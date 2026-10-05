@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<!-- logo goes here -->
+<img width="690" height="519" alt="Screenshot-1791166153-291331984-4" src="https://github.com/user-attachments/assets/7ba5668a-649f-4bae-ac2c-ec08f6826b14" />
 
 ### A Wayland compositor with its own desktop shell, built in Zig
 
@@ -35,18 +35,13 @@ screens, notifications and OSDs, all in one process, benchmarked against
 ## Installing
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/oxydizer/rediwm/HEAD/scripts/install.sh | sh              # add `-s -- --dm` for rediwm-dm
+curl -fsSL https://raw.githubusercontent.com/oxydizer/rediwm/HEAD/scripts/install.sh | sh    # add `-s -- --dm` for rediwm-dm
 ```
 
 `scripts/install.sh` installs the prebuilt release for your distro (Arch,
 Debian, Ubuntu and Fedora on x86_64, and their derivatives): the compositor,
 the apps and the exact wlroots 0.20 they were tested with, including the
-[window-title patch](patches/wlroots/README.md). Nothing is compiled; the
-runtime libraries come from your package manager, and the tarball's checksum is
-verified before anything is installed. `--build` compiles from source instead,
-which is also what happens on any other distro or CPU, or when the release's
-libraries don't match yours. `REDIWM_VERSION=<tag>` picks a release other than
-the latest. Installing never replaces your login manager. SDDM, GDM and the
+[window-title patch](patches/wlroots/README.md). Installing never replaces your login manager. SDDM, GDM and the
 like keep working, and RediWM only appears as a session in their picker. The
 `rediwm-dm` login manager is installed only with `--dm`, and even then it is
 not enabled (see below).
@@ -78,55 +73,12 @@ then `install-session.sh` with the arguments you give it).
 ### Releasing
 
 `scripts/make-release.sh` builds each distro's tarball (`rediwm-<distro>-x86_64.tar.gz`)
-in a clean container of that distro, with `scripts/build-wlroots.sh`'s pinned,
-patched wlroots bundled in `lib/rediwm`, and a `DEPENDS` list of runtime packages
-read off the built binaries. It then installs each tarball with the real
-`install.sh` in a fresh container and starts the compositor headless. Upload the
-tarballs and the `SHA256SUMS` it writes to a GitHub release; `install.sh` reads
-`releases/latest/download/`. Needs `podman` (or `docker`) and builds from
-`git archive HEAD`, so commit first. Bump wlroots in `build-wlroots.sh` only
-together with a new release.
-
-For tolerant handling of malformed window titles (replace invalid bytes instead
-of disconnecting the app), use the [patched private wlroots build](patches/wlroots/README.md)
-(already part of every release).
-
-Files detects Git repositories, including subfolders and linked worktrees. Its
-Git sidebar shows the branch and locally known upstream ahead/behind counts;
-repository folders use Name/Git columns. Badges are M (modified), A (added),
-D (deleted), R (renamed), U (conflict), and ? (untracked). Deleted rows are
-informational. Click the repository name to return to its root. Leaving the
-repository restores the regular view. Files watches the current folder and
-Git metadata; Refresh also rescans changes inside child folders. It does not
-fetch or change the repository, and it never runs a repository's own programs:
-a repository whose own configuration names filter or Git LFS commands (as one
-from an archive or a USB stick may) is shown as a plain folder, and branch
-switches skip hooks and submodules.
-
-Files browses ZIP, TAR (including gzip, bzip2, xz and zstd) and 7z archives
-with double-click, Enter or Space. Archive folders use the usual navigation,
-with a folder icon before the archive name in the address bar. Contents are
-read-only; opening a member extracts just that file into private temporary
-storage, removed when Files exits. The archive's context menu offers **Extract**
-beside the archive and **Extract to…** through the folder picker. Existing
-names use Skip/Rename/Cancel; archives are never overwritten. Extraction uses
-libarchive and rejects paths outside the destination. Password-protected
-archives, links and special files are not supported for extraction yet.
+in a clean container of that distro, with `scripts/build-wlroots.sh`'s pinned.
 
 `rediwm-pdf FILE` opens one PDF in a sandboxed viewer process. It requires
 Landlock ABI 3 or newer and a compositor with `security-context-v1` (including
 RediWM); it refuses to parse a document if isolation cannot be established.
-Open another PDF from Files in a new viewer. Web links copy their address for
-pasting into a browser. See [PDF isolation](docs/pdf-security.md) for the policy,
-limits and tests.
-
-A nested session is never sharper than its host; use `REDIWM_SCALE=1` to judge
-layout. Installing adds **RediWM** to `/usr/share/wayland-sessions`; restarting
-over IPC disconnects applications. `rediwm-session` supervises the compositor,
-restarts it after a crash (at most 5 times a minute; a session that was locked
-comes back locked) and logs to `$XDG_STATE_HOME/rediwm/session.log`. To recover a stuck session, switch VTs with
-**Ctrl+Alt+F1…F12** (works while locked) or `pkill -u "$(id -u)" -x rediwm`.
-
+ 
 ## Using it
 
 | Keys | Action |
@@ -223,37 +175,8 @@ Beyond xdg-shell, layer-shell and Xwayland:
 | Colour | `color-management-v1`, `color-representation-v1` | renderer-supported colour spaces and pixel representations |
 | Presentation | `tearing-control-v1`, `drm-lease-v1` | opt-in fullscreen tearing, DRM-connected VR headsets |
 | Rendering | `fractional-scale-v1`, `viewporter`, `single-pixel-buffer-v1`, `linux-dmabuf-v1`, `linux-drm-syncobj-v1`, `presentation-time` | |
-
-Output changes from clients are saved like changes made in Settings. Capture
-is refused while locked or during a polkit prompt, and any capture lights the
-taskbar **Stop sharing** indicator. A crashed lock client leaves the session
-locked on the built-in screen. Sandboxed (`wp_security_context_v1`) clients
-get none of the privileged globals unless `[[sandbox_allow]]` grants them.
-
-The workspace protocol describes RediWM's continuous canvas as one workspace;
-it does not advertise workspace creation, removal or switching. Window IPC
-includes `workspace_id = 1`, and client-supplied `tag`, `description` and
-`content_type` when present. A `tag` matcher in `[[window_rules]]` accepts the
-same glob strings/arrays as `app_id`; tags are application metadata, not trusted
-identity. Content hints describe photo/video/game content without changing idle
-or focus policy.
-
-Colour capabilities follow the renderer. Pixman exposes colour feedback without
-parametric image creation; GPU renderers advertise the conversions wlroots
-supports. Output remains SDR: this does not enable HDR monitor modes or ICC
-profile loading. The decoration skirt falls back to its theme fill when a
-client edge cannot be sampled as ordinary premultiplied sRGB.
-
-Set `[compositor] allow_tearing = true` to honor asynchronous presentation hints
-from focused fullscreen clients. It defaults to false. Unsupported output commits
-fall back to synchronized presentation, disabling tearing for that output until
-it is recreated. Tearing is suppressed while locked or authenticating.
-DRM leases are available only on DRM backends and only for physical non-desktop
-outputs; private capture outputs are never offered. Locking/authentication revokes
-leases and refuses new requests. Sandboxed clients need the `windows` allowance
-for workspace access and `outputs` for DRM leasing. These globals are omitted in
-greeter mode.
-
+ 
+ 
 ## Configuration
 
 `$XDG_CONFIG_HOME/rediwm/config.toml` (`REDIWM_CONFIG` overrides) is written with
@@ -264,15 +187,7 @@ previous config. Sections: `[theme]`, `[input]`, `[input_method]`,
 `[[window_rules]]`, `[[notification_rules]]` and `[[sandbox_allow]]`.
 
 The `.toml` files use a **line-based TOML subset**, including standalone theme
-files. Keep each `key = value` assignment and array on one line. Strings must
-use double quotes; their contents are copied verbatim, with no TOML escape
-processing (`\n`, `\t`, `\"`, and Unicode escapes are not decoded). Single-quoted
-literal strings and triple-quoted/multiline strings are unsupported, as are
-multiline arrays, inline tables, arbitrary dotted keys, and dates/times.
-Use the sections and value types shown in the generated defaults. `#` starts
-a comment outside double quotes. A valid general-purpose TOML file is not
-necessarily a valid RediWM config; avoid generating it with a generic TOML
-formatter. For example, write `app_id = ["firefox", "chromium"]` on one line.
+files.  
 
 Window rules match by globs; for each property the last matching rule wins:
 
@@ -307,23 +222,6 @@ uses this envelope (command names are case-sensitive snake_case):
 {"version":1,"id":2,"command":"move_cursor","params":{"x":100,"y":200}}
 ```
 
-`version` must be the integer `1`; `command` is required. `params` is an
-optional object, and `id` is an optional nonnegative integer or string of at
-most 256 bytes, echoed after successful request parsing. Parse errors omit the
-ID. Other envelope fields and duplicate JSON keys are rejected.
-Bare strings, command-key objects, `Action`, `request`, `query`/`action`
-envelopes, PascalCase command names and command aliases are not accepted.
-`capabilities` lists canonical names; `describe_ipc` lists parameters, command
-kinds and protocol version. The CLI's human-friendly subcommands translate to
-these names; `rediwm-msg --raw` sends the supplied v1 JSON unchanged.
-
-Responses retain the tagged shape `{"id":1,"Ok":{"Windows":[]}}` or
-`{"id":1,"Err":"InvalidRequest"}`; response and event tags are case-sensitive
-and distinct from command names. `event_stream` acknowledges the subscription
-and then sends newline-delimited tagged events on that connection. Clients
-should tolerate new response fields and discover new commands through
-`capabilities`; incompatible request changes require a new protocol version.
-
 Settings and desktop inspection also work without opening Settings:
 
 | Query/action | Parameters and behavior |
@@ -338,36 +236,12 @@ Settings and desktop inspection also work without opening Settings:
 | `set_accent_color` | `color`: `#RRGGBB` or `#RRGGBBAA`; updates live shell decorations and widgets. |
 | `get_processes` | Window-owning app processes grouped by PID, with window IDs, RSS bytes and CPU sampled for approximately 200 ms on a worker. 100% means one logical CPU; this excludes background processes and app child-process aggregation. Missing/exited processes have null usage. No idle sampling. |
 | `set_night_light` | Optional `enabled` and `temperature` (1700–10000 K); at least one required. Enabling follows the configured schedule. |
-
-Wallpaper, accent and night-light setters save by default; pass `persist: false`
-for a session-only change. Save errors are returned before changing live settings.
-Service edits use systemd's interactive authorization and return acceptance;
-`get_services.action_pending`, raw state and `status` report subsequent completion
-or failure. They do not depend on the Services tab's unlock state.
-
-Event sounds use `[compositor] sound_theme = "freedesktop"`,
-`sound_enabled = true`, and `sound_disabled_events = []`. Lookup uses XDG data
-locations, theme `stereo/` and root directories, `index.theme` inheritance and
-freedesktop fallback, honoring `.disabled` markers. Ogg and WAV files are supported.
-These calls provide explicit event playback; they do not add automatic sounds to
-window or notification events. `paplay` is an optional runtime dependency.
-
-For example:
-
-```sh
-rediwm-msg --raw '{"query":"get_theme"}'
-rediwm-msg --raw '{"action":"set_accent_color","params":{"color":"#e05a47"}}'
-rediwm-msg --raw '{"action":"set_night_light","params":{"enabled":true,"temperature":4000,"persist":false}}'
-```
+ 
 
 ## More
 
 - [SECURITY.md](SECURITY.md): security boundaries and decisions.
 - [TESTING.md](TESTING.md): unit and headless integration tests.
-- [AGENTS.md](AGENTS.md): implementation notes for contributors.
-- [Desktop readiness](desktop-readiness.md): remaining work and validation status.
-- [Screen sharing](docs/screen-sharing.md) and
-  [sandbox access](docs/security-context.md): current behavior and limitations.
 - [D-Bus transport](src/dbus/README.md) and [polkit agent](src/polkit/README.md).
 - Fonts: Manrope and JetBrains Mono (OFL); cursors:
   [phinger-cursors](https://github.com/phisch/phinger-cursors) (CC BY-SA 4.0).
