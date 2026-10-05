@@ -51,34 +51,36 @@ fn show(owner: ?*anyopaque, conn: *dbus.Connection, msg: wire.Message) !void {
     try reader.done();
     // ShowFolders names folders; the other calls name items inside one.
     const items = !std.mem.eql(u8, msg.headers.member orelse "", "ShowFolders");
-    var folders: std.ArrayList([]const u8) = .empty;
+    const Request = struct { folder: []const u8, item: ?[]const u8 };
+    var folders: std.ArrayList(Request) = .empty;
     while (uris.offset < uris.bytes.len) {
         const path = launch.fileUriPath(a, try uris.string()) catch continue;
         const folder = if (items) std.fs.path.dirname(path) orelse "/" else path;
         const seen = for (folders.items) |known| {
-            if (std.mem.eql(u8, known, folder)) break true;
+            if (std.mem.eql(u8, known.folder, folder)) break true;
         } else false;
-        if (!seen and folders.items.len < max_folders) try folders.append(a, folder);
+        if (!seen and folders.items.len < max_folders) try folders.append(a, .{ .folder = folder, .item = if (items) path else null });
     }
-    for (folders.items) |folder| open(server, a, folder);
+    for (folders.items) |request| open(server, a, request.folder, request.item);
     const empty: wire.Writer = .{ .allocator = gpa };
     try conn.reply(msg, "", &empty);
 }
 
-fn open(server: *Server, a: std.mem.Allocator, folder: []const u8) void {
+fn open(server: *Server, a: std.mem.Allocator, folder: []const u8, item: ?[]const u8) void {
     const snapshot = server.start_menu_catalog.retainSnapshot();
     defer snapshot.release();
     const preferred = server.config.compositor.default_file_manager;
     const id = if (preferred.len > 0) preferred else "rediwm-files.desktop";
+    const target = if (std.mem.eql(u8, id, "rediwm-files.desktop")) item orelse folder else folder;
     if (defaults.find(snapshot.entries, id)) |entry| {
-        const uri = fileUri(a, folder) catch return;
+        const uri = fileUri(a, target) catch return;
         launch.launchUris(gpa, server, entry, &.{uri}) catch |err| {
             log.warn("could not open {s} in {s}: {}", .{ folder, id, err });
         };
         return;
     }
     // Not installed as a desktop entry: run the built-in browser directly.
-    const command = std.fmt.allocPrint(a, "rediwm-files '{s}'", .{std.mem.replaceOwned(u8, a, folder, "'", "'\\''") catch return}) catch return;
+    const command = std.fmt.allocPrint(a, "rediwm-files '{s}'", .{std.mem.replaceOwned(u8, a, item orelse folder, "'", "'\\''") catch return}) catch return;
     @import("../config_runtime/actions.zig").spawnProcess(server, command);
 }
 

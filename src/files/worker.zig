@@ -414,7 +414,10 @@ pub const Worker = struct {
             list.append(mem, item) catch continue;
         }
 
-        snap.repository = git.scan(mem, self.io, self.environ, dir_path) catch null;
+        // Temporarily disable Git integration, including discovery, watches and
+        // all repository UI, regardless of the saved Git View preference.
+        const git_enabled = false;
+        snap.repository = if (git_enabled) git.scan(mem, self.io, self.environ, dir_path) catch null else null;
         if (snap.repository) |repo| {
             for (list.items) |*item| {
                 item.git_status = repo.status(item.name);

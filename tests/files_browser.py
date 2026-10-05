@@ -57,10 +57,11 @@ fi
             XDG_RUNTIME_DIR=str(tmp),
             XDG_STATE_HOME=str(tmp / "state"),
             WLR_BACKENDS='headless', REDIWM_FILES_DEVICES='0',
+            REDIWM_IPC_AUTOMATION='1',
             WLR_HEADLESS_OUTPUTS='1',
             WLR_RENDERER='pixman',
             REDIWM_SCALE='1',
-            PATH=str(helpers) + ':' + os.environ.get('PATH', ''),
+            PATH=str(helpers) + ':' + str(ROOT / 'zig-out/bin') + ':' + os.environ.get('PATH', ''),
         )
         config_path = tmp / 'rediwm-config.toml'
         config_path.write_text('')
@@ -121,7 +122,7 @@ fi
                 return None
 
             win = wait_for(find_window, 'rediwm-files window did not appear')
-            assert win['title'] == f'{browse_dir.name} — Files', f"Unexpected title: {win['title']}"
+            assert win['title'] == f'{browse_dir.name} — RediWM Files', f"Unexpected title: {win['title']}"
             print(f"Verified initial window: {win['app_id']}, title: '{win['title']}'")
 
             # Focus the window
@@ -139,10 +140,10 @@ fi
                 action('key', {'keycode': 28, 'pressed': pressed})
             time.sleep(0.2)
 
-            # Wait for title to update to "subfolder — Files"
+            # Wait for title to update to "subfolder — RediWM Files"
             def check_subfolder():
                 w = find_window()
-                return w if w and w.get('title') == 'subfolder — Files' else None
+                return w if w and w.get('title') == 'subfolder — RediWM Files' else None
 
             win = wait_for(check_subfolder, 'Did not navigate into subfolder')
             print(f"Verified folder navigation: title '{win['title']}'")
@@ -156,7 +157,7 @@ fi
 
             def check_back():
                 w = find_window()
-                return w if w and w.get('title') == f'{browse_dir.name} — Files' else None
+                return w if w and w.get('title') == f'{browse_dir.name} — RediWM Files' else None
 
             win = wait_for(check_back, 'Did not navigate Back')
             print(f"Verified Back navigation: title '{win['title']}'")
@@ -306,6 +307,35 @@ fi
 
             wait_for(check_closed, 'Window did not close')
             print("Verified window close.")
+
+            # Opening a file path reveals it in its parent folder. Enter acts
+            # on that selection without a preliminary click or arrow key.
+            opened_marker.unlink()
+            start('rediwm-files', [str(browse_dir / 'sample.txt')], WAYLAND_DISPLAY=display)
+            selected_win = wait_for(find_window, 'file-path window did not appear')
+            assert selected_win['title'] == f'{browse_dir.name} — RediWM Files'
+            action('focus_window', {'id': selected_win['id']})
+            time.sleep(0.4)
+            send_key(28)
+            wait_for(opened_marker.exists, 'selected startup file did not open on Enter')
+            assert opened_marker.read_text().strip() == str(browse_dir / 'sample.txt')
+            action('close_window', {'id': selected_win['id']})
+            print('Verified file-path startup selection.')
+
+            if env.get('REDIWM_FORCE_DBUS') == '1':
+                opened_marker.unlink()
+                subprocess.run(['busctl', '--user', 'call', 'org.freedesktop.FileManager1',
+                                '/org/freedesktop/FileManager1', 'org.freedesktop.FileManager1',
+                                'ShowItems', 'ass', '1', (browse_dir / 'sample.txt').as_uri(), ''],
+                               env=env, check=True, capture_output=True, text=True)
+                shown_win = wait_for(find_window, 'ShowItems did not open RediWM Files')
+                action('focus_window', {'id': shown_win['id']})
+                time.sleep(0.4)
+                send_key(28)
+                wait_for(opened_marker.exists, 'ShowItems did not select the requested file')
+                assert opened_marker.read_text().strip() == str(browse_dir / 'sample.txt')
+                action('close_window', {'id': shown_win['id']})
+                print('Verified D-Bus ShowItems selection.')
 
         except Exception as e:
             for log_file in tmp.glob('*.log'):

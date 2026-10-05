@@ -252,6 +252,8 @@ pub const App = struct {
     /// "Scanning folder..." notice waits `scan_notice_delay_ms` from here.
     loading_since: i64 = 0,
     scan_notice_shown: bool = false,
+    /// A file passed at startup is selected once its parent folder is listed.
+    initial_selection: ?[]const u8 = null,
     error_message: ?[]const u8 = null,
     show_hidden: bool = false,
     list_view: bool = false,
@@ -284,6 +286,7 @@ pub const App = struct {
     pins_path: ?[]u8 = null,
     /// While a drag hovers PLACES: the gap, among the pins, where a drop lands.
     pin_drop: ?usize = null,
+    folder_drop: ?usize = null,
 
     // Removable and external volumes (see volumes.zig), listed under DEVICES.
     // The monitor starts once the window exists; without it the list is empty.
@@ -329,6 +332,7 @@ pub const App = struct {
     drag_origin: ?struct { x: f64, y: f64 } = null,
     drag_ready: bool = false,
     collapse_on_release: ?usize = null,
+    deselect_on_release: ?usize = null,
     selection_band: ?struct {
         x: f64,
         y: f64, // Content coordinates, so the anchor survives edge scrolling.
@@ -509,9 +513,9 @@ pub const App = struct {
         }
         const cur = self.history.current;
         const name = if (self.trash_dir != null and std.mem.eql(u8, cur, self.trash_dir.?)) "Trash" else if (std.mem.eql(u8, cur, "/")) "/" else std.fs.path.basename(cur);
-        _ = std.fmt.bufPrintZ(&self.title_z, "{s} — Files", .{name}) catch {
-            @memcpy(self.title_z[0..5], "Files");
-            self.title_z[5] = 0;
+        _ = std.fmt.bufPrintZ(&self.title_z, "{s} — RediWM Files", .{name}) catch {
+            @memcpy(self.title_z[0..12], "RediWM Files");
+            self.title_z[12] = 0;
         };
         self.title_changed = true;
     }
@@ -868,6 +872,11 @@ pub const App = struct {
         self.invalidate();
     }
 
+    pub fn selectOnLoad(self: *App, path: []const u8) void {
+        self.initial_selection = path;
+        if (std.mem.startsWith(u8, std.fs.path.basename(path), ".")) self.toggleHidden();
+    }
+
     pub fn back(self: *App) void {
         self.rememberView();
         if (self.history.back() catch null) |path| {
@@ -1023,6 +1032,17 @@ pub const App = struct {
         self.loading = false;
         self.rebuildView();
         if (self.restore_view) self.restoreView();
+        if (self.initial_selection) |path| {
+            self.initial_selection = null;
+            for (self.items.items, 0..) |*item, i| {
+                if (!std.mem.eql(u8, item.path, path)) continue;
+                item.selected = true;
+                self.focused_index = i;
+                self.selection_anchor = i;
+                self.revealIndex(i);
+                break;
+            }
+        }
     }
 
     /// Repositories list as one Git column and ignore the grid, but the user's
@@ -1593,14 +1613,18 @@ pub const App = struct {
     }
 
     pub fn executePaste(self: *App, kind: ops_mod.OpKind, paths: []const []const u8) bool {
+        return self.executeTransfer(kind, paths, self.history.current, true);
+    }
+
+    pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, clipboard: bool) bool {
         if (self.history.archive_len > 0) return false;
         if (paths.len == 0) return false;
         const runner = self.job_runner orelse return false;
-        runner.start(kind, paths, self.history.current, .ask) catch {
+        runner.start(kind, paths, directory, .ask) catch {
             self.setStatusNotice("Failed to start transfer job", true);
             return false;
         };
-        self.job_cut_revision = if (kind == .move and self.clipboard_cut) self.clipboard_revision else null;
+        self.job_cut_revision = if (clipboard and kind == .move and self.clipboard_cut) self.clipboard_revision else null;
         self.job_was_running = true;
         self.invalidate();
         return true;
@@ -2755,7 +2779,39 @@ pub const App = struct {
         return slot != null;
     }
 
+    /// Content drops use the folder under the pointer, or the displayed folder
+    /// on empty space. Archives, dialogs, and file choosers are not targets.
+    pub fn dropDirectoryAt(self: *App, x: f64, y: f64) ?[]const u8 {
+        if (self.chooser != null or self.dialog != null or self.menu != null or self.history.archive_len > 0) return null;
+        if (self.job_state == .running or self.job_state == .waiting_conflict) return null;
+        if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter())) or
+            y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) return null;
+        if (self.itemAt(x, y)) |idx| {
+            const item = self.items.items[idx];
+            if (!item.is_dir or item.missing or item.is_broken) return null;
+            return item.path;
+        }
+        return self.history.current;
+    }
+
+    pub fn highlightDrop(self: *App, x: f64, y: f64, accepted: bool) void {
+        const idx = if (accepted) self.itemAt(x, y) else null;
+        if (self.folder_drop == idx) return;
+        const per_row: usize = @intCast(self.columns());
+        for ([_]?usize{ self.folder_drop, idx }) |index| {
+            const i = index orelse continue;
+            var rect = self.itemHighlight(.{ .col = @floatFromInt(i % per_row), .row = @floatFromInt(i / per_row) });
+            rect.x -= 2;
+            rect.y -= 2;
+            rect.w += 4;
+            rect.h += 4;
+            self.addDamage(self.clipToViewport(rect));
+        }
+        self.folder_drop = idx;
+    }
+
     pub fn dropLeave(self: *App) void {
+        self.highlightDrop(0, 0, false);
         self.setPinDrop(null);
     }
 
@@ -3710,6 +3766,7 @@ pub const App = struct {
                 self.drag_ready = self.history.archive_len == 0;
                 self.drag_origin = null;
                 self.collapse_on_release = null;
+                self.deselect_on_release = null;
                 self.last_click_index = null;
             }
         }
@@ -3754,6 +3811,7 @@ pub const App = struct {
         self.drag_origin = null;
         self.drag_ready = false;
         self.collapse_on_release = null;
+        self.deselect_on_release = null;
     }
 
     fn bandRect(self: *App) header.Rect {
@@ -3918,6 +3976,10 @@ pub const App = struct {
             if (button == 0x110) {
                 if (self.collapse_on_release) |idx| {
                     for (self.items.items, 0..) |*it, i| it.selected = i == idx;
+                    self.invalidate();
+                }
+                if (self.deselect_on_release) |idx| {
+                    if (idx < self.items.items.len) self.items.items[idx].selected = false;
                     self.invalidate();
                 }
                 self.cancelDrag();
@@ -4190,7 +4252,11 @@ pub const App = struct {
                         it.selected = (i >= start and i <= end);
                     }
                 } else if (self.ctrl and (self.chooser == null or self.chooser.?.multiple)) {
-                    self.items.items[idx].selected = !self.items.items[idx].selected;
+                    if (button == 0x110 and self.chooser == null and self.items.items[idx].selected) {
+                        self.deselect_on_release = idx;
+                    } else {
+                        self.items.items[idx].selected = !self.items.items[idx].selected;
+                    }
                     self.selection_anchor = idx;
                 } else {
                     if (button == 0x110 and self.items.items[idx].selected) {
@@ -5070,15 +5136,15 @@ pub const App = struct {
         const right: f64 = @floatFromInt(self.w);
         const top: f64 = @floatFromInt(self.viewTop());
         const bottom: f64 = @floatFromInt(self.h - self.footerHeight());
-        const w = @min(280, right - left - 8);
+        const w = @min(340, right - left - 16);
         const h: f64 = 44;
-        var x = left + 16;
+        var x = left + 8;
         var y = top + 8;
         if (dlg.target_path) |target| for (self.items.items, 0..) |item, i| {
             if (!std.mem.eql(u8, item.path, target)) continue;
             const icon = self.itemIconRect(@intCast(i));
             if (self.list_view) {
-                x = icon.x - 6;
+                x = left + 8;
                 y = icon.y + icon.h / 2 - h / 2;
             } else {
                 x = icon.x + icon.w / 2 - w / 2;
@@ -5235,6 +5301,12 @@ pub const App = struct {
                 c.cairo_set_line_width(cr, 1);
                 c.cairo_stroke(cr);
             }
+            if (self.folder_drop == idx) {
+                roundedRect(cr, x, y, width, @floatFromInt(self.cardHeight()), 6);
+                setSource(cr, accent);
+                c.cairo_set_line_width(cr, 2);
+                c.cairo_stroke(cr);
+            }
             var cut = false;
             if (self.clipboard_cut) {
                 for (self.clipboard_paths.items) |path| {
@@ -5280,12 +5352,8 @@ pub const App = struct {
                 const ty = self.listColumn(2);
                 drawEllipsis(cr, itemType(item), ty.x + 4, y + baseline, ty.w - 8, shell_ui.textSize(), false);
                 const mt = self.listColumn(3);
-                var tm: c.struct_tm = undefined;
-                var seconds: c.time_t = @intCast(item.mtime);
-                if (c.localtime_r(&seconds, &tm) != null) {
-                    const n = c.strftime(&buf, buf.len, "%Y-%m-%d %H:%M", &tm);
-                    drawEllipsis(cr, buf[0..n], mt.x + 4, y + baseline, mt.w - 8, shell_ui.textSize(), false);
-                }
+                const timestamp = @import("settings.zig").dateTime(item.mtime, &buf);
+                drawEllipsis(cr, timestamp, mt.x + 4, y + baseline, mt.w - 8, shell_ui.textSize(), false);
                 const permissions = self.listColumn(4);
                 const mode = formatPermissions(item.mode);
                 drawEllipsis(cr, if (item.permissions_text.len > 0) item.permissions_text else &mode, permissions.x + 4, y + baseline, permissions.w - 8, shell_ui.textSize(), false);
@@ -6520,6 +6588,19 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     app.handleButton(0x110, true);
     app.handleButton(0x110, false);
     try std.testing.expect(!app.items.items[1].selected);
+
+    app.ctrl = true;
+    app.last_click_index = null;
+    app.handleButton(0x110, true);
+    try std.testing.expect(app.items.items[0].selected);
+    app.handleMotion(270, 158);
+    try std.testing.expect(app.drag_ready);
+    app.handleButton(0x110, false);
+    try std.testing.expect(app.items.items[0].selected);
+    app.handleMotion(250, 158);
+    app.handleButton(0x110, true);
+    app.handleButton(0x110, false);
+    try std.testing.expect(!app.items.items[0].selected);
 }
 
 test "Files reduced motion scrolls immediately" {

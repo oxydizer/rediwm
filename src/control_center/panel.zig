@@ -56,7 +56,7 @@ const page_descriptions = [_][]const u8{
     "Connect and manage your Bluetooth devices.",          "Your language, regional formats and calendar preferences.",
     "Review login accounts and automatic-login settings.", "Manage and analyze systemd services.",
 };
-const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi, .settings, .keyboard, .grid, .bluetooth, .globe, .generic, .settings };
+const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi, .settings, .keyboard, .squares, .bluetooth, .globe, .users, .settings };
 const max_devices = 16;
 
 pub fn palette() theme.Theme {

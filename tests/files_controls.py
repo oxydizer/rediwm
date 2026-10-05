@@ -104,7 +104,7 @@ def run():
                     text(value)
 
                 def title(value):
-                    wait_for(lambda: windows() and windows()[0]["title"] == value + " — Files",
+                    wait_for(lambda: windows() and windows()[0]["title"] == value + " — RediWM Files",
                              "navigation did not reach " + value)
 
                 def opened(name):
@@ -125,7 +125,7 @@ def run():
                     title(folder)
                     action('pointer_button', {"button": button, "pressed": False})
                     time.sleep(.1)
-                    assert windows()[0]["title"] == folder + " — Files"
+                    assert windows()[0]["title"] == folder + " — RediWM Files"
                 # A modal editor must keep its current directory.
                 key(49, ctrl=True)  # Ctrl+N: new folder
                 for pressed in (True, False):

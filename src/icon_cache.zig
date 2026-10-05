@@ -282,7 +282,8 @@ fn lerpArgb(a: u32, b: u32, t: f32) u32 {
     return (out[0] << 24) | (out[1] << 16) | (out[2] << 8) | out[3];
 }
 
-// Bilinear resample of a premultiplied-ARGB buffer. Valid on premultiplied
+// Bilinear resample of a premultiplied-ARGB buffer into a square icon slot,
+// centering rectangular artwork without stretching it. Valid on premultiplied
 // data (unlike some other filters) since resize is a linear operation.
 fn resample(src: []const u32, src_w: i32, src_h: i32, dst_size: i32) ![]u32 {
     const dst = try gpa.alloc(u32, @intCast(dst_size * dst_size));
@@ -290,10 +291,20 @@ fn resample(src: []const u32, src_w: i32, src_h: i32, dst_size: i32) ![]u32 {
     const sw: f32 = @floatFromInt(src_w);
     const sh: f32 = @floatFromInt(src_h);
     const dwf: f32 = @floatFromInt(dst_size);
+    const longest = @max(sw, sh);
+    const image_w = dwf * sw / longest;
+    const image_h = dwf * sh / longest;
+    const left = (dwf - image_w) / 2;
+    const top = (dwf - image_h) / 2;
 
     var dy: usize = 0;
     while (dy < dw) : (dy += 1) {
-        const sy = (@as(f32, @floatFromInt(dy)) + 0.5) * sh / dwf - 0.5;
+        const py = @as(f32, @floatFromInt(dy)) + 0.5;
+        if (py < top or py >= top + image_h) {
+            @memset(dst[dy * dw ..][0..dw], 0);
+            continue;
+        }
+        const sy = (py - top) * sh / image_h - 0.5;
         const y0f = @floor(sy);
         const fy = sy - y0f;
         const y0 = clampInt(@intFromFloat(y0f), 0, src_h - 1);
@@ -301,7 +312,12 @@ fn resample(src: []const u32, src_w: i32, src_h: i32, dst_size: i32) ![]u32 {
 
         var dx: usize = 0;
         while (dx < dw) : (dx += 1) {
-            const sx = (@as(f32, @floatFromInt(dx)) + 0.5) * sw / dwf - 0.5;
+            const px = @as(f32, @floatFromInt(dx)) + 0.5;
+            if (px < left or px >= left + image_w) {
+                dst[dy * dw + dx] = 0;
+                continue;
+            }
+            const sx = (px - left) * sw / image_w - 0.5;
             const x0f = @floor(sx);
             const fx = sx - x0f;
             const x0 = clampInt(@intFromFloat(x0f), 0, src_w - 1);
@@ -316,6 +332,15 @@ fn resample(src: []const u32, src_w: i32, src_h: i32, dst_size: i32) ![]u32 {
         }
     }
     return dst;
+}
+
+test "rectangular PNG icons keep their proportions" {
+    const src = [_]u32{ 0xffff0000, 0xff0000ff };
+    const pixels = try resample(&src, 2, 1, 4);
+    defer gpa.free(pixels);
+    try std.testing.expectEqualSlices(u32, &.{ 0, 0, 0, 0 }, pixels[0..4]);
+    try std.testing.expectEqualSlices(u32, &.{ 0, 0, 0, 0 }, pixels[12..16]);
+    for (pixels[4..12]) |pixel| try std.testing.expectEqual(@as(u32, 0xff), pixel >> 24);
 }
 
 test "decode palette PNG via cairo fallback" {

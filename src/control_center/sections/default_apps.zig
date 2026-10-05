@@ -27,7 +27,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     inline for (.{ defaults.Kind.file_manager, defaults.Kind.terminal }, 0..) |kind, index| {
         var labels: std.ArrayList([]const u8) = .empty;
         var values: std.ArrayList([]const u8) = .empty;
-        try labels.append(a, if (kind == .file_manager) "Files (built-in)" else "Automatic ($TERMINAL / Foot)");
+        try labels.append(a, if (kind == .file_manager) "RediWM Files (built-in)" else "Automatic ($TERMINAL / Foot)");
         try values.append(a, "");
         const selected = if (kind == .file_manager) cc.server.config.compositor.default_file_manager else cc.server.config.compositor.default_terminal;
         var selected_index: usize = 0;

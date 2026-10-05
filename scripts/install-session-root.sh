@@ -16,6 +16,7 @@ for binary in rediwm rediwm-msg rediwm-files rediwm-images rediwm-editor rediwm-
     install -m755 "$release_dir/bin/$binary" "$stage/$binary"
 done
 install -Dm644 "$repo_dir/data/rediwm-files.desktop" /usr/local/share/applications/rediwm-files.desktop
+install -Dm644 "$release_dir/share/icons/hicolor/256x256/apps/redi-fm-icon.png" /usr/local/share/icons/hicolor/256x256/apps/redi-fm-icon.png
 install -Dm644 "$repo_dir/data/rediwm-images.desktop" /usr/local/share/applications/rediwm-images.desktop
 install -Dm644 "$repo_dir/data/rediwm-editor.desktop" /usr/local/share/applications/rediwm-editor.desktop
 install -Dm644 "$repo_dir/data/rediwm-pdf.desktop" /usr/local/share/applications/rediwm-pdf.desktop
@@ -37,7 +38,7 @@ if [ -d "$release_dir/lib/rediwm" ]; then
 fi
 # Bundled Xcursor themes (aliases are symlinks); the compositor finds them
 # through $ORIGIN/../share/icons, which it adds to XCURSOR_PATH.
-for theme in "$release_dir"/share/icons/*/; do
+for theme in "$release_dir"/share/icons/phinger-cursors-*/; do
     name=$(basename "$theme")
     rm -rf "/usr/local/share/icons/.$name-new"
     install -d /usr/local/share/icons

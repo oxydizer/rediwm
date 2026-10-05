@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Files
+Name=RediWM Files
 GenericName=File Manager
 Comment=Browse, open and manage local files and folders
 Exec=rediwm-files %f
-Icon=system-file-manager
+Icon=redi-fm-icon
 Terminal=false
 StartupWMClass=rediwm-files
 Categories=System;FileTools;FileManager;Utility;

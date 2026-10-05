@@ -79,6 +79,9 @@ def run(binary):
             command = case["args"][1] if case["args"][0] == "action" else case["args"][0]
             assert command in help_text, f"missing help for {command}"
     assert "doctor" in help_text and "--save <PATH>" in help_text
+    for command in ("get_services", "set_wallpaper", "get_theme", "get_processes", "set_night_light"):
+        assert command in help_text, f"missing raw IPC help for {command}"
+    assert "Other IPC commands (via raw JSON):" in help_text
     print(f"PASS: {len(cases)} CLI v1 contract cases and generated help")
 
 

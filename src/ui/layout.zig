@@ -138,6 +138,8 @@ pub const IconId = enum {
     drive,
     eject,
     more,
+    users,
+    squares,
 };
 
 pub const ButtonState = enum { idle, hover, press, disabled };

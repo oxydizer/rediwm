@@ -276,7 +276,114 @@ def run_pin():
             log.close()
 
 
+def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
+    with tempfile.TemporaryDirectory(prefix="rediwm-files-transfer-") as directory:
+        tmp = Path(directory)
+        home = tmp / "home"
+        home.mkdir()
+        source = home / "source"
+        source.mkdir()
+        target = source / "destination" if same_window else home / "target"
+        target.mkdir()
+        if folder and not same_window:
+            target = target / "destination"
+            target.mkdir()
+        name = "a space # 雪.txt"
+        (source / name).write_text("transfer payload")
+        if not same_window:
+            (source / "bundle").mkdir()
+            (source / "bundle" / "child.txt").write_text("nested payload")
+        comp, log = spawn_compositor(tmp, config_content="[compositor]\nxwayland = false\ndodge_file_drags = false\n",
+                                     env_extra={"HOME": str(home)})
+        peers = []
+        try:
+            with IPCClient(tmp).connect() as ipc:
+                display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
+                env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp),
+                           XDG_STATE_HOME=str(tmp / "state"), XDG_CONFIG_HOME=str(tmp / "config"),
+                           REDIWM_CONFIG=str(tmp / "rediwm-config.toml"), WAYLAND_DISPLAY=display,
+                           DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent", REDIWM_FILES_DEVICES="0")
+                env.pop("DISPLAY", None)
+                def launch(path, x):
+                    known = {w["id"] for w in ipc.get_windows()}
+                    out = (tmp / f"files-{x}.log").open("w")
+                    try:
+                        peers.append(subprocess.Popen([str(ROOT / "zig-out/bin/rediwm-files"), str(path)], env=env, stdout=out, stderr=out))
+                    finally:
+                        out.close()
+                    window = wait_for(lambda: next((w for w in ipc.get_windows() if w["id"] not in known), None), "Files did not map")
+                    ipc.action('set_window_size', {"id": window["id"], "width": 600, "height": 500})
+                    ipc.action('move_window_to', {"id": window["id"], "x": x, "y": 30})
+                    return window
+                src = launch(source, 10)
+                dst = src if same_window else launch(target.parent if folder else target, 680)
+                ipc.action('focus_window', {"id": src["id"]})
+                time.sleep(.5)
+                box = ipc.get_window_debug(src["id"])["client_box"]
+                dest = ipc.get_window_debug(dst["id"])["client_box"]
+                def move(x, y):
+                    ipc.action('move_cursor', {"x": round(x), "y": round(y)})
+                def button(pressed):
+                    ipc.action('pointer_button', {"button": 272, "pressed": pressed})
+                if list_view:
+                    for rect in ([box] if same_window else [box, dest]):
+                        move(rect["x"] + 367, rect["y"] + 80)
+                        button(True)
+                        button(False)
+                    time.sleep(.3)
+                # Folders sort first: the source file is second in a shared window.
+                sx = box["x"] + 250
+                sy = box["y"] + ((216 if same_window else 178) if list_view else (302 if same_window else 158))
+                tx = dest["x"] + 250
+                ty = dest["y"] + ((178 if list_view else 158) if folder else 350)
+                move(sx, sy)
+                button(True)
+                button(False)
+                time.sleep(.7)
+                if not same_window:
+                    for key, pressed in ((29, True), (30, True), (30, False), (29, False)):
+                        ipc.action('key', {"keycode": key, "pressed": pressed})
+                if copy:
+                    ipc.action('key', {"keycode": 29, "pressed": True})
+                button(True)
+                time.sleep(.08)
+                for step in range(1, 17):
+                    move(sx + (tx-sx)*step/16, sy + (ty-sy)*step/16)
+                    time.sleep(.04)
+                time.sleep(.2)
+                button(False)
+                if copy:
+                    ipc.action('key', {"keycode": 29, "pressed": False})
+                wait_for(lambda: (target / name).exists(), "file did not arrive at drop destination")
+                assert (target / name).read_text() == "transfer payload"
+                if copy:
+                    assert (source / name).read_text() == "transfer payload"
+                else:
+                    wait_for(lambda: not (source / name).exists(), "move left the source behind")
+                if not same_window:
+                    wait_for(lambda: (target / "bundle" / "child.txt").exists(), "nested folder did not arrive")
+                    assert (target / "bundle" / "child.txt").read_text() == "nested payload"
+                    if copy:
+                        assert (source / "bundle" / "child.txt").read_text() == "nested payload"
+                    else:
+                        wait_for(lambda: not (source / "bundle").exists(), "folder move left the source behind")
+                assert all(peer.poll() is None for peer in peers), "Files exited during transfer"
+                print(f"PASS Files {'copy' if copy else 'move'} {'within window' if same_window else 'between windows'} {'folder' if folder else 'background'} {'list' if list_view else 'grid'}")
+        finally:
+            for peer in peers:
+                stop_process(peer)
+            stop_process(comp)
+            log.close()
+
+
 if __name__ == "__main__":
+    if "--transfer" in sys.argv:
+        run_transfer(same_window=True)
+        run_transfer(same_window=True, copy=True, list_view=True)
+        run_transfer(folder=False)
+        run_transfer(copy=True)
+        run_transfer(list_view=True)
+        sys.exit(0)
     if "--pin" in sys.argv:
         run_pin()
         sys.exit(0)

@@ -577,7 +577,7 @@ pub const StartMenu = struct {
                 } },
                 .direction = .row,
                 .@"align" = .center,
-                .gap = 12,
+                .gap = 16,
                 .padding = layout.Edges.xy(theme.global.start_menu_icon_left_pad, theme.global.start_menu_icon_bottom_pad),
                 .width = .{ .percent = 1 },
                 .height = .{ .fixed = 56 },

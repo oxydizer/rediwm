@@ -90,6 +90,14 @@ pub const State = struct {
         defer c.cairo_restore(cr);
         @import("ui").cairo.setSource(cr, dialog.backdropColor());
         c.cairo_paint(cr);
+        self.drawWindow(ctx, w, h, mx, my, background);
+    }
+
+    /// Floating compositor prompts have no app-sized backdrop to dim.
+    pub fn drawWindow(self: *const State, ctx: anytype, w: i32, h: i32, mx: f64, my: f64, background: ?[4]f32) void {
+        const cr: *c.cairo_t = @ptrCast(ctx);
+        c.cairo_save(cr);
+        defer c.cairo_restore(cr);
         const g = self.geometry(w, h);
         c.cairo_translate(cr, g.x, g.y);
         var layer = shell_ui.Layer.begin(cr, .{ .x = 0, .y = 0, .w = g.width, .h = g.height }) orelse return;

@@ -11,12 +11,18 @@ from PIL import Image, ImageChops
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def difference(expected, actual):
+    diff = ImageChops.difference(expected, actual)
+    # GLES can composite unchanged background pixels one level differently
+    # after camera changes, including on an unmodified compositor.
+    return diff.point(lambda value: 0 if value <= 1 else value) if os.getenv('REDIWM_TEST_RENDERER') == 'gles2' else diff
+
 def run():
     with tempfile.TemporaryDirectory(prefix='rediwm-icons-') as directory:
         tmp = Path(directory)
         desktop = tmp / 'Desktop'
         env = dict(os.environ, XDG_RUNTIME_DIR=directory, XDG_CONFIG_HOME=str(tmp/'config'), XDG_CACHE_HOME=str(tmp/'cache'), XDG_STATE_HOME=str(tmp/'state'),
-                   WLR_BACKENDS='headless', REDIWM_FILES_DEVICES='0', WLR_HEADLESS_OUTPUTS='1', WLR_RENDERER='pixman',
+                   WLR_BACKENDS='headless', REDIWM_FILES_DEVICES='0', WLR_HEADLESS_OUTPUTS='1', WLR_RENDERER=os.getenv('REDIWM_TEST_RENDERER', 'pixman'),
                    REDIWM_SCALE='1', REDIWM_DESKTOP_BUILTINS="0", REDIWM_DESKTOP_DIR=str(desktop))
         config_path = tmp/'rediwm-config.toml'
         config_path.write_text('[compositor]\ndefault_file_manager = "rediwm-fixture-files.desktop"\n')
@@ -96,6 +102,7 @@ def run():
                 action('screenshot',{'path':str(path)})
                 return Image.open(path).convert('RGB')
             background=capture('background')
+            bottom_exclusion=action('outputs')['Outputs'][0]['bottom_exclusion']
             display=next(p.name for p in tmp.glob('wayland-*') if not p.name.endswith('.lock'))
             # Pixel comparisons isolate icons from transient navigation overlays.
             # The desktop starts and stops with its config section, like any reload.
@@ -107,7 +114,7 @@ def run():
             wait_for(desktop.exists,'desktop directory not created')
             time.sleep(.5)
             empty=capture('empty')
-            assert ImageChops.difference(background,empty).getbbox() is None, 'empty desktop is not transparent'
+            assert difference(background,empty).getbbox() is None, 'empty desktop is not transparent'
             # Controlled launcher does not open or modify anything outside the temporary fixture.
             launcher=desktop/'Launch.desktop'
             marker=tmp/'launched'
@@ -124,17 +131,17 @@ def run():
             click(600,400)
             time.sleep(5.2) # the untrusted-launcher notice expires before the pixel checks
             icons=capture('icons')
-            assert ImageChops.difference(empty,icons).crop((1150,20,1270,145)).getbbox(), 'icon missing'
+            assert difference(empty,icons).crop((1150,20,1270,145)).getbbox(), 'icon missing'
             # Default-on icons stay at the same pixels after a camera pan.
             move(0,0)
             action('set_camera', {'x': 300, 'y': 150})
             pinned=capture('icons-pinned')
-            assert ImageChops.difference(icons,pinned).crop((0,0,1280,660)).getbbox() is None, 'fixed icons moved with camera'
+            assert difference(icons,pinned).crop((0,0,1280,660)).getbbox() is None, 'fixed icons moved with camera'
             for percent in (70, 100):
                 action('set_zoom', {'percent': percent})
                 time.sleep(1.4)
                 fixed_zoom=capture('icons-fixed-'+str(percent))
-                assert ImageChops.difference(icons,fixed_zoom).crop((0,0,1280,660)).getbbox() is None, 'fixed icons scaled with camera'
+                assert difference(icons,fixed_zoom).crop((0,0,1280,660)).getbbox() is None, 'fixed icons scaled with camera'
             click(1200,60);time.sleep(.05);click(1200,60)
             wait_for(marker.exists,'fixed icon click after pan did not launch')
             marker.unlink()
@@ -146,14 +153,14 @@ def run():
             icons=capture('icons-unpinned')
             # With the option off, icons share the window camera and input coordinates.
             # Anchor at the origin so expected projected positions are exact.
-            original_box=ImageChops.difference(empty,icons).crop((0,0,1280,660)).getbbox()
+            original_box=difference(empty,icons).crop((0,0,1280,660)).getbbox()
             for percent in (85,70,55):
                 move(0,0)
                 action('set_zoom',{'percent':percent})
                 time.sleep(1.4) # let the shared zoom OSD fade out
                 zoomed=capture('icons-'+str(percent))
                 # Crop the taskbar: its clock may tick between captures.
-                box=ImageChops.difference(empty,zoomed).crop((0,0,1280,660)).getbbox()
+                box=difference(empty,zoomed).crop((0,0,1280,660)).getbbox()
                 z=percent/100
                 assert box and all(abs(a-b*z)<=2 for a,b in zip(box,original_box)), ('icon did not scale with camera',percent,box,original_box)
             click(660,33);time.sleep(.05);click(660,33)
@@ -171,7 +178,7 @@ def run():
             time.sleep(1)
             click(1200,60)
             selected=capture('selected')
-            assert ImageChops.difference(icons,selected).getbbox(), 'selection did not draw'
+            assert difference(icons,selected).getbbox(), 'selection did not draw'
             click(1200,60)
             time.sleep(.05)
             click(1200,60)
@@ -184,13 +191,13 @@ def run():
             set_desktop(False);time.sleep(.3);set_desktop(True)
             time.sleep(.5)
             restored=capture('restored')
-            assert ImageChops.difference(empty,restored).crop((1150,140,1270,255)).getbbox(), 'position not restored'
+            assert difference(empty,restored).crop((1150,140,1270,255)).getbbox(), 'position not restored'
             click(600,300,273)
             menu=capture('menu')
-            assert ImageChops.difference(restored,menu).crop((590,290,810,480)).getbbox(), 'empty context menu missing'
+            assert difference(restored,menu).crop((590,290,810,480)).getbbox(), 'empty context menu missing'
             move(650,345)
             hovered=capture('menu-hover')
-            assert ImageChops.difference(menu,hovered).crop((600,300,800,540)).getbbox(), 'menu hover did not highlight a row'
+            assert difference(menu,hovered).crop((600,300,800,540)).getbbox(), 'menu hover did not highlight a row'
             key(1)
             click(600,300,273)
             key(108)  # New File, using keyboard navigation in the menu.
@@ -207,6 +214,42 @@ def run():
             marker.unlink()
             key(28)
             wait_for(marker.exists,'keyboard focus not reacquired')
+            # Desktop prompts must paint and receive input above client windows.
+            from desktop_zoom import build_client
+            build_client(tmp)
+            cover=subprocess.Popen([str(tmp/'client')],env=dict(env,WAYLAND_DISPLAY=display),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            processes.append(cover)
+            wait_for(lambda: any(w['app_id']=='rediwm.zoom-fixture' for w in action('windows')['Windows']), 'cover window did not map')
+            cover_id=next(w['id'] for w in action('windows')['Windows'] if w['app_id']=='rediwm.zoom-fixture')
+            action('set_window_size',{'id':cover_id,'width':800,'height':500})
+            action('move_window_to',{'id':cover_id,'x':240,'y':100})
+            time.sleep(.4)
+            click(1200,180,273)
+            covered=capture('covered-before-trash')
+            click(1100,369)  # Move to Trash, in the icon's clamped context menu.
+            prompt=capture('trash-above-window')
+            assert difference(covered,prompt).crop((400,250,880,440)).getbbox(), 'Trash dialog is hidden behind the client'
+            click(650,414)  # Cancel must reach the dialog, not the covered client.
+            cancelled=capture('trash-cancelled')
+            assert difference(prompt,cancelled).crop((400,250,880,440)).getbbox(), 'Cancel did not dismiss the desktop dialog'
+            assert launcher.exists(), 'Cancel removed the launcher'
+            move(0,0)
+            action('set_zoom',{'percent':70})
+            time.sleep(1.4)
+            click(840,126,273)
+            zoom_covered=capture('zoom-covered-before-trash')
+            click(770,258)
+            zoom_prompt=capture('zoom-trash-above-window')
+            assert difference(zoom_covered,zoom_prompt).crop((280,175,616,308)).getbbox(), 'Zoomed Trash dialog is hidden'
+            click(455,290)
+            zoom_cancelled=capture('zoom-trash-cancelled')
+            assert difference(zoom_prompt,zoom_cancelled).crop((280,175,616,308)).getbbox(), 'Zoomed Cancel missed the dialog'
+            move(0,0)
+            action('set_zoom',{'percent':100})
+            time.sleep(1.4)
+            cover.terminate();cover.wait(timeout=3);processes.remove(cover)
+            wait_for(lambda: not action('windows')['Windows'], 'cover window did not close')
+            click(1200,180)
             # Shared deletion dialog: close and cancel preserve the selected file.
             key(111)
             preview = capture('delete-dialog')
@@ -215,7 +258,7 @@ def run():
             move(600,251); button(True)
             move(660,301); button(False)
             moved = capture('delete-dialog-moved')
-            assert ImageChops.difference(preview.crop((450,235,650,268)),
+            assert difference(preview.crop((450,235,650,268)),
                                         moved.crop((510,285,710,318))).getbbox() is None, 'Desktop delete dialog did not move'
             click(915,301)  # Close follows the moved titlebar.
             assert launcher.exists()
@@ -230,7 +273,7 @@ def run():
             wait_for(lambda: not launcher.exists(), 'Desktop permanent deletion failed')
             time.sleep(.5)
             removed=capture('removed')
-            assert ImageChops.difference(empty,removed).crop((1150,140,1270,255)).getbbox() is None, 'removed icon remains'
+            assert difference(empty,removed).crop((1150,140,1270,255)).getbbox() is None, 'removed icon remains'
             # Multi-selection uses Trash by default, including after a permanent deletion.
             for name in ('Trash A.txt', 'Trash B.txt'):
                 (desktop/name).write_text('trash fixture')
@@ -259,14 +302,14 @@ def run():
             move(1140,20);button(True);move(1255,246);time.sleep(.1);button(False)
             selected_files=capture('rubber-band')
             for y in (30,142):
-                assert ImageChops.difference(unselected,selected_files).crop((1160,y,1180,y+10)).getbbox(), 'rubber band missed an icon'
+                assert difference(unselected,selected_files).crop((1160,y,1180,y+10)).getbbox(), 'rubber band missed an icon'
             key(1)
             click(1200,60)
             before_rename=capture('before-rename')
             key(60) # F2 selects the stem, leaving the extension intact.
             editor=capture('rename-editor')
             editor.save('/tmp/rediwm-desktop-rename.png')
-            assert ImageChops.difference(before_rename,editor).crop((1040,94,1150,139)).getbbox(), 'rename editor clipped to icon bounds'
+            assert difference(before_rename,editor).crop((1040,94,1150,139)).getbbox(), 'rename editor clipped to icon bounds'
             action('type_text',{'text':'Preview'})
             click(1228,116) # Checkmark is outside the text field.
             wait_for(lambda: (desktop/'Preview.txt').exists(), 'confirm button did not preserve the extension')
@@ -370,7 +413,7 @@ def run():
             painted=capture('wallpaper')
             pixel=painted.getpixel((1000,300))
             assert all(abs(x-y)<=3 for x,y in zip(pixel,(24,48,72))), ('JPEG wallpaper missing',pixel)
-            assert request({'version': 1, 'command': 'outputs'})['Outputs'][0]['bottom_exclusion']==54
+            assert request({'version': 1, 'command': 'outputs'})['Outputs'][0]['bottom_exclusion']==bottom_exclusion
             request({'version': 1, 'command': 'open_appearance'})
             reader.close();sock.close()
             # Restart with built-ins in a scratch home. Mouse actions must map

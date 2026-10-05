@@ -62,7 +62,7 @@ pub const Theme = struct {
     /// Unset follows the surface accent during hover/drag.
     scrollbar_thumb_active: ?[4]f32 = null,
     taskbar_title_size: f32 = 12.5,
-    taskbar_size: f32 = 48.0,
+    taskbar_size: f32 = 44.0,
     // Gap between adjacent taskbar window-item pills, logical px. Also
     // drives each pill's top/bottom margin within the bar (capped — see
     // Taskbar.chipVerticalMargin), so one slider spaces pills on every side
@@ -75,7 +75,7 @@ pub const Theme = struct {
     // Size of the start button's icon/logo, logical px. Clamped to the
     // button's own size at paint time (Taskbar.startIconSize), so it also
     // shrinks if `taskbar_size` shrinks the button below this.
-    start_button_icon_size: f32 = 42.0,
+    start_button_icon_size: f32 = 36.0,
     button_font_size: f32 = 12.5,
     bg: [4]f32 = .{ 9.0 / 255.0, 11.0 / 255.0, 24.0 / 255.0, 1 }, // #090b18
     fg: [4]f32 = .{ 245.0 / 255.0, 245.0 / 255.0, 245.0 / 255.0, 1 }, // #f5f5f5
@@ -142,7 +142,7 @@ pub const Theme = struct {
     start_menu_left_pad: f32 = 2.0,
     start_menu_bottom_pad: f32 = 6.0,
     // Inset applied to each app row (icon + label together), logical px.
-    start_menu_icon_left_pad: f32 = 2.0,
+    start_menu_icon_left_pad: f32 = 12.0,
     start_menu_icon_bottom_pad: f32 = 6.0,
 
     // Additional appearance tokens. All fields are parsed and saved through

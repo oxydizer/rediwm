@@ -173,18 +173,20 @@ pub const Popup = struct {
             return;
         }
         self.sonar_node.setOpacity(opacity);
+        const sonar_scale: f32 = 48 / sonar.size;
+        const inset = (sonar.size - 48) / 2;
         self.sonar_node.node.setPosition(
-            self.buffer_node.node.x + @as(i32, @intFromFloat(@round(100 * self.factor))),
-            self.buffer_node.node.y + @as(i32, @intFromFloat(@round(8 * self.factor))),
+            self.buffer_node.node.x + @as(i32, @intFromFloat(@round((100 + inset) * self.factor))),
+            self.buffer_node.node.y + @as(i32, @intFromFloat(@round((8 + inset) * self.factor))),
         );
         if (self.sonarFading() and self.sonar_step >= 0) return;
         const moving = searching_now and anim.enabled() and !anim.reducedMotion();
         const step = if (moving) @divTrunc(now, 32) else 0;
         if (self.sonar_step == step) return;
-        const side: i32 = @intFromFloat(@round(sonar.size * self.factor));
+        const side: i32 = @intFromFloat(@round(sonar.size * sonar_scale * self.factor));
         const buf = PanelBuffer.createUnpooled(side, side, self.output.wlr_output.scale) catch return;
         defer buf.base.drop();
-        var r: paint.Renderer = .{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = self.output.wlr_output.scale * self.factor };
+        var r: paint.Renderer = .{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = self.output.wlr_output.scale * self.factor * sonar_scale };
         const m = self.manager().?;
         sonar.paint(&r, m.networks[0..m.count], if (moving) @as(f32, @floatFromInt(@mod(step, 100))) / 100 else null);
         self.sonar_node.setBuffer(&buf.base);

@@ -2277,6 +2277,17 @@ fn printUsage() void {
     inline for (protocol.commands.specs) |s| {
         if (comptime s.action_cli) |cli| printCommandHelp("action ", cli, s.description);
     }
+    std.debug.print(
+        "\nOther IPC commands (via raw JSON):\n" ++
+            "  rediwm-msg raw '{{\"version\":1,\"command\":\"get_theme\"}}'\n" ++
+            "  rediwm-msg raw '{{\"version\":1,\"command\":\"set_dnd\",\"params\":{{\"enabled\":true}}}}'\n",
+        .{},
+    );
+    inline for (protocol.commands.specs) |s| {
+        if (comptime s.cli == null and s.action_cli == null)
+            std.debug.print("  {s}  {s}\n", .{ s.wire(), s.description });
+    }
+    std.debug.print("  Use 'rediwm-msg describe' for parameter schemas.\n", .{});
 }
 
 fn printCommandHelp(prefix: []const u8, cli: protocol.commands.CliSpec, description: []const u8) void {

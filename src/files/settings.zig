@@ -7,11 +7,13 @@ const anim = @import("ui").anim;
 const anim_config = @import("config").animations;
 const theme = @import("ui").theme;
 const text = @import("ui").text;
+const config = @import("config").loader;
 
 /// Owns the string tokens while a theme travels from the worker to the UI.
 pub const ThemeUpdate = struct {
     value: theme.Theme,
     allocator: std.mem.Allocator,
+    region: config.RegionConfig = .{},
 
     fn init(a: std.mem.Allocator, t: theme.Theme) !ThemeUpdate {
         var value = t;
@@ -32,6 +34,7 @@ pub const ThemeUpdate = struct {
     /// Transfers ownership to the UI thread. Never call from a worker.
     pub fn apply(self: ThemeUpdate) void {
         theme.global = self.value;
+        region = self.region;
         text.setPreferredFamilies(self.value.font, self.value.mono_font);
         if (applied_theme) |old| old.deinit();
         applied_theme = self;
@@ -39,9 +42,11 @@ pub const ThemeUpdate = struct {
 };
 
 var applied_theme: ?ThemeUpdate = null;
+var region: config.RegionConfig = .{};
 
 pub fn deinitTheme() void {
     theme.global = .{};
+    region = .{};
     if (applied_theme) |t| t.deinit();
     applied_theme = null;
 }
@@ -51,6 +56,7 @@ pub const Settings = struct {
     theme_path: ?[:0]const u8 = null,
     stamps: [2]?Stamp = .{ null, null },
     animations: anim.Settings = .{},
+    region: config.RegionConfig = .{},
     initialized: bool = false,
     last_second: i64 = -1,
 
@@ -95,15 +101,25 @@ pub const Settings = struct {
         defer arena.deinit();
         var t: theme.Theme = .{};
         self.animations = .{};
+        self.region = .{};
         for (paths, 0..) |path, i| {
             const p = path orelse continue;
             const bytes = std.Io.Dir.cwd().readFileAlloc(io, p, arena.allocator(), .limited(1 << 20)) catch continue;
-            if (i == 0) self.animations = parseAnimations(bytes);
+            if (i == 0) {
+                self.animations = parseAnimations(bytes);
+                var cfg = config.parse(arena.allocator(), bytes, p) catch null;
+                if (cfg) |*value| {
+                    self.region = value.region;
+                    value.deinit();
+                }
+            }
             var next = t;
             theme.overlay(arena.allocator(), &next, bytes) catch continue;
             t = next;
         }
-        return ThemeUpdate.init(a, t) catch null;
+        var update = ThemeUpdate.init(a, t) catch return null;
+        update.region = self.region;
+        return update;
     }
 };
 
@@ -112,6 +128,26 @@ pub fn loadTheme(a: std.mem.Allocator, io: std.Io, env: std.process.Environ) voi
     var settings = Settings.init(a, env) catch return;
     defer settings.deinit(a);
     if (settings.poll(a, io)) |t| t.apply();
+}
+
+/// File timestamps use the same clock preference as the shell.
+pub fn dateTime(timestamp: i64, buf: []u8) []const u8 {
+    return formatDateTime(timestamp, buf, region);
+}
+
+fn formatDateTime(timestamp: i64, buf: []u8, prefs: config.RegionConfig) []const u8 {
+    var seconds: c.time_t = @intCast(timestamp);
+    var tm: c.struct_tm = undefined;
+    if (c.localtime_r(&seconds, &tm) == null) return "Unavailable";
+    const date_len = c.strftime(buf.ptr, buf.len, "%Y-%m-%d ", &tm);
+    if (date_len == 0) return "Unavailable";
+    var time_buf: [64]u8 = undefined;
+    const time_len = c.strftime(&time_buf, time_buf.len, prefs.timeFormat(), &tm);
+    if (time_len == 0) return "Unavailable";
+    const time = std.mem.trimStart(u8, time_buf[0..time_len], " ");
+    if (date_len + time.len > buf.len) return "Unavailable";
+    @memcpy(buf[date_len..][0..time.len], time);
+    return buf[0 .. date_len + time.len];
 }
 
 test "Files follows config edits, theme overrides and file removal" {
@@ -134,6 +170,7 @@ test "Files follows config edits, theme overrides and file removal" {
     try std.testing.expectEqual(@as(f32, 12), update0.value.scrollbar_width);
     try std.testing.expectEqualStrings("Noto Sans", update0.value.font);
     try std.testing.expectEqualStrings("Noto Sans Mono", update0.value.mono_font);
+    try std.testing.expect(!update0.region.clock_24h);
     settings.last_second = -1;
     try std.testing.expect(settings.poll(a, io) == null);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &theme_path, .data = "[theme]\nscrollbar_width = 24\nfont = \"Liberation Sans\"\n" });
@@ -149,12 +186,29 @@ test "Files follows config edits, theme overrides and file removal" {
     defer update2.deinit();
     try std.testing.expectEqual(@as(f32, 12), update2.value.scrollbar_width);
     try std.testing.expectEqualStrings("Noto Sans", update2.value.font);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &config_path, .data = "[theme]\nscrollbar_width = 4\n" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &config_path, .data = "[theme]\nscrollbar_width = 4\n[region]\nclock_24h = true\n" });
     settings.last_second = -1;
     const update3 = settings.poll(a, io).?;
     defer update3.deinit();
     try std.testing.expectEqual(@as(f32, 4), update3.value.scrollbar_width);
     try std.testing.expectEqualStrings((theme.Theme{}).font, update3.value.font);
+    try std.testing.expect(update3.region.clock_24h);
+    // The config's preference travels with the worker update, independently
+    // of theme overrides; verify both clock formats in local time.
+    var tm: c.struct_tm = std.mem.zeroes(c.struct_tm);
+    tm.tm_year = 124;
+    tm.tm_mon = 2;
+    tm.tm_mday = 14;
+    tm.tm_min = 24;
+    tm.tm_isdst = -1;
+    var buf: [64]u8 = undefined;
+    for ([_]c_int{ 0, 12, 15 }, [_][]const u8{ "12:24 AM", "12:24 PM", "3:24 PM" }, [_][]const u8{ "00:24", "12:24", "15:24" }) |hour, time12, time24| {
+        tm.tm_hour = hour;
+        const timestamp = c.mktime(&tm);
+        try std.testing.expectEqualStrings(time12, formatDateTime(timestamp, &buf, update0.region)[11..]);
+        try std.testing.expectEqualStrings(time24, formatDateTime(timestamp, &buf, update3.region)[11..]);
+    }
+    try std.testing.expectEqualStrings("Unavailable", formatDateTime(0, buf[0..4], update3.region));
     // Outstanding worker updates retain their strings across later polls.
     try std.testing.expectEqualStrings("Liberation Sans", update1.value.font);
 }

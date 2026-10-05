@@ -101,7 +101,7 @@ def run():
                     time.sleep(.15)
 
                 def title(value):
-                    wait_for(lambda: windows() and windows()[0]["title"] == value + " — Files",
+                    wait_for(lambda: windows() and windows()[0]["title"] == value + " — RediWM Files",
                              "navigation did not reach " + value)
 
                 # 1. Test Grid View:
@@ -119,8 +119,8 @@ def run():
                 time.sleep(.2)
 
                 # Clicking dash must NOT select big_folder (item 1 small_folder must still be active/selected)
-                # And must NOT navigate into big_folder! Title remains "Home — Files"
-                assert windows()[0]["title"] == "Home — Files", "Clicking dash opened the folder!"
+                # And must NOT navigate into big_folder! Title remains "Home — RediWM Files"
+                assert windows()[0]["title"] == "Home — RediWM Files", "Clicking dash opened the folder!"
 
                 # 2. Test List View:
                 # Switch to list view (Header list button at x=727, y=80)

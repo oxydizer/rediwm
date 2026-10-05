@@ -131,7 +131,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         text("Time & Date", 17, false),
         try info(a, "Time zone", try timezone(a, cc)),
         toggle,
-        text("Taskbar, calendar and lock screen.", 12, true),
+        text("Taskbar, calendar, lock screen and Files.", 12, true),
         text("First day of the week", 13, false),
         .{ .name = "first_day_of_week", .kind = .{ .select = .{ .labels = &days, .selected = @intFromEnum(prefs.first_day_of_week), .owner = cc, .on_change = firstDayChanged } }, .width = .{ .percent = 1 } },
         text("Changes the taskbar calendar.", 12, true),

@@ -169,8 +169,8 @@ pub fn build(b: *std.Build) void {
     const install_files = b.addInstallArtifact(files, .{});
     // Advertises rediwm-files to the start menu's applications scanner
     // (src/start_menu/applications.zig) and to any other XDG-aware
-    // launcher; Icon references a theme icon name rather than a bundled
-    // asset, consistent with how the rest of this project resolves icons.
+    // launcher. Its icon is installed in the hicolor fallback theme so the
+    // start menu and taskbar can resolve the desktop entry's Icon name.
     const install_files_desktop_entry = b.addInstallFileWithDir(
         b.path("data/rediwm-files.desktop"),
         .prefix,
@@ -178,6 +178,10 @@ pub fn build(b: *std.Build) void {
     );
     b.getInstallStep().dependOn(&install_files.step);
     b.getInstallStep().dependOn(&install_files_desktop_entry.step);
+    const install_files_icon = b.addSystemCommand(&.{ "install", "-Dm644" });
+    install_files_icon.addFileArg(b.path("icons/redi-fm-icon.png"));
+    install_files_icon.addArg(b.getInstallPath(.prefix, "share/icons/hicolor/256x256/apps/redi-fm-icon.png"));
+    b.getInstallStep().dependOn(&install_files_icon.step);
     // rediwm-files links neither wlroots-server nor libinput/libpulse, so it
     // can be built (and its dependencies checked) without the rest of this
     // repository's toolchain. `zig build` (the default `install` step) still
@@ -776,7 +780,7 @@ fn addShellUi(b: *std.Build, module: *std.Build.Module) void {
 
 // Bundle shell glyphs so installed binaries never depend on the checkout.
 fn addShellIcons(b: *std.Build, module: *std.Build.Module) void {
-    inline for (.{ "git-branch", "home", "folder", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "open", "usb-stick", "drive", "eject" }) |name| {
+    inline for (.{ "git-branch", "home", "folder", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "open", "usb-stick", "drive", "eject", "users", "squares" }) |name| {
         module.addAnonymousImport("shell-icon-" ++ name, .{ .root_source_file = b.path("icons/" ++ name ++ ".svg") });
     }
 }

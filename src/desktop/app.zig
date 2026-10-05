@@ -37,6 +37,8 @@ pub const Icon = struct {
 pub const App = struct {
     worker: *watcher.Worker,
     host: Host = .none,
+    /// Embedded hosts present prompts above windows in a separate scene layer.
+    separate_overlays: bool = false,
     wallpaper: ?@import("wallpaper.zig").Image = null,
     /// Bumped whenever `wallpaper` changes to a different image.
     wallpaper_revision: u64 = 0,
@@ -1037,6 +1039,50 @@ pub const App = struct {
             c.cairo_paint_with_alpha(cr, opacity);
             c.cairo_pattern_destroy(group);
         }
+        if (self.dragging) {
+            const r = self.geometry.rect(self.geometry.snap(self.x, self.y));
+            rounded(cr, r.x, r.y, r.w, r.h, 8);
+            shell_cairo.setSource(cr, appearance_theme.global.desktop_drop_border);
+            c.cairo_set_line_width(cr, 1);
+            c.cairo_stroke(cr);
+        }
+        if (self.rubber) {
+            if (self.band) |band| {
+                c.cairo_set_source(cr, band);
+                c.cairo_paint(cr);
+            } else self.drawBand(cr);
+        }
+        if (!self.separate_overlays) self.paintOverlay(cr, now);
+    }
+
+    /// Prompt geometry is shared by painting, scene allocation and input.
+    pub fn promptRect(self: *App) ?grid.Rect {
+        if (self.renameGeometry()) |g| return damage_mod.expand(g.panel, 2);
+        if (self.edit == .trash) {
+            const g = self.deletion.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
+            return .{ .x = @intFromFloat(@floor(g.x)), .y = @intFromFloat(@floor(g.y)), .w = @intFromFloat(@ceil(g.width)), .h = @intFromFloat(@ceil(g.height)) };
+        }
+        if (self.edit == .add_app or self.edit == .open_with) return .{ .x = @divTrunc(self.geometry.w - 480, 2), .y = @divTrunc(self.geometry.h - 360, 2), .w = 480, .h = 360 };
+        if (self.edit != .none) return .{ .x = @divTrunc(self.geometry.w - 420, 2), .y = @divTrunc(self.geometry.h - 120, 2), .w = 420, .h = 120 };
+        if (self.menu) return .{ .x = self.menu_x, .y = self.menu_y, .w = context_menu.width, .h = Menu.height(self.menuLabels().len, self.menu_icon != null) };
+        return null;
+    }
+
+    pub fn overlayRect(self: *App) ?grid.Rect {
+        var rect = self.promptRect();
+        if (self.notice_until > nowMs()) {
+            const notice_rect = grid.Rect{ .x = 24, .y = @max(24, self.geometry.h - self.geometry.bottom - 50), .w = @min(500, self.geometry.w - 48), .h = 36 };
+            if (rect) |r| {
+                const x = @min(r.x, notice_rect.x);
+                const y = @min(r.y, notice_rect.y);
+                rect = .{ .x = x, .y = y, .w = @max(r.x + r.w, notice_rect.x + notice_rect.w) - x, .h = @max(r.y + r.h, notice_rect.y + notice_rect.h) - y };
+            } else rect = notice_rect;
+        }
+        // Context-menu shadows extend five pixels sideways and eight below.
+        return if (rect) |r| damage_mod.expand(r, 8) else null;
+    }
+
+    pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
         if (self.renameGeometry()) |g| {
             // Rasterize the complete overlay independently of the repair clip,
             // just like icons: clipping Cairo arcs changes their edge coverage.
@@ -1052,19 +1098,6 @@ pub const App = struct {
             c.cairo_set_source(cr, overlay);
             c.cairo_paint(cr);
             c.cairo_pattern_destroy(overlay);
-        }
-        if (self.dragging) {
-            const r = self.geometry.rect(self.geometry.snap(self.x, self.y));
-            rounded(cr, r.x, r.y, r.w, r.h, 8);
-            shell_cairo.setSource(cr, appearance_theme.global.desktop_drop_border);
-            c.cairo_set_line_width(cr, 1);
-            c.cairo_stroke(cr);
-        }
-        if (self.rubber) {
-            if (self.band) |band| {
-                c.cairo_set_source(cr, band);
-                c.cairo_paint(cr);
-            } else self.drawBand(cr);
         }
         if (self.menu) {
             const labels = self.menuLabels();
@@ -1105,7 +1138,10 @@ pub const App = struct {
                 label(cr, entry.name, px + 12, y, 456, 32, false);
             }
         } else if (self.edit == .trash) {
-            self.deletion.draw(cr, self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, null);
+            if (self.separate_overlays)
+                self.deletion.drawWindow(cr, self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, null)
+            else
+                self.deletion.draw(cr, self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, null);
         } else if (self.edit != .none and self.edit != .rename) {
             const x = @divTrunc(self.geometry.w - 420, 2);
             const y = @divTrunc(self.geometry.h - 120, 2);

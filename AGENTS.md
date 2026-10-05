@@ -385,13 +385,18 @@ calling a failure a regression.
   `rowKind`. Hover keys: 300+i built-in (File System is 300+`pin_base`), 600+k
   device, 700+k eject, 800+j pin. `pinRowY` positions pins and the drop line;
   `placeY` for File System and everything below it follows the pin count.
-* **Files is a drop target only for pinning** (`main.zig` `dragOver`/
-  `dragDropped`). It accepts `text/uri-list` over PLACES and nothing elsewhere,
-  and only with the *copy* action: a move-only source must be refused or
-  `finish()` would let it delete the originals. After `drop` the offer leaves
-  `drag_offer` (a `leave` would destroy it), is read through a nonblocking pipe
-  (`drop_receiving`, poll slot 15) and gets `finish()` only after the read.
-  The gap comes from `pin_drop`, set by motion and taken at the drop.
+* **Files drops** (`main.zig` `dragOver`/`dragDropped`) accept `text/uri-list`:
+  PLACES pins with *copy* only; the content area transfers to the hovered folder
+  or, on empty space, the displayed directory. Files sources advertise
+  `application/x-rediwm-file-transfer`: the receiving job owns moves and the
+  source never deletes on `dnd_finished`. Ctrl at drag start offers copy only;
+  other sources copy. After `drop` the offer leaves `drag_offer` (a `leave`
+  would destroy it) and is read through a nonblocking pipe (`drop_receiving`,
+  poll slot 15). Snapshot the destination before reading. Drops use the normal
+  conflict/progress jobs without touching cut-clipboard state; reject a folder
+  dropped into itself/descendants, including through symlinks. Pins take their
+  gap from `pin_drop`. Ctrl-click deselection waits for release so Ctrl-drag
+  preserves the selection.
 * **Pins are not built-ins:** a built-in place's path is refused ("Already in
   Places"), a hidden built-in can be dropped back as a pin, a missing target
   stays listed dimmed, a file pin opens like a double click (a chooser browses

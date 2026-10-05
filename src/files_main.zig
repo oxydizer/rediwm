@@ -4,9 +4,9 @@ const c = @import("files/c.zig").api;
 
 fn printUsage() void {
     const usage =
-        \\Usage: rediwm-files [DIRECTORY]
+        \\Usage: rediwm-files [DIRECTORY|FILE]
         \\
-        \\A lightweight, standalone file browser for Wayland.
+        \\A lightweight, standalone file browser for Wayland. A file opens its folder and is selected.
         \\
         \\Options:
         \\  -h, --help    Show this help message and exit
@@ -36,7 +36,13 @@ fn printUsage() void {
     std.debug.print("{s}", .{usage});
 }
 
-fn resolveDirectory(allocator: std.mem.Allocator, environ: std.process.Environ, target: ?[]const u8) ![]const u8 {
+const Target = struct {
+    path: []const u8,
+    directory: []const u8,
+    selected: ?[]const u8,
+};
+
+fn resolveTarget(allocator: std.mem.Allocator, environ: std.process.Environ, target: ?[]const u8, allow_file: bool) !Target {
     const home = environ.getPosix("HOME") orelse "/";
 
     var path_to_check: []const u8 = undefined;
@@ -63,11 +69,9 @@ fn resolveDirectory(allocator: std.mem.Allocator, environ: std.process.Environ, 
         return error.FileNotFound;
     }
 
-    if ((stat_buf.st_mode & c.S_IFMT) != c.S_IFDIR) {
-        return error.NotADirectory;
-    }
-
-    return resolved;
+    if ((stat_buf.st_mode & c.S_IFMT) == c.S_IFDIR) return .{ .path = resolved, .directory = resolved, .selected = null };
+    if (!allow_file) return error.NotADirectory;
+    return .{ .path = resolved, .directory = std.fs.path.dirname(resolved) orelse "/", .selected = resolved };
 }
 
 pub fn main(init: std.process.Init) void {
@@ -109,12 +113,9 @@ pub fn main(init: std.process.Init) void {
     }
 
     const allocator = std.heap.c_allocator;
-    const dir = resolveDirectory(allocator, init.minimal.environ, target_arg) catch |err| blk: {
-        if (chooser != null) break :blk resolveDirectory(allocator, init.minimal.environ, null) catch resolveDirectory(allocator, init.minimal.environ, "/") catch std.process.exit(1);
+    const target = resolveTarget(allocator, init.minimal.environ, target_arg, chooser == null) catch |err| blk: {
+        if (chooser != null) break :blk resolveTarget(allocator, init.minimal.environ, null, false) catch resolveTarget(allocator, init.minimal.environ, "/", false) catch std.process.exit(1);
         switch (err) {
-            error.NotADirectory => {
-                std.debug.print("rediwm-files: '{s}': Not a directory\n", .{target_arg.?});
-            },
             error.FileNotFound => {
                 std.debug.print("rediwm-files: '{s}': No such file or directory\n", .{target_arg.?});
             },
@@ -124,9 +125,9 @@ pub fn main(init: std.process.Init) void {
         }
         std.process.exit(1);
     };
-    defer allocator.free(dir);
+    defer allocator.free(target.path);
 
-    main_mod.run(init, dir, chooser) catch |err| {
+    main_mod.run(init, target.directory, if (chooser == null) target.selected else null, chooser) catch |err| {
         std.log.err("rediwm-files: {}", .{err});
         std.process.exit(1);
     };

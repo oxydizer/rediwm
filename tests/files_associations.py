@@ -306,7 +306,7 @@ def run():
                 key(108)
                 key(28)
                 key(28)  # Open the selected folder; a modal would intercept this.
-                wait_for(lambda: any(w['title'] == '0-folder — Files' for w in ipc.get_windows()),
+                wait_for(lambda: any(w['title'] == '0-folder — RediWM Files' for w in ipc.get_windows()),
                          "folder context menu unexpectedly opened an app picker")
                 assert client.poll() is None
                 print("PASS: MIME icons, Properties permissions and compact layout, Open With, default persistence, cancellation and folder exclusion")

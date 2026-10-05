@@ -176,7 +176,8 @@ also be launched with `rediwm-files --open`, `--save` or `--folder`; it returns
 a JSON result on stdout.
 
 **Desktop, Files, Images**: `desktop_icons.py`, `desktop_damage.py`,
-`files_browser.py`, `files_controls.py`, `files_decoration.py`,
+`files_browser.py` (file-path selection; with `REDIWM_FORCE_DBUS=1` on a private
+`dbus-run-session` bus, also checks `FileManager1.ShowItems`), `files_controls.py`, `files_decoration.py`,
 `files_thumbnails.py` (draws real pictures and reads thumbnail pixels back: shape,
 colour, EXIF rotation, the shared freedesktop cache read and write, a 240-picture
 folder, the `REDIWM_FILES_THUMBNAILS=0` switch and idle wakeups; it sets a scratch
@@ -184,7 +185,8 @@ folder, the `REDIWM_FILES_THUMBNAILS=0` switch and idle wakeups; it sets a scrat
 databases; needs update-mime-database, update-desktop-database and gio), `files_drag.py` (GTK 3; `--browser` tests
 real Brave uploads with an isolated profile; `--select` selects by dragging
 from empty space, `--list` exercises list view, and `--pin` drags folders and a
-file onto PLACES: insertion line, order, refused drops, open and remove), `files_drag_dodge.py`
+file onto PLACES: insertion line, order, refused drops, open and remove;
+`--transfer` moves/copies into folders and between Files windows in grid/list), `files_drag_dodge.py`
 (Files slides aside while a file is dragged out onto a window it covers, and
 back on drop or Escape; also camera zoom, the setting off and nothing to uncover;
 `browser` runs the real Brave upload and is not in the default set), `images_viewer.py`, `client_cursor.py` (grim;

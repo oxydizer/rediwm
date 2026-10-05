@@ -30,15 +30,15 @@ pub const source =
     \\caret_width  = 1.5          # text insertion caret, not the mouse pointer
     \\scrollbar_width = 8.0      # every scrollbar, 4–24 logical px
     \\selection_alpha = 0.35       # highlight opacity when it follows the accent
-    \\taskbar_size = 48.0         # taskbar height in pixels (36.0 to 84.0)
+    \\taskbar_size = 44.0         # taskbar height in pixels (36.0 to 84.0)
     \\chip_width  = 220.0        # preferred window item width, 64–400px; shrinks to fit
     \\chip_gap     = 4.0          # gap between taskbar window-item pills; also sets
     \\                            # each pill's top/bottom margin in the bar (capped)
     \\start_button_gap = 4.0     # gap to the left of the start button and between start button and first pill
-    \\start_button_icon_size = 42.0  # start button logo size; capped to the button itself
+    \\start_button_icon_size = 36.0  # start button logo size; capped to the button itself
     \\start_menu_left_pad = 2.0          # start menu distance from left edge
     \\start_menu_bottom_pad = 6.0        # start menu gap above the taskbar
-    \\start_menu_icon_left_pad = 2.0    # start menu app row left inset
+    \\start_menu_icon_left_pad = 12.0   # start menu app row left/right inset
     \\start_menu_icon_bottom_pad = 6.0   # start menu app row top/bottom inset
     \\# More colors and styling: docs/wiki/Theme.md (all keys are optional).
     \\# control_thumb = "#ffffff"     # sliders and toggle thumbs

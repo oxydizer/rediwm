@@ -262,11 +262,7 @@ fn permissionBit(index: usize) c.mode_t {
 }
 
 fn date(timestamp: ?i64, buf: []u8) []const u8 {
-    var seconds: c.time_t = timestamp orelse return "Unavailable";
-    var tm: c.struct_tm = undefined;
-    if (c.localtime_r(&seconds, &tm) == null) return "Unavailable";
-    const n = c.strftime(buf.ptr, buf.len, "%Y-%m-%d %H:%M", &tm);
-    return if (n > 0) buf[0..n] else "Unavailable";
+    return @import("settings.zig").dateTime(timestamp orelse return "Unavailable", buf);
 }
 
 fn describe(a: std.mem.Allocator, path: [:0]const u8, mode: c.mode_t) ![]const u8 {

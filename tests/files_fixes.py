@@ -137,7 +137,7 @@ def run(scale="1"):
                 # Unfocused, the path bar is clickable folders; the empty space
                 # after them edits the path like Ctrl+L.
                 def title_is(value):
-                    return any(w["id"] == first["id"] and w["title"] == value + " — Files" for w in ipc.get_windows())
+                    return any(w["id"] == first["id"] and w["title"] == value + " — RediWM Files" for w in ipc.get_windows())
                 click(first, 144, 27)  # "Home" crumb
                 wait_for(lambda: title_is("Home"), "path bar folder click did not navigate")
                 navigate(source)
@@ -278,7 +278,7 @@ def run(scale="1"):
                 ipc.screenshot(path=str(preview))
                 # The last destination is now visible and reachable in a short sidebar.
                 click(first, 70, 190)
-                wait_for(lambda: any(w["id"] == first["id"] and w["title"] == "Projects — Files" for w in ipc.get_windows()), "short sidebar could not reach Projects")
+                wait_for(lambda: any(w["id"] == first["id"] and w["title"] == "Projects — RediWM Files" for w in ipc.get_windows()), "short sidebar could not reach Projects")
                 navigate(home)
                 ipc.action('set_window_size', {"id": first["id"], "width": 360, "height": 240})
                 time.sleep(.4)

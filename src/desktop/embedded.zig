@@ -40,6 +40,8 @@ pub const Desktop = struct {
     worker: *Worker,
     app: app_mod.App,
     tree: *wlr.SceneTree,
+    overlay: *wlr.SceneBuffer,
+    overlay_rect: ?grid.Rect = null,
     output: ?*Output = null,
     /// Layout box and scale the canvas and tiles were built for.
     box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
@@ -98,11 +100,17 @@ pub const Desktop = struct {
         errdefer worker.deinit();
         const tree = try server.world_desktop_tree.createSceneTree();
         errdefer tree.node.destroy();
+        const overlay = try server.overlay_tree.createSceneBuffer(null);
+        errdefer overlay.node.destroy();
+        overlay.node.setEnabled(false);
+        overlay.point_accepts_input = overlayAcceptsInput;
+        overlay.setFilterMode(.bilinear);
         const self = try a.create(Desktop);
         errdefer a.destroy(self);
-        self.* = .{ .server = server, .worker = worker, .app = .{ .worker = worker }, .tree = tree };
+        self.* = .{ .server = server, .worker = worker, .app = .{ .worker = worker, .separate_overlays = true }, .tree = tree, .overlay = overlay };
         self.app.host = .{ .ctx = self, .vtable = &vtable };
         self.scene_data = .{ .role = .{ .desktop = self } };
+        self.scene_data.attach(&overlay.node);
         server.input.seat.keyboard_state.events.focus_change.add(&self.focus_change);
         errdefer self.focus_change.link.remove();
         const loop = server.wl_server.getEventLoop();
@@ -121,6 +129,7 @@ pub const Desktop = struct {
         // Tile buffers still locked by the scene return to the pool when
         // wlroots releases them; none of them points back at this desktop.
         self.tree.node.destroy();
+        self.overlay.node.destroy();
         self.tiles.deinit(a);
         self.secondaries.deinit(a);
         self.freeCanvas();
@@ -144,6 +153,7 @@ pub const Desktop = struct {
         self.output = output;
         const out = output orelse {
             self.tree.node.setEnabled(false);
+            self.overlay.node.setEnabled(false);
             return;
         };
         var box: wlr.Box = undefined;
@@ -370,7 +380,62 @@ pub const Desktop = struct {
         c.cairo_destroy(cr);
         c.cairo_surface_flush(surface);
         self.publish(&self.app.damage);
+        self.paintOverlay() catch |err| log.warn("desktop overlay: {}", .{err});
         self.app.presented();
+    }
+
+    fn paintOverlay(self: *Desktop) !void {
+        const rect = self.app.overlayRect() orelse {
+            self.overlay_rect = null;
+            self.overlay.node.setEnabled(false);
+            self.overlay.setBuffer(null);
+            return;
+        };
+        const buffer = try @import("../panel_buffer.zig").PanelBuffer.create(rect.w, rect.h, self.scale);
+        defer buffer.base.drop();
+        const surface = c.cairo_image_surface_create_for_data(@ptrCast(buffer.pixels.ptr), c.CAIRO_FORMAT_ARGB32, buffer.width, buffer.height, buffer.width * 4) orelse return error.CairoFailed;
+        defer c.cairo_surface_destroy(surface);
+        if (c.cairo_surface_status(surface) != c.CAIRO_STATUS_SUCCESS) return error.CairoFailed;
+        const cr = c.cairo_create(surface) orelse return error.CairoFailed;
+        defer c.cairo_destroy(cr);
+        if (c.cairo_status(cr) != c.CAIRO_STATUS_SUCCESS) return error.CairoFailed;
+        c.cairo_scale(cr, self.scale, self.scale);
+        c.cairo_translate(cr, -@as(f64, @floatFromInt(rect.x)), -@as(f64, @floatFromInt(rect.y)));
+        self.app.paintOverlay(cr, app_mod.nowMs());
+        c.cairo_surface_flush(surface);
+        const opening = self.overlay_rect == null;
+        self.overlay_rect = rect;
+        self.overlay.setBuffer(&buffer.base);
+        if (opening) self.overlay.node.raiseToTop();
+        self.syncOverlayPosition();
+    }
+
+    /// Follow the desktop's camera transform without rerasterizing its prompt.
+    pub fn syncOverlayPosition(self: *Desktop) void {
+        const rect = self.overlay_rect orelse return;
+        if (self.output == null) return;
+        const fixed = self.server.config.compositor.desktop_icons_fixed;
+        const zoom = if (fixed) 1 else self.server.world.camera.zoom();
+        const x: f64 = @floatFromInt(self.box.x + rect.x);
+        const y: f64 = @floatFromInt(self.box.y + rect.y);
+        const origin = if (fixed) geometry.Vec2{ .x = x, .y = y } else blk: {
+            const point = self.server.world.toLayout(x, y);
+            break :blk geometry.Vec2{ .x = point.x, .y = point.y };
+        };
+        const x0: i32 = @intFromFloat(@round(origin.x));
+        const y0: i32 = @intFromFloat(@round(origin.y));
+        self.overlay.node.setPosition(x0, y0);
+        self.overlay.setDestSize(@max(1, @as(i32, @intFromFloat(@round(origin.x + @as(f64, @floatFromInt(rect.w)) * zoom))) - x0), @max(1, @as(i32, @intFromFloat(@round(origin.y + @as(f64, @floatFromInt(rect.h)) * zoom))) - y0));
+        self.overlay.node.setEnabled(true);
+    }
+
+    fn overlayAcceptsInput(node: *wlr.SceneBuffer, sx: *f64, sy: *f64) callconv(.c) bool {
+        const data = SceneData.fromNode(&node.node) orelse return false;
+        const self = data.role.desktop;
+        const rect = self.overlay_rect orelse return false;
+        const prompt = self.app.promptRect() orelse return false;
+        // Scene input coordinates use the destination size, not the raster.
+        return prompt.contains(@as(f64, @floatFromInt(rect.x)) + sx.* * @as(f64, @floatFromInt(rect.w)) / @as(f64, @floatFromInt(node.dst_width)), @as(f64, @floatFromInt(rect.y)) + sy.* * @as(f64, @floatFromInt(rect.h)) / @as(f64, @floatFromInt(node.dst_height)));
     }
 
     /// Copies each damaged tile into a fresh buffer and hands projection the

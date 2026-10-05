@@ -1891,7 +1891,7 @@ fn drawPartText(bar: *Taskbar, now_ms: i64, part: Part, buf: *BarBuffer, ox: i32
     }
 }
 
-// Theme-driven item sizing must reproduce the default 42/23/34px layout
+// Theme-driven item sizing must reproduce the default 38/21/31px layout
 // at the defaults, then scale down as the bar shrinks or the item
 // gap grows, staying at or above the floors that keep pills/tiles/targets
 // legible and non-overlapping.
@@ -1900,10 +1900,10 @@ test "chip/tile/tray sizing matches default theme" {
     defer ui_theme.global = saved;
     ui_theme.global = .{};
 
-    try std.testing.expectEqual(@as(i32, base_chip_size), chipSize());
-    try std.testing.expectEqual(@as(i32, @intFromFloat(@round(base_tile_size))), tileSize());
-    try std.testing.expectEqual(@as(i32, 9), chipPad());
-    try std.testing.expectEqual(@as(i32, base_tray_hit), trayHit());
+    try std.testing.expectEqual(@as(i32, 38), chipSize());
+    try std.testing.expectEqual(@as(i32, 21), tileSize());
+    try std.testing.expectEqual(@as(i32, 8), chipPad());
+    try std.testing.expectEqual(@as(i32, 31), trayHit());
     try std.testing.expectEqual(chipSize(), buttonSize());
 }
 
@@ -1938,7 +1938,7 @@ test "start button gap and icon size are theme-driven and icon is capped to the 
     try std.testing.expectEqual(@as(i32, 4), startButtonGap());
     try std.testing.expectEqual(@as(i32, 4), startButtonLeft());
     try std.testing.expectEqual(@as(i32, 4 + buttonSize() + 4), firstChipX());
-    try std.testing.expectEqual(@as(i32, base_chip_size), startIconSize());
+    try std.testing.expectEqual(@as(i32, 36), startIconSize());
 
     ui_theme.global.start_button_gap = 24;
     try std.testing.expectEqual(@as(i32, 24), startButtonLeft());

@@ -84,6 +84,8 @@ fn source(id: IconId) ?[]const u8 {
         .usb_stick => @embedFile("shell-icon-usb-stick"),
         .drive => @embedFile("shell-icon-drive"),
         .eject => @embedFile("shell-icon-eject"),
+        .users => @embedFile("shell-icon-users"),
+        .squares => @embedFile("shell-icon-squares"),
         else => null,
     };
 }
