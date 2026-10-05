@@ -6,14 +6,12 @@
 
 ### A Wayland compositor with its own desktop shell, built in Zig
 
-<!-- badges go here -->
-
 </div>   
 
-RediWM is a [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) compositor
+RediWM is a single process [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) compositor
 that draws its whole shell itself: taskbar, start menu, settings, lock and login
 screens, notifications and OSDs, all in one process, benchmarked against
-[labwc](https://labwc.github.io/) to stay as lean.
+[labwc](https://labwc.github.io/) to stay as lean (192mb idle ram usage, <1% CPU usage)
 
 https://github.com/user-attachments/assets/60bc1190-694c-4fb7-b2bc-d90e5e9faa90
 
@@ -39,26 +37,19 @@ curl -fsSL https://raw.githubusercontent.com/oxydizer/rediwm/HEAD/scripts/instal
 ```
 
 `scripts/install.sh` installs the prebuilt release for your distro (Arch,
-Debian, Ubuntu and Fedora on x86_64, and their derivatives): the compositor,
-the apps and the exact wlroots 0.20 they were tested with, including the
-[window-title patch](patches/wlroots/README.md). Installing never replaces your login manager. SDDM, GDM and the
-like keep working, and RediWM only appears as a session in their picker. The
-`rediwm-dm` login manager is installed only with `--dm`, and even then it is
-not enabled (see below).
+Debian, Ubuntu and Fedora).
+Installing never replaces your login manager
 
 ## Building and running
 
-Requirements: Zig 0.16, wlroots 0.20 (`scripts/install.sh --build` builds it
-into a private prefix on Debian/Ubuntu, and `REDIWM_PRIVATE_WLROOTS=1` does so
-on Arch and Fedora), and the development files for Wayland,
+Requirements: Zig 0.16, wlroots 0.20, and the development files for Wayland,
 wayland-protocols, xkbcommon, pixman, FreeType, HarfBuzz, Fontconfig,
 librsvg/GdkPixbuf, PangoCairo, libinput, PAM, libpulse, libpipewire-0.3, Poppler GLib,
 libseccomp, libjpeg and libpng. Optional:
-Xwayland, `foot`, `brightnessctl`, `gio`/`xdg-open`, `git` (Files repository status).
+Xwayland, `foot`, `brightnessctl`, `gio`/`xdg-open`, `git` (optional).
 
-Runtime portals: `xdg-desktop-portal`, `xdg-desktop-portal-wlr` for screen
-sharing, and `xdg-desktop-portal-gtk` for fallback portals. `scripts/install.sh`
-installs all three.
+Run from a checkout, `scripts/install.sh` builds that checkout (dependencies,
+then `install-session.sh` with the arguments you give it).
 
 ```sh
 zig build run -- foot                     # nested in your current Wayland session
@@ -66,9 +57,6 @@ zig build -Doptimize=ReleaseSafe          # for daily use and measurements
 sh scripts/install-session.sh             # install and restart the running session
 sh scripts/install-session.sh --no-restart --dm   # install only, plus rediwm-dm
 ```
-
-Run from a checkout, `scripts/install.sh` builds that checkout (dependencies,
-then `install-session.sh` with the arguments you give it).
 
 ### Releasing
 
@@ -97,65 +85,17 @@ RediWM); it refuses to parse a document if isolation cannot be established.
 | Super+Z | undo the last window move or resize |
 | Super+Shift+E | quit |
 
-All bindings live in `[keybinds]` (`"noop"` disables one).
+All bindings live in `[keybinds]`; `"noop"` disables one.
 
-- Alt+drag moves windows, Alt+right-drag resizes. **Super+Alt+mouse** or a
-  middle-button drag pans the desktop; **Super+Alt+scroll** zooms it, and
-  **Alt+scroll** over a window zooms just that window. Ordinary desktop zoom scales all
-  windows together around the pointer, up to 100%, without changing their
-  world positions. Desktop icons stay fixed by default; the taskbar stays fixed.
-  The shared volume/brightness OSD also shows the desktop zoom percentage.
-- **Window switching zoom** in Settings → Appearance controls Alt+Tab,
-  directional focus and taskbar activation. **Boost window** (the default)
-  temporarily brings the selected floating window to 100% on-screen size
-  while preserving desktop zoom, its position and its saved window zoom.
-  Switching away restores its original scale. **Keep zoom** only pans;
-  **Focus camera** zooms the desktop to the selected window's depth, fading
-  windows that would grow beyond full size. In that mode, desktop zoom also
-  steps through the depths of open windows above 100%. Configure this with
-  `[compositor] focus_zoom = "boost"`, `"keep"`, or `"camera"`.
-  Window reveals ease over 320 ms, and titlebar scrolling uses the same
-  eased window zoom as Alt+scroll. Animation speed and reduced motion apply
-  to these transitions; `[animations.camera_reveal]` can override the pan.
-- **Window tabs** in Settings → Appearance lets you enable tabs per app using
-  RediWM chrome (XDG, KDE or X11 decorations). Open an app once to list it.
-  **+** opens another window as a tab in that frame; ordinary launches stay
-  separate. Each tab has a close button, and the outer close button closes
-  the group while respecting app confirmation dialogs. Disabling tabs restores
-  separate windows. App IDs are saved in `[compositor] window_tab_apps`.
-  Arrow buttons and scrolling over the strip switch tabs; Alt+scroll still
-  zooms the window. Apps need a desktop entry with a usable launch command;
-  launches that only activate an existing window do not create a tab.
-- **Settings** (start menu cog) is a regular window covering display modes,
-  scale and night light, input, audio, appearance, shortcuts and the desktop
-  canvas. Changes are saved to the config with its comments intact.
-- The lock screen covers every output; Escape clears the field and never
-  unlocks. It engages before the system sleeps, and sleep waits until it is
-  on screen (`[compositor] lock_on_suspend`, on by default), and on
-  `loginctl lock-session`. RediWM doesn't lock on idle itself: run
-  `swayidle -w timeout 300 'swaylock -f'` from `[[autostart]]`.
-- Desktop icons run a `.desktop` launcher only if it is installed, owned by
-  root, executable, or an exact copy of an installed entry. Any other
-  launcher shows as the file it is until you choose **Allow Launching** from
-  its menu.
-- `rediwm-dm` runs the greeter as an unprivileged user on its own VT. After
-  installing, disable your current display manager, `sudo systemctl enable
-  rediwm-dm` and reboot; options live in `/etc/rediwm/dm.conf`.
-- In `rediwm-files`, **Space** opens images, PDFs and text files. **Text Editor**
-  (`rediwm-editor [FILE ...]`) opens text files in tabs in one window per display.
-  Use **Ctrl+N** for a new tab, **Ctrl+O** to open, **Ctrl+S** to save,
-  **Ctrl+Shift+S** for the existing Save As dialog, **Ctrl+Page Up/Down** to
-  switch tabs, **Ctrl+W** to close a tab, and **Ctrl+F** / **F3** to find text.
-  It supports UTF-8 files up to 16 MiB, preserves BOM and line endings, and
-  prompts before discarding changes. Files, Images and Text Editor also run
-  on other Wayland compositors.
-- Games get pointer lock and relative motion. VMs and remote desktops can
-  capture shortcuts; **Super+Escape** takes them back.
-- The desktop renders before autostart; session environment publication and
-  audio connection do not block frames or input. Xwayland starts on the first
-  X11 connection, including with native scaling.
-- X11 limits of wlroots 0.20: X11→Wayland drag-and-drop
-  doesn't start, and X11 pointer input on a second output doesn't arrive.
+- **Mouse:** Alt+drag moves windows, Alt+right-drag resizes. Super+Alt+drag (or middle-drag) pans the desktop, Super+Alt+scroll zooms it, and Alt+scroll zooms a single window.
+- **Zoom on window switch:** `[compositor] focus_zoom` (also in Settings → Appearance) controls what Alt+Tab, directional focus and taskbar activation do. `"boost"` (default) shows the window at 100% until you switch away, `"keep"` only pans, and `"camera"` zooms the desktop to the window's depth.
+- **Window tabs:** enable per app in Settings → Appearance (saved in `[compositor] window_tab_apps`). **+** opens a new window as a tab. The app needs a desktop entry with a launch command.
+- **Lock screen:** covers every output and engages before suspend (`[compositor] lock_on_suspend`) and on `loginctl lock-session`. There's no idle lock; add `swayidle -w timeout 300 'swaylock -f'` to `[[autostart]]`.
+- **Desktop icons:** a `.desktop` launcher only runs if it's installed, root-owned, executable, or an exact copy of an installed entry. Otherwise, choose **Allow Launching** from its menu.
+- **`rediwm-dm`:** disable your current display manager, run `sudo systemctl enable rediwm-dm`, and reboot. Options are in `/etc/rediwm/dm.conf`.
+- **Text editor:** `rediwm-editor [FILE ...]` opens UTF-8 files up to 16 MiB in tabs. Ctrl+N new, Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W close tab, Ctrl+PgUp/PgDn switch tabs, Ctrl+F or F3 find. In `rediwm-files`, Space previews images, PDFs and text.
+- **Games and VMs:** games get pointer lock and relative motion. If a VM or remote desktop grabs your shortcuts, Super+Escape takes them back.
+- **Known issues (wlroots 0.20):** X11→Wayland drag-and-drop doesn't start, and X11 pointer input on a second output doesn't arrive.
 
 ## Protocols
 
@@ -185,9 +125,6 @@ previous config. Sections: `[theme]`, `[input]`, `[input_method]`,
 `[compositor]`, `[region]`, `[idle]`, `[night_light]`, `[notifications]`, `[desktop]`,
 `[polkit]`, `[ipc]`, `[keybinds]`, `[[outputs]]`, `[[autostart]]`,
 `[[window_rules]]`, `[[notification_rules]]` and `[[sandbox_allow]]`.
-
-The `.toml` files use a **line-based TOML subset**, including standalone theme
-files.  
 
 Window rules match by globs; for each property the last matching rule wins:
 
