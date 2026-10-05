@@ -1,0 +1,2 @@
+d /var/lib/rediwm-greeter 0700 rediwm-greeter rediwm-greeter -
+d /run/rediwm-dm 0700 root root -

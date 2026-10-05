@@ -1,0 +1,98 @@
+[theme]
+# Window chrome
+window_bg = "rgba(14,19,28,0.46)"
+window_fg = "#E6F1FF"
+window_dim = "#A0B4D8"
+window_border = "#2A4B6F"
+window_border_hover = "rgba(59,130,246,0.70)"
+window_divider = "#1E3A5F"
+window_close_hover = "#EF4444"
+
+# App windows (Files, Images, PDF)
+text_secondary = "#A0B4D8"
+app_bg = "#0D192B"
+app_toolbar = "#0F1B2E"
+app_sidebar = "#0F2036"
+app_bar = "#12263F"
+app_item = "#132B46"
+app_item_hover = "#1A3658"
+app_item_border = "#1E3A5F"
+app_item_selected = "#1E40AF"
+app_nav_selected = "#164E91"
+app_divider = "#1E3A5F"
+app_icon = "#8FB7E8"
+scrollbar_thumb = "#2A4B6F"
+scrollbar_thumb_active = "#3B82F6"
+
+# Shell palette
+bg = "#070F1F"
+fg = "#E6F1FF"
+dim = "#A0B4D8"
+faint = "#6B84A5"
+accent = "#00D1FF"
+accent_2 = "#A855F7"
+accent_3 = "#2563EB"
+danger = "#EF4444"
+on_accent = "#04111A"
+# Shell controls use these overrides when constructing their palette.
+shell_accent = "#00D1FF"
+shell_on_accent = "#04111A"
+surface = "rgba(255,255,255,0.05)"
+surface_hover = "rgba(0,209,255,0.08)"
+border = "#2A4B6F"
+border_soft = "#1E3A5F"
+border_hover = "#3B82F6"
+border_focus = "rgba(0,209,255,0.45)"
+glass = "rgba(8,20,38,0.62)"
+glass_strong = "rgba(8,18,32,0.82)"
+shadow = "rgba(0,0,0,0.55)"
+
+# Taskbar
+taskbar_bg = "rgba(10,20,38,0.96)"
+taskbar_surface = "rgba(255,255,255,0.03)"
+taskbar_hover = "rgba(0,209,255,0.08)"
+taskbar_border = "#2A4B6F"
+
+# Start menu and fields
+start_menu_bg = "rgba(15,27,46,0.98)"
+start_menu_border = "#2A4B6F"
+start_menu_search_bg = "#0B1526"
+start_menu_selected_bg = "rgba(37,99,235,0.18)"
+start_menu_selected_border = "rgba(0,209,255,0.40)"
+start_menu_selected_marker = "#00D1FF"
+field_bg = "#0E182B"
+field_border = "#315E9E"
+
+# Caret, selection, selection_fg and field_border_focus follow the accent.
+selection_alpha = 0.30
+
+# Line thicknesses and sizes (logical px)
+caret_width = 1.5
+scrollbar_width = 8
+chrome_height = 32
+chrome_control_gap = 4
+taskbar_size = 48
+chip_gap = 4
+shadow_size = 24
+shadow_offset_y = 8
+
+# Sharp corners
+radius = 4
+radius_md = 4
+radius_lg = 4
+field_radius = 4
+start_menu_radius = 4
+settings_radius = 4
+settings_sidebar_radius = 4
+settings_card_radius = 4
+toggle_radius = 4
+swatch_radius = 4
+dialog_badge_radius = 4
+dialog_inset_radius = 4
+switcher_radius = 4
+switcher_item_radius = 4
+switcher_icon_radius = 4
+switcher_selection_radius = 4
+calendar_radius = 4
+osd_radius = 4
+start_button_radius = 4

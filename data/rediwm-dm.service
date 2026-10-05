@@ -1,0 +1,14 @@
+[Unit]
+Description=RediWM Display Manager
+After=systemd-user-sessions.service plymouth-quit-wait.service getty@tty1.service
+Conflicts=getty@tty1.service
+OnFailure=plymouth-quit.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rediwm-dm
+Restart=always
+RestartSec=1s
+
+[Install]
+Alias=display-manager.service

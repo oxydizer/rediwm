@@ -1,0 +1,1477 @@
+[
+  {
+    "args": [
+      "state"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_state"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "get-state"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_state"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "describe"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "describe_ipc"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "describe-ipc"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "describe_ipc"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "window-debug",
+      "7"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_window_debug",
+        "params": {
+          "id": 7
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "shell-state",
+      "--output",
+      "HEADLESS-1"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_shell_state",
+        "params": {
+          "output": "HEADLESS-1"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "input-state"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_input_state"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "hit-test",
+      "1",
+      "2",
+      "--output",
+      "HEADLESS-1"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "hit_test",
+        "params": {
+          "x": 1,
+          "y": 2,
+          "output": "HEADLESS-1"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "scene-tree",
+      "--max-depth",
+      "4"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_scene_tree",
+        "params": {
+          "max_depth": 4
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "layers"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_layer_surfaces"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "widget-tree",
+      "start_menu"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_widget_tree",
+        "params": {
+          "panel": "start_menu"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "config"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_config_status"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "get-config"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_config_status"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "runtime"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_runtime_info"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "get-runtime"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_runtime_info"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "perf"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_performance_stats"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "get-perf"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_performance_stats"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "perf-reset"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "reset_performance_stats"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "wait",
+      "window_mapped",
+      "--id",
+      "7",
+      "--output",
+      "HEADLESS-1",
+      "--timeout",
+      "12"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "wait_for",
+        "params": {
+          "condition": "window_mapped",
+          "timeout_ms": 12,
+          "window_id": 7,
+          "output": "HEADLESS-1"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "wait-frame",
+      "--output",
+      "HEADLESS-1",
+      "--timeout",
+      "12"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "wait_for_frame",
+        "params": {
+          "output": "HEADLESS-1",
+          "timeout_ms": 12
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "dump-buffer",
+      "titlebar",
+      "--id",
+      "7",
+      "--output",
+      "HEADLESS-1"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "dump_buffer",
+        "params": {
+          "target": "titlebar",
+          "window_id": 7,
+          "output": "HEADLESS-1"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "sample-pixels",
+      "1",
+      "2",
+      "3",
+      "4",
+      "--output",
+      "HEADLESS-1"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "sample_pixels",
+        "params": {
+          "x": 1,
+          "y": 2,
+          "width": 3,
+          "height": 4,
+          "output": "HEADLESS-1"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "maximize",
+      "7"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "maximize_window",
+        "params": {
+          "id": 7
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "minimize",
+      "7"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "minimize_window",
+        "params": {
+          "id": 7
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "restore",
+      "7"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "restore_window",
+        "params": {
+          "id": 7
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "fullscreen",
+      "7",
+      "--output",
+      "HEADLESS-1"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "fullscreen_window",
+        "params": {
+          "id": 7
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "set-zoom",
+      "7",
+      "85"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "set_window_zoom",
+        "params": {
+          "id": 7,
+          "percent": 85
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "close-panel",
+      "start_menu"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "close_panel",
+        "params": {
+          "panel": "start_menu"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "reload"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "reload_config"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "launch",
+      "example.desktop"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "launch_app",
+        "params": {
+          "desktop_id": "example.desktop"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "version"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "version"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "capabilities"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "capabilities"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "windows"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "windows"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "outputs"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "outputs"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "focused-window"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "focused_window"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "workspaces"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "workspaces"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "event-stream",
+      "--events",
+      "WindowOpened,WindowClosed",
+      "--window",
+      "7",
+      "--output",
+      "HEADLESS-1"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "event_stream",
+        "params": {
+          "events": [
+            "WindowOpened",
+            "WindowClosed"
+          ],
+          "window_id": 7,
+          "output": "HEADLESS-1"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "focus-window",
+      "--id",
+      "7"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "focus_window",
+        "params": {
+          "id": 7
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "close-window",
+      "--id",
+      "7"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "close_window",
+        "params": {
+          "id": 7
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "move-window-to",
+      "--id",
+      "7",
+      "--x",
+      "-10",
+      "--y",
+      "20"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "move_window_to",
+        "params": {
+          "id": 7,
+          "x": -10,
+          "y": 20
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "spawn",
+      "--",
+      "printf",
+      "a \"quoted\" arg"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "spawn",
+        "params": {
+          "argv": [
+            "printf",
+            "a \"quoted\" arg"
+          ]
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "move-cursor",
+      "--x",
+      "10",
+      "--y",
+      "20",
+      "--output",
+      "HEADLESS-1"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "move_cursor",
+        "params": {
+          "x": 10,
+          "y": 20,
+          "output": "HEADLESS-1"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "move-cursor-relative",
+      "--dx",
+      "-1",
+      "--dy",
+      "2"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "move_cursor_relative",
+        "params": {
+          "dx": -1,
+          "dy": 2
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "pointer-button",
+      "--button",
+      "272",
+      "--pressed",
+      "true"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "pointer_button",
+        "params": {
+          "button": 272,
+          "pressed": true
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "click",
+      "--button",
+      "right"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "click",
+        "params": {
+          "button": 273
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "scroll",
+      "--dx",
+      "1.5",
+      "--dy",
+      "-2.5"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "scroll",
+        "params": {
+          "dx": 1.5,
+          "dy": -2.5
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "key",
+      "--keycode",
+      "30",
+      "--pressed",
+      "false"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "key",
+        "params": {
+          "keycode": 30,
+          "pressed": false
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "key-press",
+      "--key",
+      "Super+a"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "key_press",
+        "params": {
+          "key": "Super+a"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "type-text",
+      "--text",
+      "hi \"quoted\"\n"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "type_text",
+        "params": {
+          "text": "hi \"quoted\"\n"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "drag",
+      "--from-x",
+      "1",
+      "--from-y",
+      "2",
+      "--to-x",
+      "3",
+      "--to-y",
+      "4",
+      "--button",
+      "left",
+      "--output",
+      "HEADLESS-1"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "drag",
+        "params": {
+          "from_x": 1,
+          "from_y": 2,
+          "to_x": 3,
+          "to_y": 4,
+          "button": 272,
+          "output": "HEADLESS-1"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "screenshot",
+      "--output",
+      "HEADLESS-1",
+      "--window",
+      "7",
+      "--mode",
+      "window",
+      "--include-cursor",
+      "--path",
+      "/tmp/example.png"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "screenshot",
+        "params": {
+          "output": "HEADLESS-1",
+          "window_id": 7,
+          "mode": "window",
+          "include_cursor": true,
+          "path": "/tmp/example.png"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "set-master-volume",
+      "--volume",
+      "0.6"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "set_master_volume",
+        "params": {
+          "volume": 0.6
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "toggle-mute"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "toggle_mute"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "set-app-volume",
+      "--index",
+      "3",
+      "--volume",
+      "0.8"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "set_app_volume",
+        "params": {
+          "index": 3,
+          "volume": 0.8
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "set-app-mute",
+      "--index",
+      "3",
+      "--muted",
+      "true"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "set_app_mute",
+        "params": {
+          "index": 3,
+          "muted": true
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "get-audio-state"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_audio_state"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "get-panel-stats"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_panel_stats"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "reset-panel-stats"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "reset_panel_stats"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "set-anim-time",
+      "--ms",
+      "null"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "set_anim_time",
+        "params": {
+          "ms": null
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "open-start-menu"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "open_start_menu"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "open-control-center"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "open_control_center"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "open-power-menu"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "open_power_menu"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "click"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "click",
+        "params": {
+          "button": 272
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "close-window"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "close_window"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "set-anim-time",
+      "--ms",
+      "42"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "set_anim_time",
+        "params": {
+          "ms": 42
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "screenshot",
+      "--save",
+      "$SAVE"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "screenshot",
+        "params": {}
+      },
+      "code": 0,
+      "saved": "x"
+    }
+  },
+  {
+    "args": [
+      "event-stream"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "event_stream"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "wait-frame"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "wait_for_frame",
+        "params": {}
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "shell-state"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_shell_state"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "scene-tree"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_scene_tree"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "raw",
+      "{\"version\": 1, \"command\": \"version\"}"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "version"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "--raw",
+      "{\"version\": 1, \"command\": \"windows\"}"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "windows"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "raw",
+      "-"
+    ],
+    "stdin": "{\"version\": 1, \"command\": \"version\"}\n",
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "version"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "--raw"
+    ],
+    "stdin": "{\"version\": 1, \"command\": \"windows\"}\n",
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "windows"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "unknown"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "unknown"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "window-debug"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "window-debug",
+      "bad"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "hit-test",
+      "1"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "widget-tree"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "wait"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "dump-buffer"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "sample-pixels",
+      "1"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "maximize"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "set-zoom",
+      "1"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "close-panel"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "launch"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "focus-window"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "move-window-to"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "key-press"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "type-text"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "action",
+      "set-master-volume"
+    ],
+    "expected": {
+      "request": null,
+      "code": 1,
+      "saved": null
+    }
+  }
+]

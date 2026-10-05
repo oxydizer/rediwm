@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PDF Viewer
+Comment=View PDF documents with RediWM
+Exec=rediwm-pdf %f
+Icon=application-pdf
+Terminal=false
+StartupWMClass=rediwm-pdf
+Categories=Office;Viewer;
+MimeType=application/pdf;
+NoDisplay=true

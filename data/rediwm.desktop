@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=RediWM
+Comment=RediWM Wayland compositor
+Exec=rediwm-session
+TryExec=rediwm-session
+Type=Application
+DesktopNames=rediwm

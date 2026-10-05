@@ -1,0 +1,122 @@
+[theme]
+font = "Manrope"
+mono_font = "JetBrains Mono"
+font_size = 13
+radius = 5
+radius_md = 7
+radius_lg = 10
+title_size = 13.5
+chrome_height = 46
+chrome_control_gap = 4
+taskbar_title_size = 12.5
+taskbar_size = 48
+chip_gap = 4
+chip_width = 220
+start_button_gap = 4
+button_font_size = 12.5
+caret_width = 1.5
+field_radius = 8
+shadow_size = 24
+shadow_offset_y = 8
+start_menu_width = 560
+start_menu_max_height = 600
+start_menu_radius = 14
+start_menu_left_pad = 2
+start_menu_bottom_pad = 6
+start_menu_icon_left_pad = 2
+start_menu_icon_bottom_pad = 6
+
+# Window chrome
+window_bg = "rgba(246,247,249,0.75)"
+window_fg = "#1F2430"
+window_dim = "#5E6773"
+window_border = "rgba(0,0,0,0.10)"
+window_border_hover = "rgba(0,0,0,0.15)"
+window_divider = "rgba(0,0,0,0.06)"
+window_close_hover = "#0EA5A0"
+
+# App windows
+text_secondary = "#66707C"
+app_bg = "#F4F6F8"
+app_toolbar = "#EEF1F4"
+app_sidebar = "#E9EDF1"
+app_bar = "#F0F3F6"
+app_item = "#FFFFFF"
+app_item_hover = "#F6F8FA"
+app_item_border = "#D7DEE6"
+app_item_selected = "#D9F0ED"
+app_nav_selected = "#C7E9E4"
+app_divider = "#D5DCE4"
+app_icon = "#4F5A67"
+scrollbar_thumb = "#B4BEC9"
+scrollbar_thumb_active = "#98A4B2"
+
+# Shell palette. Explicit overrides carry teal into shell surfaces too.
+bg = "#F7F9FC"
+fg = "#1F2430"
+dim = "#5E6773"
+faint = "#8D97A3"
+accent = "#0EA5A0"
+accent_2 = "#7C63E8"
+accent_3 = "#6BBF8A"
+danger = "#168579"
+on_accent = "#F7FFFE"
+shell_accent = "#0EA5A0"
+shell_on_accent = "#F7FFFE"
+surface = "rgba(0,0,0,0.04)"
+surface_hover = "rgba(0,0,0,0.07)"
+border = "rgba(0,0,0,0.10)"
+border_soft = "rgba(0,0,0,0.06)"
+border_hover = "rgba(0,0,0,0.18)"
+border_focus = "rgba(14,165,160,0.35)"
+glass = "rgba(255,255,255,0.62)"
+glass_strong = "rgba(255,255,255,0.82)"
+shadow = "rgba(0,0,0,0.12)"
+
+# Taskbar
+taskbar_bg = "rgba(241,244,247,0.94)"
+taskbar_surface = "rgba(0,0,0,0.025)"
+taskbar_hover = "rgba(0,0,0,0.05)"
+taskbar_border = "rgba(0,0,0,0.08)"
+
+# Start menu and fields
+start_menu_bg = "rgba(247,248,250,0.98)"
+start_menu_border = "rgba(0,0,0,0.10)"
+start_menu_search_bg = "#FFFFFF"
+start_menu_selected_bg = "rgba(0,0,0,0.045)"
+start_menu_selected_border = "rgba(14,165,160,0.28)"
+start_menu_selected_marker = "#0EA5A0"
+field_bg = "#FFFFFF"
+field_border = "#CBD4DD"
+
+# Leave caret, selection and field_border_focus unset to follow the active
+# accent. Selected text keeps the dark foreground for contrast on the pale
+# translucent highlight.
+selection_alpha = 0.22
+
+# Subtle control tracks and cards remain visible on the light surfaces.
+toggle_track = "rgba(0,0,0,0.12)"
+slider_track = "rgba(0,0,0,0.08)"
+pill_bg = "rgba(0,0,0,0.05)"
+settings_card_bg = "rgba(0,0,0,0.025)"
+calendar_border = "rgba(0,0,0,0.10)"
+osd_border = "rgba(0,0,0,0.10)"
+start_button_hover = "rgba(0,0,0,0.035)"
+start_button_indicator = "rgba(0,0,0,0.5)"
+
+# Selection and focus accents across shell surfaces.
+switcher_border = "rgba(14,165,160,0.65)"
+switcher_selected_border = "#0EA5A0"
+screenshot_border = "#0EA5A0"
+desktop_selected = "rgba(14,165,160,0.12)"
+desktop_selection = "rgba(14,165,160,0.15)"
+desktop_selection_border = "#0EA5A0"
+desktop_drop_border = "rgba(14,165,160,0.8)"
+
+# Tint the bundled R while retaining its SVG silhouette and antialiasing.
+start_button_logo_color = "#1F2430"
+
+# Deeper green for attention, error and critical-state accents.
+file_broken = "#168579"
+battery_critical = "#168579"
+desktop_notice_bg = "rgba(8,42,36,0.95)"

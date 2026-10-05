@@ -1,0 +1,62 @@
+--- a/types/xdg_shell/wlr_xdg_toplevel.c
++++ b/types/xdg_shell/wlr_xdg_toplevel.c
+@@ -219,19 +219,50 @@
+ 	}
+ }
+ 
++// Window titles are presentation text. Repair malformed client bytes instead
++// of disconnecting the application; never publish invalid UTF-8 to consumers.
++static char *title_to_utf8(const char *title) {
++	if (is_utf8(title)) {
++		return strdup(title);
++	}
++	size_t len = strlen(title);
++	char *result = malloc(len + 1);
++	if (result == NULL) {
++		return NULL;
++	}
++	char *out = result;
++	for (size_t i = 0; i < len;) {
++		unsigned char first = title[i];
++		size_t width = first < 0x80 ? 1 :
++			(first >= 0xC2 && first <= 0xDF ? 2 :
++			(first >= 0xE0 && first <= 0xEF ? 3 :
++			(first >= 0xF0 && first <= 0xF4 ? 4 : 0)));
++		char codepoint[5] = {0};
++		if (width > 0 && width <= len - i) {
++			memcpy(codepoint, title + i, width);
++		} else {
++			width = 0;
++		}
++		if (width > 0 && is_utf8(codepoint)) {
++			memcpy(out, codepoint, width);
++			out += width;
++			i += width;
++		} else {
++			// Keep the byte length unchanged: expanding a long title to
++			// U+FFFD could overflow Wayland's message limit when forwarded.
++			*out++ = '?';
++			i++;
++		}
++	}
++	*out = '\0';
++	return result;
++}
++
+ static void xdg_toplevel_handle_set_title(struct wl_client *client,
+ 		struct wl_resource *resource, const char *title) {
+ 	struct wlr_xdg_toplevel *toplevel =
+ 		wlr_xdg_toplevel_from_resource(resource);
+-	char *tmp;
+-
+-	if (!is_utf8(title)) {
+-		// TODO: update when xdg_toplevel has a dedicated error code for this
+-		wl_resource_post_error(resource, (uint32_t)-1, "xdg_toplevel title is not valid UTF-8");
+-		return;
+-	}
+-
+-	tmp = strdup(title);
++	char *tmp = title_to_utf8(title);
+ 	if (tmp == NULL) {
+ 		wl_resource_post_no_memory(resource);
+ 		return;

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RediWM · Authentication dialog preview</title>
+<style>
+  * { box-sizing: border-box; }
+  :root { color-scheme: dark; font-family: Inter, "Noto Sans", sans-serif; color: #f2f4f8; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px 16px; background: radial-gradient(ellipse at 25% 85%, #36202a, transparent 55%), #101216; }
+  main { width: min(100%, 540px); }
+  .dialog { background: #1b1d20; border: 1px solid #ffffff14; border-radius: 18px; padding: 28px; box-shadow: 0 24px 90px #0008; }
+  header { display: flex; gap: 22px; align-items: center; margin-bottom: 28px; }
+  .badge { width: 72px; height: 72px; flex: none; display: grid; place-items: center; background: #3d1f26; color: #ff7183; border: 1px solid #ff71831a; border-radius: 20px; }
+  svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .lock-icon { width: 18px; height: 18px; flex: none; filter: invert(63%) sepia(45%) saturate(1400%) hue-rotate(308deg) brightness(105%); }
+  .badge .lock-icon { width: 32px; height: 32px; }
+  h1 { font-size: 25px; line-height: 1.25; letter-spacing: -.6px; margin: 0 0 8px; font-weight: 650; }
+  p { margin: 0; font-size: 14px; line-height: 1.55; color: #a8b0ba; }
+  .request { display: flex; align-items: center; gap: 14px; padding-bottom: 22px; border-bottom: 1px solid #ffffff0d; }
+  .app-icon { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid #ffffff14; border-radius: 10px; background: linear-gradient(#35383f, #24262b); color: #d0d4da; }
+  strong { display: block; font-size: 15px; font-weight: 600; margin-bottom: 3px; }
+  .action { font-size: 12px; overflow-wrap: anywhere; user-select: text; }
+  .identity { display: flex; gap: 13px; align-items: center; margin: 20px 0; padding: 13px 15px; border-radius: 12px; background: #1f2125; border: 1px solid #ffffff0b; }
+  .avatar { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: #34373d; color: #c9cdd4; }
+  .identity p { font-size: 12px; }
+  label { display: block; font-size: 13px; color: #bbc1ca; margin: 0 0 8px; }
+  .field { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 15px; border-radius: 11px; border: 1px solid #d85a6b; box-shadow: 0 0 0 2px #ba243814; color: #d67b87; background: #17191c; }
+  .field span { color: #f2f4f8; letter-spacing: 5px; font-size: 19px; }
+  .hint { margin-top: 13px; min-height: 43px; font-size: 12px; }
+  .hint.error { color: #ff8f9e; }
+  footer { display: flex; gap: 12px; margin-top: 17px; }
+  button { font: inherit; cursor: pointer; }
+  footer button { flex: 1; min-height: 44px; border: 1px solid #ffffff12; border-radius: 11px; color: #f2f4f8; background: #2b2e33; font-size: 14px; }
+  footer .primary { background: #ba2438; font-weight: 600; border-color: #ed65764d; }
+  button:hover { filter: brightness(1.12); }
+  button:focus-visible { outline: 2px solid #f2b2bb; outline-offset: 3px; }
+  button:disabled { opacity: .65; cursor: wait; }
+  .preview { margin-top: 24px; text-align: center; }
+  .preview p { font-size: 11px; color: #8e929b; }
+  .states { display: flex; justify-content: center; gap: 6px; margin-top: 12px; }
+  .states button { border: 1px solid #ffffff14; border-radius: 6px; background: #ffffff06; color: #b9bdc5; font-size: 11px; padding: 6px 12px; }
+  .states button[aria-pressed="true"] { background: #ffffff12; color: white; }
+  @media (max-width: 420px) { .dialog { padding: 22px; } header { gap: 15px; } .badge { width: 56px; height: 56px; border-radius: 16px; } h1 { font-size: 22px; } }
+</style>
+<main>
+  <section class="dialog" role="dialog" aria-labelledby="title" aria-describedby="description">
+    <header>
+      <div class="badge"><img class="lock-icon" src="../../icons/lock.svg" alt=""></div>
+      <div><h1 id="title">Authentication required</h1><p id="description">Enter your password to continue.</p></div>
+    </header>
+    <div class="request">
+      <div class="app-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 6 6 6-6 6m9 0h5"/></svg></div>
+      <div><strong>Run a command as administrator</strong><p class="action">org.freedesktop.policykit.exec</p></div>
+    </div>
+    <div class="identity">
+      <div class="avatar"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="currentColor" stroke="none"/><path d="M4 21v-2a8 8 0 0 1 16 0v2" fill="currentColor" stroke="none"/></svg></div>
+      <div><strong>Alex</strong><p>alex · Administrator account</p></div>
+    </div>
+    <label id="password-label">Password</label>
+    <div class="field" role="img" aria-labelledby="password-label" aria-label="Password field preview, example masked characters">
+      <img class="lock-icon" src="../../icons/lock.svg" alt=""><span aria-hidden="true">••••••••</span>
+    </div>
+    <p class="hint" id="status" aria-live="polite">Administrator privileges are required to continue.</p>
+    <footer><button id="cancel">Cancel</button><button class="primary" id="authenticate">Authenticate</button></footer>
+  </section>
+  <aside class="preview" aria-label="Preview controls">
+    <p>UI preview · example characters only · no password entry</p>
+    <div class="states"><button data-state="ready" aria-pressed="true">Ready</button><button data-state="retry" aria-pressed="false">Retry</button><button data-state="working" aria-pressed="false">Authenticating</button></div>
+  </aside>
+</main>
+<script>
+  const status = document.querySelector('#status');
+  const authenticate = document.querySelector('#authenticate');
+  function show(state) {
+    status.classList.toggle('error', state === 'retry');
+    status.textContent = {ready: 'Administrator privileges are required to continue.', retry: 'Authentication failed. Try again. 2 attempts remaining.', working: 'Verifying your password…', cancelled: 'Request cancelled. Select Ready to preview again.'}[state];
+    authenticate.disabled = state === 'working' || state === 'cancelled';
+    authenticate.textContent = state === 'working' ? 'Authenticating…' : 'Authenticate';
+    document.querySelectorAll('[data-state]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.state === state)));
+  }
+  document.querySelectorAll('[data-state]').forEach(button => button.addEventListener('click', () => show(button.dataset.state)));
+  authenticate.addEventListener('click', () => show('working'));
+  document.querySelector('#cancel').addEventListener('click', () => show('cancelled'));
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') show('cancelled'); });
+</script>
+</html>

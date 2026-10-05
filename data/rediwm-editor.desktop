@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Text Editor
+Comment=Edit text files in tabs
+Exec=rediwm-editor %F
+Icon=accessories-text-editor
+Terminal=false
+Categories=Utility;TextEditor;
+MimeType=text/plain;text/markdown;text/x-log;text/x-c;text/x-python;application/json;application/toml;application/x-shellscript;
+StartupNotify=true
