@@ -15,7 +15,7 @@ that draws its whole shell itself: taskbar, start menu, settings, lock and login
 screens, notifications and OSDs, all in one process, benchmarked against
 [labwc](https://labwc.github.io/) to stay as lean.
 
-<!-- screenshots / video go here -->
+https://github.com/user-attachments/assets/60bc1190-694c-4fb7-b2bc-d90e5e9faa90
 
 ## Features
 
