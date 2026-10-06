@@ -15,7 +15,7 @@ const Rect = ui.Rect;
 
 pub const Action = enum { none, cancel, open };
 const Focus = enum { list, more, remember, cancel, open };
-const row_height: f32 = 28;
+const row_height: f32 = 34;
 
 pub const Geometry = struct {
     box: Rect,
@@ -25,23 +25,30 @@ pub const Geometry = struct {
     cancel: Rect,
     open: Rect,
     close: Rect,
+    /// Y of the rule above the "more apps" button.
+    divider: f32,
     rows: usize,
 
     pub fn init(w: i32, h: i32, count: usize) Geometry {
         const width: f32 = @min(480, @as(f32, @floatFromInt(w)) - 24);
         const header: f32 = @floatFromInt((chrome.Metrics{}).titlebarHeight());
-        const height: f32 = @min(@min(400, header + 176 + @as(f32, @floatFromInt(@max(1, count))) * row_height), @as(f32, @floatFromInt(h)) - 16);
-        const compact = height < header + 220;
-        const list_y = header + @as(f32, if (compact) 30 else 52);
-        const rows: usize = @intFromFloat(@max(1, @floor((height - @as(f32, if (compact) 104 else 124) - list_y) / row_height)));
+        const height: f32 = @min(@min(500, header + 236 + @as(f32, @floatFromInt(@max(1, count))) * row_height), @as(f32, @floatFromInt(h)) - 16);
+        const compact = height < header + 290;
+        const list_y = header + @as(f32, if (compact) 34 else 64);
+        const rows: usize = @intFromFloat(@max(1, @floor((height - @as(f32, if (compact) 112 else 172) - list_y) / row_height)));
+        const more_y = height - @as(f32, if (compact) 100 else 140);
+        const small: f32 = if (compact) 26 else 30;
+        const button_y = height - @as(f32, if (compact) 42 else 58);
+        const button_h: f32 = if (compact) 32 else 34;
         return .{
             .box = .{ .x = (@as(f32, @floatFromInt(w)) - width) / 2, .y = (@as(f32, @floatFromInt(h)) - height) / 2, .w = width, .h = height },
             .list = .{ .x = 16, .y = list_y, .w = width - 32, .h = @as(f32, @floatFromInt(rows)) * row_height },
-            .more = .{ .x = 16, .y = height - @as(f32, if (compact) 92 else 104), .w = width - 32, .h = 24 },
-            .remember = .{ .x = 16, .y = height - @as(f32, if (compact) 64 else 76), .w = width - 32, .h = 24 },
-            .cancel = .{ .x = width - 188, .y = height - @as(f32, if (compact) 36 else 44), .w = 80, .h = 28 },
-            .open = .{ .x = width - 100, .y = height - @as(f32, if (compact) 36 else 44), .w = 84, .h = 28 },
+            .more = .{ .x = 16, .y = more_y, .w = width - 32, .h = small },
+            .remember = .{ .x = 16, .y = height - @as(f32, if (compact) 72 else 102), .w = width - 32, .h = small },
+            .cancel = .{ .x = width - 188, .y = button_y, .w = 80, .h = button_h },
+            .open = .{ .x = width - 100, .y = button_y, .w = 84, .h = button_h },
             .close = frame.closeBox(width),
+            .divider = more_y - @as(f32, if (compact) 8 else 18),
             .rows = rows,
         };
     }
@@ -193,8 +200,8 @@ pub const State = struct {
         frame.paintWindowTitle(r, layer.local(), "Open With", .grid, null);
         var buffer: [256]u8 = undefined;
         const subtitle = if (self.message.len > 0) self.message else if (self.apps.paths.len == 1) std.fs.path.basename(self.apps.paths[0]) else std.fmt.bufPrint(&buffer, "{d} selected files", .{self.apps.paths.len}) catch "Selected files";
-        if (g.list.y - @as(f32, @floatFromInt((chrome.Metrics{}).titlebarHeight())) > 30) r.drawText(16, g.list.y - 44, g.box.w - 32, 20, .{ .content = subtitle, .font_size = ui.textSize(), .color = palette.fg });
-        r.drawText(16, g.list.y - 22, g.box.w - 32, 20, .{ .content = if (self.all) "All Applications" else "Recommended Apps", .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
+        if (g.list.y - @as(f32, @floatFromInt((chrome.Metrics{}).titlebarHeight())) > 50) r.drawText(16, g.list.y - 50, g.box.w - 32, 20, .{ .content = subtitle, .font_size = ui.textSize(), .color = palette.fg });
+        r.drawText(16, g.list.y - 26, g.box.w - 32, 20, .{ .content = if (self.all) "All Applications" else "Recommended Apps", .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
         const hovered = self.hit(w, h, mx, my);
         if (self.count() == 0) r.drawText(24, g.list.y, g.list.w - 16, row_height, .{ .content = "No applications available", .font_size = ui.textSize(), .color = palette.fg });
         const end = @min(self.count(), self.offset + g.rows);
@@ -212,14 +219,14 @@ pub const State = struct {
                 icon = icons.get(cfg, io, name, @intFromFloat(18 * ui.scaleOf(cr)));
                 if (icon != null) break;
             }
-            if (icon) |im| r.drawImageCover(24, y + 4, 18, 18, 0, .{ .pixels = im.pixels, .width = @intCast(im.size), .height = @intCast(im.size) }) else r.drawIcon(24, y + 4, 18, 18, .{ .id = .grid, .color = palette.fg });
+            if (icon) |im| r.drawImageCover(24, y + 7, 18, 18, 0, .{ .pixels = im.pixels, .width = @intCast(im.size), .height = @intCast(im.size) }) else r.drawIcon(24, y + 7, 18, 18, .{ .id = .grid, .color = palette.fg });
             const label = if (entry.is_default) std.fmt.bufPrint(&buffer, "{s} (default)", .{entry.name}) catch entry.name else entry.name;
             r.drawText(52, y, g.list.w - 44, row_height - 2, .{ .content = label, .font_size = ui.textSize(), .color = palette.fg });
         }
         const strip = scrollbar.gutter(theme.global.scrollbar_width);
         if (scrollbar.Geometry.compute(.vertical, .{ .x = g.box.w - strip, .y = g.list.y, .w = strip, .h = g.list.h }, @floatFromInt(g.rows), @floatFromInt(self.count()), @floatFromInt(self.offset))) |bar|
             scrollbar.paint(r, scrollbar.look(bar, .{}, theme.global.scrollbar_width, palette));
-        r.fillRect(16, g.more.y - 12, g.box.w - 32, 1, .{ .color = theme.global.app_divider });
+        r.fillRect(16, g.divider, g.box.w - 32, 1, .{ .color = theme.global.app_divider });
         button.paint(r, g.more, .{ .size = .sm, .variant = .ghost, .alignment = .left, .leading_icon = .plus, .label = if (self.all) "Back to recommended apps" else "Choose another app…" }, .{ .focused = self.focus == .more, .pointer = if (hovered == 4) .hover else .idle });
         const extension = std.fs.path.extension(self.apps.paths[0]);
         const remember_label = if (extension.len > 0 and self.apps.paths.len == 1)

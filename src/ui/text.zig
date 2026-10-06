@@ -1075,21 +1075,7 @@ pub fn drawOpts(
     const ink_height = metrics.ascender - metrics.descender;
     var baseline = snap26_6(y0 * 64 + @divTrunc((y1 - y0) * 64 - ink_height, 2) + metrics.ascender) * 64;
     if (options.center_ink) {
-        var top: i32 = std.math.maxInt(i32);
-        var bottom: i32 = std.math.minInt(i32);
-        var offset_y: c.FT_Pos = 0;
-        for (run.glyphs) |glyph| {
-            defer offset_y += glyph.y_advance;
-            const face = ensureLoaded(glyph.face) catch continue;
-            applySize(face, size) catch continue;
-            if (glyphBitmap(face, glyph.face, glyph.index)) |bitmap| {
-                if (bitmap.cols == 0 or bitmap.rows == 0) continue;
-                const origin_y = snap26_6(offset_y - glyph.y_offset) - bitmap.top;
-                top = @min(top, origin_y);
-                bottom = @max(bottom, origin_y + bitmap.rows);
-            }
-        }
-        if (top < bottom) baseline = @divFloor(y0 + y1 - top - bottom + 1, 2) * 64;
+        if (inkCenteredBaseline(run, size, y0, y1)) |row| baseline = row * 64;
     }
     if (options.baseline) |row| baseline = row * 64;
     var pen_x = x0 * 64;
@@ -1121,6 +1107,39 @@ pub fn drawOpts(
         pen_x += glyph.x_advance;
         pen_y += glyph.y_advance;
     }
+}
+
+/// Buffer-pixel baseline row that centres the visible glyph bounds of `run`
+/// between rows `y0` and `y1`; null when nothing in it has ink.
+fn inkCenteredBaseline(run: Run, size: c.FT_F26Dot6, y0: i32, y1: i32) ?i32 {
+    var top: i32 = std.math.maxInt(i32);
+    var bottom: i32 = std.math.minInt(i32);
+    var offset_y: c.FT_Pos = 0;
+    for (run.glyphs) |glyph| {
+        defer offset_y += glyph.y_advance;
+        const face = ensureLoaded(glyph.face) catch continue;
+        applySize(face, size) catch continue;
+        if (glyphBitmap(face, glyph.face, glyph.index)) |bitmap| {
+            if (bitmap.cols == 0 or bitmap.rows == 0) continue;
+            const origin_y = snap26_6(offset_y - glyph.y_offset) - bitmap.top;
+            top = @min(top, origin_y);
+            bottom = @max(bottom, origin_y + bitmap.rows);
+        }
+    }
+    if (top >= bottom) return null;
+    return @divFloor(y0 + y1 - top - bottom + 1, 2);
+}
+
+/// The `DrawOptions.baseline` that `center_ink` would pick for `sample` in
+/// `rect` (which must lie inside the buffer). A line drawn in pieces, such as
+/// tabular digits, gives every piece this row: centring each piece on its own
+/// ink would lift a colon to mid-height and let a flat "1" sit a row off a
+/// round "0".
+pub fn inkBaseline(sample: []const u8, font: Font, size_px: f32, scale: f32, rect: Rect) !i32 {
+    const size = size26(size_px, scale);
+    _ = try setSize(font, size_px, scale);
+    const run = try shapedRun(font, size, sample);
+    return inkCenteredBaseline(run, size, devicePixels(rect.y, scale), devicePixels(rect.y + rect.h, scale)) orelse error.NoInk;
 }
 
 fn snap26_6(value: c.FT_Pos) i32 {

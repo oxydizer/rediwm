@@ -1,7 +1,7 @@
 #!/bin/sh
 # One-command installer for RediWM:
 #
-#   curl -fsSL https://raw.githubusercontent.com/oxydizer/rediwm/HEAD/scripts/install.sh | sh
+#   curl -fsSL https://rediwm.redios.org/install.sh | sh
 #
 # Detects the distro and installs the prebuilt release for it: a tarball with
 # the compositor, the apps and the exact wlroots they were tested with, made by

@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/60bc1190-694c-4fb7-b2bc-d90e5e9faa90
 ## Installing
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/oxydizer/rediwm/HEAD/scripts/install.sh | sh    # add `-s -- --dm` for rediwm-dm
+curl -fsSL https://rediwm.redios.org/install.sh | sh    # add `-s -- --dm` for rediwm-dm
 ```
 
 `scripts/install.sh` installs the prebuilt release for your distro (Arch,

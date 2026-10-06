@@ -11,7 +11,7 @@ is also the fallback for other distros and CPUs, or if the release's libraries
 don't match yours. `REDIWM_VERSION=<tag>` installs a specific release.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/oxydizer/rediwm/HEAD/scripts/install.sh | sh -s -- --dm   # --dm also installs rediwm-dm
+curl -fsSL https://rediwm.redios.org/install.sh | sh -s -- --dm   # --dm also installs rediwm-dm
 ```
 
 Installing never replaces your login manager. SDDM, GDM and friends keep

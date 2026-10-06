@@ -255,12 +255,12 @@ def run():
             preview = capture('delete-dialog')
             preview.save('/tmp/rediwm-desktop-delete-dialog.png')
             assert launcher.exists()
-            move(600,251); button(True)
-            move(660,301); button(False)
+            move(600,230); button(True)
+            move(660,280); button(False)
             moved = capture('delete-dialog-moved')
-            assert difference(preview.crop((450,235,650,268)),
-                                        moved.crop((510,285,710,318))).getbbox() is None, 'Desktop delete dialog did not move'
-            click(915,301)  # Close follows the moved titlebar.
+            assert difference(preview.crop((450,210,650,243)),
+                                        moved.crop((510,260,710,293))).getbbox() is None, 'Desktop delete dialog did not move'
+            click(915,278)  # Close follows the moved titlebar.
             assert launcher.exists()
             key(111)
             key(1)

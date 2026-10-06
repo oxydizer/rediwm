@@ -197,8 +197,10 @@ clock_date: [128]u8 = [_]u8{0} ** 128,
 clock_locale: c_time.locale_t = null,
 clock_minute: c_time.time_t = 0,
 // Layout and every tick ask for these; shaping them each time showed up in
-// idle profiles. The clock's is dropped when its strings change.
+// idle profiles. The clock column only ever grows while its settings stay the
+// same (see `updateClockStrings`), so a ticking clock never moves its neighbours.
 clock_width: MeasuredWidth = .{},
+clock_digit: MeasuredWidth = .{},
 capture_width: MeasuredWidth = .{},
 
 const MeasuredWidth = struct {
@@ -458,7 +460,7 @@ fn onTick(bar: *Taskbar) c_int {
             if (output.calendar) |calendar| calendar.refresh();
         }
     }
-    bar.refreshClock();
+    bar.refreshClock(false);
     bar.scheduleClockTick();
     return 0;
 }
@@ -508,16 +510,21 @@ fn updateClockLocale(bar: *Taskbar) void {
 
 pub fn refreshClockSettings(bar: *Taskbar) void {
     bar.updateClockLocale();
-    bar.refreshClock();
+    bar.refreshClock(true);
     bar.scheduleClockTick();
 }
 
-fn refreshClock(bar: *Taskbar) void {
+/// `reset_width` forgets the widest the column has been (a new format, day
+/// line or locale may fit a narrower one).
+fn refreshClock(bar: *Taskbar, reset_width: bool) void {
     const previous_width = bar.clockColumnWidth();
-    if (!bar.updateClockStrings()) return;
+    if (reset_width) bar.clock_width.valid = false;
+    const changed = bar.updateClockStrings();
+    const width_changed = previous_width != bar.clockColumnWidth();
+    if (!changed and !width_changed) return;
     bar.clock_dirty = true;
     var causes: u8 = paint_clock;
-    if (previous_width != bar.clockColumnWidth()) {
+    if (width_changed) {
         // A wider/narrower clock moves every item to its left, including the tray.
         bar.tray_dirty = .{ true, true };
         bar.capture_dirty = true;
@@ -554,7 +561,14 @@ fn updateClockStrings(bar: *Taskbar) bool {
 
     bar.clock_time = next_time;
     bar.clock_date = next_date;
-    bar.clock_width.valid = false;
+    // The column is as wide as the widest text it has shown (AM against PM,
+    // a longer date), never narrower, so only a real growth moves the items
+    // beside it. A settings change starts it over in `refreshClockSettings`.
+    const scale = bar.wlr_output.scale;
+    if (bar.clock_width.get(scale)) |current| {
+        const needed = bar.measureClockColumn() catch current;
+        if (needed > current) _ = bar.clock_width.put(scale, needed);
+    }
     return true;
 }
 
@@ -608,17 +622,67 @@ pub fn notifyToplevelsChanged(bar: *Taskbar) void {
     if (bar.dirty) bar.wlr_output.scheduleFrame();
 }
 
+const clock_time_size: f32 = 14;
+const clock_date_size: f32 = 11;
+
+/// One piece of the time line: a single digit in a fixed cell, or a run of
+/// everything between digits (":", " PM"). `x` is its offset from the line's
+/// start and `w` the width of its own text.
+const ClockPiece = struct { text: []const u8, x: i32, w: i32 };
+const clock_pieces_max = 16;
+const ClockLine = struct { pieces: [clock_pieces_max]ClockPiece = undefined, count: usize = 0, width: i32 = 0 };
+
+/// The widest digit's advance. Every digit of the time sits in a cell this
+/// wide, so the seconds ticking over change neither the line's width nor where
+/// its other glyphs are (Manrope's digits are proportional).
+fn clockDigitCell(bar: *Taskbar) !i32 {
+    const scale = bar.wlr_output.scale;
+    if (bar.clock_digit.get(scale)) |cell| return @intFromFloat(cell);
+    var widest: i32 = 0;
+    for ("0123456789") |*digit| widest = @max(widest, try text.measureWidth(digit[0..1], .manrope, clock_time_size, scale));
+    return @intFromFloat(bar.clock_digit.put(scale, @floatFromInt(widest)));
+}
+
+fn clockLine(bar: *Taskbar, time: []const u8) !ClockLine {
+    const scale = bar.wlr_output.scale;
+    const cell = try bar.clockDigitCell();
+    var line: ClockLine = .{};
+    var i: usize = 0;
+    while (i < time.len and line.count < clock_pieces_max) {
+        const digit = std.ascii.isDigit(time[i]);
+        var end = i + 1;
+        if (!digit) {
+            while (end < time.len and !std.ascii.isDigit(time[end])) end += 1;
+        }
+        const piece = time[i..end];
+        const w = try text.measureWidth(piece, .manrope, clock_time_size, scale);
+        line.pieces[line.count] = .{ .text = piece, .x = line.width + if (digit) @divTrunc(cell - w, 2) else 0, .w = w };
+        line.count += 1;
+        line.width += if (digit) cell else w;
+        i = end;
+    }
+    return line;
+}
+
+/// Logical width the clock column needs for the current strings.
+fn measureClockColumn(bar: *Taskbar) !f32 {
+    const scale = bar.wlr_output.scale;
+    const raw = std.mem.sliceTo(&bar.clock_time, 0);
+    const time = std.mem.trimStart(u8, raw, " ");
+    var time_w = (try bar.clockLine(time)).width;
+    // "%l" pads the hours 1-9 with a blank: keep the room of the second digit
+    // so that 9:59 turning 10:00 does not resize the column.
+    if (time.len < raw.len) time_w += try bar.clockDigitCell();
+    const date_w = try text.measureWidth(std.mem.sliceTo(&bar.clock_date, 0), .manrope, clock_date_size, scale);
+    // Fit the displayed lines so unused column space cannot widen the left gap.
+    return @floatFromInt(@max(time_w, date_w) + 1);
+}
+
 fn clockColumnWidth(bar: *Taskbar) f32 {
     const scale = bar.wlr_output.scale;
     if (bar.clock_width.get(scale)) |width| return width;
-    const time_str = std.mem.trimStart(u8, std.mem.sliceTo(&bar.clock_time, 0), " ");
-    const date_str = std.mem.sliceTo(&bar.clock_date, 0);
-    // Fit the displayed lines so unused column space cannot widen the left gap.
-    const time_w = text.measureWidth(time_str, .manrope, 14, scale) catch null;
-    const date_w = text.measureWidth(date_str, .manrope, 11, scale) catch null;
-    const width: f32 = @floatFromInt(@max(time_w orelse 0, date_w orelse 0) + 1);
     // A failed measurement is retried next time rather than remembered.
-    if (time_w == null or date_w == null) return width;
+    const width = bar.measureClockColumn() catch return bar.clock_width.width;
     return bar.clock_width.put(scale, width);
 }
 
@@ -1866,15 +1930,25 @@ fn drawPartText(bar: *Taskbar, now_ms: i64, part: Part, buf: *BarBuffer, ox: i32
         .clock => {
             const time = std.mem.trimStart(u8, std.mem.sliceTo(&bar.clock_time, 0), " ");
             const date = std.mem.sliceTo(&bar.clock_date, 0);
-            const tw = text.measureWidth(time, .manrope, 14, scale) catch 0;
-            const dw = text.measureWidth(date, .manrope, 11, scale) catch 0;
+            const dw = text.measureWidth(date, .manrope, clock_date_size, scale) catch 0;
             const left: i32 = @intFromFloat(@round(bar.clockX()));
             const width: i32 = @intFromFloat(bar.clockColumnWidth());
             const clock_h: i32 = if (date.len == 0) 20 else 37;
             const time_y = @divTrunc(bar.box.height - clock_h, 2);
             const date_y = time_y + 21;
-            drawCenteredText(buf.pixels, buf.width, buf.height, local(left + @divTrunc(width - tw - 1, 2), time_y, tw + 1, 20, ox, oy), time, Color.clock_time(), scale, .manrope, 14) catch {};
-            if (date.len != 0) drawCenteredText(buf.pixels, buf.width, buf.height, local(left + @divTrunc(width - dw - 1, 2), date_y, dw + 1, 16, ox, oy), date, Color.clock_date(), scale, .manrope, 11) catch {};
+            if (bar.clockLine(time)) |line| {
+                // Every piece shares the baseline the digits would centre on.
+                const row = text.inkBaseline("0123456789", .manrope, clock_time_size, scale, local(0, time_y, 1, 20, ox, oy)) catch null;
+                const start = left + @divTrunc(width - line.width - 1, 2);
+                for (line.pieces[0..line.count]) |piece| {
+                    text.drawOpts(buf.pixels, buf.width, buf.height, piece.text, Color.clock_time(), scale, .manrope, clock_time_size, .{
+                        .rect = local(start + piece.x, time_y, piece.w + 1, 20, ox, oy),
+                        .center_ink = row == null,
+                        .baseline = row,
+                    }) catch {};
+                }
+            } else |_| {}
+            if (date.len != 0) drawCenteredText(buf.pixels, buf.width, buf.height, local(left + @divTrunc(width - dw - 1, 2), date_y, dw + 1, 16, ox, oy), date, Color.clock_date(), scale, .manrope, clock_date_size) catch {};
         },
         .chip => |chip| {
             const cx: i32 = @intFromFloat(@round(chip.renderX(now_ms)));

@@ -210,7 +210,7 @@ def run():
                 # Cancel preserves the association and launches nothing.
                 marker.unlink()
                 picker()
-                drag_title(300, 130, 70, 45)
+                drag_title(300, 66, 70, 30)
                 preview = os.environ.get("REDIWM_OPEN_WITH_PREVIEW")
                 if preview:
                     ipc.screenshot(path=preview)

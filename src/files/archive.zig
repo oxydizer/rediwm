@@ -36,9 +36,9 @@ fn check(cancel: *const Cancel) !void {
 }
 
 /// Canonical member names never contain absolute paths, '..', or backslashes.
-/// Empty names describe the archive root (a common tar './' entry).
+/// Empty names describe the archive root (a common tar './' or ZIP '/' entry).
 pub fn normalize(mem: Allocator, raw: []const u8) ![]const u8 {
-    if (raw.len > 4095 or std.mem.startsWith(u8, raw, "/") or std.mem.indexOfAny(u8, raw, "\\\x00") != null) return error.UnsafeArchivePath;
+    if (raw.len > 4095 or (std.mem.startsWith(u8, raw, "/") and !std.mem.eql(u8, raw, "/")) or std.mem.indexOfAny(u8, raw, "\\\x00") != null) return error.UnsafeArchivePath;
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(mem);
     var parts = std.mem.splitScalar(u8, raw, '/');
@@ -160,7 +160,10 @@ pub const Index = struct {
             name_bytes += std.mem.span(raw).len;
             if (name_bytes > 32 * 1024 * 1024) return error.ArchiveTooLarge;
             const name = try normalize(alloc, std.mem.span(raw));
-            if (name.len == 0) continue;
+            if (name.len == 0) {
+                if (a.archive_entry_filetype(entry) != c.S_IFDIR or a.archive_entry_hardlink(entry) != null) return error.UnsupportedArchiveEntry;
+                continue;
+            }
             var parts = std.mem.splitScalar(u8, name, '/');
             var end: usize = 0;
             while (parts.next()) |part| {
@@ -229,7 +232,10 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
         const raw = a.archive_entry_pathname(entry) orelse return error.InvalidArchive;
         const name = try normalize(mem, std.mem.span(raw));
         defer mem.free(name);
-        if (name.len == 0) continue;
+        if (name.len == 0) {
+            if (a.archive_entry_filetype(entry) != c.S_IFDIR or a.archive_entry_hardlink(entry) != null) return error.UnsupportedArchiveEntry;
+            continue;
+        }
         if (member) |wanted| if (!std.mem.eql(u8, name, wanted)) continue;
         const kind = a.archive_entry_filetype(entry);
         if ((kind != c.S_IFREG and kind != c.S_IFDIR) or a.archive_entry_hardlink(entry) != null) return error.UnsupportedArchiveEntry;

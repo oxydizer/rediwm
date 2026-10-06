@@ -59,10 +59,21 @@ def run():
         opener = helpers / "gio"
         opener.write_text('#!/bin/sh\n[ "$1" = "open" ] || exit 1\nprintf "%s" "$2" > "' + str(marker) + '"\n')
         opener.chmod(0o755)
+        applications = data / "applications"
+        applications.mkdir()
+        (applications / "rediwm-test-opener.desktop").write_text(
+            "[Desktop Entry]\nType=Application\nName=Test Opener\n"
+            f"Exec={opener} open %f\nMimeType=application/octet-stream;text/plain;\n")
+        config_home = tmp / "config"
+        config_home.mkdir()
+        (config_home / "mimeapps.list").write_text(
+            "[Default Applications]\n"
+            "application/octet-stream=rediwm-test-opener.desktop;\n"
+            "text/plain=rediwm-test-opener.desktop;\n")
         config = tmp / "config.toml"
         config.write_text("")
         env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=directory,
-                   XDG_DATA_HOME=str(tmp / "data"),
+                   XDG_DATA_HOME=str(tmp / "data"), XDG_CONFIG_HOME=str(config_home),
                    REDIWM_CONFIG=str(config), WLR_BACKENDS="headless", REDIWM_FILES_DEVICES="0",
                    WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
                    REDIWM_SCALE="1", XDG_STATE_HOME=str(tmp / "state"), PATH=str(helpers) + ":" + os.environ["PATH"],
@@ -139,6 +150,40 @@ def run():
                     wait_for(lambda: marker.exists() and marker.read_text() == str(home / name),
                              "did not open " + name)
                     marker.unlink()
+
+                if "--archive-only" in sys.argv:
+                    archive_dir = tmp / "archive-check"
+                    archive_dir.mkdir()
+                    archive = archive_dir / "sample.zip"
+                    with zipfile.ZipFile(archive, "w") as z:
+                        z.writestr("/", "")
+                        z.writestr("nested/item.txt", "archive member")
+                    key(38, ctrl=True)
+                    text(str(archive_dir))
+                    key(28)
+                    title("archive-check")
+                    click(250, 160)
+                    key(57)
+                    title("sample.zip")
+                    key(102)
+                    key(28)
+                    title("nested")
+                    key(102)
+                    key(28)
+                    wait_for(marker.exists, "archive member did not open")
+                    assert Path(marker.read_text()).read_text() == "archive member"
+                    key(103, alt=True)
+                    title("sample.zip")
+                    key(103, alt=True)
+                    title("archive-check")
+                    click(250, 160, 273)
+                    key(108)
+                    key(108)
+                    key(28)
+                    wait_for(lambda: (archive_dir / "nested/item.txt").exists(), "Extract in place failed")
+                    assert (archive_dir / "nested/item.txt").read_text() == "archive member"
+                    print("PASS: ZIP root entry browsing, member opening and extraction")
+                    return
 
                 # Both common evdev side-button pairs navigate on press only.
                 for folder in ("Archive", "Documents"):
@@ -543,6 +588,7 @@ def run():
                 destination.mkdir()
                 archive = archive_dir / "sample.zip"
                 with zipfile.ZipFile(archive, "w") as z:
+                    z.writestr("/", "")  # Some ZIP creators include an explicit root directory.
                     z.writestr("nested/item.txt", "archive member")
                     z.writestr("top.txt", "top level")
                 key(38, ctrl=True)

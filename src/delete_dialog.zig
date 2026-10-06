@@ -111,13 +111,13 @@ pub const State = struct {
         dialog.paintWindowTitle(r, layer.local(), if (self.paths.items.len > 1) "Delete items?" else if (self.folder) "Delete folder?" else "Delete file?", .trash, null);
         const hover = g.target(mx, my);
         button.paint(r, g.close, .{ .variant = .chrome, .icon = .close, .label = "Close" }, .{ .pointer = if (hover == .close) .hover else .idle });
-        r.drawText(16, g.header + 10, g.width - 32, 24, .{
+        r.drawText(16, g.header + 16, g.width - 32, 24, .{
             .content = if (self.permanent) "This cannot be undone." else if (self.paths.items.len == 1) "You can restore it later from Trash." else "You can restore them later from Trash.",
             .font_size = shell_ui.textSize(),
             .color = t.fg,
         });
-        const inset_y = g.header + 40;
-        const inset_h = @min(64, g.toggle.y - inset_y - 12);
+        const inset_y = g.header + 50;
+        const inset_h = @min(80, g.toggle.y - inset_y - 16);
         r.fillRect(16, inset_y, g.width - 32, inset_h, .{ .color = t.app_toolbar, .radius = t.radius_md, .border_width = 1, .border_color = t.app_item_border });
         const icon_size = @min(32, inset_h - 12);
         const icon_y = inset_y + (inset_h - icon_size) / 2;
@@ -126,10 +126,10 @@ pub const State = struct {
         } else r.drawIcon(28, icon_y, icon_size, icon_size, .{ .id = if (self.folder) .folder else .document, .color = t.fg });
         var buf: [256]u8 = undefined;
         const name = if (self.paths.items.len == 1) self.name else std.fmt.bufPrint(&buf, "{d} selected items", .{self.paths.items.len}) catch "Selected items";
-        r.drawText(76, inset_y + @max(0, (inset_h - 44) / 2), g.width - 108, @min(24, inset_h), .{ .content = name, .font_size = shell_ui.textSize(), .weight = 600, .color = t.fg });
+        r.drawText(76, inset_y + @max(0, (inset_h - 48) / 2), g.width - 108, @min(24, inset_h), .{ .content = name, .font_size = shell_ui.textSize(), .weight = 600, .color = t.fg });
         var detail_buf: [128]u8 = undefined;
         const detail = if (self.paths.items.len > 1) "Files and folders in this selection" else if (self.folder) "Folder · includes its contents" else std.fmt.bufPrint(&detail_buf, "{s} · {d:.1} {s}", .{ if (std.ascii.eqlIgnoreCase(std.fs.path.extension(self.name), ".pdf")) "PDF document" else "File", @as(f64, @floatFromInt(@max(0, self.bytes))) / (if (self.bytes >= 1048576) @as(f64, 1048576) else if (self.bytes >= 1024) @as(f64, 1024) else 1), if (self.bytes >= 1048576) "MB" else if (self.bytes >= 1024) "KB" else "bytes" }) catch "File";
-        if (inset_h >= 44) r.drawText(76, inset_y + (inset_h - 44) / 2 + 24, g.width - 108, 20, .{ .content = detail, .font_size = shell_ui.textSize(), .color = t.fg });
+        if (inset_h >= 48) r.drawText(76, inset_y + (inset_h - 48) / 2 + 28, g.width - 108, 20, .{ .content = detail, .font_size = shell_ui.textSize(), .color = t.fg });
         const focus = if (self.keyboard_focus) self.focus else null;
         checkbox.paint(r, g.toggle, "Delete permanently", .{ .checked = self.permanent, .focused = focus == .toggle });
         button.paint(r, g.cancel, .{ .size = .sm, .label = "Cancel" }, .{ .focused = focus == .cancel, .pointer = if (hover == .cancel) .hover else .idle });
@@ -152,8 +152,8 @@ pub const Geometry = struct {
         const width = @min(480, @as(f32, @floatFromInt(w)) - 24);
         const header: f32 = @floatFromInt((chrome.Metrics{}).titlebarHeight());
         const stacked = width < 440;
-        const height = @min(header + @as(f32, if (stacked) 202 else 170), @as(f32, @floatFromInt(h)) - 16);
-        const footer = height - 44;
+        const height = @min(header + @as(f32, if (stacked) 264 else 222), @as(f32, @floatFromInt(h)) - 16);
+        const footer = height - 58;
         return .{
             .x = (@as(f64, @floatFromInt(w)) - width) / 2,
             .y = (@as(f64, @floatFromInt(h)) - height) / 2,
@@ -161,9 +161,9 @@ pub const Geometry = struct {
             .height = height,
             .header = header,
             .close = dialog.closeBox(width),
-            .toggle = .{ .x = 16, .y = footer - @as(f32, if (stacked) 32 else 0), .w = if (stacked) width - 32 else 174, .h = 28 },
-            .cancel = .{ .x = width - 268, .y = footer, .w = 80, .h = 28 },
-            .confirm = .{ .x = width - 180, .y = footer, .w = 164, .h = 28 },
+            .toggle = .{ .x = 16, .y = footer - @as(f32, if (stacked) 42 else 0), .w = if (stacked) width - 32 else 174, .h = 34 },
+            .cancel = .{ .x = width - 268, .y = footer, .w = 80, .h = 34 },
+            .confirm = .{ .x = width - 180, .y = footer, .w = 164, .h = 34 },
         };
     }
 

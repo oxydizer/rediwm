@@ -505,12 +505,12 @@ test "deletion dialog owns targets and shares responsive hit geometry" {
     try std.testing.expectEqual(deletion.Action.confirm, state.key(c.XKB_KEY_Return));
     for ([_][2]i32{ .{ 960, 540 }, .{ 480, 300 }, .{ 360, 280 }, .{ 1280, 656 } }) |size| {
         const g = deletion.Geometry.init(size[0], size[1]);
-        try std.testing.expectEqual(deletion.Action.toggle, g.hit(g.x + 100, g.y + g.height - @as(f64, if (g.width < 440) 62 else 30)));
+        try std.testing.expectEqual(deletion.Action.toggle, g.hit(g.x + 100, g.y + g.height - @as(f64, if (g.width < 440) 82 else 30)));
         try std.testing.expectEqual(deletion.Action.cancel, g.hit(g.x + g.width - 228, g.y + g.height - 30));
         try std.testing.expectEqual(deletion.Action.confirm, g.hit(g.x + g.width - 98, g.y + g.height - 30));
         try std.testing.expectEqual(deletion.Action.cancel, g.hit(g.x + g.width - 25, g.y + g.header / 2));
-        try std.testing.expectEqual(@as(f32, 28), g.cancel.h);
-        try std.testing.expectEqual(@as(f32, 28), g.confirm.h);
+        try std.testing.expectEqual(@as(f32, 34), g.cancel.h);
+        try std.testing.expectEqual(@as(f32, 34), g.confirm.h);
         try std.testing.expectEqual(deletion.Action.none, g.hit(0, 0));
     }
 }
@@ -1164,11 +1164,12 @@ fn writeArchiveFixture(path: []const u8, names: []const [:0]const u8) !void {
         const entry = api.archive_entry_new() orelse return error.OutOfMemory;
         defer api.archive_entry_free(entry);
         api.archive_entry_set_pathname(entry, name);
-        api.archive_entry_set_filetype(entry, c.S_IFREG);
+        const directory = std.mem.endsWith(u8, name, "/");
+        api.archive_entry_set_filetype(entry, if (directory) c.S_IFDIR else c.S_IFREG);
         api.archive_entry_set_perm(entry, 0o644);
-        api.archive_entry_set_size(entry, 7);
+        api.archive_entry_set_size(entry, if (directory) 0 else 7);
         try std.testing.expectEqual(@as(c_int, 0), api.archive_write_header(writer, entry));
-        try std.testing.expectEqual(@as(isize, 7), api.archive_write_data(writer, "payload", 7));
+        if (!directory) try std.testing.expectEqual(@as(isize, 7), api.archive_write_data(writer, "payload", 7));
     }
     try std.testing.expectEqual(@as(c_int, 0), api.archive_write_close(writer));
 }
@@ -1182,7 +1183,7 @@ test "archive index, staged extraction and member reads preserve destination bou
         defer ops_mod.deleteRecursive(mem, root) catch {};
         const source = try std.fmt.allocPrint(mem, "{s}/sample{s}", .{ root, extension });
         defer mem.free(source);
-        try writeArchiveFixture(source, &.{ "nested/item.txt", "other.txt" });
+        try writeArchiveFixture(source, &.{ "/", "nested/item.txt", "other.txt" });
         var cancel: archive.Cancel = .init(false);
         var index = try archive.Index.read(mem, source, &cancel);
         defer index.deinit();
@@ -1197,6 +1198,12 @@ test "archive index, staged extraction and member reads preserve destination bou
         var content: [32]u8 = undefined;
         try std.testing.expectEqualStrings("payload", try readTestFile(member, &content));
         try std.testing.expectError(error.WriteFailed, archive.extract(mem, source, stage, "nested/item.txt", &cancel));
+        const full_stage = try archive.temporary(mem, root);
+        defer mem.free(full_stage);
+        try archive.extract(mem, source, full_stage, null, &cancel);
+        const other = try std.fmt.allocPrint(mem, "{s}/other.txt", .{full_stage});
+        defer mem.free(other);
+        try std.testing.expectEqualStrings("payload", try readTestFile(other, &content));
         cancel.store(true, .release);
         try std.testing.expectError(error.Cancelled, archive.extract(mem, source, stage, null, &cancel));
         cancel.store(false, .release);
@@ -1212,7 +1219,7 @@ test "archive index, staged extraction and member reads preserve destination bou
         const safe = try std.fmt.allocPrintSentinel(mem, "{s}/safe.txt", .{root}, 0);
         defer mem.free(safe);
         try std.testing.expect(c.access(safe, c.F_OK) != 0);
-        for ([_][]const u8{ "/absolute", "dir/../../escape", "a\\b" }) |name| {
+        for ([_][]const u8{ "/absolute", "//", "dir/../../escape", "a\\b" }) |name| {
             try std.testing.expectError(error.UnsafeArchivePath, archive.normalize(mem, name));
         }
 
