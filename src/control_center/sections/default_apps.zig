@@ -45,7 +45,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         s.values[index] = values.items;
         children[index + 1] = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .gap = 12, .children = try a.dupe(W, &.{
             text(if (kind == .file_manager) "File Manager" else "Terminal"),
-            .{ .name = "default_" ++ @tagName(kind), .kind = .{ .select = .{ .labels = labels.items, .selected = selected_index, .owner = cc, .on_change = if (kind == .file_manager) fileChanged else terminalChanged } }, .width = .{ .fixed = 240 } },
+            .{ .name = "default_" ++ @tagName(kind), .kind = .{ .select = .{ .labels = labels.items, .selected = selected_index, .notify_on_reselect = kind == .file_manager, .owner = cc, .on_change = if (kind == .file_manager) fileChanged else terminalChanged } }, .width = .{ .fixed = 240 } },
         }) };
     }
     children[3] = text(s.message);

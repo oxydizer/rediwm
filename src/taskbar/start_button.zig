@@ -104,7 +104,7 @@ pub fn paintPixel(state: Paint, px: f32, py: f32, bar_height: i32, scale: f32, e
         const dot_cx = base_left + fsize / 2;
         const dot_cy = base_top + fsize + indicator_gap + indicator_diameter / 2;
         const cov = edgeCoverage(sdCircle(px, py, dot_cx, dot_cy, indicator_diameter / 2), scale);
-        if (cov > 0) return Color.fromRgba(theme.global.start_button_indicator).scaled(cov * open_amt);
+        if (cov > 0) return Color.fromRgba(theme.taskbar(.start_button_indicator)).scaled(cov * open_amt);
     }
 
     const mapped = mapPoint(state, px, py, bar_height, edge_pad, btn_size);
@@ -117,5 +117,5 @@ pub fn paintPixel(state: Paint, px: f32, py: f32, bar_height: i32, scale: f32, e
     if (cov <= 0) return null;
 
     const highlight = @max(state.hover, open_amt);
-    return Color.fromRgba(theme.global.start_button_hover).scaled(cov * highlight);
+    return Color.fromRgba(theme.taskbar(.start_button_hover)).scaled(cov * highlight);
 }

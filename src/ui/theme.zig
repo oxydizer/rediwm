@@ -1,5 +1,5 @@
 // A deliberately tiny TOML reader for the shell-chrome theme file: only a
-// `[theme]` section header, bare numeric values, and quoted string values
+// `[theme]` section header, bare numeric/boolean values, and quoted string values
 // (colors as "#rrggbb"/"#rrggbbaa" or "rgba(r,g,b,a)", font names as plain
 // strings). No arrays, tables-of-tables, dates, or multi-line strings — the
 // token set below is everything this engine actually reads.
@@ -33,6 +33,8 @@ pub const Theme = struct {
     chrome_height: f32 = 46.0,
     /// Space between window controls, independent of their size.
     chrome_control_gap: f32 = 4.0,
+    /// Circular window controls and pill-shaped tabs, including tab controls.
+    chrome_round_buttons: bool = false,
     // Window decorations use neutral charcoal independently of shell glass.
     window_bg: [4]f32 = .{ @as(f32, 7.6) / 255.0, 9.0 / 255.0, 11.0 / 255.0, 0.80 }, // 80% darkness and opacity
     // Neutral foregrounds keep text and monochrome icons free of a blue tint.
@@ -311,6 +313,84 @@ pub fn shellPalette() Theme {
     return t;
 }
 
+/// The colour tokens the taskbar draws with. A taskbar theme (Appearance's
+/// "Task Bar theme", `[taskbar_theme]` in the config) replaces just these, and
+/// only on the taskbar: every other surface keeps the main theme. Geometry
+/// (`taskbar_size`, chip and start-button sizes and gaps, radii) stays with the
+/// main theme, which has sliders for it.
+pub const TaskbarToken = enum {
+    taskbar_bg,
+    taskbar_surface,
+    taskbar_hover,
+    taskbar_border,
+    border_soft,
+    surface_hover,
+    window_fg,
+    window_dim,
+    danger,
+    window_close_hover,
+    start_button_hover,
+    start_button_indicator,
+    start_button_logo_color,
+    battery_bg,
+    battery_full,
+    battery_low,
+    battery_critical,
+    battery_shimmer,
+};
+
+/// The chosen taskbar theme; null follows `global`. Only its `TaskbarToken`
+/// fields mean anything (see `taskbarTokens`).
+pub var taskbar_override: ?Theme = null;
+
+/// A taskbar colour: the taskbar theme's when one is chosen, else the main
+/// theme's. The taskbar reads these instead of `global` so the two can differ.
+pub fn taskbar(comptime token: TaskbarToken) @FieldType(Theme, @tagName(token)) {
+    if (taskbar_override) |chosen| return @field(chosen, @tagName(token));
+    return @field(global, @tagName(token));
+}
+
+/// Just `t`'s taskbar tokens over a default theme: the form `taskbar_override`
+/// holds, so nothing else of `t` (its strings in particular) is kept.
+pub fn taskbarTokens(t: Theme) Theme {
+    var out: Theme = .{};
+    inline for (std.meta.fields(TaskbarToken)) |field| @field(out, field.name) = @field(t, field.name);
+    return out;
+}
+
+/// Whether two themes' taskbar tokens look the same once written: colours
+/// compare as `writeTaskbarInto` stores them, so a saved and reloaded theme
+/// still equals the preset it came from.
+pub fn taskbarTokensEql(a: Theme, b: Theme) bool {
+    inline for (std.meta.fields(TaskbarToken)) |field| {
+        if (!sameWritten(@field(a, field.name), @field(b, field.name))) return false;
+    }
+    return true;
+}
+
+fn sameWritten(a: anytype, b: @TypeOf(a)) bool {
+    if (comptime @TypeOf(a) == ?[4]f32) {
+        const left = a orelse return b == null;
+        const right = b orelse return false;
+        return sameWritten(left, right);
+    }
+    return std.meta.eql(quantize(a), quantize(b));
+}
+
+pub fn taskbarOverrideEql(a: ?Theme, b: ?Theme) bool {
+    const left = a orelse return b == null;
+    const right = b orelse return false;
+    return taskbarTokensEql(left, right);
+}
+
+/// Applies `key` only when it is a taskbar token, so a section holding a whole
+/// theme file's keys still yields just the taskbar's. False for any other key.
+pub fn applyTaskbarKey(allocator: Allocator, t: *Theme, key: []const u8, value: []const u8) !bool {
+    if (std.meta.stringToEnum(TaskbarToken, key) == null) return false;
+    try applyKey(allocator, t, key, value);
+    return true;
+}
+
 /// Appearance presets write ordinary numeric theme tokens, so hand-edited
 /// radii remain the source of truth and repeated picks never compound.
 pub const RadiusPreset = enum { sharp, default, round };
@@ -424,6 +504,7 @@ fn keysOf(comptime T: type) []const []const u8 {
 }
 const color_keys = keysOf([4]f32);
 const number_keys = keysOf(f32);
+const boolean_keys = keysOf(bool);
 const optional_color_keys = keysOf(?[4]f32);
 const string_keys = keysOf([]const u8);
 
@@ -473,6 +554,12 @@ pub fn stripComment(line: []const u8) []const u8 {
 
 pub fn applyKey(allocator: Allocator, t: *Theme, key: []const u8, value: []const u8) !void {
     @setEvalBranchQuota(10000);
+    inline for (boolean_keys) |name| {
+        if (std.mem.eql(u8, key, name)) {
+            @field(t, name) = if (std.mem.eql(u8, value, "true")) true else if (std.mem.eql(u8, value, "false")) false else return error.InvalidBoolean;
+            return;
+        }
+    }
     inline for (string_keys) |name| {
         if (std.mem.eql(u8, key, name)) {
             const text = try unquote(value);
@@ -578,8 +665,15 @@ fn appendColor(allocator: Allocator, buf: *std.ArrayList(u8), key: []const u8, c
 pub fn writeInto(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme) !void {
     const defaults: Theme = .{};
     try buf.appendSlice(allocator, "[theme]\n");
+    inline for (boolean_keys) |name| {
+        if (@field(t, name) != @field(defaults, name)) try appendLine(allocator, buf, "{s} = {}\n", .{ name, @field(t, name) });
+    }
     inline for (string_keys) |name| {
-        if (!std.mem.eql(u8, @field(t, name), @field(defaults, name))) try appendLine(allocator, buf, "{s} = \"{s}\"\n", .{ name, @field(t, name) });
+        if (!std.mem.eql(u8, @field(t, name), @field(defaults, name))) {
+            try buf.appendSlice(allocator, name ++ " = \"");
+            try buf.appendSlice(allocator, @field(t, name));
+            try buf.appendSlice(allocator, "\"\n");
+        }
     }
     inline for (number_keys) |name| {
         // Keep the frame radius explicit even at Default, so a legacy
@@ -598,6 +692,22 @@ pub fn writeInto(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme) !void 
     // into a fixed colour on the first save.
     inline for (optional_color_keys) |name| {
         if (@field(t, name)) |color| try appendColor(allocator, buf, name, color);
+    }
+}
+
+/// The `[taskbar_theme]` section for `t`'s taskbar tokens. Values equal to the
+/// defaults are left out, as `writeInto` does: the section's presence, not its
+/// keys, says a taskbar theme is chosen, and it reads back over the defaults.
+pub fn writeTaskbarInto(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme) !void {
+    const defaults: Theme = .{};
+    try buf.appendSlice(allocator, "[taskbar_theme]\n");
+    inline for (std.meta.fields(TaskbarToken)) |field| {
+        const value = @field(t, field.name);
+        if (comptime @TypeOf(value) == ?[4]f32) {
+            if (value) |color| try appendColor(allocator, buf, field.name, color);
+        } else if (!std.meta.eql(quantize(value), quantize(@field(defaults, field.name)))) {
+            try appendColor(allocator, buf, field.name, value);
+        }
     }
 }
 
@@ -857,10 +967,16 @@ test "chrome geometry validates and survives theme serialization" {
         var t: Theme = .{};
         try std.testing.expectError(error.InvalidSize, applyKey(a, &t, "chrome_control_gap", value));
     }
-    const t = try parse(a, "[theme]\nchrome_height = 28\nchrome_control_gap = 0\n");
+    for ([_][]const u8{ "1", "\"true\"", "True" }) |value| {
+        var t: Theme = .{};
+        try std.testing.expectError(error.InvalidBoolean, applyKey(a, &t, "chrome_round_buttons", value));
+    }
+    try std.testing.expect(!(try parse(a, "[theme]\nchrome_round_buttons = false\n")).chrome_round_buttons);
+    const t = try parse(a, "[theme]\nchrome_height = 28\nchrome_control_gap = 0\nchrome_round_buttons = true\n");
     var buf: std.ArrayList(u8) = .empty;
     try writeInto(a, &buf, t);
     const restored = try parse(a, buf.items);
     try std.testing.expectEqual(@as(f32, 28), restored.chrome_height);
     try std.testing.expectEqual(@as(f32, 0), restored.chrome_control_gap);
+    try std.testing.expect(restored.chrome_round_buttons);
 }

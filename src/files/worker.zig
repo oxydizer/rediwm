@@ -4,6 +4,7 @@ const c = @import("c.zig").api;
 const theme = @import("../icon_theme.zig");
 const icons = @import("../icon_cache.zig");
 const git = @import("git.zig");
+const recent = @import("recent.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Item = struct {
@@ -19,6 +20,7 @@ pub const Item = struct {
     is_broken: bool,
     bytes: i64,
     mtime: i64,
+    opened: i64 = 0,
     mode: c.mode_t = 0,
     owner: []const u8 = "",
     icon_name: []const u8,
@@ -66,6 +68,7 @@ pub const Worker = struct {
     show_hidden: bool = false,
     request_id: u64 = 1,
     pending_snapshot: ?*Snapshot = null,
+    opened_paths: std.ArrayList([]u8) = .empty,
     /// Signalled after each request so the worker sleeps between them
     /// instead of polling on an 80 ms clock.
     wake: c_int = -1,
@@ -112,6 +115,8 @@ pub const Worker = struct {
         _ = c.close(self.wake_main);
         if (self.pending_snapshot) |s| s.destroy();
         if (self.theme) |t| t.deinit();
+        for (self.opened_paths.items) |p| self.allocator.free(p);
+        self.opened_paths.deinit(self.allocator);
 
         for (self.theme_cfg.base_dirs) |d| self.allocator.free(d);
         self.allocator.free(self.theme_cfg.base_dirs);
@@ -122,6 +127,17 @@ pub const Worker = struct {
 
     pub fn navigateTo(self: *Worker, new_dir: []const u8, show_hidden: bool) u64 {
         return self.navigateLocation(new_dir, show_hidden, 0);
+    }
+
+    pub fn recordOpened(self: *Worker, path: []const u8) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+        const owned = self.allocator.dupe(u8, path) catch return;
+        self.opened_paths.append(self.allocator, owned) catch {
+            self.allocator.free(owned);
+            return;
+        };
+        self.signal();
     }
 
     pub fn navigateLocation(self: *Worker, new_dir: []const u8, show_hidden: bool, archive_len: usize) u64 {
@@ -199,7 +215,18 @@ pub const Worker = struct {
         var inotify_wd: c_int = -1;
         var git_watches: [4]c_int = @splat(-1);
 
-        while (!self.stop.load(.acquire)) {
+        while (true) {
+            _ = c.pthread_mutex_lock(&self.mutex);
+            const opened = self.opened_paths;
+            self.opened_paths = .empty;
+            _ = c.pthread_mutex_unlock(&self.mutex);
+            for (opened.items) |p| {
+                recent.record(self.allocator, self.io, self.environ, p) catch {};
+                self.allocator.free(p);
+            }
+            var opened_storage = opened;
+            opened_storage.deinit(self.allocator);
+            if (self.stop.load(.acquire)) break;
             if (settings.poll(self.allocator, self.io)) |t| {
                 _ = c.pthread_mutex_lock(&self.mutex);
                 self.animation_settings = settings.animations;
@@ -240,15 +267,21 @@ pub const Worker = struct {
 
                 if (inotify_fd >= 0 and watched_dir != null) {
                     var zpath_buf: [4096]u8 = undefined;
-                    const watch_path = if (cur_archive_len > 0) std.fs.path.dirname(cur_dir[0..cur_archive_len]) orelse "/" else watched_dir.?;
-                    const zpath = std.fmt.bufPrintZ(&zpath_buf, "{s}", .{watch_path}) catch null;
-                    if (zpath) |zp| {
+                    const recent_path = if (recent.isLocation(cur_dir)) recent.path(self.allocator, self.environ) catch null else null;
+                    defer if (recent_path) |p| self.allocator.free(p);
+                    var watch_path = if (recent_path) |p| std.fs.path.dirname(p).? else if (cur_archive_len > 0) std.fs.path.dirname(cur_dir[0..cur_archive_len]) orelse "/" else watched_dir.?;
+                    while (true) {
+                        const zp = std.fmt.bufPrintZ(&zpath_buf, "{s}", .{watch_path}) catch break;
                         inotify_wd = c.inotify_add_watch(
                             inotify_fd,
                             zp,
                             c.IN_CREATE | c.IN_DELETE | c.IN_MOVED_FROM | c.IN_MOVED_TO |
                                 c.IN_CLOSE_WRITE | c.IN_ATTRIB | c.IN_DELETE_SELF | c.IN_MOVE_SELF,
                         );
+                        // A first-run data directory may not exist yet. Watch
+                        // its nearest existing parent until it is created.
+                        if (inotify_wd >= 0 or recent_path == null) break;
+                        watch_path = std.fs.path.dirname(watch_path) orelse break;
                     }
                 }
             }
@@ -306,7 +339,15 @@ pub const Worker = struct {
                             off += @sizeOf(c.struct_inotify_event) + ev.len;
                         }
                     }
-                    if (changed) self.rescan_requested.store(true, .release);
+                    if (changed) {
+                        self.rescan_requested.store(true, .release);
+                        if (recent.isLocation(cur_dir)) {
+                            // Re-establish the watch after creation or replacement
+                            // of the data directory, without a periodic rescan.
+                            if (watched_dir) |d| self.allocator.free(d);
+                            watched_dir = null;
+                        }
+                    }
                 }
             } else {
                 _ = c.usleep(80 * 1000);
@@ -390,6 +431,29 @@ pub const Worker = struct {
             snap.err_msg = "Out of memory";
             return snap;
         };
+
+        if (recent.isLocation(dir_path)) {
+            const entries = recent.read(mem, self.io, self.environ) catch {
+                snap.err_msg = "Could not read recent files";
+                return snap;
+            };
+            var list: std.ArrayList(Item) = .empty;
+            var owners: std.AutoHashMapUnmanaged(c.uid_t, []const u8) = .empty;
+            var associations: @import("associations.zig").Resolver = .{ .allocator = mem };
+            var seen: std.StringHashMapUnmanaged(void) = .empty;
+            for (entries) |entry| {
+                const name = std.fs.path.basename(entry.path);
+                if (!show_hidden and std.mem.startsWith(u8, name, ".")) continue;
+                if (seen.contains(entry.path)) continue;
+                var item = statItem(mem, &owners, &associations, name, entry.path) orelse continue;
+                if (item.is_dir or item.is_broken or (item.mode & c.S_IFMT != c.S_IFREG and !item.is_symlink)) continue;
+                item.opened = entry.opened;
+                seen.put(mem, entry.path, {}) catch continue;
+                list.append(mem, item) catch continue;
+            }
+            snap.items = list.toOwnedSlice(mem) catch &.{};
+            return snap;
+        }
 
         var dir = std.Io.Dir.cwd().openDir(self.io, dir_path, .{ .iterate = true }) catch |err| {
             snap.err_msg = switch (err) {

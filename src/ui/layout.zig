@@ -392,6 +392,8 @@ pub const StepperData = struct {
 /// Borrowed labels; keep them alive until the tree is destroyed. Callbacks may
 /// rebuild the tree. Popup state is transient and resets with the widget.
 pub const SelectData = struct {
+    /// Explicitly selecting the current choice reapplies its external state.
+    notify_on_reselect: bool = false,
     owner: ?*anyopaque = null,
     id: usize = 0,
     /// Visible placeholders that cannot be committed.

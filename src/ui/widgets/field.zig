@@ -21,6 +21,9 @@ pub const Trailing = enum { none, reveal };
 
 pub const Options = struct {
     size: Size = .md,
+    /// Draws a hidden secret as circles of this size and pitch instead of
+    /// bullet glyphs. The caret and hint stay at the field's font size.
+    secret_dots: ?secret_input.Dots = null,
     /// None by default; `.search` for search boxes.
     leading_icon: ?layout.IconId = null,
     leading_icon_size: ?f32 = null,
@@ -145,6 +148,7 @@ pub fn paintSecret(r: *Renderer, box: Rect, opts: Options, state: State, input: 
         .caret = state.focused and !state.disabled,
         .placeholder = placeholder,
         .draw_caret = !state.external_caret,
+        .dots = opts.secret_dots,
     });
     return out;
 }

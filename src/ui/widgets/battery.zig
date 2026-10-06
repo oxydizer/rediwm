@@ -54,6 +54,20 @@ pub const Colors = struct {
     pub fn of(t: theme.Theme) Colors {
         return .{ .border = t.taskbar_border, .fg = t.window_fg, .bg = t.battery_bg, .full = t.battery_full, .low = t.battery_low, .critical = t.battery_critical, .shimmer = t.battery_shimmer };
     }
+
+    /// The badge as the taskbar shows it: its theme's colours, which may
+    /// differ from the rest of the shell's.
+    pub fn taskbar() Colors {
+        return .{
+            .border = theme.taskbar(.taskbar_border),
+            .fg = theme.taskbar(.window_fg),
+            .bg = theme.taskbar(.battery_bg),
+            .full = theme.taskbar(.battery_full),
+            .low = theme.taskbar(.battery_low),
+            .critical = theme.taskbar(.battery_critical),
+            .shimmer = theme.taskbar(.battery_shimmer),
+        };
+    }
 };
 
 /// Straight (not premultiplied) colour.

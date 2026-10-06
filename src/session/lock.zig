@@ -45,7 +45,7 @@ pub fn clearKeyScratch(bytes: []u8) void {
 
 pub const Lock = struct {
     server: *Server,
-    /// Redraws the clock at the next minute; the lock has no other deadline.
+    /// Handles the clock and transient controls deadlines.
     timer: *wl.EventSource,
     user: [256]u8 = @splat(0),
     name: [256]u8 = @splat(0),
@@ -71,6 +71,8 @@ pub const Lock = struct {
     retry_at: i64 = 0,
     revision: u64 = 1,
     minute: i64 = -1,
+    controls_visible: bool = false,
+    controls_hide_at: i64 = 0,
     confirm: ?bool = null, // false = power off, true = reboot
     power_child: ?*Child = null,
     avatar: ?png.Image = null,
@@ -169,10 +171,13 @@ pub const Lock = struct {
         self.scheduleClock();
     }
 
-    /// Wakes at the next minute boundary, as the taskbar clock does.
+    /// Wakes for the next clock minute or transient controls timeout.
     fn scheduleClock(self: *Lock) void {
-        const delay: c_int = @intCast((60 - @mod(c.time(null), 60)) * 1000 + 25);
-        self.timer.timerUpdate(delay) catch {};
+        var delay: i64 = (60 - @mod(c.time(null), 60)) * 1000 + 25;
+        if (self.controls_visible and self.controls_hide_at > 0) {
+            delay = @min(delay, @max(1, self.controls_hide_at - anim.nowMs()));
+        }
+        self.timer.timerUpdate(@intCast(delay)) catch {};
     }
 
     /// Everyone outside the compositor who tracks the lock: rediwm-session,
@@ -358,7 +363,24 @@ pub const Lock = struct {
     /// Volume, mute or brightness changed; redraw only the controls block.
     pub fn controlsChanged(self: *Lock) void {
         if (self.greeter != null) return;
-        if (self.controls.refresh(self.server)) self.server.scheduleFrames();
+        const previous_volume = self.controls.volume;
+        const previous_muted = self.controls.muted;
+        const previous_brightness = self.controls.brightness;
+        if (self.controls.refresh(self.server)) {
+            self.server.scheduleFrames();
+            if (self.controls.volume != previous_volume or self.controls.muted != previous_muted or self.controls.brightness != previous_brightness) {
+                self.showControls();
+            }
+        }
+    }
+
+    fn showControls(self: *Lock) void {
+        if (self.greeter != null or self.controls.height() == 0) return;
+        const newly_visible = !self.controls_visible;
+        self.controls_visible = true;
+        self.controls_hide_at = anim.nowMs() + 2500;
+        self.scheduleClock();
+        if (newly_visible) self.server.scheduleFrames();
     }
 
     /// The control under a layout point, with its track's left edge and
@@ -378,16 +400,24 @@ pub const Lock = struct {
         if (self.controls.drag != null) {
             const before = self.controls.revision;
             self.controls.dragTo(self.server, @floatCast(x));
+            self.controls_hide_at = anim.nowMs() + 2500;
+            self.scheduleClock();
             if (self.controls.revision != before) self.server.scheduleFrames();
             return;
         }
-        const hit: ?lock_controls.Hit = if (self.controlsAt(x, y)) |at| at.hit else null;
+        const at = self.controlsAt(x, y);
+        if (at != null) self.showControls();
+        const hit: ?lock_controls.Hit = if (at) |found| found.hit else null;
         if (self.controls.setHover(hit)) self.server.scheduleFrames();
     }
 
     /// The primary button went up, wherever the pointer is.
     pub fn pointerReleased(self: *Lock) void {
-        if (self.controls.endDrag()) self.server.scheduleFrames();
+        if (self.controls.endDrag()) {
+            self.controls_hide_at = anim.nowMs() + 2500;
+            self.scheduleClock();
+            self.server.scheduleFrames();
+        }
     }
 
     fn powerExited(owner: ?*anyopaque, _: *Child, status: ?u32) void {
@@ -402,6 +432,12 @@ pub const Lock = struct {
         if (minute != self.minute) {
             self.minute = minute;
             self.changed();
+        }
+        if (self.controls_visible and self.controls.drag == null and anim.nowMs() >= self.controls_hide_at) {
+            self.controls_visible = false;
+            self.controls_hide_at = 0;
+            _ = self.controls.setHover(null);
+            self.server.scheduleFrames();
         }
         self.scheduleClock();
         return 0;
@@ -613,6 +649,7 @@ pub const Lock = struct {
 
     pub fn click(self: *Lock, x: f64, y: f64) void {
         if (self.controlsAt(x, y)) |at| {
+            self.showControls();
             switch (at.hit.part) {
                 .icon => if (at.hit.kind == .volume) lock_controls.toggleMute(self.server),
                 .track => self.controls.beginDrag(self.server, at.hit.kind, at.left, at.span, @floatCast(x)),
@@ -737,7 +774,7 @@ const Geometry = struct {
     }
 };
 
-const field_options: text_field.Options = .{ .size = .lg, .trailing = .reveal };
+const field_options: text_field.Options = .{ .size = .lg, .secret_dots = .{ .diameter = 0.46, .pitch = 1.05 }, .trailing = .reveal };
 
 pub const View = struct {
     tree: *wlr.SceneTree,
@@ -804,7 +841,7 @@ pub const View = struct {
     /// on, changed. The greeter and an output without either backend show none.
     fn syncControls(self: *View, lock: *Lock, b: wlr.Box, scale: f32) void {
         const block_h = lock.controls.height();
-        if (lock.greeter != null or block_h == 0 or b.width <= 0 or b.height <= 0) return self.hideControls();
+        if (lock.greeter != null or !lock.controls_visible or block_h == 0 or b.width <= 0 or b.height <= 0) return self.hideControls();
         const key = ControlsKey{ .revision = lock.controls.revision, .width = b.width, .height = b.height, .scale = scale };
         if (self.controls_key) |have| if (std.meta.eql(have, key)) return;
         const geo = Geometry.init(@floatFromInt(b.width), @floatFromInt(b.height));
@@ -1050,7 +1087,7 @@ test "lock output guard is opaque independent of wallpaper and UI buffers" {
 }
 
 test "lock raster scales to small outputs and renders a solid accent unlock button" {
-    var lock = Lock{ .server = undefined, .timer = undefined };
+    var lock = Lock{ .server = undefined, .timer = undefined, .controls_visible = true };
     @memcpy(lock.name[0..11], "Alex Morgan");
     @memcpy(lock.user[0..10], "alexmorgan");
     lock.controls = .{ .has_volume = true, .volume = 0.5, .has_brightness = true, .brightness = 0.25 };

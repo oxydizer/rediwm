@@ -47,6 +47,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         server.night_light.reconfigure(new.night_light);
     }
     theme_mod.global = new.theme;
+    theme_mod.taskbar_override = if (new.taskbar_theme) |chosen| theme_mod.taskbarTokens(chosen) else null;
     @import("ui").text.setPreferredFamilies(theme_mod.global.font, theme_mod.global.mono_font);
     camera_mod.zoom_levels = new.compositor.zoom_percents;
 
@@ -156,6 +157,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     }
 
     const theme_changed = !themeEql(old.theme, new.theme) or old.compositor.border_radius != new.compositor.border_radius;
+    const taskbar_theme_changed = !theme_mod.taskbarOverrideEql(old.taskbar_theme, new.taskbar_theme);
     if (theme_changed) {
         if (server.desktop) |desktop| desktop.app.themeChanged();
         if (server.locker) |lock| lock.themeChanged();
@@ -173,6 +175,10 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
             sm.buildTree();
             sm.relayout();
         }
+    } else if (taskbar_theme_changed) {
+        // Only the bar's colours moved; its picker in Appearance follows.
+        server.refreshTaskbarsGeometry();
+        if (server.input.open_control_center) |cc| cc.refresh();
     } else if (any_taskbar_changed) {
         server.refreshTaskbars();
     }
@@ -264,11 +270,25 @@ fn logKeybindDiff(old: Config, new: Config) void {
 
 /// Called by both Settings and config reload; no new clock timers.
 pub fn applyRegion(server: *Server) void {
+    if (server.greeter_mode) return;
+    @import("region.zig").applyTimezone(@import("../main.zig").gpa, server.config.region.timezone, server.environ.getPosix("TZ")) catch |err| {
+        log.warn("could not apply personal timezone: {}", .{err});
+    };
+    if (server.desktop) |desktop| {
+        updateDesktopEnv(server, desktop) catch |err| log.warn("could not update desktop launch environment: {}", .{err});
+    }
     var outputs = server.outputs.iterator(.forward);
     while (outputs.next()) |output| {
-        if (output.taskbar) |bar| bar.refreshClock();
+        if (output.taskbar) |bar| bar.refreshClockSettings();
         if (output.calendar) |calendar| calendar.refresh();
     }
     if (server.locker) |lock| lock.themeChanged();
     if (server.input.open_control_center) |cc| cc.refresh();
+}
+
+fn updateDesktopEnv(server: *Server, desktop: *@import("../desktop/embedded.zig").Desktop) !void {
+    var env = try server.environ.createMap(std.heap.c_allocator);
+    errdefer env.deinit();
+    try server.applyChildEnv(&env);
+    desktop.worker.updateChildEnv(env);
 }

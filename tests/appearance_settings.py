@@ -11,6 +11,7 @@ import re
 
 from ipc_client import IPCClient, spawn_compositor, stop_process
 from ui_driver import UIDriver
+from desktop_zoom import wait_for
 from PIL import Image
 
 
@@ -30,7 +31,9 @@ def test_appearance_settings():
             "[animations]\nenabled = true\nspeed = 1.0\nreduced_motion = \"auto\"\n"
             "[theme]\nfont = \"Manrope\"\nmono_font = \"JetBrains Mono\"\nwindow_bg = \"rgba(16,18,21,0.980)\"\n"
         )
-        env = {"DBUS_SESSION_BUS_ADDRESS": ""}
+        env = {"DBUS_SESSION_BUS_ADDRESS": "", "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/nonexistent",
+               "REDIWM_FILES_DEVICES": "0", "XDG_DATA_HOME": str(tmp / "data"),
+               "XDG_CACHE_HOME": str(tmp / "cache")}
 
         process, log = spawn_compositor(tmp, config_content=initial_config, env_extra=env)
         try:
@@ -78,6 +81,63 @@ def test_appearance_settings():
                 with Image.open(capture) as image:
                     assert sum(n for n, color in image.convert("RGB").getcolors(image.width * image.height) if color == (18, 52, 86)) > 20, "app_bg reload did not repaint Settings"
                 appearance_page()
+
+                # Pick a real image through Files, persist a long path, and
+                # check the taskbar's pixels before and after restoring R.
+                logo_dir = tmp / ("custom logo " + "a" * 140)
+                logo_dir.mkdir()
+                logo = logo_dir / "logo.png"
+                Image.new("RGBA", (32, 32), (18, 231, 73, 255)).save(logo)
+
+                def chooser():
+                    return next((w for w in ipc.get_windows() if w["app_id"] == "rediwm-file-chooser"), None)
+
+                logo_shots = iter(range(10000))
+
+                def logo_visible():
+                    shot = tmp / f"logo-shot-{next(logo_shots)}.png"
+                    ipc.screenshot(str(shot))
+                    with Image.open(shot) as image:
+                        colors = image.convert("RGB").crop((0, image.height - 80, 100, image.height)).getdata()
+                        return sum(1 for c in colors if c == (18, 231, 73)) > 100
+
+                assert ui.scroll_into_view("start_logo_reset")["is_disabled"]
+                click_widget(ui.scroll_into_view("start_logo_choose"))
+                window = wait_for(chooser, "logo file chooser")
+                assert next(w for w in widgets() if w["name"] == "start_logo_choose")["is_disabled"]
+                ipc.focus_window(window["id"])
+                time.sleep(.3)
+                ipc.key(29, True)
+                ipc.key_down_up(38)  # Ctrl+L
+                ipc.key(29, False)
+                ipc.type_text(str(logo_dir))
+                ipc.key_press("Return")
+                time.sleep(.5)
+                ipc.key_press("Home")
+                ipc.key_press("Return")
+                wait_for(lambda: chooser() is None, "logo chooser accepted")
+                wait_for(lambda: read_config()["theme"].get("start_button_icon") == str(logo), "saved logo path")
+                wait_for(logo_visible, "custom taskbar logo")
+                ipc.reload_config()
+                ipc.wait_for_panel_settled("control_center")
+                assert not ui.scroll_into_view("start_logo_reset")["is_disabled"]
+
+                click_widget(ui.scroll_into_view("start_logo_choose"))
+                window = wait_for(chooser, "logo chooser reopened")
+                ipc.focus_window(window["id"])
+                time.sleep(.3)
+                ipc.key_press("Escape")
+                wait_for(lambda: chooser() is None, "logo chooser cancelled")
+                assert read_config()["theme"]["start_button_icon"] == str(logo)
+                assert logo_visible()
+
+                click_widget(ui.scroll_into_view("start_logo_reset"))
+                wait_for(lambda: not read_config()["theme"].get("start_button_icon"), "default logo saved")
+                wait_for(lambda: not logo_visible(), "default logo restored")
+                assert ui.scroll_into_view("start_logo_reset")["is_disabled"]
+                ipc.reload_config()
+                ipc.wait_for_panel_settled("control_center")
+                assert not logo_visible()
 
                 focus_zoom = ui.scroll_into_view("focus_zoom")
                 assert focus_zoom.get("selected_index") == 1, "boost should be the default"
@@ -272,6 +332,46 @@ def test_appearance_settings():
                 assert light_theme["shell_accent"].startswith("rgba(14,165,160,")
                 for name in ("caret", "selection", "selection_fg", "field_border_focus"):
                     assert name not in light_theme
+
+                # A taskbar theme recolours only the bar: Dark on a Light desktop.
+                def taskbar_pixel(name):
+                    ipc.move_cursor(2, 2)
+                    ipc.wait_for_frame()
+                    box = ipc.get_shell_state()["taskbars"][0]["box"]
+                    shot = tmp / name
+                    ipc.screenshot(str(shot))
+                    with Image.open(shot) as image:
+                        return image.convert("RGB").getpixel((box["x"] + box["width"] // 2,
+                                                              box["y"] + box["height"] // 2))
+
+                assert ui.scroll_into_view("taskbar_theme")["selected_index"] == 0
+                click_widget(ui.scroll_into_view("taskbar_theme"))
+                ipc.key_press("Home")
+                ipc.key_press("Down")
+                ipc.key_press("Return")
+                ipc.wait_for_panel_settled("control_center")
+                assert ui.scroll_into_view("taskbar_theme")["selected_index"] == 1
+                assert max(taskbar_pixel("dark-taskbar.png")) < 90, "taskbar did not take the Dark taskbar theme"
+                tokens = ipc.action("get_theme")["tokens"]
+                assert all(abs(a - b) < 0.001 for a, b in zip(tokens["taskbar_bg"], [241 / 255, 244 / 255, 247 / 255, 0.94]))
+                assert all(abs(a - b) < 0.001 for a, b in zip(tokens["window_fg"], [31 / 255, 36 / 255, 48 / 255, 1]))
+                assert ui.scroll_into_view("theme")["selected_index"] == 1
+                assert read_config()["taskbar_theme"] == {}
+                assert read_config()["theme"]["shell_accent"].startswith("rgba(14,165,160,")
+                ipc.reload_config()
+                ipc.close_panel("control_center")
+                ipc.wait_for("control_center_closed", timeout_ms=5000)
+                ipc.action("open_appearance")
+                ipc.wait_for_panel_settled("control_center")
+                assert ui.scroll_into_view("taskbar_theme")["selected_index"] == 1
+                assert max(taskbar_pixel("dark-taskbar-reloaded.png")) < 90
+                click_widget(ui.scroll_into_view("taskbar_theme"))
+                ipc.key_press("Home")
+                ipc.key_press("Return")
+                ipc.wait_for_panel_settled("control_center")
+                assert ui.scroll_into_view("taskbar_theme")["selected_index"] == 0
+                assert "taskbar_theme" not in read_config()
+                assert min(taskbar_pixel("light-taskbar-again.png")) > 200, "taskbar did not return to the main theme"
 
                 ipc.reload_config()
                 ipc.close_panel("control_center")

@@ -1546,6 +1546,13 @@ test "secret input widget never retains hidden or echo-on responses in run cache
     // And through the shared field, frame and all.
     _ = field_widget.paintSecret(&renderer, .{ .x = 0, .y = 0, .w = 400, .h = 50 }, .{ .size = .lg, .trailing = .reveal }, .{ .focused = true }, &field, "");
     _ = field_widget.paintSecret(&renderer, .{ .x = 0, .y = 0, .w = 400, .h = 50 }, .{ .size = .lg, .trailing = .reveal }, .{ .focused = true, .revealed = true }, &field, "");
+    // Dotted masking: the caret keeps the field font's height, hidden or not.
+    const box: field_widget.Rect = .{ .x = 0, .y = 0, .w = 400, .h = 50 };
+    const dotted: field_widget.Options = .{ .size = .lg, .secret_dots = .{ .diameter = 0.46, .pitch = 1.05 } };
+    const hidden = field_widget.paintSecret(&renderer, box, dotted, .{ .focused = true }, &field, "").caret.?;
+    const clear = field_widget.paintSecret(&renderer, box, dotted, .{ .focused = true, .revealed = true }, &field, "").caret.?;
+    try std.testing.expectEqual(clear.h, hidden.h);
+    try std.testing.expectEqual(clear.y, hidden.y);
     try std.testing.expectEqual(before, text_mod.testingRunCacheCount());
 }
 

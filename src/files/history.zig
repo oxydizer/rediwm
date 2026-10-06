@@ -51,7 +51,7 @@ pub const History = struct {
         return self.forward_stack.items.len > 0;
     }
     pub fn canUp(self: *const History) bool {
-        return !std.mem.eql(u8, self.current, "/");
+        return !@import("recent.zig").isLocation(self.current) and !std.mem.eql(u8, self.current, "/");
     }
     pub fn navigate(self: *History, new_path: []const u8) !void {
         const archive_len = if (self.archive_len > 0 and new_path.len >= self.archive_len and

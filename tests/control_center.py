@@ -193,6 +193,26 @@ print(f'fixture,backlight,{value},{value}%,100')
                     assert not any(w["role"] == "swatch" or w.get("label") == "Accent colour" for w in widgets())
                     assert any(w.get("name") == "theme" for w in widgets())
                     capture("appearance")
+                    # A held scrollbar keeps working beyond the window edge.
+                    def content_scroll():
+                        return next(w for w in widgets() if w["role"] == "scroll_container")
+
+                    viewport = content_scroll()["global_box"]
+                    assert content_scroll()["content_size"] > viewport["height"]
+                    bar_x = viewport["x"] + viewport["width"] - 7
+                    bar_y = viewport["y"] + 8
+                    outside_x = box["x"] - 40
+                    ipc.move_cursor(bar_x, bar_y)
+                    ipc.pointer_button(272, True)
+                    ipc.move_cursor(outside_x, bar_y + 30)
+                    first_offset = content_scroll()["scroll_offset"]
+                    assert first_offset > 0, "scrollbar stopped outside Settings"
+                    ipc.move_cursor(outside_x, bar_y + 60)
+                    assert content_scroll()["scroll_offset"] > first_offset
+                    ipc.pointer_button(272, False)
+                    released_offset = content_scroll()["scroll_offset"]
+                    ipc.move_cursor(bar_x, bar_y + 90)
+                    assert content_scroll()["scroll_offset"] == released_offset, "scrollbar kept dragging after release"
                     page("Audio")
                     ipc.move_cursor(box["x"] + box["width"] - 80, box["y"] + box["height"] - 80)
                     ipc.scroll(0, 600)
@@ -330,6 +350,14 @@ def default_applications(scale):
                     ipc.wait_for_frame()
                 association = (tmp / "config/mimeapps.list").read_text()
                 assert "inode/directory=test-files.desktop" in association, association
+                # Reapply the current choice after another app changes the association.
+                association_path = tmp / "config/mimeapps.list"
+                association_path.write_text(association.replace(
+                    "inode/directory=test-files.desktop", "inode/directory=test-terminal.desktop"))
+                ui.click(ui.scroll_into_view("default_file_manager"), panel="control_center")
+                ipc.key_press("Return")
+                wait(lambda: "inode/directory=test-files.desktop" in association_path.read_text(),
+                     "reselecting the file manager restores the folder association")
                 window = next(w for w in ipc.get_windows() if w.get("app_id") == "rediwm-settings")
                 ipc.close_window(window["id"])
                 ui.wait_absent("control_center")

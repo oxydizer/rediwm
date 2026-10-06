@@ -36,7 +36,7 @@ def run(scale="1"):
         try:
             sock = wait_for(lambda: next(tmp.glob("rediwm-*.sock"), None), "IPC unavailable")
             display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
-            env = dict(os.environ, **env_extra, XDG_RUNTIME_DIR=directory, WAYLAND_DISPLAY=display)
+            env = dict(os.environ, **env_extra, XDG_RUNTIME_DIR=directory, XDG_DATA_HOME=str(tmp / "data"), WAYLAND_DISPLAY=display)
             with IPCClient(sock) as ipc:
                 def key(code, ctrl=False, shift=False, alt=False):
                     mods = ([29] if ctrl else []) + ([42] if shift else []) + ([56] if alt else [])

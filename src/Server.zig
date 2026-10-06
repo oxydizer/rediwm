@@ -377,6 +377,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         loaded.polkit.enable = false;
     }
     ui_theme.global = loaded.theme;
+    ui_theme.taskbar_override = if (loaded.taskbar_theme) |chosen| ui_theme.taskbarTokens(chosen) else null;
     @import("ui").text.setPreferredFamilies(ui_theme.global.font, ui_theme.global.mono_font);
     // Caret timings are process-wide UI-engine state, like the theme, and the
     // panels paint before any input device exists to carry them in.
@@ -419,6 +420,10 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         .start_menu_catalog = catalog,
         .session = session,
         .greeter_mode = greeter,
+    };
+
+    if (!greeter) @import("config_runtime/region.zig").applyTimezone(@import("main.zig").gpa, loaded.region.timezone, environ.getPosix("TZ")) catch |err| {
+        log.warn("could not apply personal timezone: {}", .{err});
     };
 
     // The syncobj global itself is created with the other globals below.
@@ -671,6 +676,7 @@ pub fn applyChildEnvWithToken(server: *Server, map: *child_env.Map, token: ?[]co
     try map.put("PATH", path);
 
     try child_env.apply(map, .{
+        .region = server.config.region,
         .input_method = server.config.input_method.env,
         .wayland_display = server.wl_server_socket_name,
         .ipc_socket = server.ipc_socket_path,

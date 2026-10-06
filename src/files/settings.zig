@@ -15,20 +15,30 @@ pub const ThemeUpdate = struct {
     allocator: std.mem.Allocator,
     region: config.RegionConfig = .{},
 
-    fn init(a: std.mem.Allocator, t: theme.Theme) !ThemeUpdate {
+    fn init(a: std.mem.Allocator, t: theme.Theme, prefs: config.RegionConfig) !ThemeUpdate {
         var value = t;
         value.font = try a.dupe(u8, t.font);
         errdefer a.free(value.font);
         value.mono_font = try a.dupe(u8, t.mono_font);
         errdefer a.free(value.mono_font);
         value.start_button_icon = try a.dupe(u8, t.start_button_icon);
-        return .{ .value = value, .allocator = a };
+        errdefer a.free(value.start_button_icon);
+        var owned = prefs;
+        owned.timezone = try a.dupe(u8, prefs.timezone);
+        errdefer a.free(owned.timezone);
+        owned.language = try a.dupe(u8, prefs.language);
+        errdefer a.free(owned.language);
+        owned.formats = try a.dupe(u8, prefs.formats);
+        return .{ .value = value, .allocator = a, .region = owned };
     }
 
     pub fn deinit(self: ThemeUpdate) void {
         self.allocator.free(self.value.font);
         self.allocator.free(self.value.mono_font);
         self.allocator.free(self.value.start_button_icon);
+        self.allocator.free(self.region.timezone);
+        self.allocator.free(self.region.language);
+        self.allocator.free(self.region.formats);
     }
 
     /// Transfers ownership to the UI thread. Never call from a worker.
@@ -100,6 +110,7 @@ pub const Settings = struct {
         var arena = std.heap.ArenaAllocator.init(a);
         defer arena.deinit();
         var t: theme.Theme = .{};
+        var prefs: config.RegionConfig = .{};
         self.animations = .{};
         self.region = .{};
         for (paths, 0..) |path, i| {
@@ -109,17 +120,21 @@ pub const Settings = struct {
                 self.animations = parseAnimations(bytes);
                 var cfg = config.parse(arena.allocator(), bytes, p) catch null;
                 if (cfg) |*value| {
-                    self.region = value.region;
-                    value.deinit();
+                    defer value.deinit();
+                    prefs = value.region;
+                    prefs.timezone = arena.allocator().dupe(u8, prefs.timezone) catch return null;
+                    prefs.language = arena.allocator().dupe(u8, prefs.language) catch return null;
+                    prefs.formats = arena.allocator().dupe(u8, prefs.formats) catch return null;
                 }
             }
             var next = t;
             theme.overlay(arena.allocator(), &next, bytes) catch continue;
             t = next;
         }
-        var update = ThemeUpdate.init(a, t) catch return null;
-        update.region = self.region;
-        return update;
+        // Settings only retains scalar preferences; returned updates own strings.
+        self.region.clock_24h = prefs.clock_24h;
+        self.region.first_day_of_week = prefs.first_day_of_week;
+        return ThemeUpdate.init(a, t, prefs) catch null;
     }
 };
 
@@ -186,7 +201,7 @@ test "Files follows config edits, theme overrides and file removal" {
     defer update2.deinit();
     try std.testing.expectEqual(@as(f32, 12), update2.value.scrollbar_width);
     try std.testing.expectEqualStrings("Noto Sans", update2.value.font);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &config_path, .data = "[theme]\nscrollbar_width = 4\n[region]\nclock_24h = true\n" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &config_path, .data = "[theme]\nscrollbar_width = 4\n[region]\nclock_24h = true\ntimezone = \"Pacific/Auckland\"\nlanguage = \"C.utf8\"\nformats = \"en_NZ.utf8\"\n" });
     settings.last_second = -1;
     const update3 = settings.poll(a, io).?;
     defer update3.deinit();
@@ -209,6 +224,9 @@ test "Files follows config edits, theme overrides and file removal" {
         try std.testing.expectEqualStrings(time24, formatDateTime(timestamp, &buf, update3.region)[11..]);
     }
     try std.testing.expectEqualStrings("Unavailable", formatDateTime(0, buf[0..4], update3.region));
+    try std.testing.expectEqualStrings("Pacific/Auckland", update3.region.timezone);
+    try std.testing.expectEqualStrings("C.utf8", update3.region.language);
+    try std.testing.expectEqualStrings("en_NZ.utf8", update3.region.formats);
     // Outstanding worker updates retain their strings across later polls.
     try std.testing.expectEqualStrings("Liberation Sans", update1.value.font);
 }

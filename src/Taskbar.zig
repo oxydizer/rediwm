@@ -15,6 +15,7 @@ const wlr = @import("wlroots");
 const col = @import("color.zig");
 
 const c_time = @cImport({
+    @cInclude("locale.h");
     @cInclude("time.h");
 });
 
@@ -192,7 +193,9 @@ audio_volume: f32 = 0,
 audio_muted: bool = false,
 
 clock_time: [16]u8 = [_]u8{0} ** 16,
-clock_date: [16]u8 = [_]u8{0} ** 16,
+clock_date: [128]u8 = [_]u8{0} ** 128,
+clock_locale: c_time.locale_t = null,
+clock_minute: c_time.time_t = 0,
 // Layout and every tick ask for these; shaping them each time showed up in
 // idle profiles. The clock's is dropped when its strings change.
 clock_width: MeasuredWidth = .{},
@@ -289,7 +292,7 @@ const ChipMemo = struct {
             .radius = t.radius,
             .title_size = t.taskbar_title_size,
             .font = t.font,
-            .colors = .{ t.taskbar_surface, t.taskbar_hover, t.surface_hover, t.taskbar_border, t.border_soft, t.window_fg },
+            .colors = .{ ui_theme.taskbar(.taskbar_surface), ui_theme.taskbar(.taskbar_hover), ui_theme.taskbar(.surface_hover), ui_theme.taskbar(.taskbar_border), ui_theme.taskbar(.border_soft), ui_theme.taskbar(.window_fg) },
         };
     }
 };
@@ -384,6 +387,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
         .capture_node = capture_node,
         .battery_node = battery_node,
         .battery_state = battery.read(server.io, gpa),
+        .clock_minute = @divFloor(c_time.time(null), 60),
         .timer = undefined,
     };
     bar.node_data = .{ .role = .{ .taskbar = bar } };
@@ -402,6 +406,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
     bar.refreshStartLogo();
     bar.timer = try server.wl_server.getEventLoop().addTimer(*Taskbar, onTick, bar);
     errdefer bar.timer.remove();
+    bar.updateClockLocale();
     _ = bar.updateClockStrings();
     bar.scheduleClockTick();
     return bar;
@@ -411,6 +416,7 @@ pub fn destroy(bar: *Taskbar) void {
     if (bar.server.tray) |tray_mgr| tray_mgr.closeMenu();
     bar.server.input.detachTaskbar(bar);
     bar.timer.remove();
+    if (bar.clock_locale) |locale| c_time.freelocale(locale);
     if (bar.start_logo) |e| bar.server.iconRelease(e.id);
     for (bar.chips.items) |chip| {
         if (chip.raster) |raster| raster.base.drop();
@@ -442,18 +448,17 @@ pub fn applyBattery(bar: *Taskbar, next: battery.State) void {
 }
 
 fn onTick(bar: *Taskbar) c_int {
-    // Plug events arrive through Server's uevent socket; this catches the
-    // capacity changes firmware does not announce.
-    bar.applyBattery(battery.read(bar.server.io, gpa));
-    if (bar.updateClockStrings()) {
-        bar.clock_dirty = true;
-        bar.markDirty(paint_clock);
-        bar.wlr_output.scheduleFrame();
-        stats.recordTaskbarClockFrameRequest();
+    // Seconds only repaint the clock. Keep expensive sysfs reads and the
+    // calendar on their minute cadence; plug events have their own uevent.
+    const minute = @divFloor(c_time.time(null), 60);
+    if (minute != bar.clock_minute) {
+        bar.clock_minute = minute;
+        bar.applyBattery(battery.read(bar.server.io, gpa));
+        if (Output.fromWlr(bar.wlr_output)) |output| {
+            if (output.calendar) |calendar| calendar.refresh();
+        }
     }
-    if (Output.fromWlr(bar.wlr_output)) |output| {
-        if (output.calendar) |calendar| calendar.refresh();
-    }
+    bar.refreshClock();
     bar.scheduleClockTick();
     return 0;
 }
@@ -476,41 +481,52 @@ pub fn markDirty(bar: *Taskbar, cause: u8) void {
 }
 
 fn scheduleClockTick(bar: *Taskbar) void {
-    var raw: c_time.time_t = c_time.time(null);
-    var tm_storage: c_time.struct_tm = undefined;
-    const tm = c_time.localtime_r(&raw, &tm_storage) orelse {
+    var now: c_time.struct_timespec = undefined;
+    if (c_time.clock_gettime(c_time.CLOCK_REALTIME, &now) != 0) {
         bar.timer.timerUpdate(1000) catch |err| {
-            log.err("scheduleClockTick: localtime failed: {}", .{err});
-        };
-        return;
-    };
-
-    const tm_sec = tm.*.tm_sec;
-    if (tm_sec < 0 or tm_sec > 59) {
-        bar.timer.timerUpdate(1000) catch |err| {
-            log.err("scheduleClockTick: invalid tm_sec {}: {}", .{ tm_sec, err });
+            log.err("scheduleClockTick: clock_gettime failed: {}", .{err});
         };
         return;
     }
-
-    // Keep updates aligned to the displayed minute boundary to avoid one-second
-    // frame requests when the shown strings did not change. Battery capacity
-    // shares this wakeup instead of adding its own.
-    const delay_ms: c_int = @intCast((60 - tm_sec) * 1000 + 25);
+    // Wake just after the next displayed boundary, without accumulating drift.
+    // A hidden clock only needs the shared minute wake for battery/calendar.
+    const interval: c_time.time_t = if (bar.server.config.region.clock_show_seconds and bar.itemShown(.clock)) 1 else 60;
+    const delay_ms: c_int = @intCast((interval - @mod(now.tv_sec, interval)) * 1000 - @divTrunc(now.tv_nsec, 1_000_000) + 25);
     bar.timer.timerUpdate(delay_ms) catch |err| {
         log.err("scheduleClockTick: could not reschedule clock timer: {}", .{err});
     };
 }
 
-pub fn refreshClock(bar: *Taskbar) void {
+fn updateClockLocale(bar: *Taskbar) void {
+    const name = gpa.dupeZ(u8, bar.server.config.region.formats) catch return;
+    defer gpa.free(name);
+    // Keep a private locale: changing the process locale would affect workers.
+    const locale = c_time.newlocale(c_time.LC_TIME_MASK, name, null);
+    if (bar.clock_locale) |old| c_time.freelocale(old);
+    bar.clock_locale = locale;
+}
+
+pub fn refreshClockSettings(bar: *Taskbar) void {
+    bar.updateClockLocale();
+    bar.refreshClock();
+    bar.scheduleClockTick();
+}
+
+fn refreshClock(bar: *Taskbar) void {
+    const previous_width = bar.clockColumnWidth();
     if (!bar.updateClockStrings()) return;
     bar.clock_dirty = true;
-    // A wider/narrower clock moves every item to its left, including the tray.
-    bar.tray_dirty = .{ true, true };
-    bar.capture_dirty = true;
-    const chips_changed = bar.reconcile(nowMs());
-    bar.markDirty(paint_clock | paint_tray | paint_capture | (if (chips_changed) paint_chips else @as(u8, 0)));
+    var causes: u8 = paint_clock;
+    if (previous_width != bar.clockColumnWidth()) {
+        // A wider/narrower clock moves every item to its left, including the tray.
+        bar.tray_dirty = .{ true, true };
+        bar.capture_dirty = true;
+        const chips_changed = bar.reconcile(nowMs());
+        causes |= paint_tray | paint_capture | (if (chips_changed) paint_chips else @as(u8, 0));
+    }
+    bar.markDirty(causes);
     bar.wlr_output.scheduleFrame();
+    stats.recordTaskbarClockFrameRequest();
 }
 
 fn updateClockStrings(bar: *Taskbar) bool {
@@ -519,9 +535,16 @@ fn updateClockStrings(bar: *Taskbar) bool {
     const tm = c_time.localtime_r(&raw, &tm_storage) orelse return false;
 
     var next_time: [16]u8 = undefined;
-    var next_date: [16]u8 = undefined;
-    if (c_time.strftime(&next_time, next_time.len, bar.server.config.region.timeFormat(), tm) == 0) return false;
-    if (c_time.strftime(&next_date, next_date.len, "%a, %b %-d", tm) == 0) return false;
+    var next_date: [128]u8 = @splat(0);
+    const prefs = bar.server.config.region;
+    if (c_time.strftime(&next_time, next_time.len, prefs.taskbarTimeFormat(), tm) == 0) return false;
+    if (prefs.clock_show_day) {
+        const len = if (bar.clock_locale) |locale|
+            c_time.strftime_l(&next_date, next_date.len, "%x", tm, locale)
+        else
+            c_time.strftime(&next_date, next_date.len, "%x", tm);
+        if (len == 0) return false;
+    }
 
     const prev_time = std.mem.sliceTo(&bar.clock_time, 0);
     const prev_date = std.mem.sliceTo(&bar.clock_date, 0);
@@ -560,6 +583,7 @@ pub fn relayout(bar: *Taskbar, output_box: wlr.Box) void {
     bar.battery_dirty = true;
     for (bar.chips.items) |*chip| chip.dirty = true;
     bar.render(now_ms, paint_start | paint_chips | paint_tray | paint_clock);
+    bar.scheduleClockTick();
     bar.dirty = false;
     bar.paint_causes = 0;
     if (Output.fromWlr(bar.wlr_output)) |output| if (output.wifi_popup) |popup| {
@@ -589,10 +613,10 @@ fn clockColumnWidth(bar: *Taskbar) f32 {
     if (bar.clock_width.get(scale)) |width| return width;
     const time_str = std.mem.trimStart(u8, std.mem.sliceTo(&bar.clock_time, 0), " ");
     const date_str = std.mem.sliceTo(&bar.clock_date, 0);
-    // Reserve room for the widest usual clock/date to keep the tray stable.
+    // Fit the displayed lines so unused column space cannot widen the left gap.
     const time_w = text.measureWidth(time_str, .manrope, 14, scale) catch null;
     const date_w = text.measureWidth(date_str, .manrope, 11, scale) catch null;
-    const width: f32 = @floatFromInt(@max(80, @max(time_w orelse 0, date_w orelse 0) + 1));
+    const width: f32 = @floatFromInt(@max(time_w orelse 0, date_w orelse 0) + 1);
     // A failed measurement is retried next time rather than remembered.
     if (time_w == null or date_w == null) return width;
     return bar.clock_width.put(scale, width);
@@ -1191,38 +1215,38 @@ const Color = struct {
 
     // Exact CSS tints; glass.c supplies the filtered backdrop underneath.
     fn bar_fill() Color {
-        return fromRgba(ui_theme.global.taskbar_bg);
+        return fromRgba(ui_theme.taskbar(.taskbar_bg));
     }
     fn hairline() Color {
-        return fromRgba(ui_theme.global.border_soft);
+        return fromRgba(ui_theme.taskbar(.border_soft));
     }
     fn chip_idle() Color {
-        return fromRgba(ui_theme.global.taskbar_surface);
+        return fromRgba(ui_theme.taskbar(.taskbar_surface));
     }
     fn hover_fill() Color {
-        return fromRgba(ui_theme.global.surface_hover);
+        return fromRgba(ui_theme.taskbar(.surface_hover));
     }
     fn active_fill() Color {
-        return fromRgba(ui_theme.global.taskbar_hover).scaled(2.8);
+        return fromRgba(ui_theme.taskbar(.taskbar_hover)).scaled(2.8);
     }
     pub fn fromRgba(c: [4]f32) Color {
         return .{ .r = c[0], .g = c[1], .b = c[2], .a = c[3] };
     }
     fn chip_title_idle() text.Color {
-        return textColor(fromRgba(ui_theme.global.window_fg));
+        return textColor(fromRgba(ui_theme.taskbar(.window_fg)));
     }
     fn tray_icon() Color {
-        return fromRgba(ui_theme.global.window_fg);
+        return fromRgba(ui_theme.taskbar(.window_fg));
     }
     fn tray_icon_hover() Color {
-        return fromRgba(ui_theme.global.window_fg);
+        return fromRgba(ui_theme.taskbar(.window_fg));
     }
     const glyph = Color{ .r = 1, .g = 1, .b = 1, .a = 0.96 };
     fn clock_time() text.Color {
-        return textColor(fromRgba(ui_theme.global.window_fg));
+        return textColor(fromRgba(ui_theme.taskbar(.window_fg)));
     }
     fn clock_date() text.Color {
-        return textColor(fromRgba(ui_theme.global.window_dim));
+        return textColor(fromRgba(ui_theme.taskbar(.window_dim)));
     }
 
     pub fn over(source: Color, destination: Color) Color {
@@ -1523,7 +1547,7 @@ fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_y: i
     if (part == .tray) {
         const i = part.tray;
         const color = if (i == @intFromEnum(TrayKind.volume) and bar.audio_muted)
-            Color.fromRgba(ui_theme.global.danger)
+            Color.fromRgba(ui_theme.taskbar(.danger))
         else
             Color.lerp(Color.tray_icon(), Color.tray_icon_hover(), hover);
         const size = 20 * press;
@@ -1568,7 +1592,7 @@ fn paintPartPixel(bar: *Taskbar, sampled_start: start_button.Paint, hover: f32, 
                 if (ix >= 0 and ix < icon.size and iy >= 0 and iy < icon.size) {
                     var sample = Color.fromPremultiplied(icon.pixels[@intCast(iy * icon.size + ix)]);
                     if (ui_theme.global.start_button_icon.len == 0) {
-                        if (ui_theme.global.start_button_logo_color) |tint| sample = Color.fromRgba(tint).scaled(sample.a);
+                        if (ui_theme.taskbar(.start_button_logo_color)) |tint| sample = Color.fromRgba(tint).scaled(sample.a);
                     }
                     color = sample.over(color);
                 }
@@ -1592,7 +1616,7 @@ fn paintBatteryPixel(bar: *Taskbar, x: f32, py: f32, scale: f32, progress: f32) 
         .plugged = bar.battery_state.plugged,
         .shimmer = progress,
         .height = trh,
-    }, battery_badge.Colors.of(ui_theme.global));
+    }, battery_badge.Colors.taskbar());
     return .{ .r = c.r, .g = c.g, .b = c.b, .a = c.a };
 }
 
@@ -1605,7 +1629,7 @@ fn paintCapturePixel(bar: *Taskbar, hover: f32, press: f32, tx: f32, tw: f32, px
     var color = Color{ .r = 0, .g = 0, .b = 0, .a = 0 };
     const cov = edgeCoverage(chrome.sdRoundedBox(lx, ly, tx, tray_y, tw, @floatFromInt(trayHit()), tray_radius), scale);
     if (cov > 0) {
-        const fill = Color.lerp(Color.fromRgba(ui_theme.global.danger), Color.fromRgba(ui_theme.global.window_close_hover), hover);
+        const fill = Color.lerp(Color.fromRgba(ui_theme.taskbar(.danger)), Color.fromRgba(ui_theme.taskbar(.window_close_hover)), hover);
         color = fill.scaled(cov).over(color);
     }
     return color;
@@ -1623,7 +1647,7 @@ const ChipPaint = struct {
         const active = chip.toplevel == bar.server.world.toplevels.first();
         const hover = chip.hover.value(now_ms);
         const press_strength = std.math.clamp((1 - chip.press.value(now_ms)) / (1 - press_scale), 0, 1);
-        const style = @import("taskbar/chip_style.zig").look(Color, active, chip.toplevel.needs_attention, hover, press_strength);
+        const style = @import("taskbar/chip_style.zig").lookFrom(Color, .taskbar, active, chip.toplevel.needs_attention, hover, press_strength);
         var paint: ChipPaint = .{
             .chip = chip,
             .x = chip.renderX(now_ms),
@@ -1837,22 +1861,20 @@ fn drawPartText(bar: *Taskbar, now_ms: i64, part: Part, buf: *BarBuffer, ox: i32
         .start => if (bar.start_logo == null) {
             const btn_size = buttonSize();
             const w = text.measureWidth("R", .mono_bold, start_button.glyph_size_px, scale) catch 0;
-            drawCenteredText(buf.pixels, buf.width, buf.height, local(startButtonLeft() + @divTrunc(btn_size - w, 2), @intFromFloat(@round(start_button.top(bar.box.height, btn_size))), btn_size, btn_size, ox, oy), "R", textColor(Color.fromRgba(ui_theme.global.start_button_logo_color orelse .{ 1, 1, 1, 1 })), scale, .mono_bold, start_button.glyph_size_px) catch {};
+            drawCenteredText(buf.pixels, buf.width, buf.height, local(startButtonLeft() + @divTrunc(btn_size - w, 2), @intFromFloat(@round(start_button.top(bar.box.height, btn_size))), btn_size, btn_size, ox, oy), "R", textColor(Color.fromRgba(ui_theme.taskbar(.start_button_logo_color) orelse .{ 1, 1, 1, 1 })), scale, .mono_bold, start_button.glyph_size_px) catch {};
         },
         .clock => {
             const time = std.mem.trimStart(u8, std.mem.sliceTo(&bar.clock_time, 0), " ");
             const date = std.mem.sliceTo(&bar.clock_date, 0);
             const tw = text.measureWidth(time, .manrope, 14, scale) catch 0;
             const dw = text.measureWidth(date, .manrope, 11, scale) catch 0;
-            // Keep both lines left-aligned, with the wider line at the column's
-            // right edge rather than leaving the reserved width empty there.
-            const right: i32 = @intFromFloat(@round(bar.clockX() + bar.clockColumnWidth()));
-            const left = right - @max(tw, dw) - 1;
-            const clock_h: i32 = 37;
+            const left: i32 = @intFromFloat(@round(bar.clockX()));
+            const width: i32 = @intFromFloat(bar.clockColumnWidth());
+            const clock_h: i32 = if (date.len == 0) 20 else 37;
             const time_y = @divTrunc(bar.box.height - clock_h, 2);
             const date_y = time_y + 21;
-            drawCenteredText(buf.pixels, buf.width, buf.height, local(left, time_y, tw + 1, 20, ox, oy), time, Color.clock_time(), scale, .manrope, 14) catch {};
-            drawCenteredText(buf.pixels, buf.width, buf.height, local(left, date_y, dw + 1, 16, ox, oy), date, Color.clock_date(), scale, .manrope, 11) catch {};
+            drawCenteredText(buf.pixels, buf.width, buf.height, local(left + @divTrunc(width - tw - 1, 2), time_y, tw + 1, 20, ox, oy), time, Color.clock_time(), scale, .manrope, 14) catch {};
+            if (date.len != 0) drawCenteredText(buf.pixels, buf.width, buf.height, local(left + @divTrunc(width - dw - 1, 2), date_y, dw + 1, 16, ox, oy), date, Color.clock_date(), scale, .manrope, 11) catch {};
         },
         .chip => |chip| {
             const cx: i32 = @intFromFloat(@round(chip.renderX(now_ms)));

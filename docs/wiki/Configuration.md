@@ -36,9 +36,9 @@ built-in default. Appearance preserves these overrides when it saves.
 
 ## Region & Language
 
-Settings → Region & Language shows the login session's language, regional
-formats and time zone. These system settings are read-only; RediWM's interface
-currently uses English. Format examples use the session's locale categories.
+Settings → Region & Language lets you choose a personal language, regional
+formats and time zone. Empty choices inherit the login environment; system
+defaults are unchanged. RediWM's interface currently uses English.
 
 Personal clock and calendar preferences apply immediately and are saved in
 `[region]`:
@@ -46,10 +46,16 @@ Personal clock and calendar preferences apply immediately and are saved in
 ```toml
 [region]
 clock_24h = false
+clock_show_seconds = false
+clock_show_day = true
 first_day_of_week = "sunday"
 ```
 
 `clock_24h` applies to the taskbar, calendar and built-in lock screen.
+`clock_show_seconds` adds seconds to the taskbar time. `clock_show_day` shows
+the date line beneath it, using the selected regional format (`formats`, or
+the inherited locale). Both lines are centered; hiding the date centers the
+time vertically. These two options apply only to the taskbar clock.
 `first_day_of_week` accepts any lowercase weekday name, and changes both the
 weekday headings and date positions in the taskbar calendar. Existing configs
 keep 12-hour time and Sunday first until changed.

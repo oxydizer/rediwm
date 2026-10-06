@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import zipfile
@@ -25,6 +26,33 @@ def run():
         (home / "alpha-file.txt").write_text("small")
         (home / "zeta-file.txt").write_text("large" * 100)
         (home / ".hidden-file").write_text("hidden")
+        data = tmp / "data"
+        data.mkdir()
+        recent_file = data / "recently-used.xbel"
+        recent_old = home / "Research" / "a older file.bin"
+        recent_new = home / "Work" / "z résumé.bin"
+        recent_old.write_text("older")
+        recent_new.write_text("newer")
+
+        def write_recent(newest=recent_new):
+            entries = [(recent_old.as_uri(), "2026-01-01T00:00:00Z"),
+                       (recent_new.as_uri(), "2026-02-01T00:00:00Z"),
+                       ((home / "gone.bin").as_uri(), "2026-03-01T00:00:00Z"),
+                       ("file://remote-host/tmp/remote.bin", "2026-04-01T00:00:00Z")]
+            body = "".join(
+                '<bookmark href="' + uri + '" visited="' +
+                ("2026-05-01T00:00:00Z" if uri == newest.as_uri() else date) +
+                '" modified="' + date + '"><info><metadata owner="http://freedesktop.org">'
+                '<mime:mime-type type="application/octet-stream"/>'
+                '<bookmark:applications><bookmark:application name="Fixture" exec="gio open %u" '
+                'modified="' + date + '" count="1"/></bookmark:applications>'
+                '</metadata></info></bookmark>' for uri, date in entries)
+            replacement = recent_file.with_suffix(".tmp")
+            replacement.write_text('<xbel version="1.0" xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks" '
+                                   'xmlns:mime="http://www.freedesktop.org/standards/shared-mime-info">' + body + '</xbel>')
+            replacement.replace(recent_file)
+
+        write_recent()
         helpers = tmp / "bin"
         helpers.mkdir()
         marker = tmp / "opened"
@@ -144,6 +172,42 @@ def run():
                 click(70, 140)
                 title("Home")
 
+                # Recent below Trash uses shared history, newest opened first,
+                # and opens real paths (including spaces and Unicode).
+                click(70, 210)
+                title("Recent")
+                if "--places-only" in sys.argv and (preview := os.environ.get("REDIWM_FILES_PREVIEW")):
+                    time.sleep(.3)
+                    preview = Path(preview).resolve()
+                    preview.unlink(missing_ok=True)
+                    action('screenshot', {"path": str(preview)})
+                key(102)  # Home: first item
+                key(28)
+                wait_for(lambda: marker.exists() and marker.read_text() == str(recent_new),
+                         "Recent did not open the newest local file")
+                marker.unlink()
+                wait_for(lambda: "RediWM Files" in recent_file.read_text(),
+                         "Files did not record the open in shared history")
+                key(106, alt=True)  # Recent has no parent directory.
+                title("Recent")
+                key(38, ctrl=True)  # Ctrl+L, Enter keeps the virtual location.
+                key(28)
+                title("Recent")
+                key(49, ctrl=True)  # Ctrl+N cannot create inside a virtual location.
+                title("Recent")
+                click(70, 210, 273)
+                key(28)  # The Recent menu offers Open only.
+                title("Recent")
+                write_recent(recent_old)
+                time.sleep(.3)
+                key(102)
+                key(28)
+                wait_for(lambda: marker.exists() and marker.read_text() == str(recent_old),
+                         "Recent did not refresh after an external history replacement")
+                marker.unlink()
+                click(70, 140)
+                title("Home")
+
                 # Toolbar New popup is actionable with the keyboard.
                 click(50, 80)
                 key(28)
@@ -226,18 +290,18 @@ def run():
                 key(102)
                 time.sleep(.2)
                 # Sidebar context menus target the clicked place without navigating first.
-                click(70, 270, 273)  # Documents
+                click(70, 305, 273)  # Documents
                 title("Home")
                 key(28)  # Open
                 title("Documents")
-                click(70, 270, 273)
+                click(70, 305, 273)
                 key(108)
                 key(28)  # Unpin
                 title("Documents")  # Unpin does not navigate or delete the folder.
                 assert (home / "Documents").is_dir()
                 saved = (tmp / "state/rediwm/files-view").read_bytes()
                 assert saved[0] == ord("3") and saved[3] & 2 and saved[4] == 1, saved
-                click(70, 270)  # Downloads now occupies Documents' old row.
+                click(70, 305)  # Downloads now occupies Documents' old row.
                 title("Downloads")
                 click(70, 140, 273)  # Home has Open and Properties, without Unpin.
                 key(108)
@@ -247,6 +311,10 @@ def run():
                 click(70, 140, 273)
                 key(28)
                 title("Home")
+
+                print("PASS: Files navigation, Recent, toolbar and Places controls", flush=True)
+                if "--places-only" in sys.argv:
+                    return
 
                 # Repository discovery switches a grid preference to Name/Git.
                 # Changes remain live across index updates and branch switches.

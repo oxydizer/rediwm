@@ -13,6 +13,7 @@ pub const session_type = "wayland";
 pub const InputMethod = @import("config").types.InputMethod;
 
 pub const Spec = struct {
+    region: @import("config").loader.RegionConfig = .{},
     input_method: InputMethod = .none,
     wayland_display: ?[]const u8 = null,
     ipc_socket: ?[]const u8 = null,
@@ -29,6 +30,7 @@ pub const Spec = struct {
 };
 
 pub fn apply(map: *Map, spec: Spec) !void {
+    try applyRegion(map, spec.region);
     // Private supervisor authority must never escape to descendant launches.
     inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY" }) |key| _ = map.swapRemove(key);
     switch (spec.input_method) {
@@ -71,6 +73,30 @@ pub fn apply(map: *Map, spec: Spec) !void {
     } else {
         stripHostX11(map);
     }
+}
+
+pub const format_categories = [_][]const u8{ "LC_TIME", "LC_NUMERIC", "LC_MONETARY", "LC_MEASUREMENT", "LC_PAPER", "LC_ADDRESS", "LC_TELEPHONE", "LC_NAME" };
+
+pub fn applyRegion(map: *Map, prefs: @import("config").loader.RegionConfig) !void {
+    if (prefs.timezone.len != 0) try map.put("TZ", prefs.timezone);
+    if (prefs.language.len == 0 and prefs.formats.len == 0) return;
+    // Preserve LC_ALL's inherited categories before removing its precedence.
+    if (map.get("LC_ALL")) |all| {
+        const copy = try map.allocator.dupe(u8, all);
+        defer map.allocator.free(copy);
+        if (copy.len != 0) {
+            inline for (.{ "LC_MESSAGES", "LC_CTYPE", "LC_COLLATE", "LC_TIME", "LC_NUMERIC", "LC_MONETARY", "LC_MEASUREMENT", "LC_PAPER", "LC_ADDRESS", "LC_TELEPHONE", "LC_NAME", "LC_IDENTIFICATION" }) |key| try map.put(key, copy);
+        }
+        _ = map.swapRemove("LC_ALL");
+    }
+    if (prefs.language.len != 0) {
+        try map.put("LANG", prefs.language);
+        try map.put("LC_MESSAGES", prefs.language);
+        try map.put("LC_CTYPE", prefs.language);
+        // gettext's LANGUAGE would otherwise override LC_MESSAGES.
+        _ = map.swapRemove("LANGUAGE");
+    }
+    for (format_categories) |key| if (prefs.formats.len != 0) try map.put(key, prefs.formats);
 }
 
 fn stripHostX11(map: *Map) void {
@@ -139,6 +165,17 @@ test "child env overwrites a host XDG_CURRENT_DESKTOP" {
     try apply(&map, .{ .wayland_display = "wayland-1" });
     try std.testing.expectEqualStrings(desktop_name, map.get("XDG_CURRENT_DESKTOP").?);
     try std.testing.expectEqualStrings(session_type, map.get("XDG_SESSION_TYPE").?);
+    try map.put("LC_ALL", "en_US.utf8");
+    try map.put("LANGUAGE", "de:fr");
+    try apply(&map, .{ .region = .{ .timezone = "Pacific/Auckland", .language = "C.utf8", .formats = "en_NZ.utf8" } });
+    try std.testing.expect(map.get("LC_ALL") == null);
+    try std.testing.expect(map.get("LANGUAGE") == null);
+    try std.testing.expectEqualStrings("C.utf8", map.get("LANG").?);
+    try std.testing.expectEqualStrings("C.utf8", map.get("LC_MESSAGES").?);
+    try std.testing.expectEqualStrings("C.utf8", map.get("LC_CTYPE").?);
+    try std.testing.expectEqualStrings("en_US.utf8", map.get("LC_COLLATE").?);
+    for (format_categories) |key| try std.testing.expectEqualStrings("en_NZ.utf8", map.get(key).?);
+    try std.testing.expectEqualStrings("Pacific/Auckland", map.get("TZ").?);
 }
 
 test "activation_token sets XDG_ACTIVATION_TOKEN and DESKTOP_STARTUP_ID" {

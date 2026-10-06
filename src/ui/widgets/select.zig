@@ -64,7 +64,7 @@ fn reveal(w: *Widget) void {
 pub fn commit(w: *Widget, index: usize) void {
     const d = &w.kind.select;
     if (d.disabled or index >= d.labels.len or std.mem.indexOfScalar(usize, d.disabled_options, index) != null) return;
-    const changed = d.selected == null or d.selected.? != index;
+    const changed = d.notify_on_reselect or d.selected == null or d.selected.? != index;
     const callback = d.on_change;
     const owner = d.owner;
     const id = d.id;

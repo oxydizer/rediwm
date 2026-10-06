@@ -39,6 +39,8 @@ pub const Options = struct {
     /// lock's Power and Restart.
     stacked: bool = false,
     alignment: enum { center, left } = .center,
+    /// Override for chrome's tab navigation buttons, which use the ghost look.
+    radius: ?f32 = null,
 };
 
 pub const State = struct {
@@ -132,7 +134,7 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
     const border_w: f32 = if (ring) 2 else if (opts.variant == .secondary) 1 else 0;
     if (bg[3] > 0 or border_w > 0) r.fillRect(box.x, box.y, box.w, box.h, .{
         .color = bg,
-        .radius = if (opts.variant == .chrome) chrome.control_radius else m.radius,
+        .radius = opts.radius orelse if (opts.variant == .chrome) chrome.cornerRadius(t.chrome_round_buttons, box.w, box.h, chrome.control_radius) else m.radius,
         .border_width = border_w,
         .border_color = if (ring) t.controlFocusColor() else if (hovered) t.border else t.border_soft,
     });
@@ -333,5 +335,13 @@ test "ghost and chrome buttons draw nothing until hovered" {
     paint(&r, box, .{ .variant = .chrome, .icon = .close, .icon_scale = 0.01 }, .{});
     try std.testing.expectEqual(@as(u32, 0), pixels[5 * 40 + 20]);
     paint(&r, box, .{ .variant = .chrome, .icon = .close, .icon_scale = 0.01 }, .{ .pointer = .hover });
+    try std.testing.expectEqual(@as(u32, 217), pixels[5 * 40 + 20] >> 24);
+    try std.testing.expect(pixels[2 * 40 + 2] >> 24 > 0);
+    @memset(&pixels, 0);
+    var t = theme.global;
+    t.chrome_round_buttons = true;
+    r.palette = t;
+    paint(&r, box, .{ .variant = .chrome, .icon = .close, .icon_scale = 0.01 }, .{ .pointer = .hover });
+    try std.testing.expectEqual(@as(u32, 0), pixels[2 * 40 + 2]);
     try std.testing.expectEqual(@as(u32, 217), pixels[5 * 40 + 20] >> 24);
 }

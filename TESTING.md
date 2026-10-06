@@ -37,6 +37,8 @@ compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
   layout autosave and saved window sizes.
 - Files lists the host's removable and external disks from UDisks2, so every
   Files-launching suite sets `REDIWM_FILES_DEVICES=0`. Do the same in new ones.
+- Files records opened files in shared recent history; set a scratch
+  `XDG_DATA_HOME` in suites that open files so they never update the host's history.
 - `REDIWM_TEST_RENDERER=gles2`: GPU rendering (needs a render node; pick one
   with `WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128` on multi-GPU machines).
   GLES2 frees CPU scene buffers after upload, so `DumpBuffer` checks run on
@@ -178,7 +180,8 @@ a JSON result on stdout.
 **Desktop, Files, Images**: `desktop_icons.py`, `desktop_damage.py`,
 `files_browser.py` (file-path selection; with `REDIWM_FORCE_DBUS=1` on a private
 `dbus-run-session` bus, also checks `FileManager1.ShowItems`), `files_controls.py`, `files_decoration.py`,
-`files_thumbnails.py` (draws real pictures and reads thumbnail pixels back: shape,
+`files_controls.py --places-only` isolates navigation, Recent history and sidebar
+controls from the Git checks. `files_thumbnails.py` (draws real pictures and reads thumbnail pixels back: shape,
 colour, EXIF rotation, the shared freedesktop cache read and write, a 240-picture
 folder, the `REDIWM_FILES_THUMBNAILS=0` switch and idle wakeups; it sets a scratch
 `XDG_CACHE_HOME`), `files_fixes.py` (wl-clipboard), `files_associations.py` (private MIME/app
@@ -193,9 +196,11 @@ back on drop or Escape; also camera zoom, the setting off and nothing to uncover
 themed cursor pixels, live theme reload and client cursor serials).
 
 **Text editor**: `zig build test-editor` (document history, Unicode boundaries,
-file classification and safe saving), `python3 tests/editor.py` (Files Space,
-tab reuse and activation, typing, undo/redo, clipboard, Save As, unsaved-close
-prompts and external-change protection). `python3 tests/editor_visuals.py` checks
+line segmentation and folding, the scrolling view, file classification, loading
+and safe saving), `python3 tests/editor.py` (Files Space, tab reuse and
+activation, typing, undo/redo, clipboard, Save As, unsaved-close prompts,
+external-change protection, and a 46 MiB file opened, edited at its end and
+saved exactly). `python3 tests/editor_visuals.py` checks
 caret blinking and idle wakeups, and title glyph dimensions across resizes
 (`REDIWM_EDITOR_DRAG=1` exercises pointer resizing). Supports `REDIWM_TEST_SCALE`,
 `REDIWM_TEST_RENDERER`, and `REDIWM_EDITOR_PREVIEW=/tmp/editor.png`.

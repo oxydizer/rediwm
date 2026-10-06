@@ -30,16 +30,26 @@ def run():
         (browse_dir / 'sample.txt').write_text('hello world')
         (browse_dir / '.hidden_file').write_text('secret')
 
-        # Mock GIO opening and trashing in helper bin
+        # Use a private default application for opening, and mock GIO trash.
         helpers = tmp / 'bin'
         helpers.mkdir()
         opened_marker = tmp / 'opened-file'
         trash_marker = tmp / 'trashed-files'
+        opener = helpers / 'record-open'
+        opener.write_text(f'#!/bin/sh\nprintf "%s" "$1" > "{opened_marker}"\n')
+        opener.chmod(0o755)
+        apps = tmp / 'data/applications'
+        apps.mkdir(parents=True)
+        (apps / 'rediwm-test-opener.desktop').write_text(
+            '[Desktop Entry]\nType=Application\nName=Test Opener\n'
+            f'Exec={opener} %f\nMimeType=text/plain;\n')
+        config = tmp / 'config'
+        config.mkdir()
+        (config / 'mimeapps.list').write_text(
+            '[Default Applications]\ntext/plain=rediwm-test-opener.desktop;\n')
         gio_helper = helpers / 'gio'
         gio_helper.write_text(f'''#!/bin/sh
-if [ "$1" = "open" ]; then
-    printf "%s" "$2" > "{opened_marker}"
-elif [ "$1" = "trash" ]; then
+if [ "$1" = "trash" ]; then
     shift
     while [ "$1" != "" ]; do
         if [ "$1" != "--" ]; then
@@ -56,6 +66,8 @@ fi
             os.environ,
             XDG_RUNTIME_DIR=str(tmp),
             XDG_STATE_HOME=str(tmp / "state"),
+            XDG_DATA_HOME=str(tmp / "data"),
+            XDG_CONFIG_HOME=str(config),
             WLR_BACKENDS='headless', REDIWM_FILES_DEVICES='0',
             REDIWM_IPC_AUTOMATION='1',
             WLR_HEADLESS_OUTPUTS='1',
@@ -164,7 +176,7 @@ fi
 
             # Back restores the subfolder selection; explicitly start at the first item.
             send_key(102)
-            # Navigate Right twice to reach sample.txt, then Enter to open with gio open
+            # Navigate Right twice to reach sample.txt, then Enter to open it.
             for _ in range(2):
                 for pressed in (True, False):
                     action('key', {'keycode': 106, 'pressed': pressed})
@@ -174,10 +186,10 @@ fi
                 action('key', {'keycode': 28, 'pressed': pressed})
             time.sleep(0.3)
 
-            wait_for(opened_marker.exists, 'File was not opened via gio open')
+            wait_for(opened_marker.exists, 'File was not opened with its MIME default')
             opened_path = opened_marker.read_text().strip()
             assert opened_path == str(browse_dir / 'sample.txt'), f"Unexpected opened file: {opened_path}"
-            print(f"Verified opening file via gio open: '{opened_path}'")
+            print(f"Verified opening file with its MIME default: '{opened_path}'")
 
             # Test inotify auto-refresh: create dynamic.txt in browse_dir
             dynamic_file = browse_dir / 'dynamic.txt'

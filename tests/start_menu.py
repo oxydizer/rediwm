@@ -69,6 +69,26 @@ def run():
                 assert widget_tree.get("panel") == "start_menu", widget_tree
                 assert len(widget_tree.get("widgets", [])) > 0, "no widgets in start_menu"
 
+                def viewport():
+                    return next(w for w in client.get_widget_tree("start_menu")["widgets"] if w["role"] == "scroll_container")
+
+                area = viewport()["global_box"]
+                assert viewport()["content_size"] > area["height"]
+                bar_x = area["x"] + area["width"] - 7
+                bar_y = area["y"] + 8
+                outside_x = area["x"] + area["width"] + 100
+                client.move_cursor(bar_x, bar_y)
+                client.pointer_button(272, True)
+                client.move_cursor(outside_x, bar_y + 30)
+                first_offset = viewport()["scroll_offset"]
+                assert first_offset > 0, "scrollbar stopped outside the Start menu"
+                client.move_cursor(outside_x, bar_y + 60)
+                assert viewport()["scroll_offset"] > first_offset
+                client.pointer_button(272, False)
+                released_offset = viewport()["scroll_offset"]
+                client.move_cursor(bar_x, bar_y + 90)
+                assert viewport()["scroll_offset"] == released_offset, "scrollbar kept dragging after release"
+
                 # Timer repeats must retain the original keyboard text after
                 # the key event's temporary UTF-8 buffer has been reused.
                 client.key(33, True)  # Hold 'f' across several repeat ticks.

@@ -1,6 +1,6 @@
-//! Appearance's "Choose folder": runs Files in its folder-chooser mode (the
+//! Settings' file and folder pickers: runs Files in chooser mode (the
 //! same process and JSON contract the FileChooser portal uses) and hands the
-//! picked folder to a callback. The event loop only reads the child's pipe.
+//! picked path to a callback. The event loop only reads the child's pipe.
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const Server = @import("../Server.zig");
@@ -14,7 +14,7 @@ const c = @cImport({
 });
 
 const a = std.heap.c_allocator;
-/// A folder path in JSON; anything larger is not a result.
+/// A path in JSON; anything larger is not a result.
 const max_output = 64 * 1024;
 
 const Picker = struct {
@@ -36,10 +36,11 @@ const Picker = struct {
         a.destroy(self);
     }
 
-    /// Ends the chooser and reports its outcome: the folder, or null when it
+    /// Ends the chooser and reports its outcome: the path, or null when it
     /// was cancelled, failed or the session locked meanwhile.
     fn end(self: *Picker, path: ?[]const u8) void {
         defer self.destroy();
+        if (active == self) active = null;
         self.on_done(self.owner, path);
     }
 
@@ -93,11 +94,14 @@ pub fn cancel() void {
 /// Opens the chooser at `start_dir`; `on_done` gets the chosen folder's path
 /// (valid only during the call), or null. One chooser at a time.
 pub fn start(server: *Server, title: []const u8, start_dir: []const u8, owner: ?*anyopaque, on_done: *const fn (?*anyopaque, ?[]const u8) void) !void {
+    return startWithOptions(server, .{ .mode = .folder, .title = title, .accept_label = "Use folder", .current_folder = start_dir }, owner, on_done);
+}
+
+pub fn startWithOptions(server: *Server, opts: chooser.Options, owner: ?*anyopaque, on_done: *const fn (?*anyopaque, ?[]const u8) void) !void {
     if (active != null or server.locker != null or server.greeter_mode) return error.Busy;
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const opts: chooser.Options = .{ .mode = .folder, .title = title, .accept_label = "Use folder", .current_folder = start_dir };
     const bytes = try std.json.Stringify.valueAlloc(alloc, opts, .{});
     const input = c.memfd_create("rediwm-folder-picker", c.MFD_CLOEXEC);
     if (input < 0) return error.CreateFailed;
@@ -112,6 +116,7 @@ pub fn start(server: *Server, title: []const u8, start_dir: []const u8, owner: ?
     const executable = if (n > 0 and n < pathbuf.len) try std.fmt.allocPrint(alloc, "{s}/rediwm-files", .{std.fs.path.dirname(pathbuf[0..@intCast(n)]).?}) else "rediwm-files";
     var child = try std.process.spawn(server.io, .{ .argv = &.{ executable, "--chooser-stdin" }, .environ_map = &env, .stdin = .{ .file = .{ .handle = input, .flags = .{ .nonblocking = false } } }, .stdout = .pipe });
     errdefer child.kill(server.io);
+    @import("../session/app_scope.zig").place(server, child.id.?, "file-chooser");
     const pidfd_result = std.os.linux.pidfd_open(child.id.?, 0);
     if (std.os.linux.errno(pidfd_result) != .SUCCESS) return error.PidfdFailed;
     const pidfd: c_int = @intCast(pidfd_result);

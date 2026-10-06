@@ -17,6 +17,7 @@ pub const source =
     \\chrome_height = 46.0       # window titlebar height, 28–84px; scales icons and controls
     \\chrome_control_gap = 4.0   # gap between window controls, 0–24px
     \\radius       = 5.0          # --r-sm base
+    \\chrome_round_buttons = false # true: circular window controls and pill-shaped tabs
     \\bg           = "#090b18"    # shell background
     \\fg           = "#eef1fb"    # --text
     \\dim          = "#9aa2c4"    # --text-dim
@@ -141,10 +142,15 @@ pub const source =
     \\lock_on_suspend       = true  # lock before the system sleeps (menu, lid, idle or another program)
     \\
     \\# ───────────────────────────────────────────────
-    \\# Region & Language — personal shell preferences; system locale is inherited
+    \\# Region & Language — this user's RediWM session only, not system defaults
     \\# ───────────────────────────────────────────────
     \\[region]
+    \\timezone = ""              # empty inherits login; e.g. Pacific/Auckland
+    \\language = ""              # installed locale for new apps; e.g. en_NZ.utf8
+    \\formats = ""               # installed locale for regional date/number/currency formats
     \\clock_24h = false           # taskbar, calendar and lock screen
+    \\clock_show_seconds = false # taskbar clock only
+    \\clock_show_day = true      # taskbar date line, in regional format
     \\first_day_of_week = "sunday" # any lowercase weekday name
     \\
     \\# ───────────────────────────────────────────────

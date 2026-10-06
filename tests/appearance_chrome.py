@@ -31,10 +31,10 @@ def run(scale, external_theme=False):
         config = ('[compositor]\nxwayland = false\nfocus_zoom = "keep"\n'
                   '[desktop]\nenabled = false\n'
                   '[animations]\nenabled = false\n'
-                  '[theme]\nwindow_bg = "#101215"\nshadow = "#00000000"\n')
+                  '[theme]\nwindow_bg = "#101215"\nshadow = "#00000000"\nchrome_round_buttons = false\n')
         theme_path = tmp / ("theme.toml" if external_theme else "rediwm-config.toml")
         if external_theme:
-            theme_path.write_text('[theme]\n')
+            theme_path.write_text('[theme]\nchrome_round_buttons = false\n')
         env_extra = {"DBUS_SESSION_BUS_ADDRESS": "", "XDG_DATA_HOME": str(data),
                      "REDIWM_NO_GLASS": "1"}
         if external_theme:
@@ -101,6 +101,44 @@ def run(scale, external_theme=False):
                 def controls():
                     return {w["name"]: w for w in ipc.get_widget_tree(f"window/{win_id}")["widgets"]}
 
+                # Reload while a control is hovered: retained chrome must
+                # change its corner pixels without moving the hit target.
+                ipc.action("move_window_to", {"id": win_id, "x": 80, "y": 80})
+                ipc.set_zoom(win_id, 100)
+                ipc.focus_window(win_id)
+
+                def control_pixels(name):
+                    box = controls()[name]["global_box"]
+                    ipc.move_cursor(rounded(box["x"] + box["width"] / 2), rounded(box["y"] + box["height"] / 2))
+                    ipc.wait_for_frame()
+                    path = tmp / "control-shape.png"
+                    path.unlink(missing_ok=True)
+                    ipc.screenshot(str(path))
+                    with Image.open(path) as image:
+                        image = image.convert("RGB")
+                        corner = image.getpixel((rounded((box["x"] + 2) * scale), rounded((box["y"] + 2) * scale)))
+                        edge = image.getpixel((rounded((box["x"] + box["width"] / 2) * scale), rounded((box["y"] + 2) * scale)))
+                    return box, corner, edge
+
+                names = ("minimize", "maximize", "close")
+                square = {name: control_pixels(name) for name in names}
+                theme_path.write_text(theme_path.read_text().replace("chrome_round_buttons = false", "chrome_round_buttons = true"))
+                ipc.reload_config()
+                assert ipc.action("get_theme")["tokens"]["chrome_round_buttons"] is True
+                for name in names:
+                    box, corner, edge = control_pixels(name)
+                    assert box == square[name][0], (name, box, square[name])
+                    assert sum(abs(a - b) for a, b in zip(corner, square[name][1])) > 6, (name, corner, square[name])
+                    assert edge == square[name][2], (name, edge, square[name])
+                theme_path.write_text(theme_path.read_text().replace("chrome_round_buttons = true", "chrome_round_buttons = false"))
+                ipc.reload_config()
+                assert ipc.action("get_theme")["tokens"]["chrome_round_buttons"] is False
+                for name in names:
+                    assert control_pixels(name) == square[name], name
+                ipc.move_cursor(10, 10)
+                theme_path.write_text(theme_path.read_text().replace("chrome_round_buttons = false", "chrome_round_buttons = true"))
+                ipc.reload_config()
+
                 open_appearance()
                 assert ui.scroll_into_view("chrome_height")["value"] == 46
                 assert ui.scroll_into_view("chrome_control_gap")["value"] == 4
@@ -135,6 +173,7 @@ def run(scale, external_theme=False):
                     saved = tomllib.loads(theme_path.read_text())["theme"]
                     assert saved["chrome_height"] == height, saved
                     assert saved["chrome_control_gap"] == gap, saved
+                    assert saved["chrome_round_buttons"] is True, saved
                     assert tomllib.loads((tmp / "rediwm-config.toml").read_text())["compositor"]["focus_zoom"] == "keep"
                     close_settings()
                     debug = ipc.get_window_debug(win_id)
@@ -241,7 +280,7 @@ def run(scale, external_theme=False):
                 open_appearance()
                 assert ui.scroll_into_view("chrome_height")["value"] == 84
                 assert ui.scroll_into_view("chrome_control_gap")["value"] == 24
-            print(f"PASS: chrome height/gap, pixels and controls (scale={scale}, external={external_theme})")
+            print(f"PASS: chrome round buttons, height/gap, pixels and controls (scale={scale}, external={external_theme})")
         finally:
             if focus_client is not None:
                 stop_process(focus_client)

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Clock popup navigation and dismissal, isolated from the host desktop."""
 import argparse
+import json
+import locale
+import os
+import sys
+from hardware_keys import wait
 from pathlib import Path
 import tempfile
 import time
@@ -14,8 +19,8 @@ def run(scale):
     with tempfile.TemporaryDirectory(prefix="rediwm-calendar-") as directory:
         tmp = Path(directory)
         # Pixel equality checks need a settled popup, not its opening slide.
-        process, log = spawn_compositor(tmp, scale=scale, config_content='[compositor]\nxwayland = false\n[animations]\nenabled = false\n',
-                                        env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": directory})
+        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"), config_content='[compositor]\nxwayland = false\n[animations]\nenabled = false\n',
+                                        env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": directory, "TZ": "Pacific/Auckland", "LC_ALL": "C", "LANGUAGE": "en"})
         try:
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.wait_for("wallpaper_presented", timeout_ms=10000)
@@ -65,6 +70,8 @@ def run(scale):
                 ui.click("region", panel="control_center")
                 ui.wait_settled("control_center")
                 assert not any(w["label"] == "Preferred Languages" for w in ui.widgets())
+                assert ui.find("clock_show_seconds")["on"] is False
+                assert ui.find("clock_show_day")["on"] is True
                 assert ui.find("first_day_of_week", panel="control_center")["selected_index"] == 0
                 ui.click(ui.scroll_into_view("first_day_of_week"), panel="control_center")
                 ipc.key_down_up(108)  # Sunday -> Monday
@@ -124,7 +131,128 @@ def run(scale):
                 ui.wait_settled("control_center")
                 assert ui.find("first_day_of_week", panel="control_center")["selected_index"] == 0
                 assert any(w["label"] == "3:24 PM" for w in ui.widgets())
-                print(f"PASS: calendar navigation, preferences, live reload and dismissal at scale {scale}")
+                assert any("session only; system defaults are unchanged" in (w["label"] or "") for w in ui.widgets())
+                wait(lambda: not ui.find("language")["is_disabled"], "installed locales")
+                for name in ("language", "formats"):
+                    ui.click(ui.scroll_into_view(name), panel="control_center")
+                    ipc.key_press("Home")
+                    ipc.key_press("Down")
+                    ipc.key_press("Return")
+                    ui.wait_settled("control_center")
+                    assert tomllib.loads(cfg_path.read_text())["region"][name] == "C"
+                # UTC is the last sorted zone. Changing it must refresh the
+                # existing clock without modifying the host's timezone files.
+                before_zone = capture()
+                ui.click(ui.scroll_into_view("timezone"), panel="control_center")
+                ipc.key_press("End")
+                ipc.key_press("Return")
+                ui.wait_settled("control_center")
+                assert tomllib.loads(cfg_path.read_text())["region"]["timezone"] == "UTC"
+                after_zone = capture()
+                clock_crop = tuple(round(v * float(scale)) for v in
+                                   (bar["x"] + bar["width"] - 100, bar["y"],
+                                    bar["x"] + bar["width"], bar["y"] + bar["height"]))
+                assert ImageChops.difference(before_zone.crop(clock_crop), after_zone.crop(clock_crop)).getbbox(), "clock did not follow timezone"
+                marker = tmp / "child-env.json"
+                script = "import json,os; from pathlib import Path; Path(" + repr(str(marker)) + ").write_text(json.dumps(dict(os.environ)))"
+                ipc.action("spawn", {"argv": [sys.executable, "-c", script]})
+                wait(marker.exists, "new app environment")
+                child_env = json.loads(marker.read_text())
+                assert child_env["TZ"] == "UTC", child_env
+                assert child_env["LANG"] == child_env["LC_MESSAGES"] == "C"
+                assert child_env["LC_TIME"] == child_env["LC_NUMERIC"] == child_env["LC_MONETARY"] == "C"
+                assert "LC_ALL" not in child_env and "LANGUAGE" not in child_env
+                # Reopen Settings to prove that choices survive its arenas.
+                window = next(w for w in ipc.get_windows() if w["app_id"] == "rediwm-settings")
+                ipc.close_window(window["id"])
+                ui.wait_absent("control_center")
+                ipc.open_control_center()
+                ui.wait_settled("control_center")
+                ui.click("region", panel="control_center")
+                wait(lambda: not ui.find("language")["is_disabled"], "locales after reopen")
+                for name in ("timezone", "language", "formats"):
+                    assert ui.find(name)["selected_index"] > 0
+                    ui.click(ui.scroll_into_view(name), panel="control_center")
+                    ipc.key_press("Home")
+                    ipc.key_press("Return")
+                    ui.wait_settled("control_center")
+                    assert tomllib.loads(cfg_path.read_text())["region"][name] == ""
+
+                def clock_image():
+                    box = next(i["box"] for i in ipc.get_shell_state()["taskbars"][0]["right_items"]
+                               if i["name"] == "clock")
+                    return capture().crop(tuple(round(v * float(scale)) for v in
+                                                (box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"])))
+
+                def ink(image):
+                    return image.convert("L").point(lambda value: 255 if value > 150 else 0).getbbox()
+
+                # A two-line clock centers both runs in its fitted column.
+                shown = clock_image()
+                split = shown.height // 2
+                for line in (shown.crop((0, 0, shown.width, split)), shown.crop((0, split, shown.width, shown.height))):
+                    bounds = ink(line)
+                    assert bounds and abs((bounds[0] + bounds[2]) / 2 - shown.width / 2) <= 2 * float(scale), bounds
+
+                ui.click(ui.scroll_into_view("clock_show_seconds"))
+                ui.wait_settled("control_center")
+                assert any(w["label"] == "3:24:00 PM" for w in ui.widgets())
+                before = ipc.get_perf()["taskbar_clock_frame_requests"]
+                first_second = clock_image()
+                time.sleep(2.2)
+                assert ipc.get_perf()["taskbar_clock_frame_requests"] - before >= 2, "seconds did not rearm the clock timer"
+                assert ImageChops.difference(first_second, clock_image()).getbbox(), "seconds did not repaint"
+
+                ui.click(ui.scroll_into_view("clock_show_day"))
+                ui.wait_settled("control_center")
+                prefs = tomllib.loads(cfg_path.read_text())["region"]
+                assert prefs["clock_show_seconds"] is True and prefs["clock_show_day"] is False
+                single_line = clock_image()
+                bounds = ink(single_line)
+                assert bounds and abs((bounds[1] + bounds[3]) / 2 - single_line.height / 2) <= 2 * float(scale), bounds
+                assert bounds[3] - bounds[1] < 22 * float(scale), "date line remained visible"
+
+                window = next(w for w in ipc.get_windows() if w["app_id"] == "rediwm-settings")
+                ipc.close_window(window["id"])
+                ui.wait_absent("control_center")
+                ipc.reload_config()
+                ipc.open_control_center()
+                ui.wait_settled("control_center")
+                ui.click("region", panel="control_center")
+                ui.wait_settled("control_center")
+                assert ui.find("clock_show_seconds")["on"] is True
+                assert ui.find("clock_show_day")["on"] is False
+                ui.click(ui.scroll_into_view("clock_show_seconds"))
+                ui.wait_settled("control_center")
+                before = ipc.get_perf()["taskbar_clock_frame_requests"]
+                time.sleep(2.2)
+                assert ipc.get_perf()["taskbar_clock_frame_requests"] - before <= 1, "disabled seconds still wake every second"
+                ui.click(ui.scroll_into_view("clock_show_day"))
+                ui.wait_settled("control_center")
+
+                # Check that the taskbar itself follows the regional date,
+                # when a second installed locale is available on the test host.
+                try:
+                    locale.setlocale(locale.LC_TIME, "en_NZ.utf8")
+                except locale.Error:
+                    pass
+                else:
+                    baseline_config = cfg_path.read_text()
+                    cfg_path.write_text(baseline_config.replace('formats = ""', 'formats = "C"'))
+                    ipc.reload_config()
+                    us_date = clock_image()
+                    cfg_path.write_text(baseline_config.replace('formats = ""', 'formats = "en_NZ.utf8"'))
+                    ipc.reload_config()
+                    nz_date = clock_image()
+                    # The C format has a two-digit year; en_NZ uses four.
+                    assert us_date.size != nz_date.size or ImageChops.difference(us_date, nz_date).getbbox(), "taskbar date ignored regional format"
+                    cfg_path.write_text(baseline_config)
+                    ipc.reload_config()
+                print(f"PASS: calendar, region/language/timezone, centered clock, seconds/day toggles, persistence and child environment at scale {scale}")
+        except Exception:
+            log.flush()
+            print((tmp / "compositor.log").read_text()[-5000:])
+            raise
         finally:
             stop_process(process)
             log.close()

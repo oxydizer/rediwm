@@ -900,14 +900,14 @@ pub const ConfigLoadedEvent = struct {
     error_name: ?[]const u8 = null,
 };
 
-pub const ThemeToken = struct { name: []const u8, color: ?[4]f32 = null, number: ?f32 = null, text: ?[]const u8 = null };
+pub const ThemeToken = struct { name: []const u8, color: ?[4]f32 = null, number: ?f32 = null, text: ?[]const u8 = null, boolean: ?bool = null };
 pub const ThemeTokens = struct {
     entries: []const ThemeToken,
     pub fn jsonStringify(self: ThemeTokens, jws: anytype) !void {
         try jws.beginObject();
         for (self.entries) |token| {
             try jws.objectField(token.name);
-            if (token.color) |color| try jws.write(color) else if (token.number) |number| try jws.write(number) else try jws.write(token.text);
+            if (token.color) |color| try jws.write(color) else if (token.number) |number| try jws.write(number) else if (token.boolean) |boolean| try jws.write(boolean) else try jws.write(token.text);
         }
         try jws.endObject();
     }

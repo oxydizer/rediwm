@@ -2,10 +2,45 @@
 const std = @import("std");
 const text = @import("../text.zig");
 const theme = @import("../theme.zig");
-const Renderer = @import("../paint.zig").Renderer;
+const ui_paint = @import("../paint.zig");
+const Renderer = ui_paint.Renderer;
 
 /// Bullets beyond this many are not drawn; no caller stores more characters.
 const max_bullets = 512;
+
+/// Masked characters drawn as circles instead of bullet glyphs, so their size
+/// and spacing are the caller's choice rather than the face's. Both are in
+/// ems of the field's font size.
+pub const Dots = struct {
+    diameter: f32,
+    /// Centre to centre; the caret sits halfway between two dots.
+    pitch: f32,
+};
+
+/// `Dots` in whole device pixels (as logical units): every dot then
+/// rasterizes identically and the gaps cannot wander by a pixel.
+const DotGrid = struct {
+    pitch: f32,
+    /// A cell's left edge to its dot's.
+    lead: f32,
+    diameter: f32,
+
+    fn init(dots: Dots, font_size: f32, scale: f32) DotGrid {
+        const pitch = @max(1, @round(dots.pitch * font_size * scale));
+        const diameter = std.math.clamp(@round(dots.diameter * font_size * scale), 1, pitch);
+        return .{ .pitch = pitch / scale, .lead = @floor((pitch - diameter) / 2) / scale, .diameter = diameter / scale };
+    }
+};
+
+/// Characters, not bytes, capped at what the mask draws.
+fn masked(bytes: []const u8) usize {
+    var count: usize = 0;
+    for (bytes) |b| {
+        if (b & 0xc0 != 0x80) count += 1;
+    }
+    return @min(count, max_bullets);
+}
+
 pub const Input = struct {
     storage: []u8,
     len: usize = 0,
@@ -62,6 +97,9 @@ pub const Input = struct {
         /// Off when the caller animates the caret itself from the returned
         /// `CaretPlace` (a blinking, gliding overlay).
         draw_caret: bool = true,
+        /// Mask with circles rather than bullet glyphs. The caret and the
+        /// placeholder stay on `font_size` either way.
+        dots: ?Dots = null,
     };
 
     /// Where the caret belongs, in the renderer's logical units.
@@ -83,23 +121,12 @@ pub const Input = struct {
     /// place when `look.caret` is set.
     pub fn paint(self: *const Input, r: *Renderer, x: f32, y: f32, w: f32, h: f32, font_size: f32, look: Look) ?CaretPlace {
         const t = r.palette orelse theme.global;
-        var mask: [max_bullets * 3]u8 = undefined;
-        const shown = if (look.hidden) self.bullets(&mask) else self.value();
-        const prefix = if (look.hidden) blk: {
-            var count: usize = 0;
-            for (self.value()[0..self.cursor]) |b| {
-                if (b & 0xc0 != 0x80) count += 1;
-            }
-            break :blk shown[0..@min(shown.len, count * 3)];
-        } else self.value()[0..self.cursor];
-        const advance = text.measureSensitiveWidth(prefix, .manrope, font_size, r.scale) catch 0;
-        const scroll = @max(0, advance - w + 2);
-        r.drawTextScrolled(.{ .x = x, .y = y, .w = w, .h = h, .scroll_x = scroll, .style = .{
-            .content = if (shown.len == 0) look.placeholder else shown,
-            .font_size = font_size,
-            .color = if (shown.len == 0) t.faint else t.fg,
-            .sensitive = true,
-        } });
+        const dots: ?Dots = if (look.hidden and self.len > 0) look.dots else null;
+        const advance = if (dots) |spec|
+            self.paintDots(r, x, y, w, h, font_size, spec)
+        else
+            self.paintText(r, x, y, w, h, font_size, look);
+        const scroll = scrollFor(advance, w);
         if (!look.caret) return null;
         // The face's ink box, which is what the text is centred on.
         const ink = text.verticalMetrics(.manrope, font_size, r.scale) catch
@@ -109,6 +136,50 @@ pub const Input = struct {
         if (look.draw_caret) r.fillRect(place.origin_x + place.offset, place.y, place.w, place.h, .{ .color = t.caretColor() });
         return place;
     }
+    /// How far the row scrolls to keep a caret `advance` in is in a box `w` wide.
+    fn scrollFor(advance: f32, w: f32) f32 {
+        return @max(0, advance - w + 2);
+    }
+
+    /// Bullet glyphs (or the clear text, or the placeholder) through the
+    /// sensitive text path. Returns the caret's advance.
+    fn paintText(self: *const Input, r: *Renderer, x: f32, y: f32, w: f32, h: f32, font_size: f32, look: Look) f32 {
+        const t = r.palette orelse theme.global;
+        var mask: [max_bullets * 3]u8 = undefined;
+        const shown = if (look.hidden) self.bullets(&mask) else self.value();
+        const prefix = if (look.hidden)
+            shown[0..@min(shown.len, masked(self.value()[0..self.cursor]) * 3)]
+        else
+            self.value()[0..self.cursor];
+        const advance = text.measureSensitiveWidth(prefix, .manrope, font_size, r.scale) catch 0;
+        r.drawTextScrolled(.{ .x = x, .y = y, .w = w, .h = h, .scroll_x = scrollFor(advance, w), .style = .{
+            .content = if (shown.len == 0) look.placeholder else shown,
+            .font_size = font_size,
+            .color = if (shown.len == 0) t.faint else t.fg,
+            .sensitive = true,
+        } });
+        return advance;
+    }
+
+    /// One circle per character on a fixed pitch, centred in the box and
+    /// clipped to it. Returns the caret's advance.
+    fn paintDots(self: *const Input, r: *Renderer, x: f32, y: f32, w: f32, h: f32, font_size: f32, spec: Dots) f32 {
+        const t = r.palette orelse theme.global;
+        const grid = DotGrid.init(spec, font_size, r.scale);
+        const advance = grid.pitch * @as(f32, @floatFromInt(masked(self.value()[0..self.cursor])));
+        const origin = @round((x - scrollFor(advance, w)) * r.scale) / r.scale;
+        const top = @round(((y + h / 2) - grid.diameter / 2) * r.scale) / r.scale;
+        r.clean = false;
+        var clipped = r.*;
+        clipped.clip = ui_paint.intersectClip(r.clip, .{ .x = x, .y = y, .w = w, .h = h });
+        for (0..masked(self.value())) |i| {
+            const dot_x = origin + grid.pitch * @as(f32, @floatFromInt(i)) + grid.lead;
+            if (dot_x + grid.diameter <= x or dot_x >= x + w) continue;
+            clipped.fillRect(dot_x, top, grid.diameter, grid.diameter, .{ .color = t.fg, .radius = grid.diameter / 2 });
+        }
+        return advance;
+    }
+
     pub fn bullets(self: *const Input, out: []u8) []const u8 {
         var n: usize = 0;
         for (self.value()) |b| if (b & 0xc0 != 0x80 and n + 3 <= out.len) {

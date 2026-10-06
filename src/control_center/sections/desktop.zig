@@ -46,15 +46,25 @@ fn card(a: std.mem.Allocator, items: []const W) !W {
 }
 
 fn button(cc: *panel.ControlCenter, id: usize, label: []const u8, disabled: bool) W {
-    return .{ .kind = .{ .button = .{ .label = label, .owner = cc, .id = id, .on_click = change, .state = if (disabled) .disabled else .idle } }, .height = .{ .fixed = 36 }, .width = .{ .fixed = if (id == 4) 180 else 42 } };
+    var w: W = .{ .kind = .{ .button = .{ .label = label, .owner = cc, .id = id, .on_click = change, .state = if (disabled) .disabled else .idle } } };
+    if (id == 4) {
+        w.width = .{ .fixed = 180 };
+        w.height = .{ .fixed = 36 };
+    } else {
+        w.kind.button.size = .lg;
+        w.width = .{ .fixed = 56 };
+        w.height = .{ .fixed = 52 };
+    }
+    return w;
 }
 
 fn dimension(a: std.mem.Allocator, cc: *panel.ControlCenter, vertical: bool, value: u32) !W {
     const id: usize = if (vertical) 2 else 0;
     var number = text(try std.fmt.allocPrint(a, "{d}", .{value}), 22, false);
-    number.width = .{ .flex = 1 };
+    number.width = .{ .fixed = 28 };
     var row = try container(a, .row, &.{ button(cc, id, "←", value == 1), number, button(cc, id + 1, "→", value == 10) });
     row.@"align" = .center;
+    row.justify = .center;
     return container(a, .column, &.{
         text(if (vertical) "Vertical Pan" else "Horizontal Pan", 13, false),
         row,

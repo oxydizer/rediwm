@@ -33,7 +33,8 @@ def run():
                  ("application/x-rediwm-specific", "specific", "specific-file"),
                  ("application/x-rediwm-override", "override", None),
                  ("application/x-rediwm-noicon", "noicon", None),
-                 ("application/pdf", "pdf", None)]
+                 ("application/pdf", "pdf", None),
+                 ("video/mp4", "mp4", None)]
         xml = '<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">'
         for mime_type, extension, icon in types:
             xml += f'<mime-type type="{mime_type}"><comment>Test model</comment><glob pattern="*.{extension}" weight="80"/>'
@@ -45,18 +46,22 @@ def run():
         launcher = tmp / "record-open"
         launcher.write_text('#!/usr/bin/python3\nimport pathlib,sys\npathlib.Path(' + repr(str(marker)) + ').write_text(sys.argv[1]+"\\n"+sys.argv[2])\n')
         launcher.chmod(0o755)
-        for app, icon in (("openscad", "openscad"), ("override", "override-app"), ("missing", "no-such-app-icon-rediwm")):
+        for app, icon in (("openscad", "openscad"), ("override", "override-app"),
+                          ("missing", "no-such-app-icon-rediwm"), ("celluloid", "override-app"),
+                          ("thunar", "no-such-app-icon-rediwm")):
             (apps / f"{app}.desktop").write_text('[Desktop Entry]\nType=Application\n'
                 f'Name={app}\nIcon={icon}\nExec={launcher} {app} %f\nTerminal=false\n'
-                'MimeType=' + ';'.join(t[0] for t in types) + ';\n')
+                'MimeType=' + ';'.join(t[0] for t in types) +
+                (';x-scheme-handler/file;\n' if app == 'thunar' else ';\n'))
         (apps / "alternate.desktop").write_text('[Desktop Entry]\nType=Application\n'
             f'Name=Alternate Editor\nIcon=override-app\nExec={launcher} alternate %f\nTerminal=false\n')
         for i in range(12):
             (apps / f"extra-{i}.desktop").write_text('[Desktop Entry]\nType=Application\n'
                 f'Name=Z Extra {i:02d}\nExec={launcher} extra-{i} %f\nTerminal=false\n')
-        defaults = ["openscad", "openscad", "override", "missing"]
+        defaults = ["openscad", "openscad", "override", "missing", "", "celluloid"]
         (config / "mimeapps.list").write_text('[Default Applications]\n' + ''.join(
-            f'{t[0]}={app}.desktop;\n' for t, app in zip(types, defaults)))
+            f'{t[0]}={app}.desktop;\n' for t, app in zip(types, defaults) if app) +
+            'x-scheme-handler/file=thunar.desktop;\n')
         for name in ("a model #.scad", "b.specific", "c.override", "d.noicon"):
             (home / name).write_text('cube([1, 2, 3]);\n')
         env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(data), XDG_DATA_DIRS=str(data),
@@ -297,6 +302,18 @@ def run():
                 wait_for(marker.exists, "ordinary PDF Open ignored the saved default")
                 assert marker.read_text() == 'alternate\n' + str(pdf)
 
+                # A file:// handler must not override the video's MIME default
+                # when the user double-clicks it.
+                video = home / 'z-video.mp4'
+                video.write_bytes(b'\x00\x00\x00\x18ftypmp42')
+                key(63)  # Refresh the directory listing.
+                time.sleep(.4)
+                marker.unlink(missing_ok=True)
+                click(738, 316)
+                click(738, 316)
+                wait_for(marker.exists, "double-click ignored the video MIME default")
+                assert marker.read_text() == 'celluloid\n' + str(video)
+
                 # A directory's second action remains Cut, not Open With.
                 folder = home / '0-folder'
                 folder.mkdir()
@@ -309,8 +326,10 @@ def run():
                 wait_for(lambda: any(w['title'] == '0-folder — RediWM Files' for w in ipc.get_windows()),
                          "folder context menu unexpectedly opened an app picker")
                 assert client.poll() is None
-                print("PASS: MIME icons, Properties permissions and compact layout, Open With, default persistence, cancellation and folder exclusion")
+                print("PASS: MIME icons, Properties permissions and compact layout, Open With, video default on double-click, default persistence, cancellation and folder exclusion")
         except Exception:
+            if (tmp / "compositor.log").exists():
+                print((tmp / "compositor.log").read_text()[-5000:])
             if (tmp / "files.log").exists():
                 print((tmp / "files.log").read_text()[-5000:])
             raise

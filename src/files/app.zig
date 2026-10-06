@@ -6,6 +6,7 @@ const c = @import("c.zig").api;
 const git = @import("git.zig");
 const worker_mod = @import("worker.zig");
 const history_mod = @import("history.zig");
+const recent = @import("recent.zig");
 const ops_mod = @import("ops.zig");
 const clipboard_mod = @import("clipboard.zig");
 const dirsize = @import("dirsize.zig");
@@ -152,6 +153,7 @@ pub const ViewItem = struct {
     is_broken: bool,
     bytes: i64,
     mtime: i64,
+    opened: i64 = 0,
     mode: c.mode_t = 0,
     permissions_text: []const u8 = "",
     icon_name: []const u8,
@@ -265,6 +267,7 @@ pub const App = struct {
     git_column_weight: ?f64 = null,
     column_resize: ?struct { column: usize, x: f64, widths: [5]f64 } = null,
     sort_mode: Sort = .name,
+    recent_sort_mode: Sort = .modified,
     folders_only: bool = false,
     // Only meaningful inside a Git repository; on by default there.
     changed_only: bool = true,
@@ -512,7 +515,7 @@ pub const App = struct {
             return;
         }
         const cur = self.history.current;
-        const name = if (self.trash_dir != null and std.mem.eql(u8, cur, self.trash_dir.?)) "Trash" else if (std.mem.eql(u8, cur, "/")) "/" else std.fs.path.basename(cur);
+        const name = if (self.isRecent()) "Recent" else if (self.trash_dir != null and std.mem.eql(u8, cur, self.trash_dir.?)) "Trash" else if (std.mem.eql(u8, cur, "/")) "/" else std.fs.path.basename(cur);
         _ = std.fmt.bufPrintZ(&self.title_z, "{s} — RediWM Files", .{name}) catch {
             @memcpy(self.title_z[0..12], "RediWM Files");
             self.title_z[12] = 0;
@@ -679,6 +682,7 @@ pub const App = struct {
     }
 
     fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
+        if (self.isRecent() and (action == .new or action == .paste)) return false;
         if (self.history.archive_len > 0) switch (action) {
             .new, .cut, .copy, .paste, .trash => return false,
             else => {},
@@ -853,6 +857,7 @@ pub const App = struct {
     }
 
     pub fn navigate(self: *App, new_path: []const u8) void {
+        if (self.chooser != null and recent.isLocation(new_path)) return;
         self.rememberView();
         self.history.navigate(new_path) catch return;
         self.applyHistoryNav(self.history.current);
@@ -1103,8 +1108,10 @@ pub const App = struct {
                 return if (mode == .size) a.bytes > b.bytes else a.bytes < b.bytes;
             }
         }
-        if (mode == .modified and a.mtime != b.mtime) return a.mtime > b.mtime;
-        if (mode == .modified_asc and a.mtime != b.mtime) return a.mtime < b.mtime;
+        const a_date = if (a.opened != 0) a.opened else a.mtime;
+        const b_date = if (b.opened != 0) b.opened else b.mtime;
+        if (mode == .modified and a_date != b_date) return a_date > b_date;
+        if (mode == .modified_asc and a_date != b_date) return a_date < b_date;
         if (mode == .type or mode == .type_desc) {
             const order = std.mem.order(u8, itemType(a), itemType(b));
             if (order != .eq) return if (mode == .type) order == .lt else order == .gt;
@@ -1166,6 +1173,7 @@ pub const App = struct {
                     .missing = it.missing,
                     .bytes = bytes,
                     .mtime = it.mtime,
+                    .opened = it.opened,
                     .mode = it.mode,
                     .permissions_text = std.fmt.allocPrint(mem, "{s} ({s})", .{ formatPermissions(it.mode), it.owner }) catch continue,
                     .icon_name = mem.dupe(u8, it.icon_name) catch continue,
@@ -1175,7 +1183,7 @@ pub const App = struct {
                     .selection_border = if (previous) |item| item.selection_border else .{},
                 }) catch continue;
             }
-            std.mem.sort(ViewItem, self.items.items, self.sort_mode, lessThan);
+            std.mem.sort(ViewItem, self.items.items, self.effectiveSort(), lessThan);
             for (self.items.items, 0..) |item, i| {
                 if (old_focus) |path| {
                     if (std.mem.eql(u8, path, item.path)) self.focused_index = i;
@@ -1293,6 +1301,9 @@ pub const App = struct {
             .open => {
                 if (self.dialog.?.applications.?.open()) {
                     const message = self.dialog.?.applications.?.message;
+                    if (message.len == 0) {
+                        for (self.dialog.?.applications.?.apps.paths) |path| self.worker.recordOpened(path);
+                    }
                     self.closeDialog();
                     if (message.len > 0) self.setStatusNotice(message, true);
                     self.refresh();
@@ -1304,7 +1315,7 @@ pub const App = struct {
     }
 
     pub fn openNewFolderDialog(self: *App) void {
-        if (self.history.archive_len > 0) return;
+        if (self.isRecent() or self.history.archive_len > 0) return;
         self.closeDialog();
         var dlg = Dialog{
             .kind = .new_folder,
@@ -1336,7 +1347,7 @@ pub const App = struct {
     }
 
     pub fn openNewFileDialog(self: *App) void {
-        if (self.history.archive_len > 0) return;
+        if (self.isRecent() or self.history.archive_len > 0) return;
         self.closeDialog();
         var dlg = Dialog{
             .kind = .new_file,
@@ -1613,11 +1624,12 @@ pub const App = struct {
     }
 
     pub fn executePaste(self: *App, kind: ops_mod.OpKind, paths: []const []const u8) bool {
+        if (self.isRecent()) return false;
         return self.executeTransfer(kind, paths, self.history.current, true);
     }
 
     pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, clipboard: bool) bool {
-        if (self.history.archive_len > 0) return false;
+        if (self.history.archive_len > 0 or recent.isLocation(directory)) return false;
         if (paths.len == 0) return false;
         const runner = self.job_runner orelse return false;
         runner.start(kind, paths, directory, .ask) catch {
@@ -2011,8 +2023,8 @@ pub const App = struct {
         const at_home = std.mem.eql(u8, path, self.home_dir) or (std.mem.startsWith(u8, path, self.home_dir) and path.len > self.home_dir.len and path[self.home_dir.len] == '/');
         const at_trash = if (self.trash_dir) |trash| std.mem.eql(u8, path, trash) or
             (std.mem.startsWith(u8, path, trash) and path.len > trash.len and path[trash.len] == '/') else false;
-        ends[0] = if (at_trash) self.trash_dir.?.len else if (at_home) self.home_dir.len else 1;
-        labels[0] = if (at_trash) "Trash" else if (at_home) "Home" else "/";
+        ends[0] = if (self.isRecent()) path.len else if (at_trash) self.trash_dir.?.len else if (at_home) self.home_dir.len else 1;
+        labels[0] = if (self.isRecent()) "Recent" else if (at_trash) "Trash" else if (at_home) "Home" else "/";
         var start = ends[0];
         while (start < path.len and count < ends.len) {
             if (path[start] == '/') {
@@ -2192,13 +2204,24 @@ pub const App = struct {
     }
 
     fn columnLabels(self: *App) []const []const u8 {
-        return if (self.repository() != null) &.{ "Name", "Git" } else &column_labels;
+        return if (self.repository() != null) &.{ "Name", "Git" } else if (self.isRecent()) &.{ "Name", "Size", "Type", "Opened", "Permissions" } else &column_labels;
     }
 
     const column_labels = [_][]const u8{ "Name", "Size", "Type", "Modified", "Permissions" };
     fn columnMinimums(width: f64) [5]f64 {
-        const scale = @min(1, width / 224);
-        return .{ 64 * scale, 40 * scale, 40 * scale, 40 * scale, 40 * scale };
+        if (width < 224) {
+            const scale = width / 224;
+            return .{ 64 * scale, 40 * scale, 40 * scale, 40 * scale, 40 * scale };
+        }
+        // Keep enough room for the full date and time when the view is wide
+        // enough; below that, let the Modified column yield space to Name.
+        return .{ 64, 40, 40, @min(136, width - 184), 40 };
+    }
+
+    fn columnMinimumTotal(minimum: [5]f64) f64 {
+        var total: f64 = 0;
+        for (minimum) |value| total += value;
+        return total;
     }
 
     fn listWidths(self: *App) [5]f64 {
@@ -2211,13 +2234,24 @@ pub const App = struct {
         }
         if (self.column_weights) |weights| {
             const minimum = columnMinimums(width);
+            const extra = @max(0, width - columnMinimumTotal(minimum));
             var widths: [5]f64 = undefined;
-            for (weights, 0..) |weight, i| widths[i] = minimum[i] + weight * @max(0, width - 224);
+            for (weights, 0..) |weight, i| widths[i] = minimum[i] + weight * extra;
             return widths;
         }
-        const detail = @min(110, width * 0.14);
+        const minimum = columnMinimums(width);
+        const detail = @max(minimum[1], @min(110, width * 0.14));
+        const modified = @max(minimum[3], @min(160, width * 0.20));
         const permissions = @min(200, width * 0.26);
-        return .{ width - detail * 3 - permissions, detail, detail, detail, permissions };
+        var widths: [5]f64 = .{ 0, detail, detail, modified, @max(minimum[4], permissions) };
+        var overflow = widths[1] + widths[2] + widths[3] + widths[4] - (width - minimum[0]);
+        for ([_]usize{ 4, 2, 1 }) |i| {
+            const shrink = @min(@max(0, overflow), widths[i] - minimum[i]);
+            widths[i] -= shrink;
+            overflow -= shrink;
+        }
+        widths[0] = width - widths[1] - widths[2] - widths[3] - widths[4];
+        return widths;
     }
 
     fn listColumn(self: *App, column: usize) header.Rect {
@@ -2251,7 +2285,7 @@ pub const App = struct {
             return;
         }
         const minimum = columnMinimums(total);
-        const extra = total - 224;
+        const extra = total - columnMinimumTotal(minimum);
         if (extra <= 0) return;
         const delta = std.math.clamp(x - drag.x, minimum[drag.column] - widths[drag.column], widths[drag.column + 1] - minimum[drag.column + 1]);
         widths[drag.column] += delta;
@@ -2487,7 +2521,7 @@ pub const App = struct {
     }
 
     fn sortColumn(self: *App) usize {
-        return switch (self.sort_mode) {
+        return switch (self.effectiveSort()) {
             .name, .name_desc => 0,
             .size, .size_asc => 1,
             .type, .type_desc => 2,
@@ -2495,7 +2529,7 @@ pub const App = struct {
         };
     }
     fn sortDescending(self: *App) bool {
-        return switch (self.sort_mode) {
+        return switch (self.effectiveSort()) {
             .name_desc, .size, .modified, .type_desc => true,
             else => false,
         };
@@ -2517,12 +2551,13 @@ pub const App = struct {
     fn sortByColumn(self: *App, column: usize) void {
         if (column >= 4 or (self.repository() != null and column != 0)) return;
         const reverse = self.sortColumn() == column and !self.sortDescending();
-        self.sort_mode = switch (column) {
+        const mode: Sort = switch (column) {
             0 => if (reverse) .name_desc else .name,
             1 => if (reverse) .size else .size_asc,
             2 => if (reverse) .type_desc else .type,
             else => if (reverse) .modified else .modified_asc,
         };
+        self.setSort(mode);
         self.rebuildView();
         self.savePreferences();
         self.startSortFeedback(nowMs());
@@ -2578,7 +2613,21 @@ pub const App = struct {
         return if (ext.len > 1) ext[1..] else "File";
     }
 
-    const places = [_][]const u8{ "Home", "Trash", "Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos", "Projects" };
+    const places = [_][]const u8{ "Home", "Trash", "Recent", "Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos", "Projects" };
+
+    const places_start = 3;
+
+    fn isRecent(self: *const App) bool {
+        return recent.isLocation(self.history.current);
+    }
+
+    fn effectiveSort(self: *const App) Sort {
+        return if (self.isRecent()) self.recent_sort_mode else self.sort_mode;
+    }
+
+    fn setSort(self: *App, mode: Sort) void {
+        if (self.isRecent()) self.recent_sort_mode = mode else self.sort_mode = mode;
+    }
 
     /// Where the pins start: the built-in places come first.
     const pin_base = places.len;
@@ -2632,18 +2681,23 @@ pub const App = struct {
     }
 
     fn placePinnable(index: usize) bool {
-        return index >= 2 and index < pin_base;
+        return index >= places_start and index < pin_base;
     }
 
     fn placeVisible(self: *App, index: usize) bool {
         return switch (self.rowKind(index)) {
-            .builtin => !placePinnable(index) or self.unpinned_places & (@as(u8, 1) << @as(u3, @intCast(index - 2))) == 0,
+            .builtin => if (index == 2 and self.chooser != null) false else !placePinnable(index) or self.unpinned_places & (@as(u8, 1) << @as(u3, @intCast(index - places_start))) == 0,
             .pin => true,
             .device => |k| k < self.device_list.items.len,
         };
     }
 
     fn openPlace(self: *App, index: usize) void {
+        if (index == 2) {
+            self.navigate(recent.location);
+            self.focus = .file_view;
+            return;
+        }
         switch (self.rowKind(index)) {
             .device => |k| {
                 self.activateDevice(k);
@@ -2756,7 +2810,7 @@ pub const App = struct {
         }
         const step: f64 = @floatFromInt(self.placeStep());
         const count = self.pins.items.items.len;
-        const top: f64 = @floatFromInt(self.placeY(2) - 30);
+        const top: f64 = @floatFromInt(self.placeY(places_start) - 30);
         if (y < top or y >= self.pinBoundary(count) + 16) return null;
         const nearest = @round((y - self.pinBoundary(0)) / step);
         return @intFromFloat(std.math.clamp(nearest, 0, @as(f64, @floatFromInt(count))));
@@ -2791,7 +2845,7 @@ pub const App = struct {
             if (!item.is_dir or item.missing or item.is_broken) return null;
             return item.path;
         }
-        return self.history.current;
+        return if (self.isRecent()) null else self.history.current;
     }
 
     pub fn highlightDrop(self: *App, x: f64, y: f64, accepted: bool) void {
@@ -3066,7 +3120,7 @@ pub const App = struct {
         for (0..index) |i| {
             if (!self.placeVisible(i)) hidden += 1;
         }
-        return self.contentTop() - self.sidebar_scroll - hidden * step + (if (index < 2) 16 + @as(i32, @intCast(index)) * step else 80 + @as(i32, @intCast(index - 1)) * step);
+        return self.contentTop() - self.sidebar_scroll - hidden * step + (if (index < places_start) 16 + @as(i32, @intCast(index)) * step else 80 + @as(i32, @intCast(index - 1)) * step);
     }
 
     /// Where pin `j` is drawn; `j` == the pin count is the slot under the last
@@ -3074,7 +3128,7 @@ pub const App = struct {
     fn pinRowY(self: *App, j: usize) i32 {
         const step = self.placeStep();
         var hidden: i32 = 0;
-        for (2..pin_base) |i| {
+        for (0..pin_base) |i| {
             if (!self.placeVisible(i)) hidden += 1;
         }
         return self.contentTop() - self.sidebar_scroll - hidden * step + 80 + @as(i32, @intCast(pin_base - 1 + j)) * step;
@@ -3103,6 +3157,7 @@ pub const App = struct {
             .builtin => |i| switch (i) {
                 0 => self.home_dir,
                 1 => self.trash_dir orelse std.fmt.bufPrint(buf, "{s}/.local/share/Trash/files", .{self.home_dir}) catch null,
+                2 => recent.location,
                 else => std.fmt.bufPrint(buf, "{s}/{s}", .{ self.home_dir, places[i] }) catch null,
             },
             .pin => |j| self.pins.items.items[j].path,
@@ -3133,7 +3188,7 @@ pub const App = struct {
             c.cairo_fill(cr);
         }
         setSource(cr, ui_theme.global.window_fg);
-        drawText(cr, "PLACES", 24, @floatFromInt(self.placeY(2) - 12), shell_ui.headingSize(), true);
+        drawText(cr, "PLACES", 24, @floatFromInt(self.placeY(places_start) - 12), shell_ui.headingSize(), true);
         for (0..self.deviceBase()) |i| {
             if (!self.placeVisible(i)) continue;
             const y: f64 = @floatFromInt(self.placeY(i));
@@ -3158,10 +3213,14 @@ pub const App = struct {
                 c.cairo_fill(cr);
             }
             setSource(cr, withAlpha(ui_theme.global.app_icon, alpha));
-            if (i < 2) {
+            if (i < places_start) {
                 if (shell_ui.Layer.begin(cr, .{ .x = 21, .y = @floatCast(y + 3), .w = 24, .h = 24 })) |icon_layer| {
                     var layer = icon_layer;
-                    layer.renderer.drawIcon(0, 0, 24, 24, .{ .id = if (i == 0) .home else .trash, .color = withAlpha(ui_theme.global.app_icon, alpha) });
+                    layer.renderer.drawIcon(0, 0, 24, 24, .{ .id = switch (i) {
+                        0 => .home,
+                        1 => .trash,
+                        else => .clock,
+                    }, .color = withAlpha(ui_theme.global.app_icon, alpha) });
                     layer.finish();
                 }
             } else if (pin != null and pin.?.kind == .file) {
@@ -3416,6 +3475,7 @@ pub const App = struct {
             self.setStatusNotice("Could not open Text Editor", true);
             return;
         };
+        self.worker.recordOpened(path);
         self.children.add(self.allocator, child.id.?) catch child.kill(self.io);
     }
 
@@ -3439,6 +3499,7 @@ pub const App = struct {
         }
         if (c.lseek(fd, 0, c.SEEK_SET) < 0) return error.SeekFailed;
         try self.launchImageList(fd, index);
+        self.worker.recordOpened(self.items.items[selected].path);
     }
 
     fn launchImageList(self: *App, fd: c_int, index: usize) !void {
@@ -3486,33 +3547,42 @@ pub const App = struct {
     pub fn openFile(self: *App, path: []const u8) void {
         if (self.chooser != null) return;
         const pdf = isPdf(path) and !@import("associations.zig").hasAlternativeDefault(path, "rediwm-pdf.desktop");
-        var executable: []const u8 = if (pdf) "rediwm-pdf" else "gio";
+        if (!pdf) {
+            @import("associations.zig").launchDefault(path) catch |err| {
+                std.log.warn("failed to open '{s}': {}", .{ path, err });
+                self.setStatusNotice("Could not open file", true);
+                return;
+            };
+            self.worker.recordOpened(path);
+            return;
+        }
+        var executable: []const u8 = "rediwm-pdf";
         var exe_buf: [4096]u8 = undefined;
         var sibling_buf: [4096]u8 = undefined;
-        if (pdf) {
-            const n = c.readlink("/proc/self/exe", &exe_buf, exe_buf.len);
-            if (n > 0 and n < exe_buf.len) {
-                if (std.fs.path.dirname(exe_buf[0..@intCast(n)])) |dir| {
-                    if (std.fmt.bufPrintZ(&sibling_buf, "{s}/rediwm-pdf", .{dir})) |sibling| {
-                        if (c.access(sibling, c.X_OK) == 0) executable = sibling;
-                    } else |_| {}
-                }
+        const n = c.readlink("/proc/self/exe", &exe_buf, exe_buf.len);
+        if (n > 0 and n < exe_buf.len) {
+            if (std.fs.path.dirname(exe_buf[0..@intCast(n)])) |dir| {
+                if (std.fmt.bufPrintZ(&sibling_buf, "{s}/rediwm-pdf", .{dir})) |sibling| {
+                    if (c.access(sibling, c.X_OK) == 0) executable = sibling;
+                } else |_| {}
             }
         }
         var child = std.process.spawn(self.io, .{
-            .argv = &.{ executable, if (pdf) "--" else "open", path },
+            .argv = &.{ executable, "--", path },
         }) catch |err| {
             std.log.warn("failed to open '{s}': {}", .{ path, err });
             self.setStatusNotice("Could not open file", true);
             return;
         };
 
+        self.worker.recordOpened(path);
         self.children.add(self.allocator, child.id.?) catch child.kill(self.io);
     }
 
     fn browseArchive(self: *App, path: []const u8) void {
         self.rememberView();
         self.history.navigateLocation(path, path.len) catch return;
+        self.worker.recordOpened(path);
         self.applyHistoryNav(self.history.current);
     }
 
@@ -4398,7 +4468,7 @@ pub const App = struct {
                 self.cutSelected();
                 return;
             } else if (sym == c.XKB_KEY_v or sym == c.XKB_KEY_V) {
-                self.paste_requested = true;
+                if (!self.isRecent()) self.paste_requested = true;
                 return;
             } else if (sym == c.XKB_KEY_l or sym == c.XKB_KEY_L) {
                 self.focus = .location_bar;
@@ -4527,7 +4597,7 @@ pub const App = struct {
             }
 
             // Clean path
-            const resolved = std.fs.path.resolve(self.allocator, &.{target}) catch target;
+            const resolved = if (recent.isLocation(target)) target else std.fs.path.resolve(self.allocator, &.{target}) catch target;
             defer if (resolved.ptr != target.ptr) self.allocator.free(resolved);
 
             self.navigate(resolved);
@@ -4713,7 +4783,7 @@ pub const App = struct {
         // Reuse the shell glyphs until dedicated file-action artwork is available.
         return switch (self.menu orelse return null) {
             .file => self.fileActions()[row].icon(),
-            .background => if (self.history.archive_len > 0) .refresh else ([_]IconId{ .plus, .edit, .paste, .refresh })[row],
+            .background => if (self.history.archive_len > 0 or self.isRecent()) .refresh else ([_]IconId{ .plus, .edit, .paste, .refresh })[row],
             else => null,
         };
     }
@@ -4758,6 +4828,11 @@ pub const App = struct {
 
     fn fileActions(self: *App) []const FileAction {
         if (self.history.archive_len > 0) return &.{.open};
+        if (self.isRecent()) {
+            if (self.selectedArchive() != null) return &.{ .open, .open_with, .extract, .extract_to, .cut, .copy, .rename, .trash, .properties };
+            if (self.canOpenWith()) return &.{ .open, .open_with, .cut, .copy, .rename, .trash, .properties };
+            return &.{ .open, .cut, .copy, .rename, .trash, .properties };
+        }
         if (self.selectedArchive() != null) return &.{ .open, .open_with, .extract, .extract_to, .cut, .copy, .paste, .rename, .trash, .properties };
         if (self.canOpenWith()) return &.{ .open, .open_with, .cut, .copy, .paste, .rename, .trash, .properties };
         if (self.hasSizeSelection()) return &.{ .open, .cut, .copy, .paste, .rename, .trash, .size, .properties };
@@ -4777,7 +4852,7 @@ pub const App = struct {
                 for (actions, 0..) |action, i| self.file_menu_labels[i] = action.label();
                 break :blk self.file_menu_labels[0..actions.len];
             },
-            .sidebar => if (placePinnable(self.menu_place))
+            .sidebar => if (self.menu_place == 2) &.{"Open"} else if (placePinnable(self.menu_place))
                 &.{ "Open", "Unpin", "Properties" }
             else switch (self.rowKind(self.menu_place)) {
                 .pin => &.{ "Open", "Remove from Places", "Properties" },
@@ -4787,7 +4862,7 @@ pub const App = struct {
                 (if (volume.mount != null) &.{ "Open", "Eject" } else &.{"Mount"})
             else
                 &.{},
-            .background => if (self.history.archive_len > 0) &.{"Refresh"} else &.{ "New Folder", "New File", "Paste", "Refresh" },
+            .background => if (self.history.archive_len > 0 or self.isRecent()) &.{"Refresh"} else &.{ "New Folder", "New File", "Paste", "Refresh" },
             .chooser_filter => self.chooser_filter_labels.items,
         };
     }
@@ -4819,7 +4894,7 @@ pub const App = struct {
                 if (row == 0) {
                     self.openPlace(self.menu_place);
                 } else if (row == 1 and placePinnable(self.menu_place)) {
-                    self.unpinned_places |= @as(u8, 1) << @as(u3, @intCast(self.menu_place - 2));
+                    self.unpinned_places |= @as(u8, 1) << @as(u3, @intCast(self.menu_place - places_start));
                     self.sidebar_scroll = std.math.clamp(self.sidebar_scroll, 0, @max(0, self.sidebarExtent() - (self.h - self.footerHeight())));
                     self.nav_hover = .{};
                     self.savePreferences();
@@ -4844,7 +4919,7 @@ pub const App = struct {
                 else => {},
             },
             .sort => {
-                if (row < 8) self.sort_mode = @enumFromInt(row);
+                if (row < 8) self.setSort(@enumFromInt(row));
                 self.rebuildView();
                 self.savePreferences();
                 self.scroll_y = 0;
@@ -4880,7 +4955,7 @@ pub const App = struct {
                 .size => self.calculateSizeSelected(),
                 .properties => self.openSelectedProperties(),
             },
-            .background => if (self.history.archive_len > 0) self.refresh() else switch (row) {
+            .background => if (self.history.archive_len > 0 or self.isRecent()) self.refresh() else switch (row) {
                 0 => self.openNewFolderDialog(),
                 1 => self.openNewFileDialog(),
                 2 => self.paste_requested = true,
@@ -4899,7 +4974,7 @@ pub const App = struct {
         context_menu.frame(cr, .{ .x = self.menu_x, .y = self.menu_y, .w = width, .h = height }, context);
         for (labels, 0..) |label, i| {
             const row = self.menuRowRect(i);
-            const checked = (self.menu == .sort and i == @intFromEnum(self.sort_mode)) or
+            const checked = (self.menu == .sort and i == @intFromEnum(self.effectiveSort())) or
                 (self.menu == .filter and ((i == 0 and self.folders_only) or (i == 1 and self.show_hidden) or (i == 2 and self.changed_only) or (i == 3 and self.full_paths)));
             context_menu.row(cr, .{ .x = row.x, .y = row.y, .w = row.w, .h = row.h }, .{
                 .label = label,
@@ -4958,7 +5033,7 @@ pub const App = struct {
                     (action == .filter and (self.folders_only or self.show_hidden or self.changedOnly())) or (action == .search and self.search_visible);
                 const opts: ui_button.Options = switch (action) {
                     .new => .{ .leading_icon = .plus, .label = "New" },
-                    .sort => .{ .leading_icon = .sort, .label = switch (self.sort_mode) {
+                    .sort => .{ .leading_icon = .sort, .label = switch (self.effectiveSort()) {
                         .name, .name_desc => "Name",
                         .size, .size_asc => "Size",
                         .modified, .modified_asc => "Date",
@@ -5048,7 +5123,7 @@ pub const App = struct {
             }
         } else if (self.items.items.len == 0) {
             setSource(cr, ui_theme.global.window_fg);
-            drawText(cr, if (self.search.text.items.len > 0 or self.folders_only) "No matching items" else if (self.changedOnly()) "No changed files" else "This folder is empty", @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), false);
+            drawText(cr, if (self.search.text.items.len > 0 or self.folders_only) "No matching items" else if (self.changedOnly()) "No changed files" else if (self.isRecent()) "No recent files" else "This folder is empty", @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), false);
         } else {
             self.renderFileItems(cr, viewport_h);
         }
@@ -5352,7 +5427,7 @@ pub const App = struct {
                 const ty = self.listColumn(2);
                 drawEllipsis(cr, itemType(item), ty.x + 4, y + baseline, ty.w - 8, shell_ui.textSize(), false);
                 const mt = self.listColumn(3);
-                const timestamp = @import("settings.zig").dateTime(item.mtime, &buf);
+                const timestamp = @import("settings.zig").dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
                 drawEllipsis(cr, timestamp, mt.x + 4, y + baseline, mt.w - 8, shell_ui.textSize(), false);
                 const permissions = self.listColumn(4);
                 const mode = formatPermissions(item.mode);
@@ -6468,8 +6543,8 @@ test "sidebar hover glides between places and leaves the current one to its own 
     const original_height = app.h;
     for ([_]i32{ 500, 700 }) |height| {
         app.h = height;
-        const first = app.placeRect(2);
-        const next = app.placeRect(3);
+        const first = app.placeRect(App.places_start);
+        const next = app.placeRect(App.places_start + 1);
         try std.testing.expectEqual(first.y + first.h, next.y);
         var y = first.y;
         while (y < next.y + next.h) : (y += 1) {
@@ -6858,7 +6933,7 @@ test "sidebar menus unpin only Places and close gaps without changing selection"
     defer app.deinit();
     try testItems(&app, 2);
     app.items.items[0].selected = true;
-    const y = app.placeY(2);
+    const y = app.placeY(App.places_start);
     const last_place_y = app.placeY(App.pin_base - 1);
     app.handleMotion(70, @floatFromInt(y + 10));
     app.handleButton(0x111, true);
@@ -6867,12 +6942,12 @@ test "sidebar menus unpin only Places and close gaps without changing selection"
     try std.testing.expectEqualStrings("Properties", app.menuLabels()[2]);
     app.runMenu(2); // Properties must not alter pinned places.
     app.closeDialog();
-    try std.testing.expect(app.placeVisible(2));
+    try std.testing.expect(app.placeVisible(App.places_start));
     app.openMenu(.sidebar, 70, @floatFromInt(y));
     app.runMenu(1);
-    try std.testing.expect(!app.placeVisible(2));
-    try std.testing.expectEqual(y, app.placeY(3));
-    try std.testing.expectEqual(@as(?usize, 3), app.placeAt(70, @floatFromInt(y + 10)));
+    try std.testing.expect(!app.placeVisible(App.places_start));
+    try std.testing.expectEqual(y, app.placeY(App.places_start + 1));
+    try std.testing.expectEqual(@as(?usize, App.places_start + 1), app.placeAt(70, @floatFromInt(y + 10)));
     try std.testing.expectEqual(last_place_y - app.placeStep(), app.placeY(App.pin_base - 1));
     try std.testing.expect(app.items.items[0].selected);
     for ([_]usize{ 0, 1 }) |index| {
@@ -6883,13 +6958,29 @@ test "sidebar menus unpin only Places and close gaps without changing selection"
         app.runMenu(1);
         try std.testing.expect(app.placeVisible(index));
     }
-    for (2..App.pin_base) |index| {
+    app.menu_place = 2;
+    app.openMenu(.sidebar, 70, 210);
+    try std.testing.expectEqualSlices([]const u8, &.{"Open"}, app.menuLabels());
+    app.menu = null;
+    try std.testing.expect(app.placeVisible(2));
+    try std.testing.expectEqual(app.placeY(1) + app.placeStep(), app.placeY(2));
+    for (App.places_start..App.pin_base) |index| {
         app.menu_place = index;
         app.openMenu(.sidebar, 70, 140);
         app.runMenu(1);
     }
     try std.testing.expectEqual(@as(u8, 0x7f), app.unpinned_places);
     try std.testing.expectEqual(@as(?usize, null), app.placeAt(70, @floatFromInt(y + 10)));
+    app.closeDialog();
+    try app.history.navigate(recent.location);
+    try std.testing.expect(!app.history.canUp());
+    try std.testing.expect(!app.toolbarButtonEnabled(.new));
+    try std.testing.expect(!app.toolbarButtonEnabled(.paste));
+    try std.testing.expectEqual(Sort.modified, app.effectiveSort());
+    try std.testing.expectEqual(@as(?[]const u8, null), app.dropDirectoryAt(500, 300));
+    app.openNewFolderDialog();
+    try std.testing.expect(app.dialog == null);
+    try std.testing.expect(app.placeActive(2));
 }
 
 test "pins sit after Projects, take drops by gap and keep the rows in drawn order" {
@@ -6917,7 +7008,7 @@ test "pins sit after Projects, take drops by gap and keep the rows in drawn orde
     app.device_list.items = &.{};
 
     // A drag snaps to the nearest gap from anywhere on PLACES, and only there.
-    const desktop: f64 = @floatFromInt(app.placeY(2) + 10);
+    const desktop: f64 = @floatFromInt(app.placeY(App.places_start) + 10);
     const first_gap = app.pinBoundary(0);
     try std.testing.expectEqual(@as(?usize, 0), app.pinSlotAt(70, desktop));
     try std.testing.expectEqual(@as(?usize, 0), app.pinSlotAt(70, first_gap + 4));

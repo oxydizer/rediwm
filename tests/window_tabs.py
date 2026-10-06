@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 import tomllib
 
+from PIL import Image
+
 from desktop_zoom import build_client, wait_for
 from ipc_client import IPCClient, spawn_compositor, stop_process
 from ui_driver import UIDriver
@@ -33,11 +35,14 @@ def run():
             "rediwm-files", "rediwm-editor",
         ]))
         config = ('[compositor]\nxwayland = false\nfocus_zoom = "keep"\n'
-                  '[desktop]\nenabled = false\n[animations]\nenabled = false\n')
+                  '[desktop]\nenabled = false\n[animations]\nenabled = false\n'
+                  '[theme]\nchrome_round_buttons = false\n'
+                  'window_bg = "#101215"\nshadow = "#00000000"\n')
         process, log = spawn_compositor(tmp, config_content=config,
             scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
             renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
-            env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_DATA_HOME": str(tmp / "data")})
+            env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_DATA_HOME": str(tmp / "data"),
+                       "REDIWM_NO_GLASS": "1"})
         clients = []
         try:
             with IPCClient(tmp, timeout=15) as ipc:
@@ -112,6 +117,46 @@ def run():
                 assert not widgets(first)[0]["visible"]
                 assert window(first)["is_minimized"] is False
                 assert (window(second)["x"], window(second)["y"]) == (60, 60)
+                # Tabs, their close buttons and + reload to the same round
+                # style while preserving geometry, then restore the old pixels.
+                scale = float(os.environ.get("REDIWM_TEST_SCALE", "1"))
+                ipc.focus_window(second)
+
+                def shape_pixels(name):
+                    widget = next(w for w in widgets(second) if w["name"] == name)
+                    box = widget["global_box"]
+                    dx = min(30, box["width"] / 2) if name == f"tab/{second}" else box["width"] / 2
+                    ipc.move_cursor(round(box["x"] + dx), round(box["y"] + box["height"] / 2))
+                    ipc.wait_for_frame()
+                    path = tmp / "tab-shape.png"
+                    path.unlink(missing_ok=True)
+                    ipc.screenshot(str(path))
+                    with Image.open(path) as image:
+                        image = image.convert("RGB")
+                        corner = image.getpixel((round((box["x"] + 2) * scale), round((box["y"] + 2) * scale)))
+                        edge = image.getpixel((round((box["x"] + box["width"] / 2) * scale), round((box["y"] + 2) * scale)))
+                    return widget["box"], corner, edge
+
+                names = (f"tab/{second}", f"tab/{second}/close", "tab_new")
+                square = {name: shape_pixels(name) for name in names}
+                path = tmp / "rediwm-config.toml"
+                path.write_text(path.read_text().replace("chrome_round_buttons = false", "chrome_round_buttons = true"))
+                ipc.reload_config()
+                assert ipc.action("get_theme")["tokens"]["chrome_round_buttons"] is True
+                for name in names:
+                    box, corner, edge = shape_pixels(name)
+                    assert box == square[name][0], (name, box, square[name])
+                    assert sum(abs(a - b) for a, b in zip(corner, square[name][1])) > 6, (name, corner, square[name])
+                    assert max(abs(a - b) for a, b in zip(edge, square[name][2])) <= 2, (name, edge, square[name])
+                path.write_text(path.read_text().replace("chrome_round_buttons = true", "chrome_round_buttons = false"))
+                ipc.reload_config()
+                for name in names:
+                    box, corner, edge = shape_pixels(name)
+                    assert box == square[name][0], (name, box, square[name][0])
+                    for actual, expected in ((corner, square[name][1]), (edge, square[name][2])):
+                        assert max(abs(a - b) for a, b in zip(actual, expected)) <= 1, (name, actual, expected)
+                path.write_text(path.read_text().replace("chrome_round_buttons = false", "chrome_round_buttons = true"))
+                ipc.reload_config()
                 # A close request to an inactive tab must reveal its native
                 # confirmation dialog, and refusing close keeps the tab alive.
                 ipc.action('close_window', {"id": first})

@@ -10,6 +10,11 @@ pub const title_icon_gap: i32 = 10;
 const icon_scale: f32 = 1.11;
 pub const button_glyph_scale: f32 = icon_scale * 1.1;
 pub const control_radius: f32 = 4;
+/// Round chrome uses half the shorter side: circles for controls, pills for tabs.
+pub fn cornerRadius(round: bool, width: f32, height: f32, default_radius: f32) f32 {
+    return if (round) @min(width, height) / 2 else default_radius;
+}
+
 pub const ControlKind = enum { minimize, maximize, close };
 
 // Charcoal header with evenly spaced, unboxed window controls.

@@ -5,6 +5,7 @@ Name=RediWM Files
 GenericName=File Manager
 Comment=Browse, open and manage local files and folders
 Exec=rediwm-files %f
+MimeType=inode/directory;
 Icon=redi-fm-icon
 Terminal=false
 StartupWMClass=rediwm-files

@@ -14,6 +14,7 @@ const toggle = @import("ui").widgets.toggle;
 const checkbox = @import("ui").widgets.checkbox;
 const Secret = @import("ui").widgets.secret_input.Input;
 const Caret = @import("../caret_overlay.zig").CaretOverlay;
+const hover_glide = @import("ui").hover_glide;
 const network = @import("manager.zig");
 const sonar = @import("sonar.zig");
 const secure = @import("secure_allocator.zig").allocator;
@@ -67,6 +68,7 @@ pub const Popup = struct {
     focus: Focus = .toggle,
     focus_index: usize = 0,
     hover: ?usize = null,
+    item_hover: hover_glide.Glide = .{},
     hits: [280]Hit = undefined,
     hit_count: usize = 0,
     scroll: f32 = 0,
@@ -131,6 +133,8 @@ pub const Popup = struct {
         if (self.caret.placed) |*p| p.origin_y = @floatFromInt(self.buffer_node.node.y);
         const active = self.caret.frame(now);
         self.paintSonar(now);
+        const row_quantum = anim.rasterPixelQuantum(self.output.wlr_output.scale) / (row_height * self.factor);
+        if (self.item_hover.step(now, 1, row_quantum)) self.refresh();
         const expanding = !self.opening.height.settled(now) or !self.closing.height.settled(now);
         // Sample both every frame: sampleChanged must run once per frame each.
         const quantum = 1 / (self.output.wlr_output.scale * self.factor);
@@ -140,7 +144,7 @@ pub const Popup = struct {
             self.refresh();
             if (!self.opening.height.settled(now)) self.ensureFormVisible();
         }
-        return active or expanding or !self.slide.settled(now) or self.sonarFading() or (self.sonarVisible() and self.searching() and anim.enabled() and !anim.reducedMotion());
+        return active or expanding or self.item_hover.animating(now) or !self.slide.settled(now) or self.sonarFading() or (self.sonarVisible() and self.searching() and anim.enabled() and !anim.reducedMotion());
     }
     fn searching(self: *Popup) bool {
         return if (self.manager()) |m| m.searching() else false;
@@ -228,6 +232,11 @@ pub const Popup = struct {
         const next = self.hit(@floatCast(sx / self.factor), @floatCast(sy / self.factor));
         if (next == self.hover) return;
         self.hover = next;
+        const target: ?hover_glide.Cell = if (next) |i| if (self.hits[i].focus == .row)
+            .{ .col = 0, .row = @intCast(self.hits[i].index) }
+        else
+            null else null;
+        self.item_hover.setTarget(anim.nowMs(), target);
         self.refresh();
     }
     fn hit(self: *Popup, x: f32, y: f32) ?usize {
@@ -264,6 +273,7 @@ pub const Popup = struct {
     pub fn scrollWheel(self: *Popup, delta: f32) void {
         self.scroll = std.math.clamp(self.scroll + delta, 0, @max(0, self.content_height - (self.height - header - footer - self.status_height)));
         self.hover = null;
+        self.item_hover.setTarget(anim.nowMs(), null);
         self.refresh();
     }
     fn ensureFormVisible(self: *Popup) void {
@@ -457,6 +467,23 @@ pub const Popup = struct {
     fn focused(self: *Popup, f: Focus, index: usize) bool {
         return self.focus == f and ((f != .row and f != .security_option) or self.focus_index == index);
     }
+    fn networkRowY(self: *Popup, index: usize) ?f32 {
+        const m = self.manager() orelse return null;
+        if (!m.available or !m.enabled or !m.hardware or m.device.len == 0 or index >= m.count) return null;
+        var y = header - self.scroll;
+        for (m.networks[0..index]) |net| y += row_height + self.shownHeight(net);
+        return y;
+    }
+    fn itemHoverBox(self: *Popup, row: f32) ?Rect {
+        const m = self.manager() orelse return null;
+        if (m.count == 0) return null;
+        const bounded = std.math.clamp(row, 0, @as(f32, @floatFromInt(m.count - 1)));
+        const low: usize = @intFromFloat(@floor(bounded));
+        const high = @min(low + 1, m.count - 1);
+        const low_y = self.networkRowY(low) orelse return null;
+        const high_y = self.networkRowY(high) orelse return null;
+        return .{ .x = 12, .y = low_y + (high_y - low_y) * (bounded - @floor(bounded)), .w = width - 24, .h = row_height };
+    }
     fn formHeight(self: *Popup) f32 {
         if (self.hidden) return @as(f32, if (self.security == .open) 220 else 292) + @as(f32, if (self.security_open) 102 else 0);
         if (self.selected) |s| {
@@ -550,6 +577,13 @@ pub const Popup = struct {
         r.fillRect(20, 65, width - 40, 1, .{ .color = t.border });
         r.clip = .{ .x = 12, .y = header, .w = width - 24, .h = self.height - header - footer - self.status_height };
         self.caret_reported = false;
+        if (self.item_hover.frame.alpha > 0) if (self.itemHoverBox(self.item_hover.frame.row)) |box| {
+            var fill = t.surface_hover;
+            var border = t.border_soft;
+            fill[3] *= self.item_hover.frame.alpha;
+            border[3] *= self.item_hover.frame.alpha;
+            r.fillRect(box.x, box.y, box.w, box.h, .{ .color = fill, .radius = 5, .border_width = 1, .border_color = border });
+        };
         var y = header - self.scroll;
         if (enabled) {
             if (count == 0) {
@@ -560,8 +594,8 @@ pub const Popup = struct {
                 const selected = if (self.selected) |s| network.sameNetwork(s, net) else false;
                 const extra = self.shownHeight(net);
                 const box: Rect = .{ .x = 12, .y = y, .w = width - 24, .h = row_height };
-                const hovered = self.addHit(box, .row, i);
-                if (selected or extra > 0 or net.connected or hovered or self.focused(.row, i)) r.fillRect(12, y, width - 24, row_height + extra, .{ .color = t.surface_hover, .radius = 5 });
+                _ = self.addHit(box, .row, i);
+                if (selected or extra > 0 or net.connected or self.focused(.row, i)) r.fillRect(12, y, width - 24, row_height + extra, .{ .color = t.surface_hover, .radius = 5 });
                 if (net.connected or selected or extra > 0) r.fillRect(12, y + 5, 3, row_height - 10 + extra, .{ .color = t.accent, .radius = 1 });
                 var signal_color = t.window_fg;
                 signal_color[3] *= 0.45 + @as(f32, @floatFromInt(net.strength)) / 100 * 0.55;

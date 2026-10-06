@@ -1412,11 +1412,22 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
 }
 
 fn passthroughMotion(input: *Input, time_msec: u32) void {
+    // Shell controls keep receiving motion until release, just like a client's
+    // implicit grab. A scrollbar drag may leave the whole window or panel.
     if (input.open_control_center) |cc| {
-        if (cc.appearance.item_drag != null) {
+        if (cc.pointer_down) {
             const local = cc.localPoint(input.cursor.x, input.cursor.y);
             control_center.pointerMotion(cc, local.x, local.y);
-            input.setNamedCursor("grabbing");
+            if (cc.appearance.item_drag != null) input.setNamedCursor("grabbing") else input.setShellCursor(ui_input.current.overText());
+            input.seat.pointerClearFocus();
+            return;
+        }
+    }
+    if (input.open_start_menu) |menu| {
+        if (menu.dispatcher.scroll_drag != null) {
+            const local = scene_data.toNodeLocal(&menu.buffer_node.node, input.cursor.x, input.cursor.y);
+            menu.pointerMotion(local.x, local.y);
+            input.setDefaultCursor();
             input.seat.pointerClearFocus();
             return;
         }

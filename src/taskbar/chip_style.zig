@@ -5,12 +5,27 @@ const chrome = @import("../chrome.zig");
 pub fn Look(comptime C: type) type {
     return struct { fill: C, border: C };
 }
+/// Whose colours a pill wears: the main theme's (window tabs) or the taskbar
+/// theme's, which a chosen taskbar theme can make different.
+pub const Source = enum { window, taskbar };
+
+fn token(comptime source: Source, comptime name: theme.TaskbarToken) [4]f32 {
+    return switch (source) {
+        .window => @field(theme.global, @tagName(name)),
+        .taskbar => theme.taskbar(name),
+    };
+}
+
 pub fn look(comptime C: type, active: bool, attention: bool, hover: f32, press: f32) Look(C) {
-    const idle = if (active) C.fromRgba(theme.global.taskbar_hover).scaled(2.8) else C.fromRgba(theme.global.taskbar_surface);
-    const hovered = C.fromRgba(theme.global.taskbar_hover).scaled(if (active) 3.6 else 2.0);
+    return lookFrom(C, .window, active, attention, hover, press);
+}
+
+pub fn lookFrom(comptime C: type, comptime source: Source, active: bool, attention: bool, hover: f32, press: f32) Look(C) {
+    const idle = if (active) C.fromRgba(token(source, .taskbar_hover)).scaled(2.8) else C.fromRgba(token(source, .taskbar_surface));
+    const hovered = C.fromRgba(token(source, .taskbar_hover)).scaled(if (active) 3.6 else 2.0);
     return .{
-        .fill = C.fromRgba(theme.global.surface_hover).scaled(press).over(C.lerp(idle, hovered, hover)),
-        .border = if (attention) C.fromRgba(theme.global.danger).scaled(2.5 + 0.8 * hover + press) else C.fromRgba(theme.global.taskbar_border).scaled(if (active) 2.2 + 0.6 * hover + 0.8 * press else 1 + hover + 0.8 * press),
+        .fill = C.fromRgba(token(source, .surface_hover)).scaled(press).over(C.lerp(idle, hovered, hover)),
+        .border = if (attention) C.fromRgba(token(source, .danger)).scaled(2.5 + 0.8 * hover + press) else C.fromRgba(token(source, .taskbar_border)).scaled(if (active) 2.2 + 0.6 * hover + 0.8 * press else 1 + hover + 0.8 * press),
     };
 }
 

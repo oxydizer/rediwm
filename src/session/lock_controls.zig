@@ -1,4 +1,4 @@
-//! Volume and brightness sliders at the bottom of the built-in lock screen.
+//! Transient volume and brightness sliders on the built-in lock screen.
 //!
 //! The hardware keys already work behind the lock; these are the pointer and
 //! touch way to the same two controls. They are not part of the lock's
@@ -9,6 +9,8 @@
 //! row exists only while its backend reports one: no default sink, no
 //! backlight, no row. A drag shows its own value until release, then the
 //! backend's report takes over again.
+//! The block is hidden at rest and appears on pointer use or a hardware value
+//! change, then hides again after a short idle timeout.
 //!
 //! Everything here is in the block's design units (the lock's 600x900
 //! canvas) except the drag's track, which is kept in layout pixels so a drag

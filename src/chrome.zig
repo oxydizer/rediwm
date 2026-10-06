@@ -313,6 +313,7 @@ pub const TitlebarMemo = struct {
     title_size: f32,
     chrome_height: f32 = 46,
     chrome_control_gap: f32 = 4,
+    chrome_round_buttons: bool = false,
 
     pub fn capture(width: i32, height: i32, title_ptr: ?[*:0]const u8, state: ChromeState) TitlebarMemo {
         const t = theme.global;
@@ -344,6 +345,7 @@ pub const TitlebarMemo = struct {
             .title_size = t.title_size,
             .chrome_height = t.chrome_height,
             .chrome_control_gap = t.chrome_control_gap,
+            .chrome_round_buttons = t.chrome_round_buttons,
         };
     }
 
@@ -380,7 +382,7 @@ pub const TitlebarMemo = struct {
         inline for (.{ "glass", "border", "border_soft", "fg", "dim", "border_hover", "surface_hover", "danger", "close_fg" }) |field| {
             if (!rgbaEql(@field(a, field), @field(b, field))) return false;
         }
-        return a.close_hover_alpha == b.close_hover_alpha and a.title_size == b.title_size and a.chrome_height == b.chrome_height and a.chrome_control_gap == b.chrome_control_gap;
+        return a.close_hover_alpha == b.close_hover_alpha and a.title_size == b.title_size and a.chrome_height == b.chrome_height and a.chrome_control_gap == b.chrome_control_gap and a.chrome_round_buttons == b.chrome_round_buttons;
     }
 };
 
@@ -1382,7 +1384,7 @@ fn paintControls(
 ) Color {
     var color = base;
 
-    // .win-btn:hover chip, 4px radius, drawn under the glyph. One chip
+    // Window-control hover chip, drawn under the glyph. One chip
     // slides between the buttons; its rect and red-ness are interpolated
     // from the slot coordinate.
     if (chip_alpha > 0) {
@@ -1391,15 +1393,17 @@ fn paintControls(
         const a_btn = if (from_max) max_btn else min_btn;
         const b_btn = if (from_max) close_btn else max_btn;
         const t = if (from_max) pos - 1 else pos;
+        const chip_width = mix(@floatFromInt(a_btn.w), @floatFromInt(b_btn.w), t);
+        const chip_height = mix(@floatFromInt(a_btn.h), @floatFromInt(b_btn.h), t);
         const fill = Color.lerp(Color.control_hover(), Color.close_hover(), clamp01(pos - 1));
         const chip = edgeCoverage(sdRoundedBox(
             px,
             py,
             mix(@floatFromInt(a_btn.x), @floatFromInt(b_btn.x), t),
             mix(@floatFromInt(a_btn.y), @floatFromInt(b_btn.y), t),
-            mix(@floatFromInt(a_btn.w), @floatFromInt(b_btn.w), t),
-            mix(@floatFromInt(a_btn.h), @floatFromInt(b_btn.h), t),
-            btn_radius * density,
+            chip_width,
+            chip_height,
+            window_chrome.cornerRadius(theme.global.chrome_round_buttons, chip_width, chip_height, btn_radius * density),
         ), scale);
         if (chip > 0) color = fill.scaled(chip * clamp01(chip_alpha)).over(color);
     }
@@ -1635,6 +1639,11 @@ test "chrome geometry changes invalidate retained titlebar pixels" {
     theme.global.chrome_height += 1;
     const taller = TitlebarMemo.capture(400, 320, null, .{ .radius = 10 });
     try std.testing.expect(!before.reusableFor(taller));
+    theme.global.chrome_height = saved.chrome_height;
+    theme.global.chrome_round_buttons = !saved.chrome_round_buttons;
+    const round = TitlebarMemo.capture(400, 320, null, .{ .radius = 10 });
+    try std.testing.expect(!before.eql(round));
+    try std.testing.expect(!before.reusableFor(round));
 }
 
 test "chrome controls fit and stay centered at every supported height and density" {

@@ -72,6 +72,7 @@ pub const Worker = struct {
     io: std.Io,
     environ: std.process.Environ,
     child_env: std.process.Environ.Map,
+    pending_child_env: ?std.process.Environ.Map = null,
     dir: []const u8,
     layout: []const u8,
     theme_cfg: theme.Config,
@@ -135,6 +136,7 @@ pub const Worker = struct {
         }
         self.commands.deinit(a);
         self.catalog_arena.deinit();
+        if (self.pending_child_env) |*env| env.deinit();
         self.child_env.deinit();
         for (self.theme_cfg.base_dirs) |d| a.free(d);
         a.free(self.theme_cfg.base_dirs);
@@ -153,6 +155,15 @@ pub const Worker = struct {
         var count: u64 = 0;
         _ = c.read(fd, &count, @sizeOf(u64));
     }
+    /// Transfers ownership; only the worker replaces the environment it reads.
+    pub fn updateChildEnv(self: *Worker, env: std.process.Environ.Map) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+        if (self.pending_child_env) |*old| old.deinit();
+        self.pending_child_env = env;
+        signal(self.wake_worker);
+    }
+
     /// Asks the worker to rescan from the Wayland thread.
     pub fn requestRefresh(self: *Worker) void {
         self.refresh.store(true, .release);
@@ -355,6 +366,11 @@ pub const Worker = struct {
                 wd = c.inotify_add_watch(fd, zdir, c.IN_CREATE | c.IN_DELETE | c.IN_MOVED_FROM | c.IN_MOVED_TO | c.IN_CLOSE_WRITE | c.IN_ATTRIB | c.IN_DELETE_SELF | c.IN_MOVE_SELF);
             }
             _ = c.pthread_mutex_lock(&self.mutex);
+            if (self.pending_child_env) |env| {
+                self.child_env.deinit();
+                self.child_env = env;
+                self.pending_child_env = null;
+            }
             const commands = self.commands;
             self.commands = .empty;
             _ = c.pthread_mutex_unlock(&self.mutex);

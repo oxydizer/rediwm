@@ -6,6 +6,7 @@ const button = @import("ui").widgets.button;
 const style = @import("taskbar/chip_style.zig");
 const icon_service = @import("icon_service.zig");
 const chrome = @import("chrome.zig");
+const window_chrome = @import("ui").window_chrome;
 const Rect = button.Rect;
 
 pub const Tab = struct { id: u64, title: []const u8, active: bool, attention: bool };
@@ -101,7 +102,7 @@ fn hashImpl(strip: Strip, include_titles: bool) u64 {
         h.update(std.mem.asBytes(&t.attention));
     }
     // The shared painter's palette is independent of the chrome palette.
-    inline for (.{ "taskbar_surface", "taskbar_hover", "taskbar_border", "surface_hover", "danger", "window_fg", "radius", "taskbar_title_size" }) |field| h.update(std.mem.asBytes(&@field(theme.global, field)));
+    inline for (.{ "taskbar_surface", "taskbar_hover", "taskbar_border", "surface_hover", "danger", "window_fg", "radius", "taskbar_title_size", "chrome_round_buttons" }) |field| h.update(std.mem.asBytes(&@field(theme.global, field)));
     return h.final();
 }
 
@@ -114,6 +115,7 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
     const clip_right: usize = if (clip) |c| @intFromFloat(@max(0, @round(@as(f32, @floatFromInt(c.x + c.w)) * scale))) else @intCast(width);
     for (strip.tabs[g.first..][0..g.count], 0..) |t, i| {
         const rect = g.tab(i);
+        const radius = window_chrome.cornerRadius(theme.global.chrome_round_buttons, rect.w, rect.h, theme.global.radius * density * 0.8);
         const look = style.look(C, t.active, t.attention, if (strip.hover == key(.{ .tab = t.id })) 1 else 0, 0);
         const x0: usize = @max(clip_left, @as(usize, @intFromFloat(@max(0, @floor(rect.x * scale)))));
         const x1: usize = @min(clip_right, @as(usize, @intFromFloat(@min(@as(f32, @floatFromInt(width)), @ceil((rect.x + rect.w) * scale)))));
@@ -121,7 +123,7 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
         const y1: usize = @intFromFloat(@min(@as(f32, @floatFromInt(height)), @ceil((rect.y + rect.h) * scale)));
         if (x1 > x0 and y1 > y0) for (y0..y1) |y| for (x0..x1) |x| {
             const index = y * @as(usize, @intCast(width)) + x;
-            const c = style.pixel(C, (@as(f32, @floatFromInt(x)) + 0.5) / scale, (@as(f32, @floatFromInt(y)) + 0.5) / scale, rect.x, rect.y, rect.w, rect.h, theme.global.radius * density * 0.8, scale, look.fill, look.border);
+            const c = style.pixel(C, (@as(f32, @floatFromInt(x)) + 0.5) / scale, (@as(f32, @floatFromInt(y)) + 0.5) / scale, rect.x, rect.y, rect.w, rect.h, radius, scale, look.fill, look.border);
             pixels[index] = c.over(C.fromPremultiplied(pixels[index])).argb();
         };
         const size = @min(20 * density, rect.h - 6);
@@ -138,7 +140,11 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
         });
         button.paint(&renderer, close, .{ .variant = .chrome, .size = .sm, .icon = .close, .icon_scale = 0.39, .label = "Close tab" }, .{ .pointer = if (strip.hover == key(.{ .close = t.id })) .hover else .idle });
     }
-    button.paint(&renderer, g.plus, .{ .variant = .ghost, .size = .sm, .icon = .plus, .label = "New tab" }, .{ .pointer = if (strip.notice == .opening) .disabled else if (strip.hover == key(.plus)) .hover else .idle });
-    if (g.previous) |r| button.paint(&renderer, r, .{ .variant = .ghost, .size = .sm, .icon = .chevron_left }, .{ .pointer = if (strip.hover == key(.previous)) .hover else .idle });
-    if (g.next) |r| button.paint(&renderer, r, .{ .variant = .ghost, .size = .sm, .icon = .chevron_right }, .{ .pointer = if (strip.hover == key(.next)) .hover else .idle });
+    button.paint(&renderer, g.plus, .{ .variant = .ghost, .size = .sm, .icon = .plus, .label = "New tab", .radius = navigationRadius(g.plus) }, .{ .pointer = if (strip.notice == .opening) .disabled else if (strip.hover == key(.plus)) .hover else .idle });
+    if (g.previous) |r| button.paint(&renderer, r, .{ .variant = .ghost, .size = .sm, .icon = .chevron_left, .radius = navigationRadius(r) }, .{ .pointer = if (strip.hover == key(.previous)) .hover else .idle });
+    if (g.next) |r| button.paint(&renderer, r, .{ .variant = .ghost, .size = .sm, .icon = .chevron_right, .radius = navigationRadius(r) }, .{ .pointer = if (strip.hover == key(.next)) .hover else .idle });
+}
+
+fn navigationRadius(rect: Rect) f32 {
+    return window_chrome.cornerRadius(theme.global.chrome_round_buttons, rect.w, rect.h, theme.global.radius);
 }

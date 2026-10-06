@@ -10,6 +10,19 @@ RediWM Light uses 75% window chrome opacity and teal selection accents.
 `start_button_logo_color` optionally tints the bundled R logo; Light uses a
 dark tint for contrast. Custom start-button icons retain their own colours.
 
+Appearance also has a **Taskbar theme** picker under Theme, with the same
+presets plus "Same as theme". It gives the taskbar the preset's colours and
+leaves every other surface on the theme above. It is saved as a
+`[taskbar_theme]` section holding only these keys: `taskbar_bg`,
+`taskbar_surface`, `taskbar_hover`, `taskbar_border`, `border_soft`,
+`surface_hover`, `window_fg`, `window_dim`, `danger`, `window_close_hover`,
+`start_button_hover`, `start_button_indicator`, `start_button_logo_color` and
+the `battery_*` colours. Unlisted keys are ignored, so a whole theme file's
+body can be pasted under that header; keys it leaves out take the built-in
+defaults, not the main theme's. The section's presence selects the taskbar
+theme (an empty one is the built-in colours); without it the taskbar follows
+`[theme]`. Sizes, gaps and radii always come from `[theme]`.
+
 Colors accept `"#rrggbb"`, `"#rrggbbaa"`, or `"rgba(r,g,b,a)"` with RGB
 channels from 0 to 255 and alpha from 0 to 1. Numbers must be finite and
 nonnegative. Sizes are logical pixels. The tables describe appearance tokens;
@@ -58,6 +71,12 @@ Appearance's Radius presets write all numeric radius tokens: Default restores
 the current built-in radii, Sharp caps them at 4 px (the minimap's default),
 and Round uses 1.3 times the defaults. Individual theme radii remain editable.
 Cursor styling is `[input].cursor_theme` and `[input].cursor_size`; animation behavior belongs in `[animations]`.
+
+Set `[theme].chrome_round_buttons = true` for circular window controls and
+pill-shaped window tabs. Tab close, new-tab and overflow controls follow the
+same setting. It defaults to `false`, preserving the existing corner radii,
+and reloads live from the main config or the `REDIWM_THEME` file. Button sizes
+and hit targets stay the same; `radius_lg` still controls the window frame.
 
 The lock's background always paints opaque, even if `lock_bg` supplies alpha;
 `lock_wallpaper_opacity` controls its wallpaper overlay. Actual image pixels,
@@ -314,3 +333,7 @@ fit their available space. The scrollbar reserves room for its maximum width;
 | `font` | `"Manrope"` | Compositor's preferred proportional font family |
 | `mono_font` | `"JetBrains Mono"` | Compositor's preferred monospace font family |
 | `start_button_icon` | `""` | Bundled Redi logo; otherwise an absolute image path |
+
+In **Settings → Appearance → Start menu**, **Choose file…** selects a PNG or
+SVG for the Start button logo and applies it immediately. **Reset to default**
+restores the bundled R logo. Both choices are saved with the theme.

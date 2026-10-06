@@ -291,7 +291,7 @@ pub const ControlCenter = struct {
         users_section.deinit(cc);
         cc.shortcuts.arena.deinit();
         cc.desktop.arena.deinit();
-        cc.region.arena.deinit();
+        cc.region.deinit();
         cc.portals.arena.deinit();
         cc.default_apps.arena.deinit();
         cc.display.arena.deinit();

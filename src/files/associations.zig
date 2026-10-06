@@ -188,6 +188,21 @@ pub const Applications = struct {
 
 extern fn g_app_info_get_id(app: *anyopaque) ?[*:0]const u8;
 
+/// Launch through the same MIME default that Open With displays. A URI-based
+/// launch can pick the handler for file:// instead of the file's content type.
+pub fn launchDefault(path: []const u8) !void {
+    const filename = try std.heap.c_allocator.dupeZ(u8, path);
+    defer std.heap.c_allocator.free(filename);
+    const kind = g_content_type_guess(filename, null, 0, null) orelse return error.UnknownContentType;
+    defer g_free(kind);
+    const app = g_app_info_get_default_for_type(kind, 0) orelse return error.NoDefaultApplication;
+    defer g_object_unref(app);
+    const file = g_file_new_for_path(filename);
+    defer g_object_unref(file);
+    var files: List = .{ .data = file };
+    if (g_app_info_launch(app, &files, null, null) == 0) return error.LaunchFailed;
+}
+
 /// Keep the bundled PDF viewer fallback, but honor an explicit alternative.
 pub fn hasAlternativeDefault(path: []const u8, bundled_id: []const u8) bool {
     const filename = std.heap.c_allocator.dupeZ(u8, path) catch return false;

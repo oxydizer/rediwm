@@ -8,7 +8,7 @@
 // codebase's own buffer convention (see chrome.zig/Taskbar.BarBuffer), so
 // the rasterized pixels are copied out verbatim, no conversion. PNG reuses
 // the existing (deliberately minimal) png.zig decoder, then gets
-// bilinearly resampled to the requested size, since hicolor's fixed sizes
+// area-filtered when reduced to the requested size, since hicolor's fixed sizes
 // essentially never match our device-pixel target exactly.
 const std = @import("std");
 const Io = std.Io;
@@ -282,9 +282,9 @@ fn lerpArgb(a: u32, b: u32, t: f32) u32 {
     return (out[0] << 24) | (out[1] << 16) | (out[2] << 8) | out[3];
 }
 
-// Bilinear resample of a premultiplied-ARGB buffer into a square icon slot,
-// centering rectangular artwork without stretching it. Valid on premultiplied
-// data (unlike some other filters) since resize is a linear operation.
+// Resample a premultiplied-ARGB buffer into a square icon slot, centering
+// rectangular artwork without stretching it. Each reduced pixel averages its
+// entire source footprint; bilinear sampling alone aliases small app icons.
 fn resample(src: []const u32, src_w: i32, src_h: i32, dst_size: i32) ![]u32 {
     const dst = try gpa.alloc(u32, @intCast(dst_size * dst_size));
     const dw: usize = @intCast(dst_size);
@@ -296,6 +296,43 @@ fn resample(src: []const u32, src_w: i32, src_h: i32, dst_size: i32) ![]u32 {
     const image_h = dwf * sh / longest;
     const left = (dwf - image_w) / 2;
     const top = (dwf - image_h) / 2;
+
+    if (longest > dwf) {
+        const source_per_pixel = longest / dwf;
+        for (0..dw) |dy| {
+            const y_start = (@as(f32, @floatFromInt(dy)) - top) * source_per_pixel;
+            const y_end = y_start + source_per_pixel;
+            for (0..dw) |dx| {
+                const x_start = (@as(f32, @floatFromInt(dx)) - left) * source_per_pixel;
+                const x_end = x_start + source_per_pixel;
+                var channels = [4]f32{ 0, 0, 0, 0 };
+                const first_y: i32 = @intFromFloat(@floor(@max(0, y_start)));
+                const last_y: i32 = @intFromFloat(@ceil(@min(sh, y_end)));
+                const first_x: i32 = @intFromFloat(@floor(@max(0, x_start)));
+                const last_x: i32 = @intFromFloat(@ceil(@min(sw, x_end)));
+                var sy = first_y;
+                while (sy < last_y) : (sy += 1) {
+                    const yf: f32 = @floatFromInt(sy);
+                    const wy = @min(y_end, yf + 1) - @max(y_start, yf);
+                    var sx = first_x;
+                    while (sx < last_x) : (sx += 1) {
+                        const xf: f32 = @floatFromInt(sx);
+                        const weight = wy * (@min(x_end, xf + 1) - @max(x_start, xf));
+                        const pixel = src[@intCast(sy * src_w + sx)];
+                        const sample = unpack(pixel);
+                        for (0..4) |channel| channels[channel] += sample[channel] * weight;
+                    }
+                }
+                const area = source_per_pixel * source_per_pixel;
+                var result: u32 = 0;
+                for (channels) |channel| {
+                    result = (result << 8) | @as(u32, @intFromFloat(@round(channel / area)));
+                }
+                dst[dy * dw + dx] = result;
+            }
+        }
+        return dst;
+    }
 
     var dy: usize = 0;
     while (dy < dw) : (dy += 1) {
@@ -341,6 +378,14 @@ test "rectangular PNG icons keep their proportions" {
     try std.testing.expectEqualSlices(u32, &.{ 0, 0, 0, 0 }, pixels[0..4]);
     try std.testing.expectEqualSlices(u32, &.{ 0, 0, 0, 0 }, pixels[12..16]);
     for (pixels[4..12]) |pixel| try std.testing.expectEqual(@as(u32, 0xff), pixel >> 24);
+}
+
+test "shrinking an icon preserves fine detail across each pixel footprint" {
+    var src = [_]u32{0} ** 64;
+    src[0] = 0x80800000;
+    const pixels = try resample(&src, 8, 8, 2);
+    defer gpa.free(pixels);
+    try std.testing.expectEqualSlices(u32, &.{ 0x08080000, 0, 0, 0 }, pixels);
 }
 
 test "decode palette PNG via cairo fallback" {

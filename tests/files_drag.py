@@ -32,7 +32,7 @@ def run(browser=False, select=False, list_view=False):
             with IPCClient(tmp).connect() as ipc:
                 display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
                 env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp),
-                           XDG_STATE_HOME=str(tmp / "state"), XDG_CONFIG_HOME=str(tmp / "config"),
+                           XDG_STATE_HOME=str(tmp / "state"), XDG_DATA_HOME=str(tmp / "data"), XDG_CONFIG_HOME=str(tmp / "config"),
                            REDIWM_CONFIG=str(tmp / "rediwm-config.toml"), WAYLAND_DISPLAY=display,
                            GDK_BACKEND="wayland", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent",
                            REDIWM_FILES_DEVICES="0")
@@ -184,7 +184,7 @@ def run_pin():
             with IPCClient(tmp).connect() as ipc:
                 display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
                 env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp),
-                           XDG_STATE_HOME=str(tmp / "state"), XDG_CONFIG_HOME=str(tmp / "config"),
+                           XDG_STATE_HOME=str(tmp / "state"), XDG_DATA_HOME=str(tmp / "data"), XDG_CONFIG_HOME=str(tmp / "config"),
                            REDIWM_CONFIG=str(tmp / "rediwm-config.toml"), WAYLAND_DISPLAY=display,
                            DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent", REDIWM_FILES_DEVICES="0")
                 for key in ("DISPLAY", "REDIWM_SOCKET", "WAYLAND_DEBUG"):
@@ -192,7 +192,7 @@ def run_pin():
                 with (tmp / "files.log").open("w") as out:
                     files = subprocess.Popen([str(ROOT / "zig-out/bin/rediwm-files"), str(home)], env=env, stdout=out, stderr=out)
                 win = wait_for(lambda: next((w for w in ipc.get_windows() if w["app_id"] == "rediwm-files"), None), "Files did not map")
-                ipc.action('set_window_size', {"id": win["id"], "width": 1000, "height": 560})
+                ipc.action('set_window_size', {"id": win["id"], "width": 1000, "height": 588})
                 ipc.action('move_window_to', {"id": win["id"], "x": 10, "y": 30})
                 ipc.action('focus_window', {"id": win["id"]})
                 time.sleep(.6)
@@ -200,7 +200,7 @@ def run_pin():
 
                 # Window coordinates: three grid cards 252 px apart, the sidebar 208 px
                 # wide with rows 32 px apart. Row n of the pins is centred at
-                # 462 + 32n, and the gap above it is at 446 + 32n.
+                # 494 + 32n, and the gap above it is at 478 + 32n.
                 def move(x, y):
                     ipc.action('move_cursor', {"x": round(box["x"] + x), "y": round(box["y"] + y)})
                 def button(pressed, code=272):
@@ -239,23 +239,23 @@ def run_pin():
 
                 names = [home / "pinned folder", home / "second folder", home / "note.txt"]
                 # A file onto the section pins it, even aimed far from the gap.
-                drag(2, 80, 240, line_at=446)
+                drag(2, 80, 270, line_at=478)
                 wait_for(lambda: pins() == [str(names[2])], "the dropped file was not pinned")
                 # Above the first pin, then between the two.
-                drag(0, 80, 240, line_at=446)
+                drag(0, 80, 270, line_at=478)
                 wait_for(lambda: pins() == [str(names[0]), str(names[2])], "folder did not land above the first pin")
-                drag(1, 80, 480, line_at=478)
+                drag(1, 80, 512, line_at=510)
                 wait_for(lambda: pins() == [str(n) for n in names], "folder did not land between the pins")
                 # Off PLACES nothing is accepted, and a listed folder is not added twice.
                 drag(0, 600, 400)
-                drag(0, 80, 240)
+                drag(0, 80, 270)
                 time.sleep(.3)
                 assert pins() == [str(n) for n in names], pins()
                 # A click opens a folder pin.
-                click(80, 494)
+                click(80, 526)
                 wait_for(lambda: any(w["title"].startswith("second folder") for w in ipc.get_windows()), "pin did not open its folder")
                 # Removing one keeps the others in order.
-                click(80, 526, 273)
+                click(80, 558, 273)
                 time.sleep(.2)
                 for key in (108, 28):
                     ipc.action('key', {"keycode": key, "pressed": True})
@@ -300,7 +300,7 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
             with IPCClient(tmp).connect() as ipc:
                 display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
                 env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp),
-                           XDG_STATE_HOME=str(tmp / "state"), XDG_CONFIG_HOME=str(tmp / "config"),
+                           XDG_STATE_HOME=str(tmp / "state"), XDG_DATA_HOME=str(tmp / "data"), XDG_CONFIG_HOME=str(tmp / "config"),
                            REDIWM_CONFIG=str(tmp / "rediwm-config.toml"), WAYLAND_DISPLAY=display,
                            DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent", REDIWM_FILES_DEVICES="0")
                 env.pop("DISPLAY", None)

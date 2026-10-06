@@ -92,7 +92,7 @@ pub const Section = struct {
     cursor_themes: ?[]cursor_theme.Theme = null,
     cursor_row_children: [2]Widget = undefined,
     family_row_children: [2]Widget = undefined,
-    row_storage: [21]Widget = undefined,
+    row_storage: [22]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
     /// Rescanned on every build, so images added meanwhile show up.
     wallpapers: []const wallpapers.Entry = &.{},
@@ -107,6 +107,7 @@ pub const Section = struct {
     wallpaper_row_children: [2]Widget = undefined,
     wallpaper_footer_children: [2]Widget = undefined,
     theme_row_children: [2]Widget = undefined,
+    taskbar_theme_row_children: [2]Widget = undefined,
     dark_row_children: [2]Widget = undefined,
     dark_label_children: [2]Widget = undefined,
     splash_row_children: [2]Widget = undefined,
@@ -142,7 +143,10 @@ pub const Section = struct {
     item_controls: [taskbar_items.count][3]Widget = undefined,
     item_drag: ?struct { index: usize, press_y: f32, moved: bool = false, items: taskbar_items.Config } = null,
     item_focus: ?taskbar_items.Item = null,
-    start_menu_section_children: [5]Widget = undefined,
+    start_menu_section_children: [6]Widget = undefined,
+    start_logo_children: [3]Widget = undefined,
+    start_logo_buttons: [2]Widget = undefined,
+    start_logo_error: ?[]const u8 = null,
 };
 
 fn indexOfNearest(values: []const f32, v: f32) usize {
@@ -243,6 +247,38 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
                 .disabled = preset_labels.len == 0,
                 .owner = out,
                 .on_change = &onThemePicked,
+            } },
+            .width = .{ .fixed = segmented_width },
+        },
+    };
+
+    // The same presets for the taskbar alone, led by a choice that follows
+    // the theme above. Its tokens are compared, not the whole theme.
+    var taskbar_labels: [][]const u8 = &.{};
+    var taskbar_selected: ?usize = null;
+    if (arena.alloc([]const u8, out.presets.len + 1)) |labels| {
+        taskbar_labels = labels;
+        labels[0] = "Same as theme";
+        if (theme.taskbar_override == null) taskbar_selected = 0;
+        for (out.presets, 1..) |preset, i| {
+            labels[i] = preset.name;
+            const chosen = theme.taskbar_override orelse continue;
+            if (taskbar_selected != null) continue;
+            const parsed = theme.parse(arena, preset.bytes) catch continue;
+            if (theme.taskbarTokensEql(parsed, chosen)) taskbar_selected = i;
+        }
+    } else |_| {}
+    out.taskbar_theme_row_children = .{
+        labelWidget("Taskbar theme"),
+        .{
+            .name = "taskbar_theme",
+            .kind = .{ .select = .{
+                .labels = taskbar_labels,
+                .selected = taskbar_selected,
+                .placeholder = "Custom",
+                .disabled = taskbar_labels.len == 0,
+                .owner = out,
+                .on_change = &onTaskbarThemePicked,
             } },
             .width = .{ .fixed = segmented_width },
         },
@@ -496,11 +532,22 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     const menu_bottom_row = pxGroup(out, px_menu_bottom, "Menu bottom padding", std.math.clamp(t.start_menu_bottom_pad, 0.0, 40.0), 0, 40, 2, &PxHandler(px_menu_bottom, "start_menu_bottom_pad", false).changed);
     const icon_left_row = pxGroup(out, px_icon_left, "Icon left padding", std.math.clamp(t.start_menu_icon_left_pad, 0.0, 32.0), 0, 32, 2, &PxHandler(px_icon_left, "start_menu_icon_left_pad", false).changed);
     const icon_bottom_row = pxGroup(out, px_icon_bottom, "Icon bottom padding", std.math.clamp(t.start_menu_icon_bottom_pad, 0.0, 24.0), 0, 24, 2, &PxHandler(px_icon_bottom, "start_menu_icon_bottom_pad", false).changed);
-    out.start_menu_section_children = .{ sectionLabel("START MENU"), menu_left_row, menu_bottom_row, icon_left_row, icon_bottom_row };
+    out.start_logo_buttons = .{
+        .{ .name = "start_logo_choose", .kind = .{ .button = .{ .label = "Choose file…", .owner = out, .on_click = &onChooseStartLogo, .state = if (folder_picker.running()) .disabled else .idle } }, .width = .{ .fixed = 124 }, .height = .{ .fixed = 30 } },
+        .{ .name = "start_logo_reset", .kind = .{ .button = .{ .label = "Reset to default", .owner = out, .on_click = &onResetStartLogo, .state = if (t.start_button_icon.len == 0 or folder_picker.running()) .disabled else .idle } }, .width = .{ .fixed = 140 }, .height = .{ .fixed = 30 } },
+    };
+    out.start_logo_children = .{
+        labelWidget("Start button logo"),
+        .{ .name = "start_logo_file", .kind = .{ .text = .{ .content = out.start_logo_error orelse (if (t.start_button_icon.len == 0) "Default R logo · PNG or SVG" else std.fs.path.basename(t.start_button_icon)), .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .container, .direction = .row, .gap = 8, .children = &out.start_logo_buttons },
+    };
+    const logo_row: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.start_logo_children };
+    out.start_menu_section_children = .{ sectionLabel("START MENU"), logo_row, menu_left_row, menu_bottom_row, icon_left_row, icon_bottom_row };
     const start_menu_section: Widget = .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.start_menu_section_children };
 
     out.row_storage = .{
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.theme_row_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_theme_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dark_row_children },
         .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.wallpaper_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.splash_row_children },
@@ -830,7 +877,10 @@ fn applyThemeChange(s: *Section) void {
 /// a repaint pass on each slider tick; see `PxHandler`'s doc comment
 /// for which fields need the full path.
 fn applyThemeChangeImpl(s: *Section, taskbar_geometry: bool) void {
-    const server = s.cc.server;
+    saveThemeChange(s.cc.server, taskbar_geometry);
+}
+
+fn saveThemeChange(server: *Server, taskbar_geometry: bool) void {
     if (server.theme_path) |path| {
         theme.save(main.gpa, server.io, path, theme.global);
         theme.loadGlobal(main.gpa, server.io, path);
@@ -838,6 +888,46 @@ fn applyThemeChangeImpl(s: *Section, taskbar_geometry: bool) void {
         @import("config").loader.replaceThemeSection(main.gpa, server.io, server.config.path, theme.global);
     }
     refreshTheme(server, taskbar_geometry);
+}
+
+fn onChooseStartLogo(owner: ?*anyopaque, _: usize) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    s.start_logo_error = null;
+    folder_picker.startWithOptions(server, .{
+        .title = "Choose Start button logo",
+        .accept_label = "Use logo",
+        .current_folder = std.fs.path.dirname(theme.global.start_button_icon) orelse "",
+        .filters = &.{.{ .name = "PNG and SVG images", .rules = &.{ .{ .kind = 0, .value = "*.png" }, .{ .kind = 0, .value = "*.svg" } } }},
+    }, server, &onStartLogoChosen) catch |err| {
+        std.log.warn("could not open the logo chooser: {}", .{err});
+        s.start_logo_error = "Could not open the file chooser.";
+    };
+    s.cc.refresh();
+}
+
+fn onStartLogoChosen(owner: ?*anyopaque, path: ?[]const u8) void {
+    // The server outlives the chooser, including when Settings is closed.
+    const server: *Server = @ptrCast(@alignCast(owner orelse return));
+    if (path) |picked| {
+        // Theme strings use a literal, double-quoted TOML dialect.
+        if (!std.fs.path.isAbsolute(picked) or std.mem.indexOfAny(u8, picked, "\"\\\n\r\t") != null) {
+            if (server.input.open_control_center) |cc| {
+                cc.appearance.start_logo_error = "Choose a path without quotes, backslashes or control characters.";
+                cc.refresh();
+            }
+            return;
+        }
+        theme.global.start_button_icon = server.config.arena.allocator().dupe(u8, picked) catch return;
+        saveThemeChange(server, false);
+    } else if (server.input.open_control_center) |cc| cc.refresh();
+}
+
+fn onResetStartLogo(owner: ?*anyopaque, _: usize) void {
+    const s = section(owner);
+    s.start_logo_error = null;
+    theme.global.start_button_icon = "";
+    applyThemeChange(s);
 }
 
 pub fn refreshTheme(server: *@import("../../Server.zig"), taskbar_geometry: bool) void {
@@ -878,6 +968,31 @@ fn onThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
         const server = section(owner).cc.server;
         if (server.input.open_control_center) |cc| cc.refresh();
     }
+}
+
+/// Gives the taskbar the colours of the picked preset (index 0 hands it back
+/// to the main theme). Only the bar changes: `theme.global` keeps whatever the
+/// theme row above chose, and so does the saved `[theme]` section.
+fn onTaskbarThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    if (index == 0) {
+        theme.taskbar_override = null;
+    } else {
+        if (index > s.presets.len) return;
+        const preset = s.presets[index - 1];
+        // Only the colour tokens are kept, so nothing outlives this arena.
+        var scratch: std.heap.ArenaAllocator = .init(main.gpa);
+        defer scratch.deinit();
+        const parsed = theme.parse(scratch.allocator(), preset.bytes) catch |err| {
+            std.log.warn("taskbar theme '{s}' failed to parse: {}", .{ preset.name, err });
+            return;
+        };
+        theme.taskbar_override = theme.taskbarTokens(parsed);
+    }
+    if (server.config.path.len > 0) loader.replaceTaskbarThemeSection(main.gpa, server.io, server.config.path, theme.taskbar_override);
+    server.refreshTaskbarsGeometry();
+    if (server.input.open_control_center) |cc| cc.refresh();
 }
 
 fn onFontFamilyChanged(owner: ?*anyopaque, _: usize, index: usize) void {

@@ -95,13 +95,23 @@ pub const InputConfig = struct {
     caret_motion_ms: u32 = 80,
 };
 
-/// Personal shell clock/calendar preferences; system locale stays inherited.
+/// Personal session preferences. Empty strings inherit the login environment.
 pub const RegionConfig = struct {
+    timezone: []const u8 = "",
+    language: []const u8 = "",
+    formats: []const u8 = "",
     clock_24h: bool = false,
+    clock_show_seconds: bool = false,
+    clock_show_day: bool = true,
     first_day_of_week: enum { sunday, monday, tuesday, wednesday, thursday, friday, saturday } = .sunday,
 
     pub fn timeFormat(self: RegionConfig) [:0]const u8 {
         return if (self.clock_24h) "%H:%M" else "%l:%M %p";
+    }
+
+    pub fn taskbarTimeFormat(self: RegionConfig) [:0]const u8 {
+        if (!self.clock_show_seconds) return self.timeFormat();
+        return if (self.clock_24h) "%H:%M:%S" else "%l:%M:%S %p";
     }
 };
 
@@ -245,6 +255,9 @@ pub const NotificationRule = struct {
 
 pub const Config = struct {
     theme: Theme = .{},
+    /// `[taskbar_theme]`: the taskbar's own colours over the main theme's.
+    /// Null (no section) follows the main theme. Only taskbar tokens are set.
+    taskbar_theme: ?Theme = null,
     input: InputConfig = .{},
     input_method: struct { env: types.InputMethod = .none } = .{},
     keyboard_keymap: ?*xkb.Keymap = null,
@@ -305,51 +318,75 @@ pub const resolvePath = @import("path.zig").resolvePath;
 /// section and any leading comments. Used by the control center so appearance
 /// edits don't clobber keybinds/input.
 pub fn replaceThemeSection(allocator: Allocator, io: Io, path: []const u8, t: Theme) void {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    theme_mod.writeInto(allocator, &buf, t) catch return;
+    rewriteSection(allocator, io, path, "[theme]", buf.items);
+}
+
+/// Rewrites `[taskbar_theme]` to `t`'s taskbar tokens, or drops the section
+/// for null so the taskbar follows the main theme again.
+pub fn replaceTaskbarThemeSection(allocator: Allocator, io: Io, path: []const u8, t: ?Theme) void {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    if (t) |tokens| theme_mod.writeTaskbarInto(allocator, &buf, tokens) catch return;
+    rewriteSection(allocator, io, path, "[taskbar_theme]", if (t == null) null else buf.items);
+}
+
+/// Replaces the section starting with `header` by `body` (a whole section,
+/// header line included), or removes it for null, leaving everything else as
+/// it was. A section that is not there yet goes at the end.
+fn rewriteSection(allocator: Allocator, io: Io, path: []const u8, header: []const u8, body: ?[]const u8) void {
     const existing = Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1 << 20)) catch {
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(allocator);
-        theme_mod.writeInto(allocator, &buf, t) catch return;
-        Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = buf.items }) catch return;
+        const text = body orelse return;
+        Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text }) catch return;
         return;
     };
     defer allocator.free(existing);
 
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
+    spliceSection(allocator, &out, existing, header, body) catch return;
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = out.items }) catch |err| {
+        log.warn("rewrite '{s}' in '{s}': {}", .{ header, path, err });
+    };
+}
 
-    var in_theme = false;
+/// `rewriteSection` on text: appends `existing` to `out` with the section
+/// replaced (or removed for a null `body`).
+fn spliceSection(allocator: Allocator, out: *std.ArrayList(u8), existing: []const u8, header: []const u8, body: ?[]const u8) !void {
+    var in_section = false;
     var replaced = false;
     var lines = std.mem.splitScalar(u8, existing, '\n');
     while (lines.next()) |raw| {
+        // The piece after the file's final newline is not a line; keeping it
+        // would add a blank line to the file on every save.
+        if (raw.len == 0 and lines.peek() == null) break;
         const trimmed = std.mem.trim(u8, raw, " \t\r");
         if (trimmed.len > 0 and trimmed[0] == '[') {
-            const is_theme = std.mem.startsWith(u8, trimmed, "[theme]");
-            if (in_theme) {
-                in_theme = false;
-            }
-            if (is_theme) {
+            const is_section = std.mem.startsWith(u8, trimmed, header);
+            in_section = false;
+            if (is_section) {
                 if (!replaced) {
-                    theme_mod.writeInto(allocator, &out, t) catch return;
-                    if (out.items.len == 0 or out.items[out.items.len - 1] != '\n') {
-                        out.append(allocator, '\n') catch return;
+                    if (body) |text| {
+                        try out.appendSlice(allocator, text);
+                        if (out.items.len == 0 or out.items[out.items.len - 1] != '\n') try out.append(allocator, '\n');
                     }
                     replaced = true;
                 }
-                in_theme = true;
+                in_section = true;
                 continue;
             }
         }
-        if (in_theme) continue;
-        out.appendSlice(allocator, raw) catch return;
-        out.append(allocator, '\n') catch return;
+        if (in_section) continue;
+        try out.appendSlice(allocator, raw);
+        try out.append(allocator, '\n');
     }
     if (!replaced) {
-        if (out.items.len > 0 and out.items[out.items.len - 1] != '\n') out.append(allocator, '\n') catch return;
-        theme_mod.writeInto(allocator, &out, t) catch return;
+        const text = body orelse return;
+        if (out.items.len > 0 and out.items[out.items.len - 1] != '\n') try out.append(allocator, '\n');
+        try out.appendSlice(allocator, text);
     }
-    Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = out.items }) catch |err| {
-        log.warn("replaceThemeSection '{s}': {}", .{ path, err });
-    };
 }
 
 pub fn generateDefault(io: Io, path: []const u8) !void {
@@ -453,6 +490,8 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                 return error.InvalidConfig;
             };
             if (section == .keybinds) seen_keybinds = true;
+            // Its presence alone chooses a taskbar theme, even with no keys.
+            if (section == .taskbar_theme and cfg.taskbar_theme == null) cfg.taskbar_theme = .{};
             continue;
         }
 
@@ -471,6 +510,13 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                     return error.InvalidConfig;
                 };
                 if (std.mem.eql(u8, key, "radius_lg")) seen_frame_radius = true;
+            },
+            .taskbar_theme => {
+                // Other theme keys are ignored, so a whole theme file's body can be pasted in.
+                _ = theme_mod.applyTaskbarKey(cfg.arena.allocator(), &cfg.taskbar_theme.?, key, value) catch |err| {
+                    fail(path, line_no, "invalid taskbar_theme field '{s}': {s}", .{ key, @errorName(err) });
+                    return error.InvalidConfig;
+                };
             },
             .input_method => {
                 if (!std.mem.eql(u8, key, "env")) return error.InvalidConfig;
@@ -667,6 +713,7 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
 const Section = union(enum) {
     none,
     theme,
+    taskbar_theme,
     input,
     input_method,
     compositor,
@@ -747,7 +794,7 @@ fn parseSection(line: []const u8) !Section {
     const close = std.mem.indexOfScalar(u8, line, ']') orelse return error.InvalidConfig;
     const name = line[1..close];
     // Array tables and internal tags are deliberately not accepted here.
-    inline for (.{ .theme, .input, .input_method, .compositor, .region, .keybinds, .polkit, .idle, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
+    inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .polkit, .idle, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
         if (std.mem.eql(u8, name, @tagName(tag))) return tag;
     }
     if (std.mem.startsWith(u8, name, "animations.")) {
@@ -886,7 +933,12 @@ const input_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(InputConfig), Fi
 };
 
 const region_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(RegionConfig), FieldRule, null) = .{
+    .timezone = .string,
+    .language = .string,
+    .formats = .string,
     .clock_24h = .boolean,
+    .clock_show_seconds = .boolean,
+    .clock_show_day = .boolean,
     .first_day_of_week = .enumeration,
 };
 
@@ -1307,6 +1359,49 @@ fn fail(path: []const u8, line: usize, comptime fmt: []const u8, args: anytype) 
     log.warn("{s}:{d}: {s}", .{ path, line, msg });
 }
 
+test "[taskbar_theme] holds only taskbar tokens and is rewritten without touching its neighbours" {
+    const a = std.testing.allocator;
+    var cfg = try parse(a, "[theme]\nwindow_fg = \"#102030\"\n[taskbar_theme]\ntaskbar_bg = \"#112233\"\nwindow_fg = \"#445566\"\naccent = \"#ff0000\"\nchip_gap = 30\n[input]\ntap_drag = false\n", "mem");
+    defer cfg.deinit();
+    const chosen = cfg.taskbar_theme.?;
+    try std.testing.expectEqual(theme_mod.parseColor("#112233") catch unreachable, chosen.taskbar_bg);
+    try std.testing.expectEqual(theme_mod.parseColor("#445566") catch unreachable, theme_mod.taskbarTokens(chosen).window_fg);
+    // Neither the main theme nor the taskbar's other tokens move.
+    try std.testing.expectEqual(theme_mod.parseColor("#102030") catch unreachable, cfg.theme.window_fg);
+    try std.testing.expectEqual(@as(Theme, .{}).accent, chosen.accent);
+    try std.testing.expectEqual(@as(Theme, .{}).chip_gap, chosen.chip_gap);
+    // The header alone chooses a taskbar theme; no header means the main one.
+    var bare = try parse(a, "[taskbar_theme]\n", "mem");
+    defer bare.deinit();
+    try std.testing.expect(bare.taskbar_theme != null);
+    var none = try parse(a, "[theme]\n", "mem");
+    defer none.deinit();
+    try std.testing.expect(none.taskbar_theme == null);
+
+    // What the writer saves reads back equal, and `[theme]` is not mistaken for it.
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(a);
+    try theme_mod.writeTaskbarInto(a, &body, chosen);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(a);
+    try spliceSection(a, &out, "[theme]\nfont = \"X\"\n\n[input]\ntap_drag = false\n", "[taskbar_theme]", body.items);
+    try std.testing.expectEqualStrings("[theme]\nfont = \"X\"\n\n[input]\ntap_drag = false\n[taskbar_theme]\ntaskbar_bg = \"rgba(17,34,51,1.000)\"\nwindow_fg = \"rgba(68,85,102,1.000)\"\n", out.items);
+    var reread = try parse(a, out.items, "mem");
+    defer reread.deinit();
+    try std.testing.expect(theme_mod.taskbarOverrideEql(chosen, reread.taskbar_theme));
+    try std.testing.expectEqualStrings("X", reread.theme.font);
+
+    // Replacing it again keeps one copy and no extra blank lines; null removes it.
+    var again: std.ArrayList(u8) = .empty;
+    defer again.deinit(a);
+    try spliceSection(a, &again, out.items, "[taskbar_theme]", "[taskbar_theme]\n");
+    try std.testing.expectEqualStrings("[theme]\nfont = \"X\"\n\n[input]\ntap_drag = false\n[taskbar_theme]\n", again.items);
+    var removed: std.ArrayList(u8) = .empty;
+    defer removed.deinit(a);
+    try spliceSection(a, &removed, out.items, "[taskbar_theme]", null);
+    try std.testing.expectEqualStrings("[theme]\nfont = \"X\"\n\n[input]\ntap_drag = false\n", removed.items);
+}
+
 test "empty config keeps built-in zoom steps and default keybinds" {
     var cfg = try parse(std.testing.allocator, "", "mem");
     defer cfg.deinit();
@@ -1456,6 +1551,7 @@ test "input and theme reload detect every field and compare strings by content" 
     inline for (std.meta.fields(Theme)) |field| {
         var changed = original_theme;
         @field(changed, field.name) = switch (field.type) {
+            bool => !@field(original_theme, field.name),
             f32 => @field(original_theme, field.name) + 1,
             []const u8 => "another theme",
             [4]f32 => .{ 0.1, 0.2, 0.3, 0.4 },
