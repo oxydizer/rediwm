@@ -9,11 +9,21 @@ const dialog = @import("ui").widgets.dialog;
 const menu = @import("ui").context_menu;
 const p = @import("pango.zig");
 const Document = @import("document.zig").Document;
+const view = @import("view.zig");
+const lines = @import("lines.zig");
 const op = @import("operation.zig");
 const a = std.heap.c_allocator;
 const top: f64 = 40;
 const status_h: f64 = 26;
 const tab_w: f64 = 176;
+const Status = struct {
+    revision: usize = std.math.maxInt(usize),
+    cursor: usize = 0,
+    line: usize = 0,
+    column: usize = 0,
+};
+/// Stand-in for the position of a cursor too far from the view to measure.
+const far: c_int = 1_000_000 * 1024;
 const Action = enum { new, open, save, save_as, find, wrap };
 const labels = [_][]const u8{ "New", "Open", "Save", "Save As", "Find", "Word Wrap" };
 const Tab = struct {
@@ -21,18 +31,15 @@ const Tab = struct {
     doc: Document = .{},
     path: ?[:0]u8 = null,
     stamp: ?op.Stamp = null,
-    scroll: f64 = 0,
+    /// Pixels of the first visible line (`doc.top`) scrolled out of view.
+    dy: f64 = 0,
     scroll_x: f64 = 0,
-    layout: ?*p.Layout = null,
-    layout_revision: usize = std.math.maxInt(usize),
-    layout_width: i32 = 0,
-    layout_scale: i32 = 0,
-    height: i32 = 0,
-    width: i32 = 0,
+    measure: view.Measure = .{},
+    /// The status bar's line and column, recomputed only when the cursor or text moves.
+    status: Status = .{},
     fn deinit(t: *Tab) void {
         t.doc.deinit();
         if (t.path) |path| a.free(path);
-        if (t.layout) |layout| p.g_object_unref(layout);
         a.destroy(t);
     }
     fn name(t: *Tab) []const u8 {
@@ -86,6 +93,8 @@ pub const App = struct {
     clipboard_revision: usize = 0,
     paste_requested: bool = false,
     preedit: std.ArrayList(u8) = .empty,
+    layouts: view.Layouts = .{},
+    rows: std.ArrayList(view.Row) = .empty,
 
     pub fn init(io: std.Io) !App {
         var self: App = .{ .io = io };
@@ -101,6 +110,8 @@ pub const App = struct {
         self.query.deinit(a);
         self.clipboard.deinit(a);
         self.preedit.deinit(a);
+        self.rows.deinit(a);
+        self.layouts.deinit();
     }
     fn current(self: *App) *Tab {
         return self.tabs.items[self.selected];
@@ -193,7 +204,9 @@ pub const App = struct {
             error.FileChanged => "File changed on disk. Use Save As to keep your edits in another file.",
             error.BinaryFile => "This file contains binary data and cannot be edited as text.",
             error.UnsupportedEncoding => "This file is not valid UTF-8 text.",
-            error.FileTooLarge => "Text files are limited to 16 MiB.",
+            error.FileTooLarge => "Text files are limited to 4 GiB.",
+            error.OutOfMemory => "Not enough free memory to hold this file.",
+            error.Busy => "Saving a large file. Editing resumes when it is written.",
             error.PermissionDenied => "Permission denied. Try Save As in a writable folder.",
             error.HardLinkedFile => "This file has multiple hard links. Use Save As to create a separate copy.",
             else => @errorName(err),
@@ -219,6 +232,9 @@ pub const App = struct {
             self.operation = null;
             defer job.deinit();
             self.dirty = true;
+            if (job.kind == .save) if (self.findTab(job.tab_id)) |i| {
+                self.tabs.items[i].doc.locked = false;
+            };
             if (job.err) |err| {
                 self.close_all = false;
                 self.failure(err);
@@ -243,7 +259,9 @@ pub const App = struct {
                     job.document = null;
                     t.path = path;
                     t.stamp = job.stamp;
-                    t.layout_revision = std.math.maxInt(usize);
+                    t.dy = 0;
+                    t.scroll_x = 0;
+                    t.measure = .{};
                     self.notice_len = 0;
                     self.changed();
                 },
@@ -287,15 +305,16 @@ pub const App = struct {
         };
     }
     fn startSave(self: *App, t: *Tab, path: []const u8, stamp: ?op.Stamp) void {
-        var bytes: std.ArrayList(u8) = .empty;
-        defer bytes.deinit(a);
-        if (t.doc.bom) bytes.appendSlice(a, "\xef\xbb\xbf") catch return;
-        bytes.appendSlice(a, t.doc.text.items) catch return;
-        self.operation = op.Operation.start(.save, self.io, t.id, path, bytes.items, stamp) catch |err| {
+        // A small document is copied so typing can continue while it is
+        // written. A large one is written where it is, which needs the text to
+        // stay put until the save finishes (see `Document.locked`).
+        const borrow = t.doc.text.items.len > op.copy_limit;
+        self.operation = op.Operation.startSave(self.io, t.id, path, t.doc.bom, t.doc.text.items, borrow, stamp) catch |err| {
             self.failure(err);
             return;
         };
         self.operation.?.revision = t.doc.revision;
+        t.doc.locked = borrow;
         self.message("Saving…");
     }
     fn save(self: *App, as: bool) void {
@@ -343,6 +362,7 @@ pub const App = struct {
             .wrap => {
                 self.wrap = !self.wrap;
                 self.current().scroll_x = 0;
+                self.port().clamp();
             },
         }
         self.dirty = true;
@@ -370,10 +390,23 @@ pub const App = struct {
     /// while the document fits.
     fn scrollbarGeometry(self: *App) ?scrollbar.Geometry {
         if (self.tabs.items.len == 0) return null;
-        const tab = self.current();
         const strip = scrollbar.gutter(theme.global.scrollbar_width);
         const track: scrollbar.Rect = .{ .x = @as(f32, @floatFromInt(self.w)) - strip, .y = @floatCast(self.viewTop()), .w = strip, .h = @floatCast(self.viewHeight()) };
-        return scrollbar.Geometry.compute(.vertical, track, track.h, @floatFromInt(tab.height), @floatCast(tab.scroll));
+        const e = self.port().extent(&self.current().measure);
+        return scrollbar.Geometry.compute(.vertical, track, @floatCast(e.viewport), @floatCast(e.content), @floatCast(e.offset));
+    }
+    /// The current tab's scroll offset in the scrollbar's units.
+    fn scrollOffset(self: *App) f32 {
+        return @floatCast(self.port().extent(&self.current().measure).offset);
+    }
+    fn seekScroll(self: *App, offset: f32) void {
+        self.port().seek(&self.current().measure, offset);
+    }
+    /// The current tab as something to scroll, lay out and hit-test.
+    fn port(self: *App) view.Port {
+        const t = self.current();
+        self.layouts.configure(theme.global.mono_font, ui.textSize(), if (self.wrap) self.w - 40 else null, self.scale);
+        return .{ .doc = &t.doc, .layouts = &self.layouts, .height = self.viewHeight(), .dy = &t.dy };
     }
 
     /// Advances the scrollbar's hover and scroll feedback.
@@ -381,13 +414,14 @@ pub const App = struct {
         if (self.tabs.items.len == 0) return;
         const tab = self.current();
         const bar = self.scrollbarGeometry();
+        const position = @as(f64, @floatFromInt(tab.doc.top)) * 1024 + tab.dy;
         if (self.bar_tab != tab) {
             self.bar_tab = tab;
-            self.bar_observed = tab.scroll;
+            self.bar_observed = position;
         }
         const hovered = !self.menu_open and self.close_tab == null and if (bar) |b| b.overThumb(@floatCast(self.px), @floatCast(self.py)) else false;
-        if (self.bar_appearance.step(now, tab.scroll != self.bar_observed, hovered, self.scroll_drag.active, bar != null)) self.dirty = true;
-        self.bar_observed = tab.scroll;
+        if (self.bar_appearance.step(now, position != self.bar_observed, hovered, self.scroll_drag.active, bar != null)) self.dirty = true;
+        self.bar_observed = position;
     }
 
     /// How long the event loop may sleep before the scrollbar needs a frame.
@@ -397,10 +431,6 @@ pub const App = struct {
         return null;
     }
 
-    fn clampScroll(self: *App) void {
-        const t = self.current();
-        t.scroll = std.math.clamp(t.scroll, 0, @max(0, @as(f64, @floatFromInt(t.height)) - self.viewHeight()));
-    }
     pub fn handleScroll(self: *App, amount: f64) void {
         if (self.close_tab != null or self.menu_open) return;
         if (self.py >= 0 and self.py < top) {
@@ -408,75 +438,50 @@ pub const App = struct {
         } else if (self.shift and !self.wrap) {
             self.current().scroll_x = @max(0, self.current().scroll_x + amount * 3);
         } else {
-            self.current().scroll += amount * 3;
-            self.clampScroll();
+            self.port().scrollBy(amount * 3);
         }
         self.dirty = true;
     }
-    fn layout(self: *App, cr: *c.cairo_t) void {
-        const t = self.current();
-        if (t.layout == null) t.layout = p.pango_cairo_create_layout(cr) orelse return;
-        const width: i32 = if (self.wrap) @max(1, self.w - 40) * 1024 else -1;
-        if (t.layout_revision != t.doc.revision or t.layout_width != width or t.layout_scale != self.scale) {
-            const family = a.dupeZ(u8, theme.global.mono_font) catch return;
-            defer a.free(family);
-            const font = p.pango_font_description_from_string(family) orelse return;
-            defer p.pango_font_description_free(font);
-            p.pango_font_description_set_absolute_size(font, ui.textSize() * 1024);
-            p.pango_layout_set_font_description(t.layout.?, font);
-            p.pango_layout_set_text(t.layout.?, t.doc.text.items.ptr, @intCast(t.doc.text.items.len));
-            p.pango_layout_set_width(t.layout.?, width);
-            p.pango_layout_set_wrap(t.layout.?, 2);
-            p.pango_cairo_update_layout(cr, t.layout.?);
-            p.pango_layout_get_pixel_size(t.layout.?, &t.width, &t.height);
-            t.layout_revision = t.doc.revision;
-            t.layout_width = width;
-            t.layout_scale = self.scale;
-            self.clampScroll();
-        }
-    }
-    fn ensureLayout(self: *App) void {
-        const surface = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, 1, 1);
-        defer c.cairo_surface_destroy(surface);
-        const cr = c.cairo_create(surface);
-        defer c.cairo_destroy(cr);
-        c.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
-        self.layout(cr.?);
-    }
+    /// The cursor's rectangle in Pango units, with `y` measured from the top
+    /// of the text view. A cursor too far away to measure without scrolling
+    /// is reported well outside the view, above or below it.
     pub fn caretRect(self: *App) p.Rectangle {
-        self.ensureLayout();
-        var r: p.Rectangle = .{ .x = 0, .y = 0, .width = 0, .height = 18 * 1024 };
-        if (self.current().layout) |l| p.pango_layout_get_cursor_pos(l, @intCast(self.document().cursor), &r, null);
+        const d = self.document();
+        const row = self.port().locate(d.cursor) orelse return .{ .x = 0, .y = if (d.cursor < d.top) -far else far, .width = 0, .height = 18 * 1024 };
+        var r: p.Rectangle = undefined;
+        p.pango_layout_get_cursor_pos(row.line.layout, row.line.index(d.cursor), &r, null);
+        r.y += @intFromFloat(row.y * 1024);
+        return r;
+    }
+    /// Like `caretRect`, but first scrolls to a cursor that is far away.
+    fn caretRectNear(self: *App) p.Rectangle {
+        var r = self.caretRect();
+        if (r.y <= -far / 2 or r.y >= far / 2) {
+            self.port().jumpTo(self.document().cursor);
+            r = self.caretRect();
+        }
         return r;
     }
     pub fn inputRectangle(self: *App) p.Rectangle {
         const r = self.caretRect();
-        return .{ .x = @intFromFloat(@as(f64, @floatFromInt(r.x)) / 1024 + 16 - self.current().scroll_x), .y = @intFromFloat(@as(f64, @floatFromInt(r.y)) / 1024 + self.viewTop() - self.current().scroll), .width = 2, .height = @max(1, @divTrunc(r.height, 1024)) };
+        return .{ .x = @intFromFloat(@as(f64, @floatFromInt(r.x)) / 1024 + 16 - self.current().scroll_x), .y = @intFromFloat(@as(f64, @floatFromInt(r.y)) / 1024 + self.viewTop()), .width = 2, .height = @max(1, @divTrunc(r.height, 1024)) };
     }
     fn reveal(self: *App) void {
-        const r = self.caretRect();
+        const r = self.caretRectNear();
         const t = self.current();
         const y = @as(f64, @floatFromInt(r.y)) / 1024;
         const h = @as(f64, @floatFromInt(r.height)) / 1024;
-        t.scroll = @max(0, @min(t.scroll, y));
-        t.scroll = @max(t.scroll, y + h - self.viewHeight());
-        self.clampScroll();
+        const pt = self.port();
+        if (y < 0) pt.scrollBy(y) else if (y + h > pt.height) pt.scrollBy(y + h - pt.height);
         if (!self.wrap) {
             const x = @as(f64, @floatFromInt(r.x)) / 1024;
             t.scroll_x = @max(0, @max(x - @as(f64, @floatFromInt(self.w)) + 48, @min(t.scroll_x, x)));
         }
         self.changed();
     }
+    /// The byte offset nearest a point given relative to the text origin.
     fn indexAt(self: *App, x: f64, y: f64) usize {
-        self.ensureLayout();
-        const t = self.current();
-        const l = t.layout orelse return 0;
-        var idx: c_int = 0;
-        var trailing: c_int = 0;
-        _ = p.pango_layout_xy_to_index(l, @intFromFloat(std.math.clamp(x * 1024, -1e9, 1e9)), @intFromFloat(std.math.clamp(y * 1024, -1e9, 1e9)), &idx, &trailing);
-        var offset: usize = @intCast(@max(0, idx));
-        while (trailing > 0 and offset < t.doc.text.items.len) : (trailing -= 1) offset += std.unicode.utf8ByteSequenceLength(t.doc.text.items[offset]) catch 1;
-        return @min(offset, t.doc.text.items.len);
+        return self.port().indexAt(x, y);
     }
     pub fn handleMotion(self: *App, x: f64, y: f64) void {
         const changed_hover = ((self.py < top or y < top) and @divFloor(self.px, 76) != @divFloor(x, 76)) or (self.py < top) != (y < top);
@@ -492,16 +497,12 @@ pub const App = struct {
         }
         if (self.dragging) {
             const t = self.current();
-            if (y < self.viewTop()) t.scroll -= 18 else if (y > self.viewTop() + self.viewHeight()) t.scroll += 18;
-            self.clampScroll();
-            t.doc.move(self.indexAt(x - 16 + t.scroll_x, y - self.viewTop() + t.scroll), true);
+            if (y < self.viewTop()) self.port().scrollBy(-18) else if (y > self.viewTop() + self.viewHeight()) self.port().scrollBy(18);
+            t.doc.move(self.indexAt(x - 16 + t.scroll_x, y - self.viewTop()), true);
             self.changed();
         }
         if (self.scroll_drag.active) {
-            if (self.scrollbarGeometry()) |bar| {
-                self.current().scroll = self.scroll_drag.offsetAt(bar, @floatCast(x), @floatCast(y));
-                self.clampScroll();
-            }
+            if (self.scrollbarGeometry()) |bar| self.seekScroll(self.scroll_drag.offsetAt(bar, @floatCast(x), @floatCast(y)));
             self.dirty = true;
         }
         if (changed_hover) self.dirty = true;
@@ -552,14 +553,11 @@ pub const App = struct {
         } else if (self.py < @as(f64, @floatFromInt(self.h)) - status_h) {
             if (self.px > @as(f64, @floatFromInt(self.w)) - scrollbar.gutter(theme.global.scrollbar_width)) {
                 if (self.scrollbarGeometry()) |bar| {
-                    const scroll: f32 = @floatCast(self.current().scroll);
+                    const scroll = self.scrollOffset();
                     if (scrollbar.press(bar, @floatCast(self.px), @floatCast(self.py), scroll)) |action| {
                         switch (action) {
                             .grab => self.scroll_drag.begin(bar, @floatCast(self.px), @floatCast(self.py), scroll),
-                            .page => |offset| {
-                                self.current().scroll = offset;
-                                self.clampScroll();
-                            },
+                            .page => |offset| self.seekScroll(offset),
                         }
                         self.dirty = true;
                     }
@@ -568,7 +566,7 @@ pub const App = struct {
             }
             self.find_open = false;
             const t = self.current();
-            t.doc.move(self.indexAt(self.px - 16 + t.scroll_x, self.py - self.viewTop() + t.scroll), self.shift);
+            t.doc.move(self.indexAt(self.px - 16 + t.scroll_x, self.py - self.viewTop()), self.shift);
             self.dragging = true;
             self.changed();
         }
@@ -741,7 +739,7 @@ pub const App = struct {
             c.XKB_KEY_Home => d.move(if (self.ctrl) 0 else d.lineStart(d.cursor), self.shift),
             c.XKB_KEY_End => d.move(if (self.ctrl) d.text.items.len else d.lineEnd(d.cursor), self.shift),
             c.XKB_KEY_Up, c.XKB_KEY_Down, c.XKB_KEY_Page_Up, c.XKB_KEY_Page_Down => {
-                const r = self.caretRect();
+                const r = self.caretRectNear();
                 const down = sym == c.XKB_KEY_Down or sym == c.XKB_KEY_Page_Down;
                 const distance = if (sym == c.XKB_KEY_Page_Up or sym == c.XKB_KEY_Page_Down) self.viewHeight() else @as(f64, @floatFromInt(r.height)) / 1024;
                 d.move(self.indexAt(@as(f64, @floatFromInt(r.x)) / 1024, @as(f64, @floatFromInt(r.y)) / 1024 + @as(f64, @floatFromInt(r.height)) / 2048 + (if (down) distance else -distance)), self.shift);
@@ -866,78 +864,104 @@ pub const App = struct {
             c.cairo_restore(cr);
             self.paintButton(cr, .{ .x = @floatFromInt(self.w - 90), .y = 43, .w = 78, .h = 30 }, "Next", false);
         }
-        self.layout(cr);
+        self.layouts.beginFrame();
+        const pt = self.port();
+        pt.clamp();
+        pt.visible(&self.rows);
         const tab = self.current();
         const sel = tab.doc.selection();
         c.cairo_save(cr);
         c.cairo_rectangle(cr, 12, self.viewTop(), @floatFromInt(self.w - 30), self.viewHeight());
         c.cairo_clip(cr);
-        c.cairo_translate(cr, 16 - tab.scroll_x, self.viewTop() - tab.scroll);
-        if (tab.layout) |layout_ptr| {
-            if (p.pango_layout_get_iter(layout_ptr)) |iter| {
-                defer p.pango_layout_iter_free(iter);
-                var line_index: c_int = 0;
-                while (true) : (line_index += 1) {
-                    var rect: p.Rectangle = undefined;
-                    p.pango_layout_iter_get_line_extents(iter, null, &rect);
-                    const y = @as(f64, @floatFromInt(rect.y)) / 1024;
-                    const h = @as(f64, @floatFromInt(rect.height)) / 1024;
-                    if (y > tab.scroll + self.viewHeight()) break;
-                    if (y + h >= tab.scroll) {
-                        const line = p.pango_layout_iter_get_line_readonly(iter);
-                        const line_start: usize = @intCast(p.pango_layout_line_get_start_index(line));
-                        const line_end: usize = if (p.pango_layout_get_line_readonly(layout_ptr, line_index + 1)) |next|
-                            @intCast(p.pango_layout_line_get_start_index(next))
-                        else
-                            tab.doc.text.items.len;
-                        // Pango extends ranges to the right margin even for
-                        // lines entirely before the selection. Only ask for
-                        // intersecting lines, including a selected line break.
-                        if (sel[0] != sel[1] and sel[0] < line_end and sel[1] > line_start) {
-                            var ranges: ?[*]c_int = null;
-                            var count: c_int = 0;
-                            p.pango_layout_line_get_x_ranges(line, @intCast(sel[0]), @intCast(sel[1]), &ranges, &count);
-                            if (ranges) |r| {
-                                defer p.g_free(r);
-                                var n: usize = 0;
-                                while (n < @as(usize, @intCast(count))) : (n += 1) {
-                                    var accent = theme.shellPalette().accent;
-                                    accent[3] = 0.35;
-                                    fill(cr, @as(f64, @floatFromInt(r[n * 2])) / 1024, y, @as(f64, @floatFromInt(r[n * 2 + 1] - r[n * 2])) / 1024, h, accent);
-                                }
-                            }
-                        }
-                        ui.setSource(cr, t.window_fg);
-                        c.cairo_move_to(cr, @as(f64, @floatFromInt(rect.x)) / 1024, @as(f64, @floatFromInt(p.pango_layout_iter_get_baseline(iter))) / 1024);
-                        p.pango_cairo_show_layout_line(cr, line);
-                    }
-                    if (p.pango_layout_iter_next_line(iter) == 0) break;
-                }
-            }
-            if (self.focused and !self.find_open and self.close_tab == null) {
-                var r: p.Rectangle = undefined;
-                p.pango_layout_get_cursor_pos(layout_ptr, @intCast(tab.doc.cursor), &r, null);
-                if (self.caret_visible) fill(cr, @as(f64, @floatFromInt(r.x)) / 1024, @as(f64, @floatFromInt(r.y)) / 1024, 1.5, @as(f64, @floatFromInt(r.height)) / 1024, t.window_fg);
-                if (self.preedit.items.len > 0) {
-                    const x = @as(f64, @floatFromInt(r.x)) / 1024;
-                    const y = @as(f64, @floatFromInt(r.y + r.height)) / 1024;
-                    ui.setSource(cr, t.window_fg);
-                    ui.drawText(cr, self.preedit.items, x, y, ui.textSize(), false);
-                    fill(cr, x, y + 2, ui.measureText(cr, self.preedit.items, ui.textSize(), false), 1, theme.shellPalette().accent);
-                }
-            }
-        }
+        for (self.rows.items) |row| self.paintLine(cr, tab, row, sel);
         c.cairo_restore(cr);
         if (self.scrollbarGeometry()) |bar| ui.drawScrollbar(cr, scrollbar.look(bar, self.bar_appearance, theme.global.scrollbar_width, theme.shellPalette()));
         fill(cr, 0, @as(f64, @floatFromInt(self.h)) - status_h, @floatFromInt(self.w), status_h, t.app_bar);
         var info: [256]u8 = undefined;
-        const line = std.mem.count(u8, tab.doc.text.items[0..tab.doc.cursor], "\n") + 1;
-        const column = (std.unicode.utf8CountCodepoints(tab.doc.text.items[tab.doc.lineStart(tab.doc.cursor)..tab.doc.cursor]) catch 0) + 1;
-        const text = if (self.notice_len > 0) self.notice[0..self.notice_len] else std.fmt.bufPrint(&info, "Line {d}, Column {d}    ·    UTF-8{s}    ·    {s}", .{ line, column, if (tab.doc.bom) " BOM" else "", if (tab.doc.crlf) "CRLF" else "LF" }) catch "";
+        if (tab.status.revision != tab.doc.revision or tab.status.cursor != tab.doc.cursor) {
+            const d = &tab.doc;
+            tab.status = .{
+                .revision = d.revision,
+                .cursor = d.cursor,
+                .line = d.linesBefore(d.cursor) + 1,
+                .column = (std.unicode.utf8CountCodepoints(d.text.items[d.lineStart(d.cursor)..d.cursor]) catch 0) + 1,
+            };
+        }
+        const text = if (self.notice_len > 0) self.notice[0..self.notice_len] else std.fmt.bufPrint(&info, "Line {d}, Column {d}    ·    UTF-8{s}    ·    {s}", .{ tab.status.line, tab.status.column, if (tab.doc.bom) " BOM" else "", if (tab.doc.crlf) "CRLF" else "LF" }) catch "";
         ui.setSource(cr, t.window_fg);
         ui.drawText(cr, text, 12, @floatFromInt(self.h - 8), ui.statusSize(), false);
         if (self.menu_open) self.paintMenu(cr);
         if (self.close_tab != null) self.paintClose(cr);
+    }
+    /// Draws one segment: its selection, text and, if the cursor is in it, the caret.
+    fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]usize) void {
+        const t = theme.global;
+        const l = row.line;
+        const seg = l.seg;
+        const iter = p.pango_layout_get_iter(l.layout) orelse return;
+        defer p.pango_layout_iter_free(iter);
+        c.cairo_save(cr);
+        defer c.cairo_restore(cr);
+        c.cairo_translate(cr, 16 - tab.scroll_x, self.viewTop() + row.y);
+        const text_len = l.textLen();
+        // The selection as indices into this layout, which holds the text
+        // without its line break. With wrapping, a selected break is drawn as
+        // highlight out to the right margin, as Pango does when the break is
+        // in the layout; without it Pango stops at the end of the text.
+        const margin: f64 = @floatFromInt(self.w - 40);
+        const s0 = sel[0] -| seg.start;
+        const s1 = @min(sel[1] -| seg.start, text_len);
+        const covers_break = seg.terminated() and sel[0] <= seg.text_end and sel[1] > seg.text_end;
+        var accent = theme.shellPalette().accent;
+        accent[3] = 0.35;
+        var line_index: c_int = 0;
+        while (true) : (line_index += 1) {
+            var rect: p.Rectangle = undefined;
+            p.pango_layout_iter_get_line_extents(iter, null, &rect);
+            const y = @as(f64, @floatFromInt(rect.y)) / 1024;
+            const h = @as(f64, @floatFromInt(rect.height)) / 1024;
+            if (row.y + y > self.viewHeight()) break;
+            if (row.y + y + h >= 0) {
+                const line = p.pango_layout_iter_get_line_readonly(iter);
+                const first: usize = @intCast(p.pango_layout_line_get_start_index(line));
+                const next = p.pango_layout_get_line_readonly(l.layout, line_index + 1);
+                const end: usize = if (next) |n| @intCast(p.pango_layout_line_get_start_index(n)) else text_len;
+                // Pango extends ranges to the right margin even for lines
+                // entirely before the selection, so only ask for lines it intersects.
+                if (sel[0] != sel[1] and s0 < s1 and s0 < end and s1 > first) {
+                    var ranges: ?[*]c_int = null;
+                    var count: c_int = 0;
+                    p.pango_layout_line_get_x_ranges(line, @intCast(s0), @intCast(s1), &ranges, &count);
+                    if (ranges) |r| {
+                        defer p.g_free(r);
+                        var n: usize = 0;
+                        while (n < @as(usize, @intCast(count))) : (n += 1) {
+                            fill(cr, @as(f64, @floatFromInt(r[n * 2])) / 1024, y, @as(f64, @floatFromInt(r[n * 2 + 1] - r[n * 2])) / 1024, h, accent);
+                        }
+                    }
+                }
+                if (covers_break and next == null and self.wrap) {
+                    const x = @as(f64, @floatFromInt(rect.x + rect.width)) / 1024;
+                    if (margin > x) fill(cr, x, y, margin - x, h, accent);
+                }
+                ui.setSource(cr, t.window_fg);
+                c.cairo_move_to(cr, @as(f64, @floatFromInt(rect.x)) / 1024, @as(f64, @floatFromInt(p.pango_layout_iter_get_baseline(iter))) / 1024);
+                p.pango_cairo_show_layout_line(cr, line);
+            }
+            if (p.pango_layout_iter_next_line(iter) == 0) break;
+        }
+        if (self.focused and !self.find_open and self.close_tab == null and lines.holds(seg, tab.doc.cursor, tab.doc.text.items.len)) {
+            var r: p.Rectangle = undefined;
+            p.pango_layout_get_cursor_pos(l.layout, l.index(tab.doc.cursor), &r, null);
+            if (self.caret_visible) fill(cr, @as(f64, @floatFromInt(r.x)) / 1024, @as(f64, @floatFromInt(r.y)) / 1024, 1.5, @as(f64, @floatFromInt(r.height)) / 1024, t.window_fg);
+            if (self.preedit.items.len > 0) {
+                const x = @as(f64, @floatFromInt(r.x)) / 1024;
+                const py = @as(f64, @floatFromInt(r.y + r.height)) / 1024;
+                ui.setSource(cr, t.window_fg);
+                ui.drawText(cr, self.preedit.items, x, py, ui.textSize(), false);
+                fill(cr, x, py + 2, ui.measureText(cr, self.preedit.items, ui.textSize(), false), 1, theme.shellPalette().accent);
+            }
+        }
     }
     fn paintClose(self: *App, cr: *c.cairo_t) void {
         fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), .{ 0, 0, 0, 0.45 });

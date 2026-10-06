@@ -257,6 +257,30 @@ def run():
                 window_control(24)  # close all clean tabs
                 wait_for(lambda: not windows("rediwm-editor"), "editor closes")
                 print("binary rejection and clean window close", flush=True)
+
+                # Beyond the old 16 MiB limit, and past the size where a save is
+                # copied: opening must not lay the whole text out, End must reach
+                # the real end, and the file written must be exact.
+                large = docs / "large.log"
+                chunk = b"".join(b"line %d: the quick brown fox jumps over the lazy dog\n" % n for n in range(20000))
+                with large.open("wb") as handle:
+                    handle.write(b"\xef\xbb\xbf")
+                    for _ in range(40):
+                        handle.write(chunk)
+                original = large.read_bytes()
+                assert len(original) > 40 * 1024 * 1024
+                start("rediwm-editor", large)
+                win = title("large.log")
+                ipc.focus_window(win["id"])
+                key(107, ctrl=True)
+                ipc.type_text("END")
+                title("* large.log")
+                key(31, ctrl=True)
+                wait_for(lambda: large.read_bytes() == original + b"END", "large file saved exactly with its BOM")
+                title("large.log")
+                key(17, ctrl=True)
+                wait_for(lambda: not windows("rediwm-editor"), "large file tab closes")
+                print("files beyond 16 MiB open, jump to the end and save exactly", flush=True)
                 if env["WLR_RENDERER"] == "gles2":
                     lines = (tmp / "rediwm-0.log").read_text().splitlines()
                     for line in lines:

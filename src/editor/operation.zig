@@ -1,8 +1,17 @@
 //! Immutable file/chooser jobs. The UI only consumes results after the eventfd wakes it.
 const std = @import("std");
 const c = @import("../files/c.zig").api;
-const Document = @import("document.zig").Document;
+const document = @import("document.zig");
+const Document = document.Document;
 const a = std.heap.c_allocator;
+/// Saves of documents up to this size are copied, so editing can continue
+/// while they are written; larger ones are written in place and editing waits.
+pub const copy_limit: usize = 32 * 1024 * 1024;
+/// Files smaller than this are not checked against free memory.
+const memory_check_floor: usize = 64 * 1024 * 1024;
+/// A binary or non-UTF-8 file is refused after this many bytes, before the rest is read.
+const sniff_len: usize = 64 * 1024;
+const bom_bytes = "\xef\xbb\xbf";
 extern fn flistxattr(c_int, ?[*]u8, usize) isize;
 extern fn fgetxattr(c_int, [*:0]const u8, ?[*]u8, usize) isize;
 extern fn fsetxattr(c_int, [*:0]const u8, [*]const u8, usize, c_int) c_int;
@@ -68,6 +77,54 @@ fn readAll(fd: c_int, limit: usize) ![]u8 {
     }
     return bytes.toOwnedSlice(a);
 }
+/// Reads the whole file into one buffer sized from `hint`, so a huge file is
+/// neither grown by doubling nor copied afterwards.
+fn readInto(fd: c_int, text: *std.ArrayList(u8), hint: usize, max: usize) !void {
+    try text.ensureTotalCapacityPrecise(a, hint + 1);
+    var sniffed = false;
+    while (true) {
+        if (text.unusedCapacitySlice().len == 0) {
+            // The file grew while it was read.
+            if (text.items.len >= max) return error.FileTooLarge;
+            try text.ensureTotalCapacity(a, @min(max, text.items.len + text.items.len / 2 + 1024 * 1024));
+        }
+        const room = text.unusedCapacitySlice();
+        const n = c.read(fd, room.ptr, room.len);
+        if (n == 0) break;
+        if (n < 0) {
+            if (std.posix.errno(n) == .INTR) continue;
+            return error.ReadFailed;
+        }
+        text.items.len += @intCast(n);
+        if (!sniffed and text.items.len >= sniff_len) {
+            sniffed = true;
+            try Document.sniff(text.items[0..sniff_len]);
+        }
+    }
+}
+/// Memory the kernel could give a new allocation without swapping, in bytes.
+fn availableMemory() ?usize {
+    const fd = c.open("/proc/meminfo", c.O_RDONLY | c.O_CLOEXEC);
+    if (fd < 0) return null;
+    defer _ = c.close(fd);
+    var buf: [4096]u8 = undefined;
+    const n = c.read(fd, &buf, buf.len);
+    if (n <= 0) return null;
+    const info = buf[0..@intCast(n)];
+    const key = "MemAvailable:";
+    const at = std.mem.indexOf(u8, info, key) orelse return null;
+    var rest = std.mem.trimStart(u8, info[at + key.len ..], " ");
+    rest = rest[0 .. std.mem.indexOfAny(u8, rest, " \n") orelse rest.len];
+    const kib = std.fmt.parseInt(usize, rest, 10) catch return null;
+    return std.math.mul(usize, kib, 1024) catch null;
+}
+/// Opening must not push the machine into swap or the OOM killer: refuse a
+/// file that, with room to edit it, would not fit in free memory.
+fn ensureMemory(size: usize) !void {
+    if (size < memory_check_floor) return;
+    const available = availableMemory() orelse return;
+    if (size + size / 8 > available) return error.OutOfMemory;
+}
 pub fn executable(buf: []u8, name: []const u8) []const u8 {
     var path: [4096]u8 = undefined;
     const n = c.readlink("/proc/self/exe", &path, path.len);
@@ -85,7 +142,10 @@ pub const Operation = struct {
     tab_id: usize,
     revision: usize = 0,
     path: [:0]u8,
-    bytes: []u8,
+    /// What a save writes after the optional BOM; owned unless `owns_bytes` is false.
+    bytes: []const u8,
+    owns_bytes: bool = true,
+    bom: bool = false,
     expected: ?Stamp,
     stamp: ?Stamp = null,
     io: std.Io,
@@ -97,16 +157,24 @@ pub const Operation = struct {
     document: ?Document = null,
 
     pub fn start(kind: Kind, io: std.Io, tab_id: usize, path: []const u8, bytes: []const u8, expected: ?Stamp) !*Operation {
+        return create(kind, io, tab_id, path, try a.dupe(u8, bytes), true, false, expected);
+    }
+    /// Writes `text` (after a BOM if `bom`). With `borrow` the caller keeps
+    /// `text` alive and unchanged until the operation finishes, which spares
+    /// a copy of a very large document.
+    pub fn startSave(io: std.Io, tab_id: usize, path: []const u8, bom: bool, text: []const u8, borrow: bool, expected: ?Stamp) !*Operation {
+        return create(.save, io, tab_id, path, if (borrow) text else try a.dupe(u8, text), !borrow, bom, expected);
+    }
+    fn create(kind: Kind, io: std.Io, tab_id: usize, path: []const u8, data: []const u8, owns: bool, bom: bool, expected: ?Stamp) !*Operation {
+        errdefer if (owns) a.free(data);
         const self = try a.create(Operation);
         errdefer a.destroy(self);
         const owned = try a.dupeZ(u8, path);
         errdefer a.free(owned);
-        const data = try a.dupe(u8, bytes);
-        errdefer a.free(data);
         const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (fd < 0) return error.EventFailed;
         errdefer _ = c.close(fd);
-        self.* = .{ .kind = kind, .io = io, .tab_id = tab_id, .path = owned, .bytes = data, .expected = expected, .fd = fd };
+        self.* = .{ .kind = kind, .io = io, .tab_id = tab_id, .path = owned, .bytes = data, .owns_bytes = owns, .bom = bom, .expected = expected, .fd = fd };
         self.thread = try std.Thread.spawn(.{}, run, .{self});
         return self;
     }
@@ -114,7 +182,7 @@ pub const Operation = struct {
         self.thread.?.join();
         if (self.document) |*d| d.deinit();
         a.free(self.path);
-        a.free(self.bytes);
+        if (self.owns_bytes) a.free(self.bytes);
         _ = c.close(self.fd);
         a.destroy(self);
     }
@@ -143,10 +211,19 @@ pub const Operation = struct {
                 var st: c.struct_stat = undefined;
                 if (c.fstat(fd, &st) != 0 or st.st_mode & c.S_IFMT != c.S_IFREG) return error.NotRegularFile;
                 self.stamp = Stamp.of(st);
-                const bytes = try readAll(fd, @import("document.zig").limit);
-                defer a.free(bytes);
-                self.document = try Document.init(bytes);
+                const size: usize = @intCast(@max(0, st.st_size));
+                if (size > document.limit) return error.FileTooLarge;
+                try ensureMemory(size);
+                var text: std.ArrayList(u8) = .empty;
+                errdefer text.deinit(a);
+                try readInto(fd, &text, size, document.limit);
                 if (c.fstat(fd, &st) != 0 or !self.stamp.?.eql(Stamp.of(st))) return error.FileChanged;
+                const bom = std.mem.startsWith(u8, text.items, bom_bytes);
+                if (bom) {
+                    @memmove(text.items[0 .. text.items.len - bom_bytes.len], text.items[bom_bytes.len..]);
+                    text.items.len -= bom_bytes.len;
+                }
+                self.document = try Document.adopt(text, bom);
             },
             .save => try self.save(),
             .open_dialog, .save_dialog => try self.choose(),
@@ -186,6 +263,7 @@ pub const Operation = struct {
             if (c.fstat(source, &source_stat) != 0 or !before.?.eql(Stamp.of(source_stat))) return error.FileChanged;
             try copyAttributes(source, fd);
         }
+        if (self.bom) try writeAll(fd, bom_bytes);
         try writeAll(fd, self.bytes);
         if (c.fsync(fd) != 0) return error.WriteFailed;
         if (before) |stamp| {
@@ -292,4 +370,50 @@ test "atomic saves preserve permissions, reject stale files and follow symlink t
     // A destination appearing after Save As must not be silently replaced.
     job.expected = null;
     try std.testing.expectError(error.FileChanged, job.work());
+}
+
+test "loading reads one buffer, keeps the BOM aside and refuses binary data early" {
+    var template: [64:0]u8 = @splat(0);
+    _ = try std.fmt.bufPrintZ(&template, "/tmp/rediwm-editor-XXXXXX", .{});
+    const dir = c.mkdtemp(&template) orelse return error.CreateFailed;
+    defer _ = c.rmdir(dir);
+    const path = try std.fmt.allocPrintSentinel(a, "{s}/big.txt", .{std.mem.span(dir)}, 0);
+    defer a.free(path);
+    defer _ = c.unlink(path);
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(a);
+    try body.appendSlice(a, bom_bytes);
+    for (0..5000) |n| try body.print(a, "line {d}\r\n", .{n});
+    const fd = c.open(path, c.O_WRONLY | c.O_CREAT | c.O_CLOEXEC, @as(c_uint, 0o600));
+    try std.testing.expect(fd >= 0);
+    try writeAll(fd, body.items);
+    _ = c.close(fd);
+    var job: Operation = .{ .kind = .load, .tab_id = 1, .path = try a.dupeZ(u8, path), .bytes = "", .owns_bytes = false, .expected = null, .io = undefined, .fd = -1 };
+    defer a.free(job.path);
+    defer if (job.document) |*d| d.deinit();
+    try job.work();
+    const d = job.document.?;
+    try std.testing.expect(d.bom and d.crlf);
+    try std.testing.expectEqualSlices(u8, body.items[bom_bytes.len..], d.text.items);
+    // A NUL past the sniffed prefix is still caught, by the full validation.
+    job.document.?.deinit();
+    job.document = null;
+    try body.append(a, 0);
+    const fd2 = c.open(path, c.O_WRONLY | c.O_TRUNC | c.O_CLOEXEC);
+    try writeAll(fd2, body.items);
+    _ = c.close(fd2);
+    try std.testing.expectError(error.BinaryFile, job.work());
+    // One inside it is refused before the rest of the file is read.
+    body.items[1000] = 0;
+    const fd3 = c.open(path, c.O_WRONLY | c.O_TRUNC | c.O_CLOEXEC);
+    try writeAll(fd3, body.items);
+    _ = c.close(fd3);
+    try std.testing.expectError(error.BinaryFile, job.work());
+}
+
+test "free memory is read from the kernel" {
+    const available = availableMemory() orelse return;
+    try std.testing.expect(available > 1024 * 1024);
+    try ensureMemory(1024);
+    try std.testing.expectError(error.OutOfMemory, ensureMemory(available + memory_check_floor));
 }

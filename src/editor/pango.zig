@@ -15,6 +15,8 @@ pub extern fn pango_font_description_from_string([*:0]const u8) ?*Font;
 pub extern fn pango_font_description_set_absolute_size(*Font, f64) void;
 pub extern fn pango_font_description_free(*Font) void;
 pub extern fn pango_layout_get_pixel_size(*Layout, *c_int, *c_int) void;
+pub extern fn pango_layout_get_extents(*Layout, ?*Rectangle, *Rectangle) void;
+pub extern fn pango_layout_get_text(*Layout) [*:0]const u8;
 pub extern fn pango_layout_get_cursor_pos(*Layout, c_int, *Rectangle, ?*Rectangle) void;
 pub extern fn pango_layout_xy_to_index(*Layout, c_int, c_int, *c_int, *c_int) c_int;
 pub extern fn pango_layout_get_iter(*Layout) ?*Iter;

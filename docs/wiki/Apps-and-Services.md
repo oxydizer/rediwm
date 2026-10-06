@@ -27,8 +27,12 @@ The file manager. Space opens images, PDFs and text files.
 
 ## Text editor (`rediwm-editor [FILE ...]`)
 
-Tabs, one window per display. UTF-8 up to 16 MiB, keeps BOM and line endings,
-asks before discarding changes.
+Tabs, one window per display. UTF-8 files up to 4 GiB (they must fit in free
+memory), keeps BOM and line endings, asks before discarding changes. Only the
+lines on screen are ever laid out, so opening, scrolling and Find stay fast on
+huge files, and a single line of many megabytes is folded onto several rows.
+Editing near the start of a very large file moves the rest of the text, which
+costs a few milliseconds per 100 MB per keystroke.
 
 | Keys | Action |
 | --- | --- |
