@@ -1,8 +1,8 @@
 # RediWM
 
 <div align="center">
+<img width="1085" height="233" alt="redi-logo" src="https://github.com/user-attachments/assets/4e80c572-bd30-4800-bcf3-acb95299358d" />
 
-<img width="690" height="519" alt="Screenshot-1791166153-291331984-4" src="https://github.com/user-attachments/assets/7ba5668a-649f-4bae-ac2c-ec08f6826b14" />
 
 ### A Wayland compositor with its own desktop shell, built in Zig
 
