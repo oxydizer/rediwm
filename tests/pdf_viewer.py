@@ -9,7 +9,7 @@ import time
 import sys
 import warnings
 import cairo
-from PIL import Image
+from PIL import Image, ImageChops
 from ipc_client import IPCClient, ROOT
 from files_browser import wait_for
 
@@ -59,9 +59,12 @@ def generate_tall_pdf(path: Path):
 
 class FakePrintPortal:
     """org.freedesktop.portal.Print on a private bus. Records each document it
-    is handed, then answers the request with `response` (0 printed, 2 failed)."""
+    is handed. PreparePrint dismissal and submitted job failures are separate."""
 
     XML = """<node><interface name="org.freedesktop.portal.Print">
+      <method name="PreparePrint"><arg type="s" direction="in"/><arg type="s" direction="in"/>
+        <arg type="a{sv}" direction="in"/><arg type="a{sv}" direction="in"/>
+        <arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
       <method name="Print"><arg type="s" direction="in"/><arg type="s" direction="in"/>
         <arg type="h" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
     </interface></node>"""
@@ -72,6 +75,8 @@ class FakePrintPortal:
         self.GLib = GLib
         self.jobs = []
         self.response = 0
+        self.prepare_response = 0
+        self.dialogs = []
         self.daemon = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"],
                                        stdout=subprocess.PIPE, text=True)
         self.address = self.daemon.stdout.readline().strip()
@@ -87,17 +92,30 @@ class FakePrintPortal:
         self.loop = GLib.MainLoop()
         threading.Thread(target=self.loop.run, daemon=True).start()
 
-    def call(self, conn, sender, _path, _interface, _method, params, invocation):
-        parent, title, index, options = params.unpack()
-        fd = invocation.get_message().get_unix_fd_list().get(index)
-        with os.fdopen(fd, "rb") as document:
-            data = document.read()
+    def call(self, conn, sender, _path, _interface, method, params, invocation):
+        args = params.unpack()
+        options = args[-1]
         request = "/org/freedesktop/portal/desktop/request/%s/%s" % (
             sender[1:].replace(".", "_"), options.get("handle_token", "t"))
-        invocation.return_value(self.GLib.Variant("(o)", (request,)))
-        self.jobs.append({"parent": parent, "title": title, "data": data, "options": options})
+        results = {}
+        if method == "PreparePrint":
+            self.dialogs.append(args)
+            response = self.prepare_response
+            if response == 0:
+                results = {"token": self.GLib.Variant("u", 42)}
+        else:
+            parent, title, index, options = args
+            assert options.get("token") == 42, "Print must use the confirmed dialog token"
+            fd = invocation.get_message().get_unix_fd_list().get(index)
+            with os.fdopen(fd, "rb") as document:
+                data = document.read()
+            self.jobs.append({"parent": parent, "title": title, "data": data, "options": options})
+            response = self.response
         conn.emit_signal(sender, request, "org.freedesktop.portal.Request", "Response",
-                         self.GLib.Variant("(ua{sv})", (self.response, {})))
+                         self.GLib.Variant("(ua{sv})", (response, results)))
+        # Exercise a response arriving before the method reply, including the
+        # transition from PreparePrint to Print with another watch installed.
+        invocation.return_value(self.GLib.Variant("(o)", (request,)))
 
     def close(self):
         self.loop.quit()
@@ -245,6 +263,54 @@ def run(scale: int = 1):
                     assert any(r > 200 and b > 200 and g < 60 for n, (r, g, b) in canvas_colors), \
                         "Page 1 bottom edge is clipped on open"
 
+                # A horizontal drag selects characters, not the entire page.
+                # Test forward/reverse, rotation, and Escape clearing copy state.
+                box = ipc.get_window_debug(win["id"])["client_box"]
+                page_scale = min(4 / 3, (box["width"] - 180 - 48) / 300,
+                                 (box["height"] - 44 - 48) / 400)
+                page_x = box["x"] + 180 + (box["width"] - 180 - 300 * page_scale) / 2
+                page_y = box["y"] + 44 + 16
+                measure = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1))
+                measure.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+                measure.set_font_size(16)
+
+                def clipboard():
+                    return subprocess.check_output(["wl-paste", "--no-newline"],
+                                                   env=dict(env, WAYLAND_DISPLAY=display), timeout=5).decode()
+
+                def select_word(reverse=False, copy=True, word="Page", rotated=False):
+                    prefix = "" if word == "Page" else "Page 1 "
+                    first = 30 + measure.text_extents(prefix)[4]
+                    last = first + measure.text_extents(word)[4]
+                    if rotated:
+                        fitted = min(4 / 3, (box["width"] - 180 - 48) / 400,
+                                     (box["height"] - 44 - 48) / 300)
+                        left = box["x"] + 180 + (box["width"] - 180 - 400 * fitted) / 2
+                        points = [(left + (400 - 154) * fitted, page_y + first * fitted),
+                                  (left + (400 - 154) * fitted, page_y + last * fitted)]
+                    else:
+                        points = [(page_x + first * page_scale, page_y + 154 * page_scale),
+                                  (page_x + last * page_scale, page_y + 154 * page_scale)]
+                    if reverse:
+                        points.reverse()
+                    ipc.move_cursor(round(points[0][0]), round(points[0][1]))
+                    time.sleep(.08)
+                    ipc.action("pointer_button", {"button": 272, "pressed": True})
+                    ipc.move_cursor(round(points[1][0]), round(points[1][1]))
+                    time.sleep(.08)
+                    ipc.action("pointer_button", {"button": 272, "pressed": False})
+                    if copy:
+                        key(46, ctrl=True)
+                        assert clipboard() == word, "drag copied more than the selected text"
+
+                select_word()
+                select_word(reverse=True)
+                select_word(word="Content", copy=False)
+                key(1)
+                # Copying after Escape must leave the clipboard unchanged.
+                key(46, ctrl=True)
+                assert clipboard() == "Page"
+
                 # Next page via keyboard shortcut (PageDown = keycode 109)
                 key(109)
                 time.sleep(0.3)
@@ -258,6 +324,9 @@ def run(scale: int = 1):
                 # Rotate via keyboard shortcut R (keycode 19)
                 key(19)
                 time.sleep(0.3)
+
+                key(102, ctrl=True)  # Start of the rotated document.
+                select_word(rotated=True)
 
                 # Close via Ctrl+W (keycode 17 = W)
                 key(17, ctrl=True)
@@ -287,6 +356,45 @@ def run(scale: int = 1):
                     key(25, ctrl=True)
                     wait_for(lambda: len(portal.jobs) == 2, "Ctrl+P did not print again")
                     assert portal.jobs[1]["data"] == job["data"]
+                    def dialog_pixels():
+                        shot = tmp / "print-dialog-check.png"
+                        shot.unlink(missing_ok=True)
+                        ipc.screenshot(path=str(shot))
+                        with Image.open(shot) as im:
+                            cx = box["x"] + box["width"] / 2
+                            cy = box["y"] + box["height"] / 2
+                            return im.convert("RGB").crop(tuple(round(v * scale) for v in
+                                (cx - 210, cy - 85, cx + 210, cy + 85)))
+
+                    baseline = dialog_pixels()
+                    # Both cancellation and otherwise dismissed dialogs submit
+                    # no job and leave the viewer usable without an error modal.
+                    for response in (1, 2):
+                        portal.prepare_response = response
+                        dialogs = len(portal.dialogs)
+                        key(25, ctrl=True)
+                        wait_for(lambda: len(portal.dialogs) == dialogs + 1, "print dialog not requested")
+                        time.sleep(.2)
+                        assert len(portal.jobs) == 2, "dismissed print dialog submitted a job"
+                        assert ImageChops.difference(baseline, dialog_pixels()).getbbox() is None, \
+                            "dismissing the print dialog displayed an error"
+                        key(109)
+                        expect_title("(2/2)")
+                        key(104)
+                        expect_title("(1/2)")
+                    # A submitted job failure still displays an error dialog.
+                    portal.prepare_response = 0
+                    portal.response = 2
+                    key(25, ctrl=True)
+                    wait_for(lambda: len(portal.jobs) == 3, "failed job not submitted")
+                    time.sleep(.2)
+                    assert ImageChops.difference(baseline, dialog_pixels()).getbbox() is not None, \
+                        "a failed submitted job did not show an error"
+                    key(1)
+                    assert ImageChops.difference(baseline, dialog_pixels()).getbbox() is None, \
+                        "Escape did not dismiss the job error"
+                    key(109)
+                    expect_title("(2/2)")
                     key(17, ctrl=True)
                     wait_for(lambda: not viewer(), "printing viewer did not close")
                     assert print_proc.wait(timeout=5) == 0

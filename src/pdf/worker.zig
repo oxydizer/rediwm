@@ -93,6 +93,7 @@ pub const PageSizesBatch = struct {
 pub const ContentExtracted = struct {
     page_index: usize,
     text: ?[:0]u8,
+    text_rects: []const layout.Rect,
     links: []document.Link,
 };
 
@@ -129,6 +130,7 @@ pub const Result = struct {
             .page_sizes_batch => |b| a.free(b.sizes),
             .content_extracted => |ce| {
                 if (ce.text) |t| a.free(t);
+                a.free(ce.text_rects);
                 for (ce.links) |l| l.deinit(a);
                 a.free(ce.links);
             },
@@ -619,12 +621,14 @@ pub const Worker = struct {
                     _ = c.api.pthread_mutex_unlock(&self.mutex);
 
                     const text = doc.getPageText(p_idx, a) catch null;
+                    const text_rects = doc.getTextLayout(p_idx, a) catch &[_]layout.Rect{};
                     const links = doc.getPageLinks(p_idx, a) catch a.alloc(document.Link, 0) catch null;
 
                     _ = c.api.pthread_mutex_lock(&self.mutex);
 
                     if (self.stop or self.generation != current_gen) {
                         if (text) |t| a.free(t);
+                        a.free(text_rects);
                         if (links) |ls| {
                             for (ls) |l| l.deinit(a);
                             a.free(ls);
@@ -639,9 +643,13 @@ pub const Worker = struct {
                             .payload = .{ .content_extracted = .{
                                 .page_index = p_idx,
                                 .text = text,
+                                .text_rects = text_rects,
                                 .links = ls,
                             } },
                         });
+                    } else {
+                        if (text) |t| a.free(t);
+                        a.free(text_rects);
                     }
                     job.deinit();
                 },

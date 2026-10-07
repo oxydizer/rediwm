@@ -5,6 +5,7 @@ const std = @import("std");
 const c = @import("c.zig");
 const document = @import("document.zig");
 const layout = @import("layout.zig");
+const selection = @import("selection.zig");
 const cache = @import("cache.zig");
 const worker = @import("worker.zig");
 const shell_ui = @import("ui").cairo;
@@ -121,10 +122,12 @@ pub const SearchMatch = struct {
 pub const PageContent = struct {
     page_index: usize,
     text: ?[:0]u8 = null,
+    text_rects: []const layout.Rect = &[_]layout.Rect{},
     links: []document.Link = &[_]document.Link{},
 
     pub fn deinit(self: *PageContent) void {
         if (self.text) |t| a.free(t);
+        a.free(self.text_rects);
         for (self.links) |l| l.deinit(a);
         if (self.links.len > 0) a.free(self.links);
         self.* = undefined;
@@ -202,6 +205,7 @@ pub const App = struct {
 
     // Page content & links
     page_contents: std.AutoHashMap(usize, PageContent),
+    hover_text: bool = false,
     hover_link: ?document.Link = null,
 
     // Text selection & Wayland clipboard
@@ -210,7 +214,7 @@ pub const App = struct {
     selection_page: ?usize = null,
     selection_start: layout.Point = .{ .x = 0, .y = 0 },
     selection_end: layout.Point = .{ .x = 0, .y = 0 },
-    selection_box: ?layout.Rect = null,
+    selection_range: ?selection.Range = null,
     selected_text: ?[:0]u8 = null,
     clipboard_text: ?[:0]u8 = null,
     clipboard_request: bool = false,
@@ -304,6 +308,11 @@ pub const App = struct {
         self.thumb_cache.clearGeneration(self.generation);
         self.clearOutline();
         self.clearPageContents();
+        self.clearSelectionText();
+        self.selection_page = null;
+        self.selection_range = null;
+        self.selection_active = false;
+        self.selection_dragging = false;
         self.search_matches.clearRetainingCapacity();
 
         self.current_page = 0;
@@ -456,9 +465,12 @@ pub const App = struct {
                     entry.value_ptr.* = .{
                         .page_index = ce.page_index,
                         .text = ce.text,
+                        .text_rects = ce.text_rects,
                         .links = ce.links,
                     };
                     ce.text = null;
+                    ce.text_rects = &[_]layout.Rect{};
+                    if (self.selection_page == ce.page_index) self.updateSelection();
                     ce.links = &[_]document.Link{};
                     self.dirty = true;
                 },
@@ -952,19 +964,15 @@ pub const App = struct {
                 const page_y = cv.y + p.y_offset - self.scroll_y;
                 const view_pt = layout.Point{ .x = px - page_x, .y = py - page_y };
                 self.selection_end = layout.viewPointToPage(view_pt, p.pts_size, self.rotation, self.zoom);
-                const min_x = @min(self.selection_start.x, self.selection_end.x);
-                const max_x = @max(self.selection_start.x, self.selection_end.x);
-                const min_y = @min(self.selection_start.y, self.selection_end.y);
-                const max_y = @max(self.selection_start.y, self.selection_end.y);
-                self.selection_box = .{ .x = min_x, .y = min_y, .w = max_x - min_x, .h = max_y - min_y };
-                self.selection_active = true;
+                self.updateSelection();
                 self.dirty = true;
                 return;
             }
         }
 
-        // Link hover detection
+        // Text and link hover detection
         self.hover_link = null;
+        self.hover_text = false;
         if (self.doc_layout) |dl| {
             const cv = self.canvasRect();
             if (cv.contains(px, py)) {
@@ -977,6 +985,12 @@ pub const App = struct {
                         if (px >= page_x and px <= page_x + p.logical_width and py >= page_y and py <= page_y + p.logical_height) {
                             if (self.page_contents.get(i)) |content| {
                                 const pt = layout.viewPointToPage(.{ .x = px - page_x, .y = py - page_y }, p.pts_size, self.rotation, self.zoom);
+                                for (content.text_rects) |r| {
+                                    if (r.w > 0 and r.h > 0 and r.contains(pt)) {
+                                        self.hover_text = true;
+                                        break;
+                                    }
+                                }
                                 for (content.links) |lnk| {
                                     if (lnk.area.contains(pt)) {
                                         self.hover_link = lnk;
@@ -1101,8 +1115,10 @@ pub const App = struct {
                                 self.selection_page = i;
                                 self.selection_start = pt;
                                 self.selection_end = pt;
-                                self.selection_box = null;
+                                self.clearSelectionText();
+                                self.selection_range = null;
                                 self.selection_active = false;
+                                self.dirty = true;
                                 return;
                             }
                         }
@@ -1124,21 +1140,32 @@ pub const App = struct {
                 }
                 if (self.selection_dragging) {
                     self.selection_dragging = false;
-                    if (self.selection_box != null and self.selection_box.?.w > 2.0 and self.selection_box.?.h > 2.0) {
-                        self.selection_active = true;
-                        // Build text for clipboard
-                        if (self.selection_page) |p_idx| {
-                            if (self.page_contents.get(p_idx)) |content| {
-                                if (content.text) |txt| {
-                                    if (self.selected_text) |t| a.free(t);
-                                    self.selected_text = a.dupeZ(u8, txt) catch null;
-                                }
-                            }
-                        }
-                    }
+                    self.updateSelection();
                 }
             }
         }
+    }
+
+    fn clearSelectionText(self: *App) void {
+        if (self.selected_text) |t| a.free(t);
+        self.selected_text = null;
+    }
+
+    fn updateSelection(self: *App) void {
+        self.dirty = true;
+        self.clearSelectionText();
+        self.selection_range = null;
+        self.selection_active = false;
+        const page = self.selection_page orelse return;
+        const content = self.page_contents.get(page) orelse return;
+        const range = selection.between(content.text_rects, self.selection_start, self.selection_end) orelse return;
+        const text = content.text orelse return;
+        const selected = range.text(text);
+        if (selected.len == 0) return;
+        self.selected_text = a.dupeZ(u8, selected) catch return;
+        self.selection_range = range;
+        self.selection_active = true;
+        self.dirty = true;
     }
 
     fn handleToolbarClick(self: *App) void {
@@ -1316,9 +1343,12 @@ pub const App = struct {
             } else if (self.search_open) {
                 self.search_open = false;
                 self.focus = .none;
-            } else if (self.selection_active) {
+            } else if (self.selection_active or self.selection_dragging) {
                 self.selection_active = false;
-                self.selection_box = null;
+                self.selection_dragging = false;
+                self.selection_page = null;
+                self.selection_range = null;
+                self.clearSelectionText();
             }
             self.dirty = true;
             return;
@@ -1388,7 +1418,7 @@ pub const App = struct {
                     self.dirty = true;
                 },
                 'c', 'C' => {
-                    if (self.selected_text) |txt| {
+                    if (if (self.selection_active) self.selected_text else null) |txt| {
                         if (self.clipboard_text) |c_prev| a.free(c_prev);
                         self.clipboard_text = a.dupeZ(u8, txt) catch null;
                         self.clipboard_request = true;
@@ -1454,7 +1484,7 @@ pub const App = struct {
 
     pub fn cursorName(self: *const App) [*:0]const u8 {
         if (self.hover_link != null) return "pointer";
-        if (self.selection_active or self.selection_dragging) return "text";
+        if (self.hover_text or self.selection_dragging) return "text";
         if (self.focus != .none) return "text";
         return "default";
     }
@@ -1607,12 +1637,17 @@ pub const App = struct {
             }
 
             // Paint text selection highlight on this page
-            if (self.selection_page == i and self.selection_box != null) {
-                const sbox = self.selection_box.?;
-                const vr = layout.pageRectToView(sbox, p.pts_size, self.rotation, self.zoom);
-                shell_ui.setSource(cr, ui_theme.shellPalette().selectionColor());
-                c.api.cairo_rectangle(cr, page_x + vr.x, page_y + vr.y, vr.w, vr.h);
-                c.api.cairo_fill(cr);
+            if (self.selection_page == i) {
+                if (self.selection_range) |range| {
+                    if (self.page_contents.get(i)) |content| {
+                        shell_ui.setSource(cr, ui_theme.shellPalette().selectionColor());
+                        for (content.text_rects[range.start..range.end]) |r| {
+                            const vr = layout.pageRectToView(r, p.pts_size, self.rotation, self.zoom);
+                            c.api.cairo_rectangle(cr, page_x + vr.x, page_y + vr.y, vr.w, vr.h);
+                        }
+                        c.api.cairo_fill(cr);
+                    }
+                }
             }
         }
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("pdf/c.zig");
 const layout = @import("pdf/layout.zig");
 const document = @import("pdf/document.zig");
+const selection = @import("pdf/selection.zig");
 const cache = @import("pdf/cache.zig");
 const worker = @import("pdf/worker.zig");
 
@@ -207,6 +208,12 @@ test "document: opening, page sizes, rendering and text extraction" {
     try testing.expect(text0 != null);
     try testing.expect(std.mem.indexOf(u8, text0.?, "Page 1 Test") != null);
 
+    const text_rects = try doc.getTextLayout(0, a);
+    defer a.free(text_rects);
+    try testing.expectEqual(try std.unicode.utf8CountCodepoints(text0.?), text_rects.len);
+    const range = selection.between(text_rects, .{ .x = text_rects[0].x, .y = text_rects[0].y + text_rects[0].h / 2 }, .{ .x = text_rects[3].x + text_rects[3].w, .y = text_rects[3].y + text_rects[3].h / 2 }).?;
+    try testing.expectEqualStrings("Page", range.text(text0.?));
+
     // Text search
     const matches = try doc.findText(0, "Test", a);
     defer a.free(matches);
@@ -409,4 +416,24 @@ test "worker: background open, render, and result delivery" {
         _ = c.api.usleep(10_000);
     }
     try testing.expect(got_render);
+}
+
+test "selection: horizontal and reverse drags, multiple lines and Unicode byte boundaries" {
+    const rects = [_]layout.Rect{
+        .{ .x = 10, .y = 10, .w = 10, .h = 12 },
+        .{ .x = 20, .y = 10, .w = 10, .h = 12 },
+        .{ .x = 30, .y = 10, .w = 0, .h = 0 }, // newline
+        .{ .x = 10, .y = 30, .w = 10, .h = 12 },
+        .{ .x = 20, .y = 30, .w = 10, .h = 12 },
+    };
+    const from = layout.Point{ .x = 10, .y = 16 };
+    const to = layout.Point{ .x = 30, .y = 16 };
+    const forward = selection.between(&rects, from, to).?;
+    try testing.expectEqualStrings("é猫", forward.text("é猫\nAB"));
+    const reverse = selection.between(&rects, to, from).?;
+    try testing.expectEqualStrings("é猫", reverse.text("é猫\nAB"));
+    const multiline = selection.between(&rects, from, .{ .x = 30, .y = 36 }).?;
+    try testing.expectEqualStrings("é猫\nAB", multiline.text("é猫\nAB"));
+    try testing.expect(selection.between(&rects, from, from) == null);
+    try testing.expect(selection.between(&.{}, from, to) == null);
 }

@@ -32,12 +32,19 @@ typedef struct {
     GDBusConnection *bus;
     // While a print dialog is open: its request object and Response watch.
     gboolean busy;
+    gboolean preparing;
     char *request;
     guint response;
     unsigned serial;
     // The viewer has exited; quit once the open dialog is answered.
     gboolean closing;
 } helper;
+
+// Responses may arrive before the method reply. Do not let an old reply
+// replace the subscription for the next phase or the next request.
+typedef struct { helper *h; unsigned serial; } pending_call;
+
+static void submit_print(helper *h, guint32 token);
 
 static void reply(helper *h, char code) {
     ssize_t n;
@@ -59,9 +66,24 @@ static void on_response(GDBusConnection *bus, const char *sender, const char *pa
     helper *h = data;
     guint32 code = 2;
     if (g_variant_is_of_type(params, G_VARIANT_TYPE("(ua{sv})"))) g_variant_get_child(params, 0, "u", &code);
-    // 0 sent to the printer, 1 cancelled in the dialog, 2 failed.
-    if (code == 2) reply(h, REPLY_FAILED);
-    finish(h);
+    if (h->preparing) {
+        guint32 token = 0;
+        if (code == 0) {
+            GVariant *results = g_variant_get_child_value(params, 1);
+            g_variant_lookup(results, "token", "u", &token);
+            g_variant_unref(results);
+        }
+        finish(h);
+        // A dismissed settings dialog has not submitted a job. Portals may
+        // report either cancellation (1) or an otherwise ended interaction (2).
+        if (code == 0 && !h->closing) {
+            if (token) submit_print(h, token);
+            else reply(h, REPLY_FAILED);
+        }
+    } else {
+        if (code != 0 && code != 1) reply(h, REPLY_FAILED);
+        finish(h);
+    }
 }
 
 static void watch_request(helper *h, const char *path) {
@@ -84,14 +106,17 @@ static void on_closed(GDBusConnection *bus, gboolean vanished, GError *error, gp
 }
 
 static void on_called(GObject *source, GAsyncResult *result, gpointer data) {
-    helper *h = data;
+    pending_call *call = data;
+    helper *h = call->h;
+    gboolean current = h->busy && call->serial == h->serial;
+    g_free(call);
     GError *error = NULL;
     GVariant *ret = g_dbus_connection_call_with_unix_fd_list_finish(G_DBUS_CONNECTION(source), NULL, result, &error);
     if (!ret) {
         fprintf(stderr, "rediwm-pdf: print portal: %s\n", error->message);
         g_error_free(error);
         // Already reported if the bus closed under the call.
-        if (h->busy) {
+        if (current) {
             reply(h, REPLY_UNAVAILABLE);
             finish(h);
         }
@@ -100,8 +125,27 @@ static void on_called(GObject *source, GAsyncResult *result, gpointer data) {
     const char *handle = NULL;
     g_variant_get(ret, "(&o)", &handle);
     // A portal that ignored handle_token answers on a path of its own.
-    if (h->busy && g_strcmp0(handle, h->request) != 0) watch_request(h, handle);
+    if (current && g_strcmp0(handle, h->request) != 0) watch_request(h, handle);
     g_variant_unref(ret);
+}
+
+static void begin_request(helper *h) {
+    // Subscribe before calling: the request path is known from the token.
+    char token[32];
+    snprintf(token, sizeof token, "rediwm_pdf%u", ++h->serial);
+    char *sender = g_strdup(g_dbus_connection_get_unique_name(h->bus) + 1);
+    g_strdelimit(sender, ".", '_');
+    char *path = g_strdup_printf(PORTAL_PATH "/request/%s/%s", sender, token);
+    watch_request(h, path);
+    g_free(path);
+    g_free(sender);
+    h->busy = TRUE;
+}
+
+static pending_call *new_call(helper *h) {
+    pending_call *call = g_new(pending_call, 1);
+    *call = (pending_call){ h, h->serial };
+    return call;
 }
 
 static void start_print(helper *h) {
@@ -119,6 +163,24 @@ static void start_print(helper *h) {
         g_signal_connect(h->bus, "closed", G_CALLBACK(on_closed), h);
     }
 
+    begin_request(h);
+    h->preparing = TRUE;
+    GVariantBuilder settings, page_setup, options;
+    g_variant_builder_init(&settings, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_init(&page_setup, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&options, "{sv}", "handle_token",
+                         g_variant_new_string(strrchr(h->request, '/') + 1));
+    const char *formats[] = { "pdf", NULL };
+    g_variant_builder_add(&options, "{sv}", "supported_output_file_formats",
+                         g_variant_new_strv(formats, -1));
+    g_dbus_connection_call_with_unix_fd_list(
+        h->bus, PORTAL_NAME, PORTAL_PATH, "org.freedesktop.portal.Print", "PreparePrint",
+        g_variant_new("(ssa{sv}a{sv}a{sv})", "", h->title, &settings, &page_setup, &options),
+        G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, on_called, new_call(h));
+}
+
+static void submit_print(helper *h, guint32 token) {
     // A new open file description, so the print system reads from offset 0
     // independently of the parser's reads.
     char proc[64];
@@ -131,25 +193,18 @@ static void start_print(helper *h) {
     }
     GUnixFDList *fds = g_unix_fd_list_new_from_array(&fd, 1);
 
-    // Subscribe before calling: the request path is known from the token.
-    char token[32];
-    snprintf(token, sizeof token, "rediwm_pdf%u", ++h->serial);
-    char *sender = g_strdup(g_dbus_connection_get_unique_name(h->bus) + 1);
-    g_strdelimit(sender, ".", '_');
-    char *path = g_strdup_printf(PORTAL_PATH "/request/%s/%s", sender, token);
-    watch_request(h, path);
-    g_free(path);
-    g_free(sender);
-    h->busy = TRUE;
+    begin_request(h);
+    h->preparing = FALSE;
 
     GVariantBuilder options;
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token));
+    g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(strrchr(h->request, '/') + 1));
+    g_variant_builder_add(&options, "{sv}", "token", g_variant_new_uint32(token));
     // RediWM has no xdg-foreign, so the dialog cannot name a parent window.
     g_dbus_connection_call_with_unix_fd_list(
         h->bus, PORTAL_NAME, PORTAL_PATH, "org.freedesktop.portal.Print", "Print",
         g_variant_new("(ssha{sv})", "", h->title, 0, &options), G_VARIANT_TYPE("(o)"),
-        G_DBUS_CALL_FLAGS_NONE, -1, fds, NULL, on_called, h);
+        G_DBUS_CALL_FLAGS_NONE, -1, fds, NULL, on_called, new_call(h));
     g_object_unref(fds);
 }
 

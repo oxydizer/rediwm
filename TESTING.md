@@ -206,12 +206,13 @@ caret blinking and idle wakeups, and title glyph dimensions across resizes
 `REDIWM_TEST_RENDERER`, and `REDIWM_EDITOR_PREVIEW=/tmp/editor.png`.
 
 **PDF viewer**: `zig build test-pdf`, `pdf_viewer.py` (rendering, navigation,
-tiled fit width, and printing through a fake Print portal on a private bus; run
+text selection/copying, tiled fit width, and print dismissal/failure through a
+fake Print portal on a private bus; run
 it with `REDIWM_SCALE=2` too, where tiles split differently), `pdf_sandbox.py`
 (a test-only parser hook checks file, syscall, inherited-FD, environment and
 Wayland restrictions, that the print helper's socket cannot pass descriptors,
 plus failure to install the sandbox). Requires Poppler GLib, libseccomp, Linux
-Landlock ABI 3+, Python Cairo, and `dbus-daemon`.
+Landlock ABI 3+, Python Cairo, `wl-paste`, and `dbus-daemon`.
 
 **Browsers**: `brave_input.py` (optional; `REDIWM_TEST_BRAVE=/path`), a smoke
 test of focus, clipboard, navigation and scrolling in a fresh profile.

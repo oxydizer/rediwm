@@ -276,6 +276,22 @@ pub const Document = struct {
         return try allocator.dupeZ(u8, std.mem.span(text_ptr.?));
     }
 
+    /// One rectangle per Unicode character, in top-left page coordinates.
+    pub fn getTextLayout(self: Document, page_index: usize, allocator: std.mem.Allocator) Error![]layout.Rect {
+        if (page_index >= self.n_pages) return error.PageNotFound;
+        const page = c.poppler_document_get_page(self.doc, @intCast(page_index)) orelse return error.PageNotFound;
+        defer c.g_object_unref(page);
+        var rectangles: ?[*]c.PopplerRectangle = null;
+        var count: c_uint = 0;
+        _ = c.poppler_page_get_text_layout(page, &rectangles, &count);
+        defer if (rectangles) |rs| c.g_free(rs);
+        const rects = try allocator.alloc(layout.Rect, if (rectangles != null) count else 0);
+        if (rectangles) |rs| for (rects, rs[0..count]) |*dest, src| {
+            dest.* = .{ .x = src.x1, .y = src.y1, .w = src.x2 - src.x1, .h = src.y2 - src.y1 };
+        };
+        return rects;
+    }
+
     pub fn findText(self: Document, page_index: usize, query: [:0]const u8, allocator: std.mem.Allocator) Error![]layout.Rect {
         if (page_index >= self.n_pages) return error.PageNotFound;
         const page = c.poppler_document_get_page(self.doc, @intCast(page_index)) orelse return error.PageNotFound;
