@@ -80,6 +80,7 @@ fn source(id: IconId) ?[]const u8 {
         .undo => @embedFile("shell-icon-undo"),
         .save => @embedFile("shell-icon-save"),
         .fit => @embedFile("shell-icon-fit"),
+        .print => @embedFile("shell-icon-print"),
         .open => @embedFile("shell-icon-open"),
         .usb_stick => @embedFile("shell-icon-usb-stick"),
         .drive => @embedFile("shell-icon-drive"),
@@ -138,7 +139,7 @@ fn rasterize(svg: []const u8, size: i32) ?Mask {
 
 test "bundled shell SVGs render nonempty transparent masks at fractional scales" {
     defer deinit();
-    for ([_]IconId{ .usb_stick, .drive, .eject, .home, .settings, .mouse, .display, .music, .headphones, .wifi, .bluetooth, .battery, .notification, .volume, .volume_muted, .power, .clock, .lock, .logout, .reboot }) |id| {
+    for ([_]IconId{ .print, .usb_stick, .drive, .eject, .home, .settings, .mouse, .display, .music, .headphones, .wifi, .bluetooth, .battery, .notification, .volume, .volume_muted, .power, .clock, .lock, .logout, .reboot }) |id| {
         for ([_]i32{ 24, 36, 48 }) |size| {
             const mask = get(id, size) orelse return error.InvalidShellIcon;
             var visible = false;

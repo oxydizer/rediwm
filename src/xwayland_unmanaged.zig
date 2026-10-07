@@ -221,9 +221,7 @@ fn handleUnmap(listener: *wl.Listener(void)) void {
 fn grabKeyboard(self: *Unmanaged) void {
     if (self.server.locker != null or self.server.polkit_dialog != null) return;
     const surface = self.xsurface.surface orelse return;
-    const seat = self.server.input.seat;
-    const keyboard = seat.getKeyboard() orelse return;
-    seat.keyboardNotifyEnter(surface, keyboard.keycodes[0..keyboard.num_keycodes], &keyboard.modifiers);
+    @import("Keyboard.zig").enter(self.server, surface);
 }
 
 /// If this popup still holds keyboard focus when it unmaps (closed via
@@ -235,11 +233,10 @@ fn restoreFocus(self: *Unmanaged) void {
     const seat = self.server.input.seat;
     const focused = seat.keyboard_state.focused_surface orelse return;
     if (focused != own_surface) return;
-    const keyboard = seat.getKeyboard() orelse return;
     const parent_toplevel = parentToplevel(self) orelse self.server.world.toplevels.first();
     const target = if (parent_toplevel) |t| t.surface() else null;
     if (target) |surface| {
-        seat.keyboardNotifyEnter(surface, keyboard.keycodes[0..keyboard.num_keycodes], &keyboard.modifiers);
+        @import("Keyboard.zig").enter(self.server, surface);
     } else {
         seat.keyboardClearFocus();
     }

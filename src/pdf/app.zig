@@ -48,14 +48,67 @@ pub const Action = enum {
     next_page,
     zoom_out,
     zoom_in,
-    fit_mode,
+    fit_width,
+    fit_page,
     rotate,
     open_dialog,
     find_toggle,
     find_prev,
     find_next,
     find_close,
+    print,
 };
+
+/// Toolbar buttons left to right, shared by painting and hit testing.
+const ToolbarButton = struct { x: f64, w: f64, act: Action };
+const toolbar_buttons = [_]ToolbarButton{
+    .{ .x = 10.0, .w = 32.0, .act = .toggle_sidebar },
+    .{ .x = 52.0, .w = 32.0, .act = .prev_page },
+    .{ .x = 88.0, .w = 32.0, .act = .next_page },
+    .{ .x = 210.0, .w = 32.0, .act = .zoom_out },
+    .{ .x = 286.0, .w = 32.0, .act = .zoom_in },
+    .{ .x = 326.0, .w = 76.0, .act = .fit_width },
+    .{ .x = 406.0, .w = 70.0, .act = .fit_page },
+    .{ .x = 484.0, .w = 32.0, .act = .rotate },
+    .{ .x = 524.0, .w = 64.0, .act = .find_toggle },
+    .{ .x = 596.0, .w = 32.0, .act = .print },
+};
+const toolbar_button_y: f64 = 6.0;
+const toolbar_button_h: f64 = 32.0;
+
+/// Pages whose raster exceeds this render as square tiles of `tile_px`
+/// device pixels, of which only those in view are rendered.
+fn rasterTiled(px_w: f64, px_h: f64) bool {
+    return px_w > 2048 or px_h > 2048 or px_w * px_h > 4 * 1024 * 1024;
+}
+const tile_px: f64 = 1024.0;
+
+/// The tiles of a page raster that intersect the canvas: half-open index
+/// ranges over a grid in the raster's device pixels, the unit of
+/// `cache.TileKey` and of the worker's clip.
+const TileSpan = struct {
+    raster_w: f64,
+    raster_h: f64,
+    x0: usize = 0,
+    x1: usize = 0,
+    y0: usize = 0,
+    y1: usize = 0,
+
+    fn key(self: TileSpan, tx: usize, ty: usize) cache.TileKey {
+        const x = @as(f64, @floatFromInt(tx)) * tile_px;
+        const y = @as(f64, @floatFromInt(ty)) * tile_px;
+        return .{
+            .x = @intFromFloat(x),
+            .y = @intFromFloat(y),
+            .w = @intFromFloat(@min(tile_px, self.raster_w - x)),
+            .h = @intFromFloat(@min(tile_px, self.raster_h - y)),
+        };
+    }
+};
+
+fn tileClip(tk: cache.TileKey) layout.Rect {
+    return .{ .x = @floatFromInt(tk.x), .y = @floatFromInt(tk.y), .w = @floatFromInt(tk.w), .h = @floatFromInt(tk.h) };
+}
 
 pub const Dialog = enum { none, information, password };
 pub const Focus = enum { none, page_number, password, search };
@@ -161,6 +214,9 @@ pub const App = struct {
     selected_text: ?[:0]u8 = null,
     clipboard_text: ?[:0]u8 = null,
     clipboard_request: bool = false,
+
+    /// Set by the Print button; main.zig hands it to the print helper.
+    print_request: bool = false,
 
     pub fn init(initial_path: [:0]const u8, document_fd: c_int) !App {
         const wkr = try worker.Worker.init(document_fd);
@@ -342,11 +398,7 @@ pub const App = struct {
                     }
                     // Open fitted to the first page's size; refit to the real ones.
                     if (self.zoom_mode != .manual) self.updateEffectiveZoom();
-                    self.recomputeLayout() catch {};
-                    if (self.doc_layout) |dl| {
-                        self.scroll_y = layout.scrollToAnchor(dl.pages, self.anchor, self.canvasRect().h);
-                    }
-                    self.dirty = true;
+                    self.relayout();
                 },
 
                 .page_rendered => |*pr| {
@@ -443,41 +495,26 @@ pub const App = struct {
         for (vis_range.start_index..vis_range.end_index + 1) |i| {
             if (count >= jobs.len) break;
             const p = dl.pages[i];
-            const p_px_w = p.logical_width * @as(f64, @floatFromInt(self.scale));
-            const p_px_h = p.logical_height * @as(f64, @floatFromInt(self.scale));
 
-            // Large-page tile rendering above threshold
-            if (p_px_w > 2048 or p_px_h > 2048 or p_px_w * p_px_h > 4 * 1024 * 1024) {
-                const tile_size = 1024.0 / @as(f64, @floatFromInt(self.scale));
-                var ty: f64 = 0;
-                while (ty < p.logical_height) : (ty += tile_size) {
-                    var tx: f64 = 0;
-                    while (tx < p.logical_width) : (tx += tile_size) {
-                        if (count >= jobs.len) break;
-                        const tw = @min(tile_size, p.logical_width - tx);
-                        const th = @min(tile_size, p.logical_height - ty);
-                        const tile_clip = layout.Rect{ .x = tx, .y = ty, .w = tw, .h = th };
-                        const tile_key = cache.TileKey{
-                            .x = @intFromFloat(tx),
-                            .y = @intFromFloat(ty),
-                            .w = @intFromFloat(tw),
-                            .h = @intFromFloat(th),
+            // Large pages: only the tiles in view.
+            if (self.tileSpan(cv, p)) |span| {
+                for (span.y0..span.y1) |ty| for (span.x0..span.x1) |tx| {
+                    if (count >= jobs.len) break;
+                    const tk = span.key(tx, ty);
+                    const pk = cache.PageKey.init(self.generation, i, effective_scale, self.rotation, tk);
+                    if (self.page_cache.get(pk) == null) {
+                        jobs[count] = .{
+                            .kind = .render_page,
+                            .priority = 0,
+                            .generation = self.generation,
+                            .page_index = i,
+                            .scale = effective_scale,
+                            .rotation = self.rotation,
+                            .clip = tileClip(tk),
                         };
-                        const pk = cache.PageKey.init(self.generation, i, effective_scale, self.rotation, tile_key);
-                        if (self.page_cache.get(pk) == null) {
-                            jobs[count] = .{
-                                .kind = .render_page,
-                                .priority = 0,
-                                .generation = self.generation,
-                                .page_index = i,
-                                .scale = effective_scale,
-                                .rotation = self.rotation,
-                                .clip = tile_clip,
-                            };
-                            count += 1;
-                        }
+                        count += 1;
                     }
-                }
+                };
             } else {
                 const pk = cache.PageKey.init(self.generation, i, effective_scale, self.rotation, null);
                 if (self.page_cache.get(pk) == null) {
@@ -537,8 +574,9 @@ pub const App = struct {
             }
         }
 
-        // 3. Nearby prefetch page (priority 2)
-        if (vis_range.start_index > 0 and count < jobs.len) {
+        // 3. Nearby prefetch page (priority 2), unless it would be tiled: a
+        // whole raster of it would be large, and drawn tiles replace it.
+        if (vis_range.start_index > 0 and count < jobs.len and !self.isTiled(dl.pages[vis_range.start_index - 1])) {
             const prev = vis_range.start_index - 1;
             const pk = cache.PageKey.init(self.generation, prev, effective_scale, self.rotation, null);
             if (self.page_cache.get(pk) == null) {
@@ -553,7 +591,7 @@ pub const App = struct {
                 count += 1;
             }
         }
-        if (vis_range.end_index + 1 < dl.pages.len and count < jobs.len) {
+        if (vis_range.end_index + 1 < dl.pages.len and count < jobs.len and !self.isTiled(dl.pages[vis_range.end_index + 1])) {
             const next = vis_range.end_index + 1;
             const pk = cache.PageKey.init(self.generation, next, effective_scale, self.rotation, null);
             if (self.page_cache.get(pk) == null) {
@@ -602,6 +640,64 @@ pub const App = struct {
             self.rotation,
             self.sidebar_w - 32.0,
         );
+    }
+
+    /// Lays the pages out again after a zoom, rotation or size change and
+    /// returns to the same reading position.
+    fn relayout(self: *App) void {
+        self.recomputeLayout() catch {};
+        if (self.doc_layout) |dl| {
+            const cv_h = self.canvasRect().h;
+            const anchored = layout.scrollToAnchor(dl.pages, self.anchor, cv_h);
+            self.scroll_y = @min(anchored, @max(0.0, dl.total_height - cv_h));
+        }
+        self.dirty = true;
+    }
+
+    fn setZoomMode(self: *App, mode: ZoomMode) void {
+        self.zoom_mode = mode;
+        self.updateEffectiveZoom();
+        self.relayout();
+    }
+
+    fn zoomBy(self: *App, factor: f64) void {
+        if (self.doc_layout == null) return;
+        self.zoom_mode = .manual;
+        self.zoom = std.math.clamp(self.zoom * factor, 0.2, 5.0);
+        self.relayout();
+    }
+
+    /// Ctrl+wheel: a 15-unit wheel notch zooms 1.2x, like the buttons;
+    /// touchpads zoom smoothly in proportion.
+    pub fn handleZoomScroll(self: *App, delta: f64) void {
+        self.zoomBy(std.math.pow(f64, 1.2, -delta / 15.0));
+    }
+
+    fn isTiled(self: *const App, p: layout.PageLayout) bool {
+        const s: f64 = @floatFromInt(self.scale);
+        return rasterTiled(@ceil(p.logical_width * s), @ceil(p.logical_height * s));
+    }
+
+    /// The visible tiles of page `p`, or null when it renders whole.
+    fn tileSpan(self: *const App, cv: Rect, p: layout.PageLayout) ?TileSpan {
+        if (!self.isTiled(p)) return null;
+        const s: f64 = @floatFromInt(self.scale);
+        var span: TileSpan = .{ .raster_w = @ceil(p.logical_width * s), .raster_h = @ceil(p.logical_height * s) };
+        // The canvas in page coordinates, clamped to the page.
+        const page_x = self.pageX(cv, p);
+        const page_y = cv.y + p.y_offset - self.scroll_y;
+        const x0 = @max(0.0, cv.x - page_x) * s;
+        const x1 = @min(p.logical_width, cv.x + cv.w - page_x) * s;
+        const y0 = @max(0.0, cv.y - page_y) * s;
+        const y1 = @min(p.logical_height, cv.y + cv.h - page_y) * s;
+        if (x1 <= x0 or y1 <= y0) return span;
+        const cols = @ceil(span.raster_w / tile_px);
+        const rows = @ceil(span.raster_h / tile_px);
+        span.x0 = @intFromFloat(@floor(x0 / tile_px));
+        span.x1 = @intFromFloat(@min(cols, @ceil(x1 / tile_px)));
+        span.y0 = @intFromFloat(@floor(y0 / tile_px));
+        span.y1 = @intFromFloat(@min(rows, @ceil(y1 / tile_px)));
+        return span;
     }
 
     fn updateEffectiveZoom(self: *App) void {
@@ -657,11 +753,7 @@ pub const App = struct {
         if (self.zoom_mode != .manual) {
             self.updateEffectiveZoom();
         }
-        self.recomputeLayout() catch {};
-        if (self.doc_layout) |dl| {
-            self.scroll_y = layout.scrollToAnchor(dl.pages, self.anchor, self.canvasRect().h);
-        }
-        self.dirty = true;
+        self.relayout();
     }
 
     pub fn requestClose(self: *App) void {
@@ -1050,18 +1142,6 @@ pub const App = struct {
     }
 
     fn handleToolbarClick(self: *App) void {
-        const tb = self.toolbarRect();
-        const actions = [_]struct { x: f64, w: f64, act: Action }{
-            .{ .x = 10.0, .w = 32.0, .act = .toggle_sidebar },
-            .{ .x = 52.0, .w = 32.0, .act = .prev_page },
-            .{ .x = 88.0, .w = 32.0, .act = .next_page },
-            .{ .x = 210.0, .w = 32.0, .act = .zoom_out },
-            .{ .x = 286.0, .w = 32.0, .act = .zoom_in },
-            .{ .x = 326.0, .w = 84.0, .act = .fit_mode },
-            .{ .x = 418.0, .w = 32.0, .act = .rotate },
-            .{ .x = 458.0, .w = 64.0, .act = .find_toggle },
-        };
-
         // Page number editor field click: x=124..204
         if (self.px >= 124.0 and self.px <= 204.0 and self.py >= 6.0 and self.py <= 38.0) {
             self.focus = .page_number;
@@ -1073,13 +1153,12 @@ pub const App = struct {
             return;
         }
 
-        for (actions) |item| {
-            if (self.px >= item.x and self.px <= item.x + item.w and self.py >= 6.0 and self.py <= 38.0) {
+        for (toolbar_buttons) |item| {
+            if (self.px >= item.x and self.px <= item.x + item.w and self.py >= toolbar_button_y and self.py <= toolbar_button_y + toolbar_button_h) {
                 self.triggerAction(item.act);
                 return;
             }
         }
-        _ = tb;
     }
 
     fn handleSidebarClick(self: *App) void {
@@ -1162,10 +1241,7 @@ pub const App = struct {
             .toggle_sidebar => {
                 self.sidebar_open = !self.sidebar_open;
                 if (self.zoom_mode != .manual) self.updateEffectiveZoom();
-                self.recomputeLayout() catch {};
-                if (self.doc_layout) |dl| {
-                    self.scroll_y = layout.scrollToAnchor(dl.pages, self.anchor, self.canvasRect().h);
-                }
+                self.relayout();
             },
             .prev_page => {
                 if (self.current_page > 0) self.goToPage(self.current_page - 1);
@@ -1173,37 +1249,14 @@ pub const App = struct {
             .next_page => {
                 if (self.current_page + 1 < self.n_pages) self.goToPage(self.current_page + 1);
             },
-            .zoom_out => {
-                self.zoom_mode = .manual;
-                self.zoom = @max(0.2, self.zoom / 1.2);
-                self.recomputeLayout() catch {};
-                if (self.doc_layout) |dl| {
-                    self.scroll_y = layout.scrollToAnchor(dl.pages, self.anchor, self.canvasRect().h);
-                }
-            },
-            .zoom_in => {
-                self.zoom_mode = .manual;
-                self.zoom = @min(5.0, self.zoom * 1.2);
-                self.recomputeLayout() catch {};
-                if (self.doc_layout) |dl| {
-                    self.scroll_y = layout.scrollToAnchor(dl.pages, self.anchor, self.canvasRect().h);
-                }
-            },
-            .fit_mode => {
-                self.zoom_mode = if (self.zoom_mode == .fit_width) .fit_page else .fit_width;
-                self.updateEffectiveZoom();
-                self.recomputeLayout() catch {};
-                if (self.doc_layout) |dl| {
-                    self.scroll_y = layout.scrollToAnchor(dl.pages, self.anchor, self.canvasRect().h);
-                }
-            },
+            .zoom_out => self.zoomBy(1.0 / 1.2),
+            .zoom_in => self.zoomBy(1.2),
+            .fit_width => self.setZoomMode(.fit_width),
+            .fit_page => self.setZoomMode(.fit_page),
             .rotate => {
                 self.rotation = self.rotation.rotateClockwise();
                 if (self.zoom_mode != .manual) self.updateEffectiveZoom();
-                self.recomputeLayout() catch {};
-                if (self.doc_layout) |dl| {
-                    self.scroll_y = layout.scrollToAnchor(dl.pages, self.anchor, self.canvasRect().h);
-                }
+                self.relayout();
             },
             .open_dialog => {
                 self.dialog = .information;
@@ -1232,7 +1285,18 @@ pub const App = struct {
                 self.search_open = false;
                 self.focus = .none;
             },
+            .print => if (self.n_pages > 0 and !self.loading) {
+                self.print_request = true;
+            },
         }
+        self.dirty = true;
+    }
+
+    /// Reports a print helper problem in the information dialog.
+    pub fn showMessage(self: *App, message: []const u8) void {
+        self.dialog = .information;
+        self.focus = .none;
+        self.error_message = message;
         self.dirty = true;
     }
 
@@ -1314,6 +1378,7 @@ pub const App = struct {
                 'w', 'W' => self.closed = true,
                 'o', 'O' => self.triggerAction(.open_dialog),
                 'f', 'F' => self.triggerAction(.find_toggle),
+                'p', 'P' => self.triggerAction(.print),
                 'l', 'L' => {
                     self.focus = .page_number;
                     self.editor.text.clearRetainingCapacity();
@@ -1342,18 +1407,8 @@ pub const App = struct {
             'r', 'R' => self.triggerAction(.rotate),
             '+', '=' => self.triggerAction(.zoom_in),
             '-' => self.triggerAction(.zoom_out),
-            '0' => {
-                self.zoom_mode = .fit_width;
-                self.updateEffectiveZoom();
-                self.recomputeLayout() catch {};
-                self.dirty = true;
-            },
-            '9' => {
-                self.zoom_mode = .fit_page;
-                self.updateEffectiveZoom();
-                self.recomputeLayout() catch {};
-                self.dirty = true;
-            },
+            '0' => self.triggerAction(.fit_width),
+            '9' => self.triggerAction(.fit_page),
             0xffbe => { // F3
                 if (self.shift) {
                     self.triggerAction(.find_prev);
@@ -1477,36 +1532,40 @@ pub const App = struct {
             c.api.cairo_fill(cr);
 
             // Check page cache
-            const p_px_w = p.logical_width * @as(f64, @floatFromInt(self.scale));
-            const p_px_h = p.logical_height * @as(f64, @floatFromInt(self.scale));
-            const is_tiled = (p_px_w > 2048 or p_px_h > 2048 or p_px_w * p_px_h > 4 * 1024 * 1024);
-
             var painted_pixels = false;
-            if (is_tiled) {
-                const tile_size = 1024.0 / @as(f64, @floatFromInt(self.scale));
-                var ty: f64 = 0;
-                while (ty < p.logical_height) : (ty += tile_size) {
-                    var tx: f64 = 0;
-                    while (tx < p.logical_width) : (tx += tile_size) {
-                        const tw = @min(tile_size, p.logical_width - tx);
-                        const th = @min(tile_size, p.logical_height - ty);
-                        const tk = cache.TileKey{
-                            .x = @intFromFloat(tx),
-                            .y = @intFromFloat(ty),
-                            .w = @intFromFloat(tw),
-                            .h = @intFromFloat(th),
-                        };
-                        const pk = cache.PageKey.init(self.generation, i, effective_scale, self.rotation, tk);
-                        if (self.page_cache.get(pk)) |cp| {
-                            self.drawCachedSurface(cr, cp, page_x + tx, page_y + ty, tw, th);
-                            painted_pixels = true;
-                        }
+            if (self.tileSpan(cv, p)) |span| {
+                var tiles: [64]?*cache.CachedPage = undefined;
+                var n: usize = 0;
+                var complete = true;
+                for (span.y0..span.y1) |ty| for (span.x0..span.x1) |tx| {
+                    const pk = cache.PageKey.init(self.generation, i, effective_scale, self.rotation, span.key(tx, ty));
+                    const cp = self.page_cache.get(pk);
+                    complete = complete and cp != null;
+                    if (n < tiles.len) {
+                        tiles[n] = cp;
+                        n += 1;
+                    }
+                };
+                // An older whole-page raster stands in under missing tiles.
+                if (!complete) {
+                    if (self.page_cache.findBest(self.generation, i, self.rotation)) |best| {
+                        self.drawCachedSurface(cr, best, page_x, page_y, p.logical_width, p.logical_height);
+                        painted_pixels = true;
                     }
                 }
+                n = 0;
+                for (span.y0..span.y1) |ty| for (span.x0..span.x1) |tx| {
+                    if (n >= tiles.len) break;
+                    defer n += 1;
+                    const cp = tiles[n] orelse continue;
+                    const tk = span.key(tx, ty);
+                    self.drawRaster(cr, cp, page_x, page_y, @floatFromInt(tk.x), @floatFromInt(tk.y));
+                    painted_pixels = true;
+                };
             } else {
                 const pk = cache.PageKey.init(self.generation, i, effective_scale, self.rotation, null);
                 if (self.page_cache.get(pk)) |cp| {
-                    self.drawCachedSurface(cr, cp, page_x, page_y, p.logical_width, p.logical_height);
+                    self.drawRaster(cr, cp, page_x, page_y, 0, 0);
                     painted_pixels = true;
                 }
             }
@@ -1558,6 +1617,16 @@ pub const App = struct {
         }
 
         if (self.hbar()) |bar| shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.hbar_appearance, ui_theme.global.scrollbar_width, ui_theme.shellPalette()));
+    }
+
+    /// Draws a raster at the current zoom one pixel per device pixel, with
+    /// the page origin on the device grid: resampling would soften text and
+    /// leave seams between tiles. `x`, `y` place it within the page raster.
+    fn drawRaster(self: *App, cr: *c.api.cairo_t, cp: *cache.CachedPage, page_x: f64, page_y: f64, x: f64, y: f64) void {
+        const s: f64 = @floatFromInt(self.scale);
+        const origin_x = @round(page_x * s);
+        const origin_y = @round(page_y * s);
+        self.drawCachedSurface(cr, cp, (origin_x + x) / s, (origin_y + y) / s, @as(f64, @floatFromInt(cp.width)) / s, @as(f64, @floatFromInt(cp.height)) / s);
     }
 
     fn drawCachedSurface(self: *App, cr: *c.api.cairo_t, cp: *cache.CachedPage, x: f64, y: f64, target_w: f64, target_h: f64) void {
@@ -1751,12 +1820,25 @@ pub const App = struct {
         c.api.cairo_line_to(cr, tb.x + tb.w, tb.h - 0.5);
         c.api.cairo_stroke(cr);
 
-        // Sidebar toggle button
-        self.renderButtonIcon(cr, 10.0, 6.0, 32.0, 32.0, .view_grid, "Toggle sidebar");
-
-        // Previous & Next page buttons
-        self.renderButtonText(cr, 52.0, 6.0, 32.0, 32.0, "◀");
-        self.renderButtonText(cr, 88.0, 6.0, 32.0, 32.0, "▶");
+        for (toolbar_buttons) |item| {
+            const x = item.x;
+            const y = toolbar_button_y;
+            const w = item.w;
+            const h = toolbar_button_h;
+            switch (item.act) {
+                .toggle_sidebar => self.renderButtonIcon(cr, x, y, w, h, .view_grid, "Toggle sidebar"),
+                .prev_page => self.renderButtonText(cr, x, y, w, h, "◀"),
+                .next_page => self.renderButtonText(cr, x, y, w, h, "▶"),
+                .zoom_out => self.renderButtonText(cr, x, y, w, h, "−"),
+                .zoom_in => self.renderButtonText(cr, x, y, w, h, "+"),
+                .fit_width => self.renderToggle(cr, x, y, w, h, "Fit width", self.zoom_mode == .fit_width),
+                .fit_page => self.renderToggle(cr, x, y, w, h, "Fit page", self.zoom_mode == .fit_page),
+                .rotate => self.renderButtonIcon(cr, x, y, w, h, .rotate, "Rotate"),
+                .find_toggle => self.renderButtonText(cr, x, y, w, h, if (self.search_open) "Find ▲" else "Find"),
+                .print => self.renderButtonIcon(cr, x, y, w, h, .print, "Print"),
+                else => {},
+            }
+        }
 
         // Page number field: [ 3 ] / 42
         var pbuf: [32]u8 = undefined;
@@ -1783,23 +1865,11 @@ pub const App = struct {
         shell_ui.setSource(cr, ui_theme.global.window_fg);
         shell_ui.drawText(cr, total_str, 180.0, 26.0, shell_ui.textSize(), false);
 
-        // Zoom controls: − [ 125% ] +
-        self.renderButtonText(cr, 210.0, 6.0, 32.0, 32.0, "−");
+        // Zoom level between − and +
         var zbuf: [16]u8 = undefined;
-        const zstr = std.fmt.bufPrint(&zbuf, "{d}%", .{@as(i32, @intFromFloat(self.zoom * 100.0))}) catch "100%";
+        const zstr = std.fmt.bufPrint(&zbuf, "{d}%", .{@as(i32, @intFromFloat(@round(self.zoom * 100.0)))}) catch "100%";
         const zw = shell_ui.measureText(cr, zstr, shell_ui.textSize(), true);
         shell_ui.drawText(cr, zstr, 246.0 + (36.0 - zw) / 2.0, 26.0, shell_ui.textSize(), true);
-        self.renderButtonText(cr, 286.0, 6.0, 32.0, 32.0, "+");
-
-        // Fit mode button
-        const fit_label = if (self.zoom_mode == .fit_width) "Fit width" else if (self.zoom_mode == .fit_page) "Fit page" else "Manual";
-        self.renderButtonText(cr, 326.0, 6.0, 84.0, 32.0, fit_label);
-
-        // Rotate button
-        self.renderButtonIcon(cr, 418.0, 6.0, 32.0, 32.0, .rotate, "Rotate");
-
-        // Find button
-        self.renderButtonText(cr, 458.0, 6.0, 64.0, 32.0, if (self.search_open) "Find ▲" else "Find");
     }
 
     fn renderSearchBar(self: *App, cr: *c.api.cairo_t) void {
@@ -1860,15 +1930,12 @@ pub const App = struct {
         c.api.cairo_rectangle(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h));
         c.api.cairo_fill(cr);
 
-        // Dialog box
-        shell_ui.setSource(cr, ui_theme.global.window_bg);
-        c.api.cairo_rectangle(cr, dx, dy, dw, dh);
-        c.api.cairo_fill(cr);
-
-        shell_ui.setSource(cr, ui_theme.global.window_border);
-        c.api.cairo_set_line_width(cr, 1.0);
-        c.api.cairo_rectangle(cr, dx, dy, dw, dh);
-        c.api.cairo_stroke(cr);
+        // The shared card stays opaque when the window background is glass.
+        if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(dx), .y = @floatCast(dy), .w = @floatCast(dw), .h = @floatCast(dh) })) |value| {
+            var frame = value;
+            ui_dialog.paintFrame(&frame.renderer, frame.local());
+            frame.finish();
+        }
 
         // Title
         const title = switch (self.dialog) {
@@ -1914,6 +1981,17 @@ pub const App = struct {
             .variant = .ghost,
             .label = label,
         }, .{ .pointer = if (is_hover) .hover else .idle });
+    }
+
+    /// A text button shown selected while its mode is active.
+    fn renderToggle(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8, selected: bool) void {
+        const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
+        var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+        defer layer.finish();
+        ui_button.paint(&layer.renderer, layer.local(), .{
+            .variant = .ghost,
+            .label = label,
+        }, .{ .pointer = if (is_hover) .hover else .idle, .selected = selected });
     }
 
     fn renderButtonIcon(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, icon: IconId, tooltip: []const u8) void {

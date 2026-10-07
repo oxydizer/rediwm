@@ -330,6 +330,12 @@ def default_applications(scale):
                "XDG_CONFIG_HOME": str(tmp / "config"), "XDG_CACHE_HOME": str(tmp / "cache"),
                "REDIWM_DESKTOP_DIR": str(desktop), "DBUS_SESSION_BUS_ADDRESS": "",
                "PULSE_SERVER": "unix:" + str(tmp / "no-audio")}
+        association_path = tmp / "config/mimeapps.list"
+        association_path.parent.mkdir(parents=True)
+        association_path.write_text(
+            '[Default Applications]\nx-scheme-handler/file=test-terminal.desktop;\n'
+            'text/plain=test-terminal.desktop;\n'
+            '[Added Associations]\nx-scheme-handler/file=test-terminal.desktop;\n')
         process, log = spawn_compositor(tmp, scale=scale, env_extra=env,
                                         config_content='[desktop]\nenabled = true\n')
         try:
@@ -350,6 +356,20 @@ def default_applications(scale):
                     ipc.wait_for_frame()
                 association = (tmp / "config/mimeapps.list").read_text()
                 assert "inode/directory=test-files.desktop" in association, association
+                # Transmission opens file: URIs through GIO. A stale scheme
+                # handler must not override the selected folder application.
+                assert "x-scheme-handler/file=" not in association, association
+                launch_env = dict(os.environ, **env)
+                subprocess.run(['gio', 'open', folder.as_uri()], env=launch_env, check=True)
+                wait(lambda: (tmp / "files").exists(), "file URI uses selected manager")
+                assert json.loads((tmp / "files").read_text()) == ["--fixture", str(folder)]
+                (tmp / "files").unlink()
+                document = tmp / "sample.txt"
+                document.write_text("fixture")
+                subprocess.run(['gio', 'open', document.as_uri()], env=launch_env, check=True)
+                wait(lambda: (tmp / "terminal").exists(), "file URI keeps document association")
+                assert json.loads((tmp / "terminal").read_text()) == ["--fixture", str(document)]
+                (tmp / "terminal").unlink()
                 # Reapply the current choice after another app changes the association.
                 association_path = tmp / "config/mimeapps.list"
                 association_path.write_text(association.replace(

@@ -124,7 +124,8 @@ pub fn startButtonBox(bar: *Taskbar) wlr.Box {
         .height = size,
     };
 }
-fn startIconSize() i32 {
+/// Logical size the start button logo is drawn at.
+pub fn startIconSize() i32 {
     const configured: i32 = @intFromFloat(@round(ui_theme.global.start_button_icon_size));
     return @max(8, @min(configured, buttonSize()));
 }

@@ -9,6 +9,7 @@ pub const input = @import("input.zig");
 
 pub const widgets = struct {
     pub const scrollbar = @import("widgets/scrollbar.zig");
+    pub const splitter = @import("widgets/splitter.zig");
     pub const select = @import("widgets/select.zig");
     pub const button = @import("widgets/button.zig");
     pub const checkbox = @import("widgets/checkbox.zig");

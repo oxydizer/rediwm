@@ -251,6 +251,21 @@ def run_pin():
                 drag(0, 80, 270)
                 time.sleep(.3)
                 assert pins() == [str(n) for n in names], pins()
+                # A folder pin can open a separate window without navigating this one.
+                click(80, 526, 273)
+                for code in (108, 28):
+                    ipc.action('key', {"keycode": code, "pressed": True})
+                    ipc.action('key', {"keycode": code, "pressed": False})
+                new = wait_for(lambda: next((w for w in ipc.get_windows()
+                                            if w["app_id"] == "rediwm-files" and w["id"] != win["id"]), None),
+                               "folder pin did not open a new window")
+                assert new["title"] == "second folder — RediWM Files", new
+                assert next(w for w in ipc.get_windows() if w["id"] == win["id"])["title"] == win["title"]
+                ipc.close_window(new["id"])
+                wait_for(lambda: all(w["id"] != new["id"] for w in ipc.get_windows()), "new pin window did not close")
+                ipc.action('focus_window', {"id": win["id"]})
+                time.sleep(.3)
+                box = ipc.get_window_debug(win["id"])["client_box"]
                 # A click opens a folder pin.
                 click(80, 526)
                 wait_for(lambda: any(w["title"].startswith("second folder") for w in ipc.get_windows()), "pin did not open its folder")

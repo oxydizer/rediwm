@@ -86,7 +86,7 @@ origin), `zoom_osd.py` (shared zoom OSD,
 (border antialiasing and filled side edges on dark/light backgrounds at
 integer/fractional scales), `switcher.py`,
 `switcher_live.py`, `window_snapping.py`, `initial_window_state.py` (startup
-maximize/fullscreen placement, restore, window rules and depth), `taskbar_peek.py`, `taskbar_items.py`,
+maximize/fullscreen placement, restore, window rules and depth), `taskbar_peek.py`,
 `taskbar_title_repaint.py`, `window_urgency.py`, `start_menu.py`,
 `power_menu.py` (only ever activates Log Out), `control_center.py`,
 `control_center.py --services-only` (private systemd and polkit fixture: availability, in-table loading, unlock/lock and prompt cancellation, startup settings, Notify service types and isolated drop-in edits, runtime actions, authorization refusal, analysis, live updates and lifetime),
@@ -205,10 +205,13 @@ caret blinking and idle wakeups, and title glyph dimensions across resizes
 (`REDIWM_EDITOR_DRAG=1` exercises pointer resizing). Supports `REDIWM_TEST_SCALE`,
 `REDIWM_TEST_RENDERER`, and `REDIWM_EDITOR_PREVIEW=/tmp/editor.png`.
 
-**PDF viewer**: `zig build test-pdf`, `pdf_viewer.py` (rendering and navigation),
-`pdf_sandbox.py` (a test-only parser hook checks file, syscall, inherited-FD,
-environment and Wayland restrictions, plus failure to install the sandbox).
-Requires Poppler GLib, libseccomp, Linux Landlock ABI 3+, and Python Cairo.
+**PDF viewer**: `zig build test-pdf`, `pdf_viewer.py` (rendering, navigation,
+tiled fit width, and printing through a fake Print portal on a private bus; run
+it with `REDIWM_SCALE=2` too, where tiles split differently), `pdf_sandbox.py`
+(a test-only parser hook checks file, syscall, inherited-FD, environment and
+Wayland restrictions, that the print helper's socket cannot pass descriptors,
+plus failure to install the sandbox). Requires Poppler GLib, libseccomp, Linux
+Landlock ABI 3+, Python Cairo, and `dbus-daemon`.
 
 **Browsers**: `brave_input.py` (optional; `REDIWM_TEST_BRAVE=/path`), a smoke
 test of focus, clipboard, navigation and scrolling in a fresh profile.

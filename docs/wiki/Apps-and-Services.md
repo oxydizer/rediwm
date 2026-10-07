@@ -49,7 +49,11 @@ Files, Images and the editor also run on other Wayland compositors.
 The PDF viewer is sandboxed with Landlock (ABI 3 or newer) and needs a
 compositor with `security-context-v1`, which RediWM has. It refuses to parse
 a document if it can't isolate itself. Each PDF gets its own viewer. Web links
-copy their address instead of opening. Details in `docs/pdf-security.md`.
+copy their address instead of opening.
+
+Print (toolbar button or Ctrl+P) opens the print dialog of xdg-desktop-portal
+(GTK's, by default). A helper started before the sandbox hands the portal the
+file you opened; the sandboxed parser can only ask it to print.
 
 ## Desktop
 

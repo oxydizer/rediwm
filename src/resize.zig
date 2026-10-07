@@ -184,9 +184,8 @@ pub fn selectEdgesFromQuadrant(
     };
 }
 
-/// How far a grab reaches past the frame, over the drop shadow. Only pixels a
-/// chrome buffer covers can be hit, so this never exceeds the shadow margin
-/// in practice (smallest preset is 16).
+/// How far a grab reaches past the frame. `Toplevel.resize_grab` covers this
+/// band whether or not a shadow is drawn there.
 pub const reach_outside: f64 = 10.0;
 /// How far it reaches into the frame, where chrome (titlebar, footer skirt)
 /// is exposed. Beside the client the frame border is 1 px and the client

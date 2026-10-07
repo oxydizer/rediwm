@@ -234,8 +234,9 @@ pub fn build(b: *std.Build) void {
     });
     pdf.root_module.addImport("wayland", wayland);
     pdf.root_module.addCSourceFile(.{ .file = b.path("src/pdf/sandbox.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    pdf.root_module.addCSourceFile(.{ .file = b.path("src/pdf/print.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     pdf.root_module.linkSystemLibrary("seccomp", .{});
-    inline for (.{ "wayland-client", "wayland-cursor", "poppler-glib", "cairo", "gobject-2.0", "glib-2.0", "xkbcommon" }) |lib| pdf.root_module.linkSystemLibrary(lib, .{});
+    inline for (.{ "wayland-client", "wayland-cursor", "poppler-glib", "cairo", "gio-2.0", "gobject-2.0", "glib-2.0", "xkbcommon" }) |lib| pdf.root_module.linkSystemLibrary(lib, .{});
     const install_pdf = b.addInstallArtifact(pdf, .{});
     const pdf_entry = b.addInstallFileWithDir(b.path("data/rediwm-pdf.desktop"), .prefix, "share/applications/rediwm-pdf.desktop");
     b.getInstallStep().dependOn(&install_pdf.step);
@@ -780,7 +781,7 @@ fn addShellUi(b: *std.Build, module: *std.Build.Module) void {
 
 // Bundle shell glyphs so installed binaries never depend on the checkout.
 fn addShellIcons(b: *std.Build, module: *std.Build.Module) void {
-    inline for (.{ "git-branch", "home", "folder", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "open", "usb-stick", "drive", "eject", "users", "squares" }) |name| {
+    inline for (.{ "git-branch", "home", "folder", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares" }) |name| {
         module.addAnonymousImport("shell-icon-" ++ name, .{ .root_source_file = b.path("icons/" ++ name ++ ".svg") });
     }
 }

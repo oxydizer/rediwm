@@ -27,6 +27,11 @@ const folder_picker = @import("../folder_picker.zig");
 const wl = @import("wayland").server.wl;
 const actions = @import("../../config_runtime/actions.zig");
 const anim = @import("ui").anim;
+const col = @import("../../color.zig");
+const geometry = @import("../../geometry.zig");
+const start_button = @import("../../taskbar/start_button.zig");
+const menu_size = @import("../../start_menu/size.zig");
+const wlr = @import("wlroots");
 const ipc_animations = @import("../../ipc/animations.zig");
 
 const segmented_width: f32 = 180;
@@ -79,6 +84,8 @@ const px_chip_width = 9;
 const px_window_gap = 10;
 const px_chrome_height = 11;
 const px_chrome_control_gap = 12;
+const px_menu_width = 13;
+const px_menu_height = 14;
 
 pub const Section = struct {
     cc: *panel.ControlCenter = undefined,
@@ -135,7 +142,7 @@ pub const Section = struct {
     inactive_opacity_header_children: [2]Widget = undefined,
     inactive_opacity_group_children: [2]Widget = undefined,
     inactive_opacity_value_buf: [16]u8 = undefined,
-    px: [13]PxControl = undefined,
+    px: [15]PxControl = undefined,
     taskbar_section_children: [8]Widget = undefined,
     taskbar_position_children: [2]Widget = undefined,
     items_children: [3]Widget = undefined,
@@ -143,11 +150,79 @@ pub const Section = struct {
     item_controls: [taskbar_items.count][3]Widget = undefined,
     item_drag: ?struct { index: usize, press_y: f32, moved: bool = false, items: taskbar_items.Config } = null,
     item_focus: ?taskbar_items.Item = null,
-    start_menu_section_children: [6]Widget = undefined,
-    start_logo_children: [3]Widget = undefined,
+    start_menu_section_children: [9]Widget = undefined,
+    start_size_children: [2]Widget = undefined,
+    start_logo_children: [2]Widget = undefined,
+    start_logo_body: [2]Widget = undefined,
+    start_logo_tile: [1]Widget = undefined,
+    start_logo_info: [2]Widget = undefined,
     start_logo_buttons: [2]Widget = undefined,
     start_logo_error: ?[]const u8 = null,
+    /// The preview is waiting on the icon service; `iconsReady` rebuilds.
+    start_logo_pending: bool = false,
 };
+
+/// Slider ranges for the start menu's size. They only bound what the sliders
+/// offer: `StartMenu.relayout` caps both to the output and floors them at
+/// 320 x 240, which a hand-edited theme can still reach but leaves one row.
+/// Until a slider is moved the theme holds 0 and the menu is sized to the
+/// output (`start_menu/size.zig`); the sliders show that size.
+const menu_width_min = menu_size.min_width;
+const menu_width_max: f32 = 900;
+const menu_height_min = menu_size.min_height;
+const menu_height_max: f32 = 900;
+const start_logo_tile_size: f32 = 56;
+
+const StartLogo = struct {
+    image: layout.ImageData,
+    /// Logical size the image is drawn at.
+    size: i32,
+    /// A chosen file failed to load, so `image` is the bundled logo.
+    failed: bool,
+};
+
+/// The logo the taskbar is showing: the chosen file, else the bundled R (also
+/// when the file cannot be loaded), with the bundled one tinted the way
+/// `Taskbar.paintPartPixel` tints it. Mirrors `Taskbar.refreshStartLogo`.
+/// Pixels are copied into `a`, so nothing is pinned in the icon service.
+fn startLogoImage(out: *Section, a: std.mem.Allocator, logical: i32) StartLogo {
+    const server = out.cc.server;
+    const custom = theme.global.start_button_icon;
+    const size_px = geometry.devicePixels(logical, out.cc.toplevel.render_scale);
+    var result: StartLogo = .{ .image = .{ .fallback_icon = null }, .size = logical, .failed = false };
+    out.start_logo_pending = false;
+
+    var lookup = server.iconLookup(if (custom.len > 0) custom else start_button.builtin_logo, size_px);
+    if (lookup == .missing and custom.len > 0) {
+        result.failed = true;
+        lookup = server.iconLookup(start_button.builtin_logo, size_px);
+    }
+    const entry = switch (lookup) {
+        .ready => |e| e,
+        .pending => {
+            out.start_logo_pending = true;
+            return result;
+        },
+        .missing => return result,
+    };
+    const pixels = a.dupe(u32, entry.pixels) catch return result;
+    if (custom.len == 0) {
+        if (theme.taskbar(.start_button_logo_color)) |tint| {
+            for (pixels) |*pixel| {
+                var c = col.Straight.fromRgba(tint);
+                c.a *= @as(f32, @floatFromInt(pixel.* >> 24)) / 255.0;
+                pixel.* = c.argb();
+            }
+        }
+    }
+    result.image = .{ .pixels = pixels, .width = entry.size, .height = entry.size, .fallback_icon = null };
+    return result;
+}
+
+/// A decode finished: a preview that was waiting for one can now show it.
+pub fn iconsReady(s: *Section) void {
+    if (s.start_logo_pending and s.cc.page == .appearance) s.cc.refresh();
+}
 
 fn indexOfNearest(values: []const f32, v: f32) usize {
     var best: usize = 0;
@@ -528,6 +603,14 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     out.taskbar_section_children = .{ sectionLabel("TASKBAR"), position_row, taskbar_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, items_group };
     const taskbar_section: Widget = .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.taskbar_section_children };
 
+    var output_box: wlr.Box = undefined;
+    out.cc.server.output_layout.getBox(out.cc.wlr_output, &output_box);
+    const menu_now = menu_size.wanted(t, @floatFromInt(output_box.width), @floatFromInt(output_box.height));
+    const menu_pinned = t.start_menu_width > 0 or t.start_menu_max_height > 0;
+    const menu_width_row = pxGroup(out, px_menu_width, "Menu width", std.math.clamp(menu_now.width, menu_width_min, menu_width_max), menu_width_min, menu_width_max, 10, &PxHandler(px_menu_width, "start_menu_width", false).changed);
+    out.px[px_menu_width].group_children[1].name = "start_menu_width";
+    const menu_height_row = pxGroup(out, px_menu_height, "Menu height", std.math.clamp(menu_now.height, menu_height_min, menu_height_max), menu_height_min, menu_height_max, 10, &PxHandler(px_menu_height, "start_menu_max_height", false).changed);
+    out.px[px_menu_height].group_children[1].name = "start_menu_height";
     const menu_left_row = pxGroup(out, px_menu_left, "Menu left padding", std.math.clamp(t.start_menu_left_pad, 0.0, 40.0), 0, 40, 2, &PxHandler(px_menu_left, "start_menu_left_pad", false).changed);
     const menu_bottom_row = pxGroup(out, px_menu_bottom, "Menu bottom padding", std.math.clamp(t.start_menu_bottom_pad, 0.0, 40.0), 0, 40, 2, &PxHandler(px_menu_bottom, "start_menu_bottom_pad", false).changed);
     const icon_left_row = pxGroup(out, px_icon_left, "Icon left padding", std.math.clamp(t.start_menu_icon_left_pad, 0.0, 32.0), 0, 32, 2, &PxHandler(px_icon_left, "start_menu_icon_left_pad", false).changed);
@@ -536,13 +619,49 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .name = "start_logo_choose", .kind = .{ .button = .{ .label = "Choose file…", .owner = out, .on_click = &onChooseStartLogo, .state = if (folder_picker.running()) .disabled else .idle } }, .width = .{ .fixed = 124 }, .height = .{ .fixed = 30 } },
         .{ .name = "start_logo_reset", .kind = .{ .button = .{ .label = "Reset to default", .owner = out, .on_click = &onResetStartLogo, .state = if (t.start_button_icon.len == 0 or folder_picker.running()) .disabled else .idle } }, .width = .{ .fixed = 140 }, .height = .{ .fixed = 30 } },
     };
-    out.start_logo_children = .{
-        labelWidget("Start button logo"),
-        .{ .name = "start_logo_file", .kind = .{ .text = .{ .content = out.start_logo_error orelse (if (t.start_button_icon.len == 0) "Default R logo · PNG or SVG" else std.fs.path.basename(t.start_button_icon)), .font_size = 12, .color = pal.dim } } },
+    const logo = startLogoImage(out, arena, Taskbar.startIconSize());
+    const logo_note: []const u8 = out.start_logo_error orelse blk: {
+        if (t.start_button_icon.len == 0) break :blk "Default R logo · PNG or SVG";
+        const name = std.fs.path.basename(t.start_button_icon);
+        if (logo.failed) break :blk std.fmt.allocPrint(arena, "{s} could not be loaded · showing the default R", .{name}) catch name;
+        break :blk name;
+    };
+    // The logo sits on the taskbar, so it is shown on the taskbar's colour.
+    var tile_bg = theme.taskbar(.taskbar_bg);
+    tile_bg[3] = 1;
+    out.start_logo_tile = .{.{
+        .name = "start_logo_preview",
+        .kind = .{ .image = logo.image },
+        .width = .{ .fixed = @floatFromInt(logo.size) },
+        .height = .{ .fixed = @floatFromInt(logo.size) },
+    }};
+    out.start_logo_info = .{
+        .{ .name = "start_logo_file", .kind = .{ .text = .{ .content = logo_note, .font_size = 12, .color = pal.dim } } },
         .{ .kind = .container, .direction = .row, .gap = 8, .children = &out.start_logo_buttons },
     };
+    out.start_logo_body = .{
+        .{
+            .name = "start_logo_tile",
+            .kind = .{ .rect = .{ .color = tile_bg, .radius = 10, .border_width = 1, .border_color = pal.border_soft } },
+            .width = .{ .fixed = start_logo_tile_size },
+            .height = .{ .fixed = start_logo_tile_size },
+            .justify = .center,
+            .@"align" = .center,
+            .children = &out.start_logo_tile,
+        },
+        .{ .kind = .container, .direction = .column, .gap = 8, .justify = .center, .width = .{ .flex = 1 }, .children = &out.start_logo_info },
+    };
+    out.start_logo_children = .{
+        labelWidget("Start button logo"),
+        .{ .kind = .container, .direction = .row, .gap = 12, .@"align" = .center, .children = &out.start_logo_body },
+    };
     const logo_row: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.start_logo_children };
-    out.start_menu_section_children = .{ sectionLabel("START MENU"), logo_row, menu_left_row, menu_bottom_row, icon_left_row, icon_bottom_row };
+    out.start_size_children = .{
+        .{ .name = "start_menu_size_note", .kind = .{ .text = .{ .content = if (menu_pinned) "Custom size" else "Sized to fit your screen · move a slider to set your own", .font_size = 12, .color = pal.dim } }, .width = .{ .flex = 1 } },
+        .{ .name = "start_menu_size_auto", .kind = .{ .button = .{ .label = "Size to screen", .owner = out, .on_click = &onAutoMenuSize, .state = if (menu_pinned) .idle else .disabled } }, .width = .{ .fixed = 124 }, .height = .{ .fixed = 30 } },
+    };
+    const menu_size_row: Widget = .{ .kind = .container, .direction = .row, .gap = 8, .@"align" = .center, .children = &out.start_size_children };
+    out.start_menu_section_children = .{ sectionLabel("START MENU"), logo_row, menu_width_row, menu_height_row, menu_size_row, menu_left_row, menu_bottom_row, icon_left_row, icon_bottom_row };
     const start_menu_section: Widget = .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.start_menu_section_children };
 
     out.row_storage = .{
@@ -921,6 +1040,14 @@ fn onStartLogoChosen(owner: ?*anyopaque, path: ?[]const u8) void {
         theme.global.start_button_icon = server.config.arena.allocator().dupe(u8, picked) catch return;
         saveThemeChange(server, false);
     } else if (server.input.open_control_center) |cc| cc.refresh();
+}
+
+/// Hands the menu's size back to the output: 0 is "automatic".
+fn onAutoMenuSize(owner: ?*anyopaque, _: usize) void {
+    const s = section(owner);
+    theme.global.start_menu_width = 0;
+    theme.global.start_menu_max_height = 0;
+    applyThemeChange(s);
 }
 
 fn onResetStartLogo(owner: ?*anyopaque, _: usize) void {

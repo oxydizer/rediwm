@@ -7,6 +7,7 @@ from pathlib import Path
 import json
 import re
 import socket
+import struct
 import tempfile
 import time
 
@@ -235,9 +236,59 @@ def test_stalled_audio_does_not_block():
                 log.close()
 
 
+def test_stalled_wayland_client_recovers():
+    """Queue replies while a client is busy, then consume every reply."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-client-buffer-") as directory:
+        tmp = Path(directory)
+        process, log = spawn_compositor(tmp, config_content='[compositor]\nxwayland = false\n', env_extra={
+            "XDG_DATA_HOME": str(tmp / "data"),
+            "XDG_DATA_DIRS": str(tmp / "empty"),
+            "XDG_CACHE_HOME": str(tmp / "cache"),
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + str(tmp / "missing-bus"),
+            "PULSE_SERVER": "unix:" + str(tmp / "missing-pulse"),
+            "PIPEWIRE_RUNTIME_DIR": str(tmp),
+        })
+        try:
+            with IPCClient(socket_path=tmp, timeout=10) as client:
+                # Each wl_display.sync produces callback.done + delete_id,
+                # 24 bytes total. Withhold reads to exercise backpressure.
+                display = next(p for p in tmp.glob("wayland-*") if p.is_socket())
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+                    peer.settimeout(5)
+                    peer.connect(str(display))
+                    count = 20_000
+                    peer.sendall(b"".join(struct.pack("=III", 1, 12 << 16, i)
+                                          for i in range(2, count + 2)))
+                    client.get_shell_state()  # The desktop still responds.
+                    received = bytearray()
+                    while len(received) < count * 24:
+                        data = peer.recv(count * 24 - len(received))
+                        assert data, f"busy client disconnected after {len(received)} reply bytes"
+                        received.extend(data)
+                    for index in range(count):
+                        callback, event, _, display_id, delete_event, deleted = struct.unpack_from(
+                            "=IIIIII", received, index * 24)
+                        assert (callback, event) == (index + 2, 12 << 16)
+                        assert (display_id, delete_event, deleted) == (1, (12 << 16) | 1, index + 2)
+                    # A subsequent roundtrip proves the connection remains usable.
+                    peer.sendall(struct.pack("=III", 1, 12 << 16, 2))
+                    reply = bytearray()
+                    while len(reply) < 24:
+                        data = peer.recv(24 - len(reply))
+                        assert data, "client disconnected after draining its backlog"
+                        reply.extend(data)
+                    assert struct.unpack("=IIIIII", reply)[0] == 2
+                assert "Data too big for buffer" not in (tmp / "compositor.log").read_text()
+                print("startup: stalled Wayland client drained 20,000 callbacks and recovered")
+        finally:
+            stop_process(process)
+            log.close()
+
+
 if __name__ == "__main__":
     test_responsive_before_publication()
     test_cache_then_revalidate()
     test_corrupt_cache_falls_back()
     test_early_shutdown_joins_workers()
     test_stalled_audio_does_not_block()
+    test_stalled_wayland_client_recovers()

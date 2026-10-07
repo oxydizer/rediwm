@@ -58,6 +58,13 @@ def run():
         marker = tmp / "opened"
         opener = helpers / "gio"
         opener.write_text('#!/bin/sh\n[ "$1" = "open" ] || exit 1\nprintf "%s" "$2" > "' + str(marker) + '"\n')
+        # Never invoke the real trash backend: it could include mounted trash.
+        empty_marker = tmp / "trash-emptied"
+        opener.write_text(opener.read_text().replace(
+            '[ "$1" = "open" ] || exit 1',
+            '[ "$1" = "trash" ] && [ "$2" = "--empty" ] && '
+            '[ "$#" = "2" ] && { printf emptied > "' + str(empty_marker) + '"; exit 0; }\n'
+            '[ "$1" = "open" ] || exit 1'))
         opener.chmod(0o755)
         applications = data / "applications"
         applications.mkdir()
@@ -151,6 +158,26 @@ def run():
                              "did not open " + name)
                     marker.unlink()
 
+                def open_place_window(y, expected_title):
+                    before = windows()
+                    original = next(w for w in before if w["id"] == win["id"])
+                    ids = {w["id"] for w in before}
+                    click(70, y, 273)
+                    key(108)  # Open in New Window
+                    key(28)
+                    new = wait_for(lambda: next((w for w in windows() if w["id"] not in ids), None),
+                                   "sidebar did not open a new window")
+                    wait_for(lambda: any(w["id"] == new["id"] and
+                                         w["title"] == expected_title + " — RediWM Files" for w in windows()),
+                             "new window did not open " + expected_title)
+                    assert next(w for w in windows() if w["id"] == win["id"])["title"] == original["title"], \
+                        "Open in New Window navigated the original window"
+                    action('close_window', {"id": new["id"]})
+                    wait_for(lambda: all(w["id"] != new["id"] for w in windows()),
+                             "new window did not close")
+                    action('focus_window', {"id": win["id"]})
+                    time.sleep(.2)
+
                 if "--archive-only" in sys.argv:
                     archive_dir = tmp / "archive-check"
                     archive_dir.mkdir()
@@ -209,12 +236,37 @@ def run():
                 key(105, alt=True)
                 title("Home")
 
+                # New windows use the clicked place and leave the current folder alone.
+                open_place_window(305, "Documents")
+                open_place_window(140, "Home")
+                open_place_window(210, "Recent")
+                open_place_window(175, "Trash")
+
                 # Trash below Home opens the local trash, even before its first use.
                 click(70, 175)
                 title("Trash")
                 trash = tmp / "data" / "Trash" / "files"
                 assert trash.is_dir(), "Trash shortcut did not create an empty location"
                 click(70, 140)
+                title("Home")
+
+                # Empty Trash is a sidebar action independent of the current folder.
+                def empty_trash_dialog():
+                    click(70, 175, button=273)
+                    key(108)  # Down: Open in New Window
+                    key(108)  # Down: Empty Trash…
+                    key(28)   # Open the confirmation, without executing it.
+                    assert not empty_marker.exists(), "Trash emptied before confirmation"
+
+                empty_trash_dialog()
+                key(1)  # Escape cancels.
+                assert not empty_marker.exists(), "Cancel emptied Trash"
+                title("Home")
+                empty_trash_dialog()
+                key(15)  # Tab skips the unavailable permanent-delete toggle.
+                key(28)
+                wait_for(empty_marker.exists, "Empty Trash did not invoke gio trash --empty")
+                empty_marker.unlink()
                 title("Home")
 
                 # Recent below Trash uses shared history, newest opened first,
@@ -241,7 +293,7 @@ def run():
                 key(49, ctrl=True)  # Ctrl+N cannot create inside a virtual location.
                 title("Recent")
                 click(70, 210, 273)
-                key(28)  # The Recent menu offers Open only.
+                key(28)  # Open Recent in the current window.
                 title("Recent")
                 write_recent(recent_old)
                 time.sleep(.3)
@@ -341,6 +393,7 @@ def run():
                 title("Documents")
                 click(70, 305, 273)
                 key(108)
+                key(108)
                 key(28)  # Unpin
                 title("Documents")  # Unpin does not navigate or delete the folder.
                 assert (home / "Documents").is_dir()
@@ -348,7 +401,8 @@ def run():
                 assert saved[0] == ord("3") and saved[3] & 2 and saved[4] == 1, saved
                 click(70, 305)  # Downloads now occupies Documents' old row.
                 title("Downloads")
-                click(70, 140, 273)  # Home has Open and Properties, without Unpin.
+                click(70, 140, 273)  # Home has Open, Open in New Window and Properties.
+                key(108)
                 key(108)
                 key(28)  # Properties opens a modal without navigating.
                 title("Downloads")
@@ -357,7 +411,55 @@ def run():
                 key(28)
                 title("Home")
 
-                print("PASS: Files navigation, Recent, toolbar and Places controls", flush=True)
+                # The pane divider resizes independently of file selection and
+                # stays within its minimum and half the client width.
+                from PIL import Image
+
+                def sidebar_shot():
+                    shot = tmp / "sidebar.png"
+                    shot.unlink(missing_ok=True)
+                    action('screenshot', {"path": str(shot)})
+                    box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
+                    with Image.open(shot) as full:
+                        return full.convert("RGB").crop((box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"]))
+
+                def pane_width_is(width):
+                    image = sidebar_shot()
+                    background = image.getpixel((5, 120))
+                    return (image.getpixel((width - 20, 120)) == background and
+                            image.getpixel((width - 1, 120)) != background and
+                            image.getpixel((width + 2, 120)) != background)
+
+                def drag_divider(start, end):
+                    box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
+                    action('move_cursor', {"x": box["x"] + start, "y": box["y"] + 140})
+                    action('pointer_button', {"button": 272, "pressed": True})
+                    action('move_cursor', {"x": box["x"] + end, "y": box["y"] + 190})
+                    action('pointer_button', {"button": 272, "pressed": False})
+
+                drag_divider(208, 340)
+                wait_for(lambda: pane_width_is(340), "sidebar did not grow with its divider")
+                title("Home")
+                click(727, 80)  # The same divider works in list view.
+                drag_divider(340, 850)
+                wait_for(lambda: pane_width_is(480), "sidebar exceeded half the window width")
+                action('set_window_size', {"id": win["id"], "width": 600, "height": 540})
+                wait_for(lambda: sidebar_shot().width == 600 and pane_width_is(300),
+                         "sidebar did not clamp after the window shrank")
+                action('set_window_size', {"id": win["id"], "width": 960, "height": 540})
+                wait_for(lambda: sidebar_shot().width == 960 and pane_width_is(480),
+                         "sidebar forgot its width after the window grew")
+                drag_divider(480, 20)
+                wait_for(lambda: pane_width_is(160), "sidebar shrank below its minimum")
+                drag_divider(160, 208)
+                wait_for(lambda: pane_width_is(208), "sidebar divider did not release")
+                click(690, 80)  # Restore the grid for the remaining checks.
+                click(70, 305)
+                title("Downloads")
+                click(70, 140)
+                title("Home")
+
+                print("PASS: Files navigation, Recent, toolbar, Places and sidebar resizing", flush=True)
                 if "--places-only" in sys.argv:
                     return
 

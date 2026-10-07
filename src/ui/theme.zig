@@ -130,8 +130,9 @@ pub const Theme = struct {
     shadow: [4]f32 = .{ 0, 0, 0, 0.35 },
     shadow_size: f32 = 24.0, // blur/softness radius, logical px
     shadow_offset_y: f32 = 8.0, // vertical offset, logical px
-    start_menu_width: f32 = 560.0,
-    start_menu_max_height: f32 = 600.0,
+    // 0 sizes the menu to the output (`start_menu/size.zig`); set either to pin it.
+    start_menu_width: f32 = 0,
+    start_menu_max_height: f32 = 0,
     start_menu_radius: f32 = 14.0,
     start_menu_bg: [4]f32 = .{ 29.0 / 255.0, 34.0 / 255.0, 41.0 / 255.0, 0.98 }, // #1d2229
     start_menu_border: [4]f32 = .{ 1, 1, 1, 0.12 },
@@ -798,7 +799,8 @@ test "writeInto then parse round-trips every field" {
     var t: Theme = .{};
     // Exercise every registered field with a non-default value, so omission
     // from either parser or serializer cannot pass as a default round-trip.
-    inline for (number_keys) |name| @field(t, name) *= 0.9;
+    // Keys defaulting to 0 (automatic sizes) would stay at the default under *= 0.9.
+    inline for (number_keys) |name| @field(t, name) = if (@field(t, name) == 0) 500 else @field(t, name) * 0.9;
     inline for (color_keys) |name| @field(t, name) = .{ 16.0 / 255.0, 32.0 / 255.0, 48.0 / 255.0, 0.321 };
     inline for (optional_color_keys) |name| @field(t, name) = .{ 16.0 / 255.0, 32.0 / 255.0, 48.0 / 255.0, 0.321 };
     t.accent = .{ 167.0 / 255.0, 139.0 / 255.0, 250.0 / 255.0, 1 };

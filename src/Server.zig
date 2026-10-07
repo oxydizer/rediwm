@@ -47,6 +47,8 @@ const Server = @This();
 
 const log = std.log.scoped(.compositor);
 
+extern fn wl_display_set_default_max_buffer_size(display: *wl.Server, size: usize) void;
+
 pub const CompositorError = error{
     ServerCreateFailed,
     BackendCreateFailed,
@@ -324,6 +326,10 @@ fn firstAvailableOutput(server: *Server) ?*Output {
 pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io: std.Io, environ: std.process.Environ, theme_path: ?[]const u8, argv: []const [*:0]const u8, greeter: bool) CompositorError!void {
     const wl_server = wl.Server.create() catch return error.ServerCreateFailed;
     errdefer wl_server.destroy();
+    // Let temporarily busy clients catch up with input/event bursts instead
+    // of disconnecting when the default 4 KiB outgoing buffer fills. This is
+    // a growth limit, not an allocation per client; keep it bounded at 1 MiB.
+    wl_display_set_default_max_buffer_size(wl_server, 1024 * 1024);
 
     var session: ?*wlr.Session = null;
     const backend = wlr.Backend.autocreate(wl_server.getEventLoop(), &session) catch return error.BackendCreateFailed;
@@ -1618,6 +1624,7 @@ fn handleIconWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
         if (output.start_menu) |sm| sm.iconsReady();
     }
     if (server.notifications) |mgr| mgr.iconsReady();
+    if (server.input.open_control_center) |cc| @import("control_center/sections/appearance.zig").iconsReady(&cc.appearance);
     if (server.tray) |tray| tray.changed();
     server.scheduleFrames();
     return 0;

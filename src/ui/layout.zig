@@ -131,6 +131,7 @@ pub const IconId = enum {
     undo,
     save,
     fit,
+    print,
     home,
     open,
     // Files' devices.

@@ -37,6 +37,8 @@ pub const source =
     \\                            # each pill's top/bottom margin in the bar (capped)
     \\start_button_gap = 4.0     # gap to the left of the start button and between start button and first pill
     \\start_button_icon_size = 36.0  # start button logo size; capped to the button itself
+    \\# start_menu_width = 560.0       # start menu size; omitted or 0 sizes it to the screen
+    \\# start_menu_max_height = 600.0
     \\start_menu_left_pad = 2.0          # start menu distance from left edge
     \\start_menu_bottom_pad = 6.0        # start menu gap above the taskbar
     \\start_menu_icon_left_pad = 12.0   # start menu app row left/right inset

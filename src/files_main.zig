@@ -45,6 +45,11 @@ const Target = struct {
 fn resolveTarget(allocator: std.mem.Allocator, environ: std.process.Environ, target: ?[]const u8, allow_file: bool) !Target {
     const home = environ.getPosix("HOME") orelse "/";
 
+    if (allow_file and target != null and @import("files/recent.zig").isLocation(target.?)) {
+        const path = try allocator.dupe(u8, target.?);
+        return .{ .path = path, .directory = path, .selected = null };
+    }
+
     var path_to_check: []const u8 = undefined;
     if (target) |t| {
         if (std.mem.startsWith(u8, t, "~")) {

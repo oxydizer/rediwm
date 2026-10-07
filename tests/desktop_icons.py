@@ -458,6 +458,14 @@ def run():
             wait_for(lambda: files_marker.exists() and files_marker.read_text()==str(trash_dir), 'Trash menu should wrap from Empty Trash to Open')
             trashed_file=trash_dir/'empty-trash.txt';trashed_file.write_text('fixture')
             click(152,172,273);key(108);key(28)
+            time.sleep(.2)
+            assert trashed_file.exists(), 'Desktop emptied Trash before confirmation'
+            key(1)
+            assert trashed_file.exists(), 'Cancelling Empty Trash deleted contents'
+            click(152,172,273);click(200,224)
+            time.sleep(.2)
+            assert trashed_file.exists(), 'Clicking Empty Trash bypassed confirmation'
+            key(15);key(28)  # Tab reaches confirmation, without a deletion-mode checkbox.
             wait_for(lambda: not any(trash_dir.iterdir()), 'Empty Trash did not clear the scratch Trash')
             assert home.is_dir() and trash_dir.is_dir(), 'built-in action removed its folder'
             reader.close();sock.close()

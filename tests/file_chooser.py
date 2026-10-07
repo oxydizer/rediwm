@@ -29,11 +29,22 @@ def run():
         (docs / "alpha.txt").write_text("keep this")
         (docs / "beta.txt").write_text("second")
         (docs / "image.png").write_bytes(b"fixture")
+        recent_dir = home / "Other folder"
+        recent_dir.mkdir()
+        recent_text = recent_dir / "alpha.txt"
+        recent_text.write_text("recent file in another directory")
+        data = tmp / "data"
+        data.mkdir()
+        (data / "recently-used.xbel").write_text(
+            '<xbel version="1.0">' + ''.join(
+                f'<bookmark href="{path.as_uri()}" visited="2026-01-0{day}T00:00:00Z"/>'
+                for path, day in [(docs / "beta.txt", 1), (recent_text, 2), (docs / "image.png", 3)]
+            ) + '</xbel>')
         cfg = tmp / "config"
         portals = cfg / "xdg-desktop-portal" / "rediwm-portals.conf"
         portals.parent.mkdir(parents=True)
         portals.write_text("# preserved\n[preferred]\ndefault=gtk\norg.freedesktop.impl.portal.ScreenCast=wlr\norg.freedesktop.impl.portal.Settings=rediwm;gtk\norg.freedesktop.impl.portal.FileChooser=rediwm;gtk\n")
-        proc, log = spawn_compositor(tmp, env_extra={"HOME": str(home), "XDG_CONFIG_HOME": str(cfg), "REDIWM_FORCE_DBUS": "1", "GIO_USE_VFS": "local"})
+        proc, log = spawn_compositor(tmp, env_extra={"HOME": str(home), "XDG_CONFIG_HOME": str(cfg), "XDG_DATA_HOME": str(data), "REDIWM_FILES_DEVICES": "0", "REDIWM_FORCE_DBUS": "1", "GIO_USE_VFS": "local"})
         try:
             sock = wait_for(lambda: next(iter(tmp.glob("rediwm-*.sock")), None), "IPC")
             with IPCClient(str(sock)) as ipc:
@@ -100,6 +111,19 @@ def run():
                 code, result = finish(request)
                 assert code == 0 and set(result["uris"]) == {(docs / "alpha.txt").as_uri(), (docs / "beta.txt").as_uri()}, result
                 print("multiple selection excludes filtered files", flush=True)
+
+                for multiple in (False, True):
+                    request = start("OpenFile", {"filters": filters, "multiple": GLib.Variant("b", multiple)})
+                    click(request[3], 70, 190)  # Recent, below Trash
+                    if multiple:
+                        key(30, ctrl=True)
+                    else:
+                        key(102)  # newest matching file
+                    key(28)
+                    code, result = finish(request)
+                    expected = {recent_text.as_uri(), (docs / "beta.txt").as_uri()} if multiple else {recent_text.as_uri()}
+                    assert code == 0 and set(result["uris"]) == expected, (code, result)
+                print("Recent opens full paths across folders with filters and multiple selection", flush=True)
 
                 request = start("OpenFile", {"filters": GLib.Variant("a(sa(us))", [("Text files", [(0, "*.txt")]), ("Images", [(0, "*.png")])])})
                 click(request[3], 650, 490)

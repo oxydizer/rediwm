@@ -10,5 +10,7 @@ pub const launch = @import("launch.zig");
 pub const model = @import("model.zig");
 pub const Model = model.Model;
 
+pub const size = @import("size.zig");
+
 pub const panel = @import("panel.zig");
 pub const StartMenu = panel.StartMenu;

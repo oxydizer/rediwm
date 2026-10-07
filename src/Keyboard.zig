@@ -166,6 +166,35 @@ fn handleKey(listener: *wl.Listener(*wlr.Keyboard.event.Key), event: *wlr.Keyboa
     keyboard.processKey(event.time_msec, event.keycode, event.state);
 }
 
+/// Focus enters must contain only keys delivered to clients. A raw hardware
+/// snapshot also includes shell shortcuts (e.g. Tab still held when Alt is
+/// released); their swallowed releases would leave them stuck in Xwayland.
+pub fn enter(server: *Server, surface: *wlr.Surface) void {
+    const seat = server.input.seat;
+    const wlr_keyboard = seat.getKeyboard() orelse return;
+    var owner: ?*Keyboard = null;
+    var keyboards = server.input.keyboards.iterator(.forward);
+    while (keyboards.next()) |keyboard| {
+        if (keyboard.device == &wlr_keyboard.base) {
+            owner = keyboard;
+            break;
+        }
+    }
+    var keys: [32]u32 = undefined;
+    var count: usize = 0;
+    for (wlr_keyboard.keycodes[0..wlr_keyboard.num_keycodes]) |code| {
+        if (owner) |keyboard| {
+            if (code < keyboard.client_pressed.len and
+                (!keyboard.client_pressed[code] or keyboard.polkit_consumed[code])) continue;
+        }
+        if (count < keys.len) {
+            keys[count] = code;
+            count += 1;
+        }
+    }
+    seat.keyboardNotifyEnter(surface, keys[0..count], &wlr_keyboard.modifiers);
+}
+
 pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state: wl.Keyboard.KeyState) void {
     keyboard.noteShellKey(event_keycode, state);
     if (keyboard.server.locker != null and @import("input/text_input.zig").isVirtual(keyboard.device)) return;

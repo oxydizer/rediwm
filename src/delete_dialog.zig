@@ -25,6 +25,7 @@ pub const State = struct {
     bytes: i64 = 0,
     preview: ?icons.Entry = null,
     permanent: bool = false,
+    empty_trash: bool = false,
     focus: enum { cancel, toggle, confirm } = .cancel,
 
     keyboard_focus: bool = false,
@@ -34,6 +35,10 @@ pub const State = struct {
         const box = self.placement.box(g.box(), w, h);
         g.x = box.x;
         g.y = box.y;
+        if (self.empty_trash) {
+            g.toggle.w = 0;
+            g.toggle.h = 0;
+        }
         return g;
     }
 
@@ -72,7 +77,7 @@ pub const State = struct {
         if (sym == c.XKB_KEY_Tab or sym == c.XKB_KEY_ISO_Left_Tab) {
             self.keyboard_focus = true;
             const n: usize = @intFromEnum(self.focus);
-            self.focus = @enumFromInt((n + (if (sym == c.XKB_KEY_Tab) @as(usize, 1) else 2)) % 3);
+            self.focus = if (self.empty_trash) (if (self.focus == .cancel) .confirm else .cancel) else @enumFromInt((n + (if (sym == c.XKB_KEY_Tab) @as(usize, 1) else 2)) % 3);
         }
         if (sym == c.XKB_KEY_space or ((sym == c.XKB_KEY_Return or sym == c.XKB_KEY_KP_Enter) and self.keyboard_focus)) return switch (self.focus) {
             .cancel => .cancel,
@@ -108,7 +113,7 @@ pub const State = struct {
         t.button_font_size = shell_ui.textSize();
         r.palette = t;
         dialog.paintWindowFrame(r, layer.local(), background);
-        dialog.paintWindowTitle(r, layer.local(), if (self.paths.items.len > 1) "Delete items?" else if (self.folder) "Delete folder?" else "Delete file?", .trash, null);
+        dialog.paintWindowTitle(r, layer.local(), if (self.empty_trash) "Empty Trash?" else if (self.paths.items.len > 1) "Delete items?" else if (self.folder) "Delete folder?" else "Delete file?", .trash, null);
         const hover = g.target(mx, my);
         button.paint(r, g.close, .{ .variant = .chrome, .icon = .close, .label = "Close" }, .{ .pointer = if (hover == .close) .hover else .idle });
         r.drawText(16, g.header + 16, g.width - 32, 24, .{
@@ -123,17 +128,17 @@ pub const State = struct {
         const icon_y = inset_y + (inset_h - icon_size) / 2;
         if (self.preview) |im| {
             r.drawImageCover(28, icon_y, icon_size, icon_size, 0, .{ .pixels = im.pixels, .width = @intCast(im.size), .height = @intCast(im.size) });
-        } else r.drawIcon(28, icon_y, icon_size, icon_size, .{ .id = if (self.folder) .folder else .document, .color = t.fg });
+        } else r.drawIcon(28, icon_y, icon_size, icon_size, .{ .id = if (self.empty_trash) .trash else if (self.folder) .folder else .document, .color = t.fg });
         var buf: [256]u8 = undefined;
-        const name = if (self.paths.items.len == 1) self.name else std.fmt.bufPrint(&buf, "{d} selected items", .{self.paths.items.len}) catch "Selected items";
+        const name = if (self.empty_trash) "All items in Trash" else if (self.paths.items.len == 1) self.name else std.fmt.bufPrint(&buf, "{d} selected items", .{self.paths.items.len}) catch "Selected items";
         r.drawText(76, inset_y + @max(0, (inset_h - 48) / 2), g.width - 108, @min(24, inset_h), .{ .content = name, .font_size = shell_ui.textSize(), .weight = 600, .color = t.fg });
         var detail_buf: [128]u8 = undefined;
-        const detail = if (self.paths.items.len > 1) "Files and folders in this selection" else if (self.folder) "Folder · includes its contents" else std.fmt.bufPrint(&detail_buf, "{s} · {d:.1} {s}", .{ if (std.ascii.eqlIgnoreCase(std.fs.path.extension(self.name), ".pdf")) "PDF document" else "File", @as(f64, @floatFromInt(@max(0, self.bytes))) / (if (self.bytes >= 1048576) @as(f64, 1048576) else if (self.bytes >= 1024) @as(f64, 1024) else 1), if (self.bytes >= 1048576) "MB" else if (self.bytes >= 1024) "KB" else "bytes" }) catch "File";
+        const detail = if (self.empty_trash) "Permanently delete all trashed files and folders" else if (self.paths.items.len > 1) "Files and folders in this selection" else if (self.folder) "Folder · includes its contents" else std.fmt.bufPrint(&detail_buf, "{s} · {d:.1} {s}", .{ if (std.ascii.eqlIgnoreCase(std.fs.path.extension(self.name), ".pdf")) "PDF document" else "File", @as(f64, @floatFromInt(@max(0, self.bytes))) / (if (self.bytes >= 1048576) @as(f64, 1048576) else if (self.bytes >= 1024) @as(f64, 1024) else 1), if (self.bytes >= 1048576) "MB" else if (self.bytes >= 1024) "KB" else "bytes" }) catch "File";
         if (inset_h >= 48) r.drawText(76, inset_y + (inset_h - 48) / 2 + 28, g.width - 108, 20, .{ .content = detail, .font_size = shell_ui.textSize(), .color = t.fg });
         const focus = if (self.keyboard_focus) self.focus else null;
-        checkbox.paint(r, g.toggle, "Delete permanently", .{ .checked = self.permanent, .focused = focus == .toggle });
+        if (!self.empty_trash) checkbox.paint(r, g.toggle, "Delete permanently", .{ .checked = self.permanent, .focused = focus == .toggle });
         button.paint(r, g.cancel, .{ .size = .sm, .label = "Cancel" }, .{ .focused = focus == .cancel, .pointer = if (hover == .cancel) .hover else .idle });
-        button.paint(r, g.confirm, .{ .variant = .primary, .size = .sm, .leading_icon = .trash, .label = if (self.permanent) "Delete permanently" else "Move to Trash" }, .{ .focused = focus == .confirm, .pointer = if (hover == .confirm) .hover else .idle });
+        button.paint(r, g.confirm, .{ .variant = .primary, .size = .sm, .leading_icon = .trash, .label = if (self.empty_trash) "Empty Trash" else if (self.permanent) "Delete permanently" else "Move to Trash" }, .{ .focused = focus == .confirm, .pointer = if (hover == .confirm) .hover else .idle });
     }
 };
 

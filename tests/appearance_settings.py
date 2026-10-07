@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Appearance settings: window chrome opacity, inactive window opacity, file-drag dodge and animations controls.
+"""Appearance settings: window chrome opacity, inactive window opacity, file-drag dodge, animations controls, Start button logo preview and Start menu size.
 
 Verifies UI controls, live compositor updates, and persistence to config.toml.
 """
@@ -101,6 +101,17 @@ def test_appearance_settings():
                         colors = image.convert("RGB").crop((0, image.height - 80, 100, image.height)).getdata()
                         return sum(1 for c in colors if c == (18, 231, 73)) > 100
 
+                def logo_preview():
+                    """(green pixels, pixels differing from the tile colour) inside Settings' logo preview."""
+                    ipc.wait_for_frame()
+                    box = ui.scroll_into_view("start_logo_tile")["global_box"]
+                    shot = tmp / f"preview-shot-{next(logo_shots)}.png"
+                    ipc.screenshot(str(shot))
+                    with Image.open(shot) as image:
+                        crop = image.convert("RGB").crop((box["x"] + 6, box["y"] + 6, box["x"] + box["width"] - 6, box["y"] + box["height"] - 6))
+                    pixels = list(crop.getdata())
+                    return sum(1 for c in pixels if c == (18, 231, 73)), sum(1 for c in pixels if c != pixels[0])
+
                 assert ui.scroll_into_view("start_logo_reset")["is_disabled"]
                 click_widget(ui.scroll_into_view("start_logo_choose"))
                 window = wait_for(chooser, "logo file chooser")
@@ -118,6 +129,7 @@ def test_appearance_settings():
                 wait_for(lambda: chooser() is None, "logo chooser accepted")
                 wait_for(lambda: read_config()["theme"].get("start_button_icon") == str(logo), "saved logo path")
                 wait_for(logo_visible, "custom taskbar logo")
+                wait_for(lambda: logo_preview()[0] > 100, "Settings previews the chosen logo")
                 ipc.reload_config()
                 ipc.wait_for_panel_settled("control_center")
                 assert not ui.scroll_into_view("start_logo_reset")["is_disabled"]
@@ -138,6 +150,59 @@ def test_appearance_settings():
                 ipc.reload_config()
                 ipc.wait_for_panel_settled("control_center")
                 assert not logo_visible()
+                wait_for(lambda: logo_preview()[0] == 0 and logo_preview()[1] > 50, "Settings previews the default logo")
+
+                def menu_slider(name, fraction):
+                    box = ui.scroll_into_view(name)["global_box"]
+                    ipc.click_at(round(box["x"] + min(box["width"] - 1, box["width"] * fraction)), round(box["y"] + box["height"] / 2))
+                    ipc.wait_for_panel_settled("control_center")
+
+                # Untouched, the menu is sized to the output (start_menu/size.zig):
+                # 560x600 from about 1706x1066 logical pixels up, the same share
+                # of the screen below that, never under 400x360.
+                output = ipc.get_outputs()[0]
+                auto_w = round(min(560, max(400, 560 * output["logical_width"] / 1706)))
+                auto_h = round(min(600, max(360, 600 * output["logical_height"] / 1066)))
+                assert ui.scroll_into_view("start_menu_width")["value"] == auto_w
+                assert ui.scroll_into_view("start_menu_height")["value"] == auto_h
+                assert ui.scroll_into_view("start_menu_size_auto")["is_disabled"]
+                assert "start_menu_width" not in read_config()["theme"]
+
+                def start_menu_box():
+                    ipc.action("open_start_menu")
+                    ipc.wait_for("menu_opened", timeout_ms=5000)
+                    box = ipc.get_shell_state()["start_menu"]["box"]
+                    ipc.close_panel("start_menu")
+                    ipc.wait_for("menu_closed", timeout_ms=5000)
+                    return box["width"], box["height"]
+
+                assert start_menu_box() == (auto_w, auto_h)
+                for fraction, width, height in ((0, 400, 360), (1, 900, 900)):
+                    menu_slider("start_menu_width", fraction)
+                    menu_slider("start_menu_height", fraction)
+                    saved = read_config()["theme"]
+                    assert saved["start_menu_width"] == width and saved["start_menu_max_height"] == height, saved
+                    assert ui.scroll_into_view("start_menu_width")["value"] == width
+                    assert ui.scroll_into_view("start_menu_height")["value"] == height
+                    if fraction == 0:
+                        # Exactly the chosen size: it is below any output's cap.
+                        ipc.action("open_start_menu")
+                        ipc.wait_for("menu_opened", timeout_ms=5000)
+                        box = ipc.get_shell_state()["start_menu"]["box"]
+                        assert (box["width"], box["height"]) == (width, height), box
+                        ipc.close_panel("start_menu")
+                        ipc.wait_for("menu_closed", timeout_ms=5000)
+
+                # Size to screen hands both back to the output.
+                assert not ui.scroll_into_view("start_menu_size_auto")["is_disabled"]
+                click_widget(ui.scroll_into_view("start_menu_size_auto"))
+                ipc.wait_for_panel_settled("control_center")
+                theme_saved = read_config()["theme"]
+                assert "start_menu_width" not in theme_saved and "start_menu_max_height" not in theme_saved, theme_saved
+                assert ui.scroll_into_view("start_menu_width")["value"] == auto_w
+                assert ui.scroll_into_view("start_menu_height")["value"] == auto_h
+                assert ui.scroll_into_view("start_menu_size_auto")["is_disabled"]
+                assert start_menu_box() == (auto_w, auto_h)
 
                 focus_zoom = ui.scroll_into_view("focus_zoom")
                 assert focus_zoom.get("selected_index") == 1, "boost should be the default"

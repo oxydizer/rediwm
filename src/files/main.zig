@@ -80,6 +80,8 @@ pub const Client = struct {
     drag_icon: ?DragIcon = null,
     axis_source: wl.Pointer.AxisSource = .wheel,
     axis_delta: f64 = 0,
+    horizontal_delta: f64 = 0,
+    horizontal_notches: ?f64 = null,
     axis_notches: ?f64 = null,
     clipboard_revision: usize = 0,
     offers: std.ArrayList(*Offer) = .empty,
@@ -177,12 +179,13 @@ pub const Client = struct {
     /// the poll, including file-operation state changes. Only animation and
     /// known deadlines need a timeout; an idle window sleeps.
     fn pollTimeout(self: *Client) c_int {
-        if (self.app.wheel_glide.active() or self.app.selectionNeedsScroll() or self.app.hover_active or self.app.layout_active or self.app.scroll_appearance.active or self.app.sidebar_scroll_appearance.active) return 16;
+        if (self.app.wheel_glide.active() or self.app.selectionNeedsScroll() or self.app.hover_active or self.app.layout_active or self.app.scroll_appearance.active or self.app.sidebar_scroll_appearance.active or self.app.horizontal_appearance.active) return 16;
         if (self.app.hasRunningFolderSize()) return 33;
         var deadline: ?i64 = null;
         if (self.app.status_notice != null) deadline = self.app.status_notice_until;
         if (self.app.scanNoticeDeadline()) |at| deadline = earlier(deadline, at);
         if (self.app.scroll_appearance.deadline) |at| deadline = earlier(deadline, at);
+        if (self.app.horizontal_appearance.deadline) |at| deadline = earlier(deadline, at);
         if (self.app.sidebar_scroll_appearance.deadline) |at| deadline = earlier(deadline, at);
         // Transfers expire once strictly past their timeout.
         if (self.receiving) |receive| deadline = earlier(deadline, receive.started + transfer.timeout_ms + 1);
@@ -410,15 +413,15 @@ pub const Client = struct {
             .axis => |ev| {
                 if (ev.axis == .vertical_scroll) {
                     self.axis_delta += ev.value.toDouble();
-                    if (self.pointer.?.getVersion() < 5) self.flushScroll();
-                }
+                } else self.horizontal_delta += ev.value.toDouble();
+                if (self.pointer.?.getVersion() < 5) self.flushScroll();
             },
             .axis_source => |ev| self.axis_source = ev.axis_source,
             .axis_discrete => |ev| {
-                if (ev.axis == .vertical_scroll) self.axis_notches = (self.axis_notches orelse 0) + @as(f64, @floatFromInt(ev.discrete));
+                if (ev.axis == .vertical_scroll) self.axis_notches = (self.axis_notches orelse 0) + @as(f64, @floatFromInt(ev.discrete)) else self.horizontal_notches = (self.horizontal_notches orelse 0) + @as(f64, @floatFromInt(ev.discrete));
             },
             .axis_value120 => |ev| {
-                if (ev.axis == .vertical_scroll) self.axis_notches = (self.axis_notches orelse 0) + @as(f64, @floatFromInt(ev.value120)) / 120.0;
+                if (ev.axis == .vertical_scroll) self.axis_notches = (self.axis_notches orelse 0) + @as(f64, @floatFromInt(ev.value120)) / 120.0 else self.horizontal_notches = (self.horizontal_notches orelse 0) + @as(f64, @floatFromInt(ev.value120)) / 120.0;
             },
             .frame => self.flushScroll(),
             else => {},
@@ -430,9 +433,13 @@ pub const Client = struct {
             const pixels_per_notch = 100.0;
             const pixels = if (self.axis_notches) |n| n * pixels_per_notch else self.axis_delta * (pixels_per_notch / 15.0);
             self.app.handleWheel(pixels, app_mod.nowMs());
-        } else if (self.axis_delta != 0) {
-            self.app.handleScroll(self.axis_delta);
+            self.app.handleHorizontalScroll(if (self.horizontal_notches) |n| n * pixels_per_notch else self.horizontal_delta * (pixels_per_notch / 15.0));
+        } else {
+            if (self.axis_delta != 0) self.app.handleScroll(self.axis_delta);
+            self.app.handleHorizontalScroll(self.horizontal_delta);
         }
+        self.horizontal_delta = 0;
+        self.horizontal_notches = null;
         self.axis_delta = 0;
         self.axis_notches = null;
     }
@@ -489,7 +496,7 @@ pub const Client = struct {
     }
 
     fn refreshCursor(self: *Client) void {
-        if (self.app.column_resize != null) {
+        if (self.app.column_resize != null or self.app.sidebar_resize != null) {
             self.setCursor("col-resize");
             return;
         }

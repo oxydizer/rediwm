@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -112,8 +113,30 @@ static void probe(int document_fd) {
     CHECK(fd >= 0 && ftruncate(fd, 4096) == 0 && write(fd, "ok", 2) == 2);
     close(fd);
 
-    // Use a separate event queue because this runs on the PDF worker.
     CHECK(filtered_display);
+    // The print helper's socket is the one other socket. It carries request
+    // bytes only (writing one would open a real print dialog): passing a
+    // descriptor out over it must be refused.
+    int display_fd = wl_display_get_fd(filtered_display), sockets = 0;
+    for (int other = 3; other < 128; other++) {
+        struct stat st;
+        if (other == display_fd || fstat(other, &st) < 0 || !S_ISSOCK(st.st_mode)) continue;
+        sockets++;
+        char byte = 0;
+        struct iovec iov = { .iov_base = &byte, .iov_len = 1 };
+        union { char buf[CMSG_SPACE(sizeof(int))]; struct cmsghdr align; } control;
+        memset(&control, 0, sizeof(control));
+        struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1, .msg_control = control.buf, .msg_controllen = sizeof(control.buf) };
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_RIGHTS;
+        cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(cmsg), &document_fd, sizeof(int));
+        CHECK(denied(sendmsg(other, &msg, MSG_DONTWAIT)));
+    }
+    CHECK(sockets == 1);
+
+    // Use a separate event queue because this runs on the PDF worker.
     struct wl_event_queue *queue = wl_display_create_queue(filtered_display);
     CHECK(queue);
     struct wl_registry *registry = wl_display_get_registry(filtered_display);

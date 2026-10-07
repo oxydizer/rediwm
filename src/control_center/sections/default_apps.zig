@@ -73,6 +73,7 @@ fn save(owner: ?*anyopaque, comptime kind: defaults.Kind, index: usize) void {
 }
 extern fn g_desktop_app_info_new(id: [*:0]const u8) ?*anyopaque;
 extern fn g_app_info_set_as_default_for_type(app: *anyopaque, content_type: [*:0]const u8, err: ?*?*anyopaque) c_int;
+extern fn g_app_info_reset_type_associations(content_type: [*:0]const u8) void;
 extern fn g_object_unref(object: *anyopaque) void;
 
 fn setDirectoryDefault(id: []const u8) !void {
@@ -81,6 +82,10 @@ fn setDirectoryDefault(id: []const u8) !void {
     const app = g_desktop_app_info_new(terminated) orelse return error.ApplicationUnavailable;
     defer g_object_unref(app);
     if (g_app_info_set_as_default_for_type(app, "inode/directory", null) == 0) return error.AssociationFailed;
+    // GIO checks the file: scheme before the path's MIME type. An old file
+    // manager registered here overrides inode/directory (and regular files).
+    // Let local URIs resolve through their individual MIME associations.
+    g_app_info_reset_type_associations("x-scheme-handler/file");
 }
 
 fn fileChanged(owner: ?*anyopaque, _: usize, index: usize) void {

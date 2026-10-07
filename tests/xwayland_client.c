@@ -178,7 +178,16 @@ int main(int argc, char *argv[]) {
             if (!fgets(line, sizeof(line), stdin))
                 break;
             line[strcspn(line, "\n")] = 0;
-            if (strncmp(line, "urgent ", 7) == 0) {
+            if (strncmp(line, "keys ", 5) == 0) {
+                xcb_query_keymap_reply_t *reply = xcb_query_keymap_reply(conn, xcb_query_keymap(conn), NULL);
+                if (!reply) return 1;
+                printf("keys %s", line + 5);
+                for (int code = 8; code < 256; code++)
+                    if (reply->keys[code / 8] & (1u << (code % 8))) printf(" %d", code);
+                free(reply);
+                printf("\n");
+                fflush(stdout);
+            } else if (strncmp(line, "urgent ", 7) == 0) {
                 uint32_t hints[9] = {0};
                 hints[0] = atoi(line + 7) ? (1u << 8) : 0;
                 xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, XCB_ATOM_WM_HINTS,

@@ -53,13 +53,26 @@ static int single_threaded(void) {
     return 0;
 }
 
-static int close_inherited(int document, int display) {
-    if (document < 3 || display < 3 || document == display) { errno = EINVAL; return -1; }
-    int lower = document < display ? document : display;
-    int upper = document < display ? display : document;
-    if (lower > 3 && close_range(3, (unsigned)lower - 1, 0) < 0) return -1;
-    if (upper > lower + 1 && close_range((unsigned)lower + 1, (unsigned)upper - 1, 0) < 0) return -1;
-    return close_range((unsigned)upper + 1, ~0u, 0);
+// Closes every descriptor above stdio except `keep`; negative entries are
+// unused slots.
+static int close_inherited(const int *keep, unsigned count) {
+    int sorted[3];
+    unsigned n = 0;
+    if (count > sizeof(sorted) / sizeof(sorted[0])) { errno = EINVAL; return -1; }
+    for (unsigned i = 0; i < count; i++) {
+        if (keep[i] < 0) continue;
+        if (keep[i] < 3) { errno = EINVAL; return -1; }
+        unsigned at = n++;
+        while (at > 0 && sorted[at - 1] > keep[i]) { sorted[at] = sorted[at - 1]; at--; }
+        if (at > 0 && sorted[at - 1] == keep[i]) { errno = EINVAL; return -1; }
+        sorted[at] = keep[i];
+    }
+    unsigned next = 3;
+    for (unsigned i = 0; i < n; i++) {
+        if ((unsigned)sorted[i] > next && close_range(next, (unsigned)sorted[i] - 1, 0) < 0) return -1;
+        next = (unsigned)sorted[i] + 1;
+    }
+    return close_range(next, ~0u, 0);
 }
 
 static int read_tree(int rules, const char *path) {
@@ -173,8 +186,14 @@ done:
     return 0;
 }
 
-int rediwm_pdf_sandbox_enter(int document, int display) {
-    if (single_threaded() < 0 || close_inherited(document, display) < 0) return -1;
+// `print` is the print helper's socket (see print.c), or -1. The viewer
+// may only read and write bytes on it: sendmsg is limited to `display`, so
+// no descriptor can be passed out.
+int rediwm_pdf_sandbox_enter(int document, int display, int print) {
+    if (document < 0 || display < 0) { errno = EINVAL; return -1; }
+    const int keep[] = { document, display, print };
+    const unsigned kept = sizeof(keep) / sizeof(keep[0]);
+    if (single_threaded() < 0 || close_inherited(keep, kept) < 0) return -1;
     // Drop terminal input, and ensure diagnostics cannot be read as input.
     int null = open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (null < 0 || dup2(null, STDIN_FILENO) < 0) { if (null >= 0) close(null); return -1; }
@@ -200,7 +219,7 @@ int rediwm_pdf_sandbox_enter(int document, int display) {
     if (clearenv() < 0) return -1;
     password_codec = iconv_open("ISO-8859-1", "UTF-8");
     if (password_codec == (iconv_t)-1) return -1;
-    if (single_threaded() < 0 || close_inherited(document, display) < 0) return -1;
+    if (single_threaded() < 0 || close_inherited(keep, kept) < 0) return -1;
     struct rlimit core = {0, 0}, memory = {2ULL << 30, 2ULL << 30}, files = {128, 128};
     if (setrlimit(RLIMIT_CORE, &core) < 0 || setrlimit(RLIMIT_AS, &memory) < 0 ||
         setrlimit(RLIMIT_NOFILE, &files) < 0 || prctl(PR_SET_DUMPABLE, 0) < 0 ||

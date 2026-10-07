@@ -248,8 +248,8 @@ Numeric tokens accept 0–4096 unless constrained below. Fractions ending in
 | `field_radius` | `8.0` |
 | `shadow_size` | `24.0` |
 | `shadow_offset_y` | `8.0` |
-| `start_menu_width` | `560.0` |
-| `start_menu_max_height` | `600.0` |
+| `start_menu_width` | `0` (automatic) |
+| `start_menu_max_height` | `0` (automatic) |
 | `start_menu_radius` | `14.0` |
 | `start_menu_left_pad` | `2.0` |
 | `start_menu_bottom_pad` | `6.0` |
@@ -336,4 +336,12 @@ fit their available space. The scrollbar reserves room for its maximum width;
 
 In **Settings → Appearance → Start menu**, **Choose file…** selects a PNG or
 SVG for the Start button logo and applies it immediately. **Reset to default**
-restores the bundled R logo. Both choices are saved with the theme.
+restores the bundled R logo. Both choices are saved with the theme. A preview
+beside the buttons shows the logo as the taskbar draws it (the bundled R when a
+chosen file cannot be loaded). The **Menu width** (400–900) and **Menu height**
+(360–900) sliders in the same section set `start_menu_width` and
+`start_menu_max_height`; the menu is still capped to the output. Left at `0`
+(the default) the menu is sized to the screen: 560 x 600 on a screen of about
+1700 x 1070 logical pixels or more, and the same share of the screen (33% wide,
+56% high) on smaller ones, never below 400 x 360. **Size to screen** returns to
+that.

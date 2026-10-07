@@ -144,6 +144,7 @@ shadow_tree: *wlr.SceneTree,
 shadow_corners: [4]*wlr.SceneBuffer,
 shadow_edges: [4]*wlr.SceneBuffer,
 shadow_fallback: *wlr.SceneBuffer,
+resize_grab: *wlr.SceneBuffer,
 glass_effect: ?*glass.Effect = null,
 titlebar_buffer: *wlr.SceneBuffer,
 footer_buffer: *wlr.SceneBuffer,
@@ -297,6 +298,7 @@ const ChromeNodes = struct {
     shadow_corners: [4]*wlr.SceneBuffer,
     shadow_edges: [4]*wlr.SceneBuffer,
     shadow_fallback: *wlr.SceneBuffer,
+    resize_grab: *wlr.SceneBuffer,
     glass_effect: ?*glass.Effect,
     titlebar_buffer: *wlr.SceneBuffer,
     footer_buffer: *wlr.SceneBuffer,
@@ -313,6 +315,11 @@ fn createChromeNodes(server: *Server) !ChromeNodes {
     // frame would be a clickable ghost for a window not in world.toplevels.
     frame_tree.node.setEnabled(false);
     if (!@import("projection.zig").setTreeZoom(&frame_tree.node, 1)) return error.OutOfMemory;
+
+    // Input only: no buffer, so never drawn. Gives the edges their reach past
+    // the frame without depending on the shadow (`shadow_size = 0`).
+    const resize_grab = try frame_tree.createSceneBuffer(null);
+    resize_grab.point_accepts_input = chromeAcceptsInput;
 
     const shadow_tree = try frame_tree.createSceneTree();
     var shadow_corners: [4]*wlr.SceneBuffer = undefined;
@@ -357,6 +364,7 @@ fn createChromeNodes(server: *Server) !ChromeNodes {
         .shadow_corners = shadow_corners,
         .shadow_edges = shadow_edges,
         .shadow_fallback = shadow_fallback,
+        .resize_grab = resize_grab,
         .glass_effect = glass_effect,
         .titlebar_buffer = titlebar_buffer,
         .footer_buffer = footer_buffer,
@@ -372,6 +380,7 @@ fn finishCreate(toplevel: *Toplevel, nodes: ChromeNodes, scene_tree: *wlr.SceneT
     toplevel.shadow_corners = nodes.shadow_corners;
     toplevel.shadow_edges = nodes.shadow_edges;
     toplevel.shadow_fallback = nodes.shadow_fallback;
+    toplevel.resize_grab = nodes.resize_grab;
     toplevel.glass_effect = nodes.glass_effect;
     toplevel.titlebar_buffer = nodes.titlebar_buffer;
     toplevel.footer_buffer = nodes.footer_buffer;
@@ -406,6 +415,7 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
         .shadow_corners = nodes.shadow_corners,
         .shadow_edges = nodes.shadow_edges,
         .shadow_fallback = nodes.shadow_fallback,
+        .resize_grab = nodes.resize_grab,
         .glass_effect = nodes.glass_effect,
         .titlebar_buffer = nodes.titlebar_buffer,
         .footer_buffer = nodes.footer_buffer,
@@ -450,6 +460,7 @@ pub fn createXwayland(server: *Server, xsurface: *wlr.XwaylandSurface) !void {
         .shadow_corners = nodes.shadow_corners,
         .shadow_edges = nodes.shadow_edges,
         .shadow_fallback = nodes.shadow_fallback,
+        .resize_grab = nodes.resize_grab,
         .glass_effect = nodes.glass_effect,
         .titlebar_buffer = nodes.titlebar_buffer,
         .footer_buffer = nodes.footer_buffer,
@@ -584,6 +595,7 @@ pub fn createPlaceholder(
         .shadow_corners = nodes.shadow_corners,
         .shadow_edges = nodes.shadow_edges,
         .shadow_fallback = nodes.shadow_fallback,
+        .resize_grab = nodes.resize_grab,
         .glass_effect = nodes.glass_effect,
         .titlebar_buffer = nodes.titlebar_buffer,
         .footer_buffer = nodes.footer_buffer,
@@ -694,6 +706,7 @@ pub fn createShell(server: *Server, cc: *ControlCenter, width: i32, height: i32)
         .shadow_corners = nodes.shadow_corners,
         .shadow_edges = nodes.shadow_edges,
         .shadow_fallback = nodes.shadow_fallback,
+        .resize_grab = nodes.resize_grab,
         .glass_effect = nodes.glass_effect,
         .titlebar_buffer = nodes.titlebar_buffer,
         .footer_buffer = nodes.footer_buffer,
@@ -1269,6 +1282,7 @@ fn attachSceneData(toplevel: *Toplevel) void {
         scene_data.SceneData.attach(&toplevel.chrome_data, &buf.node);
     }
     scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.shadow_fallback.node);
+    scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.resize_grab.node);
     scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.titlebar_buffer.node);
     scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.footer_buffer.node);
     for (toplevel.side_fills) |rect| {
@@ -2771,6 +2785,7 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
         toplevel.last_titlebar = null;
         toplevel.last_footer = null;
         toplevel.shadow_tree.node.setEnabled(false);
+        toplevel.resize_grab.node.setEnabled(false);
         toplevel.content_tree.node.setPosition(0, 0);
         const animated = visualChromeSize(toplevel, now_ms, geometry_box.width, geometry_box.height);
         toplevel.chrome_width = animated.w;
@@ -2859,6 +2874,7 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
     toplevel.footer_buffer.setDestSize(width, footer);
 
     toplevel.syncBorders(width, height);
+    toplevel.syncResizeGrab(width, height);
     if (rebuild_shadow) try toplevel.syncShadow(width, height, radius);
 
     // wlr_scene_xdg_surface_create origin is the geometry top-left.
@@ -2975,6 +2991,15 @@ fn syncShadow(toplevel: *Toplevel, width: i32, height: i32, radius: f32) !void {
     toplevel.shadow_edges[3].setDestSize(c_size, height + 2 * margin - 2 * c_size);
 
     toplevel.last_shadow = memo;
+}
+
+// Unchanged position and size are no-ops in wlroots, so this runs on every
+// sync. Off while maximized, like the shadow: `startResize` refuses then.
+fn syncResizeGrab(toplevel: *Toplevel, width: i32, height: i32) void {
+    const reach: i32 = @intFromFloat(@ceil(resize.reach_outside));
+    toplevel.resize_grab.node.setEnabled(!toplevel.isMaximized());
+    toplevel.resize_grab.node.setPosition(-reach, -reach);
+    toplevel.resize_grab.setDestSize(width + 2 * reach, height + 2 * reach);
 }
 
 fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {

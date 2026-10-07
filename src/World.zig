@@ -175,27 +175,7 @@ pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) 
         seat.keyboardClearFocus();
         return;
     };
-    const wlr_keyboard = seat.getKeyboard() orelse return;
-    // Authentication keys held while focus returns must not enter a client.
-    var keys: [32]u32 = undefined;
-    var count: usize = 0;
-    var keyboards = world.server.input.keyboards.iterator(.forward);
-    var consumed: ?*const [768]bool = null;
-    while (keyboards.next()) |keyboard| {
-        if (keyboard.device == &wlr_keyboard.base) consumed = &keyboard.polkit_consumed;
-    }
-    for (wlr_keyboard.keycodes[0..wlr_keyboard.num_keycodes]) |code| {
-        if (consumed) |mask| if (code < mask.len and mask[code]) continue;
-        if (count < keys.len) {
-            keys[count] = code;
-            count += 1;
-        }
-    }
-    seat.keyboardNotifyEnter(
-        next,
-        keys[0..count],
-        &wlr_keyboard.modifiers,
-    );
+    @import("Keyboard.zig").enter(world.server, next);
 }
 
 /// A transient dialog must stay above its owner even when the owner itself

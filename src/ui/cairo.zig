@@ -10,6 +10,7 @@ const paint = @import("paint.zig");
 const theme = @import("theme.zig");
 const text = @import("text.zig");
 const scrollbar = @import("widgets/scrollbar.zig");
+const splitter = @import("widgets/splitter.zig");
 
 pub const Rect = @import("widgets/field.zig").Rect;
 const allocator = std.heap.c_allocator;
@@ -57,6 +58,14 @@ pub fn fontMetrics(cr: *anyopaque, size: f64) FontMetrics {
 /// Sets a straight-alpha theme colour as the context's source.
 pub fn setSource(cr_any: *anyopaque, color: [4]f32) void {
     c.cairo_set_source_rgba(@ptrCast(cr_any), color[0], color[1], color[2], color[3]);
+}
+
+pub fn drawSplitter(cr_any: *anyopaque, geometry: splitter.Geometry, engaged: bool) void {
+    const cr: *c.cairo_t = @ptrCast(cr_any);
+    const rect = geometry.line(engaged);
+    setSource(cr, splitter.color(engaged));
+    c.cairo_rectangle(cr, rect.x, rect.y, rect.w, rect.h);
+    c.cairo_fill(cr);
 }
 
 /// Fills a scrollbar thumb: `scrollbar.look` through Cairo, the counterpart of

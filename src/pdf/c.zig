@@ -26,7 +26,11 @@ pub const api = @cImport({
 });
 
 pub extern fn rediwm_pdf_open_document(path: [*:0]const u8) c_int;
-pub extern fn rediwm_pdf_sandbox_enter(document_fd: c_int, display_fd: c_int) c_int;
+/// `print_fd` is the print helper's socket or -1; it stays open in the sandbox.
+pub extern fn rediwm_pdf_sandbox_enter(document_fd: c_int, display_fd: c_int, print_fd: c_int) c_int;
+/// Forks the unsandboxed print helper (print.c); returns the viewer's end of
+/// its socket, or -1.
+pub extern fn rediwm_pdf_print_start(document_fd: c_int, path: [*:0]const u8) c_int;
 
 // GLib & Poppler types declared by hand without @cInclude.
 pub const PopplerDocument = opaque {};

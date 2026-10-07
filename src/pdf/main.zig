@@ -67,6 +67,8 @@ pub const Client = struct {
     xkb_context: ?*c.api.xkb_context = null,
     xkb_state: ?*c.api.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
+    /// Socket to the unsandboxed print helper, or -1 without one.
+    print_fd: c_int = -1,
     app: app_mod.App,
 
     pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Client) void {
@@ -303,7 +305,9 @@ pub const Client = struct {
             },
             .axis => |ev| {
                 if (ev.axis == .vertical_scroll) {
-                    if (self.app.shift) {
+                    if (self.app.ctrl) {
+                        self.app.handleZoomScroll(ev.value.toDouble());
+                    } else if (self.app.shift) {
                         self.app.handleHorizontalScroll(ev.value.toDouble());
                     } else {
                         self.app.handleScroll(ev.value.toDouble());
@@ -586,6 +590,37 @@ pub const Client = struct {
         c.api.cairo_stroke(cr);
     }
 
+    /// Asks the helper for the print dialog; it answers only on failure.
+    fn requestPrint(self: *Client) void {
+        self.app.print_request = false;
+        if (self.print_fd >= 0) {
+            const request: u8 = 'p';
+            if (c.api.write(self.print_fd, &request, 1) == 1) return;
+            self.closePrint();
+        }
+        self.app.showMessage("Printing is not available.");
+    }
+
+    fn readPrintReplies(self: *Client) void {
+        var buf: [16]u8 = undefined;
+        const n = c.api.read(self.print_fd, &buf, buf.len);
+        if (n <= 0) {
+            if (n < 0 and std.posix.errno(n) == .INTR) return;
+            return self.closePrint();
+        }
+        for (buf[0..@intCast(n)]) |reply| switch (reply) {
+            'u' => self.app.showMessage("No print service answered (xdg-desktop-portal)."),
+            'f' => self.app.showMessage("The document could not be printed."),
+            else => {},
+        };
+    }
+
+    fn closePrint(self: *Client) void {
+        if (self.print_fd < 0) return;
+        _ = c.api.close(self.print_fd);
+        self.print_fd = -1;
+    }
+
     fn publishClipboard(self: *Client) void {
         const mgr = self.data_manager orelse return;
         const dev = self.data_device orelse return;
@@ -724,6 +759,7 @@ pub fn run(init: std.process.Init.Minimal) !void {
             \\  0 / 9: Fit width / Fit page
             \\  R: Rotate 90° clockwise
             \\  Ctrl+L: Jump to page
+            \\  Ctrl+P: Print
             \\  PageUp / PageDown / Space: Move viewport
             \\  Home / End: First / Last page
             \\  Ctrl+W / Esc: Close window / dialog
@@ -749,6 +785,10 @@ pub fn run(init: std.process.Init.Minimal) !void {
     const document_fd = c.rediwm_pdf_open_document(initial_path.ptr);
     if (document_fd < 0) return error.CannotOpenRegularFile;
     defer _ = c.api.close(document_fd);
+    // Printing needs the session bus, which the sandbox denies: fork the
+    // helper now, while this process is unsandboxed and single-threaded.
+    const print_fd = c.rediwm_pdf_print_start(document_fd, initial_path.ptr);
+    if (print_fd < 0) std.log.warn("print helper unavailable; printing is disabled", .{});
     const force_csd = init.environ.getPosix("REDIWM_PDF_FORCE_CSD") != null;
     // Read before the sandbox closes the filesystem.
     @import("../files/settings.zig").loadTheme(a, std.Io.Threaded.global_single_threaded.io(), init.environ);
@@ -761,15 +801,17 @@ pub fn run(init: std.process.Init.Minimal) !void {
 
     const display = try @import("connection.zig").connect();
     defer display.disconnect();
-    if (c.rediwm_pdf_sandbox_enter(document_fd, display.getFd()) != 0) {
+    if (c.rediwm_pdf_sandbox_enter(document_fd, display.getFd(), print_fd) != 0) {
         std.log.err("required PDF sandbox could not be installed; refusing to parse the document", .{});
         return error.SandboxUnavailable;
     }
 
     var self = Client{
         .display = display,
+        .print_fd = print_fd,
         .app = try app_mod.App.init(initial_path, document_fd),
     };
+    defer self.closePrint();
     defer self.app.deinit();
     defer for (self.buffers) |slot| {
         if (slot) |buffer| buffer.destroy();
@@ -832,6 +874,7 @@ pub fn run(init: std.process.Init.Minimal) !void {
         if (self.app.clipboard_request) {
             self.publishClipboard();
         }
+        if (self.app.print_request) self.requestPrint();
         if (self.app.closed) {
             self.running = false;
             break;
@@ -862,6 +905,8 @@ pub fn run(init: std.process.Init.Minimal) !void {
         var fds = [_]c.api.struct_pollfd{
             .{ .fd = display.getFd(), .events = @intCast(c.api.POLLIN | @as(c_int, if (flushed == .AGAIN) c.api.POLLOUT else 0)), .revents = 0 },
             .{ .fd = self.app.worker.fds[0], .events = c.api.POLLIN, .revents = 0 },
+            // poll ignores a negative fd.
+            .{ .fd = self.print_fd, .events = c.api.POLLIN, .revents = 0 },
         };
         const now = key_repeat.nowMs();
         var timeout: c_int = if (self.key_repeat.timeoutMs(now)) |wait| @intCast(@min(wait, 60_000)) else -1;
@@ -873,6 +918,7 @@ pub fn run(init: std.process.Init.Minimal) !void {
             display.cancelRead();
         }
         if ((fds[0].revents & (c.api.POLLERR | c.api.POLLHUP)) != 0) return error.DisplayFailed;
+        if (fds[2].revents != 0) self.readPrintReplies();
         if (display.dispatchPending() != .SUCCESS) return error.DisplayFailed;
         self.repeatDue();
     }

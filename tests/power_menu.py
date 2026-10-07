@@ -16,7 +16,8 @@ from ipc_client import IPCClient, spawn_compositor, stop_process
 def run(scale):
     with tempfile.TemporaryDirectory(prefix="rediwm-power-test-") as directory:
         tmp = Path(directory)
-        process, log = spawn_compositor(tmp, scale=scale, env_extra={
+        process, log = spawn_compositor(tmp, scale=scale,
+            config_content='[theme]\nwindow_bg = "rgba(24,30,40,0.70)"\n', env_extra={
             "DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": directory,
         })
         try:
@@ -51,13 +52,14 @@ def run(scale):
                     opened = capture("open")
                     s = float(scale)
                     # Sample clear padding after the opening animation settles:
-                    # 56% neutral tint over the wallpaper and the 45% scrim.
+                    # Configured chrome tint/opacity over the wallpaper and
+                    # the 45% scrim, independent of the shell glass alpha.
                     point = (round((box["x"] + 20) * s),
                              round((box["y"] + box["height"] / 2) * s))
                     behind = closed.getpixel(point)
                     actual = opened.getpixel(point)
-                    expected = tuple(round(bg * .55 * .44 + tint * .56)
-                                     for bg, tint in zip(behind, (38, 45, 55)))
+                    expected = tuple(round(bg * .55 * .30 + tint * .70)
+                                     for bg, tint in zip(behind, (24, 30, 40)))
                     assert max(abs(a - b) for a, b in zip(actual, expected)) <= 3, (actual, expected)
                     # Both logical pixels of the idle border must be visible.
                     x = round((box["x"] + card["x"] + card["width"] / 2) * s)
@@ -65,8 +67,8 @@ def run(scale):
                     for offset in (.5, 1.5):
                         point = (x, int((top + offset) * s))
                         edge = opened.getpixel(point)
-                        tint_only = tuple(round(bg * .55 * .44 + tint * .56)
-                                          for bg, tint in zip(closed.getpixel(point), (38, 45, 55)))
+                        tint_only = tuple(round(bg * .55 * .30 + tint * .70)
+                                          for bg, tint in zip(closed.getpixel(point), (24, 30, 40)))
                         assert min(a - b for a, b in zip(edge, tint_only)) >= 4, (edge, tint_only)
                     if cancel and (preview := os.environ.get("REDIWM_POWER_PREVIEW")):
                         opened.save(preview)

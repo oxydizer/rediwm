@@ -101,7 +101,10 @@ def run():
                 for _ in repeated:
                     key(14)
 
-                hit = client.hit_test(100, 200)
+                # The menu is sized to the output, so aim at its centre (the result list).
+                menu = client.get_shell_state()["start_menu"]["box"]
+                centre = (menu["x"] + menu["width"] // 2, menu["y"] + menu["height"] // 2)
+                hit = client.hit_test(*centre)
                 assert hit.get("target_type") in ("panel", "widget", "window", "start_menu"), hit
 
                 key(30)  # Search for 'a', rebuilding and laying out the tree.
@@ -116,7 +119,7 @@ def run():
                 assert ImageChops.difference(searched, selected).getbbox(), "selection did not repaint"
 
                 key(14)  # Clear search, then scroll to load a different set of icons.
-                client.move_cursor(250, 300)
+                client.move_cursor(*centre)
                 client.wait_for_frame(timeout_ms=2000)
                 hovered = capture_now("hovered")
                 client.scroll(0, 180)

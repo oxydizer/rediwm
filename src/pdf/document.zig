@@ -15,8 +15,10 @@ pub const Error = error{
 };
 
 pub const RenderOptions = struct {
+    /// Zoom times the output's buffer scale.
     scale: f64 = 1.0,
     rotation: layout.Rotation = .deg0,
+    /// Part of the raster to render, in its pixels (not logical units).
     clip: ?layout.Rect = null,
 };
 

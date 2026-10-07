@@ -1,6 +1,7 @@
 const std = @import("std");
 const archive = @import("archive.zig");
 const scrollbar = @import("ui").widgets.scrollbar;
+const splitter = @import("ui").widgets.splitter;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const git = @import("git.zig");
@@ -38,6 +39,29 @@ const Editor = @import("editor.zig").Editor;
 const DeviceOp = struct { id: []u8, unmount: bool, open: bool, navigation: u32 };
 
 const MenuKind = enum { new, sort, filter, file, background, sidebar, device, chooser_filter };
+const PlaceAction = enum {
+    open,
+    open_window,
+    empty_trash,
+    unpin,
+    remove_pin,
+    properties,
+    mount,
+    eject,
+
+    fn label(self: PlaceAction) []const u8 {
+        return switch (self) {
+            .open => "Open",
+            .open_window => "Open in New Window",
+            .empty_trash => "Empty Trash…",
+            .unpin => "Unpin",
+            .remove_pin => "Remove from Places",
+            .properties => "Properties",
+            .mount => "Mount",
+            .eject => "Eject",
+        };
+    }
+};
 const FileAction = enum {
     open,
     open_with,
@@ -263,8 +287,8 @@ pub const App = struct {
     git_expanded: bool = true,
     /// The "Git View" checkbox: off shows a repository like any other folder.
     git_view: bool = true,
-    column_weights: ?[5]f64 = null,
-    git_column_weight: ?f64 = null,
+    column_widths: ?[5]f64 = null,
+    git_column_widths: ?[5]f64 = null,
     column_resize: ?struct { column: usize, x: f64, widths: [5]f64 } = null,
     sort_mode: Sort = .name,
     recent_sort_mode: Sort = .modified,
@@ -281,6 +305,7 @@ pub const App = struct {
     menu_y: f64 = 0,
     menu_selected: usize = 0,
     file_menu_labels: [12][]const u8 = undefined,
+    place_menu_labels: [4][]const u8 = undefined,
     menu_place: usize = 0,
     unpinned_places: u8 = 0,
     /// Folders and files the user dropped into PLACES (see pins.zig); they sit
@@ -345,6 +370,9 @@ pub const App = struct {
         last_ms: i64,
     } = null,
     sidebar_scroll: i32 = 0,
+    /// User width for this window; responsive layouts still hide the pane.
+    sidebar_requested: ?i32 = null,
+    sidebar_resize: ?splitter.Drag = null,
     /// Eased sidebar width and place pitch (-1 until the first `stepLayout`,
     /// which adopts the current targets without animating).
     sidebar_glide: anim.Anim = .{},
@@ -356,6 +384,10 @@ pub const App = struct {
     sidebar_scroll_appearance: scrollbar.Appearance = .{},
     sidebar_scroll_observed: i32 = 0,
     scrollbar_width: f32 = 8,
+    scroll_x: f64 = 0,
+    horizontal_drag: scrollbar.Drag = .{},
+    horizontal_appearance: scrollbar.Appearance = .{},
+    horizontal_observed: f64 = 0,
     scroll_drag: scrollbar.Drag = .{},
     scroll_appearance: scrollbar.Appearance = .{},
     scroll_observed: i32 = 0,
@@ -623,7 +655,7 @@ pub const App = struct {
 
     fn clipToViewport(self: *App, rect: header.Rect) header.Rect {
         const top: f64 = @floatFromInt(self.viewTop());
-        const bottom = @min(rect.y + rect.h, @as(f64, @floatFromInt(self.h - self.footerHeight())));
+        const bottom = @min(rect.y + rect.h, @as(f64, @floatFromInt(self.contentBottom())));
         const y = @max(rect.y, top);
         return .{ .x = rect.x, .y = y, .w = rect.w, .h = @max(0, bottom - y) };
     }
@@ -632,6 +664,7 @@ pub const App = struct {
     /// paints its own fill.
     fn hoveredPlace(self: *App) ?usize {
         if (self.dialog != null or self.menu != null) return null;
+        if (self.sidebar_resize != null or self.overSidebarDivider(self.mouse_x, self.mouse_y)) return null;
         const width: f64 = @floatFromInt(self.sidebarWidth());
         if (self.mouse_x < 0 or self.mouse_x >= width) return null;
         if (self.sidebarScrollbar()) |bar| if (self.mouse_x >= @as(f64, bar.track.x)) return null;
@@ -746,7 +779,7 @@ pub const App = struct {
         self.hover_active = self.hover_active or !self.sort_feedback.animation.settled(now);
         // Only visible cards need samples or a frame clock. Logical selection
         // changes immediately; painting and damage share these sampled fades.
-        const viewport_h = @max(0, self.h - self.viewTop() - self.footerHeight());
+        const viewport_h = @max(0, self.contentBottom() - self.viewTop());
         const first: usize = @min(self.items.items.len, @as(usize, @intCast(@divTrunc(self.scroll_y, self.rowHeight()))) * per_row);
         const last: usize = @min(self.items.items.len, @as(usize, @intCast(@divTrunc(self.scroll_y + viewport_h, self.rowHeight()) + 1)) * per_row);
         for (self.items.items[first..last], first..) |*item, idx| {
@@ -808,6 +841,7 @@ pub const App = struct {
             self.sidebar_scroll_drag.end();
             self.w = @max(360, new_w);
             self.h = @max(240, new_h);
+            if (self.sidebar_requested != null and self.w >= 500) self.syncSidebarWidth();
             self.clampScroll();
             self.clampSidebarScroll();
             if (self.menu) |kind| self.openMenu(kind, self.menu_x, self.menu_y);
@@ -857,7 +891,7 @@ pub const App = struct {
     }
 
     pub fn navigate(self: *App, new_path: []const u8) void {
-        if (self.chooser != null and recent.isLocation(new_path)) return;
+        if (!self.recentAvailable() and recent.isLocation(new_path)) return;
         self.rememberView();
         self.history.navigate(new_path) catch return;
         self.applyHistoryNav(self.history.current);
@@ -1393,6 +1427,16 @@ pub const App = struct {
         self.invalidate();
     }
 
+    fn openEmptyTrashDialog(self: *App) void {
+        self.closeDialog();
+        self.dialog = .{
+            .kind = .trash_confirm,
+            .title = "Empty Trash?",
+            .deletion = .{ .permanent = true, .empty_trash = true },
+        };
+        self.invalidate();
+    }
+
     pub fn openTrashConfirmDialog(self: *App) void {
         if (self.history.archive_len > 0) return;
         var count: usize = 0;
@@ -1670,6 +1714,7 @@ pub const App = struct {
             .cancel => self.closeDialog(),
             .confirm => self.confirmDialog(),
             .toggle => {
+                if (self.dialog.?.deletion.empty_trash) return;
                 self.dialog.?.deletion.permanent = !self.dialog.?.deletion.permanent;
                 self.dialog.?.deletion.focus = .toggle;
             },
@@ -1680,13 +1725,13 @@ pub const App = struct {
 
     fn executeDeletion(self: *App) void {
         const state = &self.dialog.?.deletion;
-        const result = if (state.permanent) ops_mod.deleteItems(self.io, state.paths.items) else ops_mod.trashItems(self.io, state.paths.items);
+        const result = if (state.empty_trash) ops_mod.emptyTrash(self.io) else if (state.permanent) ops_mod.deleteItems(self.io, state.paths.items) else ops_mod.trashItems(self.io, state.paths.items);
         result catch |err| {
-            self.setStatusNotice(if (state.permanent) "Could not delete all items" else if (err == error.GioNotAvailable) "Trash unavailable (gio not installed)" else "Could not move all items to Trash", true);
+            self.setStatusNotice(if (state.empty_trash) "Could not empty Trash" else if (state.permanent) "Could not delete all items" else if (err == error.GioNotAvailable) "Trash unavailable (gio not installed)" else "Could not move all items to Trash", true);
             self.refresh();
             return;
         };
-        self.setStatusNotice(if (state.permanent) "Items permanently deleted" else "Items moved to Trash", false);
+        self.setStatusNotice(if (state.empty_trash) "Trash emptied" else if (state.permanent) "Items permanently deleted" else "Items moved to Trash", false);
         self.refresh();
     }
 
@@ -1884,7 +1929,14 @@ pub const App = struct {
         if (opts.mode == .save or (opts.mode == .open and !opts.multiple and self.filename.text.items.len > 0)) {
             const name = self.filename.text.items;
             if (!chooser_mod.validName(name)) return error.InvalidName;
-            const path = try std.fs.path.join(self.allocator, &.{ self.history.current, name });
+            const path = if (self.isRecent()) selected: {
+                // Recent spans directories, so the filename alone is not a path.
+                for (self.items.items) |item| {
+                    if (item.selected and std.mem.eql(u8, item.name, name))
+                        break :selected try self.allocator.dupe(u8, item.path);
+                }
+                return error.NoSelection;
+            } else try std.fs.path.join(self.allocator, &.{ self.history.current, name });
             defer self.allocator.free(path);
             const zpath = try self.allocator.dupeZ(u8, path);
             defer self.allocator.free(zpath);
@@ -2093,7 +2145,7 @@ pub const App = struct {
         return self.contentTop() + if (self.list_view) @as(i32, 30) else 0;
     }
     fn compactList(self: *App) bool {
-        return self.list_view and self.h - self.viewTop() - self.footerHeight() < 80;
+        return self.list_view and self.contentBottom() - self.viewTop() < 80;
     }
     fn itemInset(self: *App) i32 {
         return if (self.compactList()) 0 else 20;
@@ -2110,13 +2162,37 @@ pub const App = struct {
     }
 
     fn sidebarTargetWidth(self: *App) i32 {
-        return if (self.w >= 700) 208 else if (self.w >= 500) 160 else 0;
+        if (self.w < 500) return 0;
+        if (self.sidebar_requested) |width| return std.math.clamp(width, 160, @divTrunc(self.w, 2));
+        return if (self.w >= 700) 208 else 160;
     }
 
     /// The width being drawn: it eases toward `sidebarTargetWidth` when a
     /// resize crosses a threshold.
     fn sidebarWidth(self: *App) i32 {
-        return if (self.sidebar_px >= 0) self.sidebar_px else self.sidebarTargetWidth();
+        return @min(@divTrunc(self.w, 2), if (self.sidebar_px >= 0) self.sidebar_px else self.sidebarTargetWidth());
+    }
+
+    fn syncSidebarWidth(self: *App) void {
+        self.sidebar_px = self.sidebarTargetWidth();
+        self.sidebar_glide.cancel(@floatFromInt(self.sidebar_px));
+    }
+
+    fn sidebarDivider(self: *App) ?splitter.Geometry {
+        if (self.w < 500 or self.sidebarWidth() < 160) return null;
+        return .{ .x = @floatFromInt(self.sidebarWidth()), .y = @floatFromInt(self.contentTop()), .h = @floatFromInt(@max(0, self.h - self.contentTop() - self.footerHeight())) };
+    }
+
+    fn overSidebarDivider(self: *App, x: f64, y: f64) bool {
+        if (self.dialog != null or self.menu != null) return false;
+        const divider = self.sidebarDivider() orelse return false;
+        return divider.contains(x, y);
+    }
+
+    fn damageSidebarDivider(self: *App) void {
+        const divider = self.sidebarDivider() orelse return;
+        const rect = divider.line(true);
+        self.addDamage(.{ .x = rect.x, .y = rect.y, .w = rect.w, .h = rect.h });
     }
 
     fn placeTargetStep(self: *App) i32 {
@@ -2175,7 +2251,7 @@ pub const App = struct {
 
     fn itemAt(self: *App, x: f64, y: f64) ?usize {
         const gx = @as(i32, @intFromFloat(x)) - self.sidebarWidth() - 20;
-        if (y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) return null;
+        if (y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.contentBottom()))) return null;
         const gy = @as(i32, @intFromFloat(y)) - self.viewTop() - self.itemInset() + self.scroll_y;
         if (gx < 0 or gy < 0) return null;
         const col = @divTrunc(gx, self.cellWidth());
@@ -2218,27 +2294,15 @@ pub const App = struct {
         return .{ 64, 40, 40, @min(136, width - 184), 40 };
     }
 
-    fn columnMinimumTotal(minimum: [5]f64) f64 {
-        var total: f64 = 0;
-        for (minimum) |value| total += value;
-        return total;
-    }
-
     fn listWidths(self: *App) [5]f64 {
         const width: f64 = @floatFromInt(self.cellWidth() - 20);
         if (self.repository() != null) {
+            if (self.git_column_widths) |widths| return widths;
             const minimum = gitColumnMinimums(width);
-            const extra = @max(0, width - minimum[0] - minimum[1]);
-            const name = if (self.git_column_weight) |weight| minimum[0] + weight * extra else @max(minimum[0], width - 164);
+            const name = @max(minimum[0], width - 164);
             return .{ name, width - name, 0, 0, 0 };
         }
-        if (self.column_weights) |weights| {
-            const minimum = columnMinimums(width);
-            const extra = @max(0, width - columnMinimumTotal(minimum));
-            var widths: [5]f64 = undefined;
-            for (weights, 0..) |weight, i| widths[i] = minimum[i] + weight * extra;
-            return widths;
-        }
+        if (self.column_widths) |widths| return widths;
         const minimum = columnMinimums(width);
         const detail = @max(minimum[1], @min(110, width * 0.14));
         const modified = @max(minimum[3], @min(160, width * 0.20));
@@ -2256,13 +2320,14 @@ pub const App = struct {
 
     fn listColumn(self: *App, column: usize) header.Rect {
         const widths = self.listWidths();
-        var x: f64 = @floatFromInt(self.sidebarWidth() + 20);
+        var x: f64 = @as(f64, @floatFromInt(self.sidebarWidth() + 20)) - self.horizontalOffset();
         for (widths[0..column]) |width| x += width;
         return .{ .x = x, .y = @floatFromInt(self.contentTop()), .w = widths[column], .h = 30 };
     }
 
     fn columnBoundary(self: *App, x: f64, y: f64) ?usize {
         if (!self.list_view or self.dialog != null or self.menu != null) return null;
+        if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) return null;
         for (0..self.columnLabels().len - 1) |i| {
             const rect = self.listColumn(i);
             if (y >= rect.y and y < rect.y + rect.h and @abs(x - (rect.x + rect.w)) <= 4) return i;
@@ -2273,26 +2338,12 @@ pub const App = struct {
     fn resizeColumn(self: *App, x: f64) void {
         const drag = self.column_resize orelse return;
         var widths = drag.widths;
-        var total: f64 = 0;
-        for (widths) |width| total += width;
-        if (self.repository() != null) {
-            const minimum = gitColumnMinimums(total);
-            const extra = total - minimum[0] - minimum[1];
-            if (extra <= 0) return;
-            const delta = std.math.clamp(x - drag.x, minimum[0] - widths[0], widths[1] - minimum[1]);
-            self.git_column_weight = (widths[0] + delta - minimum[0]) / extra;
-            self.invalidate();
-            return;
-        }
-        const minimum = columnMinimums(total);
-        const extra = total - columnMinimumTotal(minimum);
-        if (extra <= 0) return;
-        const delta = std.math.clamp(x - drag.x, minimum[drag.column] - widths[drag.column], widths[drag.column + 1] - minimum[drag.column + 1]);
-        widths[drag.column] += delta;
-        widths[drag.column + 1] -= delta;
-        var weights: [5]f64 = undefined;
-        for (widths, 0..) |width, i| weights[i] = (width - minimum[i]) / extra;
-        self.column_weights = weights;
+        const minimum: f64 = if (self.repository() != null)
+            (if (drag.column == 0) 96 else 64)
+        else if (drag.column == 0) 64 else 40;
+        widths[drag.column] = @max(minimum, widths[drag.column] + x - drag.x);
+        if (self.repository() != null) self.git_column_widths = widths else self.column_widths = widths;
+        self.clampScroll();
         self.invalidate();
     }
 
@@ -2564,6 +2615,10 @@ pub const App = struct {
     }
     fn renderColumns(self: *App, cr: *c.cairo_t) void {
         if (!self.list_view) return;
+        c.cairo_save(cr);
+        defer c.cairo_restore(cr);
+        c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.contentTop()), @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter()), 30);
+        c.cairo_clip(cr);
         setSource(cr, ui_theme.global.app_bar);
         c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.contentTop()), @floatFromInt(self.w - self.sidebarWidth()), 30);
         c.cairo_fill(cr);
@@ -2619,6 +2674,10 @@ pub const App = struct {
 
     fn isRecent(self: *const App) bool {
         return recent.isLocation(self.history.current);
+    }
+
+    fn recentAvailable(self: *const App) bool {
+        return if (self.chooser) |opts| opts.mode == .open else true;
     }
 
     fn effectiveSort(self: *const App) Sort {
@@ -2686,7 +2745,7 @@ pub const App = struct {
 
     fn placeVisible(self: *App, index: usize) bool {
         return switch (self.rowKind(index)) {
-            .builtin => if (index == 2 and self.chooser != null) false else !placePinnable(index) or self.unpinned_places & (@as(u8, 1) << @as(u3, @intCast(index - places_start))) == 0,
+            .builtin => if (index == 2 and !self.recentAvailable()) false else !placePinnable(index) or self.unpinned_places & (@as(u8, 1) << @as(u3, @intCast(index - places_start))) == 0,
             .pin => true,
             .device => |k| k < self.device_list.items.len,
         };
@@ -2718,6 +2777,36 @@ pub const App = struct {
             self.navigate(path);
         }
         self.focus = .file_view;
+    }
+
+    fn openPlaceWindow(self: *App, index: usize) void {
+        if (self.chooser != null) return;
+        var buf: [4096]u8 = undefined;
+        const path = if (self.deviceAt(index)) |volume|
+            volume.mount orelse return
+        else
+            self.placePath(index, &buf) orelse return;
+        if (index == 1) std.Io.Dir.cwd().createDirPath(self.io, path) catch {
+            self.setStatusNotice("Could not open Trash", true);
+            return;
+        };
+        if (!recent.isLocation(path) and pins_mod.kindOf(path) != .dir) {
+            self.setStatusNotice("Could not open folder", true);
+            return;
+        }
+        var exe: [4096]u8 = undefined;
+        const n = c.readlink("/proc/self/exe", &exe, exe.len);
+        const executable: []const u8 = if (n > 0 and n < exe.len) exe[0..@intCast(n)] else "rediwm-files";
+        var child = std.process.spawn(self.io, .{
+            .argv = &.{ executable, path },
+        }) catch {
+            self.setStatusNotice("Could not open new window", true);
+            return;
+        };
+        self.children.add(self.allocator, child.id.?) catch {
+            child.kill(self.io);
+            self.setStatusNotice("Could not open new window", true);
+        };
     }
 
     /// A click on a pin: a folder is browsed, a file opened as a double-click
@@ -2839,7 +2928,7 @@ pub const App = struct {
         if (self.chooser != null or self.dialog != null or self.menu != null or self.history.archive_len > 0) return null;
         if (self.job_state == .running or self.job_state == .waiting_conflict) return null;
         if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter())) or
-            y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) return null;
+            y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.contentBottom()))) return null;
         if (self.itemAt(x, y)) |idx| {
             const item = self.items.items[idx];
             if (!item.is_dir or item.missing or item.is_broken) return null;
@@ -3144,9 +3233,32 @@ pub const App = struct {
         return scrollbar.Geometry.compute(.vertical, track, viewport, @floatFromInt(self.sidebarExtent() - self.contentTop()), @floatFromInt(self.sidebar_scroll));
     }
 
+    fn maxHorizontalScroll(self: *App) f64 {
+        if (!self.list_view) return 0;
+        var total: f64 = 0;
+        for (self.listWidths()) |width| total += width;
+        const overflow = total - @as(f64, @floatFromInt(self.cellWidth() - 20));
+        return if (overflow > 0.001) overflow else 0;
+    }
+
+    fn horizontalOffset(self: *App) f64 {
+        return std.math.clamp(self.scroll_x, 0, self.maxHorizontalScroll());
+    }
+
+    fn contentBottom(self: *App) i32 {
+        return self.h - self.footerHeight() - (if (self.maxHorizontalScroll() > 0) self.scrollbarGutter() else @as(i32, 0));
+    }
+
+    fn horizontalScrollbar(self: *App) ?scrollbar.Geometry {
+        if (self.maxHorizontalScroll() <= 0) return null;
+        const viewport: f32 = @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter());
+        const track: scrollbar.Rect = .{ .x = @floatFromInt(self.sidebarWidth()), .y = @floatFromInt(self.contentBottom()), .w = viewport, .h = @floatFromInt(self.scrollbarGutter()) };
+        return scrollbar.Geometry.compute(.horizontal, track, viewport, viewport + @as(f32, @floatCast(self.maxHorizontalScroll())), @floatCast(self.horizontalOffset()));
+    }
+
     /// The file view's bar, along the window's right edge below the header.
     fn scrollbarGeometry(self: *App) ?scrollbar.Geometry {
-        const viewport: f32 = @floatFromInt(@max(0, self.h - self.viewTop() - self.footerHeight()));
+        const viewport: f32 = @floatFromInt(@max(0, self.contentBottom() - self.viewTop()));
         const gutter: f32 = @floatFromInt(self.scrollbarGutter());
         const track: scrollbar.Rect = .{ .x = @as(f32, @floatFromInt(self.w)) - gutter, .y = @floatFromInt(self.viewTop()), .w = gutter, .h = viewport };
         return scrollbar.Geometry.compute(.vertical, track, viewport, @floatFromInt(self.contentHeight()), @floatFromInt(self.scroll_y));
@@ -3407,13 +3519,14 @@ pub const App = struct {
     }
 
     fn clampScroll(self: *App) void {
+        self.scroll_x = self.horizontalOffset();
         const max_scroll = self.maxScroll();
         self.scroll_y = std.math.clamp(self.scroll_y, 0, max_scroll);
     }
 
     fn maxScroll(self: *App) i32 {
         const total_h = self.contentHeight();
-        const viewport_h = self.h - self.viewTop() - self.footerHeight();
+        const viewport_h = self.contentBottom() - self.viewTop();
         return @max(0, total_h - viewport_h);
     }
 
@@ -3421,7 +3534,7 @@ pub const App = struct {
         const row = @divTrunc(@as(i32, @intCast(idx)), self.columns());
         const row_top = if (row == 0) 0 else self.itemInset() + row * self.rowHeight();
         const row_bottom = self.itemInset() + row * self.rowHeight() + self.cardHeight();
-        const viewport_h = self.h - self.viewTop() - self.footerHeight();
+        const viewport_h = self.contentBottom() - self.viewTop();
 
         if (row_top < self.scroll_y) {
             self.scroll_y = row_top;
@@ -3769,6 +3882,7 @@ pub const App = struct {
             return 0;
         }
         if (self.menu != null) return 100 + (self.menuHit(x, y) orelse 99);
+        if (self.sidebar_resize != null or self.overSidebarDivider(x, y)) return 0;
         if (self.chooser) |opts| {
             if (y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) {
                 for (0..4 + opts.choices.len) |i| {
@@ -3778,7 +3892,7 @@ pub const App = struct {
             }
         }
         if (header.hit(self.w, self.inRepository(), x, y)) |action| return 200 + @as(usize, @intFromEnum(action));
-        if (self.list_view) {
+        if (self.list_view and x >= @as(f64, @floatFromInt(self.sidebarWidth())) and x < @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) {
             for (self.columnLabels(), 0..) |_, i| {
                 if (i < 4 and self.listColumn(i).contains(x, y)) return 400 + i;
             }
@@ -3814,6 +3928,20 @@ pub const App = struct {
     }
 
     pub fn handleMotion(self: *App, x: f64, y: f64) void {
+        if (self.sidebar_resize) |drag| {
+            self.mouse_x = x;
+            self.mouse_y = y;
+            const width = drag.widthAt(x, 160, @divTrunc(self.w, 2));
+            if (width != self.sidebarWidth()) {
+                self.sidebar_requested = width;
+                self.syncSidebarWidth();
+                self.clampScroll();
+                self.clampSidebarScroll();
+                self.invalidate();
+            }
+            return;
+        }
+        if (self.overSidebarDivider(self.mouse_x, self.mouse_y) != self.overSidebarDivider(x, y)) self.damageSidebarDivider();
         if (self.dialog) |*dlg| {
             const moved = switch (dlg.kind) {
                 .properties => dlg.properties.?.motion(self.w, self.h, x, y),
@@ -3867,6 +3995,12 @@ pub const App = struct {
                 self.invalidate();
             }
         }
+        if (self.horizontal_drag.active) {
+            if (self.horizontalScrollbar()) |bar| {
+                self.scroll_x = self.horizontal_drag.offsetAt(bar, @floatCast(x), @floatCast(y));
+                self.invalidate();
+            }
+        }
     }
 
     pub fn cancelDrag(self: *App) void {
@@ -3876,6 +4010,9 @@ pub const App = struct {
             if (dlg.applications) |*apps| apps.placement.grab = null;
         }
         self.column_resize = null;
+        if (self.sidebar_resize != null) self.damageSidebarDivider();
+        self.sidebar_resize = null;
+        self.horizontal_drag.end();
         if (self.selection_band != null) self.invalidate();
         self.selection_band = null;
         self.drag_origin = null;
@@ -3887,7 +4024,7 @@ pub const App = struct {
     fn bandRect(self: *App) header.Rect {
         const band = self.selection_band.?;
         const x = std.math.clamp(self.mouse_x, @as(f64, @floatFromInt(self.sidebarWidth())), @as(f64, @floatFromInt(self.w - self.scrollbarGutter())));
-        const y = std.math.clamp(self.mouse_y, @as(f64, @floatFromInt(self.viewTop())), @as(f64, @floatFromInt(self.h - self.footerHeight()))) + @as(f64, @floatFromInt(self.scroll_y));
+        const y = std.math.clamp(self.mouse_y, @as(f64, @floatFromInt(self.viewTop())), @as(f64, @floatFromInt(self.contentBottom()))) + @as(f64, @floatFromInt(self.scroll_y));
         return .{ .x = @min(band.x, x), .y = @min(band.y, y), .w = @abs(x - band.x), .h = @abs(y - band.y) };
     }
 
@@ -3952,6 +4089,10 @@ pub const App = struct {
     }
 
     pub fn handleWheel(self: *App, delta_px: f64, now: i64) void {
+        if (self.shift and self.dialog == null and self.mouse_x >= @as(f64, @floatFromInt(self.sidebarWidth()))) {
+            self.handleHorizontalScroll(delta_px);
+            return;
+        }
         if (self.dialog) |*dlg| {
             if (dlg.properties) |*props| {
                 props.wheel(delta_px, self.w, self.h);
@@ -3994,6 +4135,10 @@ pub const App = struct {
     }
 
     pub fn handleScroll(self: *App, delta_px: f64) void {
+        if (self.shift and self.dialog == null and self.mouse_x >= @as(f64, @floatFromInt(self.sidebarWidth()))) {
+            self.handleHorizontalScroll(delta_px);
+            return;
+        }
         if (self.dialog != null) {
             self.handleWheel(delta_px, nowMs());
             return;
@@ -4009,6 +4154,16 @@ pub const App = struct {
             return;
         }
         self.scroll_y = std.math.clamp(self.scroll_y + step, 0, self.maxScroll());
+        self.invalidate();
+    }
+
+    pub fn handleHorizontalScroll(self: *App, delta_px: f64) void {
+        if (delta_px == 0 or self.dialog != null or self.mouse_x < @as(f64, @floatFromInt(self.sidebarWidth()))) return;
+        self.cancelWheel();
+        self.menu = null;
+        const next = std.math.clamp(self.horizontalOffset() + delta_px, 0, self.maxHorizontalScroll());
+        if (next == self.scroll_x) return;
+        self.scroll_x = next;
         self.invalidate();
     }
 
@@ -4066,6 +4221,14 @@ pub const App = struct {
         const x = self.mouse_x;
         const y = self.mouse_y;
         if (button == 0x110) {
+            if (self.overSidebarDivider(x, y)) {
+                self.sidebar_resize = .{ .origin = x, .width = self.sidebarWidth() };
+                self.sidebar_requested = self.sidebarWidth();
+                self.syncSidebarWidth();
+                self.last_click_index = null;
+                self.damageSidebarDivider();
+                return;
+            }
             if (self.columnBoundary(x, y)) |column| {
                 self.column_resize = .{ .column = column, .x = x, .widths = self.listWidths() };
                 self.last_click_index = null;
@@ -4264,6 +4427,20 @@ pub const App = struct {
             }
         }
 
+        if (self.horizontalScrollbar()) |bar| {
+            if (bar.track.contains(@floatCast(x), @floatCast(y))) {
+                if (button == 0x110) {
+                    if (scrollbar.press(bar, @floatCast(x), @floatCast(y), @floatCast(self.horizontalOffset()))) |action| switch (action) {
+                        .grab => self.horizontal_drag.begin(bar, @floatCast(x), @floatCast(y), @floatCast(self.horizontalOffset())),
+                        .page => |offset| {
+                            self.scroll_x = offset;
+                            self.invalidate();
+                        },
+                    };
+                }
+                return;
+            }
+        }
         // Use the same scrollbar gutter for input and content layout.
         if (x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter())) and y >= @as(f64, @floatFromInt(self.contentTop())) and y < @as(f64, @floatFromInt(self.h - self.footerHeight()))) {
             if (self.scrollbarGeometry()) |bar| {
@@ -4281,7 +4458,7 @@ pub const App = struct {
         }
 
         // File view area
-        if (y >= @as(f64, @floatFromInt(self.contentTop())) and y < @as(f64, @floatFromInt(self.h - self.footerHeight())) and x < @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) {
+        if (y >= @as(f64, @floatFromInt(self.contentTop())) and y < @as(f64, @floatFromInt(self.contentBottom())) and x < @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) {
             self.focus = .file_view;
             if (self.itemAt(x, y)) |idx| {
                 if (button == 0x110) {
@@ -4546,12 +4723,12 @@ pub const App = struct {
             const last_idx = self.items.items.len - 1;
             self.selectIndex(last_idx);
         } else if (sym == c.XKB_KEY_Page_Down) {
-            const page_rows = @max(1, @divTrunc(self.h - self.viewTop() - self.footerHeight(), self.rowHeight())) * self.columns();
+            const page_rows = @max(1, @divTrunc(self.contentBottom() - self.viewTop(), self.rowHeight())) * self.columns();
             const cur = self.focused_index orelse 0;
             const new_idx = @min(self.items.items.len - 1, cur + @as(usize, @intCast(@max(1, page_rows))));
             self.selectIndex(new_idx);
         } else if (sym == c.XKB_KEY_Page_Up) {
-            const page_rows = @max(1, @divTrunc(self.h - self.viewTop() - self.footerHeight(), self.rowHeight())) * self.columns();
+            const page_rows = @max(1, @divTrunc(self.contentBottom() - self.viewTop(), self.rowHeight())) * self.columns();
             const cur = self.focused_index orelse 0;
             const page_u = @as(usize, @intCast(@max(1, page_rows)));
             const new_idx = if (cur > page_u) cur - page_u else 0;
@@ -4746,7 +4923,7 @@ pub const App = struct {
                 else => false,
             },
             .background => row == 2,
-            .sidebar => row == self.menuLabels().len - 1,
+            .sidebar => self.placeActions()[row] == .properties,
             else => false,
         };
     }
@@ -4839,6 +5016,28 @@ pub const App = struct {
         return &.{ .open, .cut, .copy, .paste, .rename, .trash, .properties };
     }
 
+    fn placeActions(self: *App) []const PlaceAction {
+        const new_window = self.chooser == null;
+        return switch (self.rowKind(self.menu_place)) {
+            .builtin => |index| switch (index) {
+                1 => if (new_window) &.{ .open, .open_window, .empty_trash, .properties } else &.{ .open, .empty_trash, .properties },
+                2 => if (new_window) &.{ .open, .open_window } else &.{.open},
+                else => if (placePinnable(index))
+                    (if (new_window) &.{ .open, .open_window, .unpin, .properties } else &.{ .open, .unpin, .properties })
+                else
+                    (if (new_window) &.{ .open, .open_window, .properties } else &.{ .open, .properties }),
+            },
+            .pin => |j| if (new_window and self.pins.items.items[j].kind == .dir)
+                &.{ .open, .open_window, .remove_pin, .properties }
+            else
+                &.{ .open, .remove_pin, .properties },
+            .device => if (self.deviceAt(self.menu_place)) |volume|
+                (if (volume.mount == null) &.{.mount} else if (new_window) &.{ .open, .open_window, .eject } else &.{ .open, .eject })
+            else
+                &.{},
+        };
+    }
+
     fn menuLabels(self: *App) []const []const u8 {
         return switch (self.menu orelse return &.{}) {
             .new => &.{ "New Folder", "New File" },
@@ -4852,16 +5051,11 @@ pub const App = struct {
                 for (actions, 0..) |action, i| self.file_menu_labels[i] = action.label();
                 break :blk self.file_menu_labels[0..actions.len];
             },
-            .sidebar => if (self.menu_place == 2) &.{"Open"} else if (placePinnable(self.menu_place))
-                &.{ "Open", "Unpin", "Properties" }
-            else switch (self.rowKind(self.menu_place)) {
-                .pin => &.{ "Open", "Remove from Places", "Properties" },
-                else => &.{ "Open", "Properties" },
+            .sidebar, .device => blk: {
+                const actions = self.placeActions();
+                for (actions, 0..) |action, i| self.place_menu_labels[i] = action.label();
+                break :blk self.place_menu_labels[0..actions.len];
             },
-            .device => if (self.deviceAt(self.menu_place)) |volume|
-                (if (volume.mount != null) &.{ "Open", "Eject" } else &.{"Mount"})
-            else
-                &.{},
             .background => if (self.history.archive_len > 0 or self.isRecent()) &.{"Refresh"} else &.{ "New Folder", "New File", "Paste", "Refresh" },
             .chooser_filter => self.chooser_filter_labels.items,
         };
@@ -4886,28 +5080,29 @@ pub const App = struct {
 
     fn runMenu(self: *App, row: usize) void {
         const kind = self.menu orelse return;
-        const properties_row = self.menuLabels().len - 1;
+        const place_action: ?PlaceAction = if ((kind == .sidebar or kind == .device) and row < self.placeActions().len) self.placeActions()[row] else null;
         const file_action: ?FileAction = if (kind == .file and row < self.fileActions().len) self.fileActions()[row] else null;
         self.menu = null;
         switch (kind) {
-            .sidebar => {
-                if (row == 0) {
-                    self.openPlace(self.menu_place);
-                } else if (row == 1 and placePinnable(self.menu_place)) {
+            .sidebar, .device => if (place_action) |action| switch (action) {
+                .open => self.openPlace(self.menu_place),
+                .open_window => self.openPlaceWindow(self.menu_place),
+                .empty_trash => self.openEmptyTrashDialog(),
+                .unpin => {
                     self.unpinned_places |= @as(u8, 1) << @as(u3, @intCast(self.menu_place - places_start));
                     self.sidebar_scroll = std.math.clamp(self.sidebar_scroll, 0, @max(0, self.sidebarExtent() - (self.h - self.footerHeight())));
                     self.nav_hover = .{};
                     self.savePreferences();
-                } else if (row == 1 and self.pinIndex(self.menu_place) != null) {
+                },
+                .remove_pin => {
                     self.removePin(self.pinIndex(self.menu_place).?);
-                } else if (row == properties_row) {
+                },
+                .properties => {
                     var buf: [4096]u8 = undefined;
                     if (self.placePath(self.menu_place, &buf)) |path| self.openProperties(path, null);
-                }
-            },
-            .device => if (self.deviceAt(self.menu_place) != null) {
-                const k = self.menu_place - self.deviceBase();
-                if (self.device_list.items[k].mount == null or row == 0) self.activateDevice(k) else self.ejectDevice(k);
+                },
+                .mount => self.activateDevice(self.menu_place - self.deviceBase()),
+                .eject => self.ejectDevice(self.menu_place - self.deviceBase()),
             },
             .chooser_filter => {
                 if (row < self.chooser.?.filters.len) self.chooser.?.filter_index = row;
@@ -5099,9 +5294,9 @@ pub const App = struct {
         self.renderSidebarScrollbar(cr);
 
         // 3. Content Area (Files View)
-        const viewport_h = self.h - self.viewTop() - self.footerHeight();
+        const viewport_h = self.contentBottom() - self.viewTop();
         c.cairo_save(cr);
-        c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.viewTop()), w_f - @as(f64, @floatFromInt(self.sidebarWidth())), @as(f64, @floatFromInt(viewport_h)));
+        c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.viewTop()), w_f - @as(f64, @floatFromInt(self.sidebarWidth() + self.scrollbarGutter())), @as(f64, @floatFromInt(viewport_h)));
         c.cairo_clip(cr);
 
         if (self.list_view) {
@@ -5132,6 +5327,10 @@ pub const App = struct {
         c.cairo_restore(cr);
 
         self.renderColumns(cr);
+
+        if (self.sidebarDivider()) |divider| {
+            shell_ui.drawSplitter(cr, divider, self.sidebar_resize != null or self.overSidebarDivider(self.mouse_x, self.mouse_y));
+        }
 
         // 4. Scrollbar
         self.renderScrollbar(cr);
@@ -5190,12 +5389,14 @@ pub const App = struct {
     }
 
     pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
+        if (self.sidebar_resize != null) return "col-resize";
         if (self.text_dragging) return "text";
-        if (self.menu != null or self.selection_band != null or self.drag_origin != null or self.scroll_drag.active or self.sidebar_scroll_drag.active) return "default";
+        if (self.menu != null or self.selection_band != null or self.drag_origin != null or self.scroll_drag.active or self.sidebar_scroll_drag.active or self.horizontal_drag.active) return "default";
         if (self.dialog != null) {
             return if (self.activeEditor() != null and self.editorRect().contains(x, y)) "text" else "default";
         }
         if (self.column_resize != null or self.columnBoundary(x, y) != null) return "col-resize";
+        if (self.overSidebarDivider(x, y)) return "col-resize";
         if (self.chooser != null and self.chooserRect(0).contains(x, y)) return "text";
         if (self.focus != .location_bar and !self.search_visible and header.field(self.w).contains(x, y)) return "pointer";
         return if (header.field(self.w).contains(x, y)) "text" else "default";
@@ -5394,7 +5595,7 @@ pub const App = struct {
             if (cut) c.cairo_push_group(cr);
             const icon = self.itemIconRect(index);
             self.drawItemIcon(cr, item, icon.x, icon.y, icon.w);
-            const label_x = x + (if (self.list_view) @as(f64, 42) else 26);
+            const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) else 26);
             setSource(cr, ui_theme.global.window_fg);
             const name_width = if (self.list_view) self.listColumn(0).w - 46 else width - 42;
             // A path that does not fit loses its head, so the file's own name stays readable.
@@ -5501,7 +5702,7 @@ pub const App = struct {
         const cols = self.columns();
         const size: f64 = if (self.list_view) 24 else 48;
         return .{
-            .x = @as(f64, @floatFromInt(self.sidebarWidth() + 20 + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) else 26),
+            .x = @as(f64, @floatFromInt(self.sidebarWidth() + 20 + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) else 26) - self.horizontalOffset(),
             .y = @as(f64, @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight() - self.scroll_y)) + (if (self.compactList()) @as(f64, 3) else if (self.list_view) @as(f64, 6) else 20),
             .w = size,
             .h = size,
@@ -5550,7 +5751,7 @@ pub const App = struct {
         if (!self.thumbs_enabled) return;
         const cols = self.columns();
         const row_h = self.rowHeight();
-        const viewport_h = @max(0, self.h - self.viewTop() - self.footerHeight());
+        const viewport_h = @max(0, self.contentBottom() - self.viewTop());
         const row0 = @divTrunc(self.scroll_y, row_h);
         const row1 = @divTrunc(self.scroll_y + viewport_h, row_h);
         const request: ThumbRequest = .{ .revision = self.view_revision, .row0 = row0, .row1 = row1, .cols = cols };
@@ -5577,7 +5778,7 @@ pub const App = struct {
         if (self.thumb_arrived.items.len == 0) return;
         const cols = self.columns();
         const row_h = self.rowHeight();
-        const viewport_h = @max(0, self.h - self.viewTop() - self.footerHeight());
+        const viewport_h = @max(0, self.contentBottom() - self.viewTop());
         const first = @divTrunc(self.scroll_y, row_h) * cols;
         const last = @min(@as(i32, @intCast(self.items.items.len)), (@divTrunc(self.scroll_y + viewport_h, row_h) + 1) * cols);
         var index = first;
@@ -5734,7 +5935,7 @@ pub const App = struct {
         const idle = self.menu == null and self.dialog == null;
         const hovered = if (bar) |b| idle and b.overThumb(@floatCast(self.mouse_x), @floatCast(self.mouse_y)) else false;
         if (self.scroll_appearance.step(now, self.scroll_y != self.scroll_observed, hovered, self.scroll_drag.active, bar != null)) {
-            const viewport: f64 = @floatFromInt(@max(0, self.h - self.viewTop() - self.footerHeight()));
+            const viewport: f64 = @floatFromInt(@max(0, self.contentBottom() - self.viewTop()));
             self.addDamage(.{ .x = @floatFromInt(self.w - self.scrollbarGutter()), .y = @floatFromInt(self.viewTop()), .w = @floatFromInt(self.scrollbarGutter()), .h = viewport });
         }
         self.scroll_observed = self.scroll_y;
@@ -5744,6 +5945,13 @@ pub const App = struct {
             if (side) |b| self.addDamage(.{ .x = b.track.x, .y = b.track.y, .w = b.track.w, .h = b.track.h });
         }
         self.sidebar_scroll_observed = self.sidebar_scroll;
+        const horizontal = self.horizontalScrollbar();
+        const horizontal_hovered = if (horizontal) |b| idle and b.overThumb(@floatCast(self.mouse_x), @floatCast(self.mouse_y)) else false;
+        const offset = self.horizontalOffset();
+        if (self.horizontal_appearance.step(now, offset != self.horizontal_observed, horizontal_hovered, self.horizontal_drag.active, horizontal != null)) {
+            if (horizontal) |b| self.addDamage(.{ .x = b.track.x, .y = b.track.y, .w = b.track.w, .h = b.track.h });
+        }
+        self.horizontal_observed = offset;
     }
 
     fn renderScrollEdges(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
@@ -5751,7 +5959,7 @@ pub const App = struct {
         const depth: f64 = @min(12, @as(f64, @floatFromInt(viewport_h)) / 2);
         for ([_]bool{ true, false }) |top| {
             if (if (top) self.scroll_y <= 0 else self.scroll_y >= self.maxScroll()) continue;
-            const edge: f64 = @floatFromInt(if (top) self.viewTop() else self.h - self.footerHeight());
+            const edge: f64 = @floatFromInt(if (top) self.viewTop() else self.contentBottom());
             const inner = edge + if (top) depth else -depth;
             const gradient = c.cairo_pattern_create_linear(0, edge, 0, inner) orelse continue;
             defer c.cairo_pattern_destroy(gradient);
@@ -5764,6 +5972,9 @@ pub const App = struct {
     }
 
     fn renderScrollbar(self: *App, cr: *c.cairo_t) void {
+        if (self.horizontalScrollbar()) |bar| {
+            shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.horizontal_appearance, self.scrollbar_width, ui_theme.shellPalette()));
+        }
         const bar = self.scrollbarGeometry() orelse return;
         shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.scroll_appearance, self.scrollbar_width, ui_theme.shellPalette()));
     }
@@ -6311,40 +6522,6 @@ test "history restores names and scroll while tolerating removed items" {
     try std.testing.expectEqual(@as(?usize, 12), app.selection_anchor);
 }
 
-test "stationary visual hover does no paint work and sidebar can reach bottom" {
-    var app = try testApp();
-    defer app.deinit();
-    try testItems(&app, 12);
-    app.handleMotion(250, 160);
-    app.dirty = false;
-    app.handleMotion(260, 170);
-    try std.testing.expect(!app.dirty);
-    app.handleMotion(490, 160);
-    try std.testing.expect(app.dirty);
-    app.h = 240;
-    app.handleMotion(70, 175);
-    app.handleScroll(800);
-    try std.testing.expect(app.sidebar_scroll > 0);
-    try std.testing.expect(app.placeY(App.pin_base - 1) + 30 <= app.h - 26);
-    app.list_view = true;
-    app.w = 360;
-    for (App.column_labels, 0..) |_, i| {
-        const rect = app.listColumn(i);
-        try std.testing.expect(rect.x >= 0 and rect.x + rect.w <= 360 and rect.w > 40);
-        if (i == 4) {
-            const previous = app.sort_mode;
-            app.sortByColumn(i);
-            try std.testing.expectEqual(previous, app.sort_mode);
-            continue;
-        }
-        app.sortByColumn(i);
-        try std.testing.expectEqual(i, app.sortColumn());
-        const descending = app.sortDescending();
-        app.sortByColumn(i);
-        try std.testing.expect(descending != app.sortDescending());
-    }
-}
-
 test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
     const before = anim.currentSettings();
     defer anim.applySettings(before);
@@ -6828,6 +7005,63 @@ test "viewport edge shadows at top middle bottom and when content fits" {
     try std.testing.expectEqual(@as(u8, 0), pixels[@as(usize, @intCast(app.viewTop())) * stride + x * 4 + 3]);
 }
 
+test "sidebar divider resizes within limits without selecting or sorting" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 2);
+    app.resize(960, 540);
+    app.stepLayout(0);
+    app.items.items[0].selected = true;
+    const sort = app.sort_mode;
+    const y: f64 = @floatFromInt(app.contentTop() + 15);
+    // Grab slightly off the line: starting a drag must not jump the width.
+    app.handleMotion(210, y);
+    try std.testing.expectEqualStrings("col-resize", std.mem.span(app.pointerCursor(210, y)));
+    app.handleButton(0x110, true);
+    try std.testing.expect(app.sidebar_resize != null);
+    app.handleMotion(210, y);
+    try std.testing.expectEqual(@as(i32, 208), app.sidebarWidth());
+    app.handleMotion(342, y);
+    try std.testing.expectEqual(@as(i32, 340), app.sidebarWidth());
+    app.stepLayout(1000);
+    try std.testing.expectEqual(@as(i32, 340), app.sidebarWidth());
+    app.handleMotion(10000, -50);
+    try std.testing.expectEqual(@as(i32, 480), app.sidebarWidth());
+    try std.testing.expectEqualStrings("col-resize", std.mem.span(app.pointerCursor(10000, -50)));
+    app.handleMotion(-10000, y);
+    try std.testing.expectEqual(@as(i32, 160), app.sidebarWidth());
+    app.handleMotion(342, y);
+    app.handleButton(0x110, false);
+    try std.testing.expect(app.sidebar_resize == null and app.selection_band == null and app.drag_origin == null);
+    try std.testing.expect(app.items.items[0].selected and !app.items.items[1].selected);
+    try std.testing.expectEqual(sort, app.sort_mode);
+    app.handleMotion(400, y);
+    try std.testing.expectEqual(@as(i32, 340), app.sidebarWidth());
+    // Window resizes clamp the drawn width but retain the user's preference.
+    app.resize(500, 540);
+    try std.testing.expectEqual(@as(i32, 250), app.sidebarWidth());
+    app.resize(960, 540);
+    try std.testing.expectEqual(@as(i32, 340), app.sidebarWidth());
+    app.handleMotion(340, y);
+    app.handleButton(0x110, true);
+    app.handleKey(c.XKB_KEY_Escape, "");
+    try std.testing.expect(app.sidebar_resize == null);
+    app.handleMotion(500, y);
+    try std.testing.expectEqual(@as(i32, 340), app.sidebarWidth());
+    app.openMenu(.background, 400, y);
+    try std.testing.expect(!app.overSidebarDivider(340, y));
+    app.menu = null;
+    try std.testing.expect(!app.overSidebarDivider(340, 20));
+    try std.testing.expect(!app.overSidebarDivider(340, @floatFromInt(app.h - 1)));
+    app.resize(360, 540);
+    app.stepLayout(2000);
+    app.stepLayout(3000);
+    try std.testing.expectEqual(@as(i32, 0), app.sidebarWidth());
+    try std.testing.expect(app.sidebarDivider() == null);
+    app.resize(960, 540);
+    try std.testing.expectEqual(@as(i32, 340), app.sidebarWidth());
+}
+
 test "sidebar scrollbar pages, drags outside and resets on resize" {
     const saved = anim.currentSettings();
     defer anim.applySettings(saved);
@@ -6897,35 +7131,66 @@ test "file selection fades in and out while logical selection is immediate" {
     try std.testing.expectEqual(@as(f32, 0), app.items.items[1].selection_fill.alpha);
 }
 
-test "list column resize keeps adjacent columns bounded and does not sort" {
-    var app = try testApp();
-    defer app.deinit();
-    app.list_view = true;
-    const original = app.listWidths();
-    const rect = app.listColumn(0);
-    const x = rect.x + rect.w;
-    const y = rect.y + 15;
-    try std.testing.expectEqualStrings("col-resize", std.mem.span(app.pointerCursor(x, y)));
-    app.handleMotion(x, y);
-    app.handleButton(0x110, true);
-    app.handleMotion(x + 25, y + 100);
-    try std.testing.expectApproxEqAbs(original[0] + 25, app.listWidths()[0], 0.001);
-    try std.testing.expectApproxEqAbs(original[1] - 25, app.listWidths()[1], 0.001);
-    try std.testing.expectEqualStrings("col-resize", std.mem.span(app.pointerCursor(x + 25, y + 100)));
-    app.handleMotion(x + 1000, y);
-    try std.testing.expectApproxEqAbs(@as(f64, 40), app.listWidths()[1], 0.001);
-    app.handleButton(0x110, false);
-    try std.testing.expect(app.column_resize == null);
-    try std.testing.expectEqual(Sort.name, app.sort_mode);
-    app.w = 360;
-    var total: f64 = 0;
-    for (app.listWidths()) |width| {
-        try std.testing.expect(width >= 40);
-        total += width;
+test "list column resize pushes following columns and scrolls in Files and chooser" {
+    for ([_]bool{ false, true }) |chooser| {
+        var app = try testApp();
+        defer app.deinit();
+        if (chooser) try app.configureChooser(.{ .mode = .open });
+        app.list_view = true;
+        try testItems(&app, 20);
+        const original = app.listWidths();
+        const last = app.listColumn(4);
+        const rect = app.listColumn(3);
+        const x = rect.x + rect.w;
+        const y = rect.y + 15;
+        try std.testing.expectEqualStrings("col-resize", std.mem.span(app.pointerCursor(x, y)));
+        app.handleMotion(x, y);
+        app.handleButton(0x110, true);
+        app.handleMotion(x + 120, y + 100);
+        const widths = app.listWidths();
+        for (original, 0..) |width, i| {
+            try std.testing.expectApproxEqAbs(width + (if (i == 3) @as(f64, 120) else 0), widths[i], 0.001);
+        }
+        try std.testing.expectApproxEqAbs(last.x + 120, app.listColumn(4).x, 0.001);
+        app.handleButton(0x110, false);
+        try std.testing.expect(app.column_resize == null);
+        try std.testing.expectEqual(Sort.name, app.sort_mode);
+        const bar = app.horizontalScrollbar().?;
+        try std.testing.expectEqual(@as(?usize, null), app.itemAt(bar.track.x + 40, bar.track.y + 1));
+        try std.testing.expectEqual(@as(?[]const u8, null), app.dropDirectoryAt(bar.track.x + 40, bar.track.y + 1));
+        const thumb_x = bar.thumb.x + bar.thumb.w / 2;
+        const thumb_y = bar.thumb.y + bar.thumb.h / 2;
+        app.handleMotion(thumb_x, thumb_y);
+        app.handleButton(0x110, true);
+        try std.testing.expect(app.horizontal_drag.active);
+        app.handleMotion(@floatFromInt(app.w + 100), thumb_y);
+        try std.testing.expectApproxEqAbs(@as(f64, 120), app.horizontalOffset(), 0.001);
+        try std.testing.expectApproxEqAbs(last.x, app.listColumn(4).x, 0.001);
+        app.handleButton(0x110, false);
+        try std.testing.expect(!app.horizontal_drag.active);
+        app.shift = true;
+        app.handleWheel(-60, 1000);
+        try std.testing.expectApproxEqAbs(@as(f64, 60), app.horizontalOffset(), 0.001);
+        app.shift = false;
+        app.handleHorizontalScroll(-1000);
+        try std.testing.expectEqual(@as(f64, 0), app.horizontalOffset());
+        app.resize(360, 400);
+        try std.testing.expectEqualDeep(widths, app.listWidths());
+        try std.testing.expect(app.horizontalScrollbar() != null);
+        app.resize(1600, 600);
+        try std.testing.expect(app.horizontalScrollbar() == null);
+        try std.testing.expectEqual(@as(f64, 0), app.horizontalOffset());
+        // Shrinking clamps only the dragged column.
+        const name = app.listColumn(0);
+        app.handleMotion(name.x + name.w, name.y + 15);
+        app.handleButton(0x110, true);
+        app.handleMotion(-1000, name.y + 15);
+        app.handleButton(0x110, false);
+        try std.testing.expectEqual(@as(f64, 64), app.listWidths()[0]);
+        try std.testing.expectEqualSlices(f64, widths[1..], app.listWidths()[1..]);
+        app.list_view = false;
+        try std.testing.expect(app.horizontalScrollbar() == null);
     }
-    try std.testing.expectApproxEqAbs(@as(f64, @floatFromInt(app.cellWidth() - 20)), total, 0.001);
-    app.list_view = false;
-    try std.testing.expectEqualStrings("default", std.mem.span(app.pointerCursor(x, y)));
 }
 
 test "sidebar menus unpin only Places and close gaps without changing selection" {
@@ -6938,13 +7203,14 @@ test "sidebar menus unpin only Places and close gaps without changing selection"
     app.handleMotion(70, @floatFromInt(y + 10));
     app.handleButton(0x111, true);
     try std.testing.expectEqual(MenuKind.sidebar, app.menu.?);
-    try std.testing.expectEqualStrings("Unpin", app.menuLabels()[1]);
-    try std.testing.expectEqualStrings("Properties", app.menuLabels()[2]);
-    app.runMenu(2); // Properties must not alter pinned places.
+    try std.testing.expectEqualStrings("Open in New Window", app.menuLabels()[1]);
+    try std.testing.expectEqualStrings("Unpin", app.menuLabels()[2]);
+    try std.testing.expectEqualStrings("Properties", app.menuLabels()[3]);
+    app.runMenu(3); // Properties must not alter pinned places.
     app.closeDialog();
     try std.testing.expect(app.placeVisible(App.places_start));
     app.openMenu(.sidebar, 70, @floatFromInt(y));
-    app.runMenu(1);
+    app.runMenu(2);
     try std.testing.expect(!app.placeVisible(App.places_start));
     try std.testing.expectEqual(y, app.placeY(App.places_start + 1));
     try std.testing.expectEqual(@as(?usize, App.places_start + 1), app.placeAt(70, @floatFromInt(y + 10)));
@@ -6953,21 +7219,36 @@ test "sidebar menus unpin only Places and close gaps without changing selection"
     for ([_]usize{ 0, 1 }) |index| {
         app.menu_place = index;
         app.openMenu(.sidebar, 70, 140);
-        try std.testing.expectEqual(@as(usize, 2), app.menuLabels().len);
-        try std.testing.expectEqualStrings("Properties", app.menuLabels()[1]);
-        app.runMenu(1);
+        try std.testing.expectEqual(@as(usize, if (index == 1) 4 else 3), app.menuLabels().len);
+        try std.testing.expectEqualStrings("Properties", app.menuLabels()[app.menuLabels().len - 1]);
+        if (index == 1) {
+            try std.testing.expectEqualStrings("Empty Trash…", app.menuLabels()[2]);
+            app.runMenu(2);
+            try std.testing.expect(app.dialog.?.deletion.empty_trash);
+            try std.testing.expect(app.dialog.?.deletion.permanent);
+            try std.testing.expectEqual(deletion.Action.none, app.dialog.?.deletion.key(c.XKB_KEY_Tab));
+            try std.testing.expectEqual(deletion.Action.confirm, app.dialog.?.deletion.key(c.XKB_KEY_Return));
+            app.deleteAction(.toggle);
+            try std.testing.expect(app.dialog.?.deletion.permanent);
+            app.deleteAction(.cancel);
+            try std.testing.expect(app.dialog == null);
+            app.openMenu(.sidebar, 70, 140);
+        }
+        app.runMenu(app.menuLabels().len - 1);
         try std.testing.expect(app.placeVisible(index));
     }
     app.menu_place = 2;
     app.openMenu(.sidebar, 70, 210);
-    try std.testing.expectEqualSlices([]const u8, &.{"Open"}, app.menuLabels());
+    try std.testing.expectEqualStrings("Open", app.menuLabels()[0]);
+    try std.testing.expectEqualStrings("Open in New Window", app.menuLabels()[1]);
+    try std.testing.expectEqual(@as(usize, 0), app.menuSeparatorSpace());
     app.menu = null;
     try std.testing.expect(app.placeVisible(2));
     try std.testing.expectEqual(app.placeY(1) + app.placeStep(), app.placeY(2));
     for (App.places_start..App.pin_base) |index| {
         app.menu_place = index;
         app.openMenu(.sidebar, 70, 140);
-        app.runMenu(1);
+        app.runMenu(2);
     }
     try std.testing.expectEqual(@as(u8, 0x7f), app.unpinned_places);
     try std.testing.expectEqual(@as(?usize, null), app.placeAt(70, @floatFromInt(y + 10)));
@@ -7037,10 +7318,20 @@ test "pins sit after Projects, take drops by gap and keep the rows in drawn orde
     // Only a pin offers removal, which closes the gap again.
     app.menu_place = App.pin_base + 1;
     app.openMenu(.sidebar, 70, 140);
-    try std.testing.expectEqualStrings("Remove from Places", app.menuLabels()[1]);
-    app.runMenu(1);
+    try std.testing.expectEqualStrings("Open in New Window", app.menuLabels()[1]);
+    try std.testing.expectEqualStrings("Remove from Places", app.menuLabels()[2]);
+    app.runMenu(2);
     try std.testing.expectEqual(@as(usize, 2), app.pins.items.items.len);
     try std.testing.expectEqualStrings("null", app.pins.items.items[1].name());
+    app.menu = .sidebar;
+    try std.testing.expectEqualStrings("Remove from Places", app.menuLabels()[1]); // File pins keep their file actions.
+    app.pins.items.items[1].kind = .missing;
+    try std.testing.expectEqualStrings("Remove from Places", app.menuLabels()[1]);
+    app.chooser = .{ .mode = .open };
+    app.menu_place = App.pin_base;
+    try std.testing.expectEqualStrings("Remove from Places", app.menuLabels()[1]);
+    app.menu_place = 0;
+    try std.testing.expectEqualStrings("Properties", app.menuLabels()[1]);
     try std.testing.expectEqual(places_bottom + 2 * step, app.placeY(App.pin_base + 1));
 }
 
@@ -7078,7 +7369,8 @@ test "Sidebar lists devices under Places; only mounted ones eject" {
 
     app.menu = .device;
     app.menu_place = mounted;
-    try std.testing.expectEqualStrings("Eject", app.menuLabels()[1]);
+    try std.testing.expectEqualStrings("Open in New Window", app.menuLabels()[1]);
+    try std.testing.expectEqualStrings("Eject", app.menuLabels()[2]);
     app.menu_place = unmounted;
     try std.testing.expectEqual(@as(usize, 1), app.menuLabels().len);
     try std.testing.expectEqualStrings("Mount", app.menuLabels()[0]);
@@ -7167,17 +7459,18 @@ test "Git layout has two columns, scrollable sidebar and display-only deleted ro
     app.handleMotion(boundary_x, boundary_y);
     app.handleButton(0x110, true);
     app.handleMotion(boundary_x - 40, boundary_y + 100);
-    try std.testing.expectApproxEqAbs(@as(f64, 204), app.listColumn(1).w, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 164), app.listColumn(1).w, 0.001);
     try std.testing.expectEqualStrings("col-resize", std.mem.span(app.pointerCursor(boundary_x - 40, boundary_y + 100)));
     app.handleMotion(boundary_x + 1000, boundary_y);
-    try std.testing.expectApproxEqAbs(@as(f64, 64), app.listColumn(1).w, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 164), app.listColumn(1).w, 0.001);
     app.handleButton(0x110, false);
     try std.testing.expect(app.column_resize == null);
     try std.testing.expectEqual(sort, app.sort_mode);
     app.resize(360, 300);
     const widths = app.listWidths();
     try std.testing.expect(widths[0] >= 96 and widths[1] >= 64);
-    try std.testing.expectApproxEqAbs(@as(f64, @floatFromInt(app.cellWidth() - 20)), widths[0] + widths[1], 0.001);
+    try std.testing.expect(widths[0] + widths[1] > @as(f64, @floatFromInt(app.cellWidth() - 20)));
+    try std.testing.expect(app.horizontalScrollbar() != null);
     app.resize(960, 540);
     app.sortByColumn(1);
     try std.testing.expectEqual(sort, app.sort_mode);

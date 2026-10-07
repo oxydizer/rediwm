@@ -121,6 +121,16 @@ pub fn deleteItems(io: std.Io, paths: []const []const u8) !void {
     if (result != .exited or result.exited != 0) return error.DeleteFailed;
 }
 
+/// Let GIO remove both trashed contents and their restore metadata.
+pub fn emptyTrash(io: std.Io) !void {
+    var child = std.process.spawn(io, .{ .argv = &.{ "gio", "trash", "--empty" } }) catch |err| {
+        if (err == error.FileNotFound) return error.GioNotAvailable;
+        return error.TrashFailed;
+    };
+    const result = try child.wait(io);
+    if (result != .exited or result.exited != 0) return error.TrashFailed;
+}
+
 pub fn trashItems(io: std.Io, paths: []const []const u8) !void {
     if (paths.len == 0) return;
     var args: std.ArrayList([]const u8) = .empty;

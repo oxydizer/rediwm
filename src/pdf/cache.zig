@@ -7,7 +7,7 @@ const document = @import("document.zig");
 pub const PAGE_CACHE_LIMIT: usize = 128 * 1024 * 1024;
 pub const THUMB_CACHE_LIMIT: usize = 16 * 1024 * 1024;
 
-/// Tile bounds in page logical pixels.
+/// Tile bounds in pixels of the page's raster at the key's scale.
 pub const TileKey = struct {
     x: u32,
     y: u32,

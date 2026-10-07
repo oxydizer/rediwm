@@ -32,6 +32,7 @@ const applications = @import("applications.zig");
 const AppEntry = applications.AppEntry;
 const launch = @import("launch.zig");
 const model_mod = @import("model.zig");
+const size_mod = @import("size.zig");
 const Model = model_mod.Model;
 const Category = model_mod.Category;
 const SearchResult = model_mod.SearchResult;
@@ -745,7 +746,7 @@ pub const StartMenu = struct {
                 .border_color = t.start_menu_border,
             } },
             .direction = .column,
-            .width = .{ .fixed = t.start_menu_width },
+            .width = .{ .fixed = menu.wantedSize().width },
             .height = .auto,
             .children = root_kids,
         };
@@ -762,15 +763,23 @@ pub const StartMenu = struct {
         }
     }
 
+    /// The size the theme asks for on this menu's output, before the caps in
+    /// `relayout`: its own values, else the automatic ones (`size.zig`).
+    fn wantedSize(menu: *StartMenu) size_mod.Size {
+        var box: wlr.Box = undefined;
+        menu.server.output_layout.getBox(menu.wlr_output, &box);
+        return size_mod.wanted(theme.global, @floatFromInt(box.width), @floatFromInt(box.height));
+    }
+
     pub fn relayout(menu: *StartMenu) void {
         menu.background.invalidate();
         var output_box: wlr.Box = undefined;
         menu.server.output_layout.getBox(menu.wlr_output, &output_box);
         if (output_box.width <= 0 or output_box.height <= 0) return;
 
-        const t = theme.global;
-        const max_allowed_h = @min(t.start_menu_max_height, @as(f32, @floatFromInt(output_box.height)) * 0.85);
-        const max_allowed_w = @min(t.start_menu_width, @as(f32, @floatFromInt(output_box.width)) - 40);
+        const wanted = menu.wantedSize();
+        const max_allowed_h = @min(wanted.height, @as(f32, @floatFromInt(output_box.height)) * 0.85);
+        const max_allowed_w = @min(wanted.width, @as(f32, @floatFromInt(output_box.width)) - 40);
 
         const target_height = @max(240, max_allowed_h);
         const target_width = @max(320, max_allowed_w);

@@ -678,6 +678,89 @@ def start_x11_client(tmp, display, log_path, *args):
         )
 
 
+def test_switcher_input(factor=1):
+    """Check X11's actual key state and repeated clicks after switching back."""
+    from desktop_zoom import build_client as build_wayland_client
+    from ipc_client import IPCClient, stop_process
+
+    with tempfile.TemporaryDirectory(prefix="rediwm-xwayland-switcher-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        build_wayland_client(tmp)
+        compositor, log = start_compositor(
+            tmp, f'[compositor]\nxwayland = true\nxwayland_native_scaling = true\nxwayland_scale = {factor}\n[keybinds]\n"alt+tab" = "focus_next"\n',
+            {"XDG_STATE_HOME": str(tmp / "state"), "XDG_DATA_HOME": str(tmp / "data")},
+        )
+        clients = []
+        try:
+            with IPCClient(tmp) as ipc:
+                display = ipc.query('get_runtime_info')["xwayland_display"]
+                client_log = tmp / "x11.log"
+                client = start_x11_client(tmp, display, client_log)
+                clients.append(client)
+                xwin = wait_for(lambda: next((w for w in ipc.get_windows() if w['backend'] == 'xwayland'), None), 'X11 map')
+                with (tmp / 'wayland.log').open('w') as out:
+                    clients.append(subprocess.Popen(
+                        [str(tmp / 'client'), '--title', 'Wayland peer'],
+                        env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=wayland_display_name(tmp)),
+                        stdout=out, stderr=out,
+                    ))
+                wait_for(lambda: len(ipc.get_windows()) == 2, 'Wayland map')
+                def check_keys(label, expected=''):
+                    # Xwayland processes Wayland input before answering the X query.
+                    time.sleep(.15)
+                    client.stdin.write(f'keys {label}\n')
+                    client.stdin.flush()
+                    line = wait_for(lambda: next((l for l in client_log.read_text().splitlines() if l.startswith(f'keys {label}')), None), 'query X keys')
+                    assert line == f'keys {label}{expected}', f'Incorrect X11 keys after focus transfer: {line}'
+
+                for mode in ('tab-first', 'alt-first', 'return'):
+                    # Start on X11, switch away, then back with each release order.
+                    ipc.action('focus_window', {'id': xwin['id']})
+                    ipc.key(56, True)
+                    ipc.key_down_up(15)
+                    ipc.key(56, False)
+                    wait_for(lambda: not next(w for w in ipc.get_windows() if w['id'] == xwin['id'])['is_focused'], 'switch away')
+                    ipc.key(56, True)
+                    ipc.key(15, True)
+                    if mode == 'return':
+                        ipc.key_down_up(28)
+                    if mode == 'tab-first':
+                        ipc.key(15, False)
+                        ipc.key(56, False)
+                    else:
+                        ipc.key(56, False)
+                        ipc.key(15, False)
+                    wait_for(lambda: next(w for w in ipc.get_windows() if w['id'] == xwin['id'])['is_focused'], 'switch back')
+                    check_keys(mode)
+                print('PASS: Alt-Tab release order and Return acceptance leave no stuck X11 keys')
+
+                # Genuine client keys must still be carried across focus changes.
+                peer = next(w for w in ipc.get_windows() if w['id'] != xwin['id'])
+                ipc.action('focus_window', {'id': peer['id']})
+                ipc.key(30, True)  # A: evdev 30, X11 38
+                ipc.action('focus_window', {'id': xwin['id']})
+                check_keys('held', ' 38')
+                ipc.key(30, False)
+                check_keys('released')
+
+                box = ipc.query('get_window_debug', {'id': xwin['id']})['client_box']
+                # Scrollbars sit just inside the right edge; repeated clicks must
+                # work without moving away to generate another pointer enter.
+                ipc.move_cursor(box['x'] + box['width'] - 5, box['y'] + 80)
+                for count in range(1, 4):
+                    ipc.pointer_button(272, True)
+                    ipc.pointer_button(272, False)
+                    wait_for(lambda: client_log.read_text().count('button-release 1 ') == count,
+                             lambda: f'Repeated right-edge click {count} lost: {client_log.read_text()}', timeout=3)
+                print('PASS: repeated X11 right-edge clicks reach the client after Alt-Tab')
+        finally:
+            for client in clients:
+                stop_process(client)
+            stop_process(compositor)
+            log.close()
+
+
 def test_unmapped_window_has_no_chrome():
     """An X11 window that is configured and titled but never mapped must not
     show a frame. Its chrome used to be painted and hit-testable at the
@@ -2247,6 +2330,8 @@ def run():
     test_server_stop_cleanup()
     test_managed_window()
     test_native_scaling_managed_window()
+    test_switcher_input()
+    test_switcher_input(factor=2)
     test_unmapped_window_has_no_chrome()
     test_withdrawn_window_survives_close_animation()
     test_gtk_menu_alignment()

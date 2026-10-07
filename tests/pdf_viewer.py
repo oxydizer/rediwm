@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import time
 import sys
+import warnings
 import cairo
 from PIL import Image
 from ipc_client import IPCClient, ROOT
@@ -40,6 +41,89 @@ def generate_fixture_pdf(path: Path):
     surface.show_page()
 
     surface.finish()
+
+
+def generate_tall_pdf(path: Path):
+    """One tall page: fit width rasterizes it in tiles. Its top is a blue left
+    half and a red right half."""
+    surface = cairo.PDFSurface(str(path), 400, 1600)
+    cr = cairo.Context(surface)
+    cr.set_source_rgb(0, 0, 1)
+    cr.rectangle(0, 0, 200, 400)
+    cr.fill()
+    cr.set_source_rgb(1, 0, 0)
+    cr.rectangle(200, 0, 200, 400)
+    cr.fill()
+    surface.finish()
+
+
+class FakePrintPortal:
+    """org.freedesktop.portal.Print on a private bus. Records each document it
+    is handed, then answers the request with `response` (0 printed, 2 failed)."""
+
+    XML = """<node><interface name="org.freedesktop.portal.Print">
+      <method name="Print"><arg type="s" direction="in"/><arg type="s" direction="in"/>
+        <arg type="h" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
+    </interface></node>"""
+
+    def __init__(self):
+        import threading
+        from gi.repository import Gio, GLib
+        self.GLib = GLib
+        self.jobs = []
+        self.response = 0
+        self.daemon = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"],
+                                       stdout=subprocess.PIPE, text=True)
+        self.address = self.daemon.stdout.readline().strip()
+        flags = Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION
+        self.conn = Gio.DBusConnection.new_for_address_sync(self.address, flags, None, None)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)  # register_object's closure-less form
+            self.conn.register_object("/org/freedesktop/portal/desktop",
+                                      Gio.DBusNodeInfo.new_for_xml(self.XML).interfaces[0], self.call, None, None)
+        self.conn.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",
+                            GLib.Variant("(su)", ("org.freedesktop.portal.Desktop", 4)), None,
+                            Gio.DBusCallFlags.NONE, 3000, None)
+        self.loop = GLib.MainLoop()
+        threading.Thread(target=self.loop.run, daemon=True).start()
+
+    def call(self, conn, sender, _path, _interface, _method, params, invocation):
+        parent, title, index, options = params.unpack()
+        fd = invocation.get_message().get_unix_fd_list().get(index)
+        with os.fdopen(fd, "rb") as document:
+            data = document.read()
+        request = "/org/freedesktop/portal/desktop/request/%s/%s" % (
+            sender[1:].replace(".", "_"), options.get("handle_token", "t"))
+        invocation.return_value(self.GLib.Variant("(o)", (request,)))
+        self.jobs.append({"parent": parent, "title": title, "data": data, "options": options})
+        conn.emit_signal(sender, request, "org.freedesktop.portal.Request", "Response",
+                         self.GLib.Variant("(ua{sv})", (self.response, {})))
+
+    def close(self):
+        self.loop.quit()
+        self.conn.close_sync(None)
+        self.daemon.terminate()
+        self.daemon.wait(timeout=5)
+
+
+def print_helper(viewer_pid):
+    """The viewer's unsandboxed print helper process, if it is running."""
+    for entry in Path("/proc").iterdir():
+        try:
+            stat = (entry / "stat").read_text()
+        except (OSError, ValueError):
+            continue
+        fields = stat[stat.rindex(")") + 2:].split()
+        if "(rediwm-pdf-prnt)" in stat and int(fields[1]) == viewer_pid:
+            return int(entry.name)
+    return None
+
+
+def gone(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().split(") ")[1][0] == "Z"
+    except OSError:
+        return True
 
 
 def run(scale: int = 1):
@@ -131,6 +215,14 @@ def run(scale: int = 1):
                 key(1)
                 expect_title("(1/2)")
 
+                # Printing lives in a helper outside the sandbox. Without a
+                # session bus, Ctrl+P reports that and the viewer carries on.
+                helper = wait_for(lambda: print_helper(pdf_proc.pid), "print helper not running")
+                key(25, ctrl=True)
+                time.sleep(0.5)
+                assert pdf_proc.poll() is None and not gone(helper)
+                key(1)
+
                 # Take screenshot to verify rendering
                 shot_path = tmp / "screenshot.png"
                 ipc.screenshot(path=str(shot_path))
@@ -173,6 +265,62 @@ def run(scale: int = 1):
 
                 pdf_proc.wait(timeout=5)
                 assert pdf_proc.returncode == 0, f"rediwm-pdf exited with code {pdf_proc.returncode}"
+                wait_for(lambda: gone(helper), "print helper outlived the viewer")
+
+                # The Print button hands the opened file to the print portal.
+                portal = FakePrintPortal()
+                try:
+                    print_proc = start("rediwm-pdf", str(doc_path), WAYLAND_DISPLAY=display,
+                                       DBUS_SESSION_BUS_ADDRESS=portal.address)
+                    win = wait_for(viewer, "printing viewer did not map")
+                    ipc.focus_window(win["id"])
+                    expect_title("(1/2)")
+                    box = ipc.get_window_debug(win["id"])["client_box"]
+                    ipc.move_cursor(int(box["x"] + 612), int(box["y"] + 22))
+                    time.sleep(0.1)
+                    for pressed in (True, False):
+                        ipc.action("pointer_button", {"button": 272, "pressed": pressed})
+                    job = wait_for(lambda: portal.jobs and portal.jobs[0], "Print button did not reach the portal")
+                    assert job["data"] == doc_path.read_bytes(), "printed bytes differ from the document"
+                    assert job["title"] == doc_path.name and job["parent"] == "", job
+                    # Answered requests free the helper for the next one.
+                    key(25, ctrl=True)
+                    wait_for(lambda: len(portal.jobs) == 2, "Ctrl+P did not print again")
+                    assert portal.jobs[1]["data"] == job["data"]
+                    key(17, ctrl=True)
+                    wait_for(lambda: not viewer(), "printing viewer did not close")
+                    assert print_proc.wait(timeout=5) == 0
+                finally:
+                    portal.close()
+
+                # Tiles are clipped in raster pixels: at any scale each one
+                # shows its own part of the page, not a magnified corner.
+                tall = tmp / "tall.pdf"
+                generate_tall_pdf(tall)
+                tall_proc = start("rediwm-pdf", str(tall), WAYLAND_DISPLAY=display)
+                win = wait_for(viewer, "tall PDF viewer did not map")
+                ipc.focus_window(win["id"])
+                expect_title("(1/1)")
+                key(11)  # 0: fit width
+
+                tall_shot = tmp / "tall.png"
+
+                def halves():
+                    tall_shot.unlink(missing_ok=True)
+                    ipc.screenshot(path=str(tall_shot))
+                    box = ipc.get_window_debug(win["id"])["client_box"]
+                    with Image.open(tall_shot) as shot:
+                        top = shot.convert("RGB").crop(tuple(round(v * scale) for v in (
+                            box["x"] + 180, box["y"] + 64, box["x"] + box["width"], box["y"] + 160)))
+                    colors = top.getcolors(top.width * top.height) or []
+                    blue = sum(n for n, (r, g, b) in colors if b > 200 and r < 60 and g < 60)
+                    red = sum(n for n, (r, g, b) in colors if r > 200 and g < 60 and b < 60)
+                    return red > 0 and 0.8 < blue / red < 1.25
+
+                wait_for(halves, "fit width does not show the page's own halves")
+                key(17, ctrl=True)
+                wait_for(lambda: not viewer(), "tall PDF viewer did not close")
+                assert tall_proc.wait(timeout=5) == 0
 
                 # Files opens PDFs itself, without an installed MIME association.
                 documents = tmp / "documents"

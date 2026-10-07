@@ -236,12 +236,8 @@ pub const PowerMenu = struct {
             .{ .kind = .container, .direction = .row, .@"align" = .center, .justify = .end, .gap = 10, .height = .{ .fixed = 20 }, .children = &menu.header_children },
             .{ .kind = .container, .direction = .row, .gap = tile_gap, .height = .{ .fixed = tile_height }, .children = &menu.cards },
         };
-        // Keep the neutral panel tint, but use the glass alpha throughout
-        // the open state. Window chrome is nearly opaque and hides the blur.
-        var panel_color = t.window_bg;
-        panel_color[3] = t.glass[3];
         menu.root = .{
-            .kind = .{ .rect = .{ .color = panel_color, .radius = panel_radius, .border_width = 1, .border_color = t.border } },
+            .kind = .{ .rect = .{ .color = t.window_bg, .radius = panel_radius, .border_width = 1, .border_color = t.border } },
             .direction = .column,
             .@"align" = .stretch,
             .gap = 20,

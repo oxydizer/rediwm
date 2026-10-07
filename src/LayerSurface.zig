@@ -3,6 +3,7 @@ const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 const Server = @import("Server.zig");
+const Output = @import("Output.zig");
 const SceneData = @import("scene_data.zig").SceneData;
 const gpa = @import("main.zig").gpa;
 const Self = @This();
@@ -17,7 +18,7 @@ output_destroy: wl.Listener(*wlr.Output) = .init(outputDestroyed),
 output_commit: wl.Listener(*wlr.Output.event.Commit) = .init(outputCommitted),
 
 pub fn create(server: *Server, layer: *wlr.LayerSurfaceV1) !void {
-    const output = layer.output orelse if (server.getDefaultOutput()) |o| o.wlr_output else {
+    const output = layer.output orelse defaultOutput(server) orelse {
         layer.destroy();
         return;
     };
@@ -33,6 +34,21 @@ pub fn create(server: *Server, layer: *wlr.LayerSurfaceV1) !void {
     output.events.destroy.add(&self.output_destroy);
     output.events.commit.add(&self.output_commit);
 }
+
+fn defaultOutput(server: *Server) ?*wlr.Output {
+    if (server.getDefaultOutput()) |output| return output.wlr_output;
+    // Sleeping outputs still host layers. Closing a new layer just because
+    // every screen is dark makes clients such as notification daemons retry.
+    if (server.preferredPrimaryOutput()) |output| {
+        if (output.idle_blanked) return output.wlr_output;
+    }
+    var outputs = server.outputs.iterator(.forward);
+    while (outputs.next()) |output| {
+        if (output.isLogicallyEnabled() and output.idle_blanked) return output.wlr_output;
+    }
+    return null;
+}
+
 pub fn localPoint(self: *Self, x: f64, y: f64) @import("geometry.zig").Vec2 {
     return @import("scene_data.zig").toNodeLocal(&self.scene.tree.node, x, y);
 }
@@ -47,8 +63,12 @@ pub fn arrange(self: *Self) void {
     self.scene.tree.node.reparent(parent);
     var full: wlr.Box = undefined;
     self.server.output_layout.getBox(self.layer.output, &full);
+    const output = Output.fromWlr(self.layer.output.?);
+    if (output) |out| if (out.idle_blanked) {
+        full = out.cached_box;
+    };
     var usable = full;
-    if (@import("Output.zig").fromWlr(self.layer.output.?)) |output| usable = output.usableBox();
+    if (output) |out| usable = out.usableBox();
     self.scene.configure(&full, &usable);
 }
 fn committed(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {

@@ -386,9 +386,7 @@ pub fn focusForPress(input: *Input, hit: scene_data.Hit) void {
         .surface => |res| input.server.world.focusSurface(res.toplevel, res.surface),
         .layer => |res| res.owner.focus(),
         .xwayland_unmanaged => |res| if (res.owner.wantsKeyboard()) {
-            if (input.seat.getKeyboard()) |keyboard| {
-                input.seat.keyboardNotifyEnter(res.surface, keyboard.keycodes[0..keyboard.num_keycodes], &keyboard.modifiers);
-            }
+            @import("Keyboard.zig").enter(input.server, res.surface);
         },
         else => {},
     }
@@ -2105,11 +2103,8 @@ fn processClientButton(
 
     if (hit == .layer) hit.layer.owner.focus();
     if (hit == .xwayland_unmanaged and hit.xwayland_unmanaged.owner.wantsKeyboard()) {
-        const seat = input.seat;
         const surface = hit.xwayland_unmanaged.surface;
-        if (seat.getKeyboard()) |keyboard| {
-            seat.keyboardNotifyEnter(surface, keyboard.keycodes[0..keyboard.num_keycodes], &keyboard.modifiers);
-        }
+        @import("Keyboard.zig").enter(input.server, surface);
     }
     // Any keyboard-focus change belonging to this click must be requested
     // before pointerNotifyButton, not after: a client's own request_start_drag

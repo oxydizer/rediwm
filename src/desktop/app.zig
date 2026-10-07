@@ -662,7 +662,7 @@ pub const App = struct {
     fn menuLabels(self: *App) []const []const u8 {
         switch (self.menuBuiltin()) {
             .home => return &.{"Open"},
-            .trash => return &.{ "Open", "Empty Trash" },
+            .trash => return &.{ "Open", "Empty Trash…" },
             .none => {},
         }
         const icon_labels = [_][]const u8{ "Open", "Open With…", "Cut", "Copy", "Rename", "Move to Trash", "Properties", "Allow Launching" };
@@ -689,8 +689,11 @@ pub const App = struct {
     fn menuAction(self: *App, row: usize) void {
         const builtin = self.menuBuiltin();
         if (builtin != .none) {
-            if (row == 0) self.openSelected() else if (builtin == .trash and row == 1)
-                self.worker.enqueue(.{ .kind = .empty_trash, .path = "" });
+            if (row == 0) self.openSelected() else if (builtin == .trash and row == 1) {
+                self.deletion.deinit();
+                self.deletion = .{ .permanent = true, .empty_trash = true };
+                self.edit = .trash;
+            }
             return;
         }
         if (self.menu_icon != null) {
@@ -769,6 +772,7 @@ pub const App = struct {
                 self.edit = .none;
             },
             .toggle => {
+                if (self.deletion.empty_trash) return;
                 self.deletion.permanent = !self.deletion.permanent;
                 self.deletion.focus = .toggle;
             },
@@ -794,8 +798,12 @@ pub const App = struct {
         }
         defer self.edit = .none;
         if (self.edit == .trash) {
-            for (self.deletion.paths.items) |path| {
-                self.worker.enqueue(.{ .kind = if (self.deletion.permanent) .delete else .trash, .path = path });
+            if (self.deletion.empty_trash) {
+                self.worker.enqueue(.{ .kind = .empty_trash, .path = "" });
+            } else {
+                for (self.deletion.paths.items) |path| {
+                    self.worker.enqueue(.{ .kind = if (self.deletion.permanent) .delete else .trash, .path = path });
+                }
             }
             self.deletion.deinit();
             return;
@@ -1507,9 +1515,18 @@ test "desktop motion keeps menu highlights and moving selections live" {
     app.menu_icon = 1;
     try std.testing.expectEqual(@as(usize, 2), app.menuLabels().len);
     try std.testing.expectEqualStrings("Open", app.menuLabels()[0]);
-    try std.testing.expectEqualStrings("Empty Trash", app.menuLabels()[1]);
+    try std.testing.expectEqualStrings("Empty Trash…", app.menuLabels()[1]);
     try std.testing.expectEqual(@import("ui").layout.IconId.trash, app.menuIcon(1));
     try std.testing.expectEqual(@as(?[]const u8, null), app.menuHint(1));
+    // Opening and cancelling must not enqueue work (the worker is undefined).
+    app.menuAction(1);
+    try std.testing.expect(app.edit == .trash);
+    try std.testing.expect(app.deletion.empty_trash and app.deletion.permanent);
+    app.deleteAction(.toggle);
+    try std.testing.expect(app.deletion.permanent);
+    app.deleteAction(.cancel);
+    try std.testing.expect(app.edit == .none);
+    try std.testing.expect(!app.deletion.empty_trash);
     app.icons.items = &.{};
     app.menu_icon = null;
     app.menu = false;
