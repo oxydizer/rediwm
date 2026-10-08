@@ -13,7 +13,11 @@ that draws its whole shell itself: taskbar, start menu, settings, lock and login
 screens, notifications and OSDs, all in one process, benchmarked against
 [labwc](https://labwc.github.io/) to stay as lean (192mb idle ram usage, <1% CPU usage)
 
-https://github.com/user-attachments/assets/60bc1190-694c-4fb7-b2bc-d90e5e9faa90
+
+
+https://github.com/user-attachments/assets/34c20760-f1ec-4776-a00b-063e3c8a5ffb
+
+
 
 ## Features
 
