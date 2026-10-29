@@ -130,6 +130,8 @@ pub const InputConfig = struct {
     // A wheel click against the run this soon after its last click is held
     // as a likely encoder bounce (`input/wheel_debounce.zig`). 0 disables.
     wheel_debounce_ms: u32 = 60,
+    // Swap the primary and secondary buttons (libinput left-handed mode).
+    left_handed: bool = false,
     tap_to_click: bool = true,
     tap_drag: bool = true,
     disable_while_typing: bool = true,

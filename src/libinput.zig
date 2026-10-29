@@ -45,6 +45,18 @@ pub fn setNaturalScroll(device: *wlr.InputDevice, on: bool) void {
     _ = c.libinput_device_config_scroll_set_natural_scroll_enabled(dev, if (on) 1 else 0);
 }
 
+pub fn getLeftHanded(device: *wlr.InputDevice) ?bool {
+    const dev = handle(device) orelse return null;
+    if (c.libinput_device_config_left_handed_is_available(dev) == 0) return null;
+    return c.libinput_device_config_left_handed_get(dev) != 0;
+}
+
+pub fn setLeftHanded(device: *wlr.InputDevice, on: bool) void {
+    const dev = handle(device) orelse return;
+    if (c.libinput_device_config_left_handed_is_available(dev) == 0) return;
+    _ = c.libinput_device_config_left_handed_set(dev, if (on) 1 else 0);
+}
+
 pub fn getTapToClick(device: *wlr.InputDevice) ?bool {
     const dev = handle(device) orelse return null;
     if (c.libinput_device_config_tap_get_finger_count(dev) == 0) return null;

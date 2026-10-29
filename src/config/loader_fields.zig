@@ -70,6 +70,7 @@ pub const input_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(InputConfig)
     .smooth_scroll = .boolean,
     .smooth_scroll_exclude = .string_list,
     .wheel_debounce_ms = .{ .uint = .{ .min = 0, .max = 200 } },
+    .left_handed = .boolean,
     .tap_to_click = .boolean,
     .tap_drag = .boolean,
     .disable_while_typing = .boolean,

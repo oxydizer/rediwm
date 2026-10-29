@@ -301,6 +301,7 @@ pub fn applyPointerDevice(device: *wlr.InputDevice, cfg: InputConfig) void {
         libinput.setDisableWhileTyping(device, cfg.disable_while_typing);
     }
     libinput.setNaturalScroll(device, cfg.natural_scroll);
+    libinput.setLeftHanded(device, cfg.left_handed);
     libinput.setTapToClick(device, cfg.tap_to_click);
     libinput.setTapDrag(device, cfg.tap_drag);
 }

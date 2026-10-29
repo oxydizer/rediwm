@@ -24,12 +24,45 @@ const pan_speed_values = [4]f32{ 1, 2, 3, 4 };
 const pan_speed_labels = [_][]const u8{ "1x", "2x", "3x", "4x" };
 const pan_speed_segmented_width: f32 = 180;
 
+const KeyboardLayout = struct { label: []const u8, layout: []const u8, variant: []const u8 = "" };
+
+// Layout names are shown in their own language, so they are not translated.
+const keyboard_layouts = [_]KeyboardLayout{
+    .{ .label = "English (US, QWERTY)", .layout = "us" },
+    .{ .label = "Français (AZERTY)", .layout = "fr" },
+    .{ .label = "Français (BÉPO)", .layout = "fr", .variant = "bepo" },
+    .{ .label = "Belge (AZERTY)", .layout = "be" },
+    .{ .label = "Suisse romand (QWERTZ)", .layout = "ch", .variant = "fr" },
+    .{ .label = "Canadien multilingue", .layout = "ca", .variant = "multix" },
+    .{ .label = "Deutsch (QWERTZ)", .layout = "de" },
+    .{ .label = "Español", .layout = "es" },
+    .{ .label = "Italiano", .layout = "it" },
+    .{ .label = "Português", .layout = "pt" },
+    .{ .label = "English (UK)", .layout = "gb" },
+    .{ .label = "English (Dvorak)", .layout = "us", .variant = "dvorak" },
+    .{ .label = "Русский", .layout = "ru" },
+};
+
+const keyboard_layout_labels = blk: {
+    var out: [keyboard_layouts.len][]const u8 = undefined;
+    for (keyboard_layouts, 0..) |l, i| out[i] = l.label;
+    const final = out;
+    break :blk final;
+};
+
+fn keyboardLayoutIndex(cfg: anytype) ?usize {
+    for (keyboard_layouts, 0..) |l, i| {
+        if (std.mem.eql(u8, l.layout, cfg.xkb_layout) and std.mem.eql(u8, l.variant, cfg.xkb_variant)) return i;
+    }
+    return null;
+}
+
 const PointerKind = enum { mouse, touchpad };
 
 pub const Section = struct {
     root: Widget = undefined,
     top_children: [2]Widget = undefined,
-    row_storage: [8]Widget = undefined,
+    row_storage: [10]Widget = undefined,
     row_count: usize = 0,
     mouse_speed_group_children: [2]Widget = undefined,
     mouse_speed_header_children: [2]Widget = undefined,
@@ -40,6 +73,8 @@ pub const Section = struct {
     touchpad_speed_value_buf: [16]u8 = undefined,
     natural_row_children: [2]Widget = undefined,
     tap_row_children: [2]Widget = undefined,
+    left_row_children: [2]Widget = undefined,
+    layout_row_children: [2]Widget = undefined,
     pan_speed_row_children: [2]Widget = undefined,
     delay_row_children: [2]Widget = undefined,
     rate_row_children: [2]Widget = undefined,
@@ -171,6 +206,7 @@ pub fn build(out: *Section, input: *Input) void {
     const touchpad_disable_while_typing = pointerDisableWhileTypingFor(input, .touchpad);
     const natural = firstPointerValue(input, libinput.getNaturalScroll, input.server.config.input.natural_scroll);
     const tap = firstPointerValue(input, libinput.getTapToClick, input.server.config.input.tap_to_click);
+    const left = firstPointerValue(input, libinput.getLeftHanded, input.server.config.input.left_handed);
     const repeat = firstKeyboardRepeat(input);
 
     var row_count: usize = 0;
@@ -201,6 +237,10 @@ pub fn build(out: *Section, input: *Input) void {
         layout.appendRow(&out.row_storage, &row_count, touchpad_dwt_row);
     }
 
+    out.left_row_children = .{ fgLabel(i18n.tr("Left-handed mouse")), .{ .name = "left_handed", .kind = .{ .toggle = .{ .on = left, .owner = out, .on_change = &onLeftHandedChanged } } } };
+    const left_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.left_row_children };
+    layout.appendRow(&out.row_storage, &row_count, left_row);
+
     out.natural_row_children = .{ fgLabel(i18n.tr("Natural scroll")), .{ .name = "natural_scroll", .kind = .{ .toggle = .{ .on = natural, .owner = out, .on_change = &onNaturalScrollChanged } } } };
     const natural_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.natural_row_children };
     layout.appendRow(&out.row_storage, &row_count, natural_row);
@@ -219,6 +259,17 @@ pub fn build(out: *Section, input: *Input) void {
     };
     const pan_speed_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.pan_speed_row_children };
     layout.appendRow(&out.row_storage, &row_count, pan_speed_row);
+
+    out.layout_row_children = .{
+        fgLabel(i18n.tr("Keyboard layout")),
+        .{
+            .name = "keyboard_layout",
+            .kind = .{ .select = .{ .labels = &keyboard_layout_labels, .selected = keyboardLayoutIndex(input.server.config.input), .placeholder = i18n.tr("Custom (config file)"), .owner = out, .on_change = &onKeyboardLayoutPicked } },
+            .width = .{ .fixed = 220 },
+        },
+    };
+    const layout_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.layout_row_children };
+    layout.appendRow(&out.row_storage, &row_count, layout_row);
 
     out.delay_row_children = .{
         fgLabel(i18n.tr("Repeat delay")),
@@ -272,6 +323,31 @@ fn onNaturalScrollChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     var it = s.input.pointers.iterator(.forward);
     while (it.next()) |pointer| libinput.setNaturalScroll(pointer.device, on);
     persist(s, "natural_scroll", on);
+}
+
+fn onLeftHandedChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const s: *Section = @ptrCast(@alignCast(owner orelse return));
+    var it = s.input.pointers.iterator(.forward);
+    while (it.next()) |pointer| libinput.setLeftHanded(pointer.device, on);
+    persist(s, "left_handed", on);
+}
+
+// Only the file is written here: the reload diffs it against the live config
+// and recompiles the keymap on every keyboard (`config_runtime/apply.zig`).
+fn onKeyboardLayoutPicked(owner: ?*anyopaque, _: usize, index: usize) void {
+    const s: *Section = @ptrCast(@alignCast(owner orelse return));
+    if (index >= keyboard_layouts.len) return;
+    const server = s.input.server;
+    const choice = keyboard_layouts[index];
+    const save = @import("config").setting_save;
+    save.saveInput(@import("../../main.zig").gpa, server.io, server.config.path, "xkb_layout", choice.layout) catch |err| {
+        std.log.warn("could not save keyboard layout: {}", .{err});
+        return;
+    };
+    save.saveInput(@import("../../main.zig").gpa, server.io, server.config.path, "xkb_variant", choice.variant) catch |err| {
+        std.log.warn("could not save keyboard variant: {}", .{err});
+    };
+    @import("../../config_runtime/watcher.zig").reloadConfig(server);
 }
 
 fn onTapToClickChanged(owner: ?*anyopaque, _: usize, on: bool) void {

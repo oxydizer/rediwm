@@ -52,7 +52,7 @@ test "config field parsing preserves ranges and derived zoom state" {
     inline for (.{ "-1.01", "1.01", "nan", "inf" }) |v| {
         try std.testing.expectError(error.InvalidValue, applyInputKey(&input, a, "pointer_speed_touchpad", v));
     }
-    inline for (.{ "natural_scroll", "invert_scroll", "tap_to_click", "tap_drag", "disable_while_typing" }) |key| {
+    inline for (.{ "natural_scroll", "invert_scroll", "left_handed", "tap_to_click", "tap_drag", "disable_while_typing" }) |key| {
         try applyInputKey(&input, a, key, "false");
         try std.testing.expect(!@field(input, key));
         try applyInputKey(&input, a, key, "true");

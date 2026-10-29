@@ -89,12 +89,13 @@ pub const source =
     \\#                          # which smooth wheel scrolling themselves
     \\wheel_debounce_ms = 60        # 0-200; ignore a wheel click against the run this soon after
     \\                              # the last one (worn wheels bounce); 0 = off
+    \\left_handed      = false     # true swaps left/right mouse buttons (touchpad: tap and click too)
     \\tap_to_click      = true
     \\tap_drag          = true
     \\disable_while_typing = true
     \\disable_while_typing_touchpad = true
     \\# Empty XKB names use XKB_DEFAULT_* or system defaults.
-    \\xkb_layout = ""              # e.g. "us,ru"
+    \\xkb_layout = ""              # e.g. "fr" for AZERTY, "us,ru"
     \\xkb_variant = ""
     \\xkb_options = ""             # e.g. "grp:caps_toggle"
     \\xkb_model = ""
