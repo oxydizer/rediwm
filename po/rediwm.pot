@@ -543,10 +543,6 @@ msgstr ""
 msgid "Automatic power actions are inactive in this session."
 msgstr ""
 
-#: src/control_center/search_index.zig
-msgid "Automatic power management"
-msgstr ""
-
 #: src/control_center/sections/desktop.zig
 msgid "Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating."
 msgstr ""
@@ -7213,10 +7209,6 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "enable apps launcher"
-msgstr ""
-
-#: src/control_center/search_index.zig
-msgid "enable disable sleep"
 msgstr ""
 
 #: src/control_center/search_index.zig

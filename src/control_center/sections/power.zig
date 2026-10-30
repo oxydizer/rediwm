@@ -7,7 +7,7 @@ const W = ui.layout.Widget;
 const gpa = @import("../../main.zig").gpa;
 const config = @import("config");
 const power = config.power;
-const Field = enum { source, mode, brightness, blank, sleep, lid, docked, lock, warning, saver, critical, critical_action, dim, dim_brightness, keyboard, charge, automatic };
+const Field = enum { source, mode, brightness, blank, sleep, lid, docked, lock, warning, saver, critical, critical_action, dim, dim_brightness, keyboard, charge };
 const times = [_]u32{ 0, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200 };
 
 pub const Section = struct {
@@ -158,7 +158,6 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     if (cc.server.power_profiles) |manager| if (manager.active) |mode| {
         try rows.append(a, panel.label(try i18n.allocPrint(a, i18n.tr("Current power mode: {mode}"), .{ .mode = mode.label() }), 13, true));
     };
-    try rows.append(a, try row(cc, a, i18n.tr("Automatic power management"), .{ .name = "power_enabled", .kind = .{ .toggle = .{ .on = cc.server.config.power.enabled orelse cc.server.backend.isDrm(), .owner = cc, .id = @backingInt(Field.automatic), .on_change = toggled } } }));
     if (!cc.server.power_policy.enabled()) try rows.append(a, panel.label(i18n.tr("Automatic power actions are inactive in this session."), 13, true));
     if (s.message.len > 0) try rows.append(a, panel.label(s.message, 13, true));
     if (cc.server.power_policy.message.len > 0) try rows.append(a, panel.label(cc.server.power_policy.message, 13, true));
@@ -201,7 +200,6 @@ fn save(cc: *panel.ControlCenter, field: Field, selected: usize) !void {
     const value = if (values.len > 0) values[selected] else 0;
     switch (field) {
         .source => unreachable,
-        .automatic => try persist(cc, null, "enabled", selected != 0),
         .charge => try persist(cc, null, "charge_limit", value),
         .keyboard => try persist(cc, s.source, "keyboard_brightness", if (value == 101) @as(i32, -1) else @as(i32, @intCast(value))),
         .mode => try persist(cc, s.source, "mode", @as(power.Mode, @fromBackingInt(@intCast(selected)))),

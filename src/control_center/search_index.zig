@@ -22,7 +22,6 @@ const source_entries = [_]SourceEntry{
     .{ .page = .power, .title = i18n.msg("Power & Battery"), .target = "", .keywords = i18n.msg("sleep battery charging energy") },
     .{ .page = .power, .title = i18n.msg("Keyboard backlight"), .target = "power_keyboard", .keywords = i18n.msg("brightness plugged battery") },
     .{ .page = .power, .title = i18n.msg("Charging limit"), .target = "power_charge_limit", .keywords = i18n.msg("battery health threshold") },
-    .{ .page = .power, .title = i18n.msg("Automatic power management"), .target = "power_enabled", .keywords = i18n.msg("enable disable sleep") },
     .{ .page = .power, .title = i18n.msg("Power mode"), .target = "power_mode", .keywords = i18n.msg("performance balanced saver plugged unplugged") },
     .{ .page = .power, .title = i18n.msg("Automatic brightness"), .target = "power_brightness", .keywords = i18n.msg("backlight battery plugged") },
     .{ .page = .power, .title = i18n.msg("Turn off screen after"), .target = "power_blank", .keywords = i18n.msg("idle timeout display") },
