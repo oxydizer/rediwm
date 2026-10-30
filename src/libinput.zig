@@ -111,7 +111,7 @@ pub fn getIdentity(device: *wlr.InputDevice) ?Identity {
     const udev = c.libinput_device_get_udev_device(dev) orelse return null;
     defer _ = c.udev_device_unref(udev);
     return identity.build(.{
-        .bus = c.libinput_device_get_id_bustype(dev),
+        .bus = busType(dev, udev) orelse return null,
         .vendor = c.libinput_device_get_id_vendor(dev),
         .product = c.libinput_device_get_id_product(dev),
         .name = std.mem.span(c.libinput_device_get_name(dev)),
@@ -120,6 +120,15 @@ pub fn getIdentity(device: *wlr.InputDevice) ?Identity {
         .interface = property(udev, "ID_USB_INTERFACE_NUM") orelse ancestorAttribute(udev, "bInterfaceNumber"),
         .path = property(udev, "ID_PATH"),
     });
+}
+
+/// libinput_device_get_id_bustype() is new in libinput 1.26 (Ubuntu 24.04 has
+/// 1.25). Older headers read the same value, the kernel's input_id.bustype, from
+/// the input device's sysfs `id/bustype` (hex), which is what udev rules match.
+fn busType(dev: *c.libinput_device, udev: *c.udev_device) ?u32 {
+    if (@hasDecl(c, "libinput_device_get_id_bustype")) return c.libinput_device_get_id_bustype(dev);
+    const text = ancestorAttribute(udev, "id/bustype") orelse return null;
+    return std.fmt.parseUnsigned(u32, std.mem.trim(u8, text, " \n"), 16) catch null;
 }
 
 fn property(device: *c.udev_device, key: [*:0]const u8) ?[]const u8 {

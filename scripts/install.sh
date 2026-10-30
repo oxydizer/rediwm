@@ -259,7 +259,7 @@ case "$FAMILY" in
             libxcb-res0-dev libxcb-xfixes0-dev libxcb-dri3-dev libxcb-present-dev \
             libxcb-render-util0-dev libxcb-shm0-dev libxcb-xinput-dev xwayland \
             libfreetype-dev libharfbuzz-dev libfontconfig-dev librsvg2-dev libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev \
-            libglib2.0-dev libarchive-dev libwebp-dev libpng-dev libjpeg-dev libpulse-dev libpipewire-0.3-dev libpam0g-dev libaudit-dev libcups2-dev libpoppler-glib-dev libseccomp-dev libreadline-dev libtorrent-rasterbar-dev libjson-glib-dev \
+            libglib2.0-dev libarchive-dev libwebp-dev libpng-dev libjpeg-dev libpulse-dev libpipewire-0.3-dev libpam0g-dev libaudit-dev libcups2-dev libgnutls28-dev libavahi-client-dev libpoppler-glib-dev libseccomp-dev libreadline-dev libtorrent-rasterbar-dev libjson-glib-dev \
             xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk"
         ;;
     fedora)
