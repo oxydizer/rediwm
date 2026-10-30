@@ -47,6 +47,11 @@ chrome, capture, or retained panel painting. General rules remain in
   host `grim`. Brief vanishing after a startup scale mismatch is not a bug.
 * **GLES can NULL `wlr_scene_buffer.buffer`** after upload (the texture
   stays): persist raster sizes.
+* **Owned buffer destructors call `base.finish()` before freeing or pooling.**
+  wlroots 0.20 delegates the destroy event and addon cleanup to the producer.
+  Skipping it leaves consumers attached to freed storage (or the old incarnation
+  of a pooled buffer). This applies to chrome, images, taskbar, panels and desktop
+  tiles; `zig build test-lifecycle` checks finalization after the last lock.
 * **Glass is drawn by the output pass** (stage 5, `docs/plans/scene-graph-stage5.md`).
   `glass.c` only registers effects: a bufferless node just below its target, to
   which resolve gives the target's box. When an effect re-blurs, `scene_output_draw.c`

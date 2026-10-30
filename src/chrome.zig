@@ -401,6 +401,7 @@ pub const ChromeBuffer = struct {
     }
 
     fn destroy(base: *wlr.Buffer) callconv(.c) void {
+        base.finish();
         const frame: *ChromeBuffer = @fieldParentPtr("base", base);
         gpa.free(frame.pixels);
         gpa.destroy(frame);
