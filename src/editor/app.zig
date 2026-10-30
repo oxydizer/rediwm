@@ -23,10 +23,15 @@ const app_paint = @import("app_paint.zig");
 const app_search = @import("app_search.zig");
 const app_edit = @import("app_edit.zig");
 const app_controls = @import("app_controls.zig");
+const app_drafts = @import("app_drafts.zig");
+const drafts = @import("drafts.zig");
 const a = std.heap.c_allocator;
 pub const top: f64 = 40;
 pub const status_h: f64 = 26;
-pub const tab_w: f64 = 176;
+/// A tab is this wide while there is room; tabs share the strip down to
+/// `tab_min`, and beyond that the strip scrolls.
+pub const tab_max: f64 = 176;
+pub const tab_min: f64 = 112;
 const Status = struct {
     revision: usize = std.math.maxInt(usize),
     cursor: usize = 0,
@@ -48,6 +53,10 @@ pub const Tab = struct {
     measure: view.Measure = .{},
     /// The status bar's line and column, recomputed only when the cursor or text moves.
     status: Status = .{},
+    /// The draft file this tab's unsaved text lives in, and the revision of the
+    /// text it holds; null while the tab has none (see `drafts.zig`).
+    draft_name: ?u64 = null,
+    draft_rev: ?usize = null,
     pub fn deinit(t: *Tab) void {
         t.doc.deinit();
         if (t.path) |path| a.free(path);
@@ -61,7 +70,9 @@ pub const App = struct {
     tabs: std.ArrayList(*Tab) = .empty,
     selected: usize = 0,
     next_id: usize = 1,
-    first_tab: usize = 0,
+    /// How far the tab strip is scrolled, in pixels.
+    tab_scroll: f64 = 0,
+    strip_seen: app_controls.Strip = .{},
     w: i32 = 900,
     h: i32 = 620,
     scale: i32 = 1,
@@ -113,6 +124,8 @@ pub const App = struct {
     preedit: std.ArrayList(u8) = .empty,
     layouts: view.Layouts = .{},
     rows: std.ArrayList(view.Row) = .empty,
+    /// Where unsaved text is kept between sessions; null when it cannot be.
+    keeper: ?*drafts.Keeper = null,
 
     pub fn init(io: std.Io) !App {
         var self: App = .{ .io = io };
@@ -120,6 +133,7 @@ pub const App = struct {
         return self;
     }
     pub fn deinit(self: *App) void {
+        self.deinitDrafts();
         if (self.operation) |job| job.deinit();
         for (self.tabs.items) |t| t.deinit();
         self.tabs.deinit(a);
@@ -172,9 +186,7 @@ pub const App = struct {
             self.title[value.len] = 0;
             self.title_changed = true;
         }
-        const visible: usize = @intFromFloat(@max(1, @floor((self.tabRight() - 2) / tab_w)));
-        if (self.selected < self.first_tab) self.first_tab = self.selected;
-        if (self.selected >= self.first_tab + visible) self.first_tab = self.selected - visible + 1;
+        self.revealTab();
     }
 
     pub const CaretState = app_paint.CaretState;
@@ -191,6 +203,12 @@ pub const App = struct {
     pub const paintMenu = app_paint.paintMenu;
     pub const paintButton = app_paint.paintButton;
     pub const paintIcon = app_controls.paintIcon;
+    pub const tabWidth = app_controls.tabWidth;
+    pub const tabX = app_controls.tabX;
+    pub const tabAt = app_controls.tabAt;
+    pub const tabScrollMax = app_controls.tabScrollMax;
+    pub const scrollTabs = app_controls.scrollTabs;
+    pub const revealTab = app_controls.revealTab;
     pub const tabCloseBox = app_controls.tabCloseBox;
     pub const newButtonBox = app_controls.newButtonBox;
     pub const menuButtonBox = app_controls.menuButtonBox;
@@ -213,6 +231,14 @@ pub const App = struct {
     pub const closeSelected = app_files.closeSelected;
     pub const finishClose = app_files.finishClose;
     pub const act = app_files.act;
+
+    pub const openDrafts = app_drafts.openDrafts;
+    pub const stepDrafts = app_drafts.stepDrafts;
+    pub const draftTimeout = app_drafts.draftTimeout;
+    pub const draftWake = app_drafts.draftWake;
+    pub const drainDrafts = app_drafts.drainDrafts;
+    pub const signaled = app_drafts.signaled;
+    pub const deinitDrafts = app_drafts.deinitDrafts;
 
     pub const resize = app_view.resize;
     pub const viewTop = app_view.viewTop;

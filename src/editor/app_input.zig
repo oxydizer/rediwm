@@ -12,7 +12,6 @@ const app_mod = @import("app.zig");
 const App = app_mod.App;
 const top = app_mod.top;
 const status_h = app_mod.status_h;
-const tab_w = app_mod.tab_w;
 const labels = app_mod.labels;
 
 /// The byte offset nearest a point given relative to the text origin.
@@ -89,12 +88,10 @@ pub fn handleButton(self: *App, code: u32, pressed: bool) void {
             self.act(.new);
             return;
         }
-        if (self.px < 0 or self.px >= self.tabRight()) return;
-        const i = self.first_tab + @as(usize, @intFromFloat(@max(0, self.px) / tab_w));
-        if (i < self.tabs.items.len) {
+        if (self.tabAt(self.px)) |i| {
             self.selected = i;
             self.changed();
-            if (self.tabCloseBox(i - self.first_tab).contains(self.px, self.py)) self.closeSelected();
+            if (self.tabCloseBox(i).contains(self.px, self.py)) self.closeSelected();
         }
     } else if (self.find_open and self.py < self.viewTop()) {
         if (self.searchHit(self.px, self.py)) |control| self.searchActivate(control);

@@ -19,10 +19,10 @@ const app_mod = @import("app.zig");
 const App = app_mod.App;
 const top = app_mod.top;
 const status_h = app_mod.status_h;
-const tab_w = app_mod.tab_w;
 const labels = app_mod.labels;
 const Tab = app_mod.Tab;
 const fill = app_mod.fill;
+const drawEllipsis = @import("../files/app_draw.zig").drawEllipsis;
 
 pub const CaretState = struct {
     active: bool,
@@ -164,25 +164,29 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     const t = theme.global;
     fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), t.app_bg);
     fill(cr, 0, 0, @floatFromInt(self.w), 38, t.app_bar);
-    var i = self.first_tab;
-    while (i < self.tabs.items.len) : (i += 1) {
-        const x = @as(f64, @floatFromInt(i - self.first_tab)) * tab_w;
-        if (x + tab_w > self.tabRight()) break;
-        const tab = self.tabs.items[i];
+    c.cairo_save(cr);
+    c.cairo_rectangle(cr, 0, 0, self.tabRight(), 38);
+    c.cairo_clip(cr);
+    const width = self.tabWidth();
+    for (self.tabs.items, 0..) |tab, i| {
+        const x = self.tabX(i);
+        if (x + width <= 0 or x >= self.tabRight()) continue;
         if (i == self.selected) {
-            fill(cr, x, 0, tab_w, 38, t.app_bg);
-            fill(cr, x + 8, 35, tab_w - 16, 2, theme.shellPalette().accent);
-        }
-        var buf: [512]u8 = undefined;
-        const label = std.fmt.bufPrint(&buf, "{s}{s}", .{ tab.name(), if (tab.doc.modified()) " •" else "" }) catch tr("Text file");
-        c.cairo_save(cr);
-        c.cairo_rectangle(cr, x + 12, 2, tab_w - 52, 32);
-        c.cairo_clip(cr);
+            fill(cr, x, 0, width, 38, t.app_bg);
+            fill(cr, x + 8, 35, width - 16, 2, theme.shellPalette().accent);
+        } else if (i + 1 != self.selected and i + 1 < self.tabs.items.len) fill(cr, x + width - 1, 10, 1, 18, t.app_divider);
+        // The name gives way to the close button; the unsaved mark never does.
+        const name = if (std.unicode.utf8ValidateSlice(tab.name())) tab.name() else tr("Text file");
+        const mark: f64 = if (tab.doc.modified()) 14 else 0;
+        const room = width - 48 - mark;
         ui.setSource(cr, t.window_fg);
-        ui.drawText(cr, label, x + 12, 24, ui.textSize(), false);
-        c.cairo_restore(cr);
-        self.paintIcon(cr, self.tabCloseBox(i - self.first_tab), .close, tr("Close tab"), false);
+        drawEllipsis(cr, name, x + 12, 24, room, ui.textSize(), false);
+        if (mark > 0) {
+            ui.drawText(cr, "•", x + 12 + @min(ui.measureText(cr, name, ui.textSize(), false), room) + 5, 24, ui.textSize(), false);
+        }
+        self.paintIcon(cr, self.tabCloseBox(i), .close, tr("Close tab"), false);
     }
+    c.cairo_restore(cr);
     self.paintIcon(cr, self.newButtonBox(), .plus, tr("New tab"), false);
     if (!self.has_titlebar) self.paintIcon(cr, self.menuButtonBox(), .more, tr("Menu"), self.menu_open);
     if (self.find_open) self.paintSearch(cr);

@@ -193,6 +193,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     const display = try wl.Display.connect(null);
     defer display.disconnect();
     var self = Client{ .display = display, .app = try app_mod.App.init(init.io) };
+    self.app.openDrafts(init.minimal.environ);
     for (paths) |path| self.app.open(path);
     self.ime = .{ .app = &self.app };
     defer self.ime.deinit();
@@ -272,6 +273,9 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     defer a.free(pending_token);
     while (self.running) {
         self.app.sync();
+        self.app.stepDrafts(key_repeat.nowMs());
+        // The session is ending: leave without asking; `deinit` writes the drafts.
+        if (self.app.signaled()) self.app.closed = true;
         if (self.app.closed) {
             self.close();
             break;
@@ -320,10 +324,15 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         fds[1] = .{ .fd = if (self.app.operation) |job| job.fd else -1, .events = c.POLLIN, .revents = 0 };
         fds[2] = .{ .fd = instance.fd, .events = c.POLLIN, .revents = 0 };
-        const fd_count = 3 + self.clipboard.addPoll(fds[3..]);
+        fds[3] = .{ .fd = self.app.draftWake(), .events = c.POLLIN, .revents = 0 };
+        const fd_count = 4 + self.clipboard.addPoll(fds[4..]);
         const poll_now = key_repeat.nowMs();
         var timeout: c_int = if (self.key_repeat.timeoutMs(poll_now)) |wait| @intCast(@min(wait, 60_000)) else -1;
         if (self.app.barTimeout(poll_now)) |wait| timeout = if (timeout < 0) @intCast(wait) else @min(timeout, @as(c_int, @intCast(wait)));
+        if (self.app.draftTimeout(poll_now)) |wait| {
+            const ms: c_int = @intCast(@min(wait, 60_000));
+            timeout = if (timeout < 0) ms else @min(timeout, ms);
+        }
         const result = c.poll(&fds, fd_count, self.app.caret.timeout(poll_now, self.clipboard.timeout(timeout)));
         if (result > 0 and (fds[0].revents & c.POLLIN != 0)) {
             if (display.readEvents() != .SUCCESS) return error.DisplayFailed;
@@ -332,6 +341,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
         }
         if ((fds[0].revents & (c.POLLERR | c.POLLHUP)) != 0) return error.DisplayFailed;
         if (display.dispatchPending() != .SUCCESS) return error.DisplayFailed;
+        if (fds[3].revents & c.POLLIN != 0) self.app.drainDrafts();
         if (fds[2].revents & c.POLLIN != 0) {
             var request_buf: [16384]u8 = undefined;
             if (instance.receive(&request_buf)) |bytes| {

@@ -92,7 +92,7 @@ pub fn barTimeout(self: *const App, now: i64) ?u32 {
 pub fn handleScroll(self: *App, amount: f64) void {
     if (self.close_tab != null or self.menu_open) return;
     if (self.py >= 0 and self.py < top) {
-        if (amount > 0) self.first_tab = @min(self.tabs.items.len - 1, self.first_tab + 1) else self.first_tab -|= 1;
+        self.scrollTabs(amount * 3);
     } else if (self.shift and !self.wrap) {
         self.current().scroll_x = @max(0, self.current().scroll_x + amount * 3);
     } else {
