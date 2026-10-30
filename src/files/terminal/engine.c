@@ -329,6 +329,26 @@ void ft_io(FT *t, bool read_pty, bool write_pty, bool channel, bool exited) {
 }
 bool ft_changed(FT *t) { bool changed=t->changed; t->changed=false; return changed; }
 bool ft_running(const FT *t) { return t->pid>0 && !t->exited; }
+/* Whether closing would end work: a foreground job on the PTY, or any other
+ * process of the session (background jobs, nested shells, ssh). An idle shell
+ * at its prompt is not work. Read from the kernel at the moment of asking, so
+ * it cannot be stale, and anything that cannot be established counts as
+ * active. Runs only when the window is asked to close. */
+bool ft_active(const FT *t) {
+    if (!ft_running(t)) return false;
+    if (t->master<0 || tcgetpgrp(t->master)!=t->pid || getsid(t->pid)!=t->pid) return true;
+    DIR *proc=opendir("/proc");
+    if (!proc) return true;
+    bool active=false;
+    struct dirent *entry;
+    while (!active && (entry=readdir(proc))) {
+        char *end; long value=strtol(entry->d_name,&end,10);
+        if (!*entry->d_name || *end || value<=0 || value>INT_MAX || value==t->pid) continue;
+        active=getsid((pid_t)value)==t->pid;
+    }
+    closedir(proc);
+    return active;
+}
 bool ft_exited(const FT *t) { return t->exited; }
 int ft_exit_status(const FT *t) { return t->exit_status; }
 const char *ft_error(const FT *t) { return t->error; }

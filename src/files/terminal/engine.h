@@ -33,6 +33,7 @@ bool ft_wants_request(const FT *t);
 void ft_io(FT *t, bool read_pty, bool write_pty, bool channel, bool exited);
 bool ft_changed(FT *t);
 bool ft_running(const FT *t);
+bool ft_active(const FT *t);
 bool ft_exited(const FT *t);
 int ft_exit_status(const FT *t);
 const char *ft_error(const FT *t);

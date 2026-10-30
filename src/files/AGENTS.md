@@ -40,8 +40,9 @@ and headless fixtures. The pinned library is compiled only into Files/tests.
   title, foreground PID or quiet output alone never authorizes a directory
   change. Unsupported and nested shells keep pending following suspended.
 * Spawn the fresh helper with `posix_spawn`, so PTY setup and scope placement
-  never run in a forked multithreaded Files child. Confirm every live session
-  on close; bound asynchronous cleanup and retain the session leader until
+  never run in a forked multithreaded Files child. Close asks only when
+  `ft_active` finds a foreground job or another session member (an idle shell
+  is just hung up); bound asynchronous cleanup and retain the session leader until
   session members have been signaled through pidfds and it can be reaped.
 * Cell metrics use the exact shared mono advance. Paint non-ASCII/wide cells
   separately so fallback shaping cannot move later cells. Preserve the
