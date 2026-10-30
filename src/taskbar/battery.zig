@@ -4,13 +4,15 @@
 //! adapter's `_PSR`, measured at 1-1.5 ms of kernel CPU charged to the
 //! compositor.
 //! Kernel power_supply uevents (plug, unplug, charge state) trigger an
-//! immediate read; capacity and time estimates are re-read on the taskbar's
+//! immediate read; capacity and time estimates are re-read on the session power policy's
 //! minute tick, because many firmwares never announce percentage changes.
 const i18n = @import("i18n");
 const std = @import("std");
-const linux = std.os.linux;
 
 pub const State = struct {
+    valid: bool = false,
+    present: bool = false,
+    external_power: ?bool = null,
     percent: ?u8 = null,
     plugged: bool = false,
     charging: bool = false,
@@ -43,12 +45,13 @@ pub const State = struct {
 /// snapshots do not rearm it; only a real recovery or end of discharge does.
 pub const Warning = struct {
     notified: bool = false,
+    threshold: u32 = 10,
 
     pub const Action = enum { none, show, clear };
 
     pub fn update(self: *Warning, state: State) Action {
         const percent = state.percent orelse return .none;
-        if (percent > 10 or !state.discharging or state.charging or state.full) {
+        if (self.threshold == 0 or percent > self.threshold or !state.discharging or state.charging or state.full) {
             self.notified = false;
             return .clear;
         }
@@ -71,6 +74,8 @@ pub const Snapshot = struct {
     sum: u32 = 0,
     count: u32 = 0,
     online: bool = false,
+    online_known: bool = false,
+    battery_count: u32 = 0,
     charging: bool = false,
     discharging: bool = false,
     full_count: u32 = 0,
@@ -86,10 +91,14 @@ pub const Snapshot = struct {
         // Ignore peripheral batteries (mice, keyboards, etc.).
         if (std.mem.eql(u8, field(contents, "POWER_SUPPLY_SCOPE") orelse "", "Device")) return;
         if (!std.mem.eql(u8, kind, "Battery")) {
-            if (std.mem.eql(u8, field(contents, "POWER_SUPPLY_ONLINE") orelse "", "1")) self.online = true;
+            if (field(contents, "POWER_SUPPLY_ONLINE")) |online| {
+                if (std.mem.eql(u8, online, "0") or std.mem.eql(u8, online, "1")) self.online_known = true;
+                if (std.mem.eql(u8, online, "1")) self.online = true;
+            }
             return;
         }
         if (std.mem.eql(u8, field(contents, "POWER_SUPPLY_PRESENT") orelse "1", "0")) return;
+        self.battery_count += 1;
         const raw = std.fmt.parseInt(u32, field(contents, "POWER_SUPPLY_CAPACITY") orelse return, 10) catch return;
         // ACPI computes capacity from ENERGY_NOW / ENERGY_FULL; on a worn pack
         // the firmware's stale "full" estimate makes this read 101% or more.
@@ -125,6 +134,9 @@ pub const Snapshot = struct {
 
     pub fn state(self: Snapshot) State {
         return .{
+            .valid = true,
+            .present = self.battery_count > 0,
+            .external_power = if (self.online_known) self.online else if (self.charging) true else if (self.discharging) false else null,
             // Equal-pack average when more than one system battery is present.
             .percent = if (self.count == 0) null else @intCast((self.sum + self.count / 2) / self.count),
             .plugged = self.online or self.charging,
@@ -187,7 +199,7 @@ pub fn read(io: std.Io, allocator: std.mem.Allocator) State {
     defer dir.close(io);
     var snapshot: Snapshot = .{};
     var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
+    while (it.next(io) catch return .{}) |entry| {
         var path_buf: [512]u8 = undefined;
         // A HID peripheral battery's uevent can send a synchronous GET_REPORT
         // to the device; `scope` is static, so check it before reading that.
@@ -197,60 +209,16 @@ pub fn read(io: std.Io, allocator: std.mem.Allocator) State {
             if (std.mem.eql(u8, std.mem.trimEnd(u8, scope, "\n"), "Device")) continue;
         } else |_| {}
         const path = std.fmt.bufPrint(&path_buf, "{s}/uevent", .{entry.name}) catch continue;
-        const contents = dir.readFileAlloc(io, path, allocator, .limited(16384)) catch continue;
+        const contents = dir.readFileAlloc(io, path, allocator, .limited(16384)) catch return .{};
         defer allocator.free(contents);
         snapshot.add(contents);
     }
     return snapshot.state();
 }
 
-/// Nonblocking socket on the kernel's uevent multicast group; `null` leaves
-/// only the minute poll. Receiving needs no privileges, and sending to the
-/// group does, so nothing unprivileged can fake these (they only trigger a
-/// sysfs read anyway).
-pub fn openUeventSocket() ?std.posix.fd_t {
-    const rc = linux.socket(linux.AF.NETLINK, linux.SOCK.DGRAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK, linux.NETLINK.KOBJECT_UEVENT);
-    // Raw syscalls return -errno; std.posix.errno expects libc's -1/errno.
-    if (linux.errno(rc) != .SUCCESS) return null;
-    const fd: std.posix.fd_t = @intCast(rc);
-    const addr: linux.sockaddr.nl = .{ .pid = 0, .groups = 1 };
-    if (linux.errno(linux.bind(fd, @ptrCast(&addr), @sizeOf(linux.sockaddr.nl))) != .SUCCESS) {
-        _ = std.posix.system.close(fd);
-        return null;
-    }
-    return fd;
-}
-
-/// Empties the socket. True when any message could change `read`'s result,
-/// including an overflow that may have dropped one.
-pub fn drainUevents(fd: std.posix.fd_t) bool {
-    var relevant = false;
-    var buf: [8192]u8 = undefined;
-    while (true) {
-        const rc = linux.recvfrom(fd, &buf, buf.len, 0, null, null);
-        switch (linux.errno(rc)) {
-            .SUCCESS => if (isSystemPowerSupplyUevent(buf[0..rc])) {
-                relevant = true;
-            },
-            .INTR => {},
-            .NOBUFS => relevant = true,
-            else => return relevant,
-        }
-    }
-}
-
-/// Kernel uevents are `action@devpath` then NUL-separated KEY=VALUE pairs.
-/// Peripheral batteries are ignored by `read`, so their events are too.
-pub fn isSystemPowerSupplyUevent(msg: []const u8) bool {
-    var fields = std.mem.splitScalar(u8, msg, 0);
-    if (std.mem.indexOfScalar(u8, fields.first(), '@') == null) return false;
-    var power_supply = false;
-    while (fields.next()) |kv| {
-        if (std.mem.eql(u8, kv, "SUBSYSTEM=power_supply")) power_supply = true;
-        if (std.mem.eql(u8, kv, "POWER_SUPPLY_SCOPE=Device")) return false;
-    }
-    return power_supply;
-}
+pub const openUeventSocket = @import("platform").power_supply.openUeventSocket;
+pub const drainUevents = @import("platform").power_supply.drainUevents;
+pub const isSystemPowerSupplyUevent = @import("platform").power_supply.isSystemPowerSupplyUevent;
 
 test {
     _ = @import("battery_tests.zig");

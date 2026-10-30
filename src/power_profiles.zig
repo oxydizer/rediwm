@@ -61,7 +61,7 @@ pub fn next(active: Profile, available: std.EnumSet(Profile)) Profile {
     const choices = if (available.count() == 0) std.EnumSet(Profile).full else available;
     var candidate = active;
     for (0..@typeInfo(Profile).@"enum".field_names.len) |_| {
-        candidate = @enumFromInt((@intFromEnum(candidate) + 1) % @typeInfo(Profile).@"enum".field_names.len);
+        candidate = @fromBackingInt(@intCast((@backingInt(candidate) + 1) % @typeInfo(Profile).@"enum".field_names.len));
         if (choices.contains(candidate)) return candidate;
     }
     return active;
@@ -81,6 +81,7 @@ pub const Manager = struct {
     active: ?Profile = null,
     available: std.EnumSet(Profile) = .empty,
     closing: bool = false,
+    pending_sets: usize = 0,
 
     pub fn create(server: *Server, allocator: std.mem.Allocator) !*Manager {
         const self = try allocator.create(Manager);
@@ -106,19 +107,32 @@ pub const Manager = struct {
 
     /// Selection remains at the last confirmed value until the daemon replies.
     pub fn select(self: *Manager, profile: Profile) void {
-        if (!self.supports(profile) or self.active == profile) return;
+        self.server.power_policy.manualMode();
+        self.selectMode(profile, true);
+    }
+
+    pub fn selectAuto(self: *Manager, profile: Profile) void {
+        self.selectMode(profile, false);
+    }
+
+    fn selectMode(self: *Manager, profile: Profile, interactive: bool) void {
+        // A previous Set may still change the currently reported profile.
+        // Send reversals even when they match the last confirmed value.
+        if (!self.supports(profile) or (self.active == profile and self.pending_sets == 0)) return;
         const conn = self.conn orelse return;
-        if (!conn.closed) self.request(conn, profile);
+        if (!conn.closed) self.request(conn, profile, interactive);
     }
 
     fn refreshPopup(self: *Manager) void {
         if (self.closing) return;
+        self.server.power_policy.refreshSettings();
         if (self.server.input.open_battery) |popup| popup.refresh();
     }
 
     /// Asks the daemon for the next profile. The OSD appears only when the
     /// daemon confirms the change through PropertiesChanged.
     pub fn cycle(self: *Manager) void {
+        self.server.power_policy.manualMode();
         const conn = self.conn orelse {
             self.connect();
             return;
@@ -131,10 +145,10 @@ pub const Manager = struct {
             log.info("no power profile service to switch", .{});
             return;
         };
-        self.request(conn, next(active, self.available));
+        self.request(conn, next(active, self.available), true);
     }
 
-    fn request(self: *Manager, conn: *dbus.Connection, profile: Profile) void {
+    fn request(self: *Manager, conn: *dbus.Connection, profile: Profile, interactive: bool) void {
         var body: wire.Writer = .{ .allocator = self.allocator };
         defer body.deinit();
         body.string(bus_name) catch return;
@@ -143,19 +157,26 @@ pub const Manager = struct {
         body.string(profile.wireName()) catch return;
         // power-profiles-daemon checks the switch-profile polkit action, which
         // active local sessions normally hold without a prompt.
-        _ = conn.callWithFlags(bus_name, object_path, properties_interface, "Set", "ssv", &body, self, onSet, call_timeout_ms, wire.flag_allow_interactive_authorization) catch |err| {
+        self.pending_sets += 1;
+        _ = conn.callWithFlags(bus_name, object_path, properties_interface, "Set", "ssv", &body, self, onSet, call_timeout_ms, if (interactive) wire.flag_allow_interactive_authorization else 0) catch |err| {
+            self.pending_sets -= 1;
             log.warn("could not request power profile {s}: {}", .{ profile.wireName(), err });
         };
     }
 
     fn onSet(owner: ?*anyopaque, _: *dbus.Connection, result: dbus.Connection.Failure!wire.Message) void {
         const self: *Manager = @ptrCast(@alignCast(owner orelse return));
+        self.pending_sets -|= 1;
         if (self.closing) return;
         const msg = result catch |err| {
             log.warn("power profile change failed: {}", .{err});
+            self.server.power_policy.failed(i18n.tr("Power mode could not be changed."));
             return;
         };
-        if (msg.kind == .error_reply) log.warn("power profile change refused: {s}", .{msg.headers.error_name orelse "unknown error"});
+        if (msg.kind == .error_reply) {
+            log.warn("power profile change refused: {s}", .{msg.headers.error_name orelse "unknown error"});
+            self.server.power_policy.failed(i18n.tr("Power mode change was refused by the system."));
+        }
     }
 
     fn connect(self: *Manager) void {
@@ -311,6 +332,7 @@ pub const Manager = struct {
             self.active = profile;
             log.info("power profile service ready, active profile {s}", .{profile.wireName()});
         }
+        self.server.power_policy.serviceReady();
         self.refreshPopup();
     }
 
@@ -362,6 +384,7 @@ pub const Manager = struct {
     fn apply(self: *Manager, profile: Profile) void {
         const previous = self.active;
         self.active = profile;
+        self.server.power_policy.confirmedMode(profile);
         self.refreshPopup();
         if (previous == null or previous.? == profile) return;
         log.info("power profile changed to {s}", .{profile.wireName()});

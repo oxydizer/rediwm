@@ -2,7 +2,7 @@
 const std = @import("std");
 const fold = @import("ui").fold;
 const i18n = @import("i18n");
-pub const Page = enum { general, input, displays, audio, network, appearance, shortcuts, desktop, bluetooth, region, users, printers, services };
+pub const Page = enum { general, input, displays, audio, network, appearance, shortcuts, desktop, bluetooth, region, users, printers, services, power };
 pub const Entry = struct {
     page: Page,
     title: []const u8,
@@ -19,6 +19,20 @@ const SourceEntry = struct {
 };
 
 const source_entries = [_]SourceEntry{
+    .{ .page = .power, .title = i18n.msg("Power & Battery"), .target = "", .keywords = i18n.msg("sleep battery charging energy") },
+    .{ .page = .power, .title = i18n.msg("Keyboard backlight"), .target = "power_keyboard", .keywords = i18n.msg("brightness plugged battery") },
+    .{ .page = .power, .title = i18n.msg("Charging limit"), .target = "power_charge_limit", .keywords = i18n.msg("battery health threshold") },
+    .{ .page = .power, .title = i18n.msg("Automatic power management"), .target = "power_enabled", .keywords = i18n.msg("enable disable sleep") },
+    .{ .page = .power, .title = i18n.msg("Power mode"), .target = "power_mode", .keywords = i18n.msg("performance balanced saver plugged unplugged") },
+    .{ .page = .power, .title = i18n.msg("Automatic brightness"), .target = "power_brightness", .keywords = i18n.msg("backlight battery plugged") },
+    .{ .page = .power, .title = i18n.msg("Turn off screen after"), .target = "power_blank", .keywords = i18n.msg("idle timeout display") },
+    .{ .page = .power, .title = i18n.msg("Sleep after"), .target = "power_sleep", .keywords = i18n.msg("automatic suspend idle") },
+    .{ .page = .power, .title = i18n.msg("Dim screen after"), .target = "power_dim", .keywords = i18n.msg("brightness idle") },
+    .{ .page = .power, .title = i18n.msg("Low battery warning"), .target = "power_warning", .keywords = i18n.msg("notification percent") },
+    .{ .page = .power, .title = i18n.msg("Automatic Power Saver"), .target = "power_saver", .keywords = i18n.msg("low battery") },
+    .{ .page = .power, .title = i18n.msg("Critical battery"), .target = "power_critical", .keywords = i18n.msg("sleep shutdown") },
+    .{ .page = .power, .title = i18n.msg("Lock before sleep"), .target = "lock_on_suspend", .keywords = i18n.msg("security suspend") },
+    .{ .page = .power, .title = i18n.msg("External display lid action"), .target = "power_docked", .keywords = i18n.msg("dock monitor laptop") },
     .{ .page = .general, .title = i18n.msg("General"), .target = "", .keywords = i18n.msg("") },
     .{ .page = .input, .title = i18n.msg("Input"), .target = "", .keywords = i18n.msg("") },
     .{ .page = .displays, .title = i18n.msg("Displays"), .target = "", .keywords = i18n.msg("") },
@@ -55,7 +69,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .displays, .title = i18n.msg("Rotation"), .target = "transform", .keywords = i18n.msg("orientation portrait landscape screen") },
     .{ .page = .displays, .title = i18n.msg("Night light"), .target = "night_light", .keywords = i18n.msg("blue light warm screen") },
     .{ .page = .displays, .title = i18n.msg("Night light temperature"), .target = "night_light_temperature", .keywords = i18n.msg("warmth colour color") },
-    .{ .page = .displays, .title = i18n.msg("Lid close action"), .target = "lid_close", .keywords = i18n.msg("laptop suspend sleep") },
+    .{ .page = .power, .title = i18n.msg("Lid close action"), .target = "lid_close", .keywords = i18n.msg("laptop suspend sleep") },
     .{ .page = .audio, .title = i18n.msg("Output volume"), .target = "output_volume", .keywords = i18n.msg("sound speakers loudness mute") },
     .{ .page = .audio, .title = i18n.msg("Microphone volume"), .target = "input_volume", .keywords = i18n.msg("sound input recording mute") },
     .{ .page = .audio, .title = i18n.msg("Output balance"), .target = "output_balance", .keywords = i18n.msg("left right speakers") },

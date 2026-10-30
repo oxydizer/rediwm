@@ -82,6 +82,7 @@ startup_committing: bool = false,
 startup_presented: bool = false,
 animation_budget: anim.FrameBudget = .{},
 idle_blanked: bool = false,
+lid_blanked: bool = false,
 /// Turned off by a wlr-output-power-management client (`output_power.zig`):
 /// held `idle_blanked` until a client turns it back on.
 power_off: bool = false,
@@ -145,7 +146,7 @@ pub fn otherDisplayOn(server: *Server) bool {
 /// A closed lid turns the built-in panel off, but never the last display.
 pub fn lidHides(output: *const Output) bool {
     const server = output.server;
-    if (!server.input.lid.closed or server.config.compositor.lid_close == .ignore) return false;
+    if (!server.input.lid.closed or (if (server.power_policy.enabled()) server.power_policy.lidAction() else server.config.compositor.lid_close) == .ignore) return false;
     return isBuiltinPanel(std.mem.span(output.wlr_output.name)) and otherDisplayOn(server);
 }
 
@@ -155,11 +156,21 @@ pub fn applyLid(server: *Server) void {
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
         if (!isBuiltinPanel(std.mem.span(output.wlr_output.name))) continue;
-        if (lidHides(output) == output.user_disabled) continue;
-        output.applyConfig();
-        changed = true;
+        const lid_blank = server.power_policy.enabled() and server.input.lid.closed and server.power_policy.lidAction() != .ignore and !otherDisplayOn(server);
+        const blank_changed = output.lid_blanked != lid_blank;
+        output.lid_blanked = lid_blank;
+        const layout_changed = lidHides(output) != output.user_disabled;
+        if (layout_changed) {
+            output.applyConfig();
+            changed = true;
+        }
+        if (blank_changed or layout_changed) {
+            const idle_blank = if (server.idle) |idle| idle.isBlanked() else false;
+            _ = output.setIdleBlanked(idle_blank or output.power_off);
+        }
     }
     if (changed) syncLayout(server);
+    server.power_policy.reconcileLid();
 }
 
 // output/modes.zig
@@ -360,7 +371,8 @@ pub fn taskbarPopupY(output: *Output, height: i32, gap: i32) i32 {
         @max(box.y, box.y + box.height - height - gap);
 }
 
-pub fn setIdleBlanked(output: *Output, blanked: bool) bool {
+pub fn setIdleBlanked(output: *Output, requested: bool) bool {
+    const blanked = requested or output.lid_blanked;
     if (output.user_disabled) return false;
     if (output.idle_blanked == blanked) return true;
     output.idle_blanked = blanked;

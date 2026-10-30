@@ -116,3 +116,10 @@ compositor's code), `ipc_tests.zig`, `files_tests.zig`, `editor_tests.zig`,
 `test { _ = @import(...); }` blocks; C fixtures are `src/*_test.c` (cases in
 `*_test_*.c`); integration suites are `tests/*.py`. Splitting tools are in
 `tools/split/`.
+
+Power preferences: `config/power.zig` parses source profiles;
+`session/power_policy.zig` owns shared battery state and source actions;
+`control_center/sections/power.zig` owns Settings controls.
+`platform/power_supply.zig` receives uevents, `platform/charge_limit.zig` handles
+optional firmware thresholds. Server construction/destruction are in
+`server/setup.zig` and `server/teardown.zig`.

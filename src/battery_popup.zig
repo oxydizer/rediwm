@@ -27,6 +27,7 @@ pub const Popup = struct {
     slide: Anim = .{},
     panel_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     focused: ?usize = null,
+    settings_button: @import("ui").layout.Widget = .{ .kind = .container },
 
     pub fn create(output: *Output) !*Popup {
         const self = try gpa.create(Popup);
@@ -58,6 +59,10 @@ pub const Popup = struct {
     pub fn press(self: *Popup, sx: f64, sy: f64) void {
         const x = sx / self.factor;
         const y = sy / self.factor;
+        if (@import("ui").input.hitTest(&self.settings_button, @floatCast(x), @floatCast(y)) != null) {
+            self.openSettings();
+            return;
+        }
         if (x < 20 or x >= 348 or y < 366 or y >= 462) return;
         self.focused = @intFromFloat(@floor((y - 366) / 32));
         self.activate();
@@ -65,13 +70,22 @@ pub const Popup = struct {
     }
 
     pub fn navigate(self: *Popup, backwards: bool) void {
-        self.focused = if (self.focused) |f| (f + (if (backwards) @as(usize, 2) else 1)) % 3 else if (backwards) 2 else 0;
+        self.focused = if (self.focused) |f| (f + (if (backwards) @as(usize, 3) else 1)) % 4 else if (backwards) 3 else 0;
         self.refresh();
     }
 
     pub fn activate(self: *Popup) void {
         const index = self.focused orelse return;
-        if (self.output.server.power_profiles) |manager| manager.select(@enumFromInt(index));
+        if (index == 3) return self.openSettings();
+        if (self.output.server.power_profiles) |manager| manager.select(@fromBackingInt(@intCast(index)));
+    }
+
+    fn openSettings(self: *Popup) void {
+        const output = self.output;
+        const cc = output.server.input.open_control_center orelse (@import("control_center/ControlCenter.zig").create(output.server, output.wlr_output) catch return);
+        cc.selectPage(.power);
+        output.server.world.focus(cc.toplevel);
+        output.closeBattery();
     }
 
     pub fn refresh(self: *Popup) void {
@@ -80,9 +94,9 @@ pub const Popup = struct {
         var box: wlr.Box = undefined;
         self.output.server.output_layout.getBox(self.output.wlr_output, &box);
         const available_h = @max(1, box.height - @import("Taskbar.zig").reservedHeight() - 24);
-        self.factor = @min(1, @min(@as(f32, @floatFromInt(@max(1, box.width - 24))) / 368, @as(f32, @floatFromInt(available_h)) / 496));
+        self.factor = @min(1, @min(@as(f32, @floatFromInt(@max(1, box.width - 24))) / 368, @as(f32, @floatFromInt(available_h)) / 536));
         const width: i32 = @max(1, @as(i32, @intFromFloat(@round(368 * self.factor))));
-        const height: i32 = @max(1, @as(i32, @intFromFloat(@round(496 * self.factor))));
+        const height: i32 = @max(1, @as(i32, @intFromFloat(@round(536 * self.factor))));
         const left = std.math.clamp(anchor.x + @divTrunc(anchor.width, 2) - @divTrunc(width, 2), box.x + 12, @max(box.x + 12, box.x + box.width - width - 12));
         const tip = std.math.clamp(@as(f32, @floatFromInt(anchor.x + @divTrunc(anchor.width, 2) - left)) / self.factor, 24, 344);
         const scale = self.output.wlr_output.scale;
@@ -91,7 +105,7 @@ pub const Popup = struct {
         var r: paint.Renderer = .{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = scale * self.factor };
         const t = theme.shellPalette();
         r.palette = t;
-        popup_style.background(&r, buf, 368, 496, 16, tip, self.output.server.config.compositor.taskbar_position == .top);
+        popup_style.background(&r, buf, 368, 536, 16, tip, self.output.server.config.compositor.taskbar_position == .top);
         const card_t = popup_style.cardPalette(t);
         const state = bar.battery_state;
         var pct: [16]u8 = undefined;
@@ -129,7 +143,7 @@ pub const Popup = struct {
             label(&r, 28, 408, 310, 40, i18n.tr("No power profile service is running."), t.font_size - 1, card_t.faint, false);
         }
         for (0..if (service_up) 3 else 0) |i| {
-            const profile: Profile = @enumFromInt(i);
+            const profile: Profile = @fromBackingInt(@intCast(i));
             const enabled = if (manager) |m| m.supports(profile) else false;
             const selected = if (manager) |m| m.active == profile else false;
             const y: f32 = 366 + @as(f32, @floatFromInt(i)) * 32;
@@ -143,6 +157,8 @@ pub const Popup = struct {
                 label(&r, 28 + checkbox.box_size + checkbox.gap, y, 282, 32, profile.label(), t.font_size, if (enabled) card_t.fg else card_t.faint, false);
             }
         }
+        self.settings_button = .{ .name = "power_settings", .kind = .{ .button = .{ .label = i18n.tr("Power & Battery settings"), .state = if (self.focused == 3) .hover else .idle } }, .computed_x = 20, .computed_y = 474, .computed_width = 328, .computed_height = 36 };
+        paint.paint(&self.settings_button, &r);
         self.buffer_node.setBuffer(&buf.base);
         self.buffer_node.setDestSize(width, height);
         self.panel_box = .{ .x = left, .y = self.output.taskbarPopupY(height, 12), .width = width, .height = height };

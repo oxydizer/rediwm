@@ -149,7 +149,7 @@ fn handleDown(listener: *wl.Listener(*wlr.Touch.event.Down), event: *wlr.Touch.e
         self.point_count += 1;
     }
     if (server.idle) |im| {
-        if (im.state != .active) {
+        if (im.isBlanked()) {
             // Like a mouse button, the waking touch does nothing else.
             im.notifyActivity(.touch);
             return;

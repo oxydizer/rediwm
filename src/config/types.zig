@@ -100,11 +100,11 @@ pub const FocusZoom = enum { keep, boost, camera };
 pub const MiniMapPosition = enum { bottom_right, bottom_center, bottom_left };
 
 pub const LidAction = enum {
-    /// Turn off the built-in display while another display is on.
+    /// Turn off the built-in display (legacy policy hides it only when docked).
     display_off,
     /// Lock, and turn off the built-in display.
     lock,
-    /// Lock and suspend. Without another display logind suspends by itself.
+    /// Suspend through the session power service, honoring lock-before-sleep.
     @"suspend",
     /// Leave the built-in display on and inhibit logind lid handling.
     ignore,

@@ -107,3 +107,12 @@ An edited control should switch from Default to Custom. Reset one device and
 verify that it returns to Default immediately while the others remain unchanged;
 then change a global default and check that the reset device inherits it after
 reload, reconnection and restart.
+
+Power policy: `python3 tests/power_settings.py` uses private PowerProfiles and
+logind services, fake sysfs events, and a fake brightnessctl. Repeat with
+`REDIWM_TEST_SCALE=1.5`. Also run `tests/idle.py`, `tests/power.py`,
+`tests/power_profiles.py`, `tests/battery_popup.py`, `tests/control_center.py`,
+`tests/hardware_keys.py`, `tests/greeter.py`, and `tests/i18n.py`. On hardware,
+qualify lid close/open, external-monitor removal with the lid closed, suspend
+and resume after unplugging, keyboard lighting and firmware charging-limit
+readback. Keep real power actions out of automated tests.

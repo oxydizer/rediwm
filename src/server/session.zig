@@ -24,6 +24,7 @@ pub fn terminate(server: *Server) void {
 }
 
 pub fn deactivateSession(server: *Server) void {
+    if (server.power) |power| power.syncInhibitors();
     if (server.polkit) |agent| {
         if (server.locker != null) agent.pauseForLock() else agent.cancelAll();
     }
@@ -65,6 +66,8 @@ pub fn deactivateSession(server: *Server) void {
 }
 
 pub fn reactivateSession(server: *Server) void {
+    server.power_policy.refresh();
+    if (server.idle) |idle| idle.notifyActivity(.lid);
     log.info("reactivating session: restoring output layout, damage and presentation", .{});
     Output.syncLayout(server);
     server.input.refreshOutputScales();

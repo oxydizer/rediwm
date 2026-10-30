@@ -39,5 +39,6 @@
   `processAxis`, on detented `.wheel` events only. IPC `scroll` and
   automation sequences (`virtual.zig`) enter `processAxis` as `.continuous`
   and never reach it, so cover it with unit tests.
-* **Lid:** a closed lid hides built-in panels only while another display is
-  on; undocked, logind owns the lid.
+* **Lid:** native power policy takes logind’s lid inhibitor and owns lid actions.
+  Docked panels leave the layout; undocked panels blank without removing the
+  last output. Never also request undocked sleep without the inhibitor.

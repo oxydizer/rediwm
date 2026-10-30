@@ -34,6 +34,7 @@ pub fn applyPending(cc: *ControlCenter) void {
     }
     if (cc.page == .services) services_section.apply(&cc.services, cc);
     cc.shortcuts.apply(cc);
+    if (cc.page == .power) @import("sections/power.zig").apply(cc);
     if (cc.page == .displays) {
         const arranged = display_section.pendingArrangement(&cc.display);
         if (arranged) |placements| {
@@ -89,19 +90,7 @@ pub fn applyPending(cc: *ControlCenter) void {
             cc.requestRepaint();
             return;
         }
-        if (display_section.pendingLidAction(&cc.display)) |action| {
-            cc.display.initial_lid = @intFromEnum(action);
-            cc.display.save_failed = false;
-            @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, "lid_close", action) catch |err| {
-                log.warn("could not save lid_close: {}", .{err});
-                cc.display.save_failed = true;
-            };
-            // The reload applies it (`Output.applyLid`) and rebuilds this page.
-            if (!cc.display.save_failed) @import("../config_runtime/watcher.zig").reloadConfig(cc.server);
-            cc.relayout();
-            cc.requestRepaint();
-            return;
-        }
+
         if (display_section.pendingTransform(&cc.display)) |transform| {
             const output = @import("../Output.zig").fromWlr(cc.selectedDisplayOutput() orelse return) orelse return;
             cc.applyOutputPatch(output, .{ .transform = transform });
@@ -136,7 +125,7 @@ pub fn rebuildTree(cc: *ControlCenter) void {
     }
     cc.buildTree();
     if (hovered_nav) |id| {
-        if (cc.navIndex(@enumFromInt(id))) |row| {
+        if (cc.navIndex(@fromBackingInt(@intCast(id)))) |row| {
             cc.nav_hover.setTarget(anim.nowMs(), .{ .col = 0, .row = @intCast(row) });
             cc.nav_rows[row].kind.row.state = .hover;
             ui.input.adoptHover(&cc.root, &cc.nav_rows[row]);
@@ -231,7 +220,7 @@ pub fn resizeLayout(cc: *ControlCenter) void {
 pub fn navIndex(cc: *const ControlCenter, page: Page) ?usize {
     if (cc.is_welcome) return null;
     for (cc.sidebar_children[1].children, 0..) |row, i| {
-        if (row.kind.row.id == @intFromEnum(page)) return i;
+        if (row.kind.row.id == @backingInt(page)) return i;
     }
     return null;
 }

@@ -207,6 +207,63 @@ Omit coordinates for automatic left-to-right placement. Scale and placement
 apply live. `REDIWM_SCALE` overrides every output. Changes from Settings,
 `wlr-randr`, kanshi or `rediwm-msg output-config` are all saved here.
 
+## Power and battery
+
+Settings → Power & Battery (Power without a system battery) saves source-specific
+preferences. Missing screen-off, sleep and lid values inherit `[idle]` and
+`[compositor]`; existing configurations retain their settings. Desktops use
+`power.plugged_in`. Automatic source actions default to enabled on DRM sessions,
+disabled in nested/headless sessions, and never run in the greeter.
+
+```toml
+[power]
+# enabled = true                 # override the session default
+# lock_on_suspend = true         # otherwise inherit compositor.lock_on_suspend
+docked = "follow"                # follow or keep_awake (built-in screen off)
+low_battery_percent = 10         # 0 disables the warning
+power_saver_percent = 0          # opt in, e.g. 15
+critical_percent = 0             # opt in, e.g. 5
+critical_action = "notify"       # notify, sleep, power_off
+charge_limit = 0                 # leave unchanged; otherwise 50–100
+
+[power.plugged_in]
+mode = "unchanged"               # unchanged, power_saver, balanced, performance
+brightness = 0                   # leave unchanged; otherwise 1–100
+keyboard_brightness = -1          # leave unchanged; 0 turns off, 1–100 sets level
+# blank_after_seconds = 900       # 0 = Never
+# suspend_after_seconds = 0
+# lid_close = "display_off"       # display_off, lock, suspend, ignore
+
+[power.on_battery]
+mode = "power_saver"
+brightness = 45
+keyboard_brightness = 0
+dim_after_seconds = 120           # 0 disables dimming
+dim_brightness = 30
+blank_after_seconds = 300
+suspend_after_seconds = 900
+lid_close = "suspend"
+```
+
+Source actions run at login and on a confirmed plug/unplug transition. Manual
+brightness and mode changes last until the next source change; editing the
+active source applies only changed preferences. Fully charged and not-charging
+batteries still count as plugged in when external power is online. Missing
+readings retain the last source. Peripheral batteries do not enable this page's
+battery controls. Screen-off and sleep deadlines are independent.
+
+Low-battery Power Saver triggers once per discharge episode, with five percentage
+points of recovery hysteresis. Recovery restores the prior/configured mode only
+while the automatic change still owns it. Critical actions are opt-in, trigger
+once per episode, and respect system authorization and sleep inhibitors.
+
+Keyboard lighting uses `brightnessctl`'s keyboard-backlight device. Charging
+limits appear only when firmware exposes `charge_control_end_threshold`; changing
+them requires existing write permission. RediWM never elevates for sysfs writes.
+A start threshold at or above the requested end threshold is rejected. The UI
+shows the firmware's readback, including any hardware rounding. Charging limits
+are applied at login or when edited, not continually enforced.
+
 ## Idle and night light
 
 ```toml

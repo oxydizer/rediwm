@@ -270,14 +270,14 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     if (keyboard.server.input.window_menu.node != null and keyboard.server.screenshot_selector.output == null) {
         if (state == .pressed) {
             if (event_keycode < keyboard.tray_consumed.len) keyboard.tray_consumed[event_keycode] = true;
-            for (xkb_state.keyGetSyms(keycode)) |sym| keyboard.server.input.window_menu.key(@intFromEnum(sym));
+            for (xkb_state.keyGetSyms(keycode)) |sym| keyboard.server.input.window_menu.key(@backingInt(sym));
         }
         return;
     }
     if (keyboard.server.tray) |tray| {
         if (tray.menu_item != 0 and state == .pressed and keyboard.server.screenshot_selector.output == null) {
             if (event_keycode < keyboard.tray_consumed.len) keyboard.tray_consumed[event_keycode] = true;
-            for (xkb_state.keyGetSyms(keycode)) |sym| tray.key(@intFromEnum(sym));
+            for (xkb_state.keyGetSyms(keycode)) |sym| tray.key(@backingInt(sym));
             return;
         }
     }
@@ -302,7 +302,10 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
                     },
                     xkb.Keysym.Up, xkb.Keysym.Left, xkb.Keysym.ISO_Left_Tab => popup.navigate(true),
                     xkb.Keysym.Down, xkb.Keysym.Right, xkb.Keysym.Tab => popup.navigate(false),
-                    xkb.Keysym.Return, xkb.Keysym.KP_Enter, xkb.Keysym.space => popup.activate(),
+                    xkb.Keysym.Return, xkb.Keysym.KP_Enter, xkb.Keysym.space => {
+                        popup.activate();
+                        return;
+                    },
                     else => {},
                 }
             }

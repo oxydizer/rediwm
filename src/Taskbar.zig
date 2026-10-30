@@ -270,7 +270,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
         .capture_node = capture_node,
         .battery_node = battery_node,
         .glass_effect = glass_effect,
-        .battery_state = battery.read(server.io, gpa),
+        .battery_state = server.power_policy.state,
         .network_offline = if (server.network) |network| network.offline() else false,
         .network_presence = if (server.network) |network| network.presence() else .{},
         .clock_minute = @divFloor(c_time.time(null), 60),
@@ -343,8 +343,8 @@ pub fn applyNetwork(bar: *Taskbar, offline: bool) void {
     bar.network_offline = offline;
     bar.blink_dim = false;
     bar.syncBlink();
-    bar.tray_dirty[@intFromEnum(TrayKind.wifi)] = true;
-    bar.tray_dirty[@intFromEnum(TrayKind.wired)] = true;
+    bar.tray_dirty[@backingInt(TrayKind.wifi)] = true;
+    bar.tray_dirty[@backingInt(TrayKind.wired)] = true;
     bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
 }
@@ -394,19 +394,19 @@ pub fn onBlink(bar: *Taskbar) c_int {
 
 pub fn repaintWifi(bar: *Taskbar) void {
     if (!bar.itemShown(.wifi) and !bar.itemShown(.wired)) return;
-    bar.tray_dirty[@intFromEnum(TrayKind.wifi)] = true;
-    bar.tray_dirty[@intFromEnum(TrayKind.wired)] = true;
+    bar.tray_dirty[@backingInt(TrayKind.wifi)] = true;
+    bar.tray_dirty[@backingInt(TrayKind.wired)] = true;
     bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
 }
 
 pub fn onTick(bar: *Taskbar) c_int {
-    // Seconds only repaint the clock. Keep expensive sysfs reads and the
-    // calendar on their minute cadence; plug events have their own uevent.
+    // Seconds only repaint the clock. Keep the
+    // calendar on its minute cadence; battery reads belong to power_policy.
     const minute = @divFloor(c_time.time(null), 60);
     if (minute != bar.clock_minute) {
         bar.clock_minute = minute;
-        bar.applyBattery(battery.read(bar.server.io, gpa));
+
         if (Output.fromWlr(bar.wlr_output)) |output| {
             if (output.calendar) |calendar| calendar.refresh();
         }

@@ -4,6 +4,8 @@
 //! `AGENTS.md` beside this file). No compositor imports.
 pub const child = @import("child.zig");
 pub const exe = @import("exe.zig");
+pub const power_supply = @import("power_supply.zig");
+pub const charge_limit = @import("charge_limit.zig");
 pub const watch = @import("watch.zig");
 
 test {

@@ -364,6 +364,7 @@ pub const Config = struct {
     region: RegionConfig = .{},
     polkit: PolkitConfig = .{},
     idle: IdleConfig = .{},
+    power: @import("power.zig").Config = .{},
     night_light: NightLightConfig = .{},
     notifications: NotificationsConfig = .{},
     desktop: DesktopConfig = .{},

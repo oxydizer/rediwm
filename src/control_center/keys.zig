@@ -35,6 +35,7 @@ pub fn selectSearchPage(cc: *ControlCenter, page: Page) void {
     }
     if (cc.page != page) if (cc.navIndex(page)) |row| cc.nav_selection.retargetTo(anim.nowMs(), @floatFromInt(row), anim.curveFor(.start_glide));
     cc.page = page;
+    if (page == .power) cc.server.keyboard_brightness.query(cc.server);
     if (page == .bluetooth and !cc.server.greeter_mode) {
         if (cc.panel_box.width == default_width) _ = cc.toplevel.requestSize(1120, cc.panel_box.height);
         if (cc.server.bluetooth) |m| m.opened() else cc.server.bluetooth = @import("../bluetooth.zig").Manager.create(cc.server) catch null;
@@ -82,7 +83,7 @@ pub fn focusSearch(cc: *ControlCenter) void {
 
 pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
     if (settings_search.key(cc, key, shift)) return true;
-    if (cc.page != .input and cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .printers and cc.page != .network and cc.page != .bluetooth and cc.page != .region) return false;
+    if (cc.page != .input and cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .printers and cc.page != .network and cc.page != .bluetooth and cc.page != .region and cc.page != .power) return false;
     const dispatcher = &ui.input.current;
     if (cc.page == .appearance) {
         if (appearance_section.itemKey(&cc.appearance, key)) return true;
@@ -99,7 +100,7 @@ pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
             }
         }
     }
-    if (cc.is_welcome or cc.page == .input or cc.page == .users or cc.page == .services or cc.page == .printers or cc.page == .network or cc.page == .bluetooth or cc.page == .region) {
+    if (cc.is_welcome or cc.page == .input or cc.page == .users or cc.page == .services or cc.page == .printers or cc.page == .network or cc.page == .bluetooth or cc.page == .region or cc.page == .power) {
         const focused = dispatcher.focused;
         if (cc.page == .bluetooth and bluetooth_section.key(cc, key)) return true;
         if (cc.page == .network and (focused == null or focused.?.kind != .select or !focused.?.kind.select.open)) {

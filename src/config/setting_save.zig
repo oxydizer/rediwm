@@ -7,6 +7,13 @@ const theme = @import("ui").theme;
 pub const saveInputDevice = @import("input_device_save.zig").save;
 pub const resetInputDevice = @import("input_device_save.zig").reset;
 
+pub fn savePower(allocator: std.mem.Allocator, io: Io, path: []const u8, source: ?@import("power.zig").Source, comptime key: []const u8, value: anytype) !void {
+    if (source) |which| switch (which) {
+        .on_battery => try save(allocator, io, path, "power.on_battery", key, value),
+        .plugged_in => try save(allocator, io, path, "power.plugged_in", key, value),
+    } else try save(allocator, io, path, "power", key, value);
+}
+
 pub fn saveInput(allocator: std.mem.Allocator, io: Io, path: []const u8, comptime key: []const u8, value: @FieldType(loader.InputConfig, key)) !void {
     try save(allocator, io, path, "input", key, value);
 }

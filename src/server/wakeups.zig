@@ -42,12 +42,7 @@ pub fn handleAudioWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
 pub fn handleBatteryUevent(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
     _ = mask;
     if (!battery_mod.drainUevents(fd)) return 0;
-    const state = battery_mod.read(server.io, @import("../main.zig").gpa);
-    server.updateBatteryWarning(state);
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        if (output.taskbar) |bar| bar.applyBattery(state);
-    }
+    server.power_policy.refresh();
     return 0;
 }
 

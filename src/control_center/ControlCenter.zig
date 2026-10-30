@@ -146,6 +146,7 @@ network: network_section.Section = .{},
 bluetooth: bluetooth_section.Section = .{},
 services: services_section.Section = .{},
 printers: printers_section.Section = .{},
+power_settings: @import("sections/power.zig").Section = .{},
 systemd_client: ?*systemd.Client = null,
 
 pub const min_width = 420;
@@ -248,6 +249,7 @@ pub fn destroy(cc: *ControlCenter) void {
     users_section.deinit(cc);
     cc.shortcuts.arena.deinit();
     cc.desktop.arena.deinit();
+    cc.power_settings.arena.deinit();
     cc.region.deinit();
     cc.portals.arena.deinit();
     cc.default_apps.arena.deinit();
