@@ -14,6 +14,8 @@ pub const Section = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
     root: W = undefined,
     source: ?power.Source = null,
+    /// The real source `source` was last aligned to; a change snaps the tab to it.
+    live: ?power.Source = null,
     pending: ?struct { field: Field, value: usize } = null,
     values: [@typeInfo(Field).@"enum".field_names.len][]const u32 = @splat(&.{}),
     message: []const u8 = "",
@@ -21,7 +23,11 @@ pub const Section = struct {
 
 pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     _ = s.arena.reset(.retain_capacity);
-    if (s.source == null) s.source = cc.server.power_policy.source orelse .plugged_in;
+    // The tab starts on the active source and follows plug/unplug; a tab the
+    // user picked stays until the source next changes.
+    const live = cc.server.power_policy.source orelse .plugged_in;
+    if (s.source == null or s.live != live) s.source = live;
+    s.live = live;
     if (!cc.server.power_policy.state.present) s.source = .plugged_in;
     s.root = tree(s, cc, s.arena.allocator()) catch panel.outOfMemory();
 }

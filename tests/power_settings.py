@@ -189,6 +189,17 @@ def exercise(ipc, root, supply, pp, logind, pp_log, login_log, event_path, batte
     ui.click(ui.find('power', panel='control_center'))
     ui.wait_settled('control_center')
     assert ui.find('power_brightness')['selected_index'] == 45
+    # The tab follows the real source while Settings stays open.
+    supply(True)
+    wait_for(lambda: not any('On Battery' in str(w.get('label') or '') for w in ui.widgets()), 'status leaves On Battery')
+    ui.wait_settled('control_center')
+    assert ui.find('power_source')['selected_index'] == 0
+    assert ui.find('power_brightness')['selected_index'] == 80
+    supply(False)
+    wait_for(lambda: any('On Battery' in str(w.get('label') or '') for w in ui.widgets()), 'status says On Battery')
+    ui.wait_settled('control_center')
+    assert ui.find('power_source')['selected_index'] == 1
+    assert ui.find('power_brightness')['selected_index'] == 45
     ui.click(ui.find('power_source'), fraction=.2)
     ui.wait_settled('control_center')
     assert ui.find('power_brightness')['selected_index'] == 80
