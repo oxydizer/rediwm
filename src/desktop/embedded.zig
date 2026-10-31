@@ -27,6 +27,7 @@ const geometry = @import("../geometry.zig");
 const SceneData = @import("../scene_data.zig").SceneData;
 const clipboard = @import("../clipboard.zig");
 const DropTarget = @import("../desktop_drop.zig").Target;
+const dnd = @import("dnd.zig");
 const app_scope = @import("../session/app_scope.zig");
 
 const log = std.log.scoped(.desktop);
@@ -72,6 +73,11 @@ pub const Desktop = struct {
     transfer: enum { none, drop, paste } = .none,
     /// Hit-test role shared by every tile.
     scene_data: SceneData = undefined,
+
+    const DropAt = struct {
+        destination: dnd.Destination,
+        path: ?[]const u8 = null,
+    };
 
     const Secondary = struct {
         output: *Output,
@@ -594,27 +600,41 @@ pub const Desktop = struct {
         self.schedule();
     }
 
-    /// The folder icon under the pointer, where a drop or paste would land.
-    fn dropFolder(self: *Desktop) ?[]const u8 {
-        const index = self.app.hit(self.app.x, self.app.y) orelse return null;
+    /// The desktop item under the pointer, classified independently of its folder flag.
+    fn dropAt(self: *Desktop) DropAt {
+        const index = self.app.hit(self.app.x, self.app.y) orelse return .{ .destination = .link };
         const item = self.app.icons.items[index].item;
-        return if (item.folder) item.path else null;
+        return .{
+            .destination = dnd.destination(item.builtin == .trash, item.folder),
+            .path = item.path,
+        };
     }
 
-    /// A client drag moved over the desktop: dropping on a folder moves into
-    /// it, anywhere else links, as the desktop client negotiated.
+    /// A client drag moved over the desktop. Trash and folders require move;
+    /// only Trash forbids negotiation fallback to another action.
     pub fn dragHover(self: *Desktop) void {
-        self.drop_target.hover(self.server.input.seat, if (self.dropFolder() != null) .move else .copy);
+        const target = self.dropAt();
+        const preferred: @import("../desktop_drop.zig").Action = if (target.destination == .link) .copy else .move;
+        self.drop_target.hover(self.server.input.seat, preferred, target.destination != .trash);
     }
 
     /// Receives a client drag released over the desktop. False leaves the
     /// drag to wlroots, which cancels it.
     pub fn drop(self: *Desktop, button: u32) bool {
         if (self.transfer != .none) return false;
-        const folder = self.dropFolder();
-        const taken = self.drop_target.take(self.server.input.seat, button, if (folder != null) .move else .copy) orelse return false;
+        const target = self.dropAt();
+        const is_trash = target.destination == .trash;
+        const is_folder = target.destination == .folder;
+        const preferred: @import("../desktop_drop.zig").Action = if (target.destination == .link) .copy else .move;
+        const taken = self.drop_target.take(self.server.input.seat, button, preferred, !is_trash) orelse return false;
         self.worker.drop_done.store(false, .release);
-        self.worker.enqueue(.{ .kind = .drop, .path = folder orelse self.worker.dir, .folder = folder != null and taken.action == .move, .value = if (folder != null) "paste" else "", .fd = taken.fd });
+        self.worker.enqueue(.{
+            .kind = .drop,
+            .path = if (is_folder) target.path.? else self.worker.dir,
+            .folder = is_folder and taken.action == .move,
+            .value = if (is_trash) "trash" else if (is_folder) "paste" else "",
+            .fd = taken.fd,
+        });
         self.transfer = .drop;
         self.app.leave();
         self.schedule();

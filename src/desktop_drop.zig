@@ -44,9 +44,9 @@ pub const Target = struct {
 
     /// Tells a drag hovering the target what a drop would do, so its source
     /// can show the right cursor. Entering a client resets this.
-    pub fn hover(self: *const Target, seat: *wlr.Seat, preferred: Action) void {
+    pub fn hover(self: *const Target, seat: *wlr.Seat, preferred: Action, allow_fallback: bool) void {
         const source = dragSource(seat) orelse return;
-        const action = if (self.active) null else negotiate(source, preferred);
+        const action = if (self.active) null else negotiate(source, preferred, allow_fallback);
         // Motion arrives far faster than this changes; a client entering
         // resets `accepted`, so returning here sends it again.
         if (action) |value| {
@@ -60,10 +60,10 @@ pub const Target = struct {
     /// before `pointerNotifyButton`. Returns the read end of the URI list and
     /// the negotiated action, or null (leaving the drag untouched, so wlroots
     /// cancels it) when there is nothing usable or a drop is still running.
-    pub fn take(self: *Target, seat: *wlr.Seat, button: u32, preferred: Action) ?struct { fd: i32, action: Action } {
+    pub fn take(self: *Target, seat: *wlr.Seat, button: u32, preferred: Action, allow_fallback: bool) ?struct { fd: i32, action: Action } {
         if (self.active or button != seat.pointer_state.grab_button) return null;
         const source = dragSource(seat) orelse return null;
-        const action = negotiate(source, preferred) orelse return null;
+        const action = negotiate(source, preferred, allow_fallback) orelse return null;
         var fds: [2]std.posix.fd_t = undefined;
         if (std.c.pipe2(&fds, .{ .CLOEXEC = true }) != 0) return null;
 
@@ -102,15 +102,30 @@ pub fn offersUriList(source: *wlr.DataSource) bool {
 }
 
 /// The action a drop would perform, or null when the source allows neither.
-/// Sources older than v3 have no action mask and always copy.
-pub fn negotiate(source: *wlr.DataSource, preferred: Action) ?Action {
-    if (source.actions < 0) return .copy;
-    const mask: u32 = @bitCast(source.actions);
+pub fn negotiate(source: *wlr.DataSource, preferred: Action, allow_fallback: bool) ?Action {
+    return negotiateActions(source.actions, preferred, allow_fallback);
+}
+
+/// Pure action-mask negotiation, also covering legacy sources without an action mask.
+pub fn negotiateActions(actions: i32, preferred: Action, allow_fallback: bool) ?Action {
+    if (actions < 0) return if (preferred == .copy or allow_fallback) .copy else null;
+    const mask: u32 = @bitCast(actions);
     const copy_bit: u32 = @intFromEnum(wl.DataDeviceManager.DndAction.Enum.copy);
     const move_bit: u32 = @intFromEnum(wl.DataDeviceManager.DndAction.Enum.move);
-    const bit = if (preferred == .move) move_bit else copy_bit;
-    if (mask & bit != 0) return preferred;
-    if (mask & copy_bit != 0) return .copy;
-    if (mask & move_bit != 0) return .move;
+    const preferred_bit = if (preferred == .move) move_bit else copy_bit;
+    if (mask & preferred_bit != 0) return preferred;
+    if (!allow_fallback) return null;
+    const fallback_bit = if (preferred == .move) copy_bit else move_bit;
+    if (mask & fallback_bit != 0) return if (preferred == .move) .copy else .move;
     return null;
+}
+
+test "move-only drop negotiation rejects copy-only and legacy sources" {
+    const copy_bit: u32 = @intFromEnum(wl.DataDeviceManager.DndAction.Enum.copy);
+    const move_bit: u32 = @intFromEnum(wl.DataDeviceManager.DndAction.Enum.move);
+    try std.testing.expectEqual(@as(?Action, null), negotiateActions(@intCast(copy_bit), .move, false));
+    try std.testing.expectEqual(@as(?Action, null), negotiateActions(-1, .move, false));
+    try std.testing.expectEqual(@as(?Action, .move), negotiateActions(@intCast(move_bit), .move, false));
+    try std.testing.expectEqual(@as(?Action, .copy), negotiateActions(@intCast(copy_bit), .move, true));
+    try std.testing.expectEqual(@as(?Action, .move), negotiateActions(@intCast(move_bit), .copy, true));
 }

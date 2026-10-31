@@ -455,9 +455,9 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.hovered_resize_edges = null;
             input.clearTaskbarHover();
             input.setHover(null, null);
-            // Clearing client focus also leaves a DnD drag unfocused, which
-            // is what lets the desktop receive its drop.
-            input.seat.pointerClearFocus();
+            // Defer focus clearing to the active pointer grab so wlroots
+            // updates its DnD drag focus as well as ordinary pointer focus.
+            input.seat.pointerNotifyClearFocus();
             res.desktop.pointerMotion(res.x, res.y);
             if (input.seat.drag != null) res.desktop.dragHover();
         },
