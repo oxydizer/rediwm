@@ -140,8 +140,6 @@ stdenv.mkDerivation {
       lib
       tzdata
       systemd
-      glibc
-      pulseaudio
       dejavu_fonts
       fontconfig
       poppler_data
@@ -184,6 +182,8 @@ stdenv.mkDerivation {
             xwayland
             xdg-utils
             glib
+            glibc # locale, spawned by the Region settings page.
+            pulseaudio # paplay, resolved on PATH for event sounds.
           ]
         } \
         --suffix XDG_DATA_DIRS : "$out/share:${

@@ -2,8 +2,6 @@
   lib,
   tzdata,
   systemd,
-  glibc,
-  pulseaudio,
   dejavu_fonts,
   fontconfig,
   poppler_data,
@@ -14,17 +12,12 @@
 ''
   substituteInPlace src/polkit/native.c \
     --replace-fail 'const char *paths[] = {' 'const char *paths[] = {"/run/wrappers/bin/polkit-agent-helper-1", '
-  substituteInPlace src/systemd_edit.zig \
-    --replace-fail '/usr/bin/pkexec' '/run/wrappers/bin/pkexec' \
-    --replace-fail 'else "/bin/pkexec"' 'else "/run/wrappers/bin/pkexec"' \
-    --replace-fail '/usr/bin/systemctl' '${lib.getExe' systemd "systemctl"}' \
-    --replace-fail 'else "/bin/systemctl"' 'else "${lib.getExe' systemd "systemctl"}"'
+  # Privileged helpers use trusted directories, never the session's PATH.
+  substituteInPlace src/platform/tool.zig \
+    --replace-fail 'const system_dirs = [_][]const u8{' \
+      'const system_dirs = [_][]const u8{ "/run/wrappers/bin", "${lib.getBin systemd}/bin",'
   substituteInPlace src/config_runtime/region.zig src/control_center/sections/region.zig \
     --replace-fail '/usr/share/zoneinfo' '${tzdata}/share/zoneinfo'
-  substituteInPlace src/control_center/sections/region.zig \
-    --replace-fail '/usr/bin/locale' '${lib.getBin glibc}/bin/locale'
-  substituteInPlace src/audio/sounds.zig \
-    --replace-fail '/usr/bin/paplay' '${lib.getExe' pulseaudio "paplay"}'
   # Permit only these font/character-map data directories after Landlock,
   # never the whole Nix store. The UI's selected fonts are opened beforehand.
   substituteInPlace src/pdf/sandbox.c \

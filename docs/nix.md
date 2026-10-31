@@ -82,5 +82,9 @@ in `patches/wlroots/`. Update Nixpkgs deliberately with
 `nix flake update nixpkgs`, then rerun the checks.
 
 Nix-specific runtime path substitutions live in `nix/runtime-paths.nix` and
-fail if their source text changes. The PDF sandbox grants access only to
-specific font and Poppler data directories, not the whole Nix store.
+fail if their source text changes. Privileged helpers use `platform.tool`'s
+trusted directories, with `/run/wrappers/bin` and the packaged systemd's
+`bin` directory searched first. Ordinary helpers such as `locale` and
+`paplay` come from the package wrapper's `PATH`. The PDF sandbox grants
+access only to specific font and Poppler data directories, not the whole
+Nix store.
