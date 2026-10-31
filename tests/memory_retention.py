@@ -9,6 +9,7 @@ missing DRM accounting is reported as null, never zero. No allocator trimming.
     python3 tests/memory_retention.py --cycles 50 --out /tmp/retention.json
     python3 tests/memory_retention.py --app files --scale 1.5 --out /tmp/files.json
     python3 tests/memory_retention.py --app control-center --out /tmp/settings.json
+    python3 tests/memory_retention.py --app brave --dwell 2 --out /tmp/brave.json
 
 Use ReleaseSafe for memory comparisons; Debug's allocator has different retention.
 Memory thresholds are opt-in and machine-specific. Scene counts must return to
@@ -22,6 +23,8 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
+import signal
 import statistics
 import subprocess
 import tempfile
@@ -30,6 +33,16 @@ import time
 from PIL import Image
 
 from ipc_client import IPCClient, ROOT, spawn_compositor, stop_process
+
+
+# Animated canvas: keeps Brave committing new dmabuf frames while the window is open.
+PAGE = """<!doctype html><title>retention</title><body style="margin:0"><canvas id=c></canvas><script>
+const c = document.getElementById("c"), g = c.getContext("2d");
+c.width = innerWidth; c.height = innerHeight;
+(function f(t) { const x = (t / 8) % c.width, gr = g.createLinearGradient(x, 0, x + 400, c.height);
+  gr.addColorStop(0, "#c33"); gr.addColorStop(1, "#38c"); g.fillStyle = gr;
+  g.fillRect(0, 0, c.width, c.height); requestAnimationFrame(f); })(0);
+</script>"""
 
 
 def drm_memory(proc):
@@ -97,6 +110,26 @@ def sample(ipc, pid):
     return {**memory(pid), "scene_counts": counts, "scene_nodes": sum(counts.values())}
 
 
+def brave_command(env):
+    """Isolated Brave: private profile, no network (a dead-end proxy), animated page."""
+    browser = os.environ.get("REDIWM_TEST_BRAVE") or shutil.which("brave")
+    if not browser:
+        raise SystemExit("Brave not found; set REDIWM_TEST_BRAVE to its executable")
+    home = Path(env["HOME"])
+    return [browser, "--ozone-platform=wayland", f"--user-data-dir={home / 'brave-profile'}",
+            "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
+            "--proxy-server=http://127.0.0.1:9", "--password-store=basic",
+            "--hide-crash-restore-bubble", (home / "page.html").as_uri()]
+
+
+def kill_group(pid):
+    """Brave is a process tree started in its own session; never leave children behind."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def cycle(args, ipc, env, app_log):
     app = None
     try:
@@ -104,23 +137,40 @@ def cycle(args, ipc, env, app_log):
             ipc.open_control_center()
             ipc.wait_for("window_mapped", app_id="rediwm-settings")
         else:
-            command = [str(args.binary.parent / f"rediwm-{args.app}")]
+            if args.app == "brave":
+                # A reused profile restores last cycle's tab and Brave then asks "Close all tabs?".
+                shutil.rmtree(Path(env["HOME"]) / "brave-profile", ignore_errors=True)
+                command, app_id = brave_command(env), "brave-browser"
+            else:
+                command, app_id = [str(args.binary.parent / f"rediwm-{args.app}")], f"rediwm-{args.app}"
             if args.app == "files":
                 command.append(env["HOME"])
-            app = subprocess.Popen(command, env=env, stdout=app_log, stderr=app_log)
-            ipc.wait_for("window_mapped", app_id=f"rediwm-{args.app}")
+            app = subprocess.Popen(command, env=env, stdout=app_log, stderr=app_log,
+                                   start_new_session=args.app == "brave")
+            ipc.wait_for("window_mapped", app_id=app_id, timeout_ms=30000)
         windows = ipc.get_windows()
         assert len(windows) == 1, f"expected one window, got {windows}"
         window_id = windows[0]["id"]
         ipc.wait_for("window_geometry_settled", window_id=window_id)
         ipc.wait_for_frame()
         opened = memory(app.pid) if app else None
+        time.sleep(args.dwell)
         if args.close_mode == "kill":
-            app.kill()
+            kill_group(app.pid) if args.app == "brave" else app.kill()
         else:
             ipc.close_window(window_id)
         if app:
-            code = app.wait(timeout=10)
+            try:
+                code = app.wait(timeout=30 if args.app == "brave" else 10)
+            except subprocess.TimeoutExpired:
+                tree = subprocess.run(["ps", "-o", "pid,stat,wchan:22,etime,args", "--sid", str(app.pid)],
+                                      capture_output=True, text=True).stdout
+                shot = args.out.with_name(args.out.stem + "-hang.png")
+                ipc.screenshot(path=str(shot))
+                raise AssertionError(f"{args.app} did not exit after close (screenshot: {shot}); windows={ipc.get_windows()}\n"
+                                     + "\n".join(line[:160] for line in tree.splitlines()[:12])) from None
+            if args.app == "brave":
+                kill_group(app.pid)
             expected = -9 if args.close_mode == "kill" else 0
             assert code == expected, f"application exited {code}, expected {expected}"
         ipc.wait_for("window_closed", window_id=window_id)
@@ -129,6 +179,8 @@ def cycle(args, ipc, env, app_log):
     finally:
         if app and app.poll() is None:
             stop_process(app)
+        if app and args.app == "brave":
+            kill_group(app.pid)
 
 
 def summarize(baseline, rows):
@@ -150,6 +202,7 @@ def summarize(baseline, rows):
 def run(args, tmp, report):
     wallpaper = tmp / "wallpaper.png"
     Image.new("RGB", (64, 64), (32, 48, 64)).save(wallpaper)
+    (tmp / "page.html").write_text(PAGE)
     env = dict(HOME=str(tmp), XDG_CONFIG_HOME=str(tmp / "config"), XDG_DATA_HOME=str(tmp / "data"),
                XDG_CACHE_HOME=str(tmp / "cache"), XDG_STATE_HOME=str(tmp / "state"),
                XDG_RUNTIME_DIR=str(tmp), XDG_DATA_DIRS=str(tmp / "data"),
@@ -219,10 +272,11 @@ def run(args, tmp, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=ROOT / "zig-out/release-safe/bin/rediwm")
-    parser.add_argument("--app", choices=("calculator", "editor", "files", "control-center"), default="calculator")
+    parser.add_argument("--app", choices=("calculator", "editor", "files", "control-center", "brave"), default="calculator")
     parser.add_argument("--cycles", type=int, default=30)
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--settle", type=float, default=1.0, help="seconds after each close before frame barriers")
+    parser.add_argument("--dwell", type=float, default=0.0, help="seconds to keep the window open before closing")
     parser.add_argument("--scale", type=float, default=1.0)
     parser.add_argument("--close-mode", choices=("graceful", "kill"), default="graceful")
     parser.add_argument("--no-animations", action="store_true")
@@ -231,7 +285,7 @@ def main():
     parser.add_argument("--max-pss-slope-kib", type=float)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    if args.cycles < 2 or args.warmup < 1 or not math.isfinite(args.settle) or args.settle < 0:
+    if args.cycles < 2 or args.warmup < 1 or not math.isfinite(args.settle) or args.settle < 0 or not math.isfinite(args.dwell) or args.dwell < 0:
         parser.error("need at least two measured cycles, one warm-up cycle and a nonnegative finite settle time")
     if not math.isfinite(args.scale) or args.scale <= 0:
         parser.error("scale must be positive and finite")
