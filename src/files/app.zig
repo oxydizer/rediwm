@@ -268,6 +268,10 @@ pub const App = struct {
     mouse_y: f64 = 0,
     last_click_time: i64 = 0,
     last_click_index: ?usize = null,
+    /// The item a single-click last opened, and when: the second click of a
+    /// double-click on its icon must not open it again.
+    last_open_index: ?usize = null,
+    last_open_time: i64 = 0,
     ctrl: bool = false,
     shift: bool = false,
     alt: bool = false,

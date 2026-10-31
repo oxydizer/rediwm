@@ -307,6 +307,8 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
                 if (!self.ctrl and !self.shift and !self.alt and self.singleClickIconAt(self.mouse_x, self.mouse_y) == idx) {
                     self.last_click_index = null;
                     self.last_click_time = 0;
+                    self.last_open_index = idx;
+                    self.last_open_time = nowMs();
                     self.activateItem(idx);
                 }
             }
@@ -593,6 +595,9 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             }
 
             const single_click = button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.singleClickIconAt(x, y) == idx;
+            // A single click opens on release, so a double-click on an icon
+            // would open it twice: the second click only selects.
+            const just_opened = single_click and self.last_open_index == idx and now - self.last_open_time < 400;
             // Icon clicks activate on release so they can still start a drag.
             if (!single_click and button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.last_click_index == idx and (now - self.last_click_time < 400)) {
                 self.activateItem(idx);
@@ -628,7 +633,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             }
             if (self.chooser != null and !self.items.items[idx].is_dir) self.setChooserName(self.items.items[idx].name);
             if (self.chooser == null and button == 0x110 and self.items.items[idx].selected and !self.items.items[idx].missing) self.drag_origin = .{ .x = x, .y = y };
-            if (single_click) self.open_on_release = idx;
+            if (single_click and !just_opened) self.open_on_release = idx;
         } else {
             // A background press starts a rubber-band selection; pressing
             // an item still starts an outgoing file drag.
