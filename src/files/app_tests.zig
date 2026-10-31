@@ -189,6 +189,23 @@ pub fn testItems(app: *App, count: usize) !void {
     }
 }
 
+test "Delete shortcuts set permanent deletion mode only for Shift+Delete" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+
+    app.focused_index = 0;
+    app.handleKey(c.XKB_KEY_Delete, "");
+    try std.testing.expect(app.dialog != null);
+    try std.testing.expect(!app.dialog.?.deletion.permanent);
+
+    app.closeDialog();
+    app.shift = true;
+    app.handleKey(c.XKB_KEY_Delete, "");
+    try std.testing.expect(app.dialog != null);
+    try std.testing.expect(app.dialog.?.deletion.permanent);
+}
+
 test "terminal drawer shares viewport geometry and preserves its preferred height" {
     var app = try testApp();
     defer app.deinit();

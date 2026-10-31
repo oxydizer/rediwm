@@ -231,7 +231,7 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         self.openRenameDialog();
         return;
     } else if (sym == c.XKB_KEY_Delete) {
-        self.openTrashConfirmDialog();
+        self.openTrashConfirmDialogWithMode(self.shift);
         return;
     } else if (sym == c.XKB_KEY_Return) {
         self.activateSelected();

@@ -550,6 +550,7 @@ pub const App = struct {
     pub const openRenameDialog = app_dialogs.openRenameDialog;
     pub const openEmptyTrashDialog = app_dialogs.openEmptyTrashDialog;
     pub const openTrashConfirmDialog = app_dialogs.openTrashConfirmDialog;
+    pub const openTrashConfirmDialogWithMode = app_dialogs.openTrashConfirmDialogWithMode;
     pub const openConflictDialog = app_dialogs.openConflictDialog;
     pub const confirmDialog = app_dialogs.confirmDialog;
     pub const handleDialogKey = app_dialogs.handleDialogKey;
