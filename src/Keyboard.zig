@@ -96,6 +96,62 @@ fn handleKeymap(listener: *wl.Listener(*wlr.Keyboard), _: *wlr.Keyboard) void {
     @import("input/layouts.zig").changed(keyboard, true);
 }
 
+fn updateDragAction(seat: *wlr.Seat, ctrl: bool) void {
+    const drag = seat.drag orelse return;
+    const source = seat.drag_source orelse return;
+
+    const Enum = wl.DataDeviceManager.DndAction.Enum;
+    const copy_bit: u32 = @intFromEnum(Enum.copy);
+    const move_bit: u32 = @intFromEnum(Enum.move);
+    const both_bits = copy_bit | move_bit;
+
+    // Only change the action for sources that explicitly support both.
+    if (source.actions < 0) return;
+    const source_actions: u32 = @bitCast(source.actions);
+    if ((source_actions & both_bits) != both_bits) return;
+
+    source.compositor_action = if (ctrl) copy_bit else move_bit;
+
+    const focus_client = drag.focus_client orelse return;
+    var offers = seat.drag_offers.iterator(.forward);
+    while (offers.next()) |offer| {
+        if (offer.type != .drag or offer.source != source) continue;
+        if (offer.resource.getClient() != focus_client.client) continue;
+
+        const version = offer.resource.getVersion();
+        const offer_actions: u32 = if (version >= 3) offer.actions else copy_bit;
+        const preferred_bits: u32 = if (version >= 3)
+            @as(u32, @intCast(@intFromEnum(offer.preferred_action)))
+        else
+            0;
+        const available = offer_actions & source_actions;
+
+        const compositor_bits = source.compositor_action & available;
+        const action_bits = if (compositor_bits != 0)
+            compositor_bits
+        else if ((preferred_bits & available) != 0)
+            preferred_bits & available
+        else
+            available & (~available +% 1);
+
+        const action: Enum = @enumFromInt(action_bits);
+
+        // wlroots tracks one current action per source, shared by its offers.
+        if (source.current_dnd_action == action) return;
+
+        if (offer.in_ask) {
+            source.current_dnd_action = action;
+            return;
+        }
+
+        source.dndAction(action);
+        if (version >= 3) {
+            offer.resource.sendAction(@bitCast(action_bits));
+        }
+        return;
+    }
+}
+
 fn handleModifiers(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Keyboard) void {
     const keyboard: *Keyboard = @fieldParentPtr("modifiers", listener);
     if (keyboard.server.locker != null and @import("input/text_input.zig").isVirtual(keyboard.device)) return;
@@ -117,7 +173,12 @@ fn handleModifiers(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Key
         const synthetic_locked = keyboard.server.locker != null and keyboard.server.virtual_input != null and keyboard.device == &keyboard.server.virtual_input.?.keyboard.wlr_kbd.base;
         if (!synthetic_locked) @import("osd.zig").show(keyboard.server, .{ .kind = .caps_lock, .active = caps });
     }
-    keyboard.server.input.seat.setKeyboard(wlr_keyboard);
+    const seat = keyboard.server.input.seat;
+    seat.setKeyboard(wlr_keyboard);
+    updateDragAction(seat, mods.ctrl);
+    // wlroots' DnD keyboard grab does not forward modifier events.
+    // Keep the focused source client synchronized while the drag is active.
+    if (seat.drag != null) seat.keyboardSendModifiers(&wlr_keyboard.modifiers);
     @import("input/layouts.zig").activate(keyboard);
     if (keyboard.server.locker) |lock| {
         lock.modifiers(wlr_keyboard.getModifiers());

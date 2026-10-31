@@ -79,7 +79,7 @@ pub fn dragOver(self: *Client, x: f64, y: f64, entered: bool) void {
     const folder = available and !pin and !terminal and self.app.dropDirectoryAt(x, self.drag_y) != null;
     self.app.highlightDrop(x, self.drag_y, folder);
     const wanted = pin or folder or terminal;
-    const moving = folder and offer.files;
+    const moving = folder and offer.files and !self.app.ctrl;
     if (!entered and wanted == self.drag_accepting and moving == self.drag_moving) return;
     self.drag_accepting = wanted;
     self.drag_moving = moving;
@@ -235,7 +235,7 @@ pub fn startFileDrag(self: *Client) !void {
     source.offer("text/uri-list");
     source.offer("application/x-rediwm-file-transfer");
     // The receiving file manager performs moves; upload targets choose copy.
-    if (source.getVersion() >= 3) source.setActions(.{ .copy = true, .move = !self.app.ctrl });
+    if (source.getVersion() >= 3) source.setActions(.{ .copy = true, .move = true });
     self.drag_source = clip;
     self.app.cancelWheel();
     self.app.cancelDrag();

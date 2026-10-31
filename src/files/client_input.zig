@@ -246,6 +246,13 @@ pub fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) v
                 self.app.shift = c.xkb_state_mod_name_is_active(state, "Shift", c.XKB_STATE_MODS_EFFECTIVE) > 0;
                 self.app.alt = c.xkb_state_mod_name_is_active(state, "Mod1", c.XKB_STATE_MODS_EFFECTIVE) > 0 or
                     c.xkb_state_mod_name_is_active(state, "Alt", c.XKB_STATE_MODS_EFFECTIVE) > 0;
+                if (self.drag_offer != null) {
+                    self.dragOver(
+                        self.drag_x,
+                        self.drag_y + @as(f64, @floatFromInt(self.titlebarHeight())),
+                        false,
+                    );
+                }
             }
         },
         .key => |ev| {

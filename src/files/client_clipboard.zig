@@ -13,6 +13,13 @@ const Client = @import("Client.zig");
 
 pub fn clipboardEvent(source: *wl.DataSource, event: wl.DataSource.Event, clip: *ClipboardSource) void {
     switch (event) {
+        .action => |ev| {
+            if (clip.client.drag_source == clip) {
+                if (clip.client.drag_icon) |*icon| {
+                    icon.update(clip.client, ev.dnd_action.copy) catch {};
+                }
+            }
+        },
         .send => |ev| {
             const mime = std.mem.span(ev.mime_type);
             const data = if (std.mem.eql(u8, mime, "x-special/gnome-copied-files")) clip.gnome else clip.uris;
