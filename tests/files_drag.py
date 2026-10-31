@@ -291,7 +291,8 @@ def run_pin():
             log.close()
 
 
-def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
+def run_transfer(same_window=False, copy=False, list_view=False, folder=True, ctrl_changes=()):
+    expected_copy = ctrl_changes[-1] if ctrl_changes else copy
     with tempfile.TemporaryDirectory(prefix="rediwm-files-transfer-") as directory:
         tmp = Path(directory)
         home = tmp / "home"
@@ -308,7 +309,8 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
         if not same_window:
             (source / "bundle").mkdir()
             (source / "bundle" / "child.txt").write_text("nested payload")
-        comp, log = spawn_compositor(tmp, config_content="[compositor]\nxwayland = false\ndodge_file_drags = false\n",
+        comp, log = spawn_compositor(tmp, scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
+                                     config_content="[compositor]\nxwayland = false\ndodge_file_drags = false\n",
                                      env_extra={"HOME": str(home)})
         peers = []
         try:
@@ -316,6 +318,7 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
                 display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
                 env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp),
                            XDG_STATE_HOME=str(tmp / "state"), XDG_DATA_HOME=str(tmp / "data"), XDG_CONFIG_HOME=str(tmp / "config"),
+                           XDG_CACHE_HOME=str(tmp / "cache"),
                            REDIWM_CONFIG=str(tmp / "rediwm-config.toml"), WAYLAND_DISPLAY=display,
                            DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent", REDIWM_FILES_DEVICES="0")
                 env.pop("DISPLAY", None)
@@ -333,6 +336,8 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
                 src = launch(source, 10)
                 dst = src if same_window else launch(target.parent if folder else target, 680)
                 ipc.action('focus_window', {"id": src["id"]})
+                for window in ([src] if same_window else [src, dst]):
+                    ipc.wait_for("window_geometry_settled", window_id=window["id"])
                 time.sleep(.5)
                 box = ipc.get_window_debug(src["id"])["client_box"]
                 dest = ipc.get_window_debug(dst["id"])["client_box"]
@@ -366,24 +371,30 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
                     move(sx + (tx-sx)*step/16, sy + (ty-sy)*step/16)
                     time.sleep(.04)
                 time.sleep(.2)
+                # Change Ctrl while stationary over the target: action updates
+                # must not depend on another pointer motion or drag enter.
+                for pressed in ctrl_changes:
+                    ipc.action('key', {"keycode": 29, "pressed": pressed})
+                    time.sleep(.2)
                 button(False)
-                if copy:
+                if expected_copy:
                     ipc.action('key', {"keycode": 29, "pressed": False})
                 wait_for(lambda: (target / name).exists(), "file did not arrive at drop destination")
                 assert (target / name).read_text() == "transfer payload"
-                if copy:
+                if expected_copy:
                     assert (source / name).read_text() == "transfer payload"
                 else:
                     wait_for(lambda: not (source / name).exists(), "move left the source behind")
                 if not same_window:
                     wait_for(lambda: (target / "bundle" / "child.txt").exists(), "nested folder did not arrive")
                     assert (target / "bundle" / "child.txt").read_text() == "nested payload"
-                    if copy:
+                    if expected_copy:
                         assert (source / "bundle" / "child.txt").read_text() == "nested payload"
                     else:
                         wait_for(lambda: not (source / "bundle").exists(), "folder move left the source behind")
                 assert all(peer.poll() is None for peer in peers), "Files exited during transfer"
-                print(f"PASS Files {'copy' if copy else 'move'} {'within window' if same_window else 'between windows'} {'folder' if folder else 'background'} {'list' if list_view else 'grid'}")
+                changes = f" Ctrl changes={ctrl_changes}" if ctrl_changes else ""
+                print(f"PASS Files {'copy' if expected_copy else 'move'} {'within window' if same_window else 'between windows'} {'folder' if folder else 'background'} {'list' if list_view else 'grid'}{changes}")
         finally:
             for peer in peers:
                 stop_process(peer)
@@ -398,6 +409,10 @@ if __name__ == "__main__":
         run_transfer(folder=False)
         run_transfer(copy=True)
         run_transfer(list_view=True)
+        run_transfer(same_window=True, ctrl_changes=(True,))
+        run_transfer(same_window=True, copy=True, ctrl_changes=(False,))
+        run_transfer(ctrl_changes=(True,))
+        run_transfer(copy=True, ctrl_changes=(False,))
         sys.exit(0)
     if "--pin" in sys.argv:
         run_pin()
