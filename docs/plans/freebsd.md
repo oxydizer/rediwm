@@ -49,7 +49,7 @@ translate. About 47 Zig files call `std.os.linux.*` directly.
 
 The PDF sandbox (`pdf/sandbox.c` + `pdf/syscall_policy.zig`: raw BPF through
 `platform/seccomp.zig`, + Landlock) and the theme helper
-(`theme_helper/native.c`: raw BPF + Landlock) have no FreeBSD counterpart
+(`theme_helper/native.c` + `syscall_policy.zig`: the same builder, + Landlock) have no FreeBSD counterpart
 short of a rewrite on **Capsicum** (`cap_enter`, `cap_rights_limit` on
 pre-opened directory fds). The design fits, since both already preload before
 the sandbox closes (`compose.preload`), but capability mode forbids every
@@ -119,12 +119,17 @@ ReleaseSafe, `zig build test` and affected integration suites.
    `/proc/self/exe` readers.
 4. **Raw syscalls to libc** where libc has the call (fork, execve, wait4,
    close, read, getuid, …), keeping `std.os.linux` for what has no libc form.
-5. **One sandbox interface:** (half done) the PDF sandbox no longer uses
-   libseccomp: `platform/seccomp.zig` builds and loads the filter and
+5. **One sandbox interface:** (syscall filters done) the PDF sandbox no longer
+   uses libseccomp: `platform/seccomp.zig` builds and loads the filter and
    `pdf/syscall_policy.zig` holds its allow-list, checked verdict for verdict
-   against the libseccomp program it replaced. Left: move the theme helper's
-   C filter onto the same builder and give both one "restrict to these
-   directories" entry point, which Capsicum later implements.
+   against the libseccomp program it replaced; the theme helper's filter
+   (`theme_helper/syscall_policy.zig`: no `socket`/`connect`) uses the same
+   builder, checked the same way against its old C filter. Left: give both
+   sandboxes one "restrict to these directories" entry point, which Capsicum
+   later implements. Their Landlock code differs on purpose (PDF: read-only
+   trees, ABI 3 required, fails closed; theme helper: optionally writable root
+   and `/usr` executable, runs without Landlock on older kernels), so settle
+   what the entry point promises before moving either.
 6. **Process listing:** keep `/proc` parsing behind the system monitor's
    collector interface (shared with `ipc/processes.zig`).
 7. **Paths:** replace fixed `/usr/bin/…` tool paths with `PATH` lookup.

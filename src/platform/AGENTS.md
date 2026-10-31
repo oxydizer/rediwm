@@ -2,8 +2,10 @@
 
 The one place the OS shows: child handles (`child.zig`), directory watching
 (`watch.zig`), the program's own path (`exe.zig`), seccomp-BPF filters
-(`seccomp.zig`), and `child.h`/`self_exe.h` for C and C++. Std only, no compositor imports. Linux today; the FreeBSD port
-(`docs/plans/freebsd.md`) adds `freebsd_*.zig` parts without changing callers.
+(`seccomp.zig`, for the PDF viewer and the theme helper), and
+`child.h`/`self_exe.h` for C and C++. Std only, no compositor imports. Linux
+today; the FreeBSD port (`docs/plans/freebsd.md`) adds `freebsd_*.zig` parts
+without changing callers.
 
 * **A `Handle` is not a pid.** Hold it for as long as you may signal; a bare
   `kill(pid)` is only safe while you have not reaped the child. `pid()` is
@@ -22,7 +24,8 @@ The one place the OS shows: child handles (`child.zig`), directory watching
   and nothing allocates. Rules match in order; `ruleArg` compares all 64 bits
   and falls through on a mismatch. The header kills a foreign arch and an x32
   number, but not -1 (a tracer's skip number: it gets the default action, as
-  libseccomp did). Use `seccomp.number("name")` (null where an architecture
+  libseccomp did; under an allow-by-default policy such as the theme helper's
+  it reaches the kernel, which answers ENOSYS). Use `seccomp.number("name")` (null where an architecture
   dropped the call) and keep optional legacy names in a separate list from
   required ones, so a typo is a compile error and not a silent hole. Load with
   `install` only after `PR_SET_NO_NEW_PRIVS`, single-threaded; it goes through

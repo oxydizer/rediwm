@@ -123,6 +123,7 @@ pub fn build(b: *std.Build) void {
     theme_helper.root_module.addImport("config", config_mod);
     theme_helper.root_module.addImport("ui", ui_mod);
     theme_helper.root_module.addImport("i18n", i18n_mod);
+    theme_helper.root_module.addImport("platform", platform_mod);
     theme_helper.root_module.addCSourceFile(.{ .file = b.path("src/theme_helper/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "libarchive", "librsvg-2.0", "gdk-pixbuf-2.0" }) |lib| theme_helper.root_module.linkSystemLibrary(lib, .{});
     addThumbCodec(b, theme_helper.root_module);

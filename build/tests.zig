@@ -107,6 +107,9 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     const run_platform_tests = b.addRunArtifact(b.addTest(.{ .root_module = ctx.platform_mod }));
     test_step.dependOn(&run_platform_tests.step);
     b.step("test-platform", "Test child handles, file watching and the program's own path").dependOn(&run_platform_tests.step);
+    const theme_policy_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/theme_helper/syscall_policy.zig"), .target = target, .optimize = optimize, .link_libc = true }) });
+    theme_policy_tests.root_module.addImport("platform", ctx.platform_mod);
+    test_step.dependOn(&b.addRunArtifact(theme_policy_tests).step);
     const i18n_tool_tests = b.addTest(.{ .root_module = i18n_tool.root_module });
     test_step.dependOn(&b.addRunArtifact(i18n_tool_tests).step);
     b.step("test-i18n", "Test locale resolution, catalogs and formatting").dependOn(&run_i18n_tests.step);

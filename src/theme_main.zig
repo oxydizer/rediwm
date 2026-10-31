@@ -3,6 +3,11 @@ const std = @import("std");
 const packs = @import("config").theme_pack;
 const theme = @import("ui").theme;
 const archive = @import("files/archive.zig");
+
+// `native.c` calls the exported syscall policy.
+comptime {
+    _ = @import("theme_helper/syscall_policy.zig");
+}
 extern fn rediwm_theme_stage_isolated([*:0]const u8, [*:0]const u8) c_int;
 extern fn rediwm_theme_validate_isolated([*:0]const u8) c_int;
 extern fn rediwm_theme_rollback([*:0]const u8, [*:0]const u8) c_int;
