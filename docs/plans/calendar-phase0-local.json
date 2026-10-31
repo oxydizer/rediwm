@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "scope": "local_dependency_prototype",
+  "backend_decision": "pending",
+  "phase0_complete": false,
+  "inventory": {
+    "packages": {
+      "sqlite3": {
+        "status": "available",
+        "version": "3.54.0"
+      },
+      "libical": {
+        "status": "available",
+        "version": "4.0.7"
+      },
+      "libcurl": {
+        "status": "available",
+        "version": "8.23.0"
+      },
+      "libecal-2.0": {
+        "status": "available",
+        "version": "3.60.2"
+      },
+      "libedataserver-1.2": {
+        "status": "available",
+        "version": "3.60.2"
+      },
+      "libsecret-1": {
+        "status": "available",
+        "version": "0.21.8.2"
+      }
+    },
+    "provider_modules": [
+      "libecalbackendcaldav.so"
+    ],
+    "tools": {
+      "cc": true,
+      "pkg-config": true,
+      "dbus-daemon": true,
+      "gdbus": true,
+      "glib-compile-schemas": true
+    },
+    "keyring_access": "not_tested",
+    "provider_access": "not_tested"
+  },
+  "probes": {
+    "native": {
+      "status": "pass",
+      "ical_roundtrip": true,
+      "dst_master_expansion": true,
+      "exception_identity_preservation": true,
+      "sqlite_rollback": true,
+      "pending_survives_cache_refresh_and_reopen": true,
+      "exception_overlay_applied": false,
+      "provider_qualification": false
+    },
+    "eds": {
+      "status": "pass",
+      "write": {
+        "status": "pass",
+        "scope": "eds_local_store",
+        "stage": "write",
+        "series_edit": true,
+        "moved_occurrence": true,
+        "provider_qualification": false
+      },
+      "after_service_restart": {
+        "status": "pass",
+        "scope": "eds_local_store",
+        "stage": "read",
+        "series_edit": true,
+        "moved_occurrence": true,
+        "provider_qualification": false
+      },
+      "runtime": "local module only; backend-per-process=0; no activation services",
+      "idle": {
+        "seconds": 15.004,
+        "processes": {
+          "bus": {
+            "memory": {
+              "Rss_kib": 4468,
+              "Pss_kib": 822,
+              "Private_Clean_kib": 192,
+              "Private_Dirty_kib": 452
+            },
+            "threads": [
+              {
+                "name": "dbus-daemon",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              }
+            ],
+            "new_threads": 0,
+            "exited_threads": 0
+          },
+          "registry": {
+            "memory": {
+              "Rss_kib": 20124,
+              "Pss_kib": 5581,
+              "Private_Clean_kib": 108,
+              "Private_Dirty_kib": 3132
+            },
+            "threads": [
+              {
+                "name": "evolution-sourc",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              },
+              {
+                "name": "gmain",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              },
+              {
+                "name": "pool-spawner",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              },
+              {
+                "name": "gdbus",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              }
+            ],
+            "new_threads": 0,
+            "exited_threads": 1
+          },
+          "calendar": {
+            "memory": {
+              "Rss_kib": 22516,
+              "Pss_kib": 8004,
+              "Private_Clean_kib": 1272,
+              "Private_Dirty_kib": 4368
+            },
+            "threads": [
+              {
+                "name": "evolution-calen",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              },
+              {
+                "name": "gmain",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              },
+              {
+                "name": "pool-spawner",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              },
+              {
+                "name": "gdbus",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              },
+              {
+                "name": "evolution-calen",
+                "voluntary_delta": 0,
+                "involuntary_delta": 0
+              }
+            ],
+            "new_threads": 0,
+            "exited_threads": 3
+          }
+        }
+      },
+      "provider_qualification": false
+    }
+  }
+}
