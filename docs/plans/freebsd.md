@@ -1,7 +1,8 @@
 # FreeBSD support plan
 
-Status: draft, 2026-10-30. Preparation steps P.1–P.3 are done (Linux only,
-`src/platform/`); nothing else is implemented. Decisions D1–D6 are open.
+Status: draft, 2026-10-31. Preparation steps P.1–P.3 and P.7 are done (Linux
+only, `src/platform/` and the call sites); nothing else is implemented.
+Decisions D1–D6 are open.
 
 Run RediWM on FreeBSD: first the compositor in a seatd session on DRM, then
 the shell features and apps, and last `rediwm-dm` and packaging. Linux stays
@@ -41,7 +42,7 @@ translate. About 47 Zig files call `std.os.linux.*` directly.
 | `/proc/self/fd`, `fdinfo` | spawn paths | `closefrom`/`close_range`. |
 | `/proc/<pid>/stat`, `/proc/stat`, `/proc/meminfo`, task children | system monitor, `ipc/processes.zig` | libprocstat / `kern.proc` sysctls behind a collector backend. |
 | `pty.h` | terminal engine | `libutil.h` (`openpty`/`forkpty`), link `util`. |
-| `renameat2` | torrent helper | Emulate no-replace with `link` + `unlink`. |
+| `renameat2` | ~9 sites: Files ops, Editor, Images, screenshots, desktop watcher, theme helper, torrent helper | Emulate no-replace with `link` + `unlink`, behind one `platform` function. |
 | `DRM_IOCTL_VERSION` via `linux.IOCTL` | `Output.zig:206` | Different ioctl encoding: use libdrm `drmGetVersion`. |
 | netlink `KOBJECT_UEVENT` | printer hotplug | devd's seqpacket socket, or rescans only. |
 
@@ -132,9 +133,20 @@ ReleaseSafe, `zig build test` and affected integration suites.
    what the entry point promises before moving either.
 6. **Process listing:** keep `/proc` parsing behind the system monitor's
    collector interface (shared with `ipc/processes.zig`).
-7. **Paths:** replace fixed `/usr/bin/…` tool paths with `PATH` lookup.
+7. **Paths** (done): no fixed `/usr/bin/…` tool path is left in the shell.
+   `paplay` is found on `PATH` (`config.app_theme.executable`) and `locale` is
+   spawned by bare name, which `std.process.spawn` resolves on `PATH`. The
+   programs that run as root or are handed a secret (`pkexec`, `systemctl`)
+   deliberately do not use `PATH`: `platform.tool.system` searches only
+   `/usr/bin`, `/bin` and `/usr/local/bin`, so a user-writable `PATH` entry
+   cannot capture a password typed in Settings. Left as they are: the accounts
+   helper's candidate lists (root; phase 3 rewrites it on `pw(8)`), the
+   `/bin/sh` launches (present on both systems) and the polkit agent helper's
+   directory list in `polkit/native.c` (add `/usr/local/lib/polkit-1` and
+   `/usr/local/libexec` in phase 1; it is verified setuid and root-owned), and
+   the cupsd probe in `printing/platform.zig` (`usr/local/sbin`, phase 3).
 
-Steps 1–3 and 7 are small; 4 is mechanical but broad; 5 is security work and
+Steps 1–3 and 7 were small; 4 is mechanical but broad; 5 is security work and
 needs its own review.
 
 ### 0. Spike (FreeBSD)

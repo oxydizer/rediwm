@@ -4,6 +4,7 @@ const std = @import("std");
 const systemd = @import("systemd.zig");
 const gpa = @import("main.zig").gpa;
 const Child = @import("session/child.zig");
+const platform = @import("platform");
 const c = @import("c");
 
 pub const Request = struct {
@@ -31,8 +32,8 @@ pub fn start(client: *systemd.Client, unit: []const u8, value: []const u8) !void
         if (sockets[0] >= 0) _ = c.close(sockets[0]);
         if (sockets[1] >= 0) _ = c.close(sockets[1]);
     }
-    const pkexec = if (c.access("/usr/bin/pkexec", c.X_OK) == 0) "/usr/bin/pkexec" else "/bin/pkexec";
-    const systemctl = if (c.access("/usr/bin/systemctl", c.X_OK) == 0) "/usr/bin/systemctl" else "/bin/systemctl";
+    const pkexec = platform.tool.system(req.io, "pkexec") orelse return error.FileNotFound;
+    const systemctl = platform.tool.system(req.io, "systemctl") orelse return error.FileNotFound;
     var child = try std.process.spawn(req.io, .{
         .argv = &.{ pkexec, "--disable-internal-agent", systemctl, "--system", "--no-reload", "--stdin", "--drop-in=zz-rediwm-notify.conf", "edit", "--", unit },
         .stdin = .{ .file = .{ .handle = sockets[0], .flags = .{ .nonblocking = false } } },

@@ -1,7 +1,8 @@
 # Platform module
 
 The one place the OS shows: child handles (`child.zig`), directory watching
-(`watch.zig`), the program's own path (`exe.zig`), seccomp-BPF filters
+(`watch.zig`), the program's own path (`exe.zig`), where the system's helper
+programs live (`tool.zig`), seccomp-BPF filters
 (`seccomp.zig`, for the PDF viewer and the theme helper), and
 `child.h`/`self_exe.h` for C and C++. Std only, no compositor imports. Linux
 today; the FreeBSD port (`docs/plans/freebsd.md`) adds `freebsd_*.zig` parts
@@ -33,6 +34,11 @@ without changing callers.
   does not compile in Zig 0.17: use `seccomp.audit_arch`. A policy change is
   checked by evaluating both programs over all numbers and argument samples
   (`seccomp.evaluate`), not by trusting a read.
+* **Programs that run as root or get a secret** (`pkexec`, `systemctl`) are
+  found with `tool.system`, which searches only the root-owned system
+  directories. Everything else is looked up on `PATH` (`config.app_theme.executable`)
+  or spawned by bare name, which `std.process.spawn` resolves on the process's
+  `PATH`; never write `/usr/bin/<tool>`, ports live in `/usr/local`.
 * Nothing here arms a timer or starts a thread; a caller retrying a failed
   `add` owns that clock.
 

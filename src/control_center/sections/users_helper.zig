@@ -4,6 +4,7 @@ const i18n = @import("i18n");
 const panel = @import("../panel.zig");
 const Child = @import("../../session/child.zig");
 const gpa = @import("../../main.zig").gpa;
+const platform = @import("platform");
 const c = @import("c");
 extern fn rediwm_polkit_clear([*]u8, usize) void;
 
@@ -33,7 +34,7 @@ pub fn startHelper(cc: *panel.ControlCenter, request: anytype, is_authorization:
         if (sockets[1] >= 0) _ = c.close(sockets[1]);
     }
 
-    const executable = if (c.access("/usr/bin/pkexec", c.X_OK) == 0) "/usr/bin/pkexec" else "/bin/pkexec";
+    const executable = platform.tool.system(cc.server.io, "pkexec") orelse return error.FileNotFound;
     var child = try std.process.spawn(cc.server.io, .{
         .argv = &.{ executable, "--disable-internal-agent", @import("install_paths").bin ++ "/rediwm-accounts-helper" },
         .stdin = .{ .file = .{ .handle = sockets[0], .flags = .{ .nonblocking = false } } },

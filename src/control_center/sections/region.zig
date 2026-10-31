@@ -57,7 +57,7 @@ fn loadOptions(s: *Section, cc: *panel.ControlCenter) !void {
         if (columns.next()) |zone| try s.zones.append(a, zone);
     }
     std.mem.sort([]const u8, s.zones.items, {}, less);
-    var child = try std.process.spawn(cc.server.io, .{ .argv = &.{ "/usr/bin/locale", "-a" }, .stdout = .pipe, .stderr = .ignore });
+    var child = try std.process.spawn(cc.server.io, .{ .argv = &.{ "locale", "-a" }, .stdout = .pipe, .stderr = .ignore });
     errdefer {
         child.kill(cc.server.io);
     }
