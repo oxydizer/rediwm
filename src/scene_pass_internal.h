@@ -56,10 +56,12 @@ struct gl_state {
 };
 struct rediwm_scene_renderer {
     struct wlr_renderer *renderer;
-    // Rounded-rectangle shapes (stage 4b), built by enable_shapes: one program for
+    // Rounded-rectangle shapes (stage 4b), built with the renderer: one program for
     // a 2D texture, a solid colour and the shape's shadow (they differ in a mode
-    // uniform, which every fragment of a draw reads the same), one for external.
+    // uniform, which every fragment of a draw reads the same). The one for external
+    // textures is built by enable_external.
     struct program shaped, shaped_external;
+    bool external_tried, external_ok;
     // The same, with the polygon distance compiled in (POLY), built on demand by
     // enable_polygons the first time a theme gives a window or the bar an outline.
     // Draws of a polygon shape use these; every other draw the programs above,

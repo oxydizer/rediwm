@@ -108,6 +108,8 @@ int main(void) {
     assert(allocator);
     struct rediwm_scene_renderer *r = rediwm_scene_renderer_create(renderer);
     assert(r);
+    assert(rediwm_scene_renderer_enable_external(r));
+    assert(rediwm_scene_renderer_enable_external(r)); // idempotent
     struct wlr_buffer *actual = target(allocator), *expected = target(allocator);
     parity(r, actual, expected, false);
     shapes_fail_closed(r, actual);

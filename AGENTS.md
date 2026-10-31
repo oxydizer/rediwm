@@ -198,7 +198,9 @@ panel painting. The key rules:
   writes nothing under `$HOME` (it disables the GLES2 shader cache), and runs no Xwayland, autostart, IPC,
   notifications, tray, portal, polkit, services, audio, desktop or
   external-tool globals: skip anything new that owns a bus name, spawns or
-  writes (`tests/greeter.py`). Secrets stay in mlocked, wiped buffers.
+  writes (`tests/greeter.py`). Secrets stay in mlocked, wiped buffers. Boot
+  waits for it: every program it builds is an uncached compile, so it builds
+  only those it draws with ([readiness](docs/greeter-readiness.md)).
 * **A crash never unlocks.** `Lock.announce` reports state on
   `REDIWM_SESSION_FD` first thing in `engage`; `rediwm-session` queues `lock`
   for a compositor that died locked, and `main.zig` locks before the backend

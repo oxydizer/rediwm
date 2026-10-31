@@ -282,8 +282,7 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
     // Every draw goes through the shaped programs; one without a shape costs a
     // uniform branch. A GL program costs the driver 130-150 KiB however small,
     // so the plain ones are gone (stage 5, D4 of docs/plans/scene-graph-stage5.md).
-    bool ok = program_init(&r->shaped, 8, shaped_vertex, "uniform sampler2D tex;\n", shaped_fragment) &&
-        (!r->has_external || program_init(&r->shaped_external, 16, shaped_vertex, ext_prefix, shaped_fragment));
+    bool ok = program_init(&r->shaped, 8, shaped_vertex, "uniform sampler2D tex;\n", shaped_fragment);
     r->has_shapes = r->shapes_tried = ok;
     if (ok && r->has_vao) {
         r->gen_vertex_arrays(1, &r->vertex_array);
@@ -331,6 +330,18 @@ void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
 bool rediwm_scene_renderer_enable_shapes(struct rediwm_scene_renderer *r) {
     assert(!r->active);
     return r->has_shapes;
+}
+
+bool rediwm_scene_renderer_enable_external(struct rediwm_scene_renderer *r) {
+    assert(!r->active);
+    if (r->external_tried) return r->external_ok;
+    r->external_tried = true;
+    if (!r->has_external) return r->external_ok = true;
+    struct gl_state state;
+    if (!scene_pass_enter(r, &state)) return false;
+    r->external_ok = program_init(&r->shaped_external, 16, shaped_vertex, ext_prefix, shaped_fragment);
+    scene_pass_leave(r, &state);
+    return r->external_ok;
 }
 
 // The polygon programs: the shaped ones again with POLY defined (scene_pass.h).

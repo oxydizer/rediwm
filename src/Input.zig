@@ -325,7 +325,9 @@ pub fn init(input: *Input, server: *Server) Server.CompositorError!void {
     errdefer input.request_set_primary_selection.link.remove();
 
     input.cursor.attachOutputLayout(server.output_layout);
-    input.cursor_mgr.load(1) catch return error.XcursorCreateFailed;
+    // Parses the whole theme. The greeter loads it per output scale instead
+    // (refreshOutputScales), and its only cursor is the default one.
+    if (!server.greeter_mode) input.cursor_mgr.load(1) catch return error.XcursorCreateFailed;
     input.cursor.events.motion.add(&input.cursor_motion);
     input.cursor.events.motion_absolute.add(&input.cursor_motion_absolute);
     input.cursor.events.button.add(&input.cursor_button);

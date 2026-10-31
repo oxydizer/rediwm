@@ -12,6 +12,8 @@ struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer
 // Builds the programs that draw rounded shapes (see scene_pass.h); false if they
 // did not build, in which case no window may be given a shape.
 bool rediwm_output_renderer_enable_shapes(struct rediwm_output_renderer *);
+// The program for imported client buffers (see scene_pass.h).
+bool rediwm_output_renderer_enable_external(struct rediwm_output_renderer *);
 // The programs for polygon outlines (see scene_pass.h), built on first request.
 bool rediwm_output_renderer_enable_polygons(struct rediwm_output_renderer *);
 // Glass in the pass (stage 5c); requires shapes. False: glass is the surface's own tint.

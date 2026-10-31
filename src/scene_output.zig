@@ -11,6 +11,8 @@ pub const Renderer = opaque {
     pub const create = rediwm_output_renderer_create;
     extern fn rediwm_output_renderer_enable_shapes(renderer: *Renderer) bool;
     pub const enableShapes = rediwm_output_renderer_enable_shapes;
+    extern fn rediwm_output_renderer_enable_external(renderer: *Renderer) bool;
+    pub const enableExternal = rediwm_output_renderer_enable_external;
     extern fn rediwm_output_renderer_enable_polygons(renderer: *Renderer) bool;
     pub const enablePolygons = rediwm_output_renderer_enable_polygons;
     extern fn rediwm_output_renderer_enable_backdrops(renderer: *Renderer) bool;

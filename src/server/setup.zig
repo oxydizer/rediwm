@@ -191,11 +191,14 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
     errdefer explicit_sync.ReadFence.destroy(server.read_fence);
 
     // REDIWM_NO_GLASS=1 skips the backdrop blur for A/B frame-cost
-    // measurements; every glass call already accepts a null engine.
-    server.glass_engine = if (environ.getPosix("REDIWM_NO_GLASS") != null) null else glass.Engine.create();
+    // measurements; every glass call already accepts a null engine. The greeter
+    // has no glass and no clients, and each program it skips is a compile the
+    // login screen would wait for (no shader cache there: main.zig).
+    server.glass_engine = if (greeter or environ.getPosix("REDIWM_NO_GLASS") != null) null else glass.Engine.create();
     errdefer glass.Engine.destroy(server.glass_engine);
     server.output_renderer = scene_output_mod.Renderer.create(renderer) orelse return error.RendererInitFailed;
     errdefer scene_output_mod.Renderer.destroy(server.output_renderer);
+    if (!greeter and !server.output_renderer.enableExternal()) return error.RendererInitFailed;
     log.info("scene renderer: owned GLES2 output pass", .{});
     // The window shapes: rounded clip, ring and shadow. Built here, before any
     // window exists. Without them windows are square, with no ring or shadow.

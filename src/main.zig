@@ -18,6 +18,10 @@ const log = std.log.scoped(.compositor);
 // nested/headless outputs default to 1x (host density is not reliably exposed).
 const scale_env = "REDIWM_SCALE";
 
+fn isGreeter(argv: []const [*:0]const u8) bool {
+    return argv.len >= 2 and std.mem.eql(u8, std.mem.span(argv[1]), "--greeter");
+}
+
 pub fn main(init: std.process.Init) void {
     // Every client, helper and autostart item would inherit root. rediwm-dm
     // and rediwm-session run the compositor as the logged-in user; seat
@@ -38,7 +42,9 @@ pub fn main(init: std.process.Init) void {
     std.posix.sigaction(.PIPE, &ignore_sigpipe, null);
 
     @import("session/activation.zig").setSessionFdInheritance(init.minimal.environ, false);
-    wlr.log.init(.debug, null);
+    // Unbuffered stderr is four writes a line, and wlroots' debug level is over a
+    // thousand lines before a login screen that everything is waiting for.
+    wlr.log.init(if (isGreeter(init.minimal.args.vector)) .info else .debug, null);
     // Runs last, on a normal exit only: restarts exec and fatal paths exit.
     defer if (@import("builtin").mode == .debug) {
         if (@import("memory").deinit()) log.err("memory leaks reported above", .{});
@@ -79,9 +85,10 @@ fn start(init: std.process.Init) !bool {
     const argv = init.minimal.args.vector;
     // `rediwm --greeter` is rediwm-dm's greeter: no IPC, no autostart, no
     // command, and the lock screen stays up until rediwm-dm starts a session.
-    const greeter = argv.len >= 2 and std.mem.eql(u8, std.mem.span(argv[1]), "--greeter");
+    const greeter = isGreeter(argv);
     // The greeter writes nothing under $HOME, and GLES2 drivers keep a shader
-    // cache in ~/.cache. Compiling a handful of shaders per start costs little.
+    // cache in ~/.cache. So every program it builds is a full compile on each
+    // start (tens of ms): it builds only those it draws with (server/setup.zig).
     if (greeter and setenv("MESA_SHADER_CACHE_DISABLE", "true", 0) != 0) return error.OutOfMemory;
 
     var server: Server = undefined;

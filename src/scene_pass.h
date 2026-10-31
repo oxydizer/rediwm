@@ -68,6 +68,11 @@ struct rediwm_pass_shadow {
 // first shaped draw; later calls return the first result. False when they did not
 // build: shaped draws then fail the pass at submit, plain drawing is unaffected.
 bool rediwm_scene_renderer_enable_shapes(struct rediwm_scene_renderer *);
+// Builds the program that draws external textures, which only imported client
+// buffers are, so a process with no clients (the greeter) skips its compile. Call it
+// outside a pass, before the first such draw; later calls return the first result.
+// False when it did not build. Without it an external draw fails the pass.
+bool rediwm_scene_renderer_enable_external(struct rediwm_scene_renderer *);
 // Builds the programs that draw a polygon shape (`poly_count` > 0), which are the
 // shaped ones with the polygon distance compiled in: another 280 KiB or so, so only
 // on request, outside a pass, before the first such draw. False when they did not

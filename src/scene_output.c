@@ -19,6 +19,9 @@ struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer
 bool rediwm_output_renderer_enable_shapes(struct rediwm_output_renderer *r) {
     return rediwm_scene_renderer_enable_shapes(r->pass);
 }
+bool rediwm_output_renderer_enable_external(struct rediwm_output_renderer *r) {
+    return rediwm_scene_renderer_enable_external(r->pass);
+}
 bool rediwm_output_renderer_enable_polygons(struct rediwm_output_renderer *r) {
     return rediwm_scene_renderer_enable_polygons(r->pass);
 }
