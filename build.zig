@@ -27,6 +27,11 @@ pub fn build(b: *std.Build) void {
     const use_llvm = b.option(bool, "llvm", "Use LLVM and LLD (default for optimized builds)") orelse (optimize != .debug);
     // Debug aid (TESTING.md): redraw every frame whole and log what the damage missed.
     const damage_audit = b.option(bool, "damage-audit", "Compare every frame with a full repaint and log the difference (slow)") orelse false;
+    // Debug aid: log the timing of every frame (event, render, commit, presentation).
+    const frame_trace = b.option(bool, "frame-trace", "Log per-frame timing for frame scheduling measurements (src/output/frame_trace.zig)") orelse false;
+    const trace_options = b.addOptions();
+    trace_options.addOption(bool, "frame_trace", frame_trace);
+    const trace_mod = trace_options.createModule();
     // Set by scripts/build-wlroots.sh builds on distros without wlroots 0.20
     // (Debian/Ubuntu). pkg-config runs in zig build's own environment, so
     // start it through scripts/with-wlroots.sh to find the prefix.
@@ -178,6 +183,7 @@ pub fn build(b: *std.Build) void {
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/session/auth.c"), .flags = &.{"-std=c11"} });
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     addGlass(b, compositor.root_module, damage_audit);
+    if (frame_trace) compositor.root_module.addCMacro("REDIWM_FRAME_TRACE", "1");
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/gpu_timing.c"), .flags = &.{"-std=c11"} });
     b.step("rediwm", "Build the compositor").dependOn(&compositor.step);
 
@@ -259,6 +265,7 @@ pub fn build(b: *std.Build) void {
     }
     inline for (.{ compositor.root_module, ui_tests_module, files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, editor_tests.root_module, images_tests.root_module, pdf_tests.root_module, files_tests.root_module, ipc_tests_module, protocol_mod, session_supervisor.root_module, session_tests.root_module, share_picker_tests.root_module, dbus_tests.root_module }) |module| {
         module.addImport("install_paths", layout.options);
+        module.addImport("trace", trace_mod);
         module.addImport("ui", ui_mod);
         module.addImport("i18n", i18n_mod);
         module.addImport("config", config_mod);

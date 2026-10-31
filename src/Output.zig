@@ -19,6 +19,7 @@ const output_layout = @import("output/layout.zig");
 const output_panels = @import("output/panels.zig");
 const output_wallpaper = @import("output/wallpaper.zig");
 const output_frame = @import("output/frame.zig");
+const output_late = @import("output/late.zig");
 
 pub const wlr_color_transform_init_lut_3x1d = wlr.color.transformInitLut3x1d;
 pub const wlr_color_transform_unref = wlr.color.transformUnref;
@@ -98,6 +99,15 @@ frame_wanted: bool = false,
 /// Last known vblank: a page-flip frame event or a fired `vblank_timer`.
 last_vblank_ns: u64 = 0,
 flip_pending: bool = false,
+/// Late rendering (`output/late.zig`): the decision model, the timer that
+/// starts a deferred frame, whether one is waiting (frame events are ignored
+/// meanwhile), the plan `runFrame` takes when it runs, and whether the last
+/// frame asked for another (an animation) so the next is worth deferring.
+late: @import("output/late_render.zig").State = .{},
+late_timer: ?*wl.EventSource = null,
+late_armed: bool = false,
+late_plan: ?@import("output/late_render.zig").Plan = null,
+late_animating: bool = false,
 /// Decides, once this dispatch's commits are handled, whether client frame
 /// callbacks need a frame (`frameCallbacksWanted`).
 callback_idle: ?*wl.EventSource = null,
@@ -244,6 +254,8 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     }
     output.vblank_timer = server.wl_server.getEventLoop().addTimer(*Output, handleVblank, output) catch null;
     errdefer if (output.vblank_timer) |timer| timer.remove();
+    output.late_timer = server.wl_server.getEventLoop().addTimer(*Output, lateFire, output) catch null;
+    errdefer if (output.late_timer) |timer| timer.remove();
 
     // Layout entry and scene output are addons on `wlr_output`. On error the
     // caller destroys that output, which is safer than a second explicit
@@ -475,6 +487,9 @@ pub const handleRequestState = output_frame.handleRequestState;
 pub const handlePresent = output_frame.handlePresent;
 pub const startupVisible = output_frame.startupVisible;
 
+// output/late.zig
+pub const lateFire = output_late.fire;
+
 pub const CursorState = struct {
     cursor: ?*wlr.OutputCursor = null,
     buffer: ?*wlr.Buffer = null,
@@ -575,6 +590,7 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     if (output.power_menu) |pm| pm.destroy();
     output.color.deinit();
     if (output.vblank_timer) |timer| timer.remove();
+    if (output.late_timer) |timer| timer.remove();
     if (output.callback_idle) |idle| idle.remove();
     output.link.remove();
     output.frame.link.remove();

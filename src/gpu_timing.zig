@@ -1,5 +1,6 @@
 const wlr = @import("wlroots");
 const stats = @import("ipc/stats.zig");
+const late_render = @import("output/late_render.zig");
 const Sample = extern struct { ns: u64, generation: u64 };
 
 pub const Timer = opaque {
@@ -17,12 +18,15 @@ pub const Timer = opaque {
         if (!ok) stats.global_stats.gpu_samples_dropped +%= 1;
         return ok;
     }
-    pub fn collect(self: *Timer) void {
+    /// Records finished samples in the stats window and in `recent`, which
+    /// keeps them whatever the stats generation (late rendering reads it).
+    pub fn collect(self: *Timer, recent: *late_render.PeakRing(32)) void {
         var samples: [8]Sample = undefined;
         var dropped: u64 = 0;
         const n = rediwm_gpu_timer_collect(self, stats.global_stats.generation, &samples, &dropped);
         stats.global_stats.gpu_samples_dropped +%= dropped;
         for (samples[0..n]) |sample| {
+            recent.push(sample.ns);
             if (sample.generation == stats.global_stats.generation)
                 stats.global_stats.gpu_elapsed.record(sample.ns);
         }

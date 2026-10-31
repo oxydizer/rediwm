@@ -27,9 +27,8 @@
 //!   regardless of T, see signal.zig), but not a real payload type.
 //!   Connecting one of those later needs its real event struct filled
 //!   in first -- that's a compile error pointing here, not a silent bug.
-//! - `Present`'s payload is truncated after `presented` (only
-//!   `commit_seq`/`presented` are read); `Damage`/`Precommit`/`Bind`
-//!   aren't defined at all since nothing connects those signals.
+//! - `Damage`/`Precommit`/`Bind` aren't defined at all since nothing
+//!   connects those signals.
 //!
 //! Dependencies are supplied by wlr.zig from the same header-backed module.
 const std = @import("std");
@@ -261,17 +260,28 @@ pub fn Types(
             };
 
             pub const event = struct {
-                /// Truncated after `presented`: nothing else is read.
                 pub const Present = extern struct {
                     output: *Output,
                     commit_seq: u32,
                     presented: bool,
+                    /// When the content turned into light (the display's clock).
+                    when: std.posix.timespec,
+                    /// Vertical retrace counter; zero if unavailable.
+                    seq: c_uint,
+                    /// Predicted nanoseconds from `when` to the next refresh; zero if unknown.
+                    refresh: c_int,
+                    flags: u32,
 
                     comptime {
                         const Real = c.wlr_output_event_present;
                         assertFieldOffset(Present, Real, "output");
                         assertFieldOffset(Present, Real, "commit_seq");
                         assertFieldOffset(Present, Real, "presented");
+                        assertFieldOffset(Present, Real, "when");
+                        assertFieldOffset(Present, Real, "seq");
+                        assertFieldOffset(Present, Real, "refresh");
+                        assertFieldOffset(Present, Real, "flags");
+                        assertSameLayout(Present, Real);
                     }
                 };
 

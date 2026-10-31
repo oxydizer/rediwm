@@ -9,6 +9,8 @@ const Taskbar = @import("../Taskbar.zig");
 const anim = @import("ui").anim;
 const glass = @import("../glass.zig");
 const stats = @import("../ipc/stats.zig");
+const trace = @import("frame_trace.zig");
+const late = @import("late.zig");
 const wlr_color_transform_unref = Output.wlr_color_transform_unref;
 const log = std.log.scoped(.output);
 const CursorState = Output.CursorState;
@@ -188,6 +190,10 @@ pub fn tearingIdle(output: *Output) void {
 
 pub fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     const output: *Output = @fieldParentPtr("frame", listener);
+    // A deferred frame is on its way; this event is damage asking for it.
+    // (Not traced: the frame's event is the one that deferred it.)
+    if (output.late_armed) return;
+    trace.frameEvent(output.wlr_output);
     // Only the vblank timer paces frames after a skipped commit.
     if (output.vblank_armed) {
         output.frame_wanted = true;
@@ -197,11 +203,13 @@ pub fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
         output.flip_pending = false;
         output.last_vblank_ns = stats.nowNs();
     }
+    if (late.tryDefer(output)) return;
     runFrame(output);
 }
 
 pub fn runFrame(output: *Output) void {
     const frame_started = stats.nowNs();
+    const late_plan = late.takePlan(output);
     // Stage timing costs a clock read per boundary (and two per animation
     // sample); only pay it while someone is reading the stats.
     const observing = output.server.observingStats(frame_started);
@@ -214,7 +222,7 @@ pub fn runFrame(output: *Output) void {
         output.animation_budget.record(elapsed, output.wlr_output.refresh);
     }
     output.server.expireGpuTimer();
-    if (output.server.gpu_timer) |timer| timer.collect();
+    if (output.server.gpu_timer) |timer| timer.collect(&output.server.gpu_recent);
 
     output.server.screenshot_selector.flush(output);
     const now_ms = Taskbar.nowMs();
@@ -305,6 +313,8 @@ pub fn runFrame(output: *Output) void {
         captured = sm.handleOutputFrame(output);
     }
     var deferred = false;
+    var timing = trace.Frame{ .start = frame_started, .active = trace.enabled or late.enabled(output), .plan = late_plan };
+    defer timing.finish(output.wlr_output);
     if (!captured) {
         const started = stats.nowNs();
         var state = wlr.Output.State.init();
@@ -321,7 +331,9 @@ pub fn runFrame(output: *Output) void {
         var committed = true;
         if (should_commit) {
             if (output.server.capture_mgr) |cm| cm.guardScreencopy(output.wlr_output);
-            if (output.server.buildOutputState(scene_output, &state)) {
+            const built_ok = output.server.buildOutputState(scene_output, &state);
+            timing.markBuilt();
+            if (built_ok) {
                 if (@import("../startup.zig").marks.first_visible_ns == 0) {
                     output.startup_commit_seq = output.wlr_output.commit_seq +% 1;
                     output.startup_presented = false;
@@ -331,6 +343,7 @@ pub fn runFrame(output: *Output) void {
                 output.startup_committing = true;
                 committed = output.commitFrameState(&state);
                 output.startup_committing = false;
+                timing.markCommitted(if (committed) output.wlr_output.commit_seq else null);
                 if (!committed) {
                     output.startup_commit_seq = null;
                     output.greeter_commit_seq = null;
@@ -341,6 +354,7 @@ pub fn runFrame(output: *Output) void {
             if (committed) {
                 output.committed_cursor = CursorState.of(output.wlr_output);
                 output.flip_pending = true;
+                if (timing.commit_seq) |seq| late.noteCommitted(output, seq, frame_started, timing.built, timing.done, late_plan);
                 if (output.lock_commit_pending) {
                     output.lock_commit_pending = false;
                     if (output.server.locker) |lock| lock.outputCovered();
@@ -359,14 +373,15 @@ pub fn runFrame(output: *Output) void {
             // Headless backends can acknowledge synchronously inside commit.
             if (output.startup_presented) output.startupVisible();
         }
-        if (!deferred) {
+        // A deferred frame's callbacks went out when it was deferred.
+        if (!deferred and late_plan == null) {
             var now = timestamp();
             output.server.sendFrameDone(scene_output, &now);
         }
     }
     if (deferred) {
         deferFrameDone(output);
-    } else {
+    } else if (late_plan == null) {
         var preview_time = timestamp();
         output.server.switcher.frameDone(output, &preview_time);
     }
@@ -381,6 +396,7 @@ pub fn runFrame(output: *Output) void {
     // animation settles; otherwise chrome and the bar only redraw when a
     // client does.
     const keep_going = mini_map_animating or switcher_animating or osd_animating or dock_animating or bar_animating or chrome_animating or cc_animating or sm_animating or pm_animating or taskbar_popup_animating or notif_animating or desktop_animating or lock_animating or polkit_animating or reveal_animating;
+    output.late_animating = keep_going;
     // A pinned clock is advanced explicitly by IPC, which schedules its own
     // frame. Global window/taskbar springs must not spin between those steps.
     if (keep_going and !anim.clockOverridden()) {
@@ -401,6 +417,7 @@ pub fn setDisplayMode(output: *Output, mode: @import("../output_modes.zig").Choi
     defer state.finish();
     mode.setState(&state);
     if (!output.wlr_output.testState(&state) or !output.wlr_output.commitState(&state)) return false;
+    late.reset(output);
     syncLayout(output.server);
     output.color.key = null;
     output.server.night_light.retargetOutput(output);
@@ -434,6 +451,7 @@ pub fn handleRequestState(
         log.err("handleRequestState: commitState failed for {s}", .{output.wlr_output.name});
         return;
     }
+    late.reset(output);
     output.applyConfig();
     syncLayout(output.server);
     output.color.key = null;
@@ -443,6 +461,8 @@ pub fn handleRequestState(
 
 pub fn handlePresent(listener: *wl.Listener(*wlr.Output.event.Present), event: *wlr.Output.event.Present) void {
     const output: *Output = @fieldParentPtr("present", listener);
+    trace.presented(event);
+    late.notePresent(output, event);
     if (event.presented and output.greeter_commit_seq == event.commit_seq) {
         output.greeter_presented = true;
         @import("../session/greeter_ready.zig").check(output.server);

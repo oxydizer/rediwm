@@ -62,6 +62,14 @@ and [startup_perf.py](tests/startup_perf.py). Stats requests enable timers and
 add overhead; keep CPU comparisons free of them. `frame_time_ms` is the commit
 interval; CPU and GPU work overlap, so do not add their timings.
 
+Measure frame scheduling (frame event, render start, commit, presentation, age
+of the content shown) with a `-Dframe-trace=true` build and
+[frame_latency.py](tests/frame_latency.py), which runs an isolated session or
+analyses a traced compositor's log. The option compiles the trace in; normal
+builds contain none of it. Headless presents synchronously, so only the cost
+columns mean anything there; presentation latency needs DRM (a spare VT) and
+the `present flags` line showing vsync with a hardware clock.
+
 Audit memory retention with [memory_retention.py](tests/memory_retention.py):
 
 ```sh

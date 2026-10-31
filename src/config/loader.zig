@@ -242,6 +242,11 @@ pub const CompositorConfig = struct {
     switcher_opacity: f32 = 1.0,
     border_radius: u32 = 10,
     allow_tearing: bool = false,
+    /// Start frames as late as the display allows instead of right after
+    /// each vblank (`output/late_render.zig`).
+    late_render: bool = false,
+    /// The least safety time (ms) late rendering keeps before a vblank.
+    late_render_margin_ms: f32 = 2.0,
     xwayland: bool = true,
     xwayland_native_scaling: bool = false,
     /// 0 follows the native-scaling policy; explicit factors require restart.

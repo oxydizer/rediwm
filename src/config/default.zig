@@ -126,6 +126,12 @@ pub const source =
     \\floating_apps = []          # app ID glob patterns that float in workspaces
     \\# Allow fullscreen clients to request asynchronous presentation (may tear).
     \\allow_tearing = false
+    \\# Render as late as the display allows, so input made just before a refresh
+    \\# still reaches it. Only displays that report presentation times qualify
+    \\# (DRM; not VRR, tearing or nested ones), and it steps back by itself when
+    \\# deadlines are missed. The margin is the least safety time kept (ms).
+    \\late_render = false
+    \\late_render_margin_ms = 2.0
     \\# Only windows launched with the chrome + join that window’s tabs.
     \\window_tab_apps = []       # app IDs; Appearance provides a checkbox list
     \\# Desktop application IDs; empty keeps Files and the automatic terminal.

@@ -155,6 +155,8 @@ pub const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(Composi
     .switcher_opacity = .{ .float = .{ .min = 0, .max = 1 } },
     .border_radius = .{ .uint = .{ .min = 0, .max = 128 } },
     .allow_tearing = .boolean,
+    .late_render = .boolean,
+    .late_render_margin_ms = .{ .float = .{ .min = 0.5, .max = 8 } },
     .xwayland = .boolean,
     .xwayland_native_scaling = .boolean,
     .xwayland_scale = .{ .float = .{ .min = 0, .max = 4 } },

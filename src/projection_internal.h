@@ -210,8 +210,10 @@ static inline void mark_group(struct rediwm_projection *p, struct group *g) {
 }
 static inline void schedule(struct rediwm_projection *p) {
   struct rediwm_scene_output *out;
-  wl_list_for_each(out, &p->outputs->outputs, link)
+  wl_list_for_each(out, &p->outputs->outputs, link) {
+      rediwm_trace_damage(out->output);
       wlr_output_schedule_frame(out->output);
+  }
 }
 // ---- Surface feedback (stage 6 of docs/plans/scene-graph.md) ---------------------
 // wlr_scene tells a surface where it is shown by emitting its scene buffer's own

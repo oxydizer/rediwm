@@ -142,6 +142,8 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | Key | Default | Notes |
 | --- | --- | --- |
 | `allow_tearing` | `false` | lets focused fullscreen clients request async presentation |
+| `late_render` | `false` | start each frame of a stream (dragging, scrolling, animation) as late as the display allows so input made just before a refresh still reaches it: roughly one refresh period less latency for continuous input, none for a single event. Needs a display that reports presentation times (DRM); VRR, tearing and nested sessions keep the normal path, and repeated missed deadlines pause it for a while |
+| `late_render_margin_ms` | `2.0` | 0.5 to 8, the least safety time kept before the refresh; it grows by itself after a miss |
 | `window_tab_apps` | `[]` | app IDs that get tabs |
 | `default_file_manager`, `default_terminal` | `""` | desktop IDs, empty means Files / auto terminal |
 | `taskbar_position` | `"bottom"` | `top` or `bottom` |

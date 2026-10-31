@@ -102,6 +102,10 @@ renderer: *wlr.Renderer,
 gpu_timer: ?*@import("gpu_timing.zig").Timer = null,
 gpu_timer_tried: bool = false,
 gpu_timer_used_ns: u64 = 0,
+/// Late rendering needs the GPU's elapsed times too: it keeps the timer alive
+/// while it schedules (`keepGpuTimer`) and reads this ring of recent samples.
+gpu_timer_sched_ns: u64 = 0,
+gpu_recent: @import("output/late_render.zig").PeakRing(32) = .{},
 allocator: *wlr.Allocator,
 /// What each output keeps besides the output itself (scene_outputs.h).
 scene_outputs: *scene_outputs_mod.SceneOutputs,
@@ -531,6 +535,7 @@ pub const handleAudioWake = server_wakeups.handleAudioWake;
 pub const handleBatteryUevent = server_wakeups.handleBatteryUevent;
 pub const updateBatteryWarning = server_wakeups.updateBatteryWarning;
 pub const ensureGpuTimer = server_wakeups.ensureGpuTimer;
+pub const keepGpuTimer = server_wakeups.keepGpuTimer;
 pub const observingStats = server_wakeups.observingStats;
 pub const expireGpuTimer = server_wakeups.expireGpuTimer;
 

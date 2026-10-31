@@ -119,6 +119,17 @@ test "config field parsing preserves ranges and derived zoom state" {
         try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, fixture[0], fixture[3]));
         try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, fixture[0], fixture[4]));
     }
+    try std.testing.expect(!c.late_render);
+    try applyCompositorKey(&c, a, "late_render", "true");
+    try std.testing.expect(c.late_render);
+    try std.testing.expectEqual(@as(f32, 2.0), c.late_render_margin_ms);
+    inline for (.{ "0.5", "8", "3.25" }) |value| {
+        try applyCompositorKey(&c, a, "late_render_margin_ms", value);
+        try std.testing.expectEqual(try std.fmt.parseFloat(f32, value), c.late_render_margin_ms);
+    }
+    inline for (.{ "0.4", "8.5", "-1" }) |value| {
+        try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "late_render_margin_ms", value));
+    }
     inline for (.{ "1", "1.05", "1.5" }) |value| {
         try applyCompositorKey(&c, a, "dock_hover_zoom", value);
         try std.testing.expectEqual(try std.fmt.parseFloat(f32, value), c.dock_hover_zoom);

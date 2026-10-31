@@ -101,6 +101,19 @@ panel painting. The key rules:
 * **Commit through `Output.commitFrameState`** and build output state through
   `Server.buildOutputState`, including capture. Register new commit reasons
   in `commitIsRedundant`; skipped callbacks wait for `vblank_timer`.
+* **Late rendering is opt-in** (`[compositor] late_render`; glue in
+  `output/late.zig`, model in `late_render.zig`). Off, nothing in the frame path
+  changes. On, a frame event that finds work and a trusted presentation
+  timeline (vsync + hardware clock, a stream of frames, no VRR/tearing) is
+  deferred: frame callbacks go out *then* so clients answer inside the wait,
+  `late_timer` runs `runFrame`, which takes the plan and skips its own
+  post-commit callbacks, and frame events meanwhile are ignored. Frames after
+  idle always render at once. The deadline is `vblank - worst recent
+  cost - margin`, cost = max(CPU to commit, build + GPU elapsed from
+  `server.gpu_recent`); a missed vblank grows the margin, three in two seconds
+  pause it with backoff. Headless presents synchronously and nested pipelines
+  are deeper, so only `late_render_tests.zig` and a DRM run reach the engaged
+  path (`tests/frame_latency.py`).
 * **Window frames are shapes:** every ring pixel needs body content beneath
   it. Shadows, resize grabs, popups and other nodes outside the window need
   `setTreeUnclipped`. Capture the client alone with its shape supplied
