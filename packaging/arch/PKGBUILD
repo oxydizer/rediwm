@@ -22,7 +22,6 @@ depends=(
   'libpulse'
   'pipewire'
   'poppler-glib'
-  'libseccomp'
   'libarchive'
   'libjpeg-turbo'
   'libpng'

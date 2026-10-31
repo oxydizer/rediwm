@@ -15,6 +15,11 @@ const client_input = @import("client_input.zig");
 const client_render = @import("client_render.zig");
 const client_print = @import("client_print.zig");
 
+// `sandbox.c` calls the exported syscall policy.
+comptime {
+    _ = @import("syscall_policy.zig");
+}
+
 const a = std.heap.c_allocator;
 
 pub const CSD_TITLEBAR_H: i32 = 32;

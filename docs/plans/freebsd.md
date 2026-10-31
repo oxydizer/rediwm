@@ -47,7 +47,8 @@ translate. About 47 Zig files call `std.os.linux.*` directly.
 
 ### 2. Sandboxes
 
-The PDF sandbox (`pdf/sandbox.c`: libseccomp + Landlock) and the theme helper
+The PDF sandbox (`pdf/sandbox.c` + `pdf/syscall_policy.zig`: raw BPF through
+`platform/seccomp.zig`, + Landlock) and the theme helper
 (`theme_helper/native.c`: raw BPF + Landlock) have no FreeBSD counterpart
 short of a rewrite on **Capsicum** (`cap_enter`, `cap_rights_limit` on
 pre-opened directory fds). The design fits, since both already preload before
@@ -118,10 +119,12 @@ ReleaseSafe, `zig build test` and affected integration suites.
    `/proc/self/exe` readers.
 4. **Raw syscalls to libc** where libc has the call (fork, execve, wait4,
    close, read, getuid, …), keeping `std.os.linux` for what has no libc form.
-5. **One sandbox interface:** move the PDF sandbox from libseccomp to the raw
-   BPF the theme helper already uses and give both one "restrict to these
-   directories" entry point. Drops a dependency; Capsicum later implements the
-   same entry point.
+5. **One sandbox interface:** (half done) the PDF sandbox no longer uses
+   libseccomp: `platform/seccomp.zig` builds and loads the filter and
+   `pdf/syscall_policy.zig` holds its allow-list, checked verdict for verdict
+   against the libseccomp program it replaced. Left: move the theme helper's
+   C filter onto the same builder and give both one "restrict to these
+   directories" entry point, which Capsicum later implements.
 6. **Process listing:** keep `/proc` parsing behind the system monitor's
    collector interface (shared with `ipc/processes.zig`).
 7. **Paths:** replace fixed `/usr/bin/…` tool paths with `PATH` lookup.
@@ -141,8 +144,9 @@ headless + GLES2 path works there.
 
 Split `src/platform/` into Linux and FreeBSD parts (`exe.path` can use
 `std.process.executablePath`, which already reads `kern.proc.pathname`);
-split the translate roots; build conditions for `seccomp`,
-`util`, `pam`. Hide NM, BlueZ, PPD, UDisks, app scopes; PDF and theme helper
+split the translate roots; build conditions for `util`, `pam`, and for
+`platform/seccomp.zig`, which is Linux-only code now that nothing links
+libseccomp. Hide NM, BlueZ, PPD, UDisks, app scopes; PDF and theme helper
 refuse. Goal: `rediwm` and the apps start in a seatd session and the headless
 integration suites run.
 

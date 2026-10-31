@@ -25,7 +25,6 @@
   pulseaudio,
   pipewire,
   poppler,
-  libseccomp,
   libarchive,
   libjpeg,
   libpng,
@@ -115,7 +114,6 @@ stdenv.mkDerivation {
     libpulseaudio
     pipewire
     poppler
-    libseccomp
     libarchive
     libjpeg
     libpng

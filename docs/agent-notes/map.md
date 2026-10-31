@@ -44,7 +44,8 @@ widgets, layout, text, theme, animation), `config` (`src/config/`: parsing and
 saving `config.toml`), `dbus`, `i18n`, `memory` and `protocol`
 (`src/ipc/protocol.zig`, the IPC wire format shared with `rediwm-msg`). Also
 `platform` (`src/platform/`, std only): child-process handles, directory
-watching and the program's own path, the seam for other operating systems.
+watching, the program's own path and syscall filters (`seccomp.zig`), the
+seam for other operating systems.
 
 ## Compositor
 

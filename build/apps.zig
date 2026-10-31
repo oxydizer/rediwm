@@ -197,7 +197,6 @@ pub fn add(ctx: Context) Apps {
     pdf.root_module.addImport("wayland", wayland);
     pdf.root_module.addCSourceFile(.{ .file = b.path("src/pdf/sandbox.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     pdf.root_module.addCSourceFile(.{ .file = b.path("src/pdf/print.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    pdf.root_module.linkSystemLibrary("seccomp", .{});
     inline for (.{ "wayland-client", "wayland-cursor", "poppler-glib", "cairo", "gio-2.0", "gobject-2.0", "glib-2.0", "xkbcommon" }) |lib| pdf.root_module.linkSystemLibrary(lib, .{});
     const install_pdf = b.addInstallArtifact(pdf, .{});
     const pdf_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, ctx.layout.prefix, "data/rediwm-pdf.desktop"), .prefix, "share/applications/rediwm-pdf.desktop");

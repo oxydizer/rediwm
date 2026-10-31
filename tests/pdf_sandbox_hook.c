@@ -5,8 +5,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <seccomp.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,11 +52,18 @@ struct wl_display *wl_display_connect_to_fd(int fd) {
     return filtered_display;
 }
 
-int seccomp_load(scmp_filter_ctx context) {
-    if (fail_policy) return -EPERM;
-    int (*real)(scmp_filter_ctx) = dlsym(RTLD_NEXT, "seccomp_load");
+// The sandbox loads its filter through libc's syscall(). Fail that one call
+// when the test asks for a failed policy; forward every other.
+long syscall(long number, ...) {
+    long args[6];
+    va_list ap;
+    va_start(ap, number);
+    for (int i = 0; i < 6; i++) args[i] = va_arg(ap, long);
+    va_end(ap);
+    if (fail_policy && number == SYS_seccomp) { errno = EPERM; return -1; }
+    long (*real)(long, ...) = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");
     CHECK(real);
-    return real(context);
+    return real(number, args[0], args[1], args[2], args[3], args[4], args[5]);
 }
 
 static bool denied(int rc) {

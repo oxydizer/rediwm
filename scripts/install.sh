@@ -235,7 +235,7 @@ log "Installing dependencies (needs sudo)..."
 case "$FAMILY" in
     arch)
         deps="wayland wayland-protocols pixman libxkbcommon \
-            freetype2 harfbuzz fontconfig librsvg cairo pango libinput poppler-glib libseccomp \
+            freetype2 harfbuzz fontconfig librsvg cairo pango libinput poppler-glib \
             libarchive libwebp libpng libjpeg-turbo libpulse pipewire pam libcups mesa pkgconf git readline gcc boost libtorrent-rasterbar json-glib \
             xorg-xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk"
         if [ "$PRIVATE_WLROOTS" = no ]; then
@@ -259,13 +259,13 @@ case "$FAMILY" in
             libxcb-res0-dev libxcb-xfixes0-dev libxcb-dri3-dev libxcb-present-dev \
             libxcb-render-util0-dev libxcb-shm0-dev libxcb-xinput-dev xwayland \
             libfreetype-dev libharfbuzz-dev libfontconfig-dev librsvg2-dev libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev \
-            libglib2.0-dev libarchive-dev libwebp-dev libpng-dev libjpeg-dev libpulse-dev libpipewire-0.3-dev libpam0g-dev libaudit-dev libcups2-dev libgnutls28-dev libavahi-client-dev libpoppler-glib-dev libseccomp-dev libreadline-dev libtorrent-rasterbar-dev libjson-glib-dev \
+            libglib2.0-dev libarchive-dev libwebp-dev libpng-dev libjpeg-dev libpulse-dev libpipewire-0.3-dev libpam0g-dev libaudit-dev libcups2-dev libgnutls28-dev libavahi-client-dev libpoppler-glib-dev libreadline-dev libtorrent-rasterbar-dev libjson-glib-dev \
             xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk"
         ;;
     fedora)
         deps="wayland-devel wayland-protocols-devel pixman-devel libxkbcommon-devel \
             freetype-devel harfbuzz-devel fontconfig-devel librsvg2-devel cairo-devel pango-devel libinput-devel \
-            libarchive-devel libwebp-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel pipewire-devel pam-devel cups-devel poppler-glib-devel libseccomp-devel \
+            libarchive-devel libwebp-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel pipewire-devel pam-devel cups-devel poppler-glib-devel \
             mesa-libEGL-devel mesa-libGLES-devel glibc-devel readline-devel gcc-c++ json-glib-devel \
             pkgconf-pkg-config git rb_libtorrent-devel \
             xorg-x11-server-Xwayland \
@@ -282,7 +282,7 @@ case "$FAMILY" in
     opensuse)
         deps="wlroots-devel wayland-devel wayland-protocols-devel libpixman-1-0-devel libxkbcommon-devel \
             freetype2-devel harfbuzz-devel fontconfig-devel librsvg-devel cairo-devel pango-devel libinput-devel \
-            libarchive-devel libwebp-devel libpng16-devel libjpeg8-devel libpulse-devel pipewire-devel pam-devel cups-devel libpoppler-glib-devel libseccomp-devel \
+            libarchive-devel libwebp-devel libpng16-devel libjpeg8-devel libpulse-devel pipewire-devel pam-devel cups-devel libpoppler-glib-devel \
             Mesa-libEGL-devel Mesa-libGLESv2-devel glibc-devel readline-devel gcc-c++ json-glib-devel \
             pkg-config git libtorrent-rasterbar-devel \
             xwayland \

@@ -6,8 +6,6 @@
 #include <fcntl.h>
 #include <iconv.h>
 #include <linux/landlock.h>
-#include <sched.h>
-#include <seccomp.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,72 +117,8 @@ static int filesystem_policy(void) {
     return rc;
 }
 
-static int syscall_policy(int display) {
-    scmp_filter_ctx filter = seccomp_init(SCMP_ACT_ERRNO(EPERM));
-    if (!filter) return -1;
-    int rc = seccomp_attr_set(filter, SCMP_FLTATR_CTL_TSYNC, 1);
-    if (rc < 0) goto done;
-    // File opens are checked by Landlock. No exec, fork, socket/connect,
-    // ptrace, process_vm_*, pidfd, io_uring, BPF, keyring, mount or general
-    // ioctl/prctl is allowed. Unsupported/new syscalls are denied as well.
-    const int allowed[] = {
-        SCMP_SYS(read), SCMP_SYS(write), SCMP_SYS(readv), SCMP_SYS(writev),
-        SCMP_SYS(pread64), SCMP_SYS(lseek), SCMP_SYS(close), SCMP_SYS(dup),
-        SCMP_SYS(dup2), SCMP_SYS(dup3), SCMP_SYS(open), SCMP_SYS(openat),
-        SCMP_SYS(fstat), SCMP_SYS(fstatfs), SCMP_SYS(newfstatat), SCMP_SYS(stat), SCMP_SYS(lstat),
-        SCMP_SYS(statx), SCMP_SYS(access), SCMP_SYS(faccessat), SCMP_SYS(faccessat2),
-        SCMP_SYS(readlink), SCMP_SYS(readlinkat), SCMP_SYS(getdents64),
-        SCMP_SYS(mmap), SCMP_SYS(mprotect), SCMP_SYS(munmap), SCMP_SYS(mremap),
-        SCMP_SYS(madvise), SCMP_SYS(brk), SCMP_SYS(mlock), SCMP_SYS(munlock),
-        SCMP_SYS(futex), SCMP_SYS(futex_waitv), SCMP_SYS(set_robust_list), SCMP_SYS(rseq),
-        SCMP_SYS(sched_yield), SCMP_SYS(sched_getaffinity),
-        SCMP_SYS(rt_sigaction), SCMP_SYS(rt_sigprocmask), SCMP_SYS(rt_sigreturn),
-        SCMP_SYS(sigaltstack), SCMP_SYS(getpid), SCMP_SYS(gettid),
-        SCMP_SYS(getuid), SCMP_SYS(geteuid), SCMP_SYS(getgid), SCMP_SYS(getegid),
-        SCMP_SYS(clock_gettime), SCMP_SYS(gettimeofday), SCMP_SYS(clock_nanosleep),
-        SCMP_SYS(nanosleep), SCMP_SYS(time), SCMP_SYS(uname), SCMP_SYS(getrandom),
-        SCMP_SYS(poll), SCMP_SYS(ppoll), SCMP_SYS(select), SCMP_SYS(pselect6),
-        SCMP_SYS(eventfd2), SCMP_SYS(pipe2), SCMP_SYS(ftruncate),
-        SCMP_SYS(exit), SCMP_SYS(exit_group), SCMP_SYS(restart_syscall),
-    };
-    for (unsigned i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
-        // Some legacy syscalls are absent on other native architectures.
-        // Skipping their pseudo-numbers leaves the default denial intact.
-        if (allowed[i] < 0) continue;
-        rc = seccomp_rule_add(filter, SCMP_ACT_ALLOW, allowed[i], 0);
-        if (rc < 0) goto done;
-    }
-    const int commands[] = { F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD_CLOEXEC, F_GET_SEALS, F_ADD_SEALS };
-    for (unsigned i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
-        rc = seccomp_rule_add(filter, SCMP_ACT_ALLOW, SCMP_SYS(fcntl), 1, SCMP_A1(SCMP_CMP_EQ, commands[i], 0));
-        if (rc < 0) goto done;
-    }
-    rc = seccomp_rule_add(filter, SCMP_ACT_ALLOW, SCMP_SYS(memfd_create), 1,
-                          SCMP_A1(SCMP_CMP_MASKED_EQ, ~3ULL, 0));
-    if (rc < 0) goto done;
-    // glibc retries pthread_create with clone when clone3 returns ENOSYS.
-    rc = seccomp_rule_add(filter, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(clone3), 0);
-    if (rc < 0) goto done;
-    const unsigned thread_flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
-        CLONE_THREAD | CLONE_SYSVSEM | CLONE_SETTLS | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID;
-    rc = seccomp_rule_add(filter, SCMP_ACT_ALLOW, SCMP_SYS(clone), 1,
-                          SCMP_A0(SCMP_CMP_EQ, thread_flags, 0));
-    if (rc < 0) goto done;
-    rc = seccomp_rule_add(filter, SCMP_ACT_ALLOW, SCMP_SYS(tgkill), 1,
-                          SCMP_A0(SCMP_CMP_EQ, getpid(), 0));
-    if (rc < 0) goto done;
-    rc = seccomp_rule_add(filter, SCMP_ACT_ALLOW, SCMP_SYS(sendmsg), 1,
-                          SCMP_A0(SCMP_CMP_EQ, display, 0));
-    if (rc < 0) goto done;
-    rc = seccomp_rule_add(filter, SCMP_ACT_ALLOW, SCMP_SYS(recvmsg), 1,
-                          SCMP_A0(SCMP_CMP_EQ, display, 0));
-    if (rc < 0) goto done;
-    rc = seccomp_load(filter);
-done:
-    seccomp_release(filter);
-    if (rc < 0) { errno = -rc; return -1; }
-    return 0;
-}
+// The syscall allow-list is built and loaded in syscall_policy.zig.
+extern int rediwm_pdf_syscall_policy(int display);
 
 // `print` is the print helper's socket (see print.c), or -1. The viewer
 // may only read and write bytes on it: sendmsg is limited to `display`, so
@@ -225,5 +159,5 @@ int rediwm_pdf_sandbox_enter(int document, int display, int print) {
         setrlimit(RLIMIT_NOFILE, &files) < 0 || prctl(PR_SET_DUMPABLE, 0) < 0 ||
         prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0) return -1;
     if (filesystem_policy() < 0) return -1;
-    return syscall_policy(display);
+    return rediwm_pdf_syscall_policy(display);
 }
