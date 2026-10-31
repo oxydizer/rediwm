@@ -98,7 +98,9 @@ pub fn applyLoadedConfig(server: *Server, new_cfg: loader.Config) void {
     var old = server.config;
     server.config = new_cfg;
     @import("apply.zig").applyDiff(server, old, new_cfg);
-    old.deinit();
+    // The open Settings page was built from `old` and is rebuilt on its next
+    // frame (or after a drag): it keeps `old` until then.
+    if (server.input.open_control_center) |cc| cc.retireConfig(&old) else old.deinit();
     server.config_generation += 1;
     server.config_reload_error = null;
     @import("../ipc/events.zig").onConfigLoaded(server);

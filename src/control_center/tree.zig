@@ -2,6 +2,7 @@
 
 const i18n = @import("i18n");
 const std = @import("std");
+const gpa = @import("../main.zig").gpa;
 const ui = @import("ui");
 const layout = ui.layout;
 const Widget = layout.Widget;
@@ -55,6 +56,7 @@ pub fn buildTree(cc: *ControlCenter) void {
         cc.root.linkParents();
         cc.built_page = cc.page;
         cc.refresh_pending = false;
+        releaseRetired(cc);
         return;
     }
     cc.search.capture();
@@ -280,6 +282,23 @@ pub fn buildTree(cc: *ControlCenter) void {
     cc.search.built_empty = cc.search.empty();
     cc.built_page = cc.page;
     cc.refresh_pending = false;
+    releaseRetired(cc);
+}
+
+/// Takes over a replaced config that the open page may still point into, and
+/// asks for the rebuild that drops those pointers. Rebuilding here would run
+/// inside whatever widget callback reloaded the config.
+pub fn retireConfig(cc: *ControlCenter, old: *@import("config").loader.Config) void {
+    cc.retired_configs.append(gpa, old.*) catch {
+        old.deinit();
+        return;
+    };
+    cc.refresh();
+}
+
+pub fn releaseRetired(cc: *ControlCenter) void {
+    for (cc.retired_configs.items) |*old| old.deinit();
+    cc.retired_configs.clearRetainingCapacity();
 }
 
 pub fn append(cc: *ControlCenter, widget: Widget) void {
