@@ -6,6 +6,7 @@ pub const paint = @import("paint.zig");
 pub const window_chrome = @import("window_chrome.zig");
 pub const theme = @import("theme.zig");
 pub const input = @import("input.zig");
+pub const trackpad_navigation = @import("trackpad_navigation.zig");
 
 pub const widgets = struct {
     pub const scrollbar = @import("widgets/scrollbar.zig");

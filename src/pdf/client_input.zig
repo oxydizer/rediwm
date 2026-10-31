@@ -20,6 +20,7 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
         },
         .leave => {
             self.inside = false;
+            self.finger_navigation.reset();
             self.app.cancelDrag();
         },
         .motion => |ev| {
@@ -29,17 +30,45 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
             self.input_serial = ev.serial;
             self.handlePointerButton(ev.button, ev.state == .pressed);
         },
+        .axis_source => |ev| {
+            if (self.axis_source != ev.axis_source) self.finger_navigation.reset();
+            self.axis_source = ev.axis_source;
+        },
         .axis => |ev| {
-            if (ev.axis == .vertical_scroll) {
+            const delta = ev.value.toDouble();
+            if (self.axis_source == .finger and !self.app.ctrl and !self.app.shift) {
+                self.finger_navigation.add(ev.axis == .horizontal_scroll, delta);
+                if (ev.axis == .vertical_scroll) self.app.handleScroll(delta);
+            } else if (ev.axis == .vertical_scroll) {
                 if (self.app.ctrl) {
-                    self.app.handleZoomScroll(ev.value.toDouble());
+                    self.app.handleZoomScroll(delta);
                 } else if (self.app.shift) {
-                    self.app.handleHorizontalScroll(ev.value.toDouble());
+                    self.app.handleHorizontalScroll(delta);
                 } else {
-                    self.app.handleScroll(ev.value.toDouble());
+                    self.app.handleScroll(delta);
                 }
             } else if (ev.axis == .horizontal_scroll) {
-                self.app.handleHorizontalScroll(ev.value.toDouble());
+                self.app.handleHorizontalScroll(delta);
+            }
+        },
+        .axis_stop => |ev| {
+            if (self.axis_source == .finger) {
+                if (self.finger_navigation.stop(ev.axis == .horizontal_scroll)) |gesture| {
+                    if (self.app.dialog == .none) {
+                        if (gesture.direction) |direction| {
+                            if (self.app.n_pages > 0) {
+                                switch (direction) {
+                                    .back => if (self.app.current_page > 0)
+                                        self.app.goToPage(self.app.current_page - 1),
+                                    .forward => if (self.app.current_page < self.app.n_pages - 1)
+                                        self.app.goToPage(self.app.current_page + 1),
+                                }
+                            }
+                        } else {
+                            self.app.handleHorizontalScroll(gesture.horizontal_delta);
+                        }
+                    }
+                }
             }
         },
         else => {},

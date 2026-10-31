@@ -25,6 +25,7 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
         },
         .leave => {
             self.inside = false;
+            self.finger_navigation.reset();
             self.app.text_dragging = false;
             self.app.cancelDrag();
             self.app.handleMotion(-1, -1);
@@ -38,12 +39,42 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
             self.handlePointerButton(ev.button, ev.state == .pressed);
         },
         .axis => |ev| {
-            if (ev.axis == .vertical_scroll) {
+            if (self.axis_source == .finger) {
+                self.finger_navigation.add(
+                    ev.axis == .horizontal_scroll,
+                    ev.value.toDouble(),
+                );
+                if (ev.axis == .vertical_scroll) self.axis_delta += ev.value.toDouble();
+            } else if (ev.axis == .vertical_scroll) {
                 self.axis_delta += ev.value.toDouble();
-            } else self.horizontal_delta += ev.value.toDouble();
+            } else {
+                self.horizontal_delta += ev.value.toDouble();
+            }
             if (self.pointer.?.getVersion() < 5) self.flushScroll();
         },
-        .axis_source => |ev| self.axis_source = ev.axis_source,
+        .axis_source => |ev| {
+            if (self.axis_source != ev.axis_source) self.finger_navigation.reset();
+            self.axis_source = ev.axis_source;
+        },
+        .axis_stop => |ev| {
+            if (self.axis_source == .finger) {
+                if (ev.axis == .horizontal_scroll) {
+                    self.flushScroll();
+                    if (self.finger_navigation.stop(true)) |gesture| {
+                        if (gesture.direction) |direction| {
+                            switch (direction) {
+                                .back => self.app.back(),
+                                .forward => self.app.forward(),
+                            }
+                        } else {
+                            self.app.handleHorizontalScroll(gesture.horizontal_delta);
+                        }
+                    }
+                } else {
+                    _ = self.finger_navigation.stop(false);
+                }
+            }
+        },
         .axis_discrete => |ev| {
             if (ev.axis == .vertical_scroll) self.axis_notches = (self.axis_notches orelse 0) + @as(f64, @floatFromInt(ev.discrete)) else self.horizontal_notches = (self.horizontal_notches orelse 0) + @as(f64, @floatFromInt(ev.discrete));
         },
@@ -51,12 +82,13 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
             if (ev.axis == .vertical_scroll) self.axis_notches = (self.axis_notches orelse 0) + @as(f64, @floatFromInt(ev.value120)) / 120.0 else self.horizontal_notches = (self.horizontal_notches orelse 0) + @as(f64, @floatFromInt(ev.value120)) / 120.0;
         },
         .frame => self.flushScroll(),
-        else => {},
     }
 }
 
 pub fn flushScroll(self: *Client) void {
-    if (self.axis_source == .wheel or self.axis_source == .wheel_tilt) {
+    if (self.axis_source == .finger) {
+        if (self.axis_delta != 0) self.app.handleScroll(self.axis_delta);
+    } else if (self.axis_source == .wheel or self.axis_source == .wheel_tilt) {
         const pixels_per_notch = 100.0;
         const pixels = if (self.axis_notches) |n| n * pixels_per_notch else self.axis_delta * (pixels_per_notch / 15.0);
         self.app.handleWheel(pixels, app_mod.nowMs());

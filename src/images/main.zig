@@ -55,6 +55,8 @@ pub const Client = struct {
     density: f64 = 1,
     seat: ?*wl.Seat = null,
     pointer: ?*wl.Pointer = null,
+    axis_source: wl.Pointer.AxisSource = .wheel,
+    finger_navigation: @import("ui").trackpad_navigation.Gesture = .{},
     keyboard: ?*wl.Keyboard = null,
     input_serial: u32 = 0,
     wm_base: ?*xdg.WmBase = null,
@@ -370,6 +372,7 @@ pub const Client = struct {
             },
             .leave => {
                 self.inside = false;
+                self.finger_navigation.reset();
                 self.app.cancelDrag();
             },
             .motion => |ev| {
@@ -379,9 +382,30 @@ pub const Client = struct {
                 self.input_serial = ev.serial;
                 self.handlePointerButton(ev.button, ev.state == .pressed);
             },
+            .axis_source => |ev| {
+                if (self.axis_source != ev.axis_source) self.finger_navigation.reset();
+                self.axis_source = ev.axis_source;
+            },
             .axis => |ev| {
-                if (ev.axis == .vertical_scroll or self.app.overFilmstrip()) {
+                if (self.axis_source == .finger and !self.app.overFilmstrip()) {
+                    self.finger_navigation.add(
+                        ev.axis == .horizontal_scroll,
+                        ev.value.toDouble(),
+                    );
+                    if (ev.axis == .vertical_scroll) {
+                        self.app.handleScroll(ev.value.toDouble());
+                    }
+                } else if (ev.axis == .vertical_scroll or self.app.overFilmstrip()) {
                     self.app.handleScroll(ev.value.toDouble());
+                }
+            },
+            .axis_stop => |ev| {
+                if (self.axis_source == .finger) {
+                    if (self.finger_navigation.stop(ev.axis == .horizontal_scroll)) |gesture| {
+                        if (gesture.direction) |direction| {
+                            self.app.perform(if (direction == .back) .previous else .next);
+                        }
+                    }
                 }
             },
             else => {},
