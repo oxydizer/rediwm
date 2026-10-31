@@ -319,6 +319,16 @@ static int execute(struct rediwm_cups *w) {
     }
     return send_request(w, r, NULL);
 }
+/* The local daemon's socket: /run/cups on most Linux systems, /var/run/cups
+ * elsewhere (FreeBSD). The first when neither exists yet; probed on every
+ * connect, since the daemon may start after the worker. */
+static const char *local_socket(void) {
+    static const char *const paths[] = {"/run/cups/cups.sock", "/var/run/cups/cups.sock"};
+    struct stat st;
+    for (size_t i = 0; i < sizeof paths / sizeof paths[0]; i++)
+        if (!stat(paths[i], &st) && S_ISSOCK(st.st_mode)) return paths[i];
+    return paths[0];
+}
 static void close_connection(struct rediwm_cups *w) {
     if (w->active_fd >= 0) close(w->active_fd);
     w->active_fd = -1;
@@ -330,7 +340,7 @@ static void close_connection(struct rediwm_cups *w) {
 static void *run(void *data) {
     struct rediwm_cups *w = data;
     pthread_setname_np(pthread_self(), "rediwm-cups");
-    cupsSetServer("/run/cups/cups.sock");
+    cupsSetServer(local_socket());
     cupsSetPasswordCB2(password_cb, w);
     pthread_mutex_lock(&w->mutex);
     while (!atomic_load(&w->stop)) {
@@ -341,7 +351,11 @@ static void *run(void *data) {
         w->queued = 0;
         w->deadline = now() + 20;
         pthread_mutex_unlock(&w->mutex);
-        if (!w->http) w->http = httpConnect2("/run/cups/cups.sock", 631, NULL, AF_UNIX, HTTP_ENCRYPTION_NEVER, 1, 1000, NULL);
+        if (!w->http) {
+            const char *path = local_socket();
+            cupsSetServer(path);
+            w->http = httpConnect2(path, 631, NULL, AF_UNIX, HTTP_ENCRYPTION_NEVER, 1, 1000, NULL);
+        }
         int result = 1;
         if (w->http) {
             pthread_mutex_lock(&w->mutex);
