@@ -408,6 +408,59 @@ fn reliefTheme() theme.Theme {
     return t;
 }
 
+const button_widget = @import("widgets/button.zig");
+
+fn adaptiveButtonPixels(palette: theme.Theme, state: button_widget.State) [80 * 60]u32 {
+    var pixels: [80 * 60]u32 = @splat(0xff808080);
+    var renderer = Renderer.init(&pixels, 80, 60, 1);
+    renderer.palette = palette;
+    button_widget.paint(
+        &renderer,
+        .{ .x = 20, .y = 20, .w = 40, .h = 24 },
+        .{ .variant = .secondary, .label = "" },
+        state,
+    );
+    return pixels;
+}
+
+test "adaptive button relief transitions inset, lifts raised, and leaves flat and protected states unchanged" {
+    var inset = reliefTheme();
+    inset.button_relief = .inset;
+
+    const inset_rest = adaptiveButtonPixels(inset, .{ .pointer = .hover, .hover_elevation = 0 });
+    const inset_hover = adaptiveButtonPixels(inset, .{ .pointer = .hover, .hover_elevation = 1 });
+    try std.testing.expect(!std.mem.eql(u32, &inset_rest, &inset_hover));
+
+    var raised = inset;
+    raised.button_relief = .raised;
+    const raised_rest = adaptiveButtonPixels(raised, .{ .pointer = .hover, .hover_elevation = 0 });
+    const raised_hover = adaptiveButtonPixels(raised, .{ .pointer = .hover, .hover_elevation = 1 });
+    try std.testing.expect(!std.mem.eql(u32, &raised_rest, &raised_hover));
+
+    var flat = inset;
+    flat.button_relief = .flat;
+    const flat_rest = adaptiveButtonPixels(flat, .{ .pointer = .hover, .hover_elevation = 0 });
+    const flat_hover = adaptiveButtonPixels(flat, .{ .pointer = .hover, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &flat_rest, &flat_hover);
+
+    // Focus, selection, press and disabled treatments do not inherit elevation.
+    const focused_rest = adaptiveButtonPixels(inset, .{ .pointer = .hover, .focused = true, .hover_elevation = 0 });
+    const focused_hover = adaptiveButtonPixels(inset, .{ .pointer = .hover, .focused = true, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &focused_rest, &focused_hover);
+
+    const selected_rest = adaptiveButtonPixels(inset, .{ .pointer = .hover, .selected = true, .hover_elevation = 0 });
+    const selected_hover = adaptiveButtonPixels(inset, .{ .pointer = .hover, .selected = true, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &selected_rest, &selected_hover);
+
+    const pressed_rest = adaptiveButtonPixels(inset, .{ .pointer = .press, .hover_elevation = 0 });
+    const pressed_hover = adaptiveButtonPixels(inset, .{ .pointer = .press, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &pressed_rest, &pressed_hover);
+
+    const disabled_rest = adaptiveButtonPixels(inset, .{ .pointer = .disabled, .hover_elevation = 0 });
+    const disabled_hover = adaptiveButtonPixels(inset, .{ .pointer = .disabled, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &disabled_rest, &disabled_hover);
+}
+
 test "relief draws nothing while the theme's relief_depth is zero" {
     var with_relief = @as([40 * 40]u32, @splat(0xff808080));
     var without = with_relief;

@@ -249,6 +249,8 @@ pub const ButtonData = struct {
     /// Last sampled cursor position relative to this button.
     proximity_x: f32 = 0,
     proximity_y: f32 = 0,
+    /// 0 at rest, 1 while hovering; stepped with the other retained animations.
+    hover_elevation: anim.Anim = .{},
 };
 
 pub const CheckboxData = struct {

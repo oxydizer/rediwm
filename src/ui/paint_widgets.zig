@@ -76,6 +76,7 @@ pub fn paintButton(widget: *const Widget, data: ButtonData, renderer: *Renderer)
         .proximity_distance = data.proximity_distance,
         .proximity_x = data.proximity_x,
         .proximity_y = data.proximity_y,
+        .hover_elevation = data.hover_elevation.value(@import("anim.zig").nowMs()),
     });
 }
 

@@ -55,6 +55,8 @@ pub const State = struct {
     proximity_distance: f32 = std.math.inf(f32),
     proximity_x: f32 = 0,
     proximity_y: f32 = 0,
+    /// Retained hover-elevation progress, from 0 at rest to 1 at full hover.
+    hover_elevation: f32 = 0,
 };
 
 pub const Metrics = struct {
@@ -121,10 +123,14 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
     const m = metrics(opts.size, t);
     const disabled = state.pointer == .disabled;
     const hovered = state.pointer == .hover or state.pointer == .press;
+    const adaptive_hover = opts.variant == .secondary and
+        !state.selected and !disabled and !state.focused and
+        state.pointer != .press and r.reliefActive(t.button_relief) and
+        (state.pointer == .hover or state.hover_elevation > 0);
     const clear: [4]f32 = .{ 0, 0, 0, 0 };
     var bg: [4]f32 = switch (opts.variant) {
         .primary => t.accent,
-        .secondary => if (hovered) t.surface_hover else t.surface,
+        .secondary => if (hovered and !adaptive_hover) t.surface_hover else t.surface,
         .ghost => if (hovered) t.surface_hover else clear,
         .chrome => if (hovered) t.window_close_hover else clear,
     };
@@ -138,13 +144,18 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
     const border_w: f32 = if (ring) 2 else if (opts.variant == .secondary) 1 else 0;
     const relief: layout.Relief = if (disabled or (opts.variant != .primary and opts.variant != .secondary)) .flat else if (state.pointer == .press or state.selected) t.button_pressed_relief else t.button_relief;
     const radius = opts.radius orelse if (opts.variant == .chrome) chrome.cornerRadius(t.chrome_round_buttons, box.w, box.h, chrome.control_radius) else m.radius;
-    if (bg[3] > 0 or border_w > 0) r.fillRect(box.x, box.y, box.w, box.h, .{
-        .relief = relief,
-        .color = bg,
-        .radius = radius,
-        .border_width = border_w,
-        .border_color = if (ring) t.controlFocusColor() else if (hovered) t.border else t.border_soft,
-    });
+    if (bg[3] > 0 or border_w > 0) {
+        r.fillRect(box.x, box.y, box.w, box.h, .{
+            .relief = if (adaptive_hover) .flat else relief,
+            .color = bg,
+            .radius = radius,
+            .border_width = border_w,
+            .border_color = if (ring) t.controlFocusColor() else if (hovered) t.border else t.border_soft,
+        });
+        if (adaptive_hover) {
+            paintAdaptiveRelief(r, box, radius, t.button_relief, state.hover_elevation, t);
+        }
+    }
 
     // Directional lighting gives quiet graphite buttons a subtle raised feel.
     // Preserve selected, disabled, primary, ghost, and chrome treatments.
@@ -165,6 +176,54 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
     }
 
     paintProximityGlow(r, box, radius, state);
+}
+
+/// Crossfades an inset groove into raised relief, or gives an already-raised
+/// button a little more lift. The temporary renderer palettes keep the
+/// transition local to this button and leave the shared theme untouched.
+fn paintAdaptiveRelief(
+    r: *Renderer,
+    box: Rect,
+    radius: f32,
+    base: layout.Relief,
+    progress: f32,
+    palette: theme.Theme,
+) void {
+    const amount = std.math.clamp(progress, 0, 1);
+    const shape: paint_mod.ReliefBox = .{
+        .x = box.x,
+        .y = box.y,
+        .w = box.w,
+        .h = box.h,
+        .radius = radius,
+    };
+
+    switch (base) {
+        .inset => {
+            var inset_palette = palette;
+            inset_palette.relief_dark[3] *= 1 - amount;
+            inset_palette.relief_light[3] *= 1 - amount;
+            var inset_renderer = r.*;
+            inset_renderer.palette = inset_palette;
+            inset_renderer.paintShapeRelief(.inset, shape, .{});
+
+            var raised_palette = palette;
+            raised_palette.relief_dark[3] *= amount;
+            raised_palette.relief_light[3] *= amount;
+            raised_palette.relief_depth *= 1 + 0.18 * amount;
+            var raised_renderer = r.*;
+            raised_renderer.palette = raised_palette;
+            raised_renderer.paintShapeRelief(.raised, shape, .{});
+        },
+        .raised => {
+            var raised_palette = palette;
+            raised_palette.relief_depth *= 1 + 0.18 * amount;
+            var raised_renderer = r.*;
+            raised_renderer.palette = raised_palette;
+            raised_renderer.paintShapeRelief(.raised, shape, .{});
+        },
+        .flat => {},
+    }
 }
 
 /// Paints the pointer-facing red highlight and its opposing dark shade.
