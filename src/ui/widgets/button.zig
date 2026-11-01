@@ -230,7 +230,7 @@ fn paintAdaptiveRelief(
 /// Both passes stay inside the button's antialiased rounded shape.
 fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
     const t = r.palette orelse theme.global;
-    if (!t.border_glow_enabled or state.proximity_distance >= std.math.inf(f32) or
+    if (!t.button_hover_glow_enabled or state.proximity_distance >= std.math.inf(f32) or
         t.border_glow[3] <= 0 or t.border_glow_reach <= 0 or
         t.border_glow_length <= 0 or t.border_glow_depth <= 0 or
         box.w <= 0 or box.h <= 0)

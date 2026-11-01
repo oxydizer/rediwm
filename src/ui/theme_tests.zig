@@ -350,6 +350,30 @@ test "component relief theme serialization round-trips and omits defaults" {
     try std.testing.expectEqual(original.field_relief, reloaded.field_relief);
 }
 
+test "window edge and button hover glow toggles serialize independently and reload" {
+    const cases = [_]struct { edge: bool, button: bool }{
+        .{ .edge = false, .button = true },
+        .{ .edge = true, .button = false },
+        .{ .edge = false, .button = false },
+        .{ .edge = true, .button = true },
+    };
+
+    for (cases) |case| {
+        var original: Theme = .{};
+        original.border_glow_enabled = case.edge;
+        original.button_hover_glow_enabled = case.button;
+
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(std.testing.allocator);
+        try theme_file.writeDiff(std.testing.allocator, &buf, original, .{}, "", false);
+
+        var restored: Theme = .{};
+        try theme_file.overlay(std.testing.allocator, &restored, buf.items);
+        try std.testing.expectEqual(case.edge, restored.border_glow_enabled);
+        try std.testing.expectEqual(case.button, restored.button_hover_glow_enabled);
+    }
+}
+
 test "relief keys of the remaining widgets parse, default to flat and round-trip" {
     const Relief = theme.Relief;
     const keys = [_][]const u8{ "segmented_relief", "segmented_selected_relief", "stepper_relief", "swatch_relief", "pill_relief", "row_hover_relief", "row_selected_relief", "settings_card_relief", "dialog_frame_relief", "taskbar_chip_relief", "taskbar_chip_active_relief" };

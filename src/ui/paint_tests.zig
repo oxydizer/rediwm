@@ -682,7 +682,7 @@ test "segmented frames, swatches and rows take their own relief keys" {
 }
 
 
-test "button proximity glow follows the pointer and stays rounded and clipped" {
+test "button hover glow is independent of window edge glow and stays rounded and clipped" {
     const sample = struct {
         fn pixel(pixels: []const u32, width: i32, scale: f32, x: f32, y: f32) u32 {
             const px: usize = @intFromFloat(@floor(x * scale));
@@ -705,7 +705,8 @@ test "button proximity glow follows the pointer and stays rounded and clipped" {
         var renderer = Renderer.init(&pixels, width, height, scale);
         var palette: theme.Theme = .{};
         palette.border_glow = .{ 1, 0, 0, 0.60 };
-        palette.border_glow_enabled = true;
+        palette.border_glow_enabled = false;
+        palette.button_hover_glow_enabled = true;
         palette.border_glow_reach = 56;
         palette.border_glow_length = 72;
         palette.border_glow_depth = 3;
@@ -737,5 +738,19 @@ test "button proximity glow follows the pointer and stays rounded and clipped" {
         try std.testing.expect((near >> 16) & 0xff > (centre >> 16) & 0xff);
         try std.testing.expectEqual(@as(u32, 0xff808080), rounded_corner);
         try std.testing.expectEqual(@as(u32, 0xff808080), outside_clip);
+
+        // Window-edge glow being off must not suppress button glow.
+        @memset(&pixels, 0xff808080);
+        palette.border_glow_enabled = true;
+        palette.button_hover_glow_enabled = false;
+        renderer.palette = palette;
+        paintButton(&widget, .{
+            .variant = .ghost,
+            .proximity_distance = 4,
+            .proximity_x = 40,
+            .proximity_y = -4,
+        }, &renderer);
+        const button_glow_disabled = sample.pixel(&pixels, width, scale, 60.5, 20.5);
+        try std.testing.expectEqual(@as(u32, 0xff808080), button_glow_disabled);
     }
 }

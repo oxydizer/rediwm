@@ -90,6 +90,7 @@ pub const onFontSizeChanged = appearance_chrome.onFontSizeChanged;
 pub const onRadiusChanged = appearance_chrome.onRadiusChanged;
 pub const onShadowChanged = appearance_chrome.onShadowChanged;
 pub const onBorderGlowChanged = appearance_chrome.onBorderGlowChanged;
+pub const onButtonHoverGlowChanged = appearance_chrome.onButtonHoverGlowChanged;
 pub const onChromeOpacityChanged = appearance_chrome.onChromeOpacityChanged;
 pub const onChromeDarknessChanged = appearance_chrome.onChromeDarknessChanged;
 pub const onInactiveDimChanged = appearance_chrome.onInactiveDimChanged;
@@ -274,6 +275,8 @@ pub const Section = struct {
     shadow_row_children: [2]Widget = undefined,
     glow_row_children: [2]Widget = undefined,
     glow_label_children: [2]Widget = undefined,
+    button_hover_glow_row_children: [2]Widget = undefined,
+    button_hover_glow_label_children: [2]Widget = undefined,
     opacity_header_children: [2]Widget = undefined,
     opacity_group_children: [2]Widget = undefined,
     opacity_value_buf: [16]u8 = undefined,
@@ -517,6 +520,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.radius_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.shadow_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.glow_row_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.button_hover_glow_row_children },
         chrome_row,
         buildWindowTabs(out),
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dim_row_children },
@@ -589,6 +593,7 @@ pub const Row = enum {
     radius,
     shadow,
     edge_glow,
+    button_hover_glow,
     chrome_opacity,
     window_tabs,
     inactive_dim,
@@ -606,7 +611,7 @@ pub const groups = [_]struct { title: ?i18n.Message, rows: []const Row }{
     .{ .title = i18n.msg("Themes & colours"), .rows = &.{ .theme, .taskbar_theme, .theme_pack, .icon_theme, .dark_mode, .app_colors } },
     .{ .title = i18n.msg("Wallpaper"), .rows = &.{.wallpaper} },
     .{ .title = i18n.msg("Fonts & cursor"), .rows = &.{ .font_family, .font_size, .cursor } },
-    .{ .title = i18n.msg("Windows"), .rows = &.{ .radius, .shadow, .edge_glow, .chrome_opacity, .window_tabs, .inactive_dim, .inactive_opacity, .terminal_opacity, .window_gap, .scrollbar_width } },
+    .{ .title = i18n.msg("Windows"), .rows = &.{ .radius, .shadow, .edge_glow, .button_hover_glow, .chrome_opacity, .window_tabs, .inactive_dim, .inactive_opacity, .terminal_opacity, .window_gap, .scrollbar_width } },
     .{ .title = i18n.msg("Motion & feedback"), .rows = &.{ .animations, .animation_speed, .reduced_motion, .focus_zoom, .drag_feedback, .drag_scale, .dodge_file_drags, .launch_splash } },
     .{ .title = null, .rows = &.{.dock} },
     .{ .title = null, .rows = &.{.taskbar} },
