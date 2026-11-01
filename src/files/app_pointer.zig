@@ -139,9 +139,12 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
             self.last_click_index = null;
         }
     }
+    const old_x = self.mouse_x;
+    const old_y = self.mouse_y;
     const old_hover = self.hoverKey();
     self.mouse_x = x;
     self.mouse_y = y;
+    self.damageToolbarProximity(old_x, old_y, x, y);
     if (self.selection_band != null) self.updateSelectionBand();
     if (self.text_dragging) {
         self.placeCaret(x, true);

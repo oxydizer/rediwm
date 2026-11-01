@@ -5,6 +5,8 @@ const App = @import("app.zig").App;
 const anim = @import("ui").anim;
 const header = @import("header.zig");
 const hover_glide = @import("ui").hover_glide;
+const button_widget = @import("ui").widgets.button;
+const ui_theme = @import("ui").theme;
 const pins_mod = @import("pins.zig");
 const HoverLayout = App.HoverLayout;
 const column_labels = App.column_labels;
@@ -163,6 +165,61 @@ pub fn hoveredToolbarButton(self: *App) ?header.Rect {
     const action = header.hit(self.w, self.inRepository(), self.mouse_x, self.mouse_y) orelse return null;
     if (!self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action)) return null;
     return header.rect(self.w, self.inRepository(), action);
+}
+
+/// Shared button proximity using Files' existing pointer and header geometry.
+pub fn toolbarButtonProximity(
+    self: *App,
+    action: header.Action,
+    x: f64,
+    y: f64,
+) button_widget.ProximitySample {
+    const absent = button_widget.ProximitySample{
+        .distance = std.math.inf(f32),
+        .x = 0,
+        .y = 0,
+    };
+    if (self.transfer_view.active or self.dialog != null or self.menu != null or
+        !self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action))
+        return absent;
+
+    const r = header.rect(self.w, self.inRepository(), action);
+    return button_widget.sampleProximity(
+        .{
+            .x = @floatCast(r.x),
+            .y = @floatCast(r.y),
+            .w = @floatCast(r.w),
+            .h = @floatCast(r.h),
+        },
+        @floatCast(x),
+        @floatCast(y),
+        .{
+            .x = 0,
+            .y = 0,
+            .w = @floatFromInt(self.w),
+            .h = @floatFromInt(self.contentTop()),
+        },
+    );
+}
+
+/// Repaint only toolbar buttons whose proximity appearance may have changed.
+pub fn damageToolbarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, new_y: f64) void {
+    const reach = ui_theme.global.border_glow_reach;
+    if (reach <= 0) return;
+    if (!ui_theme.global.button_hover_glow_enabled and ui_theme.global.button_relief == .flat) return;
+
+    var damage: ?header.Rect = null;
+    for (std.meta.tags(header.Action)) |action| {
+        if (!self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action)) continue;
+
+        const before = self.toolbarButtonProximity(action, old_x, old_y);
+        const after = self.toolbarButtonProximity(action, new_x, new_y);
+        if (@min(before.distance, after.distance) > reach) continue;
+
+        const rect = header.rect(self.w, self.inRepository(), action);
+        damage = if (damage) |current| unionRect(current, rect) else rect;
+    }
+    if (damage) |rect| self.addDamage(rect);
 }
 
 /// Samples the hover highlights and queues damage for what moved or

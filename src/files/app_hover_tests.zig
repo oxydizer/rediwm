@@ -289,3 +289,27 @@ test "hover damage covers this repaint only" {
     app.addDamage(.{ .x = 10, .y = 10, .w = 5, .h = 5 });
     try std.testing.expect(app.dirty and app.paint_damage == null);
 }
+
+test "toolbar proximity uses shared button geometry and damages in-button motion" {
+    var app = try testApp();
+    defer app.deinit();
+
+    const rect = header.rect(app.w, false, .refresh);
+    const x = rect.x + rect.w / 2;
+    const y = rect.y + rect.h / 2;
+
+    app.handleMotion(x, y);
+    const sample = app.toolbarButtonProximity(.refresh, x, y);
+    try std.testing.expectEqual(@as(f32, 0), sample.distance);
+    try std.testing.expectEqual(@as(f32, @floatCast(rect.w / 2)), sample.x);
+    try std.testing.expectEqual(@as(f32, @floatCast(rect.h / 2)), sample.y);
+
+    // Moving within the same button does not change hoverKey. Proximity
+    // still changes and must queue damage for the button.
+    app.dirty = false;
+    app.paint_damage = null;
+    app.handleMotion(x + 1, y);
+    try std.testing.expect(app.dirty);
+    try std.testing.expect(app.paint_damage != null);
+    try std.testing.expect(app.paint_damage.?.contains(x, y));
+}
