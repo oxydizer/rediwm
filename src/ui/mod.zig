@@ -7,6 +7,7 @@ pub const window_chrome = @import("window_chrome.zig");
 pub const theme = @import("theme.zig");
 pub const border_glow = @import("border_glow");
 pub const input = @import("input.zig");
+pub const interaction_surface = @import("interaction_surface.zig");
 
 pub const widgets = struct {
     pub const scrollbar = @import("widgets/scrollbar.zig");
