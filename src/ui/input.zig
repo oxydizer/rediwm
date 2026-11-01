@@ -33,12 +33,7 @@ pub fn hitTest(root: *Widget, x: f32, y: f32) ?*Widget {
 }
 
 /// Logical-pixel rectangle used to constrain proximity sampling.
-pub const ProximityRect = struct {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-};
+pub const ProximityRect = button_widget.Rect;
 
 fn widgetRect(widget: *const Widget) ProximityRect {
     return .{
@@ -47,29 +42,6 @@ fn widgetRect(widget: *const Widget) ProximityRect {
         .w = widget.computed_width,
         .h = widget.computed_height,
     };
-}
-
-fn intersectProximityRect(a: ProximityRect, b: ProximityRect) ProximityRect {
-    const x0 = @max(a.x, b.x);
-    const y0 = @max(a.y, b.y);
-    const x1 = @min(a.x + a.w, b.x + b.w);
-    const y1 = @min(a.y + a.h, b.y + b.h);
-    return .{
-        .x = x0,
-        .y = y0,
-        .w = @max(0, x1 - x0),
-        .h = @max(0, y1 - y0),
-    };
-}
-
-fn proximityDistance(x: f32, y: f32, rect: ProximityRect) f32 {
-    if (rect.w <= 0 or rect.h <= 0) return std.math.inf(f32);
-
-    const right = rect.x + rect.w;
-    const bottom = rect.y + rect.h;
-    const dx = if (x < rect.x) rect.x - x else if (x > right) x - right else 0;
-    const dy = if (y < rect.y) rect.y - y else if (y > bottom) y - bottom else 0;
-    return @sqrt(dx * dx + dy * dy);
 }
 
 /// Updates every button in the retained tree, not merely the hit-tested one.
@@ -83,7 +55,7 @@ pub fn updateButtonProximity(
     viewport: ProximityRect,
 ) bool {
     var changed = false;
-    const root_clip = intersectProximityRect(viewport, widgetRect(root));
+    const root_clip = button_widget.intersectRect(viewport, widgetRect(root));
     sampleButtonProximity(root, x, y, root_clip, &changed);
     return changed;
 }
@@ -97,14 +69,13 @@ fn sampleButtonProximity(
 ) void {
     switch (widget.kind) {
         .button => |*data| {
-            const visible = intersectProximityRect(widgetRect(widget), clip);
-            const distance = proximityDistance(x, y, visible);
-            const sample_x = if (distance < std.math.inf(f32)) x - widget.computed_x else data.proximity_x;
-            const sample_y = if (distance < std.math.inf(f32)) y - widget.computed_y else data.proximity_y;
-            if (data.proximity_distance != distance or
+            const sample = button_widget.sampleProximity(widgetRect(widget), x, y, clip);
+            const sample_x = if (sample.distance < std.math.inf(f32)) sample.x else data.proximity_x;
+            const sample_y = if (sample.distance < std.math.inf(f32)) sample.y else data.proximity_y;
+            if (data.proximity_distance != sample.distance or
                 data.proximity_x != sample_x or data.proximity_y != sample_y)
             {
-                data.proximity_distance = distance;
+                data.proximity_distance = sample.distance;
                 data.proximity_x = sample_x;
                 data.proximity_y = sample_y;
                 widget.markPaintDirty();
@@ -116,7 +87,7 @@ fn sampleButtonProximity(
 
     // paintScrollContainer clips all descendants to its own full rectangle.
     const child_clip = if (widget.kind == .scroll_container)
-        intersectProximityRect(clip, widgetRect(widget))
+        button_widget.intersectRect(clip, widgetRect(widget))
     else
         clip;
 

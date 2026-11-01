@@ -16,6 +16,67 @@ const IconId = layout.IconId;
 
 pub const Rect = @import("field.zig").Rect;
 
+pub const ProximitySample = struct {
+    distance: f32,
+    x: f32,
+    y: f32,
+};
+
+/// Intersects two logical-pixel rectangles.
+pub fn intersectRect(a: Rect, b: Rect) Rect {
+    const x0 = @max(a.x, b.x);
+    const y0 = @max(a.y, b.y);
+    const x1 = @min(a.x + a.w, b.x + b.w);
+    const y1 = @min(a.y + a.h, b.y + b.h);
+    return .{
+        .x = x0,
+        .y = y0,
+        .w = @max(0, x1 - x0),
+        .h = @max(0, y1 - y0),
+    };
+}
+
+/// Samples pointer proximity to the visible portion of a button.
+/// Returned x/y coordinates are local to the original button rectangle.
+pub fn sampleProximity(box: Rect, pointer_x: f32, pointer_y: f32, clip: Rect) ProximitySample {
+    const visible = intersectRect(box, clip);
+    if (visible.w <= 0 or visible.h <= 0) {
+        return .{
+            .distance = std.math.inf(f32),
+            .x = pointer_x - box.x,
+            .y = pointer_y - box.y,
+        };
+    }
+
+    const right = visible.x + visible.w;
+    const bottom = visible.y + visible.h;
+    const dx = if (pointer_x < visible.x) visible.x - pointer_x else if (pointer_x > right) pointer_x - right else 0;
+    const dy = if (pointer_y < visible.y) visible.y - pointer_y else if (pointer_y > bottom) pointer_y - bottom else 0;
+
+    return .{
+        .distance = @sqrt(dx * dx + dy * dy),
+        .x = pointer_x - box.x,
+        .y = pointer_y - box.y,
+    };
+}
+
+test "proximity sampling respects clipping and returns button-local coordinates" {
+    const box: Rect = .{ .x = 20, .y = 10, .w = 40, .h = 20 };
+    const clip: Rect = .{ .x = 30, .y = 15, .w = 20, .h = 10 };
+
+    const near = sampleProximity(box, 30, 10, clip);
+    try std.testing.expectEqual(@as(f32, 5), near.distance);
+    try std.testing.expectEqual(@as(f32, 10), near.x);
+    try std.testing.expectEqual(@as(f32, 0), near.y);
+
+    const inside = sampleProximity(box, 35, 20, clip);
+    try std.testing.expectEqual(@as(f32, 0), inside.distance);
+
+    const invisible_clip: Rect = .{ .x = 70, .y = 15, .w = 20, .h = 10 };
+    const outside = sampleProximity(box, 10, 20, invisible_clip);
+    try std.testing.expect(std.math.isInf(outside.distance));
+}
+
 /// `primary` is the accent fill (the start menu's selected category chip);
 /// `secondary` a quiet surface with a hairline border; `ghost` shows only on
 /// hover; `chrome` is a window-style close button, red on hover.
