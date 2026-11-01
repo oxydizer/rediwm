@@ -374,6 +374,21 @@ test "window edge and button hover glow toggles serialize independently and relo
     }
 }
 
+test "button hover glow defaults on and parses independently" {
+    const defaults: Theme = .{};
+    try std.testing.expect(defaults.button_hover_glow_enabled);
+    try std.testing.expect(defaults.border_glow_enabled);
+
+    const explicit_off =
+        \\[theme]
+        \\button_hover_glow_enabled = false
+    ;
+    var parsed: Theme = .{};
+    try theme_file.overlay(std.testing.allocator, &parsed, explicit_off);
+    try std.testing.expect(!parsed.button_hover_glow_enabled);
+    try std.testing.expect(parsed.border_glow_enabled);
+}
+
 test "relief keys of the remaining widgets parse, default to flat and round-trip" {
     const Relief = theme.Relief;
     const keys = [_][]const u8{ "segmented_relief", "segmented_selected_relief", "stepper_relief", "swatch_relief", "pill_relief", "row_hover_relief", "row_selected_relief", "settings_card_relief", "dialog_frame_relief", "taskbar_chip_relief", "taskbar_chip_active_relief" };

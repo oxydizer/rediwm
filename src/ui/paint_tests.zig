@@ -752,5 +752,18 @@ test "button hover glow is independent of window edge glow and stays rounded and
         }, &renderer);
         const button_glow_disabled = sample.pixel(&pixels, width, scale, 60.5, 20.5);
         try std.testing.expectEqual(@as(u32, 0xff808080), button_glow_disabled);
+
+        // An absent proximity sample must never paint a stale highlight.
+        @memset(&pixels, 0xff808080);
+        palette.button_hover_glow_enabled = true;
+        renderer.palette = palette;
+        paintButton(&widget, .{
+            .variant = .ghost,
+            .proximity_distance = std.math.inf(f32),
+            .proximity_x = 40,
+            .proximity_y = -4,
+        }, &renderer);
+        const no_proximity = sample.pixel(&pixels, width, scale, 60.5, 20.5);
+        try std.testing.expectEqual(@as(u32, 0xff808080), no_proximity);
     }
 }

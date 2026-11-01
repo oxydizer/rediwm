@@ -98,6 +98,20 @@ test "button proximity samples visible nested-scroll rectangles and skips unchan
         @as(f32, 0),
         root.children[0].children[0].children[0].kind.button.proximity_distance,
     );
+
+    // Moving away from the button updates its distance and local sample.
+    try std.testing.expect(input_src.updateButtonProximity(&root, 50, 15, viewport));
+    const visible_button = &root.children[0].children[0].children[0].kind.button;
+    try std.testing.expectEqual(@as(f32, 5), visible_button.proximity_distance);
+    try std.testing.expectEqual(@as(f32, 25), visible_button.proximity_x);
+    try std.testing.expectEqual(@as(f32, 15), visible_button.proximity_y);
+
+    // A distant pointer position is retained without repeatedly dirtying paint.
+    try std.testing.expect(input_src.updateButtonProximity(&root, 120, 15, viewport));
+    try std.testing.expectEqual(@as(f32, 75), visible_button.proximity_distance);
+    const distant_revision = layout.paint_revision;
+    try std.testing.expect(!input_src.updateButtonProximity(&root, 120, 15, viewport));
+    try std.testing.expectEqual(distant_revision, layout.paint_revision);
 }
 
 test "hitTest returns the topmost overlapping widget" {

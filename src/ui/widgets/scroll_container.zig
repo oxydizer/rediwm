@@ -374,6 +374,24 @@ test "secondary button hover elevation settles, skips flat relief and respects r
     step = stepBars(&button, 5000);
     try std.testing.expect(!step.pending());
     try std.testing.expectEqual(@as(f32, 1), button.kind.button.hover_elevation.value(5000));
+
+    // Disabling a button during an active hover must cancel and clear it.
+    anim.setReducedMotion(false);
+    button.kind.button.state = .idle;
+    _ = stepBars(&button, 5100);
+    _ = stepBars(&button, 5300);
+
+    button.kind.button.state = .hover;
+    step = stepBars(&button, 6000);
+    try std.testing.expect(step.pending());
+    _ = stepBars(&button, 6016);
+    try std.testing.expect(button.kind.button.hover_elevation.value(6016) > 0);
+
+    button.kind.button.state = .disabled;
+    step = stepBars(&button, 6020);
+    try std.testing.expect(!step.pending());
+    try std.testing.expect(!button.kind.button.hover_elevation.active());
+    try std.testing.expectEqual(@as(f32, 0), button.kind.button.hover_elevation.value(6020));
 }
 
 pub fn ensureVisible(widget: *Widget, target_start: f32, target_extent: f32) void {
