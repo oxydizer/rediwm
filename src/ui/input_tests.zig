@@ -114,6 +114,36 @@ test "button proximity samples visible nested-scroll rectangles and skips unchan
     try std.testing.expectEqual(distant_revision, layout.paint_revision);
 }
 
+test "dispatcher pointer motion updates button proximity samples" {
+    var children = [_]Widget{.{
+        .kind = .{ .button = .{ .label = "Button" } },
+        .computed_width = 40,
+        .computed_height = 20,
+    }};
+    var root: Widget = .{
+        .kind = .container,
+        .computed_width = 100,
+        .computed_height = 80,
+        .children = &children,
+    };
+    root.linkParents();
+
+    var dispatcher: Dispatcher = .{};
+    dispatcher.pointerMotion(&root, 45, 10);
+
+    const button = &root.children[0].kind.button;
+    try std.testing.expectEqual(@as(f32, 5), button.proximity_distance);
+    try std.testing.expectEqual(@as(f32, 45), button.proximity_x);
+    try std.testing.expectEqual(@as(f32, 10), button.proximity_y);
+
+    const revision = layout.paint_revision;
+    dispatcher.pointerMotion(&root, 45, 10);
+    try std.testing.expectEqual(revision, layout.paint_revision);
+
+    dispatcher.pointerMotion(&root, 10, 10);
+    try std.testing.expectEqual(@as(f32, 0), button.proximity_distance);
+}
+
 test "hitTest returns the topmost overlapping widget" {
     var kids = [_]Widget{
         .{ .kind = .container },
@@ -723,20 +753,26 @@ test "dragging across a field sweeps a selection and releasing ends it" {
     try std.testing.expectEqualStrings("alpha beta", field.kind.text_input.selectedText());
 }
 
-test "stable pointer motion and clamped scrolling leave visual revision unchanged" {
+test "pointer motion invalidates changed proximity samples but not repeated samples" {
     var children = [_]Widget{.{ .kind = .{ .button = .{ .label = "Button" } }, .computed_width = 100, .computed_height = 30 }};
     var root: Widget = .{ .kind = .container, .computed_width = 120, .computed_height = 80, .children = &children };
     root.linkParents();
     var dispatcher: Dispatcher = .{};
     dispatcher.pointerMotion(&root, 10, 10);
     var revision = layout.paint_revision;
+
+    dispatcher.pointerMotion(&root, 11, 10);
+    try std.testing.expect(revision != layout.paint_revision);
+    revision = layout.paint_revision;
     dispatcher.pointerMotion(&root, 11, 10);
     try std.testing.expectEqual(revision, layout.paint_revision);
+
     dispatcher.pointerMotion(&root, 110, 60);
     try std.testing.expect(revision != layout.paint_revision);
     revision = layout.paint_revision;
-    dispatcher.pointerMotion(&root, 111, 60);
+    dispatcher.pointerMotion(&root, 110, 60);
     try std.testing.expectEqual(revision, layout.paint_revision);
+
     var scroll: Widget = .{ .kind = .{ .scroll_container = .{ .content_size = 300 } }, .direction = .column, .computed_width = 100, .computed_height = 100 };
     _ = dispatcher.scrollWheel(&scroll, 10, 10, -40, null);
     try std.testing.expectEqual(revision, layout.paint_revision);

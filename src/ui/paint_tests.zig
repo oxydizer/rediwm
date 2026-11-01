@@ -15,6 +15,7 @@ const anim = @import("paint.zig").anim;
 const text_mod = @import("paint.zig").text_mod;
 const theme = @import("paint.zig").theme;
 const ui_input = @import("paint.zig").ui_input;
+const Dispatcher = @import("input.zig").Dispatcher;
 const field_widget = @import("paint.zig").field_widget;
 const ClipRect = @import("paint.zig").ClipRect;
 const Image = @import("paint.zig").Image;
@@ -681,6 +682,54 @@ test "segmented frames, swatches and rows take their own relief keys" {
     try expectInsetShading(&paintedRow(flat, .{ .state = .hover }), &paintedRow(rows, .{ .state = .hover }), 80, 35, 11, 38);
 }
 
+
+test "dispatcher proximity illuminates raised and inset buttons" {
+    for ([_]layout.Relief{ .raised, .inset }) |button_relief| {
+        var children = [_]Widget{.{
+            .kind = .{ .button = .{ .variant = .secondary } },
+            .computed_x = 20,
+            .computed_y = 20,
+            .computed_width = 40,
+            .computed_height = 24,
+        }};
+        var root: Widget = .{
+            .kind = .container,
+            .computed_width = 80,
+            .computed_height = 60,
+            .children = &children,
+        };
+        root.linkParents();
+
+        var dispatcher: Dispatcher = .{};
+        dispatcher.pointerMotion(&root, 40, 16);
+
+        const button = &root.children[0];
+        const sampled = button.kind.button;
+        try std.testing.expectEqual(@as(f32, 4), sampled.proximity_distance);
+
+        var palette = reliefTheme();
+        palette.button_relief = button_relief;
+        palette.button_hover_glow_enabled = true;
+        palette.border_glow = .{ 1, 0, 0, 0.60 };
+        palette.border_glow_enabled = false;
+        palette.border_glow_reach = 56;
+        palette.border_glow_length = 72;
+        palette.border_glow_depth = 3;
+
+        var pixels: [80 * 60]u32 = @splat(0xff808080);
+        var renderer = Renderer.init(&pixels, 80, 60, 1);
+        renderer.palette = palette;
+        paintButton(button, sampled, &renderer);
+        const illuminated = pixels;
+
+        var without_proximity = sampled;
+        without_proximity.proximity_distance = std.math.inf(f32);
+        @memset(&pixels, 0xff808080);
+        paintButton(button, without_proximity, &renderer);
+
+        try std.testing.expect(!std.mem.eql(u32, &illuminated, &pixels));
+    }
+}
 
 test "button hover glow is independent of window edge glow and stays rounded and clipped" {
     const sample = struct {
