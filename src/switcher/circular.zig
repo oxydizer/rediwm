@@ -31,6 +31,11 @@ pub const State = struct {
     hub_icon_source: ?*wlr.Buffer = null,
     hub_storage: ?*wlr.Buffer = null,
     hub_key: ?u64 = null,
+    /// The window-count badge, now drawn over the focused window's own
+    /// sector instead of inside the hub (see `updateBadge`).
+    badge: ?*sn.Buffer = null,
+    badge_storage: ?*wlr.Buffer = null,
+    badge_key: ?usize = null,
     /// The group the selected card belonged to last frame, so entering a
     /// different group (including the very first selection) can be told
     /// apart from cycling within the one already open.
@@ -41,6 +46,7 @@ pub const State = struct {
 
     pub fn deinit(self: *State) void {
         if (self.hub_storage) |buffer| buffer.unlock();
+        if (self.badge_storage) |buffer| buffer.unlock();
         for (self.groups.items) |*group| group.members.deinit(gpa);
         self.groups.deinit(gpa);
     }
@@ -96,12 +102,19 @@ pub fn open(self: *Switcher, server: *Server) !void {
         try group.members.append(gpa, index);
         group.count += 1;
     }
+    // Seed every card's animated stack slot at its resting depth so an
+    // unselected group's cascade renders correctly without having to wait
+    // for a `select()` retarget (which only ever touches the group it enters).
+    for (self.cards.items) |*card| card.stack.cancel(@floatFromInt(stackDepth(self, card)));
     self.circle.hub = try self.tree.?.createSceneBuffer(null);
     self.circle.hub.?.setFilterMode(.bilinear);
     self.circle.hub.?.point_accepts_input = Switcher.ignoreInput;
     self.circle.hub_icon = try self.tree.?.createSceneBuffer(null);
     self.circle.hub_icon.?.setFilterMode(.bilinear);
     self.circle.hub_icon.?.point_accepts_input = Switcher.ignoreInput;
+    self.circle.badge = try self.tree.?.createSceneBuffer(null);
+    self.circle.badge.?.setFilterMode(.bilinear);
+    self.circle.badge.?.point_accepts_input = Switcher.ignoreInput;
 }
 
 fn groupFor(self: *Switcher, server: *Server, raw: []const u8, index: usize) !usize {
@@ -140,15 +153,24 @@ pub fn advance(self: *Switcher, reverse: bool) void {
 }
 
 pub fn select(self: *Switcher, opening: bool) void {
+    const now = @import("../Taskbar.zig").nowMs();
     const card = self.cards.items[self.selected];
     const group = &self.circle.groups.items[card.group];
     group.front = self.selected;
+    // Advancing the front shifts every member of this group by exactly one
+    // stack slot (`stackDepth` is relative to `front`), so retargeting all of
+    // them here slides the newly-front card's preview over the old one
+    // instead of popping straight to the new arrangement.
+    for (group.members.items) |member_index| {
+        const member = &self.cards.items[member_index];
+        member.stack.retargetTo(now, @floatFromInt(stackDepth(self, member)), ui.anim.curveFor(.switcher_scroll));
+    }
     const entering_group = opening or self.circle.current_group != card.group;
     if (entering_group) {
         self.circle.current_group = card.group;
         if (group.count > 1) {
             self.circle.expand.cancel(0);
-            self.circle.expand.retargetTo(@import("../Taskbar.zig").nowMs(), 1, ui.anim.curveFor(.switcher_scroll));
+            self.circle.expand.retargetTo(now, 1, ui.anim.curveFor(.switcher_scroll));
         } else {
             self.circle.expand.cancel(0);
         }
@@ -161,7 +183,7 @@ pub fn select(self: *Switcher, opening: bool) void {
     } else {
         // Cross the twelve-o'clock seam by the shorter arc.
         const delta = @mod(target - self.scroll.to + std.math.pi, tau) - std.math.pi;
-        self.scroll.retargetTo(@import("../Taskbar.zig").nowMs(), self.scroll.to + delta, ui.anim.curveFor(.switcher_scroll));
+        self.scroll.retargetTo(now, self.scroll.to + delta, ui.anim.curveFor(.switcher_scroll));
     }
     self.circle.page = page;
     // Only restack on selection. Repeating this every frame would damage an
@@ -175,12 +197,51 @@ pub fn select(self: *Switcher, opening: bool) void {
     }
     self.circle.hub.?.node.raiseToTop();
     self.circle.hub_icon.?.node.raiseToTop();
+    self.circle.badge.?.node.raiseToTop();
 }
 
 fn stackDepth(self: *const Switcher, card: *const Switcher.Card) usize {
     const group = self.circle.groups.items[card.group];
     const front = self.cards.items[group.front];
     return (card.member + group.count - front.member) % group.count;
+}
+
+/// Pure geometry hit test mirroring `tick`'s placement math (without
+/// touching scene nodes), so pointer motion/clicks landing between frames
+/// still match exactly what's on screen. `lx`/`ly` are local to the
+/// switcher's own tree. Prefers whichever matching card sits topmost in its
+/// group's stack (`depth`'s raise-to-top order in `select`), since a deeper
+/// member's sector mostly sits behind the one in front of it.
+pub fn hit(self: *Switcher, now: i64, lx: f64, ly: f64) ?usize {
+    const slots = @min(page_size, self.circle.groups.items.len - self.circle.page * page_size);
+    if (slots == 0) return null;
+    const arc = layout.span(slots);
+    const rotation: f64 = self.scroll.value(now);
+    const selected_group = self.cards.items[self.selected].group;
+    const expand: f64 = @floatCast(self.circle.expand.value(now));
+    var best: ?usize = null;
+    var best_depth: f64 = std.math.inf(f64);
+    for (self.cards.items, 0..) |*card, i| {
+        const depth: f64 = card.stack.value(now);
+        if (card.group / page_size != self.circle.page or depth >= 3 or depth >= best_depth) continue;
+        const angle = @as(f64, @floatFromInt(card.group % page_size)) * tau / @as(f64, @floatFromInt(slots)) - rotation;
+        const progress = if (card.group == selected_group) expand else 0;
+        const sector = layout.makeSector(self.width, angle, arc, depth, progress);
+        if (inSector(sector, lx, ly)) {
+            best = i;
+            best_depth = depth;
+        }
+    }
+    return best;
+}
+
+fn inSector(sector: layout.Sector, lx: f64, ly: f64) bool {
+    const dx = lx - @as(f64, @floatFromInt(sector.x)) - sector.arc.center[0];
+    const dy = ly - @as(f64, @floatFromInt(sector.y)) - sector.arc.center[1];
+    const radius = @sqrt(dx * dx + dy * dy);
+    if (radius < sector.arc.radii[0] or radius > sector.arc.radii[1] or radius == 0) return false;
+    const dot = (dx / radius) * sector.arc.axis[0] + (dy / radius) * sector.arc.axis[1];
+    return dot >= sector.arc.half_angle[0] - 1e-9;
 }
 
 pub fn tick(self: *Switcher, output: *Output, now: i64) bool {
@@ -192,26 +253,31 @@ pub fn tick(self: *Switcher, output: *Output, now: i64) bool {
     const rotation: f64 = self.scroll.value(now);
     const selected_group = self.cards.items[self.selected].group;
     const expand: f64 = @floatCast(self.circle.expand.value(now));
-    for (self.cards.items) |*card| {
-        const depth = stackDepth(self, card);
+    var stack_settled = true;
+    for (self.cards.items, 0..) |*card, i| {
+        const depth: f64 = card.stack.value(now);
+        stack_settled = stack_settled and card.stack.settled(now);
         const visible = card.group / page_size == self.circle.page and depth < 3;
         card.tree.?.node.setEnabled(visible);
         if (!visible) continue;
         const angle = @as(f64, @floatFromInt(card.group % page_size)) * tau / @as(f64, @floatFromInt(slots)) - rotation;
         const progress = if (card.group == selected_group) expand else 0;
         const sector = layout.makeSector(self.width, angle, arc, depth, progress);
-        placeCard(self, card, sector, depth, progress);
-        if (card.id == self.cards.items[self.selected].id) self.refreshIcon(card);
+        placeCard(self, card, sector, depth, progress, self.hovered == i and i != self.selected);
+        if (card.id == self.cards.items[self.selected].id) {
+            self.refreshIcon(card);
+            updateBadge(self, card, sector) catch |err| std.log.warn("circular switcher badge: {}", .{err});
+        }
     }
     paintHub(self, output.server) catch |err| std.log.warn("circular switcher label: {}", .{err});
     _ = self.scroll.sampleChanged(now, ui.anim.quantum_px);
     _ = self.circle.expand.sampleChanged(now, ui.anim.quantum_px);
-    return !self.scroll.settled(now) or !self.circle.expand.settled(now);
+    return !self.scroll.settled(now) or !self.circle.expand.settled(now) or !stack_settled;
 }
 
-fn placeCard(self: *Switcher, card: *Switcher.Card, sector: layout.Sector, depth: usize, progress: f64) void {
+fn placeCard(self: *Switcher, card: *Switcher.Card, sector: layout.Sector, depth: f64, progress: f64, hovered: bool) void {
     const selected = self.cards.items[self.selected].id == card.id;
-    const color = if (selected) theme.global.switcher_selected_border else theme.global.switcher_item_border;
+    const color = if (selected) theme.global.switcher_selected_border else if (hovered) theme.global.border_hover else theme.global.switcher_item_border;
     const tree = card.tree.?;
     tree.node.setPosition(sector.x, sector.y);
     card.fill.?.setSize(sector.width, sector.height);
@@ -219,7 +285,7 @@ fn placeCard(self: *Switcher, card: *Switcher.Card, sector: layout.Sector, depth
         .width = sector.width,
         .height = sector.height,
         .radii = @splat(0),
-        .border = if (selected) 2 else 1,
+        .border = if (selected or hovered) 2 else 1,
         .border_color = col.Straight.fromRgba(color).premultiply().rgba,
         .sector = sector.arc,
         .sector_texture_height = if (card.pw > 0) layout.previewHeight(sector, card.aspect) else 0,
@@ -239,6 +305,45 @@ fn placeCard(self: *Switcher, card: *Switcher.Card, sector: layout.Sector, depth
     // buffers still pass straight through, without CPU readback or copies.
     preview.setSourceBox(&card.source);
     preview.setDestSize(sector.width, sector.height);
+}
+
+/// The window-count badge for a multi-window group, held over the focused
+/// card's own sector rather than inside the hub. Positioned at the sector's
+/// inner, hub-facing edge (its angular bisector at `radii[0]`) so it reads as
+/// part of the window being focused, closest to where the hub's arrow points.
+fn updateBadge(self: *Switcher, card: *Switcher.Card, sector: layout.Sector) !void {
+    const badge = self.circle.badge.?;
+    const group = self.circle.groups.items[card.group];
+    if (group.count <= 1) {
+        badge.node.setEnabled(false);
+        return;
+    }
+    badge.node.setEnabled(true);
+    const s: f32 = @max(0.75, @min(1, @as(f32, @floatFromInt(self.width)) / 600));
+    const d: f32 = 22 * s * 1.3;
+    if (self.circle.badge_key != group.count) {
+        const px: i32 = @intFromFloat(@ceil(d));
+        const image = try PanelBuffer.create(px, px, self.scale);
+        defer image.base.drop();
+        var r = ui.paint.Renderer.init(image.pixels, image.width, image.height, self.scale);
+        r.fillRect(0, 0, d, d, .{ .color = theme.global.switcher_selected_border, .radius = d / 2, .border_width = 1, .border_color = theme.global.switcher_item_bg });
+        var badge_buf: [8]u8 = undefined;
+        const badge_text = std.fmt.bufPrint(&badge_buf, "{d}", .{group.count}) catch "";
+        const font_size = 11 * 1.3 * s;
+        const text_width = ui.text.measureWidthF(badge_text, .manrope_heavy, font_size, self.scale) catch d;
+        const text_height = font_size + 6;
+        r.drawText(d / 2 - text_width / 2, d / 2 - text_height / 2, text_width + 4, text_height, .{ .content = badge_text, .font_size = font_size, .weight = 700, .color = theme.global.on_accent });
+        badge.setBuffer(&image.base);
+        _ = image.base.lock();
+        if (self.circle.badge_storage) |old| old.unlock();
+        self.circle.badge_storage = &image.base;
+        badge.setDestSize(px, px);
+        self.circle.badge_key = group.count;
+    }
+    const inner_x = sector.arc.center[0] + sector.arc.axis[0] * sector.arc.radii[0];
+    const inner_y = sector.arc.center[1] + sector.arc.axis[1] * sector.arc.radii[0];
+    const half_d: f64 = @floatCast(d / 2);
+    badge.node.setPosition(sector.x + @as(i32, @intFromFloat(inner_x - half_d)), sector.y + @as(i32, @intFromFloat(inner_y - half_d)));
 }
 
 fn paintHub(self: *Switcher, server: *Server) !void {
@@ -280,21 +385,6 @@ fn paintHub(self: *Switcher, server: *Server) !void {
         var count_buf: [64]u8 = undefined;
         const count = std.fmt.bufPrint(&count_buf, "{d} / {d}", .{ card.member + 1, group.count }) catch "";
         centered(&r, d, d / 2 + 24 * s, count, theme.global.switcher_app_size * text_scale, theme.global.switcher_fg);
-        // The stack's total window count, as a small badge inside the hub disc
-        // itself (up and to the right of centre) rather than floating outside
-        // the wheel next to the sector.
-        if (group.count > 1) {
-            const badge_d = 22 * s;
-            const reach = d / 2 * 0.72;
-            const badge_cx = d / 2 + reach * 0.7;
-            const badge_cy = d / 2 - reach * 0.7;
-            var badge_buf: [8]u8 = undefined;
-            const badge_text = std.fmt.bufPrint(&badge_buf, "{d}", .{group.count}) catch "";
-            const font_size = 11 * text_scale;
-            const text_width = ui.text.measureWidthF(badge_text, .manrope_heavy, font_size, self.scale) catch badge_d;
-            r.fillRect(badge_cx - badge_d / 2, badge_cy - badge_d / 2, badge_d, badge_d, .{ .color = theme.global.switcher_selected_border, .radius = badge_d / 2, .border_width = 1, .border_color = theme.global.switcher_item_bg });
-            r.drawText(badge_cx - text_width / 2, badge_cy - font_size / 2 - 1, text_width + 4, font_size + 6, .{ .content = badge_text, .font_size = font_size, .weight = 700, .color = theme.global.on_accent });
-        }
         if (self.circle.groups.items.len > page_size) {
             const pages = (self.circle.groups.items.len + page_size - 1) / page_size;
             const shown = @min(5, pages);

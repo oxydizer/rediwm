@@ -36,6 +36,10 @@ pub const Card = struct {
     fill: ?*sn.Rect = null,
     group: usize = 0,
     member: usize = 0,
+    /// Circular style only: this card's animated distance from the front of
+    /// its group's stack, so bringing a different member forward (`Tab`)
+    /// slides the stack into place instead of snapping.
+    stack: Anim = .{},
 };
 
 pub const Trigger = enum { alt, ctrl };
@@ -51,6 +55,15 @@ width: i32 = 0,
 scale: f32 = 1,
 style: @import("config").types.SwitcherStyle = .linear,
 circle: circular.State = .{},
+/// The card under the pointer, recomputed every tick from the last known
+/// cursor position so it tracks reflow (scroll offset, Tab) even when the
+/// mouse itself hasn't moved since.
+hovered: ?usize = null,
+last_cursor_x: f64 = 0,
+last_cursor_y: f64 = 0,
+/// Linear style only: a single reusable ring repositioned over whichever
+/// card is hovered, distinct from the fixed Tab-selection outline.
+hover_outline: ?*sn.Buffer = null,
 
 pub fn active(self: *const Self) bool {
     return self.tree != null;
@@ -105,6 +118,8 @@ fn open(self: *Self, server: *Server) !void {
     const box = output.usableBox();
     if (box.width < 260 or box.height < height) return;
     self.output = output;
+    self.last_cursor_x = server.input.cursor.x;
+    self.last_cursor_y = server.input.cursor.y;
     self.style = server.config.compositor.switcher_style;
     self.circle.enabled = self.style == .circular and circular.layout.diameter(box.width, box.height) >= 360 and @import("chrome.zig").polygonsReady();
     self.width = if (self.circle.enabled) circular.layout.diameter(box.width, box.height) else @min(1500, box.width - 32);
@@ -156,6 +171,14 @@ fn open(self: *Self, server: *Server) !void {
     r.fillRect(1, 1, card_w + 6, 162, .{ .color = .{ 0, 0, 0, 0 }, .radius = theme.global.switcher_selection_radius, .border_width = 2, .border_color = theme.global.switcher_selected_border });
     const node = try self.makeNode(&outline.base, card_w + 8, 164);
     node.node.setPosition(@divTrunc(self.width - card_w, 2) - 4, 24);
+    // A second, subtler ring reused across frames and just repositioned over
+    // whichever card the pointer sits on; unlike `outline` it isn't fixed.
+    const hover = try PanelBuffer.create(card_w + 8, 164, self.scale);
+    defer hover.base.drop();
+    r = Renderer.init(hover.pixels, hover.width, hover.height, self.scale);
+    r.fillRect(1, 1, card_w + 6, 162, .{ .color = .{ 0, 0, 0, 0 }, .radius = theme.global.switcher_selection_radius, .border_width = 2, .border_color = theme.global.border_hover });
+    self.hover_outline = try self.makeNode(&hover.base, card_w + 8, 164);
+    self.hover_outline.?.node.setEnabled(false);
     _ = self.tick(output, @import("Taskbar.zig").nowMs());
 }
 
@@ -201,10 +224,14 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
             return false;
         }
     }
+    // Recomputed every frame (not just on pointer motion) so Tab reflowing
+    // the layout under a stationary mouse still tracks the right card.
+    self.hovered = self.hit(output, now, self.last_cursor_x, self.last_cursor_y);
     if (self.circle.enabled) return circular.tick(self, output, now);
     self.background.?.setOpacity(output.server.config.compositor.switcher_opacity);
     self.tree.?.node.setPosition(box.x + @divTrunc(box.width - self.width, 2), box.y + @divTrunc(box.height - height, 2));
     const offset: i32 = @intFromFloat(@round(self.scroll.value(now)));
+    var hover_shown = false;
     for (self.cards.items, 0..) |*card, i| {
         refreshIcon(self, card);
 
@@ -212,7 +239,14 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
         place(card.label.?, card.label_source, x, 28, card_w, card_h, self.width);
         place(card.icon, card.icon_source, x + 92, 156, 40, 40, self.width);
         if (card.pw > 0) if (card.preview) |preview| place(preview, card.source, x + @divTrunc(card_w - card.pw, 2), 36 + @divTrunc(140 - card.ph, 2), card.pw, card.ph, self.width);
+        // The fixed selection outline already marks this card; a second ring
+        // on top of it would just look like a doubled border.
+        if (self.hovered == i and i != self.selected) {
+            self.hover_outline.?.node.setPosition(x - 4, 24);
+            hover_shown = true;
+        }
     }
+    self.hover_outline.?.node.setEnabled(hover_shown);
     _ = self.scroll.sampleChanged(now, anim.quantum_px);
     return !self.scroll.settled(now);
 }
@@ -285,6 +319,56 @@ pub fn frameDone(self: *Self, output: *Output, when: *const std.posix.timespec) 
         const tl = output.server.findToplevelById(card.id) orelse continue;
         if (tl.surface()) |surface| surface.sendFrameDone(when);
     }
+}
+
+/// Pointer moved while the switcher is up: only schedules a frame (which
+/// recomputes `hovered` in `tick`) when that would actually change it, so
+/// jiggling the mouse over empty space stays idle.
+pub fn motion(self: *Self, x: f64, y: f64) void {
+    if (!self.active()) return;
+    const output = self.output orelse return;
+    self.last_cursor_x = x;
+    self.last_cursor_y = y;
+    const now = @import("Taskbar.zig").nowMs();
+    if (self.hit(output, now, x, y) == self.hovered) return;
+    output.wlr_output.scheduleFrame();
+}
+
+/// A left click on a card jumps straight to it, same as Tab-ing there and
+/// releasing the modifier; anything else (a miss, another button) cancels,
+/// matching the switcher's prior any-click-dismisses behavior.
+pub fn press(self: *Self, server: *Server, x: f64, y: f64, button: u32) void {
+    if (!self.active()) return;
+    if (button == 0x110) {
+        if (self.output) |output| {
+            const now = @import("Taskbar.zig").nowMs();
+            if (self.hit(output, now, x, y)) |index| {
+                self.selected = index;
+                self.accept(server);
+                return;
+            }
+        }
+    }
+    self.cancel();
+}
+
+fn hit(self: *Self, output: *Output, now: i64, x: f64, y: f64) ?usize {
+    const box = output.usableBox();
+    const lx = x - @as(f64, @floatFromInt(box.x + @divTrunc(box.width - self.width, 2)));
+    if (self.circle.enabled) {
+        const ly = y - @as(f64, @floatFromInt(box.y + @divTrunc(box.height - self.width, 2)));
+        return circular.hit(self, now, lx, ly);
+    }
+    const ly = y - @as(f64, @floatFromInt(box.y + @divTrunc(box.height - height, 2)));
+    if (ly < 28 or ly >= 28 + card_h) return null;
+    const offset: f64 = self.scroll.value(now);
+    for (0..self.cards.items.len) |i| {
+        const cx: f64 = @floatFromInt(@divTrunc(self.width - card_w, 2) + @as(i32, @intCast(i * stride)));
+        const left = @max(cx - offset, 16);
+        const right = @min(cx - offset + card_w, @as(f64, @floatFromInt(self.width - 16)));
+        if (lx >= left and lx < right) return i;
+    }
+    return null;
 }
 
 pub fn accept(self: *Self, server: *Server) void {

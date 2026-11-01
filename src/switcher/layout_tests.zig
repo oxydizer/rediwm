@@ -22,7 +22,7 @@ test "exact circular arcs stay within the preview bounds throughout rotation" {
                 for (0..32) |step| {
                     const angle = 2 * std.math.pi * @as(f64, @floatFromInt(step)) / 32;
                     const arc = layout.span(count);
-                    const sector = layout.makeSector(size, angle, arc, depth, 0);
+                    const sector = layout.makeSector(size, angle, arc, @floatFromInt(depth), 0);
                     try testing.expect(sector.width > 0 and sector.height > 0);
                     try testing.expect(sector.x >= 0 and sector.y >= 0);
                     try testing.expect(sector.x + sector.width <= size);

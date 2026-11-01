@@ -76,6 +76,10 @@ pub fn processButton(
         input.tray_buttons &= ~screenshot_bit;
         return;
     }
+    if (state == .released and input.switcher_buttons & screenshot_bit != 0) {
+        input.switcher_buttons &= ~screenshot_bit;
+        return;
+    }
     if (input.window_menu.node != null) {
         if (state == .pressed) {
             input.tray_buttons |= screenshot_bit;
@@ -132,7 +136,10 @@ pub fn processButton(
         }
     }
     if (input.server.switcher.active()) {
-        if (state == .released) input.server.switcher.cancel();
+        if (state == .pressed) {
+            input.switcher_buttons |= screenshot_bit;
+            input.server.switcher.press(input.server, input.cursor.x, input.cursor.y, button);
+        }
         return;
     }
     if (input.server.world.mini_map.dragging or

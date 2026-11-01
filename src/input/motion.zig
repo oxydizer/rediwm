@@ -181,7 +181,11 @@ pub fn updateDockReveal(input: *Input) void {
 }
 
 pub fn processCursorMotion(input: *Input, time_msec: u32) void {
-    if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return;
+    if (input.server.locker != null or input.server.polkit_dialog != null) return;
+    if (input.server.switcher.active()) {
+        input.server.switcher.motion(input.cursor.x, input.cursor.y);
+        return;
+    }
     defer input.updateGrabBorderGlow();
     input.positionDragIcon();
     input.drag_dodge.motion();
