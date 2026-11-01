@@ -503,13 +503,25 @@ pub const Renderer = struct {
         const side = @min(w, h) * s;
         const left = cx - side / 2;
         const top = cy - side / 2;
+        // Sample the glyph's own (unrotated) coordinate frame at the point
+        // that would land on this destination pixel after rotating by
+        // `style.rotation`, i.e. rotate the sample backwards.
+        const rot = style.rotation;
+        const cos_r = @cos(-rot);
+        const sin_r = @sin(-rot);
 
         var py = y0;
         while (py < y1) : (py += 1) {
             var px = x0;
             while (px < x1) : (px += 1) {
-                const sx = @as(f32, @floatFromInt(px)) + 0.5;
-                const sy = @as(f32, @floatFromInt(py)) + 0.5;
+                var sx = @as(f32, @floatFromInt(px)) + 0.5;
+                var sy = @as(f32, @floatFromInt(py)) + 0.5;
+                if (rot != 0) {
+                    const dx = sx - cx;
+                    const dy = sy - cy;
+                    sx = cx + dx * cos_r - dy * sin_r;
+                    sy = cy + dx * sin_r + dy * cos_r;
+                }
                 const cov = if (mask) |m|
                     m.sample((sx - left) / side * @as(f32, @floatFromInt(m.size)) - 0.5, (sy - top) / side * @as(f32, @floatFromInt(m.size)) - 0.5)
                 else

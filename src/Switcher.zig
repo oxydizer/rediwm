@@ -82,6 +82,11 @@ pub fn triggerHeld(self: *const Self, server: *Server) bool {
 }
 
 pub fn step(self: *Self, server: *Server, reverse: bool, trigger: Trigger) void {
+    // A still-fading-out instance can only be here because a new gesture
+    // (the previous one already ended via `dismiss`) just started: finish
+    // the old teardown now so `opening` below sees a clean slate, rather
+    // than silently dropping this Tab or stepping a zombie instance.
+    if (self.circle.closing) self.cancel();
     const opening = !self.active();
     if (opening) {
         self.trigger = trigger;
@@ -226,7 +231,8 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
     }
     // Recomputed every frame (not just on pointer motion) so Tab reflowing
     // the layout under a stationary mouse still tracks the right card.
-    self.hovered = self.hit(output, now, self.last_cursor_x, self.last_cursor_y);
+    // Suppressed while closing: nothing should light up as it collapses.
+    self.hovered = if (self.circle.closing) null else self.hit(output, now, self.last_cursor_x, self.last_cursor_y);
     if (self.circle.enabled) return circular.tick(self, output, now);
     self.background.?.setOpacity(output.server.config.compositor.switcher_opacity);
     self.tree.?.node.setPosition(box.x + @divTrunc(box.width - self.width, 2), box.y + @divTrunc(box.height - height, 2));
@@ -325,7 +331,7 @@ pub fn frameDone(self: *Self, output: *Output, when: *const std.posix.timespec) 
 /// recomputes `hovered` in `tick`) when that would actually change it, so
 /// jiggling the mouse over empty space stays idle.
 pub fn motion(self: *Self, x: f64, y: f64) void {
-    if (!self.active()) return;
+    if (!self.active() or self.circle.closing) return;
     const output = self.output orelse return;
     self.last_cursor_x = x;
     self.last_cursor_y = y;
@@ -338,7 +344,7 @@ pub fn motion(self: *Self, x: f64, y: f64) void {
 /// releasing the modifier; anything else (a miss, another button) cancels,
 /// matching the switcher's prior any-click-dismisses behavior.
 pub fn press(self: *Self, server: *Server, x: f64, y: f64, button: u32) void {
-    if (!self.active()) return;
+    if (!self.active() or self.circle.closing) return;
     if (button == 0x110) {
         if (self.output) |output| {
             const now = @import("Taskbar.zig").nowMs();
@@ -349,7 +355,7 @@ pub fn press(self: *Self, server: *Server, x: f64, y: f64, button: u32) void {
             }
         }
     }
-    self.cancel();
+    self.dismiss();
 }
 
 fn hit(self: *Self, output: *Output, now: i64, x: f64, y: f64) ?usize {
@@ -372,14 +378,37 @@ fn hit(self: *Self, output: *Output, now: i64, x: f64, y: f64) ?usize {
 }
 
 pub fn accept(self: *Self, server: *Server) void {
-    if (!self.active()) return;
+    if (!self.active() or self.circle.closing) return;
     const id = self.cards.items[self.selected].id;
     const output = self.output;
-    self.cancel();
+    self.dismiss();
     if (server.findToplevelById(id)) |tl| {
         if (tl.minimized) tl.restore() else server.world.focus(tl);
         if (output) |out| server.world.navigateTo(tl, out);
     }
+}
+
+/// Ends the switcher the way the user asked for it to end: releasing the
+/// modifier, Escape, or a click (through `accept`/`press`). The circular
+/// style plays its close animation first (`circular.beginClose`); `tick`
+/// finishes the real teardown once it settles, which `Anim.settled` reports
+/// as already true this same call when animations are off, reduced, or the
+/// linear style has nothing to animate, so this still closes synchronously
+/// then. A forced teardown (output loss, session lock, a card's window
+/// gone, ...) must stay instant and calls `cancel` directly instead.
+pub fn dismiss(self: *Self) void {
+    if (!self.active()) return;
+    if (self.circle.closing or !self.circle.enabled) {
+        self.cancel();
+        return;
+    }
+    const now = @import("Taskbar.zig").nowMs();
+    circular.beginClose(self, now);
+    if (self.circle.appear.settled(now)) {
+        self.cancel();
+        return;
+    }
+    self.output.?.wlr_output.scheduleFrame();
 }
 
 pub fn cancel(self: *Self) void {

@@ -26,13 +26,18 @@ pub fn span(group_count: usize) f64 {
 /// windows fan out far enough to read individually. Callers pass 0 for any
 /// group that is not currently selected. `depth` is fractional while a card
 /// is sliding to a new stack slot (`Switcher.Card.stack`); callers pass a
-/// whole number for an otherwise-idle card.
-pub fn makeSector(size: i32, angle: f64, arc: f64, depth: f64, progress: f64) Sector {
+/// whole number for an otherwise-idle card. `growth` is 1 once the switcher's
+/// open/close animation has settled; below that it shrinks the sector's
+/// outer radius toward `inner` so the card reads as still emerging from (or
+/// collapsing into) the hub. `growth >= 1` takes the exact pre-existing path
+/// so resting geometry is bit-for-bit unchanged.
+pub fn makeSector(size: i32, angle: f64, arc: f64, depth: f64, progress: f64, growth: f64) Sector {
     const center = @as(f64, @floatFromInt(size)) / 2;
     const step = 14 + 46 * std.math.clamp(progress, 0, 1);
     const offset = @min(depth, 2) * step;
     const inner = @as(f64, @floatFromInt(size)) * 0.18 + offset;
-    const outer = center - 36 + offset;
+    const full_outer = center - 36 + offset;
+    const outer = if (growth >= 1) full_outer else inner + (full_outer - inner) * @max(growth, 0);
     const axis: [2]f64 = .{ @sin(angle), -@cos(angle) };
     const half: [2]f64 = .{ @cos(arc / 2), @sin(arc / 2) };
     var left: f64 = std.math.inf(f64);

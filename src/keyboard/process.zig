@@ -230,7 +230,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
             }
             if (keyboard.server.switcher.active()) {
                 keyboard.stopSwitcherRepeat();
-                if (sym == xkb.Keysym.Escape) keyboard.server.switcher.cancel();
+                if (sym == xkb.Keysym.Escape) keyboard.server.switcher.dismiss();
                 if (sym == xkb.Keysym.Return) keyboard.server.switcher.accept(keyboard.server);
                 if (event_keycode < keyboard.switcher_consumed.len) keyboard.switcher_consumed[event_keycode] = true;
                 return;

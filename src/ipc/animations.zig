@@ -36,6 +36,9 @@ pub fn snapshot(server: *Server, allocator: std.mem.Allocator) ![]const protocol
 
     if (server.switcher.active()) {
         try appendLive(allocator, &list, "switcher.scroll", server.switcher.scroll, now_ms);
+        if (server.switcher.circle.enabled) {
+            try appendLive(allocator, &list, "switcher.appear", server.switcher.circle.appear, now_ms);
+        }
     }
 
     if (server.notifications) |mgr| {

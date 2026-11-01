@@ -194,6 +194,9 @@ pub const IconStyle = struct {
     id: IconId,
     color: [4]f32,
     stroke_width: ?f32 = null,
+    /// Radians, clockwise, about the icon box's own center. 0 costs nothing
+    /// extra; used by the circular switcher's hub arrow.
+    rotation: f32 = 0,
 };
 
 pub const ImageData = struct {

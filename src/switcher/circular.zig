@@ -43,10 +43,26 @@ pub const State = struct {
     /// 0 = idle stack, 1 = the selected group's windows fanned fully open.
     /// Retargeted in `select` whenever `current_group` changes.
     expand: Anim = .{},
+    /// 0 = nothing shown, 1 = fully open. Runs once from 0->1 in `open`
+    /// (the hub appears, then windows grow out of it) and, while `closing`,
+    /// back from 1->0 before `tick` actually tears the switcher down.
+    appear: Anim = .{},
+    /// Set by `Switcher.dismiss` for an animated close; `tick` finishes the
+    /// real `Switcher.cancel` once `appear` settles at 0. Forced teardowns
+    /// (`Switcher.cancel` called directly, e.g. on output loss or session
+    /// lock) ignore this and tear down synchronously instead.
+    closing: bool = false,
+    /// The hub's arrow, in radians clockwise from "points up at the
+    /// selected card" (always true at rest, since the selection sits at
+    /// twelve o'clock). Swings to point at whatever's hovered (`updateArrow`).
+    arrow_angle: Anim = .{},
+    hub_arrow: ?*sn.Buffer = null,
+    hub_arrow_storage: ?*wlr.Buffer = null,
 
     pub fn deinit(self: *State) void {
         if (self.hub_storage) |buffer| buffer.unlock();
         if (self.badge_storage) |buffer| buffer.unlock();
+        if (self.hub_arrow_storage) |buffer| buffer.unlock();
         for (self.groups.items) |*group| group.members.deinit(gpa);
         self.groups.deinit(gpa);
     }
@@ -115,6 +131,34 @@ pub fn open(self: *Switcher, server: *Server) !void {
     self.circle.badge = try self.tree.?.createSceneBuffer(null);
     self.circle.badge.?.setFilterMode(.bilinear);
     self.circle.badge.?.point_accepts_input = Switcher.ignoreInput;
+    self.circle.hub_arrow = try self.tree.?.createSceneBuffer(null);
+    self.circle.hub_arrow.?.setFilterMode(.bilinear);
+    self.circle.hub_arrow.?.point_accepts_input = Switcher.ignoreInput;
+    self.circle.appear.retargetTo(@import("../Taskbar.zig").nowMs(), 1, ui.anim.curveFor(.switcher_open));
+}
+
+/// Called from `Switcher.dismiss` for a normal, user-driven close (releasing
+/// the modifier, Escape, accepting a selection). Plays the open animation in
+/// reverse; `tick` finishes the real teardown once it settles. Forced
+/// teardowns keep calling `Switcher.cancel` directly and skip this.
+pub fn beginClose(self: *Switcher, now: i64) void {
+    self.circle.closing = true;
+    self.circle.appear.retargetTo(now, 0, ui.anim.curveFor(.switcher_close));
+    self.hovered = null;
+}
+
+/// 0 while the hub is still fading in (or has already faded past, on close)
+/// and windows have not started growing; 1 once they should be fully grown.
+/// The 0.15 head start is the "hub appears first" beat the cards wait out.
+fn cardGrowth(appear: f64) f64 {
+    return std.math.clamp((appear - 0.15) / 0.85, 0, 1);
+}
+
+/// The hub, its icon, the badge and the backdrop disc fade in over the first
+/// third of `appear` and are the last things to fade out on close, so cards
+/// visibly grow out of the hub both ways.
+fn hubFade(appear: f64) f32 {
+    return @floatCast(std.math.clamp(appear / 0.3, 0, 1));
 }
 
 fn groupFor(self: *Switcher, server: *Server, raw: []const u8, index: usize) !usize {
@@ -198,6 +242,7 @@ pub fn select(self: *Switcher, opening: bool) void {
     self.circle.hub.?.node.raiseToTop();
     self.circle.hub_icon.?.node.raiseToTop();
     self.circle.badge.?.node.raiseToTop();
+    self.circle.hub_arrow.?.node.raiseToTop();
 }
 
 fn stackDepth(self: *const Switcher, card: *const Switcher.Card) usize {
@@ -219,6 +264,7 @@ pub fn hit(self: *Switcher, now: i64, lx: f64, ly: f64) ?usize {
     const rotation: f64 = self.scroll.value(now);
     const selected_group = self.cards.items[self.selected].group;
     const expand: f64 = @floatCast(self.circle.expand.value(now));
+    const growth = cardGrowth(self.circle.appear.value(now));
     var best: ?usize = null;
     var best_depth: f64 = std.math.inf(f64);
     for (self.cards.items, 0..) |*card, i| {
@@ -226,7 +272,7 @@ pub fn hit(self: *Switcher, now: i64, lx: f64, ly: f64) ?usize {
         if (card.group / page_size != self.circle.page or depth >= 3 or depth >= best_depth) continue;
         const angle = @as(f64, @floatFromInt(card.group % page_size)) * tau / @as(f64, @floatFromInt(slots)) - rotation;
         const progress = if (card.group == selected_group) expand else 0;
-        const sector = layout.makeSector(self.width, angle, arc, depth, progress);
+        const sector = layout.makeSector(self.width, angle, arc, depth, progress, growth);
         if (inSector(sector, lx, ly)) {
             best = i;
             best_depth = depth;
@@ -245,9 +291,19 @@ fn inSector(sector: layout.Sector, lx: f64, ly: f64) bool {
 }
 
 pub fn tick(self: *Switcher, output: *Output, now: i64) bool {
+    // The close animation finishes here rather than in `Switcher.dismiss`:
+    // it needs a frame boundary to keep sampling `appear` against, and this
+    // is the one place already called every frame while the switcher lives.
+    if (self.circle.closing and self.circle.appear.settled(now)) {
+        self.cancel();
+        return false;
+    }
     const box = output.usableBox();
     self.tree.?.node.setPosition(box.x + @divTrunc(box.width - self.width, 2), box.y + @divTrunc(box.height - self.width, 2));
-    if (self.background) |bg| bg.setOpacity(theme.global.window_bg[3]);
+    const appear: f64 = self.circle.appear.value(now);
+    const growth = cardGrowth(appear);
+    const fade = hubFade(appear);
+    if (self.background) |bg| bg.setOpacity(theme.global.window_bg[3] * fade);
     const slots = @min(page_size, self.circle.groups.items.len - self.circle.page * page_size);
     const arc = layout.span(slots);
     const rotation: f64 = self.scroll.value(now);
@@ -262,7 +318,7 @@ pub fn tick(self: *Switcher, output: *Output, now: i64) bool {
         if (!visible) continue;
         const angle = @as(f64, @floatFromInt(card.group % page_size)) * tau / @as(f64, @floatFromInt(slots)) - rotation;
         const progress = if (card.group == selected_group) expand else 0;
-        const sector = layout.makeSector(self.width, angle, arc, depth, progress);
+        const sector = layout.makeSector(self.width, angle, arc, depth, progress, growth);
         placeCard(self, card, sector, depth, progress, self.hovered == i and i != self.selected);
         if (card.id == self.cards.items[self.selected].id) {
             self.refreshIcon(card);
@@ -270,14 +326,23 @@ pub fn tick(self: *Switcher, output: *Output, now: i64) bool {
         }
     }
     paintHub(self, output.server) catch |err| std.log.warn("circular switcher label: {}", .{err});
+    updateArrow(self, now);
+    self.circle.hub.?.setOpacity(fade);
+    self.circle.hub_icon.?.setOpacity(fade);
+    self.circle.badge.?.setOpacity(fade);
+    self.circle.hub_arrow.?.setOpacity(fade);
     _ = self.scroll.sampleChanged(now, ui.anim.quantum_px);
     _ = self.circle.expand.sampleChanged(now, ui.anim.quantum_px);
-    return !self.scroll.settled(now) or !self.circle.expand.settled(now) or !stack_settled;
+    _ = self.circle.appear.sampleChanged(now, ui.anim.quantum_px);
+    return !self.scroll.settled(now) or !self.circle.expand.settled(now) or !stack_settled or !self.circle.appear.settled(now) or
+        !self.circle.arrow_angle.settled(now);
 }
 
 fn placeCard(self: *Switcher, card: *Switcher.Card, sector: layout.Sector, depth: f64, progress: f64, hovered: bool) void {
     const selected = self.cards.items[self.selected].id == card.id;
-    const color = if (selected) theme.global.switcher_selected_border else if (hovered) theme.global.border_hover else theme.global.switcher_item_border;
+    // Hover reads as "click here to land on this one", the same promise the
+    // selected sector's own border makes, so both share its colour.
+    const color = if (selected or hovered) theme.global.switcher_selected_border else theme.global.switcher_item_border;
     const tree = card.tree.?;
     tree.node.setPosition(sector.x, sector.y);
     card.fill.?.setSize(sector.width, sector.height);
@@ -371,10 +436,6 @@ fn paintHub(self: *Switcher, server: *Server) !void {
         defer image.base.drop();
         var r = ui.paint.Renderer.init(image.pixels, image.width, image.height, self.scale);
         r.fillRect(0, 0, d, d, .{ .color = theme.global.switcher_item_bg, .radius = d / 2, .border_width = 1, .border_color = theme.global.switcher_border });
-        // The selected sector always settles at twelve o'clock (layout.zig),
-        // so a fixed upward arrow always points at it; no need to rotate it.
-        const arrow_size = 28 * s;
-        r.drawIcon(d / 2 - arrow_size / 2, 2 * s, arrow_size, arrow_size, .{ .id = .caret_up, .color = theme.global.switcher_selected_border });
         centered(&r, d, d / 2 - 22 * s, tl.title(), theme.global.switcher_title_size * text_scale, theme.global.switcher_fg);
         var workspace_buf: [128]u8 = undefined;
         const workspace = if (server.world.workspaces.active)
@@ -402,6 +463,63 @@ fn paintHub(self: *Switcher, server: *Server) !void {
         self.circle.hub.?.node.setPosition(x, x);
         self.circle.hub_key = key;
     }
+}
+
+/// The hub's arrow: normally points up at the selected card (always eased to
+/// twelve o'clock by `select`'s own rotation), but swings to point at
+/// whatever's hovered instead, so the pointer previews where a click would
+/// land. Drawn as its own node rather than baked into the hub's cached
+/// image (`paintHub`'s `hub_key`): the angle can change every frame, on
+/// pointer motion alone, independently of anything that invalidates that key.
+fn updateArrow(self: *Switcher, now: i64) void {
+    const slots = @min(page_size, self.circle.groups.items.len - self.circle.page * page_size);
+    const rotation: f64 = self.scroll.value(now);
+    const target: f64 = blk: {
+        const h = self.hovered orelse break :blk 0;
+        const card = self.cards.items[h];
+        if (card.group / page_size != self.circle.page or slots == 0) break :blk 0;
+        break :blk @as(f64, @floatFromInt(card.group % page_size)) * tau / @as(f64, @floatFromInt(slots)) - rotation;
+    };
+    // Cross the twelve-o'clock seam by the shorter arc, same trick `select`
+    // uses for the wheel's own rotation.
+    const current: f64 = self.circle.arrow_angle.to;
+    const delta = @mod(target - current + std.math.pi, tau) - std.math.pi;
+    self.circle.arrow_angle.retargetTo(now, @floatCast(current + delta), ui.anim.curveFor(.switcher_scroll));
+    // ~0.03 rad (~1.7 deg) of play before a 14px-radius glyph visibly moves.
+    if (!self.circle.arrow_angle.sampleChanged(now, 0.03)) return;
+
+    const size: i32 = @intFromFloat(@as(f32, @floatFromInt(self.width)) * 0.36 - 16);
+    const x = @divTrunc(self.width - size, 2);
+    const s: f32 = @min(1, @as(f32, @floatFromInt(size)) / 210);
+    const d: f32 = @floatFromInt(size);
+    const arrow_size = 28 * s;
+    // Generous padding: a square rotated about its own center at any angle
+    // still fits a canvas 1.5x its side.
+    const canvas: i32 = @intFromFloat(@ceil(arrow_size * 1.5));
+    const image = PanelBuffer.create(canvas, canvas, self.scale) catch return;
+    defer image.base.drop();
+    var r = ui.paint.Renderer.init(image.pixels, image.width, image.height, self.scale);
+    const off = (@as(f32, @floatFromInt(canvas)) - arrow_size) / 2;
+    r.drawIcon(off, off, arrow_size, arrow_size, .{
+        .id = .caret_up,
+        .color = theme.global.switcher_selected_border,
+        .rotation = self.circle.arrow_angle.value(now),
+    });
+    self.circle.hub_arrow.?.setBuffer(&image.base);
+    _ = image.base.lock();
+    if (self.circle.hub_arrow_storage) |old| old.unlock();
+    self.circle.hub_arrow_storage = &image.base;
+    self.circle.hub_arrow.?.setDestSize(canvas, canvas);
+    // The pivot is where the old baked-in, fixed-up arrow's box center sat:
+    // `(d/2, 2*s + arrow_size/2)` inside the hub image, which itself sits at
+    // switcher-tree-local `(x, x)`.
+    const pivot_x = @as(f32, @floatFromInt(x)) + d / 2;
+    const pivot_y = @as(f32, @floatFromInt(x)) + 2 * s + arrow_size / 2;
+    const half_canvas: f32 = @as(f32, @floatFromInt(canvas)) / 2;
+    self.circle.hub_arrow.?.node.setPosition(
+        @as(i32, @intFromFloat(@round(pivot_x - half_canvas))),
+        @as(i32, @intFromFloat(@round(pivot_y - half_canvas))),
+    );
 }
 
 fn centered(r: *ui.paint.Renderer, width: f32, y: f32, value: []const u8, size: f32, color: [4]f32) void {

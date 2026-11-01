@@ -189,6 +189,12 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 Drag lift uses a gentle spring around the grab point and returns smoothly on
 release. Its timing can be adjusted with `[animations.window_drag]`.
 
+The `circular` switcher's hub appears first and the windows grow out of it
+when it opens, and collapse back into the hub the same way when it closes;
+timing is `[animations.switcher_open]` and `[animations.switcher_close]`. Like
+every other animation, Appearance's **Animations** switch and **Reduced
+motion** make both instant.
+
 ## Outputs
 
 ```toml

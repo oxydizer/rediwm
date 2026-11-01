@@ -22,7 +22,7 @@ test "exact circular arcs stay within the preview bounds throughout rotation" {
                 for (0..32) |step| {
                     const angle = 2 * std.math.pi * @as(f64, @floatFromInt(step)) / 32;
                     const arc = layout.span(count);
-                    const sector = layout.makeSector(size, angle, arc, @floatFromInt(depth), 0);
+                    const sector = layout.makeSector(size, angle, arc, @floatFromInt(depth), 0, 1);
                     try testing.expect(sector.width > 0 and sector.height > 0);
                     try testing.expect(sector.x >= 0 and sector.y >= 0);
                     try testing.expect(sector.x + sector.width <= size);
@@ -48,26 +48,26 @@ test "exact circular arcs stay within the preview bounds throughout rotation" {
 }
 
 test "stack offsets remain concentric and stop at two layers" {
-    const front = layout.makeSector(720, 0.43, layout.span(5), 0, 0);
-    const back = layout.makeSector(720, 0.43, layout.span(5), 2, 0);
+    const front = layout.makeSector(720, 0.43, layout.span(5), 0, 0, 1);
+    const back = layout.makeSector(720, 0.43, layout.span(5), 2, 0, 1);
     try testing.expectApproxEqAbs(@as(f64, 28), back.arc.radii[0] - front.arc.radii[0], 1e-8);
     try testing.expectApproxEqAbs(@as(f64, 28), back.arc.radii[1] - front.arc.radii[1], 1e-8);
-    try testing.expectEqualDeep(back, layout.makeSector(720, 0.43, layout.span(5), 100, 0));
+    try testing.expectEqualDeep(back, layout.makeSector(720, 0.43, layout.span(5), 100, 0, 1));
 }
 
 test "expand progress widens the stack without moving the front layer" {
-    const front = layout.makeSector(720, 0.43, layout.span(5), 0, 1);
-    const front_idle = layout.makeSector(720, 0.43, layout.span(5), 0, 0);
+    const front = layout.makeSector(720, 0.43, layout.span(5), 0, 1, 1);
+    const front_idle = layout.makeSector(720, 0.43, layout.span(5), 0, 0, 1);
     try testing.expectEqualDeep(front_idle, front);
-    const back_idle = layout.makeSector(720, 0.43, layout.span(5), 2, 0);
-    const back_open = layout.makeSector(720, 0.43, layout.span(5), 2, 1);
+    const back_idle = layout.makeSector(720, 0.43, layout.span(5), 2, 0, 1);
+    const back_open = layout.makeSector(720, 0.43, layout.span(5), 2, 1, 1);
     try testing.expectApproxEqAbs(@as(f64, 120), back_open.arc.radii[0] - front.arc.radii[0], 1e-8);
     try testing.expect(back_open.arc.radii[0] - front.arc.radii[0] > back_idle.arc.radii[0] - front_idle.arc.radii[0]);
 }
 
 test "radial previews fit the full top edge and crop only below it" {
     const arc = layout.span(4);
-    const front = layout.makeSector(720, 0, arc, 0, 0);
+    const front = layout.makeSector(720, 0, arc, 0, 0, 1);
     const height = layout.previewHeight(front, 0.2);
     try testing.expectApproxEqAbs(front.arc.radii[1] * arc / 0.2, height, 1e-8);
     const depth = front.arc.radii[1] - front.arc.radii[0];
@@ -76,7 +76,7 @@ test "radial previews fit the full top edge and crop only below it" {
     try testing.expect(depth / height < 0.1);
     for (0..32) |step| {
         const angle = 2 * std.math.pi * @as(f64, @floatFromInt(step)) / 32;
-        const rotated = layout.makeSector(720, angle, arc, 0, 0);
+        const rotated = layout.makeSector(720, angle, arc, 0, 0, 1);
         try testing.expectApproxEqAbs(height, layout.previewHeight(rotated, 0.2), 1e-8);
     }
     // Shallow windows retain their natural height; empty space after their
