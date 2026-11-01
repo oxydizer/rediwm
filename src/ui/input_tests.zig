@@ -19,6 +19,87 @@ const scrollWheel = @import("input.zig").scrollWheel;
 const keyEvent = @import("input.zig").keyEvent;
 const input_src = @import("input.zig");
 
+test "button proximity samples visible nested-scroll rectangles and skips unchanged values" {
+    var button = Widget{
+        .kind = .{ .button = .{ .label = "Visible" } },
+    };
+    button.computed_x = 25;
+    button.computed_y = 0;
+    button.computed_width = 20;
+    button.computed_height = 20;
+
+    var clipped_button = Widget{
+        .kind = .{ .button = .{ .label = "Clipped" } },
+    };
+    clipped_button.computed_x = 75;
+    clipped_button.computed_y = 10;
+    clipped_button.computed_width = 10;
+    clipped_button.computed_height = 10;
+
+    var inner_children = [_]Widget{button};
+    var inner = Widget{
+        .kind = .{ .scroll_container = .{} },
+        .children = &inner_children,
+    };
+    inner.computed_x = 20;
+    inner.computed_y = 5;
+    inner.computed_width = 40;
+    inner.computed_height = 30;
+
+    var outer_children = [_]Widget{ inner, clipped_button };
+    var outer = Widget{
+        .kind = .{ .scroll_container = .{} },
+        .children = &outer_children,
+    };
+    outer.computed_x = 10;
+    outer.computed_y = 10;
+    outer.computed_width = 60;
+    outer.computed_height = 40;
+
+    var root_children = [_]Widget{outer};
+    var root = Widget{
+        .kind = .container,
+        .children = &root_children,
+    };
+    root.computed_x = 0;
+    root.computed_y = 0;
+    root.computed_width = 100;
+    root.computed_height = 100;
+    root.linkParents();
+
+    const viewport: input_src.ProximityRect = .{
+        .x = 0,
+        .y = 0,
+        .w = 100,
+        .h = 100,
+    };
+
+    // The visible button is clipped by both scroll ancestors:
+    // its visible rectangle begins at y=10, five pixels below the cursor.
+    try std.testing.expect(input_src.updateButtonProximity(&root, 30, 5, viewport));
+    try std.testing.expectEqual(
+        @as(f32, 5),
+        root.children[0].children[0].children[0].kind.button.proximity_distance,
+    );
+
+    // The sibling lies entirely outside the outer scroll viewport.
+    try std.testing.expect(std.math.isInf(
+        root.children[0].children[1].kind.button.proximity_distance,
+    ));
+
+    // Repeating the same sample must not dirty widgets or advance the revision.
+    const revision = layout.paint_revision;
+    try std.testing.expect(!input_src.updateButtonProximity(&root, 30, 5, viewport));
+    try std.testing.expectEqual(revision, layout.paint_revision);
+
+    // Moving inside the visible portion changes the sample to zero.
+    try std.testing.expect(input_src.updateButtonProximity(&root, 30, 15, viewport));
+    try std.testing.expectEqual(
+        @as(f32, 0),
+        root.children[0].children[0].children[0].kind.button.proximity_distance,
+    );
+}
+
 test "hitTest returns the topmost overlapping widget" {
     var kids = [_]Widget{
         .{ .kind = .container },

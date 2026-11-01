@@ -627,3 +627,62 @@ test "segmented frames, swatches and rows take their own relief keys" {
     rows.row_hover_relief = .inset;
     try expectInsetShading(&paintedRow(flat, .{ .state = .hover }), &paintedRow(rows, .{ .state = .hover }), 80, 35, 11, 38);
 }
+
+
+test "button proximity glow follows the pointer and stays rounded and clipped" {
+    const sample = struct {
+        fn pixel(pixels: []const u32, width: i32, scale: f32, x: f32, y: f32) u32 {
+            const px: usize = @intFromFloat(@floor(x * scale));
+            const py: usize = @intFromFloat(@floor(y * scale));
+            return pixels[py * @as(usize, @intCast(width)) + px];
+        }
+
+        fn luma(pixel_value: u32) u32 {
+            const red = (pixel_value >> 16) & 0xff;
+            const green = (pixel_value >> 8) & 0xff;
+            const blue = pixel_value & 0xff;
+            return red * 212 + green * 715 + blue * 72;
+        }
+    };
+
+    for ([_]f32{ 1, 1.5, 2 }) |scale| {
+        var pixels: [256 * 192]u32 = @splat(0xff808080);
+        const width: i32 = @intFromFloat(128 * scale);
+        const height: i32 = @intFromFloat(96 * scale);
+        var renderer = Renderer.init(&pixels, width, height, scale);
+        var palette: theme.Theme = .{};
+        palette.border_glow = .{ 1, 0, 0, 0.60 };
+        palette.border_glow_enabled = true;
+        palette.border_glow_reach = 56;
+        palette.border_glow_length = 72;
+        palette.border_glow_depth = 3;
+        renderer.palette = palette;
+        renderer.clip = .{ .x = 40, .y = 20, .w = 40, .h = 34 };
+
+        const widget = Widget{
+            .kind = .container,
+            .computed_x = 20,
+            .computed_y = 20,
+            .computed_width = 80,
+            .computed_height = 34,
+        };
+        paintButton(&widget, .{
+            .variant = .ghost,
+            .proximity_distance = 4,
+            .proximity_x = 40,
+            .proximity_y = -4,
+        }, &renderer);
+
+        const near = sample.pixel(&pixels, width, scale, 60.5, 20.5);
+        const opposite = sample.pixel(&pixels, width, scale, 60.5, 53.5);
+        const centre = sample.pixel(&pixels, width, scale, 60.5, 37.5);
+        const rounded_corner = sample.pixel(&pixels, width, scale, 20.5, 20.5);
+        const outside_clip = sample.pixel(&pixels, width, scale, 30.5, 30.5);
+
+        try std.testing.expect((near >> 16) & 0xff > 0x80);
+        try std.testing.expect(sample.luma(opposite) < sample.luma(0xff808080));
+        try std.testing.expect((near >> 16) & 0xff > (centre >> 16) & 0xff);
+        try std.testing.expectEqual(@as(u32, 0xff808080), rounded_corner);
+        try std.testing.expectEqual(@as(u32, 0xff808080), outside_clip);
+    }
+}

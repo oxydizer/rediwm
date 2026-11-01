@@ -70,7 +70,13 @@ pub fn paintButton(widget: *const Widget, data: ButtonData, renderer: *Renderer)
         .y = widget.computed_y,
         .w = widget.computed_width,
         .h = widget.computed_height,
-    }, button_widget.optionsOf(data), .{ .pointer = data.state, .focused = ui_input.isFocused(widget) });
+    }, button_widget.optionsOf(data), .{
+        .pointer = data.state,
+        .focused = ui_input.isFocused(widget),
+        .proximity_distance = data.proximity_distance,
+        .proximity_x = data.proximity_x,
+        .proximity_y = data.proximity_y,
+    });
 }
 
 pub fn paintCheckbox(widget: *const Widget, data: CheckboxData, renderer: *Renderer) void {

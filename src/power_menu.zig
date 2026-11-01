@@ -461,7 +461,7 @@ pub const PowerMenu = struct {
         );
     }
 
-    fn requestWidgetRepaint(menu: *PowerMenu) void {
+    pub fn requestWidgetRepaint(menu: *PowerMenu) void {
         menu.dirty = true;
         menu.wlr_output.scheduleFrame();
     }

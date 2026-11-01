@@ -4,6 +4,7 @@
 // bookkeeping lives in input.zig's dispatcher; this module only moves a single
 // button between states and fires its callback.
 const chrome = @import("../window_chrome.zig");
+const border_glow = @import("border_glow");
 const std = @import("std");
 const layout = @import("../layout.zig");
 const theme = @import("../theme.zig");
@@ -51,6 +52,9 @@ pub const State = struct {
     /// Keyboard focus: a ring inside the button's bounds, so a widget tree's
     /// damage still covers it.
     focused: bool = false,
+    proximity_distance: f32 = std.math.inf(f32),
+    proximity_x: f32 = 0,
+    proximity_y: f32 = 0,
 };
 
 pub const Metrics = struct {
@@ -133,10 +137,11 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
     const ring = state.focused and !disabled;
     const border_w: f32 = if (ring) 2 else if (opts.variant == .secondary) 1 else 0;
     const relief: layout.Relief = if (disabled or (opts.variant != .primary and opts.variant != .secondary)) .flat else if (state.pointer == .press or state.selected) t.button_pressed_relief else t.button_relief;
+    const radius = opts.radius orelse if (opts.variant == .chrome) chrome.cornerRadius(t.chrome_round_buttons, box.w, box.h, chrome.control_radius) else m.radius;
     if (bg[3] > 0 or border_w > 0) r.fillRect(box.x, box.y, box.w, box.h, .{
         .relief = relief,
         .color = bg,
-        .radius = opts.radius orelse if (opts.variant == .chrome) chrome.cornerRadius(t.chrome_round_buttons, box.w, box.h, chrome.control_radius) else m.radius,
+        .radius = radius,
         .border_width = border_w,
         .border_color = if (ring) t.controlFocusColor() else if (hovered) t.border else t.border_soft,
     });
@@ -156,6 +161,103 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
                 .color = .{ 0, 0, 0, if (hovered) 0.12 else 0.18 },
                 .radius = 0.5,
             });
+        }
+    }
+
+    paintProximityGlow(r, box, radius, state);
+}
+
+/// Paints the pointer-facing red highlight and its opposing dark shade.
+/// Both passes stay inside the button's antialiased rounded shape.
+fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
+    const t = r.palette orelse theme.global;
+    if (!t.border_glow_enabled or state.proximity_distance >= std.math.inf(f32) or
+        t.border_glow[3] <= 0 or t.border_glow_reach <= 0 or
+        t.border_glow_length <= 0 or t.border_glow_depth <= 0 or
+        box.w <= 0 or box.h <= 0)
+        return;
+
+    const probe = border_glow.probe(
+        box.w,
+        box.h,
+        radius,
+        state.proximity_x,
+        state.proximity_y,
+        t.border_glow_reach,
+    ) orelse return;
+
+    const s = r.scale;
+    var dx0 = box.x * s;
+    var dy0 = box.y * s;
+    var dx1 = (box.x + box.w) * s;
+    var dy1 = (box.y + box.h) * s;
+    if (r.effectiveClip()) |clip| {
+        dx0 = @max(dx0, clip.x * s);
+        dy0 = @max(dy0, clip.y * s);
+        dx1 = @min(dx1, (clip.x + clip.w) * s);
+        dy1 = @min(dy1, (clip.y + clip.h) * s);
+    }
+
+    const x0: i32 = @intFromFloat(@floor(@max(0, dx0)));
+    const y0: i32 = @intFromFloat(@floor(@max(0, dy0)));
+    const x1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.width)), dx1)));
+    const y1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.height)), dy1)));
+    if (x0 >= x1 or y0 >= y1) return;
+
+    // The probe point identifies the near edge. At a rounded corner, choose
+    // the dominant normalized axis so the opposing shade has a stable side.
+    const nx = @abs(probe.x - box.w / 2) / @max(box.w / 2, 0.001);
+    const ny = @abs(probe.y - box.h / 2) / @max(box.h / 2, 0.001);
+    const horizontal = nx >= ny;
+    const negative = if (horizontal) probe.x < box.w / 2 else probe.y < box.h / 2;
+    const anchor = if (horizontal) probe.y else probe.x;
+    const length = t.border_glow_length;
+    const depth = t.border_glow_depth;
+    const red = paint_mod.toColor(t.border_glow);
+    const dark = paint_mod.toColor(.{ 0, 0, 0, t.border_glow[3] * 0.35 });
+    const shape = .{
+        .x = box.x * s,
+        .y = box.y * s,
+        .w = box.w * s,
+        .h = box.h * s,
+        .radius = radius * s,
+    };
+
+    r.clean = false;
+    var py = y0;
+    while (py < y1) : (py += 1) {
+        const sy = @as(f32, @floatFromInt(py)) + 0.5;
+        const logical_y = sy / s;
+        const row: usize = @intCast(py * r.width);
+        var px = x0;
+        while (px < x1) : (px += 1) {
+            const sx = @as(f32, @floatFromInt(px)) + 0.5;
+            const logical_x = sx / s;
+            const coverage = paint_mod.sdf.coverage(paint_mod.sdf.sdRoundedBox(
+                sx, sy, shape.x, shape.y, shape.w, shape.h, shape.radius,
+            ));
+            if (coverage <= 0) continue;
+
+            const along = if (horizontal) logical_y - box.y else logical_x - box.x;
+            const along_ratio = (along - anchor) / length;
+            const along_falloff = @exp(-2 * along_ratio * along_ratio);
+            const near_depth = if (horizontal)
+                (if (negative) logical_x - box.x else box.x + box.w - logical_x)
+            else
+                (if (negative) logical_y - box.y else box.y + box.h - logical_y);
+            const far_depth = if (horizontal)
+                (if (negative) box.x + box.w - logical_x else logical_x - box.x)
+            else
+                (if (negative) box.y + box.h - logical_y else logical_y - box.y);
+
+            const near_alpha = probe.near * along_falloff *
+                @exp(-@max(0, near_depth) / depth) * coverage;
+            const far_alpha = probe.near * along_falloff *
+                @exp(-@max(0, far_depth) / depth) * coverage;
+
+            const index = row + @as(usize, @intCast(px));
+            if (near_alpha > 0) paint_mod.blendPixel(&r.pixels[index], red, near_alpha);
+            if (far_alpha > 0) paint_mod.blendPixel(&r.pixels[index], dark, far_alpha);
         }
     }
 }

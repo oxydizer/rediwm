@@ -5,6 +5,7 @@ pub const arrange = @import("arrange.zig");
 pub const paint = @import("paint.zig");
 pub const window_chrome = @import("window_chrome.zig");
 pub const theme = @import("theme.zig");
+pub const border_glow = @import("border_glow");
 pub const input = @import("input.zig");
 
 pub const widgets = struct {

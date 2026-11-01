@@ -243,6 +243,12 @@ pub const ButtonData = struct {
     owner: ?*anyopaque = null,
     id: usize = 0,
     state: ButtonState = .idle,
+    /// Cursor distance to the button's visible, clipped rectangle.
+    /// Infinity means that no part of the button is currently visible.
+    proximity_distance: f32 = std.math.inf(f32),
+    /// Last sampled cursor position relative to this button.
+    proximity_x: f32 = 0,
+    proximity_y: f32 = 0,
 };
 
 pub const CheckboxData = struct {

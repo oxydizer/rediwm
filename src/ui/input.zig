@@ -32,6 +32,99 @@ pub fn hitTest(root: *Widget, x: f32, y: f32) ?*Widget {
     return hitTestWithScrollAncestor(root, x, y).widget;
 }
 
+/// Logical-pixel rectangle used to constrain proximity sampling.
+pub const ProximityRect = struct {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+};
+
+fn widgetRect(widget: *const Widget) ProximityRect {
+    return .{
+        .x = widget.computed_x,
+        .y = widget.computed_y,
+        .w = widget.computed_width,
+        .h = widget.computed_height,
+    };
+}
+
+fn intersectProximityRect(a: ProximityRect, b: ProximityRect) ProximityRect {
+    const x0 = @max(a.x, b.x);
+    const y0 = @max(a.y, b.y);
+    const x1 = @min(a.x + a.w, b.x + b.w);
+    const y1 = @min(a.y + a.h, b.y + b.h);
+    return .{
+        .x = x0,
+        .y = y0,
+        .w = @max(0, x1 - x0),
+        .h = @max(0, y1 - y0),
+    };
+}
+
+fn proximityDistance(x: f32, y: f32, rect: ProximityRect) f32 {
+    if (rect.w <= 0 or rect.h <= 0) return std.math.inf(f32);
+
+    const right = rect.x + rect.w;
+    const bottom = rect.y + rect.h;
+    const dx = if (x < rect.x) rect.x - x else if (x > right) x - right else 0;
+    const dy = if (y < rect.y) rect.y - y else if (y > bottom) y - bottom else 0;
+    return @sqrt(dx * dx + dy * dy);
+}
+
+/// Updates every button in the retained tree, not merely the hit-tested one.
+/// `viewport` is the host panel's visible content rectangle. Scroll containers
+/// add their own paint clip as recursion descends. Returns true only when a
+/// button's stored sample actually changes.
+pub fn updateButtonProximity(
+    root: *Widget,
+    x: f32,
+    y: f32,
+    viewport: ProximityRect,
+) bool {
+    var changed = false;
+    const root_clip = intersectProximityRect(viewport, widgetRect(root));
+    sampleButtonProximity(root, x, y, root_clip, &changed);
+    return changed;
+}
+
+fn sampleButtonProximity(
+    widget: *Widget,
+    x: f32,
+    y: f32,
+    clip: ProximityRect,
+    changed: *bool,
+) void {
+    switch (widget.kind) {
+        .button => |*data| {
+            const visible = intersectProximityRect(widgetRect(widget), clip);
+            const distance = proximityDistance(x, y, visible);
+            const sample_x = if (distance < std.math.inf(f32)) x - widget.computed_x else data.proximity_x;
+            const sample_y = if (distance < std.math.inf(f32)) y - widget.computed_y else data.proximity_y;
+            if (data.proximity_distance != distance or
+                data.proximity_x != sample_x or data.proximity_y != sample_y)
+            {
+                data.proximity_distance = distance;
+                data.proximity_x = sample_x;
+                data.proximity_y = sample_y;
+                widget.markPaintDirty();
+                changed.* = true;
+            }
+        },
+        else => {},
+    }
+
+    // paintScrollContainer clips all descendants to its own full rectangle.
+    const child_clip = if (widget.kind == .scroll_container)
+        intersectProximityRect(clip, widgetRect(widget))
+    else
+        clip;
+
+    for (widget.children) |*child| {
+        sampleButtonProximity(child, x, y, child_clip, changed);
+    }
+}
+
 pub const HitResult = struct {
     widget: ?*Widget,
     /// The nearest enclosing `.scroll_container`, if any — its scrollbar is

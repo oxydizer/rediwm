@@ -180,8 +180,47 @@ pub fn updateDockReveal(input: *Input) void {
     while (it.next()) |output| output.dock.pointerAt(input.cursor.x, input.cursor.y, engaged);
 }
 
+fn updateWidgetProximity(input: *Input) void {
+    if (input.open_start_menu) |menu| {
+        const local = scene_data.toNodeLocal(&menu.buffer_node.node, input.cursor.x, input.cursor.y);
+        if (ui_input.updateButtonProximity(&menu.root, @floatCast(local.x), @floatCast(local.y), .{
+            .x = 0,
+            .y = 0,
+            .w = @floatFromInt(menu.panel_box.width),
+            .h = @floatFromInt(menu.panel_box.height),
+        })) {
+            menu.requestWidgetRepaint();
+        }
+    }
+
+    if (input.open_control_center) |cc| {
+        const local = cc.localPoint(input.cursor.x, input.cursor.y);
+        if (ui_input.updateButtonProximity(&cc.root, @floatCast(local.x), @floatCast(local.y), .{
+            .x = 0,
+            .y = 0,
+            .w = @floatFromInt(cc.panel_box.width),
+            .h = @floatFromInt(cc.panel_box.height),
+        })) {
+            cc.requestWidgetRepaint();
+        }
+    }
+
+    if (input.open_power_menu) |menu| {
+        const local = scene_data.toNodeLocal(&menu.buffer_node.node, input.cursor.x, input.cursor.y);
+        if (ui_input.updateButtonProximity(&menu.root, @floatCast(local.x), @floatCast(local.y), .{
+            .x = 0,
+            .y = 0,
+            .w = @floatFromInt(menu.panel_box.width),
+            .h = @floatFromInt(menu.panel_box.height),
+        })) {
+            menu.requestWidgetRepaint();
+        }
+    }
+}
+
 pub fn processCursorMotion(input: *Input, time_msec: u32) void {
     if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return;
+    updateWidgetProximity(input);
     defer input.updateGrabBorderGlow();
     input.positionDragIcon();
     input.drag_dodge.motion();
