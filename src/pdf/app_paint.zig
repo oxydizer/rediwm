@@ -545,7 +545,7 @@ pub fn renderButtonText(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, 
     var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
     ui_button.paint(&layer.renderer, layer.local(), .{
-        .variant = .ghost,
+        .variant = .secondary,
         .label = label,
     }, .{ .pointer = if (is_hover) .hover else .idle });
 }

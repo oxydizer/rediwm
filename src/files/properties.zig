@@ -217,7 +217,7 @@ pub const State = struct {
         var accent_palette = palette;
         accent_palette.fg = palette.accent;
         r.palette = accent_palette;
-        button.paint(r, g.open, .{ .icon = .open, .variant = .ghost, .label = tr("Open") }, .{ .focused = self.keyboard_focus and self.focus == 1, .pointer = if (hover == 2) .hover else .idle });
+        button.paint(r, g.open, .{ .icon = .open, .variant = .secondary, .label = tr("Open") }, .{ .focused = self.keyboard_focus and self.focus == 1, .pointer = if (hover == 2) .hover else .idle });
         r.palette = palette;
         r.fillRect(24, 146 - s, g.box.w - 48, 1, .{ .color = theme.global.app_divider });
         var size_buf: [128]u8 = undefined;

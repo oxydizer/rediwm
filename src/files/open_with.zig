@@ -298,7 +298,7 @@ pub const State = struct {
             scrollbar.paint(r, scrollbar.look(bar, .{}, theme.global.scrollbar_width, palette));
         if (self.shortcut_catalog == null) {
             r.fillRect(16, g.divider, g.box.w - 32, 1, .{ .color = theme.global.app_divider });
-            button.paint(r, g.more, .{ .size = .sm, .variant = .ghost, .alignment = .left, .leading_icon = .plus, .label = if (self.all) tr("Back to recommended apps") else tr("Choose another app…") }, .{ .focused = self.focus == .more, .pointer = if (hovered == 4) .hover else .idle });
+            button.paint(r, g.more, .{ .size = .sm, .variant = .secondary, .alignment = .left, .leading_icon = .plus, .label = if (self.all) tr("Back to recommended apps") else tr("Choose another app…") }, .{ .focused = self.focus == .more, .pointer = if (hovered == 4) .hover else .idle });
             const extension = std.fs.path.extension(self.apps.paths[0]);
             const remember_label = if (extension.len > 0 and self.apps.paths.len == 1)
                 i18n.fmt(&buffer, tr("Always use this app for {value} files"), .{ .value = extension }) catch tr("Always use this app for this file type")

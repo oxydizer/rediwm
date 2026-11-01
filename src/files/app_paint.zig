@@ -296,7 +296,7 @@ pub fn renderRenameCard(self: *App, cr: *c.cairo_t, card: RenameCard) void {
     for ([_]header.Rect{ card.confirm, card.cancel }, 0..) |rect, i| {
         var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = @floatCast(rect.w), .h = @floatCast(rect.h) }) orelse continue;
         ui_button.paint(&layer.renderer, layer.local(), .{
-            .variant = .ghost,
+            .variant = .secondary,
             .icon = if (i == 0) .checkmark else .close,
             .icon_scale = 0.55,
             .label = if (i == 0) tr("Rename") else tr("Cancel"),
