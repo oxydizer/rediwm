@@ -1179,6 +1179,10 @@ msgstr ""
 msgid "Choose your window layout"
 msgstr ""
 
+#: src/control_center/sections/appearance_rows.zig
+msgid "Circular"
+msgstr ""
+
 #: src/control_center/welcome.zig
 msgid "Classic (stacking)"
 msgstr ""
@@ -3285,6 +3289,10 @@ msgstr ""
 
 #: src/editor/app_paint.zig
 msgid "Line {line}, Column {column}    ·    UTF-8{bom}    ·    {ending}"
+msgstr ""
+
+#: src/control_center/sections/appearance_rows.zig
+msgid "Linear"
 msgstr ""
 
 #: src/files/app_listing.zig
@@ -6923,6 +6931,10 @@ msgstr ""
 msgid "Window spacing"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "Window switcher"
+msgstr ""
+
 #: src/control_center/sections/appearance_rows.zig
 msgid "Window switching zoom"
 msgstr ""
@@ -7081,6 +7093,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "accessibility animations"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "alt tab linear circular applications"
 msgstr ""
 
 #: src/control_center/search_index.zig

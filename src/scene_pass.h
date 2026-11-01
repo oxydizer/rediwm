@@ -28,6 +28,12 @@ struct wlr_render_pass *rediwm_scene_pass_begin(struct rediwm_scene_renderer *,
 // rediwm_edges_snap in scene_graph.h) and scales the radii and border; nothing
 // is rounded here, so a fractional radius or border is drawn as given.
 enum { REDIWM_PASS_POLY_MAX = 16 };
+struct rediwm_pass_sector {
+  float center[2]; // device pixels from the shape box's corner
+  float radii[2]; // inner, outer; outer 0 disables the sector
+  float axis[2]; // unit direction of the sector's centre line
+  float half_angle[2]; // cosine, sine of half its span (0 < span <= pi)
+};
 struct rediwm_pass_shape {
   struct wlr_box box;
   // Top-left, top-right, bottom-right, bottom-left. A radius larger than half
@@ -38,6 +44,15 @@ struct rediwm_pass_shape {
   // Simple, no two neighbouring vertices the same, either winding.
   int poly_count;
   float poly[REDIWM_PASS_POLY_MAX][2];
+  // A circular annular sector instead of either outline above. Its outer and
+  // inner arcs are analytic circles, so no tessellation reaches the image.
+  struct rediwm_pass_sector sector;
+  // Opt-in polar texture framing: the source top follows the outer arc and
+  // source rows advance inward. Full source height in device pixels; 0 keeps
+  // ordinary rectangular texture coordinates. Output reflection and transform
+  // are tracked separately so the source is never rotated or mirrored twice.
+  float sector_texture_height, sector_texture_flip;
+  enum wl_output_transform sector_texture_transform;
   // Width of the ring just inside the edge. The same fragment that draws the body
   // composites the ring over it, then applies the shape's coverage, so a
   // translucent border tints the fill beneath it, as the legacy border rects do,
@@ -73,7 +88,7 @@ bool rediwm_scene_renderer_enable_shapes(struct rediwm_scene_renderer *);
 // outside a pass, before the first such draw; later calls return the first result.
 // False when it did not build. Without it an external draw fails the pass.
 bool rediwm_scene_renderer_enable_external(struct rediwm_scene_renderer *);
-// Builds the programs that draw a polygon shape (`poly_count` > 0), which are the
+// Builds the programs that draw polygons or circular sectors, which are the
 // shaped ones with the polygon distance compiled in: another 280 KiB or so, so only
 // on request, outside a pass, before the first such draw. False when they did not
 // build; a polygon draw then fails the pass, so callers must not make one.

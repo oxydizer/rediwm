@@ -239,7 +239,12 @@ pub const CompositorConfig = struct {
     /// brightness and of its colour (`Toplevel.applyDim`).
     inactive_dim: bool = true,
     inactive_dim_amount: f32 = 0.08,
+    /// Alt+Tab layout; circular stacks windows belonging to the same app.
+    switcher_style: types.SwitcherStyle = .linear,
     switcher_opacity: f32 = 1.0,
+    /// Circular style only: paint a disc behind it, coloured by the window
+    /// chrome's own opacity and darkness settings.
+    switcher_circle_bg: bool = false,
     border_radius: u32 = 10,
     allow_tearing: bool = false,
     /// Start frames as late as the display allows instead of right after

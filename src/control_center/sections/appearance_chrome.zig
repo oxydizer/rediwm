@@ -214,6 +214,21 @@ pub fn onFocusZoomChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     s.focus_zoom_children[2].markDirty();
 }
 
+pub fn onSwitcherStyleChanged(owner: ?*anyopaque, _: usize, index: usize) void {
+    if (index > 1) return;
+    const s = section(owner);
+    const server = s.cc.server;
+    const style: @TypeOf(server.config.compositor.switcher_style) = @enumFromInt(index);
+    if (style == server.config.compositor.switcher_style) return;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "switcher_style", style) catch |err| {
+        std.log.warn("could not save switcher style: {}", .{err});
+        s.switcher_style_children[1].kind.segmented.selected = @intFromEnum(server.config.compositor.switcher_style);
+        s.switcher_style_children[1].markDirty();
+        return;
+    };
+    server.config.compositor.switcher_style = style;
+}
+
 pub fn onDragFeedbackChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     const server = section(owner).cc.server;
     setting_save.saveCompositor(main.gpa, server.io, server.config.path, "drag_feedback", on) catch |err| {

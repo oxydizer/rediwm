@@ -193,6 +193,18 @@ test "config field parsing preserves ranges and derived zoom state" {
     try applyCompositorKey(&c, a, "unknown", "ignored");
 }
 
+test "switcher style defaults to linear and accepts only supported layouts" {
+    var defaults = try parse(std.testing.allocator, "", "mem");
+    defer defaults.deinit();
+    try std.testing.expectEqual(types.SwitcherStyle.linear, defaults.compositor.switcher_style);
+    inline for (.{ "linear", "circular" }) |style| {
+        var cfg = try parse(std.testing.allocator, "[compositor]\nswitcher_style = \"" ++ style ++ "\"\n", "mem");
+        defer cfg.deinit();
+        try std.testing.expectEqualStrings(style, @tagName(cfg.compositor.switcher_style));
+    }
+    try std.testing.expectError(error.InvalidValue, applyCompositorKey(&defaults.compositor, std.testing.allocator, "switcher_style", "\"unknown\""));
+}
+
 test "idle field rules preserve optional enabled and strict unknown keys" {
     const a = std.testing.allocator;
     var idle = IdleConfig{};

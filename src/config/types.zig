@@ -96,6 +96,7 @@ pub const AccelCurve = struct {
 };
 
 pub const FocusZoom = enum { keep, boost, camera };
+pub const SwitcherStyle = enum { linear, circular };
 
 pub const MiniMapPosition = enum { bottom_right, bottom_center, bottom_left };
 

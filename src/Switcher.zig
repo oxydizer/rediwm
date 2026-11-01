@@ -1,4 +1,4 @@
-//! Held-modifier window carousel. IDs freeze MRU order for the duration of a
+//! Held-modifier window switcher. IDs freeze MRU order for the duration of a
 //! gesture; scene buffers retain preview storage independently of clients.
 const std = @import("std");
 const wlr = @import("wlroots");
@@ -12,22 +12,30 @@ const Anim = anim.Anim;
 const gpa = @import("main.zig").gpa;
 const Self = @This();
 const theme = @import("ui").theme;
+const circular = @import("switcher/circular.zig");
+const preview_binding = @import("switcher/preview.zig");
 const card_w = 224;
 const card_h = 220;
 const stride = 244;
 const height = 284;
 
-const Card = struct {
+pub const Card = struct {
     id: u64,
-    label: *sn.Buffer,
-    label_source: wlr.FBox,
+    label: ?*sn.Buffer = null,
+    label_source: wlr.FBox = undefined,
     icon: *sn.Buffer,
+    icon_buffer: *wlr.Buffer,
     icon_source: wlr.FBox,
     icon_ready: bool = false,
     preview: ?*sn.Buffer = null,
     source: wlr.FBox = undefined,
     pw: i32 = 0,
     ph: i32 = 0,
+    aspect: f64 = 1,
+    tree: ?*sn.Tree = null,
+    fill: ?*sn.Rect = null,
+    group: usize = 0,
+    member: usize = 0,
 };
 
 pub const Trigger = enum { alt, ctrl };
@@ -41,6 +49,8 @@ selected: usize = 0,
 scroll: Anim = .{},
 width: i32 = 0,
 scale: f32 = 1,
+style: @import("config").types.SwitcherStyle = .linear,
+circle: circular.State = .{},
 
 pub fn active(self: *const Self) bool {
     return self.tree != null;
@@ -69,6 +79,12 @@ pub fn step(self: *Self, server: *Server, reverse: bool, trigger: Trigger) void 
         };
     }
     if (self.cards.items.len == 0) return;
+    if (self.circle.enabled) {
+        circular.advance(self, reverse);
+        circular.select(self, opening);
+        self.output.?.wlr_output.scheduleFrame();
+        return;
+    }
     const n = self.cards.items.len;
     self.selected = if (reverse) (self.selected + n - 1) % n else (self.selected + 1) % n;
     const target: f32 = @floatFromInt(self.selected * stride);
@@ -89,9 +105,16 @@ fn open(self: *Self, server: *Server) !void {
     const box = output.usableBox();
     if (box.width < 260 or box.height < height) return;
     self.output = output;
-    self.width = @min(1500, box.width - 32);
+    self.style = server.config.compositor.switcher_style;
+    self.circle.enabled = self.style == .circular and circular.layout.diameter(box.width, box.height) >= 360 and @import("chrome.zig").polygonsReady();
+    self.width = if (self.circle.enabled) circular.layout.diameter(box.width, box.height) else @min(1500, box.width - 32);
     self.scale = output.wlr_output.scale;
     self.tree = try server.overlay_tree.createSceneTree();
+    if (self.circle.enabled) {
+        try circular.open(self, server);
+        if (self.cards.items.len == 0) self.cancel();
+        return;
+    }
     const bg = try PanelBuffer.create(self.width, height, self.scale);
     defer bg.base.drop();
     var r = Renderer.init(bg.pixels, bg.width, bg.height, self.scale);
@@ -114,7 +137,7 @@ fn open(self: *Self, server: *Server) !void {
         ir.fillRect(0, 0, 40, 40, .{ .color = theme.global.switcher_icon_bg, .radius = theme.global.switcher_icon_radius });
         ir.drawIcon(5, 5, 30, 30, .{ .id = .generic, .color = theme.global.switcher_fg });
         const icon = try self.makeNode(&icon_image.base, 40, 40);
-        var card: Card = .{ .icon = icon, .icon_source = .{ .x = 0, .y = 0, .width = @floatFromInt(icon_image.width), .height = @floatFromInt(icon_image.height) }, .id = tl.id, .label = label, .label_source = .{ .x = 0, .y = 0, .width = @floatFromInt(image.width), .height = @floatFromInt(image.height) } };
+        var card: Card = .{ .icon = icon, .icon_buffer = &icon_image.base, .icon_source = .{ .x = 0, .y = 0, .width = @floatFromInt(icon_image.width), .height = @floatFromInt(icon_image.height) }, .id = tl.id, .label = label, .label_source = .{ .x = 0, .y = 0, .width = @floatFromInt(image.width), .height = @floatFromInt(image.height) } };
         card.preview = try self.tree.?.createSceneBuffer(null);
         card.preview.?.setFilterMode(.bilinear);
         card.preview.?.point_accepts_input = ignoreInput;
@@ -136,7 +159,7 @@ fn open(self: *Self, server: *Server) !void {
     _ = self.tick(output, @import("Taskbar.zig").nowMs());
 }
 
-fn makeNode(self: *Self, buffer: *wlr.Buffer, w: i32, h: i32) !*sn.Buffer {
+pub fn makeNode(self: *Self, buffer: *wlr.Buffer, w: i32, h: i32) !*sn.Buffer {
     // Keep storage alive for the entire gesture, including CPU buffers whose
     // scene node releases its reference after the GLES2 texture upload.
     try self.buffers.append(gpa, buffer);
@@ -166,7 +189,8 @@ fn place(node: *sn.Buffer, source: wlr.FBox, x: i32, y: i32, w: i32, h: i32, vie
 pub fn tick(self: *Self, output: *Output, now: i64) bool {
     if (!self.active() or self.output != output) return false;
     const box = output.usableBox();
-    if (output.server.locker != null or !output.isLogicallyEnabled() or output.idle_blanked or self.scale != output.wlr_output.scale or self.width != @min(1500, box.width - 32) or box.height < height) {
+    const expected_width = if (self.circle.enabled) circular.layout.diameter(box.width, box.height) else @min(1500, box.width - 32);
+    if (output.server.locker != null or !output.isLogicallyEnabled() or output.idle_blanked or self.scale != output.wlr_output.scale or self.width != expected_width or box.height < height or self.style != output.server.config.compositor.switcher_style) {
         self.cancel();
         return false;
     }
@@ -177,32 +201,15 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
             return false;
         }
     }
+    if (self.circle.enabled) return circular.tick(self, output, now);
     self.background.?.setOpacity(output.server.config.compositor.switcher_opacity);
     self.tree.?.node.setPosition(box.x + @divTrunc(box.width - self.width, 2), box.y + @divTrunc(box.height - height, 2));
     const offset: i32 = @intFromFloat(@round(self.scroll.value(now)));
     for (self.cards.items, 0..) |*card, i| {
-        if (!card.icon_ready) if (output.server.findToplevelById(card.id)) |tl| {
-            switch (output.server.iconLookup(tl.appId(), @intFromFloat(card.icon_source.width))) {
-                .ready => |entry| {
-                    if (PanelBuffer.create(40, 40, self.scale)) |image| {
-                        defer image.base.drop();
-                        var r = Renderer.init(image.pixels, image.width, image.height, self.scale);
-                        r.fillRect(0, 0, 40, 40, .{ .color = theme.global.switcher_icon_bg, .radius = theme.global.switcher_icon_radius });
-                        const widget: @import("ui").layout.Widget = .{ .kind = .{ .image = .{ .pixels = entry.pixels, .width = entry.size, .height = entry.size } }, .computed_x = 3, .computed_y = 3, .computed_width = 34, .computed_height = 34 };
-                        @import("ui").paint.paint(&widget, &r);
-                        self.buffers.append(gpa, &image.base) catch continue;
-                        _ = image.base.lock();
-                        card.icon.setBuffer(&image.base);
-                        card.icon_ready = true;
-                    } else |_| {}
-                },
-                .missing => card.icon_ready = true,
-                .pending => {},
-            }
-        };
+        refreshIcon(self, card);
 
         const x = @divTrunc(self.width - card_w, 2) + @as(i32, @intCast(i * stride)) - offset;
-        place(card.label, card.label_source, x, 28, card_w, card_h, self.width);
+        place(card.label.?, card.label_source, x, 28, card_w, card_h, self.width);
         place(card.icon, card.icon_source, x + 92, 156, 40, 40, self.width);
         if (card.pw > 0) if (card.preview) |preview| place(preview, card.source, x + @divTrunc(card_w - card.pw, 2), 36 + @divTrunc(140 - card.ph, 2), card.pw, card.ph, self.width);
     }
@@ -210,25 +217,50 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
     return !self.scroll.settled(now);
 }
 
+pub fn refreshIcon(self: *Self, card: *Card) void {
+    const output = self.output orelse return;
+    if (!card.icon_ready) if (output.server.findToplevelById(card.id)) |tl| {
+        switch (output.server.iconLookup(tl.appId(), @intFromFloat(card.icon_source.width))) {
+            .ready => |entry| {
+                if (PanelBuffer.create(40, 40, self.scale)) |image| {
+                    defer image.base.drop();
+                    var r = Renderer.init(image.pixels, image.width, image.height, self.scale);
+                    r.fillRect(0, 0, 40, 40, .{ .color = theme.global.switcher_icon_bg, .radius = theme.global.switcher_icon_radius });
+                    const widget: @import("ui").layout.Widget = .{ .kind = .{ .image = .{ .pixels = entry.pixels, .width = entry.size, .height = entry.size } }, .computed_x = 3, .computed_y = 3, .computed_width = 34, .computed_height = 34 };
+                    @import("ui").paint.paint(&widget, &r);
+                    self.buffers.append(gpa, &image.base) catch return;
+                    _ = image.base.lock();
+                    card.icon.setBuffer(&image.base);
+                    card.icon_buffer = &image.base;
+                    card.icon_ready = true;
+                } else |_| {}
+            },
+            .missing => card.icon_ready = true,
+            .pending => {},
+        }
+    };
+}
+
 // Replace the scene reference on every commit, including same-buffer damage.
 // Old client buffers are released immediately; the gesture never accumulates
 // video frames in the CPU buffer retention list.
-fn updatePreview(card: *Card, tl: *@import("Toplevel.zig")) void {
+pub fn updatePreview(card: *Card, tl: *@import("Toplevel.zig")) void {
     const preview = card.preview orelse return;
     card.pw = 0;
     if (tl.surface()) |surface| {
-        if (surface.current.transform == .normal) if (surface.buffer) |buffer| {
+        if (surface.current.transform == .normal and surface.buffer != null) {
+            if (!preview_binding.setSurface(preview, surface)) return;
             surface.getBufferSourceBox(&card.source);
             const sw: f32 = @floatFromInt(@max(1, surface.current.width));
             const sh: f32 = @floatFromInt(@max(1, surface.current.height));
+            card.aspect = sw / sh;
             const fit = @min(208 / sw, 140 / sh);
             card.pw = @max(1, @as(i32, @intFromFloat(@round(sw * fit))));
             card.ph = @max(1, @as(i32, @intFromFloat(@round(sh * fit))));
-            preview.setBuffer(&buffer.base);
             return;
-        };
+        }
     }
-    preview.setBuffer(null);
+    _ = preview_binding.setSurface(preview, null);
     preview.node.setEnabled(false);
 }
 
@@ -249,7 +281,7 @@ pub fn frameDone(self: *Self, output: *Output, when: *const std.posix.timespec) 
     // Sending twice is harmless: wlroots consumes each callback only once.
     for (self.cards.items) |card| {
         const preview = card.preview orelse continue;
-        if (card.pw == 0 or !preview.node.enabled) continue;
+        if (card.pw == 0 or !preview.node.visible()) continue;
         const tl = output.server.findToplevelById(card.id) orelse continue;
         if (tl.surface()) |surface| surface.sendFrameDone(when);
     }
@@ -268,12 +300,13 @@ pub fn accept(self: *Self, server: *Server) void {
 
 pub fn cancel(self: *Self) void {
     if (self.tree) |tree| tree.node.destroy();
+    self.circle.deinit();
     for (self.buffers.items) |buffer| buffer.unlock();
     self.buffers.deinit(gpa);
     self.cards.deinit(gpa);
     self.* = .{};
 }
 
-fn ignoreInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
+pub fn ignoreInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
     return false;
 }

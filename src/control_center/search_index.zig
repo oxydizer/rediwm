@@ -84,6 +84,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .appearance, .title = i18n.msg("Animation speed"), .target = "anim_speed", .keywords = i18n.msg("motion duration") },
     .{ .page = .appearance, .title = i18n.msg("Reduced motion"), .target = "reduced_motion", .keywords = i18n.msg("accessibility animations") },
     .{ .page = .appearance, .title = i18n.msg("Focus zoom"), .target = "focus_zoom", .keywords = i18n.msg("window focus") },
+    .{ .page = .appearance, .title = i18n.msg("Window switcher"), .target = "switcher_style", .keywords = i18n.msg("alt tab linear circular applications") },
     .{ .page = .appearance, .title = i18n.msg("Drag feedback"), .target = "drag_feedback", .keywords = i18n.msg("window moving") },
     .{ .page = .appearance, .title = i18n.msg("Drag scale"), .target = "drag_scale", .keywords = i18n.msg("window moving size") },
     .{ .page = .appearance, .title = i18n.msg("Font"), .target = "font", .keywords = i18n.msg("typeface text") },

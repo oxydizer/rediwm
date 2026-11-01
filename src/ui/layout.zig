@@ -64,6 +64,9 @@ pub const IconId = enum {
     search,
     chevron_up,
     chevron_down,
+    /// A filled triangle pointing up, distinct from the `chevron_up` stroke:
+    /// the circular switcher's hub points toward the selected sector with it.
+    caret_up,
     close,
     minimize,
     maximize,

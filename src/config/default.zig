@@ -173,7 +173,9 @@ pub const source =
     \\drag_scale            = 1.002  # drag lift multiplier, 1.000-1.100
     \\dodge_file_drags      = true   # a file manager slides aside while you drag a file out of it
     \\files_single_click_open = true # Files: one click on an icon opens the file or folder
+    \\switcher_style        = "linear" # linear or circular; circular stacks windows from the same app
     \\switcher_opacity      = 1.0   # 0.0-1.0, background only; previews stay opaque
+    \\switcher_circle_bg    = false # circular style only: paint a disc behind it, using window chrome's opacity/darkness
     \\inactive_opacity      = 1.0   # 0.0-1.0, 1.0 = no change
     \\# terminal_opacity   = 0.9   # 0.0-1.0 terminal background (Foot, kitty, Alacritty, Ghostty, WezTerm); new windows only. Unset keeps their own
     \\inactive_dim          = true  # windows that are not the focus lose a little brightness and colour

@@ -215,6 +215,14 @@ def test_appearance_settings():
                     assert read_config()["compositor"]["focus_zoom"] == mode
                     assert ui.scroll_into_view("focus_zoom").get("selected_index") == index
 
+                assert ui.scroll_into_view("switcher_style").get("selected_index") == 0
+                for index, style in ((1, "circular"), (0, "linear"), (1, "circular")):
+                    click_widget(ui.scroll_into_view("switcher_style"), fraction=(index + 0.5) / 2)
+                    assert read_config()["compositor"]["switcher_style"] == style
+                    ipc.reload_config()
+                    ipc.wait_for_panel_settled("control_center")
+                    assert ui.scroll_into_view("switcher_style").get("selected_index") == index
+
                 # --- 1. Window chrome opacity slider ---
                 chrome_slider = ui.scroll_into_view("chrome_opacity")
                 assert chrome_slider is not None
@@ -360,6 +368,7 @@ def test_appearance_settings():
 
                 # Verify speed is still 0.5x
                 assert ui.scroll_into_view("focus_zoom").get("selected_index") == 1
+                assert ui.scroll_into_view("switcher_style").get("selected_index") == 1
                 speed_seg = ui.scroll_into_view("anim_speed")
                 assert speed_seg.get("selected_index") == 0
 

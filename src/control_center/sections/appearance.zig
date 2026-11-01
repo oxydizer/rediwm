@@ -100,6 +100,7 @@ pub const onWindowGapChanged = appearance_chrome.onWindowGapChanged;
 pub const onTaskbarPositionChanged = appearance_chrome.onTaskbarPositionChanged;
 pub const onTaskbarAlignmentChanged = appearance_chrome.onTaskbarAlignmentChanged;
 pub const onFocusZoomChanged = appearance_chrome.onFocusZoomChanged;
+pub const onSwitcherStyleChanged = appearance_chrome.onSwitcherStyleChanged;
 pub const onDragFeedbackChanged = appearance_chrome.onDragFeedbackChanged;
 pub const onDragScaleChanged = appearance_chrome.onDragScaleChanged;
 pub const onAnimationsEnabledChanged = appearance_chrome.onAnimationsEnabledChanged;
@@ -225,6 +226,7 @@ pub const Section = struct {
     dock_trash_children: [2]Widget = undefined,
     dock_group_children: [10]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
+    switcher_style_children: [2]Widget = undefined,
     drag_feedback_children: [2]Widget = undefined,
     drag_scale_header_children: [2]Widget = undefined,
     drag_scale_children: [2]Widget = undefined,
@@ -509,6 +511,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.anim_speed_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.reduced_motion_row_children },
         .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.focus_zoom_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.switcher_style_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.drag_feedback_children },
         .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.drag_scale_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.cursor_row_children },
@@ -581,6 +584,7 @@ pub const Row = enum {
     animation_speed,
     reduced_motion,
     focus_zoom,
+    switcher_style,
     drag_feedback,
     drag_scale,
     cursor,
@@ -607,7 +611,7 @@ pub const groups = [_]struct { title: ?i18n.Message, rows: []const Row }{
     .{ .title = i18n.msg("Wallpaper"), .rows = &.{.wallpaper} },
     .{ .title = i18n.msg("Fonts & cursor"), .rows = &.{ .font_family, .font_size, .cursor } },
     .{ .title = i18n.msg("Windows"), .rows = &.{ .radius, .shadow, .edge_glow, .chrome_opacity, .window_tabs, .inactive_dim, .inactive_opacity, .terminal_opacity, .window_gap, .scrollbar_width } },
-    .{ .title = i18n.msg("Motion & feedback"), .rows = &.{ .animations, .animation_speed, .reduced_motion, .focus_zoom, .drag_feedback, .drag_scale, .dodge_file_drags, .launch_splash } },
+    .{ .title = i18n.msg("Motion & feedback"), .rows = &.{ .animations, .animation_speed, .reduced_motion, .focus_zoom, .switcher_style, .drag_feedback, .drag_scale, .dodge_file_drags, .launch_splash } },
     .{ .title = null, .rows = &.{.dock} },
     .{ .title = null, .rows = &.{.taskbar} },
     .{ .title = null, .rows = &.{.start_menu} },

@@ -212,6 +212,15 @@ pub fn buildBehaviorRows(out: *Section, pal: theme.Theme) void {
         .{ .kind = .{ .text = .{ .content = focus_zoom_descriptions[@intFromEnum(focus_zoom)].get(), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
 
+    out.switcher_style_children = .{
+        labelWidget(i18n.tr("Window switcher")),
+        .{
+            .name = "switcher_style",
+            .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Linear"), i18n.msg("Circular") }), .selected = @intFromEnum(out.cc.server.config.compositor.switcher_style), .owner = out, .on_change = &appearance_chrome.onSwitcherStyleChanged } },
+            .width = .{ .fixed = segmented_width },
+        },
+    };
+
     out.drag_feedback_children = .{
         labelWidget(i18n.tr("Drag feedback")),
         .{ .name = "drag_feedback", .kind = .{ .toggle = .{ .on = out.cc.server.config.compositor.drag_feedback, .owner = out, .on_change = &onDragFeedbackChanged } } },

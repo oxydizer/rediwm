@@ -52,6 +52,7 @@ test {
     _ = @import("resize.zig");
     _ = @import("camera.zig");
     _ = @import("mini_map_geometry.zig");
+    _ = @import("switcher/layout.zig");
     _ = @import("calendar.zig");
     _ = @import("start_menu/applications.zig");
     _ = @import("start_menu/catalog_cache.zig");

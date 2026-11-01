@@ -399,6 +399,18 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     test_step.dependOn(&run_node_tests.step);
     b.step("test-node", "Test the compositor's own scene nodes").dependOn(&run_node_tests.step);
 
+    const switcher_preview_tests = b.addExecutable(.{
+        .name = "switcher-preview-tests",
+        .root_module = b.createModule(.{ .target = target, .optimize = .debug, .link_libc = true }),
+    });
+    switcher_preview_tests.root_module.addCSourceFiles(.{ .files = &.{ "src/switcher_preview_test.c", "src/switcher_preview.c", "src/node.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {
+        switcher_preview_tests.root_module.linkSystemLibrary(lib, .{});
+    }
+    const run_switcher_preview_tests = b.addRunArtifact(switcher_preview_tests);
+    test_step.dependOn(&run_switcher_preview_tests.step);
+    b.step("test-switcher-preview", "Test switcher preview fences and buffer lifetime").dependOn(&run_switcher_preview_tests.step);
+
     const projection_tests = b.addExecutable(.{
         .name = "projection-tests",
         .root_module = b.createModule(.{ .target = target, .optimize = .debug, .link_libc = true }),

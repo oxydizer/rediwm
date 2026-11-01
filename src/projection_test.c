@@ -163,6 +163,7 @@ static bool probe_item(const struct rediwm_item *item, struct rediwm_node *trans
 #include "projection_test_graph.c"
 #include "projection_test_damage.c"
 #include "projection_test_groups.c"
+#include "projection_test_sector.c"
 
 int main(void) {
   struct wl_display *display = wl_display_create();
@@ -314,6 +315,8 @@ int main(void) {
   test_clean_sync(scene);
   test_clip_geometry();
   test_polygon_geometry();
+  test_sector_geometry();
+  test_sector_projection(scene, out);
   test_clip_opaque();
   test_clip_projection(scene);
   test_clip_output(scene, out);

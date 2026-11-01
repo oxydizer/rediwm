@@ -169,7 +169,9 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `drag_feedback` | `true` | softly lift a window during a move drag; suppressed by reduced motion |
 | `drag_scale` | `1.002` | drag lift multiplier, `1.000`–`1.100`; adjustable in Appearance |
 | `files_single_click_open` | `true` | Files opens files and folders with one click on their icon in list or icons view |
+| `switcher_style` | `"linear"` | `linear` keeps the horizontal Alt+Tab strip; `circular` arranges app previews around a circle and stacks windows from the same app |
 | `switcher_opacity`, `inactive_opacity` | `1.0` | |
+| `switcher_circle_bg` | `false` | `circular` style only: paint a disc behind the switcher, coloured by the window chrome's own opacity (`chrome_opacity`) and darkness (`chrome_darkness`) settings |
 | `terminal_opacity` | unset | 0.0 to 1.0, background alpha of terminals RediWM launches: Foot, kitty, Alacritty, Ghostty and WezTerm (new windows only; text stays opaque). Konsole, GNOME Terminal and other VTE terminals take it only from their own profiles. Unset keeps the opacity of your own terminal configuration. Adjustable in Appearance |
 | `inactive_dim` | `true` | windows that are not the focus lose a little brightness and colour; fullscreen windows never dim. Settings, Appearance has the switch |
 | `inactive_dim_amount` | `0.08` | 0.0 to 0.5, the fraction of brightness and of colour an unfocused window loses |

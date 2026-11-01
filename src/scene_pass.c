@@ -95,16 +95,29 @@ static const char shaped_vertex[] =
     /* Only the polygon programs (POLY, built on demand) carry it: the others */ \
     /* compile to what they did before polygons existed. */ \
     "\n#ifdef POLY\n" \
-    "uniform float npoly; uniform vec2 poly[17];" \
+    "uniform float npoly; uniform vec2 poly[17], sector_map; uniform vec4 sector_coords[2];" \
     "float sdpoly(vec2 p){ float d=dot(p-poly[0],p-poly[0]); float s=1.;" \
     "for(int i=0;i<16;i++){ if(float(i)>=npoly) break; vec2 a=poly[i], b=poly[i+1];" \
     "vec2 e=b-a, w=p-a; float h=clamp(dot(w,e)/max(dot(e,e),1e-4),0.,1.); vec2 q=w-e*h; d=min(d,dot(q,q));" \
     "bool c0=p.y>=a.y, c1=p.y<b.y, c2=e.x*w.y>e.y*w.x;" \
     "if((c0&&c1&&c2)||(!c0&&!c1&&!c2)) s=-s; }" \
     "return s*sqrt(d); }" \
+    /* The same uniforms carry an analytic sector when npoly is -1. Fold */ \
+    /* across its centre line: one finite radial edge covers both sides. */ \
+    "float sdsector(vec2 p){ vec2 q=p-poly[0]; float r=length(q);" \
+    "vec2 v=vec2(abs(q.x*poly[2].y-q.y*poly[2].x),dot(q,poly[2]));" \
+    "vec2 e=poly[3].yx; float t=clamp(dot(v,e),poly[1].x,poly[1].y);" \
+    "float d=length(v-e*t); bool angle=v.y>=r*poly[3].x;" \
+    "if(angle)d=min(d,min(abs(r-poly[1].x),abs(r-poly[1].y)));" \
+    "return angle&&r>=poly[1].x&&r<=poly[1].y?-d:d; }" \
+    "vec2 sector_uv(vec2 p){ vec2 q=p-poly[0]; float r=length(q);" \
+    "float across=dot(q,vec2(-poly[2].y,poly[2].x))*sector_map.y;" \
+    "float angle=r>.00001?atan(across,dot(q,poly[2])):0.;" \
+    "return vec2(.5+angle/(2.*atan(poly[3].y,poly[3].x)),(poly[1].y-r)/sector_map.x); }" \
     "\n#endif\n" \
     "float sdf(vec2 p, vec4 r){" \
     "\n#ifdef POLY\n" \
+    "if(npoly<-.5) return sdsector(p);" \
     "if(npoly>.5) return sdpoly(p);" \
     "\n#endif\n" \
     "vec2 q=p-size*.5;" \
@@ -146,7 +159,14 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "float a=f>=.99999?0.:clamp((c-f)/(1.-f),0.,1.); gl_FragColor=vec4(rgb*a,a); return; }"
     "if(mode>1.5){ float s=clamp(1.-sdf(local-offset,radii)/softness,0.,1.); s=s*s*(3.-2.*s);"
     "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=color*s; return; }"
-    "vec4 c=color; if(mode<.5){ c=texture2D(tex,uv); if(opaque>.5)c.a=1.; c*=alpha; }"
+    "vec4 c=color; if(mode<.5){ vec2 at=uv; float content=1.;"
+    "\n#ifdef POLY\n"
+    "if(use_shape>.5&&npoly<-.5&&sector_map.x>0.){ vec2 p=sector_uv(local);"
+    "content=clamp((1.-p.y)*sector_map.x+.5,0.,1.); p=clamp(p,0.,1.);"
+    "at=mix(mix(sector_coords[0].xy,sector_coords[0].zw,p.x),"
+    "mix(sector_coords[1].xy,sector_coords[1].zw,p.x),p.y); }"
+    "\n#endif\n"
+    "c=texture2D(tex,at); if(opaque>.5)c.a=1.; c*=alpha*content; }"
     // Without a shape (every plain draw) the colour is written as it is: the
     // plain programs are gone (stage 5, D4), and this costs one uniform branch.
     "if(use_shape<.5){ gl_FragColor=vec4(grade(c.rgb),c.a); return; }"
@@ -231,6 +251,8 @@ static bool program_init(struct program *p, unsigned bit, const char *vertex_sou
     p->radii = glGetUniformLocation(p->id, "radii");
     p->npoly = glGetUniformLocation(p->id, "npoly");
     p->poly = glGetUniformLocation(p->id, "poly[0]");
+    p->sector_map = glGetUniformLocation(p->id, "sector_map");
+    p->sector_coords = glGetUniformLocation(p->id, "sector_coords[0]");
     p->border = glGetUniformLocation(p->id, "border");
     p->bcolor = glGetUniformLocation(p->id, "bcolor");
     p->glow = glGetUniformLocation(p->id, "glow");

@@ -93,6 +93,7 @@ static struct wlr_texture *texture_create(struct wlr_renderer *renderer, bool op
 
 #include "scene_pass_test_parity.c"
 #include "scene_pass_test_shapes.c"
+#include "scene_pass_test_sector.c"
 #include "scene_pass_test_shading.c"
 #include "scene_pass_test_backdrop.c"
 
