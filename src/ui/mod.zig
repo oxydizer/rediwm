@@ -37,6 +37,7 @@ pub const font_fallback = @import("font_fallback.zig");
 pub const fold = @import("fold.zig");
 pub const hover_glide = @import("hover_glide.zig");
 pub const key_repeat = @import("key_repeat.zig");
+pub const relief = @import("relief.zig");
 pub const sdf = @import("sdf.zig");
 pub const shell_icons = @import("shell_icons.zig");
 pub const text = @import("text.zig");

@@ -132,8 +132,9 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
     if (disabled) bg[3] *= t.button_disabled_alpha;
     const ring = state.focused and !disabled;
     const border_w: f32 = if (ring) 2 else if (opts.variant == .secondary) 1 else 0;
+    const relief: layout.Relief = if (disabled or (opts.variant != .primary and opts.variant != .secondary)) .flat else if (state.pointer == .press or state.selected) t.button_pressed_relief else t.button_relief;
     if (bg[3] > 0 or border_w > 0) r.fillRect(box.x, box.y, box.w, box.h, .{
-        .relief = if (disabled or (opts.variant != .primary and opts.variant != .secondary)) .flat else if (state.pointer == .press or state.selected) t.button_pressed_relief else t.button_relief,
+        .relief = relief,
         .color = bg,
         .radius = opts.radius orelse if (opts.variant == .chrome) chrome.cornerRadius(t.chrome_round_buttons, box.w, box.h, chrome.control_radius) else m.radius,
         .border_width = border_w,
@@ -142,7 +143,7 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
 
     // Directional lighting gives quiet graphite buttons a subtle raised feel.
     // Preserve selected, disabled, primary, ghost, and chrome treatments.
-    if (opts.variant == .secondary and !state.selected and !disabled and !state.focused and box.w > 0 and box.h >= 6) {
+    if (opts.variant == .secondary and !state.selected and !disabled and !state.focused and !r.reliefActive(relief) and box.w > 0 and box.h >= 6) {
         const inset = @min(m.radius, @min(box.w, box.h) / 3);
         const strip_w = box.w - inset * 2;
         if (strip_w > 0) {

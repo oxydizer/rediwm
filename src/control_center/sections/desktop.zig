@@ -43,7 +43,7 @@ fn container(a: std.mem.Allocator, direction: ui.layout.Direction, items: []cons
 
 fn card(a: std.mem.Allocator, items: []const W) !W {
     var w = try container(a, .column, items);
-    w.kind = .{ .rect = .{ .color = panel.palette().settings_card_bg, .radius = panel.palette().settings_card_radius, .border_width = 1, .border_color = panel.palette().border_soft } };
+    w.kind = .{ .rect = .{ .color = panel.palette().settings_card_bg, .radius = panel.palette().settings_card_radius, .border_width = 1, .border_color = panel.palette().border_soft, .relief = panel.palette().settings_card_relief } };
     w.padding = ui.layout.Edges.all(14);
     return w;
 }

@@ -437,6 +437,10 @@ as before. Raised shadows reach `relief_depth + relief_softness` past a box: use
 | `button_pressed_relief` | `"flat"` | Pressed or selected button relief |
 | `field_relief` | `"flat"` | Text field frame relief |
 | `dialog_inset_relief` | `"flat"` | Dialog recessed content panel relief |
+| `dialog_frame_relief` | `"flat"` | Dialog card relief; raised shadows lie outside the card |
+| `settings_card_relief` | `"flat"` | Cards around Settings entries. The page scrolls in a clipped container, so a raised card's shadow is cut at its edge: prefer `inset` |
+| `taskbar_chip_relief` | `"flat"` | Taskbar window chip, idle. Shaded inside the edge (the chip raster has no margin): `inset` is a groove, `raised` swaps the lights. Main theme only; `[taskbar_theme]` does not carry it |
+| `taskbar_chip_active_relief` | `"flat"` | The focused taskbar chip; same rules |
 | `select_relief` | `"flat"` | Resting select/dropdown control relief |
 | `select_popup_relief` | `"flat"` | Select/dropdown popup container relief |
 | `checkbox_relief` | `"flat"` | Checkbox frame relief |

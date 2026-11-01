@@ -153,7 +153,7 @@ pub fn group(a: A, items: []const W) !W {
 pub fn card(a: A, items: []const W) !W {
     var result = try group(a, items);
     const t = panel.palette();
-    result.kind = .{ .rect = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.app_item_border } };
+    result.kind = .{ .rect = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.app_item_border, .relief = t.settings_card_relief } };
     result.padding = ui.layout.Edges.all(14);
     return result;
 }

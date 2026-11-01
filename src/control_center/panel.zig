@@ -146,7 +146,7 @@ pub fn outOfMemory() Widget {
 
 pub fn card(children: []Widget) Widget {
     return .{
-        .kind = .{ .rect = .{ .color = theme.global.app_item, .radius = theme.global.settings_card_radius, .border_width = 1, .border_color = theme.global.app_item_border } },
+        .kind = .{ .rect = .{ .color = theme.global.app_item, .radius = theme.global.settings_card_radius, .border_width = 1, .border_color = theme.global.app_item_border, .relief = theme.global.settings_card_relief } },
         .direction = .column,
         .padding = layout.Edges.all(14),
         .gap = 10,

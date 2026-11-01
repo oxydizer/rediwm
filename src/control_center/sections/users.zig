@@ -60,7 +60,7 @@ fn text(value: []const u8, size: f32, dim: bool) W {
 
 fn buildCard(a: std.mem.Allocator, children: []const W) !W {
     const t = panel.palette();
-    return .{ .kind = .{ .rect = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.app_item_border } }, .direction = .column, .padding = ui.layout.Edges.all(14), .gap = 9, .width = .{ .percent = 1 }, .children = try a.dupe(W, children) };
+    return .{ .kind = .{ .rect = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.app_item_border, .relief = t.settings_card_relief } }, .direction = .column, .padding = ui.layout.Edges.all(14), .gap = 9, .width = .{ .percent = 1 }, .children = try a.dupe(W, children) };
 }
 
 pub fn build(s: *Section, cc: *panel.ControlCenter) void {

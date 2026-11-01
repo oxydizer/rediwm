@@ -352,7 +352,7 @@ test "component relief theme serialization round-trips and omits defaults" {
 
 test "relief keys of the remaining widgets parse, default to flat and round-trip" {
     const Relief = theme.Relief;
-    const keys = [_][]const u8{ "segmented_relief", "segmented_selected_relief", "stepper_relief", "swatch_relief", "pill_relief", "row_hover_relief", "row_selected_relief" };
+    const keys = [_][]const u8{ "segmented_relief", "segmented_selected_relief", "stepper_relief", "swatch_relief", "pill_relief", "row_hover_relief", "row_selected_relief", "settings_card_relief", "dialog_frame_relief", "taskbar_chip_relief", "taskbar_chip_active_relief" };
     for (keys) |key| try std.testing.expect(theme_file.knownKey(key));
 
     const defaults: Theme = .{};
@@ -386,4 +386,6 @@ test "relief keys of the remaining widgets parse, default to flat and round-trip
     try std.testing.expectEqual(t.segmented_selected_relief, reloaded.segmented_selected_relief);
     try std.testing.expectEqual(t.row_selected_relief, reloaded.row_selected_relief);
     try std.testing.expectEqual(t.stepper_relief, reloaded.stepper_relief);
+    try std.testing.expectEqual(Relief.flat, defaults.settings_card_relief);
+    try std.testing.expectEqual(Relief.flat, defaults.taskbar_chip_active_relief);
 }

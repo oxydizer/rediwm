@@ -76,7 +76,7 @@ pub fn paintFrame(r: *Renderer, box: Rect) void {
 /// App dialogs can share the host's menu background without the shell tint.
 pub fn paintFrameWithBackground(r: *Renderer, box: Rect, bg: [4]f32) void {
     const t = r.palette orelse theme.global;
-    r.fillRect(box.x, box.y, box.w, box.h, .{ .color = bg, .radius = t.radius_lg, .border_width = 1, .border_color = t.window_border });
+    r.fillRect(box.x, box.y, box.w, box.h, .{ .color = bg, .radius = t.radius_lg, .border_width = 1, .border_color = t.window_border, .relief = t.dialog_frame_relief });
 }
 
 /// An embedded window header: identical height, tint and radius to chrome.

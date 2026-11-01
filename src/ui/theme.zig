@@ -235,6 +235,18 @@ pub const Theme = struct {
     button_pressed_relief: Relief = .flat,
     field_relief: Relief = .flat,
     dialog_inset_relief: Relief = .flat,
+    /// The dialog card itself (`widgets/dialog.zig`). Raised shadows lie outside
+    /// it, so keep them within the host's backdrop margin.
+    dialog_frame_relief: Relief = .flat,
+    /// The cards around Settings entries. The page scrolls in a clipped
+    /// container, so a raised card's shadow is cut at its edge: prefer `inset`.
+    settings_card_relief: Relief = .flat,
+    /// Taskbar window chips, idle and active (focused). The chip raster ends a
+    /// few px past the chip, so both shade inside the edge: `inset` is a
+    /// groove, `raised` the same shading with light and dark swapped. Main
+    /// theme only; `[taskbar_theme]` does not carry them.
+    taskbar_chip_relief: Relief = .flat,
+    taskbar_chip_active_relief: Relief = .flat,
     select_relief: Relief = .flat,
     select_popup_relief: Relief = .flat,
     checkbox_relief: Relief = .flat,

@@ -166,7 +166,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.m
     }, false);
     actions.width = .auto;
     var banner = try group(a, &.{ summary, actions }, narrow);
-    banner.kind = .{ .rect = .{ .color = ui.theme.global.app_item, .radius = 8, .border_width = 1, .border_color = ui.theme.global.app_item_border } };
+    banner.kind = .{ .rect = .{ .color = ui.theme.global.app_item, .radius = 8, .border_width = 1, .border_color = ui.theme.global.app_item_border, .relief = ui.theme.global.settings_card_relief } };
     banner.padding = ui.layout.Edges.all(12);
     try tryAppend(&content, a, banner);
     const field = try a.create(W);
