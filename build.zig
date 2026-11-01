@@ -39,9 +39,10 @@ pub fn build(b: *std.Build) void {
 
     const c_headers = support.cHeaders(b, target, optimize);
     const wayland = protocols.module(b);
-    const xkbcommon = b.dependency("xkbcommon", .{}).module("xkbcommon");
-    // Hand-written facade over pixman's region API (the only part this
-    // compositor uses); see src/wlr/pixman.zig. No package dependency.
+    // Hand-written facades over the parts of xkbcommon and pixman this
+    // compositor actually calls; see src/wlr/xkbcommon.zig and
+    // src/wlr/pixman.zig. Neither has a package dependency.
+    const xkbcommon = b.createModule(.{ .root_source_file = b.path("src/wlr/xkbcommon.zig") });
     const pixman = b.createModule(.{ .root_source_file = b.path("src/wlr/pixman.zig") });
     // One header-backed module supplies every compositor wlroots binding.
     const wlr_facade = b.createModule(.{
