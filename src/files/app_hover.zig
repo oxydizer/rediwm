@@ -4,6 +4,7 @@ const std = @import("std");
 const App = @import("app.zig").App;
 const anim = @import("ui").anim;
 const header = @import("header.zig");
+const interaction_surface = @import("ui").interaction_surface;
 const hover_glide = @import("ui").hover_glide;
 const button_widget = @import("ui").widgets.button;
 const ui_theme = @import("ui").theme;
@@ -92,20 +93,70 @@ pub fn clipToViewport(self: *App, rect: header.Rect) header.Rect {
 
 /// The pointer's sidebar row, unless that is the current place, which
 /// paints its own fill.
+pub fn updateSidebarSurface(self: *App) void {
+    if (self.dialog != null or self.menu != null or self.sidebar_resize != null or
+        self.overSidebarDivider(self.mouse_x, self.mouse_y))
+    {
+        _ = self.sidebar_surface.pointerMotion(null);
+        return;
+    }
+
+    const index = self.placeAt(self.mouse_x, self.mouse_y) orelse {
+        _ = self.sidebar_surface.pointerMotion(null);
+        return;
+    };
+    const eject = self.ejectAt(self.mouse_x, self.mouse_y);
+    const key: usize = if (eject) |k| 700 + k else switch (self.rowKind(index)) {
+        .builtin => |b| 300 + b,
+        .pin => |j| 800 + j,
+        .device => |k| 600 + k,
+    };
+    const bounds = if (eject != null) self.ejectRect(index) else self.placeRect(index);
+
+    _ = self.sidebar_surface.pointerMotion(.{
+        .id = @intCast(key),
+        .rect = .{
+            .x = @floatCast(bounds.x),
+            .y = @floatCast(bounds.y),
+            .w = @floatCast(bounds.w),
+            .h = @floatCast(bounds.h),
+        },
+        .clip = .{
+            .x = 0,
+            .y = @floatFromInt(self.contentTop()),
+            .w = @floatFromInt(self.sidebarWidth()),
+            .h = @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()),
+        },
+        .role = .interactive,
+    });
+}
+
+/// The pointer's sidebar row, unless that is the current place, which
+/// paints its own fill. The Surface retains the host's existing row identity.
 pub fn hoveredPlace(self: *App) ?usize {
     if (self.dialog != null or self.menu != null) return null;
     if (self.sidebar_resize != null or self.overSidebarDivider(self.mouse_x, self.mouse_y)) return null;
-    const width: f64 = @floatFromInt(self.sidebarWidth());
-    if (self.mouse_x < 0 or self.mouse_x >= width) return null;
-    if (self.sidebarScrollbar()) |bar| if (self.mouse_x >= @as(f64, bar.track.x)) return null;
-    if (self.mouse_y < @as(f64, @floatFromInt(self.contentTop())) or self.mouse_y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return null;
-    for (0..self.rowCount()) |i| {
-        if (!self.placeVisible(i)) continue;
-        const row = self.placeRect(i);
-        if (self.mouse_y < row.y or self.mouse_y >= row.y + row.h) continue;
-        return if (self.placeActive(i)) null else i;
+    if (self.sidebarScrollbar()) |bar| {
+        if (self.mouse_x >= @as(f64, bar.track.x)) return null;
     }
-    return null;
+
+    const target = self.sidebar_surface.hovered orelse return null;
+    const key: usize = @intCast(target.id);
+    const index = if (key >= 300 and key < 300 + places.len)
+        key - 300
+    else if (key >= 800 and key < 800 + pins_mod.max) blk: {
+        const pin = key - 800;
+        if (pin >= self.pins.items.items.len) return null;
+        break :blk pin_base + pin;
+    } else if (key >= 600 and key < 700)
+        self.deviceBase() + key - 600
+    else if (key >= 700 and key < 800)
+        self.deviceBase() + key - 700
+    else
+        return null;
+
+    if (index >= self.rowCount() or !self.placeVisible(index)) return null;
+    return if (self.placeActive(index)) null else index;
 }
 
 /// The pointer's item, unless it is selected, which paints its own fill.
@@ -249,6 +300,7 @@ pub fn damageToolbarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
 pub fn stepHover(self: *App, now: i64) void {
     const pixel = anim.rasterPixelQuantum(@floatFromInt(self.scale));
 
+    self.updateSidebarSurface();
     if (self.sidebarWidth() > 0) {
         const before = self.nav_hover.frame;
         self.nav_hover.setTarget(now, if (self.hoveredPlace()) |i| .{ .col = 0, .row = @intCast(i) } else null);

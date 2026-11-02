@@ -220,6 +220,7 @@ test "sidebar hover glides between places and leaves the current one to its own 
         var y = first.y;
         while (y < next.y + next.h) : (y += 1) {
             app.mouse_y = y;
+            app.updateSidebarSurface();
             try std.testing.expect(app.hoveredPlace() != null);
         }
     }
@@ -242,6 +243,32 @@ test "sidebar hover glides between places and leaves the current one to its own 
     app.sidebar_scroll = 20;
     box = app.navHighlight(app.nav_hover.frame);
     try std.testing.expectEqual(app.placeRect(4).y, box.y);
+}
+
+test "sidebar surface owns place hover and clears modal and departed targets" {
+    var app = try testApp();
+    defer app.deinit();
+    app.loading = false;
+
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(1))) + 10);
+    try std.testing.expectEqual(@as(u64, 301), app.sidebar_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(?usize, 1), app.hoveredPlace());
+
+    // The current place keeps its identity for pointer damage, but paints
+    // its own selected fill instead of receiving the hover glide.
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(0))) + 10);
+    try std.testing.expectEqual(@as(u64, 300), app.sidebar_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(?usize, null), app.hoveredPlace());
+
+    app.menu = .background;
+    app.updateSidebarSurface();
+    try std.testing.expect(app.sidebar_surface.hovered == null);
+    try std.testing.expectEqual(@as(?usize, null), app.hoveredPlace());
+
+    app.menu = null;
+    app.handleMotion(-1, -1);
+    try std.testing.expect(app.sidebar_surface.hovered == null);
+    try std.testing.expectEqual(@as(?usize, null), app.hoveredPlace());
 }
 
 test "a grid that reflows forgets its item highlight" {
