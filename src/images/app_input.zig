@@ -9,6 +9,8 @@ const cache_mod = @import("cache.zig");
 const Rect = view.Rect;
 const edit = @import("edit.zig");
 const scrollbar = @import("ui").widgets.scrollbar;
+const button_widget = @import("ui").widgets.button;
+const ui_theme = @import("ui").theme;
 const a = std.heap.c_allocator;
 const app_mod = @import("app.zig");
 const App = app_mod.App;
@@ -24,6 +26,59 @@ pub fn buttonRect(self: *const App, action: Action) Rect {
     const width = (@as(f64, @floatFromInt(self.w)) - 24) / @as(f64, @floatFromInt(columns));
     const n = @intFromEnum(action);
     return .{ .x = 12 + @as(f64, @floatFromInt(n % columns)) * width, .y = 8 + @as(f64, @floatFromInt(n / columns)) * 40, .w = width - 4, .h = 36 };
+}
+
+pub fn buttonProximity(
+    self: *const App,
+    action: Action,
+    x: f64,
+    y: f64,
+) button_widget.ProximitySample {
+    const rect = self.buttonRect(action);
+    const absent = button_widget.ProximitySample{
+        .distance = std.math.inf(f32),
+        .x = @floatCast(x - rect.x),
+        .y = @floatCast(y - rect.y),
+    };
+    if (self.dialog != .none or self.operation != null or !self.enabled(action))
+        return absent;
+
+    return button_widget.sampleProximity(
+        .{
+            .x = @floatCast(rect.x),
+            .y = @floatCast(rect.y),
+            .w = @floatCast(rect.w),
+            .h = @floatCast(rect.h),
+        },
+        @floatCast(x),
+        @floatCast(y),
+        .{
+            .x = 0,
+            .y = 0,
+            .w = @floatFromInt(self.w),
+            .h = @floatCast(self.toolbarBottom()),
+        },
+    );
+}
+
+fn toolbarProximityChanged(
+    self: *const App,
+    old_x: f64,
+    old_y: f64,
+    new_x: f64,
+    new_y: f64,
+) bool {
+    const reach = ui_theme.global.border_glow_reach;
+    if (!ui_theme.global.button_hover_glow_enabled or reach <= 0 or
+        self.dialog != .none or self.operation != null)
+        return false;
+
+    for (std.meta.tags(Action)) |action| {
+        const before = self.buttonProximity(action, old_x, old_y);
+        const after = self.buttonProximity(action, new_x, new_y);
+        if (@min(before.distance, after.distance) <= reach) return true;
+    }
+    return false;
 }
 
 pub fn hit(self: *const App, x: f64, y: f64) ?Action {
@@ -163,6 +218,8 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
 
 pub fn handleMotion(self: *App, x: f64, y: f64) void {
     if (self.closed) return;
+    const old_x = self.px;
+    const old_y = self.py;
     if (self.dialog == .trash) {
         if (self.deletion.motion(self.w, self.h, x, y)) self.dirty = true;
         const g = self.deletion.geometry(self.w, self.h);
@@ -173,6 +230,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
         self.hover = hover;
         self.dirty = true;
     }
+    if (toolbarProximityChanged(self, old_x, old_y, x, y)) self.dirty = true;
     if (self.operation != null or (self.dialog != .none and !self.filename_drag)) {
         self.px = x;
         self.py = y;
@@ -312,4 +370,42 @@ pub fn revealSelected(self: *App) void {
     const pos = self.position();
     const start = self.thumbStart();
     self.strip_start = if (pos < start) pos else if (pos >= start + self.thumbCount()) pos + 1 - self.thumbCount() else start;
+}
+
+test "Images toolbar proximity drives redraws outside direct hover" {
+    const paths = [_][:0]const u8{"/nonexistent/image.png"};
+    var app: App = .{
+        .paths = &paths,
+        .selected = 0,
+        .loader = undefined,
+        .thumbnail_loader = undefined,
+    };
+
+    const saved_theme = ui_theme.global;
+    defer ui_theme.global = saved_theme;
+    ui_theme.global.button_hover_glow_enabled = true;
+    ui_theme.global.border_glow_reach = 56;
+
+    const rect = app.buttonRect(.back);
+    const x = rect.x + rect.w / 2;
+    const y = rect.y - 4;
+    const sample = buttonProximity(&app, .back, x, y);
+
+    try std.testing.expectApproxEqAbs(@as(f32, 4), sample.distance, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, @floatCast(rect.w / 2)), sample.x, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, -4), sample.y, 0.001);
+
+    const disabled = buttonProximity(&app, .previous, x, y);
+    try std.testing.expect(std.math.isInf(disabled.distance));
+
+    app.px = 500;
+    app.py = 500;
+    app.dirty = false;
+    app.handleMotion(x, y);
+    try std.testing.expect(app.dirty);
+    try std.testing.expect(app.hover == null);
+
+    app.dirty = false;
+    app.handleMotion(500, 500);
+    try std.testing.expect(app.dirty);
 }

@@ -145,6 +145,7 @@ pub const App = struct {
 
     pub const canvas = app_input.canvas;
     pub const buttonRect = app_input.buttonRect;
+    pub const buttonProximity = app_input.buttonProximity;
     pub const hit = app_input.hit;
     pub const clamp = app_input.clamp;
     pub const zoom = app_input.zoom;
