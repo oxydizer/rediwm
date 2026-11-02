@@ -131,6 +131,88 @@ pub fn updateColumnSurface(self: *App) void {
     _ = self.column_surface.pointerMotion(null);
 }
 
+fn dialogSurfaceHit(id: usize, rect: header.Rect) interaction_surface.Hit {
+    return .{
+        .id = @intCast(id),
+        .rect = .{
+            .x = @floatCast(rect.x),
+            .y = @floatCast(rect.y),
+            .w = @floatCast(rect.w),
+            .h = @floatCast(rect.h),
+        },
+        .clip = .{
+            .x = @floatCast(rect.x),
+            .y = @floatCast(rect.y),
+            .w = @floatCast(rect.w),
+            .h = @floatCast(rect.h),
+        },
+        .role = .button,
+    };
+}
+
+/// The pointer's generic modal or inline rename button.
+pub fn updateDialogSurface(self: *App) void {
+    const dlg = self.dialog orelse {
+        _ = self.dialog_surface.pointerMotion(null);
+        return;
+    };
+
+    // These dialogs retain their own interaction and hit-testing paths.
+    if (dlg.kind == .transfers or dlg.kind == .properties or
+        dlg.kind == .open_with or dlg.kind == .trash_confirm)
+    {
+        _ = self.dialog_surface.pointerMotion(null);
+        return;
+    }
+
+    var hit: ?interaction_surface.Hit = null;
+
+    if (self.renameCard()) |card| {
+        if (card.confirm.contains(self.mouse_x, self.mouse_y)) {
+            hit = dialogSurfaceHit(1, card.confirm);
+        } else if (card.cancel.contains(self.mouse_x, self.mouse_y)) {
+            hit = dialogSurfaceHit(2, card.cancel);
+        }
+    } else {
+        const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
+        const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2;
+        const dy = (@as(f64, @floatFromInt(self.h)) - 130) / 2;
+
+        if (dlg.kind == .conflict) {
+            const button_w = (dw - 48) / 3;
+            for (0..3) |i| {
+                const rect: header.Rect = .{
+                    .x = dx + 16 + @as(f64, @floatFromInt(i)) * (button_w + 8),
+                    .y = dy + 84,
+                    .w = button_w,
+                    .h = 28,
+                };
+                if (self.mouse_x >= rect.x and self.mouse_x <= rect.x + rect.w and
+                    self.mouse_y >= rect.y and self.mouse_y <= rect.y + rect.h)
+                {
+                    hit = dialogSurfaceHit(i + 1, rect);
+                    break;
+                }
+            }
+        } else {
+            const rects = [_]header.Rect{
+                .{ .x = dx + dw - 184, .y = dy + 84, .w = 80, .h = 28 },
+                .{ .x = dx + dw - 96, .y = dy + 84, .w = 80, .h = 28 },
+            };
+            for (rects, 0..) |rect, i| {
+                if (self.mouse_x >= rect.x and self.mouse_x <= rect.x + rect.w and
+                    self.mouse_y >= rect.y and self.mouse_y <= rect.y + rect.h)
+                {
+                    hit = dialogSurfaceHit(i + 1, rect);
+                    break;
+                }
+            }
+        }
+    }
+
+    _ = self.dialog_surface.pointerMotion(hit);
+}
+
 /// The pointer's sidebar row, unless that is the current place, which
 /// paints its own fill.
 pub fn updateSidebarSurface(self: *App) void {
@@ -342,6 +424,7 @@ pub fn stepHover(self: *App, now: i64) void {
 
     self.updateSidebarSurface();
     self.updateColumnSurface();
+    self.updateDialogSurface();
     if (self.sidebarWidth() > 0) {
         const before = self.nav_hover.frame;
         self.nav_hover.setTarget(now, if (self.hoveredPlace()) |i| .{ .col = 0, .row = @intCast(i) } else null);

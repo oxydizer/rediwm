@@ -217,8 +217,11 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     }
 }
 
-pub fn renderButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, label_text: []const u8, enabled: bool) void {
-    const hovered = enabled and self.mouse_x >= x and self.mouse_x <= x + w and self.mouse_y >= y and self.mouse_y <= y + h;
+pub fn renderButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, label_text: []const u8, enabled: bool, target_id: usize) void {
+    const hovered = enabled and if (self.dialog_surface.hovered) |target|
+        target.id == target_id
+    else
+        false;
     var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     ui_button.paint(&layer.renderer, layer.local(), .{ .label = label_text }, .{ .pointer = if (!enabled) .disabled else if (hovered) .hover else .idle });
     layer.finish();
@@ -337,7 +340,10 @@ pub fn renderRenameCard(self: *App, cr: *c.cairo_t, card: RenameCard) void {
             .icon = if (i == 0) .checkmark else .close,
             .icon_scale = 0.55,
             .label = if (i == 0) tr("Rename") else tr("Cancel"),
-        }, .{ .pointer = if (rect.contains(self.mouse_x, self.mouse_y)) .hover else .idle });
+        }, .{ .pointer = if (self.dialog_surface.hovered) |target|
+            if (target.id == i + 1) .hover else .idle
+        else
+            .idle });
         layer.finish();
     }
 }
@@ -546,24 +552,24 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
 
     if (dlg.kind == .terminal_close) {
         drawEllipsis(cr, tr("Closing ends this shell and its running jobs."), dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
-        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("Close"), true);
-        self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true);
+        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("Close"), true, 1);
+        self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true, 2);
     } else if (dlg.kind == .conflict) {
         const conflict_str = dlg.conflict_name orelse "";
         const conflict_msg = i18n.fmt(&buf, tr("File '{value}' already exists in destination."), .{ .value = conflict_str }) catch tr("Conflict");
         setSource(cr, t.fg);
         drawEllipsis(cr, conflict_msg, dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
 
-        self.renderButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip (S)"), true);
-        self.renderButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename (R)"), true);
-        self.renderButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel (C)"), true);
+        self.renderButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip (S)"), true, 1);
+        self.renderButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename (R)"), true, 2);
+        self.renderButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel (C)"), true, 3);
     } else {
         self.renderEditor(cr, &self.dialog.?.edit, self.editorRect(), true, false);
 
         setSource(cr, t.fg);
         if (dw >= 420) drawText(cr, tr("Enter confirms · Esc cancels"), dx + 16, dy + 102, shell_ui.textSize(), false);
 
-        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("OK"), true);
-        self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true);
+        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("OK"), true, 1);
+        self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true, 2);
     }
 }

@@ -26,19 +26,7 @@ pub fn hoverKey(self: *App) usize {
         if (dlg.kind == .properties) return dlg.properties.?.hit(self.w, self.h, x, y);
         if (dlg.kind == .open_with) return dlg.applications.?.hit(self.w, self.h, x, y);
         if (dlg.kind == .trash_confirm) return @intFromEnum(dlg.deletion.geometry(self.w, self.h).target(x, y));
-        const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
-        const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2;
-        const dy = (@as(f64, @floatFromInt(self.h)) - 130) / 2;
-        if (y < dy + 84 or y > dy + 112) return 0;
-        if (dlg.kind == .conflict) {
-            for (0..3) |i| {
-                const left = dx + 16 + @as(f64, @floatFromInt(i)) * ((dw - 48) / 3 + 8);
-                if (x >= left and x <= left + (dw - 48) / 3) return i + 1;
-            }
-        } else {
-            if (x >= dx + dw - 184 and x <= dx + dw - 104) return 1;
-            if (x >= dx + dw - 96 and x <= dx + dw - 16) return 2;
-        }
+        if (self.dialog_surface.hovered) |target| return @intCast(target.id);
         return 0;
     }
     if (self.menu != null) return 100 + (self.menuHit(x, y) orelse 99);
@@ -134,6 +122,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     self.updateToolbarSurface();
     self.updateSidebarSurface();
     self.updateColumnSurface();
+    self.updateDialogSurface();
     self.damageToolbarProximity(old_x, old_y, x, y);
     if (self.selection_band != null) self.updateSelectionBand();
     if (self.text_dragging) {

@@ -390,3 +390,87 @@ test "toolbar proximity uses shared button geometry and damages in-button motion
     try std.testing.expect(app.paint_damage != null);
     try std.testing.expect(app.paint_damage.?.contains(x, y));
 }
+
+
+test "dialog surface owns generic modal button hover targets" {
+    var app = try testApp();
+    defer app.deinit();
+
+    const dw: f64 = @min(440, @as(f64, @floatFromInt(app.w)) - 24);
+    const dx = (@as(f64, @floatFromInt(app.w)) - dw) / 2;
+    const dy = (@as(f64, @floatFromInt(app.h)) - 130) / 2;
+
+    const generic_kinds = [_]@import("app_model.zig").DialogKind{
+        .terminal_close,
+        .new_folder,
+        .new_file,
+        .new_branch,
+    };
+
+    for (generic_kinds) |kind| {
+        app.dialog = .{ .kind = kind, .title = "Test" };
+
+        app.mouse_x = dx + dw - 144;
+        app.mouse_y = dy + 98;
+        app.updateDialogSurface();
+        try std.testing.expectEqual(@as(u64, 1), app.dialog_surface.hovered.?.id);
+        try std.testing.expectEqual(@as(usize, 1), app.hoverKey());
+
+        app.mouse_x = dx + dw - 56;
+        app.updateDialogSurface();
+        try std.testing.expectEqual(@as(u64, 2), app.dialog_surface.hovered.?.id);
+        try std.testing.expectEqual(@as(usize, 2), app.hoverKey());
+    }
+
+    app.dialog = .{
+        .kind = .conflict,
+        .title = "Conflict",
+    };
+
+    const button_w = (dw - 48) / 3;
+    for (0..3) |i| {
+        app.mouse_x = dx + 16 + @as(f64, @floatFromInt(i)) * (button_w + 8) + button_w / 2;
+        app.mouse_y = dy + 98;
+        app.updateDialogSurface();
+        try std.testing.expectEqual(@as(u64, @intCast(i + 1)), app.dialog_surface.hovered.?.id);
+        try std.testing.expectEqual(i + 1, app.hoverKey());
+    }
+
+    // A specialized dialog keeps its own interaction path.
+    app.dialog = .{ .kind = .transfers, .title = "Transfers" };
+    app.updateDialogSurface();
+    try std.testing.expect(app.dialog_surface.hovered == null);
+
+    // Closing a dialog clears any retained dialog target.
+    app.dialog = .{ .kind = .terminal_close, .title = "Close terminal?" };
+    app.mouse_x = dx + dw - 144;
+    app.mouse_y = dy + 98;
+    app.updateDialogSurface();
+    try std.testing.expect(app.dialog_surface.hovered != null);
+    app.closeDialog();
+    try std.testing.expect(app.dialog_surface.hovered == null);
+}
+
+test "dialog surface owns inline rename buttons and clears departed targets" {
+    var app = try testApp();
+    defer app.deinit();
+
+    app.dialog = .{ .kind = .rename, .title = "Rename" };
+    const card = app.renameCard().?;
+
+    app.mouse_x = card.confirm.x + card.confirm.w / 2;
+    app.mouse_y = card.confirm.y + card.confirm.h / 2;
+    app.updateDialogSurface();
+    try std.testing.expectEqual(@as(u64, 1), app.dialog_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 1), app.hoverKey());
+
+    app.mouse_x = card.cancel.x + card.cancel.w / 2;
+    app.mouse_y = card.cancel.y + card.cancel.h / 2;
+    app.updateDialogSurface();
+    try std.testing.expectEqual(@as(u64, 2), app.dialog_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 2), app.hoverKey());
+
+    app.handleMotion(-1, -1);
+    try std.testing.expect(app.dialog_surface.hovered == null);
+    try std.testing.expectEqual(@as(usize, 0), app.hoverKey());
+}
