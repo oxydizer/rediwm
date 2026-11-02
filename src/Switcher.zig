@@ -40,6 +40,8 @@ pub const Card = struct {
     /// its group's stack, so bringing a different member forward (`Tab`)
     /// slides the stack into place instead of snapping.
     stack: Anim = .{},
+    /// Circular sector border intensity, eased independently for hover exits.
+    hover: Anim = .{ .property = .opacity },
 };
 
 pub const Trigger = enum { alt, ctrl };

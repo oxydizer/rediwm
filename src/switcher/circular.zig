@@ -54,7 +54,7 @@ pub const State = struct {
     closing: bool = false,
     /// The hub's arrow, in radians clockwise from "points up at the
     /// selected card" (always true at rest, since the selection sits at
-    /// twelve o'clock). Swings to point at whatever's hovered (`updateArrow`).
+    /// twelve o'clock). Orbits the hub rim toward the hovered sector.
     arrow_angle: Anim = .{},
     hub_arrow: ?*sn.Buffer = null,
     hub_arrow_storage: ?*wlr.Buffer = null,
@@ -310,7 +310,12 @@ pub fn tick(self: *Switcher, output: *Output, now: i64) bool {
     const selected_group = self.cards.items[self.selected].group;
     const expand: f64 = @floatCast(self.circle.expand.value(now));
     var stack_settled = true;
+    var hover_settled = true;
     for (self.cards.items, 0..) |*card, i| {
+        card.hover.retargetTo(now, if (self.hovered == i and i != self.selected) 1 else 0, ui.anim.curveFor(.titlebar_hover));
+        const hover = std.math.clamp(card.hover.value(now), 0, 1);
+        _ = card.hover.sampleChanged(now, ui.anim.quantum_alpha);
+        hover_settled = hover_settled and card.hover.settled(now);
         const depth: f64 = card.stack.value(now);
         stack_settled = stack_settled and card.stack.settled(now);
         const visible = card.group / page_size == self.circle.page and depth < 3;
@@ -319,7 +324,7 @@ pub fn tick(self: *Switcher, output: *Output, now: i64) bool {
         const angle = @as(f64, @floatFromInt(card.group % page_size)) * tau / @as(f64, @floatFromInt(slots)) - rotation;
         const progress = if (card.group == selected_group) expand else 0;
         const sector = layout.makeSector(self.width, angle, arc, depth, progress, growth);
-        placeCard(self, card, sector, depth, progress, self.hovered == i and i != self.selected);
+        placeCard(self, card, sector, depth, progress, hover);
         if (card.id == self.cards.items[self.selected].id) {
             self.refreshIcon(card);
             updateBadge(self, card, sector) catch |err| std.log.warn("circular switcher badge: {}", .{err});
@@ -335,14 +340,18 @@ pub fn tick(self: *Switcher, output: *Output, now: i64) bool {
     _ = self.circle.expand.sampleChanged(now, ui.anim.quantum_px);
     _ = self.circle.appear.sampleChanged(now, ui.anim.quantum_px);
     return !self.scroll.settled(now) or !self.circle.expand.settled(now) or !stack_settled or !self.circle.appear.settled(now) or
-        !self.circle.arrow_angle.settled(now);
+        !self.circle.arrow_angle.settled(now) or !hover_settled;
 }
 
-fn placeCard(self: *Switcher, card: *Switcher.Card, sector: layout.Sector, depth: f64, progress: f64, hovered: bool) void {
+fn placeCard(self: *Switcher, card: *Switcher.Card, sector: layout.Sector, depth: f64, progress: f64, hover: f32) void {
     const selected = self.cards.items[self.selected].id == card.id;
     // Hover reads as "click here to land on this one", the same promise the
     // selected sector's own border makes, so both share its colour.
-    const color = if (selected or hovered) theme.global.switcher_selected_border else theme.global.switcher_item_border;
+    const intensity: f32 = if (selected) 1 else hover;
+    var color: [4]f32 = undefined;
+    for (&color, theme.global.switcher_item_border, theme.global.switcher_selected_border) |*channel, base, accent| {
+        channel.* = base + (accent - base) * intensity;
+    }
     const tree = card.tree.?;
     tree.node.setPosition(sector.x, sector.y);
     card.fill.?.setSize(sector.width, sector.height);
@@ -350,7 +359,7 @@ fn placeCard(self: *Switcher, card: *Switcher.Card, sector: layout.Sector, depth
         .width = sector.width,
         .height = sector.height,
         .radii = @splat(0),
-        .border = if (selected or hovered) 2 else 1,
+        .border = 1 + intensity,
         .border_color = col.Straight.fromRgba(color).premultiply().rgba,
         .sector = sector.arc,
         .sector_texture_height = if (card.pw > 0) layout.previewHeight(sector, card.aspect) else 0,
@@ -412,7 +421,8 @@ fn updateBadge(self: *Switcher, card: *Switcher.Card, sector: layout.Sector) !vo
 }
 
 fn paintHub(self: *Switcher, server: *Server) !void {
-    const card = &self.cards.items[self.selected];
+    const card = &self.cards.items[self.hovered orelse self.selected];
+    self.refreshIcon(card);
     const tl = server.findToplevelById(card.id) orelse return;
     const group = self.circle.groups.items[card.group];
     const key = std.hash.Wyhash.hash(card.id, tl.title()) ^ (@as(u64, tl.workspace_id) << 32);
@@ -466,10 +476,10 @@ fn paintHub(self: *Switcher, server: *Server) !void {
 }
 
 /// The hub's arrow: normally points up at the selected card (always eased to
-/// twelve o'clock by `select`'s own rotation), but swings to point at
-/// whatever's hovered instead, so the pointer previews where a click would
-/// land. Drawn as its own node rather than baked into the hub's cached
-/// image (`paintHub`'s `hub_key`): the angle can change every frame, on
+/// twelve o'clock by `select`'s own rotation), but orbits inside the rim
+/// toward whatever is hovered, so the pointer previews where a click lands.
+/// Drawn as its own node rather than baked into the cached hub image:
+/// the angle can change every frame, on
 /// pointer motion alone, independently of anything that invalidates that key.
 fn updateArrow(self: *Switcher, now: i64) void {
     const slots = @min(page_size, self.circle.groups.items.len - self.circle.page * page_size);
@@ -485,8 +495,8 @@ fn updateArrow(self: *Switcher, now: i64) void {
     const current: f64 = self.circle.arrow_angle.to;
     const delta = @mod(target - current + std.math.pi, tau) - std.math.pi;
     self.circle.arrow_angle.retargetTo(now, @floatCast(current + delta), ui.anim.curveFor(.switcher_scroll));
-    // ~0.03 rad (~1.7 deg) of play before a 14px-radius glyph visibly moves.
-    if (!self.circle.arrow_angle.sampleChanged(now, 0.03)) return;
+    // The orbit is much wider than the glyph: sample at subpixel arc steps.
+    if (!self.circle.arrow_angle.sampleChanged(now, 0.003)) return;
 
     const size: i32 = @intFromFloat(@as(f32, @floatFromInt(self.width)) * 0.36 - 16);
     const x = @divTrunc(self.width - size, 2);
@@ -510,11 +520,13 @@ fn updateArrow(self: *Switcher, now: i64) void {
     if (self.circle.hub_arrow_storage) |old| old.unlock();
     self.circle.hub_arrow_storage = &image.base;
     self.circle.hub_arrow.?.setDestSize(canvas, canvas);
-    // The pivot is where the old baked-in, fixed-up arrow's box center sat:
-    // `(d/2, 2*s + arrow_size/2)` inside the hub image, which itself sits at
-    // switcher-tree-local `(x, x)`.
-    const pivot_x = @as(f32, @floatFromInt(x)) + d / 2;
-    const pivot_y = @as(f32, @floatFromInt(x)) + 2 * s + arrow_size / 2;
+    // Keep the caret just inside the hub's rim, on the angular bisector of
+    // the hovered sector. Position and orientation share the eased angle.
+    const angle = self.circle.arrow_angle.value(now);
+    const radius = d / 2 - 2 * s - arrow_size / 2;
+    const center = @as(f32, @floatFromInt(x)) + d / 2;
+    const pivot_x = center + @sin(angle) * radius;
+    const pivot_y = center - @cos(angle) * radius;
     const half_canvas: f32 = @as(f32, @floatFromInt(canvas)) / 2;
     self.circle.hub_arrow.?.node.setPosition(
         @as(i32, @intFromFloat(@round(pivot_x - half_canvas))),

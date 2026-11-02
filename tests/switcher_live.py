@@ -187,6 +187,37 @@ def run_radial_framing(scale):
                 # upright rectangular crops cannot keep the source top outside.
                 pattern.write_text('0 400 240')
                 check_radial_colors(capture('short-top'), (0, 0, 255))
+                # Hover previews a window in the hub without changing the
+                # keyboard selection. The caret travels around the inner rim.
+                ipc.move_cursor(1, 1)
+                baseline = capture('hover-baseline')
+                density = output['scale']
+                hub_size = int((inner / density / .18) * .36 - 16)
+                orbit = (hub_size / 2 - 16 * min(1, hub_size / 210)) * density
+                hub_text = (round(cx - 42 * density), round(cy - 25 * density),
+                            round(cx + 42 * density), round(cy + 42 * density))
+                def accent_near(image, x, y):
+                    patch = image.crop((round(x - 14 * density), round(y - 14 * density),
+                                        round(x + 14 * density), round(y + 14 * density)))
+                    return sum(r > 220 and 15 < g < 65 and 35 < b < 95
+                               for r, g, b in patch.getdata())
+                hovered_hub = None
+                for name, dx, dy in (('right', 1, 0), ('bottom', 0, 1), ('left', -1, 0)):
+                    radius = (inner + outer) / 2
+                    ipc.move_cursor(round((cx + dx * radius) / density), round((cy + dy * radius) / density))
+                    time.sleep(.3)
+                    image = capture(f'hover-{name}')
+                    assert accent_near(image, cx + dx * orbit, cy + dy * orbit) > 10, 'caret did not orbit toward hover'
+                    assert accent_near(image, cx, cy - orbit) == 0, 'caret stayed above hub'
+                    assert image.crop(hub_text).tobytes() != baseline.crop(hub_text).tobytes(), 'hub kept selected title'
+                    if name == 'right': hovered_hub = image.crop(hub_text).tobytes()
+                ipc.move_cursor(1, 1)
+                time.sleep(.3)
+                restored = capture('hover-restored')
+                assert restored.tobytes() == baseline.tobytes(), 'hover did not restore selection or settle'
+                ipc.key_down_up(15)  # The former right-hand sector is now selected.
+                selected = capture('hover-selected')
+                assert selected.crop(hub_text).tobytes() == hovered_hub, 'hover title differs from selected title'
                 assert all(w['is_minimized'] for w in ipc.get_windows()), 'radial preview restored a client'
                 ipc.key_down_up(1)
                 ipc.key(29, False)
