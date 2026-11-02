@@ -253,6 +253,53 @@ pub fn updateSidebarSurface(self: *App) void {
     });
 }
 
+/// The pointer's item card, using Files' existing itemAt geometry.
+pub fn updateItemSurface(self: *App) void {
+    if (self.dialog != null or self.menu != null or self.transfer_view.active) {
+        _ = self.item_surface.pointerMotion(null);
+        return;
+    }
+
+    const index = self.itemAt(self.mouse_x, self.mouse_y) orelse {
+        _ = self.item_surface.pointerMotion(null);
+        return;
+    };
+
+    const per_row: usize = @intCast(self.columns());
+    const col: i32 = @intCast(index % per_row);
+    const row: i32 = @intCast(index / per_row);
+    const cell = self.cellWidth();
+    const rect: header.Rect = .{
+        .x = @floatFromInt(self.sidebarWidth() + 20 + col * cell),
+        .y = @floatFromInt(self.viewTop() + self.itemInset() - self.scroll_y + row * self.rowHeight()),
+        .w = @floatFromInt(cell - 20),
+        .h = @floatFromInt(self.cardHeight()),
+    };
+    const clip: header.Rect = .{
+        .x = @floatFromInt(self.sidebarWidth() + 20),
+        .y = @floatFromInt(self.viewTop()),
+        .w = @floatFromInt(@max(0, self.w - self.sidebarWidth() - 20 - self.scrollbarGutter())),
+        .h = @floatFromInt(@max(0, self.contentBottom() - self.viewTop())),
+    };
+
+    _ = self.item_surface.pointerMotion(.{
+        .id = @intCast(index),
+        .rect = .{
+            .x = @floatCast(rect.x),
+            .y = @floatCast(rect.y),
+            .w = @floatCast(rect.w),
+            .h = @floatCast(rect.h),
+        },
+        .clip = .{
+            .x = @floatCast(clip.x),
+            .y = @floatCast(clip.y),
+            .w = @floatCast(clip.w),
+            .h = @floatCast(clip.h),
+        },
+        .role = .interactive,
+    });
+}
+
 /// The pointer's sidebar row, unless that is the current place, which
 /// paints its own fill. The Surface retains the host's existing row identity.
 pub fn hoveredPlace(self: *App) ?usize {
@@ -283,8 +330,10 @@ pub fn hoveredPlace(self: *App) ?usize {
 
 /// The pointer's item, unless it is selected, which paints its own fill.
 pub fn hoveredItem(self: *App) ?usize {
-    if (self.dialog != null or self.menu != null) return null;
-    const idx = self.itemAt(self.mouse_x, self.mouse_y) orelse return null;
+    if (self.dialog != null or self.menu != null or self.transfer_view.active) return null;
+    const target = self.item_surface.hovered orelse return null;
+    const idx: usize = @intCast(target.id);
+    if (idx >= self.items.items.len) return null;
     return if (self.items.items[idx].selected) null else idx;
 }
 
@@ -422,6 +471,7 @@ pub fn damageToolbarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
 pub fn stepHover(self: *App, now: i64) void {
     const pixel = anim.rasterPixelQuantum(@floatFromInt(self.scale));
 
+    self.updateItemSurface();
     self.updateSidebarSurface();
     self.updateColumnSurface();
     self.updateDialogSurface();

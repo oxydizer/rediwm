@@ -119,6 +119,8 @@ test "item hover glides between cells and rests without repaints or wakeups" {
     // It fades in where the pointer landed.
     const first = pointOnItem(&app, 0);
     app.handleMotion(first[0], first[1]);
+    try std.testing.expectEqual(@as(u64, 0), app.item_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 1000), app.hoverKey());
     app.dirty = false;
     app.stepHover(1000);
     try std.testing.expect(app.hover_active);
@@ -158,6 +160,8 @@ test "item hover glides between cells and rests without repaints or wakeups" {
 
     // A selected item paints its own fill: the highlight fades out.
     app.items.items[5].selected = true;
+    try std.testing.expectEqual(@as(u64, 5), app.item_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 1005), app.hoverKey());
     app.stepHover(12100);
     app.stepHover(15000);
     try std.testing.expectEqual(@as(f32, 0), app.item_hover.frame.alpha);
@@ -181,6 +185,7 @@ test "item hover glides between cells and rests without repaints or wakeups" {
     app.menu = .background;
     app.stepHover(21100);
     app.stepHover(24000);
+    try std.testing.expect(app.item_surface.hovered == null);
     try std.testing.expectEqual(@as(f32, 0), app.item_hover.frame.alpha);
 }
 

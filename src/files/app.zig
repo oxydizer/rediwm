@@ -191,6 +191,7 @@ pub const App = struct {
     sidebar_surface: interaction_surface.Surface = .{},
     column_surface: interaction_surface.Surface = .{},
     dialog_surface: interaction_surface.Surface = .{},
+    item_surface: interaction_surface.Surface = .{},
     nav_hover: hover_glide.Glide = .{},
     item_hover: hover_glide.Glide = .{},
     // Each path section fades independently, including when crossing a separator.
@@ -450,6 +451,7 @@ pub const App = struct {
     pub const updateSidebarSurface = app_hover.updateSidebarSurface;
     pub const updateColumnSurface = app_hover.updateColumnSurface;
     pub const updateDialogSurface = app_hover.updateDialogSurface;
+    pub const updateItemSurface = app_hover.updateItemSurface;
     pub const hoveredToolbarButton = app_hover.hoveredToolbarButton;
     pub const toolbarButtonProximity = app_hover.toolbarButtonProximity;
     pub const damageToolbarProximity = app_hover.damageToolbarProximity;

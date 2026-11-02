@@ -48,20 +48,23 @@ pub fn hoverKey(self: *App) usize {
     }
     if (self.sidebar_surface.hovered) |target| return @intCast(target.id);
     if (self.inlineTorrentHit(x, y)) |hit| return std.math.maxInt(usize) - 3000 - hit.index * 2 - @intFromBool(hit.toggle);
-    if (self.itemAt(x, y)) |i| {
-        if (self.sizeButtonRect(i)) |rect| {
-            if (rect.contains(x, y)) {
-                if (self.folder_sizes.get(self.items.items[i].path)) |sz| {
-                    switch (sz) {
-                        .running => return 2_000_000 + i,
-                        .done => {},
+    if (self.item_surface.hovered) |target| {
+        const i: usize = @intCast(target.id);
+        if (i < self.items.items.len) {
+            if (self.sizeButtonRect(i)) |rect| {
+                if (rect.contains(x, y)) {
+                    if (self.folder_sizes.get(self.items.items[i].path)) |sz| {
+                        switch (sz) {
+                            .running => return 2_000_000 + i,
+                            .done => {},
+                        }
+                    } else {
+                        return 2_000_000 + i;
                     }
-                } else {
-                    return 2_000_000 + i;
                 }
             }
+            return 1000 + i;
         }
-        return 1000 + i;
     }
     return 0;
 }
@@ -123,6 +126,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     self.updateSidebarSurface();
     self.updateColumnSurface();
     self.updateDialogSurface();
+    self.updateItemSurface();
     self.damageToolbarProximity(old_x, old_y, x, y);
     if (self.selection_band != null) self.updateSelectionBand();
     if (self.text_dragging) {
