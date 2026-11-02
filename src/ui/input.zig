@@ -13,6 +13,8 @@ const layout = @import("layout.zig");
 const Widget = layout.Widget;
 
 const button_widget = @import("widgets/button.zig");
+const interaction_surface = @import("interaction_surface.zig");
+const theme = @import("theme.zig");
 const checkbox_widget = @import("widgets/checkbox.zig");
 const scroll_widget = @import("widgets/scroll_container.zig");
 const text_input_widget = @import("widgets/text_input.zig");
@@ -69,9 +71,11 @@ fn sampleButtonProximity(
 ) void {
     switch (widget.kind) {
         .button => |*data| {
-            const sample = button_widget.sampleProximity(widgetRect(widget), x, y, clip);
-            const sample_x = if (sample.distance < std.math.inf(f32)) sample.x else data.proximity_x;
-            const sample_y = if (sample.distance < std.math.inf(f32)) sample.y else data.proximity_y;
+            const sample = interaction_surface.sampleButtonProximity(
+                widgetRect(widget), x, y, clip, theme.global.border_glow_reach,
+            );
+            const sample_x = sample.x;
+            const sample_y = sample.y;
             if (data.proximity_distance != sample.distance or
                 data.proximity_x != sample_x or data.proximity_y != sample_y)
             {
@@ -151,6 +155,78 @@ pub fn findInteractive(start: ?*Widget) ?*Widget {
     return start;
 }
 
+/// Adapts the tree's point-query result to the shared interaction surface.
+/// The widget pointer remains host-owned; only its integer identity and
+/// visible geometry cross the surface boundary.
+pub fn interactionHit(
+    root: *Widget,
+    target: ?*Widget,
+    x: f32,
+    y: f32,
+) ?interaction_surface.Hit {
+    const widget = target orelse return null;
+
+    const role: interaction_surface.Role = switch (widget.kind) {
+        .button => .button,
+        .row, .checkbox, .text_input, .secret_input, .toggle, .slider,
+        .segmented, .select, .swatch, .stepper, .arrangement => .interactive,
+        else => .passive,
+    };
+
+    const enabled = switch (widget.kind) {
+        .button => |data| data.state != .disabled,
+        .row => |data| data.state != .disabled,
+        .checkbox => |data| !data.disabled,
+        .toggle => |data| !data.disabled,
+        .select => |data| !data.disabled,
+        else => true,
+    };
+
+    var rect = widgetRect(widget);
+    var clip = widgetRect(root);
+
+    // Select popups are overlays. Their hit geometry is independent
+    // of the select control's normal ancestor clipping.
+    if (widget.kind == .select and widget.kind.select.open) {
+        const popup = select_widget.popupBounds(widget);
+        if (x >= popup.x and x < popup.x + popup.w and
+            y >= popup.y and y < popup.y + popup.h)
+        {
+            rect = .{
+                .x = popup.x,
+                .y = popup.y,
+                .w = popup.w,
+                .h = popup.h,
+            };
+            clip = rect;
+        } else {
+            // Outside the popup, use only the select control itself.
+            rect = widgetRect(widget);
+            var ancestor = widget.parent;
+            while (ancestor) |parent| {
+                clip = button_widget.intersectRect(clip, widgetRect(parent));
+                if (parent == root) break;
+                ancestor = parent.parent;
+            }
+        }
+    } else {
+        var ancestor = widget.parent;
+        while (ancestor) |parent| {
+            clip = button_widget.intersectRect(clip, widgetRect(parent));
+            if (parent == root) break;
+            ancestor = parent.parent;
+        }
+    }
+
+    return .{
+        .id = @intCast(@intFromPtr(widget)),
+        .rect = rect,
+        .clip = clip,
+        .role = role,
+        .enabled = enabled,
+    };
+}
+
 pub fn isInteractiveButtonOrRow(widget: *const Widget) bool {
     return switch (widget.kind) {
         .button => |data| data.state != .disabled,
@@ -199,6 +275,7 @@ pub const Caret = input_caret.Caret;
 pub var caret_config: CaretConfig = .{};
 
 pub const Dispatcher = struct {
+    surface: interaction_surface.Surface = .{},
     hovered: ?*Widget = null,
     pressed: ?*Widget = null,
     focused: ?*Widget = null,
@@ -240,6 +317,7 @@ pub const Dispatcher = struct {
     /// `root`'s to clear.
     pub fn pointerLeave(self: *Dispatcher, root: *Widget) void {
         if (self.tree != root) return;
+        _ = self.surface.pointerLeave();
         if (self.thumb_hover) |prev| setThumbHover(prev, false);
         self.thumb_hover = null;
         // A slider is only lit while the pointer is over it; forgetting it as

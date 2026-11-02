@@ -108,7 +108,9 @@ test "button proximity samples visible nested-scroll rectangles and skips unchan
 
     // A distant pointer position is retained without repeatedly dirtying paint.
     try std.testing.expect(input_src.updateButtonProximity(&root, 120, 15, viewport));
-    try std.testing.expectEqual(@as(f32, 75), visible_button.proximity_distance);
+    try std.testing.expect(std.math.isInf(visible_button.proximity_distance));
+    try std.testing.expectEqual(@as(f32, 0), visible_button.proximity_x);
+    try std.testing.expectEqual(@as(f32, 0), visible_button.proximity_y);
     const distant_revision = layout.paint_revision;
     try std.testing.expect(!input_src.updateButtonProximity(&root, 120, 15, viewport));
     try std.testing.expectEqual(distant_revision, layout.paint_revision);
@@ -142,6 +144,64 @@ test "dispatcher pointer motion updates button proximity samples" {
 
     dispatcher.pointerMotion(&root, 10, 10);
     try std.testing.expectEqual(@as(f32, 0), button.proximity_distance);
+}
+
+test "dispatcher forwards retained-tree hits to the interaction surface" {
+    const text = Widget{
+        .kind = .{ .text = .{
+            .content = "Child",
+            .font_size = 12,
+            .color = .{ 1, 1, 1, 1 },
+        } },
+        .computed_x = 15,
+        .computed_y = 15,
+        .computed_width = 30,
+        .computed_height = 10,
+    };
+    var row_children = [_]Widget{text};
+    const row = Widget{
+        .kind = .{ .row = .{} },
+        .computed_x = 10,
+        .computed_y = 10,
+        .computed_width = 60,
+        .computed_height = 30,
+        .children = &row_children,
+    };
+    var root_children = [_]Widget{row};
+    var root = Widget{
+        .kind = .container,
+        .computed_width = 100,
+        .computed_height = 80,
+        .children = &root_children,
+    };
+    root.linkParents();
+
+    var dispatcher = Dispatcher{};
+    dispatcher.pointerMotion(&root, 20, 20);
+
+    try std.testing.expectEqual(@as(?*Widget, &root.children[0]), dispatcher.hovered);
+    try std.testing.expect(dispatcher.surface.hovered != null);
+
+    const target = dispatcher.surface.hovered.?;
+    try std.testing.expectEqual(
+        @as(u64, @intCast(@intFromPtr(&root.children[0]))),
+        target.id,
+    );
+    try std.testing.expectEqual(@as(f32, 10), target.rect.x);
+    try std.testing.expectEqual(@as(f32, 10), target.rect.y);
+    try std.testing.expectEqual(@as(f32, 60), target.rect.w);
+    try std.testing.expectEqual(@as(f32, 30), target.rect.h);
+
+    // A passive hit clears the shared target and the old widget hover.
+    dispatcher.pointerMotion(&root, 90, 70);
+    try std.testing.expect(dispatcher.surface.hovered == null);
+    try std.testing.expect(root.children[0].kind.row.state != .hover);
+
+    // Returning to the row restores the target; leaving clears its snapshot.
+    dispatcher.pointerMotion(&root, 20, 20);
+    try std.testing.expect(dispatcher.surface.hovered != null);
+    dispatcher.pointerLeave(&root);
+    try std.testing.expect(dispatcher.surface.hovered == null);
 }
 
 test "hitTest returns the topmost overlapping widget" {
