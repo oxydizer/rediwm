@@ -21,6 +21,8 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
         .leave => {
             self.inside = false;
             self.app.cancelDrag();
+            self.app.handleMotion(-1, -1);
+            self.app.dirty = true;
         },
         .motion => |ev| {
             self.handlePointerMotion(ev.surface_x.toDouble(), ev.surface_y.toDouble());

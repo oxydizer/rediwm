@@ -4,6 +4,7 @@ const std = @import("std");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
+const Action = @import("app.zig").Action;
 const c = @import("c.zig");
 const document = @import("document.zig");
 const layout = @import("layout.zig");
@@ -393,16 +394,16 @@ pub fn renderToolbar(self: *App, cr: *c.api.cairo_t) void {
         const w = item.w;
         const h = toolbar_button_h;
         switch (item.act) {
-            .toggle_sidebar => self.renderButtonIcon(cr, x, y, w, h, .view_grid, tr("Toggle sidebar")),
-            .prev_page => self.renderButtonText(cr, x, y, w, h, "◀"),
-            .next_page => self.renderButtonText(cr, x, y, w, h, "▶"),
-            .zoom_out => self.renderButtonText(cr, x, y, w, h, "−"),
-            .zoom_in => self.renderButtonText(cr, x, y, w, h, "+"),
-            .fit_width => self.renderToggle(cr, x, y, w, h, tr("Fit width"), self.zoom_mode == .fit_width),
-            .fit_page => self.renderToggle(cr, x, y, w, h, tr("Fit page"), self.zoom_mode == .fit_page),
-            .rotate => self.renderButtonIcon(cr, x, y, w, h, .rotate, tr("Rotate")),
-            .find_toggle => self.renderButtonText(cr, x, y, w, h, if (self.search_open) tr("Find ▲") else tr("Find")),
-            .print => self.renderButtonIcon(cr, x, y, w, h, .print, tr("Print")),
+            .toggle_sidebar => self.renderButtonIcon(cr, x, y, w, h, .view_grid, tr("Toggle sidebar"), item.act),
+            .prev_page => self.renderButtonText(cr, x, y, w, h, "◀", item.act),
+            .next_page => self.renderButtonText(cr, x, y, w, h, "▶", item.act),
+            .zoom_out => self.renderButtonText(cr, x, y, w, h, "−", item.act),
+            .zoom_in => self.renderButtonText(cr, x, y, w, h, "+", item.act),
+            .fit_width => self.renderToggle(cr, x, y, w, h, tr("Fit width"), self.zoom_mode == .fit_width, item.act),
+            .fit_page => self.renderToggle(cr, x, y, w, h, tr("Fit page"), self.zoom_mode == .fit_page, item.act),
+            .rotate => self.renderButtonIcon(cr, x, y, w, h, .rotate, tr("Rotate"), item.act),
+            .find_toggle => self.renderButtonText(cr, x, y, w, h, if (self.search_open) tr("Find ▲") else tr("Find"), item.act),
+            .print => self.renderButtonIcon(cr, x, y, w, h, .print, tr("Print"), item.act),
             else => {},
         }
     }
@@ -535,33 +536,47 @@ pub fn renderDialog(self: *App, cr: *c.api.cairo_t) void {
         }
     }
 
-    self.renderButtonText(cr, dx + dw - 180, dy + dh - 46, 80, 32, tr("Cancel"));
+    self.renderButtonText(cr, dx + dw - 180, dy + dh - 46, 80, 32, tr("Cancel"), null);
     const btn_label = if (self.dialog == .password) tr("Unlock") else tr("OK");
-    self.renderButtonText(cr, dx + dw - 90, dy + dh - 46, 70, 32, btn_label);
+    self.renderButtonText(cr, dx + dw - 90, dy + dh - 46, 70, 32, btn_label, null);
 }
 
-pub fn renderButtonText(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8) void {
+pub fn renderButtonText(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8, action: ?Action) void {
+    const proximity: @import("ui").widgets.button.ProximitySample = if (action) |act| self.buttonProximity(act, self.px, self.py) else .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
     const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
     var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
     ui_button.paint(&layer.renderer, layer.local(), .{
         .variant = .secondary,
         .label = label,
-    }, .{ .pointer = if (is_hover) .hover else .idle });
+    }, .{
+        .pointer = if (is_hover) .hover else .idle,
+        .proximity_distance = proximity.distance,
+        .proximity_x = proximity.x,
+        .proximity_y = proximity.y,
+    });
 }
 
 /// A text button shown selected while its mode is active.
-pub fn renderToggle(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8, selected: bool) void {
+pub fn renderToggle(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8, selected: bool, action: Action) void {
+    const proximity = self.buttonProximity(action, self.px, self.py);
     const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
     var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
     ui_button.paint(&layer.renderer, layer.local(), .{
         .variant = .ghost,
         .label = label,
-    }, .{ .pointer = if (is_hover) .hover else .idle, .selected = selected });
+    }, .{
+        .pointer = if (is_hover) .hover else .idle,
+        .selected = selected,
+        .proximity_distance = proximity.distance,
+        .proximity_x = proximity.x,
+        .proximity_y = proximity.y,
+    });
 }
 
-pub fn renderButtonIcon(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, icon: IconId, tooltip: []const u8) void {
+pub fn renderButtonIcon(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, icon: IconId, tooltip: []const u8, action: Action) void {
+    const proximity = self.buttonProximity(action, self.px, self.py);
     const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
     var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
@@ -569,5 +584,10 @@ pub fn renderButtonIcon(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, 
         .variant = .ghost,
         .icon = icon,
         .label = tooltip,
-    }, .{ .pointer = if (is_hover) .hover else .idle });
+    }, .{
+        .pointer = if (is_hover) .hover else .idle,
+        .proximity_distance = proximity.distance,
+        .proximity_x = proximity.x,
+        .proximity_y = proximity.y,
+    });
 }

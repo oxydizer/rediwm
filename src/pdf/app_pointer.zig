@@ -7,14 +7,81 @@ const App = @import("app.zig").App;
 const layout = @import("layout.zig");
 const selection = @import("selection.zig");
 const scrollbar = @import("ui").widgets.scrollbar;
+const button_widget = @import("ui").widgets.button;
+const ui_theme = @import("ui").theme;
+const Action = @import("app.zig").Action;
 const a = @import("app.zig").a;
 const toolbar_buttons = @import("app.zig").toolbar_buttons;
 const toolbar_button_y = @import("app.zig").toolbar_button_y;
 const toolbar_button_h = @import("app.zig").toolbar_button_h;
 
+pub fn buttonProximity(
+    self: *const App,
+    action: Action,
+    x: f64,
+    y: f64,
+) button_widget.ProximitySample {
+    const absent = button_widget.ProximitySample{
+        .distance = std.math.inf(f32),
+        .x = 0,
+        .y = 0,
+    };
+    if (self.dialog != .none) return absent;
+
+    for (toolbar_buttons) |item| {
+        if (item.act != action) continue;
+
+        return button_widget.sampleProximity(
+            .{
+                .x = @floatCast(item.x),
+                .y = @floatCast(toolbar_button_y),
+                .w = @floatCast(item.w),
+                .h = @floatCast(toolbar_button_h),
+            },
+            @floatCast(x),
+            @floatCast(y),
+            .{
+                .x = 0,
+                .y = 0,
+                .w = @floatFromInt(self.w),
+                .h = @floatCast(self.toolbarRect().h),
+            },
+        );
+    }
+
+    return absent;
+}
+
+fn toolbarProximityChanged(
+    self: *const App,
+    old_x: f64,
+    old_y: f64,
+    new_x: f64,
+    new_y: f64,
+) bool {
+    const reach = ui_theme.global.border_glow_reach;
+    if (!ui_theme.global.button_hover_glow_enabled or reach <= 0 or
+        self.dialog != .none)
+        return false;
+
+    for (toolbar_buttons) |item| {
+        const before = self.buttonProximity(item.act, old_x, old_y);
+        const after = self.buttonProximity(item.act, new_x, new_y);
+        if (@min(before.distance, after.distance) <= reach) return true;
+    }
+
+    return false;
+}
+
 pub fn handleMotion(self: *App, px: f64, py: f64) void {
+    const old_x = self.px;
+    const old_y = self.py;
     self.px = px;
     self.py = py;
+
+    if (toolbarProximityChanged(self, old_x, old_y, px, py)) {
+        self.dirty = true;
+    }
 
     if (self.hbar_drag.active) {
         if (self.hbar()) |bar| self.scroll_x = self.hbar_drag.offsetAt(bar, @floatCast(px), @floatCast(py));
@@ -349,6 +416,35 @@ pub fn cancelDrag(self: *App) void {
     self.dragging_canvas = false;
     self.hbar_drag.end();
     self.selection_dragging = false;
+}
+
+test "PDF toolbar proximity samples buttons and detects redraws" {
+    const saved_theme = ui_theme.global;
+    defer ui_theme.global = saved_theme;
+
+    ui_theme.global.button_hover_glow_enabled = true;
+    ui_theme.global.border_glow_reach = 56;
+
+    var app: App = undefined;
+    app.w = 700;
+    app.dialog = .none;
+
+    const button = toolbar_buttons[1];
+    const x = button.x + button.w / 2;
+    const y = toolbar_button_y - 4;
+
+    const sample = buttonProximity(&app, button.act, x, y);
+    try std.testing.expectApproxEqAbs(@as(f32, 4), sample.distance, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 16), sample.x, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, -4), sample.y, 0.001);
+
+    try std.testing.expect(toolbarProximityChanged(&app, x, y, 650, 500));
+    try std.testing.expect(!toolbarProximityChanged(&app, 650, 500, 650, 500));
+
+    app.dialog = .information;
+    const hidden = buttonProximity(&app, button.act, x, y);
+    try std.testing.expect(std.math.isInf(hidden.distance));
+    try std.testing.expect(!toolbarProximityChanged(&app, x, y, 650, 500));
 }
 
 pub fn cursorName(self: *const App) [*:0]const u8 {

@@ -355,6 +355,7 @@ pub const App = struct {
 
     // app_pointer.zig
     pub const handleMotion = app_pointer.handleMotion;
+    pub const buttonProximity = app_pointer.buttonProximity;
     pub const handleButton = app_pointer.handleButton;
     pub const clearSelectionText = app_pointer.clearSelectionText;
     pub const updateSelection = app_pointer.updateSelection;

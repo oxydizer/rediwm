@@ -6,6 +6,10 @@ const selection = @import("pdf/selection.zig");
 const cache = @import("pdf/cache.zig");
 const worker = @import("pdf/worker.zig");
 
+test {
+    _ = @import("pdf/app_pointer.zig");
+}
+
 const testing = std.testing;
 const a = testing.allocator;
 
