@@ -1,20 +1,12 @@
-//! Widget-independent interaction regions for retained and hand-laid UI.
-//! The caller owns region storage and rebuilds it with each layout pass.
+//! Query-driven interaction state shared by retained and hand-laid UI.
+//! Hosts own hit-testing and button enumeration; the surface retains no
+//! widget pointers, region collection, or allocated storage.
 
 const std = @import("std");
+const button_widget = @import("widgets/button.zig");
 
-pub const Rect = struct {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-
-    pub fn contains(self: Rect, x: f32, y: f32) bool {
-        return self.w > 0 and self.h > 0 and
-            x >= self.x and x < self.x + self.w and
-            y >= self.y and y < self.y + self.h;
-    }
-};
+pub const Rect = button_widget.Rect;
+pub const ProximitySample = button_widget.ProximitySample;
 
 pub const Role = enum {
     button,
@@ -22,372 +14,225 @@ pub const Role = enum {
     passive,
 };
 
-pub const ProximitySample = struct {
-    distance: f32 = std.math.inf(f32),
-    x: f32 = 0,
-    y: f32 = 0,
-};
-
-pub const Region = struct {
+/// A point-query result supplied by the host's own hit-testing implementation.
+pub const Hit = struct {
     id: u64,
     rect: Rect,
     clip: Rect,
     role: Role,
     enabled: bool = true,
-    proximity: ProximitySample = .{},
-    /// Set by pointer updates when this region needs visual repainting.
-    visual_changed: bool = false,
+};
+
+/// The last known visible bounds for an interaction target.
+/// This is a damage snapshot, not an authoritative geometry reference.
+pub const Target = struct {
+    id: u64,
+    rect: Rect,
 };
 
 pub const Change = struct {
-    previous_hover: ?u64,
-    hovered: ?u64,
+    previous: ?Target,
+    current: ?Target,
     hover_changed: bool,
-    proximity_changed: bool,
 
     pub fn changed(self: Change) bool {
-        return self.hover_changed or self.proximity_changed;
+        return self.hover_changed;
     }
 };
 
-/// A non-owning interaction surface. The caller supplies a fresh region
-/// buffer for each layout pass; no region or application pointer is retained.
+/// Allocation-free interaction state. The host performs hit-testing and
+/// enumerates only the buttons relevant to its own proximity sampling.
 pub const Surface = struct {
-    storage: []Region = &.{},
-    count: usize = 0,
-    hovered: ?u64 = null,
+    hovered: ?Target = null,
 
-    /// Starts a layout pass using caller-owned storage.
-    pub fn begin(self: *Surface, storage: []Region) void {
-        self.storage = storage;
-        self.count = 0;
-    }
-
-    /// Adds a region. Returns false if the buffer is full or its ID is
-    /// already present in this layout pass.
-    pub fn addRegion(self: *Surface, region: Region) bool {
-        if (self.count == self.storage.len or self.regionById(region.id) != null)
-            return false;
-        var added = region;
-        added.visual_changed = false;
-        self.storage[self.count] = added;
-        self.count += 1;
-        return true;
-    }
-
-    pub fn regionCount(self: *const Surface) usize {
-        return self.count;
-    }
-
-    pub fn regionAt(self: *const Surface, index: usize) ?*const Region {
-        if (index >= self.count) return null;
-        return &self.storage[index];
-    }
-
-    pub fn regionById(self: *const Surface, id: u64) ?*Region {
-        for (self.storage[0..self.count]) |*region| {
-            if (region.id == id) return region;
-        }
-        return null;
-    }
-
-    /// Samples proximity for every enabled button and resolves the topmost
-    /// eligible hit region. Later-emitted regions are considered topmost.
-    pub fn pointerMotion(self: *Surface, x: f32, y: f32) Change {
+    /// Applies the host's point-query result. The host is responsible for
+    /// returning the topmost hit at the supplied pointer position.
+    ///
+    /// The cached rectangle is clipped to the visible portion. When the same
+    /// ID moves, its snapshot is refreshed, but geometry invalidation remains
+    /// the host's responsibility.
+    pub fn pointerMotion(self: *Surface, hit: ?Hit) Change {
         const previous = self.hovered;
-        var next: ?u64 = null;
-        var proximity_changed = false;
-
-        for (self.storage[0..self.count]) |*region| {
-            region.visual_changed = false;
-
-            if (region.role == .button) {
-                const sample = if (region.enabled)
-                    sampleProximity(region.rect, x, y, region.clip)
-                else
-                    ProximitySample{};
-
-                if (!sameSample(region.proximity, sample)) {
-                    region.proximity = sample;
-                    region.visual_changed = true;
-                    proximity_changed = true;
-                }
-            }
-
-            if (region.enabled and region.role != .passive and
-                region.rect.contains(x, y) and region.clip.contains(x, y))
-            {
-                next = region.id;
-            }
-        }
-
-        self.hovered = next;
-        const hover_changed = previous != next;
-        if (hover_changed) {
-            if (previous) |id| {
-                if (self.regionById(id)) |region| region.visual_changed = true;
-            }
-            if (next) |id| {
-                if (self.regionById(id)) |region| region.visual_changed = true;
-            }
-        }
+        const current = targetFromHit(hit);
+        self.hovered = current;
 
         return .{
-            .previous_hover = previous,
-            .hovered = next,
-            .hover_changed = hover_changed,
-            .proximity_changed = proximity_changed,
+            .previous = previous,
+            .current = current,
+            .hover_changed = !sameTargetId(previous, current),
         };
     }
 
-    /// Clears hover and button proximity without retaining the last pointer.
+    /// Clears the hover target and returns its last visible rectangle so the
+    /// host can invalidate it.
     pub fn pointerLeave(self: *Surface) Change {
         const previous = self.hovered;
-        var proximity_changed = false;
         self.hovered = null;
-
-        for (self.storage[0..self.count]) |*region| {
-            region.visual_changed = false;
-            if (region.role != .button) continue;
-            const cleared = ProximitySample{};
-            if (!sameSample(region.proximity, cleared)) {
-                region.proximity = cleared;
-                region.visual_changed = true;
-                proximity_changed = true;
-            }
-        }
-
-        if (previous) |id| {
-            if (self.regionById(id)) |region| region.visual_changed = true;
-        }
-
         return .{
-            .previous_hover = previous,
-            .hovered = null,
+            .previous = previous,
+            .current = null,
             .hover_changed = previous != null,
-            .proximity_changed = proximity_changed,
         };
     }
 };
 
-fn intersect(a: Rect, b: Rect) Rect {
-    const x0 = @max(a.x, b.x);
-    const y0 = @max(a.y, b.y);
-    const x1 = @min(a.x + a.w, b.x + b.w);
-    const y1 = @min(a.y + a.h, b.y + b.h);
-    return .{
-        .x = x0,
-        .y = y0,
-        .w = @max(0, x1 - x0),
-        .h = @max(0, y1 - y0),
-    };
+fn targetFromHit(hit: ?Hit) ?Target {
+    const value = hit orelse return null;
+    if (!value.enabled or value.role == .passive) return null;
+
+    const visible = button_widget.intersectRect(value.rect, value.clip);
+    if (visible.w <= 0 or visible.h <= 0) return null;
+
+    return .{ .id = value.id, .rect = visible };
 }
 
-fn sampleProximity(box: Rect, x: f32, y: f32, clip: Rect) ProximitySample {
-    const visible = intersect(box, clip);
-    if (visible.w <= 0 or visible.h <= 0) {
-        return .{ .distance = std.math.inf(f32), .x = x - box.x, .y = y - box.y };
+fn sameTargetId(a: ?Target, b: ?Target) bool {
+    if (a) |left| {
+        if (b) |right| return left.id == right.id;
     }
-
-    const right = visible.x + visible.w;
-    const bottom = visible.y + visible.h;
-    const dx = if (x < visible.x) visible.x - x else if (x > right) x - right else 0;
-    const dy = if (y < visible.y) visible.y - y else if (y > bottom) y - bottom else 0;
-    return .{ .distance = @sqrt(dx * dx + dy * dy), .x = x - box.x, .y = y - box.y };
+    return a == null and b == null;
 }
 
-fn sameSample(a: ProximitySample, b: ProximitySample) bool {
-    return a.distance == b.distance and a.x == b.x and a.y == b.y;
-}
-
-test "surface resolves the last eligible overlapping region" {
-    var storage: [3]Region = undefined;
-    var surface: Surface = .{};
-    surface.begin(&storage);
-
-    const bounds = Rect{ .x = 0, .y = 0, .w = 20, .h = 20 };
-    try std.testing.expect(surface.addRegion(.{
-        .id = 1, .rect = bounds, .clip = bounds, .role = .button,
-    }));
-    try std.testing.expect(surface.addRegion(.{
-        .id = 2, .rect = bounds, .clip = bounds, .role = .interactive,
-    }));
-    try std.testing.expect(surface.addRegion(.{
-        .id = 3, .rect = bounds, .clip = bounds, .role = .passive,
-    }));
-
-    const change = surface.pointerMotion(10, 10);
-    try std.testing.expectEqual(@as(?u64, 2), change.hovered);
-    try std.testing.expect(change.hover_changed);
-    try std.testing.expect(surface.regionById(1) != null);
-}
-
-test "surface respects clipping and disabled regions" {
-    var storage: [2]Region = undefined;
-    var surface: Surface = .{};
-    surface.begin(&storage);
-
-    try std.testing.expect(surface.addRegion(.{
-        .id = 1,
-        .rect = .{ .x = 0, .y = 0, .w = 30, .h = 30 },
-        .clip = .{ .x = 10, .y = 10, .w = 10, .h = 10 },
-        .role = .interactive,
-    }));
-    try std.testing.expect(surface.addRegion(.{
-        .id = 2,
-        .rect = .{ .x = 10, .y = 10, .w = 10, .h = 10 },
-        .clip = .{ .x = 10, .y = 10, .w = 10, .h = 10 },
-        .role = .interactive,
-        .enabled = false,
-    }));
-
-    try std.testing.expectEqual(@as(?u64, null), surface.pointerMotion(5, 5).hovered);
-    try std.testing.expectEqual(@as(?u64, 1), surface.pointerMotion(15, 15).hovered);
-}
-
-test "button proximity uses the visible clipped rectangle and local coordinates" {
-    var storage: [1]Region = undefined;
-    var surface: Surface = .{};
-    surface.begin(&storage);
-
-    try std.testing.expect(surface.addRegion(.{
-        .id = 7,
-        .rect = .{ .x = 20, .y = 10, .w = 40, .h = 20 },
-        .clip = .{ .x = 30, .y = 15, .w = 20, .h = 10 },
-        .role = .button,
-    }));
-
-    const change = surface.pointerMotion(30, 10);
-    try std.testing.expect(change.proximity_changed);
-    const region = surface.regionById(7).?;
-    try std.testing.expectEqual(@as(f32, 5), region.proximity.distance);
-    try std.testing.expectEqual(@as(f32, 10), region.proximity.x);
-    try std.testing.expectEqual(@as(f32, 0), region.proximity.y);
-}
-
-test "unchanged pointer samples do not report another change" {
-    var storage: [1]Region = undefined;
-    var surface: Surface = .{};
-    surface.begin(&storage);
-
-    try std.testing.expect(surface.addRegion(.{
-        .id = 4,
-        .rect = .{ .x = 0, .y = 0, .w = 20, .h = 20 },
-        .clip = .{ .x = 0, .y = 0, .w = 20, .h = 20 },
-        .role = .button,
-    }));
-
-    try std.testing.expect(surface.pointerMotion(10, 10).changed());
-    try std.testing.expect(!surface.pointerMotion(10, 10).changed());
-}
-
-test "pointer leave clears hover and proximity" {
-    var storage: [1]Region = undefined;
-    var surface: Surface = .{};
-    surface.begin(&storage);
-
-    try std.testing.expect(surface.addRegion(.{
-        .id = 9,
-        .rect = .{ .x = 0, .y = 0, .w = 20, .h = 20 },
-        .clip = .{ .x = 0, .y = 0, .w = 20, .h = 20 },
-        .role = .button,
-    }));
-
-    _ = surface.pointerMotion(10, 10);
-    const change = surface.pointerLeave();
-    try std.testing.expect(change.hover_changed);
-    try std.testing.expect(change.proximity_changed);
-    try std.testing.expectEqual(@as(?u64, null), surface.hovered);
-    try std.testing.expect(std.math.isInf(surface.regionById(9).?.proximity.distance));
-}
-
-test "disabling a button clears its previous proximity sample" {
-    var storage: [1]Region = undefined;
-    var surface: Surface = .{};
-    surface.begin(&storage);
-
-    try std.testing.expect(surface.addRegion(.{
-        .id = 15,
-        .rect = .{ .x = 0, .y = 0, .w = 20, .h = 20 },
-        .clip = .{ .x = 0, .y = 0, .w = 20, .h = 20 },
-        .role = .button,
-    }));
-
-    _ = surface.pointerMotion(10, 10);
-    try std.testing.expectEqual(@as(f32, 0), storage[0].proximity.distance);
-
-    storage[0].enabled = false;
-    const change = surface.pointerMotion(10, 10);
-
-    try std.testing.expect(change.proximity_changed);
-    try std.testing.expect(storage[0].visual_changed);
-    try std.testing.expect(std.math.isInf(storage[0].proximity.distance));
-}
-
-test "layout rebuild preserves hover and reports changed regions" {
-    var first_storage: [1]Region = undefined;
-    var second_storage: [1]Region = undefined;
-    var surface: Surface = .{};
-    const bounds = Rect{ .x = 0, .y = 0, .w = 20, .h = 20 };
-
-    surface.begin(&first_storage);
-    try std.testing.expect(surface.addRegion(.{
-        .id = 12, .rect = bounds, .clip = bounds, .role = .interactive,
-    }));
-    const initial = surface.pointerMotion(10, 10);
-    try std.testing.expect(initial.hover_changed);
-    try std.testing.expect(first_storage[0].visual_changed);
-
-    surface.begin(&second_storage);
-    try std.testing.expectEqual(@as(?u64, 12), surface.hovered);
-    try std.testing.expect(surface.addRegion(.{
-        .id = 12, .rect = bounds, .clip = bounds, .role = .interactive,
-    }));
-
-    const rebuilt = surface.pointerMotion(10, 10);
-    try std.testing.expect(!rebuilt.hover_changed);
-    try std.testing.expectEqual(@as(?u64, 12), rebuilt.hovered);
-    try std.testing.expect(!second_storage[0].visual_changed);
-}
-
-test "hover transitions mark old and new regions for repaint" {
-    var storage: [2]Region = undefined;
-    var surface: Surface = .{};
-    surface.begin(&storage);
-
-    try std.testing.expect(surface.addRegion(.{
-        .id = 1,
-        .rect = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
-        .clip = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
-        .role = .interactive,
-    }));
-    try std.testing.expect(surface.addRegion(.{
-        .id = 2,
-        .rect = .{ .x = 20, .y = 0, .w = 10, .h = 10 },
-        .clip = .{ .x = 20, .y = 0, .w = 10, .h = 10 },
-        .role = .interactive,
-    }));
-
-    _ = surface.pointerMotion(5, 5);
-    const change = surface.pointerMotion(25, 5);
-    try std.testing.expect(change.hover_changed);
-    try std.testing.expect(storage[0].visual_changed);
-    try std.testing.expect(storage[1].visual_changed);
-}
-
-test "surface rejects duplicate IDs and a full region buffer" {
-    var storage: [1]Region = undefined;
-    var surface: Surface = .{};
-    surface.begin(&storage);
-    const region: Region = .{
-        .id = 1,
-        .rect = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
-        .clip = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
-        .role = .interactive,
+/// Samples a button using the shared widget geometry, suppressing changes
+/// beyond the configured glow reach. All out-of-reach positions produce the
+/// same inactive sample, so distant pointer motion cannot dirty every button.
+pub fn sampleButtonProximity(
+    rect: Rect,
+    pointer_x: f32,
+    pointer_y: f32,
+    clip: Rect,
+    reach: f32,
+) ProximitySample {
+    const inactive = ProximitySample{
+        .distance = std.math.inf(f32),
+        .x = 0,
+        .y = 0,
     };
-    try std.testing.expect(surface.addRegion(region));
-    try std.testing.expect(!surface.addRegion(region));
-    try std.testing.expect(!surface.addRegion(.{
-        .id = 2, .rect = region.rect, .clip = region.clip, .role = .interactive,
-    }));
+    if (reach <= 0) return inactive;
+
+    const sample = button_widget.sampleProximity(rect, pointer_x, pointer_y, clip);
+    return if (sample.distance <= reach) sample else inactive;
+}
+
+test "surface stores the host hit and returns visible damage bounds" {
+    var surface: Surface = .{};
+    const change = surface.pointerMotion(.{
+        .id = 7,
+        .rect = .{ .x = 10, .y = 10, .w = 40, .h = 30 },
+        .clip = .{ .x = 20, .y = 15, .w = 20, .h = 10 },
+        .role = .interactive,
+    });
+
+    try std.testing.expect(change.hover_changed);
+    try std.testing.expectEqual(@as(?u64, 7), surface.hovered.?.id);
+    try std.testing.expectEqual(Rect{
+        .x = 20, .y = 15, .w = 20, .h = 10,
+    }, change.current.?.rect);
+}
+
+test "surface rejects disabled passive and fully clipped hits" {
+    var surface: Surface = .{};
+
+    const bounds = Rect{ .x = 0, .y = 0, .w = 20, .h = 20 };
+    const disabled = surface.pointerMotion(.{
+        .id = 1, .rect = bounds, .clip = bounds,
+        .role = .interactive, .enabled = false,
+    });
+    try std.testing.expect(disabled.current == null);
+
+    const passive = surface.pointerMotion(.{
+        .id = 2, .rect = bounds, .clip = bounds, .role = .passive,
+    });
+    try std.testing.expect(passive.current == null);
+
+    const clipped = surface.pointerMotion(.{
+        .id = 3,
+        .rect = bounds,
+        .clip = .{ .x = 30, .y = 30, .w = 10, .h = 10 },
+        .role = .interactive,
+    });
+    try std.testing.expect(clipped.current == null);
+    try std.testing.expect(surface.hovered == null);
+}
+
+test "surface reports old and new targets when hover changes" {
+    var surface: Surface = .{};
+    const first = Rect{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    const second = Rect{ .x = 20, .y = 0, .w = 10, .h = 10 };
+
+    _ = surface.pointerMotion(.{
+        .id = 1, .rect = first, .clip = first, .role = .interactive,
+    });
+    const change = surface.pointerMotion(.{
+        .id = 2, .rect = second, .clip = second, .role = .interactive,
+    });
+
+    try std.testing.expect(change.hover_changed);
+    try std.testing.expectEqual(@as(?u64, 1), change.previous.?.id);
+    try std.testing.expectEqual(first, change.previous.?.rect);
+    try std.testing.expectEqual(@as(?u64, 2), change.current.?.id);
+    try std.testing.expectEqual(second, change.current.?.rect);
+}
+
+test "same target refreshes its damage snapshot without a hover transition" {
+    var surface: Surface = .{};
+    const first = Rect{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    const moved = Rect{ .x = 5, .y = 0, .w = 10, .h = 10 };
+
+    _ = surface.pointerMotion(.{
+        .id = 9, .rect = first, .clip = first, .role = .interactive,
+    });
+    const change = surface.pointerMotion(.{
+        .id = 9, .rect = moved, .clip = moved, .role = .interactive,
+    });
+
+    try std.testing.expect(!change.hover_changed);
+    try std.testing.expectEqual(first, change.previous.?.rect);
+    try std.testing.expectEqual(moved, change.current.?.rect);
+    try std.testing.expectEqual(moved, surface.hovered.?.rect);
+}
+
+test "pointer leave returns the previous target for invalidation" {
+    var surface: Surface = .{};
+    const bounds = Rect{ .x = 4, .y = 5, .w = 20, .h = 10 };
+
+    _ = surface.pointerMotion(.{
+        .id = 12, .rect = bounds, .clip = bounds, .role = .button,
+    });
+    const change = surface.pointerLeave();
+
+    try std.testing.expect(change.hover_changed);
+    try std.testing.expectEqual(@as(?u64, 12), change.previous.?.id);
+    try std.testing.expectEqual(bounds, change.previous.?.rect);
+    try std.testing.expect(change.current == null);
+    try std.testing.expect(surface.hovered == null);
+
+    const repeated = surface.pointerLeave();
+    try std.testing.expect(!repeated.hover_changed);
+}
+
+test "proximity sampling reuses button geometry and respects glow reach" {
+    const rect = Rect{ .x = 20, .y = 10, .w = 40, .h = 20 };
+    const clip = Rect{ .x = 30, .y = 15, .w = 20, .h = 10 };
+
+    const near = sampleButtonProximity(rect, 30, 10, clip, 5);
+    try std.testing.expectEqual(@as(f32, 5), near.distance);
+    try std.testing.expectEqual(@as(f32, 10), near.x);
+    try std.testing.expectEqual(@as(f32, 0), near.y);
+
+    const outside = sampleButtonProximity(rect, 30, 10, clip, 4);
+    try std.testing.expect(std.math.isInf(outside.distance));
+
+    const no_reach = sampleButtonProximity(rect, 30, 10, clip, 0);
+    try std.testing.expect(std.math.isInf(no_reach.distance));
+}
+
+test "all pointer positions beyond glow reach produce the same inactive sample" {
+    const rect = Rect{ .x = 0, .y = 0, .w = 20, .h = 20 };
+
+    const first = sampleButtonProximity(rect, 100, 10, rect, 56);
+    const second = sampleButtonProximity(rect, 500, 300, rect, 56);
+
+    try std.testing.expect(std.math.isInf(first.distance));
+    try std.testing.expectEqual(first, second);
 }
