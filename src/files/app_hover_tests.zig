@@ -317,6 +317,37 @@ test "hover damage covers this repaint only" {
     try std.testing.expect(app.dirty and app.paint_damage == null);
 }
 
+test "column surface owns list header hover and clears modal and departed targets" {
+    var app = try testApp();
+    defer app.deinit();
+    app.loading = false;
+    app.list_view = true;
+    try testItems(&app, 12);
+
+    const column = app.listColumn(1);
+    const x = column.x + column.w / 2;
+    const y = column.y + column.h / 2;
+
+    app.handleMotion(x, y);
+    try std.testing.expectEqual(@as(u64, 401), app.column_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 401), app.hoverKey());
+
+    app.handleMotion(-1, -1);
+    try std.testing.expect(app.column_surface.hovered == null);
+    try std.testing.expectEqual(@as(usize, 0), app.hoverKey());
+
+    app.handleMotion(x, y);
+    try std.testing.expect(app.column_surface.hovered != null);
+    app.menu = .background;
+    app.updateColumnSurface();
+    try std.testing.expect(app.column_surface.hovered == null);
+
+    app.menu = null;
+    app.transfer_view.active = true;
+    app.updateColumnSurface();
+    try std.testing.expect(app.column_surface.hovered == null);
+}
+
 test "toolbar surface owns enabled hover targets and clears disabled and departed targets" {
     var app = try testApp();
     defer app.deinit();

@@ -56,9 +56,7 @@ pub fn hoverKey(self: *App) usize {
     }
     if (self.toolbar_surface.hovered) |target| return 200 + @as(usize, @intCast(target.id));
     if (self.list_view and x >= @as(f64, @floatFromInt(self.sidebarWidth())) and x < @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) {
-        for (self.columnLabels(), 0..) |_, i| {
-            if (i < 4 and self.listColumn(i).contains(x, y)) return 400 + i;
-        }
+        if (self.column_surface.hovered) |target| return @intCast(target.id);
     }
     if (self.sidebar_surface.hovered) |target| return @intCast(target.id);
     if (self.inlineTorrentHit(x, y)) |hit| return std.math.maxInt(usize) - 3000 - hit.index * 2 - @intFromBool(hit.toggle);
@@ -135,6 +133,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     self.mouse_y = y;
     self.updateToolbarSurface();
     self.updateSidebarSurface();
+    self.updateColumnSurface();
     self.damageToolbarProximity(old_x, old_y, x, y);
     if (self.selection_band != null) self.updateSelectionBand();
     if (self.text_dragging) {

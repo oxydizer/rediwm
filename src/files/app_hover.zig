@@ -91,6 +91,46 @@ pub fn clipToViewport(self: *App, rect: header.Rect) header.Rect {
     return .{ .x = rect.x, .y = y, .w = rect.w, .h = @max(0, bottom - y) };
 }
 
+/// The pointer's list header column, using Files' existing header geometry.
+pub fn updateColumnSurface(self: *App) void {
+    if (!self.list_view or self.transfer_view.active or self.dialog != null or self.menu != null) {
+        _ = self.column_surface.pointerMotion(null);
+        return;
+    }
+
+    if (self.mouse_x < @as(f64, @floatFromInt(self.sidebarWidth())) or
+        self.mouse_x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter())))
+    {
+        _ = self.column_surface.pointerMotion(null);
+        return;
+    }
+
+    for (0..@min(4, column_labels.len)) |i| {
+        const rect = self.listColumn(i);
+        if (!rect.contains(self.mouse_x, self.mouse_y)) continue;
+
+        _ = self.column_surface.pointerMotion(.{
+            .id = @intCast(400 + i),
+            .rect = .{
+                .x = @floatCast(rect.x),
+                .y = @floatCast(rect.y),
+                .w = @floatCast(rect.w),
+                .h = @floatCast(rect.h),
+            },
+            .clip = .{
+                .x = @floatFromInt(self.sidebarWidth()),
+                .y = @floatFromInt(self.contentTop()),
+                .w = @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter()),
+                .h = 30,
+            },
+            .role = .interactive,
+        });
+        return;
+    }
+
+    _ = self.column_surface.pointerMotion(null);
+}
+
 /// The pointer's sidebar row, unless that is the current place, which
 /// paints its own fill.
 pub fn updateSidebarSurface(self: *App) void {
@@ -301,6 +341,7 @@ pub fn stepHover(self: *App, now: i64) void {
     const pixel = anim.rasterPixelQuantum(@floatFromInt(self.scale));
 
     self.updateSidebarSurface();
+    self.updateColumnSurface();
     if (self.sidebarWidth() > 0) {
         const before = self.nav_hover.frame;
         self.nav_hover.setTarget(now, if (self.hoveredPlace()) |i| .{ .col = 0, .row = @intCast(i) } else null);
