@@ -816,3 +816,55 @@ test "button hover glow is independent of window edge glow and stays rounded and
         try std.testing.expectEqual(@as(u32, 0xff808080), no_proximity);
     }
 }
+
+test "button hover glow lights adjacent and independently reachable edges" {
+    const sample = struct {
+        fn red(pixels: []const u32, x: usize, y: usize) u32 {
+            return (pixels[y * 200 + x] >> 16) & 0xff;
+        }
+    };
+
+    var pixels: [200 * 160]u32 = @splat(0xff808080);
+    var renderer = Renderer.init(&pixels, 200, 160, 1);
+    var palette: theme.Theme = .{};
+    palette.button_hover_glow_enabled = true;
+    palette.border_glow = .{ 1, 0, 0, 0.60 };
+    palette.border_glow_reach = 56;
+    palette.border_glow_length = 72;
+    palette.border_glow_depth = 3;
+    renderer.palette = palette;
+
+    // Above and to the right: both adjoining edges receive their own glow.
+    button_widget.paint(
+        &renderer,
+        .{ .x = 20, .y = 20, .w = 80, .h = 34 },
+        .{ .variant = .ghost },
+        .{ .proximity_distance = 4, .proximity_x = 84, .proximity_y = -4 },
+    );
+    try std.testing.expect(sample.red(&pixels, 92, 20) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 99, 28) > 0x80);
+
+    // Inside a larger button, only the nearby top and left edges light.
+    @memset(&pixels, 0xff808080);
+    button_widget.paint(
+        &renderer,
+        .{ .x = 20, .y = 20, .w = 140, .h = 120 },
+        .{ .variant = .ghost },
+        .{ .proximity_distance = 0, .proximity_x = 5, .proximity_y = 5 },
+    );
+    try std.testing.expect(sample.red(&pixels, 25, 20) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 20, 25) > 0x80);
+
+    // Inside a small button, all four edges are within reach and illuminate.
+    @memset(&pixels, 0xff808080);
+    button_widget.paint(
+        &renderer,
+        .{ .x = 20, .y = 20, .w = 80, .h = 34 },
+        .{ .variant = .ghost },
+        .{ .proximity_distance = 0, .proximity_x = 40, .proximity_y = 17 },
+    );
+    try std.testing.expect(sample.red(&pixels, 60, 20) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 99, 37) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 60, 53) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 20, 37) > 0x80);
+}

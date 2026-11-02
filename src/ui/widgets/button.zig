@@ -4,7 +4,6 @@
 // bookkeeping lives in input.zig's dispatcher; this module only moves a single
 // button between states and fires its callback.
 const chrome = @import("../window_chrome.zig");
-const border_glow = @import("border_glow");
 const std = @import("std");
 const layout = @import("../layout.zig");
 const theme = @import("../theme.zig");
@@ -287,8 +286,16 @@ fn paintAdaptiveRelief(
     }
 }
 
-/// Paints the pointer-facing red highlight and its opposing dark shade.
-/// Both passes stay inside the button's antialiased rounded shape.
+/// Smoothly fades an edge contribution by pointer distance.
+fn glowNear(px: f32, py: f32, edge_x: f32, edge_y: f32, reach: f32) f32 {
+    const distance = std.math.hypot(px - edge_x, py - edge_y);
+    if (!(distance < reach)) return 0;
+    const n = 1 - distance / reach;
+    return n * n * (3 - 2 * n);
+}
+
+/// Paints independent pointer-facing highlights on every nearby button edge.
+/// Overlapping edge contributions use their maximum, keeping corners controlled.
 fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
     const t = r.palette orelse theme.global;
     if (!t.button_hover_glow_enabled or state.proximity_distance >= std.math.inf(f32) or
@@ -297,14 +304,72 @@ fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
         box.w <= 0 or box.h <= 0)
         return;
 
-    const probe = border_glow.probe(
-        box.w,
-        box.h,
-        radius,
-        state.proximity_x,
-        state.proximity_y,
-        t.border_glow_reach,
-    ) orelse return;
+    const corner_radius = std.math.clamp(radius, 0, 0.5 * @min(box.w, box.h));
+    const reach = t.border_glow_reach;
+    const pointer_x = state.proximity_x;
+    const pointer_y = state.proximity_y;
+
+    const Edge = struct {
+        x: f32,
+        y: f32,
+        near: f32,
+        /// The edge runs vertically, so its falloff is measured along y.
+        vertical: bool,
+        /// The edge is the left or top edge.
+        negative: bool,
+    };
+
+    const edges = [_]Edge{
+        .{
+            .x = std.math.clamp(pointer_x, corner_radius, box.w - corner_radius),
+            .y = 0,
+            .near = glowNear(
+                pointer_x, pointer_y,
+                std.math.clamp(pointer_x, corner_radius, box.w - corner_radius), 0, reach,
+            ),
+            .vertical = false,
+            .negative = true,
+        },
+        .{
+            .x = box.w,
+            .y = std.math.clamp(pointer_y, corner_radius, box.h - corner_radius),
+            .near = glowNear(
+                pointer_x, pointer_y, box.w,
+                std.math.clamp(pointer_y, corner_radius, box.h - corner_radius), reach,
+            ),
+            .vertical = true,
+            .negative = false,
+        },
+        .{
+            .x = std.math.clamp(pointer_x, corner_radius, box.w - corner_radius),
+            .y = box.h,
+            .near = glowNear(
+                pointer_x, pointer_y,
+                std.math.clamp(pointer_x, corner_radius, box.w - corner_radius), box.h, reach,
+            ),
+            .vertical = false,
+            .negative = false,
+        },
+        .{
+            .x = 0,
+            .y = std.math.clamp(pointer_y, corner_radius, box.h - corner_radius),
+            .near = glowNear(
+                pointer_x, pointer_y, 0,
+                std.math.clamp(pointer_y, corner_radius, box.h - corner_radius), reach,
+            ),
+            .vertical = true,
+            .negative = true,
+        },
+    };
+
+    var active = false;
+    for (edges) |edge| {
+        if (edge.near > 0) {
+            active = true;
+            break;
+        }
+    }
+    if (!active) return;
 
     const s = r.scale;
     var dx0 = box.x * s;
@@ -324,13 +389,6 @@ fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
     const y1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.height)), dy1)));
     if (x0 >= x1 or y0 >= y1) return;
 
-    // The probe point identifies the near edge. At a rounded corner, choose
-    // the dominant normalized axis so the opposing shade has a stable side.
-    const nx = @abs(probe.x - box.w / 2) / @max(box.w / 2, 0.001);
-    const ny = @abs(probe.y - box.h / 2) / @max(box.h / 2, 0.001);
-    const horizontal = nx >= ny;
-    const negative = if (horizontal) probe.x < box.w / 2 else probe.y < box.h / 2;
-    const anchor = if (horizontal) probe.y else probe.x;
     const length = t.border_glow_length;
     const depth = t.border_glow_depth;
     const red = paint_mod.toColor(t.border_glow);
@@ -358,22 +416,30 @@ fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
             ));
             if (coverage <= 0) continue;
 
-            const along = if (horizontal) logical_y - box.y else logical_x - box.x;
-            const along_ratio = (along - anchor) / length;
-            const along_falloff = @exp(-2 * along_ratio * along_ratio);
-            const near_depth = if (horizontal)
-                (if (negative) logical_x - box.x else box.x + box.w - logical_x)
-            else
-                (if (negative) logical_y - box.y else box.y + box.h - logical_y);
-            const far_depth = if (horizontal)
-                (if (negative) box.x + box.w - logical_x else logical_x - box.x)
-            else
-                (if (negative) box.y + box.h - logical_y else logical_y - box.y);
+            var near_alpha: f32 = 0;
+            var far_alpha: f32 = 0;
+            for (edges) |edge| {
+                if (edge.near <= 0) continue;
 
-            const near_alpha = probe.near * along_falloff *
-                @exp(-@max(0, near_depth) / depth) * coverage;
-            const far_alpha = probe.near * along_falloff *
-                @exp(-@max(0, far_depth) / depth) * coverage;
+                const along = if (edge.vertical) logical_y - box.y else logical_x - box.x;
+                const anchor = if (edge.vertical) edge.y else edge.x;
+                const along_ratio = (along - anchor) / length;
+                const along_falloff = @exp(-2 * along_ratio * along_ratio);
+
+                const near_depth = if (edge.vertical)
+                    (if (edge.negative) logical_x - box.x else box.x + box.w - logical_x)
+                else
+                    (if (edge.negative) logical_y - box.y else box.y + box.h - logical_y);
+                const far_depth = if (edge.vertical)
+                    (if (edge.negative) box.x + box.w - logical_x else logical_x - box.x)
+                else
+                    (if (edge.negative) box.y + box.h - logical_y else logical_y - box.y);
+
+                near_alpha = @max(near_alpha, edge.near * along_falloff *
+                    @exp(-@max(0, near_depth) / depth) * coverage);
+                far_alpha = @max(far_alpha, edge.near * along_falloff *
+                    @exp(-@max(0, far_depth) / depth) * coverage);
+            }
 
             const index = row + @as(usize, @intCast(px));
             if (near_alpha > 0) paint_mod.blendPixel(&r.pixels[index], red, near_alpha);
