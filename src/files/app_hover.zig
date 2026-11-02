@@ -159,12 +159,33 @@ pub fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
     };
 }
 
+pub fn updateToolbarSurface(self: *App) void {
+    const action = if (self.transfer_view.active or self.dialog != null or self.menu != null)
+        null
+    else
+        header.hit(self.w, self.inRepository(), self.mouse_x, self.mouse_y);
+    if (action) |value| {
+        const r = header.rect(self.w, self.inRepository(), value);
+        _ = self.toolbar_surface.pointerMotion(.{
+            .id = @intCast(@intFromEnum(value)),
+            .rect = .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) },
+            .clip = .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.contentTop()) },
+            .role = .button,
+            .enabled = self.toolbarButtonVisible(value) and self.toolbarButtonEnabled(value),
+        });
+    } else {
+        _ = self.toolbar_surface.pointerMotion(null);
+    }
+}
+
 pub fn hoveredToolbarButton(self: *App) ?header.Rect {
-    if (self.transfer_view.active) return null;
-    if (self.dialog != null or self.menu != null) return null;
-    const action = header.hit(self.w, self.inRepository(), self.mouse_x, self.mouse_y) orelse return null;
-    if (!self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action)) return null;
-    return header.rect(self.w, self.inRepository(), action);
+    const target = self.toolbar_surface.hovered orelse return null;
+    return .{
+        .x = @floatCast(target.rect.x),
+        .y = @floatCast(target.rect.y),
+        .w = @floatCast(target.rect.w),
+        .h = @floatCast(target.rect.h),
+    };
 }
 
 /// Shared button proximity using Files' existing pointer and header geometry.
@@ -254,6 +275,7 @@ pub fn stepHover(self: *App, now: i64) void {
         const view: header.Rect = self.clipToViewport(.{ .x = @floatFromInt(self.sidebarWidth()), .y = 0, .w = @floatFromInt(self.w - self.sidebarWidth()), .h = @floatFromInt(self.h) });
         self.damageHighlight(view, if (before.alpha > 0) self.itemHighlight(before) else null, if (self.item_hover.frame.alpha > 0) self.itemHighlight(self.item_hover.frame) else null);
     }
+    self.updateToolbarSurface();
     if (self.toolbar_hover.step(now, self.hoveredToolbarButton(), pixel)) {
         self.addDamage(.{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.contentTop()) });
     }

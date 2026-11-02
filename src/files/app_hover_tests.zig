@@ -290,6 +290,25 @@ test "hover damage covers this repaint only" {
     try std.testing.expect(app.dirty and app.paint_damage == null);
 }
 
+test "toolbar surface owns enabled hover targets and clears disabled and departed targets" {
+    var app = try testApp();
+    defer app.deinit();
+
+    const cut = header.rect(app.w, false, .cut);
+    try std.testing.expect(!app.toolbarButtonEnabled(.cut));
+    app.handleMotion(cut.x + cut.w / 2, cut.y + cut.h / 2);
+    try std.testing.expect(app.toolbar_surface.hovered == null);
+
+    const refresh = header.rect(app.w, false, .refresh);
+    app.handleMotion(refresh.x + refresh.w / 2, refresh.y + refresh.h / 2);
+    try std.testing.expectEqual(@as(u64, @intFromEnum(header.Action.refresh)), app.toolbar_surface.hovered.?.id);
+    try std.testing.expectEqual(refresh.x, app.hoveredToolbarButton().?.x);
+
+    app.handleMotion(-1, -1);
+    try std.testing.expect(app.toolbar_surface.hovered == null);
+    try std.testing.expect(app.hoveredToolbarButton() == null);
+}
+
 test "toolbar proximity uses shared button geometry and damages in-button motion" {
     var app = try testApp();
     defer app.deinit();
