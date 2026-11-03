@@ -25,6 +25,7 @@ const app_hover = @import("app_hover.zig");
 const app_listing = @import("app_listing.zig");
 const app_dialogs = @import("app_dialogs.zig");
 const app_fileops = @import("app_fileops.zig");
+const app_trash = @import("app_trash.zig");
 const app_chooser = @import("app_chooser.zig");
 const app_layout = @import("app_layout.zig");
 const app_folder_size = @import("app_folder_size.zig");
@@ -138,6 +139,8 @@ pub const App = struct {
     menu_x: f64 = 0,
     menu_y: f64 = 0,
     menu_selected: usize = 0,
+    /// Set when a file menu opens in the Trash: whether Restore applies.
+    trash_restorable: bool = false,
     file_menu_labels: [12][]const u8 = undefined,
     menu_label_text: [8][]const u8 = undefined,
     column_label_text: [5][]const u8 = undefined,
@@ -565,6 +568,15 @@ pub const App = struct {
     pub const executePasteExternal = app_fileops.executePasteExternal;
     pub const deleteAction = app_fileops.deleteAction;
     pub const executeDeletion = app_fileops.executeDeletion;
+    pub const deleteFromTrash = app_fileops.deleteFromTrash;
+
+    // app_trash.zig
+    pub const trashRelation = app_trash.trashRelation;
+    pub const inTrash = app_trash.inTrash;
+    pub const trashReadOnly = app_trash.trashReadOnly;
+    pub const refreshTrashRestorable = app_trash.refreshTrashRestorable;
+    pub const restoreSelected = app_trash.restoreSelected;
+    pub const restoreAll = app_trash.restoreAll;
 
     // app_chooser.zig
     pub const configureChooser = app_chooser.configureChooser;
@@ -882,6 +894,8 @@ pub const App = struct {
     pub const menuHeight = app_menu.menuHeight;
     pub const menuRowRect = app_menu.menuRowRect;
     pub const menuIcon = app_menu.menuIcon;
+    pub const backgroundMenu = app_menu.backgroundMenu;
+    pub const menuDisabled = app_menu.menuDisabled;
     pub const menuHint = app_menu.menuHint;
     pub const hasSizeSelection = app_menu.hasSizeSelection;
     pub const selectedArchive = app_menu.selectedArchive;

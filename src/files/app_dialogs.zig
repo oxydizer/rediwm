@@ -124,7 +124,7 @@ pub fn openWithAction(self: *App, action: open_with.Action) void {
 }
 
 pub fn openNewFolderDialog(self: *App) void {
-    if (self.isRecent() or self.history.archive_len > 0) return;
+    if (self.isRecent() or self.history.archive_len > 0 or self.trashReadOnly()) return;
     self.closeDialog();
     var dlg = Dialog{
         .kind = .new_folder,
@@ -156,7 +156,7 @@ pub fn switchBranch(self: *App, repo: git.Repository, name: []const u8, create: 
 }
 
 pub fn openNewFileDialog(self: *App) void {
-    if (self.isRecent() or self.history.archive_len > 0) return;
+    if (self.isRecent() or self.history.archive_len > 0 or self.trashReadOnly()) return;
     self.closeDialog();
     var dlg = Dialog{
         .kind = .new_file,
@@ -170,7 +170,7 @@ pub fn openNewFileDialog(self: *App) void {
 }
 
 pub fn openRenameDialog(self: *App) void {
-    if (self.history.archive_len > 0) return;
+    if (self.history.archive_len > 0 or self.trashReadOnly()) return;
     const idx = self.focused_index orelse blk: {
         for (self.items.items, 0..) |it, i| {
             if (it.selected) break :blk i;
@@ -216,8 +216,19 @@ pub fn openTrashConfirmDialog(self: *App) void {
     self.openTrashConfirmDialogWithMode(false);
 }
 
-pub fn openTrashConfirmDialogWithMode(self: *App, permanent: bool) void {
+pub fn openTrashConfirmDialogWithMode(self: *App, permanent_requested: bool) void {
     if (self.history.archive_len > 0) return;
+    // Entries already in Trash can only be deleted for good; the ones inside
+    // a trashed folder belong to it and go with it.
+    const in_trash = switch (self.trashRelation()) {
+        .none => false,
+        .root => true,
+        .inside => {
+            self.setStatusNotice(tr("Restore the folder to change what is inside it"), false);
+            return;
+        },
+    };
+    const permanent = permanent_requested or in_trash;
     var count: usize = 0;
     for (self.items.items) |it| {
         if (it.selected and !it.missing) count += 1;
@@ -235,8 +246,8 @@ pub fn openTrashConfirmDialogWithMode(self: *App, permanent: bool) void {
     self.closeDialog();
     self.dialog = Dialog{
         .kind = .trash_confirm,
-        .title = tr("Move to Trash?"),
-        .deletion = .{ .permanent = permanent },
+        .title = if (in_trash) tr("Delete permanently?") else tr("Move to Trash?"),
+        .deletion = .{ .permanent = permanent, .in_trash = in_trash },
     };
     for (self.items.items) |it| {
         if (!it.selected or it.missing) continue;

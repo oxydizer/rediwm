@@ -235,7 +235,8 @@ pub fn startFileDrag(self: *Client) !void {
     source.offer("text/uri-list");
     source.offer("application/x-rediwm-file-transfer");
     // The receiving file manager performs moves; upload targets choose copy.
-    if (source.getVersion() >= 3) source.setActions(.{ .copy = true, .move = true });
+    // A move out of the Trash would leave the entry's metadata behind: Restore does it properly.
+    if (source.getVersion() >= 3) source.setActions(.{ .copy = true, .move = !self.app.inTrash() });
     self.drag_source = clip;
     self.app.cancelWheel();
     self.app.cancelDrag();

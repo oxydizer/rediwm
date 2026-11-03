@@ -27,6 +27,9 @@ pub const State = struct {
     preview: ?icons.Entry = null,
     permanent: bool = false,
     empty_trash: bool = false,
+    /// Deleting entries that are already in Trash: always permanent, so the
+    /// checkbox is gone, as for Empty Trash.
+    in_trash: bool = false,
     focus: enum { cancel, toggle, confirm } = .cancel,
 
     keyboard_focus: bool = false,
@@ -36,11 +39,16 @@ pub const State = struct {
         const box = self.placement.box(g.box(), w, h);
         g.x = box.x;
         g.y = box.y;
-        if (self.empty_trash) {
+        if (self.fixedChoice()) {
             g.toggle.w = 0;
             g.toggle.h = 0;
         }
         return g;
+    }
+
+    /// Nothing to choose between: the action is permanent either way.
+    pub fn fixedChoice(self: *const State) bool {
+        return self.empty_trash or self.in_trash;
     }
 
     pub fn pointerButton(self: *State, w: i32, h: i32, x: f64, y: f64, pressed: bool) bool {
@@ -78,7 +86,7 @@ pub const State = struct {
         if (sym == c.XKB_KEY_Tab or sym == c.XKB_KEY_ISO_Left_Tab) {
             self.keyboard_focus = true;
             const n: usize = @intFromEnum(self.focus);
-            self.focus = if (self.empty_trash) (if (self.focus == .cancel) .confirm else .cancel) else @enumFromInt((n + (if (sym == c.XKB_KEY_Tab) @as(usize, 1) else 2)) % 3);
+            self.focus = if (self.fixedChoice()) (if (self.focus == .cancel) .confirm else .cancel) else @enumFromInt((n + (if (sym == c.XKB_KEY_Tab) @as(usize, 1) else 2)) % 3);
         }
         if (sym == c.XKB_KEY_space or ((sym == c.XKB_KEY_Return or sym == c.XKB_KEY_KP_Enter) and self.keyboard_focus)) return switch (self.focus) {
             .cancel => .cancel,
@@ -147,7 +155,7 @@ pub const State = struct {
         const detail = if (self.empty_trash) i18n.tr("Permanently delete all trashed files and folders") else if (self.paths.items.len > 1) i18n.tr("Files and folders in this selection") else if (self.folder) i18n.tr("Folder · includes its contents") else i18n.fmt(&detail_buf, i18n.tr("{kind} · {size} {unit}"), .{ .kind = if (std.ascii.eqlIgnoreCase(std.fs.path.extension(self.name), ".pdf")) i18n.tr("PDF document") else i18n.tr("File"), .size = size, .unit = if (self.bytes >= 1048576) "MB" else if (self.bytes >= 1024) "KB" else i18n.tr("bytes") }) catch i18n.tr("File");
         if (inset_h >= 48) r.drawText(76, inset_y + (inset_h - 48) / 2 + 28, g.width - 108, 20, .{ .content = detail, .font_size = shell_ui.textSize(), .color = t.fg });
         const focus = if (self.keyboard_focus) self.focus else null;
-        if (!self.empty_trash) checkbox.paint(r, g.toggle, i18n.tr("Delete permanently"), .{ .checked = self.permanent, .focused = focus == .toggle });
+        if (!self.fixedChoice()) checkbox.paint(r, g.toggle, i18n.tr("Delete permanently"), .{ .checked = self.permanent, .focused = focus == .toggle });
         button.paint(r, g.cancel, .{ .size = .sm, .label = i18n.tr("Cancel") }, .{ .focused = focus == .cancel, .pointer = if (hover == .cancel) .hover else .idle });
         button.paint(r, g.confirm, .{ .variant = .primary, .size = .sm, .leading_icon = .trash, .label = if (self.empty_trash) i18n.tr("Empty Trash") else if (self.permanent) i18n.tr("Delete permanently") else i18n.tr("Move to Trash") }, .{ .focused = focus == .confirm, .pointer = if (hover == .confirm) .hover else .idle });
     }
