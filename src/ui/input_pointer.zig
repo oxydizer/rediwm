@@ -32,7 +32,7 @@ const findScrollContainer = input_mod.findScrollContainer;
 
 pub fn pointerMotion(self: *Dispatcher, root: *Widget, x: f32, y: f32) void {
     self.bindTree(root);
-    _ = input_mod.updateButtonProximity(root, x, y, .{
+    _ = input_mod.updateInteractiveProximity(root, x, y, .{
         .x = root.computed_x,
         .y = root.computed_y,
         .w = root.computed_width,

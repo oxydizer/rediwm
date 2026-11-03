@@ -3,6 +3,7 @@
 const std = @import("std");
 const anim = @import("anim.zig");
 const layout = @import("layout.zig");
+const theme = @import("theme.zig");
 const Widget = layout.Widget;
 const scroll_widget = @import("widgets/scroll_container.zig");
 const hitTest = @import("input.zig").hitTest;
@@ -202,6 +203,120 @@ test "dispatcher forwards retained-tree hits to the interaction surface" {
     try std.testing.expect(dispatcher.surface.hovered != null);
     dispatcher.pointerLeave(&root);
     try std.testing.expect(dispatcher.surface.hovered == null);
+}
+
+test "proximity samples shared widget surfaces and clears on pointer leave" {
+    const TextSink = struct {
+        fn call(_: ?*anyopaque, _: usize, _: []const u8) void {}
+    };
+    const CheckSink = struct {
+        fn call(_: ?*anyopaque, _: usize, _: bool) void {}
+    };
+
+    var children = [_]Widget{
+        .{
+            .kind = .{ .text_input = .{
+                .placeholder = "",
+                .value = &.{},
+                .on_change = TextSink.call,
+            } },
+            .computed_x = 10,
+            .computed_y = 10,
+            .computed_width = 60,
+            .computed_height = 30,
+        },
+        .{
+            .kind = .{ .checkbox = .{
+                .label = "Enabled",
+                .checked = false,
+                .on_change = CheckSink.call,
+            } },
+            .computed_x = 100,
+            .computed_y = 10,
+            .computed_width = 80,
+            .computed_height = 30,
+        },
+        .{
+            .kind = .{ .checkbox = .{
+                .label = "Disabled",
+                .checked = false,
+                .disabled = true,
+                .on_change = CheckSink.call,
+            } },
+            .computed_x = 200,
+            .computed_y = 10,
+            .computed_width = 80,
+            .computed_height = 30,
+        },
+    };
+    var root: Widget = .{
+        .kind = .container,
+        .computed_width = 300,
+        .computed_height = 60,
+        .children = &children,
+    };
+    root.linkParents();
+
+    var dispatcher = Dispatcher{};
+    dispatcher.pointerMotion(&root, 20, 20);
+
+    const field = &root.children[0];
+    try std.testing.expectEqual(@as(f32, 0), field.proximity.distance);
+    try std.testing.expectEqual(@as(f32, 10), field.proximity.x);
+    try std.testing.expectEqual(@as(f32, 10), field.proximity.y);
+
+    // The checkbox illuminates its square, not the label's whole row.
+    const checkbox = &root.children[1];
+    try std.testing.expect(std.math.isInf(checkbox.proximity.distance));
+    dispatcher.pointerMotion(&root, 105, 20);
+    try std.testing.expectEqual(@as(f32, 0), checkbox.proximity.distance);
+    try std.testing.expectEqual(@as(f32, 100), checkbox.proximity.rect.x);
+    try std.testing.expectEqual(@as(f32, 16), checkbox.proximity.rect.y);
+    try std.testing.expectEqual(@as(f32, 18), checkbox.proximity.rect.w);
+    try std.testing.expectEqual(@as(f32, 18), checkbox.proximity.rect.h);
+    try std.testing.expectEqual(@as(f32, 5), checkbox.proximity.x);
+    try std.testing.expectEqual(@as(f32, 4), checkbox.proximity.y);
+
+    // Disabled controls never acquire a proximity sample.
+    try std.testing.expect(std.math.isInf(root.children[2].proximity.distance));
+
+    dispatcher.pointerLeave(&root);
+    try std.testing.expect(std.math.isInf(field.proximity.distance));
+    try std.testing.expect(std.math.isInf(checkbox.proximity.distance));
+}
+
+test "scrollbar groove proximity follows the visible inset groove" {
+    const saved_theme = theme.global;
+    defer theme.global = saved_theme;
+    theme.global.scrollbar_width = 8;
+    theme.global.scrollbar_track_relief = .inset;
+
+    var root: Widget = .{
+        .kind = .{ .scroll_container = .{ .content_size = 200 } },
+        .direction = .column,
+        .computed_x = 20,
+        .computed_y = 20,
+        .computed_width = 100,
+        .computed_height = 100,
+    };
+
+    var dispatcher = Dispatcher{};
+    dispatcher.pointerMotion(&root, 110, 90);
+
+    // The 14 px gutter produces a 12 px inset groove at x=107.
+    try std.testing.expectEqual(@as(f32, 0), root.proximity.distance);
+    try std.testing.expectEqual(@as(f32, 107), root.proximity.rect.x);
+    try std.testing.expectEqual(@as(f32, 20), root.proximity.rect.y);
+    try std.testing.expectEqual(@as(f32, 12), root.proximity.rect.w);
+    try std.testing.expectEqual(@as(f32, 100), root.proximity.rect.h);
+    try std.testing.expectEqual(@as(f32, 3), root.proximity.x);
+    try std.testing.expectEqual(@as(f32, 70), root.proximity.y);
+
+    // Sampling is independent of relief so making the groove visible again
+    // does not require another pointer movement. The painter gates flat tracks.
+    theme.global.scrollbar_track_relief = .flat;
+    dispatcher.pointerMotion(&root, 110, 90);
+    try std.testing.expectEqual(@as(f32, 0), root.proximity.distance);
 }
 
 test "hitTest returns the topmost overlapping widget" {

@@ -495,6 +495,22 @@ pub const WidgetKind = union(enum) {
     container,
 };
 
+pub const ProximityRect = struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    w: f32 = 0,
+    h: f32 = 0,
+};
+
+/// Pointer sample for a shared interactive surface. Coordinates are local
+/// to `rect`; an infinite distance means the pointer is outside glow reach.
+pub const ProximityData = struct {
+    rect: ProximityRect = .{},
+    distance: f32 = std.math.inf(f32),
+    x: f32 = 0,
+    y: f32 = 0,
+};
+
 pub const Widget = struct {
     // --- Layout inputs (set by caller) ---
     width: SizeConstraint = .auto,
@@ -517,6 +533,9 @@ pub const Widget = struct {
     computed_y: f32 = 0,
     computed_width: f32 = 0,
     computed_height: f32 = 0,
+
+    /// Mouse-proximity illumination state for non-button interactive surfaces.
+    proximity: ProximityData = .{},
 
     // --- Widget identity ---
     name: ?[]const u8 = null,

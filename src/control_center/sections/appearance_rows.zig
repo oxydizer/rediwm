@@ -352,8 +352,8 @@ pub fn buildFontRows(out: *Section, arena: std.mem.Allocator, t: theme.Theme, pa
     };
 
     out.button_hover_glow_label_children = .{
-        .{ .kind = .{ .text = .{ .content = i18n.tr("Button hover glow"), .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
-        .{ .kind = .{ .text = .{ .content = i18n.tr("Light button edges near the pointer"), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Interactive surface glow"), .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Light interactive control edges near the pointer"), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     out.button_hover_glow_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.button_hover_glow_label_children },

@@ -211,7 +211,8 @@ pub const Theme = struct {
     /// (`Toplevel.setGlow`). Its alpha is the strength at full proximity; zero
     /// turns it off.
     border_glow_enabled: bool = true,
-    /// Independent gate for proximity highlights painted inside buttons.
+    /// Shared gate for proximity highlights painted inside interactive
+    /// widget surfaces. The legacy key name is retained for theme compatibility.
     /// Colour and reach/length/depth are shared with the window-edge glow.
     button_hover_glow_enabled: bool = true,
     border_glow: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 0.60 },

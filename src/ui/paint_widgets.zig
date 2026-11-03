@@ -80,6 +80,65 @@ pub fn paintButton(widget: *const Widget, data: ButtonData, renderer: *Renderer)
     });
 }
 
+fn paintProximitySample(widget: *const Widget, renderer: *Renderer) void {
+    const disabled = switch (widget.kind) {
+        .button => |data| data.state == .disabled,
+        .row => |data| data.state == .disabled,
+        .checkbox => |data| data.disabled,
+        .toggle => |data| data.disabled,
+        .select => |data| data.disabled,
+        else => false,
+    };
+    if (disabled) return;
+
+    const sample = widget.proximity;
+    if (sample.distance >= std.math.inf(f32)) return;
+
+    const box: button_widget.Rect = .{
+        .x = sample.rect.x,
+        .y = sample.rect.y,
+        .w = sample.rect.w,
+        .h = sample.rect.h,
+    };
+    const t = renderer.palette orelse theme.global;
+    const radius: f32 = switch (widget.kind) {
+        .row => |data| if (data.background) |style| style.radius else t.radius,
+        .checkbox => t.checkbox_radius,
+        .text_input => |data| field_widget.metrics(data.field.size, t).radius,
+        .secret_input => |data| field_widget.metrics(data.field.size, t).radius,
+        .toggle => |data| if (data.style == .settings) t.toggle_radius else box.h / 2,
+        .slider => box.h / 2,
+        .select, .segmented, .stepper, .arrangement => t.radius,
+        .swatch => t.swatch_radius,
+        else => return,
+    };
+
+    button_widget.paintProximityGlowAt(
+        renderer, box, radius, sample.distance, sample.x, sample.y,
+    );
+}
+
+/// Paints proximity illumination during the normal tree pass. A dropdown
+/// popup sample is deferred to the overlay pass below.
+pub fn paintInteractiveProximity(widget: *const Widget, renderer: *Renderer) void {
+    if (widget.kind == .select and widget.kind.select.open) {
+        const popup = @import("widgets/select.zig").popupBounds(widget);
+        const sample = widget.proximity.rect;
+        if (sample.x == popup.x and sample.y == popup.y and
+            sample.w == popup.w and sample.h == popup.h) return;
+    }
+    paintProximitySample(widget, renderer);
+}
+
+fn paintSelectPopupProximity(widget: *const Widget, renderer: *Renderer) void {
+    if (!(widget.kind == .select and widget.kind.select.open)) return;
+    const popup = @import("widgets/select.zig").popupBounds(widget);
+    const sample = widget.proximity.rect;
+    if (sample.x != popup.x or sample.y != popup.y or
+        sample.w != popup.w or sample.h != popup.h) return;
+    paintProximitySample(widget, renderer);
+}
+
 pub fn paintCheckbox(widget: *const Widget, data: CheckboxData, renderer: *Renderer) void {
     checkbox_widget.paint(renderer, .{
         .x = widget.computed_x,
@@ -383,6 +442,33 @@ pub fn paintStepper(widget: *const Widget, data: StepperData, renderer: *Rendere
     });
 }
 
+fn paintScrollbarGrooveProximity(
+    widget: *const Widget,
+    look: scrollbar.Look,
+    renderer: *Renderer,
+) void {
+    const sample = widget.proximity;
+    if (look.track_relief == .flat or sample.distance >= std.math.inf(f32)) return;
+
+    // Only paint a sample that still belongs to this groove's geometry.
+    if (sample.rect.x != look.track.x or sample.rect.y != look.track.y or
+        sample.rect.w != look.track.w or sample.rect.h != look.track.h) return;
+
+    button_widget.paintProximityGlowAt(
+        renderer,
+        .{
+            .x = look.track.x,
+            .y = look.track.y,
+            .w = look.track.w,
+            .h = look.track.h,
+        },
+        look.track_radius,
+        sample.distance,
+        sample.x,
+        sample.y,
+    );
+}
+
 pub fn paintScrollContainer(widget: *const Widget, state: ScrollState, renderer: *Renderer) void {
     const prev_clip = renderer.clip;
     renderer.clip = intersectClip(prev_clip, .{ .x = widget.computed_x, .y = widget.computed_y, .w = widget.computed_width, .h = widget.computed_height });
@@ -400,7 +486,10 @@ pub fn paintScrollContainer(widget: *const Widget, state: ScrollState, renderer:
 
     const g = @import("widgets/scroll_container.zig").geometry(widget) orelse return;
     const t = renderer.palette orelse theme.global;
-    scrollbar.paint(renderer, scrollbar.look(g, state.bar, theme.global.scrollbar_width, t));
+    const look = scrollbar.look(g, state.bar, theme.global.scrollbar_width, t);
+    scrollbar.paintTrack(renderer, look);
+    paintScrollbarGrooveProximity(widget, look, renderer);
+    scrollbar.paintThumb(renderer, look);
 }
 
 pub fn intersectClip(a: ?ClipRect, b: ClipRect) ClipRect {
@@ -456,6 +545,7 @@ pub fn paintOverlays(widget: *const Widget, r: *Renderer) void {
             if (scrollbar.Geometry.compute(.vertical, track, @floatFromInt(visible), @floatFromInt(d.labels.len), @floatFromInt(d.first_visible))) |g|
                 scrollbar.paint(r, scrollbar.look(g, .{}, theme.global.scrollbar_width, t));
         }
+        paintSelectPopupProximity(widget, r);
     }
     for (widget.children) |*child| paintOverlays(child, r);
 }

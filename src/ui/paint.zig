@@ -696,6 +696,9 @@ pub fn paintTree(widget: *const Widget, renderer: *Renderer) void {
     }
     if (recurse_children) {
         if (widget.underlay) |under| under.paint(under.owner, widget, renderer);
+    }
+    paint_widgets.paintInteractiveProximity(widget, renderer);
+    if (recurse_children) {
         for (widget.children) |*child| paintTree(child, renderer);
     }
 }

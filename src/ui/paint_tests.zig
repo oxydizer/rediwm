@@ -817,6 +817,121 @@ test "button hover glow is independent of window edge glow and stays rounded and
     }
 }
 
+test "non-button interactive surfaces use the shared proximity edge painter" {
+    const background: u32 = 0xff808080;
+    var pixels: [80 * 60]u32 = @splat(background);
+    var renderer = Renderer.init(&pixels, 80, 60, 1);
+    var palette: theme.Theme = .{};
+    palette.button_hover_glow_enabled = true;
+    palette.border_glow = .{ 1, 0, 0, 0.60 };
+    palette.border_glow_reach = 56;
+    palette.border_glow_length = 72;
+    palette.border_glow_depth = 3;
+    renderer.palette = palette;
+    renderer.clip = .{ .x = 30, .y = 20, .w = 20, .h = 24 };
+
+    var widget = Widget{
+        .kind = .{ .row = .{} },
+        .computed_x = 20,
+        .computed_y = 20,
+        .computed_width = 40,
+        .computed_height = 24,
+        .proximity = .{
+            .rect = .{ .x = 20, .y = 20, .w = 40, .h = 24 },
+            .distance = 4,
+            .x = 20,
+            .y = -4,
+        },
+    };
+    paintTree(&widget, &renderer);
+    const illuminated = pixels;
+
+    widget.proximity = .{};
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    try std.testing.expect(!std.mem.eql(u32, &illuminated, &pixels));
+
+    // The shared painter respects the renderer's clip.
+    try std.testing.expectEqual(background, illuminated[20 * 80 + 25]);
+    try std.testing.expect(illuminated[20 * 80 + 40] != background);
+
+    // A control becoming disabled must stop painting its cached sample,
+    // even when the pointer has not moved to trigger another sample.
+    widget.kind.row.state = .disabled;
+    widget.proximity = .{
+        .rect = .{ .x = 20, .y = 20, .w = 40, .h = 24 },
+        .distance = 4,
+        .x = 20,
+        .y = -4,
+    };
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    try std.testing.expect(std.mem.eql(u32, &pixels, &@as([80 * 60]u32, @splat(background))));
+}
+
+test "scrollbar groove proximity glows without covering the thumb" {
+    const background: u32 = 0xff808080;
+    const saved_theme = theme.global;
+    defer theme.global = saved_theme;
+
+    var palette: theme.Theme = .{};
+    palette.button_hover_glow_enabled = true;
+    palette.border_glow = .{ 1, 0, 0, 0.60 };
+    palette.border_glow_reach = 56;
+    palette.border_glow_length = 72;
+    palette.border_glow_depth = 3;
+    palette.scrollbar_width = 8;
+    palette.scrollbar_track_relief = .inset;
+    theme.global = palette;
+
+    var pixels: [160 * 160]u32 = @splat(background);
+    var renderer = Renderer.init(&pixels, 160, 160, 1);
+    renderer.palette = palette;
+
+    var widget = Widget{
+        .kind = .{ .scroll_container = .{ .content_size = 200 } },
+        .direction = .column,
+        .computed_x = 20,
+        .computed_y = 20,
+        .computed_width = 100,
+        .computed_height = 100,
+        .proximity = .{
+            .rect = .{ .x = 107, .y = 20, .w = 12, .h = 100 },
+            .distance = 0,
+            .x = 3,
+            .y = 70,
+        },
+    };
+
+    paintTree(&widget, &renderer);
+    const with_glow = pixels;
+
+    widget.proximity = .{};
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    const without_glow = pixels;
+
+    const groove_edge = 90 * 160 + 107;
+    const thumb_centre = 35 * 160 + 113;
+
+    try std.testing.expect(with_glow[groove_edge] != without_glow[groove_edge]);
+    // The thumb is painted after the groove glow and remains unchanged.
+    try std.testing.expectEqual(without_glow[thumb_centre], with_glow[thumb_centre]);
+
+    // A flat track remains unlit even though its proximity sample is retained.
+    palette.scrollbar_track_relief = .flat;
+    theme.global = palette;
+    renderer.palette = palette;
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    const flat_with_sample = pixels;
+
+    widget.proximity = .{};
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    try std.testing.expect(std.mem.eql(u32, &flat_with_sample, &pixels));
+}
+
 test "button hover glow lights adjacent and independently reachable edges" {
     const sample = struct {
         fn red(pixels: []const u32, x: usize, y: usize) u32 {

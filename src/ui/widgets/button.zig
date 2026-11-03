@@ -297,8 +297,29 @@ fn glowNear(px: f32, py: f32, edge_x: f32, edge_y: f32, reach: f32) f32 {
 /// Paints independent pointer-facing highlights on every nearby button edge.
 /// Overlapping edge contributions use their maximum, keeping corners controlled.
 fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
+    if (state.pointer == .disabled) return;
+    paintProximityGlowAt(
+        r,
+        box,
+        radius,
+        state.proximity_distance,
+        state.proximity_x,
+        state.proximity_y,
+    );
+}
+
+/// Shared edge-light painter for buttons and other interactive surfaces.
+/// Pointer coordinates are local to `box`.
+pub fn paintProximityGlowAt(
+    r: *Renderer,
+    box: Rect,
+    radius: f32,
+    proximity_distance: f32,
+    proximity_x: f32,
+    proximity_y: f32,
+) void {
     const t = r.palette orelse theme.global;
-    if (!t.button_hover_glow_enabled or state.proximity_distance >= std.math.inf(f32) or
+    if (!t.button_hover_glow_enabled or proximity_distance >= std.math.inf(f32) or
         t.border_glow[3] <= 0 or t.border_glow_reach <= 0 or
         t.border_glow_length <= 0 or t.border_glow_depth <= 0 or
         box.w <= 0 or box.h <= 0)
@@ -306,8 +327,8 @@ fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
 
     const corner_radius = std.math.clamp(radius, 0, 0.5 * @min(box.w, box.h));
     const reach = t.border_glow_reach;
-    const pointer_x = state.proximity_x;
-    const pointer_y = state.proximity_y;
+    const pointer_x = proximity_x;
+    const pointer_y = proximity_y;
 
     const Edge = struct {
         x: f32,
