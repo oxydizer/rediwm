@@ -276,11 +276,16 @@ pub fn finishResize(input: *Input) void {
     const session = &(input.resize_session orelse return);
     const toplevel = session.toplevel;
     @import("../effects/window_move.zig").stop(input.server);
-    input.server.scheduleFrames();
+    // The flame's fade and follow-through need a frame to start; with the
+    // effect off the resize ends exactly as it always did.
+    if (@import("../effects/window_move.zig").resizeEnabled(input.server)) input.server.scheduleFrames();
 
     toplevel.setResizing(false);
     const final_size = session.latest_desired_size;
     const shown = @import("../effects/window_move.zig").resizeSize(toplevel, Toplevel.nowMs(), final_size);
+    // Only a follow-through still easing toward the final size leaves work
+    // pending. Otherwise dirty is cleared here, so flushResizeConfigure ignores
+    // a settling session (it used to return early on `settling`).
     session.dirty = !std.meta.eql(shown, final_size);
     if (!session.dirty) {
         session.outstanding_configure = toplevel.requestSize(final_size.width, final_size.height);

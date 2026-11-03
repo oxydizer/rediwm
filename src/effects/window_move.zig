@@ -52,19 +52,27 @@ pub fn cancelFor(server: *Server, id: u64) void {
 }
 
 pub fn start(top: *Top) void {
-    startWith(top, top.server.config.effects.window_move, null);
+    startWith(top, top.server.config.effects.window_move, false);
+}
+
+/// Whether resizes may play the flame (and so follow-through): the cheap,
+/// usual "no". Stays true after the ribbon itself has faded away.
+pub fn resizeEnabled(server: *Server) bool {
+    return server.ribbons_ready and server.config.effects.resize().enabled;
 }
 
 pub fn startResize(top: *Top) void {
-    startWith(top, top.server.config.effects.resize(), Resize.init(top));
+    startWith(top, top.server.config.effects.resize(), true);
 }
 
-fn startWith(top: *Top, binding: @import("config").effects.Binding, resizing: ?Resize) void {
+fn startWith(top: *Top, binding: @import("config").effects.Binding, resize: bool) void {
     const server = top.server;
     cancel(server);
     if (!binding.enabled or !server.ribbons_ready or !anim.enabled() or anim.reducedMotion() or server.locker != null) return;
     const preset = server.config.effects.find(binding.preset) orelse return;
     if (preset.opacity == 0) return;
+    // Past every early out, so a disabled effect costs a resize nothing.
+    const resizing: ?Resize = if (resize) Resize.init(top) else null;
     const self = gpa.create(Self) catch return;
     const tree = top.frame_tree.createSceneTree() catch {
         gpa.destroy(self);

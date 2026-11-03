@@ -43,6 +43,12 @@ fn remove(link: *?*Self, self: *Self) void {
     gpa.destroy(self);
 }
 
+/// Whether minimizing may play the flame at all: the cheap, usual "no".
+/// `start` still makes the per-window checks.
+pub fn wanted(server: *Server) bool {
+    return server.ribbons_ready and server.config.effects.minimize().enabled;
+}
+
 pub fn start(top: *Top) void {
     const server = top.server;
     const binding = server.config.effects.minimize();
@@ -124,6 +130,8 @@ fn update(self: *Self, now: i64) void {
 
 pub fn tick(output: *Output, now: i64) bool {
     const server = output.server;
+    // Runs every frame: with no snapshot alive there is nothing to cancel or pace.
+    if (server.minimize_ribbons == null) return false;
     if (server.locker != null or !anim.enabled() or anim.reducedMotion()) {
         cancelAll(server);
         return false;

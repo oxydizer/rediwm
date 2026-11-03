@@ -55,10 +55,18 @@ pub fn minimize(toplevel: *Toplevel) void {
     // X11 clients can ask for this while withdrawn; the stack reorder below
     // needs the window to be in it.
     if (toplevel.minimized or !toplevel.in_world) return;
+    // The flame snapshots the shown window, and a minimized window's frame is
+    // hidden by the visual sync in detachInput (window_tabs.visible), so with
+    // the flame on the flag is set after the snapshot. Off, it is set first, as
+    // it always was.
+    const flame = @import("../effects/window_minimize.zig").wanted(toplevel.server);
+    if (!flame) toplevel.minimized = true;
     toplevel.detachInput();
     toplevel.finishSwitch();
-    @import("../effects/window_minimize.zig").start(toplevel);
-    toplevel.minimized = true;
+    if (flame) {
+        @import("../effects/window_minimize.zig").start(toplevel);
+        toplevel.minimized = true;
+    }
     toplevel.frame_tree.node.setEnabled(false);
 
     const server = toplevel.server;

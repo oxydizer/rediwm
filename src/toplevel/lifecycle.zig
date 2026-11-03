@@ -35,8 +35,10 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
             toplevel.positionDuringResize();
 
             // An acknowledgement can carry no pixel damage. Pending resize
-            // work still needs a frame, even after the flame has faded away.
-            if (session.dirty and session.outstanding_configure == .none) {
+            // work of the flame (following the pointer, or left over once it
+            // has faded away) still needs a frame; plain resizes already
+            // scheduled theirs, so with the effect off nothing changes.
+            if (@import("../effects/window_move.zig").resizeEnabled(toplevel.server) and session.dirty and session.outstanding_configure == .none) {
                 if (session.pacing_output) |output| output.wlr_output.scheduleFrame() else toplevel.server.scheduleFrames();
             }
 
