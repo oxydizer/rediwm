@@ -140,7 +140,7 @@ pub const App = struct {
     pub fn iconRect(self: *App, index: usize) grid.Rect {
         var r = self.geometry.rect(self.icons.items[index].cell);
         if (self.dragging and self.pressed == index) {
-            r.x = @intFromFloat(self.x - 48);
+            r.x = @intFromFloat(self.x - @as(f64, @floatFromInt(r.w)) / 2);
             r.y = @intFromFloat(self.y - 40);
         }
         return r;

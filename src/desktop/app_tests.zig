@@ -254,8 +254,10 @@ test "icon group cache matches fresh pixels after visual and content changes" {
     ic.removed = null;
     app.dragging = true;
     app.pressed = 0;
-    app.x = 128;
-    app.y = 64;
+    // The dragged icon is centred on the pointer: this puts it exactly on its cell.
+    const cell = app.geometry.rect(.{});
+    app.x = @floatFromInt(cell.x + @divTrunc(cell.w, 2));
+    app.y = @floatFromInt(cell.y + 40);
     try expectFreshIconPixels(&app, 200, 240, 1, 0, 1, 0, 1200);
     try std.testing.expectEqual(opaque_pattern, ic.raster.pattern);
     app.dragging = false;

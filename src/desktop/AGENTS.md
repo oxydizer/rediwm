@@ -10,6 +10,14 @@ Desktop keyboard focus and compositor drop targets are in the root
   damaged tiles get new buffers. Rasterize the selection band once per paint;
   repair clips snap outward to device pixels. Labels/icons are rasterized at
   exact scale.
+* **The grid fills the output.** Columns count from the right (saved cells
+  keep their meaning) and share the whole width: cells are at least 96px and
+  stretch by a few pixels so the first and last column sit the same distance
+  from the edges whatever the output width (`grid.zig`). Drawing keeps the
+  icon and label at their designed size, centred in the cell (`ox` in
+  `iconPattern`), so nothing outside `grid.zig` may assume a 96px cell or
+  derive x from a column. The column count is deliberately unchanged
+  (`reserve`): changing it moves every saved position.
 * A `.desktop` file runs only if `Worker.trustedLauncher` (`watcher.zig`)
   accepts it (installed or linked into the menus, root-owned, executable, or
   an exact copy of the installed entry); otherwise it is an `untrusted` plain
