@@ -59,6 +59,13 @@ helpers (and `panel.ControlCenter`); `sections/` one file per page.
   over locked storage, clears it on submit/cancel/hide, and never stores passwords
   in the section arena. Hiding also cancels any native authentication wait.
 
+* **The Appearance flame-effect toggles are independent** though `window_minimize`
+  and `window_resize` follow `window_move` in the file. `Config.setEnabled` pins
+  a following binding to what it showed before the change and `setting_save.saveEffect`
+  writes it (with its `preset`) so a reload reads back what was running; the handler
+  then calls `window_move.configure` (a reload's diff cannot, the live config
+  already changed). Off by default: nothing is written until a toggle is touched.
+
 * Global search uses `search_index.zig` destinations (widget names or `@` plus
   visible label text), without building hidden sections. Add an index entry
   with new settings. Typing navigates to the highest-ranked match; the sidebar

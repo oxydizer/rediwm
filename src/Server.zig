@@ -112,6 +112,9 @@ scene_outputs: *scene_outputs_mod.SceneOutputs,
 /// The compositor's own scene: its layers are the trees below, bottom to top.
 nodes: *sn.Scene,
 glass_engine: ?*glass.Engine = null,
+ribbons_ready: bool = false,
+window_ribbons: ?*@import("effects/window_move.zig") = null,
+minimize_ribbons: ?*@import("effects/window_minimize.zig") = null,
 output_renderer: *scene_output_mod.Renderer = undefined,
 // Set when wp_linux_drm_syncobj_v1 is advertised: release points for client
 // buffers the glass and window capture passes read (see explicit_sync.c).

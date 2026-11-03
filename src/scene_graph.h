@@ -367,6 +367,7 @@ enum rediwm_item_kind {
   // The analytic shadow of `item.shadow`; the leaf transports input, opacity and
   // the footprint (its edges), never pixels.
   REDIWM_ITEM_SHADOW,
+  REDIWM_ITEM_RIBBON, // an input-transparent procedural ribbon mesh
 };
 // What a leaf draws, apart from where. `color` is premultiplied.
 struct rediwm_content {
@@ -424,6 +425,10 @@ struct rediwm_item {
   // The shape clipping this item with the rest of its tree, or NULL. Owned by the
   // leaf the item belongs to: valid for the callback, until the next resolve.
   const struct rediwm_clip *clip;
-  // Set exactly for REDIWM_ITEM_SHADOW, with the same lifetime as `clip`.
-  const struct rediwm_shadow *shadow;
+  // Exclusive procedural payload. Shadows have the lifetime of `clip`;
+  // ribbons belong to their transport node. Ordinary items keep this NULL.
+  union {
+    const struct rediwm_shadow *shadow;
+    const struct rediwm_ribbon *ribbon; // node-owned; normalized to edges
+  }; // exclusive procedural kinds; ordinary items do not grow for optional effects
 };

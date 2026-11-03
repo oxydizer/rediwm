@@ -36,6 +36,7 @@ const onCursorThemePicked = appearance_chrome.onCursorThemePicked;
 const onDarkModeChanged = appearance_chrome.onDarkModeChanged;
 const onSplashStartupChanged = appearance_chrome.onSplashStartupChanged;
 const onDodgeFileDragsChanged = appearance_chrome.onDodgeFileDragsChanged;
+const EffectToggle = appearance_chrome.EffectToggle;
 const appearance = @import("appearance.zig");
 const segmented_width = appearance.segmented_width;
 const font_values = appearance.font_values;
@@ -239,6 +240,27 @@ pub fn buildBehaviorRows(out: *Section, pal: theme.Theme) void {
             .on_change = &onDragScaleChanged,
         } } },
     };
+}
+
+/// Optional flame effects: three independent toggles, off by default. They
+/// only run while Animations are on (and Reduced motion is not).
+pub fn buildEffectRows(out: *Section, pal: theme.Theme) void {
+    const effects = out.cc.server.config.effects;
+    const rows = .{
+        .{ "effect_window_move", i18n.msg("Flames while moving windows"), effects.window_move.enabled, &EffectToggle(.window_move).changed },
+        .{ "effect_window_resize", i18n.msg("Flames while resizing windows"), effects.resize().enabled, &EffectToggle(.window_resize).changed },
+        .{ "effect_window_minimize", i18n.msg("Flames when minimizing windows"), effects.minimize().enabled, &EffectToggle(.window_minimize).changed },
+    };
+    inline for (rows, 0..) |row, i| {
+        out.effect_label_children[i] = .{
+            .{ .kind = .{ .text = .{ .content = row[1].get(), .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+            .{ .kind = .{ .text = .{ .content = i18n.tr("Needs Animations to be on"), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
+        };
+        out.effect_row_children[i] = .{
+            .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.effect_label_children[i] },
+            .{ .name = row[0], .kind = .{ .toggle = .{ .on = row[2], .owner = out, .on_change = row[3] } } },
+        };
+    }
 }
 
 /// The UI font, cursor theme, font size, radius, shadow and edge glow rows.

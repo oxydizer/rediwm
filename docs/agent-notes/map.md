@@ -74,7 +74,15 @@ Also in `src/`: `Shell.zig` (xdg-shell and decorations), `Popup.zig`,
 output pass); `glass.zig`/`.c`; `chrome.zig`
 (+ `chrome_paint.zig`, `chrome_tabs.zig`) for window frames; `panel_buffer`,
 `panel_paint` and `panel_present.zig` for compositor-drawn panels;
-`camera.zig`, `geometry.zig`, `color.zig`.
+`camera.zig`, `geometry.zig`, `color.zig`. Optional movement ribbons use
+`effects/ribbon.zig` (bounded path/mesh), `effects/border.zig` (frame halo),
+`effects/window_move.zig` (movement/resize lifecycle), `effects/window_resize.zig`
+and `effects/resize_mesh.zig` (filled resize membranes), `effects/resize_outline.zig`
+(elastic perimeter), `effects/resize_follow.zig`
+(bounded size lag), `effects/window_minimize.zig`
+and `effects/minimize_mesh.zig` (minimize snapshots and deformation),
+`scene_output_snapshot.c` (shaped window capture), `ribbon.c` (scene nodes), `scene_pass_ribbon.c` and
+`scene_output_ribbon.c` (drawing), and `config/effects.zig` (presets).
 
 ## Compositor-drawn UI
 

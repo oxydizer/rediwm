@@ -168,7 +168,11 @@ struct leaf *projection_get_leaf(struct rediwm_projection *p, struct rediwm_node
   wl_list_insert(&p->leaves, &l->link);
   wlr_addon_init(&l->source_lookup, &source->addons, p, &source_lookup_impl);
   source->leaf = l;
-  l->effect = source->type == REDIWM_NODE_BUFFER && rediwm_glass_is_effect_node(source);
+  if (source->type == REDIWM_NODE_BUFFER) {
+    l->item.ribbon = rediwm_ribbon_get(source);
+    l->intrinsic_kind = l->item.ribbon ? REDIWM_ITEM_RIBBON :
+        rediwm_glass_is_effect_node(source) ? REDIWM_ITEM_EFFECT : REDIWM_ITEM_BUFFER;
+  }
   l->destroy.notify = source_destroy;
   wl_signal_add(&source->events.destroy, &l->destroy);
   if (source->type == REDIWM_NODE_BUFFER) {

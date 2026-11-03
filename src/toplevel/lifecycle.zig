@@ -34,9 +34,15 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
 
             toplevel.positionDuringResize();
 
+            // An acknowledgement can carry no pixel damage. Pending resize
+            // work still needs a frame, even after the flame has faded away.
+            if (session.dirty and session.outstanding_configure == .none) {
+                if (session.pacing_output) |output| output.wlr_output.scheduleFrame() else toplevel.server.scheduleFrames();
+            }
+
             // A queued pre-release commit must not discard the fixed-edge
             // snapshot before the client acknowledges the final resize size.
-            if (session.settling and session.outstanding_configure == .none) {
+            if (session.settling and !session.dirty and session.outstanding_configure == .none) {
                 const gen = session.generation;
                 toplevel.server.input.finishSettlement(gen);
             }

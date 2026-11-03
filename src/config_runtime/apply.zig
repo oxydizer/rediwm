@@ -186,6 +186,14 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         if (server.input.open_control_center) |cc| cc.refresh();
     }
 
+    if (old.effects.window_move.enabled != new.effects.window_move.enabled or
+        old.effects.minimize().enabled != new.effects.minimize().enabled or
+        old.effects.resize().enabled != new.effects.resize().enabled or
+        !std.meta.eql(old.effects.find(old.effects.window_move.preset), new.effects.find(new.effects.window_move.preset)) or
+        !std.meta.eql(old.effects.find(old.effects.minimize().preset), new.effects.find(new.effects.minimize().preset)) or
+        !std.meta.eql(old.effects.find(old.effects.resize().preset), new.effects.find(new.effects.resize().preset)))
+        @import("../effects/window_move.zig").configure(server);
+
     const theme_changed = pack_changed or !themeEql(old.theme, new.theme) or old.compositor.border_radius != new.compositor.border_radius;
     const taskbar_theme_changed = !theme_mod.taskbarOverrideEql(old.taskbar_theme, new.taskbar_theme);
     if (theme_changed) {

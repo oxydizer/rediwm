@@ -389,6 +389,7 @@ pub const Config = struct {
     notification_rules: []NotificationRule = &.{},
     sandbox_allow: []SandboxAllowRule = &.{},
     animations: anim.Settings = .{},
+    effects: @import("effects.zig").Config = .{},
     path: []const u8 = "",
     arena: std.heap.ArenaAllocator,
 

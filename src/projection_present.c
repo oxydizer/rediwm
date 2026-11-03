@@ -94,6 +94,8 @@ static void present_leaf(struct leaf *l) {
   bool paints = enabled;
   if (item->kind == REDIWM_ITEM_RECT) {
     paints = paints && item->content.color[3] > 0;
+  } else if (item->kind == REDIWM_ITEM_RIBBON) {
+    paints = paints && item->content.opacity > 0 && item->ribbon->count >= 4;
   } else if (item->kind == REDIWM_ITEM_EFFECT || item->kind == REDIWM_ITEM_SHADOW) {
     paints = false;
   } else {

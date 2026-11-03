@@ -2307,6 +2307,10 @@ msgstr ""
 msgid "Edits undone."
 msgstr ""
 
+#: src/control_center/sections/appearance.zig
+msgid "Effects"
+msgstr ""
+
 #: src/files/app_model.zig
 msgid "Eject"
 msgstr ""
@@ -2665,6 +2669,18 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "Fixed desktop icons"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Flames when minimizing windows"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Flames while moving windows"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Flames while resizing windows"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -3677,6 +3693,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "Natural scroll"
+msgstr ""
+
+#: src/control_center/sections/appearance_rows.zig
+msgid "Needs Animations to be on"
 msgstr ""
 
 #: src/control_center/sections/printers_tools.zig
@@ -6879,6 +6899,10 @@ msgstr ""
 msgid "Wi-Fi request failed. Check credentials and permissions."
 msgstr ""
 
+#: src/switcher/circular.zig
+msgid "Window"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Window Management"
 msgstr ""
@@ -7217,6 +7241,14 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "edge pan transitions"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "effects fire trail ribbon animation"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "effects fire trail ribbon drag animation"
 msgstr ""
 
 #: src/control_center/search_index.zig

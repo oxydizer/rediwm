@@ -3,6 +3,7 @@
 const std = @import("std");
 const Io = std.Io;
 const loader = @import("loader.zig");
+const effects = @import("effects.zig");
 const theme = @import("ui").theme;
 pub const saveInputDevice = @import("input_device_save.zig").save;
 pub const resetInputDevice = @import("input_device_save.zig").reset;
@@ -96,6 +97,49 @@ pub fn saveAccent(allocator: std.mem.Allocator, io: Io, path: []const u8, color:
 
 pub fn saveAnimations(allocator: std.mem.Allocator, io: Io, path: []const u8, comptime key: []const u8, value: anytype) !void {
     try save(allocator, io, path, "animations", key, value);
+}
+
+/// Writes the toggled effect's `enabled`; a binding that stopped following
+/// `window_move` with it also gets its `preset`, so reloading reads back what
+/// was running. One validated write.
+pub fn saveEffect(allocator: std.mem.Allocator, io: Io, path: []const u8, cfg: effects.Config, kind: effects.Target, pinned: effects.Config.Pinned) !void {
+    if (path.len == 0) return error.NoConfigPath;
+    const original = try Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1 << 20));
+    defer allocator.free(original);
+    var old = try loader.parse(allocator, original, path);
+    defer old.deinit();
+    const result = try patchEffect(allocator, original, cfg, kind, pinned);
+    defer allocator.free(result);
+    try writeValidated(allocator, io, path, result);
+}
+
+fn patchEffect(allocator: std.mem.Allocator, original: []const u8, cfg: effects.Config, kind: effects.Target, pinned: effects.Config.Pinned) ![]u8 {
+    var text = try allocator.dupe(u8, original);
+    errdefer allocator.free(text);
+    inline for (.{ effects.Target.window_move, effects.Target.window_minimize, effects.Target.window_resize }) |target| {
+        const binding = switch (target) {
+            .window_move => cfg.window_move,
+            .window_minimize => cfg.minimize(),
+            .window_resize => cfg.resize(),
+        };
+        const pin = switch (target) {
+            .window_move => false,
+            .window_minimize => pinned.window_minimize,
+            .window_resize => pinned.window_resize,
+        };
+        if (kind == target or pin) {
+            const section = "effects." ++ @tagName(target);
+            const enabled = try patch(allocator, text, section, "enabled", binding.enabled);
+            allocator.free(text);
+            text = enabled;
+            if (pin) {
+                const preset = try patch(allocator, text, section, "preset", binding.preset);
+                allocator.free(text);
+                text = preset;
+            }
+        }
+    }
+    return text;
 }
 
 fn save(allocator: std.mem.Allocator, io: Io, path: []const u8, comptime section: []const u8, comptime key: []const u8, value: anytype) !void {
@@ -416,4 +460,36 @@ test "region preferences preserve unrelated settings and reject invalid weekdays
     try std.testing.expectError(error.InvalidConfig, loader.parse(a, "[region]\nclock_24h = \"yes\"\n", "invalid"));
     try std.testing.expectError(error.InvalidConfig, loader.parse(a, "[region]\nclock_show_seconds = 1\n", "invalid"));
     try std.testing.expectError(error.InvalidConfig, loader.parse(a, "[region]\nclock_show_day = \"yes\"\n", "invalid"));
+}
+
+test "effect toggles are independent and read back as they were running" {
+    const a = std.testing.allocator;
+    const original = "[effects.window_move]\nenabled = true # trails\npreset = \"calm\"\n[effects.presets.calm]\ntype = \"flame_ribbon\"\nopacity = 0.5\n";
+    var cfg = try loader.parse(a, original, "test");
+    defer cfg.deinit();
+    // Minimizing and resizing follow window_move, preset included, until a toggle is touched.
+    try std.testing.expect(cfg.effects.minimize().enabled and cfg.effects.resize().enabled);
+    const pinned = cfg.effects.setEnabled(.window_move, false);
+    try std.testing.expect(pinned.window_minimize and pinned.window_resize);
+    try std.testing.expect(!cfg.effects.window_move.enabled and cfg.effects.minimize().enabled and cfg.effects.resize().enabled);
+    const text = try patchEffect(a, original, cfg.effects, .window_move, pinned);
+    defer a.free(text);
+    var reloaded = try loader.parse(a, text, "test");
+    defer reloaded.deinit();
+    try std.testing.expect(!reloaded.effects.window_move.enabled and reloaded.effects.minimize().enabled and reloaded.effects.resize().enabled);
+    try std.testing.expectEqualStrings("calm", reloaded.effects.minimize().preset);
+    try std.testing.expect(std.mem.indexOf(u8, text, "# trails") != null);
+
+    // A binding that already follows nothing is only touched for `enabled`.
+    var fresh = try loader.parse(a, "", "test");
+    defer fresh.deinit();
+    try std.testing.expect(!fresh.effects.window_move.enabled and !fresh.effects.minimize().enabled and !fresh.effects.resize().enabled);
+    const resize_only = fresh.effects.setEnabled(.window_resize, true);
+    try std.testing.expect(resize_only.window_resize and !resize_only.window_minimize);
+    const only = try patchEffect(a, "", fresh.effects, .window_resize, resize_only);
+    defer a.free(only);
+    try std.testing.expect(std.mem.indexOf(u8, only, "window_move") == null and std.mem.indexOf(u8, only, "window_minimize") == null);
+    var only_cfg = try loader.parse(a, only, "test");
+    defer only_cfg.deinit();
+    try std.testing.expect(!only_cfg.effects.window_move.enabled and !only_cfg.effects.minimize().enabled and only_cfg.effects.resize().enabled);
 }

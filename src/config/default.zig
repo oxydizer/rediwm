@@ -205,6 +205,31 @@ pub const source =
     \\# ───────────────────────────────────────────────
     \\# Animations — springs by default; hot-reload keeps in-flight velocity
     \\# ───────────────────────────────────────────────
+    \\# Optional soft flame trails while dragging windows. No effect resources or
+    \\# animation wakeups while disabled. Respects animations/reduced motion.
+    \\# Settings → Appearance → Effects switches each one on and off.
+    \\# [effects.window_move]
+    \\# enabled = false
+    \\# preset = "soft_flame"
+    \\# Minimizing follows window_move unless configured separately:
+    \\# [effects.window_minimize]
+    \\# enabled = true
+    \\# preset = "soft_flame"
+    \\# Resizing also follows window_move unless configured separately:
+    \\# [effects.window_resize]
+    \\# enabled = true
+    \\# preset = "soft_flame"
+    \\# [effects.presets.soft_flame]
+    \\# type = "flame_ribbon"
+    \\# color = "#ff1820"
+    \\# core_color = "#ffe0c0"
+    \\# opacity = 0.9
+    \\# width_px = 56
+    \\# max_length_px = 420
+    \\# lifetime_ms = 3000        # 50–10000; linger after movement
+    \\# turbulence = 0.3
+    \\# quality = "balanced"       # low | balanced | high
+    \\#
     \\# [animations]
     \\# enabled = true
     \\# speed = 1.0                 # 0 = jump to the target; 0.5 = half speed

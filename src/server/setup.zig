@@ -198,6 +198,7 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
     errdefer glass.Engine.destroy(server.glass_engine);
     server.output_renderer = scene_output_mod.Renderer.create(renderer) orelse return error.RendererInitFailed;
     errdefer scene_output_mod.Renderer.destroy(server.output_renderer);
+    @import("../effects/window_move.zig").configure(server);
     if (!greeter and !server.output_renderer.enableExternal()) return error.RendererInitFailed;
     log.info("scene renderer: owned GLES2 output pass", .{});
     // The window shapes: rounded clip, ring and shadow. Built here, before any

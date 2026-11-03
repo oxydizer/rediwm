@@ -7,6 +7,8 @@ extern var rediwm_scene_output_reblurs: u64;
 pub const reblurs: *u64 = &rediwm_scene_output_reblurs;
 
 pub const Renderer = opaque {
+    extern fn rediwm_output_renderer_set_ribbons(renderer: *Renderer, enabled: bool) bool;
+    pub const setRibbons = rediwm_output_renderer_set_ribbons;
     extern fn rediwm_output_renderer_create(renderer: *wlr.Renderer) ?*Renderer;
     pub const create = rediwm_output_renderer_create;
     extern fn rediwm_output_renderer_enable_shapes(renderer: *Renderer) bool;

@@ -158,10 +158,9 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
     memcpy(item->content.color, r->color, sizeof(item->content.color));
   } else {
     struct rediwm_buffer *b = rediwm_buffer_from_node(node);
-    if (l->effect) g->has_effect = true;
-    item->kind = l->effect ? REDIWM_ITEM_EFFECT
-                 : l->surface                      ? REDIWM_ITEM_SURFACE
-                                                   : REDIWM_ITEM_BUFFER;
+    if (l->intrinsic_kind == REDIWM_ITEM_EFFECT) g->has_effect = true;
+    item->kind = l->intrinsic_kind != REDIWM_ITEM_BUFFER ? l->intrinsic_kind
+                 : l->surface ? REDIWM_ITEM_SURFACE : REDIWM_ITEM_BUFFER;
     item->width = b->dst_width;
     item->height = b->dst_height;
     if (item->kind == REDIWM_ITEM_EFFECT) {
@@ -194,11 +193,11 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
     item->content.dim_brightness = w->dim->brightness;
     item->content.dim_saturation = w->dim->saturation;
   }
-  if (w->shadow && node->type == REDIWM_NODE_BUFFER) {
+  if (w->shadow && node->type == REDIWM_NODE_BUFFER && item->kind != REDIWM_ITEM_RIBBON) {
     item->kind = REDIWM_ITEM_SHADOW;
     l->shadow = *w->shadow;
     item->shadow = &l->shadow;
-  } else if (item->shadow) {
+  } else if (item->kind != REDIWM_ITEM_RIBBON && item->shadow) {
     item->shadow = NULL;
   }
   item->edges = rediwm_xform_rect(w->t, x, y, item->width, item->height);

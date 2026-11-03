@@ -72,7 +72,9 @@ struct rediwm_scene_renderer {
     bool polys_tried, has_polys;
     // Backdrops (stage 5b), built by enable_backdrops: the blur, and scratch the
     // size of the largest region so far: the copy, and the horizontal pass.
-    struct program blur;
+    struct program blur, ribbon;
+    GLuint ribbon_vertices;
+    GLint ribbon_fade;
     GLuint prefix_tex, prefix_fbo, small_tex, small_fbo;
     int small_w, small_h;
     bool has_backdrops, backdrops_tried;
@@ -163,6 +165,7 @@ static inline struct pass *owned_pass(struct wlr_render_pass *base) {
 }
 
 // Shared between the parts (scene_pass_*.c).
+bool scene_pass_program_init(struct program *, unsigned, const char *, const char *, const char *);
 // Makes the renderer's EGL context current, saving the caller's context and GL
 // state in `s`.
 bool scene_pass_enter(struct rediwm_scene_renderer *r, struct gl_state *s);

@@ -9,6 +9,7 @@
 #define WLR_PRIVATE private
 #include "projection.h"
 #include "glass.h"
+#include "ribbon.h"
 #include "node.h"
 #include "scene_graph.h"
 #include "scene_damage.h"
@@ -104,8 +105,9 @@ struct leaf {
   struct rediwm_node *own;
   // The group the last resolve() put it in.
   struct group *group;
-  // A glass effect: decided when the leaf is made, as an effect is its own node.
-  bool effect;
+  // Intrinsic kind, cached once: optional nodes add no lookup/branch to resolve.
+  // BUFFER still follows the surface binding; tree shadows override at resolve.
+  enum rediwm_item_kind intrinsic_kind;
   struct wl_listener destroy, commit;
   struct wlr_addon source_lookup;
   struct rediwm_surface *surface;

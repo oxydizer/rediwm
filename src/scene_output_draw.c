@@ -225,6 +225,10 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
         goto done;
     }
     if (!pixman_region32_not_empty(&clip)) goto done;
+    if (e->item.kind == REDIWM_ITEM_RIBBON) {
+        scene_output_render_ribbon(e, pass, v, dst, &clip);
+        goto done;
+    }
     // A clipped item is drawn in two parts: `core` (its interior, which the model
     // proves fully covered and opaque) as before, without the shape, and the rest
     // (corners, ring, anything translucent) through the shape.

@@ -29,6 +29,9 @@ bool rediwm_output_renderer_enable_backdrops(struct rediwm_output_renderer *r) {
     r->has_backdrops = rediwm_scene_renderer_enable_backdrops(r->pass);
     return r->has_backdrops;
 }
+bool rediwm_output_renderer_set_ribbons(struct rediwm_output_renderer *r, bool enabled) {
+    return rediwm_scene_renderer_set_ribbons(r->pass, enabled);
+}
 static void cache_destroy(struct rediwm_output_renderer *r, struct effect_cache *c) {
     rediwm_scene_renderer_destroy_backdrop(r->pass, c->backdrop);
     wl_list_remove(&c->link);

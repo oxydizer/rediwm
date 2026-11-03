@@ -21,6 +21,28 @@ const focus_zoom_labels = @import("appearance.zig").focus_zoom_labels;
 const focus_zoom_descriptions = @import("appearance.zig").focus_zoom_descriptions;
 const px_window_gap = @import("appearance.zig").px_window_gap;
 
+/// A flame-effect toggle. Live first (reconfiguring drops any running effect),
+/// then saved; the other two effects keep their state (`Config.setEnabled`).
+pub fn EffectToggle(comptime kind: @import("config").effects.Target) type {
+    return struct {
+        pub fn changed(owner: ?*anyopaque, _: usize, on: bool) void {
+            const server = section(owner).cc.server;
+            const effects = &server.config.effects;
+            const now = switch (kind) {
+                .window_move => effects.window_move,
+                .window_minimize => effects.minimize(),
+                .window_resize => effects.resize(),
+            };
+            if (now.enabled == on) return;
+            const pinned = effects.setEnabled(kind, on);
+            @import("../../effects/window_move.zig").configure(server);
+            setting_save.saveEffect(main.gpa, server.io, server.config.path, effects.*, kind, pinned) catch |err| {
+                std.log.warn("could not save {s} effect: {}", .{ @tagName(kind), err });
+            };
+        }
+    };
+}
+
 pub fn ClockStyle(comptime key: []const u8) type {
     return struct {
         pub fn changed(owner: ?*anyopaque, _: usize, on: bool) void {

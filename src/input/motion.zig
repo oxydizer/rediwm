@@ -539,10 +539,10 @@ pub fn processResize(input: *Input) void {
         cursor_wy,
         constraints,
     );
-
     if (desired.width != session.latest_desired_size.width or desired.height != session.latest_desired_size.height) {
         session.latest_desired_size = desired;
         session.dirty = true;
+        @import("../effects/window_move.zig").resizeMotion(toplevel);
         if (session.pacing_output) |out| {
             out.wlr_output.scheduleFrame();
         } else {

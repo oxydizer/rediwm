@@ -212,7 +212,7 @@ static GLuint shader(GLenum type, const char *prefix, const char *source) {
     }
     return id;
 }
-static bool program_init(struct program *p, unsigned bit, const char *vertex_source,
+bool scene_pass_program_init(struct program *p, unsigned bit, const char *vertex_source,
         const char *prefix, const char *source) {
     p->bit = bit;
     GLuint vs = shader(GL_VERTEX_SHADER, "", vertex_source);
@@ -304,7 +304,7 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
     // Every draw goes through the shaped programs; one without a shape costs a
     // uniform branch. A GL program costs the driver 130-150 KiB however small,
     // so the plain ones are gone (stage 5, D4 of docs/plans/scene-graph-stage5.md).
-    bool ok = program_init(&r->shaped, 8, shaped_vertex, "uniform sampler2D tex;\n", shaped_fragment);
+    bool ok = scene_pass_program_init(&r->shaped, 8, shaped_vertex, "uniform sampler2D tex;\n", shaped_fragment);
     r->has_shapes = r->shapes_tried = ok;
     if (ok && r->has_vao) {
         r->gen_vertex_arrays(1, &r->vertex_array);
@@ -337,6 +337,8 @@ void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
         glDeleteProgram(r->shaped_external.id);
         glDeleteProgram(r->shaped_poly.id);
         glDeleteProgram(r->shaped_poly_external.id);
+        glDeleteProgram(r->ribbon.id);
+        glDeleteBuffers(1, &r->ribbon_vertices);
         glDeleteProgram(r->blur.id);
         glDeleteTextures(1, &r->prefix_tex);
         glDeleteFramebuffers(1, &r->prefix_fbo);
@@ -361,7 +363,7 @@ bool rediwm_scene_renderer_enable_external(struct rediwm_scene_renderer *r) {
     if (!r->has_external) return r->external_ok = true;
     struct gl_state state;
     if (!scene_pass_enter(r, &state)) return false;
-    r->external_ok = program_init(&r->shaped_external, 16, shaped_vertex, ext_prefix, shaped_fragment);
+    r->external_ok = scene_pass_program_init(&r->shaped_external, 16, shaped_vertex, ext_prefix, shaped_fragment);
     scene_pass_leave(r, &state);
     return r->external_ok;
 }
@@ -374,8 +376,8 @@ bool rediwm_scene_renderer_enable_polygons(struct rediwm_scene_renderer *r) {
     if (!r->has_shapes) return false;
     struct gl_state state;
     if (!scene_pass_enter(r, &state)) return false;
-    r->has_polys = program_init(&r->shaped_poly, 64, shaped_vertex, "#define POLY 1\nuniform sampler2D tex;\n", shaped_fragment) &&
-        (!r->has_external || program_init(&r->shaped_poly_external, 128, shaped_vertex,
+    r->has_polys = scene_pass_program_init(&r->shaped_poly, 64, shaped_vertex, "#define POLY 1\nuniform sampler2D tex;\n", shaped_fragment) &&
+        (!r->has_external || scene_pass_program_init(&r->shaped_poly_external, 128, shaped_vertex,
             "#extension GL_OES_EGL_image_external : require\n#define POLY 1\nuniform samplerExternalOES tex;\n", shaped_fragment));
     if (!r->has_polys) {
         wlr_log(WLR_ERROR, "scene pass: polygon programs failed to build, outlines are not drawn");
@@ -394,7 +396,7 @@ bool rediwm_scene_renderer_enable_backdrops(struct rediwm_scene_renderer *r) {
     if (!r->has_shapes) return false;
     struct gl_state state;
     if (!scene_pass_enter(r, &state)) return false;
-    r->has_backdrops = program_init(&r->blur, 32, blur_vertex, "", blur_fragment);
+    r->has_backdrops = scene_pass_program_init(&r->blur, 32, blur_vertex, "", blur_fragment);
     if (!r->has_backdrops) {
         wlr_log(WLR_ERROR, "scene pass: blur program failed to build, glass is a plain tint");
         glDeleteProgram(r->blur.id);

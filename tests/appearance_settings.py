@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Appearance settings: window chrome opacity, inactive window opacity, file-drag dodge, animations controls, Start button logo preview and Start menu size.
+"""Appearance settings: window chrome opacity, inactive window opacity, file-drag dodge, flame effect toggles, animations controls, Start button logo preview and Start menu size.
 
 Verifies UI controls, live compositor updates, and persistence to config.toml.
 """
@@ -318,6 +318,32 @@ def test_appearance_settings():
                 click_widget(dim_toggle)
                 assert read_config()["compositor"]["inactive_dim"] is True
                 assert ui.scroll_into_view("inactive_dim").get("on") is True
+
+                # --- 3d. Flame effects: off by default, independent, saved as they run ---
+                names = ("effect_window_move", "effect_window_resize", "effect_window_minimize")
+                for name in names:
+                    toggle = ui.scroll_into_view(name)
+                    assert toggle is not None, name
+                    assert toggle.get("on") is False, f"{name} should default to off"
+                assert "effects" not in read_config(), "untouched defaults are not written"
+                click_widget(ui.scroll_into_view("effect_window_resize"))
+                effects = read_config()["effects"]
+                assert effects["window_resize"]["enabled"] is True
+                assert "window_move" not in effects and "window_minimize" not in effects, effects
+                assert [ui.scroll_into_view(n).get("on") for n in names] == [False, True, False]
+                # Turning movement on must not drag minimizing along with it.
+                click_widget(ui.scroll_into_view("effect_window_move"))
+                effects = read_config()["effects"]
+                assert effects["window_move"]["enabled"] is True
+                assert effects["window_resize"]["enabled"] is True
+                assert effects["window_minimize"]["enabled"] is False, effects
+                assert [ui.scroll_into_view(n).get("on") for n in names] == [True, True, False]
+                for name in names:
+                    if ui.scroll_into_view(name).get("on"):
+                        click_widget(ui.scroll_into_view(name))
+                effects = read_config()["effects"]
+                assert not any(effects[k]["enabled"] for k in ("window_move", "window_resize", "window_minimize")), effects
+                assert [ui.scroll_into_view(n).get("on") for n in names] == [False, False, False]
 
                 # --- 4. Animation speed segmented control ---
                 # Options: 0.5× (idx 0), 1.0× (idx 1), 1.5× (idx 2), 2.0× (idx 3)

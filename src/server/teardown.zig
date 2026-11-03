@@ -8,6 +8,8 @@ const log = std.log.scoped(.compositor);
 const Server = @import("../Server.zig");
 
 pub fn deinit(server: *Server) void {
+    @import("../effects/window_move.zig").cancel(server);
+    @import("../effects/window_minimize.zig").cancelAll(server);
     if (server.theme_job) |job| job.deinit();
     server.theme_job = null;
     server.undo.clear();

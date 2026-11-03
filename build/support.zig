@@ -79,7 +79,7 @@ pub fn addBassDsp(b: *std.Build, target: std.Build.ResolvedTarget) void {
 pub const projection_sources = [_][]const u8{ "src/projection.c", "src/projection_props.c", "src/projection_resolve.c", "src/projection_present.c", "src/projection_pass.c", "src/projection_pick.c" };
 
 /// scene_output.c and its parts (scene_output_internal.h).
-pub const scene_output_sources = [_][]const u8{ "src/scene_output.c", "src/scene_output_collect.c", "src/scene_output_effects.c", "src/scene_output_draw.c" };
+pub const scene_output_sources = [_][]const u8{ "src/scene_output.c", "src/scene_output_collect.c", "src/scene_output_effects.c", "src/scene_output_draw.c", "src/scene_output_ribbon.c", "src/scene_output_snapshot.c" };
 
 pub fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) void {
     module.linkSystemLibrary("wlroots-0.20", .{});
@@ -89,9 +89,10 @@ pub fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) vo
     module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFiles(.{ .files = &.{ "src/node_surface.c", "src/node_subsurface_tree.c", "src/node_xdg_shell.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFiles(.{ .files = &.{ "src/scene_pass.c", "src/scene_pass_draw.c", "src/scene_pass_backdrop.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFiles(.{ .files = &.{ "src/scene_pass.c", "src/scene_pass_draw.c", "src/scene_pass_backdrop.c", "src/scene_pass_ribbon.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFiles(.{ .files = &scene_output_sources, .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/glass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     module.addCSourceFile(.{ .file = b.path("src/explicit_sync.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/switcher_preview.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });

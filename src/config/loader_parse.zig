@@ -194,6 +194,14 @@ const ParseState = struct {
                     return error.InvalidConfig;
                 };
             },
+            .effect_binding => |kind| cfg.effects.binding(cfg.arena.allocator(), kind, key, value) catch |err| {
+                fail(path, line_no, "invalid effect binding field '{s}': {s}", .{ key, @errorName(err) });
+                return error.InvalidConfig;
+            },
+            .effect_preset => cfg.effects.apply(key, value) catch |err| {
+                fail(path, line_no, "invalid effect preset field '{s}': {s}", .{ key, @errorName(err) });
+                return error.InvalidConfig;
+            },
             .animations => anim_cfg.applyGlobalKey(&cfg.animations, key, value) catch |err| {
                 fail(path, line_no, "invalid animations field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
@@ -277,6 +285,7 @@ const ParseState = struct {
         cfg.window_rules = state.rule_list.items;
         cfg.notification_rules = state.notif_rule_list.items;
         cfg.sandbox_allow = state.sandbox_allow_list.items;
+        try cfg.effects.validate();
         try rebuildLookup(cfg);
         finishCompositor(cfg);
         // An explicit [animations.camera_desktop] table wins over the settings value.
@@ -315,6 +324,10 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                 }
                 return error.InvalidConfig;
             };
+            switch (state.section) {
+                .effect_preset => |name| try cfg.effects.declare(cfg.arena.allocator(), name),
+                else => {},
+            }
             if (state.section == .keybinds) state.seen_keybinds = true;
             // Its presence alone chooses a taskbar theme, even with no keys.
             if (state.section == .taskbar_theme and cfg.taskbar_theme == null) cfg.taskbar_theme = .{};
@@ -368,6 +381,8 @@ pub const Section = union(enum) {
     ipc,
     animations,
     animation_target: anim.Target,
+    effect_binding: @import("effects.zig").Target,
+    effect_preset: []const u8,
 };
 
 pub fn flushArrayTables(
@@ -437,6 +452,11 @@ pub fn parseSection(line: []const u8) !Section {
     inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .polkit, .idle, .power, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
         if (std.mem.eql(u8, name, @tagName(tag))) return tag;
     }
+    if (std.mem.eql(u8, name, "effects.window_move")) return .{ .effect_binding = .window_move };
+    if (std.mem.eql(u8, name, "effects.window_minimize")) return .{ .effect_binding = .window_minimize };
+    if (std.mem.eql(u8, name, "effects.window_resize")) return .{ .effect_binding = .window_resize };
+    if (std.mem.startsWith(u8, name, "effects.presets.")) return .{ .effect_preset = name["effects.presets.".len..] };
+    if (std.mem.eql(u8, name, "effects") or std.mem.startsWith(u8, name, "effects.")) return error.InvalidConfig;
     if (std.mem.startsWith(u8, name, "animations.")) {
         const rest = name["animations.".len..];
         return .{ .animation_target = anim.Target.parse(rest) orelse return error.UnknownAnimationTarget };

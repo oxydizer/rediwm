@@ -7,6 +7,10 @@
 #include <wlr/util/box.h>
 
 struct rediwm_scene_renderer;
+struct rediwm_ribbon;
+bool rediwm_scene_renderer_set_ribbons(struct rediwm_scene_renderer *, bool);
+void rediwm_scene_pass_add_ribbon(struct wlr_render_pass *, struct wlr_box,
+    const struct rediwm_ribbon *, const pixman_region32_t *, float, struct wlr_texture *);
 // The renderer must be GLES2 and outlive this object and all its passes.
 struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *);
 void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *);

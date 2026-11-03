@@ -55,9 +55,10 @@ pub fn minimize(toplevel: *Toplevel) void {
     // X11 clients can ask for this while withdrawn; the stack reorder below
     // needs the window to be in it.
     if (toplevel.minimized or !toplevel.in_world) return;
-    toplevel.minimized = true;
     toplevel.detachInput();
     toplevel.finishSwitch();
+    @import("../effects/window_minimize.zig").start(toplevel);
+    toplevel.minimized = true;
     toplevel.frame_tree.node.setEnabled(false);
 
     const server = toplevel.server;
@@ -111,6 +112,7 @@ pub fn restore(toplevel: *Toplevel) void {
     toplevel.server.window_tabs.select(toplevel);
     defer if (toplevel.tab_group != 0) @import("../window_tabs.zig").refreshVisibility(toplevel.server);
     if (!toplevel.minimized or !toplevel.in_world) return;
+    @import("../effects/window_minimize.zig").cancelFor(toplevel.server, toplevel.id);
     toplevel.minimized = false;
     toplevel.frame_tree.node.setEnabled(@import("../window_tabs.zig").visible(toplevel));
     switch (toplevel.backend) {

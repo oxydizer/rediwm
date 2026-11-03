@@ -162,6 +162,7 @@ static bool probe_item(const struct rediwm_item *item, struct rediwm_node *trans
 
 #include "projection_test_graph.c"
 #include "projection_test_damage.c"
+#include "projection_test_ribbon.c"
 #include "projection_test_groups.c"
 #include "projection_test_sector.c"
 
@@ -321,6 +322,7 @@ int main(void) {
   test_clip_projection(scene);
   test_clip_output(scene, out);
   test_shadow_output(scene, out);
+  test_ribbon_output(scene, out);
   test_damage_events(scene);
   test_dim(scene);
   test_graph_damage(scene, out);

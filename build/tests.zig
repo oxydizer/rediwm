@@ -418,6 +418,7 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/projection_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {
         projection_tests.root_module.linkSystemLibrary(lib, .{});
@@ -437,6 +438,7 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     glass_tests.root_module.addCSourceFiles(.{ .files = &support.projection_sources, .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     const run_glass_tests = b.addRunArtifact(glass_tests);
     run_glass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");

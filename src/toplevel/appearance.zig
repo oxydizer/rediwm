@@ -16,6 +16,8 @@ const log = std.log.scoped(.toplevel);
 const chip_slot_px = Toplevel.chip_slot_px;
 
 pub fn detachInput(toplevel: *Toplevel) void {
+    @import("../effects/window_minimize.zig").cancelFor(toplevel.server, toplevel.id);
+    @import("../effects/window_move.zig").cancelFor(toplevel.server, toplevel.id);
     toplevel.server.input.detachToplevel(toplevel);
     toplevel.clearDragLift();
     toplevel.clearDodge();
