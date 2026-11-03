@@ -51,6 +51,9 @@ pub const FileAction = enum {
     paste,
     rename,
     trash,
+    /// In the Trash: put the entry back, or remove it for good.
+    restore,
+    delete_permanently,
     size,
     properties,
     pub fn label(self: FileAction) []const u8 {
@@ -65,6 +68,8 @@ pub const FileAction = enum {
             .paste => tr("Paste"),
             .rename => tr("Rename"),
             .trash => tr("Move to Trash"),
+            .restore => tr("Restore"),
+            .delete_permanently => tr("Delete Permanently"),
             .size => tr("Calculate size"),
             .properties => tr("Properties"),
         };
@@ -79,7 +84,8 @@ pub const FileAction = enum {
             .copy => .copy,
             .paste => .paste,
             .rename => .edit,
-            .trash => .trash,
+            .trash, .delete_permanently => .trash,
+            .restore => .undo,
             .size, .properties => .view_list,
         };
     }

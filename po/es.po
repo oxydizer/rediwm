@@ -1563,6 +1563,14 @@ msgstr "No se pudo solicitar el inicio de CUPS."
 msgid "Could not request authentication. Check that polkit is running."
 msgstr "No se pudo solicitar autenticación. Comprueba que polkit esté en ejecución."
 
+#: src/files/app_trash.zig
+msgid "Could not restore the items in Trash"
+msgstr "No se pudieron restaurar los elementos de la papelera"
+
+#: src/files/app_trash.zig
+msgid "Could not restore the selected items"
+msgstr "No se pudieron restaurar los elementos seleccionados"
+
 #: src/images/app_input.zig
 msgid "Could not rotate: not enough memory."
 msgstr "No se pudo girar: memoria insuficiente."
@@ -1865,6 +1873,10 @@ msgstr "Terminal predeterminado"
 msgid "Deferred"
 msgstr "Pospuesto"
 
+#: src/files/app_model.zig
+msgid "Delete Permanently"
+msgstr "Eliminar permanentemente"
+
 #: src/delete_dialog.zig
 msgid "Delete file?"
 msgstr "¿Eliminar el archivo?"
@@ -1884,6 +1896,10 @@ msgstr "¿Eliminar los elementos?"
 #: src/delete_dialog.zig
 msgid "Delete permanently"
 msgstr "Eliminar permanentemente"
+
+#: src/files/app_dialogs.zig
+msgid "Delete permanently?"
+msgstr "¿Eliminar permanentemente?"
 
 #: src/control_center/sections/users.zig
 msgid "Delete user…"
@@ -3997,6 +4013,10 @@ msgstr "Abriendo…"
 msgid "Optimize"
 msgstr "Optimizar"
 
+#: src/files/app_menu.zig
+msgid "Original location unknown: these items have no Trash information"
+msgstr "Ubicación original desconocida: estos elementos no tienen información de la papelera"
+
 #: src/files/properties.zig
 msgid "Others"
 msgstr "Otros"
@@ -4817,6 +4837,14 @@ msgstr "Reiniciar la shell del escritorio."
 msgid "Restart? Activate Restart again to confirm."
 msgstr "¿Reiniciar? Activa Reiniciar otra vez para confirmar."
 
+#: src/files/app_model.zig
+msgid "Restore"
+msgstr "Restaurar"
+
+#: src/files/app_menu.zig
+msgid "Restore All"
+msgstr "Restaurar todo"
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore Layout"
 msgstr "Restaurar disposición"
@@ -4840,6 +4868,20 @@ msgstr "Restaurar la ampliación del escritorio."
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore the focused window's size."
 msgstr "Restaurar el tamaño de la ventana enfocada."
+
+#: src/files/app_dialogs.zig
+msgid "Restore the folder to change what is inside it"
+msgstr "Restaura la carpeta para cambiar su contenido"
+
+#: src/files/app_trash.zig
+msgid "Restored"
+msgstr "Restaurado"
+
+#: src/files/app_trash.zig
+msgid "Restored {count} item"
+msgid_plural "Restored {count} items"
+msgstr[0] "Se restauró {count} elemento"
+msgstr[1] "Se restauraron {count} elementos"
 
 #: src/calculator/model.zig
 msgid "Result is too large"
@@ -5393,9 +5435,21 @@ msgstr "Socket"
 msgid "Soft"
 msgstr "Suave"
 
+#: src/files/app_trash.zig
+msgid "Some could not be restored"
+msgstr "Algunos no se pudieron restaurar"
+
 #: src/control_center/sections/users.zig
 msgid "Some groups cannot be safely shown; group changes are disabled."
 msgstr "Algunos grupos no se pueden mostrar con seguridad; sus cambios están desactivados."
+
+#: src/files/app_trash.zig
+msgid "Some have no Trash information"
+msgstr "Algunos no tienen información de la papelera"
+
+#: src/files/app_trash.zig
+msgid "Some kept under a new name"
+msgstr "Algunos se conservaron con un nombre nuevo"
 
 #: src/systemd/requests.zig
 msgid "Some startup times are unavailable."
@@ -6177,9 +6231,17 @@ msgstr "Transformar"
 msgid "Trash"
 msgstr "Papelera"
 
+#: src/files/app_trash.zig
+msgid "Trash can't be edited. Restore items to change them."
+msgstr "La papelera no se puede editar. Restaura los elementos para cambiarlos."
+
 #: src/files/app_fileops.zig
 msgid "Trash emptied"
 msgstr "Papelera vaciada"
+
+#: src/files/app_trash.zig
+msgid "Trash is empty"
+msgstr "La papelera está vacía"
 
 #: src/images/app_dialogs.zig
 msgid "Trash is unavailable: install gio to use it."
@@ -6384,6 +6446,10 @@ msgstr "Usar formato de 24 horas"
 #: src/network/manager.zig
 msgid "Use 8–63 characters or a 64-digit hex key."
 msgstr "Usa entre 8 y 63 caracteres o una clave hexadecimal de 64 dígitos."
+
+#: src/files/app_fileops.zig
+msgid "Use Move to Trash to put items in Trash"
+msgstr "Usa «Mover a la papelera» para poner elementos en la papelera"
 
 #: src/images/app_dialogs.zig
 msgid "Use a .png filename to save a PNG copy."
@@ -7211,11 +7277,25 @@ msgid_plural "{columns} × {rows}  ·  {n} screens total"
 msgstr[0] "{columns} × {rows}  ·  {n} pantalla en total"
 msgstr[1] "{columns} × {rows}  ·  {n} pantallas en total"
 
+#: src/files/app_trash.zig
+msgid "{count} could not be restored"
+msgstr "No restaurados: {count}"
+
+#: src/files/app_trash.zig
+msgid "{count} has no Trash information"
+msgid_plural "{count} have no Trash information"
+msgstr[0] "{count} elemento sin información de la papelera"
+msgstr[1] "{count} elementos sin información de la papelera"
+
 #: src/files/app_paint.zig
 msgid "{count} item selected  ·  {size}"
 msgid_plural "{count} items selected  ·  {size}"
 msgstr[0] "{count} elemento seleccionado  ·  {size}"
 msgstr[1] "{count} elementos seleccionados  ·  {size}"
+
+#: src/files/app_trash.zig
+msgid "{count} kept under a new name"
+msgstr "Conservados con un nombre nuevo: {count}"
 
 #: src/files/open_with.zig
 msgid "{count} selected file"

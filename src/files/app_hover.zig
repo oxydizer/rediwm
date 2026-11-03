@@ -148,6 +148,19 @@ pub fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
         .new, .cut, .copy, .paste, .trash => return false,
         else => {},
     };
+    switch (self.trashRelation()) {
+        // Read-only: items are restored or deleted, not created, cut or pasted.
+        .root => switch (action) {
+            .new, .cut, .paste => return false,
+            else => {},
+        },
+        // Inside a trashed folder there is nothing to restore or delete either.
+        .inside => switch (action) {
+            .new, .cut, .paste, .trash => return false,
+            else => {},
+        },
+        .none => {},
+    }
     return switch (action) {
         .back => self.history.canBack(),
         .forward => self.history.canForward(),

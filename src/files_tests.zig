@@ -261,6 +261,7 @@ test {
     _ = @import("files/thumbs.zig");
     _ = @import("files/volumes.zig");
     _ = @import("files/pins.zig");
+    _ = @import("files/trash_tests.zig");
     _ = @import("files/terminal/tests.zig");
 }
 
