@@ -157,7 +157,14 @@ pub fn paintButton(self: *App, cr: *c.cairo_t, r: field.Rect, label: []const u8,
     var layer = ui.Layer.begin(cr, r) orelse return;
     defer layer.finish();
     layer.renderer.palette = theme.shellPalette();
-    button.paint(&layer.renderer, layer.local(), .{ .label = label, .variant = .secondary, .size = .sm }, .{ .selected = selected, .pointer = if (self.px >= r.x and self.px < r.x + r.w and self.py >= r.y and self.py < r.y + r.h) .hover else .idle });
+    const proximity = self.buttonProximity(r);
+    button.paint(&layer.renderer, layer.local(), .{ .label = label, .variant = .secondary, .size = .sm }, .{
+        .selected = selected,
+        .pointer = if (r.contains(self.px, self.py)) .hover else .idle,
+        .proximity_distance = proximity.distance,
+        .proximity_x = proximity.x,
+        .proximity_y = proximity.y,
+    });
 }
 
 pub fn render(self: *App, cr: *c.cairo_t) void {
