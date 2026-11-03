@@ -163,7 +163,7 @@ pub fn paintButton(self: *App, cr: *c.cairo_t, r: field.Rect, label: []const u8,
     });
     button.paint(&layer.renderer, layer.local(), .{ .label = label, .variant = .secondary, .size = .sm }, .{
         .selected = selected,
-        .pointer = if (r.contains(self.px, self.py)) .hover else .idle,
+        .pointer = if (self.px >= r.x and self.px < r.x + r.w and self.py >= r.y and self.py < r.y + r.h) .hover else .idle,
         .proximity_distance = proximity.distance,
         .proximity_x = proximity.x,
         .proximity_y = proximity.y,
