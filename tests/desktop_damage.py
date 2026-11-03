@@ -114,10 +114,10 @@ def run(args):
                 # reproduces it). Stale desktop pixels differ by far more.
                 tolerance = 1 if args.renderer == "gles2" and args.scale != int(args.scale) else 0
 
-                def equal(expected, actual, message):
+                def equal(expected, actual, message, slack=0):
                     diff = ImageChops.difference(expected, actual)
                     worst = max(high for _, high in diff.getextrema())
-                    assert worst <= tolerance, (message, diff.getbbox(), worst)
+                    assert worst <= max(tolerance, slack), (message, diff.getbbox(), worst)
 
                 def desktop_stats():
                     return ipc.get_perf()["desktop"]
@@ -220,7 +220,11 @@ def run(args):
                 for point in ((700, 210), (width - 70, 420), (520, 500), target):
                     move(point)
                     image = capture("drag-history")
-                equal(dragged, image, "moving icon or drop outline left stale pixels")
+                # One level of slack: where a repaint's clip edge crosses the slanted end of the
+                # outline's rounded corner, Cairo rounds the clipped edge by a fraction of a pixel,
+                # so two half-covered pixels differ by one level between a fresh and a repeated
+                # paint. Stale content would differ by far more.
+                equal(dragged, image, "moving icon or drop outline left stale pixels", slack=1)
                 button(False)
                 click(home)
                 wait_for(lambda: layout.exists() and "cell_col = 2" in layout.read_text()
