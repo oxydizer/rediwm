@@ -1,4 +1,5 @@
 //! Shared geometry for the tab controls and their hover feedback.
+const std = @import("std");
 const c = @import("../files/c.zig").api;
 const ui = @import("ui").cairo;
 const theme = @import("ui").theme;

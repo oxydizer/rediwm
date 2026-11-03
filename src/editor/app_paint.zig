@@ -157,7 +157,10 @@ pub fn paintButton(self: *App, cr: *c.cairo_t, r: field.Rect, label: []const u8,
     var layer = ui.Layer.begin(cr, r) orelse return;
     defer layer.finish();
     layer.renderer.palette = theme.shellPalette();
-    const proximity = self.buttonProximity(r);
+    const proximity = self.buttonProximity(.{
+        .x = @floatCast(r.x), .y = @floatCast(r.y),
+        .w = @floatCast(r.w), .h = @floatCast(r.h),
+    });
     button.paint(&layer.renderer, layer.local(), .{ .label = label, .variant = .secondary, .size = .sm }, .{
         .selected = selected,
         .pointer = if (r.contains(self.px, self.py)) .hover else .idle,
