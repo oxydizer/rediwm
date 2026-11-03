@@ -56,6 +56,13 @@ pub const Target = struct {
         } else if (source.accepted) source.accept(0, null);
     }
 
+    /// Tells a drag over something that takes no drops that a drop would do
+    /// nothing, undoing what `hover` said over the target.
+    pub fn refuse(_: *const Target, seat: *wlr.Seat) void {
+        const source = dragSource(seat) orelse return;
+        if (source.accepted) source.accept(0, null);
+    }
+
     /// Takes over the drag as its target. Call on the grab button's release,
     /// before `pointerNotifyButton`. Returns the read end of the URI list and
     /// the negotiated action, or null (leaving the drag untouched, so wlroots

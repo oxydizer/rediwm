@@ -144,6 +144,12 @@ pub fn buttonAt(self: *const Self, x: f32, y: f32) ?usize {
     return null;
 }
 
+/// The point (`x`, `y`), in the coordinates `motion` takes, is on the Trash item.
+pub fn trashAt(self: *const Self, x: f64, y: f64) bool {
+    const index = self.buttonAt(@floatCast(x), @floatCast(y)) orelse return false;
+    return self.shortcuts[index] == .trash;
+}
+
 /// A pinned icon was pressed and released without being dragged: its click,
 /// if the pointer (at layout position `x`, `y`) is still on that icon.
 pub fn clickPin(self: *Self, x: f64, y: f64, app_id: []const u8) void {

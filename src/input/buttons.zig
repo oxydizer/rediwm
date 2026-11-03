@@ -266,8 +266,12 @@ pub fn processClientButton(
             if (input.server.desktop) |desktop| desktop.pointerButton(button, false);
             if (input.active_buttons == 0) input.desktop_grab = false;
         }
-        if (input.seat.drag != null) if (input.server.desktop) |desktop| {
-            if (scene_data.hitTest(input.server, input.cursor.x, input.cursor.y) == .desktop) _ = desktop.drop(button);
+        if (input.seat.drag != null) switch (scene_data.hitTest(input.server, input.cursor.x, input.cursor.y)) {
+            .desktop => if (input.server.desktop) |desktop| {
+                _ = desktop.drop(button);
+            },
+            .dock => |res| _ = input.trash_drop.drop(res.dock, res.sx, res.sy, button),
+            else => {},
         };
         _ = input.seat.pointerNotifyButton(time_msec, button, state);
         // A move grab ends here, and `grabbed_toplevel` must be dropped with the

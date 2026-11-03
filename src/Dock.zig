@@ -329,6 +329,7 @@ pub const leave = dock_pointer.leave;
 pub const repaint = dock_pointer.repaint;
 pub const press = dock_pointer.press;
 pub const buttonAt = dock_pointer.buttonAt;
+pub const trashAt = dock_pointer.trashAt;
 pub const clickPin = dock_pointer.clickPin;
 pub const contextMenu = dock_pointer.contextMenu;
 pub const removeShortcut = dock_pointer.removeShortcut;

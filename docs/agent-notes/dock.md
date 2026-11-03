@@ -59,3 +59,16 @@ taskbar, OSD and input integration. General rules remain in
   before the menu's own Escape) abandons it. A dock
   holds resolved pins as copies (`pin_arena`); `config_index` maps a slot back
   into `dock_pinned_apps`, which also lists apps no longer installed.
+
+* **Files dropped on the dock's Trash item** (`trash_drop.zig`, field
+  `Input.trash_drop`) are trashed with no question, as the desktop Trash icon
+  does. It is a `desktop_drop.Target` too, so only a text/uri-list source that
+  allows *move* can drop (a copy-only drag is refused: nothing the user meant
+  to copy is deleted). `Dock.trashAt` picks the item; the motion `.dock` branch
+  must use the grab-aware `pointerNotifyClearFocus` while `seat.drag` is set,
+  or the drag stays focused on the last client and a release drops there. The
+  URI list is read on the event loop (nonblocking fd, 5 s deadline timer, 256 KiB
+  cap), then `gio trash -- <paths>` runs and the drag is finished (`dnd_finish`)
+  when it exits; a failure cancels the drag and posts a notification. An
+  auto-hiding dock reveals for a file drag (`draggingFiles` in `input/motion.zig`).
+  Covered by `tests/dock_trash_drop.py`.

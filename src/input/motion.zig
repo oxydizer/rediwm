@@ -171,11 +171,19 @@ pub fn warpCursor(input: *Input, x: f64, y: f64, time_msec: u32) void {
     }
 }
 
+/// A client's pointer drag carrying a list of files is under way.
+fn draggingFiles(input: *const Input) bool {
+    const drag = input.seat.drag orelse return false;
+    const source = drag.source orelse return false;
+    return drag.grab_type == .keyboard_pointer and @import("../desktop_drop.zig").offersUriList(source);
+}
+
 /// An auto-hiding dock shows when the pointer reaches its edge. Moving or
 /// resizing a window, or holding a button for a client (a selection dragged to
-/// the edge), must not raise it; dragging an app from the start menu does.
+/// the edge), must not raise it; dragging an app from the start menu does, and
+/// so does dragging files from a client, which can be dropped on the Trash.
 pub fn updateDockReveal(input: *Input) void {
-    const engaged = input.cursor_mode == .passthrough and (input.active_buttons == 0 or input.dock_drag.active());
+    const engaged = input.cursor_mode == .passthrough and (input.active_buttons == 0 or input.dock_drag.active() or draggingFiles(input));
     var it = input.server.outputs.iterator(.forward);
     while (it.next()) |output| output.dock.pointerAt(input.cursor.x, input.cursor.y, engaged);
 }
@@ -349,7 +357,12 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.setHover(null, null);
             res.dock.motion(res.sx, res.sy);
             input.setDefaultCursor();
-            input.seat.pointerClearFocus();
+            if (input.seat.drag != null) {
+                // The grab-aware clear: a drag must leave the client it was over,
+                // or a release here would still drop on it.
+                input.seat.pointerNotifyClearFocus();
+                input.trash_drop.hover(res.dock.trashAt(res.sx, res.sy));
+            } else input.seat.pointerClearFocus();
         },
         .taskbar => |res| {
             input.hovered_resize_edges = null;
