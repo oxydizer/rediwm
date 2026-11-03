@@ -19,7 +19,7 @@ pub fn buttonProximity(self: *const App, box: Rect) button.ProximitySample {
     );
 }
 
-fn nearestButton(self: *const App, x: f64, y: f64) f32 {
+fn nearestButton(self: *App, x: f64, y: f64) f32 {
     if (self.menu_open) return std.math.inf(f32);
     var nearest = std.math.inf(f32);
     if (self.close_tab != null) {
@@ -85,7 +85,7 @@ fn nearestButton(self: *const App, x: f64, y: f64) f32 {
     return nearest;
 }
 
-pub fn proximityChanged(self: *const App, old_x: f64, old_y: f64, new_x: f64, new_y: f64) bool {
+pub fn proximityChanged(self: *App, old_x: f64, old_y: f64, new_x: f64, new_y: f64) bool {
     const reach = ui_theme.global.border_glow_reach;
     if (!ui_theme.global.button_hover_glow_enabled or reach <= 0) return false;
     return @min(nearestButton(self, old_x, old_y), nearestButton(self, new_x, new_y)) <= reach;
