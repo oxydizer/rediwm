@@ -439,6 +439,10 @@ def run():
                 (tmp / "rediwm-config.toml").write_text(ON + mixed)
                 ipc.reload_config()
                 ipc.action("pointer_button", {"button": 272, "pressed": False})
+                # The release only ends the grab; the next frame starts the drag
+                # lift's fall on the real clock. Pinning the clock before that
+                # frame leaves the animation "in the future", never settled.
+                ipc.wait_for_frame()
                 check_resize(ipc, ipc.get_windows()[0], shot, move, tmp, mixed, scale, client)
                 check_shell_resize(ipc, move)
                 win = ipc.get_windows()[0]
