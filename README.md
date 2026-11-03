@@ -48,6 +48,9 @@ To build just the Nix package, without configuring a login session:
 nix build github:oxydizer/rediwm
 ``` 
 
+For the experimental SteamOS 3.8 portable bundle (user-only installation and
+nested KDE testing), see [the SteamOS instructions](packaging/steamos/README.txt).
+
 ## Building and running
 
 Requirements: Zig 0.17, wlroots 0.20, and the development files for Wayland,

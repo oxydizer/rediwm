@@ -214,6 +214,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .use_llvm = use_llvm,
         .wlroots_prefix = wlroots_prefix,
+        .transfers = b.option(bool, "transfers", "Build and install the torrent transfers helper") orelse true,
         .i18n_tool = i18n_tool,
         .wayland = wayland,
         .xkbcommon = xkbcommon,
@@ -242,7 +243,7 @@ pub fn build(b: *std.Build) void {
             .install_dir = .lib,
             .install_subdir = "rediwm",
         });
-        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor }) |exe|
+        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor, monitor, calculator, theme_helper }) |exe|
             exe.root_module.addRPathSpecial("$ORIGIN/../lib/rediwm");
     }
     data.add(ctx);

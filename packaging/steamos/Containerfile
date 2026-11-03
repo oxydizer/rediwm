@@ -1,0 +1,20 @@
+# Build dependencies come exclusively from Valve's versioned 3.8 repositories.
+# The Arch image supplies the bootstrap package manager only.
+FROM docker.io/library/archlinux:latest AS bootstrap
+RUN printf '[options]\nArchitecture = auto\nSigLevel = Never\nDisableDownloadTimeout\nParallelDownloads = 5\n' > /etc/pacman.conf && \
+    for repo in jupiter holo core extra; do \
+      printf '\n[%s-3.8]\nServer = https://steamdeck-packages.steamos.cloud/archlinux-mirror/$repo/os/$arch\n' "$repo" >> /etc/pacman.conf; \
+    done && \
+    mkdir -p /baseline/var/lib/pacman /baseline/dev && \
+    pacman --root /baseline --dbpath /baseline/var/lib/pacman --config /etc/pacman.conf \
+      --noscriptlet -Sy --noconfirm base base-devel ca-certificates meson ninja patchelf curl python \
+      wayland wayland-protocols pixman libxkbcommon freetype2 harfbuzz fontconfig \
+      librsvg cairo pango libinput poppler-glib libarchive libwebp libpng \
+      libjpeg-turbo libpulse pipewire pam libcups mesa readline libdrm libglvnd \
+      seatd lcms2 hwdata libxcb xcb-util-wm xcb-util-renderutil xcb-util-errors \
+      dbus git
+RUN cp /etc/pacman.conf /baseline/etc/pacman.conf
+FROM scratch
+COPY --from=bootstrap /baseline /
+RUN update-ca-trust && pacman -S --noconfirm xorg-xwayland
+WORKDIR /work

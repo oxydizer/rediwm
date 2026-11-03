@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+dest="$HOME/.local/opt/rediwm-steamos"
+[ "$(id -u)" != 0 ] || { echo 'Run as your normal desktop user.' >&2; exit 1; }
+[ ! -e "$dest" ] || { echo "$dest already exists; move it aside before installing." >&2; exit 1; }
+mkdir -p "$HOME/.local/opt"
+cp -R "$root" "$dest"
+printf 'Installed. From KDE Wayland Desktop Mode, run:\n  "%s/run" --check\n  "%s/run"\n' "$dest" "$dest"

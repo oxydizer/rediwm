@@ -38,7 +38,7 @@ for tool in meson ninja pkg-config curl sha256sum readelf patchelf ldd patch; do
 done
 
 patch_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../patches/wlroots" && pwd)
-recipe=$(cat "$0" "$patch_dir"/*.patch | sha256sum | cut -d' ' -f1)
+recipe=$({ cat "$0" "$patch_dir"/*.patch; printf '%s\n' "${REDIWM_BUNDLE_WAYLAND:-0}"; } | sha256sum | cut -d' ' -f1)
 if [ -f "$prefix/.rediwm-recipe" ] && [ "$(cat "$prefix/.rediwm-recipe")" = "$recipe" ]; then
     log "wlroots $WLROOTS_VERSION already built in $prefix"
     exit 0
@@ -104,7 +104,10 @@ wrap libdisplay-info libdisplay-info-0.3.0 \
 # lookup settles for 0.43, so an in-between system pixman must be bypassed.
 force_fallback=""
 pkg-config --atleast-version=0.46.0 pixman-1 2>/dev/null || force_fallback="--force-fallback-for=pixman"
-log "Configuring wlroots (bundling only the dependencies this system lacks)"
+if [ "${REDIWM_BUNDLE_WAYLAND:-0}" = 1 ]; then
+    force_fallback="--force-fallback-for=wayland${force_fallback:+,pixman}"
+fi
+log "Configuring wlroots (bundling required dependencies)"
 meson setup "$work/build" "$src" $force_fallback \
     --prefix "$prefix" --libdir lib --buildtype release --wrap-mode nopromote -Dwerror=false \
     -Dexamples=false -Dbackends=drm,libinput,x11 -Drenderers=gles2 \

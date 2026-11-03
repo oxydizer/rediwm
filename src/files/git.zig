@@ -262,6 +262,7 @@ pub const Outcome = struct {
 /// refuses a switch that would overwrite local changes; its first line of
 /// complaint is returned for display.
 pub fn switchBranch(mem: Allocator, io: std.Io, environ: std.process.Environ, dir: []const u8, name: []const u8, create: bool) Outcome {
+    if (!@import("install_paths").git_integration) return .{ .ok = false };
     var out: Outcome = .{ .ok = false };
     const fail = struct {
         fn set(o: *Outcome, msg: []const u8) Outcome {
@@ -306,6 +307,7 @@ pub fn switchBranch(mem: Allocator, io: std.Io, environ: std.process.Environ, di
 }
 
 pub fn scan(mem: Allocator, io: std.Io, environ: std.process.Environ, dir: []const u8) !?Repository {
+    if (!@import("install_paths").git_integration) return null;
     var canonical: [std.fs.max_path_bytes]u8 = undefined;
     const zdir = try mem.dupeSentinel(u8, dir, 0);
     defer mem.free(zdir);

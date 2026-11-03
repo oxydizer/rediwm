@@ -10,6 +10,7 @@ pub const Context = struct {
     target: std.Build.ResolvedTarget,
     optimize: std.lang.Optimize,
     use_llvm: bool,
+    transfers: bool,
     wlroots_prefix: ?[]const u8,
     i18n_tool: *std.Build.Step.Compile,
     wayland: *std.Build.Module,

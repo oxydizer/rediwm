@@ -43,26 +43,6 @@ pub fn add(ctx: Context) Apps {
     addFilesTerminal(b, files.root_module, false);
     const terminal_license = b.addInstallFileWithDir(b.dependency("vterm", .{}).path("LICENSE"), .prefix, "share/licenses/rediwm/libvterm-LICENSE");
     b.getInstallStep().dependOn(&terminal_license.step);
-    // Use the system C++ ABI, matching the distro's libtorrent-rasterbar.
-    const torrents = b.addSystemCommand(&.{ "sh", "-c", "exec c++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations -Wno-missing-field-initializers $(pkg-config --cflags libtorrent-rasterbar gio-unix-2.0 json-glib-1.0) \"$@\" $(pkg-config --libs libtorrent-rasterbar gio-unix-2.0 json-glib-1.0)", "build-transfers" });
-    torrents.addArg(if (optimize == .debug) "-O0" else "-O2");
-    torrents.addArg("-g");
-    torrents.addArg("-D_GLIBCXX_ASSERTIONS");
-    torrents.addArg("-fstack-protector-strong");
-    if (optimize != .debug) {
-        // Distro compilers may predefine fortification; replace it explicitly.
-        torrents.addArg("-U_FORTIFY_SOURCE");
-        torrents.addArg("-D_FORTIFY_SOURCE=3");
-    }
-    inline for (.{ "helper.cpp", "helper_transfers.cpp", "helper_peers.cpp", "helper_tray.cpp" }) |part| torrents.addFileArg(b.path("src/files/torrent/" ++ part));
-    torrents.addFileInput(b.path("src/files/torrent/helper.hpp"));
-    torrents.addFileInput(b.path("src/platform/self_exe.h"));
-    torrents.addArg("-o");
-    const torrent_binary = torrents.addOutputFileArg("rediwm-transfers");
-    const install_torrents = b.addInstallFileWithDir(torrent_binary, .bin, "rediwm-transfers");
-    b.getInstallStep().dependOn(&install_torrents.step);
-    const torrent_license = b.addInstallFileWithDir(b.path("src/files/torrent/LICENSE.libtorrent"), .prefix, "share/licenses/rediwm/libtorrent-LICENSE");
-    b.getInstallStep().dependOn(&torrent_license.step);
     const install_files = b.addInstallArtifact(files, .{});
     // Advertises rediwm-files to the start menu's applications scanner
     // (src/start_menu/applications.zig) and to any other XDG-aware
@@ -85,17 +65,39 @@ pub fn add(ctx: Context) Apps {
     // builds everything, this only adds a narrower entry point.
     const files_step = b.step("files", "Build the standalone Files and image viewer clients");
     files_step.dependOn(&install_files.step);
-    files_step.dependOn(&install_torrents.step);
-    files_step.dependOn(&torrent_license.step);
-    const transfers_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, ctx.layout.prefix, "data/rediwm-transfers.desktop"), .prefix, "share/applications/rediwm-transfers.desktop");
-    b.getInstallStep().dependOn(&transfers_entry.step);
-    files_step.dependOn(&transfers_entry.step);
-    const test_torrents = b.step("test-files-torrents", "Test real loopback transfers and the Files/tray interface");
-    const torrent_engine_test = b.addSystemCommand(&.{ "python3", "tests/files_torrents.py" });
-    torrent_engine_test.step.dependOn(b.getInstallStep());
-    const torrent_ui_test = b.addSystemCommand(&.{ "python3", "tests/files_transfers_ui.py" });
-    torrent_ui_test.step.dependOn(&torrent_engine_test.step);
-    test_torrents.dependOn(&torrent_ui_test.step);
+    if (ctx.transfers) {
+        // Use the system C++ ABI, matching the distro's libtorrent-rasterbar.
+        const torrents = b.addSystemCommand(&.{ "sh", "-c", "exec c++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations -Wno-missing-field-initializers $(pkg-config --cflags libtorrent-rasterbar gio-unix-2.0 json-glib-1.0) \"$@\" $(pkg-config --libs libtorrent-rasterbar gio-unix-2.0 json-glib-1.0)", "build-transfers" });
+        torrents.addArg(if (optimize == .debug) "-O0" else "-O2");
+        torrents.addArg("-g");
+        torrents.addArg("-D_GLIBCXX_ASSERTIONS");
+        torrents.addArg("-fstack-protector-strong");
+        if (optimize != .debug) {
+            // Distro compilers may predefine fortification; replace it explicitly.
+            torrents.addArg("-U_FORTIFY_SOURCE");
+            torrents.addArg("-D_FORTIFY_SOURCE=3");
+        }
+        inline for (.{ "helper.cpp", "helper_transfers.cpp", "helper_peers.cpp", "helper_tray.cpp" }) |part| torrents.addFileArg(b.path("src/files/torrent/" ++ part));
+        torrents.addFileInput(b.path("src/files/torrent/helper.hpp"));
+        torrents.addFileInput(b.path("src/platform/self_exe.h"));
+        torrents.addArg("-o");
+        const torrent_binary = torrents.addOutputFileArg("rediwm-transfers");
+        const install_torrents = b.addInstallFileWithDir(torrent_binary, .bin, "rediwm-transfers");
+        b.getInstallStep().dependOn(&install_torrents.step);
+        const torrent_license = b.addInstallFileWithDir(b.path("src/files/torrent/LICENSE.libtorrent"), .prefix, "share/licenses/rediwm/libtorrent-LICENSE");
+        b.getInstallStep().dependOn(&torrent_license.step);
+        files_step.dependOn(&install_torrents.step);
+        files_step.dependOn(&torrent_license.step);
+        const transfers_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, ctx.layout.prefix, "data/rediwm-transfers.desktop"), .prefix, "share/applications/rediwm-transfers.desktop");
+        b.getInstallStep().dependOn(&transfers_entry.step);
+        files_step.dependOn(&transfers_entry.step);
+        const test_torrents = b.step("test-files-torrents", "Test real loopback transfers and the Files/tray interface");
+        const torrent_engine_test = b.addSystemCommand(&.{ "python3", "tests/files_torrents.py" });
+        torrent_engine_test.step.dependOn(b.getInstallStep());
+        const torrent_ui_test = b.addSystemCommand(&.{ "python3", "tests/files_transfers_ui.py" });
+        torrent_ui_test.step.dependOn(&torrent_engine_test.step);
+        test_torrents.dependOn(&torrent_ui_test.step);
+    }
     files_step.dependOn(&install_files_desktop_entry.step);
     files_step.dependOn(&terminal_license.step);
     const terminal_child = b.addExecutable(.{

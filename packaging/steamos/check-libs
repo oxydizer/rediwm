@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Do not let a developer's environment hide missing runtime dependencies.
+unset LD_LIBRARY_PATH LD_PRELOAD
+for file in "$root"/bin/* "$root"/lib/rediwm/*.so*; do
+    report=$(ldd "$file" 2>&1) || { printf '%s\n' "$report" >&2; exit 1; }
+    printf '%s\n%s\n' "$file" "$report"
+    if printf '%s\n' "$report" | grep -F 'not found' >/dev/null; then
+        printf '%s\n%s\n' "Library check failed: $file" "$report" >&2
+        exit 1
+    fi
+    # Every bundled library referenced by this object must resolve privately.
+    for lib in "$root"/lib/rediwm/lib*.so*; do
+        name=$(basename "$lib")
+        resolved=$(printf '%s\n' "$report" | awk -v name="$name" '$1 == name {print $3}')
+        [ -z "$resolved" ] || [ "$(readlink -f "$resolved")" = "$(readlink -f "$lib")" ] || exit 1
+    done
+done
