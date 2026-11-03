@@ -451,7 +451,7 @@ fn paintHub(self: *Switcher, server: *Server) !void {
         const workspace = if (server.world.workspaces.active)
             i18n.fmt(&workspace_buf, i18n.tr("Workspace {n}"), .{ .n = tl.workspace_id }) catch ""
         else
-            i18n.tr("Canvas");
+            i18n.tr("Window");
         centered(&r, d, d / 2 + 2 * s, workspace, theme.global.switcher_app_size * text_scale, theme.global.switcher_dim);
         var count_buf: [64]u8 = undefined;
         const count = std.fmt.bufPrint(&count_buf, "{d} / {d}", .{ card.member + 1, group.count }) catch "";
