@@ -6,9 +6,11 @@
 #include <poll.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 #include <wayland-client.h>
 
@@ -42,6 +44,8 @@ static int edge_transform;
 static int edge_mode;
 static int perf_mode;
 static int perf_damage;
+// Optional fixture pacing; 0 leaves the original callback-driven behavior.
+static int64_t perf_period_ns, perf_next_ns;
 // REDIWM_TEST_PERF_DAMAGE_RECT="x,y,w,h": perf-damage frames report only this
 // rectangle (a spinner-sized update) instead of the whole surface.
 static int perf_rect[4], perf_rect_set, perf_rect_active;
@@ -156,6 +160,21 @@ static const struct wl_callback_listener frame_listener = {frame_done};
 static void request_frame(void) {
   wl_callback_add_listener(wl_surface_frame(surface), &frame_listener, NULL);
 }
+static void pace_perf_frame(void) {
+  if (!perf_period_ns) return;
+  struct timespec now;
+  assert(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+  const int64_t ns = (int64_t)now.tv_sec * 1000000000LL + now.tv_nsec;
+  // After an occluded/minimized interval start from now, never replay missed
+  // deadlines in a burst. Ordinary callbacks share a steady absolute cadence.
+  const int64_t deadline = perf_next_ns > ns ? perf_next_ns : ns;
+  const struct timespec wake = {deadline / 1000000000LL, deadline % 1000000000LL};
+  int result;
+  do result = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wake, NULL);
+  while (result == EINTR);
+  assert(result == 0);
+  perf_next_ns = deadline + perf_period_ns;
+}
 static void frame_done(void *data, struct wl_callback *callback,
                        uint32_t time) {
   (void)data;
@@ -188,6 +207,7 @@ static void frame_done(void *data, struct wl_callback *callback,
     return;
   }
   if (perf_mode) {
+    pace_perf_frame();
     request_frame();
     if (perf_damage) {
       perf_rect_active = perf_rect_set;
@@ -601,6 +621,13 @@ int main(int argc, char *argv[]) {
   edge_mode = getenv("REDIWM_TEST_EDGE") != NULL;
   perf_mode = getenv("REDIWM_TEST_PERF") != NULL;
   perf_damage = getenv("REDIWM_TEST_PERF_DAMAGE") != NULL;
+  const char *perf_hz = getenv("REDIWM_TEST_PERF_HZ");
+  if (perf_hz) {
+    char *end;
+    const long hz = strtol(perf_hz, &end, 10);
+    assert(*perf_hz && !*end && hz >= 0 && hz <= 1000);
+    if (hz) perf_period_ns = 1000000000LL / hz;
+  }
   test_opaque = getenv("REDIWM_TEST_OPAQUE") != NULL;
   test_hide_cursor = getenv("REDIWM_TEST_HIDE_CURSOR") != NULL;
   test_no_child = getenv("REDIWM_TEST_NO_CHILD") != NULL;

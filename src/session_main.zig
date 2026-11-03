@@ -53,7 +53,7 @@ pub fn main(init: std.process.Init) !u8 {
     const compositor = try std.fs.path.joinZ(arena, &.{ exe_dir, "rediwm" });
     try env.put("PATH", try std.fmt.allocPrint(arena, "{s}:{s}", .{ exe_dir, env.get("PATH") orelse "/usr/bin:/bin" }));
     const prefix = std.fs.path.dirname(exe_dir) orelse "/";
-    try env.put("XDG_DATA_DIRS", try std.fmt.allocPrint(arena, "{s}/share:{s}", .{ prefix, env.get("XDG_DATA_DIRS") orelse "/usr/share" }));
+    try env.put("XDG_DATA_DIRS", try dataDirs(arena, try std.fmt.allocPrint(arena, "{s}/share", .{prefix}), env.get("XDG_DATA_DIRS")));
     try env.put("XDG_CURRENT_DESKTOP", "rediwm");
     try env.put("XDG_SESSION_TYPE", "wayland");
     for ([_][]const u8{ "DISPLAY", "WAYLAND_DISPLAY", "WLR_BACKENDS", "WLR_WL_OUTPUTS", "WLR_HEADLESS_OUTPUTS", "REDIWM_NESTED", "REDIWM_SCALE" }) |key| _ = env.swapRemove(key);
@@ -106,6 +106,33 @@ fn loginSession(arena: std.mem.Allocator, bus: *login_bus.Bus, runtime_env: ?[]c
     lease.* = try Publication.init(allocator, bus, runtime, session);
     try lease.*.?.acquire();
     try env.put("REDIWM_SESSION_PRIMARY", "1");
+}
+
+/// XDG_DATA_DIRS with the install's own `share` first, once. The other
+/// entries keep their order; unset or empty, the XDG default stands.
+fn dataDirs(arena: std.mem.Allocator, own: []const u8, inherited: ?[]const u8) ![]const u8 {
+    const base = if (inherited) |value| (if (value.len > 0) value else null) else null;
+    var list: std.ArrayList(u8) = .empty;
+    try list.appendSlice(arena, own);
+    var it = std.mem.splitScalar(u8, base orelse "/usr/local/share:/usr/share", ':');
+    while (it.next()) |dir| {
+        if (dir.len == 0 or std.mem.eql(u8, dir, own)) continue;
+        try list.append(arena, ':');
+        try list.appendSlice(arena, dir);
+    }
+    return list.items;
+}
+
+test "data dirs list the install's share first and once" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Unset or empty: the XDG default, so a /usr prefix keeps /usr/local/share.
+    try std.testing.expectEqualStrings("/usr/share:/usr/local/share", try dataDirs(a, "/usr/share", null));
+    try std.testing.expectEqualStrings("/usr/share:/usr/local/share", try dataDirs(a, "/usr/share", ""));
+    try std.testing.expectEqualStrings("/usr/local/share:/usr/share", try dataDirs(a, "/usr/local/share", null));
+    // Set: the install wins, the rest keep their order and lose duplicates.
+    try std.testing.expectEqualStrings("/usr/local/share:/opt/a:/opt/b", try dataDirs(a, "/usr/local/share", "/opt/a:/usr/local/share::/opt/b"));
 }
 
 fn makePath(arena: std.mem.Allocator, path: []const u8) !void {

@@ -235,7 +235,9 @@ pub const Client = struct {
             return state;
         };
         state.remote = (try endpoint.parseServer(socket)).unix == null;
-        state.admin_local = std.mem.eql(u8, socket, "/run/cups/cups.sock") or std.mem.eql(u8, socket, "/var/run/cups/cups.sock");
+        state.admin_local = for (cups.local_sockets) |path| {
+            if (std.mem.eql(u8, socket, path)) break true;
+        } else false;
         if (self.watch) |*watch| if (watch.fd() < 0) {
             watch.deinit(a);
             self.watch = null;

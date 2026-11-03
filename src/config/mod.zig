@@ -1,4 +1,5 @@
 //! Configuration data, parsing and persistence. Runtime application lives in config_runtime/.
+pub const effects = @import("effects.zig");
 pub const animations = @import("animations.zig");
 pub const app_theme = @import("app_theme.zig");
 pub const default = @import("default.zig");
@@ -10,6 +11,7 @@ pub const output_config = @import("output_config.zig");
 pub const output_save = @import("output_save.zig");
 pub const output_transform = @import("output_transform.zig");
 pub const path = @import("path.zig");
+pub const power = @import("power.zig");
 pub const portals = @import("portals.zig");
 pub const sandbox_allow = @import("sandbox_allow.zig");
 pub const schedule = @import("schedule.zig");

@@ -1,5 +1,20 @@
 //! URI-list transfer parsing. The worker owns received pipes and filesystem mutations.
 const std = @import("std");
+
+pub const Destination = enum { trash, folder, link };
+
+/// The built-in Trash icon must win over its folder-like representation.
+pub fn destination(is_trash: bool, is_folder: bool) Destination {
+    if (is_trash) return .trash;
+    return if (is_folder) .folder else .link;
+}
+
+test "desktop drop destination gives Trash precedence over folders" {
+    try std.testing.expectEqual(Destination.trash, destination(true, true));
+    try std.testing.expectEqual(Destination.trash, destination(true, false));
+    try std.testing.expectEqual(Destination.folder, destination(false, true));
+    try std.testing.expectEqual(Destination.link, destination(false, false));
+}
 pub fn localPath(a: std.mem.Allocator, uri: []const u8) ![]const u8 {
     var raw = uri;
     if (std.mem.startsWith(u8, raw, "file://localhost/")) raw = raw[16..] else if (std.mem.startsWith(u8, raw, "file:///")) raw = raw[7..] else return error.NotLocalFile;

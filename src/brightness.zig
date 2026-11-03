@@ -6,6 +6,9 @@ const Child = @import("session/child.zig");
 const Server = @import("Server.zig");
 const c = @import("c");
 const Brightness = @This();
+pub const Kind = enum { screen, keyboard };
+kind: Kind = .screen,
+server: ?*Server = null,
 child: ?std.process.Child = null,
 timer: ?*wl.EventSource = null,
 source: ?*wl.EventSource = null,
@@ -21,12 +24,19 @@ querying: bool = false,
 show_osd: bool = false,
 
 pub fn query(self: *Brightness, server: *Server) void {
+    self.server = server;
     self.query_pending = true;
     if (self.child == null) self.start(server) catch self.unavailable(server);
 }
 
 pub fn set(self: *Brightness, server: *Server, level: f32) void {
-    self.pending_level = std.math.clamp(level, 0.01, 1);
+    if (self.kind == .screen) server.power_policy.manualBrightness();
+    self.setAuto(server, level);
+}
+
+pub fn setAuto(self: *Brightness, server: *Server, level: f32) void {
+    self.server = server;
+    self.pending_level = std.math.clamp(level, if (self.kind == .screen) @as(f32, 0.01) else 0, 1);
     self.pending = 0;
     if (self.child == null) self.start(server) catch self.unavailable(server);
 }
@@ -37,11 +47,14 @@ fn unavailable(self: *Brightness, server: *Server) void {
     self.query_pending = false;
     self.level = null;
     self.failed = true;
+    if (!self.querying) server.power_policy.failed(@import("i18n").tr("Brightness could not be changed. Check backlight support and permissions."));
     if (server.input.open_control_center) |cc| cc.refresh();
     if (server.locker) |lock| lock.controlsChanged();
 }
 
 pub fn adjust(self: *Brightness, server: *Server, steps: i32) void {
+    self.server = server;
+    if (self.kind == .screen) server.power_policy.manualBrightness();
     if (self.pending_level) |level| {
         self.pending_level = std.math.clamp(level + @as(f32, @floatFromInt(steps)) * 0.05, 0.01, 1);
     } else self.pending = std.math.clamp(self.pending + steps, -20, 20);
@@ -52,8 +65,8 @@ pub fn adjust(self: *Brightness, server: *Server, steps: i32) void {
 }
 
 fn start(self: *Brightness, server: *Server) !void {
-    if (self.pending == 0 and self.pending_level == null and !self.query_pending) return;
-    if (self.timer == null) self.timer = try server.wl_server.getEventLoop().addTimer(*Server, timeout, server);
+    if (self.child != null or (self.pending == 0 and self.pending_level == null and !self.query_pending)) return;
+    if (self.timer == null) self.timer = try server.wl_server.getEventLoop().addTimer(*Brightness, timeout, self);
     var value_buf: [16]u8 = undefined;
     self.querying = self.pending == 0 and self.pending_level == null;
     self.show_osd = !self.querying and self.pending_level == null;
@@ -64,28 +77,26 @@ fn start(self: *Brightness, server: *Server) !void {
     self.pending = 0;
     self.pending_level = null;
     self.query_pending = false;
-    const args: []const []const u8 = if (self.querying)
-        &.{ "brightnessctl", "--class=backlight", "--machine-readable", "info" }
-    else
-        &.{ "brightnessctl", "--class=backlight", "--machine-readable", "--min-value=1", "set", value };
+    const args: []const []const u8 = if (self.kind == .keyboard)
+        (if (self.querying) &.{ "brightnessctl", "--class=leds", "--device=*::kbd_backlight", "--machine-readable", "info" } else &.{ "brightnessctl", "--class=leds", "--device=*::kbd_backlight", "--machine-readable", "set", value })
+    else if (self.querying) &.{ "brightnessctl", "--class=backlight", "--machine-readable", "info" } else &.{ "brightnessctl", "--class=backlight", "--machine-readable", "--min-value=1", "set", value };
     var child = try std.process.spawn(server.io, .{ .argv = args, .stdin = .ignore, .stdout = .pipe, .stderr = .ignore });
     errdefer child.kill(server.io);
     if (c.fcntl(child.stdout.?.handle, c.F_SETFL, @as(c_int, c.O_NONBLOCK)) < 0) return error.NonblockingFailed;
-    self.source = try server.wl_server.getEventLoop().addFd(*Server, child.stdout.?.handle, .{ .readable = true }, readable, server);
+    self.source = try server.wl_server.getEventLoop().addFd(*Brightness, child.stdout.?.handle, .{ .readable = true }, readable, self);
     errdefer {
         self.source.?.remove();
         self.source = null;
     }
     try self.timer.?.timerUpdate(2000);
     errdefer self.timer.?.timerUpdate(0) catch {};
-    self.watch = try Child.watch(@import("main.zig").gpa, server.wl_server.getEventLoop(), child.id.?, server, exited);
+    self.watch = try Child.watch(@import("main.zig").gpa, server.wl_server.getEventLoop(), child.id.?, self, exited);
     self.child = child;
     self.len = 0;
     self.failed = false;
 }
 
-fn drain(server: *Server) void {
-    const self = &server.brightness;
+fn drain(self: *Brightness) void {
     const child = if (self.child) |*child| child else return;
     while (true) {
         var scratch: [1024]u8 = undefined;
@@ -102,28 +113,28 @@ fn drain(server: *Server) void {
     if (self.failed) self.watch.?.signal(.KILL);
 }
 
-fn readable(_: c_int, mask: wl.EventMask, server: *Server) c_int {
-    drain(server);
-    if (mask.hangup or mask.@"error" or server.brightness.failed) {
-        if (server.brightness.source) |source| source.remove();
-        server.brightness.source = null;
+fn readable(_: c_int, mask: wl.EventMask, self: *Brightness) c_int {
+    drain(self);
+    if (mask.hangup or mask.@"error" or self.failed) {
+        if (self.source) |source| source.remove();
+        self.source = null;
     }
     return 0;
 }
 
-fn timeout(server: *Server) c_int {
-    if (server.brightness.watch) |watch| {
-        server.brightness.failed = true;
+fn timeout(self: *Brightness) c_int {
+    if (self.watch) |watch| {
+        self.failed = true;
         watch.signal(.KILL);
     }
     return 0;
 }
 
 fn exited(owner: ?*anyopaque, _: *Child, status: ?u32) void {
-    const server: *Server = @ptrCast(@alignCast(owner.?));
-    const self = &server.brightness;
+    const self: *Brightness = @ptrCast(@alignCast(owner.?));
+    const server = self.server.?;
     // Nonblocking even when a descendant retained stdout.
-    drain(server);
+    drain(self);
     self.watch = null;
     self.timer.?.timerUpdate(0) catch {};
     if (self.source) |source| source.remove();
@@ -132,9 +143,9 @@ fn exited(owner: ?*anyopaque, _: *Child, status: ?u32) void {
     child.stdout.?.close(server.io);
     self.child = null;
     if (status != null and status.? == 0 and !self.failed) {
-        if (parseLevel(self.bytes[0..self.len])) |level| {
+        if (parseLevelKind(self.bytes[0..self.len], self.kind)) |level| {
             self.level = level;
-            if (self.show_osd) @import("osd.zig").show(server, .{ .kind = .brightness, .level = level });
+            if (self.show_osd and self.kind == .screen) @import("osd.zig").show(server, .{ .kind = .brightness, .level = level });
         } else self.failed = true;
     } else self.failed = true;
     if (server.input.open_control_center) |cc| cc.refresh();
@@ -143,6 +154,9 @@ fn exited(owner: ?*anyopaque, _: *Child, status: ?u32) void {
         std.log.warn("brightnessctl failed or returned no backlight state", .{});
     }
     if (server.locker) |lock| lock.controlsChanged();
+    if (self.kind == .screen and self.querying and !self.failed) {
+        if (server.idle) |idle| if (idle.dimmed and !idle.isBlanked()) server.power_policy.dim();
+    }
     self.start(server) catch |err| {
         self.unavailable(server);
         std.log.warn("brightnessctl: {}", .{err});
@@ -161,9 +175,13 @@ pub fn deinit(self: *Brightness, server: *Server) void {
 }
 
 pub fn parseLevel(bytes: []const u8) ?f32 {
+    return parseLevelKind(bytes, .screen);
+}
+
+fn parseLevelKind(bytes: []const u8, kind: Kind) ?f32 {
     var fields = std.mem.splitScalar(u8, std.mem.trim(u8, bytes, " \r\n"), ',');
     _ = fields.next() orelse return null;
-    if (!std.mem.eql(u8, fields.next() orelse return null, "backlight")) return null;
+    if (!std.mem.eql(u8, fields.next() orelse return null, if (kind == .screen) "backlight" else "leds")) return null;
     const current = std.fmt.parseInt(u64, fields.next() orelse return null, 10) catch return null;
     _ = fields.next() orelse return null;
     const max = std.fmt.parseInt(u64, fields.next() orelse return null, 10) catch return null;

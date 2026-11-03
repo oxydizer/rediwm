@@ -52,8 +52,18 @@ void scene_pass_set_shape(const struct pass *p, const struct program *g, const s
     else glUniform2f(g->origin, s->box.x, s->box.y);
     glUniform2f(g->size, s->box.width, s->box.height);
     glUniform4f(g->radii, s->radii[0], s->radii[1], s->radii[2], s->radii[3]);
-    if (g->npoly >= 0) glUniform1f(g->npoly, (float)s->poly_count);
-    if (s->poly_count && g->poly >= 0) {
+    const bool sector = s->sector.radii[1] > 0;
+    if (g->sector_map >= 0) glUniform2f(g->sector_map, s->sector_texture_height, s->sector_texture_flip);
+    if (g->npoly >= 0) glUniform1f(g->npoly, sector ? -1.f : (float)s->poly_count);
+    if (sector && g->poly >= 0) {
+        const float payload[4][2] = {
+            {s->sector.center[0], s->sector.center[1]},
+            {s->sector.radii[0], s->sector.radii[1]},
+            {s->sector.axis[0], s->sector.axis[1]},
+            {s->sector.half_angle[0], s->sector.half_angle[1]},
+        };
+        glUniform2fv(g->poly, 4, &payload[0][0]);
+    } else if (s->poly_count && g->poly >= 0) {
         // The walk closes the outline on a copy of the first vertex.
         float v[REDIWM_PASS_POLY_MAX + 1][2];
         memcpy(v, s->poly, sizeof(float) * 2 * s->poly_count);
@@ -128,10 +138,16 @@ static void texture_draw(struct pass *p, const struct wlr_render_texture_options
     glUniform1f(program->alpha, wlr_render_texture_options_get_alpha(o));
     glUniform1f(program->opaque, !a.has_alpha);
     GLfloat uv[8];
+    const bool polar = shape && shape->sector_texture_height > 0;
+    // Sector coordinates already follow the output's rotation/reflection.
+    // Remove that part from the source transform before applying its UV crop.
+    const enum wl_output_transform source_transform = polar ?
+        wlr_output_transform_compose(o->transform,
+            wlr_output_transform_invert(shape->sector_texture_transform)) : o->transform;
     for (int i = 0; i < 4; i++) {
         double x = positions[2 * i], y = positions[2 * i + 1], u, v;
         // Map destination corners back to the untransformed source rectangle.
-        switch (o->transform) {
+        switch (source_transform) {
         case WL_OUTPUT_TRANSFORM_NORMAL: u = x; v = y; break;
         case WL_OUTPUT_TRANSFORM_90: u = 1 - y; v = x; break;
         case WL_OUTPUT_TRANSFORM_180: u = 1 - x; v = 1 - y; break;
@@ -146,6 +162,7 @@ static void texture_draw(struct pass *p, const struct wlr_render_texture_options
         uv[2 * i + 1] = (src.y + v * src.height) / o->texture->height;
     }
     glUniform4fv(program->coords, 2, uv);
+    if (polar && program->sector_coords >= 0) glUniform4fv(program->sector_coords, 2, uv);
     glUniform1f(program->mode, 0.f);
     if (shape) scene_pass_set_shape(p, program, shape);
     else glUniform1f(program->use_shape, 0.f);

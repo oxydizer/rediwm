@@ -442,6 +442,20 @@ def ui_tests(tmp, home, env):
             other_shell = wait_for(lambda: int(pidfile.read_text()) if pidfile.read_text() != str(shell) else None, 'independent terminal')
             assert other_shell != shell
             ipc.focus_window(ident)
+            # An idle shell is not work: only a job asks for confirmation.
+            def session_members():
+                members = []
+                for entry in Path('/proc').iterdir():
+                    try:
+                        if entry.name.isdigit() and int(entry.name) != shell and os.getsid(int(entry.name)) == shell:
+                            members.append(int(entry.name))
+                    except OSError:
+                        pass
+                return members
+            assert not session_members(), 'idle shell has no other session members'
+            command('sleep 60')
+            wait_for(session_members, 'foreground job started')
+            key(62)
             # Close confirmation also covers the hidden terminal; cancellation preserves it.
             ipc.action('close_window', {'id': ident})
             time.sleep(.15)
@@ -454,7 +468,11 @@ def ui_tests(tmp, home, env):
             first.wait(timeout=4)
             assert not Path(f'/proc/{shell}').exists(), 'shell reaped on close'
             assert second.poll() is None and Path(f'/proc/{other_shell}').exists()
-        print('Files: F4/repeat, input, copy/paste, selection, external launch, following, divider/resize, idle, workspaces, minimize, independent windows and close/cancel', flush=True)
+            # Opened once and left alone: closing needs no confirmation.
+            ipc.action('close_window', {'id': second_window['id']})
+            second.wait(timeout=4)
+            assert not Path(f'/proc/{other_shell}').exists(), 'idle shell hung up on close'
+        print('Files: F4/repeat, input, copy/paste, selection, external launch, following, divider/resize, idle, workspaces, minimize, independent windows and close/cancel and idle close', flush=True)
     except Exception:
         for path in tmp.glob('*.log'):
             print(path.name, path.read_text()[-6000:])

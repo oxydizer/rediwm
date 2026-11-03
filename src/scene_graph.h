@@ -16,6 +16,7 @@
 #include <wlr/render/color.h>
 #include <wlr/render/pass.h>
 #include <wlr/util/box.h>
+#include "scene_sector.h"
 
 // Source space to layout space: p -> scale * p + (tx, ty). Uniform scale only;
 // a window zoom, an Xwayland 1/N scale and the camera all compose into one.
@@ -97,6 +98,12 @@ struct rediwm_clip_spec {
   double glow_x, glow_y, glow_radius, glow_depth;
   float glow_color[4];
   double poly[REDIWM_POLY_MAX][2];
+  // A positive outer radius selects a true annular sector instead of radii/poly.
+  // Its centre is relative to the tree; the whole shape must fit width/height.
+  struct rediwm_sector sector;
+  // Full source-image height in source units when mapped radially from the
+  // outer rim toward the hub. Zero keeps ordinary rectangular texture mapping.
+  double sector_texture_height;
 };
 struct rediwm_clip {
   struct rediwm_edges edges;
@@ -112,6 +119,9 @@ struct rediwm_clip {
   // In layout space, like the edges.
   double glow_x, glow_y, glow_radius, glow_depth;
   float glow_color[4];
+  // Centre and radii in layout space; direction and angle remain dimensionless.
+  struct rediwm_sector sector;
+  double sector_texture_height; // layout units; zero disables radial mapping
 };
 // Signed distance, negative inside, to a simple polygon of `n` vertices: the
 // nearest edge, signed by an even-odd crossing count, so either winding works.
@@ -179,7 +189,16 @@ static inline struct rediwm_clip rediwm_clip_resolve(struct rediwm_xform t, doub
   struct rediwm_clip clip = {
       .edges = rediwm_xform_rect(t, x, y, spec->width, spec->height),
       .border = spec->border * t.scale};
-  if (spec->poly_count >= 3 && spec->poly_count <= REDIWM_POLY_MAX) {
+  if (spec->sector.radii[1] > 0) {
+    clip.sector = spec->sector;
+    clip.sector_texture_height = spec->sector_texture_height * t.scale;
+    for (int i = 0; i < 2; i++) clip.sector.radii[i] *= t.scale;
+    clip.sector.center[0] = clip.edges.x1 + spec->sector.center[0] * t.scale;
+    clip.sector.center[1] = clip.edges.y1 + spec->sector.center[1] * t.scale;
+    // A sector may have an empty centre and two radial cuts. Do not claim an
+    // axis-aligned opaque core, or spare its centre from shape-change damage.
+    clip.inset = cap * t.scale;
+  } else if (spec->poly_count >= 3 && spec->poly_count <= REDIWM_POLY_MAX) {
     clip.poly_count = spec->poly_count;
     for (int i = 0; i < clip.poly_count; i++) {
       clip.poly[i][0] = clip.edges.x1 + spec->poly[i][0] * t.scale;
@@ -220,6 +239,7 @@ static inline double rediwm_coverage(double d) {
 }
 static inline double rediwm_clip_distance(const struct rediwm_clip *clip, double px,
                                           double py) {
+  if (clip->sector.radii[1] > 0) return rediwm_sd_sector(px, py, &clip->sector);
   if (clip->poly_count) return rediwm_sd_polygon(px, py, clip->poly, clip->poly_count);
   return rediwm_sd_rounded_box(px, py, clip->edges.x1, clip->edges.y1,
                                clip->edges.x2 - clip->edges.x1,
@@ -238,6 +258,7 @@ static inline double rediwm_clip_distance(const struct rediwm_clip *clip, double
 enum { REDIWM_CLIP_OPAQUE_MARGIN = 2 };
 static inline int rediwm_clip_opaque(const struct rediwm_clip *clip,
                                      struct rediwm_snap out[3]) {
+  if (clip->sector.radii[1] > 0) return 0;
   const struct rediwm_snap f = rediwm_edges_snap(clip->edges);
   if (f.width <= 0 || f.height <= 0) return 0;
   if (clip->poly_count) {
@@ -274,6 +295,16 @@ static inline int rediwm_clip_opaque(const struct rediwm_clip *clip,
 // Whether two clips are the same outline: size apart, which callers compare
 // with their own tolerance in mind.
 static inline bool rediwm_clip_outline_equal(const struct rediwm_clip *a, const struct rediwm_clip *b) {
+  // Mapping changes move sampled pixels throughout the sector, even when its
+  // outline stays fixed. Sector inset covers the whole box for this damage path.
+  if (a->sector_texture_height != b->sector_texture_height) return false;
+  for (int i = 0; i < 2; i++) {
+    if (a->sector.radii[i] != b->sector.radii[i] || a->sector.axis[i] != b->sector.axis[i] ||
+        a->sector.half_angle[i] != b->sector.half_angle[i]) return false;
+  }
+  if (a->sector.radii[1] > 0 &&
+      (a->sector.center[0] - a->edges.x1 != b->sector.center[0] - b->edges.x1 ||
+       a->sector.center[1] - a->edges.y1 != b->sector.center[1] - b->edges.y1)) return false;
   if (a->poly_count != b->poly_count) return false;
   for (int i = 0; i < 4; i++)
     if (a->radii[i] != b->radii[i]) return false;
@@ -336,6 +367,7 @@ enum rediwm_item_kind {
   // The analytic shadow of `item.shadow`; the leaf transports input, opacity and
   // the footprint (its edges), never pixels.
   REDIWM_ITEM_SHADOW,
+  REDIWM_ITEM_RIBBON, // an input-transparent procedural ribbon mesh
 };
 // What a leaf draws, apart from where. `color` is premultiplied.
 struct rediwm_content {
@@ -393,6 +425,10 @@ struct rediwm_item {
   // The shape clipping this item with the rest of its tree, or NULL. Owned by the
   // leaf the item belongs to: valid for the callback, until the next resolve.
   const struct rediwm_clip *clip;
-  // Set exactly for REDIWM_ITEM_SHADOW, with the same lifetime as `clip`.
-  const struct rediwm_shadow *shadow;
+  // Exclusive procedural payload. Shadows have the lifetime of `clip`;
+  // ribbons belong to their transport node. Ordinary items keep this NULL.
+  union {
+    const struct rediwm_shadow *shadow;
+    const struct rediwm_ribbon *ribbon; // node-owned; normalized to edges
+  }; // exclusive procedural kinds; ordinary items do not grow for optional effects
 };

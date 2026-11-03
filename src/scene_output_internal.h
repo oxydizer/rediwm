@@ -13,6 +13,7 @@
 #include "scene_graph.h"
 #include "projection.h"
 #include "glass.h"
+#include "ribbon.h"
 #include "node.h"
 #include <math.h>
 #include <stdlib.h>
@@ -123,6 +124,8 @@ struct collector {
 };
 
 // Shared between the parts (scene_output_*.c).
+void scene_output_render_ribbon(struct entry *, struct wlr_render_pass *,
+    const struct output_view *, struct wlr_box, const pixman_region32_t *);
 extern uint64_t rediwm_scene_output_reblurs;
 bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *transport, void *data);
 void scene_output_clear_entries(struct rediwm_output_renderer *r);

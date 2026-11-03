@@ -34,6 +34,7 @@ void rediwm_scene_damage_layout(struct rediwm_scene_outputs *outputs, const pixm
             wlr_damage_ring_add(&out->damage_ring, &device);
             pixman_region32_union(&out->pending_commit_damage,
                 &out->pending_commit_damage, &device);
+            rediwm_trace_damage(output);
             wlr_output_schedule_frame(output);
         }
         pixman_region32_fini(&device);

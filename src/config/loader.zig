@@ -239,9 +239,19 @@ pub const CompositorConfig = struct {
     /// brightness and of its colour (`Toplevel.applyDim`).
     inactive_dim: bool = true,
     inactive_dim_amount: f32 = 0.08,
+    /// Alt+Tab layout; circular stacks windows belonging to the same app.
+    switcher_style: types.SwitcherStyle = .linear,
     switcher_opacity: f32 = 1.0,
+    /// Circular style only: paint a disc behind it, coloured by the window
+    /// chrome's own opacity and darkness settings.
+    switcher_circle_bg: bool = false,
     border_radius: u32 = 10,
     allow_tearing: bool = false,
+    /// Start frames as late as the display allows instead of right after
+    /// each vblank (`output/late_render.zig`).
+    late_render: bool = false,
+    /// The least safety time (ms) late rendering keeps before a vblank.
+    late_render_margin_ms: f32 = 2.0,
     xwayland: bool = true,
     xwayland_native_scaling: bool = false,
     /// 0 follows the native-scaling policy; explicit factors require restart.
@@ -364,6 +374,7 @@ pub const Config = struct {
     region: RegionConfig = .{},
     polkit: PolkitConfig = .{},
     idle: IdleConfig = .{},
+    power: @import("power.zig").Config = .{},
     night_light: NightLightConfig = .{},
     notifications: NotificationsConfig = .{},
     desktop: DesktopConfig = .{},
@@ -378,6 +389,7 @@ pub const Config = struct {
     notification_rules: []NotificationRule = &.{},
     sandbox_allow: []SandboxAllowRule = &.{},
     animations: anim.Settings = .{},
+    effects: @import("effects.zig").Config = .{},
     path: []const u8 = "",
     arena: std.heap.ArenaAllocator,
 

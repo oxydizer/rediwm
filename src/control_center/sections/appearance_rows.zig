@@ -37,6 +37,7 @@ const onCursorThemePicked = appearance_chrome.onCursorThemePicked;
 const onDarkModeChanged = appearance_chrome.onDarkModeChanged;
 const onSplashStartupChanged = appearance_chrome.onSplashStartupChanged;
 const onDodgeFileDragsChanged = appearance_chrome.onDodgeFileDragsChanged;
+const EffectToggle = appearance_chrome.EffectToggle;
 const appearance = @import("appearance.zig");
 const segmented_width = appearance.segmented_width;
 const font_values = appearance.font_values;
@@ -213,6 +214,15 @@ pub fn buildBehaviorRows(out: *Section, pal: theme.Theme) void {
         .{ .kind = .{ .text = .{ .content = focus_zoom_descriptions[@intFromEnum(focus_zoom)].get(), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
 
+    out.switcher_style_children = .{
+        labelWidget(i18n.tr("Window switcher")),
+        .{
+            .name = "switcher_style",
+            .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Linear"), i18n.msg("Circular") }), .selected = @intFromEnum(out.cc.server.config.compositor.switcher_style), .owner = out, .on_change = &appearance_chrome.onSwitcherStyleChanged } },
+            .width = .{ .fixed = segmented_width },
+        },
+    };
+
     out.drag_feedback_children = .{
         labelWidget(i18n.tr("Drag feedback")),
         .{ .name = "drag_feedback", .kind = .{ .toggle = .{ .on = out.cc.server.config.compositor.drag_feedback, .owner = out, .on_change = &onDragFeedbackChanged } } },
@@ -233,7 +243,28 @@ pub fn buildBehaviorRows(out: *Section, pal: theme.Theme) void {
     };
 }
 
-/// The UI font, cursor theme, font size, radius, shadow and glow rows.
+/// Optional flame effects: three independent toggles, off by default. They
+/// only run while Animations are on (and Reduced motion is not).
+pub fn buildEffectRows(out: *Section, pal: theme.Theme) void {
+    const effects = out.cc.server.config.effects;
+    const rows = .{
+        .{ "effect_window_move", i18n.msg("Flames while moving windows"), effects.window_move.enabled, &EffectToggle(.window_move).changed },
+        .{ "effect_window_resize", i18n.msg("Flames while resizing windows"), effects.resize().enabled, &EffectToggle(.window_resize).changed },
+        .{ "effect_window_minimize", i18n.msg("Flames when minimizing windows"), effects.minimize().enabled, &EffectToggle(.window_minimize).changed },
+    };
+    inline for (rows, 0..) |row, i| {
+        out.effect_label_children[i] = .{
+            .{ .kind = .{ .text = .{ .content = row[1].get(), .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+            .{ .kind = .{ .text = .{ .content = i18n.tr("Needs Animations to be on"), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
+        };
+        out.effect_row_children[i] = .{
+            .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.effect_label_children[i] },
+            .{ .name = row[0], .kind = .{ .toggle = .{ .on = row[2], .owner = out, .on_change = row[3] } } },
+        };
+    }
+}
+
+/// The UI font, cursor theme, font size, radius, shadow, edge glow and button hover glow rows.
 pub fn buildFontRows(out: *Section, arena: std.mem.Allocator, t: theme.Theme, pal: theme.Theme) void {
     if (out.font_families == null) {
         out.font_families = @import("ui").font_fallback.listFamilies(out.font_arena.allocator()) catch null;

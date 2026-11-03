@@ -107,6 +107,9 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     const run_platform_tests = b.addRunArtifact(b.addTest(.{ .root_module = ctx.platform_mod }));
     test_step.dependOn(&run_platform_tests.step);
     b.step("test-platform", "Test child handles, file watching and the program's own path").dependOn(&run_platform_tests.step);
+    const theme_policy_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/theme_helper/syscall_policy.zig"), .target = target, .optimize = optimize, .link_libc = true }) });
+    theme_policy_tests.root_module.addImport("platform", ctx.platform_mod);
+    test_step.dependOn(&b.addRunArtifact(theme_policy_tests).step);
     const i18n_tool_tests = b.addTest(.{ .root_module = i18n_tool.root_module });
     test_step.dependOn(&b.addRunArtifact(i18n_tool_tests).step);
     b.step("test-i18n", "Test locale resolution, catalogs and formatting").dependOn(&run_i18n_tests.step);
@@ -396,6 +399,18 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     test_step.dependOn(&run_node_tests.step);
     b.step("test-node", "Test the compositor's own scene nodes").dependOn(&run_node_tests.step);
 
+    const switcher_preview_tests = b.addExecutable(.{
+        .name = "switcher-preview-tests",
+        .root_module = b.createModule(.{ .target = target, .optimize = .debug, .link_libc = true }),
+    });
+    switcher_preview_tests.root_module.addCSourceFiles(.{ .files = &.{ "src/switcher_preview_test.c", "src/switcher_preview.c", "src/node.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {
+        switcher_preview_tests.root_module.linkSystemLibrary(lib, .{});
+    }
+    const run_switcher_preview_tests = b.addRunArtifact(switcher_preview_tests);
+    test_step.dependOn(&run_switcher_preview_tests.step);
+    b.step("test-switcher-preview", "Test switcher preview fences and buffer lifetime").dependOn(&run_switcher_preview_tests.step);
+
     const projection_tests = b.addExecutable(.{
         .name = "projection-tests",
         .root_module = b.createModule(.{ .target = target, .optimize = .debug, .link_libc = true }),
@@ -403,6 +418,7 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/projection_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {
         projection_tests.root_module.linkSystemLibrary(lib, .{});
@@ -422,6 +438,7 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     glass_tests.root_module.addCSourceFiles(.{ .files = &support.projection_sources, .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     const run_glass_tests = b.addRunArtifact(glass_tests);
     run_glass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");

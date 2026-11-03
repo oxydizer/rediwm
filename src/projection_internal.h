@@ -9,6 +9,7 @@
 #define WLR_PRIVATE private
 #include "projection.h"
 #include "glass.h"
+#include "ribbon.h"
 #include "node.h"
 #include "scene_graph.h"
 #include "scene_damage.h"
@@ -104,8 +105,9 @@ struct leaf {
   struct rediwm_node *own;
   // The group the last resolve() put it in.
   struct group *group;
-  // A glass effect: decided when the leaf is made, as an effect is its own node.
-  bool effect;
+  // Intrinsic kind, cached once: optional nodes add no lookup/branch to resolve.
+  // BUFFER still follows the surface binding; tree shadows override at resolve.
+  enum rediwm_item_kind intrinsic_kind;
   struct wl_listener destroy, commit;
   struct wlr_addon source_lookup;
   struct rediwm_surface *surface;
@@ -210,8 +212,10 @@ static inline void mark_group(struct rediwm_projection *p, struct group *g) {
 }
 static inline void schedule(struct rediwm_projection *p) {
   struct rediwm_scene_output *out;
-  wl_list_for_each(out, &p->outputs->outputs, link)
+  wl_list_for_each(out, &p->outputs->outputs, link) {
+      rediwm_trace_damage(out->output);
       wlr_output_schedule_frame(out->output);
+  }
 }
 // ---- Surface feedback (stage 6 of docs/plans/scene-graph.md) ---------------------
 // wlr_scene tells a surface where it is shown by emitting its scene buffer's own

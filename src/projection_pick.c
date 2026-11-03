@@ -15,7 +15,7 @@ static bool pick_leaf(struct rediwm_projection *p, const struct group *only, dou
       struct leaf *l = wl_container_of(ll, l, paint);
       const struct rediwm_item *item = &l->item;
       // An effect takes no input, and a leaf with no pixels once rounded is not shown.
-      if (!item->enabled || item->kind == REDIWM_ITEM_EFFECT || l->inert) continue;
+      if (!item->enabled || item->kind == REDIWM_ITEM_EFFECT || item->kind == REDIWM_ITEM_RIBBON || l->inert) continue;
       const struct rediwm_snap s = rediwm_edges_snap(item->edges);
       if (s.width <= 0 || s.height <= 0 || px < s.x || px >= s.x + s.width || py < s.y ||
           py >= s.y + s.height)

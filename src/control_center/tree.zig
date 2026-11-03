@@ -2,6 +2,7 @@
 
 const i18n = @import("i18n");
 const std = @import("std");
+const gpa = @import("../main.zig").gpa;
 const ui = @import("ui");
 const layout = ui.layout;
 const Widget = layout.Widget;
@@ -55,6 +56,7 @@ pub fn buildTree(cc: *ControlCenter) void {
         cc.root.linkParents();
         cc.built_page = cc.page;
         cc.refresh_pending = false;
+        releaseRetired(cc);
         return;
     }
     cc.search.capture();
@@ -105,7 +107,7 @@ pub fn buildTree(cc: *ControlCenter) void {
     const narrow = cc.panel_box.width < 660;
     var nav_count: usize = 0;
     for (page_names, 0..) |_, i| {
-        const page: Page = @enumFromInt(i);
+        const page: Page = @fromBackingInt(@intCast(i));
         if (page == .services and !has_services) continue;
         if (cc.search.active and cc.search.firstInPage(page) == null) continue;
         nav_count += 1;
@@ -115,7 +117,7 @@ pub fn buildTree(cc: *ControlCenter) void {
     const nav_fg = theme.global.sidebarForeground();
     var nav_index: usize = 0;
     for (page_names, 0..) |_, i| {
-        const page: Page = @enumFromInt(i);
+        const page: Page = @fromBackingInt(@intCast(i));
         if (page == .services and !has_services) continue;
         if (cc.search.active and cc.search.firstInPage(page) == null) continue;
         const row = &cc.nav_rows[nav_index];
@@ -126,7 +128,7 @@ pub fn buildTree(cc: *ControlCenter) void {
         }
         cc.nav_children[nav_index] = .{
             .{ .kind = .{ .icon = .{ .id = page_icons[i], .color = if (selected) t.accent else nav_fg } }, .width = .{ .fixed = 22 }, .height = .{ .fixed = 22 } },
-            label(page_labels[i].get(), 14, false),
+            label(if (page == .power and !cc.server.power_policy.state.present) i18n.tr("Power") else page_labels[i].get(), 14, false),
         };
         cc.nav_children[nav_index][1].kind.text.color = nav_fg;
         cc.nav_children[nav_index][1].width = .{ .flex = 1 };
@@ -144,14 +146,18 @@ pub fn buildTree(cc: *ControlCenter) void {
     }
     if (!cc.search.empty()) {
         cc.content_count = 0;
-        var heading = label(page_labels[@intFromEnum(cc.page)].get(), 24, false);
+        var heading = label(if (cc.page == .power and !cc.server.power_policy.state.present) i18n.tr("Power") else page_labels[@backingInt(cc.page)].get(), 24, false);
         heading.kind.text.weight = 600;
         if (cc.page != .bluetooth) {
             cc.append(heading);
-            cc.append(label(page_descriptions[@intFromEnum(cc.page)].get(), 13, true));
+            cc.append(label(page_descriptions[@backingInt(cc.page)].get(), 13, true));
         }
         if (cc.search.unavailable) cc.append(label(i18n.tr("This setting is unavailable on this device or in the current mode."), t.settings_description_size, true));
         switch (cc.page) {
+            .power => {
+                @import("sections/power.zig").build(&cc.power_settings, cc);
+                cc.append(cc.power_settings.root);
+            },
             .desktop => {
                 desktop_section.build(&cc.desktop, cc);
                 cc.append(cc.desktop.root);
@@ -204,11 +210,7 @@ pub fn buildTree(cc: *ControlCenter) void {
                 var nl_card = card(&cc.display.nl_group_children);
                 nl_card.name = "displays";
                 cc.append(nl_card);
-                if (cc.display.has_lid) {
-                    var lid_card = card(&cc.display.lid_group_children);
-                    lid_card.name = "displays";
-                    cc.append(lid_card);
-                }
+                cc.append(.{ .name = "power_settings_link", .kind = .{ .button = .{ .label = i18n.tr("Power and lid settings"), .owner = cc, .id = @backingInt(Page.power), .on_click = pageClicked } }, .height = .{ .fixed = 36 } });
             },
             .audio => {
                 var audio_card = card(cc.sound.top_children[1].children);
@@ -280,6 +282,23 @@ pub fn buildTree(cc: *ControlCenter) void {
     cc.search.built_empty = cc.search.empty();
     cc.built_page = cc.page;
     cc.refresh_pending = false;
+    releaseRetired(cc);
+}
+
+/// Takes over a replaced config that the open page may still point into, and
+/// asks for the rebuild that drops those pointers. Rebuilding here would run
+/// inside whatever widget callback reloaded the config.
+pub fn retireConfig(cc: *ControlCenter, old: *@import("config").loader.Config) void {
+    cc.retired_configs.append(gpa, old.*) catch {
+        old.deinit();
+        return;
+    };
+    cc.refresh();
+}
+
+pub fn releaseRetired(cc: *ControlCenter) void {
+    for (cc.retired_configs.items) |*old| old.deinit();
+    cc.retired_configs.clearRetainingCapacity();
 }
 
 pub fn append(cc: *ControlCenter, widget: Widget) void {
@@ -314,7 +333,7 @@ pub fn buildGeneral(cc: *ControlCenter) void {
     };
     cc.general_output = .{
         .{ .kind = .container, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .gap = 5, .children = &cc.general_output_text },
-        .{ .kind = .{ .button = .{ .label = i18n.tr("Audio settings"), .owner = cc, .id = @intFromEnum(Page.audio), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
+        .{ .kind = .{ .button = .{ .label = i18n.tr("Audio settings"), .owner = cc, .id = @backingInt(Page.audio), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
     };
     var output_card = card(&cc.general_output);
     output_card.direction = .row;
@@ -323,7 +342,7 @@ pub fn buildGeneral(cc: *ControlCenter) void {
     cc.general_display_text = .{ sectionTitle(i18n.tr("Display")), label(std.mem.span(cc.wlr_output.name), 13, true) };
     cc.general_display = .{
         .{ .kind = .container, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .gap = 5, .children = &cc.general_display_text },
-        .{ .kind = .{ .button = .{ .label = i18n.tr("Display settings"), .owner = cc, .id = @intFromEnum(Page.displays), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
+        .{ .kind = .{ .button = .{ .label = i18n.tr("Display settings"), .owner = cc, .id = @backingInt(Page.displays), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
     };
     var display_card = card(&cc.general_display);
     display_card.direction = .row;

@@ -1,6 +1,11 @@
 // Compositor integration/unit-test root. Shared modules have separate test
 // targets in build.zig; their roots cannot import compositor code.
 test {
+    _ = @import("effects/ribbon.zig");
+    _ = @import("effects/move_heading.zig");
+    _ = @import("effects/minimize_mesh.zig");
+    _ = @import("effects/resize_mesh.zig");
+    _ = @import("effects/resize_follow.zig");
     _ = @import("calculator/model.zig");
     _ = @import("control_center/search_index.zig");
     _ = @import("auto_layout.zig");
@@ -52,6 +57,7 @@ test {
     _ = @import("resize.zig");
     _ = @import("camera.zig");
     _ = @import("mini_map_geometry.zig");
+    _ = @import("switcher/layout.zig");
     _ = @import("calendar.zig");
     _ = @import("start_menu/applications.zig");
     _ = @import("start_menu/catalog_cache.zig");
@@ -71,6 +77,7 @@ test {
     _ = @import("color.zig");
     _ = @import("ipc/stats.zig");
     _ = @import("ipc/frame_metrics.zig");
+    _ = @import("output/late_render_tests.zig");
     _ = @import("config").keybinds;
     _ = @import("osd_paint.zig");
     _ = @import("osd.zig");

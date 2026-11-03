@@ -15,6 +15,11 @@ const client_input = @import("client_input.zig");
 const client_render = @import("client_render.zig");
 const client_print = @import("client_print.zig");
 
+// `sandbox.c` calls the exported syscall policy.
+comptime {
+    _ = @import("syscall_policy.zig");
+}
+
 const a = std.heap.c_allocator;
 
 pub const CSD_TITLEBAR_H: i32 = 32;
@@ -42,6 +47,8 @@ pub const Client = struct {
     scale: i32 = 1,
     seat: ?*wl.Seat = null,
     pointer: ?*wl.Pointer = null,
+    axis_source: wl.Pointer.AxisSource = .wheel,
+    finger_navigation: @import("ui").trackpad_navigation.Gesture = .{},
     keyboard: ?*wl.Keyboard = null,
     input_serial: u32 = 0,
     wm_base: ?*xdg.WmBase = null,

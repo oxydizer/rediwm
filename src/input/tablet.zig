@@ -263,7 +263,7 @@ fn handleTip(listener: *wl.Listener(*wlr.Tablet.event.Tip), event: *wlr.Tablet.e
     const tablet = self.findTablet(&event.tablet.base) orelse return;
     if (event.state == .down) {
         if (input.server.idle) |im| {
-            if (im.state != .active) {
+            if (im.isBlanked()) {
                 im.notifyActivity(.tablet);
                 tool.tip_swallowed = true;
                 return;

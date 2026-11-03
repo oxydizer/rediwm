@@ -81,6 +81,11 @@ pub const ClipSpec = extern struct {
     glow_depth: f64 = 0,
     glow_color: [4]f32 = .{ 0, 0, 0, 0 },
     poly: [poly_max][2]f64 = @splat(.{ 0, 0 }),
+    /// An analytic annular sector instead of a polygon or rounded rectangle.
+    sector: @import("scene_sector.zig").Spec = .{},
+    /// Positive: map texture width around the outer arc, with this full source
+    /// height extending inward. Zero keeps ordinary rectangular sampling.
+    sector_texture_height: f64 = 0,
 };
 extern fn rediwm_projection_set_tree_clip(target: *node.Node, spec: ?*const ClipSpec) bool;
 /// A null spec removes the clip. False for a size that is not positive or a

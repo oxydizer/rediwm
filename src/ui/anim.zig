@@ -110,6 +110,8 @@ pub const Target = enum {
     taskbar_flip,
     start_button,
     switcher_scroll,
+    switcher_open,
+    switcher_close,
     wheel_scroll,
     osd_level,
     toast_slide,
@@ -181,6 +183,10 @@ pub fn defaultSpec(target: Target) TargetSpec {
         .taskbar_press => .{ .curve = .{ .duration = .{ .ms = 90, .ease = .out_cubic } } },
         .taskbar_flip, .toast_flip => .{ .curve = .{ .spring = springs.taskbar_flip } },
         .switcher_scroll => .{ .curve = .{ .spring = springs.switcher_scroll } },
+        // Circular style only: the hub appears first and windows grow out of
+        // it (reversed on close); kept short since it plays on every gesture.
+        .switcher_open => .{ .curve = .{ .duration = .{ .ms = 150, .ease = .out_cubic } } },
+        .switcher_close => .{ .curve = .{ .duration = .{ .ms = 110, .ease = .out_cubic } } },
         .wheel_scroll => .{ .curve = .{ .spring = springs.wheel_scroll } },
         .osd_level => .{ .curve = .{ .spring = springs.osd_level } },
         .toast_slide => .{ .curve = .{ .spring = springs.toast_slide } },

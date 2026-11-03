@@ -214,6 +214,10 @@ pub fn openEmptyTrashDialog(self: *App) void {
 }
 
 pub fn openTrashConfirmDialog(self: *App) void {
+    self.openTrashConfirmDialogWithMode(false);
+}
+
+pub fn openTrashConfirmDialogWithMode(self: *App, permanent: bool) void {
     if (self.history.archive_len > 0) return;
     var count: usize = 0;
     for (self.items.items) |it| {
@@ -233,6 +237,7 @@ pub fn openTrashConfirmDialog(self: *App) void {
     self.dialog = Dialog{
         .kind = .trash_confirm,
         .title = tr("Move to Trash?"),
+        .deletion = .{ .permanent = permanent },
     };
     for (self.items.items) |it| {
         if (!it.selected or it.missing) continue;

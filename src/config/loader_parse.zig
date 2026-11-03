@@ -148,6 +148,9 @@ const ParseState = struct {
                 fail(path, line_no, "invalid idle field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
             },
+            .power => @import("power.zig").apply(&cfg.power, key, value) catch return error.InvalidConfig,
+            .power_battery => @import("power.zig").applyProfile(&cfg.power.on_battery, key, value) catch return error.InvalidConfig,
+            .power_plugged => @import("power.zig").applyProfile(&cfg.power.plugged_in, key, value) catch return error.InvalidConfig,
             .desktop => applyDesktopKey(&cfg.desktop, cfg.arena.allocator(), key, value) catch |err| {
                 fail(path, line_no, "invalid desktop field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
@@ -190,6 +193,14 @@ const ParseState = struct {
                     fail(path, line_no, "invalid notification_rules field '{s}': {s}", .{ key, @errorName(err) });
                     return error.InvalidConfig;
                 };
+            },
+            .effect_binding => |kind| cfg.effects.binding(cfg.arena.allocator(), kind, key, value) catch |err| {
+                fail(path, line_no, "invalid effect binding field '{s}': {s}", .{ key, @errorName(err) });
+                return error.InvalidConfig;
+            },
+            .effect_preset => cfg.effects.apply(key, value) catch |err| {
+                fail(path, line_no, "invalid effect preset field '{s}': {s}", .{ key, @errorName(err) });
+                return error.InvalidConfig;
             },
             .animations => anim_cfg.applyGlobalKey(&cfg.animations, key, value) catch |err| {
                 fail(path, line_no, "invalid animations field '{s}': {s}", .{ key, @errorName(err) });
@@ -274,6 +285,7 @@ const ParseState = struct {
         cfg.window_rules = state.rule_list.items;
         cfg.notification_rules = state.notif_rule_list.items;
         cfg.sandbox_allow = state.sandbox_allow_list.items;
+        try cfg.effects.validate();
         try rebuildLookup(cfg);
         finishCompositor(cfg);
         // An explicit [animations.camera_desktop] table wins over the settings value.
@@ -312,6 +324,10 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                 }
                 return error.InvalidConfig;
             };
+            switch (state.section) {
+                .effect_preset => |name| try cfg.effects.declare(cfg.arena.allocator(), name),
+                else => {},
+            }
             if (state.section == .keybinds) state.seen_keybinds = true;
             // Its presence alone chooses a taskbar theme, even with no keys.
             if (state.section == .taskbar_theme and cfg.taskbar_theme == null) cfg.taskbar_theme = .{};
@@ -353,6 +369,9 @@ pub const Section = union(enum) {
     workspace_keybinds,
     polkit,
     idle,
+    power,
+    power_battery,
+    power_plugged,
     window_rules,
     sandbox_allow,
     night_light,
@@ -362,6 +381,8 @@ pub const Section = union(enum) {
     ipc,
     animations,
     animation_target: anim.Target,
+    effect_binding: @import("effects.zig").Target,
+    effect_preset: []const u8,
 };
 
 pub fn flushArrayTables(
@@ -425,10 +446,17 @@ pub fn parseSection(line: []const u8) !Section {
     const name = line[1..close];
     if (std.mem.eql(u8, name, "input_device")) return error.InvalidConfig;
     if (std.mem.eql(u8, name, "keybinds.workspace")) return .workspace_keybinds;
+    if (std.mem.eql(u8, name, "power.on_battery")) return .power_battery;
+    if (std.mem.eql(u8, name, "power.plugged_in")) return .power_plugged;
     // Array tables and internal tags are deliberately not accepted here.
-    inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .polkit, .idle, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
+    inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .polkit, .idle, .power, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
         if (std.mem.eql(u8, name, @tagName(tag))) return tag;
     }
+    if (std.mem.eql(u8, name, "effects.window_move")) return .{ .effect_binding = .window_move };
+    if (std.mem.eql(u8, name, "effects.window_minimize")) return .{ .effect_binding = .window_minimize };
+    if (std.mem.eql(u8, name, "effects.window_resize")) return .{ .effect_binding = .window_resize };
+    if (std.mem.startsWith(u8, name, "effects.presets.")) return .{ .effect_preset = name["effects.presets.".len..] };
+    if (std.mem.eql(u8, name, "effects") or std.mem.startsWith(u8, name, "effects.")) return error.InvalidConfig;
     if (std.mem.startsWith(u8, name, "animations.")) {
         const rest = name["animations.".len..];
         return .{ .animation_target = anim.Target.parse(rest) orelse return error.UnknownAnimationTarget };

@@ -2,7 +2,7 @@
 const std = @import("std");
 const fold = @import("ui").fold;
 const i18n = @import("i18n");
-pub const Page = enum { general, input, displays, audio, network, appearance, shortcuts, desktop, bluetooth, region, users, printers, services };
+pub const Page = enum { general, input, displays, audio, network, appearance, shortcuts, desktop, bluetooth, region, users, printers, services, power };
 pub const Entry = struct {
     page: Page,
     title: []const u8,
@@ -19,6 +19,19 @@ const SourceEntry = struct {
 };
 
 const source_entries = [_]SourceEntry{
+    .{ .page = .power, .title = i18n.msg("Power & Battery"), .target = "", .keywords = i18n.msg("sleep battery charging energy") },
+    .{ .page = .power, .title = i18n.msg("Keyboard backlight"), .target = "power_keyboard", .keywords = i18n.msg("brightness plugged battery") },
+    .{ .page = .power, .title = i18n.msg("Charging limit"), .target = "power_charge_limit", .keywords = i18n.msg("battery health threshold") },
+    .{ .page = .power, .title = i18n.msg("Power mode"), .target = "power_mode", .keywords = i18n.msg("performance balanced saver plugged unplugged") },
+    .{ .page = .power, .title = i18n.msg("Automatic brightness"), .target = "power_brightness", .keywords = i18n.msg("backlight battery plugged") },
+    .{ .page = .power, .title = i18n.msg("Turn off screen after"), .target = "power_blank", .keywords = i18n.msg("idle timeout display") },
+    .{ .page = .power, .title = i18n.msg("Sleep after"), .target = "power_sleep", .keywords = i18n.msg("automatic suspend idle") },
+    .{ .page = .power, .title = i18n.msg("Dim screen after"), .target = "power_dim", .keywords = i18n.msg("brightness idle") },
+    .{ .page = .power, .title = i18n.msg("Low battery warning"), .target = "power_warning", .keywords = i18n.msg("notification percent") },
+    .{ .page = .power, .title = i18n.msg("Automatic Power Saver"), .target = "power_saver", .keywords = i18n.msg("low battery") },
+    .{ .page = .power, .title = i18n.msg("Critical battery"), .target = "power_critical", .keywords = i18n.msg("sleep shutdown") },
+    .{ .page = .power, .title = i18n.msg("Lock before sleep"), .target = "lock_on_suspend", .keywords = i18n.msg("security suspend") },
+    .{ .page = .power, .title = i18n.msg("External display lid action"), .target = "power_docked", .keywords = i18n.msg("dock monitor laptop") },
     .{ .page = .general, .title = i18n.msg("General"), .target = "", .keywords = i18n.msg("") },
     .{ .page = .input, .title = i18n.msg("Input"), .target = "", .keywords = i18n.msg("") },
     .{ .page = .displays, .title = i18n.msg("Displays"), .target = "", .keywords = i18n.msg("") },
@@ -55,7 +68,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .displays, .title = i18n.msg("Rotation"), .target = "transform", .keywords = i18n.msg("orientation portrait landscape screen") },
     .{ .page = .displays, .title = i18n.msg("Night light"), .target = "night_light", .keywords = i18n.msg("blue light warm screen") },
     .{ .page = .displays, .title = i18n.msg("Night light temperature"), .target = "night_light_temperature", .keywords = i18n.msg("warmth colour color") },
-    .{ .page = .displays, .title = i18n.msg("Lid close action"), .target = "lid_close", .keywords = i18n.msg("laptop suspend sleep") },
+    .{ .page = .power, .title = i18n.msg("Lid close action"), .target = "lid_close", .keywords = i18n.msg("laptop suspend sleep") },
     .{ .page = .audio, .title = i18n.msg("Output volume"), .target = "output_volume", .keywords = i18n.msg("sound speakers loudness mute") },
     .{ .page = .audio, .title = i18n.msg("Microphone volume"), .target = "input_volume", .keywords = i18n.msg("sound input recording mute") },
     .{ .page = .audio, .title = i18n.msg("Output balance"), .target = "output_balance", .keywords = i18n.msg("left right speakers") },
@@ -71,6 +84,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .appearance, .title = i18n.msg("Animation speed"), .target = "anim_speed", .keywords = i18n.msg("motion duration") },
     .{ .page = .appearance, .title = i18n.msg("Reduced motion"), .target = "reduced_motion", .keywords = i18n.msg("accessibility animations") },
     .{ .page = .appearance, .title = i18n.msg("Focus zoom"), .target = "focus_zoom", .keywords = i18n.msg("window focus") },
+    .{ .page = .appearance, .title = i18n.msg("Window switcher"), .target = "switcher_style", .keywords = i18n.msg("alt tab linear circular applications") },
     .{ .page = .appearance, .title = i18n.msg("Drag feedback"), .target = "drag_feedback", .keywords = i18n.msg("window moving") },
     .{ .page = .appearance, .title = i18n.msg("Drag scale"), .target = "drag_scale", .keywords = i18n.msg("window moving size") },
     .{ .page = .appearance, .title = i18n.msg("Font"), .target = "font", .keywords = i18n.msg("typeface text") },
@@ -136,6 +150,9 @@ const source_entries = [_]SourceEntry{
     .{ .page = .appearance, .title = i18n.msg("Apply GTK colors"), .target = "apply_gtk_colors", .keywords = i18n.msg("application colours theme") },
     .{ .page = .appearance, .title = i18n.msg("Apply Qt colors"), .target = "apply_qt_colors", .keywords = i18n.msg("application colours theme") },
     .{ .page = .appearance, .title = i18n.msg("Launch splash"), .target = "launch_splash", .keywords = i18n.msg("startup welcome animation") },
+    .{ .page = .appearance, .title = i18n.msg("Flames while moving windows"), .target = "effect_window_move", .keywords = i18n.msg("effects fire trail ribbon drag animation") },
+    .{ .page = .appearance, .title = i18n.msg("Flames while resizing windows"), .target = "effect_window_resize", .keywords = i18n.msg("effects fire trail ribbon animation") },
+    .{ .page = .appearance, .title = i18n.msg("Flames when minimizing windows"), .target = "effect_window_minimize", .keywords = i18n.msg("effects fire trail ribbon animation") },
     .{ .page = .appearance, .title = i18n.msg("Dodge file drags"), .target = "dodge_file_drags", .keywords = i18n.msg("drag drop windows") },
     .{ .page = .appearance, .title = i18n.msg("Dim inactive windows"), .target = "inactive_dim", .keywords = i18n.msg("unfocused darkness") },
     .{ .page = .appearance, .title = i18n.msg("Window tabs"), .target = "window_tabs", .keywords = i18n.msg("applications titlebar grouping") },

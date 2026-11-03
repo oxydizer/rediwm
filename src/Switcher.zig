@@ -1,4 +1,4 @@
-//! Held-modifier window carousel. IDs freeze MRU order for the duration of a
+//! Held-modifier window switcher. IDs freeze MRU order for the duration of a
 //! gesture; scene buffers retain preview storage independently of clients.
 const std = @import("std");
 const wlr = @import("wlroots");
@@ -12,22 +12,36 @@ const Anim = anim.Anim;
 const gpa = @import("main.zig").gpa;
 const Self = @This();
 const theme = @import("ui").theme;
+const circular = @import("switcher/circular.zig");
+const preview_binding = @import("switcher/preview.zig");
 const card_w = 224;
 const card_h = 220;
 const stride = 244;
 const height = 284;
 
-const Card = struct {
+pub const Card = struct {
     id: u64,
-    label: *sn.Buffer,
-    label_source: wlr.FBox,
+    label: ?*sn.Buffer = null,
+    label_source: wlr.FBox = undefined,
     icon: *sn.Buffer,
+    icon_buffer: *wlr.Buffer,
     icon_source: wlr.FBox,
     icon_ready: bool = false,
     preview: ?*sn.Buffer = null,
     source: wlr.FBox = undefined,
     pw: i32 = 0,
     ph: i32 = 0,
+    aspect: f64 = 1,
+    tree: ?*sn.Tree = null,
+    fill: ?*sn.Rect = null,
+    group: usize = 0,
+    member: usize = 0,
+    /// Circular style only: this card's animated distance from the front of
+    /// its group's stack, so bringing a different member forward (`Tab`)
+    /// slides the stack into place instead of snapping.
+    stack: Anim = .{},
+    /// Circular sector border intensity, eased independently for hover exits.
+    hover: Anim = .{ .property = .opacity },
 };
 
 pub const Trigger = enum { alt, ctrl };
@@ -41,6 +55,17 @@ selected: usize = 0,
 scroll: Anim = .{},
 width: i32 = 0,
 scale: f32 = 1,
+style: @import("config").types.SwitcherStyle = .linear,
+circle: circular.State = .{},
+/// The card under the pointer, recomputed every tick from the last known
+/// cursor position so it tracks reflow (scroll offset, Tab) even when the
+/// mouse itself hasn't moved since.
+hovered: ?usize = null,
+last_cursor_x: f64 = 0,
+last_cursor_y: f64 = 0,
+/// Linear style only: a single reusable ring repositioned over whichever
+/// card is hovered, distinct from the fixed Tab-selection outline.
+hover_outline: ?*sn.Buffer = null,
 
 pub fn active(self: *const Self) bool {
     return self.tree != null;
@@ -59,6 +84,11 @@ pub fn triggerHeld(self: *const Self, server: *Server) bool {
 }
 
 pub fn step(self: *Self, server: *Server, reverse: bool, trigger: Trigger) void {
+    // A still-fading-out instance can only be here because a new gesture
+    // (the previous one already ended via `dismiss`) just started: finish
+    // the old teardown now so `opening` below sees a clean slate, rather
+    // than silently dropping this Tab or stepping a zombie instance.
+    if (self.circle.closing) self.cancel();
     const opening = !self.active();
     if (opening) {
         self.trigger = trigger;
@@ -69,6 +99,12 @@ pub fn step(self: *Self, server: *Server, reverse: bool, trigger: Trigger) void 
         };
     }
     if (self.cards.items.len == 0) return;
+    if (self.circle.enabled) {
+        circular.advance(self, reverse);
+        circular.select(self, opening);
+        self.output.?.wlr_output.scheduleFrame();
+        return;
+    }
     const n = self.cards.items.len;
     self.selected = if (reverse) (self.selected + n - 1) % n else (self.selected + 1) % n;
     const target: f32 = @floatFromInt(self.selected * stride);
@@ -89,9 +125,18 @@ fn open(self: *Self, server: *Server) !void {
     const box = output.usableBox();
     if (box.width < 260 or box.height < height) return;
     self.output = output;
-    self.width = @min(1500, box.width - 32);
+    self.last_cursor_x = server.input.cursor.x;
+    self.last_cursor_y = server.input.cursor.y;
+    self.style = server.config.compositor.switcher_style;
+    self.circle.enabled = self.style == .circular and circular.layout.diameter(box.width, box.height) >= 360 and @import("chrome.zig").polygonsReady();
+    self.width = if (self.circle.enabled) circular.layout.diameter(box.width, box.height) else @min(1500, box.width - 32);
     self.scale = output.wlr_output.scale;
     self.tree = try server.overlay_tree.createSceneTree();
+    if (self.circle.enabled) {
+        try circular.open(self, server);
+        if (self.cards.items.len == 0) self.cancel();
+        return;
+    }
     const bg = try PanelBuffer.create(self.width, height, self.scale);
     defer bg.base.drop();
     var r = Renderer.init(bg.pixels, bg.width, bg.height, self.scale);
@@ -114,7 +159,7 @@ fn open(self: *Self, server: *Server) !void {
         ir.fillRect(0, 0, 40, 40, .{ .color = theme.global.switcher_icon_bg, .radius = theme.global.switcher_icon_radius });
         ir.drawIcon(5, 5, 30, 30, .{ .id = .generic, .color = theme.global.switcher_fg });
         const icon = try self.makeNode(&icon_image.base, 40, 40);
-        var card: Card = .{ .icon = icon, .icon_source = .{ .x = 0, .y = 0, .width = @floatFromInt(icon_image.width), .height = @floatFromInt(icon_image.height) }, .id = tl.id, .label = label, .label_source = .{ .x = 0, .y = 0, .width = @floatFromInt(image.width), .height = @floatFromInt(image.height) } };
+        var card: Card = .{ .icon = icon, .icon_buffer = &icon_image.base, .icon_source = .{ .x = 0, .y = 0, .width = @floatFromInt(icon_image.width), .height = @floatFromInt(icon_image.height) }, .id = tl.id, .label = label, .label_source = .{ .x = 0, .y = 0, .width = @floatFromInt(image.width), .height = @floatFromInt(image.height) } };
         card.preview = try self.tree.?.createSceneBuffer(null);
         card.preview.?.setFilterMode(.bilinear);
         card.preview.?.point_accepts_input = ignoreInput;
@@ -133,10 +178,18 @@ fn open(self: *Self, server: *Server) !void {
     r.fillRect(1, 1, card_w + 6, 162, .{ .color = .{ 0, 0, 0, 0 }, .radius = theme.global.switcher_selection_radius, .border_width = 2, .border_color = theme.global.switcher_selected_border });
     const node = try self.makeNode(&outline.base, card_w + 8, 164);
     node.node.setPosition(@divTrunc(self.width - card_w, 2) - 4, 24);
+    // A second, subtler ring reused across frames and just repositioned over
+    // whichever card the pointer sits on; unlike `outline` it isn't fixed.
+    const hover = try PanelBuffer.create(card_w + 8, 164, self.scale);
+    defer hover.base.drop();
+    r = Renderer.init(hover.pixels, hover.width, hover.height, self.scale);
+    r.fillRect(1, 1, card_w + 6, 162, .{ .color = .{ 0, 0, 0, 0 }, .radius = theme.global.switcher_selection_radius, .border_width = 2, .border_color = theme.global.border_hover });
+    self.hover_outline = try self.makeNode(&hover.base, card_w + 8, 164);
+    self.hover_outline.?.node.setEnabled(false);
     _ = self.tick(output, @import("Taskbar.zig").nowMs());
 }
 
-fn makeNode(self: *Self, buffer: *wlr.Buffer, w: i32, h: i32) !*sn.Buffer {
+pub fn makeNode(self: *Self, buffer: *wlr.Buffer, w: i32, h: i32) !*sn.Buffer {
     // Keep storage alive for the entire gesture, including CPU buffers whose
     // scene node releases its reference after the GLES2 texture upload.
     try self.buffers.append(gpa, buffer);
@@ -166,7 +219,8 @@ fn place(node: *sn.Buffer, source: wlr.FBox, x: i32, y: i32, w: i32, h: i32, vie
 pub fn tick(self: *Self, output: *Output, now: i64) bool {
     if (!self.active() or self.output != output) return false;
     const box = output.usableBox();
-    if (output.server.locker != null or !output.isLogicallyEnabled() or output.idle_blanked or self.scale != output.wlr_output.scale or self.width != @min(1500, box.width - 32) or box.height < height) {
+    const expected_width = if (self.circle.enabled) circular.layout.diameter(box.width, box.height) else @min(1500, box.width - 32);
+    if (output.server.locker != null or !output.isLogicallyEnabled() or output.idle_blanked or self.scale != output.wlr_output.scale or self.width != expected_width or box.height < height or self.style != output.server.config.compositor.switcher_style) {
         self.cancel();
         return false;
     }
@@ -177,58 +231,78 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
             return false;
         }
     }
+    // Recomputed every frame (not just on pointer motion) so Tab reflowing
+    // the layout under a stationary mouse still tracks the right card.
+    // Suppressed while closing: nothing should light up as it collapses.
+    self.hovered = if (self.circle.closing) null else self.hit(output, now, self.last_cursor_x, self.last_cursor_y);
+    if (self.circle.enabled) return circular.tick(self, output, now);
     self.background.?.setOpacity(output.server.config.compositor.switcher_opacity);
     self.tree.?.node.setPosition(box.x + @divTrunc(box.width - self.width, 2), box.y + @divTrunc(box.height - height, 2));
     const offset: i32 = @intFromFloat(@round(self.scroll.value(now)));
+    var hover_shown = false;
     for (self.cards.items, 0..) |*card, i| {
-        if (!card.icon_ready) if (output.server.findToplevelById(card.id)) |tl| {
-            switch (output.server.iconLookup(tl.appId(), @intFromFloat(card.icon_source.width))) {
-                .ready => |entry| {
-                    if (PanelBuffer.create(40, 40, self.scale)) |image| {
-                        defer image.base.drop();
-                        var r = Renderer.init(image.pixels, image.width, image.height, self.scale);
-                        r.fillRect(0, 0, 40, 40, .{ .color = theme.global.switcher_icon_bg, .radius = theme.global.switcher_icon_radius });
-                        const widget: @import("ui").layout.Widget = .{ .kind = .{ .image = .{ .pixels = entry.pixels, .width = entry.size, .height = entry.size } }, .computed_x = 3, .computed_y = 3, .computed_width = 34, .computed_height = 34 };
-                        @import("ui").paint.paint(&widget, &r);
-                        self.buffers.append(gpa, &image.base) catch continue;
-                        _ = image.base.lock();
-                        card.icon.setBuffer(&image.base);
-                        card.icon_ready = true;
-                    } else |_| {}
-                },
-                .missing => card.icon_ready = true,
-                .pending => {},
-            }
-        };
+        refreshIcon(self, card);
 
         const x = @divTrunc(self.width - card_w, 2) + @as(i32, @intCast(i * stride)) - offset;
-        place(card.label, card.label_source, x, 28, card_w, card_h, self.width);
+        place(card.label.?, card.label_source, x, 28, card_w, card_h, self.width);
         place(card.icon, card.icon_source, x + 92, 156, 40, 40, self.width);
         if (card.pw > 0) if (card.preview) |preview| place(preview, card.source, x + @divTrunc(card_w - card.pw, 2), 36 + @divTrunc(140 - card.ph, 2), card.pw, card.ph, self.width);
+        // The fixed selection outline already marks this card; a second ring
+        // on top of it would just look like a doubled border.
+        if (self.hovered == i and i != self.selected) {
+            self.hover_outline.?.node.setPosition(x - 4, 24);
+            hover_shown = true;
+        }
     }
+    self.hover_outline.?.node.setEnabled(hover_shown);
     _ = self.scroll.sampleChanged(now, anim.quantum_px);
     return !self.scroll.settled(now);
+}
+
+pub fn refreshIcon(self: *Self, card: *Card) void {
+    const output = self.output orelse return;
+    if (!card.icon_ready) if (output.server.findToplevelById(card.id)) |tl| {
+        switch (output.server.iconLookup(tl.appId(), @intFromFloat(card.icon_source.width))) {
+            .ready => |entry| {
+                if (PanelBuffer.create(40, 40, self.scale)) |image| {
+                    defer image.base.drop();
+                    var r = Renderer.init(image.pixels, image.width, image.height, self.scale);
+                    r.fillRect(0, 0, 40, 40, .{ .color = theme.global.switcher_icon_bg, .radius = theme.global.switcher_icon_radius });
+                    const widget: @import("ui").layout.Widget = .{ .kind = .{ .image = .{ .pixels = entry.pixels, .width = entry.size, .height = entry.size } }, .computed_x = 3, .computed_y = 3, .computed_width = 34, .computed_height = 34 };
+                    @import("ui").paint.paint(&widget, &r);
+                    self.buffers.append(gpa, &image.base) catch return;
+                    _ = image.base.lock();
+                    card.icon.setBuffer(&image.base);
+                    card.icon_buffer = &image.base;
+                    card.icon_ready = true;
+                } else |_| {}
+            },
+            .missing => card.icon_ready = true,
+            .pending => {},
+        }
+    };
 }
 
 // Replace the scene reference on every commit, including same-buffer damage.
 // Old client buffers are released immediately; the gesture never accumulates
 // video frames in the CPU buffer retention list.
-fn updatePreview(card: *Card, tl: *@import("Toplevel.zig")) void {
+pub fn updatePreview(card: *Card, tl: *@import("Toplevel.zig")) void {
     const preview = card.preview orelse return;
     card.pw = 0;
     if (tl.surface()) |surface| {
-        if (surface.current.transform == .normal) if (surface.buffer) |buffer| {
+        if (surface.current.transform == .normal and surface.buffer != null) {
+            if (!preview_binding.setSurface(preview, surface)) return;
             surface.getBufferSourceBox(&card.source);
             const sw: f32 = @floatFromInt(@max(1, surface.current.width));
             const sh: f32 = @floatFromInt(@max(1, surface.current.height));
+            card.aspect = sw / sh;
             const fit = @min(208 / sw, 140 / sh);
             card.pw = @max(1, @as(i32, @intFromFloat(@round(sw * fit))));
             card.ph = @max(1, @as(i32, @intFromFloat(@round(sh * fit))));
-            preview.setBuffer(&buffer.base);
             return;
-        };
+        }
     }
-    preview.setBuffer(null);
+    _ = preview_binding.setSurface(preview, null);
     preview.node.setEnabled(false);
 }
 
@@ -249,31 +323,105 @@ pub fn frameDone(self: *Self, output: *Output, when: *const std.posix.timespec) 
     // Sending twice is harmless: wlroots consumes each callback only once.
     for (self.cards.items) |card| {
         const preview = card.preview orelse continue;
-        if (card.pw == 0 or !preview.node.enabled) continue;
+        if (card.pw == 0 or !preview.node.visible()) continue;
         const tl = output.server.findToplevelById(card.id) orelse continue;
         if (tl.surface()) |surface| surface.sendFrameDone(when);
     }
 }
 
+/// Pointer moved while the switcher is up: only schedules a frame (which
+/// recomputes `hovered` in `tick`) when that would actually change it, so
+/// jiggling the mouse over empty space stays idle.
+pub fn motion(self: *Self, x: f64, y: f64) void {
+    if (!self.active() or self.circle.closing) return;
+    const output = self.output orelse return;
+    self.last_cursor_x = x;
+    self.last_cursor_y = y;
+    const now = @import("Taskbar.zig").nowMs();
+    if (self.hit(output, now, x, y) == self.hovered) return;
+    output.wlr_output.scheduleFrame();
+}
+
+/// A left click on a card jumps straight to it, same as Tab-ing there and
+/// releasing the modifier; anything else (a miss, another button) cancels,
+/// matching the switcher's prior any-click-dismisses behavior.
+pub fn press(self: *Self, server: *Server, x: f64, y: f64, button: u32) void {
+    if (!self.active() or self.circle.closing) return;
+    if (button == 0x110) {
+        if (self.output) |output| {
+            const now = @import("Taskbar.zig").nowMs();
+            if (self.hit(output, now, x, y)) |index| {
+                self.selected = index;
+                self.accept(server);
+                return;
+            }
+        }
+    }
+    self.dismiss();
+}
+
+fn hit(self: *Self, output: *Output, now: i64, x: f64, y: f64) ?usize {
+    const box = output.usableBox();
+    const lx = x - @as(f64, @floatFromInt(box.x + @divTrunc(box.width - self.width, 2)));
+    if (self.circle.enabled) {
+        const ly = y - @as(f64, @floatFromInt(box.y + @divTrunc(box.height - self.width, 2)));
+        return circular.hit(self, now, lx, ly);
+    }
+    const ly = y - @as(f64, @floatFromInt(box.y + @divTrunc(box.height - height, 2)));
+    if (ly < 28 or ly >= 28 + card_h) return null;
+    const offset: f64 = self.scroll.value(now);
+    for (0..self.cards.items.len) |i| {
+        const cx: f64 = @floatFromInt(@divTrunc(self.width - card_w, 2) + @as(i32, @intCast(i * stride)));
+        const left = @max(cx - offset, 16);
+        const right = @min(cx - offset + card_w, @as(f64, @floatFromInt(self.width - 16)));
+        if (lx >= left and lx < right) return i;
+    }
+    return null;
+}
+
 pub fn accept(self: *Self, server: *Server) void {
-    if (!self.active()) return;
+    if (!self.active() or self.circle.closing) return;
     const id = self.cards.items[self.selected].id;
     const output = self.output;
-    self.cancel();
+    self.dismiss();
     if (server.findToplevelById(id)) |tl| {
         if (tl.minimized) tl.restore() else server.world.focus(tl);
         if (output) |out| server.world.navigateTo(tl, out);
     }
 }
 
+/// Ends the switcher the way the user asked for it to end: releasing the
+/// modifier, Escape, or a click (through `accept`/`press`). The circular
+/// style plays its close animation first (`circular.beginClose`); `tick`
+/// finishes the real teardown once it settles, which `Anim.settled` reports
+/// as already true this same call when animations are off, reduced, or the
+/// linear style has nothing to animate, so this still closes synchronously
+/// then. A forced teardown (output loss, session lock, a card's window
+/// gone, ...) must stay instant and calls `cancel` directly instead.
+pub fn dismiss(self: *Self) void {
+    if (!self.active()) return;
+    if (self.circle.closing or !self.circle.enabled) {
+        self.cancel();
+        return;
+    }
+    const now = @import("Taskbar.zig").nowMs();
+    circular.beginClose(self, now);
+    if (self.circle.appear.settled(now)) {
+        self.cancel();
+        return;
+    }
+    self.output.?.wlr_output.scheduleFrame();
+}
+
 pub fn cancel(self: *Self) void {
     if (self.tree) |tree| tree.node.destroy();
+    self.circle.deinit();
     for (self.buffers.items) |buffer| buffer.unlock();
     self.buffers.deinit(gpa);
     self.cards.deinit(gpa);
     self.* = .{};
 }
 
-fn ignoreInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
+pub fn ignoreInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
     return false;
 }

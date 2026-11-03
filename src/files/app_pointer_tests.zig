@@ -8,6 +8,32 @@ const app_tests = @import("app_tests.zig");
 const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
 
+test "Files: the second click of a double-click on an icon does not open it again" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 20);
+    const rect = app.itemIconRect(0);
+    const x = rect.x + rect.w / 2;
+    const y = rect.y + rect.h / 2;
+    app.handleMotion(x, y);
+    // Opened a moment ago: the press selects but does not arm another open.
+    app.last_open_index = 0;
+    app.last_open_time = nowMs();
+    app.handleButton(0x110, true);
+    try std.testing.expect(app.open_on_release == null and app.items.items[0].selected);
+    app.cancelDrag();
+    // Another item, or the interval passed: a click opens as usual.
+    app.last_open_index = 1;
+    app.handleButton(0x110, true);
+    try std.testing.expectEqual(@as(?usize, 0), app.open_on_release);
+    app.cancelDrag();
+    app.last_open_index = 0;
+    app.last_open_time = nowMs() - 500;
+    app.handleButton(0x110, true);
+    try std.testing.expectEqual(@as(?usize, 0), app.open_on_release);
+    app.cancelDrag();
+}
+
 test "Files wheel follows the shell spring, accumulates and reverses without lag" {
     var app = try testApp();
     defer app.deinit();

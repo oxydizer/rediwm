@@ -142,6 +142,8 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | Key | Default | Notes |
 | --- | --- | --- |
 | `allow_tearing` | `false` | lets focused fullscreen clients request async presentation |
+| `late_render` | `false` | start each frame of a stream (dragging, scrolling, animation) as late as the display allows so input made just before a refresh still reaches it: roughly one refresh period less latency for continuous input, none for a single event. Needs a display that reports presentation times (DRM); VRR, tearing and nested sessions keep the normal path, and repeated missed deadlines pause it for a while |
+| `late_render_margin_ms` | `2.0` | 0.5 to 8, the least safety time kept before the refresh; it grows by itself after a miss |
 | `window_tab_apps` | `[]` | app IDs that get tabs |
 | `default_file_manager`, `default_terminal` | `""` | desktop IDs, empty means Files / auto terminal |
 | `taskbar_position` | `"bottom"` | `top` or `bottom` |
@@ -167,7 +169,9 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `drag_feedback` | `true` | softly lift a window during a move drag; suppressed by reduced motion |
 | `drag_scale` | `1.002` | drag lift multiplier, `1.000`–`1.100`; adjustable in Appearance |
 | `files_single_click_open` | `true` | Files opens files and folders with one click on their icon in list or icons view |
+| `switcher_style` | `"linear"` | `linear` keeps the horizontal Alt+Tab strip; `circular` arranges app previews around a circle and stacks windows from the same app |
 | `switcher_opacity`, `inactive_opacity` | `1.0` | |
+| `switcher_circle_bg` | `false` | `circular` style only: paint a disc behind the switcher, coloured by the window chrome's own opacity (`chrome_opacity`) and darkness (`chrome_darkness`) settings |
 | `terminal_opacity` | unset | 0.0 to 1.0, background alpha of terminals RediWM launches: Foot, kitty, Alacritty, Ghostty and WezTerm (new windows only; text stays opaque). Konsole, GNOME Terminal and other VTE terminals take it only from their own profiles. Unset keeps the opacity of your own terminal configuration. Adjustable in Appearance |
 | `inactive_dim` | `true` | windows that are not the focus lose a little brightness and colour; fullscreen windows never dim. Settings, Appearance has the switch |
 | `inactive_dim_amount` | `0.08` | 0.0 to 0.5, the fraction of brightness and of colour an unfocused window loses |
@@ -184,6 +188,12 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 
 Drag lift uses a gentle spring around the grab point and returns smoothly on
 release. Its timing can be adjusted with `[animations.window_drag]`.
+
+The `circular` switcher's hub appears first and the windows grow out of it
+when it opens, and collapse back into the hub the same way when it closes;
+timing is `[animations.switcher_open]` and `[animations.switcher_close]`. Like
+every other animation, Appearance's **Animations** switch and **Reduced
+motion** make both instant.
 
 ## Outputs
 
@@ -206,6 +216,63 @@ gamma = 1.0            # 0.5 to 2.0
 Omit coordinates for automatic left-to-right placement. Scale and placement
 apply live. `REDIWM_SCALE` overrides every output. Changes from Settings,
 `wlr-randr`, kanshi or `rediwm-msg output-config` are all saved here.
+
+## Power and battery
+
+Settings → Power & Battery (Power without a system battery) saves source-specific
+preferences. Missing screen-off, sleep and lid values inherit `[idle]` and
+`[compositor]`; existing configurations retain their settings. Desktops use
+`power.plugged_in`. Automatic source actions default to enabled on DRM sessions,
+disabled in nested/headless sessions, and never run in the greeter.
+
+```toml
+[power]
+# enabled = true                 # override the session default
+# lock_on_suspend = true         # otherwise inherit compositor.lock_on_suspend
+docked = "follow"                # follow or keep_awake (built-in screen off)
+low_battery_percent = 10         # 0 disables the warning
+power_saver_percent = 0          # opt in, e.g. 15
+critical_percent = 0             # opt in, e.g. 5
+critical_action = "notify"       # notify, sleep, power_off
+charge_limit = 0                 # leave unchanged; otherwise 50–100
+
+[power.plugged_in]
+mode = "unchanged"               # unchanged, power_saver, balanced, performance
+brightness = 0                   # leave unchanged; otherwise 1–100
+keyboard_brightness = -1          # leave unchanged; 0 turns off, 1–100 sets level
+# blank_after_seconds = 900       # 0 = Never
+# suspend_after_seconds = 0
+# lid_close = "display_off"       # display_off, lock, suspend, ignore
+
+[power.on_battery]
+mode = "power_saver"
+brightness = 45
+keyboard_brightness = 0
+dim_after_seconds = 120           # 0 disables dimming
+dim_brightness = 30
+blank_after_seconds = 300
+suspend_after_seconds = 900
+lid_close = "suspend"
+```
+
+Source actions run at login and on a confirmed plug/unplug transition. Manual
+brightness and mode changes last until the next source change; editing the
+active source applies only changed preferences. Fully charged and not-charging
+batteries still count as plugged in when external power is online. Missing
+readings retain the last source. Peripheral batteries do not enable this page's
+battery controls. Screen-off and sleep deadlines are independent.
+
+Low-battery Power Saver triggers once per discharge episode, with five percentage
+points of recovery hysteresis. Recovery restores the prior/configured mode only
+while the automatic change still owns it. Critical actions are opt-in, trigger
+once per episode, and respect system authorization and sleep inhibitors.
+
+Keyboard lighting uses `brightnessctl`'s keyboard-backlight device. Charging
+limits appear only when firmware exposes `charge_control_end_threshold`; changing
+them requires existing write permission. RediWM never elevates for sysfs writes.
+A start threshold at or above the requested end threshold is rejected. The UI
+shows the firmware's readback, including any hardware rounding. Charging limits
+are applied at login or when edited, not continually enforced.
 
 ## Idle and night light
 

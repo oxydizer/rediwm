@@ -305,6 +305,109 @@ def run():
                 wait_for(lambda: not windows("rediwm-editor"), "editor closes")
                 print("binary rejection and clean window close", flush=True)
 
+                # Unsaved text outlives a kill, a signal and closing the window.
+                import json, signal
+                drafts = tmp / "state/rediwm/editor-drafts"
+
+                def kept():
+                    try:
+                        return json.loads((drafts / "session.json").read_text())["tabs"]
+                    except (OSError, ValueError):
+                        return None
+
+                def gone(proc):
+                    wait_for(lambda: proc.poll() is not None and not windows("rediwm-editor"), "editor exits")
+
+                notes = docs / "draft-notes.txt"
+                notes.write_text("on disk\n")
+                proc = start("rediwm-editor", notes)
+                win = title("draft-notes.txt")
+                ipc.focus_window(win["id"])
+                key(107, ctrl=True)
+                ipc.type_text("typed in file")
+                key(49, ctrl=True)  # new tab
+                ipc.type_text("never saved note")
+                title("* Untitled")
+                wait_for(lambda: len(kept() or []) == 2, "drafts written after a pause in typing")
+                assert oct((drafts / "session.json").stat().st_mode & 0o777) == "0o600"
+                assert oct(drafts.stat().st_mode & 0o777) == "0o700"
+                proc.send_signal(signal.SIGKILL)
+                proc.wait()
+                wait_for(lambda: not windows("rediwm-editor"), "killed editor unmaps")
+                assert notes.read_text() == "on disk\n"
+
+                proc = start("rediwm-editor")
+                win = title("* Untitled")
+                assert "(2/2)" in win["title"], win["title"]
+                ipc.focus_window(win["id"])
+                key(104, ctrl=True)  # previous tab: the file, edited, still unsaved
+                title("* draft-notes.txt")
+                key(31, ctrl=True)
+                wait_for(lambda: notes.read_bytes() == b"on disk\ntyped in file", "restored file draft saves over its file")
+                title("draft-notes.txt")
+                wait_for(lambda: len(kept() or []) == 1, "a saved tab leaves the drafts")
+                assert len(list(drafts.glob("*.txt"))) == 1
+
+                # Closing the window asks about what is unsaved, like closing a
+                # tab; the drafts are for a session that ends some other way.
+                ipc.action("close_window", {"id": editor()["id"]})
+                time.sleep(.3)
+                assert editor(), "window closed on unsaved work without asking"
+                key(1)  # cancel
+                win = title("* Untitled")
+                assert "(1/1)" in win["title"], win["title"]
+                ipc.focus_window(win["id"])
+                ipc.type_text(" and more")
+                time.sleep(.3)
+                proc.terminate()  # SIGTERM before the pause: written on the way out
+                gone(proc)
+                assert any(b"never saved note and more" in p.read_bytes() for p in drafts.glob("*.txt")), "SIGTERM flushed the last typing"
+                proc = start("rediwm-editor")
+                win = title("* Untitled")
+                ipc.focus_window(win["id"])
+
+                # Discarding on purpose is the only way to lose it.
+                key(17, ctrl=True)
+                box = ipc.get_window_debug(editor()["id"])["client_box"]
+                header = 46 if csd else 0
+                click(editor(), (box["width"]-420)/2+200, (box["height"]-header-170)/2+130+header)
+                gone(proc)
+                assert kept() == [] and not list(drafts.glob("*.txt")), "discarded draft is removed"
+                proc = start("rediwm-editor")
+                title("Untitled")
+                assert "(1/1)" in editor()["title"] and not editor()["title"].startswith("*")
+                key(17, ctrl=True)
+                gone(proc)
+                print("unsaved text survives kill and signal, and closing asks, until discarded", flush=True)
+
+                # Many tabs share the strip down to a minimum width, then it scrolls.
+                proc = start("rediwm-editor")
+                win = title("Untitled")
+                ipc.focus_window(win["id"])
+                for _ in range(11):
+                    key(49, ctrl=True)
+                assert "(12/12)" in title("Untitled")["title"]
+                box = ipc.get_window_debug(editor()["id"])["client_box"]
+                header = 46 if csd else 0
+                strip = box["width"] - (40 if csd else 80)
+                assert strip / 12 < 112 < 12 * 112 - strip + 1, strip
+                # Away from the close buttons, which sit at the right of each tab.
+                click(editor(), strip - 60, header + 18)
+                assert "(12/12)" in title("Untitled")["title"], "the newest tab is scrolled into view"
+                reached = []
+                for dy in (2000, -2000):
+                    ipc.move_cursor(round(box["x"] + 300), round(box["y"] + header + 18))
+                    ipc.scroll(0, dy)
+                    time.sleep(.2)
+                    click(editor(), 60, header + 18)
+                    reached.append(int(editor()["title"].rsplit("(", 1)[1].split("/")[0]))
+                far = int((60 + 12 * 112 - strip) // 112) + 1
+                assert sorted(reached) == [1, far], ("the wheel scrolls the strip to both ends", reached, far)
+                for _ in range(12):
+                    key(17, ctrl=True)
+                gone(proc)
+                print("tabs share the strip, shrink to a minimum and scroll", flush=True)
+
                 # Beyond the old 16 MiB limit, and past the size where a save is
                 # copied: opening must not lay the whole text out, End must reach
                 # the real end, and the file written must be exact.

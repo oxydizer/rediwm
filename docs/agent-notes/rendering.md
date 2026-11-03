@@ -30,6 +30,16 @@ chrome, capture, or retained panel painting. General rules remain in
   `shaped_poly[_external]`, `rediwm_scene_renderer_enable_polygons`), built on the
   first `chrome.polygonsReady()` from layout code (never inside a pass); a polygon
   draw before that fails the pass, so draw and capture code reads `chrome.polygons`.
+  Circular switcher clips use an analytic annular `sector` instead of polygon
+  vertices (`scene_sector.h`/`.zig`): CPU picking and GPU coverage share its exact
+  distance function. The same optional programs render sectors; scale radii
+  uniformly and transform the center/axis with the output, so fractional snapping
+  never stretches a circle. Sector clips claim no opaque rectangular core.
+  A positive `sector_texture_height` opts a preview into radial texture mapping:
+  the source's top follows the outer arc, and its full height extends inward.
+  Changing that height damages the whole sector. Ordinary shapes keep rectangular
+  sampling; the radial path removes the output transform from source UVs because
+  the sector axis already carries it.
   The taskbar uses the same clip on its tree (`Taskbar.applyClip`) with its raster
   outer edge left hard (`taskbar/shape.zig` `paintPolygon`: row spans, a distance
   only near an edge).
@@ -47,6 +57,11 @@ chrome, capture, or retained panel painting. General rules remain in
   host `grim`. Brief vanishing after a startup scale mismatch is not a bug.
 * **GLES can NULL `wlr_scene_buffer.buffer`** after upload (the texture
   stays): persist raster sizes.
+* **Owned buffer destructors call `base.finish()` before freeing or pooling.**
+  wlroots 0.20 delegates the destroy event and addon cleanup to the producer.
+  Skipping it leaves consumers attached to freed storage (or the old incarnation
+  of a pooled buffer). This applies to chrome, images, taskbar, panels and desktop
+  tiles; `zig build test-lifecycle` checks finalization after the last lock.
 * **Glass is drawn by the output pass** (stage 5, `docs/plans/scene-graph-stage5.md`).
   `glass.c` only registers effects: a bufferless node just below its target, to
   which resolve gives the target's box. When an effect re-blurs, `scene_output_draw.c`

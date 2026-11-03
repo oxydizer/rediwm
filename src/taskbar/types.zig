@@ -298,6 +298,7 @@ pub const BarBuffer = struct {
     }
 
     pub fn destroyBuffer(base: *wlr.Buffer) callconv(.c) void {
+        base.finish();
         const buf: *BarBuffer = @fieldParentPtr("base", base);
         gpa.free(buf.pixels);
         gpa.destroy(buf);

@@ -1,8 +1,11 @@
 # Calendar integration plan
 
-Status: draft, 2026-10-25. The first release must support **Google Calendar
-and Outlook/Microsoft 365 together**, including personal Microsoft accounts
-and work or school accounts. CalDAV follows after those providers.
+Status: Phase 0 started, 2026-10-31; backend undecided. Track evidence and open
+gates in [the Phase 0 record](calendar-phase0.md), using the noninstalled
+[prototype tools](../../tools/calendar/README.md). The first release must
+support **Google Calendar and Outlook/Microsoft 365 together**, including
+personal Microsoft accounts and work or school accounts. General CalDAV
+account support follows after those providers.
 
 Build a native Calendar application, an agenda in the taskbar clock popup,
 and a separate service for storage, synchronization and reminders. Use
@@ -87,11 +90,21 @@ References: [EDS client API](https://gnome.pages.gitlab.gnome.org/evolution-data
 Accept EDS only if the packaged versions can support calendar-only browser
 sign-in, both Microsoft account types, offline writes, recurrence exceptions,
 controlled service lifetime and an acceptable idle footprint without an
-Evolution window or toolkit-owned account dialogs. Its current Google OAuth
-implementation requests mail, contacts and tasks as well as calendars, so a
-narrower credential integration must be proved. Qualify the Microsoft
-**Graph** backend and its actual distribution availability.
-[EDS Google OAuth implementation](https://raw.githubusercontent.com/GNOME/evolution-data-server/master/src/libedataserver/e-oauth2-service-google.c)
+Evolution window or toolkit-owned account dialogs. Its Google OAuth defaults
+request mail, contacts and tasks as well as calendars; evolution-ews also
+requests broader Microsoft permissions, including during token refresh.
+Prove reduced scopes through sign-in, resource discovery, expiry/refresh and
+reconnect for **both providers**, without activating unrelated mail, contacts
+or tasks. Qualify the Microsoft **Graph** backend and its actual distribution
+availability. [EDS Google OAuth implementation](https://raw.githubusercontent.com/GNOME/evolution-data-server/master/src/libedataserver/e-oauth2-service-google.c),
+[Microsoft OAuth implementation](https://raw.githubusercontent.com/GNOME/evolution-ews/master/src/Microsoft365/common/e-oauth2-service-microsoft365.c)
+
+EDS's Google backend uses CalDAV. The REST scopes and sync mechanics below
+describe the native candidate; EDS must demonstrate the same user-visible
+correctness through its own APIs. Test the proposed reduced Google scopes
+against the packaged CalDAV adapter; Calendar REST behavior alone does not
+prove that integration. Supporting this adapter does not qualify arbitrary
+CalDAV providers. [EDS Google backend](https://raw.githubusercontent.com/GNOME/evolution-data-server/master/src/modules/google-backend/module-google-backend.c)
 
 Choose one backend after the prototype. With EDS, its store is authoritative;
 any RediWM sidecar stores only app-specific state the backend cannot own.
@@ -115,9 +128,9 @@ scopes needed for sign-in. Browser-based authorization keeps MFA with the
 provider. [Google desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app),
 [Microsoft authorization code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow)
 
-Google's initial scope set should cover calendar-list discovery and event
-read/write access; request calendar-management/sharing permissions only when
-those features arrive. Complete the applicable production consent and
+For the native candidate, Google's initial scopes should cover calendar-list
+discovery and event read/write access; request calendar-management/sharing
+permissions only when those features arrive. Complete the applicable production consent and
 verification work. An external app left in Google's Testing state generally
 gets seven-day refresh tokens for calendar access, which is not a usable
 release configuration. [Google scopes](https://developers.google.com/workspace/calendar/api/auth),
@@ -139,7 +152,12 @@ authentication; never silently store tokens as plaintext. Keep secrets out
 of config files, logs, argv, UI arenas and ordinary IPC snapshots.
 [Secret Service API](https://specifications.freedesktop.org/secret-service/latest/)
 
-| Provider | Required synchronization behavior |
+Both backends must preserve pending writes, recover from invalid sync state,
+track deletions and permission changes, and expose accurate cached coverage.
+For EDS, qualify these through its adapter and store; do not add a second
+RediWM sync engine around it. Native provider implementation details follow:
+
+| Provider | Native synchronization behavior |
 | --- | --- |
 | Google | Paginated initial sync, per-calendar sync tokens, deletions and permission changes; recover invalid tokens with a new remote snapshot while preserving unsent local changes |
 | Microsoft | Fixed-range `calendarView/delta` where supported; qualify secondary calendars and use bounded calendar-view snapshot/diff otherwise; extend/rebuild coverage as the range advances |
@@ -212,6 +230,15 @@ window lifetime. Define startup, restart, logout and nested-session isolation
 explicitly; use a single database writer and reminder delivery target. The
 greeter must never activate the service, keyring, account setup or cache.
 
+Phase 0 must choose one supervisor and document its ownership boundary.
+The current session helper manager logs exits and does not restart helpers;
+tracking a child is insufficient. Require bounded restart backoff, a visible
+failure state after repeated crashes, and bounded logout teardown with no
+respawn during shutdown. Compositor restart must reconnect to the existing
+owner or recover it without a second writer or reminder sender. Subscriptions
+must reconnect and refresh snapshots after either process restarts. Verify
+the chosen policy before relying on reminders with the app closed.
+
 If EDS is selected, RediWM owns its wrapper and subscriptions. Logout must
 release those without terminating shared EDS or keyring processes used by
 other applications. Coordinate reminder ownership so an existing backend
@@ -221,6 +248,10 @@ Persist snoozed/dismissed alarms and a delivery ledger keyed by event
 occurrence and alarm. Recalculate deadlines after edits, deletions, resume,
 time-zone changes and wall-clock adjustments. Use notification replacement
 and durable delivery state to avoid repeated alarms after reconnect/restart.
+Notification IDs are temporary: scope each replacement mapping to the
+notification server's D-Bus owner/generation and discard it when that owner
+changes. Persist occurrence/alarm identity separately; never reuse a saved
+numeric notification ID against a restarted server, which can reuse IDs.
 Keep a missed-reminder list because notification toast lifetime is not a
 durable record. Local snoozes need not change other devices' reminders.
 
@@ -274,13 +305,14 @@ rendering notes before implementation.
 ## Delivery phases and completion criteria
 
 1. **Phase 0 — Backend and account prototype.** Compare EDS and native dependencies,
-   qualify Google plus both Microsoft account types, calendar-only consent,
-   keyring access and provider round-trips. Exercise one recurring event,
-   offline edit and concurrent modification per provider, including primary
+   qualify Google plus both Microsoft account types, calendar-only consent
+   and refresh, keyring access and provider round-trips. Exercise one recurring
+   event, offline edit and concurrent modification per provider, including primary
    and secondary owned calendars and Graph series-master loading. Record process
    footprint, idle wakes, package versions, license notices, registration
-   ownership, cache horizon and transport choice. Completion means one chosen
-   backend with demonstrated behavior; mock data alone does not pass this gate.
+   ownership, cache horizon, supervisor/reconnect policy and transport choice.
+   Completion means one chosen backend with demonstrated behavior; mock data
+   alone does not pass this gate.
 2. **Phase 1 — Local calendar foundation.** Add service/model, durable local calendar,
    native month/agenda views, editor, common recurrence and `.ics` preview,
    import/export. Completion means local events survive restarts and the app
@@ -327,11 +359,15 @@ remote deletion, lost responses, pagination, invalid sync state, advancing
 Graph coverage, rate limits, token revocation, locked keyring, permission
 changes, conflicting edits, crash recovery and unsent edits on disconnect.
 
-Exercise popup/app updates while requests are pending, service restarts,
-close/reopen, stable selection, keyboard navigation, themes and scales 1/1.5.
+Exercise popup/app updates while requests are pending, service and compositor
+restarts, close/reopen, stable selection, keyboard navigation, themes and
+scales 1/1.5.
 Test reminder cancellation, duplicate prevention, snooze, clock changes,
-resume, DND, lock and multiple/nested sessions. Measure per-thread wakeups
-with no accounts, idle local calendars and scheduled remote sync separately.
+resume, DND, lock and multiple/nested sessions. Restart the notification server
+while unrelated notifications exist; stale replacement IDs must not replace
+them or trigger duplicate reminders. Exercise supervisor backoff and logout
+during a pending restart. Measure per-thread wakeups with no accounts, idle
+local calendars and scheduled remote sync separately.
 
 Implementation gates follow [`TESTING.md`](../../TESTING.md): Debug and
 ReleaseSafe builds, `zig build test`, calendar app/service fixtures and
@@ -339,6 +375,6 @@ ReleaseSafe builds, `zig build test`, calendar app/service fixtures and
 notification, lock/greeter, session lifecycle, activation and i18n suites.
 Compare failures with a clean HEAD worktree before calling them regressions.
 
-The next implementation step is Phase 0. Its backend decision and real Google,
-personal Outlook and Microsoft 365 results determine the work estimate for
-the remaining phases.
+Phase 0 is in progress; local dependency/prototype results do not complete it.
+Its backend decision and real Google, personal Outlook and Microsoft 365
+results determine the work estimate for the remaining phases.

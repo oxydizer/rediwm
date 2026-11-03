@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ "${1:-}" = --check ]; then exec "$root/check-libs"; fi
+[ -n "${WAYLAND_DISPLAY:-}" ] || { echo 'Start this from KDE Desktop Mode with a Wayland session.' >&2; exit 1; }
+"$root/check-libs" >/dev/null
+# Isolate test settings and state from both KDE and another RediWM install.
+export XDG_CONFIG_HOME="$HOME/.local/share/rediwm-steamos-test/config"
+export XDG_STATE_HOME="$HOME/.local/share/rediwm-steamos-test/state"
+export XDG_CACHE_HOME="$HOME/.cache/rediwm-steamos-test"
+export XDG_DATA_HOME="$HOME/.local/share/rediwm-steamos-test/data"
+export XDG_DATA_DIRS="$root/share:/usr/local/share:/usr/share"
+export PATH="$root/bin:$PATH"
+export WLR_BACKENDS=wayland WLR_RENDERER=gles2 REDIWM_SCALE=1
+unset LD_LIBRARY_PATH LD_PRELOAD REDIWM_CONFIG REDIWM_SESSION_FD REDIWM_LOGIN_SESSION
+exec dbus-run-session -- "$root/bin/rediwm" "$@"

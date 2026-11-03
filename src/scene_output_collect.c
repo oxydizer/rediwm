@@ -66,6 +66,8 @@ bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *tr
         // and the surface's own tint shows, as glass.c's fallback did.
         skip = !here || !r->has_backdrops || item->content.opacity == 0 ||
             !rediwm_glass_effect_info(transport, &glass) || glass.opacity <= 0;
+    } else if (item->kind == REDIWM_ITEM_RIBBON) {
+        skip = item->content.opacity == 0 || item->ribbon->count < 4;
     } else if (item->kind == REDIWM_ITEM_SHADOW) {
         // No buffer: the pixels are the shadow's, and never opaque.
         skip = item->content.opacity == 0 || item->shadow->color[3] == 0;
@@ -100,7 +102,7 @@ bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *tr
         return true;
     }
     bool full = item->kind == REDIWM_ITEM_RECT && item->content.color[3] == 1;
-    if (item->kind != REDIWM_ITEM_RECT && item->kind != REDIWM_ITEM_SHADOW) {
+    if (item->kind != REDIWM_ITEM_RECT && item->kind != REDIWM_ITEM_SHADOW && item->kind != REDIWM_ITEM_RIBBON) {
         struct rediwm_buffer *b = rediwm_buffer_from_node(transport);
         // Match the surface adapter's opacity policy. A cached raster whose
         // buffer was released must not suddenly hide previously visible peers.

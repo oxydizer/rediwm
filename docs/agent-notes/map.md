@@ -44,7 +44,9 @@ widgets, layout, text, theme, animation), `config` (`src/config/`: parsing and
 saving `config.toml`), `dbus`, `i18n`, `memory` and `protocol`
 (`src/ipc/protocol.zig`, the IPC wire format shared with `rediwm-msg`). Also
 `platform` (`src/platform/`, std only): child-process handles, directory
-watching and the program's own path, the seam for other operating systems.
+watching, the program's own path, system helper lookup (`tool.zig`) and
+syscall filters (`seccomp.zig`), the
+seam for other operating systems.
 
 ## Compositor
 
@@ -72,7 +74,15 @@ Also in `src/`: `Shell.zig` (xdg-shell and decorations), `Popup.zig`,
 output pass); `glass.zig`/`.c`; `chrome.zig`
 (+ `chrome_paint.zig`, `chrome_tabs.zig`) for window frames; `panel_buffer`,
 `panel_paint` and `panel_present.zig` for compositor-drawn panels;
-`camera.zig`, `geometry.zig`, `color.zig`.
+`camera.zig`, `geometry.zig`, `color.zig`. Optional movement ribbons use
+`effects/ribbon.zig` (bounded path/mesh), `effects/border.zig` (frame halo),
+`effects/window_move.zig` (movement/resize lifecycle), `effects/window_resize.zig`
+and `effects/resize_mesh.zig` (filled resize membranes), `effects/resize_outline.zig`
+(elastic perimeter), `effects/resize_follow.zig`
+(bounded size lag), `effects/window_minimize.zig`
+and `effects/minimize_mesh.zig` (minimize snapshots and deformation),
+`scene_output_snapshot.c` (shaped window capture), `ribbon.c` (scene nodes), `scene_pass_ribbon.c` and
+`scene_output_ribbon.c` (drawing), and `config/effects.zig` (presets).
 
 ## Compositor-drawn UI
 
@@ -116,3 +126,10 @@ compositor's code), `ipc_tests.zig`, `files_tests.zig`, `editor_tests.zig`,
 `test { _ = @import(...); }` blocks; C fixtures are `src/*_test.c` (cases in
 `*_test_*.c`); integration suites are `tests/*.py`. Splitting tools are in
 `tools/split/`.
+
+Power preferences: `config/power.zig` parses source profiles;
+`session/power_policy.zig` owns shared battery state and source actions;
+`control_center/sections/power.zig` owns Settings controls.
+`platform/power_supply.zig` receives uevents, `platform/charge_limit.zig` handles
+optional firmware thresholds. Server construction/destruction are in
+`server/setup.zig` and `server/teardown.zig`.

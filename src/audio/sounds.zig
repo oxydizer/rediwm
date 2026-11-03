@@ -3,6 +3,7 @@
 const std = @import("std");
 const Server = @import("../Server.zig");
 const protocol = @import("../ipc/protocol.zig");
+const config = @import("config");
 
 pub const events = [_][]const u8{
     "bell",          "dialog-information",  "dialog-warning",      "dialog-error",
@@ -11,12 +12,16 @@ pub const events = [_][]const u8{
     "device-added",  "device-removed",      "power-plug",          "power-unplug",
     "battery-low",   "battery-caution",     "audio-volume-change", "window-attention",
 };
-const player = "/usr/bin/paplay";
+const player = "paplay";
 
 fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > 128 or std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) return false;
     for (name) |ch| if (!std.ascii.isAlphanumeric(ch) and ch != '-' and ch != '_' and ch != '.') return false;
     return true;
+}
+/// The player on `PATH` (the session's, so ports under /usr/local count).
+fn playerPath(server: *Server, a: std.mem.Allocator) !?[]u8 {
+    return config.app_theme.executable(a, server.io, server.environ, player);
 }
 fn exists(server: *Server, path: []const u8) bool {
     const stat = std.Io.Dir.cwd().statFile(server.io, path, .{}) catch return false;
@@ -86,7 +91,7 @@ pub fn inspect(server: *Server, a: std.mem.Allocator) !protocol.SoundsResult {
         };
         row.* = .{ .name = event, .enabled = enabled, .available = match.path != null, .path = match.path };
     }
-    return .{ .theme = cfg.sound_theme, .enabled = cfg.sound_enabled, .player_available = exists(server, player), .events = rows };
+    return .{ .theme = cfg.sound_theme, .enabled = cfg.sound_enabled, .player_available = (try playerPath(server, a)) != null, .events = rows };
 }
 
 pub fn play(server: *Server, a: std.mem.Allocator, event: []const u8) !protocol.Response {
@@ -96,7 +101,7 @@ pub fn play(server: *Server, a: std.mem.Allocator, event: []const u8) !protocol.
     };
     if (!known) return error.UnknownSoundEvent;
     const state = try inspect(server, a);
-    if (!state.player_available) return error.SoundPlayerUnavailable;
+    const player_path = try playerPath(server, a) orelse return error.SoundPlayerUnavailable;
     for (state.events) |row| {
         if (!std.mem.eql(u8, event, row.name)) continue;
         if (!row.enabled) return error.SoundEventDisabled;
@@ -106,7 +111,7 @@ pub fn play(server: *Server, a: std.mem.Allocator, event: []const u8) !protocol.
         defer env.deinit();
         try server.applyChildEnv(&env);
         const child = try std.process.spawn(server.io, .{
-            .argv = &.{ player, "--client-name=RediWM", "--property=media.role=event", "--", path },
+            .argv = &.{ player_path, "--client-name=RediWM", "--property=media.role=event", "--", path },
             .environ_map = &env,
         });
         if (child.id) |pid| try manager.trackChild(pid);

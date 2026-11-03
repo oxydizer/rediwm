@@ -127,6 +127,7 @@ fn resample(src: []const u32, src_w: i32, src_h: i32, dst_w: i32, dst_h: i32) ![
 }
 
 fn destroy(base: *wlr.Buffer) callconv(.c) void {
+    base.finish();
     const image: *ImageBuffer = @fieldParentPtr("base", base);
     gpa.free(image.pixels);
     gpa.destroy(image);

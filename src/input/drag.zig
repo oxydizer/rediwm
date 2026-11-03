@@ -11,8 +11,68 @@ pub fn positionDragIcon(input: *Input) void {
     }
 }
 
+pub fn updateDragAction(seat: *wlr.Seat, ctrl: bool) void {
+    const drag = seat.drag orelse return;
+    const source = seat.drag_source orelse return;
+
+    const Enum = wl.DataDeviceManager.DndAction.Enum;
+    const copy_bit: u32 = @intFromEnum(Enum.copy);
+    const move_bit: u32 = @intFromEnum(Enum.move);
+    const both_bits = copy_bit | move_bit;
+
+    // Only change the action for sources that explicitly support both.
+    if (source.actions < 0) return;
+    const source_actions: u32 = @bitCast(source.actions);
+    if ((source_actions & both_bits) != both_bits) return;
+
+    source.compositor_action = if (ctrl) copy_bit else move_bit;
+
+    const focus_client = drag.focus_client orelse return;
+    var offers = seat.drag_offers.iterator(.forward);
+    while (offers.next()) |offer| {
+        if (offer.type != .drag or offer.source != source) continue;
+        if (offer.resource.getClient() != focus_client.client) continue;
+
+        const version = offer.resource.getVersion();
+        const offer_actions: u32 = if (version >= 3) offer.actions else copy_bit;
+        const preferred_bits: u32 = if (version >= 3)
+            @as(u32, @intCast(@intFromEnum(offer.preferred_action)))
+        else
+            0;
+        const available = offer_actions & source_actions;
+
+        const compositor_bits = source.compositor_action & available;
+        const action_bits = if (compositor_bits != 0)
+            compositor_bits
+        else if ((preferred_bits & available) != 0)
+            preferred_bits & available
+        else
+            available & (~available +% 1);
+
+        const action: Enum = @enumFromInt(action_bits);
+
+        // wlroots tracks one current action per source, shared by its offers.
+        if (source.current_dnd_action == action) return;
+
+        if (offer.in_ask) {
+            source.current_dnd_action = action;
+            return;
+        }
+
+        source.dndAction(action);
+        if (version >= 3) {
+            offer.resource.sendAction(@bitCast(action_bits));
+        }
+        return;
+    }
+}
+
 pub fn startDrag(listener: *wl.Listener(*wlr.Drag), drag: *wlr.Drag) void {
     const input: *Input = @fieldParentPtr("start_drag", listener);
+    // Ctrl may already be held before the grab starts, with no modifier
+    // change during the drag. Set the preference before the first offer.
+    const ctrl = if (input.seat.getKeyboard()) |keyboard| keyboard.getModifiers().ctrl else false;
+    updateDragAction(input.seat, ctrl);
     input.drag_dodge.begin(drag);
     if (drag.grab_type != .keyboard_pointer) return;
     const icon = drag.icon orelse return;

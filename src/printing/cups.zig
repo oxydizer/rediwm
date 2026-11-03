@@ -62,13 +62,26 @@ pub const Snapshot = struct {
     }
 };
 
+/// Where the local daemon listens: /run/cups on most Linux systems,
+/// /var/run/cups elsewhere (FreeBSD).
+pub const local_sockets = [_][]const u8{ "/run/cups/cups.sock", "/var/run/cups/cups.sock" };
+
+/// The socket that exists, else the first (the daemon may not be running yet).
+fn localSocket(io: std.Io) []const u8 {
+    for (local_sockets) |path| {
+        const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch continue;
+        if (stat.kind == .unix_domain_socket) return path;
+    }
+    return local_sockets[0];
+}
+
 /// Reject unsupported remote/encrypted settings explicitly; never contact the
 /// local daemon when the user's CUPS configuration points somewhere else.
 pub fn server(a: A, io: std.Io, env: std.process.Environ) ![]const u8 {
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
     const mem = arena.allocator();
-    var configured: []const u8 = "/run/cups/cups.sock";
+    var configured: []const u8 = localSocket(io);
     var encryption: []const u8 = "IfRequested";
     const system = try readClientConfig(mem, io, "/etc/cups/client.conf");
     const system_config = try clientConfig(system);

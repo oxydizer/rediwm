@@ -10,9 +10,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/landlock.h>
-#include <linux/filter.h>
-#include <linux/seccomp.h>
-#include <linux/audit.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -33,6 +30,8 @@ static char problem[4096];
 static unsigned entries;
 static uint64_t total;
 extern int rediwm_theme_safe_path(const char *);
+// The syscall policy is built and loaded in syscall_policy.zig.
+extern int rediwm_theme_syscall_policy(void);
 const char *rediwm_theme_problem(void) { return problem; }
 static int fail(const char *file, const char *rule) {
     snprintf(problem, sizeof(problem), "%s: %s", file, rule); return -1;
@@ -373,28 +372,7 @@ static int parser_sandbox(const char *root, const char *source, int writable) {
         int rc=syscall(SYS_landlock_restrict_self,rules,0);close(rules);if(rc<0)return -1;
     }
 #endif
-#if defined(__x86_64__)
-    const uint32_t expected_arch=AUDIT_ARCH_X86_64;
-#elif defined(__aarch64__)
-    const uint32_t expected_arch=AUDIT_ARCH_AARCH64;
-#else
-    return -1;
-#endif
-    struct sock_filter filter[]={
-        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,arch)),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,expected_arch,1,0),
-        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_KILL_PROCESS),
-        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
-        BPF_JUMP(BPF_JMP|BPF_JGE|BPF_K,0x40000000,0,1),
-        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_KILL_PROCESS),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_socket,0,1),
-        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_connect,0,1),
-        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
-        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW)
-    };
-    struct sock_fprog prog={.len=sizeof(filter)/sizeof(filter[0]),.filter=filter};
-    return prctl(PR_SET_SECCOMP,SECCOMP_MODE_FILTER,&prog);
+    return rediwm_theme_syscall_policy();
 }
 int rediwm_theme_validate_isolated(const char *root) {
     struct stat st;if(lstat(root,&st)<0||!S_ISDIR(st.st_mode))return fail(root,"pack root must be a directory");

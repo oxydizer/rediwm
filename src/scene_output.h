@@ -1,5 +1,9 @@
 #pragma once
 #include <stdbool.h>
+#include <wlr/util/box.h>
+struct rediwm_node;
+struct rediwm_buffer;
+struct rediwm_read_fence;
 struct wlr_renderer;
 struct rediwm_scene_output;
 struct wlr_output_state;
@@ -12,6 +16,8 @@ struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer
 // Builds the programs that draw rounded shapes (see scene_pass.h); false if they
 // did not build, in which case no window may be given a shape.
 bool rediwm_output_renderer_enable_shapes(struct rediwm_output_renderer *);
+// The program for imported client buffers (see scene_pass.h).
+bool rediwm_output_renderer_enable_external(struct rediwm_output_renderer *);
 // The programs for polygon outlines (see scene_pass.h), built on first request.
 bool rediwm_output_renderer_enable_polygons(struct rediwm_output_renderer *);
 // Glass in the pass (stage 5c); requires shapes. False: glass is the surface's own tint.
@@ -31,3 +37,6 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *,
 // above every effect. Direct scan-out waits until it is 0. False only when the
 // state for a nonzero veil could not be allocated.
 bool rediwm_scene_output_set_veil(struct rediwm_output_renderer *, struct rediwm_scene_output *, float alpha);
+bool rediwm_output_snapshot(struct rediwm_output_renderer *, struct rediwm_projection *,
+    struct rediwm_scene_output *, struct rediwm_node *, struct wlr_box, float,
+    struct wlr_buffer *, struct rediwm_read_fence *, struct rediwm_buffer *);

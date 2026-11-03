@@ -16,9 +16,11 @@ const OwnerRequest = Manager.OwnerRequest;
 
 pub fn wantsInhibitor(self: *Manager, which: Inhibitor) bool {
     if (self.server.greeter_mode) return false;
+    // Let logind (or the new active desktop) own lid events after a VT switch.
+    if (which == .lid) if (self.server.session) |session| if (!session.active) return false;
     return switch (which) {
-        .lid => self.server.config.compositor.lid_close == .ignore,
-        .sleep => self.server.config.compositor.lock_on_suspend,
+        .lid => self.server.power_policy.enabled() or self.server.config.compositor.lid_close == .ignore,
+        .sleep => self.server.power_policy.lockOnSuspend(self.server),
     };
 }
 
@@ -62,7 +64,7 @@ pub fn acquireInhibitor(self: *Manager, conn: *dbus.Connection, which: Inhibitor
     var body: wire.Writer = .{ .allocator = self.allocator };
     defer body.deinit();
     const args: [4][]const u8 = switch (which) {
-        .lid => .{ "handle-lid-switch", "RediWM", "Lid close is set to Do nothing", "block" },
+        .lid => .{ "handle-lid-switch", "RediWM", "RediWM manages lid actions", "block" },
         .sleep => .{ "sleep", "RediWM", "Lock the screen before sleep", "delay" },
     };
     for (args) |arg| try body.string(arg);
@@ -97,8 +99,9 @@ pub fn onInhibit(owner: ?*anyopaque, _: *dbus.Connection, result: dbus.Connectio
         return;
     }
     self.inhibitorFd(which).* = owned;
+    if (which == .lid) self.server.power_policy.reconcileLid();
     switch (which) {
-        .lid => log.info("logind lid handling inhibited (Do nothing)", .{}),
+        .lid => log.info("logind lid handling inhibited (RediWM policy)", .{}),
         .sleep => log.info("logind sleep delayed until the screen is locked", .{}),
     }
 }

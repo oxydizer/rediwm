@@ -4,6 +4,26 @@
 0.20 headers. There is no zig-wlroots package dependency. Some API shapes
 were adapted from that project; keep `LICENSE.zig-wlroots` and attribution.
 
+`@import("pixman")` resolves to `pixman.zig`, a hand-written facade over the
+small part of pixman's region API this compositor actually calls (`Region32`
++ `init`/`initRect`/`deinit`/`unionRect`/`notEmpty`/`containsPoint`). There
+is no zig-pixman package dependency either; the struct layout is adapted
+from that project (keep `LICENSE.zig-pixman`) and must keep matching the
+real `pixman_region32_t`, since `Region32` is embedded by value in
+`node.zig`'s `Buffer` and crosses into wlroots calls via `abi.bind`. Extend
+it rather than reintroducing the package if more of the API is needed.
+
+`@import("xkbcommon")` resolves to `xkbcommon.zig`, a hand-written facade
+over the part of xkbcommon this compositor calls: building a keymap from
+RMLVO names, tracking modifier/layout state, and keysym lookups. There is no
+zig-xkbcommon package dependency either (keep `LICENSE.zig-xkbcommon`).
+Unlike `Region32`, `Context`/`Keymap`/`State` are opaque handles — pointers
+only, never embedded by value — so they need no layout check to cross the
+wlroots boundary. `Keysym` is a plain non-exhaustive `u32` enum: add a named
+constant (value from xkbcommon-keysyms.h) rather than growing a full keysym
+table. Extend this file rather than reintroducing the package if more of the
+API is needed.
+
 ## Boundary and layouts
 
 * `c.h` lists every wlroots header; the build translates it once into

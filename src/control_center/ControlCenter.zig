@@ -96,6 +96,10 @@ page: Page = .general,
 built_page: ?Page = null,
 pending_page: ?Page = null,
 refresh_pending: bool = false,
+/// Configs replaced since the page was last built. The tree's strings (the
+/// start logo's file name, a font family) point into their arenas, so each
+/// is freed only once a rebuild has dropped those pointers (`retireConfig`).
+retired_configs: std.ArrayList(@import("config").loader.Config) = .empty,
 pointer_down: bool = false,
 /// The window is activated; keys arrive only with `hasKeyboardFocus`.
 focused: bool = false,
@@ -146,6 +150,7 @@ network: network_section.Section = .{},
 bluetooth: bluetooth_section.Section = .{},
 services: services_section.Section = .{},
 printers: printers_section.Section = .{},
+power_settings: @import("sections/power.zig").Section = .{},
 systemd_client: ?*systemd.Client = null,
 
 pub const min_width = 420;
@@ -248,6 +253,7 @@ pub fn destroy(cc: *ControlCenter) void {
     users_section.deinit(cc);
     cc.shortcuts.arena.deinit();
     cc.desktop.arena.deinit();
+    cc.power_settings.arena.deinit();
     cc.region.deinit();
     cc.portals.arena.deinit();
     cc.default_apps.arena.deinit();
@@ -255,6 +261,8 @@ pub fn destroy(cc: *ControlCenter) void {
     appearance_section.deinit(&cc.appearance);
     cc.appearance.arena.deinit();
     cc.appearance.font_arena.deinit();
+    @import("tree.zig").releaseRetired(cc);
+    cc.retired_configs.deinit(gpa);
     cc.background.deinit(gpa);
     // The buffer node belongs to the window's tree and may outlive this
     // in the close animation's snapshot pass: unhook it from us first.
@@ -351,6 +359,7 @@ pub fn resize(cc: *ControlCenter, width: i32, height: i32) void {
 const cc_tree = @import("tree.zig");
 pub const buildTree = cc_tree.buildTree;
 pub const append = cc_tree.append;
+pub const retireConfig = cc_tree.retireConfig;
 pub const buildGeneral = cc_tree.buildGeneral;
 pub const buildDevices = cc_tree.buildDevices;
 

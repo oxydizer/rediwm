@@ -47,9 +47,6 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         while (output_it.next()) |output| output.applyConfig();
         @import("../Output.zig").syncLayout(server);
     }
-    // Output enables and `lid_close` both decide whether a closed lid hides the panel.
-    @import("../Output.zig").applyLid(server);
-    if (server.power) |power| power.syncInhibitors();
     if (!outputsColorEql(old.outputs, new.outputs) or !nightLightEql(old.night_light, new.night_light)) {
         server.night_light.reconfigure(new.night_light);
     }
@@ -156,8 +153,14 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     }
 
     if (server.idle) |im| {
-        im.applyConfig(new.idle);
+        var desired = new.idle;
+        if (server.power_policy.enabled()) {
+            desired = @import("config").power.idle(new.power.profile(server.power_policy.source orelse .plugged_in), new.idle);
+            if (new.power.enabled) |active| desired.enabled = active;
+        } else if (new.power.enabled == false) desired.enabled = false;
+        if (!std.meta.eql(im.config, desired)) im.applyConfig(desired);
     }
+    server.power_policy.reload();
     server.syncDesktop();
 
     if (!std.mem.eql(u8, old.notifications.daemon, new.notifications.daemon)) {
@@ -182,6 +185,14 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         if (!std.meta.eql(old_served, new_served)) portal.emitEnableAnimations(server, new_served);
         if (server.input.open_control_center) |cc| cc.refresh();
     }
+
+    if (old.effects.window_move.enabled != new.effects.window_move.enabled or
+        old.effects.minimize().enabled != new.effects.minimize().enabled or
+        old.effects.resize().enabled != new.effects.resize().enabled or
+        !std.meta.eql(old.effects.find(old.effects.window_move.preset), new.effects.find(new.effects.window_move.preset)) or
+        !std.meta.eql(old.effects.find(old.effects.minimize().preset), new.effects.find(new.effects.minimize().preset)) or
+        !std.meta.eql(old.effects.find(old.effects.resize().preset), new.effects.find(new.effects.resize().preset)))
+        @import("../effects/window_move.zig").configure(server);
 
     const theme_changed = pack_changed or !themeEql(old.theme, new.theme) or old.compositor.border_radius != new.compositor.border_radius;
     const taskbar_theme_changed = !theme_mod.taskbarOverrideEql(old.taskbar_theme, new.taskbar_theme);

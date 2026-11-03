@@ -19,12 +19,18 @@ struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer
 bool rediwm_output_renderer_enable_shapes(struct rediwm_output_renderer *r) {
     return rediwm_scene_renderer_enable_shapes(r->pass);
 }
+bool rediwm_output_renderer_enable_external(struct rediwm_output_renderer *r) {
+    return rediwm_scene_renderer_enable_external(r->pass);
+}
 bool rediwm_output_renderer_enable_polygons(struct rediwm_output_renderer *r) {
     return rediwm_scene_renderer_enable_polygons(r->pass);
 }
 bool rediwm_output_renderer_enable_backdrops(struct rediwm_output_renderer *r) {
     r->has_backdrops = rediwm_scene_renderer_enable_backdrops(r->pass);
     return r->has_backdrops;
+}
+bool rediwm_output_renderer_set_ribbons(struct rediwm_output_renderer *r, bool enabled) {
+    return rediwm_scene_renderer_set_ribbons(r->pass, enabled);
 }
 static void cache_destroy(struct rediwm_output_renderer *r, struct effect_cache *c) {
     rediwm_scene_renderer_destroy_backdrop(r->pass, c->backdrop);

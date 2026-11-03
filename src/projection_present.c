@@ -48,19 +48,20 @@ static struct rediwm_snap map_damage(const struct rediwm_item *item, const pixma
 }
 // What a commit's or a replaced buffer's damage changed: the event covers the
 // bounding box of the buffer-local damage, the screen only the pieces of it (up to
-// a few). The whole box without damage, or under a transform (conservative, like
-// glass.c was).
+// a few). The whole box without damage, under a transform, or for polar sampling
+// whose source rectangles do not map to axis-aligned screen rectangles.
 static void damage_event_for_buffer(struct leaf *l, const pixman_region32_t *damage,
                                     int buffer_width, int buffer_height,
                                     struct rediwm_snap snap) {
   const struct rediwm_item *item = &l->item;
+  if (damage && !pixman_region32_not_empty((pixman_region32_t *)damage)) return;
   if (!damage || item->content.transform != WL_OUTPUT_TRANSFORM_NORMAL ||
-      buffer_width <= 0 || buffer_height <= 0) {
+      buffer_width <= 0 || buffer_height <= 0 ||
+      (item->clip && item->clip->sector_texture_height > 0)) {
     emit_snap(l, snap);
     damage_box(l, snap, true);
     return;
   }
-  if (!pixman_region32_not_empty((pixman_region32_t *)damage)) return;
   struct wlr_fbox src = item->content.src_box;
   if (wlr_fbox_empty(&src)) src = (struct wlr_fbox){0, 0, buffer_width, buffer_height};
   const struct rediwm_snap whole =
@@ -93,6 +94,8 @@ static void present_leaf(struct leaf *l) {
   bool paints = enabled;
   if (item->kind == REDIWM_ITEM_RECT) {
     paints = paints && item->content.color[3] > 0;
+  } else if (item->kind == REDIWM_ITEM_RIBBON) {
+    paints = paints && item->content.opacity > 0 && item->ribbon->count >= 4;
   } else if (item->kind == REDIWM_ITEM_EFFECT || item->kind == REDIWM_ITEM_SHADOW) {
     paints = false;
   } else {

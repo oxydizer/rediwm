@@ -135,7 +135,7 @@ pub fn handleFrameAction(
         },
         .get_performance_stats => {
             server.ensureGpuTimer();
-            if (server.gpu_timer) |timer| timer.collect();
+            if (server.gpu_timer) |timer| timer.collect(&server.gpu_recent);
             const panel_s = @import("../panel_present.zig").snapshot();
             const timing = stats.global_stats.timing();
             return .{ .ok = .{ .performance_stats = .{

@@ -1,7 +1,8 @@
 # FreeBSD support plan
 
-Status: draft, 2026-10-30. Preparation steps P.1–P.3 are done (Linux only,
-`src/platform/`); nothing else is implemented. Decisions D1–D6 are open.
+Status: draft, 2026-10-31. Preparation steps P.1–P.3 and P.7 are done (Linux
+only, `src/platform/` and the call sites); nothing else is implemented.
+Decisions D1–D6 are open.
 
 Run RediWM on FreeBSD: first the compositor in a seatd session on DRM, then
 the shell features and apps, and last `rediwm-dm` and packaging. Linux stays
@@ -41,14 +42,15 @@ translate. About 47 Zig files call `std.os.linux.*` directly.
 | `/proc/self/fd`, `fdinfo` | spawn paths | `closefrom`/`close_range`. |
 | `/proc/<pid>/stat`, `/proc/stat`, `/proc/meminfo`, task children | system monitor, `ipc/processes.zig` | libprocstat / `kern.proc` sysctls behind a collector backend. |
 | `pty.h` | terminal engine | `libutil.h` (`openpty`/`forkpty`), link `util`. |
-| `renameat2` | torrent helper | Emulate no-replace with `link` + `unlink`. |
+| `renameat2` | ~9 sites: Files ops, Editor, Images, screenshots, desktop watcher, theme helper, torrent helper | Emulate no-replace with `link` + `unlink`, behind one `platform` function. |
 | `DRM_IOCTL_VERSION` via `linux.IOCTL` | `Output.zig:206` | Different ioctl encoding: use libdrm `drmGetVersion`. |
 | netlink `KOBJECT_UEVENT` | printer hotplug | devd's seqpacket socket, or rescans only. |
 
 ### 2. Sandboxes
 
-The PDF sandbox (`pdf/sandbox.c`: libseccomp + Landlock) and the theme helper
-(`theme_helper/native.c`: raw BPF + Landlock) have no FreeBSD counterpart
+The PDF sandbox (`pdf/sandbox.c` + `pdf/syscall_policy.zig`: raw BPF through
+`platform/seccomp.zig`, + Landlock) and the theme helper
+(`theme_helper/native.c` + `syscall_policy.zig`: the same builder, + Landlock) have no FreeBSD counterpart
 short of a rewrite on **Capsicum** (`cap_enter`, `cap_rights_limit` on
 pre-opened directory fds). The design fits, since both already preload before
 the sandbox closes (`compose.preload`), but capability mode forbids every
@@ -118,15 +120,33 @@ ReleaseSafe, `zig build test` and affected integration suites.
    `/proc/self/exe` readers.
 4. **Raw syscalls to libc** where libc has the call (fork, execve, wait4,
    close, read, getuid, …), keeping `std.os.linux` for what has no libc form.
-5. **One sandbox interface:** move the PDF sandbox from libseccomp to the raw
-   BPF the theme helper already uses and give both one "restrict to these
-   directories" entry point. Drops a dependency; Capsicum later implements the
-   same entry point.
+5. **One sandbox interface:** (syscall filters done) the PDF sandbox no longer
+   uses libseccomp: `platform/seccomp.zig` builds and loads the filter and
+   `pdf/syscall_policy.zig` holds its allow-list, checked verdict for verdict
+   against the libseccomp program it replaced; the theme helper's filter
+   (`theme_helper/syscall_policy.zig`: no `socket`/`connect`) uses the same
+   builder, checked the same way against its old C filter. Left: give both
+   sandboxes one "restrict to these directories" entry point, which Capsicum
+   later implements. Their Landlock code differs on purpose (PDF: read-only
+   trees, ABI 3 required, fails closed; theme helper: optionally writable root
+   and `/usr` executable, runs without Landlock on older kernels), so settle
+   what the entry point promises before moving either.
 6. **Process listing:** keep `/proc` parsing behind the system monitor's
    collector interface (shared with `ipc/processes.zig`).
-7. **Paths:** replace fixed `/usr/bin/…` tool paths with `PATH` lookup.
+7. **Paths** (done): no fixed `/usr/bin/…` tool path is left in the shell.
+   `paplay` is found on `PATH` (`config.app_theme.executable`) and `locale` is
+   spawned by bare name, which `std.process.spawn` resolves on `PATH`. The
+   programs that run as root or are handed a secret (`pkexec`, `systemctl`)
+   deliberately do not use `PATH`: `platform.tool.system` searches only
+   `/usr/bin`, `/bin` and `/usr/local/bin`, so a user-writable `PATH` entry
+   cannot capture a password typed in Settings. Left as they are: the accounts
+   helper's candidate lists (root; phase 3 rewrites it on `pw(8)`), the
+   `/bin/sh` launches (present on both systems) and the polkit agent helper's
+   directory list in `polkit/native.c` (add `/usr/local/lib/polkit-1` and
+   `/usr/local/libexec` in phase 1; it is verified setuid and root-owned), and
+   the cupsd probe in `printing/platform.zig` (`usr/local/sbin`, phase 3).
 
-Steps 1–3 and 7 are small; 4 is mechanical but broad; 5 is security work and
+Steps 1–3 and 7 were small; 4 is mechanical but broad; 5 is security work and
 needs its own review.
 
 ### 0. Spike (FreeBSD)
@@ -141,8 +161,9 @@ headless + GLES2 path works there.
 
 Split `src/platform/` into Linux and FreeBSD parts (`exe.path` can use
 `std.process.executablePath`, which already reads `kern.proc.pathname`);
-split the translate roots; build conditions for `seccomp`,
-`util`, `pam`. Hide NM, BlueZ, PPD, UDisks, app scopes; PDF and theme helper
+split the translate roots; build conditions for `util`, `pam`, and for
+`platform/seccomp.zig`, which is Linux-only code now that nothing links
+libseccomp. Hide NM, BlueZ, PPD, UDisks, app scopes; PDF and theme helper
 refuse. Goal: `rediwm` and the apps start in a seatd session and the headless
 integration suites run.
 

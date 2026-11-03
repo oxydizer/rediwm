@@ -66,7 +66,7 @@ def run(scale, gold=False, top=False):
                     assert hit["target_type"] == "battery_popup", hit
                     origin = point[0] - hit["local_x"], point[1] - hit["local_y"]
                     output_height = ipc.get_outputs()[0]["logical_height"] if top else bar["box"]["y"] + bar["box"]["height"]
-                    factor = min(1, (bar["box"]["width"] - 24) / 368, (output_height - bar["box"]["height"] - 24) / 496)
+                    factor = min(1, (bar["box"]["width"] - 24) / 368, (output_height - bar["box"]["height"] - 24) / 536)
 
                     def row(index):
                         return round(origin[0] + 180 * factor), round(origin[1] + (382 + index * 32) * factor)

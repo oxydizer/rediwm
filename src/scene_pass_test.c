@@ -3,6 +3,7 @@
 #include "scene_pass.c"
 #include "scene_pass_draw.c"
 #include "scene_pass_backdrop.c"
+#include "scene_pass_ribbon.c"
 #include "scene_graph.h"
 #include <math.h>
 #include <stdarg.h>
@@ -93,8 +94,10 @@ static struct wlr_texture *texture_create(struct wlr_renderer *renderer, bool op
 
 #include "scene_pass_test_parity.c"
 #include "scene_pass_test_shapes.c"
+#include "scene_pass_test_sector.c"
 #include "scene_pass_test_shading.c"
 #include "scene_pass_test_backdrop.c"
+#include "scene_pass_test_ribbon.c"
 
 int main(void) {
     wlr_log_init(WLR_ERROR, NULL);
@@ -108,6 +111,8 @@ int main(void) {
     assert(allocator);
     struct rediwm_scene_renderer *r = rediwm_scene_renderer_create(renderer);
     assert(r);
+    assert(rediwm_scene_renderer_enable_external(r));
+    assert(rediwm_scene_renderer_enable_external(r)); // idempotent
     struct wlr_buffer *actual = target(allocator), *expected = target(allocator);
     parity(r, actual, expected, false);
     shapes_fail_closed(r, actual);
@@ -116,6 +121,7 @@ int main(void) {
     parity(r, actual, expected, true);
     damage(r, actual, expected);
     state_restoration(r, actual);
+    ribbon_gate(r, actual);
     external_texture(r, allocator, actual, expected);
     external_yuv(r, actual, expected);
     synchronization(r, actual);
@@ -131,6 +137,7 @@ int main(void) {
         parity(r, actual, expected, false);
         parity(r, actual, expected, true);
         state_restoration(r, actual);
+        ribbon_gate(r, actual);
         r->has_vao = true;
     }
     rediwm_scene_renderer_destroy(r);

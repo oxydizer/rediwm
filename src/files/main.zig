@@ -51,10 +51,12 @@ pub const ClipboardSource = struct {
 
 pub const Client = @import("Client.zig");
 
-/// A separate, immutable buffer: window repaints must never recycle the drag image.
+/// A drag icon whose buffers remain alive until the drag ends.
 pub const DragIcon = struct {
     surface: *wl.Surface,
     buffer: *Buffer,
+    retired: std.ArrayList(*Buffer) = .empty,
+    copy: bool = false,
 
     pub fn create(client: *Client) !DragIcon {
         const surface = try client.compositor.?.createSurface();
@@ -62,25 +64,72 @@ pub const DragIcon = struct {
         const buffer = try Buffer.create(client, 48 * client.scale, 56 * client.scale);
         errdefer buffer.destroy();
         buffer.counts_frame = false;
+
         const cr = c.cairo_create(buffer.image) orelse return error.CairoFailed;
         defer c.cairo_destroy(cr);
         c.cairo_scale(cr, @floatFromInt(client.scale), @floatFromInt(client.scale));
-        // Transparent padding places the file below and to the right of the pointer.
-        for (client.app.items.items) |item| {
-            if (!item.selected or item.missing) continue;
-            client.app.drawItemIcon(cr, item, 8, 16, 32);
-            break;
-        }
+        drawFile(client, cr);
         c.cairo_surface_flush(buffer.image);
+
         surface.setBufferScale(client.scale);
         surface.attach(buffer.wl_buffer, 0, 0);
         surface.damageBuffer(0, 0, buffer.w, buffer.h);
         return .{ .surface = surface, .buffer = buffer };
     }
 
+    pub fn update(self: *DragIcon, client: *Client, copy: bool) !void {
+        if (self.copy == copy) return;
+
+        const buffer = try Buffer.create(client, 48 * client.scale, 56 * client.scale);
+        errdefer buffer.destroy();
+        buffer.counts_frame = false;
+
+        const cr = c.cairo_create(buffer.image) orelse return error.CairoFailed;
+        defer c.cairo_destroy(cr);
+        c.cairo_scale(cr, @floatFromInt(client.scale), @floatFromInt(client.scale));
+        drawFile(client, cr);
+        if (copy) drawCopyBadge(cr);
+        c.cairo_surface_flush(buffer.image);
+
+        try self.retired.append(a, self.buffer);
+        self.buffer = buffer;
+        self.copy = copy;
+
+        self.surface.attach(buffer.wl_buffer, 0, 0);
+        self.surface.damageBuffer(0, 0, buffer.w, buffer.h);
+        self.surface.commit();
+    }
+
+    fn drawFile(client: *Client, cr: *c.cairo_t) void {
+        // Transparent padding places the file below and to the right of the pointer.
+        for (client.app.items.items) |item| {
+            if (!item.selected or item.missing) continue;
+            client.app.drawItemIcon(cr, item, 8, 16, 32);
+            break;
+        }
+    }
+
+    fn drawCopyBadge(cr: *c.cairo_t) void {
+        c.cairo_arc(cr, 36, 44, 8, 0, 2 * std.math.pi);
+        c.cairo_set_source_rgba(cr, 0.08, 0.48, 0.24, 1);
+        c.cairo_fill_preserve(cr);
+        c.cairo_set_source_rgba(cr, 1, 1, 1, 1);
+        c.cairo_set_line_width(cr, 1.5);
+        c.cairo_stroke(cr);
+
+        c.cairo_move_to(cr, 32.5, 44);
+        c.cairo_line_to(cr, 39.5, 44);
+        c.cairo_move_to(cr, 36, 40.5);
+        c.cairo_line_to(cr, 36, 47.5);
+        c.cairo_set_line_width(cr, 2);
+        c.cairo_stroke(cr);
+    }
+
     pub fn destroy(self: *DragIcon) void {
         self.surface.destroy();
         self.buffer.destroy();
+        for (self.retired.items) |buffer| buffer.destroy();
+        self.retired.deinit(a);
     }
 };
 

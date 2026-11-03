@@ -274,6 +274,10 @@ pub const App = struct {
     mouse_y: f64 = 0,
     last_click_time: i64 = 0,
     last_click_index: ?usize = null,
+    /// The item a single-click last opened, and when: the second click of a
+    /// double-click on its icon must not open it again.
+    last_open_index: ?usize = null,
+    last_open_time: i64 = 0,
     ctrl: bool = false,
     shift: bool = false,
     alt: bool = false,
@@ -559,6 +563,7 @@ pub const App = struct {
     pub const openRenameDialog = app_dialogs.openRenameDialog;
     pub const openEmptyTrashDialog = app_dialogs.openEmptyTrashDialog;
     pub const openTrashConfirmDialog = app_dialogs.openTrashConfirmDialog;
+    pub const openTrashConfirmDialogWithMode = app_dialogs.openTrashConfirmDialogWithMode;
     pub const openConflictDialog = app_dialogs.openConflictDialog;
     pub const confirmDialog = app_dialogs.confirmDialog;
     pub const handleDialogKey = app_dialogs.handleDialogKey;

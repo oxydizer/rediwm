@@ -88,6 +88,9 @@ pub const IdleManager = struct {
     wake_consume_pending_button: ?u32 = null,
 
     suspend_request_count: usize = 0,
+    dimmed: bool = false,
+    suspend_requested: bool = false,
+    suspend_from_blanked: bool = false,
 
     pub fn create(server: *Server, config: IdleConfig) !*IdleManager {
         const gpa = @import("../main.zig").gpa;
@@ -169,9 +172,17 @@ pub const IdleManager = struct {
     }
 
     pub fn isPolicyEnabled(self: *const IdleManager) bool {
+        if (self.server) |server| {
+            if (server.greeter_mode) return false;
+            if (server.session) |session| if (!session.active) return false;
+        }
         if (self.config.enabled) |e| return e;
         if (self.server) |server| return server.backend.isDrm();
         return false;
+    }
+
+    pub fn isBlanked(self: *const IdleManager) bool {
+        return self.state == .blanked or (self.state == .suspend_pending and self.suspend_from_blanked);
     }
 
     pub fn tickTimer(self: *IdleManager) void {
@@ -179,27 +190,23 @@ pub const IdleManager = struct {
         const now = self.clock.nowMs();
         const elapsed = now - self.last_activity_ms;
 
-        switch (self.state) {
-            .active => {
-                const blank_ms = @as(i64, self.config.blank_after_seconds) * 1000;
-                if (self.config.blank_after_seconds > 0 and elapsed >= blank_ms) {
-                    self.blankOutputs();
-                } else {
-                    self.armNextTimeout();
-                }
-            },
-            .blanked => {
-                const suspend_ms = @as(i64, self.config.suspend_after_seconds) * 1000;
-                if (self.config.suspend_after_seconds > 0 and elapsed >= suspend_ms) {
-                    self.state = .suspend_pending;
-                    self.suspend_request_count += 1;
-                    log.info("idle suspend deadline reached", .{});
-                } else {
-                    self.armNextTimeout();
-                }
-            },
-            .suspend_pending => {},
+        const suspend_ms = @as(i64, self.config.suspend_after_seconds) * 1000;
+        if (!self.suspend_requested and self.config.suspend_after_seconds > 0 and elapsed >= suspend_ms) {
+            self.suspend_requested = true;
+            self.suspend_from_blanked = self.isBlanked();
+            self.state = .suspend_pending;
+            self.suspend_request_count += 1;
+            if (self.server) |server| if (server.power) |power| power.requestSuspendAuto();
         }
+        if (self.server) |server| {
+            const dim_seconds = if (server.power_policy.enabled()) server.power_policy.effective.dim_after_seconds else 0;
+            if (!self.isBlanked() and !self.dimmed and dim_seconds > 0 and elapsed >= @as(i64, dim_seconds) * 1000) {
+                self.dimmed = true;
+                server.power_policy.dim();
+            }
+        }
+        if (!self.isBlanked() and self.config.blank_after_seconds > 0 and elapsed >= @as(i64, self.config.blank_after_seconds) * 1000) self.blankOutputs();
+        self.armNextTimeout();
     }
 
     pub fn armNextTimeout(self: *IdleManager) void {
@@ -207,33 +214,16 @@ pub const IdleManager = struct {
             self.disarmTimer();
             return;
         }
-
-        const now = self.clock.nowMs();
-        switch (self.state) {
-            .active => {
-                if (self.config.blank_after_seconds == 0) {
-                    self.disarmTimer();
-                    return;
-                }
-                const blank_ms = @as(i64, self.config.blank_after_seconds) * 1000;
-                const elapsed = now - self.last_activity_ms;
-                const remaining_ms = @max(1, blank_ms - elapsed);
-                self.setTimerMs(@intCast(remaining_ms));
-            },
-            .blanked => {
-                if (self.config.suspend_after_seconds == 0) {
-                    self.disarmTimer();
-                    return;
-                }
-                const suspend_ms = @as(i64, self.config.suspend_after_seconds) * 1000;
-                const elapsed = now - self.last_activity_ms;
-                const remaining_ms = @max(1, suspend_ms - elapsed);
-                self.setTimerMs(@intCast(remaining_ms));
-            },
-            .suspend_pending => {
-                self.disarmTimer();
-            },
+        const elapsed = self.clock.nowMs() - self.last_activity_ms;
+        var remaining: i64 = std.math.maxInt(i32);
+        var armed = false;
+        const dim_seconds = if (self.server) |server| (if (server.power_policy.enabled() and !self.dimmed and !self.isBlanked()) server.power_policy.effective.dim_after_seconds else 0) else 0;
+        for ([_]u32{ if (!self.isBlanked()) self.config.blank_after_seconds else 0, if (!self.suspend_requested) self.config.suspend_after_seconds else 0, dim_seconds }) |seconds| {
+            if (seconds == 0) continue;
+            remaining = @min(remaining, @max(1, @as(i64, seconds) * 1000 - elapsed));
+            armed = true;
         }
+        if (armed) self.setTimerMs(@intCast(remaining)) else self.disarmTimer();
     }
 
     fn setTimerMs(self: *IdleManager, ms: u32) void {
@@ -251,8 +241,8 @@ pub const IdleManager = struct {
     }
 
     pub fn blankOutputs(self: *IdleManager) void {
-        if (self.state == .blanked) return;
-        self.state = .blanked;
+        if (self.isBlanked()) return;
+        if (self.state == .suspend_pending) self.suspend_from_blanked = true else self.state = .blanked;
         if (self.server) |server| {
             var it = server.outputs.iterator(.forward);
             while (it.next()) |output| {
@@ -264,8 +254,12 @@ pub const IdleManager = struct {
     }
 
     pub fn wakeOutputs(self: *IdleManager) void {
-        const was_blanked = (self.state != .active);
+        self.dimmed = false;
+        if (self.server) |server| server.power_policy.undim();
+        const was_blanked = self.isBlanked();
         self.state = .active;
+        self.suspend_requested = false;
+        self.suspend_from_blanked = false;
         if (was_blanked) {
             if (self.server) |server| {
                 var it = server.outputs.iterator(.forward);
@@ -280,6 +274,8 @@ pub const IdleManager = struct {
 
     pub fn notifyActivity(self: *IdleManager, source: ActivitySource) void {
         _ = source;
+        self.dimmed = false;
+        if (self.server) |server| server.power_policy.undim();
         const now = self.clock.nowMs();
         self.last_activity_ms = now;
 
@@ -300,7 +296,7 @@ pub const IdleManager = struct {
     /// Consumes the first key press when blanked and absorbs its matching release.
     /// Returns true if the key event should be dropped.
     pub fn interceptWakeKey(self: *IdleManager, keycode: u32, key_state: wl.Keyboard.KeyState) bool {
-        if (self.state != .active) {
+        if (self.isBlanked()) {
             if (key_state == .pressed) {
                 self.wake_consume_pending_key = keycode;
                 self.notifyActivity(.keyboard);
@@ -318,7 +314,7 @@ pub const IdleManager = struct {
     /// Consumes the first button press when blanked and absorbs its matching release.
     /// Returns true if the button event should be dropped.
     pub fn interceptWakeButton(self: *IdleManager, button: u32, btn_state: wl.Pointer.ButtonState) bool {
-        if (self.state != .active) {
+        if (self.isBlanked()) {
             if (btn_state == .pressed) {
                 self.wake_consume_pending_button = button;
                 self.notifyActivity(.pointer);
@@ -456,6 +452,8 @@ pub const IdleManager = struct {
             }
 
             if (now_inhibited) {
+                self.dimmed = false;
+                if (self.server) |server| server.power_policy.undim();
                 if (self.state != .active) {
                     self.wakeOutputs();
                 }
@@ -476,16 +474,20 @@ pub const IdleManager = struct {
 
     pub fn applyConfig(self: *IdleManager, new_cfg: IdleConfig) void {
         self.config = new_cfg;
+        // An inactive VT cannot commit a wake. Retain blanking state so the
+        // session activation's notifyActivity can restore the displays.
+        if (self.server) |server| if (server.session) |session| if (!session.active) {
+            self.disarmTimer();
+            return;
+        };
 
         if (!self.isPolicyEnabled()) {
-            if (self.state != .active) {
-                self.wakeOutputs();
-            }
+            self.wakeOutputs();
             self.disarmTimer();
             return;
         }
 
-        if (self.state == .blanked and self.config.blank_after_seconds == 0) {
+        if (self.isBlanked() and self.config.blank_after_seconds == 0) {
             self.wakeOutputs();
             return;
         }
@@ -497,153 +499,6 @@ pub const IdleManager = struct {
     }
 };
 
-test "idle state transitions with simulated clock" {
-    var im: IdleManager = .{
-        .config = .{
-            .enabled = true,
-            .blank_after_seconds = 10,
-            .suspend_after_seconds = 30,
-        },
-        .clock = .{ .mock_now_ms = 1000 },
-        .last_activity_ms = 1000,
-    };
-    im.inhibitors.init();
-
-    try std.testing.expectEqual(State.active, im.state);
-    try std.testing.expectEqual(true, im.isPolicyEnabled());
-
-    // 5 seconds elapsed: still active
-    im.clock.mock_now_ms = 6000;
-    im.tickTimer();
-    try std.testing.expectEqual(State.active, im.state);
-
-    // 10 seconds elapsed: transitions to blanked
-    im.clock.mock_now_ms = 11000;
-    im.tickTimer();
-    try std.testing.expectEqual(State.blanked, im.state);
-
-    // 25 seconds elapsed: still blanked (suspend is at 30s)
-    im.clock.mock_now_ms = 26000;
-    im.tickTimer();
-    try std.testing.expectEqual(State.blanked, im.state);
-
-    // 30 seconds elapsed: transitions to suspend_pending
-    im.clock.mock_now_ms = 31000;
-    im.tickTimer();
-    try std.testing.expectEqual(State.suspend_pending, im.state);
-    try std.testing.expectEqual(@as(usize, 1), im.suspend_request_count);
-
-    // User activity restores display
-    im.clock.mock_now_ms = 35000;
-    im.notifyActivity(.keyboard);
-    try std.testing.expectEqual(State.active, im.state);
-    try std.testing.expectEqual(@as(i64, 35000), im.last_activity_ms);
-}
-
-test "wake key absorption and matching release" {
-    var im: IdleManager = .{
-        .config = .{
-            .enabled = true,
-            .blank_after_seconds = 10,
-        },
-        .clock = .{ .mock_now_ms = 1000 },
-        .last_activity_ms = 1000,
-        .state = .blanked,
-    };
-    im.inhibitors.init();
-
-    // First key press when blanked is absorbed and wakes displays
-    try std.testing.expect(im.interceptWakeKey(30, .pressed));
-    try std.testing.expectEqual(State.active, im.state);
-    try std.testing.expectEqual(@as(?u32, 30), im.wake_consume_pending_key);
-
-    // Another key press while waking/active is NOT absorbed
-    try std.testing.expect(!im.interceptWakeKey(31, .pressed));
-
-    // Release of an unrelated key is NOT absorbed
-    try std.testing.expect(!im.interceptWakeKey(31, .released));
-    try std.testing.expectEqual(@as(?u32, 30), im.wake_consume_pending_key);
-
-    // Matching key release is absorbed and clears pending
-    try std.testing.expect(im.interceptWakeKey(30, .released));
-    try std.testing.expectEqual(@as(?u32, null), im.wake_consume_pending_key);
-
-    // Subsequent press/release are normal (not absorbed)
-    try std.testing.expect(!im.interceptWakeKey(30, .pressed));
-    try std.testing.expect(!im.interceptWakeKey(30, .released));
-}
-
-test "wake button absorption and matching release" {
-    var im: IdleManager = .{
-        .config = .{
-            .enabled = true,
-            .blank_after_seconds = 10,
-        },
-        .clock = .{ .mock_now_ms = 1000 },
-        .last_activity_ms = 1000,
-        .state = .blanked,
-    };
-    im.inhibitors.init();
-
-    // First mouse button click when blanked is absorbed and wakes displays
-    try std.testing.expect(im.interceptWakeButton(0x110, .pressed));
-    try std.testing.expectEqual(State.active, im.state);
-    try std.testing.expectEqual(@as(?u32, 0x110), im.wake_consume_pending_button);
-
-    // Another button press while active is not absorbed
-    try std.testing.expect(!im.interceptWakeButton(0x111, .pressed));
-
-    // Matching release is absorbed and clears pending
-    try std.testing.expect(im.interceptWakeButton(0x110, .released));
-    try std.testing.expectEqual(@as(?u32, null), im.wake_consume_pending_button);
-}
-
-test "config reload wakes blanked displays when policy disabled" {
-    var im: IdleManager = .{
-        .config = .{
-            .enabled = true,
-            .blank_after_seconds = 10,
-        },
-        .clock = .{ .mock_now_ms = 1000 },
-        .last_activity_ms = 1000,
-        .state = .blanked,
-    };
-    im.inhibitors.init();
-
-    // Reloading config with idle disabled should restore blanked outputs
-    im.applyConfig(.{ .enabled = false, .blank_after_seconds = 10 });
-    try std.testing.expectEqual(State.active, im.state);
-}
-
-test "idle inhibitor release starts fresh timeout" {
-    var im: IdleManager = .{
-        .config = .{
-            .enabled = true,
-            .blank_after_seconds = 10,
-        },
-        .clock = .{ .mock_now_ms = 1000 },
-        .last_activity_ms = 1000,
-        .is_inhibited = true,
-    };
-    im.inhibitors.init();
-
-    // Time elapses past blank deadline, but inhibition prevents blanking
-    im.clock.mock_now_ms = 25000;
-    im.tickTimer();
-    try std.testing.expectEqual(State.active, im.state);
-
-    // Release inhibitor: simulated activity timestamp reset to now
-    im.is_inhibited = false;
-    im.last_activity_ms = im.clock.nowMs();
-    try std.testing.expectEqual(@as(i64, 25000), im.last_activity_ms);
-
-    // 5 seconds after release: still active
-    im.clock.mock_now_ms = 30000;
-    im.tickTimer();
-    try std.testing.expectEqual(State.active, im.state);
-
-    // 10 seconds after release: blanks
-    im.clock.mock_now_ms = 35000;
-    im.tickTimer();
-    try std.testing.expectEqual(State.blanked, im.state);
+test {
+    _ = @import("idle_tests.zig");
 }

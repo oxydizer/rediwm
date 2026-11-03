@@ -22,6 +22,7 @@ pub const Layout = struct {
         const normalized = std.fs.path.resolve(b.allocator, &.{raw}) catch @panic("out of memory");
         const prefix = std.mem.trimEnd(u8, normalized, "/");
         const options = b.addOptions();
+        options.addOption(bool, "git_integration", b.option(bool, "git-integration", "Enable Files Git integration") orelse true);
         options.addOption([]const u8, "prefix", prefix);
         options.addOption([]const u8, "bin", b.fmt("{s}/bin", .{prefix}));
         options.addOption([]const u8, "data", b.fmt("{s}/share", .{prefix}));

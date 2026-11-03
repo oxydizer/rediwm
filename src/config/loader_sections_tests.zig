@@ -156,7 +156,7 @@ test "animations config defaults and overlay" {
     try std.testing.expect(empty.animations.enabled);
     try std.testing.expectEqual(@as(f32, 1.0), empty.animations.speed);
     try std.testing.expectEqual(anim.ReducedMotion.auto, empty.animations.reduced_motion);
-    const panel = empty.animations.targets[@intFromEnum(anim.Target.panel_slide)];
+    const panel = empty.animations.targets[@backingInt(anim.Target.panel_slide)];
     try std.testing.expectEqual(anim.springs.panel_slide.stiffness, panel.curve.spring.stiffness);
 
     var cfg = try parse(std.testing.allocator,
@@ -182,18 +182,18 @@ test "animations config defaults and overlay" {
     defer cfg.deinit();
     try std.testing.expectEqual(@as(f32, 0.5), cfg.animations.speed);
     try std.testing.expectEqual(anim.ReducedMotion.on, cfg.animations.reduced_motion);
-    const slide = cfg.animations.targets[@intFromEnum(anim.Target.panel_slide)].curve.spring;
+    const slide = cfg.animations.targets[@backingInt(anim.Target.panel_slide)].curve.spring;
     try std.testing.expectEqual(@as(f32, 0.9), slide.damping_ratio);
     try std.testing.expectEqual(@as(f32, 400), slide.stiffness);
     try std.testing.expectEqual(@as(f32, 0.001), slide.epsilon);
-    const press = cfg.animations.targets[@intFromEnum(anim.Target.taskbar_press)].curve.duration;
+    const press = cfg.animations.targets[@backingInt(anim.Target.taskbar_press)].curve.duration;
     try std.testing.expectEqual(@as(i64, 120), press.ms);
     try std.testing.expectEqual(anim.Ease.flip_bezier, press.ease);
-    const pan = cfg.animations.targets[@intFromEnum(anim.Target.camera_pan)];
+    const pan = cfg.animations.targets[@backingInt(anim.Target.camera_pan)];
     try std.testing.expectEqual(@as(f32, 300), pan.curve.spring.stiffness);
     try std.testing.expectEqual(@as(f32, 0.5), pan.curve.spring.epsilon);
     try std.testing.expectEqual(@as(f32, 0.99), pan.decay.rate);
-    try std.testing.expect(cfg.animations.targets[@intFromEnum(anim.Target.window_open)].curve == .off);
+    try std.testing.expect(cfg.animations.targets[@backingInt(anim.Target.window_open)].curve == .off);
 }
 
 test "animations config rejects unknown targets and illegal combinations" {
@@ -252,7 +252,7 @@ test "canvas screen counts default to three and reject values outside one to ten
 
 test "desktop switch duration sets the camera_desktop curve unless animations override it" {
     const a = std.testing.allocator;
-    const idx = @intFromEnum(anim.Target.camera_desktop);
+    const idx = @backingInt(anim.Target.camera_desktop);
     var defaults = try parse(a, "", "mem");
     defer defaults.deinit();
     try std.testing.expectEqual(anim.desktopSwitchCurve(anim.default_desktop_switch_ms), defaults.animations.targets[idx].curve);
@@ -411,4 +411,45 @@ test "external overlay wins over a referenced pack without pinning inherited tok
     const saved = try tmp.dir.readFileAlloc(io, "overlay.toml", a, .limited(4096));
     defer a.free(saved);
     try std.testing.expectEqualStrings("[theme]\nfont_size = 17\n", saved);
+}
+
+test "optional ribbon presets default off, parse and reject invalid settings" {
+    const a = std.testing.allocator;
+    var defaults = try parse(a, "", "test");
+    defer defaults.deinit();
+    try std.testing.expect(!defaults.effects.window_move.enabled);
+    try std.testing.expect(!defaults.effects.minimize().enabled);
+    try std.testing.expect(!defaults.effects.resize().enabled);
+    try std.testing.expectEqual(@as(u32, 3000), defaults.effects.find("soft_flame").?.lifetime_ms);
+    var custom = try parse(a, "[effects.window_move]\nenabled = true\npreset = \"blue\"\n" ++
+        "[effects.presets.blue]\ntype = \"flame_ribbon\"\ncolor = \"#0088ff\"\n" ++
+        "lifetime_ms = 10000\nquality = \"high\"\nwidth_px = 12\n", "test");
+    defer custom.deinit();
+    try std.testing.expect(custom.effects.window_move.enabled);
+    try std.testing.expect(custom.effects.minimize().enabled);
+    try std.testing.expectEqualStrings("blue", custom.effects.minimize().preset);
+    try std.testing.expect(custom.effects.resize().enabled);
+    try std.testing.expectEqualStrings("blue", custom.effects.resize().preset);
+    var separate = try parse(a, "[effects.window_move]\nenabled = true\n" ++
+        "[effects.window_minimize]\nenabled = false\n[effects.window_resize]\nenabled = false\n", "test");
+    defer separate.deinit();
+    try std.testing.expect(!separate.effects.minimize().enabled);
+    try std.testing.expect(!separate.effects.resize().enabled);
+    var resize_only = try parse(a, "[effects.window_resize]\nenabled = true\n", "test");
+    defer resize_only.deinit();
+    try std.testing.expect(resize_only.effects.resize().enabled and !resize_only.effects.window_move.enabled);
+    try std.testing.expectEqual(@as(u32, 10000), custom.effects.find("blue").?.lifetime_ms);
+    try std.testing.expectEqual(@as(f32, 12), custom.effects.find("blue").?.width_px);
+    for ([_][]const u8{
+        "[effects.window_move]\npreset = \"missing\"\n",
+        "[effects.window_minimize]\npreset = \"missing\"\n",
+        "[effects.window_resize]\npreset = \"missing\"\n",
+        "[effects.window_mvoe]\nenabled = true\n",
+        "[effects.presets.bad]\nwidth_px = nan\n",
+        "[effects.presets.bad]\nlifetime_ms = 100000\n",
+        "[effects.presets.bad]\nlifetime_ms = 10001\n",
+        "[effects.presets.bad]\nquality = \"ultra\"\n",
+        "[effects.presets.bad]\nunknown = 1\n",
+        "[effects.presets.a]\n[effects.presets.a]\n",
+    }) |bad| try std.testing.expectError(error.InvalidConfig, parse(a, bad, "test"));
 }

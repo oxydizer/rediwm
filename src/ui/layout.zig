@@ -64,6 +64,9 @@ pub const IconId = enum {
     search,
     chevron_up,
     chevron_down,
+    /// A filled triangle pointing up, distinct from the `chevron_up` stroke:
+    /// the circular switcher's hub points toward the selected sector with it.
+    caret_up,
     close,
     minimize,
     maximize,
@@ -197,6 +200,9 @@ pub const IconStyle = struct {
     id: IconId,
     color: [4]f32,
     stroke_width: ?f32 = null,
+    /// Radians, clockwise, about the icon box's own center. 0 costs nothing
+    /// extra; used by the circular switcher's hub arrow.
+    rotation: f32 = 0,
 };
 
 pub const ImageData = struct {

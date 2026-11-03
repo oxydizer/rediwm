@@ -37,6 +37,7 @@ pub fn startMove(input: *Input, toplevel: *Toplevel) void {
     const origin = geometry.toLocal(wx, wy, toplevel.x, toplevel.y);
     input.grabbed_toplevel = toplevel;
     input.cursor_mode = .move;
+    @import("../effects/window_move.zig").start(toplevel);
     // The window is held until release; its client gets the pointer back
     // (and sets its own cursor) on the re-enter after the move.
     input.setHover(null, null);
@@ -59,6 +60,7 @@ pub fn startMove(input: *Input, toplevel: *Toplevel) void {
 /// Ends a move grab, dropping the window into the snap zone under the
 /// pointer when `apply_snap` (a button release rather than a cancel).
 pub fn endMove(input: *Input, apply_snap: bool) void {
+    @import("../effects/window_move.zig").stop(input.server);
     // The release frame refreshes a held titlebar blur (see heldGlass).
     input.server.scheduleFrames();
     const target = input.move_snap.target;
@@ -252,6 +254,7 @@ pub fn startResize(
         .dirty = false,
         .pacing_output = pacing_output,
     };
+    @import("../effects/window_move.zig").startResize(toplevel);
 
     toplevel.setResizing(true);
     const wait = toplevel.requestSize(client_w, client_h);
@@ -272,12 +275,23 @@ pub fn startResize(
 pub fn finishResize(input: *Input) void {
     const session = &(input.resize_session orelse return);
     const toplevel = session.toplevel;
+    @import("../effects/window_move.zig").stop(input.server);
+    // The flame's fade and follow-through need a frame to start; with the
+    // effect off the resize ends exactly as it always did.
+    if (@import("../effects/window_move.zig").resizeEnabled(input.server)) input.server.scheduleFrames();
 
     toplevel.setResizing(false);
     const final_size = session.latest_desired_size;
-    session.outstanding_configure = toplevel.requestSize(final_size.width, final_size.height);
-    session.last_sent_width = final_size.width;
-    session.last_sent_height = final_size.height;
+    const shown = @import("../effects/window_move.zig").resizeSize(toplevel, Toplevel.nowMs(), final_size);
+    // Only a follow-through still easing toward the final size leaves work
+    // pending. Otherwise dirty is cleared here, so flushResizeConfigure ignores
+    // a settling session (it used to return early on `settling`).
+    session.dirty = !std.meta.eql(shown, final_size);
+    if (!session.dirty) {
+        session.outstanding_configure = toplevel.requestSize(final_size.width, final_size.height);
+        session.last_sent_width = final_size.width;
+        session.last_sent_height = final_size.height;
+    }
 
     input.cursor_mode = .passthrough;
     input.grabbed_toplevel = null;
@@ -298,13 +312,14 @@ pub fn finishResize(input: *Input) void {
 
     // Compositor-owned windows have already applied the final size and
     // position; no client commit will arrive to finish their resize session.
-    if (session.outstanding_configure == .none) input.finishSettlement(session.generation);
+    if (!session.dirty and session.outstanding_configure == .none) input.finishSettlement(session.generation);
     input.processCursorMotion(0);
 }
 
 pub fn cancelResize(input: *Input) void {
     const session = input.resize_session orelse return;
     const toplevel = session.toplevel;
+    @import("../effects/window_move.zig").cancelFor(input.server, toplevel.id);
 
     input.resize_session = null;
     input.cursor_mode = .passthrough;
@@ -325,22 +340,24 @@ pub fn cancelResize(input: *Input) void {
 pub fn flushResizeConfigure(input: *Input, output: *Output) void {
     const session = &(input.resize_session orelse return);
     if (session.pacing_output != null and session.pacing_output != output) return;
-    if (session.settling) return;
     if (!session.dirty) return;
     if (session.outstanding_configure != .none) return;
 
     const toplevel = session.toplevel;
-    const desired = session.latest_desired_size;
+    const desired = @import("../effects/window_move.zig").resizeSize(toplevel, Toplevel.nowMs(), session.latest_desired_size);
+    const following = !std.meta.eql(desired, session.latest_desired_size);
 
     if (desired.width == session.last_sent_width and desired.height == session.last_sent_height) {
-        session.dirty = false;
+        session.dirty = following;
+        if (session.settling and !following) input.finishSettlement(session.generation);
         return;
     }
 
     session.outstanding_configure = toplevel.requestSize(desired.width, desired.height);
     session.last_sent_width = desired.width;
     session.last_sent_height = desired.height;
-    session.dirty = false;
+    session.dirty = following;
+    if (session.settling and !following and session.outstanding_configure == .none) input.finishSettlement(session.generation);
 }
 
 pub fn finishSettlement(input: *Input, generation: u64) void {

@@ -63,6 +63,9 @@ static bool set_tree_clip(struct wlr_addon_set *set, void **slot,
   }
   if (spec->width <= 0 || spec->height <= 0 || !finite_at_least_zero(spec->border)) return false;
   if (!valid_polygon(spec->poly, spec->poly_count, spec->width, spec->height)) return false;
+  if (!rediwm_sector_valid(&spec->sector) || (spec->sector.radii[1] > 0 && spec->poly_count != 0)) return false;
+  if (!finite_at_least_zero(spec->sector_texture_height) ||
+      (spec->sector_texture_height > 0 && spec->sector.radii[1] <= 0)) return false;
   for (int i = 0; i < 4; i++)
     if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->border_color[i]) ||
         !isfinite(spec->glow_color[i]))

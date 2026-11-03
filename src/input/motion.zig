@@ -219,7 +219,11 @@ fn updateWidgetProximity(input: *Input) void {
 }
 
 pub fn processCursorMotion(input: *Input, time_msec: u32) void {
-    if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return;
+    if (input.server.locker != null or input.server.polkit_dialog != null) return;
+    if (input.server.switcher.active()) {
+        input.server.switcher.motion(input.cursor.x, input.cursor.y);
+        return;
+    }
     updateWidgetProximity(input);
     defer input.updateGrabBorderGlow();
     input.positionDragIcon();
@@ -494,9 +498,9 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.hovered_resize_edges = null;
             input.clearTaskbarHover();
             input.setHover(null, null);
-            // Clearing client focus also leaves a DnD drag unfocused, which
-            // is what lets the desktop receive its drop.
-            input.seat.pointerClearFocus();
+            // Defer focus clearing to the active pointer grab so wlroots
+            // updates its DnD drag focus as well as ordinary pointer focus.
+            input.seat.pointerNotifyClearFocus();
             res.desktop.pointerMotion(res.x, res.y);
             if (input.seat.drag != null) res.desktop.dragHover();
         },
@@ -574,10 +578,10 @@ pub fn processResize(input: *Input) void {
         cursor_wy,
         constraints,
     );
-
     if (desired.width != session.latest_desired_size.width or desired.height != session.latest_desired_size.height) {
         session.latest_desired_size = desired;
         session.dirty = true;
+        @import("../effects/window_move.zig").resizeMotion(toplevel);
         if (session.pacing_output) |out| {
             out.wlr_output.scheduleFrame();
         } else {

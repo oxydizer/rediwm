@@ -29,7 +29,7 @@ Building needs Zig 0.16 and wlroots 0.20 (`scripts/install.sh --build` builds it
 into a private prefix on Debian/Ubuntu; `REDIWM_PRIVATE_WLROOTS=1` does the same
 on Arch and Fedora), plus dev files for Wayland, wayland-protocols, xkbcommon,
 pixman, FreeType, HarfBuzz, Fontconfig, librsvg/GdkPixbuf, PangoCairo, libinput,
-PAM, libpulse, libpipewire-0.3, Poppler GLib, libseccomp, libjpeg and libpng.
+PAM, libpulse, libpipewire-0.3, Poppler GLib, libjpeg and libpng.
 
 ```sh
 zig build run -- foot                     # nested in your current Wayland session

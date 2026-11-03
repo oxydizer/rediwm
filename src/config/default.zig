@@ -126,6 +126,12 @@ pub const source =
     \\floating_apps = []          # app ID glob patterns that float in workspaces
     \\# Allow fullscreen clients to request asynchronous presentation (may tear).
     \\allow_tearing = false
+    \\# Render as late as the display allows, so input made just before a refresh
+    \\# still reaches it. Only displays that report presentation times qualify
+    \\# (DRM; not VRR, tearing or nested ones), and it steps back by itself when
+    \\# deadlines are missed. The margin is the least safety time kept (ms).
+    \\late_render = false
+    \\late_render_margin_ms = 2.0
     \\# Only windows launched with the chrome + join that window’s tabs.
     \\window_tab_apps = []       # app IDs; Appearance provides a checkbox list
     \\# Desktop application IDs; empty keeps Files and the automatic terminal.
@@ -167,7 +173,9 @@ pub const source =
     \\drag_scale            = 1.002  # drag lift multiplier, 1.000-1.100
     \\dodge_file_drags      = true   # a file manager slides aside while you drag a file out of it
     \\files_single_click_open = true # Files: one click on an icon opens the file or folder
+    \\switcher_style        = "linear" # linear or circular; circular stacks windows from the same app
     \\switcher_opacity      = 1.0   # 0.0-1.0, background only; previews stay opaque
+    \\switcher_circle_bg    = false # circular style only: paint a disc behind it, using window chrome's opacity/darkness
     \\inactive_opacity      = 1.0   # 0.0-1.0, 1.0 = no change
     \\# terminal_opacity   = 0.9   # 0.0-1.0 terminal background (Foot, kitty, Alacritty, Ghostty, WezTerm); new windows only. Unset keeps their own
     \\inactive_dim          = true  # windows that are not the focus lose a little brightness and colour
@@ -197,6 +205,31 @@ pub const source =
     \\# ───────────────────────────────────────────────
     \\# Animations — springs by default; hot-reload keeps in-flight velocity
     \\# ───────────────────────────────────────────────
+    \\# Optional soft flame trails while dragging windows. No effect resources or
+    \\# animation wakeups while disabled. Respects animations/reduced motion.
+    \\# Settings → Appearance → Effects switches each one on and off.
+    \\# [effects.window_move]
+    \\# enabled = false
+    \\# preset = "soft_flame"
+    \\# Minimizing follows window_move unless configured separately:
+    \\# [effects.window_minimize]
+    \\# enabled = true
+    \\# preset = "soft_flame"
+    \\# Resizing also follows window_move unless configured separately:
+    \\# [effects.window_resize]
+    \\# enabled = true
+    \\# preset = "soft_flame"
+    \\# [effects.presets.soft_flame]
+    \\# type = "flame_ribbon"
+    \\# color = "#ff1820"
+    \\# core_color = "#ffe0c0"
+    \\# opacity = 0.9
+    \\# width_px = 56
+    \\# max_length_px = 420
+    \\# lifetime_ms = 3000        # 50–10000; linger after movement
+    \\# turbulence = 0.3
+    \\# quality = "balanced"       # low | balanced | high
+    \\#
     \\# [animations]
     \\# enabled = true
     \\# speed = 1.0                 # 0 = jump to the target; 0.5 = half speed

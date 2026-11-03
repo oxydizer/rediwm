@@ -29,3 +29,37 @@
   `text.items` reader (segmenter, find, IME, clipboard) would need to learn it.
 * A selected line break is not in the segment layout, so `paintLine` draws the
   highlight out to the margin itself (wrapped mode only, as Pango did).
+
+## Drafts
+
+* **Unsaved text survives closing, crashes and reboots.** `drafts.zig` owns
+  the files (`$XDG_STATE_HOME/rediwm/editor-drafts/`: `session.json`, one
+  `<name>.txt` per modified tab, `lock`; all 0600 in a 0700 directory, each
+  replaced through a synced temporary name, strays swept after every write).
+  `app_drafts.zig` decides what and when. A tab is kept when it is modified and
+  not an empty untitled one; clean tabs are not restored. A restored tab has
+  `doc.saved = null` and the file's `stamp` from before, so saving it still
+  trips `FileChanged` if the file moved on.
+* **Writes follow `app_drafts.signature`** (tabs, revisions, modified, paths,
+  selected tab; not the cursor), debounced 1 s after the last change and at
+  most 5 s into continuous typing, on a thread over copied text. No timer runs
+  unless a change is unwritten: a tab switch with nothing to keep arms none.
+  State that should trigger a write belongs in the signature. A failed write is
+  retried after the usual delay, never in a loop.
+* **Drafts are for a session that ends some other way.** Closing the window
+  or a tab asks to save as usual (Discard deletes the draft). A SIGTERM/SIGHUP/
+  SIGINT (they write through the eventfd the writer uses to wake the loop), a
+  dying compositor or a crash leaves the drafts, and `deinit` writes last.
+  Tabs over `text_limit` (8 MiB; 64 MiB together) are not kept.
+* Tests that start the editor need a scratch `XDG_STATE_HOME`, or they restore
+  and overwrite the real drafts.
+
+## Tab strip
+
+* Tabs share the strip left of the new-tab button, `tab_max` (176) down to
+  `tab_min` (112) wide; beyond that it scrolls by pixels (`tab_scroll`), by
+  wheel over the strip. `revealTab` brings the selected tab into view only when
+  the selection, the tab count or the width changed, so typing never snaps a
+  strip the user scrolled away. Go through `tabX`/`tabAt`/`tabCloseBox`; a tab
+  at the edge is partly drawn (the strip is clipped), so hit tests must stay
+  inside `tabRight()`. Names are ellipsized; the unsaved dot never is.

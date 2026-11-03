@@ -88,3 +88,13 @@ void rediwm_scene_output_damage_whole(struct rediwm_scene_output *);
 // Whether anything asks for a frame: the output itself, or damage not yet committed.
 bool rediwm_scene_output_needs_frame(const struct rediwm_scene_output *);
 bool rediwm_scene_output_has_pending_damage(const struct rediwm_scene_output *);
+
+// Frame timing trace (-Dframe-trace, src/output/frame_trace.zig): when content last asked
+// this output for a frame. A no-op in every other build.
+#ifdef REDIWM_FRAME_TRACE
+void rediwm_trace_damage(struct wlr_output *);
+// The first damage since the last take (0 if none); `last_ns` gets the latest.
+uint64_t rediwm_trace_take_damage(struct wlr_output *, uint64_t *last_ns);
+#else
+static inline void rediwm_trace_damage(struct wlr_output *output) { (void)output; }
+#endif

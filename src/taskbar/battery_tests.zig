@@ -9,13 +9,13 @@ const drainUevents = battery.drainUevents;
 test "battery percentage and external power are independent" {
     var s: Snapshot = .{};
     s.add("POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY=82\nPOWER_SUPPLY_STATUS=Discharging\n");
-    try std.testing.expectEqual(State{ .percent = 82, .discharging = true }, s.state());
+    try std.testing.expectEqual(State{ .valid = true, .present = true, .external_power = false, .percent = 82, .discharging = true }, s.state());
     s.add("POWER_SUPPLY_TYPE=Mains\nPOWER_SUPPLY_ONLINE=1\n");
-    try std.testing.expectEqual(State{ .percent = 82, .plugged = true, .discharging = true }, s.state());
+    try std.testing.expectEqual(State{ .valid = true, .present = true, .external_power = true, .percent = 82, .plugged = true, .discharging = true }, s.state());
     s = .{};
     s.add("POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY=100\nPOWER_SUPPLY_STATUS=Full\n");
     s.add("POWER_SUPPLY_TYPE=USB\nPOWER_SUPPLY_ONLINE=1\n");
-    try std.testing.expectEqual(State{ .percent = 100, .plugged = true, .full = true }, s.state());
+    try std.testing.expectEqual(State{ .valid = true, .present = true, .external_power = true, .percent = 100, .plugged = true, .full = true }, s.state());
 }
 
 test "only system power_supply uevents trigger a read" {
@@ -46,7 +46,7 @@ test "draining reports a queued power_supply event once and stops at EAGAIN" {
 test "over-full capacity from a worn pack clamps to 100 instead of hiding" {
     var s: Snapshot = .{};
     s.add("POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY=101\nPOWER_SUPPLY_STATUS=Discharging\n");
-    try std.testing.expectEqual(State{ .percent = 100, .discharging = true }, s.state());
+    try std.testing.expectEqual(State{ .valid = true, .present = true, .external_power = false, .percent = 100, .discharging = true }, s.state());
     s = .{};
     s.add("POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY=300\n");
     try std.testing.expectEqual(@as(?u8, 100), s.state().percent);
@@ -59,7 +59,7 @@ test "absent peripheral and invalid batteries are hidden; charging works without
     s.add("POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY=-1\n");
     try std.testing.expectEqual(@as(?u8, null), s.state().percent);
     s.add("POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY=0\nPOWER_SUPPLY_STATUS=Charging\n");
-    try std.testing.expectEqual(State{ .percent = 0, .plugged = true, .charging = true }, s.state());
+    try std.testing.expectEqual(State{ .valid = true, .present = true, .external_power = true, .percent = 0, .plugged = true, .charging = true }, s.state());
 }
 
 test "battery details use full versus design capacity and preserve missing readings" {

@@ -21,6 +21,7 @@
 #include <wlr/render/interface.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/util/log.h>
+#include <wlr/util/transform.h>
 
 struct program {
     GLuint id;
@@ -28,6 +29,7 @@ struct program {
     GLint target, dst, color, alpha, opaque, sampler, coords;
     // Shaped programs only (-1 elsewhere): the shape, and the shadow's own terms.
     GLint mode, origin, size, radii, npoly, poly, border, bcolor, glow, gcolor, offset, softness, hide, use_shape, dim;
+    GLint sector_map, sector_coords;
     // What `dim` holds now (a uniform keeps its value between draws and passes).
     float dim_brightness, dim_saturation;
     // The backdrop composite (shaped mode 3) and the blur program.
@@ -56,10 +58,12 @@ struct gl_state {
 };
 struct rediwm_scene_renderer {
     struct wlr_renderer *renderer;
-    // Rounded-rectangle shapes (stage 4b), built by enable_shapes: one program for
+    // Rounded-rectangle shapes (stage 4b), built with the renderer: one program for
     // a 2D texture, a solid colour and the shape's shadow (they differ in a mode
-    // uniform, which every fragment of a draw reads the same), one for external.
+    // uniform, which every fragment of a draw reads the same). The one for external
+    // textures is built by enable_external.
     struct program shaped, shaped_external;
+    bool external_tried, external_ok;
     // The same, with the polygon distance compiled in (POLY), built on demand by
     // enable_polygons the first time a theme gives a window or the bar an outline.
     // Draws of a polygon shape use these; every other draw the programs above,
@@ -68,7 +72,9 @@ struct rediwm_scene_renderer {
     bool polys_tried, has_polys;
     // Backdrops (stage 5b), built by enable_backdrops: the blur, and scratch the
     // size of the largest region so far: the copy, and the horizontal pass.
-    struct program blur;
+    struct program blur, ribbon;
+    GLuint ribbon_vertices;
+    GLint ribbon_fade;
     GLuint prefix_tex, prefix_fbo, small_tex, small_fbo;
     int small_w, small_h;
     bool has_backdrops, backdrops_tried;
@@ -108,7 +114,7 @@ static const GLfloat positions[] = {0, 0, 1, 0, 0, 1, 1, 1};
 // The program a draw of `shape` (NULL: none) uses: the polygon variant for an outline.
 static inline struct program *shaped_for(struct rediwm_scene_renderer *r,
         const struct rediwm_pass_shape *shape, bool external) {
-    const bool poly = shape && shape->poly_count > 0;
+    const bool poly = shape && (shape->poly_count > 0 || shape->sector.radii[1] > 0);
     if (external) return poly ? &r->shaped_poly_external : &r->shaped_external;
     return poly ? &r->shaped_poly : &r->shaped;
 }
@@ -122,6 +128,21 @@ static inline bool shape_usable(const struct rediwm_pass_shape *s) {
         const float *a = s->poly[i], *b = s->poly[i + 1 < s->poly_count ? i + 1 : 0];
         if (!isfinite(a[0]) || !isfinite(a[1]) || (a[0] == b[0] && a[1] == b[1])) return false;
     }
+    const struct rediwm_pass_sector *a = &s->sector;
+    for (int i = 0; i < 2; i++) {
+        if (!isfinite(a->center[i]) || !isfinite(a->radii[i]) ||
+            !isfinite(a->axis[i]) || !isfinite(a->half_angle[i])) return false;
+    }
+    if (a->radii[1] < 0) return false;
+    if (a->radii[1] > 0 && (s->poly_count || a->radii[0] < 0 || a->radii[0] >= a->radii[1] ||
+        fabsf(a->axis[0] * a->axis[0] + a->axis[1] * a->axis[1] - 1.f) > 1e-4f ||
+        a->half_angle[0] < 0 || a->half_angle[1] <= 0 ||
+        fabsf(a->half_angle[0] * a->half_angle[0] + a->half_angle[1] * a->half_angle[1] - 1.f) > 1e-4f)) return false;
+    if (!isfinite(s->sector_texture_height) || s->sector_texture_height < 0) return false;
+    if (s->sector_texture_height > 0 && (a->radii[1] <= 0 ||
+        (s->sector_texture_flip != 1 && s->sector_texture_flip != -1) ||
+        s->sector_texture_transform < WL_OUTPUT_TRANSFORM_NORMAL ||
+        s->sector_texture_transform > WL_OUTPUT_TRANSFORM_FLIPPED_270)) return false;
     for (int i = 0; i < 4; i++) if (!isfinite(s->border_color[i]) || !isfinite(s->glow_color[i])) return false;
     return isfinite(s->glow_radius) && isfinite(s->glow_depth) && s->glow_radius >= 0 && s->glow_depth >= 0 &&
         isfinite(s->glow_center[0]) && isfinite(s->glow_center[1]);
@@ -144,6 +165,7 @@ static inline struct pass *owned_pass(struct wlr_render_pass *base) {
 }
 
 // Shared between the parts (scene_pass_*.c).
+bool scene_pass_program_init(struct program *, unsigned, const char *, const char *, const char *);
 // Makes the renderer's EGL context current, saving the caller's context and GL
 // state in `s`.
 bool scene_pass_enter(struct rediwm_scene_renderer *r, struct gl_state *s);

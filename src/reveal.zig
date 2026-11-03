@@ -18,6 +18,9 @@ const Reveal = @This();
 const wallpaper_wait_ms = 150;
 /// The fade begins by then even if no frame is ever acknowledged.
 const max_hold_ms = 1000;
+/// The greeter rises faster than a desktop (`session_reveal`): the login UI is
+/// not operational until its veil has cleared, so this is part of the wait.
+const greeter_reveal_ms = 150;
 const cover_ms = 200;
 /// Past the cover's own length: a display that stops presenting must not keep
 /// the greeter from exiting.
@@ -73,8 +76,15 @@ pub fn onVisible(self: *Reveal) void {
     self.visible = true;
     if (self.phase != .held) return;
     const server = self.server orelse return;
-    if (server.wallpaper_loader == null) return self.begin();
+    if (server.wallpaper_loader == null or showsAccountWallpaper(server)) return self.begin();
     self.armTimer(wallpaper_wait_ms);
+}
+
+/// The greeter draws the account's snapshot over the decoded wallpaper, which
+/// then only matters for an account without one: nothing to wait for.
+fn showsAccountWallpaper(server: *const Server) bool {
+    const lock = server.locker orelse return false;
+    return server.greeter_mode and lock.greeter_wallpaper != null;
 }
 
 /// The wallpaper decoded (and is on its node) or failed.
@@ -85,7 +95,11 @@ pub fn onWallpaper(self: *Reveal) void {
 fn begin(self: *Reveal) void {
     self.disarmTimer();
     self.phase = .revealing;
-    self.fade = .initCurve(1, 0, anim.nowMs(), anim.curveFor(.session_reveal));
+    const greeter = if (self.server) |server| server.greeter_mode else false;
+    self.fade = .initCurve(1, 0, anim.nowMs(), if (greeter)
+        .{ .duration = .{ .ms = greeter_reveal_ms, .ease = .in_out_sine } }
+    else
+        anim.curveFor(.session_reveal));
     // Reduced motion keeps a short fade rather than a cut.
     self.fade.property = .opacity;
     self.scheduleFrames();

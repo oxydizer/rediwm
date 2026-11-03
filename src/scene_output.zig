@@ -7,10 +7,14 @@ extern var rediwm_scene_output_reblurs: u64;
 pub const reblurs: *u64 = &rediwm_scene_output_reblurs;
 
 pub const Renderer = opaque {
+    extern fn rediwm_output_renderer_set_ribbons(renderer: *Renderer, enabled: bool) bool;
+    pub const setRibbons = rediwm_output_renderer_set_ribbons;
     extern fn rediwm_output_renderer_create(renderer: *wlr.Renderer) ?*Renderer;
     pub const create = rediwm_output_renderer_create;
     extern fn rediwm_output_renderer_enable_shapes(renderer: *Renderer) bool;
     pub const enableShapes = rediwm_output_renderer_enable_shapes;
+    extern fn rediwm_output_renderer_enable_external(renderer: *Renderer) bool;
+    pub const enableExternal = rediwm_output_renderer_enable_external;
     extern fn rediwm_output_renderer_enable_polygons(renderer: *Renderer) bool;
     pub const enablePolygons = rediwm_output_renderer_enable_polygons;
     extern fn rediwm_output_renderer_enable_backdrops(renderer: *Renderer) bool;

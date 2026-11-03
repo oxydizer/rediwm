@@ -1,7 +1,6 @@
-//! Laptop lid switches. A closed lid turns the built-in panel off while
-//! another display is on (`Output.lidHides`), and on close can also lock or
-//! suspend, as `[compositor] lid_close` says. Without another display the
-//! lid is left to logind, except that ignore inhibits its lid policy.
+//! Laptop lid switches. Native sessions use the shared power policy, including
+//! dock overrides and logind ownership. Legacy/nested sessions retain the
+//! previous docked-panel policy and leave undocked suspend to logind.
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
@@ -88,15 +87,16 @@ fn update(self: *Self, act: bool) void {
     // Decide before the panel goes off: afterwards it no longer counts.
     const docked = Output.otherDisplayOn(server);
     Output.applyLid(server);
-    if (!closed or !act) return;
-    switch (server.config.compositor.lid_close) {
+    if (!closed or !act or server.power_policy.enabled()) return;
+    switch (if (server.power_policy.enabled()) server.power_policy.lidAction() else server.config.compositor.lid_close) {
         .display_off, .ignore => {},
         .lock => @import("../session/lock.zig").Lock.start(server),
         .@"suspend" => {
-            @import("../session/lock.zig").Lock.start(server);
+            if (server.power_policy.lockOnSuspend(server)) @import("../session/lock.zig").Lock.start(server);
             // Undocked, logind handles the lid itself; asking too could
             // suspend a second time right after resume.
-            if (docked) if (server.power) |pm| pm.requestSuspendAuto();
+            const owns_lid = if (server.power) |pm| pm.lid_fd != null else false;
+            if (docked or owns_lid) if (server.power) |pm| pm.requestSuspendAuto();
         },
     }
 }

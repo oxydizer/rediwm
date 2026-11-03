@@ -4,6 +4,7 @@
 #include "scene_outputs.h"
 #include <assert.h>
 #include <stdlib.h>
+#include <time.h>
 #include <wlr/backend.h>
 #include <wlr/backend/drm.h>
 #include <wlr/render/drm_syncobj.h>
@@ -14,6 +15,41 @@
 #include <wlr/util/region.h>
 #include <wlr/util/transform.h>
 
+#ifdef REDIWM_FRAME_TRACE
+static struct {
+  struct wlr_output *output;
+  uint64_t first_ns, last_ns;
+} trace_slots[8];
+
+static uint64_t trace_now_ns(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+void rediwm_trace_damage(struct wlr_output *output) {
+  for (size_t i = 0; i < 8; i++) {
+    if (trace_slots[i].output != output && trace_slots[i].output != NULL) continue;
+    trace_slots[i].output = output;
+    trace_slots[i].last_ns = trace_now_ns();
+    if (trace_slots[i].first_ns == 0) trace_slots[i].first_ns = trace_slots[i].last_ns;
+    return;
+  }
+}
+
+uint64_t rediwm_trace_take_damage(struct wlr_output *output, uint64_t *last_ns) {
+  for (size_t i = 0; i < 8; i++) {
+    if (trace_slots[i].output != output) continue;
+    uint64_t first = trace_slots[i].first_ns;
+    *last_ns = trace_slots[i].last_ns;
+    trace_slots[i].first_ns = trace_slots[i].last_ns = 0;
+    return first;
+  }
+  *last_ns = 0;
+  return 0;
+}
+#endif
+
 void rediwm_scene_output_damage(struct rediwm_scene_output *out, const pixman_region32_t *damage) {
   struct wlr_output *output = out->output;
 
@@ -22,6 +58,7 @@ void rediwm_scene_output_damage(struct rediwm_scene_output *out, const pixman_re
   pixman_region32_intersect_rect(&clipped, damage, 0, 0, output->width, output->height);
 
   if (!pixman_region32_empty(&clipped)) {
+    rediwm_trace_damage(output);
     wlr_output_schedule_frame(output);
     wlr_damage_ring_add(&out->damage_ring, &clipped);
     pixman_region32_union(&out->pending_commit_damage, &out->pending_commit_damage, &clipped);
@@ -34,6 +71,7 @@ void rediwm_scene_output_damage_whole(struct rediwm_scene_output *out) {
   wlr_damage_ring_add_whole(&out->damage_ring);
   pixman_region32_union_rect(&out->pending_commit_damage, &out->pending_commit_damage, 0, 0,
                              out->output->width, out->output->height);
+  rediwm_trace_damage(out->output);
   wlr_output_schedule_frame(out->output);
 }
 
@@ -87,6 +125,7 @@ static void output_damage(struct wl_listener *listener, void *data) {
 static void output_needs_frame(struct wl_listener *listener, void *data) {
   (void)data;
   struct rediwm_scene_output *out = wl_container_of(listener, out, output_needs_frame);
+  rediwm_trace_damage(out->output);
   wlr_output_schedule_frame(out->output);
 }
 

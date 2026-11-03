@@ -40,8 +40,9 @@ and headless fixtures. The pinned library is compiled only into Files/tests.
   title, foreground PID or quiet output alone never authorizes a directory
   change. Unsupported and nested shells keep pending following suspended.
 * Spawn the fresh helper with `posix_spawn`, so PTY setup and scope placement
-  never run in a forked multithreaded Files child. Confirm every live session
-  on close; bound asynchronous cleanup and retain the session leader until
+  never run in a forked multithreaded Files child. Close asks only when
+  `ft_active` finds a foreground job or another session member (an idle shell
+  is just hung up); bound asynchronous cleanup and retain the session leader until
   session members have been signaled through pidfds and it can be reaped.
 * Cell metrics use the exact shared mono advance. Paint non-ASCII/wide cells
   separately so fallback shaping cannot move later cells. Preserve the
@@ -169,8 +170,10 @@ revision so a delayed receive cannot type after focus/session changes;
 control bytes are refused because terminal paste would alter them.
 
 * Files sources advertise `application/x-rediwm-file-transfer`: the receiving
-  job owns moves and the source never deletes on `dnd_finished`. Ctrl at drag
-  start offers copy only; other sources copy.
+  job owns moves and the source never deletes on `dnd_finished`. Files offers
+  both copy and move; the compositor chooses from the current Ctrl state at
+  drag start and on modifier changes. Pins, terminal drops and sources without
+  the Files transfer marker use copy only.
 * After `drop` the offer leaves `drag_offer` (a `leave` would destroy it) and
   is read through a nonblocking pipe (`drop_receiving`, poll slot 15).
   Snapshot the destination before reading.

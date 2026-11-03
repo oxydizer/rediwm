@@ -117,7 +117,12 @@ fn handleModifiers(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Key
         const synthetic_locked = keyboard.server.locker != null and keyboard.server.virtual_input != null and keyboard.device == &keyboard.server.virtual_input.?.keyboard.wlr_kbd.base;
         if (!synthetic_locked) @import("osd.zig").show(keyboard.server, .{ .kind = .caps_lock, .active = caps });
     }
-    keyboard.server.input.seat.setKeyboard(wlr_keyboard);
+    const seat = keyboard.server.input.seat;
+    seat.setKeyboard(wlr_keyboard);
+    @import("input/drag.zig").updateDragAction(seat, mods.ctrl);
+    // wlroots' DnD keyboard grab does not forward modifier events.
+    // Keep the focused source client synchronized while the drag is active.
+    if (seat.drag != null) seat.keyboardSendModifiers(&wlr_keyboard.modifiers);
     @import("input/layouts.zig").activate(keyboard);
     if (keyboard.server.locker) |lock| {
         lock.modifiers(wlr_keyboard.getModifiers());

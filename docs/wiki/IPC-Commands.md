@@ -163,7 +163,7 @@ These work without opening Settings.
 | `get_services` | system services, raw systemd state, `activation_us`, total `boot_us`. First calls may say `loading`/`analyzing`, unknown times are null |
 | `set_service_mode` | `service`, `mode`: `on`, `disabled`, `on-demand`. Changes boot policy only, doesn't start or stop the unit. `on-demand` needs an existing activation trigger and disables boot enablement. `deferred` returns `UnsupportedServiceMode`. Static and masked units are read-only |
 | `get_sounds` | theme and events, with enabled/available flags and resolved files |
-| `play_sound` | `event` from `get_sounds`. Plays with `/usr/bin/paplay`, returns the PID, not "finished" |
+| `play_sound` | `event` from `get_sounds`. Plays with `paplay` from `PATH`, returns the PID, not "finished" |
 | `get_wallpaper` | selection, resolved and displayed paths, dimensions, loading and fallback status |
 | `set_wallpaper` | `path`: a wallpaper name or a file, `""` restores the default. Decoding is async, poll `get_wallpaper` |
 | `get_theme` | theme `tokens`, theme file path (null if inline), dark mode. Colours are straight RGBA, 0 to 1 |

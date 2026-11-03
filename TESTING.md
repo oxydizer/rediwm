@@ -62,6 +62,39 @@ and [startup_perf.py](tests/startup_perf.py). Stats requests enable timers and
 add overhead; keep CPU comparisons free of them. `frame_time_ms` is the commit
 interval; CPU and GPU work overlap, so do not add their timings.
 
+Measure frame scheduling (frame event, render start, commit, presentation, age
+of the content shown) with a `-Dframe-trace=true` build and
+[frame_latency.py](tests/frame_latency.py), which runs an isolated session or
+analyses a traced compositor's log. The option compiles the trace in; normal
+builds contain none of it. Headless presents synchronously, so only the cost
+columns mean anything there; presentation latency needs DRM (a spare VT) and
+the `present flags` line showing vsync with a hardware clock.
+
+Audit memory retention with [memory_retention.py](tests/memory_retention.py):
+
+```sh
+python3 tests/memory_retention.py --app files --cycles 50 --out /tmp/files-retention.json
+python3 tests/memory_retention.py --app control-center --cycles 50 --out /tmp/settings-retention.json
+```
+
+The default binary is `zig-out/release-safe/bin/rediwm`; apps come from the same
+directory. Each run uses one private compositor, five warm-up cycles, then
+repeatedly opens and closes the same app. It waits for client exit, close
+animation teardown and frame barriers before recording PSS, private clean +
+dirty memory, swap, scene-node counts, FDs and DRM fdinfo counters. JSON includes
+every cycle, growth and slope, baseline/final smaps, binary hash and shutdown
+logs. `--scale 1.5`, `--close-mode kill`, `--no-animations` and `--no-glass`
+exercise other paths; `--settle` controls the post-close delay (default 1 s).
+Scene counts must return to the warmed baseline. Optional
+`--max-private-growth-kib` (last five samples' median minus baseline) and
+`--max-pss-slope-kib` set machine-specific memory gates. Compare identical builds,
+renderer, scale and workload settings: allocator/driver caches can retain a
+bounded high-water mark, and PSS varies with other processes sharing pages.
+DRM counters are per client (duplicate FDs removed); shared objects can still
+appear in multiple clients, and PSS alone cannot establish GPU retention.
+Restarting an app measures retention in the compositor, not leaks within a
+long-lived app process. Use Debug separately to check shutdown leak reports.
+
 Hardware, login, browser/OBS sharing and toolkit IME checks remain manual. See
 [rendering](docs/agent-notes/rendering.md), [tiling qualification](docs/plans/optional-tiling-qualification.md)
 and [printer qualification](docs/plans/printers-qualification.md).
@@ -82,3 +115,12 @@ An edited control should switch from Default to Custom. Reset one device and
 verify that it returns to Default immediately while the others remain unchanged;
 then change a global default and check that the reset device inherits it after
 reload, reconnection and restart.
+
+Power policy: `python3 tests/power_settings.py` uses private PowerProfiles and
+logind services, fake sysfs events, and a fake brightnessctl. Repeat with
+`REDIWM_TEST_SCALE=1.5`. Also run `tests/idle.py`, `tests/power.py`,
+`tests/power_profiles.py`, `tests/battery_popup.py`, `tests/control_center.py`,
+`tests/hardware_keys.py`, `tests/greeter.py`, and `tests/i18n.py`. On hardware,
+qualify lid close/open, external-monitor removal with the lid closed, suspend
+and resume after unplugging, keyboard lighting and firmware charging-limit
+readback. Keep real power actions out of automated tests.

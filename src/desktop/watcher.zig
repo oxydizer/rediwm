@@ -545,8 +545,12 @@ pub const Worker = struct {
                     const uri = std.mem.trim(u8, raw, " \t\r");
                     if (uri.len == 0 or uri[0] == '#' or std.mem.eql(u8, uri, "copy") or std.mem.eql(u8, uri, "cut")) continue;
                     const path = try @import("dnd.zig").localPath(mem, uri);
-                    const dest = try std.fmt.allocPrint(mem, "{s}/{s}", .{ cmd.path, std.fs.path.basename(path) });
-                    try self.execute(.{ .kind = if (cmd.folder or std.mem.startsWith(u8, data.items, "cut\n")) .move else if (std.mem.eql(u8, cmd.value, "paste")) .copy else .link, .path = path, .value = dest });
+                    if (std.mem.eql(u8, cmd.value, "trash")) {
+                        try self.execute(.{ .kind = .trash, .path = path });
+                    } else {
+                        const dest = try std.fmt.allocPrint(mem, "{s}/{s}", .{ cmd.path, std.fs.path.basename(path) });
+                        try self.execute(.{ .kind = if (cmd.folder or std.mem.startsWith(u8, data.items, "cut\n")) .move else if (std.mem.eql(u8, cmd.value, "paste")) .copy else .link, .path = path, .value = dest });
+                    }
                 }
                 self.drop_success.store(true, .release);
             },

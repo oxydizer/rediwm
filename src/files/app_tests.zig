@@ -189,6 +189,23 @@ pub fn testItems(app: *App, count: usize) !void {
     }
 }
 
+test "Delete shortcuts set permanent deletion mode only for Shift+Delete" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+
+    app.focused_index = 0;
+    app.handleKey(c.XKB_KEY_Delete, "");
+    try std.testing.expect(app.dialog != null);
+    try std.testing.expect(!app.dialog.?.deletion.permanent);
+
+    app.closeDialog();
+    app.shift = true;
+    app.handleKey(c.XKB_KEY_Delete, "");
+    try std.testing.expect(app.dialog != null);
+    try std.testing.expect(app.dialog.?.deletion.permanent);
+}
+
 test "terminal drawer shares viewport geometry and preserves its preferred height" {
     var app = try testApp();
     defer app.deinit();
@@ -402,6 +419,52 @@ test "type select cycles repeated letters and resets after timeout" {
 
     try std.testing.expect(app.typeSelectAt("o", 1500));
     try std.testing.expectEqual(@as(?usize, 3), app.focused_index);
+}
+
+test "type select works in open chooser and updates filename" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 3);
+
+    app.items.items[0].name = "alpha.txt";
+    app.items.items[1].name = "Documents";
+    app.items.items[1].is_dir = true;
+    app.items.items[2].name = "zeta.txt";
+    app.chooser = .{ .mode = .open };
+    app.focus = .file_view;
+
+    try std.testing.expect(app.typeSelectAt("z", 100));
+    try std.testing.expectEqual(@as(?usize, 2), app.focused_index);
+    try std.testing.expect(app.items.items[2].selected);
+    try std.testing.expectEqualStrings("zeta.txt", app.filename.text.items);
+}
+
+test "type select stays disabled while save chooser filename is focused" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 2);
+
+    app.chooser = .{ .mode = .save };
+    app.focus = .filename;
+
+    try std.testing.expect(!app.typeSelectAt("f", 100));
+    try std.testing.expectEqual(@as(?usize, null), app.focused_index);
+}
+
+test "type select works in save chooser when file list is focused" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 2);
+
+    app.items.items[0].name = "alpha.txt";
+    app.items.items[1].name = "Documents";
+    app.items.items[1].is_dir = true;
+    app.chooser = .{ .mode = .save };
+    app.focus = .file_view;
+
+    try std.testing.expect(app.typeSelectAt("d", 100));
+    try std.testing.expectEqual(@as(?usize, 1), app.focused_index);
+    try std.testing.expect(app.items.items[1].selected);
 }
 
 test "type select matches Croatian letters case insensitively" {

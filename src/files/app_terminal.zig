@@ -468,8 +468,10 @@ pub fn terminalRequestClose(self: *App) void {
     if (self.terminal.close_at != null) return;
     if (self.terminal.session) |session| if (tc.ft_running(session)) {
         if (self.dialog != null) return;
-        // A snapshot cannot prove that no job began since it arrived. Confirm
-        // every live session, including hidden and unintegrated shells.
+        // Asked of the kernel now, not of the integration snapshot, which
+        // cannot prove that no job began since it arrived. Hidden and
+        // unintegrated shells count; an idle shell is just hung up.
+        if (!tc.ft_active(session)) return self.terminalConfirmClose();
         self.dialog = .{ .kind = .terminal_close, .title = tr("Close terminal session?") };
         self.invalidate();
         return;
