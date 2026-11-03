@@ -133,7 +133,7 @@ pub fn paintIcon(self: *App, cr: *c.cairo_t, box: Rect, icon: @import("ui").layo
     defer layer.finish();
     layer.renderer.palette = theme.shellPalette();
     const active = !self.menu_open and self.close_tab == null;
-    const proximity = if (active) self.buttonProximity(box) else .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
+    const proximity: button.ProximitySample = if (active) self.buttonProximity(box) else .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
     button.paint(&layer.renderer, layer.local(), .{ .label = label, .icon = icon, .variant = .ghost, .size = .sm }, .{
         .selected = selected,
         .pointer = if (active and box.contains(self.px, self.py)) .hover else .idle,

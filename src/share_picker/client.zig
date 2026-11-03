@@ -438,7 +438,7 @@ const Client = struct {
         const close_w: f64 = @min(h_f, 32);
         const hovered = self.inside and self.pointer_y < h_f and self.pointer_x >= w_f - close_w;
         const box = self.closeRect();
-        const proximity = if (self.inside)
+        const proximity: ui_button.ProximitySample = if (self.inside)
             ui_button.sampleProximity(box, @floatCast(self.pointer_x), @floatCast(self.pointer_y), .{ .x = 0, .y = 0, .w = @floatFromInt(w), .h = @floatFromInt(h) })
         else
             .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
@@ -473,7 +473,7 @@ const Client = struct {
 
         for (self.labels, 0..) |label, i| {
             const row = self.rowRect(i);
-            const proximity = if (self.inside) self.rowProximity(i, self.pointer_x, self.pointer_y) else .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
+            const proximity: ui_button.ProximitySample = if (self.inside) self.rowProximity(i, self.pointer_x, self.pointer_y) else .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
             var layer = shell_ui.Layer.begin(cr, .{ .x = row.x, .y = row.y, .w = row.w, .h = row.h }) orelse continue;
             ui_button.paint(&layer.renderer, layer.local(), .{
                 .variant = .secondary,

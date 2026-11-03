@@ -218,7 +218,7 @@ pub fn paintSearch(self: *App, cr: *c.cairo_t) void {
         var layer = ui.Layer.begin(cr, .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) }) orelse continue;
         const disabled = (control == .next or control == .replace or control == .replace_all) and (self.query.text.items.len == 0 or (control != .next and self.document().locked));
         layer.renderer.palette = theme.shellPalette();
-        const proximity = if (self.close_tab == null and !self.menu_open) self.buttonProximity(box) else .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
+        const proximity: button.ProximitySample = if (self.close_tab == null and !self.menu_open) self.buttonProximity(box) else .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
         button.paint(&layer.renderer, layer.local(), .{
             .label = switch (control) {
                 .next => tr("Next"),
