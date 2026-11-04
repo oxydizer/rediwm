@@ -187,6 +187,8 @@ move_snap: MoveSnap = .{},
 tiling_grab: ?@import("tiling_grab.zig") = null,
 /// An application being dragged from the start menu to the dock.
 dock_drag: @import("dock_drag.zig") = .{},
+/// Files from a client's drag, dropped on the dock's Trash.
+trash_drop: @import("trash_drop.zig") = .{},
 /// The last titlebar press, for double-click-to-maximize.
 title_press: ?TitlePress = null,
 /// Pointer presses so far: a double-click is two presses in a row.
@@ -392,6 +394,7 @@ pub fn deinit(input: *Input) void {
     input.pointer_constraints.deinit();
     input.shortcuts_inhibit.deinit();
     input.drag_dodge.deinit();
+    input.trash_drop.deinit();
     input.lid.deinit();
     input.tablet.deinit();
     input.touch.deinit();

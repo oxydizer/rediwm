@@ -460,7 +460,7 @@ def run():
 
                 # Switching to list changes hit testing as well as painting.
                 click(727, 80)
-                click(300, 220)  # Second 44px row below the pinned header
+                click(300, 210)  # Second 32px row below the pinned header
                 key(28)
                 opened("alpha-file.txt")
 
@@ -620,7 +620,7 @@ def run():
                     image = git_shot()
                     # List cell ends at width-34; Git defaults to 164px.
                     x = image.width - offset
-                    return [image.getpixel((x, 170 + row * 38)) for row in range(3)]
+                    return [image.getpixel((x, 170 + row * 32)) for row in range(3)]
 
                 def changed_badges():
                     modified, deleted, added = badges()
@@ -629,8 +629,8 @@ def run():
                 # Both line-count colours appear beside M: staged and working
                 # changes combine into +28 -3, rather than double counting.
                 def count_pixels(image, row=0):
-                    return image.crop((image.width - 160, 158 + row * 38,
-                                       image.width - 40, 182 + row * 38)).tobytes()
+                    return image.crop((image.width - 160, 158 + row * 32,
+                                       image.width - 40, 182 + row * 32)).tobytes()
                 raw = count_pixels(git_shot())
                 pixels = zip(raw[0::3], raw[1::3], raw[2::3])
                 assert any(g > r + 40 and g > b + 25 for r, g, b in pixels), "added-line count missing"
@@ -662,8 +662,8 @@ def run():
                 # nested file is the fourth row, labelled with its path from the folder.
                 def nested_row():
                     image = git_shot()
-                    badge = image.getpixel((image.width - 190, 170 + 3 * 38))
-                    return badge[1] > badge[0] + 12, image.crop((250, 170 + 3 * 38 - 12, 700, 170 + 3 * 38 + 12)).tobytes()
+                    badge = image.getpixel((image.width - 190, 170 + 3 * 32))
+                    return badge[1] > badge[0] + 12, image.crop((250, 170 + 3 * 32 - 12, 700, 170 + 3 * 32 + 12)).tobytes()
                 assert nested_row()[0], "nested changed file was not listed flat"
                 with_path = nested_row()[1]
                 def toggle_full_paths():
@@ -693,7 +693,7 @@ def run():
                 click(checkbox_x, 82)
                 wait_for(lambda: prefs.read_bytes()[4] == 1, "Git View checkbox did not turn back on")
                 wait_for(changed_badges, "Git badges did not return with Git View on")
-                click(300, 215)  # Deleted beta.txt is retained but cannot open.
+                click(300, 200)  # Deleted beta.txt is retained but cannot open.
                 key(28)
                 assert not marker.exists(), "deleted tracked file was opened"
                 key(46, ctrl=True)

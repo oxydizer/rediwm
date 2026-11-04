@@ -107,11 +107,13 @@ test "desktop motion keeps menu highlights and moving selections live" {
     try std.testing.expectEqual(@as(usize, 1), app.menuLabels().len);
     try std.testing.expectEqualStrings("Open", app.menuLabels()[0]);
     app.menu_icon = 1;
-    try std.testing.expectEqual(@as(usize, 2), app.menuLabels().len);
+    try std.testing.expectEqual(@as(usize, 3), app.menuLabels().len);
     try std.testing.expectEqualStrings("Open", app.menuLabels()[0]);
     try std.testing.expectEqualStrings("Empty Trash…", app.menuLabels()[1]);
     try std.testing.expectEqual(@import("ui").layout.IconId.trash, app.menuIcon(1));
     try std.testing.expectEqual(@as(?[]const u8, null), app.menuHint(1));
+    try std.testing.expectEqualStrings("Properties", app.menuLabels()[2]);
+    try std.testing.expectEqual(@import("ui").layout.IconId.view_list, app.menuIcon(2));
     // Opening and cancelling must not enqueue work (the worker is undefined).
     app.menuAction(1);
     try std.testing.expect(app.edit == .trash);
@@ -254,8 +256,10 @@ test "icon group cache matches fresh pixels after visual and content changes" {
     ic.removed = null;
     app.dragging = true;
     app.pressed = 0;
-    app.x = 128;
-    app.y = 64;
+    // The dragged icon is centred on the pointer: this puts it exactly on its cell.
+    const cell = app.geometry.rect(.{});
+    app.x = @floatFromInt(cell.x + @divTrunc(cell.w, 2));
+    app.y = @floatFromInt(cell.y + 40);
     try expectFreshIconPixels(&app, 200, 240, 1, 0, 1, 0, 1200);
     try std.testing.expectEqual(opaque_pattern, ic.raster.pattern);
     app.dragging = false;

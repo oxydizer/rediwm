@@ -7,6 +7,7 @@ const damage_mod = @import("damage.zig");
 pub const Damage = damage_mod.Damage;
 const rename = @import("rename.zig");
 const deletion = @import("../delete_dialog.zig");
+const trash_properties = @import("../files/trash_properties.zig");
 const Host = @import("host.zig").Host;
 const host_mod = @import("host.zig");
 const Menu = @import("menu.zig").Menu;
@@ -78,9 +79,11 @@ pub const App = struct {
     menu_icon: ?usize = null,
     menu_x: i32 = 0,
     menu_y: i32 = 0,
-    edit: enum { none, rename, folder, file, trash, properties, add_app, open_with } = .none,
+    edit: enum { none, rename, folder, file, trash, trash_properties, properties, add_app, open_with } = .none,
     folder_token: u64 = 0,
     deletion: deletion.State = .{},
+    /// The Trash's Properties window, the one Files shows too.
+    trash_card: ?trash_properties.State = null,
     catalog: []const @import("dotdesktop.zig").parser.AppEntry = &.{},
     applications: ?@import("../files/open_with.zig").State = null,
     picker_theme: @import("../icon_theme.zig").Config = .{ .theme_name = "", .base_dirs = &.{} },
@@ -140,7 +143,7 @@ pub const App = struct {
     pub fn iconRect(self: *App, index: usize) grid.Rect {
         var r = self.geometry.rect(self.icons.items[index].cell);
         if (self.dragging and self.pressed == index) {
-            r.x = @intFromFloat(self.x - 48);
+            r.x = @intFromFloat(self.x - @as(f64, @floatFromInt(r.w)) / 2);
             r.y = @intFromFloat(self.y - 40);
         }
         return r;
@@ -152,6 +155,7 @@ pub const App = struct {
     }
     pub fn deinit(self: *App) void {
         self.closePicker();
+        self.closeTrashCard();
         self.deletion.deinit();
         self.rename_editor.deinit();
         if (self.wallpaper) |im| a.free(im.pixels);
@@ -293,6 +297,9 @@ pub const App = struct {
     pub const pickerAction = app_actions.pickerAction;
     pub const beginEdit = app_actions.beginEdit;
     pub const deleteAction = app_actions.deleteAction;
+    pub const beginTrashProperties = app_actions.beginTrashProperties;
+    pub const trashPropertiesAction = app_actions.trashPropertiesAction;
+    pub const closeTrashCard = app_actions.closeTrashCard;
     pub const finishEdit = app_actions.finishEdit;
     pub const choiceEntry = app_actions.choiceEntry;
 
@@ -319,6 +326,7 @@ pub const App = struct {
     }
     pub fn tick(self: *App) bool {
         const now = nowMs();
+        if (self.trash_card) |*card| if (card.poll()) self.invalidate();
         const error_len = self.worker.takeError(&self.notice);
         if (error_len > 0) {
             if (self.edit == .folder) self.edit = .none;

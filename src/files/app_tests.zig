@@ -527,3 +527,7 @@ test {
 test {
     _ = @import("app_views_tests.zig");
 }
+
+test {
+    _ = @import("app_trash_tests.zig");
+}

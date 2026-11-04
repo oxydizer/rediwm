@@ -1566,6 +1566,14 @@ msgstr "Impossible de demander le démarrage de CUPS."
 msgid "Could not request authentication. Check that polkit is running."
 msgstr "Impossible de demander l'authentification. Vérifiez que polkit est actif."
 
+#: src/files/app_trash.zig
+msgid "Could not restore the items in Trash"
+msgstr "Impossible de restaurer les éléments de la corbeille"
+
+#: src/files/app_trash.zig
+msgid "Could not restore the selected items"
+msgstr "Impossible de restaurer les éléments sélectionnés"
+
 #: src/images/app_input.zig
 msgid "Could not rotate: not enough memory."
 msgstr "Rotation impossible : mémoire insuffisante."
@@ -1868,6 +1876,10 @@ msgstr "Terminal par défaut"
 msgid "Deferred"
 msgstr "Différé"
 
+#: src/files/app_model.zig
+msgid "Delete Permanently"
+msgstr "Supprimer définitivement"
+
 #: src/delete_dialog.zig
 msgid "Delete file?"
 msgstr "Supprimer le fichier ?"
@@ -1887,6 +1899,10 @@ msgstr "Supprimer les éléments ?"
 #: src/delete_dialog.zig
 msgid "Delete permanently"
 msgstr "Supprimer définitivement"
+
+#: src/files/app_dialogs.zig
+msgid "Delete permanently?"
+msgstr "Supprimer définitivement ?"
 
 #: src/control_center/sections/users.zig
 msgid "Delete user…"
@@ -4000,6 +4016,10 @@ msgstr "Ouverture…"
 msgid "Optimize"
 msgstr "Optimiser"
 
+#: src/files/app_menu.zig
+msgid "Original location unknown: these items have no Trash information"
+msgstr "Emplacement d’origine inconnu : ces éléments n’ont aucune information de la corbeille"
+
 #: src/files/properties.zig
 msgid "Others"
 msgstr "Autres"
@@ -4820,6 +4840,14 @@ msgstr "Redémarrer l'environnement du bureau."
 msgid "Restart? Activate Restart again to confirm."
 msgstr "Redémarrer ? Activez de nouveau Redémarrer pour confirmer."
 
+#: src/files/app_model.zig
+msgid "Restore"
+msgstr "Restaurer"
+
+#: src/files/app_menu.zig
+msgid "Restore All"
+msgstr "Tout restaurer"
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore Layout"
 msgstr "Restaurer la disposition"
@@ -4843,6 +4871,20 @@ msgstr "Restaurer le zoom du bureau."
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore the focused window's size."
 msgstr "Restaurer la taille de la fenêtre active."
+
+#: src/files/app_dialogs.zig
+msgid "Restore the folder to change what is inside it"
+msgstr "Restaurez le dossier pour modifier son contenu"
+
+#: src/files/app_trash.zig
+msgid "Restored"
+msgstr "Restauré"
+
+#: src/files/app_trash.zig
+msgid "Restored {count} item"
+msgid_plural "Restored {count} items"
+msgstr[0] "{count} élément restauré"
+msgstr[1] "{count} éléments restaurés"
 
 #: src/calculator/model.zig
 msgid "Result is too large"
@@ -5396,9 +5438,21 @@ msgstr "Socket"
 msgid "Soft"
 msgstr "Doux"
 
+#: src/files/app_trash.zig
+msgid "Some could not be restored"
+msgstr "Certains n’ont pas pu être restaurés"
+
 #: src/control_center/sections/users.zig
 msgid "Some groups cannot be safely shown; group changes are disabled."
 msgstr "Certains groupes ne peuvent pas être affichés de façon sûre ; les modifications des groupes sont désactivées."
+
+#: src/files/app_trash.zig
+msgid "Some have no Trash information"
+msgstr "Certains n’ont aucune information de la corbeille"
+
+#: src/files/app_trash.zig
+msgid "Some kept under a new name"
+msgstr "Certains ont été conservés sous un nouveau nom"
 
 #: src/systemd/requests.zig
 msgid "Some startup times are unavailable."
@@ -6180,9 +6234,17 @@ msgstr "Transformation"
 msgid "Trash"
 msgstr "Corbeille"
 
+#: src/files/app_trash.zig
+msgid "Trash can't be edited. Restore items to change them."
+msgstr "La corbeille ne peut pas être modifiée. Restaurez les éléments pour les modifier."
+
 #: src/files/app_fileops.zig
 msgid "Trash emptied"
 msgstr "Corbeille vidée"
+
+#: src/files/app_trash.zig
+msgid "Trash is empty"
+msgstr "La corbeille est vide"
 
 #: src/images/app_dialogs.zig
 msgid "Trash is unavailable: install gio to use it."
@@ -6387,6 +6449,10 @@ msgstr "Utiliser le format 24 heures"
 #: src/network/manager.zig
 msgid "Use 8–63 characters or a 64-digit hex key."
 msgstr "Utilisez 8 à 63 caractères ou une clé hexadécimale de 64 chiffres."
+
+#: src/files/app_fileops.zig
+msgid "Use Move to Trash to put items in Trash"
+msgstr "Utilisez « Déplacer vers la corbeille » pour placer des éléments dans la corbeille"
 
 #: src/images/app_dialogs.zig
 msgid "Use a .png filename to save a PNG copy."
@@ -7214,11 +7280,25 @@ msgid_plural "{columns} × {rows}  ·  {n} screens total"
 msgstr[0] "{columns} × {rows}  ·  {n} écran au total"
 msgstr[1] "{columns} × {rows}  ·  {n} écrans au total"
 
+#: src/files/app_trash.zig
+msgid "{count} could not be restored"
+msgstr "Non restaurés : {count}"
+
+#: src/files/app_trash.zig
+msgid "{count} has no Trash information"
+msgid_plural "{count} have no Trash information"
+msgstr[0] "{count} élément sans information de la corbeille"
+msgstr[1] "{count} éléments sans information de la corbeille"
+
 #: src/files/app_paint.zig
 msgid "{count} item selected  ·  {size}"
 msgid_plural "{count} items selected  ·  {size}"
 msgstr[0] "{count} élément sélectionné  ·  {size}"
 msgstr[1] "{count} éléments sélectionnés  ·  {size}"
+
+#: src/files/app_trash.zig
+msgid "{count} kept under a new name"
+msgstr "Conservés sous un nouveau nom : {count}"
 
 #: src/files/open_with.zig
 msgid "{count} selected file"

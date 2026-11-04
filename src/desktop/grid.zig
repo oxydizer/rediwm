@@ -1,8 +1,14 @@
 const std = @import("std");
+/// Narrowest a cell gets. Cells stretch evenly to fill the output, so the
+/// icons at both edges sit the same distance from them whatever the width.
 pub const width = 96;
 pub const height = 112; // 8 + 56 + 8 + 2*16 + 8: two readable label lines.
-pub const margin = 24;
-pub const left_margin = 8; // cells carry their own padding, so the leftmost column may sit close to the edge.
+/// Cells carry their own padding (8 above the icon, 20 beside it), so only a
+/// little margin is needed above the first row to match the sides.
+pub const top_margin = 12;
+/// Width held back when counting columns. It no longer shows as a gap, but
+/// the count decides where saved icon positions (counted from the right) sit.
+const reserve = 32;
 pub const Cell = struct { col: i32 = 0, row: i32 = 0 };
 pub const Rect = struct {
     x: i32,
@@ -22,26 +28,55 @@ pub const Grid = struct {
     bottom: i32 = 64,
     top: i32 = 0,
     pub fn rows(g: Grid) i32 {
-        return @max(1, @divFloor(g.h - margin - g.top - g.bottom, height));
+        return @max(1, @divFloor(g.h - top_margin - g.top - g.bottom, height));
     }
     pub fn cols(g: Grid) i32 {
-        return @max(1, @divFloor(g.w - margin - left_margin, width));
+        return @max(1, @divFloor(g.w - reserve, width));
     }
+    /// Column `position.col` counts from the right edge. The columns share the
+    /// whole width, so neighbouring cells differ by at most a pixel.
     pub fn rect(g: Grid, position: Cell) Rect {
-        return .{ .x = g.w - margin - (position.col + 1) * width, .y = g.top + margin + position.row * height };
+        const n = g.cols();
+        const from_left = n - 1 - position.col;
+        const x0 = @divFloor(from_left * g.w, n);
+        const x1 = @divFloor((from_left + 1) * g.w, n);
+        return .{ .x = x0, .w = x1 - x0, .y = g.top + top_margin + position.row * height };
     }
     pub fn snap(g: Grid, x: f64, y: f64) Cell {
-        return .{ .col = std.math.clamp(@as(i32, @intFromFloat(@floor((@as(f64, @floatFromInt(g.w - margin)) - x) / width))), 0, g.cols() - 1), .row = std.math.clamp(@as(i32, @intFromFloat(@floor((y - @as(f64, @floatFromInt(g.top + margin))) / height))), 0, g.rows() - 1) };
+        const n = g.cols();
+        const from_left: i32 = @intFromFloat(@floor(x * @as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(@max(1, g.w)))));
+        const row: i32 = @intFromFloat(@floor((y - @as(f64, @floatFromInt(g.top + top_margin))) / height));
+        return .{ .col = n - 1 - std.math.clamp(from_left, 0, n - 1), .row = std.math.clamp(row, 0, g.rows() - 1) };
     }
     pub fn cell(g: Grid, index: usize) Cell {
         const n: i32 = @intCast(index);
         return .{ .col = @divFloor(n, g.rows()), .row = @mod(n, g.rows()) };
     }
 };
-test "leftmost column sits near the left edge" {
-    const g = Grid{ .w = 1280, .h = 720 };
-    const r = g.rect(.{ .col = g.cols() - 1 });
-    try std.testing.expect(r.x >= 0 and r.x < width - margin);
+test "the columns fill the whole width, so both edges get the same gap" {
+    var w: i32 = 1024;
+    while (w <= 3840) : (w += 7) {
+        const g = Grid{ .w = w, .h = 1080 };
+        const left = g.rect(.{ .col = g.cols() - 1 });
+        const right = g.rect(.{});
+        try std.testing.expectEqual(@as(i32, 0), left.x);
+        try std.testing.expectEqual(w, right.x + right.w);
+        var col: i32 = 0;
+        while (col < g.cols()) : (col += 1) {
+            const r = g.rect(.{ .col = col });
+            try std.testing.expect(r.w >= width);
+            // Column col lies immediately left of column col-1: no gaps, no overlap.
+            if (col > 0) try std.testing.expectEqual(g.rect(.{ .col = col - 1 }).x, r.x + r.w);
+            // The 56px icon sits centred: the gap to the edge stays modest at any width.
+            try std.testing.expect(@divTrunc(r.w - 56, 2) <= 28);
+        }
+    }
+}
+test "icons start close to the top-left corner" {
+    const g = Grid{ .w = 1536, .h = 864 };
+    const home = g.rect(.{ .col = g.cols() - 1, .row = 0 });
+    try std.testing.expect(@divTrunc(home.w - 56, 2) <= 28); // left gap to the icon
+    try std.testing.expect(home.y + 8 <= 24); // top gap to the icon
 }
 test "grid flows down then left and avoids the panel" {
     const g = Grid{ .w = 1280, .h = 720 };

@@ -468,6 +468,10 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
         self.dialog.?.properties.?.draw(cr, self.w, self.h, self.mouse_x, self.mouse_y, self.theme_cfg, self.io);
         return;
     }
+    if (dlg.kind == .trash_properties) {
+        self.dialog.?.trash_properties.?.draw(cr, self.w, self.h, self.mouse_x, self.mouse_y, ui_theme.global.app_toolbar, self.theme_cfg, self.io);
+        return;
+    }
     if (dlg.kind == .open_with) {
         self.dialog.?.applications.?.draw(cr, self.w, self.h, self.mouse_x, self.mouse_y, self.theme_cfg, self.io);
         return;

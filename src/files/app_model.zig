@@ -12,6 +12,7 @@ const header = @import("header.zig");
 const IconId = @import("ui").layout.IconId;
 const open_with = @import("open_with.zig");
 const properties = @import("properties.zig");
+const trash_properties = @import("trash_properties.zig");
 const Editor = @import("editor.zig").Editor;
 
 pub const DeviceOp = struct { id: []u8, unmount: bool, open: bool, navigation: u32 };
@@ -51,6 +52,9 @@ pub const FileAction = enum {
     paste,
     rename,
     trash,
+    /// In the Trash: put the entry back, or remove it for good.
+    restore,
+    delete_permanently,
     size,
     properties,
     pub fn label(self: FileAction) []const u8 {
@@ -65,6 +69,8 @@ pub const FileAction = enum {
             .paste => tr("Paste"),
             .rename => tr("Rename"),
             .trash => tr("Move to Trash"),
+            .restore => tr("Restore"),
+            .delete_permanently => tr("Delete Permanently"),
             .size => tr("Calculate size"),
             .properties => tr("Properties"),
         };
@@ -79,7 +85,8 @@ pub const FileAction = enum {
             .copy => .copy,
             .paste => .paste,
             .rename => .edit,
-            .trash => .trash,
+            .trash, .delete_permanently => .trash,
+            .restore => .undo,
             .size, .properties => .view_list,
         };
     }
@@ -196,6 +203,7 @@ pub const DialogKind = enum {
     conflict,
     open_with,
     properties,
+    trash_properties,
 };
 
 pub const Dialog = struct {
@@ -207,6 +215,7 @@ pub const Dialog = struct {
     deletion: deletion.State = .{},
     applications: ?open_with.State = null,
     properties: ?properties.State = null,
+    trash_properties: ?trash_properties.State = null,
 };
 
 pub const RenameCard = struct { panel: header.Rect, field: header.Rect, confirm: header.Rect, cancel: header.Rect };

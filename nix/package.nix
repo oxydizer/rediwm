@@ -76,9 +76,11 @@ let
   # Only this fixed-output fetch may access the network; the build gets the
   # verified package cache and runs offline. Using nixpkgs' zig.fetchDeps
   # rather than our own derivation was suggested by SpaceboyRoss.
+  # Update this hash whenever the .dependencies in build.zig.zon change (CI's
+  # "hash mismatch" error prints the new value as "got").
   zigDeps = zig_0_17.fetchDeps {
     inherit pname version src;
-    hash = "sha256-R5Eg4CG+DW/pgg1zU+4Y2Ov1LCY3ReJordmBQGxkiyc=";
+    hash = "sha256-wWUzaz1grmsPxv5Uth3P8KgEY/XaDXNRrniF8c4IeGc=";
   };
 in
 stdenv.mkDerivation {

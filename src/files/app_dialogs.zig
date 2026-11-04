@@ -11,6 +11,7 @@ const icons = @import("../icon_cache.zig");
 const deletion = @import("../delete_dialog.zig");
 const open_with = @import("open_with.zig");
 const properties = @import("properties.zig");
+const trash_properties = @import("trash_properties.zig");
 const ViewItem = @import("app_model.zig").ViewItem;
 const Dialog = @import("app_model.zig").Dialog;
 
@@ -21,6 +22,7 @@ pub fn closeDialog(self: *App) void {
         dlg.deletion.deinit();
         if (dlg.applications) |*apps| apps.deinit();
         if (dlg.properties) |*props| props.deinit();
+        if (dlg.trash_properties) |*props| props.deinit();
         dlg.edit.text.deinit(self.allocator);
         if (dlg.target_path) |tp| self.allocator.free(tp);
         if (dlg.conflict_name) |cn| self.allocator.free(cn);
@@ -76,6 +78,34 @@ pub fn propertiesAction(self: *App, action: properties.Action) void {
     }
 }
 
+/// Properties of the Trash itself (the sidebar's Trash row), not of an item in it.
+pub fn openTrashProperties(self: *App) void {
+    const path = self.trash_dir orelse {
+        self.setStatusNotice(tr("Could not read file properties"), true);
+        return;
+    };
+    const state = trash_properties.State.init(path, self.worker.wake_main) catch {
+        self.setStatusNotice(tr("Could not read file properties"), true);
+        return;
+    };
+    self.closeDialog();
+    self.dialog = .{ .kind = .trash_properties, .title = tr("Properties"), .trash_properties = state };
+    self.invalidate();
+}
+
+pub fn trashPropertiesAction(self: *App, action: trash_properties.Action) void {
+    switch (action) {
+        .none => self.invalidate(),
+        .close => self.closeDialog(),
+        .open => {
+            const path = self.allocator.dupe(u8, self.dialog.?.trash_properties.?.path) catch return;
+            defer self.allocator.free(path);
+            self.closeDialog();
+            self.navigate(path);
+        },
+    }
+}
+
 pub fn canOpenWith(self: *const App) bool {
     if (self.history.archive_len > 0) return false;
     if (self.chooser != null) return false;
@@ -124,7 +154,7 @@ pub fn openWithAction(self: *App, action: open_with.Action) void {
 }
 
 pub fn openNewFolderDialog(self: *App) void {
-    if (self.isRecent() or self.history.archive_len > 0) return;
+    if (self.isRecent() or self.history.archive_len > 0 or self.trashReadOnly()) return;
     self.closeDialog();
     var dlg = Dialog{
         .kind = .new_folder,
@@ -156,7 +186,7 @@ pub fn switchBranch(self: *App, repo: git.Repository, name: []const u8, create: 
 }
 
 pub fn openNewFileDialog(self: *App) void {
-    if (self.isRecent() or self.history.archive_len > 0) return;
+    if (self.isRecent() or self.history.archive_len > 0 or self.trashReadOnly()) return;
     self.closeDialog();
     var dlg = Dialog{
         .kind = .new_file,
@@ -170,7 +200,7 @@ pub fn openNewFileDialog(self: *App) void {
 }
 
 pub fn openRenameDialog(self: *App) void {
-    if (self.history.archive_len > 0) return;
+    if (self.history.archive_len > 0 or self.trashReadOnly()) return;
     const idx = self.focused_index orelse blk: {
         for (self.items.items, 0..) |it, i| {
             if (it.selected) break :blk i;
@@ -216,8 +246,19 @@ pub fn openTrashConfirmDialog(self: *App) void {
     self.openTrashConfirmDialogWithMode(false);
 }
 
-pub fn openTrashConfirmDialogWithMode(self: *App, permanent: bool) void {
+pub fn openTrashConfirmDialogWithMode(self: *App, permanent_requested: bool) void {
     if (self.history.archive_len > 0) return;
+    // Entries already in Trash can only be deleted for good; the ones inside
+    // a trashed folder belong to it and go with it.
+    const in_trash = switch (self.trashRelation()) {
+        .none => false,
+        .root => true,
+        .inside => {
+            self.setStatusNotice(tr("Restore the folder to change what is inside it"), false);
+            return;
+        },
+    };
+    const permanent = permanent_requested or in_trash;
     var count: usize = 0;
     for (self.items.items) |it| {
         if (it.selected and !it.missing) count += 1;
@@ -235,8 +276,8 @@ pub fn openTrashConfirmDialogWithMode(self: *App, permanent: bool) void {
     self.closeDialog();
     self.dialog = Dialog{
         .kind = .trash_confirm,
-        .title = tr("Move to Trash?"),
-        .deletion = .{ .permanent = permanent },
+        .title = if (in_trash) tr("Delete permanently?") else tr("Move to Trash?"),
+        .deletion = .{ .permanent = permanent, .in_trash = in_trash },
     };
     for (self.items.items) |it| {
         if (!it.selected or it.missing) continue;
@@ -267,7 +308,7 @@ pub fn confirmDialog(self: *App) void {
         .torrent_source, .torrent_destination => self.confirmTorrent(),
         .terminal_close => self.terminalConfirmClose(),
         .open_with => self.openWithAction(.open),
-        .properties => {},
+        .properties, .trash_properties => {},
         .new_folder => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
             ops_mod.createFolder(self.allocator, self.history.current, name) catch |err| {
@@ -354,6 +395,10 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
     if (dlg.kind == .properties) {
         const action = self.dialog.?.properties.?.key(sym, self.shift, self.w, self.h);
         self.propertiesAction(action);
+        return;
+    }
+    if (dlg.kind == .trash_properties) {
+        self.trashPropertiesAction(self.dialog.?.trash_properties.?.key(sym));
         return;
     }
     if (dlg.kind == .open_with) {

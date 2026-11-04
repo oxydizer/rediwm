@@ -1566,6 +1566,14 @@ msgstr "CUPS-Start konnte nicht angefordert werden."
 msgid "Could not request authentication. Check that polkit is running."
 msgstr "Authentifizierung konnte nicht angefordert werden. Prüfe, ob polkit läuft."
 
+#: src/files/app_trash.zig
+msgid "Could not restore the items in Trash"
+msgstr "Die Objekte im Papierkorb konnten nicht wiederhergestellt werden"
+
+#: src/files/app_trash.zig
+msgid "Could not restore the selected items"
+msgstr "Die ausgewählten Objekte konnten nicht wiederhergestellt werden"
+
 #: src/images/app_input.zig
 msgid "Could not rotate: not enough memory."
 msgstr "Drehen fehlgeschlagen: nicht genug Speicher."
@@ -1868,6 +1876,10 @@ msgstr "Standard-Terminal"
 msgid "Deferred"
 msgstr "Zurückgestellt"
 
+#: src/files/app_model.zig
+msgid "Delete Permanently"
+msgstr "Endgültig löschen"
+
 #: src/delete_dialog.zig
 msgid "Delete file?"
 msgstr "Datei löschen?"
@@ -1887,6 +1899,10 @@ msgstr "Objekte löschen?"
 #: src/delete_dialog.zig
 msgid "Delete permanently"
 msgstr "Endgültig löschen"
+
+#: src/files/app_dialogs.zig
+msgid "Delete permanently?"
+msgstr "Endgültig löschen?"
 
 #: src/control_center/sections/users.zig
 msgid "Delete user…"
@@ -4000,6 +4016,10 @@ msgstr "Wird geöffnet…"
 msgid "Optimize"
 msgstr "Optimieren"
 
+#: src/files/app_menu.zig
+msgid "Original location unknown: these items have no Trash information"
+msgstr "Ursprünglicher Ort unbekannt: Für diese Objekte gibt es keine Papierkorb-Informationen"
+
 #: src/files/properties.zig
 msgid "Others"
 msgstr "Andere"
@@ -4820,6 +4840,14 @@ msgstr "Die Schreibtisch-Shell neu starten."
 msgid "Restart? Activate Restart again to confirm."
 msgstr "Neu starten? Aktiviere Neustart erneut zum Bestätigen."
 
+#: src/files/app_model.zig
+msgid "Restore"
+msgstr "Wiederherstellen"
+
+#: src/files/app_menu.zig
+msgid "Restore All"
+msgstr "Alle wiederherstellen"
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore Layout"
 msgstr "Anordnung wiederherstellen"
@@ -4843,6 +4871,20 @@ msgstr "Den Schreibtischzoom wiederherstellen."
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore the focused window's size."
 msgstr "Größe des fokussierten Fensters wiederherstellen."
+
+#: src/files/app_dialogs.zig
+msgid "Restore the folder to change what is inside it"
+msgstr "Stelle den Ordner wieder her, um seinen Inhalt zu ändern"
+
+#: src/files/app_trash.zig
+msgid "Restored"
+msgstr "Wiederhergestellt"
+
+#: src/files/app_trash.zig
+msgid "Restored {count} item"
+msgid_plural "Restored {count} items"
+msgstr[0] "{count} Objekt wiederhergestellt"
+msgstr[1] "{count} Objekte wiederhergestellt"
 
 #: src/calculator/model.zig
 msgid "Result is too large"
@@ -5396,9 +5438,21 @@ msgstr "Socket"
 msgid "Soft"
 msgstr "Weich"
 
+#: src/files/app_trash.zig
+msgid "Some could not be restored"
+msgstr "Einige konnten nicht wiederhergestellt werden"
+
 #: src/control_center/sections/users.zig
 msgid "Some groups cannot be safely shown; group changes are disabled."
 msgstr "Einige Gruppen können nicht sicher angezeigt werden; Gruppenänderungen sind deaktiviert."
+
+#: src/files/app_trash.zig
+msgid "Some have no Trash information"
+msgstr "Für einige gibt es keine Papierkorb-Informationen"
+
+#: src/files/app_trash.zig
+msgid "Some kept under a new name"
+msgstr "Einige unter neuem Namen behalten"
 
 #: src/systemd/requests.zig
 msgid "Some startup times are unavailable."
@@ -6180,9 +6234,17 @@ msgstr "Transformation"
 msgid "Trash"
 msgstr "Papierkorb"
 
+#: src/files/app_trash.zig
+msgid "Trash can't be edited. Restore items to change them."
+msgstr "Der Papierkorb kann nicht bearbeitet werden. Stelle Objekte wieder her, um sie zu ändern."
+
 #: src/files/app_fileops.zig
 msgid "Trash emptied"
 msgstr "Papierkorb geleert"
+
+#: src/files/app_trash.zig
+msgid "Trash is empty"
+msgstr "Der Papierkorb ist leer"
 
 #: src/images/app_dialogs.zig
 msgid "Trash is unavailable: install gio to use it."
@@ -6387,6 +6449,10 @@ msgstr "24-Stunden-Format verwenden"
 #: src/network/manager.zig
 msgid "Use 8–63 characters or a 64-digit hex key."
 msgstr "Verwende 8–63 Zeichen oder einen 64-stelligen Hexadezimalschlüssel."
+
+#: src/files/app_fileops.zig
+msgid "Use Move to Trash to put items in Trash"
+msgstr "Verwende „In den Papierkorb verschieben“, um Objekte in den Papierkorb zu legen"
 
 #: src/images/app_dialogs.zig
 msgid "Use a .png filename to save a PNG copy."
@@ -7214,11 +7280,25 @@ msgid_plural "{columns} × {rows}  ·  {n} screens total"
 msgstr[0] "{columns} × {rows}  ·  insgesamt {n} Bildschirm"
 msgstr[1] "{columns} × {rows}  ·  insgesamt {n} Bildschirme"
 
+#: src/files/app_trash.zig
+msgid "{count} could not be restored"
+msgstr "Nicht wiederhergestellt: {count}"
+
+#: src/files/app_trash.zig
+msgid "{count} has no Trash information"
+msgid_plural "{count} have no Trash information"
+msgstr[0] "{count} Objekt ohne Papierkorb-Informationen"
+msgstr[1] "{count} Objekte ohne Papierkorb-Informationen"
+
 #: src/files/app_paint.zig
 msgid "{count} item selected  ·  {size}"
 msgid_plural "{count} items selected  ·  {size}"
 msgstr[0] "{count} Objekt ausgewählt  ·  {size}"
 msgstr[1] "{count} Objekte ausgewählt  ·  {size}"
+
+#: src/files/app_trash.zig
+msgid "{count} kept under a new name"
+msgstr "Unter neuem Namen behalten: {count}"
 
 #: src/files/open_with.zig
 msgid "{count} selected file"

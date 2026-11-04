@@ -7,6 +7,7 @@ const grid = @import("grid.zig");
 const watcher = @import("watcher.zig");
 const rename = @import("rename.zig");
 const deletion = @import("../delete_dialog.zig");
+const trash_properties = @import("../files/trash_properties.zig");
 const a = std.heap.c_allocator;
 
 pub fn copy(self: *App, cut: bool) void {
@@ -39,7 +40,7 @@ pub fn menuBuiltin(self: *const App) watcher.Builtin {
 pub fn menuLabels(self: *App) []const []const u8 {
     const icon_labels = [_]i18n.Message{ i18n.msg("Open"), i18n.msg("Open With…"), i18n.msg("Cut"), i18n.msg("Copy"), i18n.msg("Rename"), i18n.msg("Move to Trash"), i18n.msg("Properties"), i18n.msg("Allow Launching") };
     const desktop_labels = [_]i18n.Message{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Add Application…"), i18n.msg("Paste"), i18n.msg("Refresh"), i18n.msg("Change Wallpaper"), i18n.msg("Desktop Settings") };
-    const trash_labels = [_]i18n.Message{ i18n.msg("Open"), i18n.msg("Empty Trash…") };
+    const trash_labels = [_]i18n.Message{ i18n.msg("Open"), i18n.msg("Empty Trash…"), i18n.msg("Properties") };
     const messages: []const i18n.Message = switch (self.menuBuiltin()) {
         .home => icon_labels[0..1],
         .trash => &trash_labels,
@@ -51,7 +52,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
 
 pub fn menuIcon(self: *App, row: usize) @import("ui").layout.IconId {
     const IconId = @import("ui").layout.IconId;
-    if (self.menuBuiltin() != .none) return if (row == 0) .chevron_right else .trash;
+    if (self.menuBuiltin() != .none) return ([_]IconId{ .chevron_right, .trash, .view_list })[row];
     return if (self.menu_icon != null)
         ([_]IconId{ .chevron_right, .grid, .cut, .copy, .edit, .trash, .view_list, .checkmark })[row]
     else
@@ -76,7 +77,7 @@ pub fn menuAction(self: *App, row: usize) void {
             self.deletion.deinit();
             self.deletion = .{ .permanent = true, .empty_trash = true };
             self.edit = .trash;
-        }
+        } else if (builtin == .trash and row == 2) self.beginTrashProperties();
         return;
     }
     if (self.menu_icon != null) {
@@ -141,6 +142,7 @@ pub fn pickerAction(self: *App, action: @import("../files/open_with.zig").Action
 pub fn beginEdit(self: *App, kind: @FieldType(App, "edit")) void {
     self.deletion.deinit();
     self.closePicker();
+    self.closeTrashCard();
     self.edit = kind;
     if (kind == .folder) {
         const path = std.fmt.allocPrint(a, "{s}/{s}", .{ self.worker.dir, i18n.tr("New Folder") }) catch {
@@ -185,6 +187,43 @@ pub fn beginEdit(self: *App, kind: @FieldType(App, "edit")) void {
         self.edit = .none;
     }
     if (kind == .file) self.edit_text.appendSlice(a, i18n.tr("New File")) catch {};
+}
+
+/// Opens the Trash's Properties window for the Trash icon the menu belongs to.
+pub fn beginTrashProperties(self: *App) void {
+    const index = self.menu_icon orelse return;
+    if (index >= self.icons.items.len or self.icons.items[index].item.builtin != .trash) return;
+    self.deletion.deinit();
+    self.closePicker();
+    self.closeTrashCard();
+    self.trash_card = trash_properties.State.init(self.icons.items[index].item.path, self.worker.wake_main) catch {
+        self.notify("{s}", .{i18n.tr("Could not read file properties")});
+        return;
+    };
+    self.edit = .trash_properties;
+    self.invalidate();
+}
+
+pub fn closeTrashCard(self: *App) void {
+    if (self.trash_card) |*card| card.deinit();
+    self.trash_card = null;
+}
+
+pub fn trashPropertiesAction(self: *App, action: trash_properties.Action) void {
+    switch (action) {
+        .none => {},
+        .close => {
+            self.closeTrashCard();
+            self.edit = .none;
+        },
+        // The Trash icon stays selected under the window, as Open from its menu expects.
+        .open => {
+            self.closeTrashCard();
+            self.edit = .none;
+            self.openSelected();
+        },
+    }
+    self.invalidate();
 }
 
 pub fn deleteAction(self: *App, action: deletion.Action) void {

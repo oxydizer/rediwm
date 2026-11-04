@@ -14,7 +14,7 @@ are free functions taking `self: *App` in `app_*.zig`, grouped by concern:
 `app_fileops`, `app_chooser`, `app_layout` (geometry), `app_folder_size`,
 `app_places` (sidebar rows, pins, devices), `app_sidebar_paint`,
 `app_git_sidebar`, `app_scroll`, `app_opening`, `app_pointer`,
-`app_keyboard`, `app_menu`, `app_paint`, `app_items`. Shared enums and
+`app_keyboard`, `app_menu`, `app_paint`, `app_items`, `app_trash`. Shared enums and
 records are in `app_model.zig`, drawing helpers in `app_draw.zig`, tests in
 `app_tests.zig` (with `app_*_tests.zig` by area). A new method goes in its
 group file plus an alias line in `App`; a file that calls a sibling's
@@ -71,6 +71,45 @@ and headless fixtures. The pinned library is compiled only into Files/tests.
   XDG data, preserving existing MIME defaults. Registration keeps the image
   in place, uses its canonical absolute path and drops bundled TryExec,
   working-directory, desktop-action and D-Bus activation references.
+
+## Trash
+
+* **Moving in stays on `gio trash`** (`ops.trashItems`, which knows the
+  per-volume rules) and so does Empty Trash (`gio trash --empty`, followed by
+  `trash.sweepOrphans`). Everything else on the home trash is native in
+  `trash.zig`: restore, permanent delete, `.trashinfo` parsing and the
+  `directorysizes` line. Tests build fixture trash directories, no `gio`.
+* **Home trash only.** Per-volume trashes (`$topdir/.Trash-$uid`) are neither
+  listed nor restored, though `gio trash --empty` still clears them. Their
+  `Path=` is relative to the volume and arrives from removable media, so it
+  needs containment checks (reject `..`, check `.Trash` sticky bits) first.
+* **Restore never overwrites.** The destination name comes from `Path=`, not
+  from the name in `files/` (collisions are renamed there). A taken name
+  (a dangling symlink counts) gets `generateUniqueName`, missing parents are
+  recreated and removed again if the move fails, and the move is
+  `renameat2(RENAME_NOREPLACE)` through `ops.moveItem`. The item moves first,
+  its metadata goes after; delete does the same, so a crash leaves orphan
+  metadata (`sweepOrphans`), never an unrestorable item.
+* **`trashRelation()`** (`app_trash.zig`) is the one test for "in Trash": `root`
+  lists the trashed entries, `inside` is a trashed folder (no metadata of its
+  own: open, copy and properties only). The view is read-only: no new,
+  rename, cut, paste or drop (`executeTransfer` refuses), and drags out offer
+  copy only, because a move would leave the `.trashinfo` behind.
+* **Restore is faded, not hidden,** when no selected entry has usable
+  metadata (`trash_restorable`, worked out when the menu opens, not per paint;
+  `context_menu.Row.disabled`). Delete inside the Trash uses the shared delete
+  dialog with `in_trash`: permanent, no checkbox.
+* **Trash Properties** (sidebar row, and the desktop's Trash icon) is
+  `trash_properties.zig`, one window for both hosts: `properties_card.zig`
+  (the identity row and fields shared with file Properties, so they cannot
+  drift) minus permissions, with the icon looked up like the sidebar's (a pack's
+  `user-trash`, else the `trash_can` glyph). Items are the top-level entries of
+  `Trash/files`, the size every payload byte under them (`trash_totals.zig`:
+  links never followed, metadata excluded); the count is a thread per open
+  window that writes the host's wake fd, and `partial` reads "At least".
+* Tests: `trash_tests.zig`, `app_trash_tests.zig`, `trash_totals_tests.zig`,
+  `trash_properties_tests.zig`, `tests/files_trash.py`
+  (keyboard driven, filesystem as ground truth, fake `gio`).
 
 ## Git
 

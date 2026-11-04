@@ -1567,6 +1567,14 @@ msgstr "Не удалось запросить запуск CUPS."
 msgid "Could not request authentication. Check that polkit is running."
 msgstr "Не удалось запросить проверку подлинности. Убедитесь, что polkit запущена."
 
+#: src/files/app_trash.zig
+msgid "Could not restore the items in Trash"
+msgstr "Не удалось восстановить объекты из корзины"
+
+#: src/files/app_trash.zig
+msgid "Could not restore the selected items"
+msgstr "Не удалось восстановить выбранные объекты"
+
 #: src/images/app_input.zig
 msgid "Could not rotate: not enough memory."
 msgstr "Не удалось повернуть: недостаточно памяти."
@@ -1870,6 +1878,10 @@ msgstr "Терминал по умолчанию"
 msgid "Deferred"
 msgstr "Отложено"
 
+#: src/files/app_model.zig
+msgid "Delete Permanently"
+msgstr "Удалить безвозвратно"
+
 #: src/delete_dialog.zig
 msgid "Delete file?"
 msgstr "Удалить файл?"
@@ -1889,6 +1901,10 @@ msgstr "Удалить объекты?"
 #: src/delete_dialog.zig
 msgid "Delete permanently"
 msgstr "Удалить безвозвратно"
+
+#: src/files/app_dialogs.zig
+msgid "Delete permanently?"
+msgstr "Удалить безвозвратно?"
 
 #: src/control_center/sections/users.zig
 msgid "Delete user…"
@@ -4002,6 +4018,10 @@ msgstr "Открытие…"
 msgid "Optimize"
 msgstr "Оптимизировать"
 
+#: src/files/app_menu.zig
+msgid "Original location unknown: these items have no Trash information"
+msgstr "Исходное расположение неизвестно: для этих объектов нет сведений корзины"
+
 #: src/files/properties.zig
 msgid "Others"
 msgstr "Остальные"
@@ -4822,6 +4842,14 @@ msgstr "Перезапустить оболочку рабочего стола.
 msgid "Restart? Activate Restart again to confirm."
 msgstr "Перезапустить? Нажмите «Перезапустить» ещё раз для подтверждения."
 
+#: src/files/app_model.zig
+msgid "Restore"
+msgstr "Восстановить"
+
+#: src/files/app_menu.zig
+msgid "Restore All"
+msgstr "Восстановить всё"
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore Layout"
 msgstr "Восстановить расположение"
@@ -4845,6 +4873,21 @@ msgstr "Восстановить масштаб рабочего стола."
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore the focused window's size."
 msgstr "Восстановить размер активного окна."
+
+#: src/files/app_dialogs.zig
+msgid "Restore the folder to change what is inside it"
+msgstr "Восстановите папку, чтобы изменить её содержимое"
+
+#: src/files/app_trash.zig
+msgid "Restored"
+msgstr "Восстановлено"
+
+#: src/files/app_trash.zig
+msgid "Restored {count} item"
+msgid_plural "Restored {count} items"
+msgstr[0] "Восстановлен {count} объект"
+msgstr[1] "Восстановлено {count} объекта"
+msgstr[2] "Восстановлено {count} объектов"
 
 #: src/calculator/model.zig
 msgid "Result is too large"
@@ -5398,9 +5441,21 @@ msgstr "Сокет"
 msgid "Soft"
 msgstr "Мягкий"
 
+#: src/files/app_trash.zig
+msgid "Some could not be restored"
+msgstr "Некоторые не удалось восстановить"
+
 #: src/control_center/sections/users.zig
 msgid "Some groups cannot be safely shown; group changes are disabled."
 msgstr "Некоторые группы нельзя безопасно показать; изменение групп отключено."
+
+#: src/files/app_trash.zig
+msgid "Some have no Trash information"
+msgstr "У некоторых нет сведений корзины"
+
+#: src/files/app_trash.zig
+msgid "Some kept under a new name"
+msgstr "Некоторые сохранены под новым именем"
 
 #: src/systemd/requests.zig
 msgid "Some startup times are unavailable."
@@ -6182,9 +6237,17 @@ msgstr "Преобразование"
 msgid "Trash"
 msgstr "Корзина"
 
+#: src/files/app_trash.zig
+msgid "Trash can't be edited. Restore items to change them."
+msgstr "Корзину нельзя изменять. Восстановите объекты, чтобы изменить их."
+
 #: src/files/app_fileops.zig
 msgid "Trash emptied"
 msgstr "Корзина очищена"
+
+#: src/files/app_trash.zig
+msgid "Trash is empty"
+msgstr "Корзина пуста"
 
 #: src/images/app_dialogs.zig
 msgid "Trash is unavailable: install gio to use it."
@@ -6389,6 +6452,10 @@ msgstr "Использовать 24-часовой формат"
 #: src/network/manager.zig
 msgid "Use 8–63 characters or a 64-digit hex key."
 msgstr "Используйте 8–63 символа или 64-значный шестнадцатеричный ключ."
+
+#: src/files/app_fileops.zig
+msgid "Use Move to Trash to put items in Trash"
+msgstr "Чтобы поместить объекты в корзину, используйте «Переместить в корзину»"
 
 #: src/images/app_dialogs.zig
 msgid "Use a .png filename to save a PNG copy."
@@ -7217,12 +7284,27 @@ msgstr[0] "{columns} × {rows}  ·  всего экранов: {n}"
 msgstr[1] "{columns} × {rows}  ·  всего экранов: {n}"
 msgstr[2] "{columns} × {rows}  ·  всего экранов: {n}"
 
+#: src/files/app_trash.zig
+msgid "{count} could not be restored"
+msgstr "Не восстановлено: {count}"
+
+#: src/files/app_trash.zig
+msgid "{count} has no Trash information"
+msgid_plural "{count} have no Trash information"
+msgstr[0] "{count} объект без сведений корзины"
+msgstr[1] "{count} объекта без сведений корзины"
+msgstr[2] "{count} объектов без сведений корзины"
+
 #: src/files/app_paint.zig
 msgid "{count} item selected  ·  {size}"
 msgid_plural "{count} items selected  ·  {size}"
 msgstr[0] "Выбран {count} объект  ·  {size}"
 msgstr[1] "Выбрано {count} объекта  ·  {size}"
 msgstr[2] "Выбрано {count} объектов  ·  {size}"
+
+#: src/files/app_trash.zig
+msgid "{count} kept under a new name"
+msgstr "Сохранено под новым именем: {count}"
 
 #: src/files/open_with.zig
 msgid "{count} selected file"

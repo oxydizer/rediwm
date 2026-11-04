@@ -53,12 +53,14 @@ pub const Row = struct {
     icon: ?IconId = null,
     selected: bool = false,
     separator: bool = false,
+    /// Shown faded, without a hover highlight; the owner ignores activation.
+    disabled: bool = false,
 };
 
 pub fn row(cr_any: *anyopaque, box: Rect, opts: Row, context: bool) void {
     const cr: *c.cairo_t = @ptrCast(cr_any);
     // Desktop menus use app surfaces without resolving the compositor's theme forApp.
-    const foreground = theme.global.app_fg orelse theme.global.window_fg;
+    const foreground_color = theme.global.app_fg orelse theme.global.window_fg;
     if (opts.separator) {
         ui.setSource(cr, theme.global.app_divider);
         c.cairo_set_line_width(cr, 1);
@@ -66,7 +68,9 @@ pub fn row(cr_any: *anyopaque, box: Rect, opts: Row, context: bool) void {
         c.cairo_line_to(cr, box.x + box.w - 6, box.y - 3.5);
         c.cairo_stroke(cr);
     }
-    if (opts.selected) {
+    var foreground = foreground_color;
+    if (opts.disabled) foreground[3] *= 0.4;
+    if (opts.selected and !opts.disabled) {
         rounded(cr, box, if (context) 7 else 4);
         ui.setSource(cr, if (context) theme.global.app_item_hover else theme.global.app_nav_selected);
         c.cairo_fill(cr);

@@ -43,7 +43,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
         const idx: usize = @intCast(index);
         const item = self.items.items[idx];
         const baseline = self.listBaseline();
-        const x: f64 = @floatFromInt(self.sidebarWidth() + 20 + @mod(index, cols) * cell);
+        const x: f64 = @floatFromInt(self.sidebarWidth() + self.itemLeftInset() + @mod(index, cols) * cell);
         const y: f64 = @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight() - self.scroll_y);
         const width: f64 = @floatFromInt(cell - 20);
         // Items sit on the list itself; only selection and keyboard focus
@@ -167,7 +167,7 @@ pub fn renderFilenameTip(self: *App, cr: *c.cairo_t) void {
     // Anchor to the item, so motion within it does not require a repaint.
     const row = @divTrunc(@as(i32, @intCast(index)), self.columns());
     const y = std.math.clamp(@as(f64, @floatFromInt(self.viewTop() + self.itemInset() + row * self.rowHeight() - self.scroll_y + self.cardHeight())), 4, @max(4, @as(f64, @floatFromInt(self.h - self.footerHeight())) - height));
-    const x: f64 = @floatFromInt(@min(self.sidebarWidth() + 20, self.w - @as(i32, @intFromFloat(width)) - 12));
+    const x: f64 = @floatFromInt(@min(self.sidebarWidth() + self.itemLeftInset(), self.w - @as(i32, @intFromFloat(width)) - 12));
     roundedRect(cr, x, y, width, height, 4);
     setSource(cr, ui_theme.global.app_divider);
     c.cairo_fill(cr);
@@ -180,8 +180,8 @@ pub fn itemIconRect(self: *App, index: i32) header.Rect {
     const cols = self.columns();
     const size: f64 = if (self.list_view) 24 else GridCard.icon_size;
     return .{
-        .x = @as(f64, @floatFromInt(self.sidebarWidth() + 20 + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) else GridCard.padding_x) - self.horizontalOffset(),
-        .y = @as(f64, @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight() - self.scroll_y)) + (if (self.compactList()) @as(f64, 3) else if (self.list_view) @as(f64, 6) else GridCard.padding_top),
+        .x = @as(f64, @floatFromInt(self.sidebarWidth() + self.itemLeftInset() + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) else GridCard.padding_x) - self.horizontalOffset(),
+        .y = @as(f64, @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight() - self.scroll_y)) + (if (self.list_view) @as(f64, @floatFromInt(self.cardHeight() - 24)) / 2 else GridCard.padding_top),
         .w = size,
         .h = size,
     };

@@ -24,6 +24,7 @@ pub fn hoverKey(self: *App) usize {
     const y = self.mouse_y;
     if (self.dialog) |dlg| {
         if (dlg.kind == .properties) return dlg.properties.?.hit(self.w, self.h, x, y);
+        if (dlg.kind == .trash_properties) return @intFromEnum(dlg.trash_properties.?.hit(self.w, self.h, x, y));
         if (dlg.kind == .open_with) return dlg.applications.?.hit(self.w, self.h, x, y);
         if (dlg.kind == .trash_confirm) return @intFromEnum(dlg.deletion.geometry(self.w, self.h).target(x, y));
         const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
@@ -115,6 +116,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     if (self.dialog) |*dlg| {
         const moved = switch (dlg.kind) {
             .properties => dlg.properties.?.motion(self.w, self.h, x, y),
+            .trash_properties => dlg.trash_properties.?.motion(self.w, self.h, x, y),
             .open_with => dlg.applications.?.motion(self.w, self.h, x, y),
             .trash_confirm => dlg.deletion.motion(self.w, self.h, x, y),
             else => false,
@@ -182,6 +184,7 @@ pub fn cancelDrag(self: *App) void {
     if (self.dialog) |*dlg| {
         dlg.deletion.placement.grab = null;
         if (dlg.properties) |*props| props.placement.grab = null;
+        if (dlg.trash_properties) |*props| props.placement.grab = null;
         if (dlg.applications) |*apps| apps.placement.grab = null;
     }
     self.column_resize = null;
@@ -212,7 +215,7 @@ pub fn updateSelectionBand(self: *App) void {
     const cols = self.columns();
     for (self.items.items, 0..) |*item, i| {
         const index: i32 = @intCast(i);
-        const x: f64 = @floatFromInt(self.sidebarWidth() + 20 + @mod(index, cols) * self.cellWidth());
+        const x: f64 = @floatFromInt(self.sidebarWidth() + self.itemLeftInset() + @mod(index, cols) * self.cellWidth());
         const y: f64 = @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight());
         const hit = rect.x < x + @as(f64, @floatFromInt(self.cellWidth() - 20)) and rect.x + rect.w > x and
             rect.y < y + @as(f64, @floatFromInt(self.cardHeight())) and rect.y + rect.h > y;
@@ -284,6 +287,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         if (self.dialog) |*dlg| {
             const consumed = switch (dlg.kind) {
                 .properties => dlg.properties.?.pointerButton(self.w, self.h, self.mouse_x, self.mouse_y, pressed),
+                .trash_properties => dlg.trash_properties.?.pointerButton(self.w, self.h, self.mouse_x, self.mouse_y, pressed),
                 .open_with => dlg.applications.?.pointerButton(self.w, self.h, self.mouse_x, self.mouse_y, pressed),
                 .trash_confirm => dlg.deletion.pointerButton(self.w, self.h, self.mouse_x, self.mouse_y, pressed),
                 else => false,
@@ -354,6 +358,11 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         if (dlg.kind == .properties) {
             const action = self.dialog.?.properties.?.click(self.w, self.h, x, y);
             self.propertiesAction(action);
+            return;
+        }
+        if (dlg.kind == .trash_properties) {
+            const action = self.dialog.?.trash_properties.?.click(self.w, self.h, x, y);
+            self.trashPropertiesAction(action);
             return;
         }
         if (dlg.kind == .open_with) {

@@ -98,7 +98,7 @@ pub fn menuPadding(_: *App) usize {
 pub fn menuSeparatorBefore(self: *App, row: usize) bool {
     return switch (self.menu orelse return false) {
         .file => switch (self.fileActions()[row]) {
-            .cut, .extract, .properties => true,
+            .cut, .extract, .restore, .properties => true,
             else => false,
         },
         .background => row == 2,
@@ -139,8 +139,32 @@ pub fn menuIcon(self: *App, row: usize) ?IconId {
     // Reuse the shell glyphs until dedicated file-action artwork is available.
     return switch (self.menu orelse return null) {
         .file => self.fileActions()[row].icon(),
-        .background => if (self.history.archive_len > 0 or self.isRecent()) .refresh else ([_]IconId{ .plus, .edit, .paste, .refresh })[row],
+        .background => switch (self.backgroundMenu()) {
+            .refresh_only => .refresh,
+            .trash => ([_]IconId{ .trash, .undo, .refresh })[row],
+            .normal => ([_]IconId{ .plus, .edit, .paste, .refresh })[row],
+        },
         else => null,
+    };
+}
+
+/// What the empty-space menu offers: Recent and archives only refresh, the
+/// Trash view manages its contents, other folders create and paste.
+pub fn backgroundMenu(self: *App) enum { normal, refresh_only, trash } {
+    if (self.history.archive_len > 0 or self.isRecent()) return .refresh_only;
+    return switch (self.trashRelation()) {
+        .none => .normal,
+        .root => .trash,
+        .inside => .refresh_only,
+    };
+}
+
+/// Restore stays visible but faded when no selected entry has the metadata
+/// to say where it belongs.
+pub fn menuDisabled(self: *App, row: usize) bool {
+    return switch (self.menu orelse return false) {
+        .file => row < self.fileActions().len and self.fileActions()[row] == .restore and !self.trash_restorable,
+        else => false,
     };
 }
 
@@ -205,6 +229,14 @@ pub fn fileActions(self: *App) []const FileAction {
     }
     if (only_transfers) return &.{.open};
     if (self.history.archive_len > 0) return &.{.open};
+    // Entries here are already deleted: put back or remove for good, but never
+    // cut, rename, paste or trash again. Folders inside a trashed folder have
+    // no metadata, so they only open, copy and show properties.
+    switch (self.trashRelation()) {
+        .root => return &.{ .open, .copy, .restore, .delete_permanently, .properties },
+        .inside => return &.{ .open, .copy, .properties },
+        .none => {},
+    }
     if (self.isRecent()) {
         if (self.selectedAppImage() != null) return &.{ .open, .open_with, .add_application, .cut, .copy, .rename, .trash, .properties };
         if (self.selectedArchive() != null) return &.{ .open, .open_with, .extract, .extract_to, .cut, .copy, .rename, .trash, .properties };
@@ -258,7 +290,11 @@ pub fn menuLabels(self: *App) []const []const u8 {
             for (actions, 0..) |action, i| self.place_menu_labels[i] = action.label();
             return self.place_menu_labels[0..actions.len];
         },
-        .background => if (self.history.archive_len > 0 or self.isRecent()) &.{i18n.msg("Refresh")} else &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Paste"), i18n.msg("Refresh") },
+        .background => switch (self.backgroundMenu()) {
+            .refresh_only => &.{i18n.msg("Refresh")},
+            .trash => &.{ i18n.msg("Empty Trash…"), i18n.msg("Restore All"), i18n.msg("Refresh") },
+            .normal => &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Paste"), i18n.msg("Refresh") },
+        },
         .chooser_filter => return self.chooser_filter_labels.items,
     };
     for (messages, 0..) |message, i| self.menu_label_text[i] = message.get();
@@ -267,6 +303,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
 
 pub fn openMenu(self: *App, kind: MenuKind, x: f64, y: f64) void {
     self.menu = kind;
+    if (kind == .file) self.refreshTrashRestorable();
     const height = self.menuHeight();
     self.menu_x = std.math.clamp(x, 4, @max(4, @as(f64, @floatFromInt(self.w)) - self.menuWidth() - 4));
     self.menu_y = std.math.clamp(y, 4, @max(4, @as(f64, @floatFromInt(self.h)) - height - 4));
@@ -286,6 +323,10 @@ pub fn runMenu(self: *App, row: usize) void {
     const kind = self.menu orelse return;
     const place_action: ?PlaceAction = if ((kind == .sidebar or kind == .device) and row < self.placeActions().len) self.placeActions()[row] else null;
     const file_action: ?FileAction = if (kind == .file and row < self.fileActions().len) self.fileActions()[row] else null;
+    if (file_action == .restore and !self.trash_restorable) {
+        self.setStatusNotice(tr("Original location unknown: these items have no Trash information"), true);
+        return;
+    }
     self.menu = null;
     switch (kind) {
         .sidebar, .device => if (place_action) |action| switch (action) {
@@ -303,7 +344,12 @@ pub fn runMenu(self: *App, row: usize) void {
             },
             .properties => {
                 var buf: [4096]u8 = undefined;
-                if (self.placePath(self.menu_place, &buf)) |path| self.openProperties(path, null);
+                // The Trash (built-in row 1) is not a folder with permissions: it has its own window.
+                const trash_row = switch (self.rowKind(self.menu_place)) {
+                    .builtin => |index| index == 1,
+                    else => false,
+                };
+                if (trash_row) self.openTrashProperties() else if (self.placePath(self.menu_place, &buf)) |path| self.openProperties(path, null);
             },
             .mount => self.activateDevice(self.menu_place - self.deviceBase()),
             .eject => self.ejectDevice(self.menu_place - self.deviceBase()),
@@ -351,16 +397,26 @@ pub fn runMenu(self: *App, row: usize) void {
             .copy => self.copySelected(),
             .paste => self.paste_requested = true,
             .rename => self.openRenameDialog(),
-            .trash => self.openTrashConfirmDialog(),
+            .trash, .delete_permanently => self.openTrashConfirmDialog(),
+            .restore => self.restoreSelected(),
             .size => self.calculateSizeSelected(),
             .properties => self.openSelectedProperties(),
         },
-        .background => if (self.history.archive_len > 0 or self.isRecent()) self.refresh() else switch (row) {
-            0 => self.openNewFolderDialog(),
-            1 => self.openNewFileDialog(),
-            2 => self.paste_requested = true,
-            3 => self.refresh(),
-            else => {},
+        .background => switch (self.backgroundMenu()) {
+            .refresh_only => self.refresh(),
+            .trash => switch (row) {
+                0 => self.openEmptyTrashDialog(),
+                1 => self.restoreAll(),
+                2 => self.refresh(),
+                else => {},
+            },
+            .normal => switch (row) {
+                0 => self.openNewFolderDialog(),
+                1 => self.openNewFileDialog(),
+                2 => self.paste_requested = true,
+                3 => self.refresh(),
+                else => {},
+            },
         },
     }
     self.invalidate();
@@ -382,6 +438,7 @@ pub fn renderMenu(self: *App, cr: *c.cairo_t) void {
             .hint = if (context) self.menuHint(i) else null,
             .selected = self.menu_selected == i,
             .separator = self.menuSeparatorBefore(i),
+            .disabled = self.menuDisabled(i),
         }, context);
     }
 }

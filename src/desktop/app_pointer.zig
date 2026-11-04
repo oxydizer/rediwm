@@ -29,6 +29,17 @@ pub fn pointerMotion(self: *App, x: f64, y: f64) void {
         self.y = y;
         return;
     }
+    if (self.edit == .trash_properties) {
+        if (self.trash_card) |*card| {
+            const w = self.geometry.w;
+            const h = self.geometry.h - self.geometry.bottom;
+            const old_hit = card.hit(w, h, self.x, self.y);
+            if (card.motion(w, h, x, y) or old_hit != card.hit(w, h, x, y)) self.invalidate();
+        }
+        self.x = x;
+        self.y = y;
+        return;
+    }
     if (self.edit == .trash) {
         if (self.deletion.motion(self.geometry.w, self.geometry.h - self.geometry.bottom, x, y)) self.invalidate();
         const g = self.deletion.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
@@ -82,6 +93,7 @@ pub fn pointerMotion(self: *App, x: f64, y: f64) void {
 
 pub fn leave(self: *App) void {
     self.deletion.placement.grab = null;
+    if (self.trash_card) |*card| card.placement.grab = null;
     if (self.applications) |*picker| picker.placement.grab = null;
     if (self.hover != null) {
         self.damageIcon(self.hover.?);
@@ -100,7 +112,7 @@ pub fn deselect(self: *App) void {
 
 pub fn button(self: *App, button_code: u32, pressed: bool) void {
     const was_menu = self.menu;
-    const was_delete_dialog = self.edit == .trash;
+    const was_delete_dialog = self.edit == .trash or self.edit == .trash_properties;
     const was_renaming = self.edit == .rename;
     const menu_hit = was_menu and self.menu_layout.hit(self.x, self.y) != null;
     if (pressed) self.endLaunch();
@@ -125,6 +137,15 @@ pub fn pointerButton(self: *App, button_code: u32, pressed: bool) void {
                 }
             }
         }
+        return;
+    }
+    if (self.edit == .trash_properties) {
+        if (button_code == 272) if (self.trash_card) |*card| {
+            const w = self.geometry.w;
+            const h = self.geometry.h - self.geometry.bottom;
+            if (card.pointerButton(w, h, self.x, self.y, pressed)) return;
+            if (pressed) self.trashPropertiesAction(card.click(w, h, self.x, self.y));
+        };
         return;
     }
     if (self.edit == .trash and button_code == 272 and self.deletion.pointerButton(self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, pressed)) return;

@@ -24,7 +24,7 @@ pub fn keyRepeats(self: *const App, sym: u32, utf8: []const u8) bool {
         c.XKB_KEY_BackSpace, c.XKB_KEY_Delete, c.XKB_KEY_Left, c.XKB_KEY_Right => true,
         else => false,
     }, utf8);
-    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and dlg.kind != .terminal_close and typing;
+    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and dlg.kind != .terminal_close and typing;
     if (self.menu != null) return vertical;
     if (self.focus == .search or self.focus == .location_bar or self.focus == .filename) return typing;
     return vertical or sym == c.XKB_KEY_Left or sym == c.XKB_KEY_Right or
