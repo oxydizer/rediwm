@@ -11,6 +11,53 @@ const host_mod = @import("host.zig");
 const context_menu = @import("ui").context_menu;
 const Menu = @import("menu.zig").Menu;
 const nowMs = @import("app_draw.zig").nowMs;
+const ui_theme = @import("ui").theme;
+const widget_button = @import("ui").widgets.button;
+
+fn proximityDistance(self: *App, index: usize, x: f64, y: f64) f32 {
+    const r = self.iconRect(index);
+    const sample = widget_button.sampleProximity(
+        .{
+            .x = @floatFromInt(r.x),
+            .y = @floatFromInt(r.y),
+            .w = @floatFromInt(r.w),
+            .h = @floatFromInt(r.h),
+        },
+        @floatCast(x),
+        @floatCast(y),
+        .{
+            .x = 0,
+            .y = 0,
+            .w = @floatFromInt(self.geometry.w),
+            .h = @floatFromInt(self.geometry.h),
+        },
+    );
+    return sample.distance;
+}
+
+fn damageProximityAt(self: *App, x: f64, y: f64) void {
+    const t = ui_theme.global;
+    if (!widget_button.proximityGlowVisible(t)) return;
+
+    for (self.icons.items, 0..) |_, i| {
+        if (self.iconRect(i).contains(x, y)) continue;
+        if (proximityDistance(self, i, x, y) < t.border_glow_reach) {
+            self.damageIcon(i);
+        }
+    }
+}
+
+/// Keep pointer-dependent desktop lighting current even while an overlay
+/// handles the pointer event instead of the desktop.
+fn updateProximityPointer(self: *App, x: f64, y: f64) void {
+    const moved = self.x != x or self.y != y;
+    const newly_present = !self.pointer_present;
+    if (moved and self.pointer_present) damageProximityAt(self, self.x, self.y);
+    self.x = x;
+    self.y = y;
+    self.pointer_present = true;
+    if (moved or newly_present) damageProximityAt(self, x, y);
+}
 
 pub fn motion(self: *App, x: f64, y: f64) void {
     self.pointerMotion(x, y);
@@ -25,8 +72,7 @@ pub fn pointerMotion(self: *App, x: f64, y: f64) void {
             const old_hit = picker.hit(w, h, self.x, self.y);
             if (picker.motion(w, h, x, y) or old_hit != picker.hit(w, h, x, y)) self.invalidate();
         }
-        self.x = x;
-        self.y = y;
+        updateProximityPointer(self, x, y);
         return;
     }
     if (self.edit == .trash_properties) {
@@ -36,23 +82,20 @@ pub fn pointerMotion(self: *App, x: f64, y: f64) void {
             const old_hit = card.hit(w, h, self.x, self.y);
             if (card.motion(w, h, x, y) or old_hit != card.hit(w, h, x, y)) self.invalidate();
         }
-        self.x = x;
-        self.y = y;
+        updateProximityPointer(self, x, y);
         return;
     }
     if (self.edit == .trash) {
         if (self.deletion.motion(self.geometry.w, self.geometry.h - self.geometry.bottom, x, y)) self.invalidate();
         const g = self.deletion.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
         const changed = g.target(self.x, self.y) != g.target(x, y);
-        self.x = x;
-        self.y = y;
+        updateProximityPointer(self, x, y);
         if (changed) self.invalidate();
         return;
     }
     const moved = self.x != x or self.y != y;
     if (moved) self.damageDrag();
-    self.x = x;
-    self.y = y;
+    updateProximityPointer(self, x, y);
     const hover = if (self.edit == .rename) null else self.hit(x, y);
     if (self.hover != hover) {
         if (self.hover) |i| self.damageIcon(i);
@@ -92,6 +135,8 @@ pub fn pointerMotion(self: *App, x: f64, y: f64) void {
 }
 
 pub fn leave(self: *App) void {
+    if (self.pointer_present) damageProximityAt(self, self.x, self.y);
+    self.pointer_present = false;
     self.deletion.placement.grab = null;
     if (self.trash_card) |*card| card.placement.grab = null;
     if (self.applications) |*picker| picker.placement.grab = null;

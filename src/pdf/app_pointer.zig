@@ -4,6 +4,7 @@ const std = @import("std");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
+const Rect = @import("app.zig").Rect;
 const layout = @import("layout.zig");
 const selection = @import("selection.zig");
 const scrollbar = @import("ui").widgets.scrollbar;
@@ -73,6 +74,136 @@ fn toolbarProximityChanged(
     return false;
 }
 
+fn contentRectProximityChanged(
+    rect: Rect,
+    old_x: f64,
+    old_y: f64,
+    new_x: f64,
+    new_y: f64,
+) bool {
+    const box = button_widget.Rect{
+        .x = @floatCast(rect.x),
+        .y = @floatCast(rect.y),
+        .w = @floatCast(rect.w),
+        .h = @floatCast(rect.h),
+    };
+    const before = button_widget.sampleProximity(
+        box, @floatCast(old_x), @floatCast(old_y), box,
+    );
+    const after = button_widget.sampleProximity(
+        box, @floatCast(new_x), @floatCast(new_y), box,
+    );
+    return @min(before.distance, after.distance) <= ui_theme.global.border_glow_reach;
+}
+
+fn contentProximityChanged(
+    self: *const App,
+    old_x: f64,
+    old_y: f64,
+    new_x: f64,
+    new_y: f64,
+) bool {
+    if (old_x == new_x and old_y == new_y) return false;
+    if (!button_widget.proximityGlowVisible(ui_theme.global)) return false;
+
+    if (self.dialog != .none) {
+        const dw: f64 = 440;
+        const dh: f64 = 190;
+        const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2.0;
+        const dy = (@as(f64, @floatFromInt(self.h)) - dh) / 2.0;
+        if (self.dialog == .password and contentRectProximityChanged(
+            .{ .x = dx + 24, .y = dy + 80, .w = dw - 48, .h = 44 },
+            old_x, old_y, new_x, new_y,
+        )) return true;
+        if (contentRectProximityChanged(
+            .{ .x = dx + dw - 180, .y = dy + dh - 46, .w = 80, .h = 32 },
+            old_x, old_y, new_x, new_y,
+        )) return true;
+        return contentRectProximityChanged(
+            .{ .x = dx + dw - 90, .y = dy + dh - 46, .w = 70, .h = 32 },
+            old_x, old_y, new_x, new_y,
+        );
+    }
+
+    if (self.sidebar_open) {
+        const sb = self.sidebarRect();
+        const tab_w = sb.w / 2.0;
+        if (contentRectProximityChanged(
+            .{ .x = sb.x + 4, .y = sb.y + 4, .w = tab_w - 6, .h = 24 },
+            old_x, old_y, new_x, new_y,
+        )) return true;
+        if (contentRectProximityChanged(
+            .{ .x = sb.x + tab_w + 2, .y = sb.y + 4, .w = tab_w - 6, .h = 24 },
+            old_x, old_y, new_x, new_y,
+        )) return true;
+
+        if (self.sidebar_tab == .pages and self.sidebar_layout != null) {
+            const sbl = self.sidebar_layout.?;
+            const visible = layout.findVisibleSidebarCards(
+                sbl.cards, self.sidebar_scroll_y, sb.h - 36.0,
+            );
+            if (visible) |range| {
+                for (range.start_index..range.end_index + 1) |i| {
+                    const card = sbl.cards[i];
+                    if (contentRectProximityChanged(
+                        .{
+                            .x = sb.x + 16,
+                            .y = sb.y + 36 + card.y_offset - self.sidebar_scroll_y,
+                            .w = self.sidebar_w - 32,
+                            .h = card.card_h,
+                        },
+                        old_x, old_y, new_x, new_y,
+                    )) return true;
+                }
+            }
+        } else if (self.sidebar_tab == .outline and self.outline != null) {
+            const row_h = 28.0;
+            for (self.outline.?, 0..) |_, idx| {
+                const row_y = sb.y + 40.0 +
+                    @as(f64, @floatFromInt(idx)) * row_h -
+                    self.sidebar_scroll_y;
+                if (row_y + row_h < sb.y + 36 or row_y > sb.y + sb.h) continue;
+                if (contentRectProximityChanged(
+                    .{ .x = sb.x + 4, .y = row_y, .w = sb.w - 8, .h = row_h },
+                    old_x, old_y, new_x, new_y,
+                )) return true;
+            }
+        }
+    }
+
+    // Page-number entry is a content redraw, not a toolbar-button redraw.
+    if (contentRectProximityChanged(
+        .{ .x = 126, .y = 8, .w = 48, .h = 28 },
+        old_x, old_y, new_x, new_y,
+    )) return true;
+
+    if (self.search_open) {
+        const sr = self.searchBarRect();
+        if (contentRectProximityChanged(
+            .{ .x = sr.x + 10, .y = sr.y, .w = sr.w - 110, .h = sr.h },
+            old_x, old_y, new_x, new_y,
+        )) return true;
+        const close_x = sr.x + sr.w - 28;
+        const next_x = close_x - 28;
+        const prev_x = next_x - 28;
+        for ([_]f64{ prev_x, next_x, close_x }) |x| {
+            if (contentRectProximityChanged(
+                .{ .x = x, .y = sr.y, .w = 28, .h = sr.h },
+                old_x, old_y, new_x, new_y,
+            )) return true;
+        }
+    }
+
+    if (self.hbar()) |bar| {
+        const track = bar.track;
+        if (contentRectProximityChanged(
+            .{ .x = track.x, .y = track.y, .w = track.w, .h = track.h },
+            old_x, old_y, new_x, new_y,
+        )) return true;
+    }
+    return false;
+}
+
 pub fn handleMotion(self: *App, px: f64, py: f64) void {
     const old_x = self.px;
     const old_y = self.py;
@@ -80,6 +211,7 @@ pub fn handleMotion(self: *App, px: f64, py: f64) void {
     self.py = py;
 
     if (toolbarProximityChanged(self, old_x, old_y, px, py)) self.toolbar_dirty = true;
+    if (contentProximityChanged(self, old_x, old_y, px, py)) self.dirty = true;
 
     if (self.hbar_drag.active) {
         if (self.hbar()) |bar| self.scroll_x = self.hbar_drag.offsetAt(bar, @floatCast(px), @floatCast(py));
@@ -152,45 +284,53 @@ pub fn handleMotion(self: *App, px: f64, py: f64) void {
         }
     }
 
-    // Sidebar hover detection
+    // Sidebar hover detection. Only real cards and rows can remain hovered;
+    // moving over tabs or empty space clears the previous item.
     const sb = self.sidebarRect();
+    var found_thumb: ?usize = null;
+    var found_outline: ?usize = null;
     if (self.sidebar_open and sb.contains(px, py)) {
-        if (self.sidebar_tab == .pages and self.sidebar_layout != null) {
+        if (self.sidebar_tab == .pages and self.sidebar_layout != null and
+            px >= sb.x + 16 and px <= sb.x + self.sidebar_w - 16 and
+            py >= sb.y + 36)
+        {
             const sbl = self.sidebar_layout.?;
-            const vis_sb = layout.findVisibleSidebarCards(sbl.cards, self.sidebar_scroll_y, sb.h);
-            var found: ?usize = null;
-            if (vis_sb) |vsb| {
-                for (vsb.start_index..vsb.end_index + 1) |i| {
+            const visible = layout.findVisibleSidebarCards(
+                sbl.cards, self.sidebar_scroll_y, sb.h - 36.0,
+            );
+            if (visible) |range| {
+                for (range.start_index..range.end_index + 1) |i| {
                     const card = sbl.cards[i];
-                    const card_y = sb.y + card.y_offset - self.sidebar_scroll_y;
+                    const card_y = sb.y + 36.0 + card.y_offset - self.sidebar_scroll_y;
                     if (py >= card_y and py <= card_y + card.card_h) {
-                        found = i;
+                        found_thumb = i;
                         break;
                     }
                 }
             }
-            if (self.hover_thumb != found) {
-                self.hover_thumb = found;
-                self.dirty = true;
-            }
-        } else if (self.sidebar_tab == .outline and self.outline != null) {
-            const row_h = 28.0;
+        } else if (self.sidebar_tab == .outline and self.outline != null and
+            py >= sb.y + 40.0)
+        {
             const rel_y = py - (sb.y + 40.0) + self.sidebar_scroll_y;
-            if (rel_y >= 0) {
-                const idx: usize = @intFromFloat(rel_y / row_h);
-                if (idx < self.outline.?.len and self.hover_outline != idx) {
-                    self.hover_outline = idx;
-                    self.dirty = true;
+            const idx: usize = @intFromFloat(rel_y / 28.0);
+            if (idx < self.outline.?.len) {
+                const row_y = sb.y + 40.0 +
+                    @as(f64, @floatFromInt(idx)) * 28.0 -
+                    self.sidebar_scroll_y;
+                if (py >= row_y and py <= row_y + 28.0 and
+                    px >= sb.x + 4 and px <= sb.x + sb.w - 4)
+                {
+                    found_outline = idx;
                 }
             }
         }
-    } else {
-        if (self.hover_thumb != null or self.hover_outline != null) {
-            self.hover_thumb = null;
-            self.hover_outline = null;
-            self.dirty = true;
-        }
     }
+    if (self.hover_thumb != found_thumb or self.hover_outline != found_outline) {
+        self.hover_thumb = found_thumb;
+        self.hover_outline = found_outline;
+        self.dirty = true;
+    }
+
 }
 
 pub fn handleButton(self: *App, button: u32, pressed: bool) void {

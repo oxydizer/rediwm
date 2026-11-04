@@ -61,6 +61,7 @@ pub const App = struct {
     geometry: grid.Grid = .{ .w = 1280, .h = 720 },
     x: f64 = 0,
     y: f64 = 0,
+    pointer_present: bool = false,
     down_x: f64 = 0,
     down_y: f64 = 0,
     down_at: i64 = 0,

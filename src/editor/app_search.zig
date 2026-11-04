@@ -183,6 +183,19 @@ pub fn searchCaret(self: *App, cr: *c.cairo_t) @import("caret.zig").Rect {
 fn paintField(self: *App, cr: *c.cairo_t, control: Control, editor: *Editor, placeholder: []const u8) void {
     const box = self.searchBox(control);
     const focused = self.search_focus == control;
+
+    // Paint the shared proximity glow beneath the field frame, preserving
+    // the focused border and all existing text/caret rendering.
+    if (self.close_tab == null and !self.menu_open) {
+        ui.drawProximityGlow(
+            @ptrCast(cr),
+            .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) },
+            field.metrics(.md, theme.global).radius,
+            .{ .x = self.px, .y = self.py },
+            null,
+        );
+    }
+
     if (ui.Layer.begin(cr, .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) })) |l| {
         var layer = l;
         _ = field.paintFrame(&layer.renderer, layer.local(), .{}, .{ .focused = focused });

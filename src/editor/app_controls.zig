@@ -71,6 +71,18 @@ fn nearestButton(self: *App, x: f64, y: f64) f32 {
         nearest = @min(nearest, sample.distance);
     }
     if (self.find_open) {
+        // Search fields use the same proximity reach as their adjacent buttons.
+        for ([_]SearchControl{ .query, .replacement }) |control| {
+            if (control == .replacement and !self.replace_open) continue;
+            const box = self.searchBox(control);
+            const sample = button.sampleProximity(
+                .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) },
+                @floatCast(x), @floatCast(y),
+                .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) },
+            );
+            nearest = @min(nearest, sample.distance);
+        }
+
         const controls = [_]SearchControl{ .next, .toggle, .close, .replace, .replace_all };
         for (controls) |control| {
             if (!self.replace_open and (control == .replace or control == .replace_all)) continue;

@@ -81,6 +81,83 @@ fn toolbarProximityChanged(
     return false;
 }
 
+fn contentRectProximityChanged(
+    rect: Rect,
+    old_x: f64,
+    old_y: f64,
+    new_x: f64,
+    new_y: f64,
+) bool {
+    const box = button_widget.Rect{
+        .x = @floatCast(rect.x),
+        .y = @floatCast(rect.y),
+        .w = @floatCast(rect.w),
+        .h = @floatCast(rect.h),
+    };
+    const before = button_widget.sampleProximity(
+        box,
+        @floatCast(old_x),
+        @floatCast(old_y),
+        box,
+    );
+    const after = button_widget.sampleProximity(
+        box,
+        @floatCast(new_x),
+        @floatCast(new_y),
+        box,
+    );
+    return @min(before.distance, after.distance) <= ui_theme.global.border_glow_reach;
+}
+
+fn contentProximityChanged(
+    self: *const App,
+    old_x: f64,
+    old_y: f64,
+    new_x: f64,
+    new_y: f64,
+) bool {
+    if (old_x == new_x and old_y == new_y) return false;
+    if (!button_widget.proximityGlowVisible(ui_theme.global)) return false;
+
+    if (self.dialog == .save) {
+        if (contentRectProximityChanged(
+            self.filenameRect(), old_x, old_y, new_x, new_y,
+        )) return true;
+    }
+    if (self.dialog != .none and self.dialog != .trash) {
+        const button_count: usize = if (self.dialog == .discard) 3 else 2;
+        for (0..button_count) |index| {
+            if (contentRectProximityChanged(
+                self.dialogButton(index), old_x, old_y, new_x, new_y,
+            )) return true;
+        }
+        return false;
+    }
+    if (self.dialog != .none or self.operation != null) return false;
+
+    // Only thumbnails in the currently visible filmstrip participate.
+    for (0..self.thumbCount()) |slot| {
+        if (contentRectProximityChanged(
+            self.thumbRect(slot), old_x, old_y, new_x, new_y,
+        )) return true;
+    }
+
+    if (self.stripBar()) |bar| {
+        const track = bar.track;
+        if (contentRectProximityChanged(
+            .{
+                .x = track.x,
+                .y = track.y,
+                .w = track.w,
+                .h = track.h,
+            },
+            old_x, old_y, new_x, new_y,
+        )) return true;
+    }
+
+    return false;
+}
+
 pub fn hit(self: *const App, x: f64, y: f64) ?Action {
     inline for (std.meta.tags(Action)) |action| if (self.buttonRect(action).contains(x, y)) return action;
     return null;
@@ -231,6 +308,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
         self.dirty = true;
     }
     if (toolbarProximityChanged(self, old_x, old_y, x, y)) self.toolbar_dirty = true;
+    if (contentProximityChanged(self, old_x, old_y, x, y)) self.dirty = true;
     if (self.operation != null or (self.dialog != .none and !self.filename_drag)) {
         self.px = x;
         self.py = y;
