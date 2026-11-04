@@ -238,12 +238,32 @@ pub fn drawDialog(self: *App, cr: *c.cairo_t) void {
         for (0..n) |i| {
             const b = self.dialogButton(i);
             const label = if (i == 0) tr("Cancel") else if (self.dialog == .save or i == 2) tr("Save as…") else if (self.dialog == .trash) tr("Move to Trash") else tr("Discard");
+            const proximity = ui_button.sampleProximity(
+                .{ .x = @floatCast(b.x), .y = @floatCast(b.y), .w = @floatCast(b.w), .h = @floatCast(b.h) },
+                @floatCast(self.px), @floatCast(self.py),
+                .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) },
+            );
             ui_button.paint(lr, .{ .x = @floatCast(b.x - r.x), .y = @floatCast(b.y - r.y), .w = @floatCast(b.w), .h = @floatCast(b.h) }, .{
                 .variant = if (i == 0) .secondary else .primary,
                 .label = label,
-            }, .{ .pointer = if (b.contains(self.px, self.py)) .hover else .idle });
+            }, .{
+                .pointer = if (b.contains(self.px, self.py)) .hover else .idle,
+                .proximity_distance = proximity.distance,
+                .proximity_x = proximity.x,
+                .proximity_y = proximity.y,
+            });
         }
         layer.finish();
+    }
+    if (self.dialog == .save) {
+        const f = self.filenameRect();
+        shell_ui.drawProximityGlow(
+            cr,
+            shellRect(f),
+            7,
+            .{ .x = self.px, .y = self.py },
+            shellRect(r),
+        );
     }
     setSource(cr, t.fg);
     const title = switch (self.dialog) {

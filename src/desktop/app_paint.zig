@@ -18,6 +18,7 @@ const nowMs = @import("app_draw.zig").nowMs;
 const rounded = @import("app_draw.zig").rounded;
 const IconRaster = @import("app_draw.zig").IconRaster;
 const label = @import("app_draw.zig").label;
+const button = @import("ui").widgets.button;
 
 /// The selection band rasterized with its own bounds as the only clip. A
 /// repair can split the band's corners across several rectangular clips,
@@ -118,6 +119,27 @@ pub fn render(self: *App, cr: *c.cairo_t, damage: *const Damage, now: i64, conte
     c.cairo_paint(cr);
     c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
     if (self.wallpaper) |im| @import("wallpaper.zig").render(im, cr, self.geometry.w, self.geometry.h);
+    // Keep pointer-dependent lighting out of IconRaster: the cached icon,
+    // label and hover/selection decoration remain independent of pointer motion.
+    if (self.pointer_present and button.proximityGlowVisible(appearance_theme.global)) {
+        for (self.icons.items, 0..) |_, i| {
+            const r = self.iconRect(i);
+            if (r.contains(self.x, self.y) or !damage.intersects(r)) continue;
+            shell_cairo.drawProximityGlow(
+                @ptrCast(cr),
+                .{
+                    .x = @floatFromInt(r.x),
+                    .y = @floatFromInt(r.y),
+                    .w = @floatFromInt(r.w),
+                    .h = @floatFromInt(r.h),
+                },
+                8,
+                .{ .x = self.x, .y = self.y },
+                null,
+            );
+        }
+    }
+
     for (self.icons.items, 0..) |*ic, i| {
         const r = self.iconRect(i);
         if (!damage.intersects(r)) continue;

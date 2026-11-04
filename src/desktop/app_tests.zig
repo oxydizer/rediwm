@@ -82,6 +82,37 @@ test "desktop pointer motion repaints only when visible state changes" {
     try std.testing.expect(app.dirty);
 }
 
+test "desktop icon-card proximity damages only nearby cards and clears on leave" {
+    var icons = [_]Icon{
+        .{ .item = .{ .path = "", .name = "Alpha", .icon = null }, .cell = .{}, .born = 0 },
+    };
+    var app = App{
+        .worker = undefined,
+        .geometry = .{ .w = 400, .h = 240 },
+        .icons = .fromOwnedSlice(&icons),
+        .dirty = false,
+    };
+
+    // Outside the card's hit box, but within its proximity reach.
+    app.motion(250, 50);
+    try std.testing.expect(app.dirty);
+    try std.testing.expectEqual(@as(?usize, null), app.hover);
+    try std.testing.expect(app.pointer_present);
+
+    app.presented();
+    app.motion(249, 50);
+    try std.testing.expect(app.dirty);
+
+    app.presented();
+    app.leave();
+    try std.testing.expect(app.dirty);
+    try std.testing.expect(!app.pointer_present);
+
+    app.presented();
+    app.leave();
+    try std.testing.expect(!app.dirty);
+}
+
 test "desktop motion keeps menu highlights and moving selections live" {
     var app = App{ .worker = undefined, .menu = true, .dirty = false };
     app.menu_layout.layout(100, 100, 3, false);

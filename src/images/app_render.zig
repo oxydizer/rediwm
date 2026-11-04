@@ -106,6 +106,15 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
             }
         }
         c.cairo_restore(cr);
+        // Keep the glow outside the card's rounded image clip, but inside the
+        // visible filmstrip viewport.
+        shell_ui.drawProximityGlow(
+            cr,
+            shellRect(r),
+            7,
+            .{ .x = self.px, .y = self.py },
+            .{ .x = 16, .y = @floatCast(@as(f64, @floatFromInt(self.h - 32)) - self.thumbHeight()), .w = @floatFromInt(self.w - 32), .h = @floatCast(self.thumbHeight() + 8.0) },
+        );
         rounded(cr, r, 7);
         c.cairo_set_line_width(cr, 1);
         setSource(cr, t.app_item_border);
@@ -122,7 +131,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
         setSource(cr, color);
         c.cairo_stroke(cr);
     }
-    if (self.stripBar()) |bar| shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.strip_appearance, ui_theme.global.scrollbar_width, ui_theme.shellPalette()));
+    if (self.stripBar()) |bar| shell_ui.drawScrollbarAt(cr, scrollbar.look(bar, self.strip_appearance, ui_theme.global.scrollbar_width, ui_theme.shellPalette()), .{ .x = self.px, .y = self.py });
     var status: [160]u8 = undefined;
     const text = if (self.image) |im| std.fmt.bufPrint(&status, "{d} × {d}   ·   {d:.0}%   ·   {d} / {d}", .{ im.w, im.h, self.view.scale(box, @floatFromInt(im.w), @floatFromInt(im.h)) * self.density * 100, self.position() + 1, self.count() }) catch "" else tr("Space / Esc to close  ·  Arrow keys to browse");
     setSource(cr, t.window_fg);
