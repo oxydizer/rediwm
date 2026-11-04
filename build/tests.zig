@@ -82,7 +82,8 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     addGlass(b, ui_tests_module, false);
     ui_tests_module.addCSourceFile(.{ .file = b.path("src/gpu_timing.c"), .flags = &.{"-std=c11"} });
     const ui_tests = b.addTest(.{ .root_module = ui_tests_module });
-    const run_ui_tests = b.addRunArtifact(ui_tests);
+    const run_ui_tests = b.addSystemCommand(&.{"env"});
+    run_ui_tests.addArtifactArg(ui_tests);
 
     const ipc_tests_module = b.createModule(.{
         .root_source_file = b.path("src/ipc_tests.zig"),
@@ -111,7 +112,9 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     theme_policy_tests.root_module.addImport("platform", ctx.platform_mod);
     test_step.dependOn(&b.addRunArtifact(theme_policy_tests).step);
     const i18n_tool_tests = b.addTest(.{ .root_module = i18n_tool.root_module });
-    test_step.dependOn(&b.addRunArtifact(i18n_tool_tests).step);
+    const run_i18n_tool_tests = b.addSystemCommand(&.{"env"});
+    run_i18n_tool_tests.addArtifactArg(i18n_tool_tests);
+    test_step.dependOn(&run_i18n_tool_tests.step);
     b.step("test-i18n", "Test locale resolution, catalogs and formatting").dependOn(&run_i18n_tests.step);
     const monitor_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/system_monitor_tests.zig"),
@@ -155,8 +158,10 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     const shared_ui_tests = b.addTest(.{ .root_module = ui_mod });
     const shared_config_tests = b.addTest(.{ .root_module = config_mod });
     const shared_dbus_tests = b.addTest(.{ .root_module = dbus_mod });
-    const run_shared_ui_tests = b.addRunArtifact(shared_ui_tests);
-    const run_shared_config_tests = b.addRunArtifact(shared_config_tests);
+    const run_shared_ui_tests = b.addSystemCommand(&.{"env"});
+    run_shared_ui_tests.addArtifactArg(shared_ui_tests);
+    const run_shared_config_tests = b.addSystemCommand(&.{"env"});
+    run_shared_config_tests.addArtifactArg(shared_config_tests);
     const run_shared_dbus_tests = b.addRunArtifact(shared_dbus_tests);
     test_step.dependOn(&run_shared_ui_tests.step);
     test_step.dependOn(&run_shared_config_tests.step);
@@ -320,7 +325,8 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     test_step.dependOn(&run_auth_tests.step);
     const editor_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/editor_tests.zig"), .target = target, .optimize = optimize, .link_libc = true }) });
     inline for (.{ "pangocairo", "xkbcommon" }) |lib| editor_tests.root_module.linkSystemLibrary(lib, .{});
-    const run_editor_tests = b.addRunArtifact(editor_tests);
+    const run_editor_tests = b.addSystemCommand(&.{"env"});
+    run_editor_tests.addArtifactArg(editor_tests);
     test_step.dependOn(&run_editor_tests.step);
     b.step("test-editor", "Test text document editing and saving").dependOn(&run_editor_tests.step);
 
@@ -347,7 +353,8 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     addThumbCodec(b, files_tests.root_module);
     addVolumes(b, files_tests.root_module);
     addFilesTerminal(b, files_tests.root_module, true);
-    const run_files_tests = b.addRunArtifact(files_tests);
+    const run_files_tests = b.addSystemCommand(&.{"env"});
+    run_files_tests.addArtifactArg(files_tests);
     test_step.dependOn(&run_files_tests.step);
     b.step("test-files", "Test Files editing, navigation, transfers and layout").dependOn(&run_files_tests.step);
     const terminal_integration = b.addSystemCommand(&.{"env"});
