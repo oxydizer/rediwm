@@ -74,13 +74,19 @@ pub fn dragOver(self: *Client, x: f64, y: f64, entered: bool) void {
     self.drag_x = x;
     self.drag_y = y - @as(f64, @floatFromInt(self.titlebarHeight()));
     const available = offer.uri and self.drop_receiving == null;
-    const pin = available and self.app.dropMotion(x, self.drag_y);
-    const terminal = available and !pin and self.app.terminalDropAt(x, self.drag_y);
-    const folder = available and !pin and !terminal and self.app.dropDirectoryAt(x, self.drag_y) != null;
+    // The Trash row takes moves only, like the dock's Trash: a source that
+    // can only copy (Files' own Trash view among them) is refused.
+    const trash = available and offer.proxy.getVersion() >= 3 and self.app.trashDropAt(x, self.drag_y);
+    const trash_changed = trash != self.app.trash_drop;
+    self.app.setTrashDrop(trash);
+    const pin = available and !trash and self.app.dropMotion(x, self.drag_y);
+    if (trash) self.app.setPinDrop(null);
+    const terminal = available and !pin and !trash and self.app.terminalDropAt(x, self.drag_y);
+    const folder = available and !pin and !terminal and !trash and self.app.dropDirectoryAt(x, self.drag_y) != null;
     self.app.highlightDrop(x, self.drag_y, folder);
-    const wanted = pin or folder or terminal;
-    const moving = folder and offer.files and !self.app.ctrl;
-    if (!entered and wanted == self.drag_accepting and moving == self.drag_moving) return;
+    const wanted = pin or folder or terminal or trash;
+    const moving = trash or (folder and offer.files and !self.app.ctrl);
+    if (!entered and !trash_changed and wanted == self.drag_accepting and moving == self.drag_moving) return;
     self.drag_accepting = wanted;
     self.drag_moving = moving;
     offer.proxy.accept(self.drag_enter_serial, if (wanted) "text/uri-list" else null);
@@ -88,7 +94,7 @@ pub fn dragOver(self: *Client, x: f64, y: f64, entered: bool) void {
         // Files performs filesystem moves in the receiving job, never in
         // the source's finished callback. Other sources, pins and terminal
         // path insertion use copy only.
-        offer.proxy.setActions(.{ .copy = wanted, .move = moving }, if (moving) .{ .move = true } else .{ .copy = wanted });
+        offer.proxy.setActions(.{ .copy = wanted and !trash, .move = moving }, if (moving) .{ .move = true } else .{ .copy = wanted });
     }
 }
 
@@ -98,16 +104,18 @@ pub fn dragDropped(self: *Client) void {
     defer self.app.dropLeave();
     const accepted = self.drag_accepting;
     self.drag_accepting = false;
+    const trash = self.app.takeTrashDrop();
     const slot = self.app.takePinDrop();
-    const terminal = slot == null and self.app.terminalDropAt(self.drag_x, self.drag_y);
-    const directory = if (slot != null or terminal) "" else self.app.dropDirectoryAt(self.drag_x, self.drag_y) orelse {
+    const terminal = !trash and slot == null and self.app.terminalDropAt(self.drag_x, self.drag_y);
+    const directory = if (trash or slot != null or terminal) "" else self.app.dropDirectoryAt(self.drag_x, self.drag_y) orelse {
         self.discardOffer(offer);
         return;
     };
-    if (!accepted or (offer.proxy.getVersion() >= 3 and !offer.action.copy and !offer.action.move)) {
+    if (!accepted or (offer.proxy.getVersion() >= 3 and !offer.action.copy and !offer.action.move) or (trash and !offer.action.move)) {
         self.discardOffer(offer);
         return;
     }
+    self.drop_trash = trash;
     self.startDropReceive(offer, slot, directory, terminal) catch {
         self.app.setStatusNotice(@import("i18n").tr("Could not read the dropped items"), true);
         self.discardOffer(offer);
@@ -130,7 +138,7 @@ pub fn startDropReceive(self: *Client, offer: *Offer, slot: ?usize, target: []co
     self.drop_offer = offer;
     self.drop_slot = slot;
     self.drop_terminal = terminal;
-    self.drop_move = slot == null and !terminal and offer.action.move;
+    self.drop_move = slot == null and !terminal and !self.drop_trash and offer.action.move;
     offer.proxy.receive("text/uri-list", fds[1]);
 }
 
@@ -161,7 +169,9 @@ pub fn receiveDrop(self: *Client) void {
         return;
     };
     defer decoded.deinit(a);
-    if (self.drop_terminal) {
+    if (self.drop_trash) {
+        self.app.trashDropped(decoded.paths);
+    } else if (self.drop_terminal) {
         // Like clipboard paste, an asynchronous drop must not type into a
         // different editor or a restarted session after focus changes.
         if (receive.revision == self.app.edit_revision and self.app.focus == .terminal) self.app.terminalDropPaths(decoded.paths);
@@ -196,6 +206,7 @@ pub fn receiveDrop(self: *Client) void {
 pub fn finishDrop(self: *Client) void {
     if (self.drop_receiving) |*receive| receive.deinit();
     self.drop_receiving = null;
+    self.drop_trash = false;
     const offer = self.drop_offer orelse return;
     self.drop_offer = null;
     self.endDrop(offer);

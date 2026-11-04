@@ -6,6 +6,8 @@ const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
 const trash = @import("trash.zig");
+const ops = @import("ops.zig");
+const header = @import("header.zig");
 
 /// Where the current location lies relative to the home trash.
 pub fn trashRelation(self: *const App) trash.Relation {
@@ -71,6 +73,54 @@ pub fn restoreAll(self: *App) void {
     }
     const view: []const []const u8 = @ptrCast(names);
     restore(self, view);
+}
+
+/// Whether a drag at (`x`, `y`) is over the sidebar's Trash row, where a
+/// drop moves the items to the Trash at once, without the delete dialog.
+pub fn trashDropAt(self: *App, x: f64, y: f64) bool {
+    if (self.chooser != null or self.dialog != null or self.menu != null) return false;
+    return self.placeAt(x, y) == App.trash_place;
+}
+
+pub fn setTrashDrop(self: *App, on: bool) void {
+    if (self.trash_drop == on) return;
+    self.trash_drop = on;
+    const area: header.Rect = .{ .x = 0, .y = @floatFromInt(self.contentTop()), .w = @floatFromInt(self.sidebarWidth()), .h = @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()) };
+    var row = self.placeRect(App.trash_place);
+    row.x -= 2;
+    row.y -= 2;
+    row.w += 4;
+    row.h += 4;
+    self.damageHighlight(area, row, null);
+}
+
+/// The drop happened: whether it was on the Trash row, with the outline gone.
+pub fn takeTrashDrop(self: *App) bool {
+    const on = self.trash_drop;
+    setTrashDrop(self, false);
+    return on;
+}
+
+/// Moves what was dropped on the Trash row to the Trash. What is in the
+/// Trash already stays where it is.
+pub fn trashDropped(self: *App, paths: []const []const u8) void {
+    var kept: std.ArrayList([]const u8) = .empty;
+    defer kept.deinit(self.allocator);
+    for (paths) |path| {
+        if (self.trash_dir) |dir| if (trash.relation(dir, path) != .none) continue;
+        kept.append(self.allocator, path) catch {
+            self.setStatusNotice(tr("Could not move all items to Trash"), true);
+            return;
+        };
+    }
+    if (kept.items.len == 0) return;
+    ops.trashItems(self.io, kept.items) catch |err| {
+        self.setStatusNotice(if (err == error.GioNotAvailable) tr("Trash unavailable (gio not installed)") else tr("Could not move all items to Trash"), true);
+        self.refresh();
+        return;
+    };
+    self.setStatusNotice(tr("Items moved to Trash"), false);
+    self.refresh();
 }
 
 fn restore(self: *App, names: []const []const u8) void {

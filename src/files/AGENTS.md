@@ -220,6 +220,10 @@ control bytes are refused because terminal paste would alter them.
   state; reject a folder dropped into itself or a descendant, including
   through symlinks. Pins take their gap from `pin_drop`.
 * Ctrl-click deselection waits for release so Ctrl-drag keeps the selection.
+* The sidebar's Trash row (`trashDropAt`, `trash_drop` outline) takes
+  *move* only, like the dock's Trash: `trashDropped` runs `ops.trashItems`
+  with no dialog and skips what is in the Trash already. Copy-only sources
+  (Files' Trash view, most browsers) are refused. `tests/files_drag.py --trash`.
 
 ## BitTorrent transfers
 

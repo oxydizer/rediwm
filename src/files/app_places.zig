@@ -277,6 +277,7 @@ pub fn highlightDrop(self: *App, x: f64, y: f64, accepted: bool) void {
 pub fn dropLeave(self: *App) void {
     self.highlightDrop(0, 0, false);
     self.setPinDrop(null);
+    self.setTrashDrop(false);
 }
 
 /// The drop happened: the gap it chose, with the line gone.

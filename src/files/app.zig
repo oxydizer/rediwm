@@ -155,6 +155,8 @@ pub const App = struct {
     /// While a drag hovers PLACES: the gap, among the pins, where a drop lands.
     pin_drop: ?usize = null,
     folder_drop: ?usize = null,
+    /// While a drag hovers the sidebar's Trash row (a drop there trashes).
+    trash_drop: bool = false,
 
     // Removable and external volumes (see volumes.zig), listed under DEVICES.
     // The monitor starts once the window exists; without it the list is empty.
@@ -592,6 +594,10 @@ pub const App = struct {
     pub const refreshTrashRestorable = app_trash.refreshTrashRestorable;
     pub const restoreSelected = app_trash.restoreSelected;
     pub const restoreAll = app_trash.restoreAll;
+    pub const trashDropAt = app_trash.trashDropAt;
+    pub const setTrashDrop = app_trash.setTrashDrop;
+    pub const takeTrashDrop = app_trash.takeTrashDrop;
+    pub const trashDropped = app_trash.trashDropped;
 
     // app_chooser.zig
     pub const configureChooser = app_chooser.configureChooser;
@@ -689,6 +695,8 @@ pub const App = struct {
     pub const place_labels = [_]i18n.Message{ i18n.msg("Home"), i18n.msg("Trash"), i18n.msg("Recent"), i18n.msg("Desktop"), i18n.msg("Documents"), i18n.msg("Downloads"), i18n.msg("Pictures"), i18n.msg("Music"), i18n.msg("Videos"), i18n.msg("Projects") };
 
     pub const places_start = 3;
+    /// The built-in Trash row's index among the places.
+    pub const trash_place = 1;
 
     /// Where the pins start: the built-in places come first.
     pub const pin_base = places.len;

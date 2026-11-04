@@ -188,6 +188,21 @@ test "pins sit after Projects, take drops by gap and keep the rows in drawn orde
     try std.testing.expectEqual(@as(?usize, null), app.pin_drop);
     try std.testing.expect(!app.dropMotion(400, desktop));
 
+    // The Trash row is a drop target of its own, above the pins' gaps.
+    const trash_row: f64 = @floatFromInt(app.placeY(App.trash_place) + 10);
+    try std.testing.expect(app.trashDropAt(70, trash_row));
+    try std.testing.expect(!app.trashDropAt(70, @floatFromInt(app.placeY(0) + 10)));
+    try std.testing.expect(!app.trashDropAt(70, desktop));
+    try std.testing.expectEqual(@as(?usize, null), app.pinSlotAt(70, trash_row));
+    app.dirty = false;
+    app.setTrashDrop(true);
+    try std.testing.expect(app.dirty);
+    try std.testing.expect(app.takeTrashDrop());
+    try std.testing.expect(!app.trash_drop);
+    app.setTrashDrop(true);
+    app.dropLeave();
+    try std.testing.expect(!app.trash_drop);
+
     // Dropping on a gap inserts there; what is listed already, built in or
     // gone is refused.
     app.pinDropped(1, &.{"/etc"});

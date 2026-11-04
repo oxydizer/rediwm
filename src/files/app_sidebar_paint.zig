@@ -220,6 +220,14 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
     }
     self.renderDevices(cr, content_width);
     self.renderPinDrop(cr);
+    if (self.trash_drop) {
+        // The drop target outline, as on a folder in the content area.
+        const row = self.placeRect(App.trash_place);
+        roundedRect(cr, row.x, row.y, row.w, row.h, 6);
+        setSource(cr, ui_theme.shellPalette().accent);
+        c.cairo_set_line_width(cr, 2);
+        c.cairo_stroke(cr);
+    }
 }
 
 /// The line a drag shows between pins: where a drop would put its pin.
