@@ -7,6 +7,7 @@ const layout = @import("../layout.zig");
 const scrollbar = @import("scrollbar.zig");
 const Widget = layout.Widget;
 const Renderer = @import("../paint.zig").Renderer;
+const ReliefBox = @import("../paint.zig").ReliefBox;
 const theme = @import("../theme.zig");
 const sdf = @import("../sdf.zig");
 const text = @import("../text.zig");
@@ -47,6 +48,10 @@ pub fn paintShaded(widget: *const Widget, data: layout.SliderData, r: *Renderer)
     const fill_radius = @min(cx, track_h) / 2;
     // Include the shadow's 0.4 px offset, its 0.8 px falloff and device AA.
     const disc_extent = radius + @max(0.4 + 0.8, 0.5 / s);
+    // With relief on for the thumb, its shadows replace the hand-made contact shadow.
+    const track_relief = t.slider_track_relief;
+    const thumb_relief = t.slider_thumb_relief;
+    const cast_weight: f32 = if (r.reliefActive(thumb_relief)) 0 else 1;
     var py = y0;
     while (py < y1) : (py += 1) {
         const y = (@as(f32, @floatFromInt(py)) + 0.5) / s - widget.computed_y;
@@ -82,7 +87,7 @@ pub fn paintShaded(widget: *const Widget, data: layout.SliderData, r: *Renderer)
             // The shadow and metallic reflections are local to the knob.
             if (@abs(dx) > disc_extent or @abs(dy) > disc_extent) continue;
             const shadow = @sqrt(dx * dx + (dy - 0.4) * (dy - 0.4)) - radius;
-            blend(pixel, .{ 0, 0, 0, 0.12 }, std.math.clamp(1 - shadow / 0.8, 0, 1) * edge_fade);
+            blend(pixel, .{ 0, 0, 0, 0.12 * cast_weight }, std.math.clamp(1 - shadow / 0.8, 0, 1) * edge_fade);
             const distance = @sqrt(dx * dx + dy * dy) - radius;
             const coverage = sdf.coverage(distance * s);
             if (coverage <= 0) continue;
@@ -98,6 +103,20 @@ pub fn paintShaded(widget: *const Widget, data: layout.SliderData, r: *Renderer)
             blend(pixel, knob, coverage);
         }
     }
+    // Relief goes on last. The groove's shadows skip the disc; the disc's stay
+    // inside the slider's box, so partial repaints still erase them.
+    const rail_box: ReliefBox = .{ .x = widget.computed_x, .y = widget.computed_y + cy - track_h / 2, .w = w, .h = track_h, .radius = track_h / 2 };
+    const disc_box: ReliefBox = .{ .x = widget.computed_x + cx - radius, .y = widget.computed_y + cy - radius, .w = 2 * radius, .h = 2 * radius, .radius = radius };
+    r.paintShapeRelief(track_relief, rail_box, .{
+        .within = .{
+            .x = widget.computed_x,
+            .y = widget.computed_y,
+            .w = w,
+            .h = h,
+        },
+        .outside = disc_box,
+    });
+    r.paintShapeRelief(thumb_relief, disc_box, .{ .within = .{ .x = widget.computed_x, .y = widget.computed_y, .w = w, .h = h } });
 }
 
 fn falloff(value: f32) f32 {

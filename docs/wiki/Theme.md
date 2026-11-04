@@ -186,7 +186,7 @@ geometry retain their content or structural dimensions.
 | `display_tile_border` | `"rgba(255,255,255,0.16)"` |
 | `scrollbar_thumb` | `"rgba(89,98,110,1)"` |
 | `scrollbar_thumb_active` | `unset` |
-| `scrollbar_glow` | `1.0` (strength of the thumb's light) |
+| `scrollbar_glow` | `1.0` (strength of the thumb's light; `0` makes the thumb flat, with no highlight stripe) |
 | `bg` | `"rgba(9,11,24,1)"` |
 | `fg` | `"rgba(245,245,245,1)"` |
 | `dim` | `"rgba(214,214,214,1)"` |
@@ -218,6 +218,8 @@ geometry retain their content or structural dimensions.
 | `shadow` | `"rgba(0,0,0,0.35)"` |
 | `border_glow_enabled` | `true` |
 | `border_glow` | `"rgba(237,27,46,0.6)"` (alpha 0 turns the highlight off) |
+| `relief_dark` | `"rgba(0,0,0,0.35)"` (neumorphic shadow cast away from the light) |
+| `relief_light` | `"rgba(255,255,255,0.1)"` (neumorphic shadow cast toward the light) |
 | `start_menu_bg` | `"rgba(29,34,41,0.98)"` |
 | `start_menu_border` | `"rgba(255,255,255,0.12)"` |
 | `start_menu_search_bg` | `"rgba(21,26,31,1)"` |
@@ -339,6 +341,10 @@ Numeric tokens accept 0–4096 unless constrained below. Fractions ending in
 | `field_radius` | `8.0` |
 | `shadow_size` | `24.0` |
 | `shadow_offset_y` | `8.0` |
+| `relief_depth` | `0.0` (off). Neumorphic relief: buttons and fields cast a dark and a light shadow this many px from their edge |
+| `relief_softness` | `0.0` (1.5 x `relief_depth`), fade-out length of those shadows |
+| `relief_light_angle` | `135.0`, degrees counter-clockwise from the right (135 is the upper left) |
+
 | `border_glow_length` | `72.0` |
 | `border_glow_reach` | `56.0` |
 | `border_glow_depth` | `3.0` |
@@ -409,6 +415,47 @@ Numeric tokens accept 0–4096 unless constrained below. Fractions ending in
 | `button_selected_alpha` | `0.6` |
 | `button_selected_hover_alpha` | `0.7` |
 
+### Component relief
+
+When `relief_depth` is greater than zero, individual controls can opt into
+`"flat"`, `"raised"`, or `"inset"` relief. Flat is the default for components
+that did not previously use explicit relief. The standard slider progress fill
+overlays the start of the track, so an inset `slider_track_relief` can have its
+left-side groove shadow covered by that fill. The shaded slider and toggle paths
+(`slider_shaded`, `toggle_shaded`) keep their procedural lighting and add these
+shadows on top, dropping only what the relief would double: the toggle's hand-made
+track rim under a non-flat track relief, and the knob's cast shadow under a
+non-flat thumb relief. A groove's shadows skip its knob, and a knob's stay inside
+its track (toggle) or the slider's box, so neither crosses the thumb or outlives
+the control's damage bounds. A theme that leaves the keys `flat` renders exactly
+as before. Raised shadows reach `relief_depth + relief_softness` past a box: use
+`inset` for segments, rows and pills packed into a layout.
+
+| Key | Built-in default | Description |
+| --- | --- | --- |
+| `button_relief` | `"flat"` | Resting primary/secondary button relief |
+| `button_pressed_relief` | `"flat"` | Pressed or selected button relief |
+| `field_relief` | `"flat"` | Text field frame relief |
+| `dialog_inset_relief` | `"flat"` | Dialog recessed content panel relief |
+| `dialog_frame_relief` | `"flat"` | Dialog card relief; raised shadows lie outside the card |
+| `settings_card_relief` | `"flat"` | Cards around Settings entries. The page scrolls in a clipped container, so a raised card's shadow is cut at its edge: prefer `inset` |
+| `taskbar_chip_relief` | `"flat"` | Taskbar window chip, idle. Shaded inside the edge (the chip raster has no margin): `inset` is a groove, `raised` swaps the lights. Main theme only; `[taskbar_theme]` does not carry it |
+| `taskbar_chip_active_relief` | `"flat"` | The focused taskbar chip; same rules |
+| `select_relief` | `"flat"` | Resting select/dropdown control relief |
+| `select_popup_relief` | `"flat"` | Select/dropdown popup container relief |
+| `checkbox_relief` | `"flat"` | Checkbox frame relief |
+| `toggle_track_relief` | `"flat"` | Toggle track relief (plain and shaded) |
+| `toggle_thumb_relief` | `"flat"` | Toggle knob relief (plain and shaded) |
+| `slider_track_relief` | `"flat"` | Slider track relief (plain and shaded) |
+| `slider_thumb_relief` | `"flat"` | Slider thumb relief (plain and shaded) |
+| `segmented_relief` | `"flat"` | Segmented control frame relief |
+| `segmented_selected_relief` | `"flat"` | Selected segment relief |
+| `stepper_relief` | `"flat"` | Stepper frame relief |
+| `swatch_relief` | `"flat"` | Colour swatch relief |
+| `pill_relief` | `"flat"` | Slider value readout (pill) relief |
+| `row_hover_relief` | `"flat"` | Hovered or pressed list row relief |
+| `row_selected_relief` | `"flat"` | Selected list row relief |
+| `scrollbar_track_relief` | `"flat"` | Scrollbar channel: `flat` draws no track, `inset` cuts a groove the thumb sits in. Pair with `scrollbar_glow = 0` for a flat thumb |
 | Additional constraint | Range |
 | --- | --- |
 | `chrome_height` | 28–84 |

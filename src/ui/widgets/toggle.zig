@@ -6,6 +6,7 @@ const layout = @import("../layout.zig");
 const Widget = layout.Widget;
 
 const Renderer = @import("../paint.zig").Renderer;
+const ReliefBox = @import("../paint.zig").ReliefBox;
 const anim = @import("../anim.zig");
 const theme = @import("../theme.zig");
 const Rect = @import("field.zig").Rect;
@@ -41,6 +42,7 @@ pub fn paint(r: *Renderer, box: Rect, opts: Options) void {
         thumb[3] *= 0.5;
     }
     r.fillRect(box.x, box.y, box.w, box.h, .{
+        .relief = if (opts.disabled) .flat else t.toggle_track_relief,
         .color = track,
         .radius = radius,
         .border_width = if (opts.focused and !opts.disabled) 2 else 0,
@@ -49,7 +51,7 @@ pub fn paint(r: *Renderer, box: Rect, opts: Options) void {
     const inset: f32 = 2;
     const side = @max(0, box.h - inset * 2);
     const x = box.x + inset + (box.w - 2 * inset - side) * restPosition(opts);
-    r.fillRect(x, box.y + inset, side, side, .{ .color = thumb, .radius = if (opts.style == .settings) t.toggle_thumb_radius else side / 2 });
+    r.fillRect(x, box.y + inset, side, side, .{ .relief = if (opts.disabled) .flat else t.toggle_thumb_relief, .color = thumb, .radius = if (opts.style == .settings) t.toggle_thumb_radius else side / 2 });
 }
 
 /// Recessed track and raised knob, contained in the control's damage bounds.
@@ -79,6 +81,12 @@ fn paintShaded(r: *Renderer, box: Rect, opts: Options, t: theme.Theme) void {
     const track = trackColor(t, opts);
     const thumb = t.toggle_thumb orelse t.control_thumb;
     const opacity: f32 = if (opts.disabled) 0.5 else 1;
+    // Neumorphic relief, when the theme asks for it, takes over the hand-made
+    // lighting it would double: the track's rim and the knob's cast shadow.
+    const track_relief: layout.Relief = if (opts.disabled) .flat else t.toggle_track_relief;
+    const thumb_relief: layout.Relief = if (opts.disabled) .flat else t.toggle_thumb_relief;
+    const rim_weight: f32 = if (r.reliefActive(track_relief)) 0 else 1;
+    const cast_weight: f32 = if (r.reliefActive(thumb_relief)) 0 else 1;
     var py = y0;
     while (py < y1) : (py += 1) {
         const y = (@as(f32, @floatFromInt(py)) + 0.5) / scale - box.y;
@@ -91,11 +99,11 @@ fn paintShaded(r: *Renderer, box: Rect, opts: Options, t: theme.Theme) void {
             if (coverage <= 0) continue;
             // Dark upper lip fades into the track; the lower lip catches light.
             const rim = 1 - std.math.clamp(-distance / 1.4, 0, 1);
-            var color = shade(track, -0.07 + 0.10 * vertical + rim * (-0.22 + 0.32 * vertical));
+            var color = shade(track, -0.07 + 0.10 * vertical + rim * rim_weight * (-0.22 + 0.32 * vertical));
             // The knob casts a short, soft shadow down into the recess.
             const shadow_distance = sdf.sdRoundedBox(x, y, thumb_x, inset + 0.8, side, side, thumb_radius);
             const shadow = std.math.clamp(1 - shadow_distance / 1.6, 0, 1);
-            color = shade(color, -0.24 * shadow * shadow);
+            color = shade(color, -0.24 * cast_weight * shadow * shadow);
             if (opts.focused and !opts.disabled) {
                 const focus = sdf.coverage((distance + 2) * scale);
                 color = mix(color, t.controlFocusColor(), 1 - focus);
@@ -117,6 +125,12 @@ fn paintShaded(r: *Renderer, box: Rect, opts: Options, t: theme.Theme) void {
             }, coverage);
         }
     }
+    // Relief goes on last. The groove's shadows skip the knob; the knob's stay
+    // inside the track, so they cannot outlive the control's own damage.
+    const track_box: ReliefBox = .{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .radius = radius };
+    const knob_box: ReliefBox = .{ .x = box.x + thumb_x, .y = box.y + inset, .w = side, .h = side, .radius = thumb_radius };
+    r.paintShapeRelief(track_relief, track_box, .{ .outside = knob_box });
+    r.paintShapeRelief(thumb_relief, knob_box, .{ .within = track_box });
 }
 
 fn restPosition(opts: Options) f32 {

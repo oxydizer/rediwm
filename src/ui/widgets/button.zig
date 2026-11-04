@@ -15,6 +15,67 @@ const IconId = layout.IconId;
 
 pub const Rect = @import("field.zig").Rect;
 
+pub const ProximitySample = struct {
+    distance: f32,
+    x: f32,
+    y: f32,
+};
+
+/// Intersects two logical-pixel rectangles.
+pub fn intersectRect(a: Rect, b: Rect) Rect {
+    const x0 = @max(a.x, b.x);
+    const y0 = @max(a.y, b.y);
+    const x1 = @min(a.x + a.w, b.x + b.w);
+    const y1 = @min(a.y + a.h, b.y + b.h);
+    return .{
+        .x = x0,
+        .y = y0,
+        .w = @max(0, x1 - x0),
+        .h = @max(0, y1 - y0),
+    };
+}
+
+/// Samples pointer proximity to the visible portion of a button.
+/// Returned x/y coordinates are local to the original button rectangle.
+pub fn sampleProximity(box: Rect, pointer_x: f32, pointer_y: f32, clip: Rect) ProximitySample {
+    const visible = intersectRect(box, clip);
+    if (visible.w <= 0 or visible.h <= 0) {
+        return .{
+            .distance = std.math.inf(f32),
+            .x = pointer_x - box.x,
+            .y = pointer_y - box.y,
+        };
+    }
+
+    const right = visible.x + visible.w;
+    const bottom = visible.y + visible.h;
+    const dx = if (pointer_x < visible.x) visible.x - pointer_x else if (pointer_x > right) pointer_x - right else 0;
+    const dy = if (pointer_y < visible.y) visible.y - pointer_y else if (pointer_y > bottom) pointer_y - bottom else 0;
+
+    return .{
+        .distance = @sqrt(dx * dx + dy * dy),
+        .x = pointer_x - box.x,
+        .y = pointer_y - box.y,
+    };
+}
+
+test "proximity sampling respects clipping and returns button-local coordinates" {
+    const box: Rect = .{ .x = 20, .y = 10, .w = 40, .h = 20 };
+    const clip: Rect = .{ .x = 30, .y = 15, .w = 20, .h = 10 };
+
+    const near = sampleProximity(box, 30, 10, clip);
+    try std.testing.expectEqual(@as(f32, 5), near.distance);
+    try std.testing.expectEqual(@as(f32, 10), near.x);
+    try std.testing.expectEqual(@as(f32, 0), near.y);
+
+    const inside = sampleProximity(box, 35, 20, clip);
+    try std.testing.expectEqual(@as(f32, 0), inside.distance);
+
+    const invisible_clip: Rect = .{ .x = 70, .y = 15, .w = 20, .h = 10 };
+    const outside = sampleProximity(box, 10, 20, invisible_clip);
+    try std.testing.expect(std.math.isInf(outside.distance));
+}
+
 /// `primary` is the accent fill (the start menu's selected category chip);
 /// `secondary` a quiet surface with a hairline border; `ghost` shows only on
 /// hover; `chrome` is a window-style close button, red on hover.
@@ -51,6 +112,11 @@ pub const State = struct {
     /// Keyboard focus: a ring inside the button's bounds, so a widget tree's
     /// damage still covers it.
     focused: bool = false,
+    proximity_distance: f32 = std.math.inf(f32),
+    proximity_x: f32 = 0,
+    proximity_y: f32 = 0,
+    /// Retained hover-elevation progress, from 0 at rest to 1 at full hover.
+    hover_elevation: f32 = 0,
 };
 
 pub const Metrics = struct {
@@ -117,10 +183,14 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
     const m = metrics(opts.size, t);
     const disabled = state.pointer == .disabled;
     const hovered = state.pointer == .hover or state.pointer == .press;
+    const adaptive_hover = opts.variant == .secondary and
+        !state.selected and !disabled and !state.focused and
+        state.pointer != .press and r.reliefActive(t.button_relief) and
+        (state.pointer == .hover or state.hover_elevation > 0);
     const clear: [4]f32 = .{ 0, 0, 0, 0 };
     var bg: [4]f32 = switch (opts.variant) {
         .primary => t.accent,
-        .secondary => if (hovered) t.surface_hover else t.surface,
+        .secondary => if (hovered and !adaptive_hover) t.surface_hover else t.surface,
         .ghost => if (hovered) t.surface_hover else clear,
         .chrome => if (hovered) t.window_close_hover else clear,
     };
@@ -132,12 +202,271 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
     if (disabled) bg[3] *= t.button_disabled_alpha;
     const ring = state.focused and !disabled;
     const border_w: f32 = if (ring) 2 else if (opts.variant == .secondary) 1 else 0;
-    if (bg[3] > 0 or border_w > 0) r.fillRect(box.x, box.y, box.w, box.h, .{
-        .color = bg,
-        .radius = opts.radius orelse if (opts.variant == .chrome) chrome.cornerRadius(t.chrome_round_buttons, box.w, box.h, chrome.control_radius) else m.radius,
-        .border_width = border_w,
-        .border_color = if (ring) t.controlFocusColor() else if (hovered) t.border else t.border_soft,
-    });
+    const relief: layout.Relief = if (disabled or (opts.variant != .primary and opts.variant != .secondary)) .flat else if (state.pointer == .press or state.selected) t.button_pressed_relief else t.button_relief;
+    const radius = opts.radius orelse if (opts.variant == .chrome) chrome.cornerRadius(t.chrome_round_buttons, box.w, box.h, chrome.control_radius) else m.radius;
+    if (bg[3] > 0 or border_w > 0) {
+        r.fillRect(box.x, box.y, box.w, box.h, .{
+            .relief = if (adaptive_hover) .flat else relief,
+            .color = bg,
+            .radius = radius,
+            .border_width = border_w,
+            .border_color = if (ring) t.controlFocusColor() else if (hovered) t.border else t.border_soft,
+        });
+        if (adaptive_hover) {
+            paintAdaptiveRelief(r, box, radius, t.button_relief, state.hover_elevation, t);
+        }
+    }
+
+    // Directional lighting gives quiet graphite buttons a subtle raised feel.
+    // Preserve selected, disabled, primary, ghost, and chrome treatments.
+    if (opts.variant == .secondary and !state.selected and !disabled and !state.focused and !r.reliefActive(relief) and box.w > 0 and box.h >= 6) {
+        const inset = @min(m.radius, @min(box.w, box.h) / 3);
+        const strip_w = box.w - inset * 2;
+        if (strip_w > 0) {
+            const highlight_alpha: f32 = if (hovered) 0.055 else 0.085;
+            r.fillRect(box.x + inset, box.y + 1.5, strip_w, 1, .{
+                .color = .{ t.fg[0], t.fg[1], t.fg[2], highlight_alpha },
+                .radius = 0.5,
+            });
+            r.fillRect(box.x + inset, box.y + box.h - 2.5, strip_w, 1, .{
+                .color = .{ 0, 0, 0, if (hovered) 0.12 else 0.18 },
+                .radius = 0.5,
+            });
+        }
+    }
+
+    paintProximityGlow(r, box, radius, state);
+}
+
+/// Crossfades an inset groove into raised relief, or gives an already-raised
+/// button a little more lift. The temporary renderer palettes keep the
+/// transition local to this button and leave the shared theme untouched.
+fn paintAdaptiveRelief(
+    r: *Renderer,
+    box: Rect,
+    radius: f32,
+    base: layout.Relief,
+    progress: f32,
+    palette: theme.Theme,
+) void {
+    const amount = std.math.clamp(progress, 0, 1);
+    const shape: paint_mod.ReliefBox = .{
+        .x = box.x,
+        .y = box.y,
+        .w = box.w,
+        .h = box.h,
+        .radius = radius,
+    };
+
+    switch (base) {
+        .inset => {
+            var inset_palette = palette;
+            inset_palette.relief_dark[3] *= 1 - amount;
+            inset_palette.relief_light[3] *= 1 - amount;
+            var inset_renderer = r.*;
+            inset_renderer.palette = inset_palette;
+            inset_renderer.paintShapeRelief(.inset, shape, .{});
+
+            var raised_palette = palette;
+            raised_palette.relief_dark[3] *= amount;
+            raised_palette.relief_light[3] *= amount;
+            raised_palette.relief_depth *= 1 + 0.18 * amount;
+            var raised_renderer = r.*;
+            raised_renderer.palette = raised_palette;
+            raised_renderer.paintShapeRelief(.raised, shape, .{});
+        },
+        .raised => {
+            var raised_palette = palette;
+            raised_palette.relief_depth *= 1 + 0.18 * amount;
+            var raised_renderer = r.*;
+            raised_renderer.palette = raised_palette;
+            raised_renderer.paintShapeRelief(.raised, shape, .{});
+        },
+        .flat => {},
+    }
+}
+
+/// Smoothly fades an edge contribution by pointer distance.
+fn glowNear(px: f32, py: f32, edge_x: f32, edge_y: f32, reach: f32) f32 {
+    const distance = std.math.hypot(px - edge_x, py - edge_y);
+    if (!(distance < reach)) return 0;
+    const n = 1 - distance / reach;
+    return n * n * (3 - 2 * n);
+}
+
+/// Paints independent pointer-facing highlights on every nearby button edge.
+/// Overlapping edge contributions use their maximum, keeping corners controlled.
+fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
+    if (state.pointer == .disabled) return;
+    paintProximityGlowAt(
+        r,
+        box,
+        radius,
+        state.proximity_distance,
+        state.proximity_x,
+        state.proximity_y,
+    );
+}
+
+/// Shared edge-light painter for buttons and other interactive surfaces.
+/// Pointer coordinates are local to `box`.
+pub fn paintProximityGlowAt(
+    r: *Renderer,
+    box: Rect,
+    radius: f32,
+    proximity_distance: f32,
+    proximity_x: f32,
+    proximity_y: f32,
+) void {
+    const t = r.palette orelse theme.global;
+    if (!t.button_hover_glow_enabled or proximity_distance >= std.math.inf(f32) or
+        t.border_glow[3] <= 0 or t.border_glow_reach <= 0 or
+        t.border_glow_length <= 0 or t.border_glow_depth <= 0 or
+        box.w <= 0 or box.h <= 0)
+        return;
+
+    const corner_radius = std.math.clamp(radius, 0, 0.5 * @min(box.w, box.h));
+    const reach = t.border_glow_reach;
+    const pointer_x = proximity_x;
+    const pointer_y = proximity_y;
+
+    const Edge = struct {
+        x: f32,
+        y: f32,
+        near: f32,
+        /// The edge runs vertically, so its falloff is measured along y.
+        vertical: bool,
+        /// The edge is the left or top edge.
+        negative: bool,
+    };
+
+    const edges = [_]Edge{
+        .{
+            .x = std.math.clamp(pointer_x, corner_radius, box.w - corner_radius),
+            .y = 0,
+            .near = glowNear(
+                pointer_x, pointer_y,
+                std.math.clamp(pointer_x, corner_radius, box.w - corner_radius), 0, reach,
+            ),
+            .vertical = false,
+            .negative = true,
+        },
+        .{
+            .x = box.w,
+            .y = std.math.clamp(pointer_y, corner_radius, box.h - corner_radius),
+            .near = glowNear(
+                pointer_x, pointer_y, box.w,
+                std.math.clamp(pointer_y, corner_radius, box.h - corner_radius), reach,
+            ),
+            .vertical = true,
+            .negative = false,
+        },
+        .{
+            .x = std.math.clamp(pointer_x, corner_radius, box.w - corner_radius),
+            .y = box.h,
+            .near = glowNear(
+                pointer_x, pointer_y,
+                std.math.clamp(pointer_x, corner_radius, box.w - corner_radius), box.h, reach,
+            ),
+            .vertical = false,
+            .negative = false,
+        },
+        .{
+            .x = 0,
+            .y = std.math.clamp(pointer_y, corner_radius, box.h - corner_radius),
+            .near = glowNear(
+                pointer_x, pointer_y, 0,
+                std.math.clamp(pointer_y, corner_radius, box.h - corner_radius), reach,
+            ),
+            .vertical = true,
+            .negative = true,
+        },
+    };
+
+    var active = false;
+    for (edges) |edge| {
+        if (edge.near > 0) {
+            active = true;
+            break;
+        }
+    }
+    if (!active) return;
+
+    const s = r.scale;
+    var dx0 = box.x * s;
+    var dy0 = box.y * s;
+    var dx1 = (box.x + box.w) * s;
+    var dy1 = (box.y + box.h) * s;
+    if (r.effectiveClip()) |clip| {
+        dx0 = @max(dx0, clip.x * s);
+        dy0 = @max(dy0, clip.y * s);
+        dx1 = @min(dx1, (clip.x + clip.w) * s);
+        dy1 = @min(dy1, (clip.y + clip.h) * s);
+    }
+
+    const x0: i32 = @intFromFloat(@floor(@max(0, dx0)));
+    const y0: i32 = @intFromFloat(@floor(@max(0, dy0)));
+    const x1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.width)), dx1)));
+    const y1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.height)), dy1)));
+    if (x0 >= x1 or y0 >= y1) return;
+
+    const length = t.border_glow_length;
+    const depth = t.border_glow_depth;
+    const red = paint_mod.toColor(t.border_glow);
+    const dark = paint_mod.toColor(.{ 0, 0, 0, t.border_glow[3] * 0.35 });
+    const shape = .{
+        .x = box.x * s,
+        .y = box.y * s,
+        .w = box.w * s,
+        .h = box.h * s,
+        .radius = radius * s,
+    };
+
+    r.clean = false;
+    var py = y0;
+    while (py < y1) : (py += 1) {
+        const sy = @as(f32, @floatFromInt(py)) + 0.5;
+        const logical_y = sy / s;
+        const row: usize = @intCast(py * r.width);
+        var px = x0;
+        while (px < x1) : (px += 1) {
+            const sx = @as(f32, @floatFromInt(px)) + 0.5;
+            const logical_x = sx / s;
+            const coverage = paint_mod.sdf.coverage(paint_mod.sdf.sdRoundedBox(
+                sx, sy, shape.x, shape.y, shape.w, shape.h, shape.radius,
+            ));
+            if (coverage <= 0) continue;
+
+            var near_alpha: f32 = 0;
+            var far_alpha: f32 = 0;
+            for (edges) |edge| {
+                if (edge.near <= 0) continue;
+
+                const along = if (edge.vertical) logical_y - box.y else logical_x - box.x;
+                const anchor = if (edge.vertical) edge.y else edge.x;
+                const along_ratio = (along - anchor) / length;
+                const along_falloff = @exp(-2 * along_ratio * along_ratio);
+
+                const near_depth = if (edge.vertical)
+                    (if (edge.negative) logical_x - box.x else box.x + box.w - logical_x)
+                else
+                    (if (edge.negative) logical_y - box.y else box.y + box.h - logical_y);
+                const far_depth = if (edge.vertical)
+                    (if (edge.negative) box.x + box.w - logical_x else logical_x - box.x)
+                else
+                    (if (edge.negative) box.y + box.h - logical_y else logical_y - box.y);
+
+                near_alpha = @max(near_alpha, edge.near * along_falloff *
+                    @exp(-@max(0, near_depth) / depth) * coverage);
+                far_alpha = @max(far_alpha, edge.near * along_falloff *
+                    @exp(-@max(0, far_depth) / depth) * coverage);
+            }
+
+            const index = row + @as(usize, @intCast(px));
+            if (near_alpha > 0) paint_mod.blendPixel(&r.pixels[index], red, near_alpha);
+            if (far_alpha > 0) paint_mod.blendPixel(&r.pixels[index], dark, far_alpha);
+        }
+    }
 }
 
 pub fn paintContent(r: *Renderer, box: Rect, opts: Options, state: State) void {

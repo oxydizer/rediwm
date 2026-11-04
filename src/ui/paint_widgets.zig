@@ -45,6 +45,7 @@ pub fn paintRow(widget: *const Widget, data: RowData, renderer: *Renderer) void 
             .radius = t.radius,
             .border_width = 1,
             .border_color = t.start_menu_selected_border,
+            .relief = t.row_selected_relief,
         });
         const marker_h = @max(10, widget.computed_height - 18);
         const marker_y = widget.computed_y + (widget.computed_height - marker_h) / 2;
@@ -58,6 +59,7 @@ pub fn paintRow(widget: *const Widget, data: RowData, renderer: *Renderer) void 
             .radius = t.radius,
             .border_width = 1,
             .border_color = t.border_soft,
+            .relief = t.row_hover_relief,
         });
     }
 }
@@ -68,7 +70,73 @@ pub fn paintButton(widget: *const Widget, data: ButtonData, renderer: *Renderer)
         .y = widget.computed_y,
         .w = widget.computed_width,
         .h = widget.computed_height,
-    }, button_widget.optionsOf(data), .{ .pointer = data.state, .focused = ui_input.isFocused(widget) });
+    }, button_widget.optionsOf(data), .{
+        .pointer = data.state,
+        .focused = ui_input.isFocused(widget),
+        .proximity_distance = data.proximity_distance,
+        .proximity_x = data.proximity_x,
+        .proximity_y = data.proximity_y,
+        .hover_elevation = data.hover_elevation.value(@import("anim.zig").nowMs()),
+    });
+}
+
+fn paintProximitySample(widget: *const Widget, renderer: *Renderer) void {
+    const disabled = switch (widget.kind) {
+        .button => |data| data.state == .disabled,
+        .row => |data| data.state == .disabled,
+        .checkbox => |data| data.disabled,
+        .toggle => |data| data.disabled,
+        .select => |data| data.disabled,
+        else => false,
+    };
+    if (disabled) return;
+
+    const sample = widget.proximity;
+    if (sample.distance >= std.math.inf(f32)) return;
+
+    const box: button_widget.Rect = .{
+        .x = sample.rect.x,
+        .y = sample.rect.y,
+        .w = sample.rect.w,
+        .h = sample.rect.h,
+    };
+    const t = renderer.palette orelse theme.global;
+    const radius: f32 = switch (widget.kind) {
+        .row => |data| if (data.background) |style| style.radius else t.radius,
+        .checkbox => t.checkbox_radius,
+        .text_input => |data| field_widget.metrics(data.field.size, t).radius,
+        .secret_input => |data| field_widget.metrics(data.field.size, t).radius,
+        .toggle => |data| if (data.style == .settings) t.toggle_radius else box.h / 2,
+        .slider => box.h / 2,
+        .select, .segmented, .stepper, .arrangement => t.radius,
+        .swatch => t.swatch_radius,
+        else => return,
+    };
+
+    button_widget.paintProximityGlowAt(
+        renderer, box, radius, sample.distance, sample.x, sample.y,
+    );
+}
+
+/// Paints proximity illumination during the normal tree pass. A dropdown
+/// popup sample is deferred to the overlay pass below.
+pub fn paintInteractiveProximity(widget: *const Widget, renderer: *Renderer) void {
+    if (widget.kind == .select and widget.kind.select.open) {
+        const popup = @import("widgets/select.zig").popupBounds(widget);
+        const sample = widget.proximity.rect;
+        if (sample.x == popup.x and sample.y == popup.y and
+            sample.w == popup.w and sample.h == popup.h) return;
+    }
+    paintProximitySample(widget, renderer);
+}
+
+fn paintSelectPopupProximity(widget: *const Widget, renderer: *Renderer) void {
+    if (!(widget.kind == .select and widget.kind.select.open)) return;
+    const popup = @import("widgets/select.zig").popupBounds(widget);
+    const sample = widget.proximity.rect;
+    if (sample.x != popup.x or sample.y != popup.y or
+        sample.w != popup.w or sample.h != popup.h) return;
+    paintProximitySample(widget, renderer);
 }
 
 pub fn paintCheckbox(widget: *const Widget, data: CheckboxData, renderer: *Renderer) void {
@@ -244,7 +312,7 @@ pub fn paintSlider(widget: *const Widget, data: SliderData, renderer: *Renderer)
     // faint hold after a change (`widgets/slider.zig`).
     const tint = data.feel.accent;
     const track_color = lerp4(t.slider_track, .{ t.accent[0], t.accent[1], t.accent[2], t.slider_track_tint_alpha * t.accent[3] }, tint);
-    renderer.fillRect(widget.computed_x, track_y, w, track_h, .{ .color = track_color, .radius = track_h / 2 });
+    renderer.fillRect(widget.computed_x, track_y, w, track_h, .{ .relief = t.slider_track_relief, .color = track_color, .radius = track_h / 2 });
 
     const frac = if (data.max > data.min) std.math.clamp((data.value - data.min) / (data.max - data.min), 0, 1) else 0;
     const fill_w = frac * w;
@@ -253,7 +321,7 @@ pub fn paintSlider(widget: *const Widget, data: SliderData, renderer: *Renderer)
     if (fill_w > 0) renderer.fillRect(widget.computed_x, track_y, fill_w, track_h, .{ .color = fill_color, .radius = track_h / 2 });
 
     const thumb_x = widget.computed_x + fill_w - thumb_w / 2;
-    renderer.fillRect(thumb_x, cy - thumb_h / 2, thumb_w, thumb_h, .{ .color = t.control_thumb, .radius = if (settings) t.slider_thumb_radius else t.slider_thumb_size / 2 });
+    renderer.fillRect(thumb_x, cy - thumb_h / 2, thumb_w, thumb_h, .{ .relief = t.slider_thumb_relief, .color = t.control_thumb, .radius = if (settings) t.slider_thumb_radius else t.slider_thumb_size / 2 });
 }
 
 /// A slider's value readout: the text centred in a rounded label that fades
@@ -271,6 +339,7 @@ pub fn paintPill(widget: *const Widget, style: TextStyle, renderer: *Renderer) v
     renderer.fillRect(x, y, w, h, .{
         .color = wash,
         .radius = h / 2,
+        .relief = t.pill_relief,
         .border_width = 1,
         .border_color = lerp4(t.border, .{ t.accent[0], t.accent[1], t.accent[2], t.pill_border_active_alpha * t.accent[3] }, glow),
     });
@@ -296,6 +365,7 @@ pub fn paintSegmented(widget: *const Widget, data: SegmentedData, renderer: *Ren
         .radius = t.radius,
         .border_width = 1,
         .border_color = t.border,
+        .relief = t.segmented_relief,
     });
     if (data.labels.len == 0) return;
     const cell_w = widget.computed_width / @as(f32, @floatFromInt(data.labels.len));
@@ -307,6 +377,7 @@ pub fn paintSegmented(widget: *const Widget, data: SegmentedData, renderer: *Ren
             renderer.fillRect(cell_x + 2, widget.computed_y + 2, cell_w - 4, widget.computed_height - 4, .{
                 .color = accent_wash,
                 .radius = @max(0, t.radius - 2),
+                .relief = t.segmented_selected_relief,
                 .border_width = 1,
                 .border_color = t.accent,
             });
@@ -327,6 +398,7 @@ pub fn paintSwatch(widget: *const Widget, data: SwatchData, renderer: *Renderer)
     renderer.fillRect(widget.computed_x, widget.computed_y, widget.computed_width, widget.computed_height, .{
         .color = data.color,
         .radius = t.swatch_radius,
+        .relief = t.swatch_relief,
         .border_width = border_width,
         .border_color = border_color,
     });
@@ -353,6 +425,7 @@ pub fn paintStepper(widget: *const Widget, data: StepperData, renderer: *Rendere
         .radius = t.radius,
         .border_width = 1,
         .border_color = t.border,
+        .relief = t.stepper_relief,
     });
     renderer.drawIcon(widget.computed_x, widget.computed_y, stepper_button_width, widget.computed_height, .{ .id = .minimize, .color = t.fg });
     renderer.drawIcon(widget.computed_x + widget.computed_width - stepper_button_width, widget.computed_y, stepper_button_width, widget.computed_height, .{ .id = .plus, .color = t.fg });
@@ -367,6 +440,33 @@ pub fn paintStepper(widget: *const Widget, data: StepperData, renderer: *Rendere
         .weight = 600,
         .color = t.fg,
     });
+}
+
+fn paintScrollbarGrooveProximity(
+    widget: *const Widget,
+    look: scrollbar.Look,
+    renderer: *Renderer,
+) void {
+    const sample = widget.proximity;
+    if (look.track_relief == .flat or sample.distance >= std.math.inf(f32)) return;
+
+    // Only paint a sample that still belongs to this groove's geometry.
+    if (sample.rect.x != look.track.x or sample.rect.y != look.track.y or
+        sample.rect.w != look.track.w or sample.rect.h != look.track.h) return;
+
+    button_widget.paintProximityGlowAt(
+        renderer,
+        .{
+            .x = look.track.x,
+            .y = look.track.y,
+            .w = look.track.w,
+            .h = look.track.h,
+        },
+        look.track_radius,
+        sample.distance,
+        sample.x,
+        sample.y,
+    );
 }
 
 pub fn paintScrollContainer(widget: *const Widget, state: ScrollState, renderer: *Renderer) void {
@@ -386,7 +486,10 @@ pub fn paintScrollContainer(widget: *const Widget, state: ScrollState, renderer:
 
     const g = @import("widgets/scroll_container.zig").geometry(widget) orelse return;
     const t = renderer.palette orelse theme.global;
-    scrollbar.paint(renderer, scrollbar.look(g, state.bar, theme.global.scrollbar_width, t));
+    const look = scrollbar.look(g, state.bar, theme.global.scrollbar_width, t);
+    scrollbar.paintTrack(renderer, look);
+    paintScrollbarGrooveProximity(widget, look, renderer);
+    scrollbar.paintThumb(renderer, look);
 }
 
 pub fn intersectClip(a: ?ClipRect, b: ClipRect) ClipRect {
@@ -406,7 +509,7 @@ pub fn paintSelect(widget: *const Widget, data: layout.SelectData, r: *Renderer)
     const y = widget.computed_y;
     const w = widget.computed_width;
     const h = widget.computed_height;
-    r.fillRect(x, y, w, h, .{ .color = if (hovered and !data.disabled) t.surface_hover else t.surface, .radius = t.radius, .border_width = 1, .border_color = if (focused or data.open) t.accent else if (hovered and !data.disabled) t.border_hover else t.border });
+    r.fillRect(x, y, w, h, .{ .relief = if (data.disabled) .flat else if (data.open) t.button_pressed_relief else t.select_relief, .color = if (hovered and !data.disabled) t.surface_hover else t.surface, .radius = t.radius, .border_width = 1, .border_color = if (focused or data.open) t.accent else if (hovered and !data.disabled) t.border_hover else t.border });
     const valid = if (data.selected) |i| i < data.labels.len else false;
     const icon_width: f32 = if (valid and data.selected.? < data.icons.len) 24 else 0;
     if (icon_width > 0) r.drawIcon(x + 12, y + (h - 16) / 2, 16, 16, .{ .id = data.icons[data.selected.?], .color = if (data.disabled) t.faint else t.dim });
@@ -423,7 +526,7 @@ pub fn paintOverlays(widget: *const Widget, r: *Renderer) void {
         const t = r.palette orelse theme.global;
         var bg = t.bg;
         bg[3] = 1;
-        r.fillRect(b.x, b.y, b.w, b.h, .{ .color = bg, .radius = t.radius, .border_width = 1, .border_color = t.border_hover });
+        r.fillRect(b.x, b.y, b.w, b.h, .{ .relief = t.select_popup_relief, .color = bg, .radius = t.radius, .border_width = 1, .border_color = t.border_hover });
         const row_h = select.rowHeight();
         const visible = select.visibleCount(widget);
         const end = @min(d.labels.len, d.first_visible + visible);
@@ -442,6 +545,7 @@ pub fn paintOverlays(widget: *const Widget, r: *Renderer) void {
             if (scrollbar.Geometry.compute(.vertical, track, @floatFromInt(visible), @floatFromInt(d.labels.len), @floatFromInt(d.first_visible))) |g|
                 scrollbar.paint(r, scrollbar.look(g, .{}, theme.global.scrollbar_width, t));
         }
+        paintSelectPopupProximity(widget, r);
     }
     for (widget.children) |*child| paintOverlays(child, r);
 }

@@ -47,7 +47,7 @@ pub fn paintOpen(r: *Renderer, width: f32, s: f32, label: []const u8, focused: b
     var accent = body;
     accent.fg = body.accent;
     r.palette = accent;
-    button.paint(r, openBox(width, s), .{ .icon = .open, .variant = .ghost, .label = label }, .{ .focused = focused, .pointer = if (hovered) .hover else .idle });
+    button.paint(r, openBox(width, s), .{ .icon = .open, .variant = .secondary, .label = label }, .{ .focused = focused, .pointer = if (hovered) .hover else .idle });
     r.palette = body;
 }
 

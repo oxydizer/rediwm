@@ -88,7 +88,9 @@ pub fn build(b: *std.Build) void {
         run.addArg(entry[0]);
         b.step("i18n-" ++ entry[0], entry[1]).dependOn(&run.step);
     }
+    const border_glow_mod = b.createModule(.{ .root_source_file = b.path("src/border_glow.zig"), .target = target, .optimize = optimize });
     const ui_mod = b.createModule(.{ .root_source_file = b.path("src/ui/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    ui_mod.addImport("border_glow", border_glow_mod);
     ui_mod.addImport("i18n", i18n_mod);
     ui_mod.addImport("memory", memory_mod);
     ui_mod.addImport("wayland", wayland);

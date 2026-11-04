@@ -15,6 +15,7 @@ const anim = @import("paint.zig").anim;
 const text_mod = @import("paint.zig").text_mod;
 const theme = @import("paint.zig").theme;
 const ui_input = @import("paint.zig").ui_input;
+const Dispatcher = @import("input.zig").Dispatcher;
 const field_widget = @import("paint.zig").field_widget;
 const ClipRect = @import("paint.zig").ClipRect;
 const Image = @import("paint.zig").Image;
@@ -394,4 +395,591 @@ test "smooth image sampling is exact at one to one, blends between pixels and sh
     try std.testing.expectEqual(white, pixels[1 * 4 + 2]);
     try std.testing.expectEqual(white, pixels[2 * 4 + 1]);
     try std.testing.expectEqual(black, pixels[2 * 4 + 2]);
+}
+
+/// A theme with relief on: depth 4, softness 6, light at the upper left, and
+/// opaque shadows so the pixel checks below are unambiguous.
+fn reliefTheme() theme.Theme {
+    var t: theme.Theme = .{};
+    t.relief_depth = 4;
+    t.relief_softness = 6;
+    t.relief_light_angle = 135;
+    t.relief_dark = .{ 0, 0, 0, 1 };
+    t.relief_light = .{ 1, 1, 1, 1 };
+    return t;
+}
+
+const button_widget = @import("widgets/button.zig");
+
+fn adaptiveButtonPixels(palette: theme.Theme, state: button_widget.State) [80 * 60]u32 {
+    var pixels: [80 * 60]u32 = @splat(0xff808080);
+    var renderer = Renderer.init(&pixels, 80, 60, 1);
+    renderer.palette = palette;
+    button_widget.paint(
+        &renderer,
+        .{ .x = 20, .y = 20, .w = 40, .h = 24 },
+        .{ .variant = .secondary, .label = "" },
+        state,
+    );
+    return pixels;
+}
+
+test "adaptive button relief transitions inset, lifts raised, and leaves flat and protected states unchanged" {
+    var inset = reliefTheme();
+    inset.button_relief = .inset;
+
+    const inset_rest = adaptiveButtonPixels(inset, .{ .pointer = .hover, .hover_elevation = 0 });
+    const inset_hover = adaptiveButtonPixels(inset, .{ .pointer = .hover, .hover_elevation = 1 });
+    try std.testing.expect(!std.mem.eql(u32, &inset_rest, &inset_hover));
+
+    var raised = inset;
+    raised.button_relief = .raised;
+    const raised_rest = adaptiveButtonPixels(raised, .{ .pointer = .hover, .hover_elevation = 0 });
+    const raised_hover = adaptiveButtonPixels(raised, .{ .pointer = .hover, .hover_elevation = 1 });
+    try std.testing.expect(!std.mem.eql(u32, &raised_rest, &raised_hover));
+
+    var flat = inset;
+    flat.button_relief = .flat;
+    const flat_rest = adaptiveButtonPixels(flat, .{ .pointer = .hover, .hover_elevation = 0 });
+    const flat_hover = adaptiveButtonPixels(flat, .{ .pointer = .hover, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &flat_rest, &flat_hover);
+
+    // Focus, selection, press and disabled treatments do not inherit elevation.
+    const focused_rest = adaptiveButtonPixels(inset, .{ .pointer = .hover, .focused = true, .hover_elevation = 0 });
+    const focused_hover = adaptiveButtonPixels(inset, .{ .pointer = .hover, .focused = true, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &focused_rest, &focused_hover);
+
+    const selected_rest = adaptiveButtonPixels(inset, .{ .pointer = .hover, .selected = true, .hover_elevation = 0 });
+    const selected_hover = adaptiveButtonPixels(inset, .{ .pointer = .hover, .selected = true, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &selected_rest, &selected_hover);
+
+    const pressed_rest = adaptiveButtonPixels(inset, .{ .pointer = .press, .hover_elevation = 0 });
+    const pressed_hover = adaptiveButtonPixels(inset, .{ .pointer = .press, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &pressed_rest, &pressed_hover);
+
+    const disabled_rest = adaptiveButtonPixels(inset, .{ .pointer = .disabled, .hover_elevation = 0 });
+    const disabled_hover = adaptiveButtonPixels(inset, .{ .pointer = .disabled, .hover_elevation = 1 });
+    try std.testing.expectEqualSlices(u32, &disabled_rest, &disabled_hover);
+}
+
+test "relief draws nothing while the theme's relief_depth is zero" {
+    var with_relief = @as([40 * 40]u32, @splat(0xff808080));
+    var without = with_relief;
+    var a = Renderer.init(&with_relief, 40, 40, 1);
+    a.palette = .{};
+    a.fillRect(10, 10, 20, 20, .{ .color = .{ 1, 0, 0, 1 }, .radius = 4, .relief = .raised });
+    var b = Renderer.init(&without, 40, 40, 1);
+    b.fillRect(10, 10, 20, 20, .{ .color = .{ 1, 0, 0, 1 }, .radius = 4 });
+    try std.testing.expectEqualSlices(u32, &without, &with_relief);
+}
+
+test "a raised fill casts its dark shadow away from the light and a light one toward it" {
+    var pixels = @as([60 * 60]u32, @splat(0xff808080));
+    var r = Renderer.init(&pixels, 60, 60, 1);
+    r.palette = reliefTheme();
+    r.fillRect(20, 20, 20, 20, .{ .color = .{ 0.5, 0.5, 0.5, 1 }, .radius = 4, .relief = .raised });
+    // Light from the upper left: shadow below and right of the box, glow above and left.
+    try std.testing.expect((pixels[41 * 60 + 41] & 0xff) < 0x80);
+    try std.testing.expect((pixels[18 * 60 + 18] & 0xff) > 0x80);
+    // The fill and the surface far from it are untouched.
+    try std.testing.expectEqual(@as(u32, 0xff808080), pixels[30 * 60 + 30]);
+    try std.testing.expectEqual(@as(u32, 0xff808080), pixels[2 * 60 + 2]);
+}
+
+test "an inset fill shades the edge facing the light and lights the opposite one" {
+    var pixels = @as([60 * 60]u32, @splat(0xff808080));
+    var r = Renderer.init(&pixels, 60, 60, 1);
+    r.palette = reliefTheme();
+    r.fillRect(20, 20, 20, 20, .{ .color = .{ 0.5, 0.5, 0.5, 1 }, .radius = 4, .relief = .inset });
+    // Just inside the top edge it is dark, just inside the bottom edge light.
+    try std.testing.expect((pixels[22 * 60 + 30] & 0xff) < 0x80);
+    try std.testing.expect((pixels[37 * 60 + 30] & 0xff) > 0x80);
+    // Neither the middle nor the surface outside the box is touched.
+    try std.testing.expectEqual(@as(u32, 0xff808080), pixels[30 * 60 + 30]);
+    try std.testing.expectEqual(@as(u32, 0xff808080), pixels[30 * 60 + 15]);
+}
+
+const paintSlider = @import("paint_widgets.zig").paintSlider;
+const paintSegmented = @import("paint_widgets.zig").paintSegmented;
+const paintSwatch = @import("paint_widgets.zig").paintSwatch;
+const paintRow = @import("paint_widgets.zig").paintRow;
+
+/// The blue channel at (`x`, `y`): shadows are black and highlights white, so
+/// it is enough to tell them from the mid-grey page.
+fn channel(pixels: []const u32, width: usize, x: usize, y: usize) u32 {
+    return pixels[y * width + x] & 0xff;
+}
+
+/// Inset: the edge facing the light is in shadow, the far one lit.
+fn expectInsetShading(flat: []const u32, cut: []const u32, width: usize, x: usize, top: usize, bottom: usize) !void {
+    try std.testing.expect(channel(cut, width, x, top) < channel(flat, width, x, top));
+    try std.testing.expect(channel(cut, width, x, bottom) > channel(flat, width, x, bottom));
+}
+
+/// A shaded toggle on a mid-grey page, painted with `palette`.
+fn shadedToggle(palette: theme.Theme, on: bool) [80 * 60]u32 {
+    var pixels = @as([80 * 60]u32, @splat(0xff808080));
+    var r = Renderer.init(&pixels, 80, 60, 1);
+    r.palette = palette;
+    @import("widgets/toggle.zig").paint(&r, .{ .x = 20, .y = 20, .w = 36, .h = 20 }, .{ .on = on });
+    return pixels;
+}
+
+test "shaded toggles take the relief keys and are untouched while they are flat" {
+    var flat = reliefTheme();
+    flat.toggle_shaded = true;
+    var stock: theme.Theme = .{};
+    stock.toggle_shaded = true;
+    // Relief on in the theme but off for the control: pixel for pixel as before.
+    try std.testing.expectEqualSlices(u32, &shadedToggle(stock, false), &shadedToggle(flat, false));
+
+    // Off, the knob rests at the left: 22.8 to 37.2 across and down the track.
+    const base = shadedToggle(flat, false);
+    var raised = flat;
+    raised.toggle_thumb_relief = .raised;
+    const lit = shadedToggle(raised, false);
+    // Light from the upper left: a shadow lower right of the knob, a glow upper left.
+    try std.testing.expect(channel(&lit, 80, 39, 33) < channel(&base, 80, 39, 33));
+    try std.testing.expect(channel(&lit, 80, 21, 30) > channel(&base, 80, 21, 30));
+    // The knob's shadows never leave the track.
+    try std.testing.expectEqual(@as(u32, 0xff808080), lit[42 * 80 + 30]);
+
+    var groove = flat;
+    groove.toggle_track_relief = .inset;
+    const cut = shadedToggle(groove, false);
+    try expectInsetShading(&base, &cut, 80, 40, 21, 38);
+    // The groove's shadows skip the knob.
+    try std.testing.expectEqual(base[30 * 80 + 30], cut[30 * 80 + 30]);
+}
+
+/// A shaded slider at half on a mid-grey page: the disc is 16 across, centred
+/// on (60, 22), in a box from (10, 10) that is 100 by 24.
+fn shadedSlider(palette: theme.Theme) [130 * 50]u32 {
+    var pixels = @as([130 * 50]u32, @splat(0xff808080));
+    var r = Renderer.init(&pixels, 130, 50, 1);
+    r.palette = palette;
+    const widget = Widget{
+        .kind = .{ .slider = .{
+            .style = .standard,
+            .value = 0.5,
+            .min = 0,
+            .max = 1,
+            .feel = .{},
+            .on_change = struct {
+                fn call(_: ?*anyopaque, _: usize, _: f32) void {}
+            }.call,
+        } },
+        .computed_x = 10,
+        .computed_y = 10,
+        .computed_width = 100,
+        .computed_height = 24,
+    };
+    paintSlider(&widget, widget.kind.slider, &r);
+    return pixels;
+}
+
+fn shadedSliderTheme(track_height: f32) theme.Theme {
+    var t = reliefTheme();
+    t.slider_shaded = true;
+    t.slider_thumb_size = 16;
+    t.slider_track_height = track_height;
+    return t;
+}
+
+test "shaded sliders take the relief keys, off the thumb and inside their box" {
+    var flat = shadedSliderTheme(6);
+    var stock: theme.Theme = .{};
+    stock.slider_shaded = true;
+    stock.slider_thumb_size = 16;
+    stock.slider_track_height = 6;
+    try std.testing.expectEqualSlices(u32, &shadedSlider(stock), &shadedSlider(flat));
+
+    const base = shadedSlider(flat);
+    flat.slider_thumb_relief = .raised;
+    const lit = shadedSlider(flat);
+    try std.testing.expect(channel(&lit, 130, 68, 26) < channel(&base, 130, 68, 26));
+    try std.testing.expect(channel(&lit, 130, 51, 17) > channel(&base, 130, 51, 17));
+    // Below the box (it ends at y = 34) the page is untouched.
+    try std.testing.expectEqual(@as(u32, 0xff808080), lit[36 * 130 + 60]);
+
+    // A rail tall enough for the groove's two shadows not to meet.
+    var groove = shadedSliderTheme(14);
+    const wide = shadedSlider(groove);
+    groove.slider_track_relief = .inset;
+    const cut = shadedSlider(groove);
+    try expectInsetShading(&wide, &cut, 130, 90, 16, 27);
+    // The groove's shadows skip the disc.
+    try std.testing.expectEqual(wide[22 * 130 + 60], cut[22 * 130 + 60]);
+}
+
+fn paintedSegmented(palette: theme.Theme) [80 * 60]u32 {
+    var pixels = @as([80 * 60]u32, @splat(0xff808080));
+    var r = Renderer.init(&pixels, 80, 60, 1);
+    r.palette = palette;
+    const widget = Widget{
+        .kind = .{ .segmented = .{ .labels = &.{}, .selected = 0, .on_change = struct {
+            fn call(_: ?*anyopaque, _: usize, _: usize) void {}
+        }.call } },
+        .computed_x = 20,
+        .computed_y = 20,
+        .computed_width = 40,
+        .computed_height = 24,
+    };
+    paintSegmented(&widget, widget.kind.segmented, &r);
+    return pixels;
+}
+
+fn paintedSwatch(palette: theme.Theme) [80 * 60]u32 {
+    var pixels = @as([80 * 60]u32, @splat(0xff808080));
+    var r = Renderer.init(&pixels, 80, 60, 1);
+    r.palette = palette;
+    const widget = Widget{
+        .kind = .{ .swatch = .{ .color = .{ 0.5, 0.5, 0.5, 1 }, .selected = false, .on_select = struct {
+            fn call(_: ?*anyopaque, _: usize, _: [4]f32) void {}
+        }.call } },
+        .computed_x = 20,
+        .computed_y = 20,
+        .computed_width = 24,
+        .computed_height = 24,
+    };
+    paintSwatch(&widget, widget.kind.swatch, &r);
+    return pixels;
+}
+
+fn paintedRow(palette: theme.Theme, data: layout.RowData) [80 * 60]u32 {
+    var pixels = @as([80 * 60]u32, @splat(0xff808080));
+    var r = Renderer.init(&pixels, 80, 60, 1);
+    r.palette = palette;
+    const widget = Widget{ .kind = .{ .row = data }, .computed_x = 10, .computed_y = 10, .computed_width = 40, .computed_height = 30 };
+    paintRow(&widget, data, &r);
+    return pixels;
+}
+
+test "segmented frames, swatches and rows take their own relief keys" {
+    const stock: theme.Theme = .{};
+    const flat = reliefTheme();
+    // Relief on in the theme, every key flat: the same pixels as a theme without it.
+    try std.testing.expectEqualSlices(u32, &paintedSegmented(stock), &paintedSegmented(flat));
+    try std.testing.expectEqualSlices(u32, &paintedSwatch(stock), &paintedSwatch(flat));
+    try std.testing.expectEqualSlices(u32, &paintedRow(stock, .{ .selected = true }), &paintedRow(flat, .{ .selected = true }));
+
+    var inset = flat;
+    inset.segmented_relief = .inset;
+    try expectInsetShading(&paintedSegmented(flat), &paintedSegmented(inset), 80, 40, 21, 42);
+
+    var raised = flat;
+    raised.swatch_relief = .raised;
+    const base = paintedSwatch(flat);
+    const lit = paintedSwatch(raised);
+    // The swatch is 20 to 44 across and down: shadow to its lower right, glow upper left.
+    try std.testing.expect(channel(&lit, 80, 45, 33) < channel(&base, 80, 45, 33));
+    try std.testing.expect(channel(&lit, 80, 18, 33) > channel(&base, 80, 18, 33));
+
+    var rows = flat;
+    rows.row_selected_relief = .inset;
+    try expectInsetShading(&paintedRow(flat, .{ .selected = true }), &paintedRow(rows, .{ .selected = true }), 80, 35, 11, 38);
+    rows.row_hover_relief = .inset;
+    try expectInsetShading(&paintedRow(flat, .{ .state = .hover }), &paintedRow(rows, .{ .state = .hover }), 80, 35, 11, 38);
+}
+
+
+test "dispatcher proximity illuminates raised and inset buttons" {
+    for ([_]layout.Relief{ .raised, .inset }) |button_relief| {
+        var children = [_]Widget{.{
+            .kind = .{ .button = .{ .variant = .secondary } },
+            .computed_x = 20,
+            .computed_y = 20,
+            .computed_width = 40,
+            .computed_height = 24,
+        }};
+        var root: Widget = .{
+            .kind = .container,
+            .computed_width = 80,
+            .computed_height = 60,
+            .children = &children,
+        };
+        root.linkParents();
+
+        var dispatcher: Dispatcher = .{};
+        dispatcher.pointerMotion(&root, 40, 16);
+
+        const button = &root.children[0];
+        const sampled = button.kind.button;
+        try std.testing.expectEqual(@as(f32, 4), sampled.proximity_distance);
+
+        var palette = reliefTheme();
+        palette.button_relief = button_relief;
+        palette.button_hover_glow_enabled = true;
+        palette.border_glow = .{ 1, 0, 0, 0.60 };
+        palette.border_glow_enabled = false;
+        palette.border_glow_reach = 56;
+        palette.border_glow_length = 72;
+        palette.border_glow_depth = 3;
+
+        var pixels: [80 * 60]u32 = @splat(0xff808080);
+        var renderer = Renderer.init(&pixels, 80, 60, 1);
+        renderer.palette = palette;
+        paintButton(button, sampled, &renderer);
+        const illuminated = pixels;
+
+        var without_proximity = sampled;
+        without_proximity.proximity_distance = std.math.inf(f32);
+        @memset(&pixels, 0xff808080);
+        paintButton(button, without_proximity, &renderer);
+
+        try std.testing.expect(!std.mem.eql(u32, &illuminated, &pixels));
+    }
+}
+
+test "button hover glow is independent of window edge glow and stays rounded and clipped" {
+    const sample = struct {
+        fn pixel(pixels: []const u32, width: i32, scale: f32, x: f32, y: f32) u32 {
+            const px: usize = @intFromFloat(@floor(x * scale));
+            const py: usize = @intFromFloat(@floor(y * scale));
+            return pixels[py * @as(usize, @intCast(width)) + px];
+        }
+
+        fn luma(pixel_value: u32) u32 {
+            const red = (pixel_value >> 16) & 0xff;
+            const green = (pixel_value >> 8) & 0xff;
+            const blue = pixel_value & 0xff;
+            return red * 212 + green * 715 + blue * 72;
+        }
+    };
+
+    for ([_]f32{ 1, 1.5, 2 }) |scale| {
+        var pixels: [256 * 192]u32 = @splat(0xff808080);
+        const width: i32 = @intFromFloat(128 * scale);
+        const height: i32 = @intFromFloat(96 * scale);
+        var renderer = Renderer.init(&pixels, width, height, scale);
+        var palette: theme.Theme = .{};
+        palette.border_glow = .{ 1, 0, 0, 0.60 };
+        palette.border_glow_enabled = false;
+        palette.button_hover_glow_enabled = true;
+        palette.border_glow_reach = 56;
+        palette.border_glow_length = 72;
+        palette.border_glow_depth = 3;
+        renderer.palette = palette;
+        renderer.clip = .{ .x = 40, .y = 20, .w = 40, .h = 34 };
+
+        const widget = Widget{
+            .kind = .container,
+            .computed_x = 20,
+            .computed_y = 20,
+            .computed_width = 80,
+            .computed_height = 34,
+        };
+        paintButton(&widget, .{
+            .variant = .ghost,
+            .proximity_distance = 4,
+            .proximity_x = 40,
+            .proximity_y = -4,
+        }, &renderer);
+
+        const near = sample.pixel(&pixels, width, scale, 60.5, 20.5);
+        const opposite = sample.pixel(&pixels, width, scale, 60.5, 53.5);
+        const centre = sample.pixel(&pixels, width, scale, 60.5, 37.5);
+        const rounded_corner = sample.pixel(&pixels, width, scale, 20.5, 20.5);
+        const outside_clip = sample.pixel(&pixels, width, scale, 30.5, 30.5);
+
+        try std.testing.expect((near >> 16) & 0xff > 0x80);
+        try std.testing.expect(sample.luma(opposite) < sample.luma(0xff808080));
+        try std.testing.expect((near >> 16) & 0xff > (centre >> 16) & 0xff);
+        try std.testing.expectEqual(@as(u32, 0xff808080), rounded_corner);
+        try std.testing.expectEqual(@as(u32, 0xff808080), outside_clip);
+
+        // Window-edge glow being off must not suppress button glow.
+        @memset(&pixels, 0xff808080);
+        palette.border_glow_enabled = true;
+        palette.button_hover_glow_enabled = false;
+        renderer.palette = palette;
+        paintButton(&widget, .{
+            .variant = .ghost,
+            .proximity_distance = 4,
+            .proximity_x = 40,
+            .proximity_y = -4,
+        }, &renderer);
+        const button_glow_disabled = sample.pixel(&pixels, width, scale, 60.5, 20.5);
+        try std.testing.expectEqual(@as(u32, 0xff808080), button_glow_disabled);
+
+        // An absent proximity sample must never paint a stale highlight.
+        @memset(&pixels, 0xff808080);
+        palette.button_hover_glow_enabled = true;
+        renderer.palette = palette;
+        paintButton(&widget, .{
+            .variant = .ghost,
+            .proximity_distance = std.math.inf(f32),
+            .proximity_x = 40,
+            .proximity_y = -4,
+        }, &renderer);
+        const no_proximity = sample.pixel(&pixels, width, scale, 60.5, 20.5);
+        try std.testing.expectEqual(@as(u32, 0xff808080), no_proximity);
+    }
+}
+
+test "non-button interactive surfaces use the shared proximity edge painter" {
+    const background: u32 = 0xff808080;
+    var pixels: [80 * 60]u32 = @splat(background);
+    var renderer = Renderer.init(&pixels, 80, 60, 1);
+    var palette: theme.Theme = .{};
+    palette.button_hover_glow_enabled = true;
+    palette.border_glow = .{ 1, 0, 0, 0.60 };
+    palette.border_glow_reach = 56;
+    palette.border_glow_length = 72;
+    palette.border_glow_depth = 3;
+    renderer.palette = palette;
+    renderer.clip = .{ .x = 30, .y = 20, .w = 20, .h = 24 };
+
+    var widget = Widget{
+        .kind = .{ .row = .{} },
+        .computed_x = 20,
+        .computed_y = 20,
+        .computed_width = 40,
+        .computed_height = 24,
+        .proximity = .{
+            .rect = .{ .x = 20, .y = 20, .w = 40, .h = 24 },
+            .distance = 4,
+            .x = 20,
+            .y = -4,
+        },
+    };
+    paintTree(&widget, &renderer);
+    const illuminated = pixels;
+
+    widget.proximity = .{};
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    try std.testing.expect(!std.mem.eql(u32, &illuminated, &pixels));
+
+    // The shared painter respects the renderer's clip.
+    try std.testing.expectEqual(background, illuminated[20 * 80 + 25]);
+    try std.testing.expect(illuminated[20 * 80 + 40] != background);
+
+    // A control becoming disabled must stop painting its cached sample,
+    // even when the pointer has not moved to trigger another sample.
+    widget.kind.row.state = .disabled;
+    widget.proximity = .{
+        .rect = .{ .x = 20, .y = 20, .w = 40, .h = 24 },
+        .distance = 4,
+        .x = 20,
+        .y = -4,
+    };
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    try std.testing.expect(std.mem.eql(u32, &pixels, &@as([80 * 60]u32, @splat(background))));
+}
+
+test "scrollbar groove proximity glows without covering the thumb" {
+    const background: u32 = 0xff808080;
+    const saved_theme = theme.global;
+    defer theme.global = saved_theme;
+
+    var palette: theme.Theme = .{};
+    palette.button_hover_glow_enabled = true;
+    palette.border_glow = .{ 1, 0, 0, 0.60 };
+    palette.border_glow_reach = 56;
+    palette.border_glow_length = 72;
+    palette.border_glow_depth = 3;
+    palette.scrollbar_width = 8;
+    palette.scrollbar_track_relief = .inset;
+    theme.global = palette;
+
+    var pixels: [160 * 160]u32 = @splat(background);
+    var renderer = Renderer.init(&pixels, 160, 160, 1);
+    renderer.palette = palette;
+
+    var widget = Widget{
+        .kind = .{ .scroll_container = .{ .content_size = 200 } },
+        .direction = .column,
+        .computed_x = 20,
+        .computed_y = 20,
+        .computed_width = 100,
+        .computed_height = 100,
+        .proximity = .{
+            .rect = .{ .x = 107, .y = 20, .w = 12, .h = 100 },
+            .distance = 0,
+            .x = 3,
+            .y = 70,
+        },
+    };
+
+    paintTree(&widget, &renderer);
+    const with_glow = pixels;
+
+    widget.proximity = .{};
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    const without_glow = pixels;
+
+    const groove_edge = 90 * 160 + 107;
+    const thumb_centre = 35 * 160 + 113;
+
+    try std.testing.expect(with_glow[groove_edge] != without_glow[groove_edge]);
+    // The thumb is painted after the groove glow and remains unchanged.
+    try std.testing.expectEqual(without_glow[thumb_centre], with_glow[thumb_centre]);
+
+    // A flat track remains unlit even though its proximity sample is retained.
+    palette.scrollbar_track_relief = .flat;
+    theme.global = palette;
+    renderer.palette = palette;
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    const flat_with_sample = pixels;
+
+    widget.proximity = .{};
+    @memset(&pixels, background);
+    paintTree(&widget, &renderer);
+    try std.testing.expect(std.mem.eql(u32, &flat_with_sample, &pixels));
+}
+
+test "button hover glow lights adjacent and independently reachable edges" {
+    const sample = struct {
+        fn red(pixels: []const u32, x: usize, y: usize) u32 {
+            return (pixels[y * 200 + x] >> 16) & 0xff;
+        }
+    };
+
+    var pixels: [200 * 160]u32 = @splat(0xff808080);
+    var renderer = Renderer.init(&pixels, 200, 160, 1);
+    var palette: theme.Theme = .{};
+    palette.button_hover_glow_enabled = true;
+    palette.border_glow = .{ 1, 0, 0, 0.60 };
+    palette.border_glow_reach = 56;
+    palette.border_glow_length = 72;
+    palette.border_glow_depth = 3;
+    renderer.palette = palette;
+
+    // Above and to the right: both adjoining edges receive their own glow.
+    button_widget.paint(
+        &renderer,
+        .{ .x = 20, .y = 20, .w = 80, .h = 34 },
+        .{ .variant = .ghost },
+        .{ .proximity_distance = 4, .proximity_x = 84, .proximity_y = -4 },
+    );
+    try std.testing.expect(sample.red(&pixels, 92, 20) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 99, 28) > 0x80);
+
+    // Inside a larger button, only the nearby top and left edges light.
+    @memset(&pixels, 0xff808080);
+    button_widget.paint(
+        &renderer,
+        .{ .x = 20, .y = 20, .w = 140, .h = 120 },
+        .{ .variant = .ghost },
+        .{ .proximity_distance = 0, .proximity_x = 5, .proximity_y = 5 },
+    );
+    try std.testing.expect(sample.red(&pixels, 25, 20) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 20, 25) > 0x80);
+
+    // Inside a small button, all four edges are within reach and illuminate.
+    @memset(&pixels, 0xff808080);
+    button_widget.paint(
+        &renderer,
+        .{ .x = 20, .y = 20, .w = 80, .h = 34 },
+        .{ .variant = .ghost },
+        .{ .proximity_distance = 0, .proximity_x = 40, .proximity_y = 17 },
+    );
+    try std.testing.expect(sample.red(&pixels, 60, 20) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 99, 37) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 60, 53) > 0x80);
+    try std.testing.expect(sample.red(&pixels, 20, 37) > 0x80);
 }

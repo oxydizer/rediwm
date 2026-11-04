@@ -256,6 +256,7 @@ test "input and theme reload detect every field and compare strings by content" 
             []const u8 => "another theme",
             [4]f32 => .{ 0.1, 0.2, 0.3, 0.4 },
             ?[4]f32 => .{ 0.1, 0.2, 0.3, 0.4 },
+            theme_mod.Relief => if (@field(original_theme, field_name) == .flat) .raised else .flat,
             else => @compileError("add a theme change fixture for " ++ field_name),
         };
         try std.testing.expect(!themeEql(original_theme, changed));

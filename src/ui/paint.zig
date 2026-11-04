@@ -14,9 +14,11 @@ const Widget = layout.Widget;
 const RectStyle = layout.RectStyle;
 const TextStyle = layout.TextStyle;
 const IconStyle = layout.IconStyle;
+const Relief = layout.Relief;
 const paint_icons = @import("paint_icons.zig");
 const paint_image = @import("paint_image.zig");
 const paint_widgets = @import("paint_widgets.zig");
+const relief = @import("relief.zig");
 pub const iconDistance = paint_icons.iconDistance;
 pub const sdSegment = paint_icons.sdSegment;
 pub const sdCircle = paint_icons.sdCircle;
@@ -64,6 +66,18 @@ const taps_strip = 64;
 
 /// A logical-pixel clip rectangle, intersected as scroll containers nest.
 pub const ClipRect = struct { x: f32, y: f32, w: f32, h: f32 };
+
+/// A rounded box in logical pixels: the shape, or a limit on where its relief
+/// may land, for `Renderer.paintShapeRelief`.
+pub const ReliefBox = struct { x: f32, y: f32, w: f32, h: f32, radius: f32 = 0 };
+
+/// Where such relief may land: only `within` one box, never `outside` another.
+/// A knob's shadows stay within its track; a groove's skip the knob.
+pub const ReliefLimits = struct { within: ?ReliefBox = null, outside: ?ReliefBox = null };
+
+fn deviceBox(b: ReliefBox, s: f32) relief.Shape {
+    return .{ .x = b.x * s, .y = b.y * s, .w = b.w * s, .h = b.h * s, .radius = b.radius * s };
+}
 
 /// Premultiplied 0xAARRGGBB pixels, row-major without padding.
 pub const Image = struct { pixels: []const u32, width: i32, height: i32 };
@@ -179,7 +193,90 @@ pub const Renderer = struct {
         return out;
     }
 
+    /// A rounded fill, with the theme's neumorphic relief when the style asks
+    /// for it and `relief_depth` is set (`relief.zig`). A raised fill's shadows
+    /// go under it, around its edge; an inset fill's go over it, inside.
     pub fn fillRect(r: *Renderer, x: f32, y: f32, w: f32, h: f32, style: RectStyle) void {
+        if (style.relief == .flat or w <= 0 or h <= 0) return r.fillRectPlain(x, y, w, h, style);
+        const spec = relief.Spec.from(r.palette orelse theme.global, r.scale);
+        if (!spec.enabled()) return r.fillRectPlain(x, y, w, h, style);
+        if (style.relief == .raised) r.paintRelief(x, y, w, h, style, spec, null, null);
+        r.fillRectPlain(x, y, w, h, style);
+        if (style.relief == .inset) r.paintRelief(x, y, w, h, style, spec, null, null);
+    }
+
+    /// The shadow pair of `style.relief` over the pixels it can touch: the
+    /// fill's box grown by the shadows' reach when raised, the box itself when
+    /// inset. Honors the clip, so a scroll container cuts a raised control's
+    /// shadows at its edge. `within` and `outside` (device pixels) confine the
+    /// shadows to one shape and keep them off another, antialiased at the edge.
+    fn paintRelief(r: *Renderer, x: f32, y: f32, w: f32, h: f32, style: RectStyle, spec: relief.Spec, within: ?relief.Shape, outside: ?relief.Shape) void {
+        const s = r.scale;
+        const raised = style.relief == .raised;
+        const grow: f32 = if (raised) spec.reach() else 0;
+        var dx0 = x * s - grow;
+        var dy0 = y * s - grow;
+        var dx1 = (x + w) * s + grow;
+        var dy1 = (y + h) * s + grow;
+        if (r.effectiveClip()) |c| {
+            dx0 = @max(dx0, c.x * s);
+            dy0 = @max(dy0, c.y * s);
+            dx1 = @min(dx1, (c.x + c.w) * s);
+            dy1 = @min(dy1, (c.y + c.h) * s);
+        }
+        const x0: i32 = @intFromFloat(@floor(@max(0, dx0)));
+        const y0: i32 = @intFromFloat(@floor(@max(0, dy0)));
+        const x1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.width)), dx1)));
+        const y1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.height)), dy1)));
+        if (x0 >= x1 or y0 >= y1) return;
+
+        r.clean = false;
+        const shape: relief.Shape = .{ .x = x * s, .y = y * s, .w = w * s, .h = h * s, .radius = style.radius * s };
+        const dark = toColor(spec.dark);
+        const light = toColor(spec.light);
+        var py = y0;
+        while (py < y1) : (py += 1) {
+            const sy = @as(f32, @floatFromInt(py)) + 0.5;
+            const row: usize = @intCast(py * r.width);
+            var px = x0;
+            while (px < x1) : (px += 1) {
+                const sx = @as(f32, @floatFromInt(px)) + 0.5;
+                var keep: f32 = 1;
+                if (within) |m| keep = sdf.coverage(sdf.sdRoundedBox(sx, sy, m.x, m.y, m.w, m.h, m.radius));
+                if (outside) |m| keep *= 1 - sdf.coverage(sdf.sdRoundedBox(sx, sy, m.x, m.y, m.w, m.h, m.radius));
+                if (keep <= 0) continue;
+                const pair = if (raised) relief.raised(spec, shape, sx, sy) else relief.inset(spec, shape, sx, sy);
+                const index = row + @as(usize, @intCast(px));
+                if (pair.dark > 0) blendPixel(&r.pixels[index], dark, pair.dark * keep);
+                if (pair.light > 0) blendPixel(&r.pixels[index], light, pair.light * keep);
+            }
+        }
+    }
+
+    /// Whether `kind` would shade anything here: the theme has relief on and
+    /// the control asked for it. A painter that lights its own pixels (the
+    /// shaded toggle and slider) uses it to drop the hand-made lighting the
+    /// relief would double.
+    pub fn reliefActive(r: *const Renderer, kind: Relief) bool {
+        if (kind == .flat) return false;
+        return relief.Spec.from(r.palette orelse theme.global, r.scale).enabled();
+    }
+
+    /// The relief of `kind` for a shape some other painter fills itself. Call
+    /// it once the pixels are down: a raised shape's shadows lie outside it and
+    /// an inset one's inside, so neither touches the fill. Nothing is drawn
+    /// while the theme's `relief_depth` is 0.
+    pub fn paintShapeRelief(r: *Renderer, kind: Relief, shape: ReliefBox, limits: ReliefLimits) void {
+        if (kind == .flat or shape.w <= 0 or shape.h <= 0) return;
+        const spec = relief.Spec.from(r.palette orelse theme.global, r.scale);
+        if (!spec.enabled()) return;
+        const s = r.scale;
+        const within: ?relief.Shape = if (limits.within) |b| deviceBox(b, s) else null;
+        const outside: ?relief.Shape = if (limits.outside) |b| deviceBox(b, s) else null;
+        r.paintRelief(shape.x, shape.y, shape.w, shape.h, .{ .color = .{ 0, 0, 0, 0 }, .radius = shape.radius, .relief = kind }, spec, within, outside);
+    }
+
+    fn fillRectPlain(r: *Renderer, x: f32, y: f32, w: f32, h: f32, style: RectStyle) void {
         if (w <= 0 or h <= 0) return;
         const s = r.scale;
         var dx0 = x * s;
@@ -599,6 +696,9 @@ pub fn paintTree(widget: *const Widget, renderer: *Renderer) void {
     }
     if (recurse_children) {
         if (widget.underlay) |under| under.paint(under.owner, widget, renderer);
+    }
+    paint_widgets.paintInteractiveProximity(widget, renderer);
+    if (recurse_children) {
         for (widget.children) |*child| paintTree(child, renderer);
     }
 }

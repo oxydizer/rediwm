@@ -21,6 +21,7 @@ const onFontSizeChanged = appearance_chrome.onFontSizeChanged;
 const onRadiusChanged = appearance_chrome.onRadiusChanged;
 const onShadowChanged = appearance_chrome.onShadowChanged;
 const onBorderGlowChanged = appearance_chrome.onBorderGlowChanged;
+const onButtonHoverGlowChanged = appearance_chrome.onButtonHoverGlowChanged;
 const onChromeOpacityChanged = appearance_chrome.onChromeOpacityChanged;
 const onChromeDarknessChanged = appearance_chrome.onChromeDarknessChanged;
 const onInactiveDimChanged = appearance_chrome.onInactiveDimChanged;
@@ -263,7 +264,7 @@ pub fn buildEffectRows(out: *Section, pal: theme.Theme) void {
     }
 }
 
-/// The UI font, cursor theme, font size, radius, shadow and edge glow rows.
+/// The UI font, cursor theme, font size, radius, shadow, edge glow and button hover glow rows.
 pub fn buildFontRows(out: *Section, arena: std.mem.Allocator, t: theme.Theme, pal: theme.Theme) void {
     if (out.font_families == null) {
         out.font_families = @import("ui").font_fallback.listFamilies(out.font_arena.allocator()) catch null;
@@ -348,6 +349,15 @@ pub fn buildFontRows(out: *Section, arena: std.mem.Allocator, t: theme.Theme, pa
     out.glow_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.glow_label_children },
         .{ .name = "border_glow", .kind = .{ .toggle = .{ .on = t.border_glow_enabled, .owner = out, .on_change = &onBorderGlowChanged } } },
+    };
+
+    out.button_hover_glow_label_children = .{
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Interactive surface glow"), .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Light interactive control edges near the pointer"), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
+    };
+    out.button_hover_glow_row_children = .{
+        .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.button_hover_glow_label_children },
+        .{ .name = "button_hover_glow", .kind = .{ .toggle = .{ .on = t.button_hover_glow_enabled, .owner = out, .on_change = &onButtonHoverGlowChanged } } },
     };
 }
 

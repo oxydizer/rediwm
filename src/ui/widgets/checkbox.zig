@@ -30,6 +30,7 @@ pub fn paint(r: *Renderer, box: Rect, label: []const u8, state: State) void {
         .radius = t.checkbox_radius,
         .border_width = if (ring) 2 else 1,
         .border_color = if (ring) t.controlFocusColor() else if (state.checked) t.accent else t.border_hover,
+        .relief = if (state.disabled) .flat else t.checkbox_relief,
     });
     if (state.checked) r.drawIcon(box.x, y, box_size, box_size, .{ .id = .checkmark, .color = t.on_accent });
     var left = box.x + box_size + gap;

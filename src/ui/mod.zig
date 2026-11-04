@@ -5,7 +5,9 @@ pub const arrange = @import("arrange.zig");
 pub const paint = @import("paint.zig");
 pub const window_chrome = @import("window_chrome.zig");
 pub const theme = @import("theme.zig");
+pub const border_glow = @import("border_glow");
 pub const input = @import("input.zig");
+pub const interaction_surface = @import("interaction_surface.zig");
 pub const trackpad_navigation = @import("trackpad_navigation.zig");
 
 pub const widgets = struct {
@@ -38,6 +40,7 @@ pub const font_fallback = @import("font_fallback.zig");
 pub const fold = @import("fold.zig");
 pub const hover_glide = @import("hover_glide.zig");
 pub const key_repeat = @import("key_repeat.zig");
+pub const relief = @import("relief.zig");
 pub const sdf = @import("sdf.zig");
 pub const shell_icons = @import("shell_icons.zig");
 pub const text = @import("text.zig");

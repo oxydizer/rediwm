@@ -119,6 +119,8 @@ test "item hover glides between cells and rests without repaints or wakeups" {
     // It fades in where the pointer landed.
     const first = pointOnItem(&app, 0);
     app.handleMotion(first[0], first[1]);
+    try std.testing.expectEqual(@as(u64, 0), app.item_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 1000), app.hoverKey());
     app.dirty = false;
     app.stepHover(1000);
     try std.testing.expect(app.hover_active);
@@ -158,6 +160,8 @@ test "item hover glides between cells and rests without repaints or wakeups" {
 
     // A selected item paints its own fill: the highlight fades out.
     app.items.items[5].selected = true;
+    try std.testing.expectEqual(@as(u64, 5), app.item_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 1005), app.hoverKey());
     app.stepHover(12100);
     app.stepHover(15000);
     try std.testing.expectEqual(@as(f32, 0), app.item_hover.frame.alpha);
@@ -181,6 +185,7 @@ test "item hover glides between cells and rests without repaints or wakeups" {
     app.menu = .background;
     app.stepHover(21100);
     app.stepHover(24000);
+    try std.testing.expect(app.item_surface.hovered == null);
     try std.testing.expectEqual(@as(f32, 0), app.item_hover.frame.alpha);
 }
 
@@ -220,6 +225,7 @@ test "sidebar hover glides between places and leaves the current one to its own 
         var y = first.y;
         while (y < next.y + next.h) : (y += 1) {
             app.mouse_y = y;
+            app.updateSidebarSurface();
             try std.testing.expect(app.hoveredPlace() != null);
         }
     }
@@ -242,6 +248,32 @@ test "sidebar hover glides between places and leaves the current one to its own 
     app.sidebar_scroll = 20;
     box = app.navHighlight(app.nav_hover.frame);
     try std.testing.expectEqual(app.placeRect(4).y, box.y);
+}
+
+test "sidebar surface owns place hover and clears modal and departed targets" {
+    var app = try testApp();
+    defer app.deinit();
+    app.loading = false;
+
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(1))) + 10);
+    try std.testing.expectEqual(@as(u64, 301), app.sidebar_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(?usize, 1), app.hoveredPlace());
+
+    // The current place keeps its identity for pointer damage, but paints
+    // its own selected fill instead of receiving the hover glide.
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(0))) + 10);
+    try std.testing.expectEqual(@as(u64, 300), app.sidebar_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(?usize, null), app.hoveredPlace());
+
+    app.menu = .background;
+    app.updateSidebarSurface();
+    try std.testing.expect(app.sidebar_surface.hovered == null);
+    try std.testing.expectEqual(@as(?usize, null), app.hoveredPlace());
+
+    app.menu = null;
+    app.handleMotion(-1, -1);
+    try std.testing.expect(app.sidebar_surface.hovered == null);
+    try std.testing.expectEqual(@as(?usize, null), app.hoveredPlace());
 }
 
 test "a grid that reflows forgets its item highlight" {
@@ -288,4 +320,162 @@ test "hover damage covers this repaint only" {
     app.invalidate();
     app.addDamage(.{ .x = 10, .y = 10, .w = 5, .h = 5 });
     try std.testing.expect(app.dirty and app.paint_damage == null);
+}
+
+test "column surface owns list header hover and clears modal and departed targets" {
+    var app = try testApp();
+    defer app.deinit();
+    app.loading = false;
+    app.list_view = true;
+    try testItems(&app, 12);
+
+    const column = app.listColumn(1);
+    const x = column.x + column.w / 2;
+    const y = column.y + column.h / 2;
+
+    app.handleMotion(x, y);
+    try std.testing.expectEqual(@as(u64, 401), app.column_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 401), app.hoverKey());
+
+    app.handleMotion(-1, -1);
+    try std.testing.expect(app.column_surface.hovered == null);
+    try std.testing.expectEqual(@as(usize, 0), app.hoverKey());
+
+    app.handleMotion(x, y);
+    try std.testing.expect(app.column_surface.hovered != null);
+    app.menu = .background;
+    app.updateColumnSurface();
+    try std.testing.expect(app.column_surface.hovered == null);
+
+    app.menu = null;
+    app.transfer_view.active = true;
+    app.updateColumnSurface();
+    try std.testing.expect(app.column_surface.hovered == null);
+}
+
+test "toolbar surface owns enabled hover targets and clears disabled and departed targets" {
+    var app = try testApp();
+    defer app.deinit();
+
+    const cut = header.rect(app.w, false, .cut);
+    try std.testing.expect(!app.toolbarButtonEnabled(.cut));
+    app.handleMotion(cut.x + cut.w / 2, cut.y + cut.h / 2);
+    try std.testing.expect(app.toolbar_surface.hovered == null);
+
+    const refresh = header.rect(app.w, false, .refresh);
+    app.handleMotion(refresh.x + refresh.w / 2, refresh.y + refresh.h / 2);
+    try std.testing.expectEqual(@as(u64, @intFromEnum(header.Action.refresh)), app.toolbar_surface.hovered.?.id);
+    try std.testing.expectEqual(refresh.x, app.hoveredToolbarButton().?.x);
+
+    app.handleMotion(-1, -1);
+    try std.testing.expect(app.toolbar_surface.hovered == null);
+    try std.testing.expect(app.hoveredToolbarButton() == null);
+}
+
+test "toolbar proximity uses shared button geometry and damages in-button motion" {
+    var app = try testApp();
+    defer app.deinit();
+
+    const rect = header.rect(app.w, false, .refresh);
+    const x = rect.x + rect.w / 2;
+    const y = rect.y + rect.h / 2;
+
+    app.handleMotion(x, y);
+    const sample = app.toolbarButtonProximity(.refresh, x, y);
+    try std.testing.expectEqual(@as(f32, 0), sample.distance);
+    try std.testing.expectEqual(@as(f32, @floatCast(rect.w / 2)), sample.x);
+    try std.testing.expectEqual(@as(f32, @floatCast(rect.h / 2)), sample.y);
+
+    // Moving within the same button does not change hoverKey. Proximity
+    // still changes and must queue damage for the button.
+    app.dirty = false;
+    app.paint_damage = null;
+    app.handleMotion(x + 1, y);
+    try std.testing.expect(app.dirty);
+    try std.testing.expect(app.paint_damage != null);
+    try std.testing.expect(app.paint_damage.?.contains(x, y));
+}
+
+
+test "dialog surface owns generic modal button hover targets" {
+    var app = try testApp();
+    defer app.deinit();
+
+    const dw: f64 = @min(440, @as(f64, @floatFromInt(app.w)) - 24);
+    const dx = (@as(f64, @floatFromInt(app.w)) - dw) / 2;
+    const dy = (@as(f64, @floatFromInt(app.h)) - 130) / 2;
+
+    const generic_kinds = [_]@import("app_model.zig").DialogKind{
+        .terminal_close,
+        .new_folder,
+        .new_file,
+        .new_branch,
+    };
+
+    for (generic_kinds) |kind| {
+        app.dialog = .{ .kind = kind, .title = "Test" };
+
+        app.mouse_x = dx + dw - 144;
+        app.mouse_y = dy + 98;
+        app.updateDialogSurface();
+        try std.testing.expectEqual(@as(u64, 1), app.dialog_surface.hovered.?.id);
+        try std.testing.expectEqual(@as(usize, 1), app.hoverKey());
+
+        app.mouse_x = dx + dw - 56;
+        app.updateDialogSurface();
+        try std.testing.expectEqual(@as(u64, 2), app.dialog_surface.hovered.?.id);
+        try std.testing.expectEqual(@as(usize, 2), app.hoverKey());
+    }
+
+    app.dialog = .{
+        .kind = .conflict,
+        .title = "Conflict",
+    };
+
+    const button_w = (dw - 48) / 3;
+    for (0..3) |i| {
+        app.mouse_x = dx + 16 + @as(f64, @floatFromInt(i)) * (button_w + 8) + button_w / 2;
+        app.mouse_y = dy + 98;
+        app.updateDialogSurface();
+        try std.testing.expectEqual(@as(u64, @intCast(i + 1)), app.dialog_surface.hovered.?.id);
+        try std.testing.expectEqual(i + 1, app.hoverKey());
+    }
+
+    // A specialized dialog keeps its own interaction path.
+    app.dialog = .{ .kind = .transfers, .title = "Transfers" };
+    app.updateDialogSurface();
+    try std.testing.expect(app.dialog_surface.hovered == null);
+
+    // Closing a dialog clears any retained dialog target.
+    app.dialog = .{ .kind = .terminal_close, .title = "Close terminal?" };
+    app.mouse_x = dx + dw - 144;
+    app.mouse_y = dy + 98;
+    app.updateDialogSurface();
+    try std.testing.expect(app.dialog_surface.hovered != null);
+    app.closeDialog();
+    try std.testing.expect(app.dialog_surface.hovered == null);
+}
+
+test "dialog surface owns inline rename buttons and clears departed targets" {
+    var app = try testApp();
+    defer app.deinit();
+
+    app.dialog = .{ .kind = .rename, .title = "Rename" };
+    const card = app.renameCard().?;
+
+    app.mouse_x = card.confirm.x + card.confirm.w / 2;
+    app.mouse_y = card.confirm.y + card.confirm.h / 2;
+    app.updateDialogSurface();
+    try std.testing.expectEqual(@as(u64, 1), app.dialog_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 1), app.hoverKey());
+
+    app.mouse_x = card.cancel.x + card.cancel.w / 2;
+    app.mouse_y = card.cancel.y + card.cancel.h / 2;
+    app.updateDialogSurface();
+    try std.testing.expectEqual(@as(u64, 2), app.dialog_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(usize, 2), app.hoverKey());
+
+    app.handleMotion(-1, -1);
+    try std.testing.expect(app.dialog_surface.hovered == null);
+    try std.testing.expectEqual(@as(usize, 0), app.hoverKey());
 }

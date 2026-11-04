@@ -47,9 +47,13 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
             .{ .variant = .ghost, .label = label }
         else
             .{ .variant = .ghost, .icon = glyph(act), .label = label };
+        const proximity = self.buttonProximity(act, self.px, self.py);
         var layer = shell_ui.Layer.begin(cr, shellRect(r)) orelse continue;
         ui_button.paint(&layer.renderer, layer.local(), opts, .{
             .pointer = if (!self.enabled(act) or self.operation != null) .disabled else if (self.hover == act) .hover else .idle,
+            .proximity_distance = proximity.distance,
+            .proximity_x = proximity.x,
+            .proximity_y = proximity.y,
         });
         layer.finish();
     }

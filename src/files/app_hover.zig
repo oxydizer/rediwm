@@ -4,7 +4,10 @@ const std = @import("std");
 const App = @import("app.zig").App;
 const anim = @import("ui").anim;
 const header = @import("header.zig");
+const interaction_surface = @import("ui").interaction_surface;
 const hover_glide = @import("ui").hover_glide;
+const button_widget = @import("ui").widgets.button;
+const ui_theme = @import("ui").theme;
 const pins_mod = @import("pins.zig");
 const HoverLayout = App.HoverLayout;
 const column_labels = App.column_labels;
@@ -88,28 +91,249 @@ pub fn clipToViewport(self: *App, rect: header.Rect) header.Rect {
     return .{ .x = rect.x, .y = y, .w = rect.w, .h = @max(0, bottom - y) };
 }
 
+/// The pointer's list header column, using Files' existing header geometry.
+pub fn updateColumnSurface(self: *App) void {
+    if (!self.list_view or self.transfer_view.active or self.dialog != null or self.menu != null) {
+        _ = self.column_surface.pointerMotion(null);
+        return;
+    }
+
+    if (self.mouse_x < @as(f64, @floatFromInt(self.sidebarWidth())) or
+        self.mouse_x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter())))
+    {
+        _ = self.column_surface.pointerMotion(null);
+        return;
+    }
+
+    for (0..@min(4, column_labels.len)) |i| {
+        const rect = self.listColumn(i);
+        if (!rect.contains(self.mouse_x, self.mouse_y)) continue;
+
+        _ = self.column_surface.pointerMotion(.{
+            .id = @intCast(400 + i),
+            .rect = .{
+                .x = @floatCast(rect.x),
+                .y = @floatCast(rect.y),
+                .w = @floatCast(rect.w),
+                .h = @floatCast(rect.h),
+            },
+            .clip = .{
+                .x = @floatFromInt(self.sidebarWidth()),
+                .y = @floatFromInt(self.contentTop()),
+                .w = @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter()),
+                .h = 30,
+            },
+            .role = .interactive,
+        });
+        return;
+    }
+
+    _ = self.column_surface.pointerMotion(null);
+}
+
+fn dialogSurfaceHit(id: usize, rect: header.Rect) interaction_surface.Hit {
+    return .{
+        .id = @intCast(id),
+        .rect = .{
+            .x = @floatCast(rect.x),
+            .y = @floatCast(rect.y),
+            .w = @floatCast(rect.w),
+            .h = @floatCast(rect.h),
+        },
+        .clip = .{
+            .x = @floatCast(rect.x),
+            .y = @floatCast(rect.y),
+            .w = @floatCast(rect.w),
+            .h = @floatCast(rect.h),
+        },
+        .role = .button,
+    };
+}
+
+/// The pointer's generic modal or inline rename button.
+pub fn updateDialogSurface(self: *App) void {
+    const dlg = self.dialog orelse {
+        _ = self.dialog_surface.pointerMotion(null);
+        return;
+    };
+
+    // These dialogs retain their own interaction and hit-testing paths.
+    if (dlg.kind == .transfers or dlg.kind == .properties or
+        dlg.kind == .open_with or dlg.kind == .trash_confirm)
+    {
+        _ = self.dialog_surface.pointerMotion(null);
+        return;
+    }
+
+    var hit: ?interaction_surface.Hit = null;
+
+    if (self.renameCard()) |card| {
+        if (card.confirm.contains(self.mouse_x, self.mouse_y)) {
+            hit = dialogSurfaceHit(1, card.confirm);
+        } else if (card.cancel.contains(self.mouse_x, self.mouse_y)) {
+            hit = dialogSurfaceHit(2, card.cancel);
+        }
+    } else {
+        const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
+        const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2;
+        const dy = (@as(f64, @floatFromInt(self.h)) - 130) / 2;
+
+        if (dlg.kind == .conflict) {
+            const button_w = (dw - 48) / 3;
+            for (0..3) |i| {
+                const rect: header.Rect = .{
+                    .x = dx + 16 + @as(f64, @floatFromInt(i)) * (button_w + 8),
+                    .y = dy + 84,
+                    .w = button_w,
+                    .h = 28,
+                };
+                if (self.mouse_x >= rect.x and self.mouse_x <= rect.x + rect.w and
+                    self.mouse_y >= rect.y and self.mouse_y <= rect.y + rect.h)
+                {
+                    hit = dialogSurfaceHit(i + 1, rect);
+                    break;
+                }
+            }
+        } else {
+            const rects = [_]header.Rect{
+                .{ .x = dx + dw - 184, .y = dy + 84, .w = 80, .h = 28 },
+                .{ .x = dx + dw - 96, .y = dy + 84, .w = 80, .h = 28 },
+            };
+            for (rects, 0..) |rect, i| {
+                if (self.mouse_x >= rect.x and self.mouse_x <= rect.x + rect.w and
+                    self.mouse_y >= rect.y and self.mouse_y <= rect.y + rect.h)
+                {
+                    hit = dialogSurfaceHit(i + 1, rect);
+                    break;
+                }
+            }
+        }
+    }
+
+    _ = self.dialog_surface.pointerMotion(hit);
+}
+
 /// The pointer's sidebar row, unless that is the current place, which
 /// paints its own fill.
+pub fn updateSidebarSurface(self: *App) void {
+    if (self.dialog != null or self.menu != null or self.sidebar_resize != null or
+        self.overSidebarDivider(self.mouse_x, self.mouse_y))
+    {
+        _ = self.sidebar_surface.pointerMotion(null);
+        return;
+    }
+
+    const index = self.placeAt(self.mouse_x, self.mouse_y) orelse {
+        _ = self.sidebar_surface.pointerMotion(null);
+        return;
+    };
+    const eject = self.ejectAt(self.mouse_x, self.mouse_y);
+    const key: usize = if (eject) |k| 700 + k else switch (self.rowKind(index)) {
+        .builtin => |b| 300 + b,
+        .pin => |j| 800 + j,
+        .device => |k| 600 + k,
+    };
+    const bounds = if (eject != null) self.ejectRect(index) else self.placeRect(index);
+
+    _ = self.sidebar_surface.pointerMotion(.{
+        .id = @intCast(key),
+        .rect = .{
+            .x = @floatCast(bounds.x),
+            .y = @floatCast(bounds.y),
+            .w = @floatCast(bounds.w),
+            .h = @floatCast(bounds.h),
+        },
+        .clip = .{
+            .x = 0,
+            .y = @floatFromInt(self.contentTop()),
+            .w = @floatFromInt(self.sidebarWidth()),
+            .h = @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()),
+        },
+        .role = .interactive,
+    });
+}
+
+/// The pointer's item card, using Files' existing itemAt geometry.
+pub fn updateItemSurface(self: *App) void {
+    if (self.dialog != null or self.menu != null or self.transfer_view.active) {
+        _ = self.item_surface.pointerMotion(null);
+        return;
+    }
+
+    const index = self.itemAt(self.mouse_x, self.mouse_y) orelse {
+        _ = self.item_surface.pointerMotion(null);
+        return;
+    };
+
+    const per_row: usize = @intCast(self.columns());
+    const col: i32 = @intCast(index % per_row);
+    const row: i32 = @intCast(index / per_row);
+    const cell = self.cellWidth();
+    const rect: header.Rect = .{
+        .x = @floatFromInt(self.sidebarWidth() + 20 + col * cell),
+        .y = @floatFromInt(self.viewTop() + self.itemInset() - self.scroll_y + row * self.rowHeight()),
+        .w = @floatFromInt(cell - 20),
+        .h = @floatFromInt(self.cardHeight()),
+    };
+    const clip: header.Rect = .{
+        .x = @floatFromInt(self.sidebarWidth() + 20),
+        .y = @floatFromInt(self.viewTop()),
+        .w = @floatFromInt(@max(0, self.w - self.sidebarWidth() - 20 - self.scrollbarGutter())),
+        .h = @floatFromInt(@max(0, self.contentBottom() - self.viewTop())),
+    };
+
+    _ = self.item_surface.pointerMotion(.{
+        .id = @intCast(index),
+        .rect = .{
+            .x = @floatCast(rect.x),
+            .y = @floatCast(rect.y),
+            .w = @floatCast(rect.w),
+            .h = @floatCast(rect.h),
+        },
+        .clip = .{
+            .x = @floatCast(clip.x),
+            .y = @floatCast(clip.y),
+            .w = @floatCast(clip.w),
+            .h = @floatCast(clip.h),
+        },
+        .role = .interactive,
+    });
+}
+
+/// The pointer's sidebar row, unless that is the current place, which
+/// paints its own fill. The Surface retains the host's existing row identity.
 pub fn hoveredPlace(self: *App) ?usize {
     if (self.dialog != null or self.menu != null) return null;
     if (self.sidebar_resize != null or self.overSidebarDivider(self.mouse_x, self.mouse_y)) return null;
-    const width: f64 = @floatFromInt(self.sidebarWidth());
-    if (self.mouse_x < 0 or self.mouse_x >= width) return null;
-    if (self.sidebarScrollbar()) |bar| if (self.mouse_x >= @as(f64, bar.track.x)) return null;
-    if (self.mouse_y < @as(f64, @floatFromInt(self.contentTop())) or self.mouse_y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return null;
-    for (0..self.rowCount()) |i| {
-        if (!self.placeVisible(i)) continue;
-        const row = self.placeRect(i);
-        if (self.mouse_y < row.y or self.mouse_y >= row.y + row.h) continue;
-        return if (self.placeActive(i)) null else i;
+    if (self.sidebarScrollbar()) |bar| {
+        if (self.mouse_x >= @as(f64, bar.track.x)) return null;
     }
-    return null;
+
+    const target = self.sidebar_surface.hovered orelse return null;
+    const key: usize = @intCast(target.id);
+    const index = if (key >= 300 and key < 300 + places.len)
+        key - 300
+    else if (key >= 800 and key < 800 + pins_mod.max) blk: {
+        const pin = key - 800;
+        if (pin >= self.pins.items.items.len) return null;
+        break :blk pin_base + pin;
+    } else if (key >= 600 and key < 700)
+        self.deviceBase() + key - 600
+    else if (key >= 700 and key < 800)
+        self.deviceBase() + key - 700
+    else
+        return null;
+
+    if (index >= self.rowCount() or !self.placeVisible(index)) return null;
+    return if (self.placeActive(index)) null else index;
 }
 
 /// The pointer's item, unless it is selected, which paints its own fill.
 pub fn hoveredItem(self: *App) ?usize {
-    if (self.dialog != null or self.menu != null) return null;
-    const idx = self.itemAt(self.mouse_x, self.mouse_y) orelse return null;
+    if (self.dialog != null or self.menu != null or self.transfer_view.active) return null;
+    const target = self.item_surface.hovered orelse return null;
+    const idx: usize = @intCast(target.id);
+    if (idx >= self.items.items.len) return null;
     return if (self.items.items[idx].selected) null else idx;
 }
 
@@ -170,12 +394,88 @@ pub fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
     };
 }
 
+pub fn updateToolbarSurface(self: *App) void {
+    const action = if (self.transfer_view.active or self.dialog != null or self.menu != null)
+        null
+    else
+        header.hit(self.w, self.inRepository(), self.mouse_x, self.mouse_y);
+    if (action) |value| {
+        const r = header.rect(self.w, self.inRepository(), value);
+        _ = self.toolbar_surface.pointerMotion(.{
+            .id = @intCast(@intFromEnum(value)),
+            .rect = .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) },
+            .clip = .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.contentTop()) },
+            .role = .button,
+            .enabled = self.toolbarButtonVisible(value) and self.toolbarButtonEnabled(value),
+        });
+    } else {
+        _ = self.toolbar_surface.pointerMotion(null);
+    }
+}
+
 pub fn hoveredToolbarButton(self: *App) ?header.Rect {
-    if (self.transfer_view.active) return null;
-    if (self.dialog != null or self.menu != null) return null;
-    const action = header.hit(self.w, self.inRepository(), self.mouse_x, self.mouse_y) orelse return null;
-    if (!self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action)) return null;
-    return header.rect(self.w, self.inRepository(), action);
+    const target = self.toolbar_surface.hovered orelse return null;
+    return .{
+        .x = @floatCast(target.rect.x),
+        .y = @floatCast(target.rect.y),
+        .w = @floatCast(target.rect.w),
+        .h = @floatCast(target.rect.h),
+    };
+}
+
+/// Shared button proximity using Files' existing pointer and header geometry.
+pub fn toolbarButtonProximity(
+    self: *App,
+    action: header.Action,
+    x: f64,
+    y: f64,
+) button_widget.ProximitySample {
+    const absent = button_widget.ProximitySample{
+        .distance = std.math.inf(f32),
+        .x = 0,
+        .y = 0,
+    };
+    if (self.transfer_view.active or self.dialog != null or self.menu != null or
+        !self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action))
+        return absent;
+
+    const r = header.rect(self.w, self.inRepository(), action);
+    return button_widget.sampleProximity(
+        .{
+            .x = @floatCast(r.x),
+            .y = @floatCast(r.y),
+            .w = @floatCast(r.w),
+            .h = @floatCast(r.h),
+        },
+        @floatCast(x),
+        @floatCast(y),
+        .{
+            .x = 0,
+            .y = 0,
+            .w = @floatFromInt(self.w),
+            .h = @floatFromInt(self.contentTop()),
+        },
+    );
+}
+
+/// Repaint only toolbar buttons whose proximity appearance may have changed.
+pub fn damageToolbarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, new_y: f64) void {
+    const reach = ui_theme.global.border_glow_reach;
+    if (reach <= 0) return;
+    if (!ui_theme.global.button_hover_glow_enabled and ui_theme.global.button_relief == .flat) return;
+
+    var damage: ?header.Rect = null;
+    for (std.meta.tags(header.Action)) |action| {
+        if (!self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action)) continue;
+
+        const before = self.toolbarButtonProximity(action, old_x, old_y);
+        const after = self.toolbarButtonProximity(action, new_x, new_y);
+        if (@min(before.distance, after.distance) > reach) continue;
+
+        const rect = header.rect(self.w, self.inRepository(), action);
+        damage = if (damage) |current| unionRect(current, rect) else rect;
+    }
+    if (damage) |rect| self.addDamage(rect);
 }
 
 /// Samples the hover highlights and queues damage for what moved or
@@ -184,6 +484,10 @@ pub fn hoveredToolbarButton(self: *App) ?header.Rect {
 pub fn stepHover(self: *App, now: i64) void {
     const pixel = anim.rasterPixelQuantum(@floatFromInt(self.scale));
 
+    self.updateItemSurface();
+    self.updateSidebarSurface();
+    self.updateColumnSurface();
+    self.updateDialogSurface();
     if (self.sidebarWidth() > 0) {
         const before = self.nav_hover.frame;
         self.nav_hover.setTarget(now, if (self.hoveredPlace()) |i| .{ .col = 0, .row = @intCast(i) } else null);
@@ -210,6 +514,7 @@ pub fn stepHover(self: *App, now: i64) void {
         const view: header.Rect = self.clipToViewport(.{ .x = @floatFromInt(self.sidebarWidth()), .y = 0, .w = @floatFromInt(self.w - self.sidebarWidth()), .h = @floatFromInt(self.h) });
         self.damageHighlight(view, if (before.alpha > 0) self.itemHighlight(before) else null, if (self.item_hover.frame.alpha > 0) self.itemHighlight(self.item_hover.frame) else null);
     }
+    self.updateToolbarSurface();
     if (self.toolbar_hover.step(now, self.hoveredToolbarButton(), pixel)) {
         self.addDamage(.{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.contentTop()) });
     }

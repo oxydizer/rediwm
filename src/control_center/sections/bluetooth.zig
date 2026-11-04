@@ -64,7 +64,7 @@ fn group(a: A, dir: ui.layout.Direction, items: []const W) !W {
 fn card(a: A, items: []const W) !W {
     var w = try group(a, .column, items);
     const t = panel.palette();
-    w.kind = .{ .rect = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.app_item_border } };
+    w.kind = .{ .rect = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.app_item_border, .relief = t.settings_card_relief } };
     w.padding = ui.layout.Edges.all(14);
     w.gap = 14;
     return w;

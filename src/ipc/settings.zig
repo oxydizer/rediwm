@@ -84,7 +84,7 @@ pub fn getTheme(server: *Server, a: std.mem.Allocator) !protocol.Response {
         entries[i] = .{ .name = name };
         const value = @field(theme.global, name);
         const T = @FieldType(theme.Theme, name);
-        if (T == [4]f32 or T == ?[4]f32) entries[i].color = value else if (T == []const u8) entries[i].text = value else if (T == bool) entries[i].boolean = value else if (@typeInfo(T) == .float) entries[i].number = value else @compileError("unhandled theme token " ++ name);
+        if (T == [4]f32 or T == ?[4]f32) entries[i].color = value else if (T == []const u8) entries[i].text = value else if (T == bool) entries[i].boolean = value else if (@typeInfo(T) == .float) entries[i].number = value else if (T == theme.Relief) entries[i].text = @tagName(value) else @compileError("unhandled theme token " ++ name);
     }
     return .{ .ok = .{ .theme = .{ .tokens = .{ .entries = entries }, .path = server.theme_path, .dark_mode = server.config.compositor.dark_mode } } };
 }

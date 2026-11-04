@@ -27,19 +27,7 @@ pub fn hoverKey(self: *App) usize {
         if (dlg.kind == .trash_properties) return @intFromEnum(dlg.trash_properties.?.hit(self.w, self.h, x, y));
         if (dlg.kind == .open_with) return dlg.applications.?.hit(self.w, self.h, x, y);
         if (dlg.kind == .trash_confirm) return @intFromEnum(dlg.deletion.geometry(self.w, self.h).target(x, y));
-        const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
-        const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2;
-        const dy = (@as(f64, @floatFromInt(self.h)) - 130) / 2;
-        if (y < dy + 84 or y > dy + 112) return 0;
-        if (dlg.kind == .conflict) {
-            for (0..3) |i| {
-                const left = dx + 16 + @as(f64, @floatFromInt(i)) * ((dw - 48) / 3 + 8);
-                if (x >= left and x <= left + (dw - 48) / 3) return i + 1;
-            }
-        } else {
-            if (x >= dx + dw - 184 and x <= dx + dw - 104) return 1;
-            if (x >= dx + dw - 96 and x <= dx + dw - 16) return 2;
-        }
+        if (self.dialog_surface.hovered) |target| return @intCast(target.id);
         return 0;
     }
     if (self.menu != null) return 100 + (self.menuHit(x, y) orelse 99);
@@ -55,39 +43,29 @@ pub fn hoverKey(self: *App) usize {
             return 500;
         }
     }
-    if (header.hit(self.w, self.inRepository(), x, y)) |action| return 200 + @as(usize, @intFromEnum(action));
+    if (self.toolbar_surface.hovered) |target| return 200 + @as(usize, @intCast(target.id));
     if (self.list_view and x >= @as(f64, @floatFromInt(self.sidebarWidth())) and x < @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) {
-        for (self.columnLabels(), 0..) |_, i| {
-            if (i < 4 and self.listColumn(i).contains(x, y)) return 400 + i;
-        }
+        if (self.column_surface.hovered) |target| return @intCast(target.id);
     }
-    if (x >= 0 and x < @as(f64, @floatFromInt(self.sidebarWidth())) and y >= @as(f64, @floatFromInt(self.contentTop())) and y < @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) {
-        if (self.ejectAt(x, y)) |k| return 700 + k;
-        for (0..self.rowCount()) |i| {
-            if (!self.placeVisible(i)) continue;
-            const row = self.placeRect(i);
-            if (y >= row.y and y < row.y + row.h) return switch (self.rowKind(i)) {
-                .builtin => |b| 300 + b,
-                .pin => |j| 800 + j,
-                .device => |k| 600 + k,
-            };
-        }
-    }
+    if (self.sidebar_surface.hovered) |target| return @intCast(target.id);
     if (self.inlineTorrentHit(x, y)) |hit| return std.math.maxInt(usize) - 3000 - hit.index * 2 - @intFromBool(hit.toggle);
-    if (self.itemAt(x, y)) |i| {
-        if (self.sizeButtonRect(i)) |rect| {
-            if (rect.contains(x, y)) {
-                if (self.folder_sizes.get(self.items.items[i].path)) |sz| {
-                    switch (sz) {
-                        .running => return 2_000_000 + i,
-                        .done => {},
+    if (self.item_surface.hovered) |target| {
+        const i: usize = @intCast(target.id);
+        if (i < self.items.items.len) {
+            if (self.sizeButtonRect(i)) |rect| {
+                if (rect.contains(x, y)) {
+                    if (self.folder_sizes.get(self.items.items[i].path)) |sz| {
+                        switch (sz) {
+                            .running => return 2_000_000 + i,
+                            .done => {},
+                        }
+                    } else {
+                        return 2_000_000 + i;
                     }
-                } else {
-                    return 2_000_000 + i;
                 }
             }
+            return 1000 + i;
         }
-        return 1000 + i;
     }
     return 0;
 }
@@ -141,9 +119,17 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
             self.last_click_index = null;
         }
     }
+    const old_x = self.mouse_x;
+    const old_y = self.mouse_y;
     const old_hover = self.hoverKey();
     self.mouse_x = x;
     self.mouse_y = y;
+    self.updateToolbarSurface();
+    self.updateSidebarSurface();
+    self.updateColumnSurface();
+    self.updateDialogSurface();
+    self.updateItemSurface();
+    self.damageToolbarProximity(old_x, old_y, x, y);
     if (self.selection_band != null) self.updateSelectionBand();
     if (self.text_dragging) {
         self.placeCaret(x, true);

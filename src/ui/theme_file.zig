@@ -7,6 +7,7 @@ const log = std.log.scoped(.theme);
 const theme = @import("theme.zig");
 const window_shape = @import("window_shape.zig");
 const Theme = theme.Theme;
+pub const Relief = theme.Relief;
 const TaskbarToken = theme.TaskbarToken;
 
 /// `REDIWM_THEME`, matching this project's existing env-var config
@@ -62,6 +63,11 @@ pub const boolean_keys = keysOf(bool);
 pub const optional_color_keys = keysOf(?[4]f32);
 
 pub const string_keys = keysOf([]const u8);
+pub const relief_keys = keysOf(Relief);
+
+pub fn parseRelief(s: []const u8) ?Relief {
+    return std.meta.stringToEnum(Relief, s);
+}
 
 /// Parses theme file bytes. String fields (`font`, `mono_font`) are duped
 /// with `allocator` and, like `icon_theme.resolveConfig`'s paths, meant to
@@ -114,6 +120,13 @@ pub fn applyKey(allocator: Allocator, t: *Theme, name_in: []const u8, value: []c
     inline for (boolean_keys) |name| {
         if (std.mem.eql(u8, key, name)) {
             @field(t, name) = if (std.mem.eql(u8, value, "true")) true else if (std.mem.eql(u8, value, "false")) false else return error.InvalidBoolean;
+            return;
+        }
+    }
+    inline for (relief_keys) |name| {
+        if (std.mem.eql(u8, key, name)) {
+            const text = try unquote(value);
+            @field(t, name) = parseRelief(text) orelse return error.InvalidRelief;
             return;
         }
     }
@@ -254,6 +267,11 @@ pub fn writeDiff(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme, defaul
     if (base.len > 0) try appendLine(allocator, buf, "base = \"{s}\"\n", .{base});
     inline for (boolean_keys) |name| {
         if (@field(t, name) != @field(defaults, name)) try appendLine(allocator, buf, "{s} = {}\n", .{ name, @field(t, name) });
+    }
+    inline for (relief_keys) |name| {
+        if (@field(t, name) != @field(defaults, name)) {
+            try appendLine(allocator, buf, "{s} = \"{s}\"\n", .{ name, @tagName(@field(t, name)) });
+        }
     }
     inline for (string_keys) |name| {
         if (!std.mem.eql(u8, @field(t, name), @field(defaults, name))) {

@@ -17,6 +17,7 @@ const Dialog = @import("app_model.zig").Dialog;
 
 pub fn closeDialog(self: *App) void {
     self.text_dragging = false;
+    _ = self.dialog_surface.pointerMotion(null);
     self.edit_revision += 1;
     if (self.dialog) |*dlg| {
         dlg.deletion.deinit();

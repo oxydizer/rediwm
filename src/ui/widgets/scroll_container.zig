@@ -260,6 +260,50 @@ pub fn stepBars(root: *Widget, now_ms: i64) BarStep {
             result.deadline = step.deadline;
         },
         .toggle => result.active = toggle.step(root, now_ms),
+        .button => |*data| {
+            const t = theme.global;
+            const relief_enabled = t.button_relief != .flat and
+                t.relief_depth > 0 and
+                (t.relief_dark[3] > 0 or t.relief_light[3] > 0);
+            const eligible = data.variant == .secondary and relief_enabled and
+                data.state != .press and data.state != .disabled;
+
+            if (!eligible) {
+                const visible = data.hover_elevation.value(now_ms) != 0 or
+                    data.hover_elevation.to != 0;
+                if (data.hover_elevation.active()) {
+                    data.hover_elevation.cancel(0);
+                    if (visible) {
+                        root.markPaintDirty();
+                        anim.observeNoteChanged();
+                    }
+                }
+            } else {
+                const target: f32 = if (data.state == .hover) 1 else 0;
+                var retargeted = false;
+
+                if (data.hover_elevation.to != target) {
+                    data.hover_elevation.retargetTo(
+                        now_ms,
+                        target,
+                        anim.curveFor(.taskbar_hover),
+                    );
+                    retargeted = true;
+                }
+
+                if (retargeted or data.hover_elevation.active()) {
+                    if (data.hover_elevation.sampleChanged(
+                        now_ms,
+                        anim.rasterAlphaQuantum(),
+                    )) {
+                        root.markPaintDirty();
+                    }
+                    if (!data.hover_elevation.settled(now_ms)) {
+                        result.active = true;
+                    }
+                }
+            }
+        },
         else => {},
     }
     for (root.children) |*child| {
@@ -268,6 +312,86 @@ pub fn stepBars(root: *Widget, now_ms: i64) BarStep {
         if (step.deadline) |at| result.deadline = if (result.deadline) |old| @min(old, at) else at;
     }
     return result;
+}
+
+test "secondary button hover elevation settles, skips flat relief and respects reduced motion" {
+    const saved_theme = theme.global;
+    defer theme.global = saved_theme;
+
+    const saved_settings = anim.settings_g;
+    const saved_enabled = anim.enabled_g;
+    const saved_speed = anim.speed_g;
+    const saved_reduced = anim.reduced_motion_g;
+    defer {
+        anim.settings_g = saved_settings;
+        anim.setEnabled(saved_enabled);
+        anim.setSpeed(saved_speed);
+        anim.setReducedMotion(saved_reduced);
+    }
+
+    anim.setEnabled(true);
+    anim.setSpeed(1);
+    anim.setReducedMotion(false);
+
+    theme.global = .{
+        .button_relief = .inset,
+        .relief_depth = 4,
+        .relief_dark = .{ 0, 0, 0, 1 },
+        .relief_light = .{ 1, 1, 1, 1 },
+    };
+
+    var button = Widget{
+        .kind = .{ .button = .{ .state = .hover } },
+    };
+
+    var step = stepBars(&button, 1000);
+    try std.testing.expect(step.pending());
+    try std.testing.expectEqual(@as(f32, 1), button.kind.button.hover_elevation.to);
+
+    _ = stepBars(&button, 1016);
+    try std.testing.expect(button.kind.button.hover_elevation.value(1016) > 0);
+
+    button.kind.button.state = .idle;
+    step = stepBars(&button, 1020);
+    try std.testing.expect(step.pending());
+    try std.testing.expectEqual(@as(f32, 0), button.kind.button.hover_elevation.to);
+
+    step = stepBars(&button, 3000);
+    try std.testing.expect(!step.pending());
+    try std.testing.expectEqual(@as(f32, 0), button.kind.button.hover_elevation.value(3000));
+
+    // Flat relief never starts an elevation animation.
+    theme.global.button_relief = .flat;
+    button.kind.button.state = .hover;
+    step = stepBars(&button, 4000);
+    try std.testing.expect(!step.pending());
+    try std.testing.expect(!button.kind.button.hover_elevation.active());
+    try std.testing.expectEqual(@as(f32, 0), button.kind.button.hover_elevation.value(4000));
+
+    // Motion-property animations snap immediately when reduced motion is on.
+    theme.global.button_relief = .inset;
+    anim.setReducedMotion(true);
+    step = stepBars(&button, 5000);
+    try std.testing.expect(!step.pending());
+    try std.testing.expectEqual(@as(f32, 1), button.kind.button.hover_elevation.value(5000));
+
+    // Disabling a button during an active hover must cancel and clear it.
+    anim.setReducedMotion(false);
+    button.kind.button.state = .idle;
+    _ = stepBars(&button, 5100);
+    _ = stepBars(&button, 5300);
+
+    button.kind.button.state = .hover;
+    step = stepBars(&button, 6000);
+    try std.testing.expect(step.pending());
+    _ = stepBars(&button, 6016);
+    try std.testing.expect(button.kind.button.hover_elevation.value(6016) > 0);
+
+    button.kind.button.state = .disabled;
+    step = stepBars(&button, 6020);
+    try std.testing.expect(!step.pending());
+    try std.testing.expect(!button.kind.button.hover_elevation.active());
+    try std.testing.expectEqual(@as(f32, 0), button.kind.button.hover_elevation.value(6020));
 }
 
 pub fn ensureVisible(widget: *Widget, target_start: f32, target_extent: f32) void {

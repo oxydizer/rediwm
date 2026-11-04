@@ -82,11 +82,22 @@ pub const Background = struct {
             if (dirty) |box| {
                 // Integer logical boundaries keep text clipping and fractional
                 // output scaling on the same grid as a complete paint.
-                // Eight pixels also cover slider thumbs beyond the track ends.
-                const x = @max(0, @floor(box.x - 8));
-                const y = @max(0, @floor(box.y - 8));
-                const right = @min(@as(f32, @floatFromInt(renderer.width)) / renderer.scale, @ceil(box.x + box.w + 8));
-                const bottom = @min(@as(f32, @floatFromInt(renderer.height)) / renderer.scale, @ceil(box.y + box.h + 8));
+                // Keep the slider-thumb allowance, but grow it when themed
+                // relief shadows extend farther beyond a widget's bounds.
+                const palette = renderer.palette orelse ui.theme.global;
+                const relief_softness = if (palette.relief_softness > 0)
+                    palette.relief_softness
+                else
+                    palette.relief_depth * 1.5;
+                const relief_reach = (
+                    @max(palette.relief_depth, 0) * renderer.scale +
+                    @max(relief_softness * renderer.scale, 1)
+                ) / renderer.scale;
+                const margin = @max(@as(f32, 8), relief_reach);
+                const x = @max(0, @floor(box.x - margin));
+                const y = @max(0, @floor(box.y - margin));
+                const right = @min(@as(f32, @floatFromInt(renderer.width)) / renderer.scale, @ceil(box.x + box.w + margin));
+                const bottom = @min(@as(f32, @floatFromInt(renderer.height)) / renderer.scale, @ceil(box.y + box.h + margin));
                 if (right > x and bottom > y) bg.damage = .{ .x = x, .y = y, .w = right - x, .h = bottom - y };
             }
         }
@@ -330,6 +341,12 @@ test "panel cache allocation failure still produces a fully initialized repaint"
 
 test "partial panel paint repairs recycled buffers with exact fractional-scale pixels" {
     const allocator = std.testing.allocator;
+    const relief_theme = ui.theme.Theme{
+        .relief_depth = 6,
+        .relief_softness = 5,
+        .button_relief = .raised,
+        .button_pressed_relief = .inset,
+    };
     for ([_]f32{ 1, 1.25, 1.5, 2 }) |scale| {
         var bg: Background = .{};
         defer bg.deinit(allocator);
@@ -345,14 +362,16 @@ test "partial panel paint repairs recycled buffers with exact fractional-scale p
         defer allocator.free(pixels);
         const expected = try allocator.alloc(u32, pixels.len);
         defer allocator.free(expected);
-        for ([_]ui.layout.ButtonState{ .idle, .hover, .press, .idle }) |state| {
+        for ([_]ui.layout.ButtonState{ .idle, .hover, .press, .disabled, .idle }) |state| {
             children[0].kind.button.state = state;
             children[0].markDirty();
             @memset(pixels, 0xdeadbeef);
             var renderer = ui.paint.Renderer.init(pixels, width, height, scale);
+            renderer.palette = relief_theme;
             bg.paintIncremental(allocator, &root, &renderer, null);
             @memset(expected, 0);
             var reference = ui.paint.Renderer.init(expected, width, height, scale);
+            reference.palette = relief_theme;
             reference.clean = true;
             ui.paint.paint(&root, &reference);
             try std.testing.expectEqualSlices(u32, expected, pixels);
@@ -361,6 +380,23 @@ test "partial panel paint repairs recycled buffers with exact fractional-scale p
                 try std.testing.expect(bg.damage.?.w * bg.damage.?.h < 160 * 90 * 3 / 4);
             }
         }
+
+        // Moving a raised button must clear its old shadow footprint and paint
+        // the new one, including the relief overhang at fractional scales.
+        children[0].kind.button.state = .hover;
+        children[0].computed_x += 18;
+        children[0].markPaintDirty();
+        @memset(pixels, 0xdeadbeef);
+        var moved = ui.paint.Renderer.init(pixels, width, height, scale);
+        moved.palette = relief_theme;
+        bg.paintIncremental(allocator, &root, &moved, null);
+        @memset(expected, 0);
+        var moved_reference = ui.paint.Renderer.init(expected, width, height, scale);
+        moved_reference.palette = relief_theme;
+        moved_reference.clean = true;
+        ui.paint.paint(&root, &moved_reference);
+        try std.testing.expectEqualSlices(u32, expected, pixels);
+
         children[1].kind.rect.color[0] = 0.8;
         children[1].computed_x -= 25;
         children[1].markPaintDirty();

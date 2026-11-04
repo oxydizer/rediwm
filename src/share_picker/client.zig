@@ -261,9 +261,61 @@ const Client = struct {
         }
     }
 
+    fn rowRect(self: *const Client, index: usize) ui_button.Rect {
+        const y = header_h + @as(i32, @intCast(index)) * row_h + 4;
+        return .{
+            .x = @floatFromInt(pad - 4),
+            .y = @floatFromInt(y),
+            .w = @floatFromInt(self.w - pad * 2 + 8),
+            .h = @floatFromInt(row_h - 8),
+        };
+    }
+
+    fn rowProximity(self: *const Client, index: usize, x: f64, y: f64) ui_button.ProximitySample {
+        return ui_button.sampleProximity(
+            self.rowRect(index),
+            @floatCast(x),
+            @floatCast(y - @as(f64, @floatFromInt(self.titlebarHeight()))),
+            .{
+                .x = 0,
+                .y = @floatFromInt(header_h),
+                .w = @floatFromInt(self.w),
+                .h = @floatFromInt(@max(0, self.h - header_h)),
+            },
+        );
+    }
+
+    fn closeRect(self: *const Client) ui_button.Rect {
+        const h: f64 = @floatFromInt(self.titlebarHeight());
+        const w: f64 = @floatFromInt(self.w);
+        const close_w = @min(h, 32);
+        return .{ .x = @floatCast(w - close_w), .y = 0, .w = @floatCast(close_w), .h = @floatCast(h) };
+    }
+
+    fn proximityChanged(self: *const Client, old_x: f64, old_y: f64, x: f64, y: f64) bool {
+        const reach = ui_theme.global.border_glow_reach;
+        if (!ui_theme.global.button_hover_glow_enabled or reach <= 0) return false;
+        var before = std.math.inf(f32);
+        var after = std.math.inf(f32);
+        if (self.titlebarHeight() > 0) {
+            const box = self.closeRect();
+            const clip: ui_button.Rect = .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.titlebarHeight()) };
+            before = @min(before, ui_button.sampleProximity(box, @floatCast(old_x), @floatCast(old_y), clip).distance);
+            after = @min(after, ui_button.sampleProximity(box, @floatCast(x), @floatCast(y), clip).distance);
+        }
+        for (self.labels, 0..) |_, index| {
+            before = @min(before, self.rowProximity(index, old_x, old_y).distance);
+            after = @min(after, self.rowProximity(index, x, y).distance);
+        }
+        return @min(before, after) <= reach;
+    }
+
     fn handleMotion(self: *Client, x: f64, y: f64) void {
+        const old_x = self.pointer_x;
+        const old_y = self.pointer_y;
         self.pointer_x = x;
         self.pointer_y = y;
+        if (self.proximityChanged(old_x, old_y, x, y)) self.dirty = true;
         const content_y = y - @as(f64, @floatFromInt(self.titlebarHeight()));
         const row = rowAt(content_y);
         const next: ?usize = if (row) |r| (if (r < self.labels.len) r else null) else null;
@@ -385,8 +437,18 @@ const Client = struct {
         drawText(cr, i18n.tr("Share screen"), 16, h_f / 2.0 + 4, 13, true);
         const close_w: f64 = @min(h_f, 32);
         const hovered = self.inside and self.pointer_y < h_f and self.pointer_x >= w_f - close_w;
+        const box = self.closeRect();
+        const proximity: ui_button.ProximitySample = if (self.inside)
+            ui_button.sampleProximity(box, @floatCast(self.pointer_x), @floatCast(self.pointer_y), .{ .x = 0, .y = 0, .w = @floatFromInt(w), .h = @floatFromInt(h) })
+        else
+            .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
         var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(w_f - close_w), .y = 0, .w = @floatCast(close_w), .h = @floatCast(h_f) }) orelse return;
-        ui_button.paint(&layer.renderer, layer.local(), .{ .variant = .chrome, .icon = .close, .label = i18n.tr("Close") }, .{ .pointer = if (hovered) .hover else .idle });
+        ui_button.paint(&layer.renderer, layer.local(), .{ .variant = .chrome, .icon = .close, .label = i18n.tr("Close") }, .{
+            .pointer = if (hovered) .hover else .idle,
+            .proximity_distance = proximity.distance,
+            .proximity_x = proximity.x,
+            .proximity_y = proximity.y,
+        });
         layer.finish();
     }
 
@@ -410,15 +472,22 @@ const Client = struct {
         }
 
         for (self.labels, 0..) |label, i| {
-            const y: f64 = @floatFromInt(header_h + @as(i32, @intCast(i)) * row_h);
-            if (self.hover == i or self.selected == i) {
-                // The shared selected-item tint (a toggled-on button's).
-                setSource(cr, .{ t.accent[0], t.accent[1], t.accent[2], t.accent[3] * 0.22 });
-                roundedRect(cr, pad - 4, y + 4, w_f - @as(f64, @floatFromInt(pad * 2)) + 8, @as(f64, @floatFromInt(row_h)) - 8, t.radius);
-                c.cairo_fill(cr);
-            }
-            setSource(cr, t.fg);
-            drawText(cr, label, pad, y + 28, 13, false);
+            const row = self.rowRect(i);
+            const proximity: ui_button.ProximitySample = if (self.inside) self.rowProximity(i, self.pointer_x, self.pointer_y) else .{ .distance = std.math.inf(f32), .x = 0, .y = 0 };
+            var layer = shell_ui.Layer.begin(cr, .{ .x = row.x, .y = row.y, .w = row.w, .h = row.h }) orelse continue;
+            ui_button.paint(&layer.renderer, layer.local(), .{
+                .variant = .secondary,
+                .size = .md,
+                .alignment = .left,
+                .label = label,
+            }, .{
+                .selected = self.hover == i or self.selected == i,
+                .pointer = if (self.inside and self.hover == i) .hover else .idle,
+                .proximity_distance = proximity.distance,
+                .proximity_x = proximity.x,
+                .proximity_y = proximity.y,
+            });
+            layer.finish();
         }
     }
 };
@@ -429,15 +498,6 @@ fn drawText(cr: *c.cairo_t, str: []const u8, x: f64, y: f64, size: f64, bold: bo
 
 fn setSource(cr: *c.cairo_t, color: [4]f32) void {
     c.cairo_set_source_rgba(cr, color[0], color[1], color[2], color[3]);
-}
-
-fn roundedRect(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, r: f64) void {
-    c.cairo_new_sub_path(cr);
-    c.cairo_arc(cr, x + w - r, y + r, r, -std.math.pi / 2.0, 0);
-    c.cairo_arc(cr, x + w - r, y + h - r, r, 0, std.math.pi / 2.0);
-    c.cairo_arc(cr, x + r, y + h - r, r, std.math.pi / 2.0, std.math.pi);
-    c.cairo_arc(cr, x + r, y + r, r, std.math.pi, std.math.pi * 1.5);
-    c.cairo_close_path(cr);
 }
 
 const Buffer = struct {

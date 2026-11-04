@@ -82,7 +82,7 @@ fn choice(cc: *panel.ControlCenter, a: A, tiling: bool) !W {
         .id = @intFromBool(tiling),
         .on_click = layoutClicked,
         .selected = selected,
-        .background = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = if (selected) 2 else 1, .border_color = if (selected) t.accent else t.app_item_border },
+        .background = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = if (selected) 2 else 1, .border_color = if (selected) t.accent else t.app_item_border, .relief = t.settings_card_relief },
         .hover_background = .{ .color = t.app_nav_selected, .radius = t.settings_card_radius, .border_width = 2, .border_color = t.accent },
     } };
     result.padding = ui.layout.Edges.all(if (compact(cc)) 12 else 18);

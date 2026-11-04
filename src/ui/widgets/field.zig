@@ -116,7 +116,7 @@ pub fn paintFrame(r: *Renderer, box: Rect, opts: Options, state: State) Layout {
         t.fieldFocusColor()
     else
         t.field_border;
-    r.fillRect(box.x, box.y, box.w, box.h, .{ .color = bg, .radius = m.radius, .border_width = 1, .border_color = border });
+    r.fillRect(box.x, box.y, box.w, box.h, .{ .color = bg, .radius = m.radius, .border_width = 1, .border_color = border, .relief = if (state.disabled) .flat else t.field_relief });
     if (out.icon) |icon| r.drawIcon(icon.x, icon.y, icon.w, icon.h, .{
         .id = opts.leading_icon.?,
         .color = if (state.disabled) t.faint else opts.leading_icon_color orelse t.dim,

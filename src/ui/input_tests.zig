@@ -3,6 +3,7 @@
 const std = @import("std");
 const anim = @import("anim.zig");
 const layout = @import("layout.zig");
+const theme = @import("theme.zig");
 const Widget = layout.Widget;
 const scroll_widget = @import("widgets/scroll_container.zig");
 const hitTest = @import("input.zig").hitTest;
@@ -18,6 +19,305 @@ const pointerLeave = @import("input.zig").pointerLeave;
 const scrollWheel = @import("input.zig").scrollWheel;
 const keyEvent = @import("input.zig").keyEvent;
 const input_src = @import("input.zig");
+
+test "button proximity samples visible nested-scroll rectangles and skips unchanged values" {
+    var button = Widget{
+        .kind = .{ .button = .{ .label = "Visible" } },
+    };
+    button.computed_x = 25;
+    button.computed_y = 0;
+    button.computed_width = 20;
+    button.computed_height = 20;
+
+    var clipped_button = Widget{
+        .kind = .{ .button = .{ .label = "Clipped" } },
+    };
+    clipped_button.computed_x = 75;
+    clipped_button.computed_y = 10;
+    clipped_button.computed_width = 10;
+    clipped_button.computed_height = 10;
+
+    var inner_children = [_]Widget{button};
+    var inner = Widget{
+        .kind = .{ .scroll_container = .{} },
+        .children = &inner_children,
+    };
+    inner.computed_x = 20;
+    inner.computed_y = 5;
+    inner.computed_width = 40;
+    inner.computed_height = 30;
+
+    var outer_children = [_]Widget{ inner, clipped_button };
+    var outer = Widget{
+        .kind = .{ .scroll_container = .{} },
+        .children = &outer_children,
+    };
+    outer.computed_x = 10;
+    outer.computed_y = 10;
+    outer.computed_width = 60;
+    outer.computed_height = 40;
+
+    var root_children = [_]Widget{outer};
+    var root = Widget{
+        .kind = .container,
+        .children = &root_children,
+    };
+    root.computed_x = 0;
+    root.computed_y = 0;
+    root.computed_width = 100;
+    root.computed_height = 100;
+    root.linkParents();
+
+    const viewport: input_src.ProximityRect = .{
+        .x = 0,
+        .y = 0,
+        .w = 100,
+        .h = 100,
+    };
+
+    // The visible button is clipped by both scroll ancestors:
+    // its visible rectangle begins at y=10, five pixels below the cursor.
+    try std.testing.expect(input_src.updateButtonProximity(&root, 30, 5, viewport));
+    try std.testing.expectEqual(
+        @as(f32, 5),
+        root.children[0].children[0].children[0].kind.button.proximity_distance,
+    );
+
+    // The sibling lies entirely outside the outer scroll viewport.
+    try std.testing.expect(std.math.isInf(
+        root.children[0].children[1].kind.button.proximity_distance,
+    ));
+
+    // Repeating the same sample must not dirty widgets or advance the revision.
+    const revision = layout.paint_revision;
+    try std.testing.expect(!input_src.updateButtonProximity(&root, 30, 5, viewport));
+    try std.testing.expectEqual(revision, layout.paint_revision);
+
+    // Moving inside the visible portion changes the sample to zero.
+    try std.testing.expect(input_src.updateButtonProximity(&root, 30, 15, viewport));
+    try std.testing.expectEqual(
+        @as(f32, 0),
+        root.children[0].children[0].children[0].kind.button.proximity_distance,
+    );
+
+    // Moving away from the button updates its distance and local sample.
+    try std.testing.expect(input_src.updateButtonProximity(&root, 50, 15, viewport));
+    const visible_button = &root.children[0].children[0].children[0].kind.button;
+    try std.testing.expectEqual(@as(f32, 5), visible_button.proximity_distance);
+    try std.testing.expectEqual(@as(f32, 25), visible_button.proximity_x);
+    try std.testing.expectEqual(@as(f32, 15), visible_button.proximity_y);
+
+    // A distant pointer position is retained without repeatedly dirtying paint.
+    try std.testing.expect(input_src.updateButtonProximity(&root, 120, 15, viewport));
+    try std.testing.expect(std.math.isInf(visible_button.proximity_distance));
+    try std.testing.expectEqual(@as(f32, 0), visible_button.proximity_x);
+    try std.testing.expectEqual(@as(f32, 0), visible_button.proximity_y);
+    const distant_revision = layout.paint_revision;
+    try std.testing.expect(!input_src.updateButtonProximity(&root, 120, 15, viewport));
+    try std.testing.expectEqual(distant_revision, layout.paint_revision);
+}
+
+test "dispatcher pointer motion updates button proximity samples" {
+    var children = [_]Widget{.{
+        .kind = .{ .button = .{ .label = "Button" } },
+        .computed_width = 40,
+        .computed_height = 20,
+    }};
+    var root: Widget = .{
+        .kind = .container,
+        .computed_width = 100,
+        .computed_height = 80,
+        .children = &children,
+    };
+    root.linkParents();
+
+    var dispatcher: Dispatcher = .{};
+    dispatcher.pointerMotion(&root, 45, 10);
+
+    const button = &root.children[0].kind.button;
+    try std.testing.expectEqual(@as(f32, 5), button.proximity_distance);
+    try std.testing.expectEqual(@as(f32, 45), button.proximity_x);
+    try std.testing.expectEqual(@as(f32, 10), button.proximity_y);
+
+    const revision = layout.paint_revision;
+    dispatcher.pointerMotion(&root, 45, 10);
+    try std.testing.expectEqual(revision, layout.paint_revision);
+
+    dispatcher.pointerMotion(&root, 10, 10);
+    try std.testing.expectEqual(@as(f32, 0), button.proximity_distance);
+}
+
+test "dispatcher forwards retained-tree hits to the interaction surface" {
+    const text = Widget{
+        .kind = .{ .text = .{
+            .content = "Child",
+            .font_size = 12,
+            .color = .{ 1, 1, 1, 1 },
+        } },
+        .computed_x = 15,
+        .computed_y = 15,
+        .computed_width = 30,
+        .computed_height = 10,
+    };
+    var row_children = [_]Widget{text};
+    const row = Widget{
+        .kind = .{ .row = .{} },
+        .computed_x = 10,
+        .computed_y = 10,
+        .computed_width = 60,
+        .computed_height = 30,
+        .children = &row_children,
+    };
+    var root_children = [_]Widget{row};
+    var root = Widget{
+        .kind = .container,
+        .computed_width = 100,
+        .computed_height = 80,
+        .children = &root_children,
+    };
+    root.linkParents();
+
+    var dispatcher = Dispatcher{};
+    dispatcher.pointerMotion(&root, 20, 20);
+
+    try std.testing.expectEqual(@as(?*Widget, &root.children[0]), dispatcher.hovered);
+    try std.testing.expect(dispatcher.surface.hovered != null);
+
+    const target = dispatcher.surface.hovered.?;
+    try std.testing.expectEqual(
+        @as(u64, @intCast(@intFromPtr(&root.children[0]))),
+        target.id,
+    );
+    try std.testing.expectEqual(@as(f32, 10), target.rect.x);
+    try std.testing.expectEqual(@as(f32, 10), target.rect.y);
+    try std.testing.expectEqual(@as(f32, 60), target.rect.w);
+    try std.testing.expectEqual(@as(f32, 30), target.rect.h);
+
+    // A passive hit clears the shared target and the old widget hover.
+    dispatcher.pointerMotion(&root, 90, 70);
+    try std.testing.expect(dispatcher.surface.hovered == null);
+    try std.testing.expect(root.children[0].kind.row.state != .hover);
+
+    // Returning to the row restores the target; leaving clears its snapshot.
+    dispatcher.pointerMotion(&root, 20, 20);
+    try std.testing.expect(dispatcher.surface.hovered != null);
+    dispatcher.pointerLeave(&root);
+    try std.testing.expect(dispatcher.surface.hovered == null);
+}
+
+test "proximity samples shared widget surfaces and clears on pointer leave" {
+    const TextSink = struct {
+        fn call(_: ?*anyopaque, _: usize, _: []const u8) void {}
+    };
+    const CheckSink = struct {
+        fn call(_: ?*anyopaque, _: usize, _: bool) void {}
+    };
+
+    var children = [_]Widget{
+        .{
+            .kind = .{ .text_input = .{
+                .placeholder = "",
+                .value = &.{},
+                .on_change = TextSink.call,
+            } },
+            .computed_x = 10,
+            .computed_y = 10,
+            .computed_width = 60,
+            .computed_height = 30,
+        },
+        .{
+            .kind = .{ .checkbox = .{
+                .label = "Enabled",
+                .checked = false,
+                .on_change = CheckSink.call,
+            } },
+            .computed_x = 100,
+            .computed_y = 10,
+            .computed_width = 80,
+            .computed_height = 30,
+        },
+        .{
+            .kind = .{ .checkbox = .{
+                .label = "Disabled",
+                .checked = false,
+                .disabled = true,
+                .on_change = CheckSink.call,
+            } },
+            .computed_x = 200,
+            .computed_y = 10,
+            .computed_width = 80,
+            .computed_height = 30,
+        },
+    };
+    var root: Widget = .{
+        .kind = .container,
+        .computed_width = 300,
+        .computed_height = 60,
+        .children = &children,
+    };
+    root.linkParents();
+
+    var dispatcher = Dispatcher{};
+    dispatcher.pointerMotion(&root, 20, 20);
+
+    const field = &root.children[0];
+    try std.testing.expectEqual(@as(f32, 0), field.proximity.distance);
+    try std.testing.expectEqual(@as(f32, 10), field.proximity.x);
+    try std.testing.expectEqual(@as(f32, 10), field.proximity.y);
+
+    // The checkbox illuminates its square, not the label's whole row.
+    const checkbox = &root.children[1];
+    try std.testing.expect(std.math.isInf(checkbox.proximity.distance));
+    dispatcher.pointerMotion(&root, 105, 20);
+    try std.testing.expectEqual(@as(f32, 0), checkbox.proximity.distance);
+    try std.testing.expectEqual(@as(f32, 100), checkbox.proximity.rect.x);
+    try std.testing.expectEqual(@as(f32, 16), checkbox.proximity.rect.y);
+    try std.testing.expectEqual(@as(f32, 18), checkbox.proximity.rect.w);
+    try std.testing.expectEqual(@as(f32, 18), checkbox.proximity.rect.h);
+    try std.testing.expectEqual(@as(f32, 5), checkbox.proximity.x);
+    try std.testing.expectEqual(@as(f32, 4), checkbox.proximity.y);
+
+    // Disabled controls never acquire a proximity sample.
+    try std.testing.expect(std.math.isInf(root.children[2].proximity.distance));
+
+    dispatcher.pointerLeave(&root);
+    try std.testing.expect(std.math.isInf(field.proximity.distance));
+    try std.testing.expect(std.math.isInf(checkbox.proximity.distance));
+}
+
+test "scrollbar groove proximity follows the visible inset groove" {
+    const saved_theme = theme.global;
+    defer theme.global = saved_theme;
+    theme.global.scrollbar_width = 8;
+    theme.global.scrollbar_track_relief = .inset;
+
+    var root: Widget = .{
+        .kind = .{ .scroll_container = .{ .content_size = 200 } },
+        .direction = .column,
+        .computed_x = 20,
+        .computed_y = 20,
+        .computed_width = 100,
+        .computed_height = 100,
+    };
+
+    var dispatcher = Dispatcher{};
+    dispatcher.pointerMotion(&root, 110, 90);
+
+    // The 14 px gutter produces a 12 px inset groove at x=107.
+    try std.testing.expectEqual(@as(f32, 0), root.proximity.distance);
+    try std.testing.expectEqual(@as(f32, 107), root.proximity.rect.x);
+    try std.testing.expectEqual(@as(f32, 20), root.proximity.rect.y);
+    try std.testing.expectEqual(@as(f32, 12), root.proximity.rect.w);
+    try std.testing.expectEqual(@as(f32, 100), root.proximity.rect.h);
+    try std.testing.expectEqual(@as(f32, 3), root.proximity.x);
+    try std.testing.expectEqual(@as(f32, 70), root.proximity.y);
+
+    // Sampling is independent of relief so making the groove visible again
+    // does not require another pointer movement. The painter gates flat tracks.
+    theme.global.scrollbar_track_relief = .flat;
+    dispatcher.pointerMotion(&root, 110, 90);
+    try std.testing.expectEqual(@as(f32, 0), root.proximity.distance);
+}
 
 test "hitTest returns the topmost overlapping widget" {
     var kids = [_]Widget{
@@ -628,20 +928,26 @@ test "dragging across a field sweeps a selection and releasing ends it" {
     try std.testing.expectEqualStrings("alpha beta", field.kind.text_input.selectedText());
 }
 
-test "stable pointer motion and clamped scrolling leave visual revision unchanged" {
+test "pointer motion invalidates changed proximity samples but not repeated samples" {
     var children = [_]Widget{.{ .kind = .{ .button = .{ .label = "Button" } }, .computed_width = 100, .computed_height = 30 }};
     var root: Widget = .{ .kind = .container, .computed_width = 120, .computed_height = 80, .children = &children };
     root.linkParents();
     var dispatcher: Dispatcher = .{};
     dispatcher.pointerMotion(&root, 10, 10);
     var revision = layout.paint_revision;
+
+    dispatcher.pointerMotion(&root, 11, 10);
+    try std.testing.expect(revision != layout.paint_revision);
+    revision = layout.paint_revision;
     dispatcher.pointerMotion(&root, 11, 10);
     try std.testing.expectEqual(revision, layout.paint_revision);
+
     dispatcher.pointerMotion(&root, 110, 60);
     try std.testing.expect(revision != layout.paint_revision);
     revision = layout.paint_revision;
-    dispatcher.pointerMotion(&root, 111, 60);
+    dispatcher.pointerMotion(&root, 110, 60);
     try std.testing.expectEqual(revision, layout.paint_revision);
+
     var scroll: Widget = .{ .kind = .{ .scroll_container = .{ .content_size = 300 } }, .direction = .column, .computed_width = 100, .computed_height = 100 };
     _ = dispatcher.scrollWheel(&scroll, 10, 10, -40, null);
     try std.testing.expectEqual(revision, layout.paint_revision);

@@ -11,6 +11,7 @@ const start_button = @import("../taskbar/start_button.zig");
 const shape = @import("../taskbar/shape.zig");
 const window_shape = @import("ui").window_shape;
 const ui_theme = @import("ui").theme;
+const ui_relief = @import("ui").relief;
 const stats = @import("../ipc/stats.zig");
 const log = std.log.scoped(.taskbar);
 const bar_height = Taskbar.bar_height;
@@ -323,6 +324,22 @@ pub fn chipPixelArgb(paint: *const ChipPaint, px: f32, py: f32, scale: f32) u32 
     return paintChipPixel(paint, px, py, scale).argb();
 }
 
+/// Relief shading inside a chip's edge, over its body. A raster is only a few
+/// px wider than its chip, so there is no room for outside shadows: `inset`
+/// is the groove, `raised` the same shading with the two lights swapped.
+fn chipRelief(body: Color, kind: ui_theme.Relief, x: f32, y: f32, w: f32, h: f32, px: f32, py: f32, scale: f32) Color {
+    const spec = ui_relief.Spec.from(ui_theme.global, scale);
+    if (!spec.enabled()) return body;
+    const shape_box: ui_relief.Shape = .{ .x = x * scale, .y = y * scale, .w = w * scale, .h = h * scale, .radius = ui_theme.global.radius * scale };
+    const pair = ui_relief.inset(spec, shape_box, px * scale, py * scale);
+    const shade_dark = if (kind == .inset) spec.dark else spec.light;
+    const shade_light = if (kind == .inset) spec.light else spec.dark;
+    var color = body;
+    color = (Color{ .r = shade_dark[0], .g = shade_dark[1], .b = shade_dark[2], .a = shade_dark[3] * pair.dark }).over(color);
+    color = (Color{ .r = shade_light[0], .g = shade_light[1], .b = shade_light[2], .a = shade_light[3] * pair.light }).over(color);
+    return color;
+}
+
 pub fn paintChipPixel(paint: *const ChipPaint, px: f32, py: f32, scale: f32) Color {
     const chip = paint.chip;
     const cx = paint.x;
@@ -330,6 +347,7 @@ pub fn paintChipPixel(paint: *const ChipPaint, px: f32, py: f32, scale: f32) Col
     const lx = px;
     const ly = py;
     var color = @import("../taskbar/chip_style.zig").pixel(Color, lx, ly, cx, chip_y, chip.width, @floatFromInt(chipSize()), ui_theme.global.radius, scale, paint.fill, paint.border);
+    if (paint.relief != .flat) color = chipRelief(color, paint.relief, cx, chip_y, chip.width, @floatFromInt(chipSize()), lx, ly, scale);
     const tile_x = cx + @as(f32, @floatFromInt(chipPad()));
     const tile_y = chip_y + @as(f32, @floatFromInt(chipPad()));
     const tile_cov = edgeCoverage(chrome.sdRoundedBox(lx, ly, tile_x, tile_y, @floatFromInt(tileSize()), @floatFromInt(tileSize()), tile_radius), scale);

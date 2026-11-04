@@ -13,8 +13,11 @@ const layout = @import("layout.zig");
 const Widget = layout.Widget;
 
 const button_widget = @import("widgets/button.zig");
+const interaction_surface = @import("interaction_surface.zig");
+const theme = @import("theme.zig");
 const checkbox_widget = @import("widgets/checkbox.zig");
 const scroll_widget = @import("widgets/scroll_container.zig");
+const scrollbar = @import("widgets/scrollbar.zig");
 const text_input_widget = @import("widgets/text_input.zig");
 const toggle_widget = @import("widgets/toggle.zig");
 const slider_widget = @import("widgets/slider.zig");
@@ -30,6 +33,239 @@ const input_keys = @import("input_keys.zig");
 /// returns the deepest widget whose computed rect contains `(x, y)`.
 pub fn hitTest(root: *Widget, x: f32, y: f32) ?*Widget {
     return hitTestWithScrollAncestor(root, x, y).widget;
+}
+
+/// Logical-pixel rectangle used to constrain proximity sampling.
+pub const ProximityRect = button_widget.Rect;
+
+fn widgetRect(widget: *const Widget) ProximityRect {
+    return .{
+        .x = widget.computed_x,
+        .y = widget.computed_y,
+        .w = widget.computed_width,
+        .h = widget.computed_height,
+    };
+}
+
+/// Updates proximity samples for every interactive surface in the
+/// retained tree, not merely the hit-tested one. `viewport` is the host
+/// panel's visible content rectangle; scroll containers add their paint clip
+/// as recursion descends. Returns true only when a stored sample changes.
+pub fn updateInteractiveProximity(
+    root: *Widget,
+    x: f32,
+    y: f32,
+    viewport: ProximityRect,
+) bool {
+    var changed = false;
+    const root_clip = button_widget.intersectRect(viewport, widgetRect(root));
+    sampleInteractiveProximity(root, x, y, root_clip, root_clip, &changed);
+    return changed;
+}
+
+/// Retain the old entry point for callers that still use the button-only name.
+pub fn updateButtonProximity(
+    root: *Widget,
+    x: f32,
+    y: f32,
+    viewport: ProximityRect,
+) bool {
+    return updateInteractiveProximity(root, x, y, viewport);
+}
+
+const ProximityTarget = struct {
+    rect: button_widget.Rect,
+    clip: button_widget.Rect,
+};
+
+fn proximityTarget(
+    widget: *Widget,
+    x: f32,
+    y: f32,
+    clip: button_widget.Rect,
+    overlay_clip: button_widget.Rect,
+) ?ProximityTarget {
+    const bounds = widgetRect(widget);
+    var rect = bounds;
+    var target_clip = clip;
+
+    switch (widget.kind) {
+        .button => |data| {
+            if (data.state == .disabled) return null;
+        },
+        .row => |data| {
+            if (data.state == .disabled) return null;
+        },
+        .checkbox => |data| {
+            if (data.disabled) return null;
+        },
+        .toggle => |data| {
+            if (data.disabled) return null;
+        },
+        .select => |data| {
+            if (data.disabled) return null;
+        },
+        .scroll_container => |data| {
+            // Keep sampling the groove geometry even when its current relief is
+            // flat; the painter decides whether that groove is visible.
+            const geometry = scroll_widget.geometry(widget) orelse return null;
+            const look = scrollbar.look(
+                geometry,
+                data.bar,
+                theme.global.scrollbar_width,
+                theme.global,
+            );
+            rect = .{
+                .x = look.track.x,
+                .y = look.track.y,
+                .w = look.track.w,
+                .h = look.track.h,
+            };
+        },
+        .text_input, .secret_input, .slider, .segmented, .swatch,
+        .stepper, .arrangement => {},
+        else => return null,
+    }
+
+    // Dropdowns paint outside their normal tree position. Compare the
+    // control and popup samples, using the root overlay clip for the popup.
+    if (widget.kind == .select and widget.kind.select.open) {
+        const popup = select_widget.popupBounds(widget);
+        const popup_rect: button_widget.Rect = .{
+            .x = popup.x,
+            .y = popup.y,
+            .w = popup.w,
+            .h = popup.h,
+        };
+        const popup_clip = button_widget.intersectRect(overlay_clip, popup_rect);
+        const popup_sample = interaction_surface.sampleButtonProximity(
+            popup_rect, x, y, popup_clip, theme.global.border_glow_reach,
+        );
+        const control_sample = interaction_surface.sampleButtonProximity(
+            bounds, x, y, clip, theme.global.border_glow_reach,
+        );
+        if (popup_sample.distance < control_sample.distance) {
+            rect = popup_rect;
+            target_clip = popup_clip;
+        }
+    }
+
+    // A checkbox's interactive surface is its square, not the label row.
+    if (widget.kind == .checkbox) {
+        const side = checkbox_widget.box_size;
+        rect = .{
+            .x = bounds.x,
+            .y = bounds.y + (bounds.h - side) / 2,
+            .w = side,
+            .h = side,
+        };
+    }
+
+    return .{ .rect = rect, .clip = target_clip };
+}
+
+fn sameProximity(a: layout.ProximityData, b: layout.ProximityData) bool {
+    return a.distance == b.distance and a.x == b.x and a.y == b.y and
+        a.rect.x == b.rect.x and a.rect.y == b.rect.y and
+        a.rect.w == b.rect.w and a.rect.h == b.rect.h;
+}
+
+fn clearWidgetProximity(widget: *Widget) bool {
+    var dirty = false;
+
+    if (widget.kind == .button) {
+        const data = &widget.kind.button;
+        if (data.proximity_distance != std.math.inf(f32) or
+            data.proximity_x != 0 or data.proximity_y != 0)
+        {
+            data.proximity_distance = std.math.inf(f32);
+            data.proximity_x = 0;
+            data.proximity_y = 0;
+            dirty = true;
+        }
+    }
+
+    if (!sameProximity(widget.proximity, .{})) {
+        widget.proximity = .{};
+        dirty = true;
+    }
+
+    if (dirty) widget.markPaintDirty();
+    return dirty;
+}
+
+fn sampleInteractiveProximity(
+    widget: *Widget,
+    x: f32,
+    y: f32,
+    clip: button_widget.Rect,
+    overlay_clip: button_widget.Rect,
+    changed: *bool,
+) void {
+    if (proximityTarget(widget, x, y, clip, overlay_clip)) |target| {
+        const sample = interaction_surface.sampleButtonProximity(
+            target.rect,
+            x,
+            y,
+            target.clip,
+            theme.global.border_glow_reach,
+        );
+
+        if (widget.kind == .button) {
+            const data = &widget.kind.button;
+            if (data.proximity_distance != sample.distance or
+                data.proximity_x != sample.x or data.proximity_y != sample.y)
+            {
+                data.proximity_distance = sample.distance;
+                data.proximity_x = sample.x;
+                data.proximity_y = sample.y;
+                widget.markPaintDirty();
+                changed.* = true;
+            }
+        } else {
+            var next: layout.ProximityData = .{};
+            if (sample.distance < std.math.inf(f32)) {
+                next = .{
+                    .rect = .{
+                        .x = target.rect.x,
+                        .y = target.rect.y,
+                        .w = target.rect.w,
+                        .h = target.rect.h,
+                    },
+                    .distance = sample.distance,
+                    .x = sample.x,
+                    .y = sample.y,
+                };
+            }
+            if (!sameProximity(widget.proximity, next)) {
+                widget.proximity = next;
+                widget.markPaintDirty();
+                changed.* = true;
+            }
+        }
+    } else if (clearWidgetProximity(widget)) {
+        changed.* = true;
+    }
+
+    // paintScrollContainer clips all descendants to its own full rectangle.
+    const child_clip = if (widget.kind == .scroll_container)
+        button_widget.intersectRect(clip, widgetRect(widget))
+    else
+        clip;
+
+    for (widget.children) |*child| {
+        sampleInteractiveProximity(child, x, y, child_clip, overlay_clip, changed);
+    }
+}
+
+/// Clears retained proximity state when the host surface loses the pointer.
+pub fn clearInteractiveProximity(root: *Widget) void {
+    clearInteractiveProximityTree(root);
+}
+
+fn clearInteractiveProximityTree(widget: *Widget) void {
+    _ = clearWidgetProximity(widget);
+    for (widget.children) |*child| clearInteractiveProximityTree(child);
 }
 
 pub const HitResult = struct {
@@ -87,6 +323,78 @@ pub fn findInteractive(start: ?*Widget) ?*Widget {
     return start;
 }
 
+/// Adapts the tree's point-query result to the shared interaction surface.
+/// The widget pointer remains host-owned; only its integer identity and
+/// visible geometry cross the surface boundary.
+pub fn interactionHit(
+    root: *Widget,
+    target: ?*Widget,
+    x: f32,
+    y: f32,
+) ?interaction_surface.Hit {
+    const widget = target orelse return null;
+
+    const role: interaction_surface.Role = switch (widget.kind) {
+        .button => .button,
+        .row, .checkbox, .text_input, .secret_input, .toggle, .slider,
+        .segmented, .select, .swatch, .stepper, .arrangement => .interactive,
+        else => .passive,
+    };
+
+    const enabled = switch (widget.kind) {
+        .button => |data| data.state != .disabled,
+        .row => |data| data.state != .disabled,
+        .checkbox => |data| !data.disabled,
+        .toggle => |data| !data.disabled,
+        .select => |data| !data.disabled,
+        else => true,
+    };
+
+    var rect = widgetRect(widget);
+    var clip = widgetRect(root);
+
+    // Select popups are overlays. Their hit geometry is independent
+    // of the select control's normal ancestor clipping.
+    if (widget.kind == .select and widget.kind.select.open) {
+        const popup = select_widget.popupBounds(widget);
+        if (x >= popup.x and x < popup.x + popup.w and
+            y >= popup.y and y < popup.y + popup.h)
+        {
+            rect = .{
+                .x = popup.x,
+                .y = popup.y,
+                .w = popup.w,
+                .h = popup.h,
+            };
+            clip = rect;
+        } else {
+            // Outside the popup, use only the select control itself.
+            rect = widgetRect(widget);
+            var ancestor = widget.parent;
+            while (ancestor) |parent| {
+                clip = button_widget.intersectRect(clip, widgetRect(parent));
+                if (parent == root) break;
+                ancestor = parent.parent;
+            }
+        }
+    } else {
+        var ancestor = widget.parent;
+        while (ancestor) |parent| {
+            clip = button_widget.intersectRect(clip, widgetRect(parent));
+            if (parent == root) break;
+            ancestor = parent.parent;
+        }
+    }
+
+    return .{
+        .id = @intCast(@intFromPtr(widget)),
+        .rect = rect,
+        .clip = clip,
+        .role = role,
+        .enabled = enabled,
+    };
+}
+
 pub fn isInteractiveButtonOrRow(widget: *const Widget) bool {
     return switch (widget.kind) {
         .button => |data| data.state != .disabled,
@@ -135,6 +443,7 @@ pub const Caret = input_caret.Caret;
 pub var caret_config: CaretConfig = .{};
 
 pub const Dispatcher = struct {
+    surface: interaction_surface.Surface = .{},
     hovered: ?*Widget = null,
     pressed: ?*Widget = null,
     focused: ?*Widget = null,
@@ -176,6 +485,8 @@ pub const Dispatcher = struct {
     /// `root`'s to clear.
     pub fn pointerLeave(self: *Dispatcher, root: *Widget) void {
         if (self.tree != root) return;
+        _ = self.surface.pointerLeave();
+        clearInteractiveProximity(root);
         if (self.thumb_hover) |prev| setThumbHover(prev, false);
         self.thumb_hover = null;
         // A slider is only lit while the pointer is over it; forgetting it as

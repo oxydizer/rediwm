@@ -32,6 +32,12 @@ const findScrollContainer = input_mod.findScrollContainer;
 
 pub fn pointerMotion(self: *Dispatcher, root: *Widget, x: f32, y: f32) void {
     self.bindTree(root);
+    _ = input_mod.updateInteractiveProximity(root, x, y, .{
+        .x = root.computed_x,
+        .y = root.computed_y,
+        .w = root.computed_width,
+        .h = root.computed_height,
+    });
     if (self.text_drag) |field| {
         // Sweeping a selection: the pointer may be well outside the field
         // by now, and `offsetAtX` clamps to the ends, so no hit test.
@@ -62,7 +68,9 @@ pub fn pointerMotion(self: *Dispatcher, root: *Widget, x: f32, y: f32) void {
         if (select_widget.optionAt(w, x, y)) |index| select_widget.highlight(w, index);
     }
     const result = hitTestWithScrollAncestor(root, x, y);
-    self.setHovered(findInteractive(result.widget));
+    const target = findInteractive(result.widget);
+    const change = self.surface.pointerMotion(input_mod.interactionHit(root, target, x, y));
+    if (change.hover_changed or self.hovered != target) self.setHovered(target);
 
     // Safer than `.?` on `scroll_ancestor`: over_thumb is only true when
     // that pointer is non-null, but a hit-test race must not crash.

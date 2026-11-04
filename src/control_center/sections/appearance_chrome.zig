@@ -100,6 +100,12 @@ pub fn onBorderGlowChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     applyThemeChange(section(owner));
 }
 
+pub fn onButtonHoverGlowChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    if (theme.global.button_hover_glow_enabled == on) return;
+    theme.global.button_hover_glow_enabled = on;
+    applyThemeChange(section(owner));
+}
+
 pub fn onChromeOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     const s = section(owner);
     const clamped = std.math.clamp(value, 0.0, 1.0);

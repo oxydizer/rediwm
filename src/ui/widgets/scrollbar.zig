@@ -1,6 +1,8 @@
-// The shell's one scrollbar, as Files draws it: a track-less thumb that sits
-// centred in a reserved gutter, thin at rest, widening and tinting toward the
-// accent under the pointer, and holding a subtle tint while scrolling. Apps
+// The shell's one scrollbar, as Files draws it: a thumb that sits centred in a
+// reserved gutter, thin at rest, widening and tinting toward the accent under
+// the pointer, and holding a subtle tint while scrolling. It has no track
+// unless the theme sets `scrollbar_track_relief`, which cuts a groove for the
+// thumb; `scrollbar_glow = 0` makes the thumb itself flat. Apps
 // keep their own scroll mechanics and ask this module for the geometry, the
 // paging and drag arithmetic, the look and the feedback animation, so every
 // scrollbar behaves alike: Files, Images, PDF and the editor through Cairo
@@ -137,8 +139,17 @@ pub const Drag = struct {
     }
 };
 
-/// What to draw: the thumb's rounded box, colour and illuminated edge.
+/// What to draw: the groove (when the theme cuts one), then the thumb's
+/// rounded box, colour and illuminated edge.
 pub const Look = struct {
+    /// The channel the thumb runs in, inside the gutter. Drawn only when
+    /// `track_relief` is not `.flat`; its shading comes from the theme's
+    /// `relief_*` values, never from the accent or the frame's glow.
+    track: Rect,
+    track_radius: f32,
+    track_color: [4]f32,
+    track_relief: theme.Relief = .flat,
+    thumb_relief: theme.Relief = .flat,
     rect: Rect,
     radius: f32,
     color: [4]f32,
@@ -167,14 +178,54 @@ pub fn look(g: Geometry, state: Appearance, configured: f32, palette: theme.Them
     var highlight = palette.border_glow;
     // A pale reflection of the frame's glow reads as light on every palette.
     for (highlight[0..3]) |*channel| channel.* += (1 - channel.*) * 0.55;
-    return .{ .rect = rect, .radius = cornerRadius(thickness), .color = color, .axis = g.axis, .highlight = highlight, .shine = state.shine, .glow = @max(palette.scrollbar_glow, 0) };
+    // The groove fills the gutter less a pixel either side, so the thumb, at
+    // its widest, still sits inside it with room to spare. Its floor takes the
+    // theme's shadow tone; the relief pass shades the edges from `relief_*`.
+    const track_thickness: f32 = @max(0, gutter_thickness - 2);
+    var track_color = palette.relief_dark;
+    track_color[3] = std.math.clamp(track_color[3] * 0.75, 0.12, 0.5);
+    var track_rect = g.track;
+    if (g.axis == .vertical) {
+        track_rect.x += (track_rect.w - track_thickness) / 2;
+        track_rect.w = track_thickness;
+    } else {
+        track_rect.y += (track_rect.h - track_thickness) / 2;
+        track_rect.h = track_thickness;
+    }
+    // Nested corners: the groove's radius is the thumb's plus the margin between.
+    const track_radius = @min(cornerRadius(track_thickness) + 1.5, track_thickness / 2);
+    return .{ .track = track_rect, .track_radius = track_radius, .track_color = track_color, .track_relief = palette.scrollbar_track_relief, .thumb_relief = palette.scrollbar_thumb_relief, .rect = rect, .radius = cornerRadius(thickness), .color = color, .axis = g.axis, .highlight = highlight, .shine = state.shine, .glow = @max(palette.scrollbar_glow, 0) };
+}
+
+/// Whether `l`'s thumb gets the lit-edge raster. A flat thumb (`scrollbar_glow`
+/// of 0) or an unlit one is a plain rounded fill, in the widget tree and Cairo alike.
+pub fn lit(l: Look) bool {
+    return l.shine > 0 and l.glow > 0;
+}
+
+/// The groove; nothing at all while the theme leaves the track flat. It stays
+/// inside the track's own box, so the gutter's damage covers it.
+pub fn paintTrack(r: *@import("../paint.zig").Renderer, l: Look) void {
+    if (l.track_relief == .flat or l.track.w <= 0 or l.track.h <= 0) return;
+    r.fillRect(l.track.x, l.track.y, l.track.w, l.track.h, .{
+        .color = l.track_color,
+        .radius = l.track_radius,
+        .relief = l.track_relief,
+    });
+}
+
+/// The groove, then the thumb. Cairo clients use this same painter through
+/// `ui/cairo.zig`'s `drawScrollbar`.
+pub fn paint(r: *@import("../paint.zig").Renderer, l: Look) void {
+    paintTrack(r, l);
+    paintThumb(r, l);
 }
 
 /// The light stays inside the thumb, so ordinary scrollbar damage erases it.
-/// Cairo clients use this same painter through `ui/cairo.zig`'s `drawScrollbar`.
-pub fn paint(r: *@import("../paint.zig").Renderer, l: Look) void {
-    if (l.shine <= 0) {
+pub fn paintThumb(r: *@import("../paint.zig").Renderer, l: Look) void {
+    if (!lit(l)) {
         r.fillRect(l.rect.x, l.rect.y, l.rect.w, l.rect.h, .{ .color = l.color, .radius = l.radius });
+        paintThumbRelief(r, l);
         return;
     }
     const box = l.rect;
@@ -219,6 +270,25 @@ pub fn paint(r: *@import("../paint.zig").Renderer, l: Look) void {
             text.blendPixel(&r.pixels[@intCast(py * r.width + px)], .{ .r = color[0], .g = color[1], .b = color[2], .a = color[3] }, coverage);
         }
     }
+    paintThumbRelief(r, l);
+}
+
+fn paintThumbRelief(r: *@import("../paint.zig").Renderer, l: Look) void {
+    r.paintShapeRelief(l.thumb_relief, .{
+        .x = l.rect.x,
+        .y = l.rect.y,
+        .w = l.rect.w,
+        .h = l.rect.h,
+        .radius = l.radius,
+    }, .{
+        .within = .{
+            .x = l.track.x,
+            .y = l.track.y,
+            .w = l.track.w,
+            .h = l.track.h,
+            .radius = l.track_radius,
+        },
+    });
 }
 
 /// Presentation only: callers retain their scroll mechanics and fixed hit area.
@@ -392,6 +462,12 @@ test "the thumb is centred in its gutter, widens and tints with feedback" {
     try std.testing.expectEqual(@as(f32, 86 + 4), rest.rect.x);
     try std.testing.expectEqual(palette.scrollbar_thumb, rest.color);
     try std.testing.expectEqual(cornerRadius(6), rest.radius);
+    // The groove is the gutter less a pixel either side, and off unless asked for.
+    try std.testing.expectEqual(@as(f32, 12), rest.track.w);
+    try std.testing.expectEqual(@as(f32, 87), rest.track.x);
+    try std.testing.expectEqual(theme.Relief.flat, rest.track_relief);
+    try std.testing.expectEqual(theme.Relief.flat, rest.thumb_relief);
+    try std.testing.expect(rest.track_color[3] > 0);
     state.wide = 1;
     state.accent = 1;
     const hot = look(g, state, 8, palette);
@@ -401,4 +477,65 @@ test "the thumb is centred in its gutter, widens and tints with feedback" {
     // A gutter narrower than the animated width clamps it.
     const narrow = Geometry.compute(.vertical, .{ .x = 0, .y = 0, .w = 8, .h = 100 }, 100, 400, 0).?;
     try std.testing.expectEqual(@as(f32, 6), look(narrow, state, 8, palette).rect.w);
+}
+
+test "raised thumb relief stays within its channel" {
+    const Renderer = @import("../paint.zig").Renderer;
+    var palette: theme.Theme = .{};
+    palette.scrollbar_thumb = .{ 0.4, 0.4, 0.4, 1 };
+    palette.scrollbar_glow = 0;
+    palette.scrollbar_thumb_relief = .raised;
+    palette.relief_depth = 2;
+    palette.relief_softness = 3;
+    palette.relief_dark = .{ 0, 0, 0, 0.6 };
+    palette.relief_light = .{ 1, 1, 1, 0.6 };
+
+    const g = Geometry.compute(.vertical, .{ .x = 0, .y = 0, .w = gutter(8), .h = 100 }, 100, 400, 0).?;
+    var pixels = @as([14 * 100]u32, @splat(0));
+    var r = Renderer.init(&pixels, 14, 100, 1);
+    r.palette = palette;
+    paint(&r, look(g, .{}, 8, palette));
+
+    // The thumb begins at x=4. Its raised edge shades the channel beside it.
+    try std.testing.expect(pixels[12 * 14 + 3] != 0);
+    // The channel is inset one pixel from the gutter's outer edges.
+    try std.testing.expectEqual(@as(u32, 0), pixels[12 * 14]);
+    try std.testing.expectEqual(@as(u32, 0), pixels[12 * 14 + 13]);
+}
+
+test "the groove shades from the theme's relief and a flat thumb carries no stripe" {
+    const Renderer = @import("../paint.zig").Renderer;
+    var palette: theme.Theme = .{};
+    palette.scrollbar_thumb = .{ 0.4, 0.4, 0.4, 1 };
+    // A red accent and glow must not reach either part of the bar.
+    palette.accent = .{ 1, 0, 0, 1 };
+    palette.border_glow = .{ 1, 0, 0, 1 };
+    palette.scrollbar_glow = 0;
+    palette.scrollbar_track_relief = .inset;
+    palette.relief_depth = 2;
+    palette.relief_softness = 3;
+    palette.relief_dark = .{ 0, 0, 0, 0.6 };
+    palette.relief_light = .{ 1, 1, 1, 0.6 };
+    const g = Geometry.compute(.vertical, .{ .x = 0, .y = 0, .w = gutter(8), .h = 100 }, 100, 400, 0).?;
+    var pixels = @as([14 * 100]u32, @splat(0));
+    var r = Renderer.init(&pixels, 14, 100, 1);
+    r.palette = palette;
+    // Fully lit state: with a glow of 0 the thumb still paints as one colour.
+    paint(&r, look(g, .{ .shine = 1 }, 8, palette));
+    const row = 12 * 14;
+    for (5..9) |x| {
+        try std.testing.expectEqual(pixels[row + 5], pixels[row + x]);
+        try std.testing.expectEqual((pixels[row + x] >> 16) & 0xff, pixels[row + x] & 0xff);
+    }
+    // Below the thumb the groove is dark where it faces the light and lit on
+    // the far side, and neutral throughout.
+    const groove = 60 * 14;
+    try std.testing.expect((pixels[groove + 2] & 0xff) < (pixels[groove + 11] & 0xff));
+    for ([_]usize{ 2, 7, 11 }) |x| try std.testing.expectEqual((pixels[groove + x] >> 16) & 0xff, pixels[groove + x] & 0xff);
+    // Flat, as every theme but a neumorphic one leaves it: no channel at all.
+    palette.scrollbar_track_relief = .flat;
+    @memset(&pixels, 0);
+    paint(&r, look(g, .{}, 8, palette));
+    try std.testing.expectEqual(@as(u32, 0), pixels[groove + 7]);
+    try std.testing.expect(pixels[row + 7] != 0);
 }

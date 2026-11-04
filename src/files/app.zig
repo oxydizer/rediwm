@@ -17,6 +17,7 @@ const theme = @import("../icon_theme.zig");
 const Allocator = std.mem.Allocator;
 const header = @import("header.zig");
 const hover_glide = @import("ui").hover_glide;
+const interaction_surface = @import("ui").interaction_surface;
 const Preferences = @import("preferences.zig").Preferences;
 const pins_mod = @import("pins.zig");
 const chooser_mod = @import("chooser.zig");
@@ -189,6 +190,11 @@ pub const App = struct {
     // between cells while visible. `stepHover` samples them once per loop and
     // damages only what changed; the painters draw `frame`, never the pointer.
     toolbar_hover: ToolbarHover = .{},
+    toolbar_surface: interaction_surface.Surface = .{},
+    sidebar_surface: interaction_surface.Surface = .{},
+    column_surface: interaction_surface.Surface = .{},
+    dialog_surface: interaction_surface.Surface = .{},
+    item_surface: interaction_surface.Surface = .{},
     nav_hover: hover_glide.Glide = .{},
     item_hover: hover_glide.Glide = .{},
     // Each path section fades independently, including when crossing a separator.
@@ -448,7 +454,14 @@ pub const App = struct {
     pub const itemHighlight = app_hover.itemHighlight;
     pub const toolbarButtonVisible = app_hover.toolbarButtonVisible;
     pub const toolbarButtonEnabled = app_hover.toolbarButtonEnabled;
+    pub const updateToolbarSurface = app_hover.updateToolbarSurface;
+    pub const updateSidebarSurface = app_hover.updateSidebarSurface;
+    pub const updateColumnSurface = app_hover.updateColumnSurface;
+    pub const updateDialogSurface = app_hover.updateDialogSurface;
+    pub const updateItemSurface = app_hover.updateItemSurface;
     pub const hoveredToolbarButton = app_hover.hoveredToolbarButton;
+    pub const toolbarButtonProximity = app_hover.toolbarButtonProximity;
+    pub const damageToolbarProximity = app_hover.damageToolbarProximity;
     pub const stepHover = app_hover.stepHover;
     pub const damageHighlight = app_hover.damageHighlight;
     pub const unionRect = app_hover.unionRect;

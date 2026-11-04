@@ -374,6 +374,7 @@ pub const Client = struct {
                 self.inside = false;
                 self.finger_navigation.reset();
                 self.app.cancelDrag();
+                self.app.handleMotion(-1, -1);
             },
             .motion => |ev| {
                 self.handlePointerMotion(ev.surface_x.toDouble(), ev.surface_y.toDouble());

@@ -211,7 +211,7 @@ fn container(a: std.mem.Allocator, direction: ui.layout.Direction, items: []cons
 fn card(a: std.mem.Allocator, items: []const W) !W {
     var result = try container(a, .column, items);
     const t = panel.palette();
-    result.kind = .{ .rect = .{ .color = t.settings_card_bg, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.border_soft } };
+    result.kind = .{ .rect = .{ .color = t.settings_card_bg, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.border_soft, .relief = t.settings_card_relief } };
     result.padding = ui.layout.Edges.all(16);
     return result;
 }

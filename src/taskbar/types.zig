@@ -97,6 +97,10 @@ pub const ChipMemo = struct {
     title_size: f32,
     font: []const u8,
     colors: [6][4]f32,
+    // Inside-edge relief: kind plus the theme values `relief.Spec` reads.
+    relief: ui_theme.Relief,
+    relief_look: [3]f32,
+    relief_colors: [2][4]f32,
 
     pub fn capture(bar: *Taskbar, chip: *const ChipState, now_ms: i64) ChipMemo {
         const t = ui_theme.global;
@@ -118,6 +122,9 @@ pub const ChipMemo = struct {
             .title_size = t.taskbar_title_size,
             .font = t.font,
             .colors = .{ ui_theme.taskbar(.taskbar_surface), ui_theme.taskbar(.taskbar_hover), ui_theme.taskbar(.surface_hover), ui_theme.taskbar(.taskbar_border), ui_theme.taskbar(.border_soft), ui_theme.taskbar(.window_fg) },
+            .relief = if (chip.toplevel == bar.server.world.toplevels.first()) t.taskbar_chip_active_relief else t.taskbar_chip_relief,
+            .relief_look = .{ t.relief_depth, t.relief_softness, t.relief_light_angle },
+            .relief_colors = .{ t.relief_dark, t.relief_light },
         };
     }
 };
@@ -314,6 +321,7 @@ pub const ChipPaint = struct {
     fill: Color,
     border: Color,
     bar_height: i32,
+    relief: ui_theme.Relief = .flat,
     flat: ChipFlat = .{},
 
     pub fn init(bar: *Taskbar, now_ms: i64, chip: *const ChipState) ChipPaint {
@@ -327,6 +335,7 @@ pub const ChipPaint = struct {
             .fill = style.fill,
             .border = style.border,
             .bar_height = bar.box.height,
+            .relief = if (active) ui_theme.global.taskbar_chip_active_relief else ui_theme.global.taskbar_chip_relief,
         };
         paint.flat = .init(&paint, bar.wlr_output.scale);
         return paint;
@@ -371,7 +380,7 @@ pub const ChipFlat = struct {
         const tile: f32 = @floatFromInt(tileSize());
         const clear: Color = .{ .r = 0, .g = 0, .b = 0, .a = 0 };
         return .{
-            .enabled = scale >= 0.75,
+            .enabled = scale >= 0.75 and paint.relief == .flat,
             .outer = .{ .x0 = x - 1, .y0 = y - 1, .x1 = x + w + 1, .y1 = y + h + 1 },
             .band_h = .{ .x0 = x + 1 + corner, .y0 = y + 2, .x1 = x + 1 + iw - corner, .y1 = y + ih },
             .band_v = .{ .x0 = x + 2, .y0 = y + 1 + corner, .x1 = x + iw, .y1 = y + 1 + ih - corner },

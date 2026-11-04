@@ -10,6 +10,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const layout = @import("layout.zig");
+pub const Relief = layout.Relief;
 
 const log = std.log.scoped(.theme);
 
@@ -117,7 +119,8 @@ pub const Theme = struct {
     scrollbar_thumb: [4]f32 = .{ 89.0 / 255.0, 98.0 / 255.0, 110.0 / 255.0, 1 }, // #59626e
     /// Unset follows the surface accent during hover/drag.
     scrollbar_thumb_active: ?[4]f32 = null,
-    /// Strength of the light on a hovered/dragged/scrolling thumb (1 = subtle).
+    /// Strength of the light on a hovered/dragged/scrolling thumb (1 = subtle,
+    /// 0 = a flat thumb: no highlight stripe, only the colour feedback).
     scrollbar_glow: f32 = 1.0,
     taskbar_title_size: f32 = 12.5,
     clock_bold: bool = false,
@@ -208,12 +211,70 @@ pub const Theme = struct {
     /// (`Toplevel.setGlow`). Its alpha is the strength at full proximity; zero
     /// turns it off.
     border_glow_enabled: bool = true,
+    /// Shared gate for proximity highlights painted inside interactive
+    /// widget surfaces. The legacy key name is retained for theme compatibility.
+    /// Colour and reach/length/depth are shared with the window-edge glow.
+    button_hover_glow_enabled: bool = true,
     border_glow: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 0.60 },
     border_glow_length: f32 = 72.0, // along the edge, logical px; fades out smoothly
     border_glow_reach: f32 = 56.0, // pointer distance from the edge where it appears
     border_glow_depth: f32 = 3.0, // how far it bleeds inward past the 1 px ring
     shadow_size: f32 = 24.0, // blur/softness radius, logical px
     shadow_offset_y: f32 = 8.0, // vertical offset, logical px
+    /// Neumorphic relief of buttons, fields and inset panels (`ui/relief.zig`):
+    /// each casts a dark and a light shadow shifted `relief_depth` logical px
+    /// from its edge, away from and toward the light. 0 turns relief off.
+    relief_depth: f32 = 0,
+    /// Fade-out length of those shadows, logical px; 0 follows 1.5 x the depth.
+    relief_softness: f32 = 0,
+    /// Where the light sits, in degrees counter-clockwise from the right (135
+    /// is the upper left).
+    relief_light_angle: f32 = 135,
+    relief_dark: [4]f32 = .{ 0, 0, 0, 0.35 },
+    relief_light: [4]f32 = .{ 1, 1, 1, 0.10 },
+
+    // Component-level relief styles. Flat defaults preserve existing rendering
+    // for controls that did not previously request relief.
+    button_relief: Relief = .flat,
+    button_pressed_relief: Relief = .flat,
+    field_relief: Relief = .flat,
+    dialog_inset_relief: Relief = .flat,
+    /// The dialog card itself (`widgets/dialog.zig`). Raised shadows lie outside
+    /// it, so keep them within the host's backdrop margin.
+    dialog_frame_relief: Relief = .flat,
+    /// The cards around Settings entries. The page scrolls in a clipped
+    /// container, so a raised card's shadow is cut at its edge: prefer `inset`.
+    settings_card_relief: Relief = .flat,
+    /// Taskbar window chips, idle and active (focused). The chip raster ends a
+    /// few px past the chip, so both shade inside the edge: `inset` is a
+    /// groove, `raised` the same shading with light and dark swapped. Main
+    /// theme only; `[taskbar_theme]` does not carry them.
+    taskbar_chip_relief: Relief = .flat,
+    taskbar_chip_active_relief: Relief = .flat,
+    select_relief: Relief = .flat,
+    select_popup_relief: Relief = .flat,
+    checkbox_relief: Relief = .flat,
+    toggle_track_relief: Relief = .flat,
+    toggle_thumb_relief: Relief = .flat,
+    slider_track_relief: Relief = .flat,
+    slider_thumb_relief: Relief = .flat,
+    // Relief for the controls that had none: the segmented control (frame and
+    // selected cell), stepper, swatch, a slider's value pill, and list rows
+    // (hovered, selected). A raised box casts shadows `relief_depth +
+    // relief_softness` past its edge, so cells and rows packed into a layout
+    // want `inset`.
+    segmented_relief: Relief = .flat,
+    segmented_selected_relief: Relief = .flat,
+    stepper_relief: Relief = .flat,
+    swatch_relief: Relief = .flat,
+    pill_relief: Relief = .flat,
+    row_hover_relief: Relief = .flat,
+    row_selected_relief: Relief = .flat,
+    /// The scrollbar's channel (`widgets/scrollbar.zig`): flat draws no track at
+    /// all (the thumb alone), inset a groove the thumb sits in.
+    scrollbar_track_relief: Relief = .flat,
+    /// Relief on the scrollbar thumb; raised shadows stay inside its channel.
+    scrollbar_thumb_relief: Relief = .flat,
     // 0 sizes the menu to the output (`start_menu/size.zig`); set either to pin it.
     start_menu_width: f32 = 0,
     start_menu_max_height: f32 = 0,

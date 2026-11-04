@@ -9,9 +9,11 @@ const paint = @import("paint.zig");
 const theme = @import("theme.zig");
 const text = @import("text.zig");
 const scrollbar = @import("widgets/scrollbar.zig");
+const button = @import("widgets/button.zig");
 const splitter = @import("widgets/splitter.zig");
 
 pub const Rect = @import("widgets/field.zig").Rect;
+pub const Point = struct { x: f64, y: f64 };
 const allocator = std.heap.c_allocator;
 
 /// Text sizes of the Cairo client apps (Files, Images, PDF): one body size for
@@ -78,6 +80,47 @@ pub fn drawItemHighlight(cr_any: *anyopaque, box: ItemBox, selected: bool, fill_
     setSource(cr, border);
     c.cairo_set_line_width(cr, 1);
     c.cairo_stroke(cr);
+}
+
+/// Paints the shared proximity glow inside a Cairo-rendered interactive
+/// surface. Pointer coordinates are in the caller's user space. `clip`, when
+/// supplied, limits both proximity sampling and the pixels painted.
+pub fn drawProximityGlow(
+    cr_any: *anyopaque,
+    box: Rect,
+    radius: f32,
+    pointer: ?Point,
+    clip: ?Rect,
+) void {
+    const p = pointer orelse return;
+    const clipping = clip orelse box;
+    const visible = button.intersectRect(box, clipping);
+    if (visible.w <= 0 or visible.h <= 0) return;
+
+    const sample = button.sampleProximity(
+        box,
+        @floatCast(p.x),
+        @floatCast(p.y),
+        clipping,
+    );
+    if (sample.distance >= std.math.inf(f32)) return;
+
+    var layer = Layer.begin(cr_any, box) orelse return;
+    layer.renderer.clip = .{
+        .x = visible.x - box.x,
+        .y = visible.y - box.y,
+        .w = visible.w,
+        .h = visible.h,
+    };
+    button.paintProximityGlowAt(
+        &layer.renderer,
+        layer.local(),
+        radius,
+        sample.distance,
+        sample.x,
+        sample.y,
+    );
+    layer.finish();
 }
 
 /// Sidebar hover: a plain rounded fill at `alpha`.
@@ -153,46 +196,76 @@ pub fn drawSplitter(cr_any: *anyopaque, geometry: splitter.Geometry, engaged: bo
     c.cairo_fill(cr);
 }
 
-/// Fills a scrollbar thumb: `scrollbar.look` through Cairo, the counterpart of
-/// `scrollbar.paint` for the widget tree.
+/// Fills a scrollbar, groove and thumb through Cairo. The existing form
+/// leaves proximity lighting off; callers with pointer coordinates use
+/// `drawScrollbarAt`.
 pub fn drawScrollbar(cr_any: *anyopaque, look: scrollbar.Look) void {
+    drawScrollbarAt(cr_any, look, null);
+}
+
+/// The pointer-aware Cairo scrollbar painter. The groove glow is painted
+/// between the groove and thumb, so the thumb always stays visually clear.
+pub fn drawScrollbarAt(cr_any: *anyopaque, look: scrollbar.Look, pointer: ?Point) void {
     const cr: *c.cairo_t = @ptrCast(cr_any);
-    if (look.shine > 0) {
-        // Preserve the thumb's fractional placement within the device-aligned
-        // layer, including a Cairo translation, as its animated width changes.
-        const s = scaleOf(cr);
-        var dx: f64 = look.rect.x;
-        var dy: f64 = look.rect.y;
-        c.cairo_user_to_device(cr, &dx, &dy);
-        const inset_x: f32 = @floatCast((dx - @floor(dx)) / s);
-        const inset_y: f32 = @floatCast((dy - @floor(dy)) / s);
-        var layer = Layer.begin(cr, .{
-            .x = look.rect.x - inset_x,
-            .y = look.rect.y - inset_y,
-            .w = look.rect.w + inset_x,
-            .h = look.rect.h + inset_y,
-        }) orelse return;
-        var local = look;
-        local.rect.x = inset_x;
-        local.rect.y = inset_y;
-        scrollbar.paint(&layer.renderer, local);
-        layer.finish();
-        return;
+
+    const track = look.track;
+    const thumb = look.rect;
+    const needs_track_layer = look.track_relief != .flat or look.thumb_relief == .raised;
+    const left = if (needs_track_layer) @min(track.x, thumb.x) else thumb.x;
+    const top = if (needs_track_layer) @min(track.y, thumb.y) else thumb.y;
+    const right = if (needs_track_layer) @max(track.x + track.w, thumb.x + thumb.w) else thumb.x + thumb.w;
+    const bottom = if (needs_track_layer) @max(track.y + track.h, thumb.y + thumb.h) else thumb.y + thumb.h;
+    if (right <= left or bottom <= top) return;
+
+    const s = scaleOf(cr);
+    var dx: f64 = left;
+    var dy: f64 = top;
+    c.cairo_user_to_device(cr, &dx, &dy);
+    const inset_x: f32 = @floatCast((dx - @floor(dx)) / s);
+    const inset_y: f32 = @floatCast((dy - @floor(dy)) / s);
+
+    var layer = Layer.begin(cr, .{
+        .x = left - inset_x,
+        .y = top - inset_y,
+        .w = right - left + inset_x,
+        .h = bottom - top + inset_y,
+    }) orelse return;
+
+    var local = look;
+    local.track.x = track.x - left + inset_x;
+    local.track.y = track.y - top + inset_y;
+    local.rect.x = thumb.x - left + inset_x;
+    local.rect.y = thumb.y - top + inset_y;
+
+    scrollbar.paintTrack(&layer.renderer, local);
+
+    if (pointer) |p| {
+        if (local.track_relief != .flat) {
+            const groove: button.Rect = .{
+                .x = local.track.x,
+                .y = local.track.y,
+                .w = local.track.w,
+                .h = local.track.h,
+            };
+            const sample = button.sampleProximity(
+                groove,
+                @floatCast(p.x - left + inset_x),
+                @floatCast(p.y - top + inset_y),
+                groove,
+            );
+            button.paintProximityGlowAt(
+                &layer.renderer,
+                groove,
+                local.track_radius,
+                sample.distance,
+                sample.x,
+                sample.y,
+            );
+        }
     }
-    const x: f64 = look.rect.x;
-    const y: f64 = look.rect.y;
-    const w: f64 = look.rect.w;
-    const h: f64 = look.rect.h;
-    if (w <= 0 or h <= 0) return;
-    const r: f64 = @min(look.radius, @min(w, h) / 2);
-    setSource(cr, look.color);
-    c.cairo_new_sub_path(cr);
-    c.cairo_arc(cr, x + w - r, y + r, r, -std.math.pi / 2.0, 0);
-    c.cairo_arc(cr, x + w - r, y + h - r, r, 0, std.math.pi / 2.0);
-    c.cairo_arc(cr, x + r, y + h - r, r, std.math.pi / 2.0, std.math.pi);
-    c.cairo_arc(cr, x + r, y + r, r, std.math.pi, 3 * std.math.pi / 2.0);
-    c.cairo_close_path(cr);
-    c.cairo_fill(cr);
+
+    scrollbar.paintThumb(&layer.renderer, local);
+    layer.finish();
 }
 
 /// Draws `str` with its pen at `x` and baseline at `y`, like
@@ -337,6 +410,84 @@ test "a layer composites a shared component at its box, scaled" {
     try std.testing.expectEqual(@as(u32, 0), data[10 * 200 + 19]);
 }
 
+test "Cairo proximity glow respects the visible clip" {
+    const saved_theme = theme.global;
+    defer theme.global = saved_theme;
+
+    var glowing = theme.global;
+    glowing.button_hover_glow_enabled = true;
+    glowing.border_glow = .{ 1, 0, 0, 0.8 };
+    glowing.border_glow_reach = 20;
+    glowing.border_glow_length = 32;
+    glowing.border_glow_depth = 3;
+    theme.global = glowing;
+
+    const surface = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, 80, 40) orelse return error.Cairo;
+    defer c.cairo_surface_destroy(surface);
+    const cr = c.cairo_create(surface) orelse return error.Cairo;
+    defer c.cairo_destroy(cr);
+
+    drawProximityGlow(
+        cr,
+        .{ .x = 10, .y = 10, .w = 40, .h = 20 },
+        4,
+        .{ .x = 30, .y = 7 },
+        .{ .x = 20, .y = 10, .w = 20, .h = 20 },
+    );
+    c.cairo_surface_flush(surface);
+
+    const pixels: [*]const u32 = @ptrCast(@alignCast(c.cairo_image_surface_get_data(surface)));
+    try std.testing.expect(pixels[10 * 80 + 30] != 0);
+    try std.testing.expectEqual(@as(u32, 0), pixels[10 * 80 + 15]);
+    try std.testing.expectEqual(@as(u32, 0), pixels[10 * 80 + 45]);
+}
+
+test "Cairo scrollbar groove glow stays beneath the thumb" {
+    const saved_theme = theme.global;
+    defer theme.global = saved_theme;
+
+    var palette = theme.global;
+    palette.button_hover_glow_enabled = true;
+    palette.border_glow = .{ 1, 0, 0, 0.8 };
+    palette.border_glow_reach = 24;
+    palette.border_glow_length = 64;
+    palette.border_glow_depth = 4;
+    palette.scrollbar_track_relief = .inset;
+    palette.scrollbar_thumb = .{ 0, 0, 1, 1 };
+    theme.global = palette;
+
+    const surface = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, 40, 60) orelse return error.Cairo;
+    defer c.cairo_surface_destroy(surface);
+    const cr = c.cairo_create(surface) orelse return error.Cairo;
+    defer c.cairo_destroy(cr);
+
+    const geometry = scrollbar.Geometry.compute(
+        .vertical,
+        .{ .x = 20, .y = 0, .w = 14, .h = 60 },
+        60,
+        120,
+        0,
+    ).?;
+    const look = scrollbar.look(geometry, .{}, 8, palette);
+
+    drawScrollbar(cr, look);
+    c.cairo_surface_flush(surface);
+    const pixels: [*]const u32 = @ptrCast(@alignCast(c.cairo_image_surface_get_data(surface)));
+    var baseline: [40 * 60]u32 = undefined;
+    @memcpy(baseline[0..], pixels[0..baseline.len]);
+
+    c.cairo_set_operator(cr, c.CAIRO_OPERATOR_CLEAR);
+    c.cairo_paint(cr);
+    c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
+    drawScrollbarAt(cr, look, .{ .x = 27, .y = 58 });
+    c.cairo_surface_flush(surface);
+
+    const groove_pixel = 58 * 40 + 27;
+    const thumb_pixel = 15 * 40 + 27;
+    try std.testing.expect(pixels[groove_pixel] != baseline[groove_pixel]);
+    try std.testing.expectEqual(baseline[thumb_pixel], pixels[thumb_pixel]);
+}
+
 test "a scrollbar thumb paints its look through cairo" {
     const surface = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, 40, 60) orelse return error.Cairo;
     defer c.cairo_surface_destroy(surface);
@@ -351,7 +502,39 @@ test "a scrollbar thumb paints its look through cairo" {
     // Six wide at rest, centred in the 14 wide gutter: x 24..30, top half.
     try std.testing.expectEqual(@as(u32, 0xff0000ff), data[15 * 40 + 27]);
     try std.testing.expectEqual(@as(u32, 0), data[15 * 40 + 22]);
+    // No groove unless the theme cuts one: nothing below the thumb.
     try std.testing.expectEqual(@as(u32, 0), data[45 * 40 + 27]);
+    // With one, the channel continues below it.
+    var needs_track_layer = palette;
+    needs_track_layer.scrollbar_track_relief = .inset;
+    drawScrollbar(cr, scrollbar.look(g, .{}, 8, needs_track_layer));
+    c.cairo_surface_flush(surface);
+    try std.testing.expect(data[45 * 40 + 27] != 0);
+
+    // A raised thumb gets a layer large enough for its shadows, even with
+    // no groove. The relief remains confined to the channel.
+    c.cairo_set_operator(cr, c.CAIRO_OPERATOR_CLEAR);
+    c.cairo_paint(cr);
+    c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
+    var raised = palette;
+    raised.scrollbar_glow = 0;
+    raised.scrollbar_thumb_relief = .raised;
+    raised.relief_depth = 2;
+    raised.relief_softness = 3;
+    raised.relief_dark = .{ 0, 0, 0, 0.6 };
+    raised.relief_light = .{ 1, 1, 1, 0.6 };
+
+    // The Cairo layer obtains its renderer palette from theme.global.
+    const saved_theme = theme.global;
+    defer theme.global = saved_theme;
+    theme.global = raised;
+
+    drawScrollbar(cr, scrollbar.look(g, .{}, 8, raised));
+    c.cairo_surface_flush(surface);
+    // The channel starts at x=21; the thumb starts at x=24.
+    try std.testing.expect(data[12 * 40 + 23] != 0);
+    try std.testing.expectEqual(@as(u32, 0), data[12 * 40 + 20]);
+    try std.testing.expectEqual(@as(u32, 0), data[12 * 40 + 33]);
 
     // Engaged thumbs share the shell raster, including fractional placement,
     // Cairo translation and clipping. The highlight remains inside the thumb.
@@ -365,6 +548,8 @@ test "a scrollbar thumb paints its look through cairo" {
     c.cairo_surface_flush(surface);
     var expected = @as([40 * 60]u32, @splat(0));
     var renderer = paint.Renderer.init(&expected, 40, 60, 1.5);
+    hot.track.x += 0.25;
+    hot.track.y += 0.5;
     hot.rect.x += 0.25;
     hot.rect.y += 0.5;
     scrollbar.paint(&renderer, hot);
