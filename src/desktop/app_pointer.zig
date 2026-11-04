@@ -47,6 +47,18 @@ fn damageProximityAt(self: *App, x: f64, y: f64) void {
     }
 }
 
+/// Keep pointer-dependent desktop lighting current even while an overlay
+/// handles the pointer event instead of the desktop.
+fn updateProximityPointer(self: *App, x: f64, y: f64) void {
+    const moved = self.x != x or self.y != y;
+    const newly_present = !self.pointer_present;
+    if (moved and self.pointer_present) damageProximityAt(self, self.x, self.y);
+    self.x = x;
+    self.y = y;
+    self.pointer_present = true;
+    if (moved or newly_present) damageProximityAt(self, x, y);
+}
+
 pub fn motion(self: *App, x: f64, y: f64) void {
     self.pointerMotion(x, y);
     self.syncCursor();
@@ -60,8 +72,7 @@ pub fn pointerMotion(self: *App, x: f64, y: f64) void {
             const old_hit = picker.hit(w, h, self.x, self.y);
             if (picker.motion(w, h, x, y) or old_hit != picker.hit(w, h, x, y)) self.invalidate();
         }
-        self.x = x;
-        self.y = y;
+        updateProximityPointer(self, x, y);
         return;
     }
     if (self.edit == .trash_properties) {
@@ -71,29 +82,20 @@ pub fn pointerMotion(self: *App, x: f64, y: f64) void {
             const old_hit = card.hit(w, h, self.x, self.y);
             if (card.motion(w, h, x, y) or old_hit != card.hit(w, h, x, y)) self.invalidate();
         }
-        self.x = x;
-        self.y = y;
+        updateProximityPointer(self, x, y);
         return;
     }
     if (self.edit == .trash) {
         if (self.deletion.motion(self.geometry.w, self.geometry.h - self.geometry.bottom, x, y)) self.invalidate();
         const g = self.deletion.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
         const changed = g.target(self.x, self.y) != g.target(x, y);
-        self.x = x;
-        self.y = y;
+        updateProximityPointer(self, x, y);
         if (changed) self.invalidate();
         return;
     }
     const moved = self.x != x or self.y != y;
-    const newly_present = !self.pointer_present;
-    if (moved) {
-        self.damageDrag();
-        if (self.pointer_present) damageProximityAt(self, self.x, self.y);
-    }
-    self.x = x;
-    self.y = y;
-    self.pointer_present = true;
-    if (moved or newly_present) damageProximityAt(self, x, y);
+    if (moved) self.damageDrag();
+    updateProximityPointer(self, x, y);
     const hover = if (self.edit == .rename) null else self.hit(x, y);
     if (self.hover != hover) {
         if (self.hover) |i| self.damageIcon(i);
