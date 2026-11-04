@@ -3087,6 +3087,10 @@ msgstr ""
 msgid "Interactive authorization required."
 msgstr ""
 
+#: src/control_center/sections/appearance_rows.zig
+msgid "Interactive surface glow"
+msgstr ""
+
 #: src/control_center/welcome.zig
 msgid "Interface scale"
 msgstr ""
@@ -3321,6 +3325,10 @@ msgstr ""
 
 #: src/control_center/sections/power.zig
 msgid "Lid closed with external display"
+msgstr ""
+
+#: src/control_center/sections/appearance_rows.zig
+msgid "Light interactive control edges near the pointer"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig

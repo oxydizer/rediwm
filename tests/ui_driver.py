@@ -24,9 +24,13 @@ class UIDriver:
         """Scroll the panel's content until the widget named `name` is fully
         visible, and return it with its new box."""
         # The wheel direction depends on scroll settings, so learn it: flip
-        # whenever a step moves the widget away from the viewport.
+        # whenever a step moves the widget away from the viewport. A step that
+        # carries the widget across the viewport top is too coarse for a tall
+        # widget (the visible window is only viewport minus widget height), so
+        # halve it instead; otherwise the loop bounces over the window forever.
         step = -130
         last_distance = None
+        last_below = None
         for _ in range(attempts):
             tree = self.widgets(panel)
             widget = next(w for w in tree if w["name"] == name)
@@ -35,9 +39,13 @@ class UIDriver:
             viewport = next(w for w in tree if w["role"] == "scroll_container")
             below = widget["box"]["y"] > viewport["box"]["y"]
             distance = abs(widget["box"]["y"] - viewport["box"]["y"])
-            if last_distance is not None and distance >= last_distance:
-                step = -step
+            if last_distance is not None:
+                if below != last_below:
+                    step = (1 if step > 0 else -1) * max(10, abs(step) // 2)
+                elif distance >= last_distance:
+                    step = -step
             last_distance = distance
+            last_below = below
             area = viewport["global_box"]
             # The viewport centre may be over a nested scroll container
             # (Appearance's wallpaper strip). Its trailing gutter belongs

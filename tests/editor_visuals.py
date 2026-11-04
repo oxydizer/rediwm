@@ -138,9 +138,12 @@ def run():
                     return shot.crop(tuple(round(v*factor) for v in (
                         box['x']+140, box['y']+header+2,
                         box['x']+174, box['y']+header+36)))
-                idle_close=hover_image(130, header+19)
+                # The pointer glow lights controls within border_glow_reach (56 px)
+                # of the pointer, so the resting image is taken well outside it.
+                idle_close=hover_image(300, header+200)
+                near_close=hover_image(130, header+19)
                 hover_close=hover_image(145, header+19)
-                assert ImageChops.difference(idle_close, hover_close).getbbox(), 'close-tab hover did not repaint'
+                assert ImageChops.difference(near_close, hover_close).getbbox(), 'close-tab hover did not repaint'
                 left_close=hover_image(-30, -30)
                 assert not ImageChops.difference(idle_close, left_close).getbbox(), 'close-tab hover stuck after pointer leave'
                 print('close-tab hover appears and clears on pointer leave',flush=True)
