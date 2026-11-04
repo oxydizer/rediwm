@@ -75,6 +75,14 @@ pub const Client = struct {
     outstanding: usize = 0,
     buffers: [2]?*Buffer = @splat(null),
     applied_scale: i32 = 0,
+    /// Frames painted so far, and the last one whose content outside the
+    /// toolbar strip changed: a buffer holding that frame or a later one
+    /// needs only the strip repainted for a `toolbar_dirty` frame.
+    frames: u64 = 0,
+    content_frame: u64 = 0,
+    /// Pending `wl_surface.frame` callback of the last commit. Glow-only
+    /// frames wait for it, so they follow the display, not the pointer rate.
+    frame_callback: ?*wl.Callback = null,
     xkb_context: ?*c.api.xkb_context = null,
     xkb_state: ?*c.api.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
@@ -157,6 +165,8 @@ pub const Buffer = struct {
     w: i32,
     h: i32,
     busy: bool = false,
+    /// `Client.frames` when this buffer was last painted; 0 = never.
+    frame: u64 = 0,
 
     pub fn create(client: *Client, w: i32, h: i32) !*Buffer {
         if (w <= 0 or h <= 0 or w > 16384 or h > 16384) return error.InvalidSize;
@@ -294,6 +304,7 @@ pub fn run(init: std.process.Init.Minimal) !void {
     defer for (self.buffers) |slot| {
         if (slot) |buffer| buffer.destroy();
     };
+    defer if (self.frame_callback) |callback| callback.destroy();
 
     const registry = try display.getRegistry();
     defer registry.destroy();

@@ -58,6 +58,12 @@ pub fn updateInteractiveProximity(
     viewport: ProximityRect,
 ) bool {
     var changed = false;
+    // Samples only feed the glow painter: without a visible glow, moving
+    // the pointer must not dirty (and repaint) every widget in reach.
+    if (!button_widget.proximityGlowVisible(theme.global)) {
+        clearInteractiveProximityChanged(root, &changed);
+        return changed;
+    }
     const root_clip = button_widget.intersectRect(viewport, widgetRect(root));
     sampleInteractiveProximity(root, x, y, root_clip, root_clip, &changed);
     return changed;
@@ -264,8 +270,13 @@ pub fn clearInteractiveProximity(root: *Widget) void {
 }
 
 fn clearInteractiveProximityTree(widget: *Widget) void {
-    _ = clearWidgetProximity(widget);
-    for (widget.children) |*child| clearInteractiveProximityTree(child);
+    var changed = false;
+    clearInteractiveProximityChanged(widget, &changed);
+}
+
+fn clearInteractiveProximityChanged(widget: *Widget, changed: *bool) void {
+    if (clearWidgetProximity(widget)) changed.* = true;
+    for (widget.children) |*child| clearInteractiveProximityChanged(child, changed);
 }
 
 pub const HitResult = struct {

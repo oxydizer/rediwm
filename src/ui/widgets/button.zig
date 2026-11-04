@@ -59,6 +59,10 @@ pub fn sampleProximity(box: Rect, pointer_x: f32, pointer_y: f32, clip: Rect) Pr
     };
 }
 
+test {
+    _ = @import("button_glow_tests.zig");
+}
+
 test "proximity sampling respects clipping and returns button-local coordinates" {
     const box: Rect = .{ .x = 20, .y = 10, .w = 40, .h = 20 };
     const clip: Rect = .{ .x = 30, .y = 15, .w = 20, .h = 10 };
@@ -308,6 +312,13 @@ fn paintProximityGlow(r: *Renderer, box: Rect, radius: f32, state: State) void {
     );
 }
 
+/// Whether `paintProximityGlowAt` can draw anything with theme `t`. Hosts
+/// skip proximity sampling (and the repaints it causes) when it cannot.
+pub fn proximityGlowVisible(t: theme.Theme) bool {
+    return t.button_hover_glow_enabled and t.border_glow[3] > 0 and
+        t.border_glow_reach > 0 and t.border_glow_length > 0 and t.border_glow_depth > 0;
+}
+
 /// Shared edge-light painter for buttons and other interactive surfaces.
 /// Pointer coordinates are local to `box`.
 pub fn paintProximityGlowAt(
@@ -319,9 +330,7 @@ pub fn paintProximityGlowAt(
     proximity_y: f32,
 ) void {
     const t = r.palette orelse theme.global;
-    if (!t.button_hover_glow_enabled or proximity_distance >= std.math.inf(f32) or
-        t.border_glow[3] <= 0 or t.border_glow_reach <= 0 or
-        t.border_glow_length <= 0 or t.border_glow_depth <= 0 or
+    if (!proximityGlowVisible(t) or proximity_distance >= std.math.inf(f32) or
         box.w <= 0 or box.h <= 0)
         return;
 
@@ -422,49 +431,95 @@ pub fn paintProximityGlowAt(
         .radius = radius * s,
     };
 
+    // Every edge term is (falloff along the edge) * (falloff by depth), each
+    // a function of one axis only. The top and bottom edges share their
+    // along-x falloff, left and right their along-y one, so a column needs
+    // three exponentials and a row three, instead of eight per pixel. The
+    // products keep the per-pixel order (near * along * depth * coverage),
+    // so the result is bit-identical; an unlit edge contributes 0.
+    const top = edges[0].near;
+    const right = edges[1].near;
+    const bottom = edges[2].near;
+    const left = edges[3].near;
+    const anchor_x = edges[0].x;
+    const anchor_y = edges[1].y;
+    const chunk = 256;
+    var top_along: [chunk]f32 = undefined;
+    var bottom_along: [chunk]f32 = undefined;
+    var from_left: [chunk]f32 = undefined;
+    var from_right: [chunk]f32 = undefined;
+
+    // `blendPixel` moves a channel by at most alpha * a * max(channel, 1),
+    // and rounds to bytes: below a quarter of a byte step nothing changes, so
+    // skipping such faint blends (most of a large surface) is exact. Scaling
+    // by coverage <= 1 is monotonic, so it is applied after the test.
+    const near_min = 0.25 / (255 * red.a * @max(1, @max(red.r, @max(red.g, red.b))));
+    const far_min = 0.25 / (255 * dark.a);
+
     r.clean = false;
-    var py = y0;
-    while (py < y1) : (py += 1) {
-        const sy = @as(f32, @floatFromInt(py)) + 0.5;
-        const logical_y = sy / s;
-        const row: usize = @intCast(py * r.width);
-        var px = x0;
-        while (px < x1) : (px += 1) {
-            const sx = @as(f32, @floatFromInt(px)) + 0.5;
+    var cx0 = x0;
+    while (cx0 < x1) : (cx0 += chunk) {
+        const cx1 = @min(x1, cx0 + chunk);
+        var max_top: f32 = 0;
+        var max_bottom: f32 = 0;
+        var max_left: f32 = 0;
+        var max_right: f32 = 0;
+        for (0..@intCast(cx1 - cx0)) |i| {
+            const sx = @as(f32, @floatFromInt(cx0 + @as(i32, @intCast(i)))) + 0.5;
             const logical_x = sx / s;
-            const coverage = paint_mod.sdf.coverage(paint_mod.sdf.sdRoundedBox(
-                sx, sy, shape.x, shape.y, shape.w, shape.h, shape.radius,
-            ));
-            if (coverage <= 0) continue;
+            const along_ratio = (logical_x - box.x - anchor_x) / length;
+            const along_falloff = @exp(-2 * along_ratio * along_ratio);
+            top_along[i] = top * along_falloff;
+            bottom_along[i] = bottom * along_falloff;
+            from_left[i] = @exp(-@max(0, logical_x - box.x) / depth);
+            from_right[i] = @exp(-@max(0, box.x + box.w - logical_x) / depth);
+            max_top = @max(max_top, top_along[i]);
+            max_bottom = @max(max_bottom, bottom_along[i]);
+            max_left = @max(max_left, from_left[i]);
+            max_right = @max(max_right, from_right[i]);
+        }
 
-            var near_alpha: f32 = 0;
-            var far_alpha: f32 = 0;
-            for (edges) |edge| {
-                if (edge.near <= 0) continue;
+        var py = y0;
+        while (py < y1) : (py += 1) {
+            const sy = @as(f32, @floatFromInt(py)) + 0.5;
+            const logical_y = sy / s;
+            const along_ratio = (logical_y - box.y - anchor_y) / length;
+            const along_falloff = @exp(-2 * along_ratio * along_ratio);
+            const right_along = right * along_falloff;
+            const left_along = left * along_falloff;
+            const from_top = @exp(-@max(0, logical_y - box.y) / depth);
+            const from_bottom = @exp(-@max(0, box.y + box.h - logical_y) / depth);
+            // Upper bounds of this row's alphas: skip it when both are faint.
+            const row_near = @max(@max(max_top * from_top, right_along * max_right), @max(max_bottom * from_bottom, left_along * max_left));
+            const row_far = @max(@max(max_top * from_bottom, right_along * max_left), @max(max_bottom * from_top, left_along * max_right));
+            if (row_near < near_min and row_far < far_min) continue;
+            const row: usize = @intCast(py * r.width);
 
-                const along = if (edge.vertical) logical_y - box.y else logical_x - box.x;
-                const anchor = if (edge.vertical) edge.y else edge.x;
-                const along_ratio = (along - anchor) / length;
-                const along_falloff = @exp(-2 * along_ratio * along_ratio);
+            var px = cx0;
+            while (px < cx1) : (px += 1) {
+                const i: usize = @intCast(px - cx0);
+                const near_raw = @max(
+                    @max(top_along[i] * from_top, right_along * from_right[i]),
+                    @max(bottom_along[i] * from_bottom, left_along * from_left[i]),
+                );
+                const far_raw = @max(
+                    @max(top_along[i] * from_bottom, right_along * from_left[i]),
+                    @max(bottom_along[i] * from_top, left_along * from_right[i]),
+                );
+                if (near_raw < near_min and far_raw < far_min) continue;
 
-                const near_depth = if (edge.vertical)
-                    (if (edge.negative) logical_x - box.x else box.x + box.w - logical_x)
-                else
-                    (if (edge.negative) logical_y - box.y else box.y + box.h - logical_y);
-                const far_depth = if (edge.vertical)
-                    (if (edge.negative) box.x + box.w - logical_x else logical_x - box.x)
-                else
-                    (if (edge.negative) box.y + box.h - logical_y else logical_y - box.y);
+                const sx = @as(f32, @floatFromInt(px)) + 0.5;
+                const coverage = paint_mod.sdf.coverage(paint_mod.sdf.sdRoundedBox(
+                    sx, sy, shape.x, shape.y, shape.w, shape.h, shape.radius,
+                ));
+                if (coverage <= 0) continue;
+                const near_alpha = near_raw * coverage;
+                const far_alpha = far_raw * coverage;
 
-                near_alpha = @max(near_alpha, edge.near * along_falloff *
-                    @exp(-@max(0, near_depth) / depth) * coverage);
-                far_alpha = @max(far_alpha, edge.near * along_falloff *
-                    @exp(-@max(0, far_depth) / depth) * coverage);
+                const index = row + @as(usize, @intCast(px));
+                if (near_alpha >= near_min) paint_mod.blendPixel(&r.pixels[index], red, near_alpha);
+                if (far_alpha >= far_min) paint_mod.blendPixel(&r.pixels[index], dark, far_alpha);
             }
-
-            const index = row + @as(usize, @intCast(px));
-            if (near_alpha > 0) paint_mod.blendPixel(&r.pixels[index], red, near_alpha);
-            if (far_alpha > 0) paint_mod.blendPixel(&r.pixels[index], dark, far_alpha);
         }
     }
 }

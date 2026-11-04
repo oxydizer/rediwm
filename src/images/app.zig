@@ -48,6 +48,9 @@ pub const App = struct {
     /// Fractional device pixels per logical pixel; `scale` is its ceiling.
     density: f64 = 1,
     dirty: bool = true,
+    /// Only the toolbar strip changed (its buttons' proximity glow): the
+    /// client may repaint and damage just that strip instead of the window.
+    toolbar_dirty: bool = false,
     title_changed: bool = true,
     title: [1024:0]u8 = @splat(0),
     closed: bool = false,

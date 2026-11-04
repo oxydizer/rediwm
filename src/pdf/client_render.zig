@@ -7,6 +7,7 @@ const shell_ui = @import("ui").cairo;
 const main_mod = @import("main.zig");
 const Client = main_mod.Client;
 const Buffer = main_mod.Buffer;
+const wl = @import("wayland").client.wl;
 
 pub fn acquireBuffer(self: *Client, w: i32, h: i32) !?*Buffer {
     for (self.buffers) |slot| if (slot) |buffer| {
@@ -26,19 +27,28 @@ pub fn acquireBuffer(self: *Client, w: i32, h: i32) !?*Buffer {
 
 pub fn render(self: *Client) !void {
     self.updateCursor();
-    if (!self.configured or !self.app.dirty or self.outstanding >= 2) return;
+    if (!self.configured or !(self.app.dirty or self.app.toolbar_dirty) or self.outstanding >= 2) return;
+    if (!self.app.dirty and self.frame_callback != null) return;
 
     const tbh = self.titlebarHeight();
     const w = self.app.w;
     const h = self.app.h + tbh;
     const buffer = (try self.acquireBuffer(w * self.scale, h * self.scale)) orelse return;
+    // A proximity-glow frame repaints only the toolbar strip when this
+    // buffer already holds everything else (see `content_frame`).
+    const partial = !self.app.dirty and buffer.frame != 0 and
+        buffer.frame >= self.content_frame and self.applied_scale == self.scale;
+    const strip_h: i32 = @intFromFloat(@ceil(self.app.toolbarRect().h));
 
     const cr = c.api.cairo_create(buffer.image) orelse return error.CairoFailed;
     defer c.api.cairo_destroy(cr);
 
     c.api.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
 
-    if (tbh > 0) self.renderTitlebar(cr, w, tbh);
+    if (partial) {
+        c.api.cairo_rectangle(cr, 0, @floatFromInt(tbh), @floatFromInt(w), @floatFromInt(strip_h));
+        c.api.cairo_clip(cr);
+    } else if (tbh > 0) self.renderTitlebar(cr, w, tbh);
 
     c.api.cairo_save(cr);
     c.api.cairo_translate(cr, 0, @floatFromInt(tbh));
@@ -54,10 +64,25 @@ pub fn render(self: *Client) !void {
     self.xdg_surface.setWindowGeometry(0, 0, w, h);
     buffer.busy = true;
     self.outstanding += 1;
+    self.frames += 1;
+    buffer.frame = self.frames;
+    if (self.app.dirty) self.content_frame = self.frames;
+    if (self.frame_callback == null) {
+        if (self.surface.frame()) |callback| {
+            callback.setListener(*Client, frameDone, self);
+            self.frame_callback = callback;
+        } else |_| {}
+    }
     self.surface.attach(buffer.wl_buffer, 0, 0);
-    self.surface.damage(0, 0, w, h);
+    if (partial) self.surface.damage(0, tbh, w, strip_h) else self.surface.damage(0, 0, w, h);
     self.surface.commit();
     self.app.dirty = false;
+    self.app.toolbar_dirty = false;
+}
+
+fn frameDone(callback: *wl.Callback, _: wl.Callback.Event, self: *Client) void {
+    callback.destroy();
+    self.frame_callback = null;
 }
 
 pub fn renderTitlebar(self: *Client, cr: *c.api.cairo_t, w: i32, h: i32) void {

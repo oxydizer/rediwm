@@ -60,7 +60,7 @@ fn toolbarProximityChanged(
     new_y: f64,
 ) bool {
     const reach = ui_theme.global.border_glow_reach;
-    if (!ui_theme.global.button_hover_glow_enabled or reach <= 0 or
+    if (!button_widget.proximityGlowVisible(ui_theme.global) or
         self.dialog != .none)
         return false;
 
@@ -79,9 +79,7 @@ pub fn handleMotion(self: *App, px: f64, py: f64) void {
     self.px = px;
     self.py = py;
 
-    if (toolbarProximityChanged(self, old_x, old_y, px, py)) {
-        self.dirty = true;
-    }
+    if (toolbarProximityChanged(self, old_x, old_y, px, py)) self.toolbar_dirty = true;
 
     if (self.hbar_drag.active) {
         if (self.hbar()) |bar| self.scroll_x = self.hbar_drag.offsetAt(bar, @floatCast(px), @floatCast(py));

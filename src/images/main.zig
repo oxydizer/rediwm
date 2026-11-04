@@ -82,6 +82,14 @@ pub const Client = struct {
     outstanding: usize = 0,
     buffers: [2]?*Buffer = @splat(null),
     applied_scale: i32 = 0,
+    /// Frames painted so far, and the last one whose content outside the
+    /// toolbar strip changed: a buffer holding that frame or a later one
+    /// needs only the strip repainted for a `toolbar_dirty` frame.
+    frames: u64 = 0,
+    content_frame: u64 = 0,
+    /// Pending `wl_surface.frame` callback of the last commit. Glow-only
+    /// frames wait for it, so they follow the display, not the pointer rate.
+    frame_callback: ?*wl.Callback = null,
     xkb_context: ?*c.xkb_context = null,
     xkb_state: ?*c.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
@@ -628,19 +636,28 @@ pub const Client = struct {
     }
     fn render(self: *Client) !void {
         self.updateCursor();
-        if (!self.configured or !self.app.dirty or self.outstanding >= 2) return;
+        if (!self.configured or !(self.app.dirty or self.app.toolbar_dirty) or self.outstanding >= 2) return;
+        if (!self.app.dirty and self.frame_callback != null) return;
 
         const tbh = self.titlebarHeight();
         const w = self.app.w;
         const h = self.app.h + tbh;
         const buffer = (try self.acquireBuffer(w * self.scale, h * self.scale)) orelse return;
+        // A proximity-glow frame repaints only the toolbar strip when this
+        // buffer already holds everything else (see `content_frame`).
+        const partial = !self.app.dirty and buffer.frame != 0 and
+            buffer.frame >= self.content_frame and self.applied_scale == self.scale;
+        const strip_h: i32 = @intFromFloat(@ceil(self.app.toolbarBottom()));
 
         const cr = c.cairo_create(buffer.image) orelse return error.CairoFailed;
         defer c.cairo_destroy(cr);
 
         c.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
 
-        if (tbh > 0) self.renderTitlebar(cr, w, tbh);
+        if (partial) {
+            c.cairo_rectangle(cr, 0, @floatFromInt(tbh), @floatFromInt(w), @floatFromInt(strip_h));
+            c.cairo_clip(cr);
+        } else if (tbh > 0) self.renderTitlebar(cr, w, tbh);
 
         c.cairo_save(cr);
         c.cairo_translate(cr, 0, @floatFromInt(tbh));
@@ -656,10 +673,25 @@ pub const Client = struct {
         self.xdg_surface.setWindowGeometry(0, 0, w, h);
         buffer.busy = true;
         self.outstanding += 1;
+        self.frames += 1;
+        buffer.frame = self.frames;
+        if (self.app.dirty) self.content_frame = self.frames;
+        if (self.frame_callback == null) {
+            if (self.surface.frame()) |callback| {
+                callback.setListener(*Client, frameDone, self);
+                self.frame_callback = callback;
+            } else |_| {}
+        }
         self.surface.attach(buffer.wl_buffer, 0, 0);
-        self.surface.damage(0, 0, w, h);
+        if (partial) self.surface.damage(0, tbh, w, strip_h) else self.surface.damage(0, 0, w, h);
         self.surface.commit();
         self.app.dirty = false;
+        self.app.toolbar_dirty = false;
+    }
+
+    fn frameDone(callback: *wl.Callback, _: wl.Callback.Event, self: *Client) void {
+        callback.destroy();
+        self.frame_callback = null;
     }
 
     fn renderTitlebar(self: *Client, cr: *c.cairo_t, w: i32, h: i32) void {
@@ -715,6 +747,8 @@ const Buffer = struct {
     w: i32,
     h: i32,
     busy: bool = false,
+    /// `Client.frames` when this buffer was last painted; 0 = never.
+    frame: u64 = 0,
 
     fn create(client: *Client, w: i32, h: i32) !*Buffer {
         if (w <= 0 or h <= 0 or w > 16384 or h > 16384) return error.InvalidSize;
@@ -792,6 +826,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, selected: usize,
     defer for (self.buffers) |slot| {
         if (slot) |buffer| buffer.destroy();
     };
+    defer if (self.frame_callback) |callback| callback.destroy();
 
     const registry = try display.getRegistry();
     defer registry.destroy();

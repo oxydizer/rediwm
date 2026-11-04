@@ -69,7 +69,7 @@ fn toolbarProximityChanged(
     new_y: f64,
 ) bool {
     const reach = ui_theme.global.border_glow_reach;
-    if (!ui_theme.global.button_hover_glow_enabled or reach <= 0 or
+    if (!button_widget.proximityGlowVisible(ui_theme.global) or
         self.dialog != .none or self.operation != null)
         return false;
 
@@ -230,7 +230,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
         self.hover = hover;
         self.dirty = true;
     }
-    if (toolbarProximityChanged(self, old_x, old_y, x, y)) self.dirty = true;
+    if (toolbarProximityChanged(self, old_x, old_y, x, y)) self.toolbar_dirty = true;
     if (self.operation != null or (self.dialog != .none and !self.filename_drag)) {
         self.px = x;
         self.py = y;
@@ -400,12 +400,13 @@ test "Images toolbar proximity drives redraws outside direct hover" {
 
     app.px = 500;
     app.py = 500;
+    // Glow alone repaints the toolbar strip, never the whole window.
     app.dirty = false;
     app.handleMotion(x, y);
-    try std.testing.expect(app.dirty);
+    try std.testing.expect(app.toolbar_dirty and !app.dirty);
     try std.testing.expect(app.hover == null);
 
-    app.dirty = false;
+    app.toolbar_dirty = false;
     app.handleMotion(500, 500);
-    try std.testing.expect(app.dirty);
+    try std.testing.expect(app.toolbar_dirty and !app.dirty);
 }
