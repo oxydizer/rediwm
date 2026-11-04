@@ -9,6 +9,7 @@ const a = std.heap.c_allocator;
 const main = @import("main.zig");
 const Buffer = main.Buffer;
 const Client = @import("Client.zig");
+const wl = @import("wayland").client.wl;
 
 pub fn acquireBuffer(self: *Client, w: i32, h: i32) !*Buffer {
     var i: usize = 0;
@@ -28,8 +29,43 @@ pub fn acquireBuffer(self: *Client, w: i32, h: i32) !*Buffer {
     return buffer;
 }
 
+/// Device rows [y1, y2) one commit changed.
+pub const RowBand = struct { y1: i32 = 0, y2: i32 = 0 };
+
+/// Brings a recycled `buffer` up to the last published image (`retained`):
+/// only the rows committed since it was last painted, when they are still
+/// in `self.bands`, else all of it.
+fn refreshBuffer(self: *Client, buffer: *Buffer, bw: i32, bh: i32) void {
+    const pixels: [*]u8 = @ptrCast(buffer.memory);
+    const stride: usize = @intCast(bw * 4);
+    if (buffer.seq == 0 or self.commit_seq - buffer.seq > self.bands.len) {
+        @memcpy(pixels[0..buffer.len], self.retained.items);
+        return;
+    }
+    var y1 = bh;
+    var y2: i32 = 0;
+    var seq = buffer.seq + 1;
+    while (seq <= self.commit_seq) : (seq += 1) {
+        const band = self.bands[seq % self.bands.len];
+        y1 = @min(y1, band.y1);
+        y2 = @max(y2, band.y2);
+    }
+    if (y2 <= y1) return;
+    const from = @as(usize, @intCast(y1)) * stride;
+    const to = @as(usize, @intCast(y2)) * stride;
+    @memcpy(pixels[from..to], self.retained.items[from..to]);
+}
+
+fn frameDone(callback: *wl.Callback, _: wl.Callback.Event, self: *Client) void {
+    callback.destroy();
+    self.frame_callback = null;
+}
+
 pub fn render(self: *Client) !void {
     if (!self.configured or !self.app.dirty or self.outstanding >= 2) return;
+    // Partial repaints (hover, proximity glow, fades) follow the display,
+    // not the pointer rate: wait for the last commit's frame callback.
+    if (self.app.paint_damage != null and self.frame_callback != null and !self.ack_uncommitted) return;
 
     const tbh = self.titlebarHeight();
     const w = self.app.w;
@@ -39,9 +75,26 @@ pub fn render(self: *Client) !void {
     const buffer = try self.acquireBuffer(bw, bh);
 
     const partial = self.retained.items.len == buffer.len and self.retained_w == bw and self.applied_scale == self.scale and self.app.paint_damage != null;
+    // The rows this paint can change: the clip of a partial paint (rounded
+    // out to device pixels like `clipDamage`), else everything. Outside
+    // them the buffer already equals `retained`, so only these are compared
+    // and copied back.
+    var band: RowBand = .{ .y1 = 0, .y2 = bh };
+    var cols: RowBand = .{ .y1 = 0, .y2 = bw }; // the same, for columns
     if (partial) {
-        const pixels: [*]u8 = @ptrCast(buffer.memory);
-        @memcpy(pixels[0..buffer.len], self.retained.items);
+        const damage = self.app.paint_damage.?;
+        const s: f64 = @floatFromInt(self.scale);
+        const top = (damage.y + @as(f64, @floatFromInt(tbh))) * s;
+        const left = damage.x * s;
+        band = .{
+            .y1 = @intFromFloat(std.math.clamp(@floor(top), 0, @as(f64, @floatFromInt(bh)))),
+            .y2 = @intFromFloat(std.math.clamp(@ceil(top + damage.h * s), 0, @as(f64, @floatFromInt(bh)))),
+        };
+        cols = .{
+            .y1 = @intFromFloat(std.math.clamp(@floor(left), 0, @as(f64, @floatFromInt(bw)))),
+            .y2 = @intFromFloat(std.math.clamp(@ceil(left + damage.w * s), 0, @as(f64, @floatFromInt(bw)))),
+        };
+        refreshBuffer(self, buffer, bw, bh);
         c.cairo_surface_mark_dirty(buffer.image);
     }
     const cr = c.cairo_create(buffer.image) orelse return error.CairoFailed;
@@ -76,27 +129,47 @@ pub fn render(self: *Client) !void {
     } else {
         // Compare against the last published image, never against this recycled buffer.
         const stride: usize = @intCast(bw * 4);
-        for (0..@intCast(bh)) |row| {
+        const col0: usize = @intCast(cols.y1);
+        const col1: usize = @intCast(cols.y2);
+        for (@intCast(band.y1)..@intCast(band.y2)) |row| {
             const offset = row * stride;
-            if (std.mem.eql(u8, bytes[offset..][0..stride], self.retained.items[offset..][0..stride])) continue;
+            const now: []const u32 = @alignCast(std.mem.bytesAsSlice(u32, bytes[offset + col0 * 4 .. offset + col1 * 4]));
+            const was: []const u32 = @alignCast(std.mem.bytesAsSlice(u32, self.retained.items[offset + col0 * 4 .. offset + col1 * 4]));
+            if (std.mem.eql(u32, now, was)) continue;
             y1 = @min(y1, @as(i32, @intCast(row)));
             y2 = @as(i32, @intCast(row + 1));
-            var left: usize = 0;
-            while (left < stride and std.mem.eql(u8, bytes[offset + left ..][0..4], self.retained.items[offset + left ..][0..4])) : (left += 4) {}
-            var right = stride;
-            while (right > left and std.mem.eql(u8, bytes[offset + right - 4 ..][0..4], self.retained.items[offset + right - 4 ..][0..4])) : (right -= 4) {}
-            x1 = @min(x1, @as(i32, @intCast(left / 4)));
-            x2 = @max(x2, @as(i32, @intCast(right / 4)));
+            const left = std.mem.indexOfDiff(u32, now, was).?;
+            var right = now.len;
+            while (right > left and now[right - 1] == was[right - 1]) right -= 1;
+            x1 = @min(x1, @as(i32, @intCast(col0 + left)));
+            x2 = @max(x2, @as(i32, @intCast(col0 + right)));
         }
     }
-    try self.retained.resize(a, bytes.len);
-    @memcpy(self.retained.items, bytes);
+    if (partial) {
+        const stride: usize = @intCast(bw * 4);
+        if (y2 > y1) {
+            const from = @as(usize, @intCast(y1)) * stride;
+            const to = @as(usize, @intCast(y2)) * stride;
+            @memcpy(self.retained.items[from..to], bytes[from..to]);
+        }
+    } else {
+        try self.retained.resize(a, bytes.len);
+        @memcpy(self.retained.items, bytes);
+    }
     self.retained_w = bw;
     if (self.applied_scale != self.scale) {
         self.surface.setBufferScale(self.scale);
         self.applied_scale = self.scale;
     }
     if (x2 > x1 and y2 > y1) {
+        self.commit_seq += 1;
+        self.bands[self.commit_seq % self.bands.len] = .{ .y1 = y1, .y2 = y2 };
+        if (self.frame_callback == null) {
+            if (self.surface.frame()) |callback| {
+                callback.setListener(*Client, frameDone, self);
+                self.frame_callback = callback;
+            } else |_| {}
+        }
         self.xdg_surface.setWindowGeometry(0, 0, w, h);
         self.surface.attach(buffer.wl_buffer, 0, 0);
         self.surface.damageBuffer(x1, y1, x2 - x1, y2 - y1);
@@ -108,6 +181,8 @@ pub fn render(self: *Client) !void {
         self.xdg_surface.setWindowGeometry(0, 0, w, h);
         self.surface.commit();
     }
+    // Committed or not, the buffer now holds exactly the published image.
+    buffer.seq = self.commit_seq;
     self.ack_uncommitted = false;
     self.app.dirty = false;
 }

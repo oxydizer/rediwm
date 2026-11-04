@@ -94,6 +94,13 @@ outstanding: usize = 0,
 buffers: std.ArrayList(*Buffer) = .empty,
 retained: std.ArrayList(u8) = .empty,
 retained_w: i32 = 0,
+/// Commits published so far, and the rows each of the last few changed, so
+/// a recycled buffer catches up on just those rows (`refreshBuffer`).
+commit_seq: u64 = 0,
+bands: [4]@import("client_render.zig").RowBand = @splat(.{}),
+/// Pending `wl_surface.frame` callback of the last commit; partial repaints
+/// wait for it.
+frame_callback: ?*wl.Callback = null,
 applied_scale: i32 = 0,
 receiving: ?transfer.Receive = null,
 sends: std.ArrayList(transfer.Send) = .empty,

@@ -143,6 +143,8 @@ pub const Buffer = struct {
     h: i32,
     busy: bool = false,
     counts_frame: bool = true,
+    /// `Client.commit_seq` of the image this buffer holds; 0 = unknown.
+    seq: u64 = 0,
 
     pub fn create(client: *Client, w: i32, h: i32) !*Buffer {
         if (w <= 0 or h <= 0 or w > 16384 or h > 16384) return error.InvalidSize;
@@ -245,6 +247,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         if (self.drop_receiving) |*receive| receive.deinit();
         for (self.sends.items) |*send| send.deinit();
         self.sends.deinit(a);
+        if (self.frame_callback) |callback| callback.destroy();
         for (self.buffers.items) |buffer| buffer.destroy();
         self.buffers.deinit(a);
         self.retained.deinit(a);
