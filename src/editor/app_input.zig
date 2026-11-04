@@ -25,7 +25,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     const old_y = self.py;
     self.px = x;
     self.py = y;
-    if (self.proximityChanged(old_x, old_y, x, y)) self.dirty = true;
+    if (self.proximityChanged(old_x, old_y, x, y)) self.glow_dirty = true;
     if (self.menu_open) {
         const hovered = self.menuHit(x, y);
         if (hovered != self.menu_selected) {

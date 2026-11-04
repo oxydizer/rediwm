@@ -240,7 +240,8 @@ pub fn drawDialog(self: *App, cr: *c.cairo_t) void {
             const label = if (i == 0) tr("Cancel") else if (self.dialog == .save or i == 2) tr("Save as…") else if (self.dialog == .trash) tr("Move to Trash") else tr("Discard");
             const proximity = ui_button.sampleProximity(
                 .{ .x = @floatCast(b.x), .y = @floatCast(b.y), .w = @floatCast(b.w), .h = @floatCast(b.h) },
-                @floatCast(self.px), @floatCast(self.py),
+                @floatCast(self.px),
+                @floatCast(self.py),
                 .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) },
             );
             ui_button.paint(lr, .{ .x = @floatCast(b.x - r.x), .y = @floatCast(b.y - r.y), .w = @floatCast(b.w), .h = @floatCast(b.h) }, .{

@@ -319,6 +319,20 @@ pub fn proximityGlowVisible(t: theme.Theme) bool {
         t.border_glow_reach > 0 and t.border_glow_length > 0 and t.border_glow_depth > 0;
 }
 
+/// Whether `paintProximityGlowAt` lights any edge of a `w`×`h` box for a
+/// box-local pointer (the same edge anchors and falloff). Callers that paint
+/// through an offscreen layer test this first and skip the layer otherwise.
+pub fn proximityGlowLit(w: f32, h: f32, radius: f32, pointer_x: f32, pointer_y: f32, reach: f32) bool {
+    if (w <= 0 or h <= 0) return false;
+    const corner_radius = std.math.clamp(radius, 0, 0.5 * @min(w, h));
+    const ax = std.math.clamp(pointer_x, corner_radius, w - corner_radius);
+    const ay = std.math.clamp(pointer_y, corner_radius, h - corner_radius);
+    return glowNear(pointer_x, pointer_y, ax, 0, reach) > 0 or
+        glowNear(pointer_x, pointer_y, w, ay, reach) > 0 or
+        glowNear(pointer_x, pointer_y, ax, h, reach) > 0 or
+        glowNear(pointer_x, pointer_y, 0, ay, reach) > 0;
+}
+
 /// Shared edge-light painter for buttons and other interactive surfaces.
 /// Pointer coordinates are local to `box`.
 pub fn paintProximityGlowAt(

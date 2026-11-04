@@ -76,3 +76,12 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   or leave the damage bounds. `Renderer.reliefActive` tells it whether to drop
   the hand-made rim or cast shadow the relief replaces; flat keys must leave
   its pixels byte-identical.
+* **Pointer effects in Cairo app clients repaint only what they change.**
+  `cairo.drawProximityGlow` returns before allocating a layer when the glow is
+  off, unlit, or outside the context's clip, and sizes its layer to the visible
+  part; paint-only components use `Layer.beginVisible`. Images and PDF record
+  glow and hover changes as rects in `pointer_damage` (`repaint.Region`) and
+  repaint them clipped, paced by the frame callback, with each shm buffer's
+  `stale` region catching up what it missed; never answer a glow change with
+  `dirty` (a full, unpaced repaint at pointer rate). Hand-drawn content must
+  stay inside the rects a damage helper adds for it.

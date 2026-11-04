@@ -81,81 +81,55 @@ fn toolbarProximityChanged(
     return false;
 }
 
-fn contentRectProximityChanged(
+/// Adds `rect` to the glow damage when the pointer moving from old to new
+/// can change its glow (either position within reach).
+fn damageRectProximity(
+    self: *App,
     rect: Rect,
     old_x: f64,
     old_y: f64,
     new_x: f64,
     new_y: f64,
-) bool {
+) void {
     const box = button_widget.Rect{
         .x = @floatCast(rect.x),
         .y = @floatCast(rect.y),
         .w = @floatCast(rect.w),
         .h = @floatCast(rect.h),
     };
-    const before = button_widget.sampleProximity(
-        box,
-        @floatCast(old_x),
-        @floatCast(old_y),
-        box,
-    );
-    const after = button_widget.sampleProximity(
-        box,
-        @floatCast(new_x),
-        @floatCast(new_y),
-        box,
-    );
-    return @min(before.distance, after.distance) <= ui_theme.global.border_glow_reach;
+    const before = button_widget.sampleProximity(box, @floatCast(old_x), @floatCast(old_y), box);
+    const after = button_widget.sampleProximity(box, @floatCast(new_x), @floatCast(new_y), box);
+    if (@min(before.distance, after.distance) <= ui_theme.global.border_glow_reach)
+        self.pointer_damage.add(.around(rect.x, rect.y, rect.w, rect.h));
 }
 
-fn contentProximityChanged(
-    self: *const App,
+/// Records the content items (dialog controls, visible thumbnails, the strip
+/// scrollbar) whose glow the motion changes, so the client repaints only those.
+fn damageContentProximity(
+    self: *App,
     old_x: f64,
     old_y: f64,
     new_x: f64,
     new_y: f64,
-) bool {
-    if (old_x == new_x and old_y == new_y) return false;
-    if (!button_widget.proximityGlowVisible(ui_theme.global)) return false;
+) void {
+    if (old_x == new_x and old_y == new_y) return;
+    if (!button_widget.proximityGlowVisible(ui_theme.global)) return;
 
-    if (self.dialog == .save) {
-        if (contentRectProximityChanged(
-            self.filenameRect(), old_x, old_y, new_x, new_y,
-        )) return true;
-    }
+    if (self.dialog == .save) damageRectProximity(self, self.filenameRect(), old_x, old_y, new_x, new_y);
     if (self.dialog != .none and self.dialog != .trash) {
         const button_count: usize = if (self.dialog == .discard) 3 else 2;
-        for (0..button_count) |index| {
-            if (contentRectProximityChanged(
-                self.dialogButton(index), old_x, old_y, new_x, new_y,
-            )) return true;
-        }
-        return false;
+        for (0..button_count) |index| damageRectProximity(self, self.dialogButton(index), old_x, old_y, new_x, new_y);
+        return;
     }
-    if (self.dialog != .none or self.operation != null) return false;
+    if (self.dialog != .none or self.operation != null) return;
 
     // Only thumbnails in the currently visible filmstrip participate.
-    for (0..self.thumbCount()) |slot| {
-        if (contentRectProximityChanged(
-            self.thumbRect(slot), old_x, old_y, new_x, new_y,
-        )) return true;
-    }
+    for (0..self.thumbCount()) |slot| damageRectProximity(self, self.thumbRect(slot), old_x, old_y, new_x, new_y);
 
     if (self.stripBar()) |bar| {
         const track = bar.track;
-        if (contentRectProximityChanged(
-            .{
-                .x = track.x,
-                .y = track.y,
-                .w = track.w,
-                .h = track.h,
-            },
-            old_x, old_y, new_x, new_y,
-        )) return true;
+        damageRectProximity(self, .{ .x = track.x, .y = track.y, .w = track.w, .h = track.h }, old_x, old_y, new_x, new_y);
     }
-
-    return false;
 }
 
 pub fn hit(self: *const App, x: f64, y: f64) ?Action {
@@ -305,10 +279,12 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     const hover = if (self.dialog == .none and self.operation == null) self.hit(x, y) else null;
     if (hover != self.hover) {
         self.hover = hover;
-        self.dirty = true;
+        // Hover shows on the button and in the hint line under the toolbar.
+        self.toolbar_dirty = true;
+        self.pointer_damage.add(.around(0, self.toolbarBottom(), @floatFromInt(self.w), 26));
     }
     if (toolbarProximityChanged(self, old_x, old_y, x, y)) self.toolbar_dirty = true;
-    if (contentProximityChanged(self, old_x, old_y, x, y)) self.dirty = true;
+    damageContentProximity(self, old_x, old_y, x, y);
     if (self.operation != null or (self.dialog != .none and !self.filename_drag)) {
         self.px = x;
         self.py = y;
@@ -487,4 +463,42 @@ test "Images toolbar proximity drives redraws outside direct hover" {
     app.toolbar_dirty = false;
     app.handleMotion(500, 500);
     try std.testing.expect(app.toolbar_dirty and !app.dirty);
+}
+
+test "Images thumbnail glow damages only nearby cards, not the window" {
+    const paths = [_][:0]const u8{ "/nonexistent/a.png", "/nonexistent/b.png", "/nonexistent/c.png" };
+    var app: App = .{
+        .paths = &paths,
+        .selected = 0,
+        .loader = undefined,
+        .thumbnail_loader = undefined,
+    };
+    const saved_theme = ui_theme.global;
+    defer ui_theme.global = saved_theme;
+    ui_theme.global.button_hover_glow_enabled = true;
+    ui_theme.global.border_glow_reach = 56;
+
+    const first = app.thumbRect(0);
+    const last = app.thumbRect(app.thumbCount() - 1);
+    app.px = first.x - 200;
+    app.py = 300;
+    app.dirty = false;
+    app.handleMotion(first.x - 10, first.y + first.h / 2);
+    try std.testing.expect(!app.dirty);
+    try std.testing.expect(!app.pointer_damage.isEmpty() and !app.pointer_damage.full);
+    var covered = false;
+    for (app.pointer_damage.slice()) |r| {
+        const x0: f64 = @floatFromInt(r.x);
+        const x1: f64 = @floatFromInt(r.x + r.w);
+        covered = covered or (x0 <= first.x and x1 >= first.x + first.w);
+        try std.testing.expect(x1 < last.x);
+    }
+    try std.testing.expect(covered);
+
+    // Far from every card and the toolbar: nothing to repaint.
+    app.pointer_damage.clear();
+    app.px = 500;
+    app.py = 300;
+    app.handleMotion(501, 300);
+    try std.testing.expect(app.pointer_damage.isEmpty() and !app.dirty);
 }

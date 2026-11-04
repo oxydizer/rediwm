@@ -93,8 +93,25 @@ pub fn drawProximityGlow(
     clip: ?Rect,
 ) void {
     const p = pointer orelse return;
+    const t = &theme.global;
+    // Callers paint this for every card or row on every repaint, so every
+    // reason it would paint nothing is settled before a layer is allocated.
+    if (!button.proximityGlowVisible(t.*)) return;
+    const cr: *c.cairo_t = @ptrCast(cr_any);
     const clipping = clip orelse box;
-    const visible = button.intersectRect(box, clipping);
+    var visible = button.intersectRect(box, clipping);
+    // A partial repaint clips most items away entirely.
+    var cx0: f64 = 0;
+    var cy0: f64 = 0;
+    var cx1: f64 = 0;
+    var cy1: f64 = 0;
+    c.cairo_clip_extents(cr, &cx0, &cy0, &cx1, &cy1);
+    visible = button.intersectRect(visible, .{
+        .x = @floatCast(cx0),
+        .y = @floatCast(cy0),
+        .w = @floatCast(cx1 - cx0),
+        .h = @floatCast(cy1 - cy0),
+    });
     if (visible.w <= 0 or visible.h <= 0) return;
 
     const sample = button.sampleProximity(
@@ -104,17 +121,42 @@ pub fn drawProximityGlow(
         clipping,
     );
     if (sample.distance >= std.math.inf(f32)) return;
+    if (!button.proximityGlowLit(box.w, box.h, radius, sample.x, sample.y, t.border_glow_reach)) return;
 
-    var layer = Layer.begin(cr_any, box) orelse return;
+    // The layer covers only the visible part of the box, starting a whole
+    // number of device pixels into it, so each pixel keeps the position it
+    // would have in a layer over the whole box.
+    const s: f64 = scaleOf(cr);
+    var bx: f64 = box.x;
+    var by: f64 = box.y;
+    c.cairo_user_to_device(cr, &bx, &by);
+    var vx: f64 = visible.x;
+    var vy: f64 = visible.y;
+    c.cairo_user_to_device(cr, &vx, &vy);
+    const full_w = @ceil(box.w * s);
+    const full_h = @ceil(box.h * s);
+    const k0x = std.math.clamp(@floor(vx - @round(bx)), 0, full_w);
+    const k0y = std.math.clamp(@floor(vy - @round(by)), 0, full_h);
+    const k1x = std.math.clamp(@ceil(vx + visible.w * s - @round(bx)), k0x, full_w);
+    const k1y = std.math.clamp(@ceil(vy + visible.h * s - @round(by)), k0y, full_h);
+    if (k1x <= k0x or k1y <= k0y) return;
+    const sub: Rect = .{
+        .x = @floatCast(box.x + k0x / s),
+        .y = @floatCast(box.y + k0y / s),
+        .w = @floatCast((k1x - k0x) / s),
+        .h = @floatCast((k1y - k0y) / s),
+    };
+
+    var layer = Layer.begin(cr_any, sub) orelse return;
     layer.renderer.clip = .{
-        .x = visible.x - box.x,
-        .y = visible.y - box.y,
+        .x = visible.x - sub.x,
+        .y = visible.y - sub.y,
         .w = visible.w,
         .h = visible.h,
     };
     button.paintProximityGlowAt(
         &layer.renderer,
-        layer.local(),
+        .{ .x = box.x - sub.x, .y = box.y - sub.y, .w = box.w, .h = box.h },
         radius,
         sample.distance,
         sample.x,
@@ -330,6 +372,16 @@ fn composite(cr: *c.cairo_t, pixels: []u32, w: i32, h: i32, device_x: f64, devic
     c.cairo_paint(cr);
 }
 
+/// Whether any of `box` (user space) lies inside the context's clip.
+pub fn clipTouches(cr_any: *anyopaque, box: Rect) bool {
+    var x0: f64 = 0;
+    var y0: f64 = 0;
+    var x1: f64 = 0;
+    var y1: f64 = 0;
+    c.cairo_clip_extents(@ptrCast(cr_any), &x0, &y0, &x1, &y1);
+    return box.w > 0 and box.h > 0 and box.x < x1 and box.x + box.w > x0 and box.y < y1 and box.y + box.h > y0;
+}
+
 /// An offscreen buffer over `box` (user space), snapped to device pixels.
 /// Paint into `renderer` in box-local coordinates (`local()`), then `finish`
 /// composites it through the context's clip.
@@ -357,6 +409,14 @@ pub const Layer = struct {
         var renderer = paint.Renderer.init(pixels, w, h, s);
         renderer.palette = theme.shellPalette();
         return .{ .cr = cr, .pixels = pixels, .width = w, .height = h, .device_x = @round(dx), .device_y = @round(dy), .box = box, .renderer = renderer };
+    }
+
+    /// `begin`, or null when the context's clip leaves none of `box`
+    /// visible. For components that only paint: a partial repaint then
+    /// skips rasterizing everything outside its clip.
+    pub fn beginVisible(cr_any: *anyopaque, box: Rect) ?Layer {
+        if (!clipTouches(cr_any, box)) return null;
+        return begin(cr_any, box);
     }
 
     /// The layer's own box in the coordinates `renderer` paints in.
@@ -440,6 +500,58 @@ test "Cairo proximity glow respects the visible clip" {
     try std.testing.expect(pixels[10 * 80 + 30] != 0);
     try std.testing.expectEqual(@as(u32, 0), pixels[10 * 80 + 15]);
     try std.testing.expectEqual(@as(u32, 0), pixels[10 * 80 + 45]);
+}
+
+test "Cairo proximity glow under a context clip matches the unclipped pixels" {
+    const saved_theme = theme.global;
+    defer theme.global = saved_theme;
+    var glowing = theme.global;
+    glowing.button_hover_glow_enabled = true;
+    glowing.border_glow = .{ 1, 0, 0, 0.8 };
+    glowing.border_glow_reach = 56;
+    glowing.border_glow_length = 72;
+    glowing.border_glow_depth = 3;
+    theme.global = glowing;
+
+    const W = 300;
+    const H = 240;
+    var images: [2]*c.cairo_surface_t = undefined;
+    for (&images, 0..) |*image, pass| {
+        image.* = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, W, H) orelse return error.Cairo;
+        const cr = c.cairo_create(image.*) orelse return error.Cairo;
+        defer c.cairo_destroy(cr);
+        c.cairo_scale(cr, 1.5, 1.5);
+        c.cairo_translate(cr, 0, 7);
+        // The second pass repaints only a band across the lit top edge.
+        if (pass == 1) {
+            c.cairo_rectangle(cr, 30, 30, 100, 30);
+            c.cairo_clip(cr);
+        }
+        drawProximityGlow(cr, .{ .x = 20.3, .y = 25.6, .w = 150, .h = 110 }, 7, .{ .x = 60, .y = 22 }, null);
+        // A pointer far outside the reach paints nothing.
+        drawProximityGlow(cr, .{ .x = 20.3, .y = 25.6, .w = 30, .h = 20 }, 7, .{ .x = 190, .y = 140 }, null);
+        c.cairo_surface_flush(image.*);
+    }
+    defer for (images) |image| c.cairo_surface_destroy(image);
+    const full: [*]const u32 = @ptrCast(@alignCast(c.cairo_image_surface_get_data(images[0])));
+    const part: [*]const u32 = @ptrCast(@alignCast(c.cairo_image_surface_get_data(images[1])));
+    var lit: usize = 0;
+    for (0..H) |y| for (0..W) |x| {
+        const i = y * W + x;
+        // Device pixels wholly inside the clip: x 45..195, y 55.5..100.5.
+        const inside = x >= 45 and x < 195 and y >= 56 and y < 100;
+        if (!inside) {
+            if (y < 55 or y > 100 or x < 45 or x >= 195) try std.testing.expectEqual(@as(u32, 0), part[i]);
+            continue;
+        }
+        if (part[i] != 0) lit += 1;
+        inline for (.{ 0, 8, 16, 24 }) |shift| {
+            const a: i32 = @intCast((full[i] >> shift) & 0xff);
+            const b: i32 = @intCast((part[i] >> shift) & 0xff);
+            try std.testing.expect(@abs(a - b) <= 1);
+        }
+    };
+    try std.testing.expect(lit > 0);
 }
 
 test "Cairo scrollbar groove glow stays beneath the thumb" {

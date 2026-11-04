@@ -173,6 +173,10 @@ pub const App = struct {
     /// Only the toolbar strip changed (its buttons' proximity glow): the
     /// client may repaint and damage just that strip instead of the window.
     toolbar_dirty: bool = false,
+    /// What pointer motion changed outside the toolbar strip (proximity glow
+    /// of content items, the hover hint), in app coordinates: like
+    /// `toolbar_dirty`, a frame with only this repaints just these rects.
+    pointer_damage: @import("ui").repaint.Region = .{},
     title_changed: bool = true,
     title: [1024:0]u8 = @splat(0),
     closed: bool = false,

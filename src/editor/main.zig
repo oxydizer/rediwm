@@ -67,6 +67,9 @@ pub const Client = struct {
     outstanding: usize = 0,
     buffers: [2]?*Buffer = @splat(null),
     applied_scale: i32 = 0,
+    /// Pending `wl_surface.frame` callback of the last commit. Glow-only
+    /// frames wait for it, so they follow the display, not the pointer rate.
+    frame_callback: ?*wl.Callback = null,
     xkb_context: ?*c.xkb_context = null,
     xkb_state: ?*c.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},

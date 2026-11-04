@@ -87,6 +87,9 @@ pub const App = struct {
     caret_painted: caret_mod.Rect = .{},
     caret_snap: bool = true,
     caret_dirty: bool = false,
+    /// Only proximity glow changed: a full repaint, but paced by the frame
+    /// callback instead of following every pointer motion.
+    glow_dirty: bool = false,
     caret_activity: usize = 0,
     menu_open: bool = false,
     menu_selected: ?usize = null,

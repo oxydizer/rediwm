@@ -3,6 +3,7 @@
 const std = @import("std");
 const c = @import("../files/c.zig").api;
 const shell_ui = @import("ui").cairo;
+const wl = @import("wayland").client.wl;
 const ui_theme = @import("ui").theme;
 const button_widget = @import("ui").widgets.button;
 const IconId = @import("ui").layout.IconId;
@@ -29,7 +30,9 @@ pub fn acquireBuffer(self: *Client, w: i32, h: i32) !?*Buffer {
 
 pub fn render(self: *Client) !void {
     self.updateCursor();
-    if (!self.configured or (!self.app.dirty and !self.app.caret_dirty) or self.outstanding >= 2) return;
+    if (!self.configured or (!self.app.dirty and !self.app.caret_dirty and !self.app.glow_dirty) or self.outstanding >= 2) return;
+    if (!self.app.dirty and !self.app.caret_dirty and self.frame_callback != null) return;
+    const full = self.app.dirty or self.app.glow_dirty;
 
     const tbh = self.titlebarHeight();
     const w = self.app.w;
@@ -77,15 +80,27 @@ pub fn render(self: *Client) !void {
     self.xdg_surface.setWindowGeometry(0, 0, w, h);
     buffer.busy = true;
     self.outstanding += 1;
+    if (self.frame_callback == null) {
+        if (self.surface.frame()) |callback| {
+            callback.setListener(*Client, frameDone, self);
+            self.frame_callback = callback;
+        } else |_| {}
+    }
     self.surface.attach(buffer.wl_buffer, 0, 0);
-    if (self.app.dirty) self.surface.damageBuffer(0, 0, w * self.scale, h * self.scale) else {
+    if (full) self.surface.damageBuffer(0, 0, w * self.scale, h * self.scale) else {
         const rect = self.app.caretDamage();
         self.surface.damageBuffer(rect.x * self.scale, (rect.y + tbh) * self.scale, rect.width * self.scale, rect.height * self.scale);
     }
     self.surface.commit();
     self.app.dirty = false;
     self.app.caret_dirty = false;
+    self.app.glow_dirty = false;
     self.app.caret_painted = self.app.caret.box;
+}
+
+fn frameDone(callback: *wl.Callback, _: wl.Callback.Event, self: *Client) void {
+    callback.destroy();
+    self.frame_callback = null;
 }
 
 pub fn renderTitlebar(self: *Client, cr: *c.cairo_t, w: i32, h: i32) void {

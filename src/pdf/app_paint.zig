@@ -22,7 +22,6 @@ const toolbar_buttons = @import("app.zig").toolbar_buttons;
 const toolbar_button_y = @import("app.zig").toolbar_button_y;
 const toolbar_button_h = @import("app.zig").toolbar_button_h;
 
-
 fn drawContentGlow(
     cr: *c.api.cairo_t,
     rect: app_mod.Rect,
@@ -344,7 +343,9 @@ pub fn renderThumbnailCards(self: *App, cr: *c.api.cairo_t) void {
         drawContentGlow(
             cr,
             .{ .x = card_x, .y = card_y, .w = card_w, .h = card.card_h },
-            self.px, self.py, sb,
+            self.px,
+            self.py,
+            sb,
         );
 
         // Highlight border if active or hover
@@ -395,7 +396,9 @@ pub fn renderOutlineList(self: *App, cr: *c.api.cairo_t) void {
         drawContentGlow(
             cr,
             .{ .x = sb.x + 4.0, .y = row_y, .w = sb.w - 8.0, .h = row_h },
-            self.px, self.py, sb,
+            self.px,
+            self.py,
+            sb,
         );
 
         const indent = @as(f64, @floatFromInt(it.level)) * 12.0;
@@ -455,7 +458,9 @@ pub fn renderToolbar(self: *App, cr: *c.api.cairo_t) void {
     drawContentGlow(
         cr,
         .{ .x = 126, .y = 8, .w = 48, .h = 28 },
-        self.px, self.py, null,
+        self.px,
+        self.py,
+        null,
     );
 
     shell_ui.setSource(cr, if (self.focus == .page_number) ui_theme.shellPalette().fieldFocusColor() else ui_theme.global.field_border);
@@ -586,7 +591,8 @@ pub fn renderDialog(self: *App, cr: *c.api.cairo_t) void {
         drawContentGlow(
             cr,
             .{ .x = dx + 24, .y = dy + 80, .w = dw - 48, .h = 44 },
-            self.px, self.py,
+            self.px,
+            self.py,
             .{ .x = dx, .y = dy, .w = dw, .h = dh },
         );
     }
@@ -602,11 +608,12 @@ pub fn renderButtonText(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, 
     else
         ui_button.sampleProximity(
             .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) },
-            @floatCast(self.px), @floatCast(self.py),
+            @floatCast(self.px),
+            @floatCast(self.py),
             .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) },
         );
     const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
-    var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+    var layer = shell_ui.Layer.beginVisible(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
     ui_button.paint(&layer.renderer, layer.local(), .{
         .variant = .secondary,
@@ -623,7 +630,7 @@ pub fn renderButtonText(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, 
 pub fn renderToggle(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8, selected: bool, action: Action) void {
     const proximity = self.buttonProximity(action, self.px, self.py);
     const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
-    var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+    var layer = shell_ui.Layer.beginVisible(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
     ui_button.paint(&layer.renderer, layer.local(), .{
         .variant = .ghost,
@@ -640,7 +647,7 @@ pub fn renderToggle(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f
 pub fn renderButtonIcon(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, icon: IconId, tooltip: []const u8, action: Action) void {
     const proximity = self.buttonProximity(action, self.px, self.py);
     const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
-    var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+    var layer = shell_ui.Layer.beginVisible(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
     ui_button.paint(&layer.renderer, layer.local(), .{
         .variant = .ghost,

@@ -48,7 +48,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
         else
             .{ .variant = .ghost, .icon = glyph(act), .label = label };
         const proximity = self.buttonProximity(act, self.px, self.py);
-        var layer = shell_ui.Layer.begin(cr, shellRect(r)) orelse continue;
+        var layer = shell_ui.Layer.beginVisible(cr, shellRect(r)) orelse continue;
         ui_button.paint(&layer.renderer, layer.local(), opts, .{
             .pointer = if (!self.enabled(act) or self.operation != null) .disabled else if (self.hover == act) .hover else .idle,
             .proximity_distance = proximity.distance,
@@ -61,34 +61,39 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     setSource(cr, t.window_fg);
     clippedText(cr, hint, .{ .x = 16, .y = self.toolbarBottom() + 2, .w = @floatFromInt(self.w - 32), .h = 22 }, shell_ui.statusSize(), false);
     const box = self.canvas();
-    c.cairo_save(cr);
-    rounded(cr, box, 8);
-    c.cairo_clip(cr);
-    setSource(cr, t.app_bg);
-    c.cairo_paint(cr);
-    if (self.image) |im| {
-        const z = self.view.scale(box, @floatFromInt(im.w), @floatFromInt(im.h));
-        const dims = self.view.dimensions(@floatFromInt(im.w), @floatFromInt(im.h));
-        const cx = box.x + box.w / 2 + self.view.pan_x;
-        const cy = box.y + box.h / 2 + self.view.pan_y;
+    // A partial repaint (glow, hover) often leaves the canvas out entirely.
+    if (shell_ui.clipTouches(cr, shellRect(box))) {
         c.cairo_save(cr);
-        c.cairo_rectangle(cr, cx - dims[0] * z / 2, cy - dims[1] * z / 2, dims[0] * z, dims[1] * z);
+        rounded(cr, box, 8);
         c.cairo_clip(cr);
-        checker(cr, box);
+        setSource(cr, t.app_bg);
+        c.cairo_paint(cr);
+        if (self.image) |im| {
+            const z = self.view.scale(box, @floatFromInt(im.w), @floatFromInt(im.h));
+            const dims = self.view.dimensions(@floatFromInt(im.w), @floatFromInt(im.h));
+            const cx = box.x + box.w / 2 + self.view.pan_x;
+            const cy = box.y + box.h / 2 + self.view.pan_y;
+            c.cairo_save(cr);
+            c.cairo_rectangle(cr, cx - dims[0] * z / 2, cy - dims[1] * z / 2, dims[0] * z, dims[1] * z);
+            c.cairo_clip(cr);
+            checker(cr, box);
+            c.cairo_restore(cr);
+            c.cairo_translate(cr, cx, cy);
+            c.cairo_rotate(cr, @as(f64, @floatFromInt(self.view.rotation)) * std.math.pi / 2.0);
+            paintImage(cr, im, .{ .x = -@as(f64, @floatFromInt(im.w)) * z / 2, .y = -@as(f64, @floatFromInt(im.h)) * z / 2, .w = @as(f64, @floatFromInt(im.w)) * z, .h = @as(f64, @floatFromInt(im.h)) * z });
+        } else {
+            const msg = self.error_message orelse tr("Loading image…");
+            setSource(cr, t.window_fg);
+            drawText(cr, msg, box.x + @max(12, (box.w - measureText(cr, msg, shell_ui.textSize(), false)) / 2), box.y + box.h / 2, shell_ui.textSize(), false);
+        }
         c.cairo_restore(cr);
-        c.cairo_translate(cr, cx, cy);
-        c.cairo_rotate(cr, @as(f64, @floatFromInt(self.view.rotation)) * std.math.pi / 2.0);
-        paintImage(cr, im, .{ .x = -@as(f64, @floatFromInt(im.w)) * z / 2, .y = -@as(f64, @floatFromInt(im.h)) * z / 2, .w = @as(f64, @floatFromInt(im.w)) * z, .h = @as(f64, @floatFromInt(im.h)) * z });
-    } else {
-        const msg = self.error_message orelse tr("Loading image…");
-        setSource(cr, t.window_fg);
-        drawText(cr, msg, box.x + @max(12, (box.w - measureText(cr, msg, shell_ui.textSize(), false)) / 2), box.y + box.h / 2, shell_ui.textSize(), false);
     }
-    c.cairo_restore(cr);
     if (self.crop_mode) self.drawCrop(cr);
     for (0..self.thumbCount()) |slot| {
-        const idx = self.indexAt(self.thumbStart() + slot);
         const r = self.thumbRect(slot);
+        // Cards outside a partial repaint's clip, border stroke included.
+        if (!shell_ui.clipTouches(cr, shellRect(.{ .x = r.x - 2, .y = r.y - 2, .w = r.w + 4, .h = r.h + 4 }))) continue;
+        const idx = self.indexAt(self.thumbStart() + slot);
         c.cairo_save(cr);
         rounded(cr, r, 7);
         c.cairo_clip(cr);
