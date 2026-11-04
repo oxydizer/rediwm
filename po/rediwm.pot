@@ -423,6 +423,10 @@ msgstr ""
 msgid "At critical battery level"
 msgstr ""
 
+#: src/files/trash_properties.zig
+msgid "At least {size}"
+msgstr ""
+
 #: src/control_center/sections/printers.zig
 msgid "Attached USB printers"
 msgstr ""
@@ -825,6 +829,10 @@ msgstr ""
 
 #: src/files/app_model.zig
 msgid "Calculate size"
+msgstr ""
+
+#: src/files/trash_properties.zig
+msgid "Calculating…"
 msgstr ""
 
 #: src/calculator/app.zig
@@ -1573,7 +1581,7 @@ msgstr ""
 msgid "Could not read Wi-Fi networks"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/desktop/app_actions.zig
 msgid "Could not read file properties"
 msgstr ""
 
@@ -1993,6 +2001,10 @@ msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Delete {name}?"
+msgstr ""
+
+#: src/files/trash_properties.zig
+msgid "Deleted files and folders"
 msgstr ""
 
 #: src/session/power_capabilities.zig
@@ -7742,6 +7754,12 @@ msgstr ""
 #: src/files/app_trash.zig
 msgid "{count} has no Trash information"
 msgid_plural "{count} have no Trash information"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/files/trash_properties.zig
+msgid "{count} item"
+msgid_plural "{count} items"
 msgstr[0] ""
 msgstr[1] ""
 

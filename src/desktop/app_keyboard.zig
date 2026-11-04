@@ -15,6 +15,7 @@ pub fn keyboardLeft(self: *App, refocusing: bool) void {
     if (!refocusing) {
         self.menu = false;
         self.deletion.deinit();
+        self.closeTrashCard();
         self.closePicker();
         self.edit = .none;
     }
@@ -25,7 +26,7 @@ pub fn keyboardLeft(self: *App, refocusing: bool) void {
 /// menu, list and icon navigation otherwise. The delete dialog, Return,
 /// Escape and Ctrl shortcuts fire once.
 pub fn keyRepeats(self: *const App, sym: u32, utf8: []const u8) bool {
-    if (self.edit == .trash or self.edit == .folder or self.ctrl) return false;
+    if (self.edit == .trash or self.edit == .trash_properties or self.edit == .folder or self.ctrl) return false;
     const vertical = sym == c.XKB_KEY_Up or sym == c.XKB_KEY_Down;
     if (self.menu) return vertical;
     const typing = switch (sym) {
@@ -42,6 +43,10 @@ pub fn key(self: *App, sym: u32, utf8: []const u8) void {
     self.invalidate();
     if (self.edit == .trash) {
         self.deleteAction(self.deletion.key(sym));
+        return;
+    }
+    if (self.edit == .trash_properties) {
+        if (self.trash_card) |*card| self.trashPropertiesAction(card.key(sym));
         return;
     }
     if (self.edit == .add_app) {

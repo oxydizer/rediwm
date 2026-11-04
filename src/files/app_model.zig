@@ -12,6 +12,7 @@ const header = @import("header.zig");
 const IconId = @import("ui").layout.IconId;
 const open_with = @import("open_with.zig");
 const properties = @import("properties.zig");
+const trash_properties = @import("trash_properties.zig");
 const Editor = @import("editor.zig").Editor;
 
 pub const DeviceOp = struct { id: []u8, unmount: bool, open: bool, navigation: u32 };
@@ -202,6 +203,7 @@ pub const DialogKind = enum {
     conflict,
     open_with,
     properties,
+    trash_properties,
 };
 
 pub const Dialog = struct {
@@ -213,6 +215,7 @@ pub const Dialog = struct {
     deletion: deletion.State = .{},
     applications: ?open_with.State = null,
     properties: ?properties.State = null,
+    trash_properties: ?trash_properties.State = null,
 };
 
 pub const RenameCard = struct { panel: header.Rect, field: header.Rect, confirm: header.Rect, cancel: header.Rect };

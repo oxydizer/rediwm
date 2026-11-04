@@ -472,27 +472,46 @@ def run():
                 for window in action('windows')['Windows']:
                     if window['app_id']=='rediwm-files': action('close_window', {'id': window['id']})
                 wait_for(lambda: not action('windows')['Windows'], 'Files did not close')
-            click(152,60,273);click(200,82)
+            click(48,60,273);click(200,82)
             wait_for(lambda: files_marker.exists() and files_marker.read_text()==str(home), 'Home context-menu click did not open Home')
             close_files()
             files_marker.unlink()
-            click(152,172,273);click(200,194)
+            click(48,172,273);click(200,194)
             wait_for(lambda: files_marker.exists() and files_marker.read_text()==str(trash_dir), 'Trash context-menu click did not open Trash')
             close_files()
             real_files.unlink()
             files_marker.unlink()
-            click(152,60,273);key(108);key(28)
+            click(48,60,273);key(108);key(28)
             wait_for(lambda: files_marker.exists() and files_marker.read_text()==str(home), 'Home menu should only offer Open')
             files_marker.unlink()
-            click(152,172,273);key(108);key(108);key(28)
-            wait_for(lambda: files_marker.exists() and files_marker.read_text()==str(trash_dir), 'Trash menu should wrap from Empty Trash to Open')
+            click(48,172,273);key(108);key(108);key(108);key(28)
+            wait_for(lambda: files_marker.exists() and files_marker.read_text()==str(trash_dir), 'Trash menu should wrap from Properties to Open')
+            files_marker.unlink()
+            # Properties is the Files window for the Trash itself: items and size, no permissions.
+            card=(430,230,850,450)
+            def trash_properties(name):
+                click(48,172,273);key(108);key(108);key(28)
+                time.sleep(.5)
+                return capture(name)
+            before_properties = capture('before-trash-properties')
+            empty_properties = trash_properties('trash-properties-empty')
+            assert difference(before_properties, empty_properties).crop(card).getbbox(), 'Trash Properties did not appear'
+            key(1)
+            assert not difference(before_properties, capture('trash-properties-closed')).crop(card).getbbox(), 'Escape left Trash Properties showing'
+            (trash_dir/'report.txt').write_text('x'*1234)
+            full_properties = trash_properties('trash-properties-full')
+            assert difference(empty_properties, full_properties).crop(card).getbbox(), 'Trash Properties ignored what is in the Trash'
+            key(15);key(28)  # Tab reaches Open: Files shows the Trash and the window closes.
+            wait_for(lambda: files_marker.exists() and files_marker.read_text()==str(trash_dir), 'Open in Trash Properties did not open the Trash')
+            assert not difference(before_properties, capture('trash-properties-opened')).crop(card).getbbox(), 'Open left Trash Properties showing'
+            (trash_dir/'report.txt').unlink()
             trashed_file=trash_dir/'empty-trash.txt';trashed_file.write_text('fixture')
-            click(152,172,273);key(108);key(28)
+            click(48,172,273);key(108);key(28)
             time.sleep(.2)
             assert trashed_file.exists(), 'Desktop emptied Trash before confirmation'
             key(1)
             assert trashed_file.exists(), 'Cancelling Empty Trash deleted contents'
-            click(152,172,273);click(200,224)
+            click(48,172,273);click(200,224)
             time.sleep(.2)
             assert trashed_file.exists(), 'Clicking Empty Trash bypassed confirmation'
             key(15);key(28)  # Tab reaches confirmation, without a deletion-mode checkbox.

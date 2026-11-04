@@ -23,7 +23,7 @@ pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
         const index = key - 1000;
         if (index >= self.items.items.len or self.items.items[index].text().len > 8) return null; // May show a full-name tooltip.
         const i: i32 = @intCast(index);
-        return .{ .x = @floatFromInt(self.sidebarWidth() + 19 + @mod(i, self.columns()) * self.cellWidth()), .y = @floatFromInt(self.viewTop() + self.itemInset() - 1 + @divTrunc(i, self.columns()) * self.rowHeight() - self.scroll_y), .w = @floatFromInt(self.cellWidth() - 18), .h = @floatFromInt(self.cardHeight() + 2) };
+        return .{ .x = @floatFromInt(self.sidebarWidth() + self.itemLeftInset() - 1 + @mod(i, self.columns()) * self.cellWidth()), .y = @floatFromInt(self.viewTop() + self.itemInset() - 1 + @divTrunc(i, self.columns()) * self.rowHeight() - self.scroll_y), .w = @floatFromInt(self.cellWidth() - 18), .h = @floatFromInt(self.cardHeight() + 2) };
     }
     if (self.chooser != null and key >= 500 and key < 513) {
         if (key > 500) return self.chooserRect(key - 501);
@@ -130,7 +130,7 @@ pub fn navHighlight(self: *App, frame: hover_glide.Frame) header.Rect {
 pub fn itemHighlight(self: *App, frame: hover_glide.Frame) header.Rect {
     const cell: f64 = @floatFromInt(self.cellWidth());
     return .{
-        .x = @as(f64, @floatFromInt(self.sidebarWidth() + 20)) + frame.col * cell,
+        .x = @as(f64, @floatFromInt(self.sidebarWidth() + self.itemLeftInset())) + frame.col * cell,
         .y = @as(f64, @floatFromInt(self.viewTop() + self.itemInset() - self.scroll_y)) + frame.row * @as(f64, @floatFromInt(self.rowHeight())),
         .w = cell - 20,
         .h = @floatFromInt(self.cardHeight()),

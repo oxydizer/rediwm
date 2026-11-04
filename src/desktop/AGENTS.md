@@ -24,3 +24,10 @@ Desktop keyboard focus and compositor drop targets are in the root
   file whose own Name/Icon are never shown. Allow Launching is `chmod u+x`.
 * Launches go through `app_scope.place` like every other user app: the worker
   hands pids over with `Worker.takeStarted`.
+* The Trash icon's Properties is Files' window, not a desktop popup:
+  `files/trash_properties.zig`, held in `App.trash_card` (`edit ==
+  .trash_properties`) and routed like the delete dialog (paint, `promptRect`,
+  pointer, keys; `closeTrashCard` on every way out). Its count runs on its own
+  thread (`files/trash_totals.zig`) and writes the worker's `wake_main`; `tick`
+  polls it. Other Properties still use the small popup. Open reuses
+  `openSelected`, so the Trash icon must stay selected under the window.

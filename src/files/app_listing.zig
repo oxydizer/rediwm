@@ -135,6 +135,7 @@ pub fn sync(self: *App) void {
         self.setStatusNotice(notice, false);
     }
     self.syncFolderSizes();
+    if (self.dialog) |*dlg| if (dlg.trash_properties) |*props| if (props.poll()) self.invalidate();
     _ = c.pthread_mutex_lock(&self.worker.mutex);
     const animation_settings = self.worker.animation_settings;
     const new_theme = self.worker.theme;

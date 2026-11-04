@@ -160,6 +160,11 @@ pub fn promptRect(self: *App) ?grid.Rect {
         const g = self.deletion.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
         return .{ .x = @intFromFloat(@floor(g.x)), .y = @intFromFloat(@floor(g.y)), .w = @intFromFloat(@ceil(g.width)), .h = @intFromFloat(@ceil(g.height)) };
     }
+    if (self.edit == .trash_properties) {
+        const card = self.trash_card orelse return null;
+        const g = card.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
+        return .{ .x = @intFromFloat(@floor(g.box.x)), .y = @intFromFloat(@floor(g.box.y)), .w = @intFromFloat(@ceil(g.box.w)), .h = @intFromFloat(@ceil(g.box.h)) };
+    }
     if (self.edit == .add_app) {
         if (self.applications) |*picker| {
             const r = picker.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom).box;
@@ -248,6 +253,15 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
             self.deletion.drawWindow(cr, self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, null)
         else
             self.deletion.draw(cr, self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, null);
+    } else if (self.edit == .trash_properties) {
+        if (self.trash_card) |*card| {
+            const w = self.geometry.w;
+            const h = self.geometry.h - self.geometry.bottom;
+            if (self.separate_overlays)
+                card.drawWindow(cr, w, h, self.x, self.y, null, self.picker_theme, self.worker.io)
+            else
+                card.draw(cr, w, h, self.x, self.y, null, self.picker_theme, self.worker.io);
+        }
     } else if (self.edit != .none and self.edit != .rename and self.edit != .folder) {
         const x = @divTrunc(self.geometry.w - 420, 2);
         const y = @divTrunc(self.geometry.h - 120, 2);

@@ -344,7 +344,12 @@ pub fn runMenu(self: *App, row: usize) void {
             },
             .properties => {
                 var buf: [4096]u8 = undefined;
-                if (self.placePath(self.menu_place, &buf)) |path| self.openProperties(path, null);
+                // The Trash (built-in row 1) is not a folder with permissions: it has its own window.
+                const trash_row = switch (self.rowKind(self.menu_place)) {
+                    .builtin => |index| index == 1,
+                    else => false,
+                };
+                if (trash_row) self.openTrashProperties() else if (self.placePath(self.menu_place, &buf)) |path| self.openProperties(path, null);
             },
             .mount => self.activateDevice(self.menu_place - self.deviceBase()),
             .eject => self.ejectDevice(self.menu_place - self.deviceBase()),

@@ -125,17 +125,22 @@ pub fn itemInset(self: *App) i32 {
     return if (self.compactList()) 0 else 20;
 }
 
+/// Outer left margin of the file rows; grid cards keep their wider gutter.
+pub fn itemLeftInset(self: *App) i32 {
+    return if (self.list_view and !self.transfer_view.active) 10 else 20;
+}
+
 pub fn rowHeight(self: *App) i32 {
-    return if (self.compactList()) 32 else if (self.list_view or self.transfer_view.active) 38 else GridCard.height + 8;
+    return if (self.compactList() or (self.list_view and !self.transfer_view.active)) 32 else if (self.list_view or self.transfer_view.active) 38 else GridCard.height + 8;
 }
 
 pub fn cardHeight(self: *App) i32 {
-    return if (self.compactList()) 30 else if (self.list_view or self.transfer_view.active) 36 else GridCard.height;
+    return if (self.compactList() or (self.list_view and !self.transfer_view.active)) 30 else if (self.list_view or self.transfer_view.active) 36 else GridCard.height;
 }
 
 /// Text baseline of a list row, from the row's top.
 pub fn listBaseline(self: *App) f64 {
-    return if (self.compactList()) 21 else 24;
+    return if (self.compactList() or (self.list_view and !self.transfer_view.active)) 21 else 24;
 }
 
 pub fn sidebarTargetWidth(self: *App) i32 {
@@ -214,11 +219,11 @@ pub fn scrollbarGutter(self: *const App) i32 {
 }
 
 pub fn columns(self: *App) i32 {
-    return if (self.list_view or self.transfer_view.active) 1 else @max(1, @divTrunc(self.w - self.sidebarWidth() - 20 - self.scrollbarGutter(), 210));
+    return if (self.list_view or self.transfer_view.active) 1 else @max(1, @divTrunc(self.w - self.sidebarWidth() - self.itemLeftInset() - self.scrollbarGutter(), 210));
 }
 
 pub fn cellWidth(self: *App) i32 {
-    return @divTrunc(self.w - self.sidebarWidth() - 20 - self.scrollbarGutter(), self.columns());
+    return @divTrunc(self.w - self.sidebarWidth() - self.itemLeftInset() - self.scrollbarGutter(), self.columns());
 }
 
 pub fn contentHeight(self: *App) i32 {
@@ -228,7 +233,7 @@ pub fn contentHeight(self: *App) i32 {
 
 pub fn itemAt(self: *App, x: f64, y: f64) ?usize {
     if (self.transfer_view.active) return null;
-    const gx = @as(i32, @intFromFloat(x)) - self.sidebarWidth() - 20;
+    const gx = @as(i32, @intFromFloat(x)) - self.sidebarWidth() - self.itemLeftInset();
     if (y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.contentBottom()))) return null;
     const gy = @as(i32, @intFromFloat(y)) - self.viewTop() - self.itemInset() + self.scroll_y;
     if (gx < 0 or gy < 0) return null;
@@ -310,7 +315,7 @@ pub fn listWidths(self: *App) [5]f64 {
 
 pub fn listColumn(self: *App, column: usize) header.Rect {
     const widths = self.listWidths();
-    var x: f64 = @as(f64, @floatFromInt(self.sidebarWidth() + 20)) - self.horizontalOffset();
+    var x: f64 = @as(f64, @floatFromInt(self.sidebarWidth() + self.itemLeftInset())) - self.horizontalOffset();
     for (widths[0..column]) |width| x += width;
     return .{ .x = x, .y = @floatFromInt(self.contentTop()), .w = widths[column], .h = 30 };
 }
@@ -351,7 +356,7 @@ pub fn sizeButtonRect(self: *App, idx: usize) ?header.Rect {
     const cols = self.columns();
     const cell = self.cellWidth();
     const i: i32 = @intCast(idx);
-    const x: f64 = @floatFromInt(self.sidebarWidth() + 20 + @mod(i, cols) * cell);
+    const x: f64 = @floatFromInt(self.sidebarWidth() + self.itemLeftInset() + @mod(i, cols) * cell);
     const y: f64 = @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(i, cols) * self.rowHeight() - self.scroll_y);
     if (self.list_view) {
         const sz = self.listColumn(1);

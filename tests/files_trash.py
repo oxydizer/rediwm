@@ -271,6 +271,37 @@ def run():
                 ipc.type_text("made")
                 key(ENTER)
                 wait_for(lambda: (plain / "made").is_dir(), "New Folder no longer works outside the Trash")
+
+                # The sidebar's Trash row has its own Properties window (items, size, Open, Close),
+                # not the permissions sheet of its folder: Tab never reaches a permission cell, so
+                # Enter after two Tabs closes the window instead of changing the folder's mode.
+                put("late.txt", home / "late.txt", "twelve chars")
+                mode = files.stat().st_mode
+                geometry = next(iter(windows()))
+                row = (geometry["x"] + 75, geometry["y"] + 221)  # sidebar: Home, Trash, Recent
+
+                def trash_properties():
+                    ipc.click_at(*row, 0x111)
+                    time.sleep(.3)
+                    for _ in range(3):  # Open, Open in New Window, Empty Trash…, Properties
+                        key(DOWN)
+                    key(ENTER)
+                    time.sleep(.6)
+
+                trash_properties()
+                key(TAB)
+                key(TAB)
+                key(ENTER)
+                time.sleep(.4)
+                assert files.stat().st_mode == mode, "Trash Properties offered permissions to change"
+                trash_properties()
+                key(ESC)
+                time.sleep(.3)
+                assert windows()[0]["title"] == "plain — RediWM Files", "Escape in Trash Properties navigated away"
+                trash_properties()
+                key(TAB)
+                key(ENTER)  # Open
+                title("Trash")
         finally:
             for peer in peers:
                 stop_process(peer)

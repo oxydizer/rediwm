@@ -99,7 +99,16 @@ and headless fixtures. The pinned library is compiled only into Files/tests.
   metadata (`trash_restorable`, worked out when the menu opens, not per paint;
   `context_menu.Row.disabled`). Delete inside the Trash uses the shared delete
   dialog with `in_trash`: permanent, no checkbox.
-* Tests: `trash_tests.zig`, `app_trash_tests.zig`, `tests/files_trash.py`
+* **Trash Properties** (sidebar row, and the desktop's Trash icon) is
+  `trash_properties.zig`, one window for both hosts: `properties_card.zig`
+  (the identity row and fields shared with file Properties, so they cannot
+  drift) minus permissions, with the icon looked up like the sidebar's (a pack's
+  `user-trash`, else the `trash_can` glyph). Items are the top-level entries of
+  `Trash/files`, the size every payload byte under them (`trash_totals.zig`:
+  links never followed, metadata excluded); the count is a thread per open
+  window that writes the host's wake fd, and `partial` reads "At least".
+* Tests: `trash_tests.zig`, `app_trash_tests.zig`, `trash_totals_tests.zig`,
+  `trash_properties_tests.zig`, `tests/files_trash.py`
   (keyboard driven, filesystem as ground truth, fake `gio`).
 
 ## Git

@@ -11,6 +11,7 @@ const icons = @import("../icon_cache.zig");
 const deletion = @import("../delete_dialog.zig");
 const open_with = @import("open_with.zig");
 const properties = @import("properties.zig");
+const trash_properties = @import("trash_properties.zig");
 const ViewItem = @import("app_model.zig").ViewItem;
 const Dialog = @import("app_model.zig").Dialog;
 
@@ -21,6 +22,7 @@ pub fn closeDialog(self: *App) void {
         dlg.deletion.deinit();
         if (dlg.applications) |*apps| apps.deinit();
         if (dlg.properties) |*props| props.deinit();
+        if (dlg.trash_properties) |*props| props.deinit();
         dlg.edit.text.deinit(self.allocator);
         if (dlg.target_path) |tp| self.allocator.free(tp);
         if (dlg.conflict_name) |cn| self.allocator.free(cn);
@@ -72,6 +74,34 @@ pub fn propertiesAction(self: *App, action: properties.Action) void {
                 if (changed) self.refresh();
                 self.openFile(path);
             }
+        },
+    }
+}
+
+/// Properties of the Trash itself (the sidebar's Trash row), not of an item in it.
+pub fn openTrashProperties(self: *App) void {
+    const path = self.trash_dir orelse {
+        self.setStatusNotice(tr("Could not read file properties"), true);
+        return;
+    };
+    const state = trash_properties.State.init(path, self.worker.wake_main) catch {
+        self.setStatusNotice(tr("Could not read file properties"), true);
+        return;
+    };
+    self.closeDialog();
+    self.dialog = .{ .kind = .trash_properties, .title = tr("Properties"), .trash_properties = state };
+    self.invalidate();
+}
+
+pub fn trashPropertiesAction(self: *App, action: trash_properties.Action) void {
+    switch (action) {
+        .none => self.invalidate(),
+        .close => self.closeDialog(),
+        .open => {
+            const path = self.allocator.dupe(u8, self.dialog.?.trash_properties.?.path) catch return;
+            defer self.allocator.free(path);
+            self.closeDialog();
+            self.navigate(path);
         },
     }
 }
@@ -278,7 +308,7 @@ pub fn confirmDialog(self: *App) void {
         .torrent_source, .torrent_destination => self.confirmTorrent(),
         .terminal_close => self.terminalConfirmClose(),
         .open_with => self.openWithAction(.open),
-        .properties => {},
+        .properties, .trash_properties => {},
         .new_folder => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
             ops_mod.createFolder(self.allocator, self.history.current, name) catch |err| {
@@ -365,6 +395,10 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
     if (dlg.kind == .properties) {
         const action = self.dialog.?.properties.?.key(sym, self.shift, self.w, self.h);
         self.propertiesAction(action);
+        return;
+    }
+    if (dlg.kind == .trash_properties) {
+        self.trashPropertiesAction(self.dialog.?.trash_properties.?.key(sym));
         return;
     }
     if (dlg.kind == .open_with) {

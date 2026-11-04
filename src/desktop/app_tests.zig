@@ -107,11 +107,13 @@ test "desktop motion keeps menu highlights and moving selections live" {
     try std.testing.expectEqual(@as(usize, 1), app.menuLabels().len);
     try std.testing.expectEqualStrings("Open", app.menuLabels()[0]);
     app.menu_icon = 1;
-    try std.testing.expectEqual(@as(usize, 2), app.menuLabels().len);
+    try std.testing.expectEqual(@as(usize, 3), app.menuLabels().len);
     try std.testing.expectEqualStrings("Open", app.menuLabels()[0]);
     try std.testing.expectEqualStrings("Empty Trash…", app.menuLabels()[1]);
     try std.testing.expectEqual(@import("ui").layout.IconId.trash, app.menuIcon(1));
     try std.testing.expectEqual(@as(?[]const u8, null), app.menuHint(1));
+    try std.testing.expectEqualStrings("Properties", app.menuLabels()[2]);
+    try std.testing.expectEqual(@import("ui").layout.IconId.view_list, app.menuIcon(2));
     // Opening and cancelling must not enqueue work (the worker is undefined).
     app.menuAction(1);
     try std.testing.expect(app.edit == .trash);
