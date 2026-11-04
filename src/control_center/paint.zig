@@ -193,6 +193,7 @@ pub fn paintContent(cc: *ControlCenter) void {
     _ = cc.server.world.projection.presentOwned(cc.buffer_node, cc.server.renderer, &buf.base, if (full) null else &region);
     cc.buffer_node.setDestSize(cc.panel_box.width, cc.panel_box.height);
     buf.base.drop();
+    cc.server.switcher.committed(cc.toplevel);
     panel_present.addPaint(elapsed_ns);
     cc.painted_scale = scale;
     cc.dirty = false;

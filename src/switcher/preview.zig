@@ -8,3 +8,9 @@ extern fn rediwm_switcher_preview_set_surface(preview: *sn.Buffer, surface: ?*wl
 /// Refresh on every source commit, and pass null to clear. The preview node owns
 /// the binding; its destruction or the source's destruction detaches it safely.
 pub const setSurface = rediwm_switcher_preview_set_surface;
+
+extern fn rediwm_switcher_preview_set_owned(preview: *sn.Buffer, source: *sn.Buffer) bool;
+
+/// Mirror a compositor-owned buffer node (a `.shell` window's body). Call after
+/// each present; false when the source has no buffer to share.
+pub const setOwned = rediwm_switcher_preview_set_owned;

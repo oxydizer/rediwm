@@ -70,32 +70,68 @@ static void handle_output_sample(struct wl_listener *listener, void *data) {
       event->release_timeline, event->release_point, event->output->output->event_loop);
 }
 
+static struct preview_binding *find_binding(struct rediwm_buffer *preview) {
+  struct wlr_addon *addon = wlr_addon_find(&preview->node.addons, NULL, &binding_impl);
+  struct preview_binding *binding;
+  return addon ? wl_container_of(addon, binding, addon) : NULL;
+}
+
+static struct preview_binding *create_binding(struct rediwm_buffer *preview) {
+  struct preview_binding *binding = calloc(1, sizeof(*binding));
+  if (!binding) return NULL;
+  binding->preview = preview;
+  wlr_addon_init(&binding->addon, &preview->node.addons, NULL, &binding_impl);
+  wl_list_init(&binding->surface_destroy.link);
+  binding->node_destroy.notify = handle_node_destroy;
+  wl_signal_add(&preview->node.events.destroy, &binding->node_destroy);
+  binding->surface_destroy.notify = handle_surface_destroy;
+  binding->output_sample.notify = handle_output_sample;
+  wl_signal_add(&preview->events.output_sample, &binding->output_sample);
+  return binding;
+}
+
+static void follow_surface(struct preview_binding *binding, struct wlr_surface *surface) {
+  if (binding->surface == surface) return;
+  wl_list_remove(&binding->surface_destroy.link);
+  wl_list_init(&binding->surface_destroy.link);
+  binding->surface = surface;
+  if (surface) wl_signal_add(&surface->events.destroy, &binding->surface_destroy);
+}
+
+bool rediwm_switcher_preview_set_owned(struct rediwm_buffer *preview,
+                                       struct rediwm_buffer *source) {
+  struct wlr_buffer *buffer = source ? source->buffer : NULL;
+  if (!buffer) {
+    rediwm_switcher_preview_set_surface(preview, NULL);
+    return false;
+  }
+  struct preview_binding *binding = find_binding(preview);
+  if (!binding && !(binding = create_binding(preview))) return false;
+  follow_surface(binding, NULL);
+  unmark_buffer(binding);
+  // `rediwm_projection_present_owned` updates this client buffer in place while
+  // nothing but ignorable locks hold it; the thumbnail's lock must stay one of them.
+  struct wlr_client_buffer *client = wlr_client_buffer_get(buffer);
+  if (client) {
+    client->private.n_ignore_locks++;
+    binding->marked = client;
+  }
+  rediwm_buffer_set_buffer(preview, buffer);
+  return true;
+}
+
 bool rediwm_switcher_preview_set_surface(struct rediwm_buffer *preview,
                                          struct wlr_surface *surface) {
-  struct wlr_addon *addon = wlr_addon_find(&preview->node.addons, NULL, &binding_impl);
-  struct preview_binding *binding = addon ? wl_container_of(addon, binding, addon) : NULL;
+  struct preview_binding *binding = find_binding(preview);
   if (!binding) {
     if (!surface) {
       rediwm_buffer_set_buffer(preview, NULL);
       return true;
     }
-    binding = calloc(1, sizeof(*binding));
+    binding = create_binding(preview);
     if (!binding) return false;
-    binding->preview = preview;
-    wlr_addon_init(&binding->addon, &preview->node.addons, NULL, &binding_impl);
-    wl_list_init(&binding->surface_destroy.link);
-    binding->node_destroy.notify = handle_node_destroy;
-    wl_signal_add(&preview->node.events.destroy, &binding->node_destroy);
-    binding->surface_destroy.notify = handle_surface_destroy;
-    binding->output_sample.notify = handle_output_sample;
-    wl_signal_add(&preview->events.output_sample, &binding->output_sample);
   }
-  if (binding->surface != surface) {
-    wl_list_remove(&binding->surface_destroy.link);
-    wl_list_init(&binding->surface_destroy.link);
-    binding->surface = surface;
-    if (surface) wl_signal_add(&surface->events.destroy, &binding->surface_destroy);
-  }
+  follow_surface(binding, surface);
   unmark_buffer(binding);
   struct wlr_client_buffer *buffer = surface ? surface->buffer : NULL;
   struct rediwm_buffer_options options = {0};

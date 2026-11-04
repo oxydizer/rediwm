@@ -289,21 +289,38 @@ pub fn refreshIcon(self: *Self, card: *Card) void {
 pub fn updatePreview(card: *Card, tl: *@import("Toplevel.zig")) void {
     const preview = card.preview orelse return;
     card.pw = 0;
+    if (tl.backend == .shell) {
+        // Settings has no wl_surface: share the body it presents instead.
+        const cc = tl.backend.shell.control_center orelse return clearPreview(preview);
+        const body = cc.buffer_node;
+        if (body.buffer_width <= 0 or body.buffer_height <= 0 or cc.panel_box.width <= 0 or cc.panel_box.height <= 0) return clearPreview(preview);
+        if (!preview_binding.setOwned(preview, body)) return clearPreview(preview);
+        card.source = .{ .x = 0, .y = 0, .width = @floatFromInt(body.buffer_width), .height = @floatFromInt(body.buffer_height) };
+        fit(card, @floatFromInt(cc.panel_box.width), @floatFromInt(cc.panel_box.height));
+        return;
+    }
     if (tl.surface()) |surface| {
         if (surface.current.transform == .normal and surface.buffer != null) {
             if (!preview_binding.setSurface(preview, surface)) return;
             surface.getBufferSourceBox(&card.source);
-            const sw: f32 = @floatFromInt(@max(1, surface.current.width));
-            const sh: f32 = @floatFromInt(@max(1, surface.current.height));
-            card.aspect = sw / sh;
-            const fit = @min(208 / sw, 140 / sh);
-            card.pw = @max(1, @as(i32, @intFromFloat(@round(sw * fit))));
-            card.ph = @max(1, @as(i32, @intFromFloat(@round(sh * fit))));
+            fit(card, @floatFromInt(@max(1, surface.current.width)), @floatFromInt(@max(1, surface.current.height)));
             return;
         }
     }
+    clearPreview(preview);
+}
+
+fn clearPreview(preview: *sn.Buffer) void {
     _ = preview_binding.setSurface(preview, null);
     preview.node.setEnabled(false);
+}
+
+/// Size the linear card's thumbnail for content of `sw`×`sh` logical pixels.
+fn fit(card: *Card, sw: f32, sh: f32) void {
+    card.aspect = sw / sh;
+    const factor = @min(208 / sw, 140 / sh);
+    card.pw = @max(1, @as(i32, @intFromFloat(@round(sw * factor))));
+    card.ph = @max(1, @as(i32, @intFromFloat(@round(sh * factor))));
 }
 
 pub fn committed(self: *Self, tl: *@import("Toplevel.zig")) void {
