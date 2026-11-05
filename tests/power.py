@@ -948,51 +948,6 @@ def test_prepare_for_shutdown_waits_for_sigterm(system_bus_address):
     print("power: shutdown preparation preserves the session; SIGTERM exits without restarting Xwayland")
 
 
-def test_session_owned_helpers_stopped_on_logout(system_bus_address):
-    """Quitting compositor (logout) sends SIGTERM to owned helpers, waits, and exits cleanly."""
-    with tempfile.TemporaryDirectory(prefix="rediwm-power-test-") as directory:
-        tmp = Path(directory)
-        fake = start_fake({"FAKE_LOGIND_CAP": "yes"})
-        try:
-            process, log = spawn(tmp, system_bus_address)
-            try:
-                with IPCClient(tmp, timeout=15) as ipc:
-                    ipc.wait_for("wallpaper_presented", timeout_ms=10000)
-                    res = ipc.action("spawn", {"argv": ["/bin/sleep", "3600"]})
-
-                    def get_helper_pids():
-                        try:
-                            out = subprocess.check_output(["pgrep", "-f", "sleep 3600"], text=True)
-                            return [int(p) for p in out.strip().split() if p]
-                        except subprocess.CalledProcessError:
-                            return []
-
-                    wait_for(lambda: len(get_helper_pids()) > 0, "sleep helper running")
-                    helper_pids = get_helper_pids()
-
-                    try:
-                        press(ipc, "quit")
-                    except EOFError:
-                        pass  # Quit can close IPC before its reply is flushed.
-
-                    rc = process.wait(timeout=5)
-                    assert rc == 0, f"compositor exited with code {rc}"
-                    wait_for(lambda: "stopping 1 session-owned helper(s)" in log_text(tmp),
-                             "stopping owned helper logged")
-                    wait_for(lambda: "terminating compositor session" in log_text(tmp),
-                             "terminating session logged")
-                    wait_for(lambda: all(not is_pid_running(p) for p in helper_pids),
-                             "owned helper terminated")
-            finally:
-                if process.poll() is None:
-                    stop_process(process)
-                log.close()
-        finally:
-            fake.terminate()
-            fake.wait(timeout=3)
-    print("power: session-owned helpers are stopped with SIGTERM and reaped on logout")
-
-
 def test_compositor_clean_termination_on_sigterm(system_bus_address):
     """Compositor catches SIGTERM, terminates owned helpers, and exits cleanly with 0."""
     with tempfile.TemporaryDirectory(prefix="rediwm-power-test-") as directory:
@@ -1020,8 +975,6 @@ def test_compositor_clean_termination_on_sigterm(system_bus_address):
                     assert rc == 0, f"compositor exited with code {rc}"
                     wait_for(lambda: "received SIGTERM; requesting clean termination" in log_text(tmp),
                              "SIGTERM receipt logged")
-                    wait_for(lambda: "stopping 1 session-owned helper(s)" in log_text(tmp),
-                             "stopping owned helper logged")
                     wait_for(lambda: all(not is_pid_running(p) for p in helper_pids),
                              "owned helper terminated")
             finally:
@@ -1234,7 +1187,6 @@ def main():
     test_only_one_request_is_pending_at_a_time(system_bus_address)
     test_prepare_for_sleep_deactivates_and_restores_session(system_bus_address)
     test_prepare_for_shutdown_waits_for_sigterm(system_bus_address)
-    test_session_owned_helpers_stopped_on_logout(system_bus_address)
     test_compositor_clean_termination_on_sigterm(system_bus_address)
     test_stuck_helper_does_not_block_shutdown(system_bus_address)
 

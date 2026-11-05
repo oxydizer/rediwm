@@ -1,10 +1,12 @@
 # Platform module
 
 The one place the OS shows: child handles (`child.zig`), directory watching
-(`watch.zig`), the program's own path (`exe.zig`), where the system's helper
-programs live (`tool.zig`), seccomp-BPF filters
+(`watch.zig`), the program's own path (`exe.zig`), who is on the other end of a
+unix socket (`peer.zig`), process attributes such as no core dumps and no new
+privileges (`process.zig`), descriptors that wake a poll loop (`wake.zig`),
+where the system's helper programs live (`tool.zig`), seccomp-BPF filters
 (`seccomp.zig`, for the PDF viewer and the theme helper), and
-`child.h`/`self_exe.h` for C and C++. Std only, no compositor imports. Linux
+`child.h`/`self_exe.h`/`peer.h`/`process.h` for C and C++. Std only, no compositor imports. Linux
 today; the FreeBSD port (`docs/plans/freebsd.md`) adds `freebsd_*.zig` parts
 without changing callers.
 
@@ -39,8 +41,17 @@ without changing callers.
   directories. Everything else is looked up on `PATH` (`config.app_theme.executable`)
   or spawned by bare name, which `std.process.spawn` resolves on the process's
   `PATH`; never write `/usr/bin/<tool>`, ports live in `/usr/local`.
+* **`peer.of` names the socket's creator,** as of `connect` or `socketpair`; it
+  says nothing about who writes later (a forked child shares the descriptor).
+  `null` means refuse. `peer.h` needs `_GNU_SOURCE` (glibc hides `SO_PEERCRED`
+  without it) and, like `peer.zig`, refuses to build for another OS until the
+  port.
 * Nothing here arms a timer or starts a thread; a caller retrying a failed
   `add` owns that clock.
 
-Still direct Linux calls (later steps of the plan's phase P): `signalfd`/`epoll`
-in the supervisor and DM daemon, `kill`/`wait4`, `/proc` walks, `SO_PEERCRED`.
+Still direct Linux calls (later steps of the plan): the supervisor's and the
+DM's event loops and process calls (`signalfd`, `epoll`, `poll`, `fork`,
+`kill`, `wait4`), `statx` and `getdents64` in Files and the IPC socket check,
+`/proc` walks, and the terminal's per-message `SCM_CREDENTIALS` check
+(`files/terminal/engine.c`). Everything else outside this directory calls libc
+or `std.posix`.

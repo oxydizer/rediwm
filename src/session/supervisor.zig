@@ -42,10 +42,9 @@ pub fn Options(comptime Publication: type) type {
 
 pub fn supervise(comptime Publication: type, options: Options(Publication)) !u8 {
     const allocator = options.allocator;
-    var previous_subreaper: c_int = 0;
-    _ = try sys.check(linux.prctl(@intFromEnum(linux.PR.GET_CHILD_SUBREAPER), @intFromPtr(&previous_subreaper), 0, 0, 0));
-    _ = try sys.check(linux.prctl(@intFromEnum(linux.PR.SET_CHILD_SUBREAPER), 1, 0, 0, 0));
-    defer _ = linux.prctl(@intFromEnum(linux.PR.SET_CHILD_SUBREAPER), @intCast(previous_subreaper), 0, 0, 0);
+    const previous_subreaper = try platform.process.childSubreaper();
+    try platform.process.setChildSubreaper(true);
+    defer platform.process.setChildSubreaper(previous_subreaper) catch {};
 
     var preexisting = try descendants(allocator, linux.getpid());
     defer preexisting.deinit(allocator);

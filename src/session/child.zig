@@ -110,7 +110,7 @@ test "an observed child is reported without being reaped, and a cancelled watch 
     // The exit was observed, not collected: the real owner still gets the status.
     try std.testing.expectEqual(@as(?u32, null), seen.status);
     const status = platform.child.reap(quick_pid).?;
-    try std.testing.expectEqual(@as(u8, 5), std.os.linux.W.EXITSTATUS(status));
+    try std.testing.expectEqual(@as(u8, 5), std.posix.W.EXITSTATUS(status));
     quick.id = null;
 
     var slow = try std.process.spawn(std.testing.io, .{ .argv = &.{ "/bin/sleep", "30" } });

@@ -216,7 +216,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .use_llvm = use_llvm,
         .wlroots_prefix = wlroots_prefix,
-        .transfers = b.option(bool, "transfers", "Build and install the torrent transfers helper") orelse true,
+        // Files hides Transfers (src/files/app_torrents.zig `enabled`), so the helper is
+        // unused for now. Off on FreeBSD, where its libtorrent, glib and peer-credential
+        // code is not ported (docs/plans/freebsd.md).
+        .transfers = b.option(bool, "transfers", "Build and install the torrent transfers helper (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
         .i18n_tool = i18n_tool,
         .wayland = wayland,
         .xkbcommon = xkbcommon,

@@ -1,6 +1,7 @@
 //! Server wake handlers: audio, battery and the GPU timer.
 
 const std = @import("std");
+const platform = @import("platform");
 const i18n = @import("i18n");
 const Server = @import("../Server.zig");
 const wl = @import("wayland").server.wl;
@@ -13,9 +14,7 @@ const gpu_timer_sched_keep_ns = 10 * std.time.ns_per_s;
 /// UI catches up to an external volume change (another app, `pactl`) on its
 /// next incidental repaint instead of immediately — never fatal.
 pub fn createAudioWakeFd() ?std.posix.fd_t {
-    const rc = std.os.linux.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);
-    if (std.os.linux.errno(rc) != .SUCCESS) return null;
-    return @intCast(rc);
+    return platform.wake.create();
 }
 
 /// Runs on the compositor thread, woken by `audio.AudioManager`'s PA-thread

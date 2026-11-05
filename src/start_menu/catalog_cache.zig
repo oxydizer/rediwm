@@ -159,7 +159,7 @@ pub fn write(allocator: Allocator, io: Io, environ: std.process.Environ, payload
         return;
     }
 
-    const tmp = std.fmt.allocPrint(arena, "{s}.tmp-{d}", .{ path, std.os.linux.getpid() }) catch return;
+    const tmp = std.fmt.allocPrint(arena, "{s}.tmp-{d}", .{ path, std.c.getpid() }) catch return;
     Io.Dir.cwd().writeFile(io, .{ .sub_path = tmp, .data = encoded }) catch |err| {
         log.warn("catalog cache write {s}: {}", .{ tmp, err });
         return;

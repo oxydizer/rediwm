@@ -1,5 +1,6 @@
-/* The libc and Linux headers Zig code uses, translated once into the `c`
- * module (build/support.zig). Zig 0.17 has no @cImport.
+/* The libc headers Zig code uses, translated once into the `c` module
+ * (build/support.zig). Zig 0.17 has no @cImport. Headers that exist on one OS
+ * only sit under #ifdef at the end, so one root serves Linux and FreeBSD.
  *
  * Translate libc declarations, not glibc's fortified inline wrappers: Zig
  * rejects their attribute(error) calls in ReleaseSafe. This affects the
@@ -13,7 +14,6 @@
 #include <fnmatch.h>
 #include <grp.h>
 #include <langinfo.h>
-#include <linux/netlink.h>
 #include <locale.h>
 #include <monetary.h>
 #include <poll.h>
@@ -27,10 +27,13 @@
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+
+#ifdef __linux__
+#include <linux/netlink.h> /* printer hotplug uevents */
+#endif

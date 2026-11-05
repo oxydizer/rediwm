@@ -37,7 +37,7 @@ fn report(fd: c_int, tag: proto.Report, text: []const u8) void {
 }
 
 pub fn runWorker(ctrl_fd: c_int, greeter_fd: c_int, confdir: ?[]const u8, is_test: bool) !u8 {
-    _ = c.prctl(c.PR_SET_PDEATHSIG, @as(c_ulong, @intFromEnum(linux.SIG.TERM)), @as(c_ulong, 0), @as(c_ulong, 0), @as(c_ulong, 0));
+    platform.process.dieWithParent(.TERM);
 
     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena.deinit();
@@ -274,7 +274,7 @@ fn execSession(
         // Nothing the greeter runs needs to gain privileges (power actions
         // ask logind over D-Bus), so no setuid/file-capability exec may.
         // User sessions keep them for sudo and pkexec.
-        if (c.prctl(c.PR_SET_NO_NEW_PRIVS, @as(c_ulong, 1), @as(c_ulong, 0), @as(c_ulong, 0), @as(c_ulong, 0)) != 0) linux.exit_group(1);
+        platform.process.noNewPrivileges() catch linux.exit_group(1);
         const cmd = a.dupeSentinel(u8, exec, 0) catch linux.exit_group(1);
         const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", cmd.ptr };
         _ = linux.execve("/bin/sh", &argv, env.ptr);

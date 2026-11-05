@@ -36,7 +36,7 @@ pub const Listener = struct {
         // must never introduce an unbounded resolver wait on the compositor.
         const passwd = std.Io.Dir.cwd().readFileAlloc(io, "/etc/passwd", allocator, .limited(256 * 1024)) catch "";
         defer if (passwd.len != 0) allocator.free(passwd);
-        self.uids = serviceUids(passwd, @intCast(std.os.linux.getuid()));
+        self.uids = serviceUids(passwd, @intCast(std.c.getuid()));
         _ = try conn.hello(self, onHello);
         return self;
     }

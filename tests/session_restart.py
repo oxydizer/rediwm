@@ -20,9 +20,10 @@ def run():
         options = tmp / 'install_paths.zig'
         options.write_text('pub const bin = ' + json.dumps(str(tmp)) + ';\n')
         configured_restart = tmp / 'rediwm-restart'
-        subprocess.run(['zig', 'build-exe', '-lc', '--dep', 'install_paths',
+        subprocess.run(['zig', 'build-exe', '-lc', '--dep', 'install_paths', '--dep', 'platform',
                         '-Mroot=' + str(ROOT / 'src/session_restart.zig'),
                         '-Minstall_paths=' + str(options),
+                        '-Mplatform=' + str(ROOT / 'src/platform/mod.zig'),
                         '-femit-bin=' + str(configured_restart)], check=True)
         binary = tmp / 'rediwm'
         source = ROOT / 'zig-out/release-safe/bin/rediwm'

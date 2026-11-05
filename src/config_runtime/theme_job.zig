@@ -1,5 +1,6 @@
 //! Helper jobs wake once by eventfd; no archive/image work on the event loop.
 const std = @import("std");
+const platform = @import("platform");
 const Server = @import("../Server.zig");
 const wl = @import("wayland").server.wl;
 const protocol = @import("../ipc/protocol.zig");
@@ -52,8 +53,7 @@ pub fn start(server: *Server, args: []const []const u8, client: ?*Client, id: ?p
     for (args, argv[1..]) |arg, *dst| dst.* = try mem.dupe(u8, arg);
     var env = try server.environ.createMap(a);
     errdefer env.deinit();
-    const fd = c.eventfd(0, @intCast(std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK));
-    if (fd < 0) return error.EventFdFailed;
+    const fd = platform.wake.create() orelse return error.EventFdFailed;
     errdefer _ = c.close(fd);
     const job = try a.create(Job);
     errdefer a.destroy(job);

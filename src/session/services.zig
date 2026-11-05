@@ -6,6 +6,7 @@
 //! Does not touch unrelated user services or the systemd user manager.
 
 const std = @import("std");
+const platform = @import("platform");
 const wl = @import("wayland").server.wl;
 
 const Child = @import("child.zig");
@@ -65,9 +66,7 @@ pub const Manager = struct {
             .loop = server.wl_server.getEventLoop(),
         };
 
-        const efd_rc = std.os.linux.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);
-        if (std.os.linux.errno(efd_rc) != .SUCCESS) return error.EventFdFailed;
-        const signal_fd: std.posix.fd_t = @intCast(efd_rc);
+        const signal_fd: std.posix.fd_t = platform.wake.create() orelse return error.EventFdFailed;
         mgr.signal_fd = signal_fd;
 
         global_signal_fd.store(signal_fd, .release);
@@ -268,7 +267,7 @@ test "session helper tracking and bounded shutdown" {
     child.id = null; // ownership was transferred to the watcher
     try mgr.loop.dispatch(1000);
     var status: u32 = 0;
-    try std.testing.expectEqual(std.os.linux.E.CHILD, std.os.linux.errno(std.os.linux.wait4(pid, @ptrCast(&status), std.os.linux.W.NOHANG, null)));
+    try std.testing.expectEqual(std.posix.E.CHILD, std.posix.errno(std.c.wait4(pid, @ptrCast(&status), std.posix.W.NOHANG, null)));
 
     // Immediate exits are readable even if they occur before registration.
     var quick = try std.process.spawn(std.testing.io, .{ .argv = &.{ "/bin/sh", "-c", "exit 7" } });
@@ -278,5 +277,5 @@ test "session helper tracking and bounded shutdown" {
     quick.id = null;
     try mgr.loop.dispatch(1000);
     try std.testing.expectEqual(@as(usize, 0), mgr.countTracked());
-    try std.testing.expectEqual(std.os.linux.E.CHILD, std.os.linux.errno(std.os.linux.wait4(quick_pid, @ptrCast(&status), std.os.linux.W.NOHANG, null)));
+    try std.testing.expectEqual(std.posix.E.CHILD, std.posix.errno(std.c.wait4(quick_pid, @ptrCast(&status), std.posix.W.NOHANG, null)));
 }

@@ -1,6 +1,7 @@
 //! Filesystem work runs only on an explicit Settings action. One eventfd
 //! wakes the compositor when the export finishes; there are no idle timers.
 const std = @import("std");
+const platform = @import("platform");
 const config = @import("config").app_theme;
 const c = std.posix.system;
 const a = std.heap.c_allocator;
@@ -17,8 +18,7 @@ pub const Job = struct {
     pub fn create(io: std.Io, env: std.process.Environ, toolkit: config.Toolkit, palette: config.Palette) !*Job {
         const self = try a.create(Job);
         errdefer a.destroy(self);
-        const fd = c.eventfd(0, @intCast(std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK));
-        if (fd < 0) return error.EventFdFailed;
+        const fd = platform.wake.create() orelse return error.EventFdFailed;
         self.* = .{ .io = io, .env = env, .toolkit = toolkit, .palette = palette, .fd = fd };
         return self;
     }

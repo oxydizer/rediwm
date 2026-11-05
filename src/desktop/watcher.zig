@@ -139,8 +139,7 @@ pub const Worker = struct {
     pub fn deinit(self: *Worker) void {
         self.stopAndJoin();
         for (self.started[0..self.started_len]) |launch| {
-            var status: u32 = 0;
-            _ = std.os.linux.wait4(launch.pid, @ptrCast(&status), std.os.linux.W.NOHANG, null);
+            _ = platform.child.reap(launch.pid);
         }
         if (self.wake_worker >= 0) _ = c.close(self.wake_worker);
         if (self.wake_main >= 0) _ = c.close(self.wake_main);

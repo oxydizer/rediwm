@@ -1,4 +1,5 @@
 const std = @import("std");
+const platform = @import("platform");
 const posix = std.posix;
 const c = std.posix.system;
 const wl = @import("wayland").server.wl;
@@ -67,9 +68,7 @@ pub const WorkerPool = struct {
         const pool = try allocator.create(WorkerPool);
         errdefer allocator.destroy(pool);
 
-        const efd_res = c.eventfd(0, @intCast(std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK));
-        if (efd_res < 0) return error.EventFdFailed;
-        const efd: posix.fd_t = efd_res;
+        const efd: posix.fd_t = platform.wake.create() orelse return error.EventFdFailed;
         errdefer _ = c.close(efd);
 
         pool.* = .{

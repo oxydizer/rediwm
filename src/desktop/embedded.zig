@@ -11,6 +11,7 @@
 //! and wakes for worker results, deadlines and animation frames; an idle
 //! desktop arms no timer.
 const std = @import("std");
+const platform = @import("platform");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 const sn = @import("../node.zig");
@@ -672,9 +673,7 @@ pub const Desktop = struct {
         for (self.worker.takeStarted(&started)) |*launch| {
             app_scope.place(self.server, launch.pid, launch.app());
             _ = @import("../session/child.zig").watch(a, self.server.wl_server.getEventLoop(), launch.pid, null, null) catch {
-                _ = std.os.linux.kill(launch.pid, .KILL);
-                var status: u32 = 0;
-                while (std.os.linux.errno(std.os.linux.wait4(launch.pid, @ptrCast(&status), 0, null)) == .INTR) {}
+                platform.child.killAndReap(launch.pid);
             };
         }
     }

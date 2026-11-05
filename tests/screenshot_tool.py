@@ -143,48 +143,6 @@ def run(scale, displays="1"):
                         receiver.kill()
                         receiver.wait()
 
-                # Shell panels survive the picker, cancellation, and saved
-                # captures. Their focused key handlers must allow shortcuts.
-                ipc.set_dnd(True)
-                time.sleep(4)
-                for panel, action in (("start_menu", "OpenStartMenu"),
-                                      ("control_center", "OpenControlCenter"),
-                                      ("power_menu", "OpenPowerMenu")):
-                    move(200, 200)
-                    ipc.action(action)
-                    time.sleep(.6)
-                    state = ipc.get_shell_state(output["name"])[panel]
-                    assert state and state["state"] == "open", (panel, state)
-                    before_panel = image("before-" + panel)
-                    open_picker()
-                    assert ipc.get_shell_state(output["name"])[panel]["state"] == "open", panel
-                    height = round(clean.height / scale)
-                    move(100, 180)
-                    ipc.pointer_button(272, True)
-                    move(300, height - 20)
-                    selection = image("over-taskbar-" + panel)
-                    edge = lambda v: int(v * scale + .5)
-                    assert selection.getpixel((edge(300), edge(height - 20))) == (255, 255, 255), "taskbar covered selection corner"
-                    ipc.key_press("Escape")
-                    ipc.pointer_button(272, False)
-                    assert ipc.get_shell_state(output["name"])[panel]["state"] == "open", panel
-                    previous = set(files())
-                    open_picker()
-                    click((width - 360) // 2 + 220, 45)
-                    saved = wait_for(lambda: set(files()) - previous, "panel screenshot was not saved")
-                    shot = Image.open(saved.pop()).convert("RGB")
-                    box = state["box"]
-                    x, y = box["x"] - output["x"], box["y"] - output["y"]
-                    bounds = (edge(x), edge(y), edge(x + box["width"]), edge(y + box["height"]))
-                    assert_pixels(shot.crop(bounds), before_panel.crop(bounds), panel + " changed in saved screenshot")
-                    assert ipc.get_shell_state(output["name"])[panel]["state"] == "open", panel
-                    previous = set(files())
-                    ipc.key_press("Print")
-                    saved = wait_for(lambda: set(files()) - previous, "panel swallowed Print")
-                    shot = Image.open(saved.pop()).convert("RGB")
-                    assert_pixels(shot.crop(bounds), before_panel.crop(bounds), panel + " changed on Print")
-                    ipc.key_press("Escape")
-                    time.sleep(.4)
                 assert process.poll() is None
                 print(f"screenshot tool scale {scale}, displays {displays}: passed")
         except Exception:

@@ -92,13 +92,13 @@ pub fn forceClose(toplevel: *Toplevel) void {
         .xdg => {
             const client = toplevel.waylandClient() orelse return;
             const pid = client.getCredentials().pid;
-            if (pid > 1 and pid != std.os.linux.getpid()) std.posix.kill(pid, std.posix.SIG.KILL) catch {};
+            if (pid > 1 and pid != std.c.getpid()) std.posix.kill(pid, std.posix.SIG.KILL) catch {};
             client.destroy();
         },
         .xwayland => |*adapter| if (toplevel.server.xwayland) |xwayland| xwayland.forceClose(adapter.xsurface.window_id),
         .placeholder => |*ph| {
             if (ph.pid) |pid| {
-                if (pid > 1 and pid != std.os.linux.getpid()) std.posix.kill(pid, std.posix.SIG.KILL) catch {};
+                if (pid > 1 and pid != std.c.getpid()) std.posix.kill(pid, std.posix.SIG.KILL) catch {};
             }
             ph.cancel(toplevel);
         },

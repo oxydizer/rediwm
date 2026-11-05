@@ -273,11 +273,11 @@ fn connectTcp(io: ?std.Io, target: endpoint.Endpoint, cancel: c_int, deadline: i
         if (fd < 0) continue;
         const result = switch (address) {
             .ip4 => |ip| blk: {
-                var addr: std.os.linux.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, ip.port), .addr = @bitCast(ip.bytes) };
+                var addr: std.posix.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, ip.port), .addr = @bitCast(ip.bytes) };
                 break :blk c.connect(fd, .{ .__sockaddr__ = @ptrCast(&addr) }, @sizeOf(@TypeOf(addr)));
             },
             .ip6 => |ip| blk: {
-                var addr: std.os.linux.sockaddr.in6 = .{ .port = std.mem.nativeToBig(u16, ip.port), .flowinfo = ip.flow, .addr = ip.bytes, .scope_id = ip.interface.index };
+                var addr: std.posix.sockaddr.in6 = .{ .port = std.mem.nativeToBig(u16, ip.port), .flowinfo = ip.flow, .addr = ip.bytes, .scope_id = ip.interface.index };
                 break :blk c.connect(fd, .{ .__sockaddr__ = @ptrCast(&addr) }, @sizeOf(@TypeOf(addr)));
             },
         };
@@ -355,7 +355,7 @@ test "remote loopback HTTP preserves authority, resource and body" {
     const listener = c.socket(c.AF_INET, c.SOCK_STREAM | c.SOCK_CLOEXEC, 0);
     try t.expect(listener >= 0);
     defer _ = c.close(listener);
-    var address: std.os.linux.sockaddr.in = .{ .port = 0, .addr = @bitCast([4]u8{ 127, 0, 0, 1 }) };
+    var address: std.posix.sockaddr.in = .{ .port = 0, .addr = @bitCast([4]u8{ 127, 0, 0, 1 }) };
     try t.expectEqual(@as(c_int, 0), c.bind(listener, .{ .__sockaddr__ = @ptrCast(&address) }, @sizeOf(@TypeOf(address))));
     try t.expectEqual(@as(c_int, 0), c.listen(listener, 1));
     var length: c.socklen_t = @sizeOf(@TypeOf(address));

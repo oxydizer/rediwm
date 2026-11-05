@@ -5,6 +5,7 @@
 //! picks an account and session and signs in through rediwm-dm, then exits.
 const i18n = @import("i18n");
 const std = @import("std");
+const platform = @import("platform");
 const Child = @import("child.zig");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
@@ -132,7 +133,7 @@ pub const Lock = struct {
         // First, so a crash anywhere below still restarts the session locked.
         announce(server, true);
         _ = c.mlock(&self.password, self.password.len);
-        _ = c.prctl(c.PR_SET_DUMPABLE, @as(c_ulong, 0), @as(c_ulong, 0), @as(c_ulong, 0), @as(c_ulong, 0));
+        platform.process.denyDumps() catch {};
         server.switcher.cancel();
         server.screenshot_selector.cancel();
         server.locker = self;

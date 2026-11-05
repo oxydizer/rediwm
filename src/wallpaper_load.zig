@@ -3,6 +3,7 @@
 // Appearance page's preview) that the compositor thread wraps in ImageBuffer
 // after the eventfd wake.
 const std = @import("std");
+const platform = @import("platform");
 const Allocator = std.mem.Allocator;
 const posix = std.posix;
 const c = std.posix.system;
@@ -67,8 +68,7 @@ pub const Loader = struct {
             owned += 1;
         }
 
-        const efd = c.eventfd(0, @intCast(std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK));
-        if (efd < 0) return error.EventFdFailed;
+        const efd = platform.wake.create() orelse return error.EventFdFailed;
         errdefer _ = c.close(efd);
 
         self.* = .{

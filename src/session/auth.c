@@ -7,7 +7,7 @@
 #include <string.h>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
-#include <sys/prctl.h>
+#include "../platform/process.h"
 #include <unistd.h>
 #include <pwd.h>
 
@@ -100,7 +100,7 @@ struct rediwm_auth *rediwm_auth_start(const char *password) {
         return NULL;
     }
     (void)mlock(auth, sizeof *auth);
-    (void)prctl(PR_SET_DUMPABLE, 0);
+    (void)rediwm_process_deny_dumps();
     strcpy(auth->password, password);
     atomic_init(&auth->result, 0);
     if (pthread_create(&auth->thread, NULL, authenticate, auth)) {

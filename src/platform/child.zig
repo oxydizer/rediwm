@@ -6,8 +6,8 @@
 const std = @import("std");
 const linux = std.os.linux;
 
-pub const Pid = linux.pid_t;
-pub const Signal = linux.SIG;
+pub const Pid = std.posix.pid_t;
+pub const Signal = std.posix.SIG;
 
 pub const Error = error{
     /// The process is gone (or was never there).
@@ -127,6 +127,24 @@ pub fn exists(pid: Pid) bool {
 /// Signals every member of the process group `pgid`, a leader's own pid.
 pub fn signalGroup(pgid: Pid, sig: Signal) void {
     _ = linux.kill(-pgid, sig);
+}
+
+/// Kills a child nobody is going to wait for and collects it, so it leaves no
+/// zombie. Blocks until the kernel has taken it; SIGKILL cannot be caught.
+pub fn killAndReap(pid: Pid) void {
+    _ = linux.kill(pid, .KILL);
+    var status: u32 = 0;
+    while (linux.errno(linux.wait4(pid, @ptrCast(&status), 0, null)) == .INTR) {}
+}
+
+test "a child nobody watches is killed and collected" {
+    var child = try std.process.spawn(std.testing.io, .{ .argv = &.{ "/bin/sleep", "30" } });
+    const pid = child.id.?;
+    killAndReap(pid);
+    child.id = null;
+    // Collected: no zombie, and no child left to wait for.
+    try std.testing.expect(!exists(pid));
+    try std.testing.expectEqual(@as(?u32, null), reap(pid));
 }
 
 /// Handles for poll-based clients. One fd joins the application's normal

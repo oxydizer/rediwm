@@ -266,13 +266,16 @@ panel painting. The key rules:
   compositor imports). Parsing/persistence is `config/`, applying and reloads
   `config_runtime/`, shared raster code (`text`, `anim`, `sdf`, icons) `ui/`.
   `memory` owns the process allocator; executables own its shutdown.
-* **OS calls go through `src/platform/`**: use it, not `pidfd_*`, `inotify_*`
-  or `/proc/self/exe` (C and C++: its `child.h`, `self_exe.h`).
+* **OS calls go through `src/platform/`**: use it, not `pidfd_*`, `inotify_*`,
+  `SO_PEERCRED`, `prctl`, `eventfd` flags or `/proc/self/exe` (C and C++: its
+  `child.h`, `self_exe.h`, `peer.h`, `process.h`). Elsewhere call libc or
+  `std.posix`, not `std.os.linux` (its `AGENTS.md` lists the exceptions).
 * Zig 0.17 has no `@cImport`: the build translates header roots in `src/c/`
   into modules (`support.cHeaders`): `c` (libc), `c_gfx` (libc, cairo,
   freetype, harfbuzz, fontconfig, xkbcommon), `c_pulse`, `c_libinput`,
   `c_png`, `c_archive`. Add a header to its root; a module links nothing, so
-  artifacts link their libraries. The roots undefine `_FORTIFY_SOURCE`
+  artifacts link their libraries. A header that exists on one OS only goes
+  under `#ifdef __linux__` (or `__FreeBSD__`) at the end of `libc.h`. The roots undefine `_FORTIFY_SOURCE`
   (fortified wrappers break translate-c in ReleaseSafe) and define
   `_GNU_SOURCE`, so socket calls take `.{ .__sockaddr__ = @ptrCast(&addr) }`.
   Never translate glib/gobject/gio/librsvg; hand-declare the ABI. No runtime

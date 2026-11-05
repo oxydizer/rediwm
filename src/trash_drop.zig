@@ -10,6 +10,7 @@
 //! moving, as Files and the desktop do. The drag is finished when `gio` exits,
 //! so the source learns whether it worked.
 const std = @import("std");
+const platform = @import("platform");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 const i18n = @import("i18n");
@@ -170,9 +171,7 @@ fn trash(self: *Self, a: std.mem.Allocator, paths: []const []const u8) void {
     app_scope.place(server, pid, "gio");
     self.child = Child.watch(gpa, server.wl_server.getEventLoop(), pid, self, exited) catch {
         // Nobody would collect it.
-        _ = std.os.linux.kill(pid, .KILL);
-        var status: u32 = 0;
-        while (std.os.linux.errno(std.os.linux.wait4(pid, @ptrCast(&status), 0, null)) == .INTR) {}
+        platform.child.killAndReap(pid);
         return self.failed();
     };
 }
@@ -180,7 +179,7 @@ fn trash(self: *Self, a: std.mem.Allocator, paths: []const []const u8) void {
 fn exited(owner: ?*anyopaque, _: *Child, status: ?u32) void {
     const self: *Self = @ptrCast(@alignCast(owner.?));
     self.child = null;
-    const ok = if (status) |value| std.os.linux.W.IFEXITED(value) and std.os.linux.W.EXITSTATUS(value) == 0 else false;
+    const ok = if (status) |value| std.posix.W.IFEXITED(value) and std.posix.W.EXITSTATUS(value) == 0 else false;
     if (ok) self.target.finish(true) else self.failed();
 }
 

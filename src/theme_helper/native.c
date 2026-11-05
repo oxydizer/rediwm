@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/prctl.h>
+#include "../platform/process.h"
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -348,7 +348,7 @@ int rediwm_theme_copy(const char *src,const char *dst) {total=0;return copy_file
 static int parser_sandbox(const char *root, const char *source, int writable) {
     struct rlimit memory={512u*1024u*1024u,512u*1024u*1024u};
     if(setrlimit(RLIMIT_AS,&memory)<0)return -1;
-    if(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)<0)return -1;
+    if(rediwm_process_no_new_privileges()<0)return -1;
 #ifdef SYS_landlock_create_ruleset
     int abi=syscall(SYS_landlock_create_ruleset,NULL,0,LANDLOCK_CREATE_RULESET_VERSION);
     if(abi>0) {

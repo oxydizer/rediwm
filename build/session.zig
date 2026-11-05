@@ -45,6 +45,7 @@ pub fn add(ctx: Context) Session {
         .use_lld = use_llvm,
     });
     restart.root_module.addImport("install_paths", ctx.layout.options);
+    restart.root_module.addImport("platform", ctx.platform_mod);
     b.installArtifact(restart);
 
     const dm_ipc_mod = b.createModule(.{

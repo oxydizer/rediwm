@@ -12,7 +12,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/prctl.h>
+#include "../platform/process.h"
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -234,7 +234,7 @@ static int keep_only(int a, int b) {
 static int run(int document, int peer, const char *path) {
     // The viewer's other descriptors (Wayland, the caller's) are not ours.
     if (keep_only(document, peer) < 0) return 1;
-    prctl(PR_SET_NAME, "rediwm-pdf-prnt", 0, 0, 0);
+    rediwm_process_set_name("rediwm-pdf-prnt");
     signal(SIGCHLD, SIG_DFL);
     int devnull = open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (devnull >= 0) {

@@ -1,6 +1,7 @@
 // The Files windows that subscribe: JSON snapshots out, commands in.
 // Part of rediwm-transfers (helper.cpp).
 #include "helper.hpp"
+#include "../../platform/peer.h"
 
 namespace helper {
 
@@ -141,11 +142,9 @@ gboolean accept_peer(gint fd, GIOCondition, gpointer) {
   int client = accept4(fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
   if (client < 0)
     return G_SOURCE_CONTINUE;
-  struct ucred cred{};
-  socklen_t size = sizeof cred;
-  if (peers.size() >= 32 ||
-      getsockopt(client, SOL_SOCKET, SO_PEERCRED, &cred, &size) ||
-      cred.uid != getuid()) {
+  uid_t uid = 0;
+  if (peers.size() >= 32 || rediwm_peer_credentials(client, &uid, nullptr) ||
+      uid != getuid()) {
     close(client);
     return G_SOURCE_CONTINUE;
   }

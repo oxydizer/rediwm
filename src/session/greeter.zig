@@ -77,7 +77,7 @@ pub const Greeter = struct {
         if (environ.getPosix("REDIWM_GREETER_FD")) |fd_str| {
             if (std.fmt.parseInt(c_int, fd_str, 10)) |fd| {
                 // Nothing the greeter might spawn inherits the daemon socket.
-                _ = std.os.linux.fcntl(fd, std.os.linux.F.SETFD, std.os.linux.FD_CLOEXEC);
+                _ = c.fcntl(fd, c.F_SETFD, c.FD_CLOEXEC);
                 self.client = dm_ipc.Client.fromFd(fd);
                 self.watch() catch {
                     self.client.?.close();

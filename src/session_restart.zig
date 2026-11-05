@@ -11,13 +11,12 @@
 const std = @import("std");
 const linux = std.os.linux;
 const c = std.posix.system;
+const platform = @import("platform");
 
 const default_installed = @import("install_paths").bin ++ "/rediwm";
 const io_timeout_s = 3;
 const ready_timeout_ms = 20_000;
 const poll_interval_ms = 200;
-
-const Ucred = extern struct { pid: i32, uid: u32, gid: u32 };
 
 const Session = struct {
     path: []const u8,
@@ -141,16 +140,15 @@ fn connect(arena: std.mem.Allocator, path: []const u8, installed: []const u8) ?S
         return null;
     }
 
-    var cred: Ucred = undefined;
-    var cred_len: std.posix.socklen_t = @sizeOf(Ucred);
-    if (c.getsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.PEERCRED, @ptrCast(&cred), &cred_len) < 0 or
-        cred.uid != c.getuid() or
-        !runsInstalled(arena, cred.pid, installed))
-    {
+    const peer = platform.peer.of(fd) orelse {
+        closeFd(fd);
+        return null;
+    };
+    if (peer.uid != c.getuid() or !runsInstalled(arena, peer.pid, installed)) {
         closeFd(fd);
         return null;
     }
-    return .{ .path = path, .fd = fd, .pid = cred.pid };
+    return .{ .path = path, .fd = fd, .pid = peer.pid };
 }
 
 fn runsInstalled(arena: std.mem.Allocator, pid: i32, installed: []const u8) bool {

@@ -68,7 +68,8 @@ pub fn add(ctx: Context) void {
     cursorgen_run.addDirectoryArg(b.path("assets/cursors"));
     const cursor_themes = cursorgen_run.addOutputDirectoryArg("icons");
     // Cursor aliases are symlinks, which InstallDir drops; cp -a keeps them.
-    const install_cursors = b.addSystemCommand(&.{ "sh", "-c", "mkdir -p \"$2\" && cp -a -T \"$1\" \"$2\"", "sh" });
+    // "$1/." copies the contents into the existing "$2" with GNU and BSD cp (-T is GNU only).
+    const install_cursors = b.addSystemCommand(&.{ "sh", "-c", "mkdir -p \"$2\" && cp -a \"$1/.\" \"$2\"", "sh" });
     install_cursors.addDirectoryArg(cursor_themes);
     install_cursors.addDirectoryArg(support.installed(.prefix, "share/icons"));
     b.getInstallStep().dependOn(&install_cursors.step);

@@ -122,8 +122,7 @@ pub const Catalog = struct {
         errdefer loading.release();
         loading.loading = scan;
 
-        const efd = c.eventfd(0, @intCast(std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK));
-        if (efd < 0) return error.EventFdFailed;
+        const efd = platform.wake.create() orelse return error.EventFdFailed;
         errdefer _ = c.close(efd);
 
         const owned_locale = try allocator.dupe(u8, locale_tag);

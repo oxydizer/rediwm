@@ -21,6 +21,7 @@
 // fd, down to "never call back into compositor code from the worker
 // thread directly."
 const std = @import("std");
+const platform = @import("platform");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const posix = std.posix;
@@ -122,8 +123,7 @@ pub const IconService = struct {
         const self = try allocator.create(IconService);
         errdefer allocator.destroy(self);
 
-        const efd = c.eventfd(0, @intCast(std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK));
-        if (efd < 0) return error.EventFdFailed;
+        const efd = platform.wake.create() orelse return error.EventFdFailed;
         errdefer _ = c.close(efd);
 
         self.* = .{ .allocator = allocator, .cfg = cfg, .io = io, .eventfd = efd };

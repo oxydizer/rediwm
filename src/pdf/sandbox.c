@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/prctl.h>
+#include "../platform/process.h"
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -156,8 +156,8 @@ int rediwm_pdf_sandbox_enter(int document, int display, int print) {
     if (single_threaded() < 0 || close_inherited(keep, kept) < 0) return -1;
     struct rlimit core = {0, 0}, memory = {2ULL << 30, 2ULL << 30}, files = {128, 128};
     if (setrlimit(RLIMIT_CORE, &core) < 0 || setrlimit(RLIMIT_AS, &memory) < 0 ||
-        setrlimit(RLIMIT_NOFILE, &files) < 0 || prctl(PR_SET_DUMPABLE, 0) < 0 ||
-        prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0) return -1;
+        setrlimit(RLIMIT_NOFILE, &files) < 0 || rediwm_process_deny_dumps() < 0 ||
+        rediwm_process_no_new_privileges() < 0) return -1;
     if (filesystem_policy() < 0) return -1;
     return rediwm_pdf_syscall_policy(display);
 }

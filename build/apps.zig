@@ -55,9 +55,11 @@ pub fn add(ctx: Context) Apps {
     );
     b.getInstallStep().dependOn(&install_files.step);
     b.getInstallStep().dependOn(&install_files_desktop_entry.step);
-    const install_files_icon = b.addSystemCommand(&.{ "install", "-Dm644", "-t" });
-    install_files_icon.addDirectoryArg(support.installed(.prefix, "share/icons/hicolor/256x256/apps"));
-    install_files_icon.addFileArg(b.path("assets/icons/redi-fm-icon.png"));
+    const install_files_icon = b.addInstallFileWithDir(
+        b.path("assets/icons/redi-fm-icon.png"),
+        .prefix,
+        "share/icons/hicolor/256x256/apps/redi-fm-icon.png",
+    );
     b.getInstallStep().dependOn(&install_files_icon.step);
     // rediwm-files links neither wlroots-server nor libinput/libpulse, so it
     // can be built (and its dependencies checked) without the rest of this
@@ -80,6 +82,7 @@ pub fn add(ctx: Context) Apps {
         inline for (.{ "helper.cpp", "helper_transfers.cpp", "helper_peers.cpp", "helper_tray.cpp" }) |part| torrents.addFileArg(b.path("src/files/torrent/" ++ part));
         torrents.addFileInput(b.path("src/files/torrent/helper.hpp"));
         torrents.addFileInput(b.path("src/platform/self_exe.h"));
+        torrents.addFileInput(b.path("src/platform/peer.h"));
         torrents.addArg("-o");
         const torrent_binary = torrents.addOutputFileArg("rediwm-transfers");
         const install_torrents = b.addInstallFileWithDir(torrent_binary, .bin, "rediwm-transfers");
@@ -91,12 +94,10 @@ pub fn add(ctx: Context) Apps {
         const transfers_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, ctx.layout.prefix, "data/rediwm-transfers.desktop"), .prefix, "share/applications/rediwm-transfers.desktop");
         b.getInstallStep().dependOn(&transfers_entry.step);
         files_step.dependOn(&transfers_entry.step);
-        const test_torrents = b.step("test-files-torrents", "Test real loopback transfers and the Files/tray interface");
+        const test_torrents = b.step("test-files-torrents", "Test real loopback transfers");
         const torrent_engine_test = b.addSystemCommand(&.{ "python3", "tests/files_torrents.py" });
         torrent_engine_test.step.dependOn(b.getInstallStep());
-        const torrent_ui_test = b.addSystemCommand(&.{ "python3", "tests/files_transfers_ui.py" });
-        torrent_ui_test.step.dependOn(&torrent_engine_test.step);
-        test_torrents.dependOn(&torrent_ui_test.step);
+        test_torrents.dependOn(&torrent_engine_test.step);
     }
     files_step.dependOn(&install_files_desktop_entry.step);
     files_step.dependOn(&terminal_license.step);

@@ -26,7 +26,7 @@ pub fn main(init: std.process.Init) void {
     // Every client, helper and autostart item would inherit root. rediwm-dm
     // and rediwm-session run the compositor as the logged-in user; seat
     // access comes from logind, so root is never needed.
-    if (std.os.linux.getuid() == 0 or std.os.linux.geteuid() == 0) {
+    if (std.c.getuid() == 0 or std.c.geteuid() == 0) {
         log.err("refusing to run as root; start rediwm as a regular user", .{});
         std.process.exit(1);
     }
@@ -71,9 +71,9 @@ pub fn main(init: std.process.Init) void {
         if (!restart) return;
         // start's defers have released the seat and removed the IPC/Wayland sockets.
         @import("session/activation.zig").setSessionFdInheritance(init.minimal.environ, true);
-        const rc = std.os.linux.execve(executable.ptr, argv.ptr, init.minimal.environ.block.slice.ptr);
+        const rc = std.c.execve(executable.ptr, argv.ptr, init.minimal.environ.block.slice.ptr);
         @import("session/activation.zig").setSessionFdInheritance(init.minimal.environ, false);
-        log.err("restart execve failed ({t}); restoring the current compositor", .{std.os.linux.errno(rc)});
+        log.err("restart execve failed ({t}); restoring the current compositor", .{std.posix.errno(rc)});
     }
 }
 

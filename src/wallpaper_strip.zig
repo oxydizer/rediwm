@@ -3,6 +3,7 @@
 // finished ones after the eventfd wake. Like wallpaper_load.zig, the worker
 // never touches wlroots or GPU objects.
 const std = @import("std");
+const platform = @import("platform");
 const Allocator = std.mem.Allocator;
 const posix = std.posix;
 const c = std.posix.system;
@@ -45,8 +46,7 @@ pub const Strip = struct {
         const thumbs = try allocator.alloc(?[]u32, entries.len);
         errdefer allocator.free(thumbs);
         @memset(thumbs, null);
-        const efd = c.eventfd(0, @intCast(std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK));
-        if (efd < 0) return error.EventFdFailed;
+        const efd = platform.wake.create() orelse return error.EventFdFailed;
         errdefer _ = c.close(efd);
         self.* = .{ .allocator = allocator, .io = io, .paths = paths, .thumbs = thumbs, .eventfd = efd };
         self.thread = try std.Thread.spawn(.{}, run, .{self});

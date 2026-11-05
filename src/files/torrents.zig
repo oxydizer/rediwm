@@ -2,6 +2,7 @@
 const std = @import("std");
 const tr = @import("i18n").tr;
 const c = @import("c");
+const platform = @import("platform");
 pub const File = struct { index: usize, path: []const u8, size: i64 };
 pub const Transfer = struct {
     source: []const u8 = "",
@@ -67,9 +68,8 @@ pub const Client = struct {
             _ = c.close(fd);
             return false;
         }
-        var cred: c.struct_ucred = undefined;
-        var len: c.socklen_t = @sizeOf(@TypeOf(cred));
-        if (c.getsockopt(fd, c.SOL_SOCKET, c.SO_PEERCRED, &cred, &len) != 0 or cred.uid != c.getuid()) {
+        const same_user = if (platform.peer.of(fd)) |peer| peer.uid == c.getuid() else false;
+        if (!same_user) {
             _ = c.close(fd);
             return false;
         }

@@ -1,6 +1,7 @@
 //! Nonblocking polkit helper transport. Callbacks borrow text until return and
 //! may respond/cancel, but must not destroy this object or dispatch the loop.
 const std = @import("std");
+const platform = @import("platform");
 const wl = @import("wayland").server.wl;
 const c = @import("c");
 const Child = @import("../session/child.zig");
@@ -77,9 +78,7 @@ pub const Helper = struct {
                     self.fd = rediwm_polkit_spawn(&user, &pid);
                     if (self.fd < 0) return error.HelperUnavailable;
                     self.child = Child.watch(allocator, loop, pid, self, childExited) catch |err| {
-                        _ = std.os.linux.kill(pid, .KILL);
-                        var status: u32 = 0;
-                        while (std.os.linux.errno(std.os.linux.wait4(pid, @ptrCast(&status), 0, null)) == .INTR) {}
+                        platform.child.killAndReap(pid);
                         return err;
                     };
                     spawned = true;

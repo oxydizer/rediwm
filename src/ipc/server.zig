@@ -321,12 +321,6 @@ pub fn onSequenceComplete(vi: *@import("../input/virtual.zig").VirtualInput, seq
     client.updateFdInterest() catch {};
 }
 
-const Ucred = extern struct {
-    pid: std.posix.pid_t,
-    uid: std.posix.uid_t,
-    gid: std.posix.gid_t,
-};
-
 pub fn parseFlatpakAppId(content: []const u8) ?[]const u8 {
     var in_application_section = false;
     var line_it = std.mem.splitScalar(u8, content, '\n');
@@ -409,26 +403,18 @@ fn handleListenerFd(fd: c_int, mask: wl.EventMask, ipc: *IpcServer) c_int {
     );
     if (client_fd < 0) return 0;
 
-    var ucred: Ucred = undefined;
-    var ucred_len: std.posix.socklen_t = @sizeOf(Ucred);
-    if (c.getsockopt(
-        client_fd,
-        std.posix.SOL.SOCKET,
-        std.posix.SO.PEERCRED,
-        @ptrCast(&ucred),
-        &ucred_len,
-    ) < 0) {
+    const peer = platform.peer.of(client_fd) orelse {
+        closeFd(client_fd);
+        return 0;
+    };
+
+    if (peer.uid != c.getuid()) {
+        log.warn("rejecting IPC connection from UID {d} (expected {d})", .{ peer.uid, c.getuid() });
         closeFd(client_fd);
         return 0;
     }
 
-    if (ucred.uid != c.getuid()) {
-        log.warn("rejecting IPC connection from UID {d} (expected {d})", .{ ucred.uid, c.getuid() });
-        closeFd(client_fd);
-        return 0;
-    }
-
-    const sandbox_opt = detectSandbox(ucred.pid, client_fd, ipc.allocator);
+    const sandbox_opt = detectSandbox(peer.pid, client_fd, ipc.allocator);
     if (sandbox_opt) |sb| {
         const groups = ipc.compositor.config.sandboxAllowGroups(sb.app_id, sb.engine);
         if (!groups.contains(.ipc)) {
@@ -665,7 +651,7 @@ fn requirePrivateDir(dir: []const u8) IpcError!void {
     var info: linux.Statx = undefined;
     const rc = linux.statx(linux.AT.FDCWD, &buf, 0, .{ .UID = true, .MODE = true }, &info);
     if (linux.errno(rc) != .SUCCESS) return error.NoRuntimeDir;
-    if (info.uid != linux.getuid() or info.mode & 0o077 != 0) {
+    if (info.uid != c.getuid() or info.mode & 0o077 != 0) {
         log.err("IPC socket directory {s} is not private to this uid", .{dir});
         return error.RuntimeDirNotPrivate;
     }

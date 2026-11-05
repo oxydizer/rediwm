@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <readline/readline.h>
 #include "protocol.h"
+#include "../../platform/peer.h"
 #ifndef RL_STATE_READSTR
 #define RL_STATE_READSTR 0
 #endif
@@ -143,10 +144,10 @@ static int terminal_builtin(WordList *args) {
         return 0;
     }
     if (channel >= 0) return 0;
-    struct ucred peer;
-    socklen_t len = sizeof peer;
-    if (getsockopt(3, SOL_SOCKET, SO_PEERCRED, &peer, &len) ||
-        peer.uid != getuid() || peer.pid != getppid()) return 1;
+    uid_t uid;
+    pid_t pid;
+    if (rediwm_peer_credentials(3, &uid, &pid) ||
+        uid != getuid() || pid != getppid()) return 1;
     channel = fcntl(3, F_DUPFD_CLOEXEC, 10);
     close(3);
     if (channel < 0) return 1;
