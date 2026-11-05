@@ -27,6 +27,14 @@ prefixes are absolute paths containing letters, digits, `/`, `_`, `-`, `+` and
 `.` (no `.` or `..` components). Prebuilt releases retain their recorded prefix
 and cannot be relocated by the installer.
 
+`-Dsysconfdir` (default `/etc`, `/usr/local/etc` when targeting FreeBSD) is where
+RediWM looks for its own system configuration: `rediwm/dm.conf`,
+`rediwm/greeter.toml`, the `pam.d/rediwm` lock-screen policy and CUPS's
+`cups/client.conf`. `-Drundir` (default `/run`, `/var/run` on FreeBSD) holds the
+display manager's marker directory. Both follow the prefix's character rules.
+The installers, units and tmpfiles still write `/etc` and `/run` (FreeBSD
+packaging is phase 4 of [docs/plans/freebsd.md](plans/freebsd.md)).
+
 System integration remains in `/etc`, `/usr/lib/{systemd/system,sysusers.d,tmpfiles.d}`
 and `/usr/share/{wayland-sessions,polkit-1/actions,xdg-desktop-portal/portals}`,
 under `DESTDIR` when staging. Runtime discovery of sibling executables and assets

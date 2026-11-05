@@ -58,7 +58,7 @@ pub const Daemon = struct {
     gpa: std.mem.Allocator = std.heap.c_allocator,
     is_test: bool = false,
     confdir: ?[]const u8 = null,
-    marker_path: []const u8 = "/run/rediwm-dm/autologin-done",
+    marker_path: []const u8 = @import("install_paths").rundir ++ "/rediwm-dm/autologin-done",
     search_dirs: []const []const u8 = ws.standard_data_dirs,
     range: ws.UidRange = .{},
     relay: state_mod.Relay,

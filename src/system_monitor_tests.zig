@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const platform = @import("platform");
 const proc = @import("system_monitor/proc.zig");
+const linux = @import("system_monitor/proc_linux.zig");
 const model = @import("system_monitor/model.zig");
 const collector = @import("system_monitor/collector.zig");
 const actions = @import("system_monitor/actions.zig");
@@ -13,17 +14,18 @@ fn needsProcfs() !void {
 }
 
 test "monitor stat parsing preserves tricky names and rejects partial data" {
-    const stat = proc.parseStat("123 (a ) strange\nname) S 1 2 3 4 5 6 7 8 9 10 100 50 0 0 20 0 1 0 987654 10000 42\n").?;
+    const stat = linux.parseStat("123 (a ) strange\nname) S 1 2 3 4 5 6 7 8 9 10 100 50 0 0 20 0 1 0 987654 10000 42\n").?;
+    try std.testing.expectEqual(@as(i32, 1), stat.ppid);
     try std.testing.expectEqualStrings("a ) strange\nname", stat.name);
     try std.testing.expectEqual(@as(u64, 150), stat.cpu);
     try std.testing.expectEqual(@as(u64, 987654), stat.start);
     try std.testing.expectEqual(@as(u64, 42), stat.rss);
-    try std.testing.expect(proc.parseStat("123 (gone) S 1 2") == null);
-    try std.testing.expect(proc.parseStat("garbage") == null);
+    try std.testing.expect(linux.parseStat("123 (gone) S 1 2") == null);
+    try std.testing.expect(linux.parseStat("garbage") == null);
 }
 test "monitor CPU excludes guest accounting and rejects reset counters and PID reuse" {
-    const before = proc.parseCpu("cpu 100 20 30 400 50 10 20 10 90 10\ncpu0 1").?;
-    const after = proc.parseCpu("cpu 120 20 40 440 60 10 30 20 100 10\n").?;
+    const before = linux.parseCpu("cpu 100 20 30 400 50 10 20 10 90 10\ncpu0 1").?;
+    const after = linux.parseCpu("cpu 120 20 40 440 60 10 30 20 100 10\n").?;
     try std.testing.expectEqual(@as(u64, 640), before.total);
     try std.testing.expectApproxEqAbs(@as(f64, 50), proc.cpuPercent(before, after).?, 0.001);
     try std.testing.expect(proc.cpuPercent(after, before) == null);
@@ -35,11 +37,11 @@ test "monitor CPU excludes guest accounting and rejects reset counters and PID r
     try std.testing.expect(proc.processPercent(first, second, 100, 1_000_000_000) == null);
 }
 test "monitor memory uses available rather than free and bounds missing values" {
-    const mem = proc.parseMemory("MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 400 kB\nSwapTotal: 500 kB\nSwapFree: 250 kB\n").?;
+    const mem = linux.parseMemory("MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 400 kB\nSwapTotal: 500 kB\nSwapFree: 250 kB\n").?;
     try std.testing.expectEqual(@as(u64, 600 * 1024), mem.used());
     try std.testing.expectEqual(@as(u64, 500 * 1024), mem.swap_total.?);
-    try std.testing.expect(proc.parseMemory("MemTotal: 1000 kB\nMemFree: 100 kB\n") == null);
-    try std.testing.expect(proc.parseMemory("MemTotal: 18446744073709551615 kB\nMemAvailable: 1 kB") == null);
+    try std.testing.expect(linux.parseMemory("MemTotal: 1000 kB\nMemFree: 100 kB\n") == null);
+    try std.testing.expect(linux.parseMemory("MemTotal: 18446744073709551615 kB\nMemAvailable: 1 kB") == null);
 }
 fn fixture(pid: i32, start: u64, name: []const u8, uid: u32, cpu: f64) collector.Process {
     return .{ .identity = .{ .pid = pid, .start = start }, .name = name, .user = "alex", .uids = .{ uid, uid, uid, uid }, .state = 'S', .cpu_ticks = 0, .cpu_percent = cpu, .resident_bytes = 4096, .protected = false };

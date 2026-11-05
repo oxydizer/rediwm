@@ -1,6 +1,7 @@
 //! Private name collation. Keys are frozen with each listing so UI sorting
 //! never calls libc, changes the process locale or races a worker update.
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
 
 pub const Locale = struct {
@@ -97,11 +98,19 @@ test "C name collation preserves byte order for a mixed name list" {
     try checkOrder("C", &.{ "Apfel", "Zebra", "apple", "Äpfel", "Élan", "Ёж", "Ель", "Яблоко" });
 }
 
+/// The expected orders are glibc's. FreeBSD's tables differ (see
+/// docs/plans/freebsd.md); there `strxfrm_l` still agrees with `strcoll_l`.
+fn needsGlibcTables() !void {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+}
+
 test "German name collation places accented names beside their base letters" {
+    try needsGlibcTables();
     try checkOrder("de_DE.UTF-8", &.{ "Apfel", "Äpfel", "apple", "Élan", "Zebra", "Ёж", "Ель", "Яблоко" });
 }
 
 test "Russian name collation orders Cyrillic names and yo with ye" {
+    try needsGlibcTables();
     try checkOrder("ru_RU.UTF-8", &.{ "Apfel", "Äpfel", "apple", "Élan", "Zebra", "Еж", "Ёж", "Ель", "Яблоко" });
 }
 

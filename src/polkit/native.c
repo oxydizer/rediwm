@@ -81,7 +81,8 @@ void rediwm_polkit_secret_free(void *p) {
 
 /* The caller registers the returned child with its event-loop pidfd watcher. */
 int rediwm_polkit_spawn(const char *user, pid_t *out) {
-    const char *paths[] = {"/usr/lib/polkit-1/polkit-agent-helper-1", "/usr/libexec/polkit-agent-helper-1"};
+    const char *paths[] = {"/usr/lib/polkit-1/polkit-agent-helper-1", "/usr/libexec/polkit-agent-helper-1",
+        "/usr/local/lib/polkit-1/polkit-agent-helper-1", "/usr/local/libexec/polkit-agent-helper-1"};
     const char *path = NULL;
     for (size_t i = 0; i < sizeof paths / sizeof paths[0]; ++i) {
         struct stat st;

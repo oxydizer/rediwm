@@ -99,7 +99,7 @@ pub fn load(a: std.mem.Allocator, io: std.Io) !Snapshot {
         user.groups = try memberships.toOwnedSlice(a);
     }
 
-    const config = std.Io.Dir.cwd().readFileAlloc(io, "/etc/rediwm/dm.conf", a, .limited(64 * 1024)) catch "";
+    const config = std.Io.Dir.cwd().readFileAlloc(io, @import("install_paths").sysconfdir ++ "/rediwm/dm.conf", a, .limited(64 * 1024)) catch "";
     defer if (config.len > 0) a.free(config);
     const auto = try parseAutologin(a, config);
     const sessions = ws.loadSessions(a, io, @import("install_paths").data_dirs, @import("install_paths").search_path) catch &.{};

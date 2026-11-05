@@ -97,6 +97,7 @@ pub fn add(ctx: Context) Session {
         .use_lld = use_llvm,
     });
     accounts_helper.root_module.addImport("c", ctx.c.libc);
+    accounts_helper.root_module.addImport("install_paths", ctx.layout.options);
     accounts_helper.root_module.addImport("wayland_sessions", ws_mod);
     accounts_helper.root_module.addImport("accounts_validation", b.createModule(.{
         .root_source_file = b.path("src/accounts/validation.zig"),

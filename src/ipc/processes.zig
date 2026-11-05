@@ -7,6 +7,7 @@ const Client = @import("server.zig").Client;
 const Server = @import("../Server.zig");
 const gpa = @import("../main.zig").gpa;
 const c = @import("c");
+const proc = @import("../system_monitor/proc.zig");
 
 pub const Job = struct {
     arena: std.heap.ArenaAllocator,
@@ -34,8 +35,8 @@ pub const Job = struct {
     }
     fn run(job: *Job) void {
         defer job.unref();
-        const ticks = c.sysconf(c._SC_CLK_TCK);
-        const page = c.sysconf(c._SC_PAGESIZE);
+        const ticks = proc.ticksPerSecond();
+        const page = proc.pageSize();
         const a = job.arena.allocator();
         const first = a.alloc(?Sample, job.rows.len) catch {
             job.complete();
@@ -58,7 +59,7 @@ pub const Job = struct {
             if (prev.start != after.start) continue;
             row.running = true;
             row.start_ticks = after.start;
-            if (page > 0) row.rss_bytes = std.math.mul(u64, after.rss, @intCast(page)) catch null;
+            if (page > 0) row.rss_bytes = std.math.mul(u64, after.rss, page) catch null;
             if (ticks > 0 and elapsed > 0 and after.cpu >= prev.cpu)
                 row.cpu_percent = @as(f64, @floatFromInt(after.cpu - prev.cpu)) * 100 * 1_000_000_000 /
                     (@as(f64, @floatFromInt(ticks)) * @as(f64, @floatFromInt(elapsed)));
@@ -75,7 +76,7 @@ pub const Job = struct {
 const Sample = struct { cpu: u64, start: u64, rss: u64 };
 fn readSample(pid: i32) ?Sample {
     var buf: [4096]u8 = undefined;
-    const stat = @import("../system_monitor/proc.zig").readStat(pid, &buf) orelse return null;
+    const stat = proc.readStat(pid, &buf) orelse return null;
     return .{ .cpu = stat.cpu, .start = stat.start, .rss = stat.rss };
 }
 

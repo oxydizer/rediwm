@@ -18,7 +18,8 @@ const Request = struct {
 };
 
 const a = std.heap.c_allocator;
-const dm_conf_path = "/etc/rediwm/dm.conf";
+const conf_dir = std.fmt.comptimePrint("{s}/rediwm", .{@import("install_paths").sysconfdir});
+const dm_conf_path = conf_dir ++ "/dm.conf";
 const session_dirs = ws.standard_data_dirs;
 
 pub fn main(init: std.process.Init) u8 {
@@ -362,7 +363,7 @@ fn writeAutologin(io: std.Io, user: ?[]const u8, session: ?[]const u8) !void {
     defer a.free(old);
     const new = try dm_config.rewriteAutologin(a, old, user, session);
     defer a.free(new);
-    const temp = try std.fmt.allocPrintSentinel(a, "/etc/rediwm/.dm.conf.{d}.tmp", .{c.getpid()}, 0);
+    const temp = try std.fmt.allocPrintSentinel(a, conf_dir ++ "/.dm.conf.{d}.tmp", .{c.getpid()}, 0);
     defer a.free(temp);
     const fd = c.open(temp.ptr, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC, @as(c_uint, 0o644));
     if (fd < 0) return error.TempFileFailed;
@@ -380,9 +381,9 @@ fn writeAutologin(io: std.Io, user: ?[]const u8, session: ?[]const u8) !void {
     if (c.fsync(fd) != 0) return error.ConfigSyncFailed;
     if (c.rename(temp.ptr, dm_conf_path) != 0) return error.ConfigRenameFailed;
     ok = true;
-    const dirfd = c.open("/etc/rediwm", c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
+    const dirfd = c.open(conf_dir, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
     if (dirfd >= 0) {
         defer _ = c.close(dirfd);
-        if (c.fsync(dirfd) != 0) std.log.warn("could not sync /etc/rediwm after automatic-login update", .{});
+        if (c.fsync(dirfd) != 0) std.log.warn("could not sync " ++ conf_dir ++ " after automatic-login update", .{});
     }
 }

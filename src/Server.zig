@@ -357,11 +357,11 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
 }
 
 /// The greeter never writes a config: REDIWM_CONFIG, else the administrator's
-/// /etc/rediwm/greeter.toml, else built-in defaults.
+/// <sysconfdir>/rediwm/greeter.toml, else built-in defaults.
 pub fn loadGreeterConfig(io: std.Io, environ: std.process.Environ) !config_loader.Config {
     const allocator = @import("main.zig").gpa;
     const path = if (environ.getPosix("REDIWM_CONFIG")) |p| (if (p.len > 0) p else null) else null;
-    const system = "/etc/rediwm/greeter.toml";
+    const system = @import("install_paths").sysconfdir ++ "/rediwm/greeter.toml";
     if (path) |p| return parseGreeterFile(p, allocator, io);
     std.Io.Dir.cwd().access(io, system, .{}) catch return config_loader.default(allocator);
     return parseGreeterFile(system, allocator, io);

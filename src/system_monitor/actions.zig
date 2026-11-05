@@ -8,17 +8,17 @@ pub const Kind = enum { end, force };
 pub fn execute(identity: proc.Identity, kind: Kind) !void {
     const process = platform.child.Handle.open(identity.pid) catch |err| return signalError(err);
     defer process.close();
-    // Open the proc directory AFTER the pidfd. If PID reuse occurs between
-    // them, the old pidfd becomes readable and the final liveness gate fails.
-    const dir = try proc.openProcess(identity.pid);
-    defer _ = c.close(dir);
+    // Open the process record AFTER the handle. If PID reuse occurs between
+    // them, the old handle reports the exit and the final liveness gate fails.
+    const entry = try proc.Process.open(identity.pid);
+    defer entry.close();
     var stat_buf: [4096]u8 = undefined;
-    const stat = proc.parseStat(try proc.readAt(dir, "stat", &stat_buf)) orelse return error.IdentityUnavailable;
+    const stat = try entry.stat(&stat_buf);
     if (stat.start != identity.start) return error.ProcessExited;
     var status_buf: [16384]u8 = undefined;
-    const uids = proc.parseUids(try proc.readAt(dir, "status", &status_buf)) orelse return error.IdentityUnavailable;
+    const uids = try entry.uids(&status_buf);
     if (!proc.owned(uids, c.getuid())) return error.PermissionDenied;
-    if (try proc.protectedAt(dir, identity.pid)) return error.ProtectedProcess;
+    if (try proc.isProtected(entry, identity.pid)) return error.ProtectedProcess;
     // The handle names the task it was opened on, not whichever task
     // currently occupies /proc/PID.
     const live = process.pid() catch return error.IdentityUnavailable;

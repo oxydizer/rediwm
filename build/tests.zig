@@ -138,6 +138,7 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     printing_tests.root_module.addImport("dbus", dbus_mod);
     printing_tests.root_module.addImport("i18n", i18n_mod);
     printing_tests.root_module.addImport("platform", ctx.platform_mod);
+    printing_tests.root_module.addImport("install_paths", ctx.layout.options);
     printing_tests.root_module.addImport("wayland", wayland);
     printing_tests.root_module.linkSystemLibrary("wayland-server", .{});
     printing_tests.root_module.linkSystemLibrary("cups", .{});

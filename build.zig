@@ -21,8 +21,8 @@ const localizedData = support.localizedData;
 const addCatalogInputs = support.addCatalogInputs;
 
 pub fn build(b: *std.Build) void {
-    const layout = @import("build/install_paths.zig").Layout.init(b);
     const target = b.standardTargetOptions(.{});
+    const layout = @import("build/install_paths.zig").Layout.init(b, target.result.os.tag);
     const optimize = b.standardOptimizeOption(.{});
     // On FreeBSD the self-hosted backend's executables lack crt1's `environ`, which libc.so.7 needs
     // (a Debug rediwm-cursorgen died at startup, its ReleaseSafe build did not), so LLVM is the default there.
@@ -188,7 +188,7 @@ pub fn build(b: *std.Build) void {
     addBassDsp(b, target);
     compositor.root_module.linkSystemLibrary("pam", .{});
     compositor.root_module.linkSystemLibrary("xcb", .{});
-    compositor.root_module.addCSourceFile(.{ .file = b.path("src/session/auth.c"), .flags = &.{"-std=c11"} });
+    compositor.root_module.addCSourceFile(.{ .file = b.path("src/session/auth.c"), .flags = &.{ "-std=c11", b.fmt("-DREDIWM_SYSCONFDIR=\"{s}\"", .{layout.sysconfdir}) } });
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     addGlass(b, compositor.root_module, damage_audit);
     if (frame_trace) compositor.root_module.addCMacro("REDIWM_FRAME_TRACE", "1");

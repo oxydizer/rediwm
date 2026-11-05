@@ -39,8 +39,8 @@ pub fn main(init: std.process.Init) u8 {
     var greeter_fd: c_int = -1;
     var is_test = false;
     var confdir: ?[]const u8 = null;
-    var conf_path: []const u8 = "/etc/rediwm/dm.conf";
-    var marker_path: []const u8 = "/run/rediwm-dm/autologin-done";
+    var conf_path: []const u8 = @import("install_paths").sysconfdir ++ "/rediwm/dm.conf";
+    var marker_path: []const u8 = @import("install_paths").rundir ++ "/rediwm-dm/autologin-done";
     var marker_override = false;
     var data_dir: ?[]const u8 = null;
 

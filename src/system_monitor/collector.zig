@@ -38,14 +38,14 @@ pub fn sample(cancelled: *const std.atomic.Value(u64), generation: u64) !*Snapsh
     errdefer snapshot.deinit();
     const arena = snapshot.arena.allocator();
     var buf: [65536]u8 = undefined;
-    if (proc.readAt(c.AT_FDCWD, "/proc/stat", &buf)) |bytes| snapshot.cpu = proc.parseCpu(bytes) else |_| {}
-    if (proc.readAt(c.AT_FDCWD, "/proc/meminfo", &buf)) |bytes| snapshot.memory = proc.parseMemory(bytes) else |_| {}
-    const dir = c.opendir("/proc") orelse {
+    snapshot.cpu = proc.cpuTotals(&buf);
+    snapshot.memory = proc.memoryTotals(&buf);
+    var list = proc.List.open() orelse {
         snapshot.failed = true;
         return snapshot;
     };
-    defer _ = c.closedir(dir);
-    const page_size = c.sysconf(c._SC_PAGESIZE);
+    defer list.close();
+    const page_size = proc.pageSize();
     var rows: std.ArrayList(Process) = .empty;
     var users: std.AutoHashMapUnmanaged(u32, []const u8) = .empty;
     // Avoid NSS here: a directory service outage must never prevent stopping
@@ -60,33 +60,31 @@ pub fn sample(cancelled: *const std.atomic.Value(u64), generation: u64) !*Snapsh
             try users.put(arena, uid, try safeName(arena, user));
         }
     } else |_| {}
-    while (c.readdir(dir)) |entry| {
+    while (list.next()) |pid| {
         if (cancelled.load(.acquire) != generation) return error.Cancelled;
-        const name = std.mem.sliceTo(entry.*.d_name[0..], 0);
-        const pid = std.fmt.parseInt(i32, name, 10) catch continue;
-        if (pid <= 0) continue;
         if (rows.items.len >= 131072) {
             snapshot.truncated = true;
             break;
         }
-        const process_dir = proc.openProcess(pid) catch {
+        const process = proc.Process.open(pid) catch {
             snapshot.unavailable += 1;
             continue;
         };
-        defer _ = c.close(process_dir);
-        const stat = proc.parseStat(proc.readAt(process_dir, "stat", &buf) catch {
-            snapshot.unavailable += 1;
+        defer process.close();
+        const stat = process.stat(&buf) catch |err| {
+            // Gone or unreadable counts as unavailable; a malformed record is skipped.
+            if (err != error.IdentityUnavailable) snapshot.unavailable += 1;
             continue;
-        }) orelse continue;
+        };
         const process_name = try safeName(arena, stat.name);
-        const uids = if (proc.readAt(process_dir, "status", &buf)) |bytes| proc.parseUids(bytes) else |_| null;
+        const uids = process.uids(&buf) catch null;
         const user = if (uids) |ids| blk: {
             if (users.get(ids[0])) |value| break :blk value;
             const value = try std.fmt.allocPrint(arena, "{d}", .{ids[0]});
             try users.put(arena, ids[0], value);
             break :blk value;
         } else "Unavailable";
-        const protected = proc.protectedAt(process_dir, pid) catch true;
+        const protected = proc.isProtected(process, pid) catch true;
         try rows.append(arena, .{
             .identity = .{ .pid = pid, .start = stat.start },
             .name = process_name,
@@ -94,7 +92,7 @@ pub fn sample(cancelled: *const std.atomic.Value(u64), generation: u64) !*Snapsh
             .uids = uids,
             .state = stat.state,
             .cpu_ticks = stat.cpu,
-            .resident_bytes = if (page_size > 0) std.math.mul(u64, stat.rss, @intCast(page_size)) catch null else null,
+            .resident_bytes = if (page_size > 0) std.math.mul(u64, stat.rss, page_size) catch null else null,
             .protected = protected,
         });
     }
@@ -169,8 +167,7 @@ pub const Worker = struct {
         var last_cpu: ?proc.Cpu = null;
         var observed: u64 = std.math.maxInt(u64);
         var deadline: u64 = 0;
-        const hz_raw = c.sysconf(c._SC_CLK_TCK);
-        const hz: u64 = @intCast(@max(0, hz_raw));
+        const hz = proc.ticksPerSecond();
         while (!self.stopping.load(.acquire)) {
             const generation = self.generation.load(.acquire);
             if (generation != observed) {

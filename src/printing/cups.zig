@@ -83,7 +83,7 @@ pub fn server(a: A, io: std.Io, env: std.process.Environ) ![]const u8 {
     const mem = arena.allocator();
     var configured: []const u8 = localSocket(io);
     var encryption: []const u8 = "IfRequested";
-    const system = try readClientConfig(mem, io, "/etc/cups/client.conf");
+    const system = try readClientConfig(mem, io, @import("install_paths").sysconfdir ++ "/cups/client.conf");
     const system_config = try clientConfig(system);
     configured = system_config.server orelse configured;
     encryption = system_config.encryption orelse encryption;

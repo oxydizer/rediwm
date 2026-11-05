@@ -11,6 +11,11 @@
 #include <unistd.h>
 #include <pwd.h>
 
+/* The build passes -DREDIWM_SYSCONFDIR (build/install_paths.zig); /etc on Linux. */
+#ifndef REDIWM_SYSCONFDIR
+#define REDIWM_SYSCONFDIR "/etc"
+#endif
+
 /* No test password, environment-selected service, or privileged compositor.
  * PAM runs away from the Wayland thread. Only a completed successful auth AND
  * account check can yield success. The UID, never $USER, selects the account. */
@@ -71,8 +76,8 @@ static void *authenticate(void *data) {
     struct pam_conv conv = {converse, auth};
     pam_handle_t *pam = NULL;
     /* login is the distro-provided local-login policy. An administrator can
-     * provide a dedicated /etc/pam.d/rediwm policy instead. */
-    const char *service = access("/etc/pam.d/rediwm", F_OK) == 0 ? "rediwm" : "login";
+     * provide a dedicated <sysconfdir>/pam.d/rediwm policy instead. */
+    const char *service = access(REDIWM_SYSCONFDIR "/pam.d/rediwm", F_OK) == 0 ? "rediwm" : "login";
     int rc = pam_start(service, auth->user, &conv, &pam);
     if (rc == PAM_SUCCESS) rc = pam_authenticate(pam, PAM_DISALLOW_NULL_AUTHTOK);
     if (rc == PAM_SUCCESS) rc = pam_acct_mgmt(pam, PAM_DISALLOW_NULL_AUTHTOK);

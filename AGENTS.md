@@ -266,6 +266,12 @@ panel painting. The key rules:
   compositor imports). Parsing/persistence is `config/`, applying and reloads
   `config_runtime/`, shared raster code (`text`, `anim`, `sdf`, icons) `ui/`.
   `memory` owns the process allocator; executables own its shutdown.
+* **System paths come from `install_paths`:** `sysconfdir` (`/etc`; `/usr/local/etc`
+  targeting FreeBSD) for our own configuration and `rundir` for run state, never a
+  literal `/etc/rediwm` or `/run/...` (C gets `-DREDIWM_SYSCONFDIR`). Third-party
+  locations (`/etc/xdg`, `/etc/login.defs`) stay literal.
+* **Other processes** (list, stat, parent, uids, exe) are read through
+  `system_monitor/proc.zig`; only its Linux backend touches `/proc`.
 * **OS calls go through `src/platform/`**: use it, not `pidfd_*`, `inotify_*`,
   `SO_PEERCRED`, `prctl`, `eventfd` flags, `renameat2`, `statx` or `/proc/self/exe` (C and C++: its
   `child.h`, `self_exe.h`, `peer.h`, `process.h`). Elsewhere call libc or
