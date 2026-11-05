@@ -1,6 +1,7 @@
 //! Standalone System Monitor Wayland host. Uses the same decoration, input,
 //! cursor and released-buffer lifecycle as the other native RediWM clients.
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -756,7 +757,7 @@ const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init) !void {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
     defer @import("../files/settings.zig").deinitTheme();
     var watch = try @import("settings_watch.zig").Watch.init(init.io, init.minimal.environ);
     defer watch.deinit();

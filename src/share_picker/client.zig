@@ -3,6 +3,7 @@
 //! of the test contract in tests/screencast.py.
 const i18n = @import("i18n");
 const std = @import("std");
+const platform = @import("platform");
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zxdg = @import("wayland").client.zxdg;
@@ -547,7 +548,7 @@ const Buffer = struct {
 };
 
 pub fn run(labels: []const []const u8) !sources.Decision {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
     const display = wl.Display.connect(null) catch return error.DisplayConnectFailed;
     defer display.disconnect();
 

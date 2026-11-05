@@ -118,6 +118,11 @@ pub fn dispatch(self: *Connection, message: wire.Message) !void {
     }
 }
 
+/// Where a control message's data starts, CMSG_LEN(0): the header padded to
+/// the machine word. FreeBSD's header is 12 bytes and its data starts at 16,
+/// as on Linux, where the header is already 16.
+pub const cmsg_data = std.mem.alignForward(usize, @sizeOf(c.cmsghdr), @sizeOf(usize));
+
 pub fn closeReadFds(self: *Connection) void {
     for (self.read_fds[0..self.read_fd_count]) |fd| _ = c.close(fd);
     self.read_fd_count = 0;
@@ -129,7 +134,7 @@ pub fn readWithFds(self: *Connection) !void {
     const target = (try wire.frameLength(self.read_buf.items)) orelse 16;
     var buf: [16384]u8 = undefined;
     var iov: std.posix.iovec = .{ .base = &buf, .len = @min(buf.len, target - self.read_buf.items.len) };
-    var control: [@sizeOf(c.cmsghdr) + 16 * @sizeOf(c_int)]u8 align(@alignOf(c.cmsghdr)) = undefined;
+    var control: [cmsg_data + 16 * @sizeOf(c_int)]u8 align(@alignOf(c.cmsghdr)) = undefined;
     var msg: c.msghdr = std.mem.zeroes(c.msghdr);
     msg.iov = @ptrCast(&iov);
     msg.iovlen = 1;
@@ -147,7 +152,7 @@ pub fn readWithFds(self: *Connection) !void {
         const header: *const c.cmsghdr = @ptrCast(@alignCast(&control[offset]));
         if (header.len < @sizeOf(c.cmsghdr) or header.len > msg.controllen - offset) return error.InvalidReply;
         if (header.level == std.posix.SOL.SOCKET and header.type == c.SCM.RIGHTS) {
-            const data = control[offset + @sizeOf(c.cmsghdr) .. offset + header.len];
+            const data = control[@min(offset + cmsg_data, offset + header.len) .. offset + header.len];
             const fds: []const c_int = std.mem.bytesAsSlice(c_int, @as([]align(@alignOf(c_int)) const u8, @alignCast(data)));
             for (fds) |fd| {
                 if (self.read_fd_count == self.read_fds.len) {

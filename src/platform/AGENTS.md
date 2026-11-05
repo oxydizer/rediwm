@@ -6,9 +6,13 @@ unix socket (`peer.zig`), process attributes such as no core dumps and no new
 privileges (`process.zig`), descriptors that wake a poll loop (`wake.zig`),
 where the system's helper programs live (`tool.zig`), seccomp-BPF filters
 (`seccomp.zig`, for the PDF viewer and the theme helper), and
-`child.h`/`self_exe.h`/`peer.h`/`process.h` for C and C++. Std only, no compositor imports. Linux
-today; the FreeBSD port (`docs/plans/freebsd.md`) adds `freebsd_*.zig` parts
-without changing callers.
+`child.h`/`self_exe.h`/`peer.h`/`process.h` for C and C++, and `fs.zig`
+(rename without replacing, stat). Std only, no compositor imports. Linux and
+FreeBSD: a part is one file with a `switch (builtin.os.tag)` per function
+(`peer`, `process`, `wake`, `watch`, `exe`, `fs`), or a facade over
+`child_linux.zig` and `child_freebsd.zig`. A part not ported to another OS
+fails to compile there (`std.os.linux` would issue Linux syscall numbers on
+any target). FreeBSD notes are in `docs/plans/freebsd.md`.
 
 * **A `Handle` is not a pid.** Hold it for as long as you may signal; a bare
   `kill(pid)` is only safe while you have not reaped the child. `pid()` is
@@ -43,15 +47,24 @@ without changing callers.
   `PATH`; never write `/usr/bin/<tool>`, ports live in `/usr/local`.
 * **`peer.of` names the socket's creator,** as of `connect` or `socketpair`; it
   says nothing about who writes later (a forked child shares the descriptor).
-  `null` means refuse. `peer.h` needs `_GNU_SOURCE` (glibc hides `SO_PEERCRED`
-  without it) and, like `peer.zig`, refuses to build for another OS until the
-  port.
+  `null` means refuse. `peer.h` needs `_GNU_SOURCE` on Linux (glibc hides
+  `SO_PEERCRED` without it). FreeBSD reads `LOCAL_PEERCRED`; a kernel that
+  leaves `cr_pid` 0 gives no answer, so the peer is refused.
+* **FreeBSD handles are kqueues** (`child_freebsd.zig`): readable once the
+  process exited and never drained, so `exited()` is a `poll`. `signal` refuses
+  after the exit event instead of trusting the pid; `peer` has no counterpart
+  and `pid()` cannot tell a reused number after a reap. `alive()` is false for
+  an unreaped zombie there, true on Linux.
+* **`fs.renameNoReplace` is atomic only on Linux.** FreeBSD hard-links and
+  unlinks (a failure leaves both names) and checks-then-renames a directory.
 * Nothing here arms a timer or starts a thread; a caller retrying a failed
   `add` owns that clock.
 
 Still direct Linux calls (later steps of the plan): the supervisor's and the
 DM's event loops and process calls (`signalfd`, `epoll`, `poll`, `fork`,
-`kill`, `wait4`), `statx` and `getdents64` in Files and the IPC socket check,
-`/proc` walks, and the terminal's per-message `SCM_CREDENTIALS` check
-(`files/terminal/engine.c`). Everything else outside this directory calls libc
-or `std.posix`.
+`kill`, `wait4`; neither program is built on FreeBSD), `statx` and `getdents64`
+in the Files folder-size walk (it refuses on other systems), `/proc` walks, the
+terminal's per-message `SCM_CREDENTIALS` check (`files/terminal/engine.c`, which
+refuses to start a terminal on other systems), the DRM driver ioctl in
+`Output.zig` and the two seccomp policy tables. Everything else outside this
+directory calls libc or `std.posix`.

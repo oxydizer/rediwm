@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "../platform/process.h"
 
 /* NSS ABI boundary only: no PAM, credential validation or privileged code. */
 struct rediwm_polkit_account { uint32_t uid, gid; char user[256], name[256]; };
@@ -67,7 +68,7 @@ void *rediwm_polkit_secret_new(void) {
     size_t n = (size_t)getpagesize();
     void *p = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == MAP_FAILED) return NULL;
-    if (mlock(p, n) || madvise(p, n, MADV_DONTDUMP)) { munlock(p, n); munmap(p, n); return NULL; }
+    if (mlock(p, n) || rediwm_process_no_dump_range(p, n)) { munlock(p, n); munmap(p, n); return NULL; }
     return p;
 }
 void rediwm_polkit_clear(void *p, size_t n) { explicit_bzero(p, n); }

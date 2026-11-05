@@ -1,5 +1,6 @@
 // Standalone image client; decoration negotiation follows files/main.zig.
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -811,7 +812,7 @@ const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init, paths: []const [:0]const u8, selected: usize, return_focus: bool) !void {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
     const force_csd = init.minimal.environ.getPosix("REDIWM_IMAGES_FORCE_CSD") != null;
     defer @import("../files/settings.zig").deinitTheme();
     {

@@ -227,6 +227,16 @@ fn localeName(cc: *panel.ControlCenter, category: []const u8) []const u8 {
     return "C";
 }
 
+/// glibc's locale-name items. Other C libraries have none: the label is then
+/// the bare locale name.
+fn nlItem(comptime name: []const u8) ?c.nl_item {
+    return if (@hasDecl(c, name)) @field(c, name) else null;
+}
+
+/// Whether the locale has a currency at all: glibc names the international
+/// symbol, POSIX the local one.
+const currency_item: c.nl_item = if (@hasDecl(c, "INT_CURR_SYMBOL")) c.INT_CURR_SYMBOL else c.CRNCYSTR;
+
 fn localeLabel(a: std.mem.Allocator, name: []const u8, item: c.nl_item) ![]const u8 {
     const name_z = try a.dupeSentinel(u8, name, 0);
     const locale = c.newlocale(c.LC_ALL_MASK, name_z, null) orelse return name;
@@ -277,7 +287,7 @@ fn previews(a: std.mem.Allocator, prefs: config.loader.RegionConfig) !W {
         try info(a, tr("Date"), try a.dupe(u8, std.mem.sliceTo(&date, 0))),
         try info(a, tr("Time"), try a.dupe(u8, std.mem.trim(u8, std.mem.sliceTo(&time, 0), " "))),
         try info(a, tr("Number"), if (number_len > 0 and number_len < number.len) try a.dupe(u8, std.mem.sliceTo(&number, 0)) else tr("Unavailable")),
-        try info(a, tr("Currency"), if (std.mem.span(c.nl_langinfo_l(c.INT_CURR_SYMBOL, locale)).len == 0) tr("Not specified") else if (currency_len > 0) try a.dupe(u8, std.mem.trim(u8, std.mem.sliceTo(&currency, 0), " ")) else tr("Unavailable")),
+        try info(a, tr("Currency"), if (std.mem.span(c.nl_langinfo_l(currency_item, locale)).len == 0) tr("Not specified") else if (currency_len > 0) try a.dupe(u8, std.mem.trim(u8, std.mem.sliceTo(&currency, 0), " ")) else tr("Unavailable")),
     });
 }
 
@@ -295,12 +305,12 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const language = try card(a, &.{
         panel.sectionTitle(tr("Language")),
         text(tr("Application language"), 13, false),
-        try choice(s, cc, a, "language", 1, s.locales.items, localeName(cc, "LC_MESSAGES"), c._NL_IDENTIFICATION_LANGUAGE),
+        try choice(s, cc, a, "language", 1, s.locales.items, localeName(cc, "LC_MESSAGES"), nlItem("_NL_IDENTIFICATION_LANGUAGE")),
     });
     const region = try card(a, &.{
         panel.sectionTitle(tr("Region")),
         text(tr("Regional formats"), 13, false),
-        try choice(s, cc, a, "formats", 2, s.locales.items, localeName(cc, "LC_TIME"), c._NL_ADDRESS_COUNTRY_NAME),
+        try choice(s, cc, a, "formats", 2, s.locales.items, localeName(cc, "LC_TIME"), nlItem("_NL_ADDRESS_COUNTRY_NAME")),
         try paragraph(a, tr("Date format for the taskbar; date, number and currency formats for new apps."), paragraph_width),
     });
     var toggle = try container(a, .row, &.{

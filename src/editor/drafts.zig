@@ -9,6 +9,7 @@
 //! fight over it. Which tabs to keep and when to write is `app_drafts.zig`'s
 //! business; nothing here knows about tabs or Wayland.
 const std = @import("std");
+const platform = @import("platform");
 const c = @import("../files/c.zig").api;
 const op = @import("operation.zig");
 const Document = @import("document.zig").Document;
@@ -311,9 +312,7 @@ pub fn catchSignals(wake: c_int) void {
 }
 
 pub fn releaseSignals() void {
-    _ = c.signal(c.SIGTERM, c.SIG_DFL);
-    _ = c.signal(c.SIGHUP, c.SIG_DFL);
-    _ = c.signal(c.SIGINT, c.SIG_DFL);
+    inline for (.{ .TERM, .HUP, .INT }) |sig| platform.process.defaultSignal(sig);
     signal_wake = -1;
 }
 

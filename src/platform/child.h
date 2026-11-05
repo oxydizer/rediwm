@@ -5,6 +5,10 @@
 #ifndef REDIWM_CHILD_H
 #define REDIWM_CHILD_H
 
+#ifndef __linux__
+#error "platform/child.h is not ported to this OS yet (docs/plans/freebsd.md, phase 1)"
+#endif
+
 #include <stddef.h>
 #include <sys/syscall.h>
 #include <sys/types.h>

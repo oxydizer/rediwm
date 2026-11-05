@@ -64,7 +64,7 @@ pub const Client = struct {
         _ = std.fmt.bufPrintSentinel(@ptrCast(&address.sun_path), "{s}/files-transfers.sock", .{runtime}, 0) catch return false;
         const fd = c.socket(c.AF_UNIX, c.SOCK_SEQPACKET | c.SOCK_NONBLOCK | c.SOCK_CLOEXEC, 0);
         if (fd < 0) return false;
-        if (c.connect(fd, .{ .__sockaddr__ = @ptrCast(&address) }, @sizeOf(@TypeOf(address))) != 0) {
+        if (std.c.connect(fd, @ptrCast(&address), @sizeOf(@TypeOf(address))) != 0) {
             _ = c.close(fd);
             return false;
         }

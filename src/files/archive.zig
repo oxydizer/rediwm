@@ -303,7 +303,7 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
             }
         }
         // Keep ordinary executable bits, never set-id or archive ownership.
-        if (member == null) _ = c.fchmod(fd, @as(c_uint, @intCast(a.archive_entry_perm(entry) & 0o777)) | 0o600);
+        if (member == null) _ = c.fchmod(fd, @intCast(@as(c_uint, @intCast(a.archive_entry_perm(entry) & 0o777)) | 0o600));
         found = true;
         if (member != null) break;
     }

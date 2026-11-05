@@ -1,8 +1,9 @@
 # FreeBSD support plan
 
 Status: draft, 2026-11-05. The Linux-side preparation (P.1–P.4, P.7–P.10) is
-done, P.5 and P.6 are open, and no FreeBSD code exists yet. Decisions D1–D6
-are open.
+done, P.5 and P.6 are open. The FreeBSD parts of `platform` are written and
+the whole tree cross-compiles for `x86_64-freebsd` (Debug, ReleaseSafe, tests;
+see Validation), but nothing has run on FreeBSD yet. Decisions D1–D6 are open.
 
 Goal: run RediWM on FreeBSD: first the compositor in a seatd session on DRM,
 then the shell features and apps, and last `rediwm-dm` and packaging. Linux
@@ -16,42 +17,56 @@ harfbuzz, fontconfig, librsvg, gio, CUPS, libarchive, D-Bus, polkit,
 xdg-desktop-portal, pulseaudio and OpenPAM are in ports. Zig 0.17 targets
 `x86_64-freebsd`. Night light rides wlroots' DRM gamma and should port as is.
 
-Our own code had no OS abstraction. Its Linux half now lives in
-`src/platform/` (child handles, file watching, own path, peer credentials,
-process attributes, wake descriptors, seccomp filters, tool lookup, with C
-headers beside it), and only 22 files still use `std.os.linux` outside it.
-What is left is the FreeBSD half of each part, the Linux-only interfaces
-below, sandboxes, services and the login manager.
+Our own code had no OS abstraction. It now lives in `src/platform/` (child
+handles, file watching, own path, peer credentials, process attributes, wake
+descriptors, rename and stat, seccomp filters, tool lookup, with C headers
+beside it), with a FreeBSD half for each part except seccomp. About 15 files
+still use `std.os.linux` outside it (the supervisor, the DM, the Files
+folder-size walk, `Output.zig`, the seccomp policy tables). What is left is
+the Linux-only interfaces below, sandboxes, services and the login manager.
 
 A first outside build (FreeBSD 15.1-RELEASE amd64, AMD Navi 44 on drm-kmod,
 Zig 0.17.1, wlroots 0.20 from ports `x11-toolkits/wlroots020`) built 72 of 114
-steps. Every failure was a known item or a missing package and is fixed on the
+steps. Every failure was a known item or a missing package and was fixed on the
 Linux side (P.8–P.10; the transfers helper is off by default on FreeBSD).
+The second build of the same tester (14 failed of 106 Debug steps) stopped at
+the parts that P.4 and P.9 had deliberately made refuse to build off Linux,
+plus what that exposed: `c.SIG_IGN` does not translate, glibc's socket-address
+union, 16-bit `mode_t`, `landlock.h`, `pty.h`, `MADV_DONTDUMP`, `pam_start_confdir`,
+`_NL_*` locale items, `CLOCK_BOOTTIME`, netlink uevents, `renameat2` and
+`statx`, xattr calls, and the D-Bus control-message data offset (FreeBSD's
+`cmsghdr` is 12 bytes, its data starts at 16). All are fixed except what the
+next paragraph lists.
 On 15.1 `sys/inotify.h`, `sys/timerfd.h`, `sys/eventfd.h` and `cr_pid` in
-`sys/ucred.h` exist (header checks only). Not known yet: what the Zig code
-behind `c` needs now that it translates, `memfd_create`, the transfers
-helper's C++ flags under clang and libc++, and whether a DRM session or the
-headless GLES2 path works.
+`sys/ucred.h` exist (header checks only). Not known yet: `memfd_create`, the
+transfers helper's C++ flags under clang and libc++, whether `cr_pid` is filled
+for a unix-socket peer, whether the kqueue child handles behave in the Wayland
+loop (libepoll-shim), and whether a DRM session or the headless GLES2 path
+works. The second tester log also showed a Debug `rediwm-cursorgen` dying with
+`Undefined symbol "environ"` while its ReleaseSafe build ran, so the build now
+defaults to LLVM on FreeBSD; confirm it. Two tests failed at run time: the
+D-Bus fd test (fixed, the offset above) and the images decoder test (probably
+a gdk-pixbuf port without the PNM loader; the test now skips there).
 
 ### Interfaces still to port
 
 | Linux interface | Where | FreeBSD |
 | --- | --- | --- |
-| pidfd (`platform.child` `Handle`, `Set`; `child.h`) | `session/child`, supervisor, dm, IPC, `Toplevel`, pickers, System Monitor, terminal engine | kqueue `EVFILT_PROC`/`NOTE_EXIT`, its fd joining the wl loop like a pidfd. Signals by pid, guarded by the unreaped zombie, which holds only for our own children: handles on other processes (`Toplevel` client pids, IPC peers, System Monitor) need another identity check (start time from `kern.proc`). `Handle.pid()` (fdinfo) has no counterpart. |
+| pidfd (`platform.child` `Handle`, `Set`; `child.h`). **Zig side done** (`child_freebsd.zig`); `child.h` is Linux only and the terminal that uses it refuses to start | `session/child`, supervisor, dm, IPC, `Toplevel`, pickers, System Monitor, terminal engine | kqueue `EVFILT_PROC`/`NOTE_EXIT`, its fd joining the wl loop like a pidfd. Signals by pid, guarded by the unreaped zombie, which holds only for our own children: handles on other processes (`Toplevel` client pids, IPC peers, System Monitor) need another identity check (start time from `kern.proc`). `Handle.pid()` (fdinfo) has no counterpart. |
 | `signalfd`, `epoll` | supervisor, dm, `child.Set` | kqueue `EVFILT_SIGNAL`, kqueue. |
-| `inotify` (`platform.watch`) | 7 users | Native on 15; on 14.x kqueue `EVFILT_VNODE` has no names, so diff the directory. |
-| `eventfd` (`platform.wake`) | 9 sites | Native (13+); the flag values differ. |
+| `inotify` (`platform.watch`) | 7 users | Native on 15 (**done**, libc); on 14.x kqueue `EVFILT_VNODE` has no names, so diff the directory. |
+| `eventfd` (`platform.wake`) | 9 sites | Native (13+); the flag values differ (**done**). |
 | `memfd_create`, `timerfd` | few | `sys/timerfd.h` on 15.1; confirm `memfd_create` in phase 0. |
-| `prctl` (`platform.process`, `process.h`) | dm worker, lock, PAM worker, PDF, theme helper, supervisor subreaper | `procctl` (`PROC_PDEATHSIG_CTL`, `PROC_NO_NEW_PRIVS_CTL`, `PROC_TRACE_CTL`, `PROC_REAP_ACQUIRE`), `pthread_set_name_np`. |
-| `SO_PEERCRED` (`platform.peer`, `peer.h`) | IPC (uid and pid, for sandbox allowances), `session_restart`, `files/torrents`, torrent helper, `bash.c` | `getsockopt(LOCAL_PEERCRED)` into `struct xucred`. Check at run time that `cr_pid` is filled for a unix-socket peer. `files/terminal/engine.c` authenticates each shell message with `SCM_CREDENTIALS`; FreeBSD's `SCM_CREDS` is sender-attached, so `bash.c` would send it too: decide when the port reaches the terminal. |
-| `/proc/self/exe` (`platform.exe`, `self_exe.h`) | Zig sites, `bass.c`, torrent helper, dm re-exec | `KERN_PROC_PATHNAME` / `std.process.executablePath`; `fexecve` on a descriptor opened at startup for the re-exec. |
-| `statx`, `getdents64`, `dirent64` | Files folder sizes, IPC socket check, `session_restart` | `fstatat`, `getdirentries` or `std.Io.Dir`, behind a `platform` function. |
+| `prctl` (`platform.process`, `process.h`) | dm worker, lock, PAM worker, PDF, theme helper, supervisor subreaper | `procctl` (`PROC_PDEATHSIG_CTL`, `PROC_NO_NEW_PRIVS_CTL`, `PROC_TRACE_CTL`, `PROC_REAP_ACQUIRE`), `pthread_set_name_np` (**done**). |
+| `SO_PEERCRED` (`platform.peer`, `peer.h`) | IPC (uid and pid, for sandbox allowances), `session_restart`, `files/torrents`, torrent helper, `bash.c` | `getsockopt(LOCAL_PEERCRED)` into `struct xucred` (**done**; a peer with `cr_pid` 0 is refused). Check at run time that `cr_pid` is filled for a unix-socket peer. `files/terminal/engine.c` authenticates each shell message with `SCM_CREDENTIALS`; FreeBSD's `SCM_CREDS` is sender-attached, so `bash.c` would send it too: decide when the port reaches the terminal. |
+| `/proc/self/exe` (`platform.exe`, `self_exe.h`) | Zig sites, `bass.c`, torrent helper, dm re-exec | `KERN_PROC_PATHNAME` (**done**; the re-exec uses the path, not a descriptor kept from startup). |
+| `statx`, `getdents64`, `dirent64` | Files folder sizes, IPC socket check, `session_restart` | `fstatat` behind `platform.fs.stat` (**done** for the IPC socket check and `session_restart`). The folder-size walk still reads with `getdents64`: it refuses on FreeBSD (`getdirentries` or `readdir`, to do). |
 | `/proc/self/fd`, `fdinfo` | spawn paths; fd-as-path opens in `files/properties`, `pdf/print.c`, `pdf/sandbox.c`, `files/terminal/child.c` | `closefrom` for spawn paths; the path form needs `fdescfs` or `*at` calls on the fd, per site. |
 | `/proc/<pid>/…`, `/proc/stat`, `/proc/meminfo` | system monitor, `ipc/processes.zig`, `placeholder_match` (parent chain), `session_restart` (exe), `detectSandbox` (`root/.flatpak-info`; no Flatpak on FreeBSD, expect "not sandboxed"), editor memory probe, supervisor teardown tree | libprocstat / `kern.proc` sysctls behind a collector backend (P.6); `KERN_PROC_PATHNAME` takes a pid. procfs is optional on FreeBSD. |
-| `pty.h` | terminal engine | `libutil.h` (`openpty`/`forkpty`), link `util`. |
-| `renameat2` | ~9 sites: Files ops, Editor, Images, screenshots, desktop watcher, theme helper, torrent helper | `link` + `unlink` for no-replace, behind one `platform` function. |
-| `DRM_IOCTL_VERSION` | `Output.zig` | libdrm `drmGetVersion`. |
-| netlink `KOBJECT_UEVENT` | printer hotplug (`printing/client.zig`) | devd's seqpacket socket, or rescans only. |
+| `pty.h`, `SCM_CREDENTIALS`, `/proc` walks | terminal engine | `libutil.h` is included and `util` linked, but `ft_start` refuses on FreeBSD: porting the shell channel's per-message check and the session teardown walk (`kern.proc` by session) needs a FreeBSD to test on. |
+| `renameat2` | ~9 sites: Files ops, Editor, Images, screenshots, desktop watcher, theme helper, torrent helper | `link` + `unlink` for no-replace, behind `platform.fs.renameNoReplace` (**done** for the Zig sites; the theme helper's `RENAME_EXCHANGE` and the transfers helper stay Linux only). |
+| `DRM_IOCTL_VERSION` | `Output.zig` | libdrm `drmGetVersion`; skipped on FreeBSD for now (only a hypervisor-GPU workaround). |
+| netlink `KOBJECT_UEVENT` | printer hotplug (`printing/client.zig`) | devd's seqpacket socket, or rescans only (rescans only, **done**). |
 | `gettid`; `fork`, `kill`, `wait4`, `poll` loops | `thumbs`; supervisor and dm | A `platform` wrapper; the loops are replaced in phases 2 and 4. |
 
 ### Sandboxes
@@ -64,7 +79,9 @@ have no FreeBSD counterpart short of a rewrite on **Capsicum** (`cap_enter`,
 already preload before the sandbox closes (`compose.preload`), but capability
 mode forbids every path-based `open`, so fontconfig and late lookups need an
 audit. Until then both helpers refuse to run on FreeBSD: sandboxing fails
-closed.
+closed (`rediwm_pdf_sandbox_enter` and the theme helper's `parser_sandbox`
+return `ENOTSUP` there; the PDF viewer opens nothing and theme packs cannot be
+imported).
 
 ### System services
 
@@ -181,11 +198,11 @@ GLES2 path works there.
 
 ### 1. Compositor builds and runs
 
-Split `src/platform/` into Linux and FreeBSD parts (`exe.path` can use
-`std.process.executablePath`, which already reads `kern.proc.pathname`); build
-conditions for `util`, `pam`, and for `platform/seccomp.zig`, which is
-Linux-only code. Hide NM, BlueZ, PPD, UDisks, app scopes; PDF and theme helper
-refuse. List the FreeBSD packages the build needs (the outside build stopped
+`src/platform/` has its FreeBSD parts and the tree cross-compiles; what
+is left is to run it. `rediwm-session` and `rediwm-dm` are not built on
+FreeBSD (`-Dlogin-session`, default off there) until phases 2 and 4. Hide NM,
+BlueZ, PPD, UDisks, app scopes; PDF and theme helper refuse (done); the
+Files folder-size column stays empty and its terminal refuses. List the FreeBSD packages the build needs (the outside build stopped
 on a missing `libtorrent-rasterbar`). Goal: `rediwm` and the apps start in a
 seatd session and the headless integration suites run.
 
@@ -242,3 +259,11 @@ whatever the target, so hide it, and give Zig private caches:
 On a root that still includes `linux/netlink.h` it fails with the outside
 tester's error. It covers `libc.h` only: the roots that need cairo, libinput or
 wlroots headers need FreeBSD's own, and Zig's headers may be older than 15.1.
+
+The whole build can be cross-checked the same way, to catch the next layer of
+errors before the tester does (Zig reports errors only in code it reaches, so
+fixes expose more): `tools/freebsd-cross/check.sh` (see its README). A pass
+means every unit compiled and the build reached the link; it cannot show
+header-version differences, library versions or anything that runs. The only
+errors it leaves are `undefined symbol`s from its empty libraries, so watch
+that list for names libc itself would own (`xattr` was one).

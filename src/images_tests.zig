@@ -62,7 +62,19 @@ test "streaming decoder enforces dimensions before full raster allocation" {
     try std.testing.expect(fd >= 0);
     defer _ = c.close(fd);
     defer _ = c.unlink(&path);
-    // PPM exposes dimensions in its header, before any pixel data arrives.
+    // PPM exposes dimensions in its header, before any pixel data arrives. Some
+    // gdk-pixbuf builds ship without the PNM loader (FreeBSD's port): a 1x1
+    // picture that cannot load there means the test has nothing to measure.
+    {
+        var probe = "/tmp/rediwm-images-probe-XXXXXX".*;
+        const probe_fd = c.mkstemp(&probe);
+        try std.testing.expect(probe_fd >= 0);
+        defer _ = c.close(probe_fd);
+        defer _ = c.unlink(&probe);
+        const tiny = "P6\n1 1\n255\n\x00\x00\x00";
+        try std.testing.expectEqual(@as(isize, tiny.len), c.write(probe_fd, tiny.ptr, tiny.len));
+        _ = loader.load(std.mem.sliceTo(&probe, 0), false) catch return error.SkipZigTest;
+    }
     const header = "P6\n32769 1\n255\n";
     try std.testing.expectEqual(@as(isize, header.len), c.write(fd, header.ptr, header.len));
     const raster = @as([32769 * 3]u8, @splat(0));

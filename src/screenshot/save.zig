@@ -1,6 +1,7 @@
 //! Publish only complete PNGs: file browsers may inspect a path at IN_CREATE.
 //! All I/O runs on the capture worker, never on the compositor event loop.
 const std = @import("std");
+const platform = @import("platform");
 const c = @import("c");
 
 pub fn writePngFile(path: []const u8, bytes: []const u8) !void {
@@ -33,5 +34,5 @@ pub fn writePngFile(path: []const u8, bytes: []const u8) !void {
     if (close_result != 0) return error.CloseFailed;
     // NOREPLACE retains the IPC's no-overwrite guarantee, including symlinks
     // and another writer winning the race after queueRequest checked the path.
-    if (c.renameat2(c.AT_FDCWD, temporary.ptr, c.AT_FDCWD, destination.ptr, c.RENAME_NOREPLACE) != 0) return error.PublishFailed;
+    platform.fs.renameNoReplace(temporary.ptr, destination.ptr) catch return error.PublishFailed;
 }

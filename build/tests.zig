@@ -270,7 +270,7 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     dm_tests.root_module.linkSystemLibrary("pam", .{});
     dm_tests.root_module.addCSourceFile(.{ .file = b.path("src/dm/pam.c"), .flags = &.{"-std=c11"} });
     const run_dm_tests = b.addRunArtifact(dm_tests);
-    test_step.dependOn(&run_dm_tests.step);
+    if (ctx.login_session) test_step.dependOn(&run_dm_tests.step);
     const dm_step = b.step("test-dm", "Run unit tests for rediwm-dm");
     dm_step.dependOn(&run_dm_tests.step);
 
@@ -283,7 +283,7 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     session_tests.root_module.addImport("wayland", wayland);
     session_tests.root_module.linkSystemLibrary("wayland-server", .{});
     const run_session_tests = b.addRunArtifact(session_tests);
-    test_step.dependOn(&run_session_tests.step);
+    if (ctx.login_session) test_step.dependOn(&run_session_tests.step);
     const rediwm_session_step = b.step("test-rediwm-session", "Test the login supervisor's publication, crash-restart loop and bus calls");
     rediwm_session_step.dependOn(&run_session_tests.step);
     const rediwm_session_integration = b.addSystemCommand(&.{"python3"});

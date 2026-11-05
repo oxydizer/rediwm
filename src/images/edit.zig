@@ -1,5 +1,6 @@
 //! Pixel edits and background file operations. Originals are never overwritten.
 const std = @import("std");
+const platform = @import("platform");
 const c = @import("../files/c.zig").api;
 const Image = @import("loader.zig").Image;
 const Stamp = @import("cache.zig").Stamp;
@@ -48,10 +49,7 @@ fn save(im: Image, path: [:0]const u8) !void {
     if (c.cairo_surface_status(surface) != c.CAIRO_STATUS_SUCCESS or c.cairo_surface_write_to_png_stream(surface, writePng, &fd) != c.CAIRO_STATUS_SUCCESS) return error.WriteFailed;
     if (c.fsync(fd) != 0) return error.WriteFailed;
     // Publish only a complete file, and never replace an existing destination.
-    if (c.renameat2(c.AT_FDCWD, temp, c.AT_FDCWD, path, c.RENAME_NOREPLACE) != 0) {
-        if (std.posix.errno(@as(c_int, -1)) == .EXIST) return error.PathAlreadyExists;
-        return error.PublishFailed;
-    }
+    platform.fs.renameNoReplace(temp, path) catch |err| return if (err == error.PathAlreadyExists) error.PathAlreadyExists else error.PublishFailed;
 }
 
 pub const Operation = struct {

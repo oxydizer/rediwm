@@ -24,7 +24,9 @@ pub fn build(b: *std.Build) void {
     const layout = @import("build/install_paths.zig").Layout.init(b);
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const use_llvm = b.option(bool, "llvm", "Use LLVM and LLD (default for optimized builds)") orelse (optimize != .debug);
+    // On FreeBSD the self-hosted backend's executables lack crt1's `environ`, which libc.so.7 needs
+    // (a Debug rediwm-cursorgen died at startup, its ReleaseSafe build did not), so LLVM is the default there.
+    const use_llvm = b.option(bool, "llvm", "Use LLVM and LLD (default for optimized builds and on FreeBSD)") orelse (optimize != .debug or target.result.os.tag == .freebsd);
     // Debug aid (TESTING.md): redraw every frame whole and log what the damage missed.
     const damage_audit = b.option(bool, "damage-audit", "Compare every frame with a full repaint and log the difference (slow)") orelse false;
     // Debug aid: log the timing of every frame (event, render, commit, presentation).
@@ -220,6 +222,9 @@ pub fn build(b: *std.Build) void {
         // unused for now. Off on FreeBSD, where its libtorrent, glib and peer-credential
         // code is not ported (docs/plans/freebsd.md).
         .transfers = b.option(bool, "transfers", "Build and install the torrent transfers helper (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
+        // rediwm-session and rediwm-dm still run on signalfd, epoll, pidfd and Linux VT ioctls; the FreeBSD
+        // port starts the compositor from the console (docs/plans/freebsd.md, D2 and phase 2).
+        .login_session = b.option(bool, "login-session", "Build and install rediwm-session and rediwm-dm (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
         .i18n_tool = i18n_tool,
         .wayland = wayland,
         .xkbcommon = xkbcommon,

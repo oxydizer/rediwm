@@ -1,4 +1,5 @@
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -200,7 +201,7 @@ pub const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]const u8, chooser: ?@import("chooser.zig").Options, torrent_source: ?[]const u8, transfers: bool) !void {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
 
     const home_dir = init.minimal.environ.getPosix("HOME") orelse "/";
     // Test-only escape hatch: skip decoration negotiation to exercise the

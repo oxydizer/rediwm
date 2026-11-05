@@ -1,10 +1,100 @@
 //! File-change notification for directories. A `Watcher` is one pollable fd
 //! that turns readable while events are queued; hand `fd` to the Wayland
-//! loop or a `poll` and call `drain` when it fires. Linux backs it with
-//! inotify; events carry the entry name and neutral flags, so a backend
-//! without names can synthesize them by diffing the directory.
+//! loop or a `poll` and call `drain` when it fires. Linux and FreeBSD (15 and
+//! later, which have inotify in libc) back it with inotify; events carry the
+//! entry name and neutral flags, so a backend without names can synthesize
+//! them by diffing the directory.
 const std = @import("std");
+const builtin = @import("builtin");
 const linux = std.os.linux;
+
+comptime {
+    if (builtin.os.tag != .linux and builtin.os.tag != .freebsd)
+        @compileError("platform.watch is not ported to this OS yet (docs/plans/freebsd.md, phase 1)");
+}
+
+/// inotify's event mask and record, identical on both systems
+/// (`sys/inotify.h`).
+const IN = struct {
+    const MODIFY = 0x00000002;
+    const ATTRIB = 0x00000004;
+    const CLOSE_WRITE = 0x00000008;
+    const MOVED_FROM = 0x00000040;
+    const MOVED_TO = 0x00000080;
+    const CREATE = 0x00000100;
+    const DELETE = 0x00000200;
+    const DELETE_SELF = 0x00000400;
+    const MOVE_SELF = 0x00000800;
+    const UNMOUNT = 0x00002000;
+    const Q_OVERFLOW = 0x00004000;
+    const IGNORED = 0x00008000;
+    const ISDIR = 0x40000000;
+};
+
+const InotifyEvent = extern struct {
+    wd: i32,
+    mask: u32,
+    cookie: u32,
+    len: u32,
+};
+
+/// The system calls: raw syscalls on Linux, libc on FreeBSD, whose errno the
+/// raw Linux calls would not set.
+const sys = switch (builtin.os.tag) {
+    .linux => struct {
+        fn init() ?i32 {
+            const rc = linux.inotify_init1(linux.IN.NONBLOCK | linux.IN.CLOEXEC);
+            return if (linux.errno(rc) == .SUCCESS) @intCast(rc) else null;
+        }
+        fn close(fd: i32) void {
+            _ = linux.close(fd);
+        }
+        fn add(fd: i32, path: [*:0]const u8, m: u32) ?i32 {
+            const rc = linux.inotify_add_watch(fd, path, m);
+            return if (linux.errno(rc) == .SUCCESS) @intCast(rc) else null;
+        }
+        fn remove(fd: i32, watch: i32) void {
+            _ = linux.inotify_rm_watch(fd, watch);
+        }
+        /// Bytes read, or why not.
+        fn read(fd: i32, buf: []u8) union(enum) { bytes: usize, interrupted, empty, broken } {
+            const rc = linux.read(fd, buf.ptr, buf.len);
+            return switch (linux.errno(rc)) {
+                .SUCCESS => .{ .bytes = rc },
+                .INTR => .interrupted,
+                .AGAIN => .empty,
+                else => .broken,
+            };
+        }
+    },
+    .freebsd => struct {
+        // IN_NONBLOCK is O_NONBLOCK and IN_CLOEXEC is O_CLOEXEC (sys/inotify.h).
+        fn init() ?i32 {
+            const fd = std.c.inotify_init1(0x00000004 | 0x00100000);
+            return if (fd < 0) null else fd;
+        }
+        fn close(fd: i32) void {
+            _ = std.c.close(fd);
+        }
+        fn add(fd: i32, path: [*:0]const u8, m: u32) ?i32 {
+            const wd = std.c.inotify_add_watch(fd, path, m);
+            return if (wd < 0) null else wd;
+        }
+        fn remove(fd: i32, watch: i32) void {
+            _ = std.c.inotify_rm_watch(fd, watch);
+        }
+        fn read(fd: i32, buf: []u8) union(enum) { bytes: usize, interrupted, empty, broken } {
+            const rc = std.c.read(fd, buf.ptr, buf.len);
+            if (rc >= 0) return .{ .bytes = @intCast(rc) };
+            return switch (std.posix.errno(rc)) {
+                .INTR => .interrupted,
+                .AGAIN => .empty,
+                else => .broken,
+            };
+        }
+    },
+    else => unreachable,
+};
 
 /// One watched directory. Negative means none.
 pub const Watch = i32;
@@ -66,13 +156,11 @@ pub const Watcher = struct {
     fd: i32 = -1,
 
     pub fn init() error{Unavailable}!Watcher {
-        const rc = linux.inotify_init1(linux.IN.NONBLOCK | linux.IN.CLOEXEC);
-        if (linux.errno(rc) != .SUCCESS) return error.Unavailable;
-        return .{ .fd = @intCast(rc) };
+        return .{ .fd = sys.init() orelse return error.Unavailable };
     }
 
     pub fn deinit(self: *Watcher) void {
-        if (self.fd >= 0) _ = linux.close(self.fd);
+        if (self.fd >= 0) sys.close(self.fd);
         self.fd = -1;
     }
 
@@ -82,9 +170,7 @@ pub const Watcher = struct {
     pub fn add(self: Watcher, path: []const u8, interest: Flags) ?Watch {
         var buf: [std.posix.PATH_MAX]u8 = undefined;
         const z = std.fmt.bufPrintSentinel(&buf, "{s}", .{path}, 0) catch return null;
-        const rc = linux.inotify_add_watch(self.fd, z.ptr, mask(interest));
-        if (linux.errno(rc) != .SUCCESS) return null;
-        return @intCast(rc);
+        return sys.add(self.fd, z.ptr, mask(interest));
     }
 
     /// `add`, falling back to the nearest existing parent directory, for
@@ -99,7 +185,7 @@ pub const Watcher = struct {
     }
 
     pub fn remove(self: Watcher, watch: Watch) void {
-        _ = linux.inotify_rm_watch(self.fd, watch);
+        sys.remove(self.fd, watch);
     }
 
     /// Calls `onEvent(ctx, event)` for every queued event. `Broken` means the
@@ -111,22 +197,21 @@ pub const Watcher = struct {
     /// `drain`, reading at most `max_batches` buffers (8 KiB, a few hundred
     /// events each); the fd stays readable if more remain.
     pub fn drainBounded(self: Watcher, ctx: anytype, comptime onEvent: fn (@TypeOf(ctx), Event) void, max_batches: usize) error{Broken}!void {
-        var buf: [8192]u8 align(@alignOf(linux.inotify_event)) = undefined;
+        var buf: [8192]u8 align(@alignOf(InotifyEvent)) = undefined;
         var batches: usize = 0;
         while (batches < max_batches) : (batches += 1) {
-            const rc = linux.read(self.fd, &buf, buf.len);
-            switch (linux.errno(rc)) {
-                .SUCCESS => {},
-                .INTR => continue,
-                .AGAIN => return,
-                else => return error.Broken,
-            }
+            const rc = switch (sys.read(self.fd, &buf)) {
+                .bytes => |n| n,
+                .interrupted => continue,
+                .empty => return,
+                .broken => return error.Broken,
+            };
             if (rc == 0) return error.Broken;
             var off: usize = 0;
             while (off < rc) {
-                const body = off + @sizeOf(linux.inotify_event);
+                const body = off + @sizeOf(InotifyEvent);
                 if (body > rc) return error.Broken;
-                const raw: *const linux.inotify_event = @ptrCast(@alignCast(&buf[off]));
+                const raw: *const InotifyEvent = @ptrCast(@alignCast(&buf[off]));
                 if (raw.len > rc - body) return error.Broken;
                 onEvent(ctx, .{
                     .watch = raw.wd,
@@ -151,30 +236,30 @@ pub const Watcher = struct {
 };
 
 fn mask(interest: Flags) u32 {
-    var m: u32 = linux.IN.DELETE_SELF | linux.IN.MOVE_SELF;
-    if (interest.created) m |= linux.IN.CREATE;
-    if (interest.deleted) m |= linux.IN.DELETE;
-    if (interest.modified) m |= linux.IN.MODIFY;
-    if (interest.moved_from) m |= linux.IN.MOVED_FROM;
-    if (interest.moved_to) m |= linux.IN.MOVED_TO;
-    if (interest.written) m |= linux.IN.CLOSE_WRITE;
-    if (interest.attrib) m |= linux.IN.ATTRIB;
+    var m: u32 = IN.DELETE_SELF | IN.MOVE_SELF;
+    if (interest.created) m |= IN.CREATE;
+    if (interest.deleted) m |= IN.DELETE;
+    if (interest.modified) m |= IN.MODIFY;
+    if (interest.moved_from) m |= IN.MOVED_FROM;
+    if (interest.moved_to) m |= IN.MOVED_TO;
+    if (interest.written) m |= IN.CLOSE_WRITE;
+    if (interest.attrib) m |= IN.ATTRIB;
     return m;
 }
 
 fn flags(m: u32) Flags {
     return .{
-        .created = m & linux.IN.CREATE != 0,
-        .deleted = m & linux.IN.DELETE != 0,
-        .modified = m & linux.IN.MODIFY != 0,
-        .moved_from = m & linux.IN.MOVED_FROM != 0,
-        .moved_to = m & linux.IN.MOVED_TO != 0,
-        .written = m & linux.IN.CLOSE_WRITE != 0,
-        .attrib = m & linux.IN.ATTRIB != 0,
-        .self_gone = m & (linux.IN.DELETE_SELF | linux.IN.MOVE_SELF | linux.IN.UNMOUNT) != 0,
-        .dropped = m & linux.IN.IGNORED != 0,
-        .overflow = m & linux.IN.Q_OVERFLOW != 0,
-        .is_dir = m & linux.IN.ISDIR != 0,
+        .created = m & IN.CREATE != 0,
+        .deleted = m & IN.DELETE != 0,
+        .modified = m & IN.MODIFY != 0,
+        .moved_from = m & IN.MOVED_FROM != 0,
+        .moved_to = m & IN.MOVED_TO != 0,
+        .written = m & IN.CLOSE_WRITE != 0,
+        .attrib = m & IN.ATTRIB != 0,
+        .self_gone = m & (IN.DELETE_SELF | IN.MOVE_SELF | IN.UNMOUNT) != 0,
+        .dropped = m & IN.IGNORED != 0,
+        .overflow = m & IN.Q_OVERFLOW != 0,
+        .is_dir = m & IN.ISDIR != 0,
     };
 }
 

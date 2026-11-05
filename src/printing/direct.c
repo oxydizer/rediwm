@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <sys/eventfd.h>
+#include "../platform/process.h"
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -406,7 +407,7 @@ struct rediwm_cups *rediwm_cups_create(void) {
     w->password = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (w->password == MAP_FAILED) { free(w); return NULL; }
     if (mlock(w->password, 4096)) { munmap(w->password, 4096); free(w); return NULL; }
-    madvise(w->password, 4096, MADV_DONTDUMP);
+    rediwm_process_no_dump_range(w->password, 4096);
     w->fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (w->fd < 0) goto fail;
     if (pthread_mutex_init(&w->mutex, NULL)) goto fail_fd;

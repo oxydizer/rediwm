@@ -1,5 +1,6 @@
 //! Wayland client lifecycle, buffer presentation, decoration negotiation and input loop for rediwm-pdf.
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -220,7 +221,7 @@ pub const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init.Minimal) !void {
-    _ = c.api.signal(c.api.SIGPIPE, c.api.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
     const args = init.args.vector;
 
     if (args.len >= 2 and (std.mem.eql(u8, std.mem.span(args[1]), "--help") or std.mem.eql(u8, std.mem.span(args[1]), "-h"))) {

@@ -3,6 +3,7 @@ const wl = @import("wayland").server.wl;
 const c = std.posix.system;
 const wire = @import("wire.zig");
 const connection = @import("connection.zig");
+const io = @import("connection_io.zig");
 const Connection = connection.Connection;
 
 pub const TestResult = struct {
@@ -445,10 +446,10 @@ test "received FDs are frame scoped, cloexec, validated and closed after dispatc
         var bytes = reply;
         if (scenario == 2) bytes[40] = 1;
         var iov: std.posix.iovec_const = .{ .base = &bytes, .len = bytes.len };
-        var control: [std.mem.alignForward(usize, @sizeOf(c.cmsghdr) + @sizeOf(c_int), @sizeOf(usize))]u8 align(@alignOf(c.cmsghdr)) = @splat(0);
+        var control: [std.mem.alignForward(usize, io.cmsg_data + @sizeOf(c_int), @sizeOf(usize))]u8 align(@alignOf(c.cmsghdr)) = @splat(0);
         const header: *c.cmsghdr = @ptrCast(&control);
-        header.* = .{ .len = @sizeOf(c.cmsghdr) + @sizeOf(c_int), .level = std.posix.SOL.SOCKET, .type = c.SCM.RIGHTS };
-        @as(*c_int, @ptrCast(@alignCast(&control[@sizeOf(c.cmsghdr)]))).* = sockets[1];
+        header.* = .{ .len = io.cmsg_data + @sizeOf(c_int), .level = std.posix.SOL.SOCKET, .type = c.SCM.RIGHTS };
+        @as(*c_int, @ptrCast(@alignCast(&control[io.cmsg_data]))).* = sockets[1];
         var message: c.msghdr_const = std.mem.zeroes(c.msghdr_const);
         message.iov = @ptrCast(&iov);
         message.iovlen = 1;

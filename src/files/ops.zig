@@ -1,4 +1,5 @@
 const std = @import("std");
+const platform = @import("platform");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const archive = @import("archive.zig");
@@ -102,13 +103,11 @@ pub fn renameItem(allocator: Allocator, old_path: []const u8, new_name: []const 
     const old_z = try allocator.dupeSentinel(u8, old_path, 0);
     defer allocator.free(old_z);
 
-    if (c.renameat2(c.AT_FDCWD, old_z, c.AT_FDCWD, new_path, 1) != 0) {
-        return switch (std.c._errno().*) {
-            c.EEXIST => error.PathAlreadyExists,
-            c.EACCES => error.AccessDenied,
-            else => error.RenameFailed,
-        };
-    }
+    platform.fs.renameNoReplace(old_z, new_path) catch |err| return switch (err) {
+        error.PathAlreadyExists => error.PathAlreadyExists,
+        error.AccessDenied => error.AccessDenied,
+        else => error.RenameFailed,
+    };
 }
 
 /// rm removes directory trees without following symlinks; -- protects option-like names.
@@ -292,7 +291,7 @@ pub fn copyRecursive(allocator: Allocator, src: []const u8, dst: []const u8, can
         const dst_z = try allocator.dupeSentinel(u8, dst, 0);
         defer allocator.free(dst_z);
 
-        if (c.mkdir(dst_z, @as(c_uint, @intCast(st.st_mode & 0o7777))) != 0) return error.CreateDirectoryFailed;
+        if (c.mkdir(dst_z, @intCast(st.st_mode & 0o7777)) != 0) return error.CreateDirectoryFailed;
         // Only remove a destination created by this operation on failure.
         errdefer deleteRecursive(allocator, dst) catch {};
 
@@ -377,18 +376,11 @@ pub fn moveItem(allocator: Allocator, src: []const u8, dst: []const u8, cancel: 
     const dst_z = try allocator.dupeSentinel(u8, dst, 0);
     defer allocator.free(dst_z);
 
-    if (c.renameat2(c.AT_FDCWD, src_z, c.AT_FDCWD, dst_z, 1) == 0) {
-        return;
-    }
-
-    const err = std.c._errno().*;
-    if (err == c.EEXIST) {
-        return error.PathAlreadyExists;
-    } else if (err == c.EXDEV) {
-        return crossDeviceMove(allocator, src, dst, cancel);
-    } else {
-        return error.RenameFailed;
-    }
+    platform.fs.renameNoReplace(src_z, dst_z) catch |err| switch (err) {
+        error.PathAlreadyExists => return error.PathAlreadyExists,
+        error.CrossDevice => return crossDeviceMove(allocator, src, dst, cancel),
+        else => return error.RenameFailed,
+    };
 }
 
 pub const JobRunner = struct {

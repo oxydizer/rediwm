@@ -8,6 +8,7 @@
 //! ARGB32. The cache is keyed by path and checked against the mtime and size
 //! the folder listing reported, so an edited file misses and is re-requested.
 const std = @import("std");
+const platform = @import("platform");
 const c = @import("c.zig").api;
 const decode = @import("thumb_decode.zig");
 
@@ -22,7 +23,6 @@ const max_results: usize = 32;
 const worker_count = 2;
 const worker_nice = 5;
 
-extern fn setpriority(which: c_int, who: c_uint, prio: c_int) c_int;
 
 pub const Want = struct {
     path: []const u8,
@@ -274,7 +274,7 @@ pub const Service = struct {
 
     fn workerLoop(self: *Service, index: usize) void {
         // Thumbnails are never urgent: yield to the UI and other programs.
-        _ = setpriority(0, @intCast(std.os.linux.gettid()), worker_nice);
+        platform.process.lowerThreadPriority(worker_nice);
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
         while (!self.stopping) {

@@ -645,7 +645,7 @@ pub const Worker = struct {
                 defer a.free(p);
                 var stat: c.struct_stat = undefined;
                 if (c.stat(p, &stat) != 0 or stat.st_mode & c.S_IFMT != c.S_IFREG or stat.st_uid != c.getuid()) return error.NotYourFile;
-                if (c.chmod(p, (stat.st_mode & 0o7777) | c.S_IXUSR) != 0) return error.PermissionChangeFailed;
+                if (c.chmod(p, @intCast((stat.st_mode & 0o7777) | c.S_IXUSR)) != 0) return error.PermissionChangeFailed;
             },
             .file => {
                 const p = try a.dupeSentinel(u8, cmd.path, 0);
@@ -659,7 +659,7 @@ pub const Worker = struct {
                 defer a.free(from);
                 const to = try a.dupeSentinel(u8, cmd.value, 0);
                 defer a.free(to);
-                if (c.renameat2(c.AT_FDCWD, from, c.AT_FDCWD, to, 1) != 0) return error.RenameFailed;
+                platform.fs.renameNoReplace(from.ptr, to.ptr) catch return error.RenameFailed;
             },
             .link => {
                 const from = try a.dupeSentinel(u8, cmd.path, 0);

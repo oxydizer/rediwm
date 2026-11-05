@@ -30,11 +30,11 @@ pub const Instance = struct {
         const fd = c.socket(c.AF_UNIX, c.SOCK_DGRAM | c.SOCK_CLOEXEC | c.SOCK_NONBLOCK, 0);
         if (fd < 0) return error.SocketFailed;
         errdefer _ = c.close(fd);
-        if (c.connect(fd, .{ .__sockaddr__ = @ptrCast(&address) }, @sizeOf(c.struct_sockaddr_un)) == 0) return .{ .fd = fd, .path = path, .primary = false };
+        if (std.c.connect(fd, @ptrCast(&address), @sizeOf(c.struct_sockaddr_un)) == 0) return .{ .fd = fd, .path = path, .primary = false };
         const err = std.posix.errno(@as(c_int, -1));
         if (err != .NOENT and err != .CONNREFUSED) return error.ConnectFailed;
         _ = c.unlink(path);
-        if (c.bind(fd, .{ .__sockaddr__ = @ptrCast(&address) }, @sizeOf(c.struct_sockaddr_un)) != 0) return error.BindFailed;
+        if (std.c.bind(fd, @ptrCast(&address), @sizeOf(c.struct_sockaddr_un)) != 0) return error.BindFailed;
         _ = c.chmod(path, 0o600);
         return .{ .fd = fd, .path = path, .primary = true };
     }

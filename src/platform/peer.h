@@ -1,13 +1,12 @@
 /* Who is on the other end of a connected unix socket, for the C and C++ code
  * that cannot import platform/peer.zig; the same contract as peer.of(). Linux
  * reads SO_PEERCRED, which glibc declares only under _GNU_SOURCE (the C++
- * compilers define it themselves). */
+ * compilers define it themselves). FreeBSD reads LOCAL_PEERCRED. */
 #ifndef REDIWM_PEER_H
 #define REDIWM_PEER_H
 
-#ifndef __linux__
-#error "platform/peer.h is not ported to this OS yet (docs/plans/freebsd.md, P.9)"
-#endif
+#if defined(__linux__)
+
 #ifndef _GNU_SOURCE
 #error "platform/peer.h needs _GNU_SOURCE defined before any system header"
 #endif
@@ -27,5 +26,31 @@ static inline int rediwm_peer_credentials(int fd, uid_t *uid, pid_t *pid) {
     if (pid) *pid = cred.pid;
     return 0;
 }
+
+#elif defined(__FreeBSD__)
+
+#include <sys/param.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/ucred.h>
+#include <sys/un.h>
+
+/* As on Linux. The pid comes from `cr_pid`, which a kernel that does not fill
+ * it leaves 0: a caller that asks for the pid then refuses the peer. */
+static inline int rediwm_peer_credentials(int fd, uid_t *uid, pid_t *pid) {
+    struct xucred cred;
+    socklen_t size = sizeof cred;
+    if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERCRED, &cred, &size) != 0 || size != sizeof cred ||
+        cred.cr_version != XUCRED_VERSION)
+        return -1;
+    if (pid && cred.cr_pid <= 0) return -1;
+    if (uid) *uid = cred.cr_uid;
+    if (pid) *pid = cred.cr_pid;
+    return 0;
+}
+
+#else
+#error "platform/peer.h is not ported to this OS yet (docs/plans/freebsd.md, P.9)"
+#endif
 
 #endif

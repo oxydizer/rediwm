@@ -8,7 +8,11 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#ifdef __linux__
 #include <pty.h>
+#else
+#include <libutil.h>
+#endif
 #include <pwd.h>
 #include <signal.h>
 #include <spawn.h>
@@ -21,7 +25,15 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#ifdef __linux__
 #include "../../platform/child.h"
+#else
+/* Not ported (docs/plans/freebsd.md): ft_start refuses to run on this system,
+ * so there is never a terminal process to open, signal or close. */
+static inline int rediwm_child_open(pid_t pid) { (void)pid; return -1; }
+static inline int rediwm_child_signal(int handle, int sig) { (void)handle; (void)sig; return -1; }
+static inline void rediwm_child_close(int handle) { (void)handle; }
+#endif
 
 #if VTERM_VERSION_MAJOR != 0 || VTERM_VERSION_MINOR != 3 || VTERM_VERSION_PATCH < 3
 #error Files requires libvterm 0.3.3 (0.3 ABI)
@@ -195,6 +207,14 @@ static bool valid_shell(const char *path) {
 }
 int ft_start(FT *t, const char *helper, const char *plugin, const char *directory, bool scope) {
     if (t->pid) return -1;
+#ifndef __linux__
+    /* The shell channel authenticates each message with SCM_CREDENTIALS and
+     * teardown walks /proc; neither exists here yet, and a terminal without
+     * them would be one the Files process cannot vouch for. */
+    (void)helper; (void)plugin; (void)directory; (void)scope;
+    t->error="The terminal is not available on this system yet";
+    return -1;
+#endif
     const char *shell=getenv("SHELL");
     char account_buf[16384]; struct passwd account, *found=NULL;
     if (!valid_shell(shell)) {
@@ -206,8 +226,10 @@ int ft_start(FT *t, const char *helper, const char *plugin, const char *director
     if (openpty(&master,&slave,NULL,NULL,&size)) goto failed;
     if (fcntl(master,F_SETFD,FD_CLOEXEC) || fcntl(slave,F_SETFD,FD_CLOEXEC) ||
         fcntl(master,F_SETFL,O_NONBLOCK) || socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC|SOCK_NONBLOCK,0,pair)) goto failed;
+#ifdef __linux__
     int one=1;
     if (setsockopt(pair[0],SOL_SOCKET,SO_PASSCRED,&one,sizeof one)) goto failed;
+#endif
     posix_spawn_file_actions_t actions;
     if (posix_spawn_file_actions_init(&actions)) goto failed;
     int rc=0;
@@ -259,6 +281,7 @@ static void flush_output(FT *t) {
     if (written>0) { t->out_start+=(size_t)written; t->out_len-=(size_t)written; if (!t->out_len) t->out_start=0; }
     else if (written<0 && errno!=EINTR && errno!=EAGAIN) t->out_len=0;
 }
+#ifdef __linux__
 static void integration(FT *t) {
     for (int i=0;i<32 && t->channel>=0;i++) {
         struct ft_status status;
@@ -283,6 +306,9 @@ static void integration(FT *t) {
     if (t->request_queued && t->channel>=0 &&
         send(t->channel,&t->request,sizeof t->request,MSG_DONTWAIT|MSG_NOSIGNAL)==sizeof t->request) t->request_queued=false;
 }
+#else
+static void integration(FT *t) { (void)t; } /* no channel is ever opened (see ft_start) */
+#endif
 /* A still-owned (possibly zombie) session leader reserves the session id, so
  * these signals cannot hit a reused pid. Detached setsid jobs are independent.
  * Runs only during session teardown, never on an idle or output path. */

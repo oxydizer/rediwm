@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c.zig").api;
 const linux = std.os.linux;
 const Allocator = std.mem.Allocator;
@@ -211,6 +212,9 @@ pub const Pool = struct {
     }
 
     pub fn startJob(self: *Pool, path: []const u8) !*Job {
+        // The walk reads directories with statx and getdents64, which only Linux has; the folder
+        // size column stays empty elsewhere until the scan is ported (docs/plans/freebsd.md).
+        if (comptime builtin.os.tag != .linux) return error.Unsupported;
         var path_buf: [4096]u8 = undefined;
         const path_z = try std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0);
 

@@ -9,7 +9,8 @@ pub const Session = struct {
     ws_mod: *std.Build.Module,
 };
 
-/// rediwm-session, rediwm-dm and the accounts helper.
+/// rediwm-session, rediwm-dm and the accounts helper. The first two are always
+/// described (tests and other steps name them) but installed only with `login_session`.
 pub fn add(ctx: Context) Session {
     const b = ctx.b;
     const target = ctx.target;
@@ -31,7 +32,7 @@ pub fn add(ctx: Context) Session {
     session_supervisor.root_module.addImport("wayland", wayland);
     session_supervisor.root_module.linkSystemLibrary("wayland-server", .{});
     if (wlroots_prefix != null) session_supervisor.root_module.addRPathSpecial("$ORIGIN/../lib/rediwm");
-    b.installArtifact(session_supervisor);
+    if (ctx.login_session) b.installArtifact(session_supervisor);
 
     const restart = b.addExecutable(.{
         .name = "rediwm-restart",
@@ -81,7 +82,7 @@ pub fn add(ctx: Context) Session {
     dm.root_module.addImport("wayland_sessions", ws_mod);
     dm.root_module.linkSystemLibrary("pam", .{});
     dm.root_module.addCSourceFile(.{ .file = b.path("src/dm/pam.c"), .flags = &.{"-std=c11"} });
-    b.installArtifact(dm);
+    if (ctx.login_session) b.installArtifact(dm);
     b.step("rediwm-dm", "Build the display manager").dependOn(&dm.step);
 
     const accounts_helper = b.addExecutable(.{

@@ -1,5 +1,6 @@
 // Standalone text editor; decoration negotiation follows files/main.zig.
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -178,7 +179,7 @@ pub const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@import("instance.zig").Instance, initial_token: []const u8) !void {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
     const force_csd = init.minimal.environ.getPosix("REDIWM_EDITOR_FORCE_CSD") != null;
     @import("../files/settings.zig").loadTheme(init.gpa, init.io, init.minimal.environ);
     defer @import("../files/settings.zig").deinitTheme();
@@ -336,7 +337,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
             const ms: c_int = @intCast(@min(wait, 60_000));
             timeout = if (timeout < 0) ms else @min(timeout, ms);
         }
-        const result = c.poll(&fds, fd_count, self.app.caret.timeout(poll_now, self.clipboard.timeout(timeout)));
+        const result = c.poll(&fds, @intCast(fd_count), self.app.caret.timeout(poll_now, self.clipboard.timeout(timeout)));
         if (result > 0 and (fds[0].revents & c.POLLIN != 0)) {
             if (display.readEvents() != .SUCCESS) return error.DisplayFailed;
         } else {

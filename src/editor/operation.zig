@@ -13,31 +13,6 @@ const memory_check_floor: usize = 64 * 1024 * 1024;
 /// A binary or non-UTF-8 file is refused after this many bytes, before the rest is read.
 const sniff_len: usize = 64 * 1024;
 const bom_bytes = "\xef\xbb\xbf";
-extern fn flistxattr(c_int, ?[*]u8, usize) isize;
-extern fn fgetxattr(c_int, [*:0]const u8, ?[*]u8, usize) isize;
-extern fn fsetxattr(c_int, [*:0]const u8, [*]const u8, usize, c_int) c_int;
-fn copyAttributes(source: c_int, destination: c_int) !void {
-    const len = flistxattr(source, null, 0);
-    if (len < 0) {
-        if (std.posix.errno(@as(c_int, -1)) == .OPNOTSUPP) return;
-        return error.MetadataFailed;
-    }
-    if (len == 0) return;
-    if (len > 1024 * 1024) return error.MetadataFailed;
-    const names = try a.alloc(u8, @intCast(len));
-    defer a.free(names);
-    if (flistxattr(source, names.ptr, names.len) != len) return error.FileChanged;
-    var offset: usize = 0;
-    while (offset < names.len) {
-        const name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(names.ptr + offset)), 0);
-        const size = fgetxattr(source, name, null, 0);
-        if (size < 0 or size > 1024 * 1024) return error.MetadataFailed;
-        const value = try a.alloc(u8, @intCast(size));
-        defer a.free(value);
-        if (fgetxattr(source, name, value.ptr, value.len) != size or fsetxattr(destination, name, value.ptr, value.len, 0) != 0) return error.MetadataFailed;
-        offset += name.len + 1;
-    }
-}
 pub const Stamp = struct {
     dev: u64,
     ino: u64,
@@ -251,7 +226,7 @@ pub const Operation = struct {
             defer _ = c.close(source);
             var source_stat: c.struct_stat = undefined;
             if (c.fstat(source, &source_stat) != 0 or !before.?.eql(Stamp.of(source_stat))) return error.FileChanged;
-            try copyAttributes(source, fd);
+            try platform.fs.copyAttributes(a, source, fd);
         }
         if (self.bom) try writeAll(fd, bom_bytes);
         try writeAll(fd, self.bytes);
@@ -260,7 +235,7 @@ pub const Operation = struct {
             var current: c.struct_stat = undefined;
             if (c.stat(self.path, &current) != 0 or !stamp.eql(Stamp.of(current))) return error.FileChanged;
             if (c.rename(temp, self.path) != 0) return error.WriteFailed;
-        } else if (c.renameat2(c.AT_FDCWD, temp, c.AT_FDCWD, self.path, c.RENAME_NOREPLACE) != 0) return error.FileChanged;
+        } else platform.fs.renameNoReplace(temp, self.path) catch return error.FileChanged;
         if (c.stat(self.path, &st) != 0) return error.WriteFailed;
         self.stamp = Stamp.of(st);
         const parent_z = try a.dupeSentinel(u8, parent, 0);

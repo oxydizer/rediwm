@@ -100,8 +100,12 @@ pub const State = struct {
         const group = if (c.getgrgid(st.st_gid)) |gr| try a.dupe(u8, std.mem.span(gr.*.gr_name)) else try std.fmt.allocPrint(a, "{d}", .{st.st_gid});
         errdefer a.free(group);
         var result: State = .{ .allocator = a, .path = owned, .fd = fd, .stat = st, .description = description, .owner = owner, .group = group };
-        var sx: c.struct_statx = undefined;
-        if (c.statx(fd, "", c.AT_EMPTY_PATH | c.AT_SYMLINK_NOFOLLOW, c.STATX_BTIME, &sx) == 0 and sx.stx_mask & c.STATX_BTIME != 0) result.created = sx.stx_btime.tv_sec;
+        if (comptime @hasDecl(c, "struct_statx")) {
+            var sx: c.struct_statx = undefined;
+            if (c.statx(fd, "", c.AT_EMPTY_PATH | c.AT_SYMLINK_NOFOLLOW, c.STATX_BTIME, &sx) == 0 and sx.stx_mask & c.STATX_BTIME != 0) result.created = sx.stx_btime.tv_sec;
+        } else if (comptime @hasField(c.struct_stat, "st_birthtim")) {
+            result.created = st.st_birthtim.tv_sec; // FreeBSD's stat carries the creation time
+        }
         if (preview) |im| result.preview = .{ .pixels = try a.dupe(u32, im.pixels), .size = im.size };
         return result;
     }
@@ -252,7 +256,7 @@ pub const State = struct {
 };
 
 fn permissionBit(index: usize) c.mode_t {
-    return @as(c.mode_t, 1) << @as(u5, @intCast(8 - (index % 3) * 3 - index / 3));
+    return @as(c.mode_t, 1) << @as(std.math.Log2Int(c.mode_t), @intCast(8 - (index % 3) * 3 - index / 3));
 }
 
 fn date(timestamp: ?i64, buf: []u8) []const u8 {

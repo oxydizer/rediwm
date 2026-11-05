@@ -65,7 +65,7 @@ pub const Helper = struct {
         self.fd = c.socket(c.AF_UNIX, c.SOCK_STREAM | c.SOCK_NONBLOCK | c.SOCK_CLOEXEC, 0);
         if (self.fd < 0) return error.SocketFailed;
         var spawned = false;
-        if (c.connect(self.fd, .{ .__sockaddr__ = @ptrCast(&addr) }, @sizeOf(@TypeOf(addr))) < 0) {
+        if (std.c.connect(self.fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr))) < 0) {
             switch (std.posix.errno(@as(c_int, -1))) {
                 .INPROGRESS => self.connecting = true,
                 .NOENT, .CONNREFUSED => {

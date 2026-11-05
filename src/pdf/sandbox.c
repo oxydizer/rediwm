@@ -5,7 +5,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <iconv.h>
+#ifdef __linux__
 #include <linux/landlock.h>
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,11 +16,6 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-
-// Keep the trusted password codec resident. Poppler GLib converts supplied
-// passwords to Latin-1; lazy gconv loading after Landlock would fail. This
-// handle processes no PDF bytes and is kept until process exit.
-static iconv_t password_codec = (iconv_t)-1;
 
 int rediwm_pdf_open_document(const char *path) {
     // NONBLOCK prevents an accidental FIFO/device argument from hanging us
@@ -39,6 +36,12 @@ int rediwm_pdf_open_document(const char *path) {
     }
     return fd;
 }
+
+#ifdef __linux__
+// Keep the trusted password codec resident. Poppler GLib converts supplied
+// passwords to Latin-1; lazy gconv loading after Landlock would fail. This
+// handle processes no PDF bytes and is kept until process exit.
+static iconv_t password_codec = (iconv_t)-1;
 
 static int single_threaded(void) {
     DIR *dir = opendir("/proc/self/task");
@@ -161,3 +164,13 @@ int rediwm_pdf_sandbox_enter(int document, int display, int print) {
     if (filesystem_policy() < 0) return -1;
     return rediwm_pdf_syscall_policy(display);
 }
+#else
+// No sandbox exists here yet (a Capsicum one is planned, docs/plans/freebsd.md,
+// P.5), and there is deliberately no unsandboxed fallback: the viewer refuses
+// to open any document.
+int rediwm_pdf_sandbox_enter(int document, int display, int print) {
+    (void)document; (void)display; (void)print;
+    errno = ENOTSUP;
+    return -1;
+}
+#endif

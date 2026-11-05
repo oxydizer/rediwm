@@ -11,6 +11,7 @@ pub const Context = struct {
     optimize: std.lang.Optimize,
     use_llvm: bool,
     transfers: bool,
+    login_session: bool,
     wlroots_prefix: ?[]const u8,
     i18n_tool: *std.Build.Step.Compile,
     wayland: *std.Build.Module,

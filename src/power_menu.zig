@@ -1,5 +1,6 @@
 // Centered session-action cards with system uptime.
 const std = @import("std");
+const platform = @import("platform");
 const i18n = @import("i18n");
 const glass = @import("glass.zig");
 const wl = @import("wayland").server.wl;
@@ -296,7 +297,7 @@ pub const PowerMenu = struct {
 
     fn updateUptime(menu: *PowerMenu) bool {
         var ts: std.posix.timespec = undefined;
-        if (std.posix.errno(std.posix.system.clock_gettime(std.posix.CLOCK.BOOTTIME, &ts)) != .SUCCESS) return false;
+        if (std.posix.errno(std.posix.system.clock_gettime(platform.system.boot_clock, &ts)) != .SUCCESS) return false;
         const minutes = @divTrunc(@max(0, ts.sec), 60);
         if (menu.uptime_minutes == minutes) return false;
         menu.uptime_minutes = minutes;

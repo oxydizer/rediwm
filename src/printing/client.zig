@@ -441,24 +441,27 @@ fn drain(fd: c_int) void {
     _ = c.read(fd, &count, @sizeOf(u64));
 }
 fn ueventSocket() c_int {
+    // Printer hotplug arrives as kernel uevents on Linux; elsewhere only rescans find new printers.
+    if (comptime !@hasDecl(c, "NETLINK_KOBJECT_UEVENT")) return -1;
     const fd = c.socket(c.AF_NETLINK, c.SOCK_DGRAM | c.SOCK_CLOEXEC | c.SOCK_NONBLOCK, c.NETLINK_KOBJECT_UEVENT);
     if (fd < 0) return -1;
     var addr = std.mem.zeroes(c.struct_sockaddr_nl);
     addr.nl_family = c.AF_NETLINK;
     addr.nl_groups = 1;
-    if (c.bind(fd, .{ .__sockaddr__ = @ptrCast(&addr) }, @sizeOf(c.struct_sockaddr_nl)) != 0) {
+    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(c.struct_sockaddr_nl)) != 0) {
         _ = c.close(fd);
         return -1;
     }
     return fd;
 }
 fn drainUevents(fd: c_int) bool {
+    if (comptime !@hasDecl(c, "NETLINK_KOBJECT_UEVENT")) return false;
     var changed = false;
     for (0..256) |_| {
         var bytes: [8192]u8 = undefined;
         var sender: c.struct_sockaddr_nl = undefined;
-        var len: c.socklen_t = @sizeOf(c.struct_sockaddr_nl);
-        const n = c.recvfrom(fd, &bytes, bytes.len, 0, .{ .__sockaddr__ = @ptrCast(&sender) }, &len);
+        var len: std.c.socklen_t = @sizeOf(c.struct_sockaddr_nl);
+        const n = std.c.recvfrom(fd, &bytes, bytes.len, 0, @ptrCast(&sender), &len);
         if (n <= 0) break;
         if (sender.nl_pid != 0) continue;
         var words = std.mem.splitScalar(u8, bytes[0..@intCast(n)], 0);

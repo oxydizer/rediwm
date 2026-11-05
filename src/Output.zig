@@ -224,6 +224,8 @@ fn virtualGpuDriver(wlr_output: *wlr.Output) ?[]const u8 {
         desc_len: usize = 0,
         desc: ?[*]u8 = null,
     };
+    // The request number below is Linux's ioctl encoding; the virtual-GPU drivers listed are Linux's too.
+    if (comptime @import("builtin").os.tag != .linux) return null;
     const DRM_IOCTL_VERSION = std.os.linux.IOCTL.IOWR('d', 0x00, Version);
     var name: [32]u8 = undefined;
     var version: Version = .{ .name_len = name.len, .name = &name };

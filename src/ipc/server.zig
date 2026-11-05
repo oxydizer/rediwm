@@ -643,14 +643,11 @@ fn resolveSocketPath(allocator: std.mem.Allocator, wayland_display: []const u8) 
 /// as `$XDG_RUNTIME_DIR` does; the socket mode alone does not stop another
 /// user from replacing it between sessions.
 fn requirePrivateDir(dir: []const u8) IpcError!void {
-    const linux = std.os.linux;
     var buf: [108:0]u8 = undefined;
     if (dir.len >= buf.len) return error.SocketPathTooLong;
     @memcpy(buf[0..dir.len], dir);
     buf[dir.len] = 0;
-    var info: linux.Statx = undefined;
-    const rc = linux.statx(linux.AT.FDCWD, &buf, 0, .{ .UID = true, .MODE = true }, &info);
-    if (linux.errno(rc) != .SUCCESS) return error.NoRuntimeDir;
+    const info = platform.fs.stat(&buf) orelse return error.NoRuntimeDir;
     if (info.uid != c.getuid() or info.mode & 0o077 != 0) {
         log.err("IPC socket directory {s} is not private to this uid", .{dir});
         return error.RuntimeDirNotPrivate;

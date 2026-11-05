@@ -142,7 +142,7 @@ pub fn formatPermissions(mode: c.mode_t) [10]u8 {
         else => '?',
     };
     for (0..9) |i| {
-        const bit = @as(c.mode_t, 0o400) >> @as(u5, @intCast(i));
+        const bit = @as(c.mode_t, 0o400) >> @as(std.math.Log2Int(c.mode_t), @intCast(i));
         if (mode & bit != 0) result[i + 1] = "rwx"[i % 3];
     }
     if (mode & c.S_ISUID != 0) result[3] = if (mode & c.S_IXUSR != 0) 's' else 'S';

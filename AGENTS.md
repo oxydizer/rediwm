@@ -267,7 +267,7 @@ panel painting. The key rules:
   `config_runtime/`, shared raster code (`text`, `anim`, `sdf`, icons) `ui/`.
   `memory` owns the process allocator; executables own its shutdown.
 * **OS calls go through `src/platform/`**: use it, not `pidfd_*`, `inotify_*`,
-  `SO_PEERCRED`, `prctl`, `eventfd` flags or `/proc/self/exe` (C and C++: its
+  `SO_PEERCRED`, `prctl`, `eventfd` flags, `renameat2`, `statx` or `/proc/self/exe` (C and C++: its
   `child.h`, `self_exe.h`, `peer.h`, `process.h`). Elsewhere call libc or
   `std.posix`, not `std.os.linux` (its `AGENTS.md` lists the exceptions).
 * Zig 0.17 has no `@cImport`: the build translates header roots in `src/c/`
@@ -277,9 +277,16 @@ panel painting. The key rules:
   artifacts link their libraries. A header that exists on one OS only goes
   under `#ifdef __linux__` (or `__FreeBSD__`) at the end of `libc.h`. The roots undefine `_FORTIFY_SOURCE`
   (fortified wrappers break translate-c in ReleaseSafe) and define
-  `_GNU_SOURCE`, so socket calls take `.{ .__sockaddr__ = @ptrCast(&addr) }`.
-  Never translate glib/gobject/gio/librsvg; hand-declare the ABI. No runtime
-  `parseColor()` in comptime defaults.
+  `_GNU_SOURCE`. glibc's socket calls take a transparent union, FreeBSD's a
+  plain pointer: call `std.c.connect(fd, @ptrCast(&addr), len)` (also `bind`,
+  `getsockname`, `accept`, `recvfrom`), never `c.connect` with
+  `.__sockaddr__`. Other differences that break FreeBSD's translation:
+  `c.SIG_IGN`/`SIG_DFL` (use `platform.process.ignoreBrokenPipes` and
+  `defaultSignal`), `mode_t` is 16 bits (`@intCast` into `chmod`, `mkdir`,
+  `fchmod`; shift with `std.math.Log2Int(c.mode_t)`), and glibc-only names
+  (`_NL_*`, `statx`, `renameat2`, `CLOCK.BOOTTIME`) need `@hasDecl` or a
+  `platform` function. Never translate glib/gobject/gio/librsvg;
+  hand-declare the ABI. No runtime `parseColor()` in comptime defaults.
 * `std.os.linux.*` return `-errno` in `usize` (`std.os.linux.errno`);
   `std.posix.system.*` are libc (`std.posix.errno`).
 * **wlroots bindings** live in `src/wlr/`, backed by one translation of

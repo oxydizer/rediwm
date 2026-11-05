@@ -9,7 +9,6 @@
 //! socket is an argument, never `REDIWM_SOCKET`: a shell started from the live
 //! session inherits that variable, and a stray run would restart the desktop.
 const std = @import("std");
-const linux = std.os.linux;
 const c = std.posix.system;
 const platform = @import("platform");
 
@@ -229,13 +228,11 @@ fn waitReady(arena: std.mem.Allocator, session: Session, installed: []const u8) 
     return error.NotReady;
 }
 
-const FileId = struct { dev_major: u32, dev_minor: u32, ino: u64 };
+const FileId = struct { dev: u64, ino: u64 };
 
 fn fileId(path: [*:0]const u8) ?FileId {
-    var stx: linux.Statx = undefined;
-    const rc = linux.statx(linux.AT.FDCWD, path, 0, .{ .INO = true }, &stx);
-    if (linux.errno(rc) != .SUCCESS) return null;
-    return .{ .dev_major = stx.dev_major, .dev_minor = stx.dev_minor, .ino = stx.ino };
+    const info = platform.fs.stat(path) orelse return null;
+    return .{ .dev = info.dev, .ino = info.ino };
 }
 
 fn nowMs() i64 {

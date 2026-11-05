@@ -9,7 +9,9 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#ifdef __linux__
 #include <linux/landlock.h>
+#endif
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -27,6 +29,14 @@
 #define MAX_FILE (40u * 1024u * 1024u)
 #define MAX_TOTAL (128u * 1024u * 1024u)
 static char problem[4096];
+/* Swaps two paths atomically (RENAME_EXCHANGE). Linux only: nothing else has it. */
+static int exchange_paths(const char *a, const char *b) {
+#ifdef SYS_renameat2
+    return (int)syscall(SYS_renameat2,AT_FDCWD,a,AT_FDCWD,b,2);
+#else
+    (void)a;(void)b;errno=ENOTSUP;return -1;
+#endif
+}
 static unsigned entries;
 static uint64_t total;
 extern int rediwm_theme_safe_path(const char *);
@@ -308,7 +318,7 @@ int rediwm_theme_publish(const char *staging,const char *destination) {
     struct stat st;
     if(lstat(destination,&st)==0) {
         if(!S_ISDIR(st.st_mode))return fail(destination,"existing destination is not a directory");
-        if(syscall(SYS_renameat2,AT_FDCWD,staging,AT_FDCWD,destination,2)<0)return fail(destination,"atomic replacement failed");
+        if(exchange_paths(staging,destination)<0)return fail(destination,"atomic replacement failed");
     } else if(errno!=ENOENT || rename(staging,destination)<0)return fail(destination,"atomic install failed");
     return 0;
 }
@@ -346,6 +356,13 @@ int rediwm_theme_copy(const char *src,const char *dst) {total=0;return copy_file
 // Image and SVG parsers run in a disposable child with no writable filesystem
 // or networking. The parent performs publication only after this child exits.
 static int parser_sandbox(const char *root, const char *source, int writable) {
+#ifndef __linux__
+    /* No sandbox exists here yet (a Capsicum one is planned, docs/plans/freebsd.md,
+     * P.5), and parsing untrusted packs unsandboxed is not an option. */
+    (void)root; (void)source; (void)writable;
+    errno = ENOTSUP;
+    return -1;
+#endif
     struct rlimit memory={512u*1024u*1024u,512u*1024u*1024u};
     if(setrlimit(RLIMIT_AS,&memory)<0)return -1;
     if(rediwm_process_no_new_privileges()<0)return -1;
@@ -410,7 +427,7 @@ int rediwm_theme_stage_isolated(const char *source,const char *dest) {
 int rediwm_theme_rollback(const char *staging,const char *destination) {
     struct stat st;
     if(lstat(staging,&st)==0) {
-        if(syscall(SYS_renameat2,AT_FDCWD,staging,AT_FDCWD,destination,2)<0)return fail(destination,"install rollback failed");
+        if(exchange_paths(staging,destination)<0)return fail(destination,"install rollback failed");
     } else if(errno!=ENOENT || rename(destination,staging)<0)return fail(destination,"install rollback failed");
     return 0;
 }
