@@ -1,5 +1,5 @@
 const std = @import("std");
-const linux = std.os.linux;
+const c = @import("c");
 const battery = @import("battery.zig");
 const State = battery.State;
 const Snapshot = battery.Snapshot;
@@ -27,18 +27,18 @@ test "only system power_supply uevents trigger a read" {
 }
 
 test "draining reports a queued power_supply event once and stops at EAGAIN" {
-    var fds: [2]i32 = undefined;
-    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.socketpair(linux.AF.UNIX, linux.SOCK.DGRAM | linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC, 0, &fds)));
+    var fds: [2]c_int = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.socketpair(c.AF_UNIX, c.SOCK_DGRAM | c.SOCK_NONBLOCK | c.SOCK_CLOEXEC, 0, &fds));
     defer for (fds) |fd| {
-        _ = std.posix.system.close(fd);
+        _ = c.close(fd);
     };
     const usb = "add@/devices/usb1\x00SUBSYSTEM=usb\x00";
     const ac = "change@/devices/AC0/power_supply/AC0\x00SUBSYSTEM=power_supply\x00";
     try std.testing.expect(!drainUevents(fds[0]));
-    _ = linux.sendto(fds[1], usb, usb.len, 0, null, 0);
+    _ = c.send(fds[1], usb, usb.len, 0);
     try std.testing.expect(!drainUevents(fds[0]));
-    _ = linux.sendto(fds[1], ac, ac.len, 0, null, 0);
-    _ = linux.sendto(fds[1], usb, usb.len, 0, null, 0);
+    _ = c.send(fds[1], ac, ac.len, 0);
+    _ = c.send(fds[1], usb, usb.len, 0);
     try std.testing.expect(drainUevents(fds[0]));
     try std.testing.expect(!drainUevents(fds[0]));
 }

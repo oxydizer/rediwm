@@ -430,7 +430,8 @@ test "helper preserves a backpressured response until cancellation erases it" {
     try std.testing.expectEqual(0, c.setsockopt(helper.fd, c.SOL_SOCKET, c.SO_SNDBUF, &size, @sizeOf(c_int)));
     const padding = @as([4096]u8, @splat(0));
     var full = false;
-    for (0..16) |_| {
+    // Unix stream buffers differ by OS (FreeBSD's default is at least 64 KiB).
+    for (0..4096) |_| {
         const n = c.send(helper.fd, &padding, padding.len, c.MSG_NOSIGNAL);
         if (n < 0) {
             try std.testing.expectEqual(std.posix.E.AGAIN, std.posix.errno(n));

@@ -1,9 +1,16 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const platform = @import("platform");
 const proc = @import("system_monitor/proc.zig");
 const model = @import("system_monitor/model.zig");
 const collector = @import("system_monitor/collector.zig");
 const actions = @import("system_monitor/actions.zig");
+
+/// These read /proc, which FreeBSD does not mount by default; the collector
+/// port is plan P.6.
+fn needsProcfs() !void {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+}
 
 test "monitor stat parsing preserves tricky names and rejects partial data" {
     const stat = proc.parseStat("123 (a ) strange\nname) S 1 2 3 4 5 6 7 8 9 10 100 50 0 0 20 0 1 0 987654 10000 42\n").?;
@@ -83,6 +90,7 @@ test "monitor history holds only the last 60 seconds including pause gaps" {
     try std.testing.expectEqual(@as(usize, 1), history.count);
 }
 test "monitor action authority rejects changed identities and protects session executables" {
+    try needsProcfs();
     try std.testing.expect(proc.protectedName("/usr/bin/rediwm-session"));
     try std.testing.expect(proc.protectedName("/usr/bin/rediwm (deleted)"));
     try std.testing.expect(!proc.protectedName("/usr/bin/rediwm-files"));
@@ -93,6 +101,7 @@ test "monitor action authority rejects changed identities and protects session e
     try std.testing.expectError(error.ProtectedProcess, actions.execute(.{ .pid = proc.c.getpid(), .start = own.start }, .force));
 }
 test "monitor real collection includes its background worker owner and cancels" {
+    try needsProcfs();
     var generation = std.atomic.Value(u64).init(0);
     const snap = try collector.sample(&generation, 0);
     defer snap.deinit();
@@ -106,6 +115,7 @@ test "monitor real collection includes its background worker owner and cancels" 
 }
 
 test "monitor pidfd actions terminate only disposable fixtures and force a TERM-ignoring fixture" {
+    try needsProcfs();
     const io = std.testing.io;
     var child = try std.process.spawn(io, .{ .argv = &.{ "/bin/sleep", "30" } });
     defer child.kill(io);

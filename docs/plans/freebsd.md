@@ -3,7 +3,10 @@
 Status: draft, 2026-11-05. The Linux-side preparation (P.1–P.4, P.7–P.10) is
 done, P.5 and P.6 are open. The FreeBSD parts of `platform` are written and
 the whole tree cross-compiles for `x86_64-freebsd` (Debug, ReleaseSafe, tests;
-see Validation), but nothing has run on FreeBSD yet. Decisions D1–D6 are open.
+see Validation). The third outside build (fa55c2a, FreeBSD 15.1 VM without a DRM
+render device) builds Debug and ReleaseSafe and passes the platform tests, but
+the compositor stops at renderer initialisation, so only unit tests have run.
+Decisions D1–D6 are open.
 
 Goal: run RediWM on FreeBSD: first the compositor in a seatd session on DRM,
 then the shell features and apps, and last `rediwm-dm` and packaging. Linux
@@ -38,15 +41,24 @@ union, 16-bit `mode_t`, `landlock.h`, `pty.h`, `MADV_DONTDUMP`, `pam_start_confd
 `cmsghdr` is 12 bytes, its data starts at 16). All are fixed except what the
 next paragraph lists.
 On 15.1 `sys/inotify.h`, `sys/timerfd.h`, `sys/eventfd.h` and `cr_pid` in
-`sys/ucred.h` exist (header checks only). Not known yet: `memfd_create`, the
-transfers helper's C++ flags under clang and libc++, whether `cr_pid` is filled
-for a unix-socket peer, whether the kqueue child handles behave in the Wayland
-loop (libepoll-shim), and whether a DRM session or the headless GLES2 path
-works. The second tester log also showed a Debug `rediwm-cursorgen` dying with
+`sys/ucred.h` exist (header checks only). The platform tests now pass on 15.1, among them kqueue child
+exits and reaping, watchers and the `cr_pid` of a unix-socket peer. Not known
+yet: `memfd_create`, the transfers helper's C++ flags under clang and libc++,
+whether the kqueue child handles behave in the Wayland loop (libepoll-shim),
+and whether a DRM session or the headless GLES2 path works: wlroots'
+renderer needs a DRM render node (`drmGetDevices2 failed`), which the qemu VM
+lacks, so `rediwm-msg` and the Files lifecycle are untested. The second tester log also showed a Debug `rediwm-cursorgen` dying with
 `Undefined symbol "environ"` while its ReleaseSafe build ran, so the build now
 defaults to LLVM on FreeBSD; confirm it. Two tests failed at run time: the
 D-Bus fd test (fixed, the offset above) and the images decoder test (probably
 a gdk-pixbuf port without the PNM loader; the test now skips there).
+The third run failed in five places, all tests: the system monitor's `/proc`
+readers (no procfs; they skip until P.6), the battery event test (raw Linux
+syscalls; now libc), the polkit helper's backpressure test (its fill loop
+stopped at 64 KiB; longer now, unverified on FreeBSD), the editor view tests
+(row height 5 px; probably no monospace font in the VM, unchecked) and Files
+collation (`de_DE` and `ru_RU` sort `Élan` and `Ёж` before `Apfel`; open, it
+would misorder Files listings).
 
 ### Interfaces still to port
 
