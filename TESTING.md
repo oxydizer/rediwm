@@ -16,6 +16,10 @@ in `zig build test`.
 handles, file watching, own executable path) against real processes and
 temporary directories.
 
+`tools/freebsd-cross/check.sh [-Doptimize=ReleaseSafe | test]` cross-builds the
+tree for FreeBSD on this host (Arch, `bwrap`); run it after touching OS
+interfaces, C headers or `src/platform/`. It proves compilation only.
+
 Run affected integration suites after building. Find suites and flags in
 [tests/](tests/) and build targets in [build/tests.zig](build/tests.zig).
 Compare failures with a clean HEAD worktree before calling them regressions.
