@@ -177,7 +177,7 @@ pub const IdleManager = struct {
             if (server.session) |session| if (!session.active) return false;
         }
         if (self.config.enabled) |e| return e;
-        if (self.server) |server| return server.backend.isDrm();
+        if (self.server) |server| return server.backend.hasDrm();
         return false;
     }
 

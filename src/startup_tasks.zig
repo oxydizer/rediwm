@@ -138,6 +138,7 @@ test "staged backends retain multi ownership and only start in their own stage" 
     var observer: Observer = .{};
     multi.multiForEachBackend(*Observer, Observer.countBackend, &observer);
     try std.testing.expectEqual(@as(usize, 2), observer.backends);
+    try std.testing.expect(!multi.hasDrm());
     multi.events.new_output.add(&observer.listener);
     defer observer.listener.link.remove();
     var tasks: Tasks = .{};

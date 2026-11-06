@@ -101,6 +101,23 @@ pub const Backend = extern struct {
         return c.wlr_backend_is_drm(@ptrCast(backend));
     }
 
+    /// True for a DRM backend or a multi backend that wraps one. A real
+    /// session's `server.backend` is the multi wrapper, for which `isDrm`
+    /// is always false.
+    pub fn hasDrm(backend: *Backend) bool {
+        if (backend.isDrm()) return true;
+        if (!backend.isMulti()) return false;
+        const Found = struct {
+            value: bool = false,
+            fn visit(sub: *Backend, self: *@This()) void {
+                if (sub.isDrm()) self.value = true;
+            }
+        };
+        var found: Found = .{};
+        backend.multiForEachBackend(*Found, Found.visit, &found);
+        return found.value;
+    }
+
     pub fn isWl(backend: *Backend) bool {
         return c.wlr_backend_is_wl(@ptrCast(backend));
     }

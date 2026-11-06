@@ -60,7 +60,7 @@ pub fn enabled(self: *const Self) bool {
     const server = self.server orelse return false;
     if (server.greeter_mode) return false;
     if (server.session) |session| if (!session.active) return false;
-    return server.config.power.enabled orelse server.backend.isDrm();
+    return server.config.power.enabled orelse server.backend.hasDrm();
 }
 
 pub fn refresh(self: *Self) void {
@@ -112,7 +112,7 @@ fn apply(self: *Self, changed: bool) void {
     const next = server.config.power.profile(self.source orelse .plugged_in);
     if (!self.enabled()) {
         self.deferred_source = self.deferred_source or changed;
-        if (!(server.config.power.enabled orelse server.backend.isDrm())) {
+        if (!(server.config.power.enabled orelse server.backend.hasDrm())) {
             if (server.config.power.enabled == false) if (server.idle) |idle| {
                 var disabled = idle.config;
                 disabled.enabled = false;
