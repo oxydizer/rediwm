@@ -126,6 +126,7 @@ pub fn onPinClick(owner: ?*anyopaque, id: usize) void {
     } else {
         menu.model.error_msg = null;
         history.togglePin(menu.server, result.id);
+        if (menu.model.snapshot) |snap| menu.model.bindSnapshot(snap, true) catch {};
     }
     menu.buildTree();
     menu.restoreScrollOffset(scroll);

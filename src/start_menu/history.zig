@@ -53,6 +53,18 @@ pub const History = struct {
         return if (h.index(app_id)) |i| h.entries[i].pinned else false;
     }
 
+    /// Move matching pins first, retaining relevance order within both groups.
+    pub fn prioritize(h: *const History, results: []@import("search.zig").SearchResult) void {
+        var next: usize = 0;
+        for (0..results.len) |i| {
+            const result = results[i];
+            if (result.app_entry == null or !h.pinned(result.id)) continue;
+            std.mem.copyBackwards(@import("search.zig").SearchResult, results[next + 1 .. i + 1], results[next..i]);
+            results[next] = result;
+            next += 1;
+        }
+    }
+
     fn remember(h: *History, app_id: []const u8) void {
         if (!valid(app_id)) return;
         const pin = h.pinned(app_id);

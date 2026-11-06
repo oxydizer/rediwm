@@ -587,6 +587,9 @@ def run_launcher():
                     state = tmp / "state" / "rediwm" / "launcher"
                     assert "P\tlauncher-3.desktop" in state.read_text()
                     assert menu()["search_text"] == "Launcher App 3", "pinning lost search"
+                    # A broad query selects the matching pin ahead of App 0.
+                    client.key_down_up(14)
+                    assert menu()["search_text"] == "Launcher App "
                     client.key_down_up(28)
                     client.wait_for("menu_closed", timeout_ms=5000)
                     wait_for(lambda: (tmp / "launched-3").exists(), "selected app did not launch")
@@ -649,6 +652,19 @@ def run_launcher():
                         client.key_down_up(57)
                         client.key(125, False)
                         client.wait_for("menu_opened", timeout_ms=5000)
+                    client.key_down_up(1)
+                    client.wait_for("menu_closed", timeout_ms=5000)
+                    (tmp / "launched-3").unlink(missing_ok=True)
+                    client.open_start_menu()
+                    client.wait_for("menu_opened", timeout_ms=5000)
+                    client.type_text("Launcher")
+                    client.key_down_up(28)
+                    client.wait_for("menu_closed", timeout_ms=5000)
+                    wait_for(lambda: (tmp / "launched-3").exists(), "Start menu did not rank saved pin first")
+                    client.key(125, True)
+                    client.key_down_up(57)
+                    client.key(125, False)
+                    client.wait_for("menu_opened", timeout_ms=5000)
                     client.type_text("Launcher App 3")
                     pin = next(w for w in client.get_widget_tree("start_menu")["widgets"] if w.get("label") == "Unpin application")
                     box = pin["global_box"]

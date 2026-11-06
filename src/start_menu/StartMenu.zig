@@ -127,9 +127,10 @@ pub fn createMode(server: *Server, wlr_output: *wlr.Output, mode: Mode) !*StartM
 
     const snap = server.start_menu_catalog.retainSnapshot();
     defer snap.release();
+    server.launcher_history.load(server);
+    menu.model.history = &server.launcher_history;
     try menu.model.bindSnapshot(snap, false);
 
-    server.launcher_history.load(server);
     menu.buildTree();
     menu.slide.retargetTo(anim.nowMs(), 1, anim.curveFor(.panel_slide));
     menu.relayout();

@@ -18,6 +18,7 @@ pub const Model = struct {
     error_msg: ?[]const u8 = null,
     results_arena: ?*std.heap.ArenaAllocator = null,
     snapshot: ?*applications.Snapshot = null,
+    history: ?*const @import("history.zig").History = null,
 
     pub fn init(allocator: Allocator) Model {
         return .{
@@ -57,8 +58,9 @@ pub const Model = struct {
 
     pub fn bindSnapshot(self: *Model, snap: *applications.Snapshot, preserve_selection: bool) !void {
         try self.updateInner(snap.entries, preserve_selection, snap.loading);
+        const retained = snap.retain();
         if (self.snapshot) |old| old.release();
-        self.snapshot = snap.retain();
+        self.snapshot = retained;
     }
 
     fn updateInner(self: *Model, catalog: []const AppEntry, preserve_selection: bool, loading: bool) !void {
@@ -75,6 +77,9 @@ pub const Model = struct {
         }
 
         const new_results = try search_mod.search(new_arena.allocator(), catalog, self.query.items, self.category, loading);
+        if (std.mem.trim(u8, self.query.items, " \t\r\n").len > 0) {
+            if (self.history) |history| history.prioritize(new_results);
+        }
 
         self.freeResults();
         self.results_arena = new_arena;
@@ -195,9 +200,11 @@ test "loading snapshot selects Settings not the placeholder" {
     var model = Model.init(std.testing.allocator);
     defer model.deinit();
     const snap = try applications.Snapshot.create(std.testing.allocator);
-    defer snap.release();
     snap.loading = true;
     try model.bindSnapshot(snap, false);
+    snap.release();
+    // Pin changes may rebind the snapshot whose only remaining owner is the model.
+    try model.bindSnapshot(model.snapshot.?, true);
     try std.testing.expect(model.isLoading());
     try std.testing.expectEqual(@as(usize, 0), model.countApplications());
     try std.testing.expect(model.selectedResult().?.is_settings);
