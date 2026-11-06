@@ -211,7 +211,7 @@ def main():
         sessions.mkdir(parents=True)
         for name in ("alpha", "beta"):
             (sessions / (name + ".desktop")).write_text(
-                f"[Desktop Entry]\nName={name.title()}\nExec=/bin/true\nType=Application\n")
+                f"[Desktop Entry]\nName={name.title()}\nExec=/usr/bin/true\nType=Application\n")
         try:
             no_input_case(root, share)
             nested_case(root, share)

@@ -36,7 +36,6 @@ pub fn countOpenFds() !usize {
 }
 
 test "dirsize: nested folders give the right total" {
-    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // the walk is Linux-only for now
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);
@@ -88,7 +87,6 @@ test "dirsize: nested folders give the right total" {
 }
 
 test "dirsize: a hardlink pair is counted once" {
-    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // the walk is Linux-only for now
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);
@@ -127,7 +125,6 @@ test "dirsize: a hardlink pair is counted once" {
 }
 
 test "dirsize: a symlink loop is not followed" {
-    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // the walk is Linux-only for now
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);
@@ -166,7 +163,6 @@ test "dirsize: a symlink loop is not followed" {
 }
 
 test "dirsize: an unreadable folder gives a partial result" {
-    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // the walk is Linux-only for now
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);
@@ -206,7 +202,7 @@ test "dirsize: an unreadable folder gives a partial result" {
 }
 
 test "dirsize: cancelling mid-walk leaks no fds" {
-    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // the walk is Linux-only for now
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // counts /proc/self/fd, which FreeBSD lacks without fdescfs
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);
@@ -243,7 +239,6 @@ test "dirsize: cancelling mid-walk leaks no fds" {
 }
 
 test "dirsize: a mount boundary is not crossed" {
-    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // the walk is Linux-only for now
     const a = std.testing.allocator;
     const pool = try dirsize_mod.Pool.init(a);
     defer pool.deinit();
@@ -259,7 +254,6 @@ test "dirsize: a mount boundary is not crossed" {
 }
 
 test "App folder size calculation and display lifecycle" {
-    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // the walk is Linux-only for now
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);
@@ -374,7 +368,6 @@ test "App size sort: calculated folders sort by apparent size, uncalculated last
 }
 
 test "App clicking dash starts calculation without changing selection" {
-    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // the walk is Linux-only for now
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);

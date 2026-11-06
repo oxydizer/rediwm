@@ -259,7 +259,7 @@ def run():
                 # A normal launch command that exits without a new surface must
                 # clear pending feedback and leave the group untouched.
                 desktop = apps / "tab-fixture.desktop"
-                desktop.write_text('[Desktop Entry]\nType=Application\nName=Tab fixture\nExec=/bin/true\n')
+                desktop.write_text('[Desktop Entry]\nType=Application\nName=Tab fixture\nExec=/usr/bin/true\n')
                 click(separate, "tab_new")
                 wait_for(lambda: not next(w for w in widgets(separate) if w["name"] == "tab_new")["is_disabled"], "failed launch clears pending", timeout=15)
                 assert len(windows()) == 3

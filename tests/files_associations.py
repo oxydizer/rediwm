@@ -26,7 +26,7 @@ def appimage_fixture(tmp):
         'Exec="AppRun" --fixture %U\nIcon=portable\nTerminal=false\n'
         'Categories=Development;\nMimeType=x-scheme-handler/rediwm-appimage-test;x-scheme-handler/rediwm-existing-test;application/x-rediwm-specific;\n'
         'TryExec=/nonexistent/appimage\nPath=/nonexistent/appdir\nDBusActivatable=true\n'
-        'Actions=unsafe;\n[Desktop Action unsafe]\nName=Unsafe\nExec=/bin/false\n')
+        'Actions=unsafe;\n[Desktop Action unsafe]\nName=Unsafe\nExec=/usr/bin/false\n')
     icon = appdir / 'usr/share/icons/portable.png'
     icon.parent.mkdir(parents=True)
     Image.new('RGBA', (32, 32), (36, 120, 220, 255)).save(icon)
@@ -162,7 +162,7 @@ def run():
             (apps / f"extra-{i}.desktop").write_text('[Desktop Entry]\nType=Application\n'
                 f'Name=Z Extra {i:02d}\nExec={launcher} extra-{i} %f\nTerminal=false\n')
         (apps / 'existing-link.desktop').write_text('[Desktop Entry]\nType=Application\n'
-            'Name=Existing link handler\nExec=/bin/true %U\nMimeType=x-scheme-handler/rediwm-existing-test;\n')
+            'Name=Existing link handler\nExec=/usr/bin/true %U\nMimeType=x-scheme-handler/rediwm-existing-test;\n')
         defaults = ["openscad", "openscad", "override", "missing", "", "celluloid"]
         (config / "mimeapps.list").write_text('[Default Applications]\n' + ''.join(
             f'{t[0]}={app}.desktop;\n' for t, app in zip(types, defaults) if app) +
@@ -171,7 +171,7 @@ def run():
             (home / name).write_text('cube([1, 2, 3]);\n')
         env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(data), XDG_DATA_DIRS=str(data),
                    XDG_CONFIG_HOME=str(config), XDG_CONFIG_DIRS=str(config), XDG_STATE_HOME=str(tmp / "state"),
-                   XDG_CURRENT_DESKTOP="RediWM", BROWSER="/bin/false", REDIWM_ICON_THEME="hicolor",
+                   XDG_CURRENT_DESKTOP="RediWM", BROWSER="/usr/bin/false", REDIWM_ICON_THEME="hicolor",
                    XDG_RUNTIME_DIR=str(tmp), REDIWM_CONFIG=str(tmp / "rediwm-config.toml"),
                    WLR_BACKENDS="headless", REDIWM_FILES_DEVICES="0", WLR_RENDERER="gles2", WLR_HEADLESS_OUTPUTS="1", REDIWM_SCALE="1",
                    DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent-rediwm-test-system-bus",

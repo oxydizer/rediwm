@@ -1,8 +1,8 @@
 //! The process list the System Monitor and the IPC `processes` command read.
 //! This file is the interface: the record types and arithmetic come from
 //! `proc_common.zig`, the reading from one backend chosen at compile time
-//! (`proc_linux.zig`; `proc_freebsd.zig` reports "unavailable" until phase 3 of
-//! docs/plans/freebsd.md). A backend provides:
+//! (`proc_linux.zig` reads `/proc`, `proc_freebsd.zig` the `kern.proc` sysctls). A
+//! backend provides:
 //!
 //! * `Process`: `open(pid)`, `close`, `stat(buf)`, `uids(buf)`, `exePath(buf)`.
 //!   One open `Process` describes one task, so its three reads agree.

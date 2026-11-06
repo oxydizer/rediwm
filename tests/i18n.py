@@ -52,7 +52,7 @@ def run():
         (applications / "rediwm-i18n-fixture.desktop").write_text(
             "[Desktop Entry]\nType=Application\nName=Language fixture\n"
             "Name[de]=Prüfprogramm\nName[pt_BR]=Aplicativo de teste\n"
-            "Exec=/bin/true\nIcon=application-x-executable\n", encoding="utf-8")
+            "Exec=/usr/bin/true\nIcon=application-x-executable\n", encoding="utf-8")
 
         def config(language):
             return ('[compositor]\nxwayland = false\n[animations]\nenabled = false\n'

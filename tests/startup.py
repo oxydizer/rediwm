@@ -32,7 +32,7 @@ def write_apps(data: Path, count: int = 4):
     for index in range(count):
         (apps / f"app-{index:02}.desktop").write_text(
             f"[Desktop Entry]\nType=Application\nName=App {index:02}\n"
-            f"Exec=/bin/true\nIcon=foot\n"
+            f"Exec=/usr/bin/true\nIcon=foot\n"
         )
     return apps
 

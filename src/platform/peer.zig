@@ -12,7 +12,7 @@ const linux = std.os.linux;
 // another OS must fail here and not ask its kernel something else.
 comptime {
     if (builtin.os.tag != .linux and builtin.os.tag != .freebsd)
-        @compileError("platform.peer is not ported to this OS yet (docs/plans/freebsd.md, P.9)");
+        @compileError("platform.peer is not ported to this OS yet (docs/plans/freebsd.md)");
 }
 
 pub const Credentials = struct {

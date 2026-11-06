@@ -10,7 +10,7 @@ const child = @import("child.zig");
 // another OS must fail here and not ask its kernel something else.
 comptime {
     if (builtin.os.tag != .linux and builtin.os.tag != .freebsd)
-        @compileError("platform.process is not ported to this OS yet (docs/plans/freebsd.md, P.4)");
+        @compileError("platform.process is not ported to this OS yet (docs/plans/freebsd.md)");
 }
 
 /// FreeBSD's procctl(2): the commands and values of `sys/procctl.h`.

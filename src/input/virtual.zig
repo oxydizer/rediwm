@@ -323,16 +323,11 @@ pub const VirtualInput = struct {
     }
 
     pub fn nowMs() u32 {
-        const timespec = extern struct {
-            tv_sec: c_long,
-            tv_nsec: c_long,
-        };
-        const clock_gettime_fn = struct {
-            extern fn clock_gettime(clk_id: c_int, tp: *timespec) c_int;
-        }.clock_gettime;
-        var ts: timespec = undefined;
-        _ = clock_gettime_fn(1, &ts); // 1 = CLOCK_MONOTONIC
-        const ms: u64 = @intCast(@as(i64, ts.tv_sec) * 1000 + @divTrunc(ts.tv_nsec, 1_000_000));
+        // The OS's own constant: 1 is CLOCK_MONOTONIC on Linux but CLOCK_VIRTUAL
+        // (process CPU time) on FreeBSD.
+        var ts: std.posix.timespec = undefined;
+        if (std.posix.errno(std.posix.system.clock_gettime(std.posix.CLOCK.MONOTONIC, &ts)) != .SUCCESS) return 0;
+        const ms: u64 = @intCast(@as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000));
         return @truncate(ms);
     }
 };

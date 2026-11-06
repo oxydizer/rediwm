@@ -149,13 +149,15 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (const char *env_sleep = getenv("CLIENT_SLEEP_MS")) {
+    const char *env_sleep = getenv("CLIENT_SLEEP_MS");
+    if (env_sleep) {
         sleep_ms = atoi(env_sleep);
     }
     if (getenv("CLIENT_EXIT_BEFORE_MAP")) {
         exit_before_map = 1;
     }
-    if (const char *env_app = getenv("CLIENT_APP_ID")) {
+    const char *env_app = getenv("CLIENT_APP_ID");
+    if (env_app) {
         app_id = env_app;
     }
 

@@ -7,7 +7,8 @@ privileges (`process.zig`), descriptors that wake a poll loop (`wake.zig`),
 where the system's helper programs live (`tool.zig`), seccomp-BPF filters
 (`seccomp.zig`, for the PDF viewer and the theme helper), and
 `child.h`/`self_exe.h`/`peer.h`/`process.h` for C and C++, and `fs.zig`
-(rename without replacing, stat). Std only, no compositor imports. Linux and
+(rename without replacing, stat), and `dirwalk.zig` (reading a directory and
+examining its entries, for the Files folder-size walk). Std only, no compositor imports. Linux and
 FreeBSD: a part is one file with a `switch (builtin.os.tag)` per function
 (`peer`, `process`, `wake`, `watch`, `exe`, `fs`), or a facade over
 `child_linux.zig` and `child_freebsd.zig`. A part not ported to another OS
@@ -57,13 +58,16 @@ any target). FreeBSD notes are in `docs/plans/freebsd.md`.
   an unreaped zombie there, true on Linux.
 * **`fs.renameNoReplace` is atomic only on Linux.** FreeBSD hard-links and
   unlinks (a failure leaves both names) and checks-then-renames a directory.
+* **`dirwalk.Reader` names are valid until the next call.** The Linux reader
+  fills the caller's buffer (the walk keeps one per depth); FreeBSD's ignores
+  it and opens its own `DIR` on a copy of the descriptor. `mount_root` is a
+  Linux answer; FreeBSD's walk stops at a different device only.
 * Nothing here arms a timer or starts a thread; a caller retrying a failed
   `add` owns that clock.
 
 Still direct Linux calls (later steps of the plan): the supervisor's and the
 DM's event loops and process calls (`signalfd`, `epoll`, `poll`, `fork`,
-`kill`, `wait4`; neither program is built on FreeBSD), `statx` and `getdents64`
-in the Files folder-size walk (it refuses on other systems), `/proc` walks, the
+`kill`, `wait4`; neither program is built on FreeBSD), `/proc` walks, the
 terminal's per-message `SCM_CREDENTIALS` check (`files/terminal/engine.c`, which
 refuses to start a terminal on other systems), the DRM driver ioctl in
 `Output.zig` and the two seccomp policy tables. Everything else outside this

@@ -10,10 +10,12 @@ Tests:
 6. Sandboxed IPC callers via Flatpak (.flatpak-info) blocked unless allowed, checked per-request.
 7. Clean teardown with live sandboxed client.
 """
+import json
 import os
 from pathlib import Path
 import select
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -354,6 +356,43 @@ except Exception as exc:
             cmd_malformed = [*bwrap_base, "--ro-bind", str(malformed_info), "/.flatpak-info", "python3", "-c", script, str(ROOT / "tests"), str(tmp)]
             r5 = subprocess.run(cmd_malformed, env=session.env, capture_output=True, text=True)
             assert "REJECTED" in r5.stdout or r5.returncode != 0, f"malformed flatpak-info should fail closed: {r5.stdout}"
+
+            # 6. The connector exits after handing its socket to a child, so it cannot be
+            # classified: refused. The compositor is stopped while the client runs, so the
+            # connection is accepted after the exit, as a long frame would allow.
+            handoff = """
+import glob, os, socket, sys, time
+tmp, request = sys.argv[1], sys.argv[2].encode()
+ready, go = tmp + "/handoff-ready", tmp + "/handoff-go"
+connector = os.fork()
+if connector == 0:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(glob.glob(tmp + "/rediwm-*.sock")[0])
+    if os.fork() == 0:
+        while not os.path.exists(go):
+            time.sleep(0.05)
+        s.sendall(request)
+        time.sleep(1)
+        os._exit(0)
+    os._exit(0)
+os.waitpid(connector, 0)
+open(ready, "w").write("1")
+time.sleep(4)
+"""
+            request = json.dumps({"version": 1, "id": 1, "command": "open_start_menu"}) + "\n"
+            os.kill(session.process.pid, signal.SIGSTOP)
+            try:
+                cmd_handoff = [*bwrap_base, "--ro-bind", str(unallowed_info), "/.flatpak-info", "python3", "-c", handoff, str(tmp), request]
+                p6 = subprocess.Popen(cmd_handoff, env=session.env)
+                wait_for(lambda: (tmp / "handoff-ready").exists(), "handoff client never finished")
+            finally:
+                os.kill(session.process.pid, signal.SIGCONT)
+            time.sleep(0.5)
+            (tmp / "handoff-go").write_text("1")
+            time.sleep(1.0)
+            assert session.ipc.get_shell_state()["start_menu"] is None, "a sandboxed connector that exited must not reach IPC"
+            assert "cannot be checked for a sandbox" in Path(session.log.name).read_text(), "the refusal should be logged"
+            p6.wait(timeout=15)
         finally:
             session.close()
     print("PASS: sandboxed IPC caller detection via Flatpak info and bubblewrap")

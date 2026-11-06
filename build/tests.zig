@@ -203,6 +203,8 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     });
     polkit_service.root_module.addImport("wayland", wayland);
     polkit_service.root_module.addImport("i18n", i18n_mod);
+    polkit_service.root_module.addImport("c", ctx.c.libc);
+    polkit_service.root_module.addImport("platform", ctx.platform_mod);
     polkit_service.root_module.linkSystemLibrary("wayland-server", .{});
     polkit_service.root_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     polkit_service.root_module.linkSystemLibrary("pthread", .{});

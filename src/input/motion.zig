@@ -201,15 +201,19 @@ fn updateWidgetProximity(input: *Input) void {
         }
     }
 
+    // Mapping the window can move the camera (and so the cursor) before its
+    // first layout has built `root`.
     if (input.open_control_center) |cc| {
-        const local = cc.localPoint(input.cursor.x, input.cursor.y);
-        if (ui_input.updateButtonProximity(&cc.root, @floatCast(local.x), @floatCast(local.y), .{
-            .x = 0,
-            .y = 0,
-            .w = @floatFromInt(cc.panel_box.width),
-            .h = @floatFromInt(cc.panel_box.height),
-        })) {
-            cc.requestWidgetRepaint();
+        if (cc.built_page != null) {
+            const local = cc.localPoint(input.cursor.x, input.cursor.y);
+            if (ui_input.updateButtonProximity(&cc.root, @floatCast(local.x), @floatCast(local.y), .{
+                .x = 0,
+                .y = 0,
+                .w = @floatFromInt(cc.panel_box.width),
+                .h = @floatFromInt(cc.panel_box.height),
+            })) {
+                cc.requestWidgetRepaint();
+            }
         }
     }
 

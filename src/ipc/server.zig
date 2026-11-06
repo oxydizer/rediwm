@@ -348,25 +348,37 @@ pub fn parseFlatpakAppId(content: []const u8) ?[]const u8 {
     return null;
 }
 
-fn detectSandbox(pid: i32, client_fd: c_int, allocator: std.mem.Allocator) ?SandboxCaller {
-    if (pid <= 0) return null;
+/// Has the process that made the connection exited (a zombie counts), or is it
+/// unknown? Without a pidfd from the socket this asks about the credentials'
+/// pid, which a reuse could have handed to another process.
+fn peerGone(process: ?platform.child.Handle, pid: i32) bool {
+    return if (process) |handle| handle.exited() else !platform.child.exists(pid);
+}
+
+/// Null means "not sandboxed". `error.Unclassifiable` is a connector that is
+/// gone or that this process cannot see: its credentials outlive it, and a
+/// child that inherited the socket (and the sandbox) may still be writing, so
+/// nothing can be said and the connection is refused.
+fn detectSandbox(pid: i32, client_fd: c_int, allocator: std.mem.Allocator) error{Unclassifiable}!?SandboxCaller {
+    // SO_PEERCRED gives pid 0 for a process in a pid namespace we cannot see.
+    if (pid <= 0) return error.Unclassifiable;
 
     const process: ?platform.child.Handle = platform.child.Handle.peer(client_fd) orelse platform.child.Handle.open(pid) catch null;
     defer if (process) |handle| handle.close();
+    if (peerGone(process, pid)) return error.Unclassifiable;
 
     var proc_buf: [64]u8 = undefined;
     const proc_path = std.fmt.bufPrintSentinel(&proc_buf, "/proc/{d}", .{pid}, 0) catch return null;
 
     const proc_fd = c.open(proc_path.ptr, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true });
-    if (proc_fd < 0) return null;
+    // Alive but without a /proc entry: no procfs here, so there is nothing to read.
+    if (proc_fd < 0) return if (peerGone(process, pid)) error.Unclassifiable else null;
     defer closeFd(proc_fd);
 
     const file_fd = c.openat(proc_fd, "root/.flatpak-info", .{ .ACCMODE = .RDONLY, .CLOEXEC = true });
     if (file_fd < 0) {
         const err = std.posix.errno(file_fd);
-        if (err == .NOENT) {
-            return null;
-        }
+        if (err == .NOENT) return if (peerGone(process, pid)) error.Unclassifiable else null;
         return .{ .app_id = null, .engine = "org.flatpak" };
     }
     defer closeFd(file_fd);
@@ -414,7 +426,11 @@ fn handleListenerFd(fd: c_int, mask: wl.EventMask, ipc: *IpcServer) c_int {
         return 0;
     }
 
-    const sandbox_opt = detectSandbox(peer.pid, client_fd, ipc.allocator);
+    const sandbox_opt = detectSandbox(peer.pid, client_fd, ipc.allocator) catch {
+        log.warn("rejecting IPC connection: its process exited or cannot be seen, so it cannot be checked for a sandbox", .{});
+        closeFd(client_fd);
+        return 0;
+    };
     if (sandbox_opt) |sb| {
         const groups = ipc.compositor.config.sandboxAllowGroups(sb.app_id, sb.engine);
         if (!groups.contains(.ipc)) {

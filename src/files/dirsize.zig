@@ -1,10 +1,9 @@
 const std = @import("std");
-const builtin = @import("builtin");
+const platform = @import("platform");
 const c = @import("c.zig").api;
-const linux = std.os.linux;
 const Allocator = std.mem.Allocator;
+const dirwalk = platform.dirwalk;
 
-pub const STATX_ATTR_MOUNT_ROOT: u64 = 0x2000;
 pub const queue_capacity: usize = 256;
 pub const buffer_size: usize = 65536;
 
@@ -69,7 +68,7 @@ pub const QueueEntry = struct {
 
 const WorkerContext = struct {
     allocator: Allocator,
-    buffers: [64]?[]align(@alignOf(linux.dirent64)) u8 = @splat(null),
+    buffers: [64]?[]align(dirwalk.buffer_align) u8 = @splat(null),
 
     pub fn init(allocator: Allocator) WorkerContext {
         return .{ .allocator = allocator };
@@ -84,19 +83,19 @@ const WorkerContext = struct {
         }
     }
 
-    pub fn getBuffer(self: *WorkerContext, depth: usize) ![]align(@alignOf(linux.dirent64)) u8 {
+    pub fn getBuffer(self: *WorkerContext, depth: usize) ![]align(dirwalk.buffer_align) u8 {
         if (depth < self.buffers.len) {
             if (self.buffers[depth]) |slice| {
                 return slice;
             }
-            const slice = try self.allocator.alignedAlloc(u8, .fromByteUnits(@alignOf(linux.dirent64)), buffer_size);
+            const slice = try self.allocator.alignedAlloc(u8, .fromByteUnits(dirwalk.buffer_align), buffer_size);
             self.buffers[depth] = slice;
             return slice;
         }
-        return self.allocator.alignedAlloc(u8, .fromByteUnits(@alignOf(linux.dirent64)), buffer_size);
+        return self.allocator.alignedAlloc(u8, .fromByteUnits(dirwalk.buffer_align), buffer_size);
     }
 
-    pub fn releaseBuffer(self: *WorkerContext, depth: usize, buf: []align(@alignOf(linux.dirent64)) u8) void {
+    pub fn releaseBuffer(self: *WorkerContext, depth: usize, buf: []align(dirwalk.buffer_align) u8) void {
         if (depth >= self.buffers.len) {
             self.allocator.free(buf);
         }
@@ -212,9 +211,6 @@ pub const Pool = struct {
     }
 
     pub fn startJob(self: *Pool, path: []const u8) !*Job {
-        // The walk reads directories with statx and getdents64, which only Linux has; the folder
-        // size column stays empty elsewhere until the scan is ported (docs/plans/freebsd.md).
-        if (comptime builtin.os.tag != .linux) return error.Unsupported;
         var path_buf: [4096]u8 = undefined;
         const path_z = try std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0);
 
@@ -236,23 +232,10 @@ pub const Pool = struct {
         }
         errdefer _ = c.close(root_fd);
 
-        var root_stx: linux.Statx = undefined;
-        const stat_rc = linux.statx(
-            root_fd,
-            "",
-            linux.AT.EMPTY_PATH | linux.AT.STATX_DONT_SYNC,
-            linux.STATX{ .TYPE = true, .INO = true },
-            &root_stx,
-        );
-        if (linux.errno(stat_rc) != .SUCCESS) {
-            return error.StatFailed;
-        }
-        if ((root_stx.mode & linux.S.IFMT) != linux.S.IFDIR) {
-            return error.NotDirectory;
-        }
+        const root = dirwalk.statFd(root_fd) orelse return error.StatFailed;
+        if (root.kind != .directory) return error.NotDirectory;
 
-        const dev_id = (@as(u64, root_stx.dev_major) << 32) | root_stx.dev_minor;
-        const job = try Job.create(self.allocator, dev_id);
+        const job = try Job.create(self.allocator, root.dev);
         errdefer job.unref();
 
         job.pending.store(1, .release);
@@ -323,6 +306,12 @@ fn walkDirectory(pool: *Pool, ctx: *WorkerContext, job: *Job, dir_fd: c_int, dep
     };
     defer ctx.releaseBuffer(depth, buf);
 
+    var reader = dirwalk.Reader.init(dir_fd, buf) catch {
+        job.partial.store(true, .release);
+        return;
+    };
+    defer reader.deinit();
+
     var local_bytes: i64 = 0;
     var local_files: usize = 0;
     var local_dirs: usize = 0;
@@ -338,103 +327,69 @@ fn walkDirectory(pool: *Pool, ctx: *WorkerContext, job: *Job, dir_fd: c_int, dep
 
     while (true) {
         if (job.cancelled.load(.acquire)) return;
-        const rc = linux.getdents64(dir_fd, buf.ptr, @intCast(buf.len));
-        const err = linux.errno(rc);
-        if (err != .SUCCESS) {
-            if (err != .NOENT and err != .BADF) {
-                job.partial.store(true, .release);
-            }
+        const name_ptr = (reader.next() catch |err| {
+            if (err == error.Failed) job.partial.store(true, .release);
             return;
-        }
-        const nread = rc;
-        if (nread == 0) return;
+        }) orelse return;
 
-        var pos: usize = 0;
-        while (pos < nread) {
-            if (job.cancelled.load(.acquire)) return;
-            const d: *const linux.dirent64 = @ptrCast(@alignCast(&buf[pos]));
-            pos += d.reclen;
+        const entry = dirwalk.statAt(dir_fd, name_ptr) orelse {
+            job.partial.store(true, .release);
+            continue;
+        };
 
-            const name_ptr: [*:0]const u8 = @ptrCast(&d.name);
-            const name = std.mem.span(name_ptr);
-            if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+        if (entry.kind == .directory) {
+            if (entry.mount_root) continue;
+            if (entry.dev != job.dev_id) continue;
 
-            var stx: linux.Statx = undefined;
-            const stat_rc = linux.statx(
-                dir_fd,
-                name_ptr,
-                linux.AT.SYMLINK_NOFOLLOW | linux.AT.STATX_DONT_SYNC | linux.AT.NO_AUTOMOUNT,
-                linux.STATX{ .SIZE = true, .NLINK = true, .INO = true, .TYPE = true },
-                &stx,
-            );
-            const stat_err = linux.errno(stat_rc);
-            if (stat_err != .SUCCESS) {
+            const sub_fd = c.openat(dir_fd, name_ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
+            if (sub_fd < 0) {
                 job.partial.store(true, .release);
                 continue;
             }
+            local_dirs += 1;
 
-            const mode_type = stx.mode & linux.S.IFMT;
-            const is_dir = mode_type == linux.S.IFDIR;
-
-            if (is_dir) {
-                const raw_attr: u64 = @bitCast(stx.attributes);
-                if ((raw_attr & STATX_ATTR_MOUNT_ROOT) != 0) continue;
-
-                const dev = (@as(u64, stx.dev_major) << 32) | stx.dev_minor;
-                if (dev != job.dev_id) continue;
-
-                const sub_fd = c.openat(dir_fd, name_ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
-                if (sub_fd < 0) {
+            _ = job.pending.fetchAdd(1, .monotonic);
+            job.ref();
+            if (!pool.tryPush(job, sub_fd)) {
+                walkDirectory(pool, ctx, job, sub_fd, depth + 1);
+                _ = c.close(sub_fd);
+                if (job.pending.fetchSub(1, .acq_rel) == 1) {
+                    pool.notifyDone(job);
+                }
+                job.unref();
+            }
+        } else {
+            if (entry.kind == .regular and entry.nlink > 1) {
+                const key = InodeKey{ .dev = entry.dev, .ino = entry.ino };
+                _ = c.pthread_mutex_lock(&job.hardlink_mutex);
+                const gop = job.seen_hardlinks.getOrPut(key) catch {
+                    _ = c.pthread_mutex_unlock(&job.hardlink_mutex);
                     job.partial.store(true, .release);
                     continue;
-                }
-                local_dirs += 1;
+                };
+                const already_seen = gop.found_existing;
+                _ = c.pthread_mutex_unlock(&job.hardlink_mutex);
 
-                _ = job.pending.fetchAdd(1, .monotonic);
-                job.ref();
-                if (!pool.tryPush(job, sub_fd)) {
-                    walkDirectory(pool, ctx, job, sub_fd, depth + 1);
-                    _ = c.close(sub_fd);
-                    if (job.pending.fetchSub(1, .acq_rel) == 1) {
-                        pool.notifyDone(job);
-                    }
-                    job.unref();
-                }
-            } else {
-                const is_reg = mode_type == linux.S.IFREG;
-                if (is_reg and stx.nlink > 1) {
-                    const dev = (@as(u64, stx.dev_major) << 32) | stx.dev_minor;
-                    const key = InodeKey{ .dev = dev, .ino = stx.ino };
-                    _ = c.pthread_mutex_lock(&job.hardlink_mutex);
-                    const gop = job.seen_hardlinks.getOrPut(key) catch {
-                        _ = c.pthread_mutex_unlock(&job.hardlink_mutex);
-                        job.partial.store(true, .release);
-                        continue;
-                    };
-                    const already_seen = gop.found_existing;
-                    _ = c.pthread_mutex_unlock(&job.hardlink_mutex);
-
-                    if (!already_seen) {
-                        local_bytes += @intCast(stx.size);
-                        local_files += 1;
-                    }
-                } else {
-                    local_bytes += @intCast(stx.size);
+                if (!already_seen) {
+                    local_bytes += @intCast(entry.size);
                     local_files += 1;
                 }
+            } else {
+                local_bytes += @intCast(entry.size);
+                local_files += 1;
             }
+        }
 
-            local_count += 1;
-            if (local_count >= 4096) {
-                _ = job.bytes.fetchAdd(local_bytes, .monotonic);
-                _ = job.files.fetchAdd(local_files, .monotonic);
-                _ = job.dirs.fetchAdd(local_dirs, .monotonic);
-                local_bytes = 0;
-                local_files = 0;
-                local_dirs = 0;
-                local_count = 0;
-                if (job.cancelled.load(.acquire)) return;
-            }
+        local_count += 1;
+        if (local_count >= 4096) {
+            _ = job.bytes.fetchAdd(local_bytes, .monotonic);
+            _ = job.files.fetchAdd(local_files, .monotonic);
+            _ = job.dirs.fetchAdd(local_dirs, .monotonic);
+            local_bytes = 0;
+            local_files = 0;
+            local_dirs = 0;
+            local_count = 0;
+            if (job.cancelled.load(.acquire)) return;
         }
     }
 }

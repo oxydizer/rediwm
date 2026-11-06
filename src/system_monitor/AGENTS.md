@@ -6,7 +6,8 @@
 * **`proc.zig` is the interface to the OS.** The record types and arithmetic
   are `proc_common.zig`; one backend reads them: `proc_linux.zig` (`/proc`, a
   `Process` holds the `/proc/<pid>` directory open) or `proc_freebsd.zig`
-  (reports "unavailable" until phase 3 of `docs/plans/freebsd.md`). Never read
+  (`kern.proc` sysctls; a `Process` holds the `kinfo_proc` taken at open, CPU is
+  in microseconds). Never read
   `/proc` outside a backend; a new OS needs `Process`, `List`, `cpuTotals`,
   `memoryTotals` and `ticksPerSecond`. The Linux parsers are pure and tested
   everywhere through `proc_linux.zig`.

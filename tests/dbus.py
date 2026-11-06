@@ -4,6 +4,7 @@ import concurrent.futures
 import json
 import os
 import select
+import shutil
 import subprocess
 import sys
 import time
@@ -40,8 +41,11 @@ def receive_message(peer):
 
 def fake_peers(binary):
     """Adversarial local endpoints: authentication and framing, no bus involved."""
-    for scenario in ('reject', 'auth_timeout', 'auth_overlong', 'oversized',
-                     'truncated', 'bad_padding', 'fragmented_big_endian', 'abstract'):
+    scenarios = ['reject', 'auth_timeout', 'auth_overlong', 'oversized',
+                 'truncated', 'bad_padding', 'fragmented_big_endian']
+    if sys.platform.startswith('linux'):
+        scenarios.append('abstract')  # only Linux has abstract unix sockets
+    for scenario in scenarios:
         with tempfile.TemporaryDirectory(prefix='rediwm-dbus-') as directory:
             endpoint = directory + '/bus'
             address = 'unix:path=' + endpoint
@@ -157,6 +161,9 @@ def main():
                                          __file__, sys.argv[1], '--private']))
     fake_peers(sys.argv[1])
     activation_env(sys.argv[1])
+    if shutil.which('busctl') is None:
+        print("D-Bus: SKIP the busctl-driven client tests (busctl is systemd's tool)")
+        return
     # Exercise openSystem without ever opening the host system bus.
     service = subprocess.Popen([sys.argv[1], '--system'],
                                env=dict(os.environ, DBUS_SYSTEM_BUS_ADDRESS=os.environ['DBUS_SESSION_BUS_ADDRESS']),

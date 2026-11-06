@@ -221,7 +221,8 @@ panel painting. The key rules:
   re-check). Synthetic input and pixel reads need `[ipc] automation`. Socket
   only in a private directory, umask 0177. Sandboxed callers need an explicit
   `[[sandbox_allow]]` `ipc` allowance, fail closed and are re-checked on
-  reload. `scroll` is natural by default (negative dy pages down).
+  reload; a connector that has exited or whose pid is not visible is refused
+  (a child may hold its socket). `scroll` is natural by default (negative dy pages down).
 * **Security context** (`global_filter.zig`) hides privileged globals from
   `wp_security_context_v1` clients (guess-binds are protocol errors) unless
   `[[sandbox_allow]]` grants the group; nested contexts are fatal.

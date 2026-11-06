@@ -19,7 +19,7 @@ def run(scale):
                             'height="38"><rect width="38" height="38" fill="red"/></svg>')
             (apps / f"app-{index:02}.desktop").write_text(
                 f"[Desktop Entry]\nType=Application\nName=App {index:02}\n"
-                f"Exec=/bin/true\nIcon={icon}\n")
+                f"Exec=/usr/bin/true\nIcon={icon}\n")
         process, log = spawn_compositor(tmp, scale=scale, outputs="2", env_extra={
             "XDG_DATA_HOME": str(data), "XDG_DATA_DIRS": str(tmp / "empty"),
         })

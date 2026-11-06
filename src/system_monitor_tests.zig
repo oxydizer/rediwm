@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const platform = @import("platform");
 const proc = @import("system_monitor/proc.zig");
 const linux = @import("system_monitor/proc_linux.zig");
@@ -7,10 +6,33 @@ const model = @import("system_monitor/model.zig");
 const collector = @import("system_monitor/collector.zig");
 const actions = @import("system_monitor/actions.zig");
 
-/// These read /proc, which FreeBSD does not mount by default; the collector
-/// port is plan P.6.
-fn needsProcfs() !void {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
+test "monitor backend lists and describes this process and the machine" {
+    const pid = proc.c.getpid();
+    var list = proc.List.open().?;
+    defer list.close();
+    var listed = false;
+    while (list.next()) |other| {
+        if (other == pid) listed = true;
+    }
+    try std.testing.expect(listed);
+
+    const process = try proc.Process.open(pid);
+    defer process.close();
+    var buf: [65536]u8 = undefined;
+    const stat = try process.stat(&buf);
+    try std.testing.expect(stat.name.len > 0);
+    try std.testing.expect(stat.state == 'R' or stat.state == 'S');
+    try std.testing.expectEqual(proc.c.getppid(), stat.ppid);
+    try std.testing.expect(stat.start != 0 and stat.rss > 0);
+    try std.testing.expect(proc.owned(try process.uids(&buf), proc.c.getuid()));
+    try std.testing.expect(std.fs.path.isAbsolute(try process.exePath(&buf)));
+    try std.testing.expectError(error.ProcessExited, proc.Process.open(std.math.maxInt(i32)));
+
+    const cpu = proc.cpuTotals(&buf).?;
+    try std.testing.expect(cpu.total > 0 and cpu.idle <= cpu.total);
+    const memory = proc.memoryTotals(&buf).?;
+    try std.testing.expect(memory.total > 0 and memory.available <= memory.total);
+    try std.testing.expect(proc.ticksPerSecond() > 0 and proc.pageSize() > 0);
 }
 
 test "monitor stat parsing preserves tricky names and rejects partial data" {
@@ -92,7 +114,6 @@ test "monitor history holds only the last 60 seconds including pause gaps" {
     try std.testing.expectEqual(@as(usize, 1), history.count);
 }
 test "monitor action authority rejects changed identities and protects session executables" {
-    try needsProcfs();
     try std.testing.expect(proc.protectedName("/usr/bin/rediwm-session"));
     try std.testing.expect(proc.protectedName("/usr/bin/rediwm (deleted)"));
     try std.testing.expect(!proc.protectedName("/usr/bin/rediwm-files"));
@@ -103,7 +124,6 @@ test "monitor action authority rejects changed identities and protects session e
     try std.testing.expectError(error.ProtectedProcess, actions.execute(.{ .pid = proc.c.getpid(), .start = own.start }, .force));
 }
 test "monitor real collection includes its background worker owner and cancels" {
-    try needsProcfs();
     var generation = std.atomic.Value(u64).init(0);
     const snap = try collector.sample(&generation, 0);
     defer snap.deinit();
@@ -117,7 +137,6 @@ test "monitor real collection includes its background worker owner and cancels" 
 }
 
 test "monitor pidfd actions terminate only disposable fixtures and force a TERM-ignoring fixture" {
-    try needsProcfs();
     const io = std.testing.io;
     var child = try std.process.spawn(io, .{ .argv = &.{ "/bin/sleep", "30" } });
     defer child.kill(io);

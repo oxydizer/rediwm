@@ -37,3 +37,9 @@
 #ifdef __linux__
 #include <linux/netlink.h> /* printer hotplug uevents */
 #endif
+
+#ifdef __FreeBSD__
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#include <sys/user.h> /* struct kinfo_proc: the process list */
+#endif

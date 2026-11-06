@@ -9,7 +9,7 @@ const linux = std.os.linux;
 // another OS must fail here and not ask its kernel something else.
 comptime {
     if (builtin.os.tag != .linux and builtin.os.tag != .freebsd)
-        @compileError("platform.wake is not ported to this OS yet (docs/plans/freebsd.md, P.4)");
+        @compileError("platform.wake is not ported to this OS yet (docs/plans/freebsd.md)");
 }
 
 /// A new wake descriptor: close-on-exec, non-blocking, count zero. The caller

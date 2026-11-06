@@ -115,7 +115,9 @@ pub fn deleteItems(io: std.Io, paths: []const []const u8) !void {
     if (paths.len == 0) return;
     var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(std.heap.c_allocator);
-    try args.appendSlice(std.heap.c_allocator, &.{ "rm", "-r", "--interactive=never", "--" });
+    // GNU rm takes `--interactive=never`; FreeBSD's rm only has `-f`.
+    const never_prompt = if (@import("builtin").os.tag == .linux) "--interactive=never" else "-f";
+    try args.appendSlice(std.heap.c_allocator, &.{ "rm", "-r", never_prompt, "--" });
     try args.appendSlice(std.heap.c_allocator, paths);
     var child = try std.process.spawn(io, .{ .argv = args.items });
     const result = try child.wait(io);

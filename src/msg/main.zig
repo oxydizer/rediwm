@@ -31,6 +31,14 @@ pub fn closeFd(fd: std.posix.fd_t) void {
     _ = std.c.close(fd);
 }
 
+extern "c" fn strerror(errnum: c_int) [*:0]const u8;
+
+/// The libc text for why the libc call that returned `rc` failed ("Operation not
+/// permitted"). Call it before anything else that could touch errno.
+pub fn errnoText(rc: anytype) []const u8 {
+    return std.mem.span(strerror(@intFromEnum(std.posix.errno(rc))));
+}
+
 pub fn getEnv(key: [*:0]const u8) ?[]const u8 {
     if (std.c.getenv(key)) |ptr| {
         return std.mem.span(ptr);
@@ -144,8 +152,9 @@ pub fn runMsg(init: std.process.Init, allocator: std.mem.Allocator) !void {
     @memcpy(addr.path[0..socket_path.len], socket_path);
     const addr_len = @as(std.posix.socklen_t, @intCast(@offsetOf(std.posix.sockaddr.un, "path") + socket_path.len + 1));
 
-    if (c.connect(sock_fd, @ptrCast(&addr), addr_len) < 0) {
-        std.debug.print("error: failed to connect to socket {s}\n", .{socket_path});
+    const connect_rc = c.connect(sock_fd, @ptrCast(&addr), addr_len);
+    if (connect_rc < 0) {
+        std.debug.print("error: failed to connect to socket {s}: {s}\n", .{ socket_path, errnoText(connect_rc) });
         std.process.exit(1);
     }
 

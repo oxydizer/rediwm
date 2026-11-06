@@ -3,6 +3,7 @@
 const std = @import("std");
 const protocol = @import("protocol");
 const closeFd = @import("main.zig").closeFd;
+const errnoText = @import("main.zig").errnoText;
 
 pub fn sendDoctorQuery(sock_fd: std.posix.fd_t, query: []const u8, allocator: std.mem.Allocator) ?std.json.Parsed(std.json.Value) {
     const c = std.posix.system;
@@ -65,16 +66,24 @@ pub fn runDoctor(socket_path: []const u8, allocator: std.mem.Allocator, is_json:
     _ = c.setsockopt(sock_fd, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, @ptrCast(&tv), @sizeOf(std.posix.timeval));
     _ = c.setsockopt(sock_fd, std.posix.SOL.SOCKET, std.posix.SO.SNDTIMEO, @ptrCast(&tv), @sizeOf(std.posix.timeval));
 
-    if (c.connect(sock_fd, @ptrCast(&addr), addr_len) < 0) {
+    const connect_rc = c.connect(sock_fd, @ptrCast(&addr), addr_len);
+    if (connect_rc < 0) {
+        // The errno tells these apart: a missing or refused socket means no compositor,
+        // EPERM/EACCES means something (a sandbox, file modes) forbids the connection.
+        const reason = errnoText(connect_rc);
+        const hint = switch (std.posix.errno(connect_rc)) {
+            .NOENT, .CONNREFUSED => ", compositor not running or socket path invalid",
+            else => "",
+        };
         if (is_json) {
-            std.debug.print("{{\"status\":\"error\",\"error\":\"connection refused\",\"socket\":{f}}}\n", .{std.json.fmt(socket_path, .{})});
+            std.debug.print("{{\"status\":\"error\",\"error\":\"connection failed\",\"reason\":{f},\"socket\":{f}}}\n", .{ std.json.fmt(reason, .{}), std.json.fmt(socket_path, .{}) });
         } else {
             std.debug.print(
-                \\\rediwm doctor
-                \\\=============
-                \\\[✗] Socket: {s} (connection failed: compositor not running or socket path invalid)
-                \\\
-            , .{socket_path});
+                \\rediwm doctor
+                \\=============
+                \\[✗] Socket: {s} (connection failed: {s}{s})
+                \\
+            , .{ socket_path, reason, hint });
         }
         std.process.exit(1);
     }

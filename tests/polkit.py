@@ -126,6 +126,13 @@ class Logind:
             invocation.return_value(GLib.Variant('(v)', (GLib.Variant('s', '7'),)))
 
 
+CTTY_EXEC = (
+    'import fcntl, os, sys, termios\n'
+    'os.setsid()\n'
+    'fcntl.ioctl(0, termios.TIOCSCTTY, 1)\n'
+    'os.execv(sys.argv[1], sys.argv[1:])\n')
+
+
 def spawn(mode=None, terminal_fd=None, **overrides):
     env = dict(os.environ, DBUS_SYSTEM_BUS_ADDRESS=os.environ['DBUS_SESSION_BUS_ADDRESS'],
                WLR_BACKENDS='headless', REDIWM_FORCE_POLKIT='1', XDG_SESSION_ID='test-session', LC_ALL='C', USER='not-the-logged-in-user')
@@ -134,8 +141,10 @@ def spawn(mode=None, terminal_fd=None, **overrides):
             env.pop(key, None)
         else:
             env[key] = value
-    # An external setsid avoids Python preexec_fn in a multithreaded fixture.
-    command = (['setsid', '--ctty'] if terminal_fd is not None else []) + [sys.argv[1]] + ([mode] if mode else [])
+    # A wrapper that becomes session leader and takes the terminal (what
+    # `setsid --ctty` does, which FreeBSD lacks) avoids Python preexec_fn in a
+    # multithreaded fixture.
+    command = ([sys.executable, '-c', CTTY_EXEC] if terminal_fd is not None else []) + [sys.argv[1]] + ([mode] if mode else [])
     return subprocess.Popen(command, env=env,
                             stdin=subprocess.PIPE if terminal_fd is None else terminal_fd,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
@@ -173,6 +182,16 @@ def begin_args(identities=None):
             [('unix-user', {'uid': GLib.Variant('u', os.getuid())})])
 
 
+def peer_credentials(sock):
+    """(pid, uid) of a unix socket's peer. FreeBSD has no SO_PEERCRED: its
+    LOCAL_PEERCRED is a struct xucred (88 bytes; uid at 4, cr_pid at 80)."""
+    if hasattr(socket, 'SO_PEERCRED'):
+        pid, uid, _ = struct.unpack('3i', sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        return pid, uid
+    raw = sock.getsockopt(0, socket.LOCAL_PEERCRED, 88)
+    return struct.unpack_from('i', raw, 80)[0], struct.unpack_from('I', raw, 4)[0]
+
+
 class HelperSocket:
     """Independent wire peer. Assert the registering PID also opens the socket."""
     def __init__(self, directory, scenario):
@@ -194,7 +213,7 @@ class HelperSocket:
                 peer, _ = self.listener.accept()
                 with peer:
                     peer.settimeout(5)
-                    pid, uid, _ = struct.unpack('3i', peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                    pid, uid = peer_credentials(peer)
                     assert pid == self.pid and uid == os.getuid(), (pid, self.pid, uid)
                     with peer.makefile('rb', buffering=0) as stream:
                         assert stream.readline() == pwd.getpwuid(os.getuid()).pw_name.encode() + b'\n'
@@ -312,7 +331,9 @@ def terminal_conversations(authority):
         with tempfile.TemporaryDirectory(prefix='rediwm-polkit-tty-') as directory:
             peer = HelperSocket(directory, 'hold' if cancel else 'success')
             master, slave = pty.openpty()
-            original = termios.tcgetattr(slave)
+            # Read through the master, which shares the slave's termios: FreeBSD
+            # revokes the slave when the agent, its session leader, exits.
+            original = termios.tcgetattr(master)
             start = len(events)
             child = spawn(mode='--terminal', terminal_fd=slave, REDIWM_POLKIT_HELPER_SOCKET=peer.path)
             peer.pid = child.pid
@@ -335,7 +356,7 @@ def terminal_conversations(authority):
                     remaining = deadline - time.monotonic()
                     assert remaining > 0 and select.select([master], [], [], remaining)[0], output
                     output += os.read(master, 4096)
-                assert not termios.tcgetattr(slave)[3] & termios.ECHO
+                assert not termios.tcgetattr(master)[3] & termios.ECHO
                 if cancel:
                     child.send_signal(signal.SIGTERM)
                 else:
@@ -344,9 +365,16 @@ def terminal_conversations(authority):
                 peer.finish()
                 logs = stop(child)
                 # Child has exited; drain the finite amount of remaining tty output.
+                # FreeBSD's master stays readable at EOF once the leader is gone.
                 while select.select([master], [], [], 0)[0]:
-                    output += os.read(master, 4096)
-                assert termios.tcgetattr(slave) == original
+                    try:
+                        data = os.read(master, 4096)
+                    except OSError:
+                        break
+                    if not data:
+                        break
+                    output += data
+                assert termios.tcgetattr(master) == original
                 assert b'test-response' not in output and 'test-response' not in logs
             finally:
                 if child.poll() is None:
