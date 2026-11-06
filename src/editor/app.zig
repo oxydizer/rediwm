@@ -11,6 +11,7 @@ const dialog = @import("ui").widgets.dialog;
 const menu = @import("ui").context_menu;
 const p = @import("pango.zig");
 const caret_mod = @import("caret.zig");
+const reflow_mod = @import("reflow.zig");
 const input = @import("ui").input;
 const Document = @import("document.zig").Document;
 const view = @import("view.zig");
@@ -91,6 +92,12 @@ pub const App = struct {
     /// callback instead of following every pointer motion.
     glow_dirty: bool = false,
     caret_activity: usize = 0,
+    /// Lines an edit moved, gliding to their new places (see `reflow.zig`).
+    reflow: reflow_mod.Reflow = .{},
+    /// The animation has a frame to paint; follows the display like `glow_dirty`.
+    reflow_dirty: bool = false,
+    /// The loop time of the frame being prepared, shared by the caret and the rows.
+    frame_ms: i64 = 0,
     menu_open: bool = false,
     menu_selected: ?usize = null,
     menu_anchor: f64 = 0,
@@ -147,6 +154,7 @@ pub const App = struct {
         self.clipboard.deinit(a);
         self.preedit.deinit(a);
         self.rows.deinit(a);
+        self.reflow.deinit();
         self.layouts.deinit();
     }
     pub fn current(self: *App) *Tab {
@@ -195,6 +203,7 @@ pub const App = struct {
     pub const CaretState = app_paint.CaretState;
     pub const caretState = app_paint.caretState;
     pub const stepCaret = app_paint.stepCaret;
+    pub const stepReflow = app_paint.stepReflow;
     pub const caretDamage = app_paint.caretDamage;
     pub const paintCaret = app_paint.paintCaret;
     pub const tabRight = app_paint.tabRight;

@@ -30,9 +30,11 @@ pub fn acquireBuffer(self: *Client, w: i32, h: i32) !?*Buffer {
 
 pub fn render(self: *Client) !void {
     self.updateCursor();
-    if (!self.configured or (!self.app.dirty and !self.app.caret_dirty and !self.app.glow_dirty) or self.outstanding >= 2) return;
-    if (!self.app.dirty and !self.app.caret_dirty and self.frame_callback != null) return;
-    const full = self.app.dirty or self.app.glow_dirty;
+    if (!self.configured or (!self.app.dirty and !self.app.caret_dirty and !self.app.glow_dirty and !self.app.reflow_dirty) or self.outstanding >= 2) return;
+    // Glow and gliding lines follow the display, not the loop's own timer; the
+    // caret moving with them must not make them run ahead of it.
+    if (!self.app.dirty and self.frame_callback != null and (!self.app.caret_dirty or self.app.reflow_dirty)) return;
+    const full = self.app.dirty or self.app.glow_dirty or self.app.reflow_dirty;
 
     const tbh = self.titlebarHeight();
     const w = self.app.w;
@@ -95,6 +97,7 @@ pub fn render(self: *Client) !void {
     self.app.dirty = false;
     self.app.caret_dirty = false;
     self.app.glow_dirty = false;
+    self.app.reflow_dirty = false;
     self.app.caret_painted = self.app.caret.box;
 }
 

@@ -30,6 +30,43 @@
 * A selected line break is not in the segment layout, so `paintLine` draws the
   highlight out to the margin itself (wrapped mode only, as Pango did).
 
+## Line glide
+
+* **Edits that move lines glide instead of snapping** (`reflow.zig`): Enter
+  pushes the lines below down and carries the rest of its line onto a new one,
+  Backspace/Delete/undo joining or removing lines pulls them up, and a word
+  that now wraps shifts what follows. Layout, hit tests and the scrollbar
+  never see it: rows stay at rest and `paintLine` only gets an `Offset`
+  (`dx`, `dy`, `alpha`) for the row that starts at one byte offset. Plain
+  typing and cursor movement produce no offsets, so they cost one loop over
+  the visible rows.
+* **The edit span, not a diff, finds the same line again.** `Document.replace`
+  merges every edit since `takeChange` into `Change` (`lo`, `suffix`, lengths):
+  a row starting before `lo` keeps its start, a row at or after `hi()` started
+  `new_len - old_len` bytes earlier. `stepReflow` runs before `stepCaret` in
+  each loop pass, takes the change and plans; `render` ends with `remember`,
+  which stores the visible rows at *rest*. Where a row was drawn is its rest
+  place plus the move still in flight at `now`, so an edit during a glide
+  continues from the screen, not from the old target.
+* **All or nothing.** A line the edit made that has text (paste), a vertical
+  move over `max_glide` (120 px, the caret's jump rule), another tab, rebuilt
+  layouts (resize, font, wrap), a change the remembered rows don't describe,
+  or `caret_motion_ms = 0`/reduced motion snap every row. Lines that are
+  empty (Enter at a line's end or start) are fine. The rest of a split line
+  starts where the text before the break ends and fades in, so it doesn't
+  overprint the line above while it crosses it.
+* **The caret rides its line** (`Caret.Shift`): its box is the rest position
+  plus the offset of the row holding the cursor, solid while any line moves,
+  so the two never drift apart; a join leaves the cursor's row at rest and
+  the caret snaps as before.
+* **Frames are paced by the display.** The duration is 1.5 x `caret_motion_ms`
+  (one setting for both). `reflow_dirty` asks for a full repaint (damage is
+  not just the caret) and, unlike `caret_dirty`, waits for the frame callback;
+  one last frame is drawn at rest when it ends. Nothing runs when idle.
+  `tests/editor_visuals.py` samples a frame mid-glide (screenshots show the
+  frame at request time, so sample ~100 ms after the key); unit tests are in
+  `reflow.zig`.
+
 ## Drafts
 
 * **Unsaved text survives closing, crashes and reboots.** `drafts.zig` owns

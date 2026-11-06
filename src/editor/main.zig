@@ -302,6 +302,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
             before.top != caret_state.top or before.dy != caret_state.dy or before.scroll_x != caret_state.scroll_x or
             before.width != caret_state.width or before.height != caret_state.height or before.scale != caret_state.scale else true;
         self.caret_state = caret_state;
+        self.app.stepReflow(now);
         self.app.stepCaret(now, caret_state.active, restart, snap);
         try self.render();
         if (self.configured and self.applied_scale > 0 and pending_token.len > 0) {

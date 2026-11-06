@@ -22,6 +22,26 @@ const Edit = struct {
         a.free(e.after);
     }
 };
+/// Which part of the text an edit left alone: the first `lo` bytes and the
+/// last `suffix` bytes are the same before and after, so a position in either
+/// can be mapped between the old and the new text. Edits since the last
+/// `takeChange` are merged into one span.
+pub const Change = struct {
+    lo: usize,
+    suffix: usize,
+    old_len: usize,
+    new_len: usize,
+
+    /// End of the changed part of the new text.
+    pub fn hi(c: Change) usize {
+        return c.new_len - c.suffix;
+    }
+    /// The offset in the old text of the byte now at `new`, which must be at
+    /// or after `hi()`.
+    pub fn oldAfter(c: Change, new: usize) usize {
+        return new + c.old_len - c.new_len;
+    }
+};
 pub const Document = struct {
     text: std.ArrayList(u8) = .empty,
     cursor: usize = 0,
@@ -42,6 +62,9 @@ pub const Document = struct {
     /// Bounds of the line most recently asked about, so repeated queries in
     /// one enormous line do not each scan back to its start.
     line_memo: struct { revision: usize = std.math.maxInt(usize), start: usize = 0, end: usize = 0 } = .{},
+    /// What edits changed since `takeChange`; the view uses it to glide the
+    /// lines an edit moved instead of snapping them.
+    change: ?Change = null,
 
     pub fn deinit(d: *Document) void {
         d.text.deinit(a);
@@ -112,12 +135,28 @@ pub const Document = struct {
         if (size > limit) return error.FileTooLarge;
         try d.text.ensureTotalCapacity(a, size);
         d.retarget(at, len, bytes);
+        d.noteChange(at, len, bytes.len);
         const old = d.text.items.len;
         if (size > old) d.text.items.len = size;
         @memmove(d.text.items[at + bytes.len .. size], d.text.items[at + len .. old]);
         if (size < old) d.text.items.len = size;
         @memcpy(d.text.items[at..][0..bytes.len], bytes);
         d.revision +%= 1;
+    }
+    fn noteChange(d: *Document, at: usize, len: usize, added: usize) void {
+        const old = d.text.items.len;
+        const tail = old - at - len;
+        d.change = if (d.change) |c| .{
+            .lo = @min(c.lo, at),
+            .suffix = @min(c.suffix, tail),
+            .old_len = c.old_len,
+            .new_len = old - len + added,
+        } else .{ .lo = at, .suffix = tail, .old_len = old, .new_len = old - len + added };
+    }
+    /// The merged span of every edit since the last call, then forgets it.
+    pub fn takeChange(d: *Document) ?Change {
+        defer d.change = null;
+        return d.change;
     }
     /// Keeps the view anchor and line waypoints valid across replacing
     /// `len` bytes at `at` with `bytes`. Call before the text changes.
@@ -356,6 +395,34 @@ test "line numbers and the view anchor survive edits across waypoints" {
         try std.testing.expectEqual(naiveLines(d.text.items, pos), d.linesBefore(pos));
     }
     try std.testing.expectEqualStrings(source.items, d.text.items);
+}
+
+test "edits since the last look merge into one span of what they left alone" {
+    var d = try Document.init("0123456789");
+    defer d.deinit();
+    try std.testing.expectEqual(@as(?Change, null), d.takeChange());
+    d.move(4, false);
+    try d.insert("ab");
+    const one = d.takeChange().?;
+    try std.testing.expectEqual(Change{ .lo = 4, .suffix = 6, .old_len = 10, .new_len = 12 }, one);
+    // The "4" that followed the edit was at 4 and is now at 6.
+    try std.testing.expectEqual(@as(usize, 6), one.hi());
+    try std.testing.expectEqual(@as(usize, 4), one.oldAfter(6));
+    try std.testing.expectEqual(@as(?Change, null), d.takeChange());
+    // Two edits, the second before and shorter: one span covering both.
+    try d.insert("c");
+    d.move(1, false);
+    d.anchor = 2;
+    try d.insert("");
+    try d.insert("xyz");
+    const two = d.takeChange().?;
+    try std.testing.expectEqual(@as(usize, 1), two.lo);
+    try std.testing.expectEqual(@as(usize, 6), two.suffix);
+    try std.testing.expectEqual(@as(usize, 12), two.old_len);
+    try std.testing.expectEqual(d.text.items.len, two.new_len);
+    // Undo is an edit too.
+    try d.undo(false);
+    try std.testing.expect(d.takeChange() != null);
 }
 
 test "a binary or non-UTF-8 file is refused from its first bytes" {

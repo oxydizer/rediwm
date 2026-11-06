@@ -105,7 +105,7 @@ pub const source =
     \\cursor_size       = 32
     \\caret_blink_ms    = 1060      # full on+off cycle; 0 = never blink
     \\caret_blink_timeout = 10      # seconds idle before it goes solid; 0 = never
-    \\caret_motion_ms   = 80        # glide between positions; 0 = snap
+    \\caret_motion_ms   = 80        # glide between positions (editor lines glide 1.5x as long); 0 = snap
     \\# Pointer values above are defaults. Settings > Input saves only changed
     \\# values in [[input_device]] records keyed by a stable generated id.
     \\# Omitted device fields inherit these defaults; delete a field to reset it.

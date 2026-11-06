@@ -13,6 +13,8 @@ const dialog = @import("ui").widgets.dialog;
 const menu = @import("ui").context_menu;
 const p = @import("pango.zig");
 const caret_mod = @import("caret.zig");
+const reflow_mod = @import("reflow.zig");
+const input = @import("ui").input;
 const view = @import("view.zig");
 const lines = @import("lines.zig");
 const app_mod = @import("app.zig");
@@ -76,8 +78,36 @@ pub fn stepCaret(self: *App, now: i64, active: bool, restart: bool, snap: bool) 
     if (self.find_open) {
         if (self.layouts.cr) |cr| target = self.searchCaret(cr);
     }
-    if (self.caret.update(now, active, restart, target, snap or self.caret_snap)) self.caret_dirty = true;
+    if (self.caret.update(now, active, restart, target, snap or self.caret_snap, caretShift(self, now))) self.caret_dirty = true;
     self.caret_snap = false;
+}
+
+/// How far the line holding the cursor is from rest, for a caret that rides it.
+fn caretShift(self: *App, now: i64) caret_mod.Shift {
+    // The find bar's caret sits in its own box, not in a line.
+    if (self.find_open or !self.reflow.moving(now)) return .{};
+    const row = self.port().locate(self.document().cursor) orelse return .{ .active = true };
+    const o = self.reflow.offset(row.line.seg.start, now).snapped(@floatFromInt(self.scale));
+    return .{ .dx = o.dx, .dy = o.dy, .active = true };
+}
+
+fn reflowKey(self: *App) reflow_mod.Key {
+    return .{ .tab = self.tabId(), .epoch = self.layouts.epoch, .width = @floatFromInt(self.w) };
+}
+
+/// Starts the glide of lines an edit moved and advances one in flight. Runs
+/// before `stepCaret` in each pass of the loop: the caret rides its line.
+pub fn stepReflow(self: *App, now: i64) void {
+    self.frame_ms = now;
+    if (self.document().takeChange()) |change| {
+        const pt = self.port();
+        pt.clamp();
+        pt.visible(&self.rows);
+        const motion = input.caret_config.motion_ms;
+        _ = self.reflow.apply(now, motion + motion / 2, reflowKey(self), change, self.rows.items);
+    }
+    // One more frame once it ends, so the lines are drawn at rest.
+    if (self.reflow.settle(now) or self.reflow.moving(now)) self.reflow_dirty = true;
 }
 
 pub fn caretDamage(self: *App) p.Rectangle {
@@ -209,7 +239,17 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     c.cairo_save(cr);
     c.cairo_rectangle(cr, 12, self.viewTop(), @floatFromInt(self.w - 30), self.viewHeight());
     c.cairo_clip(cr);
-    for (self.rows.items) |row| self.paintLine(cr, tab, row, sel);
+    for (self.rows.items) |row| {
+        const o = self.reflow.offset(row.line.seg.start, self.frame_ms).snapped(@floatFromInt(self.scale));
+        // A line carried in from elsewhere fades in over the line it passes.
+        if (o.alpha < 1) c.cairo_push_group(cr);
+        self.paintLine(cr, tab, row, sel, o);
+        if (o.alpha < 1) {
+            c.cairo_pop_group_to_source(cr);
+            c.cairo_paint_with_alpha(cr, o.alpha);
+        }
+    }
+    self.reflow.remember(reflowKey(self), tab.doc.text.items.len, self.rows.items);
     if (!self.find_open) self.paintCaret(cr);
     c.cairo_restore(cr);
     if (self.scrollbarGeometry()) |bar| ui.drawScrollbar(cr, scrollbar.look(bar, self.bar_appearance, theme.global.scrollbar_width, theme.shellPalette()));
@@ -232,7 +272,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
 }
 
 /// Draws one segment's selection, text and any preedit at the cursor.
-pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]usize) void {
+pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]usize, shift: reflow_mod.Offset) void {
     const t = theme.global;
     const l = row.line;
     const seg = l.seg;
@@ -240,7 +280,8 @@ pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]u
     defer p.pango_layout_iter_free(iter);
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
-    c.cairo_translate(cr, 16 - tab.scroll_x, self.viewTop() + row.y);
+    const row_y = row.y + shift.dy;
+    c.cairo_translate(cr, 16 - tab.scroll_x + shift.dx, self.viewTop() + row_y);
     const text_len = l.textLen();
     // The selection as indices into this layout, which holds the text
     // without its line break. With wrapping, a selected break is drawn as
@@ -258,8 +299,8 @@ pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]u
         p.pango_layout_iter_get_line_extents(iter, null, &rect);
         const y = @as(f64, @floatFromInt(rect.y)) / 1024;
         const h = @as(f64, @floatFromInt(rect.height)) / 1024;
-        if (row.y + y > self.viewHeight()) break;
-        if (row.y + y + h >= 0) {
+        if (row_y + y > self.viewHeight()) break;
+        if (row_y + y + h >= 0) {
             const line = p.pango_layout_iter_get_line_readonly(iter);
             const first: usize = @intCast(p.pango_layout_line_get_start_index(line));
             const next = p.pango_layout_get_line_readonly(l.layout, line_index + 1);

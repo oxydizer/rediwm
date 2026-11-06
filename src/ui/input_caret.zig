@@ -20,7 +20,8 @@ pub const CaretConfig = struct {
     /// 0 means blink forever, which costs a repaint every half cycle for as
     /// long as the field keeps focus.
     blink_timeout_s: u32 = 10,
-    /// Glide duration when the caret moves. 0 snaps.
+    /// Glide duration when the caret moves. 0 snaps. The editor's lines glide
+    /// 1.5 times as long when an edit moves them (`editor/reflow.zig`).
     motion_ms: u32 = 80,
 };
 
