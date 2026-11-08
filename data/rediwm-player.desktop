@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Audio Player
+Comment=Play audio files in the background with RediWM
+Exec=@BINDIR@/rediwm-player --scope -- %f
+Icon=audio-x-generic
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/mpeg;audio/flac;audio/x-flac;audio/wav;audio/x-wav;audio/vnd.wave;
+NoDisplay=true
+StartupNotify=false

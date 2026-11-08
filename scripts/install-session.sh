@@ -62,7 +62,7 @@ if [ "${built_prefix%/}" != "${prefix%/}" ]; then
     echo "Build targets $built_prefix, not $prefix. Rebuild with --prefix=$prefix (prebuilt releases cannot be relocated)." >&2
     exit 1
 fi
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-monitor rediwm-editor rediwm-pdf rediwm-share-picker rediwm-dm rediwm-accounts-helper rediwm-restart; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-monitor rediwm-editor rediwm-pdf rediwm-player rediwm-share-picker rediwm-dm rediwm-accounts-helper rediwm-restart; do
     test -x "$release_dir/bin/$binary"
 done
 as_root sh "$repo_dir/scripts/install-session-root.sh" "$repo_dir" "$release_dir" "$dm_flag"

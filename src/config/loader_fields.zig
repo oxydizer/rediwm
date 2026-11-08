@@ -148,6 +148,7 @@ pub const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(Composi
     .drag_scale = .{ .float = .{ .min = drag_scale_min, .max = drag_scale_max } },
     .dodge_file_drags = .boolean,
     .files_single_click_open = .boolean,
+    .files_audio_player = .boolean,
     .inactive_opacity = .{ .float = .{ .min = 0, .max = 1 } },
     .terminal_opacity = .{ .float = .{ .min = 0, .max = 1 } },
     .inactive_dim = .boolean,

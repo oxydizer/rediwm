@@ -258,3 +258,21 @@ See `docs/files-torrents.md` for dependencies, storage and lifecycle.
   exits a stopped helper; active downloads/seeding keep it alive.
 * `zig build test-files-torrents` uses a private bus, temporary state and a
   noninstalled loopback network shim. Never fetch public torrents in tests.
+
+## Audio toolbar
+
+`app_audio_bar.zig` lays out the now-playing bar between toolbar groups, or
+in an extra row on narrow windows (`contentTop` includes it). It appears for
+playing and paused tracks, independently of the current folder; stopped/ended
+playback and file choosers have no bar. Controls use the shared buttons and Settings-style slider
+widgets and MPRIS through `player_link`; playing progress and slider feedback schedule
+repaint deadlines. Hover keys 920–923 damage the bar. `tests/files_audio.py`
+covers toolbar seeking, folder navigation, narrow layout, pause/resume and Stop.
+
+`app_audio_playlist.zig` owns the playlist popover (click, keyboard and scrolling).
+The link thread snapshots supported audio files beside the playing track, sorted
+by filename, once per playback folder. Browsing does not replace the snapshot;
+opening audio from another folder does. Immutable reference-counted snapshots
+cross the link mutex and are released by `stopAudio`; UI code never scans folders.
+The popover selects tracks through normal MPRIS OpenUri; it is not an automatic
+queue and does not change the player's end-of-track policy.

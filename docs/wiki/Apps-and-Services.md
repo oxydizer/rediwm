@@ -27,6 +27,12 @@ The file manager. Space opens images, PDFs and text files.
 - File and folder icons open with one click in list and icons view, with a hand
   cursor on hover. Names select; Ctrl/Shift clicks and dragging still work.
   Turn this off in Settings → General (`files_single_click_open`).
+- MP3, FLAC and WAV files show a play button (list view: right of the name; icons
+  view: over the icon on hover) and open in the built-in audio player,
+  `rediwm-player`, unless you picked another default application in Open With.
+  Playback continues after Files closes; the player shows an icon in the taskbar
+  tray whose menu pauses, seeks 10 s or stops it. Turn this off in Settings →
+  General (`files_audio_player`).
 
 ## Text editor (`rediwm-editor [FILE ...]`)
 

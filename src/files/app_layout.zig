@@ -110,7 +110,7 @@ pub fn sidebarFooter(self: *const App) i32 {
 
 pub fn contentTop(self: *App) i32 {
     if (self.transfer_view.active) return if (self.w < 500) 152 else 112;
-    return header.height(self.w, self.inRepository());
+    return header.height(self.w, self.inRepository()) + @import("app_audio_bar.zig").extraHeight(self);
 }
 
 pub fn viewTop(self: *App) i32 {

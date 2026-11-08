@@ -85,6 +85,7 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
         }
     }
     if (header.visible(self.w, in_repo, .git_view)) self.renderGitViewToggle(cr);
+    @import("app_audio_bar.zig").paint(self, cr);
     const field = header.field(self.w);
     self.renderLocationBar(cr, field.x, field.y, field.w, field.h);
 }
@@ -207,9 +208,11 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     if (self.chooser != null) self.renderChooser(cr) else self.renderStatusBar(cr, h_f);
     self.renderTerminal(cr);
 
-    if (!self.transfer_view.active and self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
+    if (!self.audio_bar.playlist_open and !self.transfer_view.active and self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
     if (self.menu != null) self.renderMenu(cr);
-    if (self.menu == null and self.dialog == null) self.renderTorrentTip(cr);
+    if (!self.audio_bar.playlist_open and self.menu == null and self.dialog == null) self.renderTorrentTip(cr);
+
+    @import("app_audio_playlist.zig").paint(self, cr);
 
     // 6. Modal Dialog
     if (self.dialog != null) {
@@ -262,6 +265,7 @@ pub fn editorTextArea(self: *App) header.Rect {
 }
 
 pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
+    if (@import("app_audio_playlist.zig").cursor(self)) |cursor| return cursor;
     if (self.terminal.resize != null or self.overTerminalDivider(x, y)) return "row-resize";
     if (self.dialog == null and self.menu == null) {
         if (self.terminalHit(x, y) != null) return "pointer";
@@ -277,7 +281,7 @@ pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
     if (self.overSidebarDivider(x, y)) return "col-resize";
     if (self.chooser != null and self.chooserRect(0).contains(x, y)) return "text";
     if (self.focus != .location_bar and !self.search_visible and header.field(self.w).contains(x, y)) return "pointer";
-    if (self.inlineTorrentHit(x, y) != null) return "pointer";
+    if (@import("app_audio_bar.zig").hit(self, x, y) != null or self.inlineTorrentHit(x, y) != null or self.audioButtonHit(x, y) != null) return "pointer";
     if (self.singleClickIconAt(x, y) != null) return "pointer";
     return if (header.field(self.w).contains(x, y)) "text" else "default";
 }

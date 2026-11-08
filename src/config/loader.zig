@@ -231,6 +231,9 @@ pub const CompositorConfig = struct {
     dodge_file_drags: bool = true,
     /// Files opens an item with one click on its icon; names still select.
     files_single_click_open: bool = true,
+    /// Files plays audio files in the built-in player (rediwm-player), with a
+    /// play button on audio rows, unless an explicit default application is set.
+    files_audio_player: bool = true,
     inactive_opacity: f32 = 1.0,
     /// Background alpha handed to Foot, kitty, Alacritty, Ghostty and WezTerm at launch (`config/terminal_theme.zig`).
     /// Unset keeps the `alpha` of the user's own Foot configuration.

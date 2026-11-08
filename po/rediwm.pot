@@ -787,6 +787,10 @@ msgstr ""
 msgid "Browser"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "Built-in audio player"
+msgstr ""
+
 #: src/control_center/sections/network_proxy.zig
 msgid "Bypass the proxy for"
 msgstr ""
@@ -1671,6 +1675,10 @@ msgstr ""
 
 #: src/files/open_with.zig
 msgid "Could not open with this app. Choose another."
+msgstr ""
+
+#: src/files/app_audio.zig
+msgid "Could not play the file"
 msgstr ""
 
 #: src/pdf/app_document.zig
@@ -3239,6 +3247,10 @@ msgstr ""
 msgid "In Files, click an icon to open it in list or icons view. Click the name to select."
 msgstr ""
 
+#: src/control_center/tree.zig
+msgid "In Files, show a play button on audio files and play them in the background player. A default application chosen in Open With still takes over."
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Inactive window opacity"
 msgstr ""
@@ -4663,7 +4675,7 @@ msgstr ""
 msgid "Paste"
 msgstr ""
 
-#: src/files/app_torrent_rows.zig
+#: src/files/app_audio.zig
 msgid "Pause"
 msgstr ""
 
@@ -4725,6 +4737,10 @@ msgstr ""
 
 #: src/files/app_places.zig
 msgid "Places is full"
+msgstr ""
+
+#: src/files/app_audio.zig
+msgid "Play"
 msgstr ""
 
 #: src/images/app_edit.zig
@@ -7822,6 +7838,10 @@ msgid "mouse touchpad trackpad select"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "music play sound mp3 flac wav files"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "notification percent"
 msgstr ""
 
@@ -8373,6 +8393,11 @@ msgctxt "desktop:Comment"
 msgid "Edit text files in tabs"
 msgstr ""
 
+#: data/rediwm-player.desktop
+msgctxt "desktop:Comment"
+msgid "Play audio files in the background with RediWM"
+msgstr ""
+
 #: data/rediwm-release-safe.desktop
 msgctxt "desktop:Comment"
 msgid "RediWM Wayland compositor"
@@ -8421,6 +8446,11 @@ msgstr ""
 #: data/rediwm-monitor.desktop
 msgctxt "desktop:Keywords"
 msgid "process;task;CPU;memory;performance;"
+msgstr ""
+
+#: data/rediwm-player.desktop
+msgctxt "desktop:Name"
+msgid "Audio Player"
 msgstr ""
 
 #: data/rediwm-calculator.desktop

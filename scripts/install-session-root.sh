@@ -26,7 +26,7 @@ umask 022
 install -d "${bindir}"
 stage=$(mktemp -d "${bindir}/.rediwm-install.XXXXXX")
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper rediwm-restart; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-player rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper rediwm-restart; do
     install -m755 "$release_dir/bin/$binary" "$stage/$binary"
 done
 install -Dm644 "$release_dir/share/applications/rediwm-theme.desktop" "${datadir}/applications/rediwm-theme.desktop"
@@ -43,6 +43,8 @@ install -Dm644 "$release_dir/share/applications/rediwm-calculator.desktop" "${da
 install -Dm644 "$release_dir/share/icons/hicolor/scalable/apps/rediwm-calculator.svg" "${datadir}/icons/hicolor/scalable/apps/rediwm-calculator.svg"
 install -Dm644 "$release_dir/share/applications/rediwm-editor.desktop" "${datadir}/applications/rediwm-editor.desktop"
 install -Dm644 "$release_dir/share/applications/rediwm-pdf.desktop" "${datadir}/applications/rediwm-pdf.desktop"
+install -Dm644 "$release_dir/share/applications/rediwm-player.desktop" "${datadir}/applications/rediwm-player.desktop"
+install -Dm644 "$release_dir/share/licenses/rediwm/miniaudio-LICENSE" "${datadir}/licenses/rediwm/miniaudio-LICENSE"
 if [ -z "$dest" ] && command -v update-mime-database >/dev/null 2>&1; then update-mime-database "${datadir}/mime"; fi
 if [ -z "$dest" ] && command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "${datadir}/applications"; fi
 install -Dm644 "$repo_dir/data/rediwm-portals.conf" "${datadir}/xdg-desktop-portal/rediwm-portals.conf"
@@ -92,7 +94,7 @@ for pack in "$release_dir"/share/rediwm/themes/*/; do
     rm -rf "${datadir}/rediwm/themes/$name"
     mv -T "${datadir}/rediwm/themes/.$name-new" "${datadir}/rediwm/themes/$name"
 done
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper rediwm-restart; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-player rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper rediwm-restart; do
     mv -fT "$stage/$binary" "${bindir}/$binary"
 done
 # The compositor draws the desktop itself; the old client is retired.

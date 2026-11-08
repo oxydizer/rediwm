@@ -8,6 +8,7 @@ const std = @import("std");
 const Context = @import("build/context.zig").Context;
 const protocols = @import("build/protocols.zig");
 const apps = @import("build/apps.zig");
+const player_build = @import("build/player.zig");
 const data = @import("build/data.zig");
 const session_build = @import("build/session.zig");
 const tests = @import("build/tests.zig");
@@ -239,6 +240,7 @@ pub fn build(b: *std.Build) void {
         .c = c_headers,
     };
     const app = apps.add(ctx);
+    player_build.add(ctx);
     const files = app.files;
     const images = app.images;
     const monitor = app.monitor;

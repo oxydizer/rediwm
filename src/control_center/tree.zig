@@ -41,6 +41,7 @@ const pageClicked = panel.pageClicked;
 const deviceClicked = panel.deviceClicked;
 const brightnessChanged = panel.brightnessChanged;
 const filesSingleClickChanged = panel.filesSingleClickChanged;
+const filesAudioPlayerChanged = panel.filesAudioPlayerChanged;
 const ControlCenter = @import("ControlCenter.zig");
 const paintNavHighlights = ControlCenter.paintNavHighlights;
 
@@ -362,6 +363,18 @@ pub fn buildGeneral(cc: *ControlCenter) void {
     files_card.direction = .row;
     files_card.@"align" = .center;
     cc.append(files_card);
+    cc.general_audio_text = .{
+        label(i18n.tr("Built-in audio player"), 14, false),
+        label(i18n.tr("In Files, show a play button on audio files and play them in the background player. A default application chosen in Open With still takes over."), 12, true),
+    };
+    cc.general_audio = .{
+        .{ .kind = .container, .direction = .column, .gap = 5, .width = .{ .flex = 1 }, .children = &cc.general_audio_text },
+        .{ .name = "files_audio_player", .kind = .{ .toggle = .{ .on = cc.server.config.compositor.files_audio_player, .owner = cc, .on_change = filesAudioPlayerChanged } } },
+    };
+    var audio_card = card(&cc.general_audio);
+    audio_card.direction = .row;
+    audio_card.@"align" = .center;
+    cc.append(audio_card);
 }
 
 pub fn buildDevices(cc: *ControlCenter) void {

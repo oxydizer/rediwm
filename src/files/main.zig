@@ -239,6 +239,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     if (chooser) |options| try self.app.configureChooser(options);
     if (selected_file) |path| self.app.selectOnLoad(path);
     self.app.startDevices();
+    self.app.startAudio();
     if (chooser == null) self.app.startTorrents();
     if (transfers) self.app.openTransfers();
     if (torrent_source) |source| self.app.torrentSource(source);
@@ -329,6 +330,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         self.app.stepHover(app_mod.nowMs());
         self.app.stepScrollbar(app_mod.nowMs());
         self.app.stepScanNotice(app_mod.nowMs());
+        self.app.stepAudio(app_mod.nowMs());
         self.refreshCursor();
 
         if (self.app.title_changed) {
@@ -352,7 +354,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             return error.DisplayFailed;
         }
 
-        var fds: [23]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
+        var fds: [24]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         fds[1].fd = self.app.preview_return_fd orelse -1;
         fds[2].fd = if (self.receiving) |receive| receive.fd else -1;
@@ -371,6 +373,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             fds[21].fd = terminal_c.ft_exit_fd(session);
         }
         fds[22].fd = self.app.torrents.fd;
+        fds[23].fd = self.app.audioWakeFd();
         const send_count = self.sends.items.len;
         for (self.sends.items, 0..) |send, i| fds[i + 6] = .{ .fd = send.fd, .events = c.POLLOUT, .revents = 0 };
 
@@ -393,6 +396,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         }
         if (fds[5].revents & c.POLLIN != 0) self.app.drainThumbs();
         if (fds[14].revents & c.POLLIN != 0) self.app.drainDevices();
+        if (fds[23].revents & c.POLLIN != 0) self.app.drainAudio();
         if (fds[16].revents != 0) while (self.app.children.next() != null) {};
         if (fds[18].revents != 0) if (self.app.job_runner) |runner| runner.drain();
         if (fds[17].revents != 0) self.app.extractionFolderReady();

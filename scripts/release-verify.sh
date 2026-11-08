@@ -52,7 +52,7 @@ log "Checking the installed files"
 for bin in /usr/local/bin/rediwm /usr/local/bin/rediwm-*; do
     readelf -d "$bin" 2>/dev/null | grep -E 'RUNPATH|RPATH' | grep -q "/work/" && die "$bin carries a build path in its RUNPATH"
 done
-for bin in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
+for bin in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-player rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
     [ -x "/usr/local/bin/$bin" ] || die "/usr/local/bin/$bin is missing"
     ldd "/usr/local/bin/$bin" 2>&1 | grep -q 'not found' && die "$bin has unresolved libraries"
 done

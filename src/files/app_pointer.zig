@@ -43,12 +43,14 @@ pub fn hoverKey(self: *App) usize {
             return 500;
         }
     }
+    if (@import("app_audio_bar.zig").hit(self, x, y)) |id| return 920 + id;
     if (self.toolbar_surface.hovered) |target| return 200 + @as(usize, @intCast(target.id));
     if (self.list_view and x >= @as(f64, @floatFromInt(self.sidebarWidth())) and x < @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) {
         if (self.column_surface.hovered) |target| return @intCast(target.id);
     }
     if (self.sidebar_surface.hovered) |target| return @intCast(target.id);
     if (self.inlineTorrentHit(x, y)) |hit| return std.math.maxInt(usize) - 3000 - hit.index * 2 - @intFromBool(hit.toggle);
+    if (self.audioButtonHit(x, y)) |index| return @import("app_audio.zig").audioHoverKey(index);
     if (self.item_surface.hovered) |target| {
         const i: usize = @intCast(target.id);
         if (i < self.items.items.len) {
@@ -71,6 +73,8 @@ pub fn hoverKey(self: *App) usize {
 }
 
 pub fn handleMotion(self: *App, x: f64, y: f64) void {
+    if (@import("app_audio_playlist.zig").motion(self, x, y)) return;
+    if (@import("app_audio_bar.zig").motion(self, x, y)) return;
     if (self.terminalMotion(x, y)) {
         self.mouse_x = x;
         self.mouse_y = y;
@@ -163,6 +167,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
 }
 
 pub fn cancelDrag(self: *App) void {
+    self.audio_bar.drag.end();
     self.terminalCancelPointer();
     self.terminal.resize = null;
     self.terminal.selecting = false;
@@ -246,6 +251,8 @@ pub fn renderSelectionBand(self: *App, cr: *c.cairo_t) void {
 }
 
 pub fn handleButton(self: *App, button: u32, pressed: bool) void {
+    if (@import("app_audio_playlist.zig").button(self, button, pressed)) return;
+    if (button == 0x110 and !pressed and @import("app_audio_bar.zig").release(self)) return;
     if (self.terminalButton(button, pressed)) return;
     if (pressed and self.dialog == null and self.menu == null and self.focus == .terminal) {
         self.focus = .file_view;
@@ -439,6 +446,8 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
     }
     if (self.transfer_view.active and self.transferPaneClick(x, y, button)) return;
     if (button == 0x110 and self.inlineTorrentClick(x, y)) return;
+    if (button == 0x110 and @import("app_audio_bar.zig").click(self, x, y)) return;
+    if (button == 0x110 and self.audioButtonClick(x, y)) return;
     if (button == 0x111) {
         if (self.placeAt(x, y)) |index| {
             self.menu_place = index;

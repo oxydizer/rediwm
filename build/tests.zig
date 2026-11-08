@@ -9,6 +9,7 @@ const addGlass = support.addGlass;
 const addThumbCodec = support.addThumbCodec;
 const addFilesTerminal = support.addFilesTerminal;
 const addVolumes = support.addVolumes;
+const addPlayerLink = support.addPlayerLink;
 
 pub const ZigTests = struct {
     test_step: *std.Build.Step,
@@ -365,6 +366,7 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     files_tests.root_module.addImport("c_archive", ctx.c.archive);
     addThumbCodec(b, files_tests.root_module);
     addVolumes(b, files_tests.root_module);
+    addPlayerLink(b, files_tests.root_module);
     addFilesTerminal(b, files_tests.root_module, true);
     const run_files_tests = b.addSystemCommand(&.{"env"});
     run_files_tests.addArtifactArg(files_tests);
@@ -378,6 +380,14 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     const terminal_tests = b.step("test-files-terminal", "Test the Files terminal against isolated PTYs and a headless compositor");
     terminal_tests.dependOn(&run_files_tests.step);
     terminal_tests.dependOn(&terminal_integration.step);
+    // Files plays audio in rediwm-player: the real player, with a fixture build
+    // whose output is a paced null device, so no host audio is touched.
+    const audio_fixture = @import("player.zig").executable(ctx, "rediwm-player-test", true);
+    const audio_integration = b.addSystemCommand(&.{"python3"});
+    audio_integration.addFileArg(b.path("tests/files_audio.py"));
+    audio_integration.addArtifactArg(audio_fixture);
+    audio_integration.step.dependOn(b.getInstallStep());
+    b.step("test-files-audio", "Test Files with the audio player on a private session bus").dependOn(&audio_integration.step);
     const share_picker_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/share_picker_tests.zig"),
         .target = target,

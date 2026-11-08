@@ -180,6 +180,7 @@ pub fn pollTimeout(self: *Client) c_int {
     };
     if (self.app.status_notice != null) deadline = earlier(deadline, self.app.status_notice_until);
     if (self.app.scanNoticeDeadline()) |at| deadline = earlier(deadline, at);
+    if (self.app.audioDeadline()) |at| deadline = earlier(deadline, at);
     if (self.app.scroll_appearance.deadline) |at| deadline = earlier(deadline, at);
     if (self.app.horizontal_appearance.deadline) |at| deadline = earlier(deadline, at);
     if (self.app.sidebar_scroll_appearance.deadline) |at| deadline = earlier(deadline, at);

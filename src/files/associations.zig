@@ -248,6 +248,35 @@ pub const Applications = struct {
 };
 
 extern fn g_app_info_get_id(app: *anyopaque) ?[*:0]const u8;
+extern fn g_key_file_get_string(key_file: *anyopaque, group: [*:0]const u8, key: [*:0]const u8, err: ?*?*anyopaque) ?[*:0]u8;
+
+/// Whether the user chose, in their own mimeapps.list, a default application
+/// for this file's type other than `bundled_id`. GIO's own default also names
+/// whatever happens to be installed first, which is not a choice: a bundled
+/// app that has no explicit rival keeps its files.
+pub fn hasExplicitDefault(path: []const u8, bundled_id: []const u8) bool {
+    const filename = std.heap.c_allocator.dupeSentinel(u8, path, 0) catch return false;
+    defer std.heap.c_allocator.free(filename);
+    const content_type = mime_db.guess(filename);
+    const list = std.fmt.allocPrintSentinel(std.heap.c_allocator, "{s}/mimeapps.list", .{g_get_user_config_dir()}, 0) catch return false;
+    defer std.heap.c_allocator.free(list);
+    const key_file = g_key_file_new();
+    defer g_key_file_unref(key_file);
+    if (g_key_file_load_from_file(key_file, list, 0, null) == 0) return false;
+    const keys = g_key_file_get_keys(key_file, "Default Applications", null, null) orelse return false;
+    defer g_strfreev(keys);
+    var i: usize = 0;
+    while (keys[i]) |key| : (i += 1) {
+        if (!mime_db.equals(std.mem.span(key), content_type)) continue;
+        const value = g_key_file_get_string(key_file, "Default Applications", key, null) orelse continue;
+        defer g_free(value);
+        // A list of desktop ids, the first of which is the preferred one.
+        var ids = std.mem.tokenizeScalar(u8, std.mem.span(value), ';');
+        const first = ids.next() orelse continue;
+        if (!std.mem.eql(u8, first, bundled_id)) return true;
+    }
+    return false;
+}
 
 /// Launch through the same MIME default that Open With displays. A URI-based
 /// launch can pick the handler for file:// instead of the file's content type.

@@ -6,6 +6,7 @@ const support = @import("support.zig");
 const addThumbCodec = support.addThumbCodec;
 const addFilesTerminal = support.addFilesTerminal;
 const addVolumes = support.addVolumes;
+const addPlayerLink = support.addPlayerLink;
 const localizedData = support.localizedData;
 
 pub const Apps = struct {
@@ -40,6 +41,7 @@ pub fn add(ctx: Context) Apps {
     files.root_module.addImport("c_archive", ctx.c.archive);
     addThumbCodec(b, files.root_module);
     addVolumes(b, files.root_module);
+    addPlayerLink(b, files.root_module);
     addFilesTerminal(b, files.root_module, false);
     const terminal_license = b.addInstallFileWithDir(b.dependency("vterm", .{}).path("LICENSE"), .prefix, "share/licenses/rediwm/libvterm-LICENSE");
     b.getInstallStep().dependOn(&terminal_license.step);

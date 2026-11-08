@@ -77,6 +77,7 @@ pub fn wheelMax(self: *App) i32 {
 }
 
 pub fn handleWheel(self: *App, delta_px: f64, now: i64) void {
+    if (@import("app_audio_playlist.zig").wheel(self, delta_px)) return;
     if (delta_px != 0 and self.terminalWheel(delta_px)) return;
     if (self.shift and self.dialog == null and self.mouse_x >= @as(f64, @floatFromInt(self.sidebarWidth()))) {
         self.handleHorizontalScroll(delta_px);

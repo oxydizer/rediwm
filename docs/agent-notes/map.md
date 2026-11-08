@@ -23,6 +23,7 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 | `rediwm-images` | `src/images_main.zig` | `images/` (`app.zig` + `app_*.zig`) |
 | `rediwm-editor` | `src/editor_main.zig` | `editor/` (`app.zig` + `app_*.zig`, window in `main.zig` + `client_*.zig`) |
 | `rediwm-pdf` | `src/pdf_main.zig` | `pdf/` (sandboxed; window in `main.zig` + `client_*.zig`) |
+| `rediwm-player` | `src/player/main.c` | `player/`: background audio player in C (`engine.c` miniaudio, `mpris.c`, `tray.c`); Files' side is `files/player_link.*` and `files/app_audio.zig` |
 | `rediwm-monitor` | `src/system_monitor_main.zig` | `system_monitor/` |
 | `rediwm-calculator` | `src/calculator_main.zig` | `calculator/` |
 | `rediwm-share-picker` | `src/share_picker_main.zig` | `share_picker/` |

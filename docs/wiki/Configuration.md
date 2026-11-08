@@ -169,6 +169,7 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `drag_feedback` | `true` | softly lift a window during a move drag; suppressed by reduced motion |
 | `drag_scale` | `1.002` | drag lift multiplier, `1.000`–`1.100`; adjustable in Appearance |
 | `files_single_click_open` | `true` | Files opens files and folders with one click on their icon in list or icons view |
+| `files_audio_player` | `true` | Files shows a play button on MP3, FLAC and WAV files and plays them in the background player (`rediwm-player`); a default application chosen in Open With takes precedence |
 | `switcher_style` | `"linear"` | `linear` keeps the horizontal Alt+Tab strip; `circular` arranges app previews around a circle and stacks windows from the same app |
 | `switcher_opacity`, `inactive_opacity` | `1.0` | |
 | `switcher_circle_bg` | `false` | `circular` style only: paint a disc behind the switcher, coloured by the window chrome's own opacity (`chrome_opacity`) and darkness (`chrome_darkness`) settings |

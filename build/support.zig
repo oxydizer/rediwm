@@ -132,6 +132,14 @@ pub fn addVolumes(b: *std.Build, module: *std.Build.Module) void {
     inline for (.{ "gio-2.0", "gobject-2.0", "glib-2.0" }) |lib| module.linkSystemLibrary(lib, .{});
 }
 
+/// Files' link to rediwm-player (src/files/player_link.c).
+pub fn addPlayerLink(b: *std.Build, module: *std.Build.Module) void {
+    module.addIncludePath(b.path("src/files"));
+    module.addCSourceFile(.{ .file = b.path("src/files/player_link.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addImport("c_player_link", cHeader(b, module.resolved_target.?, module.optimize.?, b.path("src/files/player_link.h"), &.{}));
+    inline for (.{ "gio-2.0", "gobject-2.0", "glib-2.0" }) |lib| module.linkSystemLibrary(lib, .{});
+}
+
 pub fn addShellUi(b: *std.Build, module: *std.Build.Module) void {
     addShellIcons(b, module);
     module.addAnonymousImport("manrope", .{ .root_source_file = b.path("assets/fonts/Manrope-VariableFont_wght.ttf") });

@@ -13,6 +13,7 @@ const dirsize = @import("dirsize.zig");
 const thumbs_mod = @import("thumbs.zig");
 const thumb_decode = @import("thumb_decode.zig");
 const volumes_mod = @import("volumes.zig");
+const player_link = @import("player_link.zig");
 const theme = @import("../icon_theme.zig");
 const Allocator = std.mem.Allocator;
 const header = @import("header.zig");
@@ -37,6 +38,7 @@ const app_torrents = @import("app_torrents.zig");
 const app_torrent_rows = @import("app_torrent_rows.zig");
 const app_git_sidebar = @import("app_git_sidebar.zig");
 const app_opening = @import("app_opening.zig");
+const app_audio = @import("app_audio.zig");
 const app_pointer = @import("app_pointer.zig");
 const app_keyboard = @import("app_keyboard.zig");
 const app_menu = @import("app_menu.zig");
@@ -213,6 +215,13 @@ pub const App = struct {
     deselect_on_release: ?usize = null,
     open_on_release: ?usize = null,
     single_click_open: bool = true,
+    /// Audio files play in rediwm-player (`files_audio_player`).
+    audio_player: bool = true,
+    audio_link: ?player_link.Link = null,
+    audio_state: player_link.State = .{},
+    /// When the playing track's progress ring next repaints; 0 recomputes.
+    audio_tick_at: i64 = 0,
+    audio_bar: @import("app_audio_bar.zig").State = .{},
     selection_band: ?struct {
         x: f64,
         y: f64, // Content coordinates, so the anchor survives edge scrolling.
@@ -316,6 +325,7 @@ pub const App = struct {
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
             .single_click_open = @import("settings.zig").singleClickOpen(),
+            .audio_player = @import("settings.zig").audioPlayer(),
         };
 
         self.theme_cfg.override_root = @import("settings.zig").iconRoot();
@@ -348,6 +358,7 @@ pub const App = struct {
 
     pub fn deinit(self: *App) void {
         self.torrents.deinit();
+        self.stopAudio();
         self.terminal.deinit(self.allocator);
         self.children.deinit(self.allocator);
         self.closeExtractPicker();
@@ -741,6 +752,18 @@ pub const App = struct {
     pub const refreshPins = app_places.refreshPins;
     pub const deviceLabel = app_places.deviceLabel;
     pub const startDevices = app_places.startDevices;
+    pub const startAudio = app_audio.startAudio;
+    pub const audioWakeFd = app_audio.audioWakeFd;
+    pub const drainAudio = app_audio.drainAudio;
+    pub const stopAudio = app_audio.stopAudio;
+    pub const playsBuiltin = app_audio.playsBuiltin;
+    pub const playAudio = app_audio.playAudio;
+    pub const audioButtonWidth = app_audio.audioButtonWidth;
+    pub const renderAudioButton = app_audio.renderAudioButton;
+    pub const audioButtonHit = app_audio.audioButtonHit;
+    pub const audioButtonClick = app_audio.audioButtonClick;
+    pub const audioDeadline = app_audio.audioDeadline;
+    pub const stepAudio = app_audio.stepAudio;
     pub const devicesWakeFd = app_places.devicesWakeFd;
     pub const drainDevices = app_places.drainDevices;
     pub const startDeviceOp = app_places.startDeviceOp;

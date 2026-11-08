@@ -136,6 +136,14 @@ pub fn openFile(self: *App, path: []const u8) void {
         self.setStatusNotice(tr("Installing theme…"), false);
         return;
     }
+    if (self.playsBuiltin(path)) {
+        if (self.playAudio(path)) {
+            self.worker.recordOpened(path);
+            return;
+        }
+        self.setStatusNotice(tr("Could not play the file"), true);
+        return;
+    }
     const pdf = isPdf(path) and !@import("associations.zig").hasAlternativeDefault(path, "rediwm-pdf.desktop");
     if (!pdf) {
         @import("associations.zig").launchDefault(path) catch |err| {

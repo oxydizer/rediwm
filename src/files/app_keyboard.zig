@@ -94,6 +94,7 @@ pub fn typeSelectAt(self: *App, utf8: []const u8, now_ms: i64) bool {
 }
 
 pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
+    if (@import("app_audio_playlist.zig").key(self, sym)) return;
     self.cancelWheel();
     if (sym == c.XKB_KEY_Escape and self.selection_band != null) {
         for (self.items.items) |*it| it.selected = it.selected_before_band;
