@@ -22,6 +22,7 @@ const App = app_mod.App;
 const top = app_mod.top;
 const status_h = app_mod.status_h;
 const labels = app_mod.labels;
+const recent_row = app_mod.recent_row;
 const Tab = app_mod.Tab;
 const fill = app_mod.fill;
 const drawEllipsis = @import("../files/app_draw.zig").drawEllipsis;
@@ -136,6 +137,8 @@ pub fn tabRight(self: *const App) f64 {
 pub fn dismissMenu(self: *App) void {
     if (!self.menu_open) return;
     self.menu_open = false;
+    self.sub_open = false;
+    self.sub_selected = null;
     self.dirty = true;
 }
 
@@ -145,6 +148,9 @@ pub fn toggleMenu(self: *App, anchor: f64) void {
     self.menu_anchor = anchor;
     self.menu_open = !self.menu_open;
     self.menu_selected = null;
+    self.sub_open = false;
+    self.sub_selected = null;
+    if (self.menu_open) self.refreshRecent();
     self.dirty = true;
 }
 
@@ -160,7 +166,7 @@ pub fn menuBox(self: *const App) menu.Rect {
 
 pub fn menuRow(self: *const App, i: usize) menu.Rect {
     const box = self.menuBox();
-    const separators: usize = @as(usize, if (i >= 2) 1 else 0) + @as(usize, if (i >= 4) 1 else 0);
+    const separators: usize = @as(usize, if (i >= 3) 1 else 0) + @as(usize, if (i >= 5) 1 else 0);
     return .{ .x = box.x + menu.padding, .y = box.y + @as(f64, @floatFromInt(menu.padding + i * menu.row_height + separators * menu.separator_space)), .w = box.w - 2 * menu.padding, .h = menu.row_height };
 }
 
@@ -172,15 +178,26 @@ pub fn menuHit(self: *const App, x: f64, y: f64) ?usize {
 pub fn paintMenu(self: *App, cr: *c.cairo_t) void {
     menu.frame(cr, self.menuBox(), true);
     const IconId = @import("ui").layout.IconId;
-    const icons = [_]?IconId{ .plus, .open, .save, .save, .search, .search, if (self.wrap) .checkmark else null };
-    const hints = [_]?[]const u8{ "CTRL+N", "CTRL+O", "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", "CTRL+H", null };
+    const icons = [_]?IconId{ .plus, .open, .clock, .save, .save, .search, .search, if (self.wrap) .checkmark else null };
+    const hints = [_]?[]const u8{ "CTRL+N", "CTRL+O", null, "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", "CTRL+H", null };
     for (labels, 0..) |label, i| menu.row(cr, self.menuRow(i), .{
         .label = label.get(),
         .hint = hints[i],
         .icon = icons[i],
         .selected = self.menu_selected == i,
-        .separator = i == 2 or i == 4,
+        .separator = i == 3 or i == 5,
+        .disabled = i == recent_row and !self.recentEnabled(),
     }, true);
+    // The chevron says the row opens a submenu.
+    const row = self.menuRow(recent_row);
+    if (ui.Layer.begin(cr, .{ .x = @floatCast(row.x + row.w - 24), .y = @floatCast(row.y + (row.h - 14) / 2), .w = 14, .h = 14 })) |l| {
+        var layer = l;
+        var color = theme.global.app_fg orelse theme.global.window_fg;
+        color[3] *= if (self.recentEnabled()) 0.6 else 0.25;
+        layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = .chevron_right, .color = color });
+        layer.finish();
+    }
+    if (self.sub_open) @import("app_recent.zig").paint(self, cr);
 }
 
 pub fn paintButton(self: *App, cr: *c.cairo_t, r: field.Rect, label: []const u8, selected: bool) void {

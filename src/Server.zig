@@ -256,6 +256,12 @@ power_profiles: ?*power_profiles_mod.Manager = null,
 /// and nested sessions.
 app_scopes: ?*@import("session/app_scope.zig").Scopes = null,
 network: ?*@import("network/manager.zig").Manager = null,
+/// The system proxy (GSettings), read when the first child is spawned and
+/// replaced when Settings applies a new one.
+proxy: @import("network/proxy.zig").Config = .{},
+proxy_loaded: bool = false,
+/// Which radios were blocked before airplane mode switched them all off.
+rfkill_before: ?@import("platform").rfkill.State = null,
 bluetooth: ?*@import("bluetooth.zig").Manager = null,
 services: ?*services_mod.Manager = null,
 qt_app_colors: bool = false,
@@ -401,6 +407,16 @@ pub fn applyChildEnvWithToken(server: *Server, map: *child_env.Map, token: ?[]co
         .cursor_size = server.config.input.cursor_size,
         .cursor_path = cursor_theme.childSearchPath(),
     });
+    if (!server.greeter_mode) try @import("network/proxy.zig").environment(map, server.systemProxy());
+}
+
+/// The system proxy, read from GSettings the first time it is needed.
+pub fn systemProxy(server: *Server) *@import("network/proxy.zig").Config {
+    if (!server.proxy_loaded) {
+        server.proxy_loaded = true;
+        server.proxy = @import("network/proxy_gsettings.zig").read();
+    }
+    return &server.proxy;
 }
 
 // server/xwayland_scale.zig

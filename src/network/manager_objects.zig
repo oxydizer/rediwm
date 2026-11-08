@@ -15,16 +15,20 @@ const wireless = manager_mod.wireless;
 const wired = manager_mod.wired;
 const device_iface = manager_mod.device_iface;
 const ip4_iface = manager_mod.ip4_iface;
+const ip6_iface = manager_mod.ip6_iface;
+const active_iface = manager_mod.active_iface;
 const ap_iface = manager_mod.ap_iface;
 const settings_iface = manager_mod.settings_iface;
 const Path = manager_mod.Path;
 const Network = manager_mod.Network;
 const Ethernet = manager_mod.Ethernet;
-const Ip4 = manager_mod.Ip4;
+const Config = manager_mod.Config;
+const ActiveConnection = manager_mod.ActiveConnection;
+const props_mod = @import("manager_props.zig");
+const IpObject = struct { v6: bool, cfg: Config };
 const Device = manager_mod.Device;
 const Request = manager_mod.Request;
 const sameNetwork = manager_mod.sameNetwork;
-const addressList = manager_mod.addressList;
 const parseSaved = manager_mod.parseSaved;
 
 pub fn fetch(self: *Manager) void {
@@ -66,6 +70,7 @@ pub fn gotObjects(owner: ?*anyopaque, _: *dbus.Connection, result: dbus.Connecti
         self.scan_pending = false;
         self.scan();
     }
+    if (self.access == .unknown) self.checkAccess(false);
     self.refresh();
 }
 
@@ -80,8 +85,10 @@ pub fn parseObjects(self: *Manager, b: *wire.Reader) !void {
     defer paths.deinit(gpa);
     var ethernet: std.ArrayList(Ethernet) = .empty;
     defer ethernet.deinit(gpa);
-    var configs: std.ArrayList(Ip4) = .empty;
+    var configs: std.ArrayList(IpObject) = .empty;
     defer configs.deinit(gpa);
+    var actives: std.ArrayList(ActiveConnection) = .empty;
+    defer actives.deinit(gpa);
     var state: u32 = 0;
     var connectivity: u32 = 0;
     var objects = try b.array(8);
@@ -92,11 +99,14 @@ pub fn parseObjects(self: *Manager, b: *wire.Reader) !void {
         var ap: Network = .{ .path = Path.init(path) };
         var dev: Device = .{ .path = Path.init(path) };
         var eth: Ethernet = .{ .path = Path.init(path) };
-        var ip4: Ip4 = .{ .path = Path.init(path) };
+        var cfg: Config = .{ .path = Path.init(path) };
+        var act: ActiveConnection = .{ .path = Path.init(path) };
         var is_ap = false;
         var is_wifi = false;
         var is_wired = false;
         var is_ip4 = false;
+        var is_ip6 = false;
+        var is_active = false;
         var flags: u32 = 0;
         var wpa: u32 = 0;
         var rsn: u32 = 0;
@@ -108,16 +118,34 @@ pub fn parseObjects(self: *Manager, b: *wire.Reader) !void {
             is_wifi = is_wifi or eq(u8, iface, wireless);
             is_wired = is_wired or eq(u8, iface, wired);
             is_ip4 = is_ip4 or eq(u8, iface, ip4_iface);
+            is_ip6 = is_ip6 or eq(u8, iface, ip6_iface);
+            is_active = is_active or eq(u8, iface, active_iface);
             var props = try ifaces.array(8);
             while (props.offset < props.bytes.len) {
                 try props.alignTo(8);
                 const key = try props.string();
                 const sig = try props.variant();
                 if (eq(u8, iface, device_iface)) {
-                    if (eq(u8, key, "Interface") and eq(u8, sig, "s")) eth.name.set(try props.string()) else if (eq(u8, key, "Driver") and eq(u8, sig, "s")) eth.driver.set(try props.string()) else if (eq(u8, key, "Managed") and eq(u8, sig, "b")) eth.managed = try props.boolean() else if (eq(u8, key, "Ip4Config") and eq(u8, sig, "o")) eth.ip4.set(try props.objectPath()) else if (eq(u8, key, "HwAddress") and eq(u8, sig, "s")) eth.mac.set(try props.string()) else if (eq(u8, key, "AvailableConnections") and eq(u8, sig, "ao")) {
+                    if (eq(u8, key, "Interface") and eq(u8, sig, "s")) {
+                        eth.name.set(try props.string());
+                        dev.name = eth.name;
+                    } else if (eq(u8, key, "Driver") and eq(u8, sig, "s")) eth.driver.set(try props.string()) else if (eq(u8, key, "Managed") and eq(u8, sig, "b")) eth.managed = try props.boolean() else if (eq(u8, key, "Ip4Config") and eq(u8, sig, "o")) {
+                        eth.ip4.set(try props.objectPath());
+                        dev.ip4 = eth.ip4;
+                    } else if (eq(u8, key, "Ip6Config") and eq(u8, sig, "o")) {
+                        eth.ip6.set(try props.objectPath());
+                        dev.ip6 = eth.ip6;
+                    } else if (eq(u8, key, "ActiveConnection") and eq(u8, sig, "o")) {
+                        eth.active_connection.set(try props.objectPath());
+                        dev.active_connection = eth.active_connection;
+                    } else if (eq(u8, key, "HwAddress") and eq(u8, sig, "s")) {
+                        eth.mac.set(try props.string());
+                        dev.mac = eth.mac;
+                    } else if (eq(u8, key, "AvailableConnections") and eq(u8, sig, "ao")) {
                         var list = try props.array(4);
                         while (list.offset < list.bytes.len) {
-                            _ = try list.objectPath();
+                            const profile = try list.objectPath();
+                            if (!eth.has_profile) eth.profile.set(profile);
                             eth.has_profile = true;
                         }
                     } else if (eq(u8, key, "State") and eq(u8, sig, "u")) {
@@ -130,8 +158,12 @@ pub fn parseObjects(self: *Manager, b: *wire.Reader) !void {
                     if (eq(u8, key, "Carrier") and eq(u8, sig, "b")) eth.carrier = try props.boolean() else if (eq(u8, key, "Speed") and eq(u8, sig, "u")) eth.speed = try props.uint32() else if (eq(u8, key, "HwAddress") and eq(u8, sig, "s")) eth.mac.set(try props.string()) else try props.skip(sig);
                     continue;
                 }
-                if (eq(u8, iface, ip4_iface)) {
-                    if (eq(u8, key, "Gateway") and eq(u8, sig, "s")) ip4.gateway.set(try props.string()) else if (eq(u8, key, "AddressData") and eq(u8, sig, "aa{sv}")) ip4.address = try addressList(&props) else if (eq(u8, key, "NameserverData") and eq(u8, sig, "aa{sv}")) ip4.dns = try addressList(&props) else try props.skip(sig);
+                if (eq(u8, iface, ip4_iface) or eq(u8, iface, ip6_iface)) {
+                    if (!try props_mod.ipProperty(&cfg, eq(u8, iface, ip6_iface), key, sig, &props)) try props.skip(sig);
+                    continue;
+                }
+                if (eq(u8, iface, active_iface)) {
+                    if (eq(u8, key, "Id") and eq(u8, sig, "s")) act.id.set(try props.string()) else if (eq(u8, key, "Type") and eq(u8, sig, "s")) act.kind.set(try props.string()) else if (eq(u8, key, "Connection") and eq(u8, sig, "o")) act.profile.set(try props.objectPath()) else if (eq(u8, key, "State") and eq(u8, sig, "u")) act.state = try props.uint32() else try props.skip(sig);
                     continue;
                 }
                 if (eq(u8, iface, nm) and eq(u8, key, "State") and eq(u8, sig, "u")) {
@@ -153,6 +185,14 @@ pub fn parseObjects(self: *Manager, b: *wire.Reader) !void {
                     }
                 } else if (eq(u8, iface, wireless) and eq(u8, key, "LastScan") and eq(u8, sig, "x")) {
                     dev.last_scan = @bitCast(try props.uint64());
+                } else if (eq(u8, iface, wireless) and eq(u8, key, "Bitrate") and eq(u8, sig, "u")) {
+                    dev.bitrate = try props.uint32();
+                } else if (eq(u8, iface, wireless) and eq(u8, key, "HwAddress") and eq(u8, sig, "s")) {
+                    dev.mac.set(try props.string());
+                } else if (eq(u8, iface, ap_iface) and eq(u8, key, "Frequency") and eq(u8, sig, "u")) {
+                    ap.frequency = try props.uint32();
+                } else if (eq(u8, iface, ap_iface) and eq(u8, key, "HwAddress") and eq(u8, sig, "s")) {
+                    ap.bssid.set(try props.string());
                 } else if (eq(u8, iface, ap_iface) and eq(u8, key, "Ssid") and eq(u8, sig, "ay")) {
                     var bytes = try props.array(1);
                     ap.ssid.set(try bytes.take(bytes.bytes.len - bytes.offset));
@@ -165,7 +205,8 @@ pub fn parseObjects(self: *Manager, b: *wire.Reader) !void {
         }
         if (is_wifi and devices.items.len < 16) try devices.append(gpa, dev);
         if (is_wired and ethernet.items.len < self.ethernet.len) try ethernet.append(gpa, eth);
-        if (is_ip4 and configs.items.len < 64) try configs.append(gpa, ip4);
+        if ((is_ip4 or is_ip6) and configs.items.len < 64) try configs.append(gpa, .{ .v6 = is_ip6, .cfg = cfg });
+        if (is_active and actives.items.len < self.actives.len) try actives.append(gpa, act);
     }
     self.available = true;
     self.state = state;
@@ -173,18 +214,15 @@ pub fn parseObjects(self: *Manager, b: *wire.Reader) !void {
     self.ethernet_count = ethernet.items.len;
     for (ethernet.items, self.ethernet[0..self.ethernet_count]) |eth, *out| {
         out.* = eth;
-        if (eth.connected()) for (configs.items) |config| {
-            if (!eq(u8, config.path.slice(), eth.ip4.slice())) continue;
-            out.address = config.address;
-            out.gateway = config.gateway;
-            out.dns = config.dns;
-            break;
-        };
+        if (eth.connected()) out.link = linkOf(configs.items, eth.ip4.slice(), eth.ip6.slice());
     }
+    self.active_count = actives.items.len;
+    @memcpy(self.actives[0..actives.items.len], actives.items);
     self.checkWired();
     self.count = 0;
     const previous_device = self.device;
     self.device = .{};
+    self.wifi = .{};
     var chosen: ?*Device = null;
     for (devices.items) |*dev| {
         if (chosen == null or dev.state == 100) chosen = dev;
@@ -193,6 +231,13 @@ pub fn parseObjects(self: *Manager, b: *wire.Reader) !void {
         if (!eq(u8, previous_device.slice(), dev.path.slice()) or dev.last_scan != self.last_scan) self.stopScan();
         self.last_scan = dev.last_scan;
         self.device = dev.path;
+        self.wifi = .{ .name = dev.name, .mac = dev.mac, .bitrate = if (dev.state == 100) dev.bitrate else 0, .active = dev.active_connection };
+        if (dev.state == 100) {
+            self.wifi.link = linkOf(configs.items, dev.ip4.slice(), dev.ip6.slice());
+            for (actives.items) |active| if (eq(u8, active.path.slice(), dev.active_connection.slice())) {
+                self.wifi.profile = active.profile;
+            };
+        }
         for (aps.items) |candidate| {
             var belongs = false;
             for (dev.aps[0..dev.count]) |p| if (eq(u8, p.slice(), candidate.path.slice())) {
@@ -267,6 +312,15 @@ pub fn parseObjects(self: *Manager, b: *wire.Reader) !void {
     self.applySaved();
     std.mem.sort(Network, self.networks[0..self.count], {}, less);
     if (eq(u8, self.message, i18n.tr("NetworkManager is unavailable"))) self.message = "";
+}
+
+fn linkOf(configs: []const IpObject, ip4: []const u8, ip6: []const u8) manager_mod.Link {
+    var link: manager_mod.Link = .{};
+    for (configs) |config| {
+        if (!config.v6 and eq(u8, config.cfg.path.slice(), ip4)) link.v4 = config.cfg;
+        if (config.v6 and eq(u8, config.cfg.path.slice(), ip6)) link.v6 = config.cfg;
+    }
+    return link;
 }
 
 pub fn less(_: void, a: Network, b: Network) bool {

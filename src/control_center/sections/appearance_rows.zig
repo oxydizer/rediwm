@@ -62,7 +62,7 @@ const PxHandler = appearance.PxHandler;
 
 /// The theme and taskbar theme pickers; returns the matched preset.
 pub fn buildThemeRows(out: *Section, arena: std.mem.Allocator) ?usize {
-    out.presets = theme_presets.list(arena, out.cc.server.io, out.cc.server.environ, out.cc.server.config.path) catch &.{};
+    out.presets = theme_presets.pickerList(arena, out.cc.server.io, out.cc.server.environ, out.cc.server.config.path, out.cc.server.config.theme_base) catch &.{};
     var preset_labels: [][]const u8 = &.{};
     var matched_index: ?usize = null;
     if (arena.alloc([]const u8, out.presets.len)) |labels| {

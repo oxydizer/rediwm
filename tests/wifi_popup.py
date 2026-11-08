@@ -356,7 +356,7 @@ def settings(scale):
                 ipc.open_control_center()
                 ui.wait_settled('control_center')
                 ui.click('network', panel='control_center')
-                wait_for(lambda: '192.168.1.100' in labels(), 'Ethernet address')
+                wait_for(lambda: '192.168.1.100/24' in labels(), 'Ethernet address')
                 ui.wait_settled('control_center')
                 body_width = ipc.get_shell_state()['control_center']['box']['width']
                 axis = 'x' if body_width >= 1000 else 'y'
@@ -371,7 +371,7 @@ def settings(scale):
                 click('ethernet_enabled')
                 assert read_line(fake) == {'ethernet': False, 'new': False}
                 wait_for(lambda: not find('ethernet_enabled')['on'] and ready(), 'Ethernet disconnected')
-                assert '192.168.1.100' not in labels()
+                assert '192.168.1.100/24' not in labels()
                 command(hold_eth=True)
                 click('ethernet_enabled')
                 assert read_line(fake) == {'ethernet': True, 'new': False}

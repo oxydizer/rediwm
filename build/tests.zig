@@ -145,6 +145,16 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     printing_tests.root_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
     const run_printing_tests = b.addRunArtifact(printing_tests);
     test_step.dependOn(&run_printing_tests.step);
+    // NetworkManager parsing that needs no compositor: addresses, profile read/write.
+    const network_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/network_tests.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) });
+    network_tests.root_module.addImport("dbus", dbus_mod);
+    const run_network_tests = b.addRunArtifact(network_tests);
+    test_step.dependOn(&run_network_tests.step);
+    b.step("test-network", "Test NetworkManager address and profile parsing").dependOn(&run_network_tests.step);
     const printers_integration = b.addSystemCommand(&.{"python3"});
     printers_integration.addFileArg(b.path("tests/printers.py"));
     printers_integration.step.dependOn(b.getInstallStep());

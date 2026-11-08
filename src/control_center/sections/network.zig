@@ -9,6 +9,20 @@ const gpa = @import("../../main.zig").gpa;
 const ui = @import("ui");
 const W = ui.layout.Widget;
 const Allocator = std.mem.Allocator;
+const widgets = @import("network_ui.zig");
+const text = widgets.text;
+const icon = widgets.icon;
+const group = widgets.group;
+const card = widgets.card;
+const divider = widgets.divider;
+const status = widgets.status;
+const summary = widgets.summary;
+const action = widgets.action;
+const details = @import("network_details.zig");
+const editor = @import("network_editor.zig");
+const proxy_card = @import("network_proxy.zig");
+const vpn_card = @import("network_vpn.zig");
+const rfkill = @import("platform").rfkill;
 
 pub const Section = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
@@ -31,6 +45,14 @@ pub const Section = struct {
     focus_requested: bool = false,
     message: []const u8 = "",
     copied: ?usize = null,
+    edit: editor.State = .{},
+    proxy: proxy_card.State = .{},
+    /// A Wi-Fi network's Forget waits for a second click.
+    forget_armed: bool = false,
+    /// The VPN row whose Remove waits for a second click.
+    vpn_forget: ?usize = null,
+    /// What the last airplane-mode change did, when it failed.
+    airplane_note: []const u8 = "",
 
     pub fn clearForm(s: *Section) void {
         s.password.clear();
@@ -45,9 +67,12 @@ pub const Section = struct {
         s.name_data = null;
         s.focus_name = .{};
         s.focus_requested = false;
+        s.forget_armed = false;
     }
     pub fn deinit(s: *Section) void {
         s.clearForm();
+        s.edit.close();
+        s.proxy.deinit();
         if (s.password.storage.len != 0) secure.free(s.password.storage);
         s.arena.deinit();
     }
@@ -58,70 +83,16 @@ pub const Section = struct {
     }
 };
 
-fn text(value: []const u8, size: f32, dim: bool) W {
-    const t = panel.palette();
-    return .{ .kind = .{ .text = .{ .content = value, .font_size = size, .weight = if (dim) 400 else 600, .color = if (dim) t.dim else t.fg } } };
-}
-fn icon(id: ui.layout.IconId, size: f32, accent: bool) W {
-    return .{ .kind = .{ .icon = .{ .id = id, .color = if (accent) panel.palette().accent else panel.palette().fg } }, .width = .{ .fixed = size }, .height = .{ .fixed = size } };
-}
-fn group(a: Allocator, direction: ui.layout.Direction, items: []const W) !W {
-    return .{ .kind = .container, .direction = direction, .gap = 10, .@"align" = if (direction == .row) .center else .stretch, .width = .{ .percent = 1 }, .children = try a.dupe(W, items) };
-}
-fn card(a: Allocator, items: []const W) !W {
-    var w = try group(a, .column, items);
-    const t = panel.palette();
-    w.kind = .{ .rect = .{ .color = t.app_item, .radius = 9, .border_width = 1, .border_color = t.app_item_border, .relief = t.settings_card_relief } };
-    w.padding = ui.layout.Edges.all(16);
-    w.gap = 14;
-    return w;
-}
-fn divider(vertical: bool) W {
-    return .{ .kind = .{ .rect = .{ .color = panel.palette().border_soft } }, .width = if (vertical) .{ .fixed = 1 } else .{ .percent = 1 }, .height = if (vertical) .{ .fixed = 58 } else .{ .fixed = 1 } };
-}
-fn status(a: Allocator, value: []const u8, active: bool) !W {
-    var label = text(value, 13, true);
-    label.width = .{ .flex = 1 };
-    if (active) label.kind.text.color = panel.palette().accent;
-    return group(a, .row, &.{
-        .{ .kind = .{ .rect = .{ .color = if (active) panel.palette().accent else panel.palette().dim, .radius = 4 } }, .width = .{ .fixed = 7 }, .height = .{ .fixed = 7 } },
-        label,
-    });
-}
-fn summary(a: Allocator, glyph: ui.layout.IconId, title: []const u8, state: []const u8, description: []const u8, active: bool) !W {
-    var labels = try group(a, .column, &.{ text(title, 14, false), try status(a, state, active), text(description, 12, true) });
-    labels.width = .{ .flex = 1 };
-    labels.gap = 5;
-    var w = try group(a, .row, &.{ icon(glyph, 30, active), labels });
-    w.width = .{ .flex = 1 };
-    return w;
-}
-fn action(cc: *panel.ControlCenter, name: []const u8, value: []const u8, id: usize, callback: *const fn (?*anyopaque, usize) void, disabled: bool) W {
-    return .{ .name = name, .kind = .{ .button = .{ .label = value, .owner = cc, .id = id, .on_click = callback, .state = if (disabled) .disabled else .idle } }, .height = .{ .fixed = 34 } };
-}
 fn switchWidget(cc: *panel.ControlCenter, name: []const u8, id: usize, on: bool, disabled: bool) W {
     return .{ .name = name, .kind = .{ .toggle = .{ .style = .settings, .on = on, .disabled = disabled, .owner = cc, .id = id, .on_change = switched } } };
-}
-fn speed(a: Allocator, eth: network.Ethernet) ![]const u8 {
-    if (!eth.carrier or eth.speed == 0) return "—";
-    return if (eth.speed >= 1000) std.fmt.allocPrint(a, "{d:.1} Gbps", .{@as(f32, @floatFromInt(eth.speed)) / 1000}) else std.fmt.allocPrint(a, "{d} Mbps", .{eth.speed});
-}
-fn chosenEthernet(s: *Section, m: *network.Manager) ?*const network.Ethernet {
-    for (m.ethernet[0..m.ethernet_count]) |*eth| if (std.mem.eql(u8, s.ethernet_path.slice(), eth.path.slice())) return eth;
-    if (m.ethernet_count == 0) return null;
-    var selected: *const network.Ethernet = &m.ethernet[0];
-    for (m.ethernet[0..m.ethernet_count]) |*eth| if (eth.connected()) {
-        selected = eth;
-        break;
-    };
-    s.ethernet_path = selected.path;
-    return selected;
 }
 
 pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     const saved_scroll = if (s.list) |list| list.kind.scroll_container else ui.layout.ScrollState{};
     if (s.name_field) |field| s.name_data = field.kind.text_input;
     s.name_field = null;
+    s.edit.capture();
+    s.proxy.capture();
     s.list = null;
     _ = s.arena.reset(.retain_capacity);
     // A service/radio change closes the form and wipes any entered secret.
@@ -146,7 +117,7 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 fn tree(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     const m = cc.server.network;
     const available = if (m) |n| n.available else false;
-    const eth = if (m) |n| chosenEthernet(s, n) else null;
+    const eth = if (m) |n| details.chosenEthernet(s, n) else null;
     const connected_wifi: ?*const network.Network = if (m) |n| for (n.networks[0..n.count]) |*net| {
         if (net.connected) break net;
     } else null else null;
@@ -164,7 +135,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
         else => if (m.?.state >= 50) i18n.tr("Internet access not verified") else i18n.tr("No internet connection"),
     };
     const wifi_state: []const u8 = if (!available) i18n.tr("Unavailable") else if (!m.?.hardware) i18n.tr("Hardware blocked") else if (!m.?.enabled) i18n.tr("Turned off") else if (m.?.device.len == 0) i18n.tr("No adapter") else if (connected_wifi != null) i18n.tr("Connected") else i18n.tr("Not connected");
-    const eth_detail = if (eth) |e| if (e.connected() and e.address.len != 0) try std.fmt.allocPrint(a, "{s} · {s}", .{ try speed(a, e.*), e.address.slice() }) else try a.dupe(u8, e.name.slice()) else i18n.tr("No wired adapter");
+    const eth_detail = if (eth) |e| if (e.connected() and e.link.v4.address.len != 0) try std.fmt.allocPrint(a, "{s} · {s}", .{ try details.speed(a, e.*), details.bareAddress(e.link.v4.address.slice()) }) else try a.dupe(u8, e.name.slice()) else i18n.tr("No wired adapter");
     const wifi_detail = if (connected_wifi) |net| try std.fmt.allocPrint(a, "{s} · {s}", .{ network.networkName(net), if (net.strength >= 80) @as([]const u8, i18n.tr("Excellent")) else if (net.strength >= 55) i18n.tr("Good") else i18n.tr("Weak") }) else i18n.tr("Wireless connections");
     const overview_width = @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100;
     var description_width: f32 = 0;
@@ -190,7 +161,46 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     var columns = try group(a, if (stacked) .column else .row, &.{ ethernet, wifi });
     columns.@"align" = .start;
     columns.gap = 16;
-    return group(a, .column, &.{ overview, columns });
+    var page: std.ArrayList(W) = .empty;
+    try page.append(a, overview);
+    if (try airplaneRow(cc, a)) |row| try page.append(a, row);
+    if (m) |n| if (try accessRow(cc, a, n)) |row| try page.append(a, row);
+    try page.append(a, columns);
+    if (try editor.build(cc, a)) |edit_card| try page.append(a, edit_card);
+    try page.append(a, try vpn_card.build(cc, a));
+    try page.append(a, try proxy_card.build(cc, a));
+    return group(a, .column, page.items);
+}
+
+/// Airplane mode: every radio blocked by software (`/dev/rfkill`), which
+/// NetworkManager and BlueZ both follow. Hidden where there is no rfkill.
+fn airplaneRow(cc: *panel.ControlCenter, a: Allocator) !?W {
+    const state = rfkill.read();
+    if (state.count == 0) return null;
+    var labels = try group(a, .column, &.{ text(i18n.tr("Airplane mode"), 14, false), text(if (cc.network.airplane_note.len != 0) cc.network.airplane_note else if (state.hardBlocked()) i18n.tr("A hardware switch is blocking a radio.") else i18n.tr("Turns off Wi-Fi, Bluetooth and other radios."), 12, true) });
+    labels.width = .{ .flex = 1 };
+    labels.gap = 4;
+    var toggle = switchWidget(cc, "network_airplane", 2, state.allBlocked(), state.hardBlocked());
+    toggle.kind.toggle.disabled = state.hardBlocked();
+    var row = try card(a, &.{try group(a, .row, &.{ icon(.power, 26, state.allBlocked()), labels, toggle })});
+    row.name = "network_airplane_row";
+    return row;
+}
+
+/// The Unlock prompt, or a line saying what the last change did.
+fn accessRow(cc: *panel.ControlCenter, a: Allocator, m: *const network.Manager) !?W {
+    const locked = m.access == .locked or m.unlocking;
+    const message: []const u8 = if (m.unlocking) i18n.tr("Waiting for authentication…") else if (m.access == .locked) i18n.tr("Unlock to change connection settings.") else if (m.access == .denied) i18n.tr("Your account is not allowed to change network connections.") else if (cc.network.edit.open) "" else m.edit_message;
+    if (message.len == 0) return null;
+    var label = text(message, 13, true);
+    label.width = .{ .flex = 1 };
+    if (!locked) return try group(a, .row, &.{label});
+    var unlock = action(cc, "network_unlock", i18n.tr("Unlock"), 0, unlockClicked, m.unlocking);
+    unlock.kind.button.leading_icon = .lock;
+    unlock.width = .auto;
+    var row = try group(a, .row, &.{ label, unlock });
+    row.name = "network_access";
+    return row;
 }
 fn ethernetCard(s: *Section, cc: *panel.ControlCenter, a: Allocator, eth: ?*const network.Ethernet) !W {
     const m = cc.server.network;
@@ -213,16 +223,15 @@ fn ethernetCard(s: *Section, cc: *panel.ControlCenter, a: Allocator, eth: ?*cons
         }
         try items.append(a, .{ .name = "ethernet_adapter", .kind = .{ .select = .{ .labels = names, .selected = selected, .owner = cc, .on_change = adapterChanged } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 34 } });
     }
-    var details = try card(a, &.{
-        try detail(cc, a, i18n.tr("Status"), if (eth) |e| e.status() else i18n.tr("Unavailable"), null, if (eth) |e| e.connected() else false, true),
-        try detail(cc, a, i18n.tr("Link speed"), if (eth) |e| try speed(a, e.*) else "—", null, false, false),
-        try detail(cc, a, i18n.tr("IPv4 address"), if (eth) |e| e.address.slice() else "", 0, false, false),
-        try detail(cc, a, i18n.tr("Gateway"), if (eth) |e| e.gateway.slice() else "", 1, false, false),
-        try detail(cc, a, i18n.tr("DNS servers"), if (eth) |e| e.dns.slice() else "", 2, false, false),
-        try detail(cc, a, i18n.tr("MAC address"), if (eth) |e| e.mac.slice() else "", 3, false, false),
-    });
-    details.gap = 6;
-    try items.append(a, details);
+    var rows = try card(a, try details.ethernetRows(cc, a, eth));
+    rows.gap = 6;
+    try items.append(a, rows);
+    if (eth) |e| {
+        var edit = action(cc, "ethernet_edit", i18n.tr("Edit settings…"), 1, editClicked, ethernetProfile(m, e).len == 0 or cc.network.edit.open);
+        edit.kind.button.variant = .secondary;
+        edit.width = .auto;
+        try items.append(a, edit);
+    }
     if (m) |n| {
         if (n.wired_message.len > 0) try items.append(a, text(n.wired_message, 12, true));
     }
@@ -230,24 +239,12 @@ fn ethernetCard(s: *Section, cc: *panel.ControlCenter, a: Allocator, eth: ?*cons
     result.name = "ethernet_card";
     return result;
 }
-fn detail(cc: *panel.ControlCenter, a: Allocator, title: []const u8, value: []const u8, copy_id: ?usize, active: bool, status_chip: bool) !W {
-    var key_label = text(title, 12, true);
-    key_label.width = .auto;
-    key_label.min_width = 96;
-    var val = if (status_chip) try status(a, value, active) else text(if (value.len == 0) "—" else try a.dupe(u8, value), 12, true);
-    val.width = .{ .flex = 1 };
-    var row = try group(a, .row, &.{ key_label, val });
-    row.height = .{ .fixed = 30 };
-    if (copy_id) |id| {
-        var copy = action(cc, try std.fmt.allocPrint(a, "ethernet_copy_{d}", .{id}), "", id, copyDetail, value.len == 0);
-        copy.kind.button.icon = if (cc.network.copied == id) .checkmark else .copy;
-        copy.kind.button.variant = .ghost;
-        copy.width = .{ .fixed = 26 };
-        copy.height = .{ .fixed = 26 };
-        row.children = try a.dupe(W, &.{ key_label, val, copy });
-    }
-    return row;
+fn ethernetProfile(m: ?*network.Manager, e: *const network.Ethernet) []const u8 {
+    const manager = m orelse return "";
+    if (details.profileOf(manager, e.active_connection.slice())) |saved| return saved.path.slice();
+    return e.profile.slice();
 }
+
 fn wifiCard(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     const m = cc.server.network;
     const available = if (m) |n| n.available and n.hardware and n.enabled and n.device.len != 0 else false;
@@ -312,7 +309,14 @@ fn wifiCard(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
 }
 fn form(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     if (s.selected) |net| {
-        if (net.connected) return group(a, .column, &.{text(i18n.tr("You're connected to this network"), 12, true)});
+        if (net.connected) {
+            var shown: std.ArrayList(W) = .empty;
+            try shown.append(a, try wifiActions(s, cc, a, net));
+            try shown.appendSlice(a, try details.wifiRows(cc, a, net));
+            var result = try group(a, .column, shown.items);
+            result.gap = 2;
+            return result;
+        }
         if (net.security == .unsupported and net.saved.len == 0) return group(a, .column, &.{text(i18n.tr("Configure this network with a network tool"), 12, true)});
     }
     var items: std.ArrayList(W) = .empty;
@@ -326,6 +330,7 @@ fn form(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
         try items.append(a, .{ .name = "wifi_security", .kind = .{ .select = .{ .labels = panel.translatedLabels(&.{ i18n.msg("WPA2 / WPA3 Personal"), i18n.msg("WPA3 Personal"), i18n.msg("Open") }), .selected = if (s.security == .personal) 0 else if (s.security == .sae) 1 else 2, .owner = cc, .on_change = securityChanged } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 34 } });
     }
     const net = s.selected orelse network.Network{ .security = s.security };
+    if (!s.hidden and net.saved.len != 0) try items.append(a, try wifiActions(s, cc, a, net));
     if (net.security == .personal or net.security == .sae) {
         if (s.password.storage.len == 0) {
             s.password.storage = try secure.alloc(u8, 128);
@@ -351,11 +356,113 @@ fn form(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     if (s.hidden) s.name_field = &result.children[1];
     return result;
 }
+/// Edit, Forget and (for the connected network) Disconnect and auto-connect.
+fn wifiActions(s: *Section, cc: *panel.ControlCenter, a: Allocator, net: network.Network) !W {
+    const m = cc.server.network.?;
+    const profile = if (net.connected) m.wifi.profile.slice() else net.saved.slice();
+    const saved = network.savedAt(m, profile);
+    const locked = m.access == .locked or m.access == .denied or m.unlocking or m.edit_busy;
+    var items: std.ArrayList(W) = .empty;
+    if (saved) |sv| {
+        var toggle: W = .{ .name = "wifi_autoconnect", .kind = .{ .checkbox = .{ .label = i18n.tr("Connect automatically"), .checked = sv.autoconnect, .disabled = locked, .owner = cc, .on_change = autoconnectToggled } }, .width = .{ .percent = 1 } };
+        toggle.padding = ui.layout.Edges.xy(0, 6);
+        try items.append(a, toggle);
+    }
+    var buttons: std.ArrayList(W) = .empty;
+    if (net.connected) {
+        var disconnect = action(cc, "wifi_disconnect", i18n.tr("Disconnect"), 0, disconnectClicked, m.busy);
+        disconnect.kind.button.variant = .secondary;
+        try buttons.append(a, disconnect);
+    }
+    if (profile.len != 0) {
+        var edit = action(cc, "wifi_edit", i18n.tr("Edit settings…"), 0, editClicked, s.edit.open);
+        edit.kind.button.variant = .secondary;
+        try buttons.append(a, edit);
+        var forget = action(cc, "wifi_forget", if (s.forget_armed) i18n.tr("Confirm forget") else i18n.tr("Forget"), 0, wifiForgetClicked, locked);
+        forget.kind.button.variant = .ghost;
+        try buttons.append(a, forget);
+    }
+    if (buttons.items.len != 0) {
+        var row = try group(a, .row, buttons.items);
+        row.padding = ui.layout.Edges.xy(0, 6);
+        try items.append(a, row);
+    }
+    return group(a, .column, items.items);
+}
+fn unlockClicked(raw: ?*anyopaque, _: usize) void {
+    const cc = owner(raw);
+    if (cc.server.network) |m| m.unlock();
+    cc.refresh();
+}
+fn disconnectClicked(raw: ?*anyopaque, _: usize) void {
+    const cc = owner(raw);
+    if (cc.server.network) |m| m.disconnectWifi();
+}
+/// Edit for the Wi-Fi network in the list (id 0) or the Ethernet adapter (id 1).
+fn editClicked(raw: ?*anyopaque, id: usize) void {
+    const cc = owner(raw);
+    const m = cc.server.network orelse return;
+    if (id == 1) {
+        const eth = details.chosenEthernet(&cc.network, m) orelse return;
+        return editor.open(cc, ethernetProfile(m, eth));
+    }
+    const net = cc.network.selected orelse return;
+    editor.open(cc, if (net.connected) m.wifi.profile.slice() else net.saved.slice());
+}
+fn wifiForgetClicked(raw: ?*anyopaque, _: usize) void {
+    const cc = owner(raw);
+    const s = &cc.network;
+    const m = cc.server.network orelse return;
+    const net = s.selected orelse return;
+    if (!s.forget_armed) {
+        s.forget_armed = true;
+        return cc.refresh();
+    }
+    const profile = if (net.connected) m.wifi.profile.slice() else net.saved.slice();
+    m.forget(profile);
+    s.clearForm();
+    cc.refresh();
+}
+fn autoconnectToggled(raw: ?*anyopaque, _: usize, on: bool) void {
+    const cc = owner(raw);
+    const m = cc.server.network orelse return;
+    const net = cc.network.selected orelse return;
+    m.setAutoconnect(if (net.connected) m.wifi.profile.slice() else net.saved.slice(), on);
+}
 fn owner(raw: ?*anyopaque) *panel.ControlCenter {
     return @ptrCast(@alignCast(raw.?));
 }
+/// Turning airplane mode on remembers which radios were already blocked, so
+/// turning it off puts them back as they were rather than waking them all.
+fn airplaneChanged(cc: *panel.ControlCenter, on: bool) void {
+    cc.network.airplane_note = "";
+    const failed = i18n.tr("Could not change the radios. Check access to /dev/rfkill.");
+    if (on) {
+        cc.server.rfkill_before = rfkill.read();
+        rfkill.blockAll(true) catch {
+            cc.server.rfkill_before = null;
+            cc.network.airplane_note = failed;
+        };
+    } else {
+        const before = cc.server.rfkill_before;
+        cc.server.rfkill_before = null;
+        if (before) |snapshot| {
+            if (snapshot.allBlocked()) rfkill.blockAll(false) catch {
+                cc.network.airplane_note = failed;
+            } else rfkill.restore(&snapshot) catch {
+                cc.network.airplane_note = failed;
+            };
+        } else rfkill.blockAll(false) catch {
+            cc.network.airplane_note = failed;
+        };
+    }
+}
 fn switched(raw: ?*anyopaque, id: usize, on: bool) void {
     const cc = owner(raw);
+    if (id == 2) {
+        airplaneChanged(cc, on);
+        return cc.refresh();
+    }
     const m = cc.server.network orelse return;
     if (id == 0) {
         cc.network.copied = null;
@@ -371,22 +478,6 @@ fn adapterChanged(raw: ?*anyopaque, _: usize, index: usize) void {
     if (index >= cc.network.ethernet_count) return;
     cc.network.ethernet_path = cc.network.ethernet_paths[index];
     cc.network.copied = null;
-    cc.refresh();
-}
-fn copyDetail(raw: ?*anyopaque, id: usize) void {
-    const cc = owner(raw);
-    const m = cc.server.network orelse return;
-    const eth = chosenEthernet(&cc.network, m) orelse return;
-    const value = switch (id) {
-        0 => eth.address.slice(),
-        1 => eth.gateway.slice(),
-        2 => eth.dns.slice(),
-        3 => eth.mac.slice(),
-        else => return,
-    };
-    if (value.len == 0) return;
-    @import("../../clipboard.zig").copyText(cc.server, value);
-    cc.network.copied = id;
     cc.refresh();
 }
 fn scanClicked(raw: ?*anyopaque, _: usize) void {

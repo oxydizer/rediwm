@@ -247,6 +247,7 @@ pub fn destroy(cc: *ControlCenter) void {
     cc.input.arena.deinit();
     cc.services.deinit();
     cc.printers.deinit();
+    if (cc.server.network) |m| m.cancelUnlock();
     cc.network.deinit();
     if (cc.page == .bluetooth) if (cc.server.bluetooth) |m| m.closed();
     cc.bluetooth.deinit();

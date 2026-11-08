@@ -77,3 +77,23 @@ helpers (and `panel.ControlCenter`); `sections/` one file per page.
 
 * `sections/users_helper.zig` owns the account helper request and authorization
   lifetime; `users.zig` owns the account UI.
+
+## Network page
+
+* **The page is `sections/network*.zig`:** `network.zig` (section state, the
+  overview, Ethernet and Wi-Fi cards, airplane mode), `network_details.zig`
+  (the address rows), `network_editor.zig` (the connection settings editor),
+  `network_vpn.zig`, `network_proxy.zig`, `network_fields.zig` (text fields that
+  keep their text across a rebuild: capture before the arena resets, never read
+  a captured widget afterwards), `network_ui.zig` (small builders).
+* **Writes go through `network/manager_profile.zig`:** read the settings with
+  `GetSettings`, replace only the keys the editor owns, `Update` with the
+  interactive flag. An `Update` without a secret keeps the stored one (verified),
+  so never add secret handling. The Unlock gate is `manager_access.zig`; proxy
+  is per user and ungated.
+* **`i18n.tr` text is not a `std.fmt` format**: use `i18n.fmt` with named
+  placeholders. `panel.translatedLabels` runs at call time, never in a
+  file-level `const`.
+* **Tests never touch the host:** `tests/nm_fake.py` is a fake NetworkManager
+  and polkit on the session bus; the proxy test sets `GSETTINGS_BACKEND=keyfile`
+  with a scratch `XDG_CONFIG_HOME`; nothing may write `/dev/rfkill`.

@@ -15,6 +15,8 @@ pub const wireless = nm ++ ".Device.Wireless";
 pub const wired = nm ++ ".Device.Wired";
 pub const device_iface = nm ++ ".Device";
 pub const ip4_iface = nm ++ ".IP4Config";
+pub const ip6_iface = nm ++ ".IP6Config";
+pub const active_iface = nm ++ ".Connection.Active";
 pub const ap_iface = nm ++ ".AccessPoint";
 pub const settings_iface = nm ++ ".Settings.Connection";
 pub const properties = "org.freedesktop.DBus.Properties";
@@ -23,27 +25,18 @@ const Presence = @import("config").taskbar_items.Presence;
 const manager_bus = @import("manager_bus.zig");
 const manager_objects = @import("manager_objects.zig");
 const manager_actions = @import("manager_actions.zig");
+const manager_access = @import("manager_access.zig");
+const manager_edit = @import("manager_edit.zig");
+pub const Profile = @import("manager_profile.zig").Profile;
+pub const Access = manager_access.Access;
 
-pub fn Text(comptime capacity: usize) type {
-    return struct {
-        bytes: [capacity]u8 = @splat(0),
-        len: usize = 0,
-        pub fn set(self: *@This(), value: []const u8) void {
-            self.len = @min(value.len, capacity);
-            @memcpy(self.bytes[0..self.len], value[0..self.len]);
-        }
-        pub fn slice(self: *const @This()) []const u8 {
-            return self.bytes[0..self.len];
-        }
-        pub fn init(value: []const u8) @This() {
-            var t: @This() = .{};
-            t.set(value);
-            return t;
-        }
-    };
-}
-pub const Path = Text(256);
-pub const Security = enum { open, personal, sae, unsupported };
+const types = @import("types.zig");
+pub const Text = types.Text;
+pub const Path = types.Path;
+pub const Security = types.Security;
+pub const Method = types.Method;
+pub const Config = types.Config;
+pub const Link = types.Link;
 pub const Network = struct {
     path: Path = .{},
     ssid: Text(32) = .{},
@@ -51,6 +44,27 @@ pub const Network = struct {
     security: Security = .open,
     connected: bool = false,
     saved: Path = .{},
+    /// MHz, and the access point's own hardware address.
+    frequency: u32 = 0,
+    bssid: Text(24) = .{},
+};
+/// The Wi-Fi adapter in use and what it was given.
+pub const WifiLink = struct {
+    name: Text(64) = .{},
+    mac: Text(64) = .{},
+    /// kbit/s of the current link.
+    bitrate: u32 = 0,
+    link: Link = .{},
+    /// The active connection object, and the saved profile it was made from.
+    active: Path = .{},
+    profile: Path = .{},
+};
+pub const ActiveConnection = struct {
+    path: Path = .{},
+    profile: Path = .{},
+    id: Text(64) = .{},
+    kind: Text(32) = .{},
+    state: u32 = 0,
 };
 pub const Ethernet = struct {
     path: Path = .{},
@@ -58,9 +72,11 @@ pub const Ethernet = struct {
     driver: Text(64) = .{},
     mac: Text(64) = .{},
     ip4: Path = .{},
-    address: Text(256) = .{},
-    gateway: Text(64) = .{},
-    dns: Text(256) = .{},
+    ip6: Path = .{},
+    active_connection: Path = .{},
+    /// The first saved profile that fits this adapter.
+    profile: Path = .{},
+    link: Link = .{},
     state: u32 = 0,
     managed: bool = false,
     carrier: bool = false,
@@ -85,16 +101,32 @@ pub const Ethernet = struct {
         };
     }
 };
-pub const Ip4 = struct { path: Path, address: Text(256) = .{}, gateway: Text(64) = .{}, dns: Text(256) = .{} };
 pub const Device = struct {
     path: Path = .{},
     active: Path = .{},
+    name: Text(64) = .{},
+    mac: Text(64) = .{},
+    ip4: Path = .{},
+    ip6: Path = .{},
+    active_connection: Path = .{},
+    bitrate: u32 = 0,
     state: u32 = 0,
     aps: [256]Path = @splat(.{}),
     count: usize = 0,
     last_scan: i64 = -1,
 };
-pub const Saved = struct { path: Path = .{}, ssid: Text(32) = .{}, security: Security = .open, loaded: bool = false };
+pub const Saved = struct {
+    path: Path = .{},
+    ssid: Text(32) = .{},
+    security: Security = .open,
+    loaded: bool = false,
+    id: Text(64) = .{},
+    /// `connection.type`: 802-11-wireless, 802-3-ethernet, vpn, wireguard...
+    kind: Text(32) = .{},
+    autoconnect: bool = true,
+    method4: Method = .auto,
+    method6: Method = .auto,
+};
 pub const Request = struct { manager: *Manager, epoch: u64, path: Path, wired_generation: u64 = 0 };
 pub const PasswordUpdate = struct {
     manager: *Manager,
@@ -132,6 +164,17 @@ pub const Manager = struct {
     connectivity: u32 = 0,
     ethernet: [16]Ethernet = @splat(.{}),
     ethernet_count: usize = 0,
+    /// Whether saved connections may be changed, and the Unlock prompt state.
+    access: Access = .unknown,
+    access_pending: bool = false,
+    unlocking: bool = false,
+    /// The profile the editor has open, once its settings arrived.
+    profile: ?Profile = null,
+    edit_busy: bool = false,
+    edit_message: []const u8 = "",
+    wifi: WifiLink = .{},
+    actives: [32]ActiveConnection = @splat(.{}),
+    active_count: usize = 0,
     wired_pending: ?Path = null,
     wired_want_connected: bool = false,
     wired_accepted: bool = false,
@@ -218,6 +261,14 @@ pub const Manager = struct {
         self.state = 0;
         self.connectivity = 0;
         self.ethernet_count = 0;
+        self.wifi = .{};
+        self.active_count = 0;
+        self.access = .unknown;
+        self.access_pending = false;
+        self.unlocking = false;
+        self.profile = null;
+        self.edit_busy = false;
+        self.edit_message = "";
         self.wired_pending = null;
         self.wired_message = "";
         if (self.wired_timer) |timer| timer.timerUpdate(0) catch {};
@@ -237,6 +288,16 @@ pub const Manager = struct {
     pub const applySaved = manager_objects.applySaved;
     pub const fetchSaved = manager_objects.fetchSaved;
 
+    pub const checkAccess = manager_access.check;
+    pub const unlock = manager_access.unlock;
+    pub const cancelUnlock = manager_access.cancelUnlock;
+    pub const readProfile = manager_edit.readProfile;
+    pub const saveProfile = manager_edit.saveProfile;
+    pub const setAutoconnect = manager_edit.setAutoconnect;
+    pub const forget = manager_edit.forget;
+    pub const activate = manager_edit.activate;
+    pub const deactivate = manager_edit.deactivate;
+    pub const disconnectWifi = manager_edit.disconnectWifi;
     pub const searching = manager_actions.searching;
     pub const stopScan = manager_actions.stopScan;
     pub const scan = manager_actions.scan;
@@ -248,6 +309,12 @@ pub const Manager = struct {
     pub const action = manager_actions.action;
     pub const failed = manager_actions.failed;
 };
+/// The saved profile at `path`, once its settings were read.
+pub fn savedAt(self: *const Manager, path: []const u8) ?*const Saved {
+    if (path.len == 0) return null;
+    for (self.saved[0..self.saved_count]) |*saved| if (eq(u8, saved.path.slice(), path)) return saved;
+    return null;
+}
 pub fn sameNetwork(a: Network, b: Network) bool {
     return a.security == b.security and eq(u8, a.ssid.slice(), b.ssid.slice());
 }
@@ -270,7 +337,7 @@ pub fn joinError(net: Network, password: []const u8) ?[]const u8 {
 }
 
 const manager_settings = @import("manager_settings.zig");
-pub const addressList = manager_settings.addressList;
+pub const parseMethod = manager_settings.parseMethod;
 pub const writeWiredSettings = manager_settings.writeWiredSettings;
 pub const parseSaved = manager_settings.parseSaved;
 pub const writeSettings = manager_settings.writeSettings;

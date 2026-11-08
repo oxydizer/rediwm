@@ -100,3 +100,17 @@
   strip the user scrolled away. Go through `tabX`/`tabAt`/`tabCloseBox`; a tab
   at the edge is partly drawn (the strip is clipped), so hit tests must stay
   inside `tabRight()`. Names are ellipsized; the unsaved dot never is.
+
+## Open Recent
+
+* **The history is Files' (`files/recent.zig`, `recently-used.xbel`), not an
+  editor file.** `app_recent.zig` rereads it each time the menu opens (text
+  files that still exist, newest 10) and `recordRecent` adds to it after a
+  load or save, on a short-lived thread (it rewrites the whole file, which
+  GLib loads and saves). GLib drops a bookmark with no application entry, so
+  tests that seed the file need one. The editor links glib for this.
+* **The submenu is drawn by the editor beside the menu** (`menu_selected` stays
+  on the Open Recent row, `sub_selected` is its own highlight; keyboard focus is
+  in the submenu whenever `sub_selected` is set). It overlaps the menu's edge so
+  the pointer never crosses a gap. Menu rows are indexed by `Action`: the test
+  helper `menu_action` in `tests/editor.py` mirrors the row and separator order.

@@ -44,6 +44,13 @@ costs a few milliseconds per 100 MB per keystroke.
 | Ctrl+PageUp/Down | switch tabs |
 | Ctrl+W | close tab |
 | Ctrl+F, F3 | find |
+| F10 | menu (Open Recent is a submenu: Right opens it) |
+
+**Open Recent** (in the menu) lists the last ten text files that still exist,
+newest first, from the same freedesktop history (`recently-used.xbel`) that
+Files' Recent view uses, so files opened from Files or saved with Save As appear
+too. **Clear Recent** forgets the text files in that history, which also removes
+them from Files' Recent; other kinds of files stay.
 
 ## Images (`rediwm-images`) and PDF (`rediwm-pdf FILE`)
 
@@ -57,6 +64,42 @@ copy their address instead of opening.
 Print (toolbar button or Ctrl+P) opens the print dialog of xdg-desktop-portal
 (GTK's, by default). A helper started before the sandbox hands the portal the
 file you opened; the sandboxed parser can only ask it to print.
+
+## Network settings
+
+Settings → Network talks to NetworkManager over D-Bus; nothing here runs `nmcli`.
+
+- **Details:** the wired adapter and the connected Wi-Fi network list IPv4 and
+  IPv6 addresses, gateway, DNS servers, search domains, MAC, whether the
+  profile is automatic or manual, and for Wi-Fi the security, signal, band and
+  channel, link speed and access point. Address rows have a copy button.
+- **Saved connections:** Wi-Fi and Ethernet have **Edit settings…**. It sets
+  connect-automatically, IPv4 and IPv6 (Automatic, Manual with address,
+  prefix and gateway, Link-local only, or Disabled), DNS (automatic or your own
+  servers), MTU and metered, and writes them back to the profile. Only those
+  keys change; secrets and everything else in the profile are left as they were.
+  Saving reapplies the connection if it is in use. **Forget** (two clicks)
+  deletes the profile, and the Wi-Fi row also has **Disconnect**.
+- **Unlock:** changing a saved connection needs the polkit action
+  `org.freedesktop.NetworkManager.settings.modify.system`. The page asks once
+  without interaction when it opens. Where policy already allows it (the usual
+  default for a local session) nothing shows; otherwise the page offers
+  **Unlock**, like Services, which asks through your polkit agent.
+- **VPN:** NetworkManager VPN and WireGuard connections are listed with
+  Connect, Disconnect and Remove. Add one with your VPN's NetworkManager plugin
+  or `nmcli connection import`. RediWM has no secret agent, so a VPN that asks
+  for a password at connect time needs its credentials saved in the profile.
+- **Proxy:** Off, Manual (HTTP, HTTPS, SOCKS and a bypass list) or Automatic (a
+  script address). It is stored in GSettings `org.gnome.system.proxy`, which GTK
+  and GIO apps and Firefox's "system proxy" read, so it needs the
+  gsettings-desktop-schemas package. A manual proxy is also exported as
+  `http_proxy`, `https_proxy`, `all_proxy` and `no_proxy` (both cases) to apps
+  RediWM starts afterwards; Off and Automatic export nothing and leave your own
+  login environment alone. Proxy credentials are not stored here.
+- **Airplane mode** soft-blocks every radio through `/dev/rfkill`, so
+  NetworkManager and BlueZ both follow. Turning it off puts each radio back as
+  it was before. It is hidden where there is no rfkill, and disabled while a
+  hardware switch is blocking a radio.
 
 ## Desktop
 

@@ -408,7 +408,10 @@ def test_appearance_settings():
 
                 # Picking a theme preserves personal edits, including the
                 # opacity set above. Only Reset discards those overrides.
-                theme_indices = {pack["id"]: i for i, pack in enumerate(ipc.query("theme.list")["packs"])}
+                # IPC lists every pack; the picker leaves out the retired ones (picker_hidden)
+                # unless one is active, so positions are counted over the rest.
+                shown_packs = [pack for pack in ipc.query("theme.list")["packs"] if pack["id"] not in ("redi-mocha", "gold")]
+                theme_indices = {pack["id"]: i for i, pack in enumerate(shown_packs)}
                 light_index = theme_indices["rediwm-light"]
                 dark_index = theme_indices["rediwm-dark"]
                 before_switch = read_config()
@@ -521,8 +524,7 @@ def test_appearance_settings():
                 ipc.wait_for_panel_settled("control_center")
                 assert ui.scroll_into_view("theme")["selected_index"] == light_index
                 # Redi Blue applies every supplied token and survives reload.
-                blue_index = next(i for i, pack in enumerate(ipc.query("theme.list")["packs"])
-                                  if pack["id"] == "redi-blue")
+                blue_index = theme_indices["redi-blue"]
                 click_widget(ui.scroll_into_view("theme"))
                 ipc.key_press("Home")
                 for _ in range(blue_index):

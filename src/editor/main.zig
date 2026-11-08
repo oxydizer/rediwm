@@ -197,6 +197,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     const display = try wl.Display.connect(null);
     defer display.disconnect();
     var self = Client{ .display = display, .app = try app_mod.App.init(init.io) };
+    self.app.environ = init.minimal.environ;
     self.app.openDrafts(init.minimal.environ);
     for (paths) |path| self.app.open(path);
     self.ime = .{ .app = &self.app };

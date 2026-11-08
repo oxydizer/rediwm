@@ -31,6 +31,10 @@ msgstr ""
 msgid "1 second"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "1.1.1.1, 2606:4700:4700::1111"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "1.5 seconds"
 msgstr ""
@@ -55,12 +59,28 @@ msgstr ""
 msgid "180°"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "192.168.1.1"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "192.168.1.20"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "2 seconds"
 msgstr ""
 
 #: src/control_center/welcome.zig
 msgid "200%"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "2001:db8::20"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "24"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -91,6 +111,14 @@ msgstr ""
 msgid "60 seconds"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "64"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "8080"
+msgstr ""
+
 #: src/control_center/sections/display.zig
 msgid "90°"
 msgstr ""
@@ -105,6 +133,10 @@ msgstr ""
 
 #: src/files/app_chooser.zig
 msgid "A file with this name exists. Replace it?"
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "A hardware switch is blocking a radio."
 msgstr ""
 
 #: src/printing/ladder.zig
@@ -141,6 +173,10 @@ msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Accept jobs"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Access point"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -227,6 +263,10 @@ msgstr ""
 msgid "Additional setup required"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Address"
+msgstr ""
+
 #: src/control_center/sections/printers_add.zig
 msgid "Address checks support IPP printers. Other connections can be tested with an explicit print after setup."
 msgstr ""
@@ -237,6 +277,10 @@ msgstr ""
 
 #: src/polkit/dialog.zig
 msgid "Administrator privileges are required to continue."
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Airplane mode"
 msgstr ""
 
 #: src/control_center/sections/services.zig
@@ -339,11 +383,19 @@ msgstr ""
 msgid "Applications"
 msgstr ""
 
+#: src/control_center/sections/network_proxy.zig
+msgid "Applied."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Applied. Apps you start from now on use this proxy."
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "Applies to output edges and the space between automatic tiles."
 msgstr ""
 
-#: src/images/app_render.zig
+#: src/control_center/sections/network_proxy.zig
 msgid "Apply"
 msgstr ""
 
@@ -385,6 +437,10 @@ msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
 msgid "Apps and web pages"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Apps that follow the system proxy use this. A manual proxy is also given to apps started from RediWM."
 msgstr ""
 
 #: src/files/archive.zig
@@ -523,7 +579,7 @@ msgstr ""
 msgid "Auto-join this network"
 msgstr ""
 
-#: src/printing/options.zig
+#: src/control_center/sections/network_details.zig
 msgid "Automatic"
 msgstr ""
 
@@ -581,6 +637,10 @@ msgstr ""
 
 #: src/control_center/sections/power.zig
 msgid "Balanced"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Band"
 msgstr ""
 
 #: src/control_center/sections/sound.zig
@@ -725,6 +785,10 @@ msgstr ""
 
 #: src/control_center/welcome.zig
 msgid "Browser"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Bypass the proxy for"
 msgstr ""
 
 #: src/images/app_render.zig
@@ -1043,6 +1107,22 @@ msgstr ""
 msgid "Check printer power, the address, and access through the network or VPN."
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Check the DNS server addresses."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Check the HTTP proxy host and port (1–65535)."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Check the HTTPS proxy host and port (1–65535)."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Check the SOCKS host and port (1–65535)."
+msgstr ""
+
 #: src/printing/ladder.zig
 msgid "Check the configured CUPS server and whether the print service is installed and available."
 msgstr ""
@@ -1195,6 +1275,10 @@ msgstr ""
 msgid "Classic (stacking)"
 msgstr ""
 
+#: src/editor/app_recent.zig
+msgid "Clear Recent"
+msgstr ""
+
 #: src/control_center/search.zig
 msgid "Clear search"
 msgstr ""
@@ -1283,6 +1367,14 @@ msgstr ""
 msgid "Completed"
 msgstr ""
 
+#: src/control_center/sections/network_details.zig
+msgid "Configuration"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Configuration URL"
+msgstr ""
+
 #: src/control_center/sections/network.zig
 msgid "Configure this network with a network tool"
 msgstr ""
@@ -1299,12 +1391,20 @@ msgstr ""
 msgid "Confirm Pairing"
 msgstr ""
 
+#: src/control_center/sections/network.zig
+msgid "Confirm forget"
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Confirm new password"
 msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Confirm password"
+msgstr ""
+
+#: src/control_center/sections/network_vpn.zig
+msgid "Confirm remove"
 msgstr ""
 
 #: src/printing/ladder.zig
@@ -1347,7 +1447,7 @@ msgstr ""
 msgid "Connecting Ethernet…"
 msgstr ""
 
-#: src/files/app_paint.zig
+#: src/control_center/sections/network_vpn.zig
 msgid "Connecting…"
 msgstr ""
 
@@ -1361,6 +1461,14 @@ msgstr ""
 
 #: src/network/manager_objects.zig
 msgid "Connection failed. Check the password and try again."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Connection forgotten."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Connection settings"
 msgstr ""
 
 #: src/session/lock_view.zig
@@ -1437,6 +1545,10 @@ msgstr ""
 msgid "Could not change permissions"
 msgstr ""
 
+#: src/control_center/sections/network.zig
+msgid "Could not change the radios. Check access to /dev/rfkill."
+msgstr ""
+
 #: src/printing/admin.zig
 msgid "Could not clear the canonical default override."
 msgstr ""
@@ -1471,6 +1583,10 @@ msgstr ""
 
 #: src/files/archive.zig
 msgid "Could not extract archive"
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Could not forget the connection."
 msgstr ""
 
 #: src/files/app_dialogs.zig
@@ -1605,6 +1721,10 @@ msgstr ""
 msgid "Could not read the AppImage's application details"
 msgstr ""
 
+#: src/network/manager_edit.zig
+msgid "Could not read the connection settings."
+msgstr ""
+
 #: src/files/client_dnd.zig
 msgid "Could not read the dropped items"
 msgstr ""
@@ -1617,7 +1737,7 @@ msgstr ""
 msgid "Could not request CUPS start."
 msgstr ""
 
-#: src/systemd/requests.zig
+#: src/network/manager_access.zig
 msgid "Could not request authentication. Check that polkit is running."
 msgstr ""
 
@@ -1675,6 +1795,10 @@ msgstr ""
 
 #: src/control_center/panel.zig
 msgid "Could not save the Files setting."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Could not save the connection settings."
 msgstr ""
 
 #: src/control_center/welcome.zig
@@ -1769,12 +1893,20 @@ msgstr ""
 msgid "Could not start the authentication request."
 msgstr ""
 
+#: src/network/manager_edit.zig
+msgid "Could not start the connection."
+msgstr ""
+
 #: src/session/power_requests.zig
 msgid "Could not start the power command."
 msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Could not start the request."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Could not stop the connection."
 msgstr ""
 
 #: src/systemd/live.zig
@@ -1907,7 +2039,7 @@ msgstr ""
 msgid "DISPLAY"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_details.zig
 msgid "DNS servers"
 msgstr ""
 
@@ -2091,7 +2223,7 @@ msgstr ""
 msgid "Disable while typing"
 msgstr ""
 
-#: src/control_center/sections/services.zig
+#: src/control_center/sections/network_details.zig
 msgid "Disabled"
 msgstr ""
 
@@ -2115,7 +2247,7 @@ msgstr ""
 msgid "Disconnecting Ethernet…"
 msgstr ""
 
-#: src/network/manager.zig
+#: src/control_center/sections/network_vpn.zig
 msgid "Disconnecting…"
 msgstr ""
 
@@ -2323,8 +2455,16 @@ msgstr ""
 msgid "ETA: {value}s"
 msgstr ""
 
+#: src/control_center/sections/network_proxy.zig
+msgid "Each bypass entry must be at most 64 characters."
+msgstr ""
+
 #: src/control_center/sections/appearance_rows.zig
 msgid "Edge glow"
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "Edit settings…"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -2419,6 +2559,14 @@ msgstr ""
 msgid "Enter a valid CUPS administrator username and password."
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Enter a valid IPv4 address."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Enter a valid IPv6 address."
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Enter a valid full name."
 msgstr ""
@@ -2427,8 +2575,28 @@ msgstr ""
 msgid "Enter a valid username and full name."
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Enter an IPv4 prefix length from 1 to 32."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Enter an IPv6 prefix length from 1 to 128."
+msgstr ""
+
 #: src/control_center/sections/printers.zig
 msgid "Enter an account permitted to administer the local CUPS server."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Enter an http://, https:// or file:// address."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Enter at least one DNS server, or choose Automatic."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Enter at least one proxy."
 msgstr ""
 
 #: src/files/app_paint.zig
@@ -2847,12 +3015,24 @@ msgstr ""
 msgid "Force quit…"
 msgstr ""
 
+#: src/control_center/sections/network.zig
+msgid "Forget"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Forget Device"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Forget connection"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Forget this device? Pair it again to reconnect."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Forgetting…"
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -2891,7 +3071,7 @@ msgstr ""
 msgid "Gap ({n} px)"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_details.zig
 msgid "Gateway"
 msgstr ""
 
@@ -2921,6 +3101,14 @@ msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Groups"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "HTTP proxy"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "HTTPS proxy"
 msgstr ""
 
 #: src/control_center/sections/network.zig
@@ -2975,12 +3163,40 @@ msgstr ""
 msgid "INPUT"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "IP address and DNS"
+msgstr ""
+
 #: src/control_center/sections/printers_add.zig
 msgid "IPP Everywhere / AirPrint"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_editor.zig
+msgid "IPv4"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
 msgid "IPv4 address"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "IPv4 {v4} · IPv6 {v6}"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "IPv6"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "IPv6 DNS servers"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "IPv6 address"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "IPv6 gateway"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -3359,8 +3575,12 @@ msgstr ""
 msgid "Link permissions cannot be changed"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_details.zig
 msgid "Link speed"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Link-local only"
 msgstr ""
 
 #: src/files/app_torrents.zig
@@ -3377,6 +3597,10 @@ msgstr ""
 
 #: src/start_menu/search.zig
 msgid "Loading applications…"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Loading connection settings…"
 msgstr ""
 
 #: src/images/app_render.zig
@@ -3459,8 +3683,12 @@ msgstr ""
 msgid "Low battery warning"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_details.zig
 msgid "MAC address"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "MTU"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -3485,6 +3713,10 @@ msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Manage…"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Manual"
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -3557,6 +3789,10 @@ msgstr ""
 
 #: src/files/app_torrent_rows.zig
 msgid "Metadata…"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Metered connection"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -3835,8 +4071,16 @@ msgstr ""
 msgid "Night light temperature"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "No"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "No Bluetooth adapter found"
+msgstr ""
+
+#: src/control_center/sections/network_vpn.zig
+msgid "No VPN connections. Add one with your VPN's NetworkManager plugin or nmcli; it then appears here."
 msgstr ""
 
 #: src/control_center/sections/network.zig
@@ -4187,6 +4431,10 @@ msgstr ""
 msgid "Open File"
 msgstr ""
 
+#: src/editor/app.zig
+msgid "Open Recent"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Open System Monitor"
 msgstr ""
@@ -4253,6 +4501,14 @@ msgstr ""
 
 #: src/files/app_menu.zig
 msgid "Original location unknown: these items have no Trash information"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Other"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Other (unchanged)"
 msgstr ""
 
 #: src/files/properties.zig
@@ -4495,6 +4751,10 @@ msgstr ""
 msgid "Pointer speed"
 msgstr ""
 
+#: src/control_center/sections/network_proxy.zig
+msgid "Port"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "Position"
 msgstr ""
@@ -4581,6 +4841,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Poweroff Auto"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Prefix length"
 msgstr ""
 
 #: src/session/lock_account.zig
@@ -4781,6 +5045,10 @@ msgstr ""
 
 #: src/desktop/app_paint.zig
 msgid "Properties — Escape closes"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Proxy"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -5237,6 +5505,10 @@ msgstr ""
 msgid "Running"
 msgstr ""
 
+#: src/control_center/sections/network_proxy.zig
+msgid "SOCKS host"
+msgstr ""
+
 #: src/control_center/sections/sound.zig
 msgid "SOUND"
 msgstr ""
@@ -5345,6 +5617,10 @@ msgstr ""
 msgid "Saved {name}"
 msgstr ""
 
+#: src/network/manager_edit.zig
+msgid "Saved."
+msgstr ""
+
 #: src/control_center/sections/portals.zig
 msgid "Saved. Changes apply next time you sign in."
 msgstr ""
@@ -5449,6 +5725,10 @@ msgstr ""
 msgid "Search devices…"
 msgstr ""
 
+#: src/control_center/sections/network_details.zig
+msgid "Search domains"
+msgstr ""
+
 #: src/system_monitor/app.zig
 msgid "Search name, PID or user"
 msgstr ""
@@ -5541,6 +5821,10 @@ msgstr ""
 msgid "Selected process"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Servers, separated by commas"
+msgstr ""
+
 #: src/control_center/sections/services.zig
 msgid "Service"
 msgstr ""
@@ -5595,6 +5879,10 @@ msgstr ""
 
 #: src/share_picker/client.zig
 msgid "Share screen"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Shared"
 msgstr ""
 
 #: src/control_center/sections/appearance.zig
@@ -5683,6 +5971,10 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "Sign-in required"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Signal"
 msgstr ""
 
 #: src/session/greeter.zig
@@ -5877,7 +6169,7 @@ msgstr ""
 msgid "State unavailable"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_details.zig
 msgid "Status"
 msgstr ""
 
@@ -6015,6 +6307,10 @@ msgstr ""
 
 #: src/start_menu/search.zig
 msgid "System preferences, display, appearance and input"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "System proxy settings need the gsettings-desktop-schemas package."
 msgstr ""
 
 #: src/control_center/sections/services.zig
@@ -6161,6 +6457,18 @@ msgstr ""
 msgid "The CUPS client configuration could not be read or is invalid."
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "The IPv4 gateway is not a valid address."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "The IPv6 gateway is not a valid address."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "The MTU must be between 576 and 9000, or empty."
+msgstr ""
+
 #: src/control_center/sections/appearance_colors.zig
 msgid "The RediWM block in gtk.css is incomplete. Repair it before applying colors."
 msgstr ""
@@ -6183,6 +6491,10 @@ msgstr ""
 
 #: src/session/power_policy.zig
 msgid "The configured power mode is unavailable."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "The connection request was refused."
 msgstr ""
 
 #: src/control_center/sections/printers_tools.zig
@@ -6653,6 +6965,10 @@ msgstr ""
 msgid "Turned off"
 msgstr ""
 
+#: src/control_center/sections/network.zig
+msgid "Turns off Wi-Fi, Bluetooth and other radios."
+msgstr ""
+
 #: src/printing/options.zig
 msgid "Two-sided printing"
 msgstr ""
@@ -6729,8 +7045,12 @@ msgstr ""
 msgid "Unknown key"
 msgstr ""
 
-#: src/control_center/sections/services.zig
+#: src/control_center/sections/network.zig
 msgid "Unlock"
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "Unlock to change connection settings."
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -6865,6 +7185,10 @@ msgstr ""
 msgid "Uses the main theme. Apply again after changing it; restart apps to see the colors."
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "VPN"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "Vertical Pan"
 msgstr ""
@@ -6901,6 +7225,10 @@ msgstr ""
 msgid "WPA2 / WPA3 Personal"
 msgstr ""
 
+#: src/control_center/sections/network_details.zig
+msgid "WPA2/WPA3 Personal"
+msgstr ""
+
 #: src/control_center/sections/network.zig
 msgid "WPA3 Personal"
 msgstr ""
@@ -6913,7 +7241,7 @@ msgstr ""
 msgid "Waiting for authentication service…"
 msgstr ""
 
-#: src/control_center/sections/services.zig
+#: src/control_center/sections/network.zig
 msgid "Waiting for authentication…"
 msgstr ""
 
@@ -7121,6 +7449,10 @@ msgstr ""
 msgid "Xwayland: {active}× active. Restart the compositor to apply {pending}×."
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Yes"
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "You"
 msgstr ""
@@ -7141,12 +7473,16 @@ msgstr ""
 msgid "You can restore them later from Trash."
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/network/popup.zig
 msgid "You're connected to this network"
 msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "You're online."
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "Your account is not allowed to change network connections."
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -7349,8 +7685,16 @@ msgstr ""
 msgid "export look"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "fe80::1"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "files folders application"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "flight radios bluetooth wi-fi rfkill"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7370,6 +7714,14 @@ msgid "hotkeys keybindings bindings terminal screenshot volume brightness worksp
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "http https socks pac proxy server bypass"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "http://wpad.example.com/wpad.dat"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "icons pack"
 msgstr ""
 
@@ -7379,6 +7731,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "import pack"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "ipv4 ipv6 static dhcp gateway mtu metered forget saved network"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7419,6 +7775,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "locale translation"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "localhost, 127.0.0.0/8, ::1"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7519,6 +7879,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "printing cups add queue jobs paper driver label"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "proxy.example.com"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7734,6 +8098,10 @@ msgid "wired internet adapter"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "wireguard openvpn tunnel private network"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "wireless internet wlan hotspot hidden network"
 msgstr ""
 
@@ -7747,6 +8115,10 @@ msgstr ""
 
 #: src/session/power_requests.zig
 msgid "{action} failed"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "{band} · channel {channel}"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig

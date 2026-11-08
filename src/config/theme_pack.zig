@@ -238,6 +238,27 @@ pub fn list(a: A, io: Io, env: std.process.Environ, config_path: []const u8) ![]
     return out.toOwnedSlice(a);
 }
 
+/// Packs that still load (so a config naming one keeps its look) but are not
+/// offered in the picker, unless one is the active theme. Uncomment to offer
+/// them again.
+const picker_hidden = [_][]const u8{
+    "redi-mocha",
+    "gold",
+};
+
+/// `list` minus `picker_hidden`; the active pack always stays so the picker
+/// shows what is applied. Lookup (`find`, config load, IPC) is unaffected.
+pub fn pickerList(a: A, io: Io, env: std.process.Environ, config_path: []const u8, active: []const u8) ![]Pack {
+    var out: std.ArrayList(Pack) = .empty;
+    for (try list(a, io, env, config_path)) |p| {
+        const hidden = for (picker_hidden) |id| {
+            if (std.mem.eql(u8, id, p.id)) break true;
+        } else false;
+        if (!hidden or std.mem.eql(u8, p.id, active)) try out.append(a, p);
+    }
+    return out.toOwnedSlice(a);
+}
+
 pub fn find(a: A, io: Io, env: std.process.Environ, config_path: []const u8, id: []const u8) !?Pack {
     if (!validId(id)) return error.InvalidPackId;
     for (try list(a, io, env, config_path)) |p| if (std.mem.eql(u8, p.id, id)) return p;

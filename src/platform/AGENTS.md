@@ -4,7 +4,8 @@ The one place the OS shows: child handles (`child.zig`), directory watching
 (`watch.zig`), the program's own path (`exe.zig`), who is on the other end of a
 unix socket (`peer.zig`), process attributes such as no core dumps and no new
 privileges (`process.zig`), descriptors that wake a poll loop (`wake.zig`),
-where the system's helper programs live (`tool.zig`), seccomp-BPF filters
+where the system's helper programs live (`tool.zig`), radio kill switches for
+airplane mode (`rfkill.zig`: Linux only, other systems report no radios), seccomp-BPF filters
 (`seccomp.zig`, for the PDF viewer and the theme helper), and
 `child.h`/`self_exe.h`/`peer.h`/`process.h` for C and C++, and `fs.zig`
 (rename without replacing, stat), and `dirwalk.zig` (reading a directory and

@@ -63,6 +63,7 @@ test {
     _ = @import("start_menu/catalog_cache.zig");
     _ = @import("startup.zig");
     _ = @import("startup_tasks.zig");
+    _ = @import("gl_vendor.zig");
     _ = @import("start_menu/launch.zig");
     _ = @import("start_menu/search.zig");
     _ = @import("start_menu/model.zig");

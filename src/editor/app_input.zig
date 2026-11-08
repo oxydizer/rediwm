@@ -13,6 +13,7 @@ const App = app_mod.App;
 const top = app_mod.top;
 const status_h = app_mod.status_h;
 const labels = app_mod.labels;
+const recent = @import("app_recent.zig");
 
 /// The byte offset nearest a point given relative to the text origin.
 pub fn indexAt(self: *App, x: f64, y: f64) usize {
@@ -27,10 +28,27 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     self.py = y;
     if (self.proximityChanged(old_x, old_y, x, y)) self.glow_dirty = true;
     if (self.menu_open) {
+        if (recent.hit(self, x, y)) |row| {
+            if (self.sub_selected != row or self.menu_selected != app_mod.recent_row) self.dirty = true;
+            self.sub_selected = row;
+            self.menu_selected = app_mod.recent_row;
+            return;
+        }
+        // Inside the submenu but between rows: keep what is open.
+        if (recent.contains(self, x, y)) return;
         const hovered = self.menuHit(x, y);
-        if (hovered != self.menu_selected) {
+        if (hovered != self.menu_selected or self.sub_selected != null) {
             self.menu_selected = hovered;
+            self.sub_selected = null;
             self.dirty = true;
+        }
+        // Moving along the menu opens the submenu on its row and closes it on any other.
+        if (hovered) |row| {
+            const want = row == app_mod.recent_row and self.recentEnabled();
+            if (want != self.sub_open) {
+                self.sub_open = want;
+                self.dirty = true;
+            }
         }
         return;
     }
@@ -76,7 +94,18 @@ pub fn handleButton(self: *App, code: u32, pressed: bool) void {
         return;
     }
     if (self.menu_open) {
+        if (recent.hit(self, self.px, self.py)) |row| {
+            recent.activate(self, row);
+            return;
+        }
+        if (recent.contains(self, self.px, self.py)) return;
         const row = self.menuHit(self.px, self.py);
+        if (row == app_mod.recent_row) {
+            // Opening a submenu is not choosing a command: the menu stays.
+            if (self.recentEnabled()) self.sub_open = true;
+            self.dirty = true;
+            return;
+        }
         self.dismissMenu();
         if (row) |i| self.act(@enumFromInt(i));
         return;
@@ -195,19 +224,47 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         self.toggleMenu(self.menu_anchor);
         return;
     }
+    if (self.menu_open and self.sub_selected != null) {
+        // Keyboard focus is in the Open Recent submenu.
+        const count = recent.rowCount(self);
+        const at = self.sub_selected.?;
+        switch (sym) {
+            c.XKB_KEY_Escape, c.XKB_KEY_Left, c.XKB_KEY_Right => {
+                self.sub_selected = null;
+                self.sub_open = false;
+            },
+            c.XKB_KEY_Down => self.sub_selected = (at + 1) % count,
+            c.XKB_KEY_Up => self.sub_selected = (at + count - 1) % count,
+            c.XKB_KEY_Home => self.sub_selected = 0,
+            c.XKB_KEY_End => self.sub_selected = count - 1,
+            c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_space => recent.activate(self, at),
+            else => {},
+        }
+        self.dirty = true;
+        return;
+    }
     if (self.menu_open) {
+        // Moving by keyboard never opens the submenu; Right/Left/Enter on its row does.
         switch (sym) {
             c.XKB_KEY_Escape => self.dismissMenu(),
             c.XKB_KEY_Down => self.menu_selected = if (self.menu_selected) |i| (i + 1) % labels.len else 0,
             c.XKB_KEY_Up => self.menu_selected = if (self.menu_selected) |i| (i + labels.len - 1) % labels.len else labels.len - 1,
             c.XKB_KEY_Home => self.menu_selected = 0,
             c.XKB_KEY_End => self.menu_selected = labels.len - 1,
-            c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_space => if (self.menu_selected) |i| {
-                self.dismissMenu();
-                self.act(@enumFromInt(i));
+            c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_space, c.XKB_KEY_Right, c.XKB_KEY_Left => if (self.menu_selected) |i| {
+                if (i == app_mod.recent_row) {
+                    if (self.recentEnabled()) {
+                        self.sub_open = true;
+                        self.sub_selected = 0;
+                    }
+                } else if (sym != c.XKB_KEY_Right and sym != c.XKB_KEY_Left) {
+                    self.dismissMenu();
+                    self.act(@enumFromInt(i));
+                }
             },
             else => {},
         }
+        if (self.menu_selected != app_mod.recent_row and self.sub_selected == null) self.sub_open = false;
         self.dirty = true;
         if (!self.ctrl) return;
         self.dismissMenu();

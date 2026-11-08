@@ -90,6 +90,9 @@ fn start(init: std.process.Init) !bool {
     // cache in ~/.cache. So every program it builds is a full compile on each
     // start (tens of ms): it builds only those it draws with (server/setup.zig).
     if (greeter and setenv("MESA_SHADER_CACHE_DISABLE", "true", 0) != 0) return error.OutOfMemory;
+    // glvnd would otherwise load the NVIDIA EGL stack on every machine, GPU or
+    // not. Must run before the backend (and so EGL) starts.
+    @import("gl_vendor.zig").skipAbsentNvidia(init.io, init.minimal.environ);
 
     var server: Server = undefined;
     try server.init(

@@ -25,6 +25,7 @@ extern fn g_bookmark_file_set_mime_type(bookmark: *anyopaque, uri: [*:0]const u8
 extern fn g_bookmark_file_add_application(bookmark: *anyopaque, uri: [*:0]const u8, name: [*:0]const u8, exec: [*:0]const u8) void;
 extern fn g_bookmark_file_to_data(bookmark: *anyopaque, length: *usize, err: ?*?*anyopaque) ?[*:0]u8;
 extern fn g_file_set_contents_full(filename: [*:0]const u8, data: [*]const u8, length: isize, flags: c_int, mode: c_int, err: ?*?*anyopaque) c_int;
+extern fn g_bookmark_file_remove_item(bookmark: *anyopaque, uri: [*:0]const u8, err: ?*?*anyopaque) c_int;
 extern fn g_strfreev(strings: [*:null]?[*:0]u8) void;
 extern fn g_free(memory: ?*anyopaque) void;
 
@@ -81,6 +82,11 @@ pub fn read(a: Allocator, io: std.Io, env: std.process.Environ) ![]Entry {
 
 /// Re-read before writing so another window's latest entries are preserved.
 pub fn record(a: Allocator, io: std.Io, env: std.process.Environ, opened: []const u8) !void {
+    return recordBy(a, io, env, opened, "RediWM Files", "rediwm-files %f");
+}
+
+/// `record` on behalf of another application (the name and command GLib stores).
+pub fn recordBy(a: Allocator, io: std.Io, env: std.process.Environ, opened: []const u8, app_name: [:0]const u8, exec: [:0]const u8) !void {
     if (!std.fs.path.isAbsolute(opened)) return;
     const filename = try path(a, env);
     defer a.free(filename);
@@ -93,15 +99,38 @@ pub fn record(a: Allocator, io: std.Io, env: std.process.Environ, opened: []cons
     const mime = try a.dupeSentinel(u8, mime_db.guess(opened), 0);
     defer a.free(mime);
     g_bookmark_file_set_mime_type(bookmark, uri, mime);
-    g_bookmark_file_add_application(bookmark, uri, "RediWM Files", "rediwm-files %f");
+    g_bookmark_file_add_application(bookmark, uri, app_name, exec);
     const now = g_date_time_new_now_utc();
     defer g_date_time_unref(now);
     g_bookmark_file_set_visited_date_time(bookmark, uri, now);
     g_bookmark_file_set_modified_date_time(bookmark, uri, now);
+    try write(io, filename, bookmark);
+}
+
+fn write(io: std.Io, filename: [:0]const u8, bookmark: *anyopaque) !void {
     try std.Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(filename).?);
     var length: usize = 0;
     const data = g_bookmark_file_to_data(bookmark, &length, null) orelse return error.WriteHistoryFailed;
     defer g_free(data);
     // G_FILE_SET_CONTENTS_CONSISTENT: atomic replacement, private on first creation.
     if (g_file_set_contents_full(filename, data, @intCast(length), 1, 0o600, null) == 0) return error.WriteHistoryFailed;
+}
+
+/// Drops every local entry `drop` accepts, re-reading first like `record`.
+pub fn forgetWhere(a: Allocator, io: std.Io, env: std.process.Environ, drop: *const fn ([]const u8) bool) !void {
+    const filename = try path(a, env);
+    defer a.free(filename);
+    const bookmark = try load(a, io, filename);
+    defer g_bookmark_file_free(bookmark);
+    var count: usize = 0;
+    const uris = g_bookmark_file_get_uris(bookmark, &count);
+    defer g_strfreev(uris);
+    var removed = false;
+    for (uris[0..count]) |maybe_uri| {
+        const uri = maybe_uri orelse continue;
+        const decoded = clipboard.decodeLocalPath(a, std.mem.span(uri)) catch continue;
+        defer a.free(decoded);
+        if (drop(decoded) and g_bookmark_file_remove_item(bookmark, uri, null) != 0) removed = true;
+    }
+    if (removed) try write(io, filename, bookmark);
 }

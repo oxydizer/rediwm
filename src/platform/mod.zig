@@ -14,6 +14,7 @@ pub const peer = @import("peer.zig");
 pub const process = @import("process.zig");
 pub const wake = @import("wake.zig");
 pub const power_supply = @import("power_supply.zig");
+pub const rfkill = @import("rfkill.zig");
 pub const charge_limit = @import("charge_limit.zig");
 pub const watch = @import("watch.zig");
 pub const seccomp = @import("seccomp.zig");
@@ -27,6 +28,7 @@ test {
     _ = fs;
     _ = peer;
     _ = process;
+    _ = rfkill;
     _ = wake;
     _ = system;
     _ = tool;

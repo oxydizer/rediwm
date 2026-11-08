@@ -11,28 +11,13 @@ const Path = manager.Path;
 const Network = manager.Network;
 const Saved = manager.Saved;
 
-pub fn addressList(b: *wire.Reader) !Text(256) {
-    var out: Text(256) = .{};
-    var list = try b.array(4);
-    while (list.offset < list.bytes.len) {
-        var entries = try list.array(8);
-        while (entries.offset < entries.bytes.len) {
-            try entries.alignTo(8);
-            const key = try entries.string();
-            const sig = try entries.variant();
-            if (eq(u8, key, "address") and eq(u8, sig, "s")) {
-                const value = try entries.string();
-                const separator: []const u8 = if (out.len == 0) "" else ", ";
-                if (out.len + separator.len + value.len <= out.bytes.len) {
-                    @memcpy(out.bytes[out.len..][0..separator.len], separator);
-                    out.len += separator.len;
-                    @memcpy(out.bytes[out.len..][0..value.len], value);
-                    out.len += value.len;
-                }
-            } else try entries.skip(sig);
-        }
-    }
-    return out;
+pub fn parseMethod(value: []const u8) manager.Method {
+    if (eq(u8, value, "auto") or eq(u8, value, "dhcp")) return .auto;
+    if (eq(u8, value, "manual")) return .manual;
+    if (eq(u8, value, "link-local")) return .link_local;
+    if (eq(u8, value, "shared")) return .shared;
+    if (eq(u8, value, "disabled") or eq(u8, value, "ignore")) return .disabled;
+    return .other;
 }
 
 pub fn writeWiredSettings(b: *wire.Writer, name: []const u8) !void {
@@ -64,7 +49,16 @@ pub fn parseSaved(b: *wire.Reader, path: Path) !Saved {
             try props.alignTo(8);
             const key = try props.string();
             const sig = try props.variant();
-            if (eq(u8, section_name, "802-11-wireless") and eq(u8, key, "ssid") and eq(u8, sig, "ay")) {
+            if (eq(u8, section_name, "connection") and eq(u8, key, "id") and eq(u8, sig, "s")) {
+                out.id.set(try props.string());
+            } else if (eq(u8, section_name, "connection") and eq(u8, key, "type") and eq(u8, sig, "s")) {
+                out.kind.set(try props.string());
+            } else if (eq(u8, section_name, "connection") and eq(u8, key, "autoconnect") and eq(u8, sig, "b")) {
+                out.autoconnect = try props.boolean();
+            } else if ((eq(u8, section_name, "ipv4") or eq(u8, section_name, "ipv6")) and eq(u8, key, "method") and eq(u8, sig, "s")) {
+                const method = parseMethod(try props.string());
+                if (eq(u8, section_name, "ipv4")) out.method4 = method else out.method6 = method;
+            } else if (eq(u8, section_name, "802-11-wireless") and eq(u8, key, "ssid") and eq(u8, sig, "ay")) {
                 var bytes = try props.array(1);
                 out.ssid.set(try bytes.take(bytes.bytes.len - bytes.offset));
             } else if (eq(u8, section_name, "802-11-wireless-security") and eq(u8, key, "key-mgmt") and eq(u8, sig, "s")) {

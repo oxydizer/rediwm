@@ -82,6 +82,7 @@ pub fn sync(self: *App) void {
                 t.scroll_x = 0;
                 t.measure = .{};
                 self.notice_len = 0;
+                self.recordRecent(job.path);
                 self.changed();
             },
             .save => if (self.findTab(job.tab_id)) |i| {
@@ -92,6 +93,7 @@ pub fn sync(self: *App) void {
                 t.stamp = job.stamp;
                 if (t.doc.revision == job.revision) t.doc.saved = t.doc.position;
                 self.message(tr("Saved"));
+                self.recordRecent(job.path);
                 self.changed();
                 if (self.close_tab == t.id and !t.doc.modified()) self.finishClose();
             },
@@ -179,6 +181,7 @@ pub fn act(self: *App, action: Action) void {
     switch (action) {
         .new => self.newTab() catch |err| self.failure(err),
         .open => self.choose(false),
+        .open_recent => {}, // the menu opens its submenu; nothing to run
         .save => self.save(false),
         .save_as => self.save(true),
         .find => {

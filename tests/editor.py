@@ -22,6 +22,21 @@ def run():
         (docs / "binary.txt").write_bytes(b"binary\x00data")
         from PIL import Image
         Image.new("RGB", (40, 40), "red").save(docs / "z image.png")
+        gamma = docs / "gamma.txt"
+        gamma.write_text("from the recent list\n")
+        # An older shared history: a text file, a missing one and a picture. Open
+        # Recent must offer only the first.
+        entries = "".join(
+            f'<bookmark href="{path.as_uri()}" added="2020-01-01T00:00:00Z" modified="2020-01-01T00:00:00Z" visited="2020-01-01T00:00:0{n}Z">'
+            f'<info><metadata owner="http://freedesktop.org"><mime:mime-type type="{mime}"/>'
+            '<bookmark:applications><bookmark:application name="Seed" exec="seed %f" modified="2020-01-01T00:00:00Z" count="1"/></bookmark:applications>'
+            '</metadata></info></bookmark>'
+            for n, (path, mime) in enumerate([(gamma, "text/plain"), (docs / "gone.txt", "text/plain"), (docs / "z image.png", "image/png")]))
+        (tmp / "data").mkdir()
+        (tmp / "data" / "recently-used.xbel").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<xbel version="1.0" '
+            'xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks" '
+            'xmlns:mime="http://www.freedesktop.org/standards/shared-mime-info">' + entries + '</xbel>\n')
         config = tmp / "config.toml"
         config.write_text('[compositor]\nxwayland = false\n')
         env = dict(os.environ, HOME=directory, XDG_RUNTIME_DIR=directory,
@@ -80,7 +95,7 @@ def run():
                     box = ipc.get_window_debug(win["id"])["client_box"]
                     # CSD hosts the menu in its header; SSD uses the tab bar.
                     click(win, box["width"] - (132 if csd else 18), 23)
-                    separators = int(row >= 2) + int(row >= 4)
+                    separators = int(row >= 3) + int(row >= 5)
                     click(win, box["width"] - 200, (52 if csd else 44) + 6 + row * 32 + separators * 7 + 16)
 
                 def window_control(offset):
@@ -120,10 +135,30 @@ def run():
                 title("alpha.txt")
                 key(21, ctrl=True)  # redo x
                 title("* alpha.txt")
-                menu_action(2)  # Save through the application menu.
+                menu_action(3)  # Save through the application menu.
                 wait_for(lambda: first.read_bytes() == b"\xef\xbb\xbfhello\r\nworld\r\nx", "save bytes and BOM/CRLF")
                 title("alpha.txt")
                 print("Space opens text; typing, undo/redo and lossless save", flush=True)
+
+                # A load and a save add the file to the shared history under the editor's name.
+                history = tmp / "data" / "recently-used.xbel"
+                wait_for(lambda: "RediWM Editor" in history.read_text() and "alpha.txt" in history.read_text(), "editor records recent files")
+                # Open Recent lists the newest text file first (the one just saved), then the
+                # seeded one; the missing file and the picture are left out.
+                def recent_entry(index):
+                    win = editor()
+                    box = ipc.get_window_debug(win["id"])["client_box"]
+                    click(win, box["width"] - (132 if csd else 18), 23)
+                    y = (52 if csd else 44) + 6 + 2 * 32 + 16
+                    click(win, box["width"] - 200, y)  # the row opens its submenu beside the menu
+                    click(win, box["width"] - 460, y + index * 32)
+                recent_entry(1)
+                win = title("gamma.txt")
+                assert "(2/2)" in win["title"], win
+                key(17, ctrl=True)  # close it again
+                win = title("alpha.txt")
+                assert "(1/1)" in win["title"], win
+                print("Open Recent lists text files that exist and opens one", flush=True)
 
                 ipc.focus_window(files["id"])
                 key(106)  # next file in grid
@@ -230,7 +265,7 @@ def run():
                 key(31, ctrl=True)
                 wait_for(lambda: second.read_text() == "catfish catfish cafe catfish", "replace-all redo")
                 key(1)
-                menu_action(5)  # Replace is also discoverable in the menu
+                menu_action(6)  # Replace is also discoverable in the menu
                 ipc.type_text("catfish")
                 key(15)
                 key(14)  # Empty replacement deletes every match

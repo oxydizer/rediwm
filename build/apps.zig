@@ -180,7 +180,7 @@ pub fn add(ctx: Context) Apps {
         .use_lld = use_llvm,
     });
     editor.root_module.addImport("wayland", wayland);
-    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon", "pangocairo" }) |lib| editor.root_module.linkSystemLibrary(lib, .{});
+    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon", "pangocairo", "glib-2.0" }) |lib| editor.root_module.linkSystemLibrary(lib, .{});
     const install_editor = b.addInstallArtifact(editor, .{});
     const editor_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, ctx.layout.prefix, "data/rediwm-editor.desktop"), .prefix, "share/applications/rediwm-editor.desktop");
     b.getInstallStep().dependOn(&install_editor.step);

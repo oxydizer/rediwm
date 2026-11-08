@@ -25,6 +25,7 @@ const app_search = @import("app_search.zig");
 const app_edit = @import("app_edit.zig");
 const app_controls = @import("app_controls.zig");
 const app_drafts = @import("app_drafts.zig");
+const app_recent = @import("app_recent.zig");
 const drafts = @import("drafts.zig");
 const a = std.heap.c_allocator;
 pub const top: f64 = 40;
@@ -41,8 +42,10 @@ const Status = struct {
 };
 /// Stand-in for the position of a cursor too far from the view to measure.
 pub const far: c_int = 1_000_000 * 1024;
-pub const Action = enum { new, open, save, save_as, find, replace, wrap };
-pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("Open"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Replace"), i18n.msg("Word Wrap") };
+pub const Action = enum { new, open, open_recent, save, save_as, find, replace, wrap };
+pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("Open"), i18n.msg("Open Recent"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Replace"), i18n.msg("Word Wrap") };
+/// The menu row whose submenu lists the recent files.
+pub const recent_row = @intFromEnum(Action.open_recent);
 pub const Tab = struct {
     id: usize,
     doc: Document = .{},
@@ -101,6 +104,12 @@ pub const App = struct {
     menu_open: bool = false,
     menu_selected: ?usize = null,
     menu_anchor: f64 = 0,
+    /// The Open Recent submenu is showing; `sub_selected` is its highlighted row.
+    sub_open: bool = false,
+    sub_selected: ?usize = null,
+    /// Paths for that submenu, newest first, reread each time the menu opens.
+    recent: std.ArrayList([:0]u8) = .empty,
+    environ: std.process.Environ = .empty,
     has_titlebar: bool = true,
     dragging: bool = false,
     drag_word: ?[2]usize = null,
@@ -144,6 +153,7 @@ pub const App = struct {
     }
     pub fn deinit(self: *App) void {
         self.deinitDrafts();
+        self.deinitRecent();
         if (self.operation) |job| job.deinit();
         for (self.tabs.items) |t| t.deinit();
         self.tabs.deinit(a);
@@ -245,6 +255,12 @@ pub const App = struct {
     pub const closeSelected = app_files.closeSelected;
     pub const finishClose = app_files.finishClose;
     pub const act = app_files.act;
+
+    pub const refreshRecent = app_recent.refreshRecent;
+    pub const recordRecent = app_recent.recordRecent;
+    pub const clearRecent = app_recent.clearRecent;
+    pub const recentEnabled = app_recent.enabled;
+    pub const deinitRecent = app_recent.deinitRecent;
 
     pub const openDrafts = app_drafts.openDrafts;
     pub const stepDrafts = app_drafts.stepDrafts;
