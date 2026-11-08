@@ -22,8 +22,7 @@ static const char ribbon_fragment[] =
     "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n"
     "varying vec2 ribbon; uniform vec4 color, bcolor;"
     "uniform mediump int mode; uniform mediump vec2 fade; uniform sampler2D tex; uniform float alpha;"
-    // Thin luminous creases over translucent sheets, with dark space between
-    // folds. The Gaussian halo stays coloured; only the finest cores go hot.
+    // Dense coloured sheets with restrained creases and narrow, faint halos.
     // Divide before squaring so the finest widths do not underflow on mediump.
     "float ridge(float x,float w){ float q=min(abs(x)/w,8.); return exp(-q*q); }"
     // Approximate pixel coverage without fattening subpixel creases into tubes.
@@ -54,9 +53,10 @@ static const char ribbon_fragment[] =
         "float edge=min(abs(uv.x),abs(1.-uv.x));"
         "float lit=smoothstep(-.10,.02,burn);"
         "float hot=filament(edge,.0028)*lit+filament(burn,.006)*inside;"
-        "float glow=.42*ridge(edge,.018)*lit+.48*ridge(burn,.045)*inside;"
-        "float light=clamp(hot+glow,0.,1.)*smoothstep(0.,.12,p)*(1.-smoothstep(.82,1.,p));"
-        "vec4 fire=mix(color,bcolor,clamp(hot,0.,1.)*.92);"
+        "float glow=.10*ridge(edge,.012)*lit+.12*ridge(burn,.025)*inside;"
+        "float band=.65*ridge(edge,.006)*lit+.70*ridge(burn,.014)*inside;"
+        "float light=clamp(.25*hot+band+glow,0.,1.)*smoothstep(0.,.12,p)*(1.-smoothstep(.82,1.,p));"
+        "vec4 fire=mix(color,bcolor,clamp(hot,0.,1.)*.22);"
         "float a=light*fire.a;"
         "float fold=.12*sin(along*15.-p*9.)*sin(p*3.141593);"
         "float ghost=.10*(1.-alive)*(1.-smoothstep(.04,.20,burn));"
@@ -67,15 +67,15 @@ static const char ribbon_fragment[] =
     "float core, light, opacity=t;"
     "if(mode==1){"
         "core=ridge(d,.055);"
-        "light=.56*exp(-5.*d)+.44*ridge(d,.19)+core;"
+        "light=.12*exp(-7.*d)+.72*ridge(d,.19)+.18*core;"
     "}else if(mode==3){"
         "float rim=d-.90;"
         "float f=.40*sin(t*12.566371+fade.y);"
         "core=.35*filament(rim,.009)+.16*filament(x-f,.007);"
-        // The resize band joins two outlines. Keep a continuous translucent
+        // The resize band joins two outlines. Keep a continuous coloured
         // sheet across its full width, including the window and target edges.
-        "light=core+.22+.18*ridge(rim,.045)+.12*ridge(x,.65)"
-            "+.16*ridge(x-f,.10)+.09*ridge(x+f*.7,.20);"
+        "light=.35*core+.36+.06*ridge(rim,.025)+.18*ridge(x,.65)"
+            "+.08*ridge(x-f,.10)+.05*ridge(x+f*.7,.20);"
         "opacity=fade.x;"
     "}else if(mode==4){"
         // A low-opacity colour wash, stronger near the window and softly
@@ -85,7 +85,7 @@ static const char ribbon_fragment[] =
         "opacity=trailOpacity(t);"
     "}else{"
         // Two attachment points (x = +/- .55) feed the edges of one sheet.
-        // The edges meet farther down the trail, retaining a single bright tail.
+        // The edges meet farther down the trail, retaining a single tapered tail.
         "float split=smoothstep(.30,.92,t);"
         "float center=.16*sin(t*7.)*(1.-t);"
         "float spread=.55*split;"
@@ -96,17 +96,17 @@ static const char ribbon_fragment[] =
         "float wa=.009+.015*swell*swell;"
         "float wb=.008+.012*swell*(.7+.3*sin(t*5.+.6));"
         "core=.45*clamp(filament(a,wa)+.82*filament(b,wb),0.,1.);"
-        "float sheet=.28*ridge(x-center,.12+spread);"
-        "float fold=.13*ridge(x-center-.12*sin(t*9.)*(1.-t),.045);"
-        "light=.09*ridge(x-center,.70)+sheet+fold"
-            "+.20*ridge(a,wa*2.8+.015)+.18*ridge(b,wb*2.8+.015)+core;"
+        "float sheet=.58*ridge(x-center,.12+spread);"
+        "float fold=.10*ridge(x-center-.12*sin(t*9.)*(1.-t),.045);"
+        "light=.025*ridge(x-center,.55)+sheet+fold"
+            "+.07*ridge(a,wa*2.+.01)+.06*ridge(b,wb*2.+.01)+.35*core;"
         // Advance a soft erasing front from the frozen tail to its sources.
         // At rest only coverage changes; the surviving folds stay in place.
         "opacity=trailOpacity(t);"
     "}"
     "float coverage=mode==3?1.:1.-smoothstep(.78,1.,d);"
     "float a=opacity*clamp(light,0.,1.)*coverage;"
-    "vec4 c=mix(color,bcolor,core*.92);"
+    "vec4 c=mix(color,bcolor,core*.22);"
     "gl_FragColor=vec4(c.rgb*c.a*a,c.a*a); }";
 
 bool rediwm_scene_renderer_set_ribbons(struct rediwm_scene_renderer *r, bool enabled) {
