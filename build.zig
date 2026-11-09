@@ -225,7 +225,8 @@ pub fn build(b: *std.Build) void {
         .transfers = b.option(bool, "transfers", "Build and install the torrent transfers helper (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
         // rediwm-session and rediwm-dm still run on signalfd, epoll, pidfd and Linux VT ioctls; the FreeBSD
         // port starts the compositor from the console (docs/plans/freebsd.md, D2 and phase 2).
-        .login_session = b.option(bool, "login-session", "Build and install rediwm-session and rediwm-dm (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
+        .display_manager = b.option(bool, "display-manager", "Build and install rediwm-dm (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
+        .login_session = b.option(bool, "login-session", "Build and install rediwm-session (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
         .i18n_tool = i18n_tool,
         .wayland = wayland,
         .xkbcommon = xkbcommon,

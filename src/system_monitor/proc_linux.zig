@@ -10,6 +10,7 @@ const Uids = common.Uids;
 const Cpu = common.Cpu;
 const Memory = common.Memory;
 const readAt = common.readAt;
+pub const descendants = @import("proc_linux_children.zig").descendants;
 pub const systemStats = @import("proc_linux_system.zig").sample;
 
 /// comm may contain spaces, newlines and closing parentheses. Field 3 starts

@@ -106,9 +106,7 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     const i18n_tests = b.addTest(.{ .root_module = i18n_mod });
     const run_i18n_tests = b.addRunArtifact(i18n_tests);
     test_step.dependOn(&run_i18n_tests.step);
-    const run_platform_tests = b.addRunArtifact(b.addTest(.{ .root_module = ctx.platform_mod }));
-    test_step.dependOn(&run_platform_tests.step);
-    b.step("test-platform", "Test child handles, file watching and the program's own path").dependOn(&run_platform_tests.step);
+    @import("login_tests.zig").add(ctx, test_step);
     const theme_policy_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/theme_helper/syscall_policy.zig"), .target = target, .optimize = optimize, .link_libc = true }) });
     theme_policy_tests.root_module.addImport("platform", ctx.platform_mod);
     test_step.dependOn(&b.addRunArtifact(theme_policy_tests).step);
@@ -284,7 +282,7 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     dm_tests.root_module.linkSystemLibrary("pam", .{});
     dm_tests.root_module.addCSourceFile(.{ .file = b.path("src/dm/pam.c"), .flags = &.{"-std=c11"} });
     const run_dm_tests = b.addRunArtifact(dm_tests);
-    if (ctx.login_session) test_step.dependOn(&run_dm_tests.step);
+    if (ctx.login_session and ctx.display_manager) test_step.dependOn(&run_dm_tests.step);
     const dm_step = b.step("test-dm", "Run unit tests for rediwm-dm");
     dm_step.dependOn(&run_dm_tests.step);
 

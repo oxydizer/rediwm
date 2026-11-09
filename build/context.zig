@@ -12,6 +12,7 @@ pub const Context = struct {
     use_llvm: bool,
     transfers: bool,
     login_session: bool,
+    display_manager: bool,
     wlroots_prefix: ?[]const u8,
     i18n_tool: *std.Build.Step.Compile,
     wayland: *std.Build.Module,

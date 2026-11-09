@@ -7,6 +7,7 @@ src/session/publication.zig; tests/session_bus.py covers real bus calls.
 Usage: session_services.py <rediwm-session binary>
 """
 import os
+import errno
 from pathlib import Path
 import select
 import shutil
@@ -102,6 +103,24 @@ time.sleep(60)
                 self.assert_dead(pid)
 
     def assert_dead(self, pid):
+        if sys.platform.startswith('freebsd'):
+            queue = select.kqueue()
+            try:
+                event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                      flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                      fflags=select.KQ_NOTE_EXIT)
+                try:
+                    events = queue.control([event], 1, 2)
+                    self.assertTrue(events, f'owned process {pid} survived')
+                    if events[0].flags & select.KQ_EV_ERROR:
+                        self.assertEqual(events[0].data, errno.ESRCH)
+                    else:
+                        self.assertTrue(events[0].fflags & select.KQ_NOTE_EXIT)
+                except ProcessLookupError:
+                    pass
+            finally:
+                queue.close()
+            return
         try:
             fd = os.pidfd_open(pid)
         except ProcessLookupError:

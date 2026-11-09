@@ -195,3 +195,13 @@ test "monitor worker pause cancels publication and resume starts a fresh CPU int
     worker.setActive(true);
     worker.setActive(false);
 }
+
+test "supervisor tree includes an owned child with its native identity" {
+    var child = try std.process.spawn(std.testing.io, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" } });
+    defer child.kill(std.testing.io);
+    var tree = try proc.descendants(std.testing.allocator, std.posix.system.getpid());
+    defer tree.deinit(std.testing.allocator);
+    const stamp = tree.get(child.id.?) orelse return error.ChildMissing;
+    try std.testing.expect(proc.treeIdentityMatches(child.id.?, stamp));
+    if (stamp != 0) try std.testing.expect(!proc.treeIdentityMatches(child.id.?, stamp + 1));
+}

@@ -50,7 +50,7 @@ What each is for:
     zig build test
 
 Off by default on FreeBSD: the transfers helper (`-Dtransfers`) and
-`rediwm-session`/`rediwm-dm` (`-Dlogin-session`). The install prefix is
+`rediwm-session` (`-Dlogin-session`) and `rediwm-dm` (`-Ddisplay-manager`). The install prefix is
 `/usr/local`, configuration `/usr/local/etc` and run state `/var/run`
 (`-Dinstall-prefix`, `-Dsysconfdir`, `-Drundir`).
 
@@ -88,4 +88,36 @@ need besides the packages above: `squashfs-tools` (`files_associations`),
 (`files_torrents`). Several suites are Linux only: `system_monitor` (a seccomp
 guard and `/proc`), `motion_perf` and `editor_visuals` (`/proc`),
 `battery_*` and `pdf_sandbox` (Linux hook libraries), `steamos_bundle`,
-and those that need `rediwm-session` or `rediwm-dm`.
+and those that need `rediwm-dm`. The supervisor's portable tests are listed below;
+its logind-specific bus fixture and pidfd-based readiness fixture remain Linux only.
+
+
+## Console session candidate
+
+The ConsoleKit2 backend and kqueue supervisor compile, but have not yet had
+native runtime qualification. Build the supervisor without the display manager:
+
+    zig build -Dlogin-session=true -Ddisplay-manager=false
+    zig build test-platform test-monitor test-login-manager
+    python3 tests/rediwm_session.py
+    python3 tests/session_services.py zig-out/bin/rediwm-session
+
+Enable dbus, ConsoleKit2, seatd and polkit; configure `pam_xdg` for the console
+login and join the seatd socket's group. From a real `/dev/ttyv*` console login,
+with a private `XDG_RUNTIME_DIR`, start using the installed path:
+
+    export LIBSEAT_BACKEND=seatd
+    exec /usr/local/bin/rediwm-session
+
+The supervisor creates its own ConsoleKit2 session, exports its cookie only to
+its children, and closes it at logout. It reuses a responding inherited user
+bus or starts a private one. The session bus survives compositor restarts.
+The legacy polkit helper socket may be absent: the existing fallback checks
+root ownership and setuid permissions before launching polkit's helper.
+
+Before enabling the supervisor by default, run the crash/locked-crash and
+adopted-child tests above on FreeBSD, and qualify VT switching, console input
+isolation, polkit prompts, suspend inhibitors, resume and clean logout on DRM.
+`tests/session_bus.py` specifically exercises the logind backend on Linux;
+`test-login-manager` exercises ConsoleKit2 with an independent private bus on
+either OS. Power/battery/brightness hardware qualification is still separate.

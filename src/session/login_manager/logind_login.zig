@@ -13,7 +13,7 @@ fn sessionString(self: anytype, arena: std.mem.Allocator, path: []const u8, fiel
 
 /// Only a verified local Wayland user login of this desktop may publish.
 /// Returns the logind session id.
-pub fn login(self: anytype, arena: std.mem.Allocator) ![]const u8 {
+pub fn login(self: anytype, arena: std.mem.Allocator, _: types.Context) ![]const u8 {
     var reply = try self.loginCall(.{ .session_for_pid = @intCast(std.posix.system.getpid()) });
     defer reply.deinit(self.allocator);
     try reply.expect("o");

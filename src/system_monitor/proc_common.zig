@@ -8,6 +8,9 @@ pub const c = @import("c");
 /// is unreadable or malformed; `Unsupported` means this OS has no backend yet.
 pub const Error = error{ ProcessExited, PermissionDenied, ReadFailed, DataTooLarge, IdentityUnavailable, Unsupported };
 
+/// Owned descendants; FreeBSD includes start stamps for handle validation.
+pub const Tree = std.AutoArrayHashMapUnmanaged(i32, u64);
+
 pub const Identity = struct {
     pid: i32,
     /// An opaque start stamp: with the pid it names one process for ever.

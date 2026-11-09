@@ -10,7 +10,8 @@ pub const Session = struct {
 };
 
 /// rediwm-session, rediwm-dm and the accounts helper. The first two are always
-/// described (tests and other steps name them) but installed only with `login_session`.
+/// described (tests and other steps name them). Installation needs `login_session`;
+/// the DM additionally needs `display_manager`, so FreeBSD can build just the supervisor.
 pub fn add(ctx: Context) Session {
     const b = ctx.b;
     const target = ctx.target;
@@ -29,6 +30,7 @@ pub fn add(ctx: Context) Session {
         .use_llvm = use_llvm,
         .use_lld = use_llvm,
     });
+    b.step("login-session", "Build the login supervisor").dependOn(&session_supervisor.step);
     session_supervisor.root_module.addImport("wayland", wayland);
     session_supervisor.root_module.linkSystemLibrary("wayland-server", .{});
     if (wlroots_prefix != null) session_supervisor.root_module.addRPathSpecial("$ORIGIN/../lib/rediwm");
@@ -82,7 +84,7 @@ pub fn add(ctx: Context) Session {
     dm.root_module.addImport("wayland_sessions", ws_mod);
     dm.root_module.linkSystemLibrary("pam", .{});
     dm.root_module.addCSourceFile(.{ .file = b.path("src/dm/pam.c"), .flags = &.{"-std=c11"} });
-    if (ctx.login_session) b.installArtifact(dm);
+    if (ctx.display_manager and ctx.login_session) b.installArtifact(dm);
     b.step("rediwm-dm", "Build the display manager").dependOn(&dm.step);
 
     const accounts_helper = b.addExecutable(.{

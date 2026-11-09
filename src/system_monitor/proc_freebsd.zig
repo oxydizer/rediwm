@@ -194,3 +194,23 @@ pub fn systemStats(_: []u8) common.System {
         result.uptime_seconds = @intCast(uptime.tv_sec);
     return result;
 }
+
+/// One kern.proc snapshot preserves identity while following parent links.
+pub fn descendants(alloc: std.mem.Allocator, root: i32) !common.Tree {
+    var list = List.open() orelse return error.ReadFailed;
+    defer list.close();
+    var tree: common.Tree = .empty;
+    errdefer tree.deinit(alloc);
+    var changed = true;
+    while (changed) {
+        changed = false;
+        for (list.entries[0..list.count]) |info| {
+            if (info.ki_pid <= 0 or info.ki_pid == root or tree.contains(info.ki_pid)) continue;
+            if (info.ki_ppid != root and !tree.contains(info.ki_ppid)) continue;
+            const stamp = @as(u64, @intCast(@max(info.ki_start.tv_sec, 0))) * 1_000_000 + @as(u64, @intCast(@max(info.ki_start.tv_usec, 0)));
+            try tree.put(alloc, info.ki_pid, stamp);
+            changed = true;
+        }
+    }
+    return tree;
+}

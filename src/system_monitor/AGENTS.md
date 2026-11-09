@@ -13,6 +13,9 @@
   lives in `proc_linux_system.zig`; rates reset with the worker generation.
   The Linux parsers are pure and tested
   everywhere through `proc_linux.zig`.
+  `descendants` also supplies the supervisor's teardown tree: Linux walks
+  task children; FreeBSD follows parent links in one `kern.proc` snapshot.
+  Its start stamps must match after a kqueue handle opens, before signaling.
 * A snapshot owns its arena. The worker publishes under its mutex through an
   eventfd; the UI takes ownership. A generation change cancels enumeration and
   publication, resets CPU baselines, and wakes the worker. Inactive workers

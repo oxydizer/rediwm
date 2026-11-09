@@ -6,6 +6,8 @@
 //! syscall filters.
 //! Callers never test the OS; `std.os.linux` is used only in here (see
 //! `AGENTS.md` beside this file). No compositor imports.
+pub const login_io = @import("login_io.zig");
+pub const login_process = @import("login_process.zig");
 pub const child = @import("child.zig");
 pub const dirwalk = @import("dirwalk.zig");
 pub const exe = @import("exe.zig");
@@ -22,6 +24,7 @@ pub const system = @import("system.zig");
 pub const tool = @import("tool.zig");
 
 test {
+    _ = login_process;
     _ = child;
     _ = dirwalk;
     _ = exe;

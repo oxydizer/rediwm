@@ -9,6 +9,16 @@ ext-session-lock) are in the root `AGENTS.md`.
   to that owner, ignore stale replies, and follow only this session's `Lock`.
   The recording transport tests live in `login_manager/tests.zig`; private-bus
   coverage is `tests/power.py`, `polkit.py` and `session_bus.py`.
+  FreeBSD selects ConsoleKit2. Its session cookie and connection belong to
+  the supervisor, survive compositor restarts and close on rejection/exit.
+  Failed verification exports no login identity or inherited cookie. Its
+  noninstalled private-bus fixture is `tests/consolekit.py` (`test-login-manager`).
+* The supervisor's process and signal calls go through `platform.login_*`;
+  descendant enumeration goes through `system_monitor/proc.zig`. Recheck
+  FreeBSD start stamps after opening handles. `user_bus.zig` starts a missing
+  user bus before the supervisor snapshots preexisting children, and stops it
+  only after the session. `private_publication.zig` updates that bus without
+  systemd's shared-manager lease.
 
 * Login appearance is a flattened snapshot in
   `/var/lib/rediwm-appearance/<uid>/`, provisioned by the DM and written by

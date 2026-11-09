@@ -1,10 +1,12 @@
 # FreeBSD support plan
 
-Status: 2026-11-06, FreeBSD 15.1 only (D1). The tree builds there and the
-compositor and apps run headless on GLES2 over a virtio GPU. What is left is
-the login and session stack, the Linux-only interfaces, sandboxes, a few
-FreeBSD-only test failures and packaging. D1–D5 are decided, D6 waits for
-phase 2, D7–D9 are recommendations.
+Status: 2026-11-09, FreeBSD 15.1 only (D1). The last native validation was
+2026-11-06: the tree builds and the compositor/apps run headless on GLES2 over
+a virtio GPU. ConsoleKit2 and the portable supervisor now have implementations
+and private-bus coverage; native session qualification is still required. The
+remaining work includes battery/brightness, Linux-only interfaces, sandboxes,
+FreeBSD-only test failures and packaging. D1–D5 and D8–D9 are decided; D6 waits
+for phase 2, D7 remains a recommendation.
 
 Goal: run RediWM on FreeBSD: the compositor in a seatd session on DRM, then the
 shell features and apps, last `rediwm-dm` and packaging. Linux stays the
@@ -22,11 +24,27 @@ primary platform; the port must not change Linux behaviour or cost.
   by the supervisor, power policy and polkit. Its logind backend owns the
   requests, signal descriptors, identity checks and power-command selection;
   callers keep their connection lifetimes and owner-generation checks. A
-  recording transport tests requests without a bus. ConsoleKit2 remains phase 2.
+  recording transport tests requests without a bus.
   Linux Debug/ReleaseSafe, unit tests, polkit, session-bus, supervisor,
   power-settings and greeter pass; the cross-check passes. Power's two final
   helper-cleanup cases fail identically on clean HEAD (`b9f10be`); its login,
   inhibitor and action cases pass.
+* **Session implementation (2026-11-09, native qualification pending):** the
+  ConsoleKit2 backend opens a Wayland user session from a console tty, verifies
+  its uid/locality/type/class/remote host, retains its cookie and owning D-Bus
+  connection across compositor restarts, and closes it on exit or rejection.
+  Power, inhibitors, Lock/LockedHint and polkit lookup use the backend. The
+  supervisor uses signalfd on Linux and kqueue on FreeBSD, with shared crash
+  and lock-state handling. Process-tree reads live in the proc backends;
+  FreeBSD teardown rechecks start stamps after opening handles. A missing
+  user bus starts a private dbus-daemon; activation uses that bus without a
+  systemd manager. `-Dlogin-session=true -Ddisplay-manager=false` builds this
+  candidate; the supervisor remains off by default on FreeBSD until tested there.
+  Linux unit/platform/monitor, ConsoleKit2/private-bus, polkit, supervisor,
+  power-settings and greeter checks pass, as do FreeBSD compilation checks
+  for the supervisor and tests. Monitor's scale-1 workspace idle check fails
+  identically on clean `b9f10be`; scale 1.5 passes. Power retains the two
+  baseline helper-cleanup failures noted above.
 * **On 15.1** (HyprBSD VM, Zig 0.17.1): Debug builds in 2.5 minutes,
   ReleaseSafe in 6.7. `zig build test` passes, and so do `test-monitor` (the
   `kern.proc` backend and kqueue End/Force), `test-platform`, `test-files`,
@@ -35,6 +53,8 @@ primary platform; the port must not change Linux behaviour or cost.
   `files_browser`, `images_viewer`, `editor`, `launch_placeholder`,
   `focus_zoom`, `window_snapping`, most appearance, undo, window-rule and
   protocol suites). Kqueue child handles work in the Wayland loop.
+  The later HyprBSD follow-up also reported nested ReleaseSafe rendering,
+  93 CLI checks and app-activation integration passing.
 * **Found by running there and fixed:** synthetic input stamped with clock id
   1 (`CLOCK_VIRTUAL` on FreeBSD); Files' `rm --interactive=never`; a Control
   Center crash on a zoomed camera (also on Linux); tests naming `/bin/true`,
@@ -54,8 +74,7 @@ primary platform; the port must not change Linux behaviour or cost.
   needs a FreeBSD variant; `motion_perf`, `editor_visuals`, `battery_*`,
   `pdf_sandbox` and `steamos_bundle` are Linux only too. The other failures
   also fail on Linux at HEAD.
-* Not tried: a DRM session on real or virtual hardware, a nested session under
-  Hyprland, `rediwm-msg` outside the tests, `memfd_create`, the transfers
+* Not tried: a DRM session on real or virtual hardware, `memfd_create`, the transfers
   helper's C++ flags under clang and libc++.
 * Name order follows FreeBSD's libc (`de_DE` is a link to `en_US`, Cyrillic has
   no usable weights); the German and Russian order tests skip off Linux (D7).
@@ -64,14 +83,14 @@ primary platform; the port must not change Linux behaviour or cost.
 
 | Linux interface | Where | FreeBSD |
 | --- | --- | --- |
-| pidfd in `child.h` (the C side) | terminal engine, supervisor, dm | kqueue `EVFILT_PROC`/`NOTE_EXIT` like the Zig side. Handles on other processes (client pids, IPC peers, monitor) need an identity check (start time from `kern.proc`; the monitor's actions already do); `Handle.pid()` (fdinfo) has no counterpart. |
-| `signalfd`, `epoll` | supervisor, dm | kqueue `EVFILT_SIGNAL`, kqueue. |
+| pidfd in `child.h` (the C side) | terminal engine, dm | kqueue `EVFILT_PROC`/`NOTE_EXIT` like the Zig side. Handles on other processes (client pids, IPC peers, monitor) need an identity check (start time from `kern.proc`; the monitor's actions already do); `Handle.pid()` (fdinfo) has no counterpart. |
+| `signalfd`, `epoll` | dm | kqueue `EVFILT_SIGNAL`, kqueue. The supervisor is ported. |
 | `/proc/self/fd`, `fdinfo` | spawn paths; fd-as-path opens in `files/properties`, `pdf/print.c`, `pdf/sandbox.c`, `files/terminal/child.c` | `closefrom` for spawn paths; the path form needs `fdescfs` or `*at` calls, per site. |
 | `pty.h`, `SCM_CREDENTIALS`, `/proc` walks | Files terminal engine | `ft_start` refuses on FreeBSD. Port the per-message check (`SCM_CREDS` is sender-attached, so `bash.c` would send it) and the session teardown walk (`kern.proc` by session); needs a FreeBSD to test on. |
-| `/proc/<pid>` leftovers | `detectSandbox` (no Flatpak: "not sandboxed"), editor memory probe, `session_restart` (Linux install tool), supervisor teardown tree | A failed read means "not sandboxed" or no check; the supervisor's walk is phase 2. |
+| `/proc/<pid>` leftovers | `detectSandbox` (no Flatpak: "not sandboxed"), editor memory probe, `session_restart` (Linux install tool) | A failed read means "not sandboxed" or no check; supervisor teardown uses the proc backend. |
 | `DRM_IOCTL_VERSION` | `Output.zig` | `drmGetVersion`; skipped on FreeBSD (a hypervisor-GPU workaround only). |
 | netlink `KOBJECT_UEVENT` | printer hotplug | devd's seqpacket socket; rescans only today. |
-| `gettid`; `fork`/`kill`/`wait4`/`poll` loops | `thumbs`; supervisor and dm | A `platform` wrapper; the loops are replaced in phases 2 and 4. |
+| `gettid`; `fork`/`kill`/`wait4`/`poll` loops | `thumbs`; dm | A `platform` wrapper; the DM loop remains phase 4. |
 | `RENAME_EXCHANGE`, `renameat2` | theme helper, transfers helper | Linux only. |
 
 Done and not repeated: the Zig side of pidfd, inotify, eventfd, `prctl`,
@@ -120,28 +139,25 @@ libinput on libudev-devd. To check on real hardware: VT switching under
 after logind confirms the login (`login_bus.zig`: Type=wayland, Class=user,
 Desktop=rediwm, not remote, same uid), gates the polkit agent, the activation
 environment, following `Lock` and keeping `LockedHint`, and the Files terminal.
-Left to do:
-
-* A ConsoleKit2 backend for the shared login-manager interface (P.11 done):
-  session of a pid, `Lock` signal,
-  `SetLockedHint`, sleep and lid inhibitors with `PrepareForSleep`, capability
-  probes, power calls. The existing backend is in `session/login_manager/`;
-  `login_bus`, `power_*` and `polkit/agent` use the shared boundary.
-* A ConsoleKit2 check (D8): local, our uid, Type=wayland, not remote, from a
-  session `rediwm-session` opens itself. No Desktop property, and a session
-  without a display device is never active, so "active" cannot be required.
+The shared interface is `session/login_manager.zig`. Logind retains its existing
+validation; the ConsoleKit2 backend opens its own session and checks local,
+same uid, Type=wayland, Class=user and empty remote host. It does not require
+Active or Desktop. Its identity is a same-uid assertion, not PAM attestation.
+Native qualification must still cover power authorization, inhibitors, daemon
+restart, lock-before-sleep and the polkit helper.
 
 **Session environment.** `XDG_RUNTIME_DIR` comes from `pam_xdg` (HyprBSD puts
 it in `/etc/pam.d/system`, which `login` and the DM include and `sshd` does
-not). Socket paths must fit `sun_path`'s 103 characters. Nothing starts the
-session bus: `rediwm-session` starts `dbus-daemon --session` when nothing
-listens, or the start script wraps it in `dbus-run-session`. `dbus`, `seatd`,
+not). Socket paths must fit `sun_path`'s 103 characters. `rediwm-session` reuses a responding
+inherited user bus or starts a private `dbus-daemon --session`, retaining it
+across compositor restarts and removing its socket on exit. `dbus`, `seatd`,
 ConsoleKit2 and polkitd must be enabled.
 
-**Supervisor.** `rediwm-session` is Linux only (pidfd, signalfd, subreaper,
-`std.os.linux`) and not built on FreeBSD. "A crash never unlocks" relies on it
-restarting the compositor locked, so its port (phase 2) comes before FreeBSD
-claims a lock. Until then, `exec` the session from the login shell (D9).
+**Supervisor.** `rediwm-session` now shares the restart/lock-report loop across
+Linux and FreeBSD; signals are signalfd/kqueue and child handles are platform
+handles. It has compiled for FreeBSD, but the native crash/reap tests and a
+DRM run remain required before claiming the lock guarantee. Start with `exec`
+from the console login shell so exiting the supervisor ends that login (D9).
 
 **What the probe showed** (HyprBSD VM, ConsoleKit2 2.0.0, seatd 0.9.3, polkit
 128, over ssh and under `ck-launch-session`):
@@ -210,18 +226,20 @@ installers (GNU `install -D`, systemd units, Debian/Arch PAM files); FreeBSD's
 
 ### 1. Compositor runs (finish)
 
-Headless works. Left: a DRM session on the VM's virtio GPU or real hardware, a
-nested session under Hyprland, the four pixel suites above, `memfd_create`,
-the transfers helper if wanted. `rediwm-session` and `rediwm-dm` stay off
-(`-Dlogin-session`, default off there) until phases 2 and 4. Goal: `rediwm`
+Headless and nested work. Left: a DRM session on the VM's virtio GPU or real
+hardware, the four pixel suites above, `memfd_create`,
+the transfers helper if wanted. `rediwm-session` stays off by default
+(`-Dlogin-session`) pending native qualification; `rediwm-dm` stays off
+(`-Ddisplay-manager`) until phase 4. Goal: `rediwm`
 and the apps start in a seatd session.
 
 ### 2. Real session
 
-The ConsoleKit2 login-manager implementation (`rediwm-session` opens the
-session; identity, power, suspend, inhibitor; lock follows `Lock`); `pam_xdg`
-and the session bus; battery and brightness backends; `rediwm-session`
-supervisor on kqueue. Goal: a daily-usable session started from the console.
+Qualify the ConsoleKit2/supervisor implementation on FreeBSD: console login,
+private/inherited bus, polkit, power and inhibitors, crash while locked,
+reaping adopted children, clean logout and VT isolation. Check the `pam_xdg`
+setup. Implement battery and brightness backends. Goal: a daily-usable session
+started from the console; a cross-build alone does not satisfy this milestone.
 
 ### 3. Parity
 
@@ -251,10 +269,10 @@ release tarball or a port (D6); FreeBSD in `make-release.sh` verification.
 * **D8 Login check on FreeBSD:** `rediwm-session` opens the ConsoleKit2 session
   itself (Type=wayland), so the logind check's shape stays minus Desktop and a
   console login needs no relaxation. It proves a process of this user
-  registered a session, not that PAM did. Recommended.
+  registered a session, not that PAM did. Implemented; native validation pending.
 * **D9 First start path:** `rediwm-session` from a console login (profile or a
   small start script), not greetd; the lock's crash guarantee rests on it.
-  Recommended.
+  Implemented; native validation pending.
 
 ## Validation
 

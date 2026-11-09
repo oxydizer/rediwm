@@ -16,6 +16,9 @@ in `zig build test`.
 handles, file watching, own executable path) against real processes and
 temporary directories.
 
+`zig build test-login-manager` tests ConsoleKit2 session ownership, identity
+rejection and private user-bus startup against independent private-bus peers.
+
 `tools/freebsd-cross/check.sh [-Doptimize=ReleaseSafe | test]` cross-builds the
 tree for FreeBSD on this host (Arch, `bwrap`); run it after touching OS
 interfaces, C headers or `src/platform/`. It proves compilation only.

@@ -3,21 +3,23 @@
 //! behind. The supervisor is a child subreaper, so double-forked helpers stay
 //! in its tree even after compositor failure.
 const std = @import("std");
-const linux = std.os.linux;
+const c = std.c;
+const proc = @import("../system_monitor/proc.zig");
+const login_process = @import("platform").login_process;
 const sys = @import("login_sys.zig");
 const publication = @import("publication.zig");
 const platform = @import("platform");
 
-const Pid = linux.pid_t;
+const Pid = std.posix.pid_t;
 const Handle = platform.child.Handle;
-const PidSet = std.AutoArrayHashMapUnmanaged(Pid, void);
+const PidSet = proc.Tree;
 
 const max_crashes = 5;
 const crash_window_ms = 60_000;
 const readiness_timeout_ms = 30_000;
 
 /// Abort-like deaths restart; anything else ends the session.
-const crash_signals = [_]linux.SIG{ .ILL, .ABRT, .BUS, .FPE, .SEGV };
+const crash_signals = [_]std.posix.SIG{ .ILL, .ABRT, .BUS, .FPE, .SEGV };
 
 /// Queued ahead of everything else for a compositor whose predecessor crashed
 /// while locked; `session/activation.zig` takes it before readiness.
@@ -43,22 +45,14 @@ pub fn Options(comptime Publication: type) type {
 pub fn supervise(comptime Publication: type, options: Options(Publication)) !u8 {
     const allocator = options.allocator;
     const previous_subreaper = try platform.process.childSubreaper();
-    try platform.process.setChildSubreaper(true);
-    defer platform.process.setChildSubreaper(previous_subreaper) catch {};
+    if (!previous_subreaper) try platform.process.setChildSubreaper(true);
+    defer if (!previous_subreaper) platform.process.setChildSubreaper(false) catch {};
 
-    var preexisting = try descendants(allocator, linux.getpid());
+    var preexisting = try descendants(allocator, c.getpid());
     defer preexisting.deinit(allocator);
 
-    // Logout signals and child exits arrive through a signalfd; the child gets the old mask back.
-    var mask = linux.sigemptyset();
-    linux.sigaddset(&mask, .TERM);
-    linux.sigaddset(&mask, .INT);
-    linux.sigaddset(&mask, .CHLD);
-    var old_mask: linux.sigset_t = undefined;
-    _ = try sys.check(linux.sigprocmask(linux.SIG.BLOCK, &mask, &old_mask));
-    defer _ = linux.sigprocmask(linux.SIG.SETMASK, &old_mask, null);
-    const signal_fd: i32 = @intCast(try sys.check(linux.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK)));
-    defer sys.close(signal_fd);
+    var signals = try login_process.Signals.init();
+    defer signals.deinit();
 
     var attempts: std.ArrayList(i64) = .empty;
     defer attempts.deinit(allocator);
@@ -84,17 +78,17 @@ pub fn supervise(comptime Publication: type, options: Options(Publication)) !u8 
         try attempts.append(allocator, now);
 
         var pair: [2]i32 = undefined;
-        _ = try sys.check(linux.socketpair(linux.AF.UNIX, linux.SOCK.SEQPACKET | linux.SOCK.CLOEXEC, 0, &pair));
+        _ = try sys.check(c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.SEQPACKET | std.posix.SOCK.CLOEXEC, 0, &pair));
         const parent = pair[0];
         var parent_open = true;
         defer if (parent_open) sys.close(parent);
         const child = pair[1];
-        if (locked) _ = sys.retry(linux.sendto, .{ parent, lock_request, lock_request.len, linux.MSG.NOSIGNAL, null, 0 }) catch |err| {
+        if (locked) _ = sys.retry(c.sendto, .{ parent, lock_request, lock_request.len, std.posix.MSG.NOSIGNAL, null, 0 }) catch |err| {
             sys.close(child);
             sys.diagnostic("cannot restart the compositor locked ({t}); ending the session", .{err});
             return 1;
         };
-        const pid = spawn(allocator, options.compositor, options.env, child, options.log_fd, &old_mask) catch |err| {
+        const pid = spawn(allocator, options.compositor, options.env, child, options.log_fd, &signals.old_mask) catch |err| {
             sys.close(child);
             return err;
         };
@@ -110,34 +104,34 @@ pub fn supervise(comptime Publication: type, options: Options(Publication)) !u8 
                 process.close();
                 if (options.publication) |p| p.restore() catch |err| sys.diagnostic("activation cleanup pending: {t}", .{err});
             }
-            stopping = try waitForExit(allocator, pid, parent, process, signal_fd, options.publication, &locked);
+            stopping = try waitForExit(allocator, pid, parent, process, &signals, options.publication, &locked);
         }
         if (stopping) return 0;
         const raw = status orelse return 1;
-        if (linux.W.IFSIGNALED(raw)) {
-            const sig = linux.W.TERMSIG(raw);
-            if (std.mem.indexOfScalar(linux.SIG, &crash_signals, sig) != null) continue;
-            return @truncate(128 + @intFromEnum(sig));
+        if (std.posix.W.IFSIGNALED(raw)) {
+            const sig = std.posix.W.TERMSIG(raw);
+            if (std.mem.indexOfScalar(std.posix.SIG, &crash_signals, sig) != null) continue;
+            return @truncate(128 + @backingInt(sig));
         }
-        return linux.W.EXITSTATUS(raw);
+        return std.posix.W.EXITSTATUS(raw);
     }
     return 0;
 }
 
 /// Serves readiness handshakes and records lock reports until the compositor
 /// exits (false) or the supervisor is asked to stop (true).
-fn waitForExit(allocator: std.mem.Allocator, compositor: Pid, parent: i32, process: Handle, signal_fd: i32, maybe_publication: anytype, locked: *bool) !bool {
+fn waitForExit(allocator: std.mem.Allocator, compositor: Pid, parent: i32, process: Handle, signals: *login_process.Signals, maybe_publication: anytype, locked: *bool) !bool {
     var deadline: ?i64 = sys.monotonicMs() + readiness_timeout_ms;
     var parent_open = true;
     var packet: [16384]u8 = undefined;
     while (true) {
-        var fds = [_]linux.pollfd{
-            .{ .fd = process.fd, .events = linux.POLL.IN, .revents = 0 },
-            .{ .fd = signal_fd, .events = linux.POLL.IN, .revents = 0 },
-            .{ .fd = if (parent_open) parent else -1, .events = linux.POLL.IN, .revents = 0 },
+        var fds = [_]std.posix.pollfd{
+            .{ .fd = process.fd, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = signals.fd, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = if (parent_open) parent else -1, .events = std.posix.POLL.IN, .revents = 0 },
         };
         const timeout: i32 = if (deadline) |d| @intCast(@max(0, d - sys.monotonicMs())) else -1;
-        const ready = try sys.retry(linux.poll, .{ &fds, fds.len, timeout });
+        const ready = try sys.retry(c.poll, .{ &fds, fds.len, timeout });
         if (ready == 0) {
             sys.diagnostic("compositor readiness timed out", .{});
             return false;
@@ -147,17 +141,15 @@ fn waitForExit(allocator: std.mem.Allocator, compositor: Pid, parent: i32, proce
             return false;
         }
         if (fds[1].revents != 0) {
-            var info: linux.signalfd_siginfo = undefined;
-            const got = linux.read(signal_fd, @ptrCast(&info), @sizeOf(linux.signalfd_siginfo));
-            if (linux.errno(got) != .SUCCESS or got != @sizeOf(linux.signalfd_siginfo)) continue;
-            if (info.signo == @intFromEnum(linux.SIG.CHLD)) {
+            const sig = signals.next() orelse continue;
+            if (sig == .CHLD) {
                 reapAdopted(compositor);
                 continue;
             }
             return true;
         }
         if (fds[2].revents == 0) continue;
-        const n = sys.retry(linux.recvfrom, .{ parent, &packet, packet.len, 0, null, null }) catch |err| switch (err) {
+        const n = sys.retry(c.recvfrom, .{ parent, &packet, packet.len, 0, null, null }) catch |err| switch (err) {
             error.ConnectionReset => return false,
             else => return err,
         };
@@ -170,7 +162,7 @@ fn waitForExit(allocator: std.mem.Allocator, compositor: Pid, parent: i32, proce
             continue;
         }
         if (maybe_publication) |p| publish(allocator, p, packet[0..n]);
-        _ = sys.retry(linux.sendto, .{ parent, "ready", 5, linux.MSG.NOSIGNAL, null, 0 }) catch |err| switch (err) {
+        _ = sys.retry(c.sendto, .{ parent, "ready", 5, std.posix.MSG.NOSIGNAL, null, 0 }) catch |err| switch (err) {
             error.BrokenPipe, error.ConnectionReset => return false,
             else => return err,
         };
@@ -184,24 +176,14 @@ fn waitForExit(allocator: std.mem.Allocator, compositor: Pid, parent: i32, proce
 /// left hundreds. Peek first (`NOWAIT`): the compositor's own status is
 /// collected by `stopGroup` and must not be consumed here. A zombie compositor
 /// can hide others behind it, but then the loop is already ending.
-fn reapAdopted(compositor: Pid) void {
-    while (true) {
-        var info = std.mem.zeroes(linux.siginfo_t);
-        const peeked = linux.waitid(.ALL, 0, &info, linux.W.EXITED | linux.W.NOHANG | linux.W.NOWAIT, null);
-        if (linux.errno(peeked) != .SUCCESS) return;
-        const pid = info.fields.common.first.piduid.pid;
-        if (pid == 0 or pid == compositor) return;
-        var reaped = std.mem.zeroes(linux.siginfo_t);
-        if (linux.errno(linux.waitid(.PID, pid, &reaped, linux.W.EXITED | linux.W.NOHANG, null)) != .SUCCESS) return;
-    }
-}
+const reapAdopted = login_process.reapAdopted;
 
 /// A compositor that locked and then crashed may die before its report is
 /// read; what it left queued still decides how the next one starts.
 fn drainLockReports(parent: i32, locked: *bool) void {
     var packet: [16]u8 = undefined;
     while (true) {
-        const n = sys.retry(linux.recvfrom, .{ parent, &packet, packet.len, linux.MSG.DONTWAIT, null, null }) catch return;
+        const n = sys.retry(c.recvfrom, .{ parent, &packet, packet.len, std.posix.MSG.DONTWAIT, null, null }) catch return;
         if (n == 0) return;
         if (lockReport(packet[0..n])) |state| locked.* = state;
     }
@@ -228,69 +210,15 @@ fn parseReadiness(arena: std.mem.Allocator, packet: []const u8) ![]publication.P
     return out;
 }
 
-fn spawn(allocator: std.mem.Allocator, compositor: [:0]const u8, env: *std.process.Environ.Map, session_fd: i32, log_fd: i32, old_mask: *const linux.sigset_t) !Pid {
+fn spawn(allocator: std.mem.Allocator, compositor: [:0]const u8, env: *std.process.Environ.Map, session_fd: i32, log_fd: i32, old_mask: *const std.posix.sigset_t) !Pid {
     var fd_text: [16]u8 = undefined;
     try env.put("REDIWM_SESSION_FD", try std.fmt.bufPrint(&fd_text, "{d}", .{session_fd}));
     const envp = try env.createPosixBlock(allocator, .{});
     defer envp.deinit(allocator);
-    const argv = [_:null]?[*:0]const u8{compositor.ptr};
-
-    const rc = try sys.check(linux.fork());
-    if (rc == 0) {
-        // Only raw syscalls between fork and exec.
-        _ = linux.setsid();
-        _ = linux.dup2(log_fd, 1);
-        _ = linux.dup2(log_fd, 2);
-        // The readiness fd is the only descriptor the compositor inherits.
-        _ = linux.fcntl(session_fd, linux.F.SETFD, 0);
-        const default: linux.Sigaction = .{ .handler = .{ .handler = linux.SIG.DFL }, .mask = linux.sigemptyset(), .flags = 0 };
-        _ = linux.sigaction(.PIPE, &default, null);
-        _ = linux.sigprocmask(linux.SIG.SETMASK, old_mask, null);
-        _ = linux.execve(compositor.ptr, &argv, envp.slice.ptr);
-        linux.exit_group(127);
-    }
-    return @intCast(rc);
+    return login_process.spawn(compositor, envp.slice.ptr, session_fd, log_fd, old_mask);
 }
 
-/// The owned process tree, read from /proc at teardown, including adopted children.
-fn descendants(allocator: std.mem.Allocator, root: Pid) !PidSet {
-    var result: PidSet = .empty;
-    errdefer result.deinit(allocator);
-    var pending: std.ArrayList(Pid) = .empty;
-    defer pending.deinit(allocator);
-    try pending.append(allocator, root);
-    var path_buf: [64]u8 = undefined;
-    var dirents: [4096]u8 align(8) = undefined;
-    while (pending.pop()) |pid| {
-        const task_path = try std.fmt.bufPrintSentinel(&path_buf, "/proc/{d}/task", .{pid}, 0);
-        const dir = sys.openZ(task_path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true }, 0) catch continue;
-        defer sys.close(dir);
-        while (true) {
-            const n = sys.check(linux.getdents64(dir, &dirents, dirents.len)) catch break;
-            if (n == 0) break;
-            var offset: usize = 0;
-            while (offset < n) {
-                const entry: *align(1) const linux.dirent64 = @ptrCast(&dirents[offset]);
-                offset += entry.reclen;
-                const name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(&entry.name)), 0);
-                if (name[0] == '.') continue;
-                var children_path: [96]u8 = undefined;
-                const file = std.fmt.bufPrintSentinel(&children_path, "/proc/{d}/task/{s}/children", .{ pid, name }, 0) catch continue;
-                const fd = sys.openZ(file, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0) catch continue;
-                defer sys.close(fd);
-                const text = sys.readAll(allocator, fd) catch continue;
-                defer allocator.free(text);
-                var it = std.mem.tokenizeScalar(u8, text, ' ');
-                while (it.next()) |token| {
-                    const child = std.fmt.parseInt(Pid, std.mem.trim(u8, token, "\n"), 10) catch continue;
-                    const gop = try result.getOrPut(allocator, child);
-                    if (!gop.found_existing) try pending.append(allocator, child);
-                }
-            }
-        }
-    }
-    return result;
-}
+const descendants = proc.descendants;
 
 /// Holds process handles throughout so an exiting or reused PID can never
 /// redirect a signal to an unrelated process. Returns the compositor's wait
@@ -310,51 +238,55 @@ fn stopGroup(allocator: std.mem.Allocator, compositor: Pid, compositor_handle: H
     awaitExit(allocator, &handles, compositor_handle, 2000);
 
     var status: u32 = 0;
-    const reaped = sys.retry(linux.wait4, .{ compositor, @as(*i32, @ptrCast(&status)), linux.W.NOHANG, null }) catch 0;
+    const reaped = sys.retry(c.wait4, .{ compositor, @as(*i32, @ptrCast(&status)), std.posix.W.NOHANG, null }) catch 0;
     for (handles.keys()) |pid| {
         var ignored: u32 = 0;
-        _ = linux.wait4(pid, @ptrCast(&ignored), linux.W.NOHANG, null);
+        _ = c.wait4(pid, @ptrCast(&ignored), std.posix.W.NOHANG, null);
     }
     if (reaped != compositor) {
-        sys.diagnostic("killed compositor remains in kernel I/O; leaving it to logind teardown", .{});
+        sys.diagnostic("killed compositor remains in kernel I/O; ending supervision", .{});
         return null;
     }
     return status;
 }
 
 fn collect(allocator: std.mem.Allocator, handles: *std.AutoArrayHashMapUnmanaged(Pid, Handle), compositor: Pid, preexisting: *const PidSet) void {
-    var tree = descendants(allocator, linux.getpid()) catch return;
+    var tree = descendants(allocator, c.getpid()) catch return;
     defer tree.deinit(allocator);
-    for (tree.keys()) |pid| {
+    for (tree.keys(), tree.values()) |pid, stamp| {
         if (pid == compositor or preexisting.contains(pid) or handles.contains(pid)) continue;
         const handle = Handle.open(pid) catch continue;
+        if (!proc.treeIdentityMatches(pid, stamp)) {
+            handle.close();
+            continue;
+        }
         handles.put(allocator, pid, handle) catch handle.close();
     }
 }
 
-fn send(handles: *const std.AutoArrayHashMapUnmanaged(Pid, Handle), compositor_handle: Handle, sig: linux.SIG) void {
+fn send(handles: *const std.AutoArrayHashMapUnmanaged(Pid, Handle), compositor_handle: Handle, sig: std.posix.SIG) void {
     signalHandle(compositor_handle, sig);
     for (handles.values()) |handle| signalHandle(handle, sig);
 }
 
-fn signalHandle(handle: Handle, sig: linux.SIG) void {
+fn signalHandle(handle: Handle, sig: std.posix.SIG) void {
     handle.signal(sig) catch |err| switch (err) {
-        error.PermissionDenied => sys.diagnostic("privileged descendant must be stopped by logind session teardown", .{}),
+        error.PermissionDenied => sys.diagnostic("privileged descendant must be stopped by the login owner", .{}),
         else => {},
     };
 }
 
 /// Waits for every handle to become readable (exited), up to `timeout_ms`.
 fn awaitExit(allocator: std.mem.Allocator, handles: *const std.AutoArrayHashMapUnmanaged(Pid, Handle), compositor_handle: Handle, timeout_ms: i64) void {
-    const fds = allocator.alloc(linux.pollfd, handles.count() + 1) catch return;
+    const fds = allocator.alloc(std.posix.pollfd, handles.count() + 1) catch return;
     defer allocator.free(fds);
-    fds[0] = .{ .fd = compositor_handle.fd, .events = linux.POLL.IN, .revents = 0 };
-    for (handles.values(), fds[1..]) |handle, *p| p.* = .{ .fd = handle.fd, .events = linux.POLL.IN, .revents = 0 };
+    fds[0] = .{ .fd = compositor_handle.fd, .events = std.posix.POLL.IN, .revents = 0 };
+    for (handles.values(), fds[1..]) |handle, *p| p.* = .{ .fd = handle.fd, .events = std.posix.POLL.IN, .revents = 0 };
     const deadline = sys.monotonicMs() + timeout_ms;
     while (true) {
         const remaining = deadline - sys.monotonicMs();
         if (remaining <= 0) return;
-        _ = sys.retry(linux.poll, .{ fds.ptr, fds.len, @as(i32, @intCast(remaining)) }) catch return;
+        _ = sys.retry(c.poll, .{ fds.ptr, @as(c.nfds_t, @intCast(fds.len)), @as(i32, @intCast(remaining)) }) catch return;
         // An exited process stays readable; stop watching it.
         var live = false;
         for (fds) |*p| {

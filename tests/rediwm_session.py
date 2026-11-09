@@ -178,6 +178,10 @@ def test_compositor_environment():
 
 def zombie_children(pid):
     """Direct children of `pid` that have exited but not been waited for."""
+    if sys.platform.startswith('freebsd'):
+        rows = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,stat='], text=True)
+        return [int(parts[0]) for line in rows.splitlines()
+                if len(parts := line.split()) == 3 and int(parts[1]) == pid and parts[2].startswith('Z')]
     children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
     zombies = []
     for child in children:

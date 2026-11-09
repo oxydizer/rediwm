@@ -4,6 +4,10 @@ const dbus = @import("dbus");
 const wire = dbus.wire;
 const types = @import("types.zig");
 const Action = types.Action;
+pub const owns_session = false;
+pub const login = @import("logind_login.zig").login;
+pub const conflict = @import("logind_login.zig").conflict;
+pub fn release(_: anytype) void {}
 const name = "org.freedesktop.login1";
 const path = "/org/freedesktop/login1";
 const manager = name ++ ".Manager";
@@ -16,6 +20,7 @@ pub const owner_match = "type='signal',sender='org.freedesktop.DBus',path='/org/
 pub fn encode(request: types.Request, body: *wire.Writer) !types.Target {
     var target: types.Target = .{ .destination = name, .path = path, .interface = manager, .member = "" };
     switch (request) {
+        .open_session, .close_session, .session_for_cookie => return error.Unsupported,
         .session_for_pid => |pid| {
             target.member = "GetSessionByPID";
             target.signature = "u";
@@ -33,6 +38,7 @@ pub fn encode(request: types.Request, body: *wire.Writer) !types.Target {
             target.signature = "ss";
             try body.string(session);
             try body.string(switch (field.field) {
+                .local => return error.Unsupported,
                 .id => "Id",
                 .uid => "User",
                 .remote => "Remote",

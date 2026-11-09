@@ -58,3 +58,16 @@ pub fn isProtected(process: Process, pid: i32) Error!bool {
     var buf: [4096]u8 = undefined;
     return protectedName(try process.exePath(&buf));
 }
+
+pub const Tree = common.Tree;
+pub const descendants = backend.descendants;
+
+/// FreeBSD's kqueue handles carry no start stamp; validate the snapshot after
+/// opening one. Linux's tree uses zero and its pidfd remains the identity guard.
+pub fn treeIdentityMatches(pid: i32, stamp: u64) bool {
+    if (builtin.os.tag == .linux) return true;
+    const process = Process.open(pid) catch return false;
+    defer process.close();
+    var buf: [256]u8 = undefined;
+    return (process.stat(&buf) catch return false).start == stamp;
+}

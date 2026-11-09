@@ -214,7 +214,11 @@ pub fn activate(self: *Lock, focus: u8) void {
             // syscall or shell interpolation. Never request an interactive
             // auth agent behind the locked screen.
             var argv: [4][]const u8 = undefined;
-            var child = std.process.spawn(self.server.io, .{ .argv = power_cmd.commandArgv(&argv, if (reboot) .reboot else .poweroff, false, true) }) catch {
+            const command = power_cmd.commandArgv(&argv, if (reboot) .reboot else .poweroff, false, true) orelse {
+                self.status = i18n.tr("Power service unavailable");
+                return;
+            };
+            var child = std.process.spawn(self.server.io, .{ .argv = command }) catch {
                 self.status = i18n.tr("Power service unavailable");
                 return;
             };

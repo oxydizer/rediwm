@@ -4,8 +4,13 @@ pub const Event = enum { sleep, shutdown, lock, owner_changed };
 pub const ActionError = enum { unknown_method, inhibited, authorization_required, denied, other };
 pub const Api = struct { with_flags: bool = false, list_inhibitors: bool = false };
 
-pub const SessionField = enum { id, uid, remote, desktop, kind, class, state };
+pub const SessionField = enum { id, uid, remote, local, desktop, kind, class, state };
+pub const Context = struct { display_device: []const u8 = "" };
+
 pub const Request = union(enum) {
+    open_session: Context,
+    close_session: []const u8,
+    session_for_cookie: []const u8,
     session_for_pid: u32,
     session: []const u8,
     session_field: struct { path: []const u8, field: SessionField },

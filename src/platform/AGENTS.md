@@ -16,6 +16,12 @@ FreeBSD: a part is one file with a `switch (builtin.os.tag)` per function
 fails to compile there (`std.os.linux` would issue Linux syscall numbers on
 any target). FreeBSD notes are in `docs/plans/freebsd.md`.
 
+* `login_io.zig` owns the supervisor's libc I/O; `login_process.zig` owns
+  signal delivery, fork/exec and adopted-child reaping. `Signals` preserves
+  the old mask for the child. FreeBSD kqueue notifications do not consume
+  blocked POSIX signals: `next` consumes them with `sigtimedwait` before the
+  old mask is restored. Keep the compositor's status for the main loop.
+
 * **A `Handle` is not a pid.** Hold it for as long as you may signal; a bare
   `kill(pid)` is only safe while you have not reaped the child. `pid()` is
   null once reaped, but an unreaped zombie keeps its pid: check `exited()` too.
@@ -66,9 +72,9 @@ any target). FreeBSD notes are in `docs/plans/freebsd.md`.
 * Nothing here arms a timer or starts a thread; a caller retrying a failed
   `add` owns that clock.
 
-Still direct Linux calls (later steps of the plan): the supervisor's and the
-DM's event loops and process calls (`signalfd`, `epoll`, `poll`, `fork`,
-`kill`, `wait4`; neither program is built on FreeBSD), `/proc` walks, the
+Still direct Linux calls (later steps of the plan): the DM's event loop and
+process calls (`signalfd`, `epoll`, `poll`, `fork`, `kill`, `wait4`; it is not
+built on FreeBSD), the
 terminal's per-message `SCM_CREDENTIALS` check (`files/terminal/engine.c`, which
 refuses to start a terminal on other systems), the DRM driver ioctl in
 `Output.zig` and the two seccomp policy tables. Everything else outside this

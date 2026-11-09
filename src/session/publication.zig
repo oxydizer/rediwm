@@ -3,7 +3,7 @@
 //! lets a successor roll back after a supervisor failure. Restoration only
 //! touches values this lease still owns.
 const std = @import("std");
-const linux = std.os.linux;
+const c = std.c;
 const sys = @import("login_sys.zig");
 
 pub const owner_key = "REDIWM_ACTIVATION_OWNER";
@@ -63,7 +63,7 @@ pub fn Publication(comptime Bus: type) type {
 
         pub fn acquire(self: *Self) !void {
             const fd = try sys.openZ(self.lock_path, .{ .ACCMODE = .RDWR, .CREAT = true, .NOFOLLOW = true, .CLOEXEC = true }, 0o600);
-            _ = sys.retry(linux.flock, .{ fd, std.posix.LOCK.EX | std.posix.LOCK.NB }) catch {
+            _ = sys.retry(c.flock, .{ fd, std.posix.LOCK.EX | std.posix.LOCK.NB }) catch {
                 sys.close(fd);
                 sys.diagnostic("another RediWM session owns activation publication", .{});
                 return error.PublicationLocked;
@@ -192,7 +192,7 @@ fn pairs(arena: std.mem.Allocator, map: std.StringArrayHashMapUnmanaged([]const 
 
 fn ownerToken(arena: std.mem.Allocator) ![]const u8 {
     var bytes: [16]u8 = undefined;
-    _ = try sys.check(linux.getrandom(&bytes, bytes.len, 0));
+    try sys.random(&bytes);
     return std.fmt.allocPrint(arena, "{x}", .{&bytes});
 }
 

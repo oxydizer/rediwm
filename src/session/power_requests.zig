@@ -68,7 +68,7 @@ pub fn beginRequest(self: *Manager, req: Request) void {
 
 pub fn startCommand(self: *Manager, req: Request) void {
     var buf: [4][]const u8 = undefined;
-    const argv = commandArgv(&buf, req.kind, req.interactive, false);
+    const argv = commandArgv(&buf, req.kind, req.interactive, false) orelse unreachable;
     var child = std.process.spawn(self.server.io, .{
         .argv = argv,
         .stdin = .ignore,

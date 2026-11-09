@@ -1,13 +1,13 @@
 const std = @import("std");
 const dbus = @import("dbus");
-const login = @import("../login_manager.zig");
+const login = @import("../login_manager.zig").Service(@import("logind.zig"));
 const types = @import("types.zig");
 const wire = dbus.wire;
 const testing = std.testing;
 
 /// Records the actual transport boundary, including borrowed body bytes. No
 /// real bus or power command can be reached by these checks.
-const Recording = struct {
+pub const Recording = struct {
     allocator: std.mem.Allocator = testing.allocator,
     target: ?types.Target = null,
     body: std.ArrayList(u8) = .empty,
@@ -23,11 +23,11 @@ const Recording = struct {
         return self.calls;
     }
 
-    fn reader(self: *const Recording) wire.Reader {
+    pub fn reader(self: *const Recording) wire.Reader {
         return .{ .bytes = self.body.items };
     }
 
-    fn deinit(self: *Recording) void {
+    pub fn deinit(self: *Recording) void {
         self.body.deinit(self.allocator);
     }
 };

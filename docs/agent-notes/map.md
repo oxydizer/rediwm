@@ -97,7 +97,7 @@ and `effects/minimize_mesh.zig` (minimize snapshots and deformation),
 * **Session** (`session/`, `AGENTS.md` there): `lock.zig` (+ `lock_account`,
   `lock_events`, `lock_input`, `lock_view.zig`), `greeter.zig`, `idle.zig`,
   `power.zig` (+ `power_*.zig`), `login_manager.zig` (`login_manager/`: service
-  protocol shared with the supervisor and polkit; currently logind), portals (`settings_portal.zig`,
+  logind/ConsoleKit2 protocol shared with the supervisor and polkit), portals (`settings_portal.zig`,
   `file_chooser.zig`), services.
 * The desktop icons (`desktop/`), `power_menu.zig`, `osd.zig`,
   `calendar.zig`, `battery_popup.zig`, `network/popup.zig`, `mini_map.zig`,

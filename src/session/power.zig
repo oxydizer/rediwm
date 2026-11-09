@@ -1,5 +1,6 @@
 //! Poweroff/reboot through systemctl (like DMS), or loginctl where systemd is
 //! not init (elogind, e.g. Artix); suspend through logind.
+//! FreeBSD's ConsoleKit2 backend sends all three actions over the system bus.
 //! Capability probes and preparation signals still use the system bus.
 //! Requests run as the logged-in user, with normal authorization and inhibitor
 //! checks. Automatic power commands use --no-ask-password. Suspend uses
@@ -89,7 +90,7 @@ pub const Request = struct {
 /// systemd as init (sd_booted's `/run/systemd/system` test); elogind systems
 /// have these verbs in loginctl, which only asks logind and never waits for
 /// the job, so it has no --no-block.
-pub fn commandArgv(buf: *[4][]const u8, kind: Kind, ask_password: bool, no_block: bool) []const []const u8 {
+pub fn commandArgv(buf: *[4][]const u8, kind: Kind, ask_password: bool, no_block: bool) ?[]const []const u8 {
     return login.commandArgv(buf, kind.loginAction(), ask_password, no_block);
 }
 
