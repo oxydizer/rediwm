@@ -96,6 +96,7 @@ pub const Manager = struct {
         try conn.register(.{ .path = bus_path, .interface = bus_interface, .member = "CloseNotification", .owner = self, .callback = handleCloseNotification });
         try settings_portal.register(conn, self.server);
         try @import("../session/file_manager_service.zig").register(conn, self.server);
+        try @import("../session/screensaver_service.zig").register(conn, self.server);
         self.file_chooser = try @import("../session/file_chooser.zig").Manager.create(self.server, conn);
 
         _ = try conn.hello(self, onHello);
@@ -619,6 +620,7 @@ fn onHello(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Connection.F
     if (mgr.file_chooser) |chooser| chooser.start();
     settings_portal.requestName(conn);
     @import("../session/file_manager_service.zig").requestName(conn);
+    @import("../session/screensaver_service.zig").start(conn, mgr.server);
     settings_portal.startWatching(conn, mgr.server);
     _ = @import("../tray.zig").Tray.create(mgr.server, conn) catch |err| {
         log.warn("could not initialize application tray: {}", .{err});

@@ -250,6 +250,10 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     settings_portal_integration.addFileArg(b.path("tests/settings_portal.py"));
     const settings_portal_step = b.step("test-settings-portal", "Test the dark_mode Settings portal backend on a private bus");
     settings_portal_step.dependOn(&settings_portal_integration.step);
+    const screensaver_integration = b.addSystemCommand(&.{"python3"});
+    screensaver_integration.addFileArg(b.path("tests/screensaver_inhibit.py"));
+    screensaver_integration.step.dependOn(b.getInstallStep());
+    b.step("test-screensaver", "Test org.freedesktop.ScreenSaver idle inhibition on a private bus").dependOn(&screensaver_integration.step);
 
     const power_integration = b.addSystemCommand(&.{"python3"});
     power_integration.addFileArg(b.path("tests/power.py"));

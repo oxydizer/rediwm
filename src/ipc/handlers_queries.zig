@@ -86,6 +86,15 @@ pub fn getIdleState(server: *Server, allocator: std.mem.Allocator) !protocol.Res
             .reason = if (tracked.reason.len > 0) try allocator.dupe(u8, tracked.reason) else null,
         });
     }
+    for (im.bus_inhibitors.items) |inhibitor| {
+        try list.append(allocator, .{
+            .surface_ptr = 0,
+            .app_id = try allocator.dupe(u8, inhibitor.app),
+            .title = try allocator.dupe(u8, inhibitor.reason),
+            .is_active = true,
+            .reason = try std.fmt.allocPrint(allocator, "D-Bus ScreenSaver {s}", .{inhibitor.owner}),
+        });
+    }
 
     const now = im.clock.nowMs();
     const elapsed = now - im.last_activity_ms;
