@@ -173,6 +173,9 @@ pub const RectStyle = struct {
     /// edges still blend by coverage; useful for translucent inset panels.
     replace: bool = false,
     radius: f32 = 0,
+    /// Straight 45-degree corners this long instead of `radius` (and without
+    /// relief or `replace`); zero keeps them rounded.
+    bevel: f32 = 0,
     border_width: f32 = 0,
     border_color: [4]f32 = .{ 0, 0, 0, 0 },
     relief: Relief = .flat,

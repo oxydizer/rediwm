@@ -12,6 +12,7 @@ const theme = @import("ui").theme;
 const text = @import("ui").text;
 
 const log = std.log.scoped(.chrome);
+const plate = @import("chrome_plate.zig");
 
 // App dialogs use these same decoration metrics and control hit targets.
 const window_chrome = @import("ui").window_chrome;
@@ -91,6 +92,9 @@ pub const ChromeState = struct {
     // right, so a polygon outline's slanted ends do not cut them (`Toplevel.controlInsets`).
     inset_left: i32 = 0,
     inset_right: i32 = 0,
+    // The window's polygon outline in frame coordinates, if it has one: the
+    // title plate keeps an even margin inside its cut corners and steps.
+    outline: ?@import("ui").window_shape.Resolved = null,
 
     /// The frame's width as the controls see it: less the right inset.
     pub fn controlsWidth(self: ChromeState, logical_width: i32) i32 {
@@ -135,9 +139,16 @@ pub const TitlebarMemo = struct {
     title_size: f32,
     chrome_height: f32 = 46,
     chrome_control_gap: f32 = 4,
+    chrome_control_right_pad: f32 = 12,
+    chrome_control_offset_y: f32 = 0,
     chrome_round_buttons: bool = false,
     top_band: [4]f32 = @splat(0),
     top_band_height: f32 = 0,
+    title_plate: [4]f32 = @splat(0),
+    title_plate_width: f32 = 0,
+    title_plate_fg: ?[4]f32 = null,
+    title_plate_geometry: [5]f32 = @splat(0),
+    title_plate_outline: u64 = 0,
     inset_left: i32 = 0,
     inset_right: i32 = 0,
 
@@ -172,9 +183,16 @@ pub const TitlebarMemo = struct {
             .title_size = t.title_size,
             .chrome_height = t.chrome_height,
             .chrome_control_gap = t.chrome_control_gap,
+            .chrome_control_right_pad = t.chrome_control_right_pad,
+            .chrome_control_offset_y = t.chrome_control_offset_y,
             .chrome_round_buttons = t.chrome_round_buttons,
             .top_band = t.window_top_band,
             .top_band_height = t.window_top_band_height,
+            .title_plate = t.window_title_plate,
+            .title_plate_width = t.window_title_plate_width,
+            .title_plate_fg = t.window_title_plate_fg,
+            .title_plate_geometry = plate.geometry(t),
+            .title_plate_outline = plate.outlineKey(state),
             .inset_left = state.inset_left,
             .inset_right = state.inset_right,
         };
@@ -215,6 +233,9 @@ pub const TitlebarMemo = struct {
         inline for (.{ "glass", "border", "border_soft", "fg", "dim", "border_hover", "surface_hover", "danger", "close_fg", "workspace_active_border" }) |field| {
             if (!rgbaEql(@field(a, field), @field(b, field))) return false;
         }
+        if (!std.mem.eql(f32, &a.title_plate_geometry, &b.title_plate_geometry) or a.title_plate_outline != b.title_plate_outline) return false;
+        if (!rgbaEql(a.title_plate, b.title_plate) or a.title_plate_width != b.title_plate_width or !std.meta.eql(a.title_plate_fg, b.title_plate_fg)) return false;
+        if (a.chrome_control_right_pad != b.chrome_control_right_pad or a.chrome_control_offset_y != b.chrome_control_offset_y) return false;
         return a.close_hover_alpha == b.close_hover_alpha and a.title_size == b.title_size and a.chrome_height == b.chrome_height and a.chrome_control_gap == b.chrome_control_gap and a.chrome_round_buttons == b.chrome_round_buttons and
             rgbaEql(a.top_band, b.top_band) and a.top_band_height == b.top_band_height and a.inset_left == b.inset_left and a.inset_right == b.inset_right;
     }
@@ -385,7 +406,7 @@ pub const ChromeBuffer = struct {
     fn titleRect(logical_width: i32, state: ChromeState) text.Rect {
         const m: Metrics = .{ .density = state.density };
         const title_left: i32 = state.inset_left + if (state.icon != null) m.length(title_inset) + m.iconSize() + m.length(title_icon_gap) else m.length(title_inset);
-        const controls_left = controlRectScaled(state.controlsWidth(logical_width), .minimize, state.density).x;
+        const controls_left = @min(controlRectScaled(state.controlsWidth(logical_width), .minimize, state.density).x, plate.titleRight(logical_width, state) orelse std.math.maxInt(i32));
         return .{ .x = title_left, .y = 0, .w = @max(0, controls_left - title_left), .h = m.titlebarHeight() - frame_border };
     }
 
@@ -440,6 +461,7 @@ pub const ChromeBuffer = struct {
         const icon_left: f32 = @floatFromInt(frame.state.inset_left + m.length(title_inset));
         const icon_top: f32 = @floatFromInt(@divTrunc(m.titlebarHeight() - m.iconSize(), 2));
         const base = Color.chrome();
+        const title_plate = plate.polygon(frame.logical_width, frame.state);
         // Away from the controls and the icon every pixel in a row has the same
         // fill. Pack that colour once instead of repeating four rounded float
         // conversions across the bar.
@@ -458,6 +480,10 @@ pub const ChromeBuffer = struct {
             if (px >= control_left and px <= control_right) control_run.add(x);
             if (px >= icon_left and px < icon_right) icon_run.add(x);
         }
+        if (title_plate != null) {
+            icon_run.start = x0;
+            icon_run.end = @max(x0, @min(x1, @as(usize, @intFromFloat(@ceil(plate.right(title_plate.?) * scale)))));
+        }
         for (0..@intCast(frame.height)) |device_y| {
             const py = (@as(f32, @floatFromInt(device_y)) + 0.5) / scale;
             const yi: i32 = @intFromFloat(@floor(py));
@@ -469,8 +495,8 @@ pub const ChromeBuffer = struct {
             if (yi == m.titlebarHeight() - 1) row_color = Color.divider().over(row_color);
             const flat_color = row_color.argb();
             const control_row = py >= control_top and py <= control_bottom;
-            const icon_row = frame.state.tabs.tabs.len == 0 and frame.state.icon != null and
-                py >= icon_top and py < icon_top + @as(f32, @floatFromInt(m.iconSize()));
+            const icon_row = title_plate != null or (frame.state.tabs.tabs.len == 0 and frame.state.icon != null and
+                py >= icon_top and py < icon_top + @as(f32, @floatFromInt(m.iconSize())));
             // The icon is left of the controls, but a narrow frame can make
             // the two overlap.
             var runs: [2]ColumnRun = undefined;
@@ -494,12 +520,16 @@ pub const ChromeBuffer = struct {
                     const px = (@as(f32, @floatFromInt(shaded)) + 0.5) / scale;
                     const in_controls = control_row and px >= control_left and px <= control_right;
                     const in_icon = icon_row and px >= icon_left and px < icon_right;
-                    if (!in_controls and !in_icon) {
+                    if (!in_controls and !in_icon and title_plate == null) {
                         row[shaded] = flat_color;
                         continue;
                     }
 
                     var color = row_color;
+                    if (title_plate) |polygon| {
+                        const distance: f32 = @floatCast(plate.distance(polygon, frame.state, px, py));
+                        color = Color.fromRgba(theme.global.window_title_plate).scaled(sdf.coverage(distance * scale)).over(color);
+                    }
                     if (in_controls) color = controls.paint(color, px, py);
 
                     if (if (frame.state.tabs.tabs.len == 0) frame.state.icon else null) |icon| {
@@ -535,12 +565,13 @@ pub const ChromeBuffer = struct {
             text_clip.x = left;
             text_clip.w = right - left;
         }
+        const title_color = if (title_plate != null) plate.color() else Color.text();
         try text.drawOpts(
             frame.pixels,
             frame.width,
             frame.height,
             frame.state.title,
-            .{ .r = Color.text().r, .g = Color.text().g, .b = Color.text().b, .a = Color.text().a },
+            .{ .r = title_color.r, .g = title_color.g, .b = title_color.b, .a = title_color.a },
             scale,
             frame.state.titleFont(),
             theme.global.title_size * m.density,

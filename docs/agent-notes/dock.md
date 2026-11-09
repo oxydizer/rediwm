@@ -72,3 +72,11 @@ taskbar, OSD and input integration. General rules remain in
   when it exits; a failure cancels the drag and posts a notification. An
   auto-hiding dock reveals for a file drag (`draggingFiles` in `input/motion.zig`).
   Covered by `tests/dock_trash_drop.py`.
+
+* **Themed tiles** (`dock_item_bg`, `_border`, `_hover_border`, `_bevel`) replace
+  the ghost hover button with a resting tile per item, outlined while hovered,
+  pressed or the highlighted active app; `dock_bevel` cuts the dock's own
+  corners (the glass rounds deep enough to stay inside the cut). `dock_icon_grey`
+  draws icons from a desaturated copy except while lit. All of it is theme
+  state (`base_key`); lit-ness comes from the button state already in each
+  item's key.

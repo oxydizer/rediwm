@@ -34,6 +34,23 @@ const tile_height: f32 = 128;
 const tile_gap: f32 = 20;
 const panel_padding: f32 = 32;
 const panel_radius: f32 = 16;
+
+/// The theme's straight corners: the panel's, and three quarters for the tiles
+/// and the selection outline (the same ratio as their radii). Zero is rounded.
+fn panelBevel() f32 {
+    return @max(0, theme.global.power_menu_bevel);
+}
+
+fn tileBevel() f32 {
+    return panelBevel() * 0.75;
+}
+
+/// The blur behind the panel only rounds its corners. A beveled panel leaves
+/// its corner triangles empty, so the blur rounds deep enough to stay inside the
+/// bevel (a circle of radius r clears a cut of b when 0.586 r >= b).
+fn glassRadius() f32 {
+    return @max(panel_radius, panelBevel() * 1.71);
+}
 const label_size: f32 = 15;
 const uptime_size: f32 = 13;
 const panel_width: f32 = panel_padding * 2 + tile_width * tiles.len + tile_gap * (tiles.len - 1);
@@ -207,6 +224,7 @@ pub const PowerMenu = struct {
             const base = layout.RectStyle{
                 .color = .{ 0, 0, 0, 0 },
                 .radius = 12,
+                .bevel = tileBevel(),
                 .border_width = 2,
                 .border_color = t.border_soft,
             };
@@ -239,7 +257,7 @@ pub const PowerMenu = struct {
             .{ .kind = .container, .direction = .row, .gap = tile_gap, .height = .{ .fixed = tile_height }, .children = &menu.cards },
         };
         menu.root = .{
-            .kind = .{ .rect = .{ .color = t.window_bg, .radius = panel_radius, .border_width = 1, .border_color = t.border } },
+            .kind = .{ .rect = .{ .color = t.window_bg, .radius = panel_radius, .bevel = panelBevel(), .border_width = 1, .border_color = t.border } },
             .direction = .column,
             .@"align" = .stretch,
             .gap = 20,
@@ -458,7 +476,7 @@ pub const PowerMenu = struct {
             a.computed_y + (b.computed_y - a.computed_y) * fraction,
             a.computed_width + (b.computed_width - a.computed_width) * fraction,
             a.computed_height + (b.computed_height - a.computed_height) * fraction,
-            .{ .color = .{ 0, 0, 0, 0 }, .radius = 12, .border_width = if (pressed) 3 else 2.5, .border_color = border },
+            .{ .color = .{ 0, 0, 0, 0 }, .radius = 12, .bevel = tileBevel(), .border_width = if (pressed) 3 else 2.5, .border_color = border },
         );
     }
 
@@ -513,7 +531,7 @@ pub const PowerMenu = struct {
         panel_present.applySlide(menu.buffer_node, menu.panel_box, t, slide_distance);
         // Glass has its own opacity: fade it with the panel so the blurred
         // backdrop does not linger until the closing spring settles.
-        glass.Effect.configure(menu.glass_effect, panel_radius, std.math.clamp(t, 0, 1));
+        glass.Effect.configure(menu.glass_effect, glassRadius(), std.math.clamp(t, 0, 1));
         const backdrop = theme.global.power_menu_backdrop;
         const scrim_alpha = backdrop[3] * std.math.clamp(t, 0, 1);
         if (menu.scrim.color[3] != scrim_alpha) {

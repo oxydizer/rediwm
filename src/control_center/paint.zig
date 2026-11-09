@@ -62,7 +62,7 @@ pub fn tick(cc: *ControlCenter, now_ms: i64) bool {
 pub fn syncNavHover(cc: *ControlCenter) void {
     const cell: ?ui.hover_glide.Cell = if (ui.input.current.hovered) |widget| switch (widget.kind) {
         .row => |data| if (data.owner == @as(?*anyopaque, cc) and data.on_click == pageClicked)
-            .{ .col = 0, .row = @intCast(cc.navIndex(@enumFromInt(data.id)) orelse return) }
+            .{ .col = 0, .row = @intCast(cc.navIndex(@fromBackingInt(@intCast(data.id))) orelse return) }
         else
             null,
         else => null,
@@ -116,7 +116,7 @@ pub fn paintNavHighlights(owner: ?*anyopaque, list: *const Widget, renderer: *ui
     const alpha = std.math.clamp(hover.alpha, 0, 1) * apart;
     if (alpha > 0) {
         const box = navRowBox(list, hover.row);
-        renderer.fillRect(box.x, box.y, box.w, box.h, .{
+        ui.widgets.highlight.paint(renderer, box, .{
             .color = scaleAlpha(t.sidebarHover(), alpha),
             .radius = t.radius,
             .border_width = 1,
@@ -124,7 +124,7 @@ pub fn paintNavHighlights(owner: ?*anyopaque, list: *const Widget, renderer: *ui
         });
     }
     const box = navRowBox(list, cc.nav_selected_row);
-    renderer.fillRect(box.x, box.y, box.w, box.h, .{
+    ui.widgets.highlight.paint(renderer, box, .{
         .color = t.sidebarSelected(),
         .radius = t.radius,
         .border_width = 1,

@@ -15,4 +15,5 @@ pub const bundled = [_]Preset{
     // Hidden from the picker until the theme is ready.
     // .{ .id = "chamfer-blue", .name = "Chamfer Blue", .bytes = @embedFile("theme-chamfer-blue") },
     .{ .id = "gold", .name = "Gold", .bytes = @embedFile("theme-gold") },
+    .{ .id = "blackout", .name = "Blackout", .bytes = @embedFile("theme-blackout") },
 };

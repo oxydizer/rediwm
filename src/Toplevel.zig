@@ -151,6 +151,7 @@ sidebar_glass_effect: ?*glass.Effect = null,
 titlebar_buffer: *sn.Buffer,
 // Body under the border ring beside and below the client (left, right, bottom).
 frame_fills: [3]*sn.Rect,
+corner_accents: @import("toplevel/corner_accents.zig").State = .{},
 // The outline of a window that draws its own decorations.
 border_rects: [4]*sn.Rect,
 content_tree: *sn.Tree,
@@ -515,6 +516,9 @@ pub const visualChromeSize = toplevel_chrome_sync.visualChromeSize;
 pub const syncShadow = toplevel_chrome_sync.syncShadow;
 pub const syncResizeGrab = toplevel_chrome_sync.syncResizeGrab;
 pub const applyShape = toplevel_chrome_sync.applyShape;
+pub const syncCornerAccents = @import("toplevel/corner_accents.zig").syncCornerAccents;
+pub const tickCornerAccents = @import("toplevel/corner_accents.zig").tickCornerAccents;
+pub const wakeCornerAccents = @import("toplevel/corner_accents.zig").wakeCornerAccents;
 pub const syncBorders = toplevel_chrome_sync.syncBorders;
 
 /// How far an easing frame stretches its titlebar raster before rastering anew.

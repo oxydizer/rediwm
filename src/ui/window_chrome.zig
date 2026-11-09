@@ -19,7 +19,6 @@ pub const ControlKind = enum { minimize, maximize, close };
 
 // Charcoal header with evenly spaced, unboxed window controls.
 pub const frame_border: i32 = 1;
-const titlebar_pad_right: i32 = 12;
 const btn_size: i32 = 34;
 const close_size: i32 = 34;
 // Preserve the original icon/control proportions when changing bar height.
@@ -81,25 +80,29 @@ pub fn controlRect(frame_width: i32, kind: ControlKind) Rect {
 
 pub fn controlRectScaled(frame_width: i32, kind: ControlKind, density: f32) Rect {
     const m: Metrics = .{ .density = density };
-    const close_x = frame_width - frame_border - m.length(titlebar_pad_right) - m.length(close_size);
+    const right_pad: i32 = @intFromFloat(@round(theme.global.chrome_control_right_pad * m.contentScale()));
+    const close_x = frame_width - frame_border - right_pad - m.length(close_size);
     const max_x = close_x - m.controlGap() - m.length(btn_size);
     const min_x = max_x - m.controlGap() - m.length(btn_size);
+    const centered_y = @divTrunc(m.titlebarHeight() - m.length(btn_size), 2);
+    const shift_y: i32 = @intFromFloat(@round(theme.global.chrome_control_offset_y * density));
+    const y = std.math.clamp(centered_y + shift_y, 0, @max(0, m.titlebarHeight() - m.length(btn_size) - frame_border));
     return switch (kind) {
         .close => .{
             .x = close_x,
-            .y = @divTrunc(m.titlebarHeight() - m.length(close_size), 2),
+            .y = y,
             .w = m.length(close_size),
             .h = m.length(close_size),
         },
         .maximize => .{
             .x = max_x,
-            .y = @divTrunc(m.titlebarHeight() - m.length(btn_size), 2),
+            .y = y,
             .w = m.length(btn_size),
             .h = m.length(btn_size),
         },
         .minimize => .{
             .x = min_x,
-            .y = @divTrunc(m.titlebarHeight() - m.length(btn_size), 2),
+            .y = y,
             .w = m.length(btn_size),
             .h = m.length(btn_size),
         },

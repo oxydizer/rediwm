@@ -3,8 +3,16 @@
 The rules every caller follows (callback owners, one look per control, app
 text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
 
+* **Hover/selection outlines** use `widgets/highlight.zig` in Cairo item and
+  sidebar rows and Settings navigation. `app_highlight_bevel` opts into straight
+  cut corners; zero preserves each caller's rounded radius. Keep sidebar markers
+  clipped to that outline and retained repaint damage unchanged. Any widget
+  rect can cut its corners with `RectStyle.bevel` (`fillRect` hands it to
+  `highlight.fillBeveled`; no relief or `replace`). The power menu uses it
+  through `power_menu_bevel`, rounding its glass to stay inside the cut.
+
 * **The scrollbar** (`widgets/scrollbar.zig`, Files' look): a thumb (track-less
-  unless `scrollbar_track_relief` cuts a groove; flat at `scrollbar_glow = 0`)
+  unless painted track tokens or `scrollbar_track_relief` enable one; flat at `scrollbar_glow = 0`)
   centred in a `gutter(scrollbar_width)` strip, thin at rest, widening and
   tinting to the accent on hover/drag, holding a faint tint after a scroll.
   `Geometry.compute` gives the thumb for any axis and unit (pixels, or items
@@ -21,6 +29,11 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   dragging and the scroll hold brighten it. `Appearance.illumination` shares
   the existing frame/deadline scheduling (no idle animation). Cairo uses the
   shared raster for the lit thumb, preserving its fractional device position.
+  `scrollbar_track` and `scrollbar_track_stripe` optionally paint a stationary
+  hatched channel (both transparent by default). `scrollbar.hasTrack` also
+  controls Cairo's layer bounds: include the whole channel even without relief.
+  Stripe period, width and slope also come from the theme through `Look`;
+  period/width zero hides the stripes, and slope zero draws transverse bands.
 * **Text fields with child accessories** reserve text/caret room with
   `field.trailing = .accessory`. Place a shared button in the field's children
   (Settings search uses a ghost clear button), so normal pointer and keyboard

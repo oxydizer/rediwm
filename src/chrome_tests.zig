@@ -130,6 +130,17 @@ test "chrome geometry changes invalidate retained titlebar pixels" {
     const round = TitlebarMemo.capture(400, 320, null, .{});
     try std.testing.expect(!before.eql(round));
     try std.testing.expect(!before.reusableFor(round));
+    theme.global = saved;
+    theme.global.chrome_control_right_pad = 2;
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, 320, null, .{})));
+    theme.global = saved;
+    theme.global.chrome_control_offset_y = 5;
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, 320, null, .{})));
+    inline for (.{ "window_title_plate_inset", "window_title_plate_bevel", "window_title_plate_slant", "window_title_plate_control_gap", "window_title_plate_text_padding" }) |field| {
+        theme.global = saved;
+        @field(theme.global, field) += 0.1;
+        try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, 320, null, .{})));
+    }
 }
 
 test "chrome controls fit and stay centered at every supported height and density" {
@@ -193,6 +204,18 @@ test "ShadowMemo.eql is false when softness changes" {
 }
 
 test "cached chrome updates exactly match complete rasters across hover controls and scales" {
+    const saved = theme.global;
+    defer theme.global = saved;
+    try checkCachedChromeUpdates();
+    theme.global.window_title_plate = .{ 1, 0.9, 0, 1 };
+    theme.global.window_title_plate_width = 310;
+    theme.global.window_title_plate_fg = .{ 0, 0, 0, 1 };
+    theme.global.chrome_control_right_pad = 2;
+    theme.global.chrome_control_offset_y = 5;
+    try checkCachedChromeUpdates();
+}
+
+fn checkCachedChromeUpdates() !void {
     for ([_]i32{ 20, 200, 640 }) |width| {
         for ([_]f32{ 1, 1.25, 1.5, 2 }) |scale| {
             for ([_]f32{ 1, 0.75, 1.0 / 1.7 }) |density| {

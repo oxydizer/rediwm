@@ -106,6 +106,13 @@ pub fn build(b: *std.Build) void {
     ui_mod.addAnonymousImport("theme-redi-mocha", .{ .root_source_file = b.path("assets/themes/redi-mocha.toml") });
     ui_mod.addAnonymousImport("theme-chamfer-blue", .{ .root_source_file = b.path("assets/themes/chamfer-blue.toml") });
     ui_mod.addAnonymousImport("theme-gold", .{ .root_source_file = b.path("assets/themes/gold.toml") });
+    ui_mod.addAnonymousImport("theme-blackout", .{ .root_source_file = b.path("assets/themes/blackout.toml") });
+    b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+        .source_dir = b.path("assets/themes/blackout"),
+        .install_dir = .prefix,
+        .install_subdir = "share/rediwm/themes/blackout",
+    }).step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("assets/themes/blackout.toml"), .prefix, "share/rediwm/themes/blackout/theme.toml").step);
     b.getInstallStep().dependOn(&b.addInstallDirectory(.{
         .source_dir = b.path("assets/themes/gold"),
         .install_dir = .prefix,

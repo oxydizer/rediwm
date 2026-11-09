@@ -27,6 +27,7 @@ test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
     app.loading = false;
     try testItems(&app, 12);
     for ([_]bool{ false, true }) |list| {
+        ui_theme.global.app_highlight_bevel = if (list) 7 else 0;
         app.list_view = list;
         for ([_]f64{ 1, 1.5 }) |scale| {
             const w: i32 = @intFromFloat(@as(f64, @floatFromInt(app.w)) * scale);
@@ -364,7 +365,7 @@ test "toolbar surface owns enabled hover targets and clears disabled and departe
 
     const refresh = header.rect(app.w, false, .refresh);
     app.handleMotion(refresh.x + refresh.w / 2, refresh.y + refresh.h / 2);
-    try std.testing.expectEqual(@as(u64, @intFromEnum(header.Action.refresh)), app.toolbar_surface.hovered.?.id);
+    try std.testing.expectEqual(@as(u64, @backingInt(header.Action.refresh)), app.toolbar_surface.hovered.?.id);
     try std.testing.expectEqual(refresh.x, app.hoveredToolbarButton().?.x);
 
     app.handleMotion(-1, -1);
@@ -395,7 +396,6 @@ test "toolbar proximity uses shared button geometry and damages in-button motion
     try std.testing.expect(app.paint_damage != null);
     try std.testing.expect(app.paint_damage.?.contains(x, y));
 }
-
 
 test "dialog surface owns generic modal button hover targets" {
     var app = try testApp();

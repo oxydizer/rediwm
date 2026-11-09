@@ -11,6 +11,7 @@ pub const interaction_surface = @import("interaction_surface.zig");
 pub const trackpad_navigation = @import("trackpad_navigation.zig");
 
 pub const widgets = struct {
+    pub const highlight = @import("widgets/highlight.zig");
     pub const scrollbar = @import("widgets/scrollbar.zig");
     pub const splitter = @import("widgets/splitter.zig");
     pub const select = @import("widgets/select.zig");

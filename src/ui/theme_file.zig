@@ -139,6 +139,9 @@ pub fn applyKey(allocator: Allocator, t: *Theme, name_in: []const u8, value: []c
             if (comptime std.mem.eql(u8, name, "window_shape") or std.mem.eql(u8, name, "taskbar_shape")) {
                 _ = try window_shape.parse(text);
             }
+            if (comptime std.mem.eql(u8, name, "window_corner_resize_ease")) {
+                _ = std.meta.stringToEnum(@import("anim.zig").Ease, text) orelse return error.InvalidEase;
+            }
             @field(t, name) = try allocator.dupe(u8, text);
             return;
         }
@@ -164,6 +167,9 @@ pub fn applyKey(allocator: Allocator, t: *Theme, name_in: []const u8, value: []c
             }
             if (comptime std.mem.eql(u8, name, "chrome_control_gap")) {
                 if (number > 24) return error.InvalidSize;
+            }
+            if (comptime std.mem.eql(u8, name, "window_title_plate_slant")) {
+                if (number > 1) return error.InvalidSize;
             }
             if (comptime std.mem.eql(u8, name, "taskbar_length")) {
                 if (number < 20 or number > 100) return error.InvalidSize;

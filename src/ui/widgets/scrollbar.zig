@@ -1,8 +1,8 @@
 // The shell's one scrollbar, as Files draws it: a thumb that sits centred in a
 // reserved gutter, thin at rest, widening and tinting toward the accent under
-// the pointer, and holding a subtle tint while scrolling. It has no track
-// unless the theme sets `scrollbar_track_relief`, which cuts a groove for the
-// thumb; `scrollbar_glow = 0` makes the thumb itself flat. Apps
+// the pointer, and holding a subtle tint while scrolling. Tracks are opt-in:
+// `scrollbar_track_relief` cuts a groove, `scrollbar_track` paints its floor,
+// and `scrollbar_track_stripe` adds hatching. `scrollbar_glow = 0` makes the thumb flat. Apps
 // keep their own scroll mechanics and ask this module for the geometry, the
 // paging and drag arithmetic, the look and the feedback animation, so every
 // scrollbar behaves alike: Files, Images, PDF and the editor through Cairo
@@ -149,6 +149,11 @@ pub const Look = struct {
     track_radius: f32,
     track_color: [4]f32,
     track_relief: theme.Relief = .flat,
+    track_fill: [4]f32 = .{ 0, 0, 0, 0 },
+    track_stripe: [4]f32 = .{ 0, 0, 0, 0 },
+    stripe_period: f32 = 10,
+    stripe_width: f32 = 5,
+    stripe_slope: f32 = 1,
     thumb_relief: theme.Relief = .flat,
     rect: Rect,
     radius: f32,
@@ -194,7 +199,7 @@ pub fn look(g: Geometry, state: Appearance, configured: f32, palette: theme.Them
     }
     // Nested corners: the groove's radius is the thumb's plus the margin between.
     const track_radius = @min(cornerRadius(track_thickness) + 1.5, track_thickness / 2);
-    return .{ .track = track_rect, .track_radius = track_radius, .track_color = track_color, .track_relief = palette.scrollbar_track_relief, .thumb_relief = palette.scrollbar_thumb_relief, .rect = rect, .radius = cornerRadius(thickness), .color = color, .axis = g.axis, .highlight = highlight, .shine = state.shine, .glow = @max(palette.scrollbar_glow, 0) };
+    return .{ .stripe_period = palette.scrollbar_track_stripe_period, .stripe_width = palette.scrollbar_track_stripe_width, .stripe_slope = palette.scrollbar_track_stripe_slope, .track_fill = palette.scrollbar_track, .track_stripe = palette.scrollbar_track_stripe, .track = track_rect, .track_radius = track_radius, .track_color = track_color, .track_relief = palette.scrollbar_track_relief, .thumb_relief = palette.scrollbar_thumb_relief, .rect = rect, .radius = cornerRadius(thickness), .color = color, .axis = g.axis, .highlight = highlight, .shine = state.shine, .glow = @max(palette.scrollbar_glow, 0) };
 }
 
 /// Whether `l`'s thumb gets the lit-edge raster. A flat thumb (`scrollbar_glow`
@@ -203,10 +208,16 @@ pub fn lit(l: Look) bool {
     return l.shine > 0 and l.glow > 0;
 }
 
-/// The groove; nothing at all while the theme leaves the track flat. It stays
+pub fn hasTrack(l: Look) bool {
+    return l.track_relief != .flat or l.track_fill[3] > 0 or (l.track_stripe[3] > 0 and l.stripe_period > 0 and l.stripe_width > 0);
+}
+
+/// The optional painted track and groove. It stays
 /// inside the track's own box, so the gutter's damage covers it.
 pub fn paintTrack(r: *@import("../paint.zig").Renderer, l: Look) void {
-    if (l.track_relief == .flat or l.track.w <= 0 or l.track.h <= 0) return;
+    if (!hasTrack(l) or l.track.w <= 0 or l.track.h <= 0) return;
+    @import("scrollbar_track.zig").paint(r, l);
+    if (l.track_relief == .flat) return;
     r.fillRect(l.track.x, l.track.y, l.track.w, l.track.h, .{
         .color = l.track_color,
         .radius = l.track_radius,

@@ -214,10 +214,14 @@ pub fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Lo
     var border = pal.accent;
     border[3] = 0.55;
     border = pal.dock_border orelse border;
-    const radius = @min(cornerRadius(pal), @as(f32, @floatFromInt(m.height)) / 2);
-    self.glass_radius = radius;
-    glass.Effect.configure(self.glass_effect, radius, std.math.clamp(self.reveal.value(anim.nowMs()), 0, 1));
-    r.fillRect(ox, oy, @floatFromInt(self.box.width), @floatFromInt(self.box.height), .{ .color = bg, .radius = radius, .border_width = 1, .border_color = border });
+    const half = @as(f32, @floatFromInt(m.height)) / 2;
+    const radius = @min(cornerRadius(pal), half);
+    const bevel = @min(@max(0, pal.dock_bevel), half);
+    // The blur only rounds: deep enough to stay inside a cut corner (a circle
+    // of radius r clears a cut of b when 0.586 r >= b).
+    self.glass_radius = if (bevel > 0) @min(half, bevel * 1.71) else radius;
+    glass.Effect.configure(self.glass_effect, self.glass_radius, std.math.clamp(self.reveal.value(anim.nowMs()), 0, 1));
+    r.fillRect(ox, oy, @floatFromInt(self.box.width), @floatFromInt(self.box.height), .{ .color = bg, .radius = radius, .bevel = bevel, .border_width = 1, .border_color = border });
     for (looks, 0..) |look, index| {
         if (dirty) |box| if (!box.overlaps(self.itemCell(m, index, width, height))) continue;
         self.paintItem(&r, pal, m, index, look, ox, oy);
@@ -258,12 +262,32 @@ pub fn paintItem(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Met
     const resting = self.iconBox(index, 1, 36);
     const cx = resting.x + resting.w / 2 + ox;
     const cy = resting.y + resting.h / 2 + oy;
-    // An enlarging icon is the hover feedback: no rectangle behind it.
-    const pointer: ui.layout.ButtonState = if (zooms) .idle else button.kind.button.state;
-    ui.widgets.button.paintBackground(r, .{ .x = x, .y = y, .w = button.computed_width, .h = button.computed_height }, .{ .variant = .ghost, .radius = m.size(12) }, .{ .pointer = pointer, .selected = look.focused and self.output.?.server.config.compositor.dock_active_highlight });
+    const selected = look.focused and self.output.?.server.config.compositor.dock_active_highlight;
+    const lit = selected or button.kind.button.state == .hover or button.kind.button.state == .press;
+    if (pal.dock_item_bg) |tile| {
+        // A theme's tile: always there, outlined in the accent while lit.
+        const hover_border = pal.dock_item_hover_border orelse pal.accent;
+        r.fillRect(x, y, button.computed_width, button.computed_height, .{
+            .color = tile,
+            .radius = m.size(12),
+            .bevel = m.size(pal.dock_item_bevel),
+            .border_width = if (lit) @max(1, m.size(2)) else 1,
+            .border_color = if (lit) hover_border else pal.dock_item_border orelse pal.border_soft,
+        });
+    } else {
+        // An enlarging icon is the hover feedback: no rectangle behind it.
+        const pointer: ui.layout.ButtonState = if (zooms) .idle else button.kind.button.state;
+        ui.widgets.button.paintBackground(r, .{ .x = x, .y = y, .w = button.computed_width, .h = button.computed_height }, .{ .variant = .ghost, .radius = m.size(12) }, .{ .pointer = pointer, .selected = selected });
+    }
     if (look.icon) |icon| {
         const rect = self.iconBox(index, look.zoom, 36);
-        r.drawImageSmooth(rect.x + ox, rect.y + oy, rect.w, rect.h, 0, .{ .pixels = icon.pixels, .width = icon.size, .height = icon.size });
+        const image: ui.paint.Image = .{ .pixels = icon.pixels, .width = icon.size, .height = icon.size };
+        const grey = if (lit) 0 else std.math.clamp(pal.dock_icon_grey, 0, 1);
+        // The launcher's logo takes the start button's tint, like the taskbar's.
+        const logo_tint = if (self.shortcuts[index] == .applications) pal.start_button_logo_color else null;
+        const drained = if (logo_tint) |tint| tinted(image, tint) else if (grey > 0) greyed(image, grey) else null;
+        defer if (drained) |pixels| gpa.free(pixels);
+        r.drawImageSmooth(rect.x + ox, rect.y + oy, rect.w, rect.h, 0, if (drained) |pixels| .{ .pixels = pixels, .width = image.width, .height = image.height } else image);
     } else {
         const rect = self.iconBox(index, look.zoom, 34);
         r.drawIcon(rect.x + ox, rect.y + oy, rect.w, rect.h, .{ .id = if (self.shortcuts[index]) |shortcut| switch (shortcut) {
@@ -304,6 +328,43 @@ pub fn paintItem(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Met
             r.fillRect(cross + ox, cy - width / 2, thickness, width, .{ .color = accent, .radius = @min(width, thickness) / 2 });
         } else r.fillRect(cx - width / 2, cross + oy, width, thickness, .{ .color = accent, .radius = @min(width, thickness) / 2 });
     }
+}
+
+/// A copy of `image` moved `amount` of the way to its luminance (Rec. 709 on
+/// the stored premultiplied values, which keeps them premultiplied). Null, and
+/// the icon drawn in colour, if the copy cannot be made.
+fn greyed(image: ui.paint.Image, amount: f32) ?[]u32 {
+    const copy = gpa.alloc(u32, image.pixels.len) catch return null;
+    const keep: u32 = @intFromFloat(@round((1 - amount) * 256));
+    for (image.pixels, copy) |pixel, *out| {
+        const r = (pixel >> 16) & 0xff;
+        const g = (pixel >> 8) & 0xff;
+        const b = pixel & 0xff;
+        const y = (r * 54 + g * 183 + b * 19) >> 8;
+        const mix = struct {
+            fn f(c: u32, lum: u32, k: u32) u32 {
+                return (lum * (256 - k) + c * k) >> 8;
+            }
+        }.f;
+        out.* = (pixel & 0xff000000) | (mix(r, y, keep) << 16) | (mix(g, y, keep) << 8) | mix(b, y, keep);
+    }
+    return copy;
+}
+
+/// A copy of `image` in one colour, keeping each pixel's coverage, as the
+/// taskbar's start button tints the logo. Null if the copy cannot be made.
+fn tinted(image: ui.paint.Image, tint: [4]f32) ?[]u32 {
+    const copy = gpa.alloc(u32, image.pixels.len) catch return null;
+    for (image.pixels, copy) |pixel, *out| {
+        const a = @as(f32, @floatFromInt(pixel >> 24)) / 255 * tint[3];
+        const channel = struct {
+            fn f(v: f32, alpha: f32) u32 {
+                return @intFromFloat(@round(std.math.clamp(v * alpha, 0, 1) * 255));
+            }
+        }.f;
+        out.* = (channel(1, a) << 24) | (channel(tint[0], a) << 16) | (channel(tint[1], a) << 8) | channel(tint[2], a);
+    }
+    return copy;
 }
 
 /// What lies between and beside the buttons: the drop gap, the divider after the

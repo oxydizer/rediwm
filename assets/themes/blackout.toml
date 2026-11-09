@@ -1,0 +1,203 @@
+[meta]
+format = 1
+id = "blackout"
+name = "Blackout"
+version = "1.0"
+description = "Near-black graphite, signal-yellow accents, cut corners and industrial striped tracks."
+
+[theme]
+font = "Manrope"
+mono_font = "JetBrains Mono"
+font_size = 13
+title_size = 13.5
+chrome_height = 42
+chrome_control_gap = 8
+chrome_control_right_pad = 2
+chrome_control_offset_y = 5
+chrome_round_buttons = false
+# Raised title tab, a 45-degree step down, and four clipped corners. The step
+# is the title plate's slant moved out by the plate inset: 310 wide, 30 slant
+# (42 - 2 * 6) and inset 6 give x - y = 274 + 6 * sqrt(2). Change them together.
+# Below ~304 px wide the outline cannot fit and the window is a plain rectangle;
+# maximized windows stay rectangular.
+window_shape = "0 14, 14 0, 282.5 0, 289.5 7, -14 7, -0 21, -0 -12, -12 -0, 12 -0, 0 -12"
+window_bg = "#111516"
+window_fg = "#E3E5E3"
+window_dim = "#A2A8A6"
+window_border = "#3B4242"
+window_border_hover = "#737C68"
+window_divider = "#2A3030"
+window_title_plate = "#FAEB01"
+window_title_plate_width = 310
+window_title_plate_fg = "#111400"
+# Plate geometry; slant is a fraction of chrome_height (30 of 42: 45 degrees).
+# With an outline the plate follows its cut corners at the inset; the bevel
+# applies to rectangular (maximized) frames.
+window_title_plate_inset = 6
+window_title_plate_bevel = 7
+window_title_plate_slant = 0.7142857
+window_title_plate_control_gap = 8
+window_title_plate_text_padding = 8
+window_corner_accent = "#FAEB01"
+window_corner_extent = 34
+window_corner_resize_extra = 18
+window_corner_width = 3
+# Extra inset beyond the frame ring; resize/restore durations in milliseconds.
+window_corner_inset = 0
+window_corner_end_padding = 2
+window_corner_resize_ms = 140
+window_corner_restore_ms = 180
+window_corner_resize_ease = "out_cubic"
+window_close_hover = "#FAEB01"
+window_close_fg = "#111400"
+workspace_active_border = "#FAEB01"
+
+app_bg = "#101314"
+app_fg = "#E3E5E3"
+app_toolbar = "#171B1C"
+app_sidebar = "#15191A"
+app_sidebar_fg = "#E3E5E3"
+app_bar = "#1D2223"
+app_item = "#15191A"
+app_item_hover = "#252B2B"
+app_item_border = "#303737"
+app_item_selected = "#454719"
+app_nav_selected = "#454719"
+# Keep readable pale labels in shared sidebar controls; yellow marker and
+# icons carry the accent without requiring per-app selection text overrides.
+app_sidebar_selected = "#454719"
+app_sidebar_hover = "#252B2B"
+app_sidebar_selected_marker = "#FAEB01"
+app_sidebar_item_radius = 5
+app_highlight_bevel = 7
+app_divider = "#303737"
+app_icon = "#FAEB01"
+app_menu_bg = "#171B1C"
+app_field_bg = "#0D1011"
+app_field_border = "#343C3C"
+text_secondary = "#A2A8A6"
+file_folder_back = "#A89D00"
+file_folder_front = "#FAEB01"
+file_document = "#D7DBD9"
+file_document_lines = "#515A58"
+scrollbar_thumb = "#E4D500"
+scrollbar_thumb_active = "#FFF233"
+scrollbar_track = "#1A2021"
+scrollbar_track_stripe = "#343D3E"
+# Distances along the scrollbar; slope 1 makes 45-degree diagonal bands.
+scrollbar_track_stripe_period = 10
+scrollbar_track_stripe_width = 5
+scrollbar_track_stripe_slope = 1
+scrollbar_glow = 0
+scrollbar_width = 8
+scrollbar_radius = 3
+
+bg = "#101314"
+fg = "#E3E5E3"
+dim = "#A2A8A6"
+faint = "#747E7B"
+accent = "#FAEB01"
+accent_2 = "#D3C600"
+accent_3 = "#A89D00"
+on_accent = "#111400"
+shell_accent = "#FAEB01"
+shell_on_accent = "#111400"
+danger = "#F06A51"
+surface = "#202627"
+surface_hover = "#303737"
+border = "#3B4242"
+border_soft = "#2A3030"
+border_hover = "#737C68"
+border_focus = "#FAEB01"
+border_glow = "rgba(250,235,1,0.55)"
+glass = "#15191A"
+glass_strong = "#171B1C"
+shadow = "rgba(0,0,0,0.65)"
+shadow_size = 22
+shadow_offset_y = 6
+field_bg = "#0D1011"
+field_border = "#343C3C"
+selection_alpha = 0.28
+toggle_on = "#FAEB01"
+toggle_thumb = "#E3E5E3"
+slider_track = "#343C3C"
+control_thumb = "#FAEB01"
+
+radius = 5
+radius_md = 6
+radius_lg = 12
+field_radius = 5
+settings_radius = 8
+settings_sidebar_radius = 5
+settings_card_radius = 6
+settings_card_bg = "#1D2223"
+taskbar_bg = "#111516"
+taskbar_surface = "#1D2223"
+taskbar_hover = "#303737"
+taskbar_border = "#3B4242"
+taskbar_size = 42
+# Dock: cut corners, dark tiles outlined in yellow on hover, icons drained of
+# colour until hovered.
+dock_bg = "#111516"
+dock_border = "#3B4242"
+dock_bevel = 14
+dock_item_bg = "#171B1C"
+dock_item_border = "#2A3030"
+dock_item_hover_border = "#FAEB01"
+dock_item_bevel = 7
+dock_icon_grey = 1
+# A short status bar in the top-right corner, its one exposed corner cut.
+taskbar_length = 20
+taskbar_shape = "0 0, -0 0, -0 -0, 16 -0, 0 -16"
+start_button_logo_color = "#FAEB01"
+start_button_indicator = "#FAEB01"
+start_menu_bg = "#15191A"
+start_menu_border = "#3B4242"
+start_menu_search_bg = "#0D1011"
+start_menu_selected_bg = "#454719"
+start_menu_selected_border = "#8F8700"
+start_menu_selected_marker = "#FAEB01"
+popup_bg = "#171B1C"
+popup_border = "#3B4242"
+popup_card_bg = "#202627"
+popup_card_fg = "#E3E5E3"
+popup_card_dim = "#A2A8A6"
+popup_card_border = "#343C3C"
+notification_bg = "#171B1C"
+notification_fg = "#E3E5E3"
+notification_dim = "#A2A8A6"
+notification_border = "#737C68"
+switcher_bg = "#111516"
+switcher_border = "#3B4242"
+switcher_item_bg = "#202627"
+switcher_item_border = "#343C3C"
+switcher_selected_border = "#FAEB01"
+switcher_fg = "#E3E5E3"
+switcher_dim = "#A2A8A6"
+switcher_icon_bg = "#303737"
+lock_bg = "#101314"
+lock_fg = "#E3E5E3"
+lock_dim = "#A2A8A6"
+lock_divider = "#3B4242"
+lock_session_fg = "#FAEB01"
+lock_wallpaper_opacity = 0.15
+power_menu_bevel = 16
+terminal_bg = "#101314"
+terminal_fg = "#E3E5E3"
+terminal_cursor = "#FAEB01"
+terminal_yellow = "#D3C600"
+terminal_bright_yellow = "#FAEB01"
+
+[layout]
+# Status items only: the start menu stays on Super, windows on Alt+Tab.
+taskbar_position = "top"
+taskbar_alignment = "right"
+taskbar_items = ["-left:start", "-left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "right:volume", "right:clock", "-right:power"]
+dock_enabled = true
+dock_position = "left"
+# Hover lights the tile; an enlarging icon would cover its outline.
+dock_hover_zoom = 1
+
+[assets]
+wallpaper = "blackout-wallpaper.png"
+color_scheme = "dark"
