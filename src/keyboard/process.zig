@@ -232,6 +232,9 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
                 keyboard.stopSwitcherRepeat();
                 if (sym == xkb.Keysym.Escape) keyboard.server.switcher.dismiss();
                 if (sym == xkb.Keysym.Return) keyboard.server.switcher.accept(keyboard.server);
+                // KEY_GRAVE is the key above Tab on every layout.
+                if (event_keycode == 41) keyboard.server.switcher.stepWindow(mods.shift);
+                if (sym == xkb.Keysym.Up or sym == xkb.Keysym.Down) keyboard.server.switcher.stepWindow(sym == xkb.Keysym.Up);
                 if (event_keycode < keyboard.switcher_consumed.len) keyboard.switcher_consumed[event_keycode] = true;
                 return;
             }

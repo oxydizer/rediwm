@@ -118,6 +118,17 @@ pub fn step(self: *Self, server: *Server, reverse: bool, trigger: Trigger) void 
     self.output.?.wlr_output.scheduleFrame();
 }
 
+/// Circular style only: the key above Tab or Up/Down steps through the
+/// selected app's own windows while the switcher is held open.
+pub fn stepWindow(self: *Self, reverse: bool) void {
+    if (!self.active() or !self.circle.enabled or self.circle.closing or self.cards.items.len == 0) return;
+    const before = self.selected;
+    circular.advanceMember(self, reverse);
+    if (self.selected == before) return;
+    circular.select(self, false);
+    self.output.?.wlr_output.scheduleFrame();
+}
+
 fn open(self: *Self, server: *Server) !void {
     server.input.window_menu.close();
     const output = server.getDefaultOutput() orelse return;

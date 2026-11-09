@@ -57,9 +57,11 @@ Windows from the same app share a stack around the circle, with a badge in the
 centre showing how many; stepping onto that app's stack fans it open. The
 selected window's title appears in the centre. Previews fan around the hub
 with their top edge at the outer rim; tall windows are cropped at the bottom.
-Up to three cards per app and eight apps per page are visible. Tab exhausts a
-stack's own windows, most recently used first, before moving to the next app;
-Shift+Tab mirrors that. Small outputs and renderers without polygon support
+Up to three cards per app and eight apps per page are visible. Tab and
+Shift+Tab move between apps, so a quick Alt+Tab always returns to the previous
+app; while the switcher is open, the key above Tab (Shift for backwards) or
+Up/Down steps through the selected app's windows, most recently used first.
+With only one app open, Tab steps through its windows. Small outputs and renderers without polygon support
 use the horizontal strip. Set `switcher_style = "linear"` to use the default
 horizontal strip.
 

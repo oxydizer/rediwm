@@ -1,6 +1,8 @@
 //! Circular presentation of the switcher's frozen MRU list, grouped by app.
-//! Tab/Shift+Tab exhausts a multi-window group's own windows (`advance`,
-//! member by member in first-seen order) before moving to the next app; the
+//! Tab/Shift+Tab moves between apps (`advance`), so a quick Alt+Tab always
+//! reaches the previous app however many windows the current one has; the
+//! key above Tab and Up/Down step through the selected app's own windows
+//! (`advanceMember`). With a single app, Tab steps its windows instead. The
 //! linear style keeps the flat MRU order untouched. A group's stack fans open
 //! (`State.expand`) only while it holds the selection.
 const std = @import("std");
@@ -173,27 +175,28 @@ fn groupFor(self: *Switcher, server: *Server, raw: []const u8, index: usize) !us
     return self.circle.groups.items.len - 1;
 }
 
-/// Replaces the flat `(selected ± 1) % n` step for the circular style: a
-/// multi-window group is exhausted member by member, in the order its
-/// windows were first seen, before the wheel moves on to the next group.
-/// Forward and backward are exact mirrors, so a full lap in either direction
-/// revisits every window exactly once, same as the flat styles.
+/// Replaces the flat `(selected ± 1) % n` step for the circular style: Tab
+/// moves to the next app's group, landing on its front window (its most
+/// recently used one, or whichever member this gesture last brought forward).
+/// The gesture opens on the focused window, so the first Tab always leaves
+/// the current app. A lone group has nowhere to go, so Tab steps its windows.
 pub fn advance(self: *Switcher, reverse: bool) void {
     const groups = self.circle.groups.items;
     if (groups.len == 0) return;
+    if (groups.len == 1) return advanceMember(self, reverse);
     const card = self.cards.items[self.selected];
-    const group = groups[card.group];
-    const next_member: ?usize = if (reverse)
-        (if (card.member == 0) null else card.member - 1)
-    else
-        (if (card.member + 1 >= group.count) null else card.member + 1);
-    if (next_member) |member| {
-        self.selected = group.members.items[member];
-        return;
-    }
     const next_group = if (reverse) (card.group + groups.len - 1) % groups.len else (card.group + 1) % groups.len;
-    const entry: usize = if (reverse) groups[next_group].count - 1 else 0;
-    self.selected = groups[next_group].members.items[entry];
+    self.selected = groups[next_group].front;
+}
+
+/// Steps to the next (or previous) window of the selected app, in MRU order,
+/// wrapping inside the group.
+pub fn advanceMember(self: *Switcher, reverse: bool) void {
+    const card = self.cards.items[self.selected];
+    const group = self.circle.groups.items[card.group];
+    if (group.count < 2) return;
+    const member = if (reverse) (card.member + group.count - 1) % group.count else (card.member + 1) % group.count;
+    self.selected = group.members.items[member];
 }
 
 pub fn select(self: *Switcher, opening: bool) void {

@@ -201,9 +201,10 @@ def run(scale, modifier=56, style='linear'):
 
 
 def run_group_cycle(scale):
-    """A multi-window app's circular sector stacks its windows; Tab exhausts
-    that app's own windows (most recent first) before moving to the next
-    app, Shift+Tab mirrors it, and the stack fans open while selected."""
+    """A multi-window app's circular sector stacks its windows; Tab moves
+    between apps (so a quick Alt+Tab from a multi-window app reaches the
+    previous app), the key above Tab and Up/Down step through the selected
+    app's windows, and the stack fans open while selected."""
     with tempfile.TemporaryDirectory(prefix='rediwm-switcher-group-') as directory:
         tmp = Path(directory)
         build_client(tmp)
@@ -225,37 +226,53 @@ def run_group_cycle(scale):
                     wait_for(lambda: len(ipc.get_windows()) == i + 1, 'map group-cycle fixture')
                 by_title = {w['title']: w['id'] for w in ipc.get_windows()}
                 ids = [by_title[t] for t, _ in specs]  # alpha1, alpha2, alpha3, alpha4, beta, gamma
+                TAB, GRAVE, SHIFT, UP, DOWN = 15, 41, 42, 103, 108
 
-                def establish_mru():
+                def establish_mru(last=None):
                     # Focusing in this order leaves Gamma most recent, Beta
                     # next, then Alpha 4..1 (Alpha 4 the most recently used
                     # of the group): cards = [gamma, beta, a4, a3, a2, a1].
                     for wid in ids:
                         ipc.action('focus_window', {'id': wid})
+                    if last is not None:
+                        ipc.action('focus_window', {'id': last})
 
                 def focused():
                     return ipc.get_focused_window()['id']
 
-                def gesture(steps, reverse=False):
-                    establish_mru()
+                def gesture(*keys, last=None):
+                    """Hold Alt, press each key (a tuple adds Shift), release."""
+                    establish_mru(last)
                     ipc.key(56, True)
-                    if reverse: ipc.key(42, True)
-                    for _ in range(steps): ipc.key_down_up(15)
-                    if reverse: ipc.key(42, False)
+                    for key in keys:
+                        shifted = isinstance(key, tuple)
+                        if shifted: ipc.key(SHIFT, True)
+                        ipc.key_down_up(key[0] if shifted else key)
+                        if shifted: ipc.key(SHIFT, False)
                     ipc.key(56, False)
                     return focused()
 
-                # Forward: leave Gamma's and Beta's singleton groups, then walk
-                # the Alpha group newest-to-oldest before completing the lap.
-                assert gesture(1) == ids[4], 'first Tab leaves the starting (singleton) group'
-                assert gesture(2) == ids[3], 'second Tab enters the app group at its most recent window'
-                assert gesture(3) == ids[2], 'third Tab stays inside the app'
-                assert gesture(4) == ids[1], 'fourth Tab is still inside the app'
-                assert gesture(5) == ids[0], "fifth Tab reaches the app's last window before leaving it"
-                assert gesture(6) == ids[5], 'sixth Tab leaves the exhausted group and completes the lap'
-                # Reverse is the exact mirror.
-                assert gesture(1, reverse=True) == ids[0], 'Shift+Tab enters the previous group at its last window'
-                assert gesture(4, reverse=True) == ids[3], 'reverse cycling mirrors forward order inside the group'
+                # Tab walks apps, landing on each app's most recent window.
+                assert gesture(TAB) == ids[4], 'first Tab selects the previous app'
+                assert gesture(TAB, TAB) == ids[3], "second Tab enters the stacked app at its most recent window"
+                assert gesture(TAB, TAB, TAB) == ids[5], 'third Tab completes the lap of apps'
+                assert gesture((TAB,)) == ids[3], 'Shift+Tab selects the previous app at its most recent window'
+                assert gesture((TAB,), (TAB,)) == ids[4], 'reverse cycling walks apps backwards'
+                # The reported bug: from a window of a multi-window app, a
+                # quick Alt+Tab must reach the other app, and back again.
+                assert gesture(TAB, last=ids[3]) == ids[5], 'Alt+Tab from a stacked app leaves it'
+                establish_mru(ids[3])
+                ipc.action('focus_window', {'id': ids[5]})
+                ipc.key(56, True); ipc.key_down_up(TAB); ipc.key(56, False)
+                assert focused() == ids[3], 'Alt+Tab toggles back to the stacked app'
+                # Inside the selected app: the key above Tab and Up/Down.
+                assert gesture(TAB, TAB, GRAVE) == ids[2], 'the key above Tab steps to the next window of the app'
+                assert gesture(TAB, TAB, GRAVE, GRAVE) == ids[1], 'it keeps stepping through the app'
+                assert gesture(TAB, TAB, (GRAVE,)) == ids[0], 'Shift steps backwards and wraps'
+                assert gesture(TAB, TAB, DOWN) == ids[2], 'Down steps to the next window of the app'
+                assert gesture(TAB, TAB, UP) == ids[0], 'Up steps to the previous window of the app'
+                assert gesture(GRAVE) == ids[5], 'a singleton app has no other window to step to'
+                assert gesture(TAB, TAB, GRAVE, TAB, (TAB,)) == ids[2], 'returning to an app keeps the window brought forward'
 
                 # The stack fans open only while its group holds the
                 # selection: a screenshot grabbed on the first frame after
