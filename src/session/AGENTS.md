@@ -27,6 +27,14 @@ ext-session-lock) are in the root `AGENTS.md`.
   a user's config or discover packs in the greeter. Account changes reset
   the palette and wallpaper before loading the next snapshot.
 
+* **Idle inhibitors** come from two places: idle-inhibit-v1 surfaces count
+  only while visible (re-checked on map, move, minimize, camera and output
+  changes); `org.freedesktop.ScreenSaver` (`screensaver_service.zig`, on the
+  notifications bus connection, so never in the greeter) counts regardless of
+  visibility until UnInhibit or its sender leaves the bus. Chromium makes its
+  surface inhibitor only on a window with pointer or keyboard focus and never
+  retries, so the bus path is what keeps videos awake.
+
 * `Lock.covered()` releases the lock-before-sleep inhibitor; the builtin lock
   also sets `Output.lock_commit_pending`.
 

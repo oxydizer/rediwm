@@ -15,6 +15,7 @@ const surface = Toplevel.surface;
 const nowMs = Toplevel.nowMs;
 
 pub fn setResizing(toplevel: *Toplevel, resizing: bool) void {
+    toplevel.wakeCornerAccents();
     switch (toplevel.backend) {
         .xdg => |*adapter| _ = adapter.xdg_toplevel.setResizing(resizing),
         .xwayland, .placeholder, .shell => {},
@@ -137,7 +138,12 @@ pub fn controlInsets(toplevel: *const Toplevel) window_shape.Insets {
     const density = toplevel.chromeDensity();
     const bar: f64 = @floatFromInt(toplevel.titlebarHeight());
     const band: f64 = @floatFromInt((chrome.Metrics{ .density = density }).length(34));
-    return window_shape.rowInsets(polygon, @floatFromInt(toplevel.chrome_width), @max(0, (bar - band) / 2), @min(bar, (bar + band) / 2));
+    var insets = window_shape.rowInsets(polygon, @floatFromInt(toplevel.chrome_width), @max(0, (bar - band) / 2), @min(bar, (bar + band) / 2));
+    if (theme.global.chrome_control_offset_y == 0) return insets;
+    // The icon stays centred while controls may sit lower under a cut corner.
+    const control = chrome.controlRectScaled(toplevel.chrome_width, .close, density);
+    insets.right = window_shape.rowInsets(polygon, @floatFromInt(toplevel.chrome_width), @floatFromInt(control.y), @floatFromInt(control.y + control.h)).right;
+    return insets;
 }
 
 pub fn ownsSurface(toplevel: *const Toplevel, candidate: *wlr.Surface) bool {

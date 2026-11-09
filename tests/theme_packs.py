@@ -197,7 +197,7 @@ def run():
         try:
             with IPCClient(tmp, timeout=30) as ipc:
                 before = ipc.query("theme.list")
-                assert {p["id"] for p in before["packs"]} >= {"rediwm-dark", "rediwm-light", "redi-blue", "redi-mocha", "gold"}
+                assert {p["id"] for p in before["packs"]} >= {"rediwm-dark", "rediwm-light", "redi-blue", "redi-mocha", "gold", "blackout"}
                 mocha = next(p for p in before["packs"] if p["id"] == "redi-mocha")
                 assert mocha["name"] == "Redi-Mocha" and not mocha["user_installed"], mocha
                 ipc.action("theme.apply", {"id": "redi-mocha"})

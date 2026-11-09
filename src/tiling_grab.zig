@@ -43,6 +43,7 @@ pub fn begin(input: *Input, top: *Top, edges: ?wlr.Edges, button: u32) bool {
     input.tiling_grab = session;
     input.grabbed_toplevel = top;
     input.cursor_mode = if (edges != null) .resize else .move;
+    if (edges != null) top.wakeCornerAccents();
     input.move_snap.preview.hide();
     input.setHover(null, null);
     input.seat.pointerClearFocus();

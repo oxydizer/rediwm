@@ -66,6 +66,21 @@ pub const SurfaceVisibility = struct {
     reason: []const u8 = "",
 };
 
+/// An org.freedesktop.ScreenSaver Inhibit call: no surface, so it counts
+/// regardless of visibility (as on GNOME and KDE) until its sender calls
+/// UnInhibit or leaves the bus. Strings are owned by the manager.
+pub const BusInhibitor = struct {
+    cookie: u32,
+    /// The caller's unique bus name.
+    owner: []u8,
+    app: []u8,
+    reason: []u8,
+};
+
+/// Bounds memory a misbehaving session client can pin.
+pub const max_bus_inhibitors = 256;
+const max_bus_text = 256;
+
 pub const IdleManager = struct {
     server: ?*Server = null,
     config: IdleConfig,
@@ -80,6 +95,9 @@ pub const IdleManager = struct {
 
     new_inhibitor_listener: wl.Listener(*wlr.IdleInhibitorV1) = .init(handleNewInhibitor),
     inhibitors: wl.list.Head(TrackedInhibitor, .link) = undefined,
+
+    bus_inhibitors: std.ArrayList(BusInhibitor) = .empty,
+    last_bus_cookie: u32 = 0,
 
     is_inhibited: bool = false,
     effective_inhibitor_count: usize = 0,
@@ -146,6 +164,7 @@ pub const IdleManager = struct {
             tracked.link.remove();
             gpa.destroy(tracked);
         }
+        self.clearBusInhibitors(gpa);
 
         gpa.destroy(self);
     }
@@ -440,6 +459,7 @@ pub const IdleManager = struct {
             tracked.reason = vis.reason;
             if (vis.visible) effective_count += 1;
         }
+        effective_count += self.bus_inhibitors.items.len;
 
         self.effective_inhibitor_count = effective_count;
         const now_inhibited = (effective_count > 0);
@@ -469,7 +489,77 @@ pub const IdleManager = struct {
         var count: usize = 0;
         var it = self.inhibitors.iterator(.forward);
         while (it.next()) |_| count += 1;
-        return count;
+        return count + self.bus_inhibitors.items.len;
+    }
+
+    /// Adds a D-Bus inhibitor for `owner` and returns its nonzero cookie.
+    pub fn addBusInhibitor(self: *IdleManager, allocator: std.mem.Allocator, owner: []const u8, app: []const u8, reason: []const u8) !u32 {
+        if (self.bus_inhibitors.items.len >= max_bus_inhibitors) return error.TooManyInhibitors;
+        var cookie = self.last_bus_cookie;
+        while (true) {
+            cookie +%= 1;
+            if (cookie != 0 and self.findBusInhibitor(cookie) == null) break;
+        }
+        const owned_owner = try allocator.dupe(u8, owner);
+        errdefer allocator.free(owned_owner);
+        const owned_app = try allocator.dupe(u8, clip(app));
+        errdefer allocator.free(owned_app);
+        const owned_reason = try allocator.dupe(u8, clip(reason));
+        errdefer allocator.free(owned_reason);
+        try self.bus_inhibitors.append(allocator, .{ .cookie = cookie, .owner = owned_owner, .app = owned_app, .reason = owned_reason });
+        self.last_bus_cookie = cookie;
+        log.info("idle inhibited over D-Bus by {s} ({s}): {s}", .{ owned_app, owned_owner, owned_reason });
+        self.recheckInhibitors();
+        return cookie;
+    }
+
+    /// Removes `cookie` if `owner` holds it; another client's cookie is left alone.
+    pub fn removeBusInhibitor(self: *IdleManager, allocator: std.mem.Allocator, owner: []const u8, cookie: u32) bool {
+        const index = self.findBusInhibitor(cookie) orelse return false;
+        if (!std.mem.eql(u8, self.bus_inhibitors.items[index].owner, owner)) return false;
+        freeBusInhibitor(allocator, self.bus_inhibitors.orderedRemove(index));
+        self.recheckInhibitors();
+        return true;
+    }
+
+    /// Drops every inhibitor of a client that left the bus.
+    pub fn dropBusOwner(self: *IdleManager, allocator: std.mem.Allocator, owner: []const u8) void {
+        var removed = false;
+        var i: usize = 0;
+        while (i < self.bus_inhibitors.items.len) {
+            if (std.mem.eql(u8, self.bus_inhibitors.items[i].owner, owner)) {
+                freeBusInhibitor(allocator, self.bus_inhibitors.orderedRemove(i));
+                removed = true;
+            } else i += 1;
+        }
+        if (removed) self.recheckInhibitors();
+    }
+
+    pub fn clearBusInhibitors(self: *IdleManager, allocator: std.mem.Allocator) void {
+        for (self.bus_inhibitors.items) |inhibitor| freeBusInhibitor(allocator, inhibitor);
+        self.bus_inhibitors.deinit(allocator);
+        self.bus_inhibitors = .empty;
+    }
+
+    fn findBusInhibitor(self: *const IdleManager, cookie: u32) ?usize {
+        for (self.bus_inhibitors.items, 0..) |inhibitor, i| {
+            if (inhibitor.cookie == cookie) return i;
+        }
+        return null;
+    }
+
+    fn freeBusInhibitor(allocator: std.mem.Allocator, inhibitor: BusInhibitor) void {
+        allocator.free(inhibitor.owner);
+        allocator.free(inhibitor.app);
+        allocator.free(inhibitor.reason);
+    }
+
+    /// Bus strings are valid UTF-8; cut on a character boundary.
+    fn clip(text: []const u8) []const u8 {
+        if (text.len <= max_bus_text) return text;
+        var end: usize = max_bus_text;
+        while (end > 0 and (text[end] & 0xC0) == 0x80) end -= 1;
+        return text[0..end];
     }
 
     pub fn applyConfig(self: *IdleManager, new_cfg: IdleConfig) void {

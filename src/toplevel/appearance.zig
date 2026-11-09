@@ -197,6 +197,7 @@ pub fn tickGlow(toplevel: *Toplevel, now_ms: i64) bool {
 }
 
 pub fn tickHover(toplevel: *Toplevel, now_ms: i64) bool {
+    const corners = toplevel.tickCornerAccents(now_ms);
     // Every sampler must run each frame (they track their own last value).
     const border = toplevel.hover_anim.sampleChanged(now_ms, anim.rasterAlphaQuantum());
     const glide = toplevel.chip_pos.sampleChanged(now_ms, anim.rasterPixelQuantum(toplevel.render_scale) / chip_slot_px);
@@ -206,7 +207,7 @@ pub fn tickHover(toplevel: *Toplevel, now_ms: i64) bool {
             log.err("tickHover: could not update window decoration: {}", .{err});
         };
     }
-    return !toplevel.hover_anim.settled(now_ms) or !toplevel.chip_pos.settled(now_ms) or !toplevel.chip_alpha.settled(now_ms);
+    return corners or !toplevel.hover_anim.settled(now_ms) or !toplevel.chip_pos.settled(now_ms) or !toplevel.chip_alpha.settled(now_ms);
 }
 
 pub fn nowMs() i64 {

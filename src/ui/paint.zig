@@ -197,6 +197,7 @@ pub const Renderer = struct {
     /// for it and `relief_depth` is set (`relief.zig`). A raised fill's shadows
     /// go under it, around its edge; an inset fill's go over it, inside.
     pub fn fillRect(r: *Renderer, x: f32, y: f32, w: f32, h: f32, style: RectStyle) void {
+        if (style.bevel > 0) return @import("widgets/highlight.zig").fillBeveled(r, .{ .x = x, .y = y, .w = w, .h = h }, style, style.bevel);
         if (style.relief == .flat or w <= 0 or h <= 0) return r.fillRectPlain(x, y, w, h, style);
         const spec = relief.Spec.from(r.palette orelse theme.global, r.scale);
         if (!spec.enabled()) return r.fillRectPlain(x, y, w, h, style);

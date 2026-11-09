@@ -129,6 +129,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
         toplevel.last_painted_hover = 0;
         toplevel.syncBorders(animated.w, animated.h);
         toplevel.applyShape();
+        try toplevel.syncCornerAccents();
         return;
     }
 
@@ -172,6 +173,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     const insets = toplevel.controlInsets();
     state.inset_left = insets.left;
     state.inset_right = insets.right;
+    state.outline = toplevel.shapePolygon(width, height);
 
     const title_memo = chrome.TitlebarMemo.capture(width, height, toplevel.titlePtr(), state);
     const skip_titlebar = if (toplevel.last_titlebar) |prev| prev.eql(title_memo) or toplevel.stretchesTitlebar(prev, title_memo, now_ms) else false;
@@ -192,6 +194,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
 
     toplevel.syncBorders(width, height);
     toplevel.applyShape();
+    try toplevel.syncCornerAccents();
     toplevel.syncResizeGrab(width, height);
     if (rebuild_shadow) try toplevel.syncShadow(width, height, radius);
 

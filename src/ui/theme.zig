@@ -35,6 +35,9 @@ pub const Theme = struct {
     chrome_height: f32 = 46.0,
     /// Space between window controls, independent of their size.
     chrome_control_gap: f32 = 4.0,
+    /// Right padding in the chrome's reference units; downward shift in logical px.
+    chrome_control_right_pad: f32 = 12,
+    chrome_control_offset_y: f32 = 0,
     /// Circular window controls and pill-shaped tabs, including tab controls.
     chrome_round_buttons: bool = false,
     /// A polygon outline for server-decorated windows instead of the rounded
@@ -44,6 +47,29 @@ pub const Theme = struct {
     /// logical px tall (0 draws none), clipped by the window's shape.
     window_top_band: [4]f32 = .{ 0, 0, 0, 0 },
     window_top_band_height: f32 = 0,
+    /// Angled title plate, capped before the window controls. Zero width disables it.
+    window_title_plate: [4]f32 = .{ 0, 0, 0, 0 },
+    window_title_plate_width: f32 = 0,
+    window_title_plate_fg: ?[4]f32 = null,
+    window_title_plate_inset: f32 = 5,
+    window_title_plate_bevel: f32 = 7,
+    /// Right slant as a fraction of chrome_height; gaps/padding are logical px.
+    window_title_plate_slant: f32 = 0.65,
+    window_title_plate_control_gap: f32 = 8,
+    window_title_plate_text_padding: f32 = 8,
+    /// Short strokes following the actual frame outline at its four corners.
+    window_corner_accent: [4]f32 = .{ 0, 0, 0, 0 },
+    window_corner_extent: f32 = 0,
+    /// Extra length during an interactive resize (zero leaves corners static).
+    window_corner_resize_extra: f32 = 0,
+    window_corner_width: f32 = 3,
+    /// Inset beyond the frame's own border ring, and padding at stroke endpoints.
+    window_corner_inset: f32 = 0,
+    window_corner_end_padding: f32 = 2,
+    window_corner_resize_ms: f32 = 140,
+    window_corner_restore_ms: f32 = 180,
+    /// out_cubic, in_out_sine or flip_bezier; global animation preferences still apply.
+    window_corner_resize_ease: []const u8 = "out_cubic",
     // Window decorations use neutral charcoal independently of shell glass.
     window_bg: [4]f32 = .{ @as(f32, 7.6) / 255.0, 9.0 / 255.0, 11.0 / 255.0, 0.80 }, // 80% darkness and opacity
     // Neutral foregrounds keep text and monochrome icons free of a blue tint.
@@ -82,6 +108,8 @@ pub const Theme = struct {
     app_sidebar_selected_marker: ?[4]f32 = null,
     /// Corners of sidebar row highlights (hover and selection).
     app_sidebar_item_radius: f32 = 5,
+    /// Straight 45-degree corners on sidebar and item highlights; zero stays rounded.
+    app_highlight_bevel: f32 = 0,
     app_surface_hover: ?[4]f32 = null,
     app_menu_bg: ?[4]f32 = null,
     app_field_bg: ?[4]f32 = null,
@@ -89,6 +117,18 @@ pub const Theme = struct {
     dock_bg: ?[4]f32 = null,
     dock_border: ?[4]f32 = null,
     dock_radius: f32 = 0, // zero follows the window frame radius
+    /// Straight 45-degree corners on the dock instead of `dock_radius`; zero is rounded.
+    dock_bevel: f32 = 0,
+    /// A resting tile behind every dock icon (unset: none, the ghost button's
+    /// hover only), its outline, and the outline while hovered, pressed or the
+    /// highlighted active app (unset: the accent). Corners cut by `dock_item_bevel`.
+    dock_item_bg: ?[4]f32 = null,
+    dock_item_border: ?[4]f32 = null,
+    dock_item_hover_border: ?[4]f32 = null,
+    dock_item_bevel: f32 = 0,
+    /// How far dock icons are drained of colour at rest (0 keeps them, 1 is
+    /// grey); a hovered icon, or the highlighted active app, shows its colours.
+    dock_icon_grey: f32 = 0,
     notification_bg: ?[4]f32 = null,
     notification_fg: ?[4]f32 = null,
     notification_dim: ?[4]f32 = null,
@@ -119,6 +159,14 @@ pub const Theme = struct {
     scrollbar_thumb: [4]f32 = .{ 89.0 / 255.0, 98.0 / 255.0, 110.0 / 255.0, 1 }, // #59626e
     /// Unset follows the surface accent during hover/drag.
     scrollbar_thumb_active: ?[4]f32 = null,
+    /// Optional stationary diagonal hatching, shared by Cairo and widget bars.
+    scrollbar_track: [4]f32 = .{ 0, 0, 0, 0 },
+    scrollbar_track_stripe: [4]f32 = .{ 0, 0, 0, 0 },
+    /// Pattern distances along the bar; slope 1 is diagonal, 0 is transverse.
+    /// Zero period or width hides the stripes, retaining the track fill.
+    scrollbar_track_stripe_period: f32 = 10,
+    scrollbar_track_stripe_width: f32 = 5,
+    scrollbar_track_stripe_slope: f32 = 1,
     /// Strength of the light on a hovered/dragged/scrolling thumb (1 = subtle,
     /// 0 = a flat thumb: no highlight stripe, only the colour feedback).
     scrollbar_glow: f32 = 1.0,
@@ -434,6 +482,9 @@ pub const Theme = struct {
     start_button_radius: f32 = 6,
     polkit_backdrop: [4]f32 = .{ 0, 0, 0, 0.55 },
     power_menu_backdrop: [4]f32 = .{ 0, 0, 0, 0.45 },
+    /// Straight 45-degree corners on the power menu panel, logical px; its tiles
+    /// and selection outline take three quarters. Zero keeps them rounded.
+    power_menu_bevel: f32 = 0,
     mini_map_bg_opacity: f32 = 0.91,
     mini_map_grid_alpha: f32 = 0.065,
     mini_map_border_alpha: f32 = 0.12,

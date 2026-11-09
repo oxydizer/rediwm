@@ -68,7 +68,7 @@ pub const ItemBox = struct { x: f64, y: f64, w: f64, h: f64 };
 pub fn drawItemHighlight(cr_any: *anyopaque, box: ItemBox, selected: bool, fill_alpha: f32, border_alpha: f32) void {
     if (box.w <= 0 or box.h <= 0 or (fill_alpha <= 0 and border_alpha <= 0)) return;
     const cr: *c.cairo_t = @ptrCast(cr_any);
-    roundedPath(cr, box.x, box.y, box.w, box.h, @min(6, @min(box.w, box.h) / 2));
+    @import("widgets/highlight.zig").path(cr, box.x, box.y, box.w, box.h, 6);
     if (fill_alpha > 0) {
         var fill = if (selected) theme.global.app_item_selected else theme.global.app_item_hover;
         fill[3] *= fill_alpha;
@@ -165,7 +165,7 @@ pub fn drawProximityGlow(
     layer.finish();
 }
 
-/// Sidebar hover: a plain rounded fill at `alpha`.
+/// Sidebar hover: the theme's highlight outline filled at `alpha`.
 pub fn drawSidebarHover(cr_any: *anyopaque, box: Rect, alpha: f32) void {
     if (box.w <= 0 or box.h <= 0 or alpha <= 0) return;
     const cr: *c.cairo_t = @ptrCast(cr_any);
@@ -218,7 +218,7 @@ pub fn drawSidebarSelected(cr_any: *anyopaque, box: Rect) void {
 
 fn sidebarRowPath(cr: *c.cairo_t, box: Rect) void {
     const radius = @min(theme.global.app_sidebar_item_radius, @min(box.w, box.h) / 2);
-    roundedPath(cr, box.x, box.y, box.w, box.h, radius);
+    @import("widgets/highlight.zig").path(cr, box.x, box.y, box.w, box.h, radius);
 }
 
 fn roundedPath(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, radius: f64) void {
@@ -252,7 +252,7 @@ pub fn drawScrollbarAt(cr_any: *anyopaque, look: scrollbar.Look, pointer: ?Point
 
     const track = look.track;
     const thumb = look.rect;
-    const needs_track_layer = look.track_relief != .flat or look.thumb_relief == .raised;
+    const needs_track_layer = scrollbar.hasTrack(look) or look.thumb_relief == .raised;
     const left = if (needs_track_layer) @min(track.x, thumb.x) else thumb.x;
     const top = if (needs_track_layer) @min(track.y, thumb.y) else thumb.y;
     const right = if (needs_track_layer) @max(track.x + track.w, thumb.x + thumb.w) else thumb.x + thumb.w;
@@ -655,6 +655,8 @@ test "a scrollbar thumb paints its look through cairo" {
     c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
     c.cairo_scale(cr, 1.5, 1.5);
     c.cairo_translate(cr, 0.25, 0.5);
+    palette.scrollbar_track = .{ 0.1, 0.1, 0.1, 1 };
+    palette.scrollbar_track_stripe = .{ 0.25, 0.25, 0.25, 1 };
     var hot = scrollbar.look(g, .{ .wide = 1, .accent = 1, .shine = 1 }, 8, palette);
     drawScrollbar(cr, hot);
     c.cairo_surface_flush(surface);

@@ -49,6 +49,30 @@ chrome, capture, or retained panel painting. General rules remain in
   handed the shape explicitly. The ring is one `max(1, round(border * scale))`.
   Without the shaped programs (`chrome.shapes` false) windows are square, with
   no ring or shadow.
+  Optional `window_corner_*` accents are four small immutable rasters owned by
+  the frame tree (`toplevel/corner_accents.zig`), following that same shape just
+  inside its ring. They decline input, inherit opacity, and memoize geometry,
+  shape, scale and theme; maximized/fullscreen/undecorated windows hide them.
+  `window_corner_resize_extra` adds length during a live resize grab. The normal
+  chrome frame tick eases that extension in/out, including split resizes; it
+  stops scheduling when settled. Begin/end wake the tick even without a client
+  commit, and pending configure acknowledgements do not prolong the feedback.
+  The grow/return durations and easing are `window_corner_resize_ms`,
+  `window_corner_restore_ms`, and `window_corner_resize_ease`; live timing edits
+  continue from the displayed length. `window_corner_inset` adds space beyond
+  the frame ring, and `window_corner_end_padding` shortens the stroke endpoints.
+  `window_title_plate*` paints an angled title label, limits text before its
+  slant and leaves grouped tabs to their existing painter. Its tokens belong
+  in `TitlebarMemo` so reload and partial title repaint agree.
+  Plate inset, bevel, height-relative slant, control gap and text padding are
+  theme tokens too; narrow frames clamp opposing cuts to prevent crossed edges.
+  With a polygon outline (`ChromeState.outline`) the plate is also cut by the
+  outline moved in by the inset (`chrome_plate.distance`, keyed in the memo),
+  so chamfers keep an even margin; a step meant to hug the plate's slant has
+  to be placed in px in `window_shape` to match the plate's width and slant.
+  `chrome_control_right_pad` and `chrome_control_offset_y` move the shared
+  control rectangles, including painting and input. `controlInsets` measures
+  the polygon at the shifted control rows while leaving the icon centred.
 * **Buffer size ≠ scene size** at fractional scale (`round(len*s)` vs
   `round((off+len)*s)-round(off*s)`). Chrome/panel buffers filter bilinearly:
   never re-raster per device-grid phase (`ChromeBuffer.create` costs 2–8 ms).

@@ -190,3 +190,60 @@ test "an unsuccessful sleep attempt does not cancel later display blanking" {
     try std.testing.expect(!im.isBlanked());
     try std.testing.expect(!im.suspend_requested);
 }
+
+test "D-Bus inhibitors hold off blanking until uninhibited or their client leaves" {
+    const allocator = std.testing.allocator;
+    var im: IdleManager = .{
+        .config = .{ .enabled = true, .blank_after_seconds = 10 },
+        .clock = .{ .mock_now_ms = 1000 },
+        .last_activity_ms = 1000,
+    };
+    im.inhibitors.init();
+    defer im.clearBusInhibitors(allocator);
+
+    const video = try im.addBusInhibitor(allocator, ":1.7", "brave", "Playing video");
+    const audio = try im.addBusInhibitor(allocator, ":1.7", "brave", "Playing audio");
+    const portal = try im.addBusInhibitor(allocator, ":1.9", "firefox", "Inhibit");
+    try std.testing.expect(video != 0 and video != audio and audio != portal);
+    try std.testing.expect(im.is_inhibited);
+    try std.testing.expectEqual(@as(usize, 3), im.inhibitorCount());
+
+    im.clock.mock_now_ms = 60_000;
+    im.tickTimer();
+    try std.testing.expectEqual(State.active, im.state);
+
+    // Another client cannot release a cookie it does not hold.
+    try std.testing.expect(!im.removeBusInhibitor(allocator, ":1.9", video));
+    try std.testing.expect(im.removeBusInhibitor(allocator, ":1.7", video));
+    try std.testing.expect(!im.removeBusInhibitor(allocator, ":1.7", video));
+    im.dropBusOwner(allocator, ":1.7");
+    try std.testing.expect(im.is_inhibited);
+    try std.testing.expect(im.removeBusInhibitor(allocator, ":1.9", portal));
+    try std.testing.expect(!im.is_inhibited);
+
+    // Releasing the last inhibitor starts a full timeout from now.
+    try std.testing.expectEqual(@as(i64, 60_000), im.last_activity_ms);
+    im.clock.mock_now_ms = 65_000;
+    im.tickTimer();
+    try std.testing.expectEqual(State.active, im.state);
+    im.clock.mock_now_ms = 70_000;
+    im.tickTimer();
+    try std.testing.expectEqual(State.blanked, im.state);
+}
+
+test "D-Bus inhibitors are bounded and clip long text" {
+    const allocator = std.testing.allocator;
+    var im: IdleManager = .{ .config = .{ .enabled = true, .blank_after_seconds = 10 } };
+    im.inhibitors.init();
+    defer im.clearBusInhibitors(allocator);
+
+    const long: [400]u8 = @bitCast(@as([200][2]u8, @splat("é".*)));
+    _ = try im.addBusInhibitor(allocator, ":1.3", &long, &long);
+    const kept = im.bus_inhibitors.items[0].app;
+    try std.testing.expect(kept.len <= 256 and std.unicode.utf8ValidateSlice(kept));
+    for (1..idle.max_bus_inhibitors) |_| _ = try im.addBusInhibitor(allocator, ":1.3", "a", "b");
+    try std.testing.expectError(error.TooManyInhibitors, im.addBusInhibitor(allocator, ":1.3", "a", "b"));
+    im.dropBusOwner(allocator, ":1.3");
+    try std.testing.expectEqual(@as(usize, 0), im.inhibitorCount());
+    try std.testing.expect(!im.is_inhibited);
+}

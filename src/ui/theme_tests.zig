@@ -285,7 +285,6 @@ test "chrome geometry validates and survives theme serialization" {
     try std.testing.expect(restored.chrome_round_buttons);
 }
 
-
 test "component relief theme keys parse, inherit, and reject invalid values" {
     const Relief = theme.Relief;
     try std.testing.expect(theme_file.knownKey("button_relief"));
@@ -427,4 +426,28 @@ test "relief keys of the remaining widgets parse, default to flat and round-trip
     try std.testing.expectEqual(t.stepper_relief, reloaded.stepper_relief);
     try std.testing.expectEqual(Relief.flat, defaults.settings_card_relief);
     try std.testing.expectEqual(Relief.flat, defaults.taskbar_chip_active_relief);
+}
+
+test "decoration geometry and resize easing are validated theme data" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var t: Theme = .{};
+    try std.testing.expectError(error.InvalidEase, applyKey(a, &t, "window_corner_resize_ease", "\"unknown\""));
+    try std.testing.expectError(error.InvalidSize, applyKey(a, &t, "window_title_plate_slant", "1.1"));
+    try applyKey(a, &t, "window_corner_resize_ease", "\"in_out_sine\"");
+    try applyKey(a, &t, "window_corner_resize_ms", "400");
+    try applyKey(a, &t, "window_corner_restore_ms", "350");
+    try applyKey(a, &t, "scrollbar_track_stripe_period", "14");
+    try applyKey(a, &t, "scrollbar_track_stripe_width", "3");
+    try applyKey(a, &t, "scrollbar_track_stripe_slope", "0.5");
+    var bytes: std.ArrayList(u8) = .empty;
+    try writeInto(a, &bytes, t);
+    const restored = try parse(a, bytes.items);
+    try std.testing.expectEqualStrings("in_out_sine", restored.window_corner_resize_ease);
+    try std.testing.expectEqual(@as(f32, 400), restored.window_corner_resize_ms);
+    try std.testing.expectEqual(@as(f32, 350), restored.window_corner_restore_ms);
+    try std.testing.expectEqual(@as(f32, 14), restored.scrollbar_track_stripe_period);
+    try std.testing.expectEqual(@as(f32, 3), restored.scrollbar_track_stripe_width);
+    try std.testing.expectEqual(@as(f32, 0.5), restored.scrollbar_track_stripe_slope);
 }
