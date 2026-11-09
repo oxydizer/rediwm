@@ -86,6 +86,7 @@ test "proximity sampling respects clipping and returns button-local coordinates"
 pub const Variant = enum { primary, secondary, ghost, chrome };
 
 pub const Size = enum { sm, md, lg };
+pub const Alignment = enum { center, left };
 
 pub const Options = struct {
     variant: Variant = .secondary,
@@ -103,7 +104,9 @@ pub const Options = struct {
     /// `leading_icon` above the label rather than beside it: a tile, like the
     /// lock's Power and Restart.
     stacked: bool = false,
-    alignment: enum { center, left } = .center,
+    alignment: Alignment = .center,
+    /// A danger-colored outline and label for a destructive secondary action.
+    destructive: bool = false,
     /// Override for chrome's tab navigation buttons, which use the ghost look.
     radius: ?f32 = null,
 };
@@ -173,6 +176,8 @@ pub fn optionsOf(data: layout.ButtonData) Options {
         .leading_icon = data.leading_icon,
         .trailing_icon = data.trailing_icon,
         .stacked = data.stacked,
+        .alignment = data.alignment,
+        .destructive = data.destructive,
     };
 }
 
@@ -199,6 +204,7 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
         .chrome => if (hovered) t.window_close_hover else clear,
     };
     if (opts.variant == .chrome) bg[3] *= t.window_close_hover_alpha;
+    if (opts.destructive and opts.variant == .secondary) bg = .{ t.danger[0], t.danger[1], t.danger[2], t.danger[3] * @as(f32, if (hovered) 0.16 else 0.06) };
     if (opts.variant == .primary and hovered) for (0..3) |i| {
         bg[i] = @min(1, bg[i] * t.button_hover_brightness);
     };
@@ -214,7 +220,7 @@ pub fn paintBackground(r: *Renderer, box: Rect, opts: Options, state: State) voi
             .color = bg,
             .radius = radius,
             .border_width = border_w,
-            .border_color = if (ring) t.controlFocusColor() else if (hovered) t.border else t.border_soft,
+            .border_color = if (ring) t.controlFocusColor() else if (opts.destructive and !disabled) t.danger else if (hovered) t.border else t.border_soft,
         });
         if (adaptive_hover) {
             paintAdaptiveRelief(r, box, radius, t.button_relief, state.hover_elevation, t);
@@ -542,7 +548,7 @@ pub fn paintContent(r: *Renderer, box: Rect, opts: Options, state: State) void {
     const t = r.palette orelse theme.global;
     const m = metrics(opts.size, t);
     const disabled = state.pointer == .disabled;
-    const fg = if (disabled) t.faint else if (opts.variant == .primary) t.on_accent else t.fg;
+    const fg = if (disabled) t.faint else if (opts.variant == .primary) t.on_accent else if (opts.destructive) t.danger else t.fg;
     if (opts.icon) |id| {
         if (opts.variant == .chrome and id == .close) {
             paintClose(r, box, opts, state);

@@ -149,6 +149,8 @@ pub const IconId = enum {
     divide,
     touchpad,
     trackball,
+    cpu,
+    ram,
 };
 
 pub const ButtonState = enum { idle, hover, press, disabled };
@@ -245,6 +247,8 @@ pub const ButtonData = struct {
     leading_icon: ?IconId = null,
     trailing_icon: ?IconId = null,
     stacked: bool = false,
+    alignment: @import("widgets/button.zig").Alignment = .center,
+    destructive: bool = false,
     on_click: ?*const fn (owner: ?*anyopaque, id: usize) void = null,
     owner: ?*anyopaque = null,
     id: usize = 0,

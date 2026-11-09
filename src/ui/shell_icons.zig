@@ -74,6 +74,8 @@ pub fn configure(io: std.Io, root: []const u8) void {
         .{ IconId.volume_low, "speaker" },
         .{ IconId.volume_muted, "speaker-xmark" },
         .{ IconId.clock, "clock" },
+        .{ IconId.cpu, "cpu" },
+        .{ IconId.ram, "ram" },
         .{ IconId.lock, "lock" },
         .{ IconId.logout, "logout" },
         .{ IconId.reboot, "restart" },
@@ -168,6 +170,8 @@ fn builtinSource(id: IconId) ?[]const u8 {
         .volume, .volume_low => @embedFile("shell-icon-speaker"),
         .volume_muted => @embedFile("shell-icon-speaker-xmark"),
         .clock => @embedFile("shell-icon-clock"),
+        .cpu => @embedFile("shell-icon-cpu"),
+        .ram => @embedFile("shell-icon-ram"),
         .lock => @embedFile("shell-icon-lock"),
         .logout => @embedFile("shell-icon-logout"),
         .reboot => @embedFile("shell-icon-restart"),
@@ -258,7 +262,7 @@ fn rasterize(svg: []const u8, size: i32) ?Mask {
 
 test "bundled shell SVGs render nonempty transparent masks at fractional scales" {
     defer deinit();
-    for ([_]IconId{ .print, .usb_stick, .drive, .eject, .home, .settings, .mouse, .touchpad, .trackball, .display, .music, .headphones, .wifi, .bluetooth, .battery, .notification, .volume, .volume_muted, .power, .clock, .lock, .logout, .reboot, .divide }) |id| {
+    for ([_]IconId{ .print, .usb_stick, .drive, .eject, .home, .settings, .mouse, .touchpad, .trackball, .display, .music, .headphones, .wifi, .bluetooth, .battery, .notification, .volume, .volume_muted, .power, .clock, .cpu, .ram, .lock, .logout, .reboot, .divide }) |id| {
         for ([_]i32{ 24, 36, 48 }) |size| {
             const mask = get(id, size) orelse return error.InvalidShellIcon;
             var visible = false;

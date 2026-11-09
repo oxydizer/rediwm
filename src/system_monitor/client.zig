@@ -339,7 +339,7 @@ pub const Client = struct {
                     if (self.outputs.items.len > 0) {
                         const output = self.outputs.items[0];
                         if (output.logical_width > 0) width = std.math.clamp(output.logical_width - 160, 640, 1080);
-                        if (output.logical_height > 0) height = std.math.clamp(output.logical_height - 200, 400, 640);
+                        if (output.logical_height > 0) height = std.math.clamp(output.logical_height - 200, 480, 640);
                     }
                     self.app.resize(width, height);
                 }
@@ -348,7 +348,7 @@ pub const Client = struct {
                     suspended = true;
                 };
                 self.app.setSuspended(suspended);
-                self.xdg_toplevel.setMinSize(640, 400 + tbh);
+                self.xdg_toplevel.setMinSize(640, 480 + tbh);
                 self.app.dirty = true;
             },
             .close => {
@@ -820,7 +820,7 @@ pub fn run(init: std.process.Init) !void {
     // Real min size is set from xdgToplevelEvent once the decoration mode
     // (and thus titlebar height) is known; this is just a safe pre-configure
     // default sized for the worst case (self-decorated).
-    self.xdg_toplevel.setMinSize(640, 400 + CSD_TITLEBAR_H);
+    self.xdg_toplevel.setMinSize(640, 480 + CSD_TITLEBAR_H);
 
     // Prefer server-side decorations; the compositor may still tell us via
     // decorationEvent to self-decorate (e.g. it has no SSD implementation),

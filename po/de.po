@@ -16,9 +16,9 @@ msgstr ""
 "X-RediWM-Locale: de_DE.UTF-8\n"
 "X-RediWM-Reviewed: no\n"
 
-#: src/system_monitor/app.zig
-msgid " · /proc unavailable"
-msgstr " · /proc nicht verfügbar"
+#: src/system_monitor/app_footer.zig
+msgid " · Process data unavailable"
+msgstr " · Prozessdaten nicht verfügbar"
 
 #: src/control_center/sections/printers.zig
 msgid " · Default"
@@ -7410,11 +7410,11 @@ msgid_plural "{n} completed sheets reported by CUPS"
 msgstr[0] "{n} fertiggestelltes Blatt von CUPS gemeldet"
 msgstr[1] "{n} fertiggestellte Blätter von CUPS gemeldet"
 
-#: src/system_monitor/app.zig
-msgid "{n} process · Swap {swap}{status}"
-msgid_plural "{n} processes · Swap {swap}{status}"
-msgstr[0] "{n} Prozess · Auslagerung {swap}{status}"
-msgstr[1] "{n} Prozesse · Auslagerung {swap}{status}"
+#: src/system_monitor/app_footer.zig
+msgid "{n} process{status}"
+msgid_plural "{n} processes{status}"
+msgstr[0] "{n} Prozess{status}"
+msgstr[1] "{n} Prozesse{status}"
 
 #: src/control_center/sections/services.zig
 msgid "{n} service, {enabled} enabled"

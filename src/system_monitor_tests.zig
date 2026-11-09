@@ -6,6 +6,10 @@ const model = @import("system_monitor/model.zig");
 const collector = @import("system_monitor/collector.zig");
 const actions = @import("system_monitor/actions.zig");
 
+test {
+    _ = @import("system_monitor/proc_system_tests.zig");
+}
+
 test "monitor backend lists and describes this process and the machine" {
     const pid = proc.c.getpid();
     var list = proc.List.open().?;
@@ -171,6 +175,7 @@ test "monitor worker pause cancels publication and resume starts a fresh CPU int
     try std.testing.expect(proc.c.poll(&fd, 1, 3000) > 0);
     const first = worker.take().?;
     try std.testing.expect(first.cpu_percent == null);
+    try std.testing.expect(first.network_rate == null);
     first.deinit();
     worker.setActive(false);
     if (worker.take()) |unexpected| {
@@ -183,6 +188,7 @@ test "monitor worker pause cancels publication and resume starts a fresh CPU int
     const resumed = worker.take().?;
     defer resumed.deinit();
     try std.testing.expect(resumed.cpu_percent == null);
+    try std.testing.expect(resumed.network_rate == null);
     for (resumed.processes) |row| try std.testing.expect(row.cpu_percent == null);
     // Exercise cancellation while enumeration may already be in progress.
     worker.setActive(false);

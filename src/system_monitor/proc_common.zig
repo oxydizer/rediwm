@@ -36,6 +36,27 @@ pub fn protectedName(name: []const u8) bool {
 }
 
 pub const Cpu = struct { total: u64, idle: u64 };
+pub const System = struct {
+    logical_cpus: ?u32 = null,
+    frequency_ghz: ?f64 = null,
+    uptime_seconds: ?u64 = null,
+    temperature_c: ?f64 = null,
+    network: ?Network = null,
+};
+pub const Network = struct { received: u64 = 0, sent: u64 = 0, interfaces: u64 = 0 };
+pub const NetworkRate = struct { received: f64, sent: f64 };
+
+/// Interface changes and reset counters need a fresh baseline, as does resume.
+pub fn networkRate(before: Network, after: Network, elapsed_ns: u64) ?NetworkRate {
+    if (elapsed_ns == 0 or before.interfaces != after.interfaces or
+        after.received < before.received or after.sent < before.sent) return null;
+    const seconds = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000_000;
+    return .{
+        .received = @as(f64, @floatFromInt(after.received - before.received)) / seconds,
+        .sent = @as(f64, @floatFromInt(after.sent - before.sent)) / seconds,
+    };
+}
+
 pub fn cpuPercent(before: Cpu, after: Cpu) ?f64 {
     if (after.total <= before.total or after.idle < before.idle) return null;
     const total = after.total - before.total;

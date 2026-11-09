@@ -4,12 +4,25 @@ Open **System Monitor** from the launcher, with **Ctrl+Alt+Del**, or by
 running `rediwm-monitor`. The shortcut restores and focuses an existing
 window, including one on another workspace.
 
-CPU and RAM summaries have 60-second graphs. System RAM usage is
+CPU and RAM summary cards show large current percentages and shaded 60-second
+graphs. CPU includes its reported frequency and logical CPU count; RAM includes
+used/total capacity and a usage bar. Graph axes show CPU percentages and memory
+capacity. The cards use a compact layout in narrow windows. System RAM usage is
 `MemTotal - MemAvailable`; process memory is resident memory. A process
 using one CPU core reads 100%, so multithreaded processes can exceed 100%.
 New processes and the first sample after resuming show an em dash until
 there is a second CPU measurement. Unavailable data also shows an em dash.
 Nonlocal account names fall back to their numeric UID.
+
+The bottom bar groups CPU, RAM, swap, network, uptime and CPU temperature
+beside the process actions. It wraps the readouts and actions at smaller
+window sizes. CPU shows online logical CPUs and CPU 0's reported frequency;
+RAM and swap show used/total capacity and a percentage. Network arrows show
+total upload/download rates across non-loopback interfaces (virtual interfaces
+can count the same traffic again). The first sample after resume or an interface
+change shows a dash. Temperature is the hottest supported CPU sensor, never a
+disk or GPU reading. Missing metrics show a dash; FreeBSD currently provides
+CPU count, frequency and uptime, with network and temperature unavailable.
 
 The list starts with your processes, sorted by CPU usage. Click a column to
 sort; click again to reverse. **My processes / All processes** changes the
@@ -22,6 +35,12 @@ and essential RediWM session protection at execution, including after a
 confirmation has been open. Signals use a validated pidfd. Other users'
 processes can be viewed where `/proc` permits but cannot be managed here.
 The monitor never requests elevated privileges.
+
+The process table has alternating rows, column dividers, process glyphs and
+colored state indicators. CPU bars fill at one core (100%); resident-memory
+bars are relative to the largest process in the snapshot, including processes
+outside the current filter. Exact values stay visible, and bars hide when the
+window is too narrow to fit them.
 
 Process rows use Files' rounded hover and selection cards. The hover fades in
 and glides between rows; selection fades use the accent outline. Both follow

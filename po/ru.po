@@ -16,9 +16,9 @@ msgstr ""
 "X-RediWM-Locale: ru_RU.UTF-8\n"
 "X-RediWM-Reviewed: no\n"
 
-#: src/system_monitor/app.zig
-msgid " · /proc unavailable"
-msgstr " · /proc недоступен"
+#: src/system_monitor/app_footer.zig
+msgid " · Process data unavailable"
+msgstr " · Данные процессов недоступны"
 
 #: src/control_center/sections/printers.zig
 msgid " · Default"
@@ -7421,12 +7421,12 @@ msgstr[0] "CUPS сообщает о {n} напечатанном листе"
 msgstr[1] "CUPS сообщает о {n} напечатанных листах"
 msgstr[2] "CUPS сообщает о {n} напечатанных листах"
 
-#: src/system_monitor/app.zig
-msgid "{n} process · Swap {swap}{status}"
-msgid_plural "{n} processes · Swap {swap}{status}"
-msgstr[0] "{n} процесс · Подкачка {swap}{status}"
-msgstr[1] "{n} процесса · Подкачка {swap}{status}"
-msgstr[2] "{n} процессов · Подкачка {swap}{status}"
+#: src/system_monitor/app_footer.zig
+msgid "{n} process{status}"
+msgid_plural "{n} processes{status}"
+msgstr[0] "{n} процесс{status}"
+msgstr[1] "{n} процесса{status}"
+msgstr[2] "{n} процессов{status}"
 
 #: src/control_center/sections/services.zig
 msgid "{n} service, {enabled} enabled"

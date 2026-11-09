@@ -125,9 +125,14 @@ def run(scale, workspace):
                         b = box()
                         output = ipc.get_outputs()[0]
                         factor = image.width / output["logical_width"]
-                        region = ((b["x"] + 16, b["y"] + 68, b["x"] + b["width"] - 16, b["y"] + 134)
+                        region = ((b["x"] + 16, b["y"] + 14, b["x"] + b["width"] - 16, b["y"] + 136)
                                   if graph else (b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]))
-                        return image.convert("RGB").crop(tuple(round(v * factor) for v in region))
+                        result = image.convert("RGB").crop(tuple(round(v * factor) for v in region))
+                        if artifacts := os.environ.get("REDIWM_TEST_ARTIFACT_DIR"):
+                            destination = Path(artifacts)
+                            destination.mkdir(parents=True, exist_ok=True)
+                            result.save(destination / f"monitor-{scale}-{'workspaces' if workspace else 'canvas'}-{name}.png")
+                        return result
 
                 def idle(label):
                     time.sleep(.4)  # finish pending buffer release and hover transitions
@@ -177,6 +182,7 @@ def run(scale, workspace):
                     return image.getpixel((round(20 * factor), round(y * factor)))
 
                 assert row_pixel("row-idle", 252) == (32, 48, 64)
+                assert row_pixel("row-stripe", 284) == (34, 40, 46)
                 move(40, 252)
                 time.sleep(.6)
                 assert row_pixel("row-hover", 252) == (74, 96, 118)
@@ -224,10 +230,21 @@ def run(scale, workspace):
                     assert monitor()["id"] == window_id and len(windows()) == 1
 
                 # Resize through maximize and return; the controls remain usable.
+                original = box()
                 ipc.maximize(window_id)
+                wait_for(lambda: box()["width"] > original["width"], "monitor did not maximize")
                 settled()
                 assert box()["width"] > 640
-                ipc.maximize(window_id)
+                shot("footer-wide")
+                ipc.restore(window_id)
+                wait_for(lambda: box()["width"] == original["width"], "monitor did not restore its width")
+                settled()
+                ipc.action("set_window_size", {"id": window_id, "width": 640, "height": 480})
+                wait_for(lambda: box()["width"] == 640, "monitor did not resize to its minimum width")
+                settled()
+                shot("footer-narrow")
+                ipc.action("set_window_size", {"id": window_id, "width": original["width"], "height": original["height"]})
+                wait_for(lambda: box()["width"] == original["width"], "monitor did not restore after narrow layout")
                 settled()
 
                 def fixture(ignore_term, replace_with=None):
@@ -258,7 +275,8 @@ def run(scale, workspace):
                     return child
 
                 normal = fixture(False)
-                chord(111)  # Delete sends TERM only to the selected fixture
+                shot("footer-selected")
+                click(box()["width"] - 224, box()["height"] - 61)
                 wait_for(lambda: normal.poll() is not None, "End process did not terminate fixture")
                 assert normal.returncode == -signal.SIGTERM
 
@@ -266,7 +284,7 @@ def run(scale, workspace):
                 chord(111)
                 time.sleep(.25)
                 assert stubborn.poll() is None, "fixture did not ignore SIGTERM"
-                chord(42, 111)  # Shift+Delete opens the named confirmation
+                click(box()["width"] - 90, box()["height"] - 61)
                 time.sleep(.2)
                 confirmation = shot("force-confirm")
                 assert stubborn.poll() is None, "force quit ran before confirmation"

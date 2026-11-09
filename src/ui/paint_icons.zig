@@ -176,7 +176,7 @@ pub fn iconDistance(id: IconId, px: f32, py: f32, cx: f32, cy: f32, half: f32, t
             const bar = sdSegment(px, py, cx, cy - half * 0.95, cx, cy - half * 0.05, t);
             break :blk @min(@max(ring, -gap), bar);
         },
-        .clock, .divide => 1000, // Embedded SVG; no procedural fallback.
+        .clock, .divide, .cpu, .ram => 1000, // Embedded SVG; no procedural fallback.
         .power_saver, .power_balanced, .power_performance => blk: {
             // Upper three quarters of a ring, open at the bottom, with a
             // needle from the hub.

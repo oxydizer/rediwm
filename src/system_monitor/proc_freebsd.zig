@@ -180,3 +180,17 @@ pub fn memoryTotals(_: []u8) ?common.Memory {
 pub fn ticksPerSecond() u64 {
     return 1_000_000;
 }
+
+pub fn systemStats(_: []u8) common.System {
+    var result: common.System = .{};
+    if (sysctlValue(c_uint, "hw.ncpu")) |count| if (count > 0) {
+        result.logical_cpus = count;
+    };
+    if (sysctlValue(c_int, "dev.cpu.0.freq")) |mhz| if (mhz > 0) {
+        result.frequency_ghz = @as(f64, @floatFromInt(mhz)) / 1000;
+    };
+    var uptime: c.struct_timespec = undefined;
+    if (c.clock_gettime(c.CLOCK_UPTIME, &uptime) == 0 and uptime.tv_sec >= 0)
+        result.uptime_seconds = @intCast(uptime.tv_sec);
+    return result;
+}

@@ -13,9 +13,12 @@ const proc = @import("proc.zig");
 const actions = @import("actions.zig");
 const scrollbar = ui.widgets.scrollbar;
 const a = std.heap.c_allocator;
-const row_h: f64 = 32;
+pub const row_h: f64 = 32;
+const table = @import("app_table.zig");
+const footer_view = @import("app_footer.zig");
+const summary = @import("app_summary.zig");
 const titles = [_]i18n.Message{ i18n.msg("Name"), i18n.msg("PID"), i18n.msg("User"), i18n.msg("CPU %"), i18n.msg("Memory (resident)"), i18n.msg("State") };
-const proportions = [_]f32{ 0.28, 0.10, 0.15, 0.12, 0.21, 0.14 };
+const proportions = [_]f32{ 0.25, 0.10, 0.11, 0.18, 0.20, 0.16 };
 const Pending = enum { none, end, confirm, cancel, force };
 const Confirmation = struct { identity: proc.Identity, name: [256]u8 = undefined, len: usize };
 const Selection = struct { identity: proc.Identity, fade: ui.hover_glide.Fade = .{} };
@@ -116,12 +119,15 @@ pub const App = struct {
             header.* = self.button(title.get(), 10 + i, 0);
             header.width = .{ .percent = width };
             header.kind.button.variant = .ghost;
+            header.kind.button.alignment = .left;
         }
         self.footer = .{
             .{ .kind = .container, .width = .{ .flex = 1 } },
             self.button(tr("End process"), 2, 124),
             self.button(tr("Force quit…"), 3, 124),
         };
+        self.footer[1].kind.button.destructive = true;
+        for (self.footer[1..]) |*control| control.height = .{ .fixed = 38 };
         self.sections = .{
             .{ .kind = .container, .height = .{ .fixed = 150 } },
             .{ .kind = .container, .height = .{ .fixed = 50 }, .padding = .{ .left = 16, .right = 16, .top = 4 }, .gap = 8, .children = &self.toolbar },
@@ -141,8 +147,10 @@ pub const App = struct {
     fn layout(self: *App) void {
         if (!self.initialized) return;
         self.sections[2].padding.right = scrollbar.gutter(theme.global.scrollbar_width) + 16;
+        self.sections[4].height = .{ .fixed = footer_view.height(self) };
         ui.measure.measure(&self.root, @floatFromInt(self.w), @floatFromInt(self.h));
         ui.arrange.arrange(&self.root, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h));
+        self.layoutFooter();
         const box = self.dialogBox();
         ui.measure.measure(&self.modal, 252, 34);
         ui.arrange.arrange(&self.modal, box.x + box.w - 276, box.y + box.h - 50, 252, 34);
@@ -150,7 +158,7 @@ pub const App = struct {
     }
     pub fn resize(self: *App, width: i32, height: i32) void {
         self.w = @max(640, width);
-        self.h = @max(400, height);
+        self.h = @max(480, height);
         self.layout();
         self.dirty = true;
     }
@@ -171,7 +179,7 @@ pub const App = struct {
             },
             2 => self.pending = .end,
             3 => self.pending = .confirm,
-            10...15 => self.model.setSort(@enumFromInt(id - 10)),
+            10...15 => self.model.setSort(@fromBackingInt(@intCast(id - 10))),
             20 => self.pending = .cancel,
             21 => self.pending = .force,
             else => {},
@@ -373,8 +381,8 @@ pub const App = struct {
         if (self.confirmation != null or self.ctrl or self.alt) return false;
         return sym == c.XKB_KEY_Up or sym == c.XKB_KEY_Down or sym == c.XKB_KEY_Page_Up or sym == c.XKB_KEY_Page_Down or sym == c.XKB_KEY_BackSpace or (self.dispatcher.focused == &self.toolbar[0] and text.len > 0);
     }
-    fn listBox(self: *const App) Rect {
-        return .{ .x = 16, .y = 236, .w = @floatFromInt(self.w - 32), .h = @floatFromInt(@max(0, self.h - 310)) };
+    pub fn listBox(self: *const App) Rect {
+        return .{ .x = 16, .y = 236, .w = @floatFromInt(self.w - 32), .h = @max(0, @as(f32, @floatFromInt(self.h)) - 264 - footer_view.height(self)) };
     }
     fn processAt(self: *const App) ?usize {
         if (self.confirmation != null or self.suspended or self.bar_drag.active) return null;
@@ -384,14 +392,14 @@ pub const App = struct {
         const index: usize = @intFromFloat(@floor((self.py - list.y + self.model.scroll) / row_h));
         return if (index < self.model.rows.items.len) index else null;
     }
-    fn rowBox(self: *const App, row: f32) cairo.ItemBox {
+    pub fn rowBox(self: *const App, row: f32) cairo.ItemBox {
         const list = self.listBox();
         return .{ .x = list.x + 1, .y = list.y + @as(f64, row) * row_h - self.model.scroll + 1, .w = list.w - scrollbar.gutter(theme.global.scrollbar_width) - 2, .h = row_h - 2 };
     }
     fn clampScroll(self: *App) void {
         self.model.scroll = std.math.clamp(self.model.scroll, 0, @max(0, @as(f64, @floatFromInt(self.model.rows.items.len)) * row_h - self.listBox().h));
     }
-    fn barGeometry(self: *const App) ?scrollbar.Geometry {
+    pub fn barGeometry(self: *const App) ?scrollbar.Geometry {
         const list = self.listBox();
         const gutter = scrollbar.gutter(theme.global.scrollbar_width);
         return scrollbar.Geometry.compute(.vertical, .{ .x = list.x + list.w - gutter, .y = list.y, .w = gutter, .h = list.h }, list.h, @as(f32, @floatFromInt(self.model.rows.items.len)) * @as(f32, @floatCast(row_h)), @floatCast(self.model.scroll));
@@ -459,11 +467,12 @@ pub const App = struct {
         cairo.setSource(cr, theme.global.app_bg);
         c.cairo_paint(cr);
         self.paintSummary(cr);
-        self.paintRows(cr);
+        self.paintTable(cr);
+        self.paintFooter(cr);
         self.toolbar[1].kind.button.label = if (self.model.mine) tr("My processes") else tr("All processes");
         self.toolbar[2].kind.button.label = if (self.paused) tr("Resume updates") else tr("Pause updates");
         for (&self.headers, titles, 0..) |*header, title, i| {
-            header.kind.button.label = std.fmt.bufPrint(&self.header_labels[i], "{s}{s}", .{ title.get(), if (@intFromEnum(self.model.sort) == i) if (self.model.descending) " ↓" else " ↑" else "" }) catch title.get();
+            header.kind.button.label = std.fmt.bufPrint(&self.header_labels[i], "{s}{s}", .{ title.get(), if (@backingInt(self.model.sort) == i) if (self.model.descending) " ↓" else " ↑" else "" }) catch title.get();
         }
         for (self.footer[1..]) |*control| {
             if (!self.manageable()) control.kind.button.state = .disabled else if (control.kind.button.state == .disabled) control.kind.button.state = .idle;
@@ -475,90 +484,14 @@ pub const App = struct {
             ui.paint.paint(&self.root, &layer.renderer);
             layer.finish();
         }
-        const foot = self.sections[4];
-        var status_buf: [256]u8 = undefined;
-        const status = if (self.notice.len > 0) self.notice else blk: {
-            const snap = self.model.snapshot orelse break :blk tr("Collecting processes…");
-            var swap_buf: [80]u8 = undefined;
-            const swap = if (snap.memory) |mem| if (mem.swap_total != null and mem.swap_free != null) bytesPair(&swap_buf, mem.swap_total.? -| mem.swap_free.?, mem.swap_total.?) else tr("Unavailable") else tr("Unavailable");
-            break :blk i18n.fmt(&status_buf, i18n.trn("{n} process · Swap {swap}{status}", "{n} processes · Swap {swap}{status}", self.model.rows.items.len), .{ .n = self.model.rows.items.len, .swap = swap, .status = if (self.paused) tr(" · Paused") else if (snap.failed) tr(" · /proc unavailable") else if (snap.truncated) tr(" · List limited") else if (snap.unavailable > 0) tr(" · Some processes unavailable") else "" }) catch tr("Processes");
-        };
-        textBox(cr, status, .{ .x = 16, .y = foot.computed_y + 8, .w = @max(0, foot.computed_width - 308), .h = 28 }, cairo.statusSize(), false, theme.global.window_fg);
-        textBox(cr, tr("CPU: 100% = one core · Memory: resident · Ctrl+F search · Delete end · Shift+Delete force quit"), .{ .x = 16, .y = @floatFromInt(self.h - 26), .w = @floatFromInt(self.w - 32), .h = 24 }, cairo.statusSize(), false, theme.global.window_fg);
+        self.paintFooterStatus(cr);
         if (self.confirmation) |confirmation| self.paintConfirmation(cr, confirmation);
     }
-    fn paintSummary(self: *App, cr: *c.cairo_t) void {
-        const gap: f32 = 16;
-        const width = (@as(f32, @floatFromInt(self.w)) - gap * 3) / 2;
-        const snap = self.model.snapshot;
-        for (0..2) |index| {
-            const box: Rect = .{ .x = gap + @as(f32, @floatFromInt(index)) * (width + gap), .y = 14, .w = width, .h = 122 };
-            var buf: [128]u8 = undefined;
-            const label = if (index == 0) if (snap != null and snap.?.cpu_percent != null) std.fmt.bufPrint(&buf, "CPU  {d:.1}%", .{snap.?.cpu_percent.?}) catch "CPU" else "CPU  —" else if (snap != null and snap.?.memory != null) blk: {
-                var pair_buf: [80]u8 = undefined;
-                const mem = snap.?.memory.?;
-                break :blk std.fmt.bufPrint(&buf, "RAM  {s}", .{bytesPair(&pair_buf, mem.used(), mem.total)}) catch "RAM";
-            } else "RAM  —";
-            textBox(cr, label, .{ .x = box.x, .y = box.y, .w = box.w, .h = 30 }, cairo.headingSize(), true, theme.global.window_fg);
-            textBox(cr, tr("60 seconds"), .{ .x = box.x, .y = box.y + 30, .w = box.w, .h = 20 }, cairo.statusSize(), false, theme.global.window_fg);
-            const graph: Rect = .{ .x = box.x, .y = box.y + 56, .w = box.w, .h = 64 };
-            cairo.setSource(cr, theme.global.app_divider);
-            c.cairo_set_line_width(cr, 1);
-            for (0..3) |line| {
-                const y = graph.y + graph.h * @as(f32, @floatFromInt(line)) / 2;
-                c.cairo_move_to(cr, graph.x, y);
-                c.cairo_line_to(cr, graph.x + graph.w, y);
-            }
-            c.cairo_stroke(cr);
-            if (snap == null) continue;
-            cairo.setSource(cr, theme.shellPalette().accent);
-            c.cairo_set_line_width(cr, 2);
-            var last: ?u64 = null;
-            for (self.history.points[0..self.history.count]) |point| {
-                const value = if (index == 0) point.cpu else point.memory;
-                const age = snap.?.at_ns -| point.at_ns;
-                if (value == null or age >= 60_000_000_000) {
-                    last = null;
-                    continue;
-                }
-                const x = graph.x + graph.w * (1 - @as(f64, @floatFromInt(age)) / 60_000_000_000);
-                const y = graph.y + graph.h * (1 - std.math.clamp(value.?, 0, 100) / 100);
-                if (last == null or point.at_ns -| last.? > 2_000_000_000) c.cairo_move_to(cr, x, y) else c.cairo_line_to(cr, x, y);
-                last = point.at_ns;
-            }
-            c.cairo_stroke(cr);
-        }
-    }
-    fn paintRows(self: *App, cr: *c.cairo_t) void {
-        const list = self.listBox();
-        const snap = self.model.snapshot orelse return;
-        c.cairo_save(cr);
-        defer c.cairo_restore(cr);
-        c.cairo_rectangle(cr, list.x, list.y, list.w, list.h);
-        c.cairo_clip(cr);
-        const first: usize = @intFromFloat(@floor(self.model.scroll / row_h));
-        const last = @min(self.model.rows.items.len, first + @as(usize, @intFromFloat(@ceil(list.h / row_h))) + 1);
-        const hover = self.row_hover.frame;
-        if (hover.alpha > 0) cairo.drawItemHighlight(cr, self.rowBox(hover.row), false, hover.alpha, hover.alpha);
-        for (first..last) |i| {
-            const row = snap.processes[self.model.rows.items[i]];
-            const y: f32 = @floatCast(list.y + @as(f64, @floatFromInt(i)) * row_h - self.model.scroll);
-            for (self.selections.items) |selection| if (selection.identity.eql(row.identity)) {
-                cairo.drawItemHighlight(cr, self.rowBox(@floatFromInt(i)), true, selection.fade.alpha, selection.fade.alpha);
-                break;
-            };
-            var pid_buf: [32]u8 = undefined;
-            var cpu_buf: [32]u8 = undefined;
-            var mem_buf: [32]u8 = undefined;
-            const pid = std.fmt.bufPrint(&pid_buf, "{d}", .{row.identity.pid}) catch "—";
-            const cpu = if (row.cpu_percent) |v| std.fmt.bufPrint(&cpu_buf, "{d:.1}%", .{v}) catch "—" else "—";
-            const memory = if (row.resident_bytes) |v| bytesLabel(&mem_buf, v) else "—";
-            const values = [_][]const u8{ row.name, pid, row.user, cpu, memory, stateName(row.state) };
-            for (values, self.headers) |value, header| textBox(cr, value, .{ .x = header.computed_x + 8, .y = y, .w = @max(0, header.computed_width - 16), .h = row_h }, cairo.textSize(), false, theme.global.window_fg);
-        }
-        if (self.model.rows.items.len == 0) textBox(cr, if (snap.failed) tr("Process data unavailable") else tr("No matching processes"), .{ .x = list.x + 8, .y = list.y + 12, .w = list.w - 16, .h = 32 }, cairo.textSize(), false, theme.global.window_fg);
-        if (self.barGeometry()) |g| cairo.drawScrollbar(cr, scrollbar.look(g, self.bar, theme.global.scrollbar_width, theme.global));
-    }
+    pub const paintSummary = summary.paint;
+    pub const paintTable = table.paint;
+    pub const paintFooter = footer_view.paint;
+    pub const layoutFooter = footer_view.layout;
+    pub const paintFooterStatus = footer_view.paintStatus;
     fn dialogBox(self: *const App) Rect {
         return .{ .x = (@as(f32, @floatFromInt(self.w)) - 520) / 2, .y = (@as(f32, @floatFromInt(self.h)) - 232) / 2, .w = 520, .h = 232 };
     }
@@ -583,7 +516,7 @@ pub const App = struct {
     }
 };
 
-fn textBox(cr: *c.cairo_t, text: []const u8, box: Rect, size: f32, bold: bool, color: [4]f32) void {
+pub fn textBox(cr: *c.cairo_t, text: []const u8, box: Rect, size: f32, bold: bool, color: [4]f32) void {
     if (box.w <= 0 or box.h <= 0) return;
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
@@ -593,28 +526,15 @@ fn textBox(cr: *c.cairo_t, text: []const u8, box: Rect, size: f32, bold: bool, c
     const metrics = cairo.fontMetrics(cr, size);
     cairo.drawText(cr, text, box.x, box.y + (box.h - metrics.ascent - metrics.descent) / 2 + metrics.ascent, size, bold);
 }
-fn bytesLabel(buf: []u8, value: u64) []const u8 {
+pub fn bytesLabel(buf: []u8, value: u64) []const u8 {
     const units = [_][]const u8{ "B", "KiB", "MiB", "GiB", "TiB" };
     var n: f64 = @floatFromInt(value);
     var unit: usize = 0;
     while (n >= 1024 and unit + 1 < units.len) : (unit += 1) n /= 1024;
     return std.fmt.bufPrint(buf, "{d:.1} {s}", .{ n, units[unit] }) catch "—";
 }
-fn bytesPair(buf: []u8, used: u64, total: u64) []const u8 {
+pub fn bytesPair(buf: []u8, used: u64, total: u64) []const u8 {
     var left: [32]u8 = undefined;
     var right: [32]u8 = undefined;
     return std.fmt.bufPrint(buf, "{s} / {s}", .{ bytesLabel(&left, used), bytesLabel(&right, total) }) catch "—";
-}
-
-fn stateName(state: u8) []const u8 {
-    return switch (state) {
-        'R' => tr("Running"),
-        'S' => tr("Sleeping"),
-        'D' => tr("Disk wait"),
-        'T', 't' => tr("Stopped"),
-        'Z' => tr("Zombie"),
-        'I' => tr("Idle"),
-        'X', 'x' => tr("Exited"),
-        else => tr("Unknown"),
-    };
 }

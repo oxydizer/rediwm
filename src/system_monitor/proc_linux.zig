@@ -10,6 +10,7 @@ const Uids = common.Uids;
 const Cpu = common.Cpu;
 const Memory = common.Memory;
 const readAt = common.readAt;
+pub const systemStats = @import("proc_linux_system.zig").sample;
 
 /// comm may contain spaces, newlines and closing parentheses. Field 3 starts
 /// after the LAST closing parenthesis; fields 4/14/15/22/24 are PPID/CPU/start/RSS.

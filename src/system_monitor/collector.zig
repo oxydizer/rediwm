@@ -23,6 +23,8 @@ pub const Snapshot = struct {
     cpu: ?proc.Cpu,
     cpu_percent: ?f64 = null,
     memory: ?proc.Memory,
+    system: proc.System = .{},
+    network_rate: ?proc.NetworkRate = null,
     unavailable: usize = 0,
     truncated: bool = false,
     failed: bool = false,
@@ -40,6 +42,7 @@ pub fn sample(cancelled: *const std.atomic.Value(u64), generation: u64) !*Snapsh
     var buf: [65536]u8 = undefined;
     snapshot.cpu = proc.cpuTotals(&buf);
     snapshot.memory = proc.memoryTotals(&buf);
+    snapshot.system = proc.systemStats(&buf);
     var list = proc.List.open() orelse {
         snapshot.failed = true;
         return snapshot;
@@ -165,6 +168,7 @@ pub const Worker = struct {
         defer previous.deinit(a);
         var last_at: u64 = 0;
         var last_cpu: ?proc.Cpu = null;
+        var last_network: ?proc.Network = null;
         var observed: u64 = std.math.maxInt(u64);
         var deadline: u64 = 0;
         const hz = proc.ticksPerSecond();
@@ -175,6 +179,7 @@ pub const Worker = struct {
                 previous.clearRetainingCapacity();
                 last_at = 0;
                 last_cpu = null;
+                last_network = null;
                 deadline = 0;
             }
             if (self.active.load(.acquire) and proc.nowNs() >= deadline) {
@@ -189,6 +194,9 @@ pub const Worker = struct {
                 if (last_cpu) |before| if (snap.cpu) |after| {
                     snap.cpu_percent = proc.cpuPercent(before, after);
                 };
+                if (last_network) |before| if (snap.system.network) |after| {
+                    snap.network_rate = proc.networkRate(before, after, snap.at_ns -| last_at);
+                };
                 for (snap.processes) |*row| {
                     if (previous.get(row.identity.pid)) |before| {
                         row.cpu_percent = proc.processPercent(.{ .name = "", .state = 0, .cpu = before.cpu, .start = before.start, .rss = 0 }, .{ .name = "", .state = 0, .cpu = row.cpu_ticks, .start = row.identity.start, .rss = 0 }, hz, snap.at_ns -| last_at);
@@ -198,6 +206,7 @@ pub const Worker = struct {
                 for (snap.processes) |row| previous.put(a, row.identity.pid, .{ .start = row.identity.start, .cpu = row.cpu_ticks }) catch {};
                 last_at = snap.at_ns;
                 last_cpu = snap.cpu;
+                last_network = snap.system.network;
                 deadline = snap.at_ns + 1_000_000_000;
                 self.mutex.lockUncancelable(self.io);
                 if (self.generation.load(.acquire) == generation and self.active.load(.acquire)) {

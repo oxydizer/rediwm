@@ -137,6 +137,9 @@ src/start_menu/panel.zig
 src/start_menu/scan.zig
 src/start_menu/search.zig
 src/system_monitor/app.zig
+src/system_monitor/app_footer.zig
+src/system_monitor/app_summary.zig
+src/system_monitor/app_table.zig
 src/system_monitor/client.zig
 src/system_monitor_main.zig
 src/taskbar/battery.zig

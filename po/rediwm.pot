@@ -3,23 +3,23 @@ msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 
-#: src/system_monitor/app.zig
-msgid " · /proc unavailable"
-msgstr ""
-
 #: src/control_center/sections/printers.zig
 msgid " · Default"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
 msgid " · List limited"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
 msgid " · Paused"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
+msgid " · Process data unavailable"
+msgstr ""
+
+#: src/system_monitor/app_footer.zig
 msgid " · Some processes unavailable"
 msgstr ""
 
@@ -107,7 +107,7 @@ msgstr ""
 msgid "5 seconds"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_summary.zig
 msgid "60 seconds"
 msgstr ""
 
@@ -803,11 +803,15 @@ msgstr ""
 msgid "CENTER"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "CPU"
+msgstr ""
+
 #: src/system_monitor/app.zig
 msgid "CPU %"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
 msgid "CPU: 100% = one core · Memory: resident · Ctrl+F search · Delete end · Shift+Delete force quit"
 msgstr ""
 
@@ -1343,7 +1347,7 @@ msgstr ""
 msgid "Closing ends this shell and its running jobs."
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
 msgid "Collecting processes…"
 msgstr ""
 
@@ -2263,7 +2267,7 @@ msgstr ""
 msgid "Discovering printers; authorization may be required…"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Disk wait"
 msgstr ""
 
@@ -2691,7 +2695,7 @@ msgstr ""
 msgid "Existing windows outside a smaller canvas stay reachable."
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Exited"
 msgstr ""
 
@@ -3219,7 +3223,7 @@ msgstr ""
 msgid "Icon theme"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Idle"
 msgstr ""
 
@@ -3955,6 +3959,10 @@ msgstr ""
 msgid "My processes"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "NET"
+msgstr ""
+
 #: src/files/app_layout.zig
 msgid "Name"
 msgstr ""
@@ -4123,6 +4131,10 @@ msgstr ""
 msgid "No audio device available"
 msgstr ""
 
+#: src/files/app_audio_playlist.zig
+msgid "No audio files"
+msgstr ""
+
 #: src/files/app_paint.zig
 msgid "No changed files"
 msgstr ""
@@ -4171,7 +4183,7 @@ msgstr ""
 msgid "No matching items"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "No matching processes"
 msgstr ""
 
@@ -4743,6 +4755,10 @@ msgstr ""
 msgid "Play"
 msgstr ""
 
+#: src/files/app_audio_bar.zig
+msgid "Playlist"
+msgstr ""
+
 #: src/images/app_edit.zig
 msgid "Please wait for the file operation to finish."
 msgstr ""
@@ -5027,11 +5043,11 @@ msgstr ""
 msgid "Problem"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Process data unavailable"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
 msgid "Processes"
 msgstr ""
 
@@ -5129,6 +5145,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Quit"
+msgstr ""
+
+#: src/system_monitor/app_footer.zig
+msgid "RAM"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -5517,7 +5537,7 @@ msgstr ""
 msgid "Round"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Running"
 msgstr ""
 
@@ -5527,6 +5547,10 @@ msgstr ""
 
 #: src/control_center/sections/sound.zig
 msgid "SOUND"
+msgstr ""
+
+#: src/system_monitor/app_footer.zig
+msgid "SWAP"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -6029,7 +6053,7 @@ msgstr ""
 msgid "Sleep and battery"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Sleeping"
 msgstr ""
 
@@ -6331,6 +6355,10 @@ msgstr ""
 
 #: src/control_center/sections/services.zig
 msgid "Systemd is unavailable."
+msgstr ""
+
+#: src/system_monitor/app_footer.zig
+msgid "TEMP"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -7021,6 +7049,10 @@ msgstr ""
 msgid "UI font"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "UPTIME"
+msgstr ""
+
 #: src/printing/ladder.zig
 msgid "USB presence or queue-to-device identity could not be established."
 msgstr ""
@@ -7517,7 +7549,7 @@ msgstr ""
 msgid "Your unsaved changes will be lost if you discard them."
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Zombie"
 msgstr ""
 
@@ -8205,6 +8237,10 @@ msgid_plural "{count}{more} items"
 msgstr[0] ""
 msgstr[1] ""
 
+#: src/system_monitor/app_footer.zig
+msgid "{hours}h {minutes}m"
+msgstr ""
+
 #: src/taskbar/battery.zig
 msgid "{hours}h {minutes}min"
 msgstr ""
@@ -8285,6 +8321,12 @@ msgstr ""
 msgid "{name}: level unavailable"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "{n} CPU"
+msgid_plural "{n} CPUs"
+msgstr[0] ""
+msgstr[1] ""
+
 #: src/control_center/sections/printers_details.zig
 msgid "{n} completed sheet reported by CUPS"
 msgid_plural "{n} completed sheets reported by CUPS"
@@ -8297,9 +8339,9 @@ msgid_plural "{n} minutes"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/system_monitor/app.zig
-msgid "{n} process · Swap {swap}{status}"
-msgid_plural "{n} processes · Swap {swap}{status}"
+#: src/system_monitor/app_footer.zig
+msgid "{n} process{status}"
+msgid_plural "{n} processes{status}"
 msgstr[0] ""
 msgstr[1] ""
 

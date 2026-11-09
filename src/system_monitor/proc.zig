@@ -7,7 +7,7 @@
 //! * `Process`: `open(pid)`, `close`, `stat(buf)`, `uids(buf)`, `exePath(buf)`.
 //!   One open `Process` describes one task, so its three reads agree.
 //! * `List`: `open()`, `next()` (a pid), `close()`.
-//! * `cpuTotals(buf)`, `memoryTotals(buf)`, `ticksPerSecond()`.
+//! * `cpuTotals(buf)`, `memoryTotals(buf)`, `systemStats(buf)`, `ticksPerSecond()`.
 //!
 //! No compositor, Wayland or UI dependencies.
 const builtin = @import("builtin");
@@ -25,6 +25,10 @@ pub const Stat = common.Stat;
 pub const Uids = common.Uids;
 pub const Cpu = common.Cpu;
 pub const Memory = common.Memory;
+pub const System = common.System;
+pub const Network = common.Network;
+pub const NetworkRate = common.NetworkRate;
+pub const networkRate = common.networkRate;
 pub const owned = common.owned;
 pub const protectedName = common.protectedName;
 pub const cpuPercent = common.cpuPercent;
@@ -37,6 +41,7 @@ pub const Process = backend.Process;
 pub const List = backend.List;
 pub const cpuTotals = backend.cpuTotals;
 pub const memoryTotals = backend.memoryTotals;
+pub const systemStats = backend.systemStats;
 pub const ticksPerSecond = backend.ticksPerSecond;
 
 /// One process's stat, or null if it is gone or unreadable. `name` points into `buf`.

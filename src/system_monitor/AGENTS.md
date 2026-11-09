@@ -9,7 +9,9 @@
   (`kern.proc` sysctls; a `Process` holds the `kinfo_proc` taken at open, CPU is
   in microseconds). Never read
   `/proc` outside a backend; a new OS needs `Process`, `List`, `cpuTotals`,
-  `memoryTotals` and `ticksPerSecond`. The Linux parsers are pure and tested
+  `memoryTotals`, `systemStats` and `ticksPerSecond`. Optional footer telemetry
+  lives in `proc_linux_system.zig`; rates reset with the worker generation.
+  The Linux parsers are pure and tested
   everywhere through `proc_linux.zig`.
 * A snapshot owns its arena. The worker publishes under its mutex through an
   eventfd; the UI takes ownership. A generation change cancels enumeration and
