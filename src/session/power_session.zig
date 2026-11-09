@@ -6,11 +6,8 @@ const wire = dbus.wire;
 const Lock = @import("lock.zig").Lock;
 const log = std.log.scoped(.power);
 const power_mod = @import("power.zig");
+const login = @import("login_manager.zig");
 const Manager = power_mod.Manager;
-const bus_name = power_mod.bus_name;
-const bus_path = power_mod.bus_path;
-const bus_interface = power_mod.bus_interface;
-const session_interface = power_mod.session_interface;
 const call_timeout_ms = power_mod.call_timeout_ms;
 const OwnerRequest = Manager.OwnerRequest;
 
@@ -20,13 +17,10 @@ pub fn watchSession(self: *Manager, conn: *dbus.Connection) void {
     if (self.server.greeter_mode or self.session_path != null or self.session_pending) return;
     const id = self.server.environ.getPosix("REDIWM_LOGIN_SESSION") orelse return;
     if (id.len == 0) return;
-    var body: wire.Writer = .{ .allocator = self.allocator };
-    defer body.deinit();
-    body.string(id) catch return;
     const sender = self.signal_sender orelse return;
     const ctx = self.allocator.create(OwnerRequest) catch return;
     ctx.* = .{ .manager = self, .generation = self.owner_generation };
-    _ = conn.call(sender, bus_path, bus_interface, "GetSession", "s", &body, ctx, onSession, call_timeout_ms) catch |err| {
+    _ = login.call(conn, .{ .session = id }, sender, ctx, onSession, call_timeout_ms) catch |err| {
         self.allocator.destroy(ctx);
         log.warn("could not look up the logind session: {}", .{err});
         return;
@@ -41,25 +35,18 @@ pub fn onSession(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Connec
     if (ctx.generation != self.owner_generation) return;
     self.session_pending = false;
     if (self.closing) return;
-    var msg = result catch |err| {
+    const msg = result catch |err| {
         log.warn("could not look up the logind session: {}", .{err});
         return;
     };
-    if (msg.kind != .method_return or !std.mem.eql(u8, msg.headers.signature, "o")) {
+    const path = login.readSessionPath(msg) catch {
         log.warn("logind has no session for this login: {s}", .{msg.headers.error_name orelse "invalid reply"});
         return;
-    }
-    const path = msg.body.objectPath() catch return;
+    };
     self.session_path = self.allocator.dupe(u8, path) catch return;
     // Every session's Lock comes from the same sender; ours is picked out
     // by path in the handler, so the registration owns no strings.
-    _ = conn.subscribe(.{
-        .sender = self.signal_sender orelse return,
-        .interface = session_interface,
-        .member = "Lock",
-        .owner = self,
-        .callback = onSessionLock,
-    }, null, null) catch |err| log.warn("could not follow logind lock requests: {}", .{err});
+    _ = conn.subscribe(login.signal(.lock, self.signal_sender orelse return, self, onSessionLock), null, null) catch |err| log.warn("could not follow logind lock requests: {}", .{err});
     self.syncLockedHint();
 }
 
@@ -84,10 +71,7 @@ pub fn syncLockedHint(self: *Manager) void {
     const conn = self.conn orelse return;
     const sender = self.signal_sender orelse return;
     if (conn.closed or self.locked_hint == self.locked) return;
-    var body: wire.Writer = .{ .allocator = self.allocator };
-    defer body.deinit();
-    body.boolean(self.locked) catch return;
-    _ = conn.call(sender, path, session_interface, "SetLockedHint", "b", &body, null, null, call_timeout_ms) catch |err| {
+    _ = login.call(conn, .{ .locked_hint = .{ .path = path, .locked = self.locked } }, sender, null, null, call_timeout_ms) catch |err| {
         log.warn("could not update the session's LockedHint: {}", .{err});
         return;
     };
@@ -103,10 +87,7 @@ pub fn onDisconnect(owner: ?*anyopaque) void {
 pub fn onOwnerChanged(owner: ?*anyopaque, conn: *dbus.Connection, msg: wire.Message) anyerror!void {
     const self: *Manager = @ptrCast(@alignCast(owner orelse return));
     if (self.closing) return;
-    var body = msg.body;
-    if (!std.mem.eql(u8, try body.string(), bus_name)) return;
-    _ = try body.string();
-    const next = try body.string();
+    const next = try login.changedOwner(msg) orelse return;
     self.owner_changed = true;
     conn.unregisterSignalsByOwner(self);
     try self.watchSignalOwner(conn);
@@ -119,12 +100,5 @@ pub fn onOwnerChanged(owner: ?*anyopaque, conn: *dbus.Connection, msg: wire.Mess
 }
 
 pub fn watchSignalOwner(self: *Manager, conn: *dbus.Connection) !void {
-    try conn.registerSignal(.{
-        .sender = "org.freedesktop.DBus",
-        .path = "/org/freedesktop/DBus",
-        .interface = "org.freedesktop.DBus",
-        .member = "NameOwnerChanged",
-        .owner = self,
-        .callback = onOwnerChanged,
-    });
+    try conn.registerSignal(login.signal(.owner_changed, null, self, onOwnerChanged));
 }

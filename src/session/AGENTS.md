@@ -3,6 +3,13 @@
 Cross-cutting lock rules (greeter, crash handling, IPC refusal, client
 ext-session-lock) are in the root `AGENTS.md`.
 
+* Login-service calls go through `login_manager.zig`; its backend owns method
+  signatures, service names, signal descriptors and login identity checks.
+  `power_*` retains policy and owner generations: pin session/inhibitor calls
+  to that owner, ignore stale replies, and follow only this session's `Lock`.
+  The recording transport tests live in `login_manager/tests.zig`; private-bus
+  coverage is `tests/power.py`, `polkit.py` and `session_bus.py`.
+
 * Login appearance is a flattened snapshot in
   `/var/lib/rediwm-appearance/<uid>/`, provisioned by the DM and written by
   that account's real desktop session. `login_appearance.zig` reads only

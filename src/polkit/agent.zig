@@ -3,6 +3,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const dbus = @import("dbus");
+const login = @import("../session/login_manager.zig");
 const activation = @import("../session/activation.zig");
 const helper_mod = @import("helper.zig");
 const identity = @import("identity.zig");
@@ -204,33 +205,25 @@ pub const Agent = struct {
         if (self.closing) return;
         _ = returned(result, "") catch |err| return self.unavailable(err);
         if (self.session_id != null) return self.queryOwner();
-        var body: wire.Writer = .{ .allocator = self.allocator };
-        defer body.deinit();
-        body.uint32(@intCast(std.posix.system.getpid())) catch |err| return self.unavailable(err);
-        _ = conn.call("org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "GetSessionByPID", "u", &body, self, sessionPath, 5000) catch |err| self.unavailable(err);
+        _ = login.call(conn, .{ .session_for_pid = @intCast(std.posix.system.getpid()) }, null, self, sessionPath, 5000) catch |err| self.unavailable(err);
     }
     fn sessionPath(owner: ?*anyopaque, conn: *C, result: C.Failure!wire.Message) void {
         const self = from(owner);
         if (self.closing) return;
-        var msg = returned(result, "o") catch |err| return self.unavailable(err);
-        const path = msg.body.objectPath() catch |err| return self.unavailable(err);
-        var body: wire.Writer = .{ .allocator = self.allocator };
-        defer body.deinit();
-        body.string("org.freedesktop.login1.Session") catch |err| return self.unavailable(err);
-        body.string("Id") catch |err| return self.unavailable(err);
-        _ = conn.call("org.freedesktop.login1", path, "org.freedesktop.DBus.Properties", "Get", "ss", &body, self, sessionId, 5000) catch |err| self.unavailable(err);
+        const msg = result catch |err| return self.unavailable(err);
+        const path = login.readSessionPath(msg) catch |err| return self.unavailable(err);
+        _ = login.call(conn, .{ .session_field = .{ .path = path, .field = .id } }, null, self, sessionId, 5000) catch |err| self.unavailable(err);
     }
     fn sessionId(owner: ?*anyopaque, _: *C, result: C.Failure!wire.Message) void {
         const self = from(owner);
         if (self.closing) return;
-        var msg = returned(result, "v") catch |err| return self.unavailable(err);
-        const sig = msg.body.variant() catch |err| return self.unavailable(err);
-        if (!std.mem.eql(u8, sig, "s")) return self.unavailable(error.InvalidReply);
-        const id = msg.body.string() catch |err| return self.unavailable(err);
+        const msg = result catch |err| return self.unavailable(err);
+        const id = login.readSessionId(msg) catch |err| return self.unavailable(err);
         if (id.len == 0) return self.unavailable(error.NoSession);
         self.session_id = self.allocator.dupe(u8, id) catch |err| return self.unavailable(err);
         self.queryOwner();
     }
+
     fn queryOwner(self: *Agent) void {
         self.query_revision = self.owner_revision;
         var body: wire.Writer = .{ .allocator = self.allocator };

@@ -6,11 +6,8 @@ const dbus = @import("dbus");
 const wire = dbus.wire;
 const log = std.log.scoped(.power);
 const power_mod = @import("power.zig");
+const login = @import("login_manager.zig");
 const Manager = power_mod.Manager;
-const bus_name = power_mod.bus_name;
-const bus_path = power_mod.bus_path;
-const bus_interface = power_mod.bus_interface;
-const introspect_interface = power_mod.introspect_interface;
 const call_timeout_ms = power_mod.call_timeout_ms;
 const onDisconnect = Manager.onDisconnect;
 
@@ -41,7 +38,7 @@ pub fn onHello(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Connecti
     _ = result catch |err| {
         conn.close();
         const req = self.pending orelse return;
-        if (req.kind != .@"suspend") return;
+        if (login.usesCommand(req.kind.loginAction())) return;
         self.pending = null;
         self.failed(req.kind, i18n.tr("Could not reach the system's power service."), err);
         return;
@@ -49,11 +46,8 @@ pub fn onHello(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Connecti
     self.hello_done = true;
     self.inspectApi(conn);
     self.watchSignalOwner(conn) catch return;
-    _ = conn.addMatch("type='signal',sender='org.freedesktop.DBus',path='/org/freedesktop/DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.freedesktop.login1'", null, null) catch return;
-    var body: wire.Writer = .{ .allocator = self.allocator };
-    defer body.deinit();
-    body.string(bus_name) catch return;
-    _ = conn.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner", "s", &body, self, onSignalOwner, call_timeout_ms) catch |err| {
+    _ = conn.addMatch(login.owner_match, null, null) catch return;
+    _ = login.call(conn, .owner, null, self, onSignalOwner, call_timeout_ms) catch |err| {
         log.warn("could not resolve power signal sender: {}", .{err});
     };
 }
@@ -71,24 +65,10 @@ pub fn onSignalOwner(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Co
 }
 
 pub fn subscribeSignals(self: *Manager, conn: *dbus.Connection) void {
-    _ = conn.subscribe(.{
-        .sender = self.signal_sender orelse return,
-        .path = bus_path,
-        .interface = bus_interface,
-        .member = "PrepareForSleep",
-        .owner = self,
-        .callback = onPrepareForSleep,
-    }, null, null) catch |err| {
+    _ = conn.subscribe(login.signal(.sleep, self.signal_sender orelse return, self, onPrepareForSleep), null, null) catch |err| {
         log.warn("could not subscribe to PrepareForSleep: {}", .{err});
     };
-    _ = conn.subscribe(.{
-        .sender = self.signal_sender orelse return,
-        .path = bus_path,
-        .interface = bus_interface,
-        .member = "PrepareForShutdown",
-        .owner = self,
-        .callback = onPrepareForShutdown,
-    }, null, null) catch |err| {
+    _ = conn.subscribe(login.signal(.shutdown, self.signal_sender orelse return, self, onPrepareForShutdown), null, null) catch |err| {
         log.warn("could not subscribe to PrepareForShutdown: {}", .{err});
     };
 }
@@ -134,8 +114,7 @@ pub fn onPrepareForShutdown(owner: ?*anyopaque, _: *dbus.Connection, msg: wire.M
 }
 
 pub fn inspectApi(self: *Manager, conn: *dbus.Connection) void {
-    const body: wire.Writer = .{ .allocator = self.allocator };
-    _ = conn.call(bus_name, bus_path, introspect_interface, "Introspect", "", &body, self, onIntrospect, call_timeout_ms) catch {
+    _ = login.call(conn, .inspect, null, self, onIntrospect, call_timeout_ms) catch {
         // If Introspect fails immediately, proceed with legacy methods
         self.introspect_done = true;
         self.maybeProbe();
@@ -147,14 +126,10 @@ pub fn onIntrospect(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Con
     const self: *Manager = @ptrCast(@alignCast(owner orelse return));
     if (self.closing) return;
     self.introspect_done = true;
-    if (result) |*msg| {
-        if (msg.kind == .method_return) {
-            var reader = msg.body;
-            if (reader.string()) |xml| {
-                self.has_with_flags = std.mem.indexOf(u8, xml, "SuspendWithFlags") != null;
-                self.has_list_inhibitors = std.mem.indexOf(u8, xml, "ListInhibitors") != null;
-            } else |_| {}
-        }
+    if (result) |msg| {
+        const api = login.readApi(msg);
+        self.has_with_flags = api.with_flags;
+        self.has_list_inhibitors = api.list_inhibitors;
     } else |_| {}
     self.maybeProbe();
     const req = self.pending orelse return;

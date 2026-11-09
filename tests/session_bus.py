@@ -151,16 +151,25 @@ def check_publication(fixture):
     assert fixture.environment == ORIGINAL, (fixture.environment, log)
 
 
-def check_foreign_desktop(fixture):
-    fixture.properties['Desktop'] = GLib.Variant('s', 'GNOME')
-    try:
-        report, log = fixture.run_session()
-    finally:
-        fixture.properties['Desktop'] = GLib.Variant('s', 'rediwm')
-    assert report['acked']
-    assert 'REDIWM_LOGIN_SESSION' not in report['env'], 'host desktop accepted as RediWM login'
-    assert 'global activation disabled' in log, log
-    assert fixture.environment == ORIGINAL
+def check_login_identity(fixture):
+    # Each assertion is independently required before exporting a trusted login.
+    for field, value in (
+        ('Desktop', GLib.Variant('s', 'GNOME')),
+        ('User', GLib.Variant('(uo)', (os.getuid() + 1, '/user/other'))),
+        ('Type', GLib.Variant('s', 'x11')),
+        ('Class', GLib.Variant('s', 'greeter')),
+        ('Remote', GLib.Variant('b', True)),
+    ):
+        original = fixture.properties[field]
+        fixture.properties[field] = value
+        try:
+            report, log = fixture.run_session()
+        finally:
+            fixture.properties[field] = original
+        assert report['acked']
+        assert 'REDIWM_LOGIN_SESSION' not in report['env'], f'untrusted {field} accepted as RediWM login'
+        assert 'global activation disabled' in log, log
+        assert fixture.environment == ORIGINAL
 
 
 def check_contention(fixture):
@@ -191,7 +200,7 @@ def main():
     fixture = Fixture(os.environ['DBUS_SESSION_BUS_ADDRESS'])
     try:
         check_publication(fixture)
-        check_foreign_desktop(fixture)
+        check_login_identity(fixture)
         check_contention(fixture)
         check_refusal(fixture)
         print('PASS: verified logind identity, graphical contention, publication while running, restoration and refusal')

@@ -1,6 +1,7 @@
 // Compositor integration/unit-test root. Shared modules have separate test
 // targets in build.zig; their roots cannot import compositor code.
 test {
+    _ = @import("session/login_manager.zig");
     _ = @import("effects/ribbon.zig");
     _ = @import("effects/move_heading.zig");
     _ = @import("effects/minimize_mesh.zig");

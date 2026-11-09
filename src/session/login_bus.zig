@@ -13,7 +13,7 @@ const Env = publication.Env;
 const Pair = publication.Pair;
 
 const timeout_ms = 3000;
-const login1 = "org.freedesktop.login1";
+const login_manager = @import("login_manager.zig");
 const systemd1 = "org.freedesktop.systemd1";
 const properties = "org.freedesktop.DBus.Properties";
 
@@ -100,82 +100,26 @@ pub const Bus = struct {
         return reply;
     }
 
-    fn sessionString(self: *Bus, arena: std.mem.Allocator, path: []const u8, name: []const u8) ![]const u8 {
-        var reply = try self.getProperty(.system, login1, path, login1 ++ ".Session", name);
-        defer reply.deinit(self.allocator);
-        var r = reply.reader();
-        if (!std.mem.eql(u8, try r.variant(), "s")) return error.InvalidReply;
-        return arena.dupe(u8, try r.string());
-    }
-
     /// Only a verified local Wayland user login of this desktop may publish.
-    /// Returns the logind session id.
     pub fn login(self: *Bus, arena: std.mem.Allocator) ![]const u8 {
-        var body: wire.Writer = .{ .allocator = self.allocator };
-        defer body.deinit();
-        try body.uint32(@intCast(std.os.linux.getpid()));
-        var reply = try self.call(.system, login1, "/org/freedesktop/login1", login1 ++ ".Manager", "GetSessionByPID", "u", &body);
-        defer reply.deinit(self.allocator);
-        try reply.expect("o");
-        var r = reply.reader();
-        const path = try arena.dupe(u8, try r.objectPath());
-
-        const uid = blk: {
-            var user = try self.getProperty(.system, login1, path, login1 ++ ".Session", "User");
-            defer user.deinit(self.allocator);
-            var ur = user.reader();
-            if (!std.mem.eql(u8, try ur.variant(), "(uo)")) return error.InvalidReply;
-            try ur.alignTo(8);
-            break :blk try ur.uint32();
+        return login_manager.login(self, arena) catch |err| {
+            if (err == error.NotLocalWaylandLogin) sys.diagnostic("not a local Wayland user login", .{});
+            return err;
         };
-        const remote = blk: {
-            var value = try self.getProperty(.system, login1, path, login1 ++ ".Session", "Remote");
-            defer value.deinit(self.allocator);
-            var vr = value.reader();
-            if (!std.mem.eql(u8, try vr.variant(), "b")) return error.InvalidReply;
-            break :blk try vr.boolean();
-        };
-        const desktop = try self.sessionString(arena, path, "Desktop");
-        const desktop_ok = std.ascii.eqlIgnoreCase(desktop, "rediwm") or std.ascii.eqlIgnoreCase(desktop, "rediwm-release-safe");
-        if (uid != std.os.linux.getuid() or
-            !std.mem.eql(u8, try self.sessionString(arena, path, "Type"), "wayland") or
-            !std.mem.eql(u8, try self.sessionString(arena, path, "Class"), "user") or
-            !desktop_ok or remote)
-        {
-            sys.diagnostic("not a local Wayland user login", .{});
-            return error.NotLocalWaylandLogin;
-        }
-        return self.sessionString(arena, path, "Id");
     }
 
-    /// Another live graphical login of this uid shares the user bus.
     pub fn conflict(self: *Bus, arena: std.mem.Allocator, session: []const u8) !?[]const u8 {
-        const body: wire.Writer = .{ .allocator = self.allocator };
-        var reply = try self.call(.system, login1, "/org/freedesktop/login1", login1 ++ ".Manager", "ListSessions", "", &body);
-        defer reply.deinit(self.allocator);
-        try reply.expect("a(susso)");
-        var r = reply.reader();
-        var rows = try r.array(8);
-        const Row = struct { sid: []const u8, path: []const u8 };
-        var candidates: std.ArrayList(Row) = .empty;
-        while (rows.offset < rows.bytes.len) {
-            try rows.alignTo(8);
-            const sid = try rows.string();
-            const uid = try rows.uint32();
-            _ = try rows.string();
-            _ = try rows.string();
-            const path = try rows.objectPath();
-            if (uid == std.os.linux.getuid() and !std.mem.eql(u8, sid, session)) {
-                try candidates.append(arena, .{ .sid = try arena.dupe(u8, sid), .path = try arena.dupe(u8, path) });
-            }
-        }
-        for (candidates.items) |row| {
-            const kind = try self.sessionString(arena, row.path, "Type");
-            if (!std.mem.eql(u8, kind, "wayland") and !std.mem.eql(u8, kind, "x11")) continue;
-            if (std.mem.eql(u8, try self.sessionString(arena, row.path, "State"), "closing")) continue;
-            return row.sid;
-        }
-        return null;
+        return login_manager.conflict(self, arena, session);
+    }
+
+    /// Blocking transport for the shared login-manager backend.
+    pub fn loginCall(self: *Bus, request: login_manager.Request) !Reply {
+        const conn = try self.connection(.system);
+        var reply: Reply = .{ .what = @tagName(request), .allocator = self.allocator };
+        errdefer reply.deinit(self.allocator);
+        _ = try login_manager.call(conn, request, null, &reply, Reply.callback, timeout_ms);
+        try self.wait(&reply);
+        return reply;
     }
 
     /// The systemd user manager's environment.
@@ -274,15 +218,15 @@ const Reply = struct {
         self.endian = msg.body.endian;
     }
 
-    fn expect(self: *const Reply, signature: []const u8) !void {
+    pub fn expect(self: *const Reply, signature: []const u8) !void {
         if (!std.mem.eql(u8, self.signature, signature)) return error.InvalidReply;
     }
 
-    fn reader(self: *const Reply) wire.Reader {
+    pub fn reader(self: *const Reply) wire.Reader {
         return .{ .bytes = self.body, .endian = self.endian };
     }
 
-    fn deinit(self: *Reply, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Reply, allocator: std.mem.Allocator) void {
         if (self.error_name) |v| allocator.free(v);
         if (self.error_text) |v| allocator.free(v);
         allocator.free(self.signature);

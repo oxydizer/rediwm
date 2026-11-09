@@ -27,20 +27,12 @@ const power_bus = @import("power_bus.zig");
 const power_requests = @import("power_requests.zig");
 
 const log = std.log.scoped(.power);
+const login = @import("login_manager.zig");
 
-pub const bus_name = "org.freedesktop.login1";
-pub const bus_path = "/org/freedesktop/login1";
-pub const bus_interface = "org.freedesktop.login1.Manager";
-pub const session_interface = "org.freedesktop.login1.Session";
-pub const introspect_interface = "org.freedesktop.DBus.Introspectable";
 pub const call_timeout_ms: u32 = 5000;
 /// How long PrepareForSleep waits for the lock to reach the screen. logind
 /// itself gives up on delay inhibitors after InhibitDelayMaxSec (5 s default).
 pub const sleep_lock_timeout_ms: i32 = 2000;
-
-/// Enforce active inhibitors even for privileged callers, ensuring we never
-/// bypass sleep/shutdown locks taken by package managers, backup tools, etc.
-pub const SD_LOGIND_ROOT_CHECK_INHIBITORS: u64 = 1 << 0;
 
 pub const Kind = enum {
     poweroff,
@@ -54,25 +46,11 @@ pub const Kind = enum {
             .@"suspend" => i18n.tr("Suspend"),
         };
     }
-    pub fn canMethod(self: Kind) []const u8 {
+    pub fn loginAction(self: Kind) login.Action {
         return switch (self) {
-            .poweroff => "CanPowerOff",
-            .reboot => "CanReboot",
-            .@"suspend" => "CanSuspend",
-        };
-    }
-    pub fn actionMethod(self: Kind) []const u8 {
-        return switch (self) {
-            .poweroff => "PowerOff",
-            .reboot => "Reboot",
-            .@"suspend" => "Suspend",
-        };
-    }
-    pub fn withFlagsMethod(self: Kind) []const u8 {
-        return switch (self) {
-            .poweroff => "PowerOffWithFlags",
-            .reboot => "RebootWithFlags",
-            .@"suspend" => "SuspendWithFlags",
+            .poweroff => .poweroff,
+            .reboot => .reboot,
+            .@"suspend" => .@"suspend",
         };
     }
     pub fn inhibitorType(self: Kind) []const u8 {
@@ -112,20 +90,7 @@ pub const Request = struct {
 /// have these verbs in loginctl, which only asks logind and never waits for
 /// the job, so it has no --no-block.
 pub fn commandArgv(buf: *[4][]const u8, kind: Kind, ask_password: bool, no_block: bool) []const []const u8 {
-    std.debug.assert(kind != .@"suspend");
-    const systemd = std.posix.system.access("/run/systemd/system", std.posix.F_OK) == 0;
-    buf[0] = if (systemd) "systemctl" else "loginctl";
-    buf[1] = @tagName(kind);
-    var len: usize = 2;
-    if (!ask_password) {
-        buf[len] = "--no-ask-password";
-        len += 1;
-    }
-    if (no_block and systemd) {
-        buf[len] = "--no-block";
-        len += 1;
-    }
-    return buf[0..len];
+    return login.commandArgv(buf, kind.loginAction(), ask_password, no_block);
 }
 
 /// Only one request may be in flight; a second action while one is
@@ -168,7 +133,7 @@ pub const Manager = struct {
     owner_generation: u64 = 0,
     owner_changed: bool = false,
 
-    pub const Inhibitor = enum { lid, sleep };
+    pub const Inhibitor = login.Inhibitor;
     pub const OwnerRequest = struct { manager: *Manager, generation: u64, inhibitor: Inhibitor = .lid };
 
     pub const wantsInhibitor = power_inhibitors.wantsInhibitor;

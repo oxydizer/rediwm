@@ -4,10 +4,8 @@ const i18n = @import("i18n");
 const dbus = @import("dbus");
 const wire = dbus.wire;
 const power_mod = @import("power.zig");
+const login = @import("login_manager.zig");
 const Manager = power_mod.Manager;
-const bus_name = power_mod.bus_name;
-const bus_path = power_mod.bus_path;
-const bus_interface = power_mod.bus_interface;
 const call_timeout_ms = power_mod.call_timeout_ms;
 const Kind = power_mod.Kind;
 const Capability = power_mod.Capability;
@@ -68,15 +66,13 @@ pub fn maybeProbe(self: *Manager) void {
 }
 
 pub fn queryProbe(self: *Manager, conn: *dbus.Connection, kind: Kind) void {
-    var empty: wire.Writer = .{ .allocator = self.allocator };
-    defer empty.deinit();
     const Context = struct { mgr: *Manager, kind: Kind };
     const ctx = self.allocator.create(Context) catch {
         self.finishProbeReply();
         return;
     };
     ctx.* = .{ .mgr = self, .kind = kind };
-    _ = conn.call(bus_name, bus_path, bus_interface, kind.canMethod(), "", &empty, ctx, onProbeCapability, call_timeout_ms) catch {
+    _ = login.call(conn, .{ .capability = kind.loginAction() }, null, ctx, onProbeCapability, call_timeout_ms) catch {
         self.allocator.destroy(ctx);
         self.finishProbeReply();
     };

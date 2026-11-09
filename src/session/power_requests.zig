@@ -7,12 +7,9 @@ const dbus = @import("dbus");
 const wire = dbus.wire;
 const log = std.log.scoped(.power);
 const power_mod = @import("power.zig");
+const login = @import("login_manager.zig");
 const Manager = power_mod.Manager;
-const bus_name = power_mod.bus_name;
-const bus_path = power_mod.bus_path;
-const bus_interface = power_mod.bus_interface;
 const call_timeout_ms = power_mod.call_timeout_ms;
-const SD_LOGIND_ROOT_CHECK_INHIBITORS = power_mod.SD_LOGIND_ROOT_CHECK_INHIBITORS;
 const Kind = power_mod.Kind;
 const Capability = power_mod.Capability;
 const Request = power_mod.Request;
@@ -53,7 +50,7 @@ pub fn beginRequest(self: *Manager, req: Request) void {
         return;
     }
     self.pending = req;
-    if (req.kind != .@"suspend") {
+    if (login.usesCommand(req.kind.loginAction())) {
         self.startCommand(req);
         return;
     }
@@ -106,9 +103,8 @@ pub fn commandExited(owner: ?*anyopaque, _: *Child, status: ?u32) void {
 }
 
 pub fn queryCapability(self: *Manager, conn: *dbus.Connection, req: Request) void {
-    if (req.kind != .@"suspend") return;
-    const body: wire.Writer = .{ .allocator = self.allocator };
-    _ = conn.call(bus_name, bus_path, bus_interface, req.kind.canMethod(), "", &body, self, onCapability, call_timeout_ms) catch |err| {
+    if (login.usesCommand(req.kind.loginAction())) return;
+    _ = login.call(conn, .{ .capability = req.kind.loginAction() }, null, self, onCapability, call_timeout_ms) catch |err| {
         self.pending = null;
         self.failed(req.kind, i18n.tr("Could not query logind."), err);
     };
@@ -167,31 +163,10 @@ pub fn onCapability(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Con
 }
 
 pub fn callAction(self: *Manager, conn: *dbus.Connection, req: Request) void {
-    const msg_flags: u8 = if (req.interactive) wire.flag_allow_interactive_authorization else 0;
-    var body: wire.Writer = .{ .allocator = self.allocator };
-    defer body.deinit();
-
-    if (self.has_with_flags) {
-        body.uint64(SD_LOGIND_ROOT_CHECK_INHIBITORS) catch |err| {
-            self.pending = null;
-            self.failed(req.kind, i18n.tr("Could not build the request."), err);
-            return;
-        };
-        _ = conn.callWithFlags(bus_name, bus_path, bus_interface, req.kind.withFlagsMethod(), "t", &body, self, onAction, call_timeout_ms, msg_flags) catch |err| {
-            self.pending = null;
-            self.failed(req.kind, i18n.tr("Could not reach logind."), err);
-        };
-    } else {
-        body.boolean(req.interactive) catch |err| {
-            self.pending = null;
-            self.failed(req.kind, i18n.tr("Could not build the request."), err);
-            return;
-        };
-        _ = conn.callWithFlags(bus_name, bus_path, bus_interface, req.kind.actionMethod(), "b", &body, self, onAction, call_timeout_ms, msg_flags) catch |err| {
-            self.pending = null;
-            self.failed(req.kind, i18n.tr("Could not reach logind."), err);
-        };
-    }
+    _ = login.call(conn, .{ .action = .{ .kind = req.kind.loginAction(), .interactive = req.interactive, .with_flags = self.has_with_flags } }, null, self, onAction, call_timeout_ms) catch |err| {
+        self.pending = null;
+        self.failed(req.kind, i18n.tr("Could not reach logind."), err);
+    };
 }
 
 pub fn onAction(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Connection.Failure!wire.Message) void {
@@ -210,18 +185,17 @@ pub fn onAction(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Connect
     }
 
     const err_name = msg.headers.error_name orelse "";
+    const failure = login.actionError(err_name);
 
     // If WithFlags is not recognized by this logind instance, fall back to the legacy method.
-    if (self.has_with_flags and std.mem.eql(u8, err_name, "org.freedesktop.DBus.Error.UnknownMethod")) {
+    if (self.has_with_flags and failure == .unknown_method) {
         log.info("{s}: WithFlags method not found; falling back to legacy method", .{req.kind.label()});
         self.has_with_flags = false;
         self.callAction(conn, req);
         return;
     }
 
-    if (std.mem.eql(u8, err_name, "org.freedesktop.login1.OperationInhibited") or
-        std.mem.eql(u8, err_name, "org.freedesktop.login1.BlockedByInhibitorLock"))
-    {
+    if (failure == .inhibited) {
         if (self.has_list_inhibitors) {
             self.queryInhibitors(conn);
             return;
@@ -234,15 +208,13 @@ pub fn onAction(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Connect
 
     self.pending = null;
 
-    if (std.mem.eql(u8, err_name, "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired")) {
+    if (failure == .authorization_required) {
         log.warn("{s}: interactive authorization required", .{req.kind.label()});
         self.report(req.kind, i18n.tr("Interactive authorization required."));
         return;
     }
 
-    if (std.mem.eql(u8, err_name, "org.freedesktop.DBus.Error.AccessDenied") or
-        std.mem.eql(u8, err_name, "org.freedesktop.login1.NotEnoughPrivileges"))
-    {
+    if (failure == .denied) {
         log.warn("{s}: denied by system policy ({s})", .{ req.kind.label(), err_name });
         self.report(req.kind, i18n.tr("Denied by system policy."));
         return;
@@ -252,8 +224,7 @@ pub fn onAction(owner: ?*anyopaque, conn: *dbus.Connection, result: dbus.Connect
 }
 
 pub fn queryInhibitors(self: *Manager, conn: *dbus.Connection) void {
-    const body: wire.Writer = .{ .allocator = self.allocator };
-    _ = conn.call(bus_name, bus_path, bus_interface, "ListInhibitors", "", &body, self, onListInhibitors, call_timeout_ms) catch {
+    _ = login.call(conn, .list_inhibitors, null, self, onListInhibitors, call_timeout_ms) catch {
         const req = self.pending orelse return;
         self.pending = null;
         log.warn("{s}: blocked by an active inhibitor lock", .{req.kind.label()});

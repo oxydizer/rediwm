@@ -16,8 +16,17 @@ primary platform; the port must not change Linux behaviour or cost.
   directory watching, own path, peer credentials, process attributes, wake
   descriptors, rename and stat, `kern.proc` process list, tool lookup), each
   with a FreeBSD half except seccomp. The Linux-side preparation (P.1–P.4,
-  P.6–P.10) is finished. The IPC allowance check refuses a connector that has
+  P.6–P.11) is finished. The IPC allowance check refuses a connector that has
   exited or cannot be seen.
+* **Login-manager boundary (2026-11-09):** `session/login_manager.zig` is shared
+  by the supervisor, power policy and polkit. Its logind backend owns the
+  requests, signal descriptors, identity checks and power-command selection;
+  callers keep their connection lifetimes and owner-generation checks. A
+  recording transport tests requests without a bus. ConsoleKit2 remains phase 2.
+  Linux Debug/ReleaseSafe, unit tests, polkit, session-bus, supervisor,
+  power-settings and greeter pass; the cross-check passes. Power's two final
+  helper-cleanup cases fail identically on clean HEAD (`b9f10be`); its login,
+  inhibitor and action cases pass.
 * **On 15.1** (HyprBSD VM, Zig 0.17.1): Debug builds in 2.5 minutes,
   ReleaseSafe in 6.7. `zig build test` passes, and so do `test-monitor` (the
   `kern.proc` backend and kqueue End/Force), `test-platform`, `test-files`,
@@ -113,12 +122,11 @@ Desktop=rediwm, not remote, same uid), gates the polkit agent, the activation
 environment, following `Lock` and keeping `LockedHint`, and the Files terminal.
 Left to do:
 
-* One login-manager interface (P.11): logind implementation (today's code,
-  moved) and a ConsoleKit2 one: session of a pid, `Lock` signal,
+* A ConsoleKit2 backend for the shared login-manager interface (P.11 done):
+  session of a pid, `Lock` signal,
   `SetLockedHint`, sleep and lid inhibitors with `PrepareForSleep`, capability
-  probes, power calls. Today logind's names are constants in `power.zig`
-  imported by `power_*`, and `login_bus.zig` and `polkit/agent.zig` spell them
-  out.
+  probes, power calls. The existing backend is in `session/login_manager/`;
+  `login_bus`, `power_*` and `polkit/agent` use the shared boundary.
 * A ConsoleKit2 check (D8): local, our uid, Type=wayland, not remote, from a
   session `rediwm-session` opens itself. No Desktop property, and a session
   without a display device is never active, so "active" cannot be required.
@@ -199,11 +207,6 @@ installers (GNU `install -D`, systemd units, Debian/Arch PAM files); FreeBSD's
    helper socket; the agent could start the setuid helper itself via
    `rediwm_polkit_spawn`). `/etc/pam.d` and `/run/rediwm-dm` are written by the
    Linux installers only. Kept on purpose: `/etc/xdg`, `/etc/login.defs`.
-11. **Login-manager interface:** move the logind calls of `login_bus`,
-    `polkit/agent` and `power_*` behind one interface, the logind implementation
-    unchanged and a recording fake for tests (`tests/power.py`, `polkit.py`,
-    `rediwm_session.py`, `session_bus.py` as the check). The ConsoleKit2
-    implementation is phase 2.
 
 ### 1. Compositor runs (finish)
 
