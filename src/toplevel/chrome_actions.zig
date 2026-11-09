@@ -70,6 +70,7 @@ pub fn minimize(toplevel: *Toplevel) void {
     toplevel.frame_tree.node.setEnabled(false);
 
     const server = toplevel.server;
+    const held_focus = server.world.toplevels.first() == toplevel and toplevel.activated;
     if (server.input.seat.keyboard_state.focused_surface) |focused| {
         if (fromSurface(server, focused) == toplevel) server.input.seat.keyboardNotifyClearFocus();
     }
@@ -101,7 +102,11 @@ pub fn minimize(toplevel: *Toplevel) void {
     }
 
     if (toplevel.tab_group != 0) @import("../window_tabs.zig").refreshVisibility(server);
-    if (server.world.workspaces.active) @import("../workspaces.zig").focusFallback(server, toplevel.workspace_id);
+    if (server.world.workspaces.active) {
+        @import("../workspaces.zig").focusFallback(server, toplevel.workspace_id);
+    } else if (held_focus) {
+        @import("../workspaces.zig").focusFallback(server, null);
+    }
     // Must run last: content_tree stays alive and rendering-ready while
     // minimized (only the frame is hidden), so a window-capture source
     // over it wouldn't otherwise notice — unlike a real close, nothing

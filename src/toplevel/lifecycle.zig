@@ -250,6 +250,7 @@ pub fn handleUnmapped(toplevel: *Toplevel) void {
     toplevel.server.undo.applying = true;
     defer toplevel.server.undo.applying = undo_applying;
     const was_focused = toplevel.server.world.toplevels.first() == toplevel;
+    const was_activated = toplevel.activated;
     const was_tab = toplevel.tab_group != 0;
     @import("../auto_tiling.zig").unmapped(toplevel);
     @import("../window_tabs.zig").rememberUnmap(toplevel);
@@ -312,7 +313,13 @@ pub fn handleUnmapped(toplevel: *Toplevel) void {
             if (owner_toplevel.in_world) toplevel.server.world.focus(owner_toplevel);
         }
     }
-    if (was_focused and toplevel.server.world.workspaces.active) @import("../workspaces.zig").focusFallback(toplevel.server, toplevel.workspace_id);
+    // Closing the active window hands the keyboard to the most recently
+    // focused survivor, on the canvas as on a workspace. `activated` is false
+    // while the desktop holds keyboard focus, which must not be taken away.
+    if (was_focused and was_activated) {
+        const workspaces = &toplevel.server.world.workspaces;
+        @import("../workspaces.zig").focusFallback(toplevel.server, if (workspaces.active) toplevel.workspace_id else null);
+    }
     if (toplevel.server.ipc) |ipc| {
         events.onWindowClosed(ipc, toplevel.id);
         ipc.wait_mgr.checkAll();

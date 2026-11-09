@@ -162,6 +162,18 @@ def run(scale, modifier=56, style='linear'):
                 ipc.pointer_button(0x110, False)
                 ipc.key(modifier, False)
                 assert focused() == accepted, 'dismissal must preserve focus'
+                # Closing or minimizing the focused window hands the keyboard
+                # to the previously focused one, without workspaces too.
+                def keyboard_window():
+                    return next((w['id'] for w in ipc.get_windows() if w['is_focused']), None)
+                by_title = {w['title']: w['id'] for w in ipc.get_windows()}
+                live = [by_title[f'Window {i}'] for i in range(len(clients))]
+                for wid in live: ipc.action('focus_window', {'id': wid})
+                stop_process(clients.pop())
+                wait_for(lambda: len(ipc.get_windows()) == len(live) - 1, 'focused client teardown')
+                wait_for(lambda: keyboard_window() == live[-2], 'closing the focused window refocuses the previous one')
+                ipc.minimize(live[-2])
+                wait_for(lambda: keyboard_window() == live[-3], 'minimizing the focused window refocuses the previous one')
                 while len(clients) > 1:
                     stop_process(clients.pop())
                 wait_for(lambda: len(ipc.get_windows()) == 1, 'one remaining window')
