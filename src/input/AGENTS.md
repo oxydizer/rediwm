@@ -13,7 +13,11 @@
 * **Text input/IME** (`text_input.zig`): `syncFocus` is the only enter path.
   IM grabs replace client delivery only (bindings, hardware keys and
   shell/lock UI win); an IM's own virtual keyboard bypasses its grab.
-  Lock/auth reject virtual input. IPC `GetTextInput` never returns text.
+  While an overlay owns new input, modifier updates and the release of keys
+  the grab already received still reach it, and the IM's virtual keyboard
+  never counts as a physical modifier source (it only echoes forwarded
+  state). Lock/auth reject virtual input. IPC `GetTextInput` never returns
+  text.
 * **Layouts:** layout-zero fallback is for binding lookup only; text uses the
   active XKB state.
 * **Shell key repeat:** one `shell_repeat` per keyboard; a new shell target
