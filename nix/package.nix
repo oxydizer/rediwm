@@ -69,6 +69,7 @@ let
       ../po
       ../tests
       ../tools
+      ../third_party
       ../LICENSE-MIT
       ../LICENSE-APACHE
     ];
