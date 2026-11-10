@@ -101,7 +101,8 @@ pub fn sdPolygon(r: Resolved, px: f64, py: f64) f64 {
     var s: f64 = 1;
     for (0..r.count) |i| {
         const a = r.points[i];
-        const b = r.points[(i + 1) % r.count];
+        // Not `% r.count`: a division per edge was a third of a raster's time.
+        const b = r.points[if (i + 1 == r.count) 0 else i + 1];
         const ex = b[0] - a[0];
         const ey = b[1] - a[1];
         const wx = px - a[0];
@@ -117,6 +118,59 @@ pub fn sdPolygon(r: Resolved, px: f64, py: f64) f64 {
         if ((c0 and c1 and c2) or (!c0 and !c1 and !c2)) s = -s;
     }
     return s * @sqrt(d);
+}
+
+/// How many device pixels after this one, along a row or column, keep a
+/// saturated coverage (wholly inside or wholly outside), given this pixel's
+/// signed distance in device pixels. A distance changes by at most one per
+/// pixel, so a raster asks for the next distance only where an edge can be.
+pub fn saturatedRun(device_distance: f32) usize {
+    const clear = @abs(device_distance) - 0.5 - 1e-3;
+    return if (clear >= 1) @intFromFloat(clear) else 0;
+}
+
+/// What the outline looks like inside the box (`x`, `y`, `w`, `h`) grown by
+/// `margin`: the edges that reach it, clipped to it and measured from its
+/// origin, and whether its centre is inside. A raster of the outline within
+/// `margin` of the box, drawn from the box's origin, is the same while this is:
+/// a corner keeps its key when the frame is resized, as far-edge anchors move
+/// with the corner.
+pub fn localKey(r: Resolved, x: f64, y: f64, w: f64, h: f64, margin: f64) u64 {
+    var hasher = std.hash.Wyhash.init(r.count);
+    const lo = [2]f64{ x - margin, y - margin };
+    const hi = [2]f64{ x + w + margin, y + h + margin };
+    for (0..r.count) |i| {
+        const a = r.points[i];
+        const b = r.points[(i + 1) % r.count];
+        var t0: f64 = 0;
+        var t1: f64 = 1;
+        var reaches = true;
+        for (0..2) |axis| {
+            const d = b[axis] - a[axis];
+            if (d == 0) {
+                if (a[axis] < lo[axis] or a[axis] > hi[axis]) reaches = false;
+                continue;
+            }
+            const ta = (lo[axis] - a[axis]) / d;
+            const tb = (hi[axis] - a[axis]) / d;
+            t0 = @max(t0, @min(ta, tb));
+            t1 = @min(t1, @max(ta, tb));
+        }
+        if (!reaches or t0 > t1) continue;
+        // Whole 1/1024ths of a pixel: the same edge at another frame size must
+        // not differ by the rounding of its far-edge anchor.
+        const ends = [4]i64{
+            quantize(a[0] + (b[0] - a[0]) * t0 - x), quantize(a[1] + (b[1] - a[1]) * t0 - y),
+            quantize(a[0] + (b[0] - a[0]) * t1 - x), quantize(a[1] + (b[1] - a[1]) * t1 - y),
+        };
+        hasher.update(std.mem.asBytes(&ends));
+    }
+    hasher.update(&.{@intFromBool(sdPolygon(r, x + w / 2, y + h / 2) < 0)});
+    return hasher.final();
+}
+
+fn quantize(v: f64) i64 {
+    return @intFromFloat(@round(std.math.clamp(v, -1e9, 1e9) * 1024));
 }
 
 pub const Insets = struct { left: i32 = 0, right: i32 = 0 };
@@ -230,4 +284,30 @@ test "row insets follow the slants and skip a notch" {
     // Rows wholly inside a rectangle need nothing.
     const box = resolve((try parse("0 0, -0 0, -0 -0, 0 -0")).?, 1000, 44, 1);
     try std.testing.expectEqual(Insets{}, rowInsets(box, 1000, 4, 40));
+}
+
+test "a corner's local key survives a resize and follows its own edges" {
+    const outline = (try parse("0 14, 14 0, 282.5 0, 289.5 7, -14 7, -0 21, -0 -12, -12 -0, 12 -0, 0 -12")).?;
+    const small = resolve(outline, 700, 500, 1);
+    const large = resolve(outline, 913, 641, 1);
+    // Each corner's 52 px square, measured from its own origin.
+    try std.testing.expectEqual(localKey(small, 0, 0, 52, 52, 5), localKey(large, 0, 0, 52, 52, 5));
+    try std.testing.expectEqual(localKey(small, 700 - 52, 0, 52, 52, 5), localKey(large, 913 - 52, 0, 52, 52, 5));
+    try std.testing.expectEqual(localKey(small, 0, 500 - 52, 52, 52, 5), localKey(large, 0, 641 - 52, 52, 52, 5));
+    try std.testing.expectEqual(localKey(small, 700 - 52, 500 - 52, 52, 52, 5), localKey(large, 913 - 52, 641 - 52, 52, 52, 5));
+    // The corners differ from one another, and a narrow frame brings the step
+    // of the top edge into the top right corner's square.
+    try std.testing.expect(localKey(small, 0, 0, 52, 52, 5) != localKey(small, 700 - 52, 0, 52, 52, 5));
+    const narrow = resolve(outline, 320, 500, 1);
+    try std.testing.expect(localKey(narrow, 320 - 52, 0, 52, 52, 5) != localKey(small, 700 - 52, 0, 52, 52, 5));
+    // Another density moves the cuts.
+    const dense = resolve(outline, 700, 500, 1.25);
+    try std.testing.expect(localKey(dense, 0, 0, 52, 52, 5) != localKey(small, 0, 0, 52, 52, 5));
+}
+
+test "a saturated run never reaches an edge" {
+    try std.testing.expectEqual(@as(usize, 0), saturatedRun(0.2));
+    try std.testing.expectEqual(@as(usize, 0), saturatedRun(-1.4));
+    try std.testing.expectEqual(@as(usize, 1), saturatedRun(-1.6));
+    try std.testing.expectEqual(@as(usize, 11), saturatedRun(12.4));
 }

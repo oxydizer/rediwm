@@ -116,10 +116,47 @@ pub fn cornerRadius(toplevel: *const Toplevel) f32 {
 /// ignored (the theme loader refuses one that does not parse).
 pub fn shapePolygon(toplevel: *const Toplevel, width: i32, height: i32) ?window_shape.Resolved {
     if (!chrome.polygons or toplevel.isMaximized() or toplevel.isFullscreen() or width <= 0 or height <= 0) return null;
-    const outline = (window_shape.parse(theme.global.window_shape) catch return null) orelse return null;
-    const resolved = window_shape.resolve(outline, @floatFromInt(width), @floatFromInt(height), toplevel.chromeDensity());
-    return if (window_shape.usable(resolved)) resolved else null;
+    const density = toplevel.chromeDensity();
+    const text = theme.global.window_shape;
+    // Every client commit asks several times (insets, clip, plate, shadow), nearly
+    // always for the frame it asked for last: parse the theme's text once, and
+    // keep the last frame's answer.
+    const cache = &shape_cache;
+    if (text.len > cache.text.len) {
+        const outline = (window_shape.parse(text) catch return null) orelse return null;
+        const resolved = window_shape.resolve(outline, @floatFromInt(width), @floatFromInt(height), density);
+        return if (window_shape.usable(resolved)) resolved else null;
+    }
+    if (!cache.parsed or !std.mem.eql(u8, cache.text[0..cache.len], text)) {
+        cache.outline = window_shape.parse(text) catch null;
+        @memcpy(cache.text[0..text.len], text);
+        cache.len = text.len;
+        cache.parsed = true;
+        cache.width = 0;
+    }
+    const outline = cache.outline orelse return null;
+    if (cache.width != width or cache.height != height or cache.density != density) {
+        const resolved = window_shape.resolve(outline, @floatFromInt(width), @floatFromInt(height), density);
+        cache.resolved = if (window_shape.usable(resolved)) resolved else null;
+        cache.width = width;
+        cache.height = height;
+        cache.density = density;
+    }
+    return cache.resolved;
 }
+
+/// The theme's outline as last parsed, and its polygon for the last frame asked
+/// about (`width` 0: none yet). Main thread only, like every caller.
+var shape_cache: struct {
+    text: [256]u8 = undefined,
+    len: usize = 0,
+    parsed: bool = false,
+    outline: ?window_shape.Outline = null,
+    width: i32 = 0,
+    height: i32 = 0,
+    density: f32 = 0,
+    resolved: ?window_shape.Resolved = null,
+} = .{};
 
 /// What the window's polygon depends on beyond its size, for memos: the outline's
 /// text and the density its px coordinates scale with. 0 without a polygon.

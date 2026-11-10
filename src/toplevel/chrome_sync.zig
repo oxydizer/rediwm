@@ -175,7 +175,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     state.inset_right = insets.right;
     state.outline = toplevel.shapePolygon(width, height);
 
-    const title_memo = chrome.TitlebarMemo.capture(width, height, toplevel.titlePtr(), state);
+    const title_memo = chrome.TitlebarMemo.capture(width, toplevel.titlePtr(), state);
     const skip_titlebar = if (toplevel.last_titlebar) |prev| prev.eql(title_memo) or toplevel.stretchesTitlebar(prev, title_memo, now_ms) else false;
     if (!skip_titlebar) {
         const titlebar = if (toplevel.cached_titlebar != null and toplevel.last_titlebar != null and toplevel.last_titlebar.?.reusableFor(title_memo))
@@ -250,7 +250,6 @@ pub fn stretchesTitlebar(toplevel: *const Toplevel, raster: chrome.TitlebarMemo,
     if (toplevel.size_w.settled(now_ms) and toplevel.size_h.settled(now_ms)) return false;
     var resized = raster;
     resized.width = next.width;
-    resized.height = next.height;
     if (!resized.eql(next)) return false;
     const ratio = @as(f32, @floatFromInt(next.width)) / @as(f32, @floatFromInt(@max(raster.width, 1)));
     return @abs(ratio - 1) <= titlebar_stretch;

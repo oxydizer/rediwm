@@ -111,8 +111,9 @@ pub const ChromeState = struct {
 pub const TitlebarMemo = struct {
     font_generation: u32 = 0,
     tabs_hash: u64 = 0,
+    // The band's width. The frame's height is not an input: a window resized
+    // only in height keeps its titlebar.
     width: i32,
-    height: i32,
     density: f32 = 1,
     active: bool = false,
     workspace_focus: bool = false,
@@ -152,12 +153,11 @@ pub const TitlebarMemo = struct {
     inset_left: i32 = 0,
     inset_right: i32 = 0,
 
-    pub fn capture(width: i32, height: i32, title_ptr: ?[*:0]const u8, state: ChromeState) TitlebarMemo {
+    pub fn capture(width: i32, title_ptr: ?[*:0]const u8, state: ChromeState) TitlebarMemo {
         const t = theme.global;
         return .{
             .font_generation = text.font_generation,
             .width = width,
-            .height = height,
             .density = state.density,
             .active = state.active,
             .workspace_focus = state.workspace_focus,
@@ -192,7 +192,7 @@ pub const TitlebarMemo = struct {
             .title_plate_width = t.window_title_plate_width,
             .title_plate_fg = t.window_title_plate_fg,
             .title_plate_geometry = plate.geometry(t),
-            .title_plate_outline = plate.outlineKey(state),
+            .title_plate_outline = plate.outlineKey(width, state),
             .inset_left = state.inset_left,
             .inset_right = state.inset_right,
         };
@@ -220,7 +220,6 @@ pub const TitlebarMemo = struct {
     pub fn eql(a: TitlebarMemo, b: TitlebarMemo) bool {
         if (a.font_generation != b.font_generation) return false;
         if (a.width != b.width) return false;
-        if (a.height != b.height) return false;
         if (a.density != b.density) return false;
         if (a.active != b.active) return false;
         if (a.workspace_focus != b.workspace_focus) return false;
@@ -462,6 +461,7 @@ pub const ChromeBuffer = struct {
         const icon_top: f32 = @floatFromInt(@divTrunc(m.titlebarHeight() - m.iconSize(), 2));
         const base = Color.chrome();
         const title_plate = plate.polygon(frame.logical_width, frame.state);
+        const plate_mask = if (title_plate) |polygon| try plate.mask(polygon, frame.logical_width, frame.state, @intCast(frame.height)) else null;
         // Away from the controls and the icon every pixel in a row has the same
         // fill. Pack that colour once instead of repeating four rounded float
         // conversions across the bar.
@@ -513,6 +513,10 @@ pub const ChromeBuffer = struct {
                     count += 1;
                 }
             }
+            // The plate is one colour inside and absent outside: but for the
+            // pixels on its edge, a row of it is two packed colours.
+            const plate_color = Color.fromRgba(theme.global.window_title_plate);
+            const plate_flat: [2]u32 = if (title_plate != null) .{ plate_color.scaled(0).over(row_color).argb(), plate_color.scaled(1).over(row_color).argb() } else @splat(flat_color);
             var x = x0;
             for (runs[0..count]) |run| {
                 @memset(row[x..run.start], flat_color);
@@ -520,16 +524,20 @@ pub const ChromeBuffer = struct {
                     const px = (@as(f32, @floatFromInt(shaded)) + 0.5) / scale;
                     const in_controls = control_row and px >= control_left and px <= control_right;
                     const in_icon = icon_row and px >= icon_left and px < icon_right;
-                    if (!in_controls and !in_icon and title_plate == null) {
-                        row[shaded] = flat_color;
-                        continue;
+                    const plate_cover = if (plate_mask) |mask| mask.at(shaded, device_y) else 0;
+                    if (!in_controls and !in_icon) {
+                        if (title_plate == null) {
+                            row[shaded] = flat_color;
+                            continue;
+                        }
+                        if (plate_cover == 0 or plate_cover == 1) {
+                            row[shaded] = plate_flat[@intFromFloat(plate_cover)];
+                            continue;
+                        }
                     }
 
                     var color = row_color;
-                    if (title_plate) |polygon| {
-                        const distance: f32 = @floatCast(plate.distance(polygon, frame.state, px, py));
-                        color = Color.fromRgba(theme.global.window_title_plate).scaled(sdf.coverage(distance * scale)).over(color);
-                    }
+                    if (title_plate != null) color = plate_color.scaled(plate_cover).over(color);
                     if (in_controls) color = controls.paint(color, px, py);
 
                     if (if (frame.state.tabs.tabs.len == 0) frame.state.icon else null) |icon| {

@@ -112,6 +112,7 @@ fn start(init: std.process.Init) !bool {
     defer @import("ui").shell_icons.deinitPack();
     defer @import("desktop/watcher.zig").deinitIcons();
     defer @import("icon_cache.zig").deinit();
+    defer @import("chrome_plate.zig").deinit();
     defer server.deinit();
 
     var buf: [11]u8 = undefined;

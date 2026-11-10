@@ -4,6 +4,7 @@ const c = @import("c_gfx");
 const theme = @import("../theme.zig");
 const paint_mod = @import("../paint.zig");
 const layout = @import("../layout.zig");
+const Color = @import("../text.zig").Color;
 
 pub fn path(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, radius: f64) void {
     const bevel = @min(theme.global.app_highlight_bevel, @min(w, h) / 2);
@@ -51,20 +52,44 @@ pub fn fillBeveled(r: *paint_mod.Renderer, box: paint_mod.ClipRect, style: layou
     const half_w = box.w / 2;
     const half_h = box.h / 2;
     r.clean = false;
+    const fill: Color = .{ .r = style.color[0], .g = style.color[1], .b = style.color[2], .a = style.color[3] };
+    const border: Color = .{ .r = style.border_color[0], .g = style.border_color[1], .b = style.border_color[2], .a = style.border_color[3] };
+    // Pixels this far inside every edge are the fill alone, at full coverage:
+    // one run per row, with no distance to work out. An opaque fill stores one
+    // packed colour there and a clear one (an outline) leaves the run untouched.
+    const inner = style.border_width + 0.5 / s + 1e-3;
+    var solid: u32 = 0;
+    paint_mod.blendPixel(&solid, fill, 1);
     var py = y0;
     while (py < y1) : (py += 1) {
         const y = @abs((@as(f32, @floatFromInt(py)) + 0.5) / s - box.y - half_h);
+        const row: usize = @intCast(py * r.width);
+        // Half the width of the run about the box's centre; negative on a row
+        // with none (within the border of the top or bottom edge).
+        const reach = if (y <= half_h - inner) @min(half_w - inner, half_w + half_h - bevel - inner * std.math.sqrt2 - y) else -1;
+        const centre = (box.x + half_w) * s;
+        const run_x0 = if (reach >= 0) std.math.clamp(@as(i32, @intFromFloat(@ceil(centre - reach * s - 0.5))), x0, x1) else x1;
+        const run_x1 = if (reach >= 0) std.math.clamp(@as(i32, @intFromFloat(@floor(centre + reach * s - 0.5))) + 1, run_x0, x1) else x1;
         var px = x0;
         while (px < x1) : (px += 1) {
+            if (px == run_x0 and run_x1 > run_x0) {
+                const run = r.pixels[row + @as(usize, @intCast(run_x0)) .. row + @as(usize, @intCast(run_x1))];
+                if (fill.a >= 1) {
+                    @memset(run, solid);
+                } else if (fill.a > 0) {
+                    for (run) |*pixel| paint_mod.blendPixel(pixel, fill, 1);
+                }
+                px = run_x1 - 1;
+                continue;
+            }
             const x = @abs((@as(f32, @floatFromInt(px)) + 0.5) / s - box.x - half_w);
             const distance = @max(@max(x - half_w, y - half_h), (x + y - half_w - half_h + bevel) / std.math.sqrt2);
             const outer = paint_mod.sdf.coverage(distance * s);
-            const inner = paint_mod.sdf.coverage((distance + style.border_width) * s);
-            const index: usize = @intCast(py * r.width + px);
-            const fill = style.color;
-            paint_mod.blendPixel(&r.pixels[index], .{ .r = fill[0], .g = fill[1], .b = fill[2], .a = fill[3] }, outer);
-            const border = style.border_color;
-            paint_mod.blendPixel(&r.pixels[index], .{ .r = border[0], .g = border[1], .b = border[2], .a = border[3] }, @max(0, outer - inner));
+            if (outer <= 0) continue;
+            const inside = paint_mod.sdf.coverage((distance + style.border_width) * s);
+            const index = row + @as(usize, @intCast(px));
+            if (fill.a > 0) paint_mod.blendPixel(&r.pixels[index], fill, outer);
+            if (outer > inside and border.a > 0) paint_mod.blendPixel(&r.pixels[index], border, outer - inside);
         }
     }
 }

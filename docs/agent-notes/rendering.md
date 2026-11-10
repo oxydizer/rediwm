@@ -51,8 +51,10 @@ chrome, capture, or retained panel painting. General rules remain in
   no ring or shadow.
   Optional `window_corner_*` accents are four small immutable rasters owned by
   the frame tree (`toplevel/corner_accents.zig`), following that same shape just
-  inside its ring. They decline input, inherit opacity, and memoize geometry,
-  shape, scale and theme; maximized/fullscreen/undecorated windows hide them.
+  inside its ring. They decline input, inherit opacity, and memoize scale and
+  theme; maximized/fullscreen/undecorated windows hide them. Each corner is
+  keyed by the part of the outline it shows (`window_shape.localKey`), so a
+  resize or a size animation moves the four nodes and paints none of them.
   `window_corner_resize_extra` adds length during a live resize grab. The normal
   chrome frame tick eases that extension in/out, including split resizes; it
   stops scheduling when settled. Begin/end wake the tick even without a client
@@ -67,9 +69,20 @@ chrome, capture, or retained panel painting. General rules remain in
   Plate inset, bevel, height-relative slant, control gap and text padding are
   theme tokens too; narrow frames clamp opposing cuts to prevent crossed edges.
   With a polygon outline (`ChromeState.outline`) the plate is also cut by the
-  outline moved in by the inset (`chrome_plate.distance`, keyed in the memo),
-  so chamfers keep an even margin; a step meant to hug the plate's slant has
-  to be placed in px in `window_shape` to match the plate's width and slant.
+  outline moved in by the inset (`chrome_plate.distance`), so chamfers keep an
+  even margin; a step meant to hug the plate's slant has to be placed in px in
+  `window_shape` to match the plate's width and slant. The memo keys only the
+  outline's edges near the plate, and not the frame's height: a window resized
+  in height alone keeps its titlebar raster.
+  Rasters that follow a distance field (the plate, the accents) ask for a
+  distance only where an edge can be: a distance changes by at most one per
+  pixel, so `window_shape.saturatedRun` pixels after one are as covered as it
+  is. A per-pixel polygon distance over a whole box costs milliseconds.
+  The plate's coverage is the same for every titlebar of one theme, scale and
+  outline, so `chrome_plate.mask` keeps the last one: a resize or a title
+  change reads it and works out no distance.
+  `Toplevel.shapePolygon` keeps the parsed outline and the last frame's
+  polygon: every client commit asks for it several times.
   `chrome_control_right_pad` and `chrome_control_offset_y` move the shared
   control rectangles, including painting and input. `controlInsets` measures
   the polygon at the shifted control rows while leaving the icon centred.

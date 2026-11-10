@@ -10,6 +10,8 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   rect can cut its corners with `RectStyle.bevel` (`fillRect` hands it to
   `highlight.fillBeveled`; no relief or `replace`). The power menu uses it
   through `power_menu_bevel`, rounding its glass to stay inside the cut.
+  Like `fillRectPlain`, a beveled fill shades only the pixels near an edge:
+  each row's interior is one run (stored, blended, or skipped for an outline).
 
 * **The scrollbar** (`widgets/scrollbar.zig`, Files' look): a thumb (track-less
   unless painted track tokens or `scrollbar_track_relief` enable one; flat at `scrollbar_glow = 0`)
@@ -34,6 +36,8 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   controls Cairo's layer bounds: include the whole channel even without relief.
   Stripe period, width and slope also come from the theme through `Look`;
   period/width zero hides the stripes, and slope zero draws transverse bands.
+  App clients paint the channel on every scroll frame: keep its loop free of
+  soft-float calls (`@mod`, `@floor`, `@round` on a baseline x86_64 target).
 * **Text fields with child accessories** reserve text/caret room with
   `field.trailing = .accessory`. Place a shared button in the field's children
   (Settings search uses a ghost clear button), so normal pointer and keyboard

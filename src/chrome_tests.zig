@@ -29,7 +29,6 @@ test "titlebar glass holds only while the titlebar is at least 98% opaque" {
 pub fn sampleTitlebarMemo() TitlebarMemo {
     return .{
         .width = 200,
-        .height = 100,
         .title_ptr = null,
         .scale = 1,
         .hover = 0,
@@ -109,37 +108,37 @@ test "TitlebarMemo.capture reads title_size from theme.global" {
     const saved = theme.global;
     defer theme.global = saved;
     theme.global.title_size = 19.25;
-    const memo = TitlebarMemo.capture(10, 10, null, .{ .scale = 1 });
+    const memo = TitlebarMemo.capture(10, null, .{ .scale = 1 });
     try std.testing.expectEqual(@as(f32, 19.25), memo.title_size);
 }
 
 test "chrome geometry changes invalidate retained titlebar pixels" {
     const saved = theme.global;
     defer theme.global = saved;
-    const before = TitlebarMemo.capture(400, 320, null, .{});
+    const before = TitlebarMemo.capture(400, null, .{});
     theme.global.chrome_control_gap += 1;
-    const spaced = TitlebarMemo.capture(400, 320, null, .{});
+    const spaced = TitlebarMemo.capture(400, null, .{});
     try std.testing.expect(!before.eql(spaced));
     try std.testing.expect(!before.reusableFor(spaced));
     theme.global.chrome_control_gap = saved.chrome_control_gap;
     theme.global.chrome_height += 1;
-    const taller = TitlebarMemo.capture(400, 320, null, .{});
+    const taller = TitlebarMemo.capture(400, null, .{});
     try std.testing.expect(!before.reusableFor(taller));
     theme.global.chrome_height = saved.chrome_height;
     theme.global.chrome_round_buttons = !saved.chrome_round_buttons;
-    const round = TitlebarMemo.capture(400, 320, null, .{});
+    const round = TitlebarMemo.capture(400, null, .{});
     try std.testing.expect(!before.eql(round));
     try std.testing.expect(!before.reusableFor(round));
     theme.global = saved;
     theme.global.chrome_control_right_pad = 2;
-    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, 320, null, .{})));
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
     theme.global = saved;
     theme.global.chrome_control_offset_y = 5;
-    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, 320, null, .{})));
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
     inline for (.{ "window_title_plate_inset", "window_title_plate_bevel", "window_title_plate_slant", "window_title_plate_control_gap", "window_title_plate_text_padding" }) |field| {
         theme.global = saved;
         @field(theme.global, field) += 0.1;
-        try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, 320, null, .{})));
+        try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
     }
 }
 
