@@ -32,6 +32,15 @@ wayland-protocols and GLES2; D-Bus suites also need PyGObject,
 App checks include [calculator](tests/calculator.py), [editor](tests/editor.py)
 and [editor visuals](tests/editor_visuals.py).
 
+SSH keys: `zig build test-keys` and
+`dbus-run-session -- python3 tests/keys_settings.py` (repeat with
+`REDIWM_TEST_SCALE=1.5`). Fixtures generate OpenSSH and legacy RSA keys in a
+scratch home, compare fingerprints with OpenSSH, verify passphrase changes,
+and exercise the real Settings fields. They never use the host's keys or
+agent. Requires OpenSSH, OpenSSL and `gio`; `GIO_USE_VFS=local` keeps Trash
+within the fixture. `--helper-only` skips the compositor; `--bin-dir` selects
+the helper and compositor builds together.
+
 ## Isolation and harness
 
 - Use a private headless compositor, temporary home/XDG directories and private

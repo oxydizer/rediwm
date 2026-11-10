@@ -25,7 +25,9 @@
   `candidate`. `sendDeactivated` destroys oneshots synchronously: clear
   `active` first.
 * **Shortcuts inhibit** gates only the switcher, screenshot shortcuts and
-  final dispatch; hardware keys, VT switching and open panels still win.
+  final dispatch; hardware keys, VT switching, System Monitor and open panels
+  still win. System Monitor dismisses transient input owners and revokes the
+  focused client's inhibitor; lock/auth and shortcut capture keep priority.
 * **Drag dodge** (`drag_dodge.zig`) slides a file manager aside through
   `Toplevel.setDodge`, a presentation-only offset added in
   `applyVisualTransform`. Never fold it into `x`/`y`/`move_x` (it would grow

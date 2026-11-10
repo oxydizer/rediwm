@@ -2,7 +2,9 @@
 
 Open **System Monitor** from the launcher, with **Ctrl+Alt+Del**, or by
 running `rediwm-monitor`. The shortcut restores and focuses an existing
-window, including one on another workspace.
+window, including one on another workspace. It dismisses open shell popups,
+the window switcher and screenshot selection, and takes focus even when a
+client has inhibited compositor shortcuts.
 
 CPU and RAM summary cards show large current percentages and shaded 60-second
 graphs. CPU includes its reported frequency and logical CPU count; RAM includes
@@ -14,14 +16,18 @@ New processes and the first sample after resuming show an em dash until
 there is a second CPU measurement. Unavailable data also shows an em dash.
 Nonlocal account names fall back to their numeric UID.
 
-The bottom bar groups CPU, RAM, swap, network, uptime and CPU temperature
+The bottom bar groups CPU, RAM, swap, network, uptime and CPU/GPU temperatures
 beside the process actions. It wraps the readouts and actions at smaller
 window sizes. CPU shows online logical CPUs and CPU 0's reported frequency;
 RAM and swap show used/total capacity and a percentage. Network arrows show
 total upload/download rates across non-loopback interfaces (virtual interfaces
 can count the same traffic again). The first sample after resume or an interface
-change shows a dash. Temperature is the hottest supported CPU sensor, never a
-disk or GPU reading. Missing metrics show a dash; FreeBSD currently provides
+change shows a dash. Temperature has separate **CPU** and **GPU** rows. CPU
+shows the hottest supported CPU sensor. GPU shows the hottest reported GPU die
+or package temperature, using Linux hwmon for AMD, Intel and Nouveau, or the
+optional NVIDIA management library for the proprietary driver. GPU junction
+and memory channels are excluded. NVIDIA telemetry is released while paused
+or minimized. Missing metrics show a dash; FreeBSD currently provides
 CPU count, frequency and uptime, with network and temperature unavailable.
 
 The list starts with your processes, sorted by CPU usage. Click a column to
@@ -89,8 +95,8 @@ For explicit workspace overrides, use the existing section:
 "Ctrl+Alt+Delete" = "open_system_monitor"
 ```
 
-Shortcut inhibition and lock/greeter rules still apply. The app gets its
-own application scope when scope management is enabled.
+Lock, greeter, authentication prompts and shortcut editing keep priority.
+The app gets its own application scope when scope management is enabled.
 
 ## Building and testing
 

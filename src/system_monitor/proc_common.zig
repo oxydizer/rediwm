@@ -44,6 +44,7 @@ pub const System = struct {
     frequency_ghz: ?f64 = null,
     uptime_seconds: ?u64 = null,
     temperature_c: ?f64 = null,
+    gpu_temperature_c: ?f64 = null,
     network: ?Network = null,
 };
 pub const Network = struct { received: u64 = 0, sent: u64 = 0, interfaces: u64 = 0 };

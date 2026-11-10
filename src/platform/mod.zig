@@ -22,6 +22,7 @@ pub const watch = @import("watch.zig");
 pub const seccomp = @import("seccomp.zig");
 pub const system = @import("system.zig");
 pub const tool = @import("tool.zig");
+pub const key_scan = @import("key_scan.zig");
 
 test {
     _ = login_process;
@@ -35,6 +36,7 @@ test {
     _ = wake;
     _ = system;
     _ = tool;
+    _ = key_scan;
     _ = watch;
     _ = @import("seccomp_tests.zig");
 }

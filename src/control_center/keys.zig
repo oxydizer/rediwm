@@ -28,6 +28,7 @@ pub fn selectSearchPage(cc: *ControlCenter, page: Page) void {
     // The service list is only kept live while its page is on screen.
     if (cc.page == .services and page != .services) if (cc.systemd_client) |client| client.hide();
     if (cc.page == .printers and page != .printers) cc.printers.hide();
+    if (cc.page == .keys and page != .keys) cc.key_settings.hide();
     if (cc.page == .network and page != .network) cc.network.clearForm();
     if (cc.page == .bluetooth and page != .bluetooth) {
         if (cc.server.bluetooth) |m| m.closed();
@@ -83,7 +84,7 @@ pub fn focusSearch(cc: *ControlCenter) void {
 
 pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
     if (settings_search.key(cc, key, shift)) return true;
-    if (cc.page != .input and cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .printers and cc.page != .network and cc.page != .bluetooth and cc.page != .region and cc.page != .power) return false;
+    if (cc.page != .input and cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .printers and cc.page != .network and cc.page != .bluetooth and cc.page != .region and cc.page != .power and cc.page != .keys) return false;
     const dispatcher = &ui.input.current;
     if (cc.page == .appearance) {
         if (appearance_section.itemKey(&cc.appearance, key)) return true;
@@ -100,8 +101,12 @@ pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
             }
         }
     }
-    if (cc.is_welcome or cc.page == .input or cc.page == .users or cc.page == .services or cc.page == .printers or cc.page == .network or cc.page == .bluetooth or cc.page == .region or cc.page == .power) {
+    if (cc.is_welcome or cc.page == .input or cc.page == .users or cc.page == .services or cc.page == .printers or cc.page == .network or cc.page == .bluetooth or cc.page == .region or cc.page == .power or cc.page == .keys) {
         const focused = dispatcher.focused;
+        if (cc.page == .keys and key == .escape and cc.key_settings.form != .none) {
+            @import("sections/keys.zig").cancel(cc, 0);
+            return true;
+        }
         if (cc.page == .bluetooth and bluetooth_section.key(cc, key)) return true;
         if (cc.page == .network and (focused == null or focused.?.kind != .select or !focused.?.kind.select.open)) {
             if (network_section.key(cc, key)) return true;

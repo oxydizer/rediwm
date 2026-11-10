@@ -120,11 +120,21 @@ fn paintMetric(self: *App, cr: *c.cairo_t, index: usize, cell: Rect) void {
             app.textBox(cr, value, content, cairo.textSize(), false, theme.global.window_fg);
         },
         5 => {
-            const value = if (system.temperature_c) |temp| std.fmt.bufPrint(&buf, "{d:.0}°C", .{temp}) catch "—" else "—";
-            app.textBox(cr, value, content, cairo.textSize(), false, colors[index]);
+            content.y -= 4;
+            content.h = 18;
+            app.textBox(cr, temperatureLabel(&buf, tr("CPU"), system.temperature_c), content, cairo.statusSize(), false, colors[index]);
+            content.y += 17;
+            app.textBox(cr, temperatureLabel(&buf, tr("GPU"), system.gpu_temperature_c), content, cairo.statusSize(), false, colors[index]);
         },
         else => unreachable,
     }
+}
+
+fn temperatureLabel(buf: []u8, label: []const u8, temperature: ?f64) []const u8 {
+    return if (temperature) |value|
+        std.fmt.bufPrint(buf, "{s}  {d:.0}°C", .{ label, value }) catch "—"
+    else
+        std.fmt.bufPrint(buf, "{s}  —", .{label}) catch "—";
 }
 
 fn memory(cr: *c.cairo_t, content: Rect, used: ?u64, total: ?u64, color: [4]f32) void {

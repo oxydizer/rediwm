@@ -82,6 +82,30 @@ pub fn focusedToplevel(server: *Server) ?*Toplevel {
 
 fn openSystemMonitor(server: *Server) void {
     if (server.greeter_mode or server.locker != null or server.polkit_dialog != null) return;
+    // Remove transient input owners before focusing either the existing app
+    // or the one about to map. Releasing Alt must not accept an old switcher.
+    var keyboards = server.input.keyboards.iterator(.forward);
+    while (keyboards.next()) |keyboard| {
+        keyboard.stopRepeat();
+        keyboard.stopShellRepeat();
+        keyboard.stopSwitcherRepeat();
+    }
+    _ = server.input.shortcuts_inhibit.revoke();
+    _ = server.input.cancelDrag();
+    server.input.clearGrab();
+    server.input.pan_session = null;
+    server.screenshot_selector.cancel();
+    server.switcher.cancel();
+    server.input.window_menu.close();
+    if (server.tray) |tray| tray.closeMenu();
+    var outputs = server.outputs.iterator(.forward);
+    while (outputs.next()) |output| {
+        output.closeStartMenu();
+        output.closePowerMenu();
+        output.closeWifi();
+        output.closeBattery();
+        output.closeCalendar();
+    }
     var it = server.world.toplevels.iterator(.forward);
     while (it.next()) |top| {
         if (!top.in_world or !std.mem.eql(u8, top.appId(), "rediwm-monitor")) continue;

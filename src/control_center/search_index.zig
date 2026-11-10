@@ -2,7 +2,7 @@
 const std = @import("std");
 const fold = @import("ui").fold;
 const i18n = @import("i18n");
-pub const Page = enum { general, input, displays, audio, network, appearance, shortcuts, desktop, bluetooth, region, users, printers, services, power };
+pub const Page = enum { general, input, displays, audio, network, appearance, shortcuts, desktop, bluetooth, region, users, printers, services, power, keys };
 pub const Entry = struct {
     page: Page,
     title: []const u8,
@@ -19,6 +19,9 @@ const SourceEntry = struct {
 };
 
 const source_entries = [_]SourceEntry{
+    .{ .page = .keys, .title = i18n.msg("Keys & Certificates"), .keywords = i18n.msg("ssh security public private identity fingerprint passphrase") },
+    .{ .page = .keys, .title = i18n.msg("New SSH key"), .target = "keys_new", .keywords = i18n.msg("generate ed25519 passphrase") },
+    .{ .page = .keys, .title = i18n.msg("SSH keys"), .target = "keys_refresh", .keywords = i18n.msg("copy public permissions label comment delete trash") },
     .{ .page = .power, .title = i18n.msg("Power & Battery"), .target = "", .keywords = i18n.msg("sleep battery charging energy") },
     .{ .page = .power, .title = i18n.msg("Keyboard backlight"), .target = "power_keyboard", .keywords = i18n.msg("brightness plugged battery") },
     .{ .page = .power, .title = i18n.msg("Charging limit"), .target = "power_charge_limit", .keywords = i18n.msg("battery health threshold") },

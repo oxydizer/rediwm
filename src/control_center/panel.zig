@@ -51,7 +51,7 @@ pub const default_height = 640;
 const theme = @import("ui").theme;
 
 pub const Page = @import("search_index.zig").Page;
-pub const page_labels = [_]i18n.Message{ i18n.msg("General"), i18n.msg("Input"), i18n.msg("Displays"), i18n.msg("Audio"), i18n.msg("Network"), i18n.msg("Appearance"), i18n.msg("Keyboard Shortcuts"), i18n.msg("Desktop"), i18n.msg("Bluetooth"), i18n.msg("Region & Language"), i18n.msg("Users"), i18n.msg("Printers"), i18n.msg("Services"), i18n.msg("Power & Battery") };
+pub const page_labels = [_]i18n.Message{ i18n.msg("General"), i18n.msg("Input"), i18n.msg("Displays"), i18n.msg("Audio"), i18n.msg("Network"), i18n.msg("Appearance"), i18n.msg("Keyboard Shortcuts"), i18n.msg("Desktop"), i18n.msg("Bluetooth"), i18n.msg("Region & Language"), i18n.msg("Users"), i18n.msg("Printers"), i18n.msg("Services"), i18n.msg("Power & Battery"), i18n.msg("Keys & Certificates") };
 /// Refreshed when a page rebuilds; storage outlives retained widget trees.
 /// Each comptime descriptor list owns its own stable slice.
 pub fn translatedLabels(comptime messages: []const i18n.Message) []const []const u8 {
@@ -74,7 +74,7 @@ pub fn pageLabel(id: usize) []const u8 {
     return page_labels[id].get();
 }
 
-pub const page_names = [_][]const u8{ "general", "input", "displays", "audio", "network", "appearance", "shortcuts", "desktop", "bluetooth", "region", "users", "printers", "services", "power" };
+pub const page_names = [_][]const u8{ "general", "input", "displays", "audio", "network", "appearance", "shortcuts", "desktop", "bluetooth", "region", "users", "printers", "services", "power", "keys" };
 pub const page_descriptions = [_]i18n.Message{
     i18n.msg("Everyday controls, all in one place."),                i18n.msg("Make your mouse and keyboard feel right."),
     i18n.msg("Arrangement, resolution, refresh rate and scaling."),  i18n.msg("Volume, microphones and output devices."),
@@ -83,8 +83,9 @@ pub const page_descriptions = [_]i18n.Message{
     i18n.msg("Connect and manage your Bluetooth devices."),          i18n.msg("Your language, regional formats and calendar preferences."),
     i18n.msg("Review login accounts and automatic-login settings."), i18n.msg("Printer status, jobs and connection diagnostics."),
     i18n.msg("Manage and analyze systemd services."),                i18n.msg("Screen, sleep and power-source preferences."),
+    i18n.msg("Your SSH keys, public identities and passphrases."),
 };
-pub const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi, .settings, .keyboard, .squares, .bluetooth, .globe, .users, .print, .settings, .battery };
+pub const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi, .settings, .keyboard, .squares, .bluetooth, .globe, .users, .print, .settings, .battery, .lock };
 pub const max_devices = 16;
 
 pub fn palette() theme.Theme {

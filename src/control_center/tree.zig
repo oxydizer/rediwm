@@ -67,6 +67,7 @@ pub fn buildTree(cc: *ControlCenter) void {
             cc.shortcuts.cancel();
             if (cc.page == .services) if (cc.systemd_client) |client| client.hide();
             if (cc.page == .printers) cc.printers.hide();
+            if (cc.page == .keys) cc.key_settings.hide();
             if (cc.page == .bluetooth) if (cc.server.bluetooth) |manager| manager.closed();
         } else {
             cc.search.restore_scroll = true;
@@ -77,6 +78,7 @@ pub fn buildTree(cc: *ControlCenter) void {
     if (cc.page == .bluetooth and cc.built_page == .bluetooth) cc.bluetooth.capture();
     if (cc.page == .network and cc.built_page == .network) cc.network.captureFocus();
     if (cc.page == .printers and cc.built_page == .printers) cc.printers.capture();
+    if (cc.page == .keys and cc.built_page == .keys) cc.key_settings.capture();
     if (cc.page == .appearance) appearance_section.captureItemFocus(&cc.appearance);
     ui.input.reset();
     const has_services = if (cc.systemd_client) |client| client.available() else false;
@@ -155,6 +157,10 @@ pub fn buildTree(cc: *ControlCenter) void {
         }
         if (cc.search.unavailable) cc.append(label(i18n.tr("This setting is unavailable on this device or in the current mode."), t.settings_description_size, true));
         switch (cc.page) {
+            .keys => {
+                @import("sections/keys.zig").build(&cc.key_settings, cc);
+                cc.append(cc.key_settings.root);
+            },
             .power => {
                 @import("sections/power.zig").build(&cc.power_settings, cc);
                 cc.append(cc.power_settings.root);

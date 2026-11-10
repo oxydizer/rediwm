@@ -128,10 +128,6 @@ def run():
             vm.send("inhibit")
             vm.expect_count("active", 1)
             binding_inhibited(vm)
-            deletes = vm.count("key 111 1")
-            chord(29, KEY_LEFTALT, 111)
-            vm.expect_count("key 111 1", deletes + 1)
-            assert window("rediwm-monitor") is None, "System Monitor bypassed shortcut inhibition"
             vm_id = window("rediwm.vm")["id"]
             tabs = vm.count(f"key {KEY_TAB} 1")
             chord(KEY_LEFTALT, KEY_TAB)
@@ -139,6 +135,12 @@ def run():
             assert input_state()["keyboard_focused_window_id"] == vm_id, "Alt+Tab switched away from the VM"
             # Super-drag pan belongs to the client's Super too.
             def super_drag():
+                w = window("rediwm.vm")
+                result = action('wait_for', {
+                    "condition": {"window_geometry_settled": {"id": w["id"]}},
+                    "timeout_ms": 5000,
+                })
+                assert not result.get("timed_out"), result
                 w = window("rediwm.vm")
                 action('move_cursor', {"x": w["x"] + 40, "y": w["y"] + 40})
                 key(KEY_LEFTMETA, True)
@@ -203,6 +205,21 @@ def run():
             vm.send("inhibit")
             vm.expect_count("active", 5)
             print("PASS: destroyed inhibitor restores bindings; a new request is granted")
+
+            # System Monitor is always reachable, even from a grabbed VM.
+            deletes = vm.count("key 111 1")
+            releases = vm.count("key 111 0")
+            chord(29, KEY_LEFTALT, 111)
+            wait_for(lambda: window("rediwm-monitor"), "System Monitor blocked by inhibition")
+            monitor_id = window("rediwm-monitor")["id"]
+            wait_for(lambda: input_state()["keyboard_focused_window_id"] == monitor_id,
+                     "System Monitor did not take keyboard focus")
+            vm.expect_count("inactive", 4)
+            vm.expect_count("key 111 1", deletes)
+            vm.expect_count("key 111 0", releases)
+            focus("rediwm.vm")
+            vm.expect_count("active", 6)
+            print("PASS: System Monitor takes focus and consumes its chord under inhibition")
 
             # A client dying while inhibiting must hand the bindings back.
             vm.process.kill(); vm.process.wait(timeout=5)

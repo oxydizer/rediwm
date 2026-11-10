@@ -74,7 +74,8 @@ int main(int argc, char **argv) {
 def run(scale, workspace):
     with tempfile.TemporaryDirectory(prefix="rediwm-monitor-") as directory:
         tmp = Path(directory)
-        config = ('[compositor]\nxwayland = false\n' +
+        config = ('[compositor]\nxwayland = false\n'
+                  'taskbar_items = ["battery", "volume", "wifi", "clock"]\n' +
                   ('desktop_mode = "workspaces"\n' if workspace else '') +
                   '[theme]\napp_bg = "#203040"\napp_item_hover = "#4a6076"\n'
                   'app_item_selected = "#62768a"\n')
@@ -88,6 +89,12 @@ def run(scale, workspace):
         targets.write_text(f"{os.getpid()}\n")
         check_signal_guard(tmp, guard, targets)
         env.update(LD_PRELOAD=str(guard), REDIWM_TEST_MONITOR_TARGETS=str(targets))
+        subprocess.run(["cc", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror",
+                        str(ROOT / "tests/system_monitor_gpu.c"), "-o", str(tmp / "libnvidia-ml.so.1")], check=True)
+        gpu_state, gpu_trace = tmp / "gpu-state", tmp / "gpu-trace"
+        gpu_state.write_text("74\n")
+        env.update(LD_LIBRARY_PATH=str(tmp), REDIWM_TEST_GPU_STATE=str(gpu_state),
+                   REDIWM_TEST_GPU_TRACE=str(gpu_trace))
         compositor, log = spawn_compositor(tmp, scale=str(scale), config_content=config, env_extra=env,
                                           binary=os.environ.get("REDIWM_TEST_BINARY"))
         fixtures = []
@@ -141,6 +148,16 @@ def run(scale, workspace):
                     delta = switches(monitor_pid) - before
                     assert delta <= 2, f"{label}: monitor kept waking ({delta} context switches)"
 
+                def taskbar_popup(name, target):
+                    bar = ipc.get_shell_state()["taskbars"][0]
+                    anchor = next(item["box"] for item in bar["right_items"] if item["name"] == name)
+                    x = anchor["x"] + anchor["width"] // 2
+                    ipc.click_at(x, anchor["y"] + anchor["height"] // 2)
+                    point = x, bar["box"]["y"] - 40
+                    assert ipc.hit_test(*point)["target_type"] == target
+                    return point
+
+                wifi_point = taskbar_popup("wifi", "wifi_popup")
                 for _ in range(3):
                     chord(29, 56, 111)  # Ctrl+Alt+Delete, including activation while starting
                 ipc.wait_for("window_mapped", app_id="rediwm-monitor", timeout_ms=15000)
@@ -148,11 +165,46 @@ def run(scale, workspace):
                 assert len(windows()) == 1, windows()
                 window_id = monitor()["id"]
                 monitor_pid = monitor()["pid"]
+                assert ipc.hit_test(*wifi_point)["target_type"] != "wifi_popup"
+                assert ipc.get_input_state()["keyboard_focused_window_id"] == window_id
+
+                # Every transient owner yields to the monitor binding, including
+                # restoration while a popup has consumed the keyboard.
+                for name, target in (("wifi", "wifi_popup"), ("clock", "calendar")):
+                    ipc.minimize(window_id)
+                    point = taskbar_popup(name, target)
+                    chord(29, 56, 111)
+                    wait_for(lambda: not monitor()["is_minimized"], f"{target} blocked restore")
+                    assert ipc.hit_test(*point)["target_type"] != target
+                    assert ipc.get_input_state()["keyboard_focused_window_id"] == window_id
+                for panel, opener in (("start_menu", ipc.open_start_menu), ("power_menu", ipc.open_power_menu)):
+                    opener()
+                    ipc.wait_for(panel + "_opened")
+                    chord(29, 56, 111)
+                    ipc.wait_for(panel + "_closed")
+                    assert ipc.get_input_state()["keyboard_focused_window_id"] == window_id
+
+                ipc.open_control_center()
+                # The switcher stays open only while Alt is held.
+                ipc.key(56, True)
+                ipc.key_down_up(15)
+                chord(29, 111)
+                ipc.key(56, False)  # Must not accept the switcher's old selection.
+                assert ipc.get_input_state()["keyboard_focused_window_id"] == window_id
+                chord(29, 42, 31)  # Ctrl+Shift+S: region screenshot selection.
+                chord(29, 56, 111)
+                assert ipc.get_input_state()["keyboard_focused_window_id"] == window_id
+                assert len(windows()) == 1 and monitor()["id"] == window_id
+                settings = next(w for w in ipc.get_windows() if w["backend"] == "shell")
+                ipc.close_window(settings["id"])
+                ipc.wait_for("window_closed", window_id=settings["id"])
+                settled()
                 time.sleep(1.2)
                 debug = ipc.get_window_debug(window_id)
                 assert debug["buffer_scale"] == 1, debug
                 assert abs(debug["buffer_width"] - round(debug["client_box"]["width"] * scale)) <= 1, debug
                 assert shot("initial").getpixel((4, 4)) == (32, 48, 64)
+                assert "temperature" in gpu_trace.read_text().splitlines(), "GPU telemetry was not sampled"
 
                 # Background collection follows visibility, independently of keyboard focus.
                 ipc.open_control_center()
@@ -161,12 +213,14 @@ def run(scale, workspace):
                 assert switches(monitor_pid) - before >= 3, "collection stopped on focus loss"
                 settings = next(w for w in ipc.get_windows() if w["backend"] == "shell")
                 ipc.close_window(settings["id"])
+                ipc.wait_for("window_closed", window_id=settings["id"])
                 ipc.focus_window(window_id)
                 settled()
 
                 # Pause has no recurring worker or theme-stat timer.
                 click(box()["width"] - 80, 171)
                 idle("paused")
+                assert gpu_trace.read_text().splitlines()[-1] == "shutdown", "paused monitor retained NVIDIA telemetry"
                 paused = shot("paused", True)
                 time.sleep(1.2)
                 assert ImageChops.difference(paused, shot("still-paused", True)).getbbox() is None
@@ -210,6 +264,11 @@ def run(scale, workspace):
                 wait_for(lambda: shot("theme").getpixel((4, 4)) == (48, 64, 80), "live app theme did not update")
                 click(box()["width"] - 80, 171)
                 time.sleep(1.2)
+                assert gpu_trace.read_text().splitlines()[-1] == "temperature", "resumed monitor did not restart GPU telemetry"
+                gpu_state.write_text("-1\n")
+                wait_for(lambda: gpu_trace.read_text().splitlines()[-1] == "unavailable", "GPU loss was not handled")
+                shot("gpu-unavailable")
+                gpu_state.write_text("74\n")
 
                 # Minimize is a real xdg-shell v6 suspended configure. Restore
                 # starts a fresh interval and repeated activation keeps this ID.
@@ -362,7 +421,7 @@ def run(scale, workspace):
                     child.stdin.close()
             stop_process(compositor)
             log.close()
-            errors = (tmp / "compositor.log").read_text()
+            errors = Path(log.name).read_text()
             if "panic" in errors or "error(gpa)" in errors:
                 print(errors[-6000:], file=sys.stderr)
                 raise AssertionError("compositor or monitor reported a panic/leak")

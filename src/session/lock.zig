@@ -138,7 +138,12 @@ pub const Lock = struct {
         server.screenshot_selector.cancel();
         server.locker = self;
         if (server.bluetooth) |bluetooth| bluetooth.closed();
-        if (server.input.open_control_center) |cc| cc.bluetooth.clearPin();
+        if (server.input.open_control_center) |cc| {
+            cc.bluetooth.clearPin();
+            cc.key_settings.clearSecrets();
+            if (cc.key_settings.client) |client| client.cancel();
+            cc.refresh();
+        }
         @import("../extra_protocols.zig").rediwm_protocols_revoke(server.extra_protocols);
         server.world.mini_map.hide();
         if (server.ipc) |ipc| ipc.wait_mgr.failAll("SessionLocked");

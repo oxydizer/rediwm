@@ -156,6 +156,24 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         return;
     }
 
+    // System Monitor is the session's escape hatch: dispatch its configured
+    // binding before overlays and client shortcut inhibitors. Lock/auth and
+    // shortcut capture above still own their input. Swallow the release even
+    // if a new overlay opens before it arrives.
+    if (state == .released and event_keycode < keyboard.shortcut_consumed.len and keyboard.shortcut_consumed[event_keycode]) {
+        keyboard.shortcut_consumed[event_keycode] = false;
+        return;
+    }
+    if (state == .pressed) {
+        for (keyboard.bindingSyms(keycode)) |sym| {
+            const action = keyboard.server.config.lookupKeybind(wlr_keyboard.getModifiers(), sym) orelse continue;
+            if (action != .open_system_monitor) continue;
+            if (event_keycode < keyboard.shortcut_consumed.len) keyboard.shortcut_consumed[event_keycode] = true;
+            keyboard.server.executeAction(action);
+            return;
+        }
+    }
+
     if (event_keycode < keyboard.battery_consumed.len and state == .released and keyboard.battery_consumed[event_keycode]) {
         keyboard.battery_consumed[event_keycode] = false;
         return;
@@ -181,11 +199,6 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         if (keyboard.switcher_code == event_keycode) keyboard.stopSwitcherRepeat();
         return;
     }
-    if (state == .released and event_keycode < keyboard.shortcut_consumed.len and keyboard.shortcut_consumed[event_keycode]) {
-        keyboard.shortcut_consumed[event_keycode] = false;
-        return;
-    }
-
     // A VM or remote desktop inhibiting shortcuts gets every binding below
     // (shell panels it didn't open still take their keys) except the one
     // that takes them back. Hardware keys and VT switching were handled above.

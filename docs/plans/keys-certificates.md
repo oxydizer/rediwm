@@ -1,7 +1,42 @@
 # Keys & Certificates plan
 
-Status: draft, 2026-11-10. Nothing built. Decisions D1–D8 are open; each has a
-recommendation. Start with Phase 0.
+Status: SSH implementation, 2026-11-10, on `feat/settings-ssh-keys`.
+D1, D4 and D8 follow the recommendations below for the initial SSH page.
+Agent integration, certificates, whole-home discovery, vault operations and
+trust stores remain later phases; their decisions are still open.
+
+The initial page inventories regular, owned files directly in `~/.ssh` by
+content, groups copies by public fingerprint, and shows encryption, weak-key,
+permission, missing-public and mismatched-public badges. It supports details,
+copy public key, Ed25519 generation, passphrase/comment/label changes,
+recreating a missing `.pub`, permissions and confirmed Trash of a selected
+location plus its matching public companion. Users links to the page; global
+search reaches it without starting its helper.
+
+Supported metadata: OpenSSH private keys (including encrypted headers),
+Ed25519/RSA/DSA/NIST ECDSA public keys, and unencrypted RSA PKCS#1/PKCS#8 PEM.
+Encrypted legacy PEM, SSH certificates, security-key formats, PuTTY and other
+certificate/container formats are skipped with an explanation for now. No
+agent or host/reference inventory is implied by the SSH view. Trash confirms
+the selected path and fingerprint and warns about references; enumerating
+those references belongs to Phase 2.
+
+The helper has bounded reads/replies, memory/CPU limits, no core dumps and a
+read-only scanner sandbox (seccomp on Linux, preopened read capabilities and
+Capsicum on FreeBSD). OpenSSH operations run on staged files; passphrase and
+comment changes verify identity and unchanged source bytes before publishing.
+The FreeBSD path has been cross-compiled; runtime qualification is still needed.
+Passphrases use locked buffers and an inherited pipe to a private askpass mode,
+with no external askpass IPC. Scan results refresh explicitly; no idle watches.
+
+Generated fixtures cover the SSH portion of Phase 0 and the initial page:
+fingerprint comparisons with OpenSSH, duplicate locations, hostile/truncated
+armor/DER, encrypted keys, missing/mismatched companions, unsafe files and
+permissions, failed/successful writes, labels, Trash and UI secrets. Whole-home
+timings, X.509 corpus/tooling surveys and oldest-supported-OpenSSH qualification
+remain prerequisites for their later phases. The metadata format follows
+[OpenSSH's key specification](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key);
+operations use [ssh-keygen](https://man.openbsd.org/ssh-keygen).
 
 Add a **Keys & Certificates** page to Settings: one place that shows every SSH
 key, certificate and private key the user owns, wherever it lies, says what

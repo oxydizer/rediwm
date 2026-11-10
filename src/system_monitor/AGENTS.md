@@ -11,6 +11,9 @@
   `/proc` outside a backend; a new OS needs `Process`, `List`, `cpuTotals`,
   `memoryTotals`, `systemStats` and `ticksPerSecond`. Optional footer telemetry
   lives in `proc_linux_system.zig`; rates reset with the worker generation.
+  CPU and GPU temperatures stay separate; GPU hwmon reads only the die/package
+  channel. Optional NVIDIA NVML (`proc_gpu.zig`) is owned by the active worker,
+  released on pause/minimize and shutdown, and never starts a subprocess.
   The Linux parsers are pure and tested
   everywhere through `proc_linux.zig`.
   `descendants` also supplies the supervisor's teardown tree: Linux walks

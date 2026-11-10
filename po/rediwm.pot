@@ -127,6 +127,10 @@ msgstr ""
 msgid "A USB character device is not applicable to this connection."
 msgstr ""
 
+#: src/control_center/sections/keys.zig
+msgid "A file already exists at that location. Choose another name."
+msgstr ""
+
 #: src/files/app_opening.zig
 msgid "A file operation is already running"
 msgstr ""
@@ -329,6 +333,10 @@ msgstr ""
 
 #: src/files/app_opening.zig
 msgid "An application is already being added"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "An empty passphrase leaves the private key unencrypted."
 msgstr ""
 
 #: src/control_center/sections/services.zig
@@ -617,6 +625,10 @@ msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "Back"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Back to SSH keys"
 msgstr ""
 
 #: src/files/open_with.zig
@@ -1035,6 +1047,14 @@ msgstr ""
 msgid "Change connection…"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "Change passphrase"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Change passphrase…"
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Change password · {name}"
 msgstr ""
@@ -1363,6 +1383,10 @@ msgstr ""
 msgid "Colour: {colour}"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "Comment"
+msgstr ""
+
 #: src/files/app_torrent_rows.zig
 msgid "Complete"
 msgstr ""
@@ -1405,6 +1429,10 @@ msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Confirm new password"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "Confirm passphrase"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -1501,6 +1529,10 @@ msgstr ""
 msgid "Copy diagnostic report"
 msgstr ""
 
+#: src/control_center/sections/keys_details.zig
+msgid "Copy public key"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Corner radius"
 msgstr ""
@@ -1543,10 +1575,6 @@ msgstr ""
 
 #: src/control_center/welcome.zig
 msgid "Could not apply this choice. Please try again."
-msgstr ""
-
-#: src/session/power_requests.zig
-msgid "Could not build the request."
 msgstr ""
 
 #: src/files/properties.zig
@@ -1595,6 +1623,14 @@ msgstr ""
 
 #: src/network/manager_edit.zig
 msgid "Could not forget the connection."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Could not load SSH keys."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Could not load SSH keys. Refresh to try again."
 msgstr ""
 
 #: src/files/app_dialogs.zig
@@ -1909,6 +1945,10 @@ msgstr ""
 msgid "Could not start the connection."
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "Could not start the key operation."
+msgstr ""
+
 #: src/session/power_requests.zig
 msgid "Could not start the power command."
 msgstr ""
@@ -1987,6 +2027,10 @@ msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
 msgid "Current font"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "Current passphrase"
 msgstr ""
 
 #: src/control_center/sections/power.zig
@@ -2475,6 +2519,14 @@ msgstr ""
 msgid "Edge glow"
 msgstr ""
 
+#: src/control_center/sections/keys_details.zig
+msgid "Edit comment…"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Edit label…"
+msgstr ""
+
 #: src/control_center/sections/network.zig
 msgid "Edit settings…"
 msgstr ""
@@ -2549,6 +2601,10 @@ msgstr ""
 
 #: src/images/app_dialogs.zig
 msgid "Enter a filename or an absolute path."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "Enter a filename without slashes or a leading dot."
 msgstr ""
 
 #: src/images/app_dialogs.zig
@@ -2799,6 +2855,10 @@ msgstr ""
 msgid "File operation failed"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "Filename in ~/.ssh"
+msgstr ""
+
 #: src/dock/items.zig
 msgid "Files"
 msgstr ""
@@ -2873,6 +2933,10 @@ msgstr ""
 
 #: src/start_menu/menu_cards.zig
 msgid "Five applications already pinned"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Fix permissions"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -3075,6 +3139,10 @@ msgstr ""
 msgid "Fully Charged"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "GPU"
+msgstr ""
+
 #: src/control_center/sections/appearance_colors.zig
 msgid "GTK colors applied. Restart GTK apps. Apps with their own styles or sandbox settings may differ."
 msgstr ""
@@ -3089,6 +3157,10 @@ msgstr ""
 
 #: src/control_center/panel.zig
 msgid "General"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "Generate key"
 msgstr ""
 
 #: src/files/app_layout.zig
@@ -3295,6 +3367,14 @@ msgstr ""
 msgid "Install"
 msgstr ""
 
+#: src/control_center/sections/keys.zig
+msgid "Install OpenSSH to generate or change keys."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "Install gio to move keys to Trash."
+msgstr ""
+
 #: src/control_center/sections/appearance_colors.zig
 msgid "Install qt5ct for Qt 5 apps or qt6ct for Qt 6 apps, then apply again."
 msgstr ""
@@ -3483,6 +3563,10 @@ msgstr ""
 msgid "Keyboard shortcuts"
 msgstr ""
 
+#: src/control_center/panel.zig
+msgid "Keys & Certificates"
+msgstr ""
+
 #: src/files/app_torrent_rows.zig
 msgid "Known peers: {value}"
 msgstr ""
@@ -3491,8 +3575,16 @@ msgstr ""
 msgid "LEFT"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "Label"
+msgstr ""
+
 #: src/control_center/sections/printers_details.zig
 msgid "Label printer and advanced test tools"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "Labels apply to every copy of this public fingerprint."
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -3611,6 +3703,10 @@ msgstr ""
 msgid "Loaded paper width"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Loading SSH keys timed out. Refresh to try again."
+msgstr ""
+
 #: src/start_menu/search.zig
 msgid "Loading applications…"
 msgstr ""
@@ -3631,7 +3727,7 @@ msgstr ""
 msgid "Loading services…"
 msgstr ""
 
-#: src/files/properties.zig
+#: src/control_center/sections/keys_details.zig
 msgid "Location"
 msgstr ""
 
@@ -3725,6 +3821,10 @@ msgstr ""
 
 #: src/control_center/panel.zig
 msgid "Manage and analyze systemd services."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Manage the current user's keys in ~/.ssh."
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -3843,6 +3943,10 @@ msgstr ""
 msgid "Mini map position"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Missing .pub file"
+msgstr ""
+
 #: src/files/app_layout.zig
 msgid "Modified"
 msgstr ""
@@ -3915,12 +4019,20 @@ msgstr ""
 msgid "Move this image to Trash?"
 msgstr ""
 
-#: src/delete_dialog.zig
+#: src/control_center/sections/keys_forms.zig
+msgid "Move this key to Trash?"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
 msgid "Move to Trash"
 msgstr ""
 
 #: src/files/app_dialogs.zig
 msgid "Move to Trash?"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Move to Trash…"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -4043,6 +4155,10 @@ msgstr ""
 msgid "New Branch"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "New Ed25519 key"
+msgstr ""
+
 #: src/desktop/app_actions.zig
 msgid "New File"
 msgstr ""
@@ -4059,8 +4175,24 @@ msgstr ""
 msgid "New Folder"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "New SSH key"
+msgstr ""
+
 #: src/files/app_git_sidebar.zig
 msgid "New branch"
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "New key…"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "New passphrase"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "New passphrase (optional)"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -4207,6 +4339,10 @@ msgstr ""
 msgid "No paired devices. Choose Pair New Device to get started."
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "No passphrase"
+msgstr ""
+
 #: src/control_center/sections/input.zig
 msgid "No pointer devices connected."
 msgstr ""
@@ -4245,6 +4381,10 @@ msgstr ""
 
 #: src/share_picker/client.zig
 msgid "No sources available."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "No supported SSH keys found."
 msgstr ""
 
 #: src/control_center/tree.zig
@@ -4667,6 +4807,10 @@ msgstr ""
 msgid "Pass"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Passphrase protected"
+msgstr ""
+
 #: src/control_center/sections/network.zig
 msgid "Password"
 msgstr ""
@@ -5083,6 +5227,18 @@ msgstr ""
 msgid "Proxy"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Public file does not match"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Public key copied."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Public key only"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Put the computer to sleep."
 msgstr ""
@@ -5207,6 +5363,10 @@ msgstr ""
 msgid "Recommended Apps"
 msgstr ""
 
+#: src/control_center/sections/keys_details.zig
+msgid "Recreate missing .pub file"
+msgstr ""
+
 #: src/files/app.zig
 msgid "RediWM Files"
 msgstr ""
@@ -5231,7 +5391,7 @@ msgstr ""
 msgid "Reduced motion"
 msgstr ""
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/keys_ssh.zig
 msgid "Refresh"
 msgstr ""
 
@@ -5547,6 +5707,10 @@ msgstr ""
 
 #: src/control_center/sections/sound.zig
 msgid "SOUND"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "SSH keys"
 msgstr ""
 
 #: src/system_monitor/app_footer.zig
@@ -6105,6 +6269,10 @@ msgstr ""
 msgid "Some could not be restored"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Some files were skipped: unsupported, unreadable, too large or unsafe to open."
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Some groups cannot be safely shown; group changes are disabled."
 msgstr ""
@@ -6485,6 +6653,10 @@ msgstr ""
 msgid "That file is open in another tab. Choose a different name."
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "The .ssh directory is accessible to other users. Fix permissions from a key's details."
+msgstr ""
+
 #: src/files/appimage.zig
 msgid "The AppImage contains more than one application launcher"
 msgstr ""
@@ -6593,6 +6765,18 @@ msgstr ""
 msgid "The filename is too long."
 msgstr ""
 
+#: src/control_center/sections/keys.zig
+msgid "The key changed since it was selected. Refresh and try again."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "The key could not be changed. Check the current passphrase."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "The key operation could not be completed. Refresh and try again."
+msgstr ""
+
 #: src/printing/ladder.zig
 msgid "The last job has not completed."
 msgstr ""
@@ -6627,6 +6811,10 @@ msgstr ""
 
 #: src/printing/ladder.zig
 msgid "The network printer did not answer."
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "The passphrases do not match. Enter them again."
 msgstr ""
 
 #: src/printing/ladder.zig
@@ -6779,6 +6967,10 @@ msgstr ""
 
 #: src/control_center/sections/printers_tools.zig
 msgid "This is a label printer"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "This location and its matching .pub file will move to Trash. Other copies stay where they are. References in SSH configuration and servers may still need this key."
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -7129,6 +7321,10 @@ msgstr ""
 msgid "Unpin from dock"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Unsafe permissions"
+msgstr ""
+
 #: src/images/app_dialogs.zig
 msgid "Unsaved edits will be discarded."
 msgstr ""
@@ -7191,6 +7387,10 @@ msgstr ""
 
 #: src/images/app_dialogs.zig
 msgid "Use a .png filename to save a PNG copy."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "Use at most 512 bytes without line breaks or control characters."
 msgstr ""
 
 #: src/control_center/folder_picker.zig
@@ -7315,6 +7515,10 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "Weak"
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Weak algorithm or key size"
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -7445,7 +7649,7 @@ msgstr ""
 msgid "Word Wrap"
 msgstr ""
 
-#: src/images/app_dialogs.zig
+#: src/control_center/sections/keys_ssh.zig
 msgid "Working…"
 msgstr ""
 
@@ -7527,6 +7731,10 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "You're online."
+msgstr ""
+
+#: src/control_center/panel.zig
+msgid "Your SSH keys, public identities and passphrases."
 msgstr ""
 
 #: src/control_center/sections/network.zig
@@ -7678,6 +7886,10 @@ msgid "colors colours dark light preset"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "copy public permissions label comment delete trash"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "date weekday"
 msgstr ""
 
@@ -7747,6 +7959,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "gaps tiling"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "generate ed25519 passphrase"
 msgstr ""
 
 #: src/files/git.zig
@@ -8031,6 +8247,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "speakers headphones sound default"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "ssh security public private identity fingerprint passphrase"
 msgstr ""
 
 #: src/control_center/search_index.zig

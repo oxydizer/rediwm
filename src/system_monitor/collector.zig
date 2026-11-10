@@ -4,6 +4,7 @@ const std = @import("std");
 const proc = @import("proc.zig");
 const c = proc.c;
 const a = std.heap.c_allocator;
+const GpuReader = @import("proc_gpu.zig").Reader;
 
 pub const Process = struct {
     identity: proc.Identity,
@@ -164,6 +165,9 @@ pub const Worker = struct {
         return result;
     }
     fn run(self: *Worker) void {
+        var gpu: ?GpuReader = null;
+        defer if (gpu) |*reader| reader.deinit();
+        var gpu_attempted = false;
         var previous: std.AutoHashMapUnmanaged(i32, Baseline) = .empty;
         defer previous.deinit(a);
         var last_at: u64 = 0;
@@ -183,9 +187,16 @@ pub const Worker = struct {
                 deadline = 0;
             }
             if (self.active.load(.acquire) and proc.nowNs() >= deadline) {
+                if (!gpu_attempted) {
+                    gpu = GpuReader.init();
+                    gpu_attempted = true;
+                }
                 const snap = sample(&self.generation, generation) catch {
                     deadline = proc.nowNs() + 1_000_000_000;
                     continue;
+                };
+                if (gpu) |*reader| if (reader.sample()) |temperature| {
+                    snap.system.gpu_temperature_c = @max(snap.system.gpu_temperature_c orelse temperature, temperature);
                 };
                 if (self.generation.load(.acquire) != generation) {
                     snap.deinit();
@@ -215,6 +226,11 @@ pub const Worker = struct {
                     wake(self.notify_fd);
                 } else snap.deinit();
                 self.mutex.unlock(self.io);
+            }
+            if (!self.active.load(.acquire)) {
+                if (gpu) |*reader| reader.deinit();
+                gpu = null;
+                gpu_attempted = false;
             }
             var fd = c.struct_pollfd{ .fd = self.wake_fd, .events = c.POLLIN, .revents = 0 };
             const timeout: c_int = if (!self.active.load(.acquire)) -1 else @intCast(@min(1000, (deadline -| proc.nowNs() + 999_999) / 1_000_000));

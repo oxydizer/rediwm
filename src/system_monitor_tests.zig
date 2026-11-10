@@ -8,6 +8,8 @@ const actions = @import("system_monitor/actions.zig");
 
 test {
     _ = @import("system_monitor/proc_system_tests.zig");
+    _ = @import("system_monitor/proc_gpu.zig");
+    _ = @import("system_monitor/proc_temperature_tests.zig");
 }
 
 test "monitor backend lists and describes this process and the machine" {

@@ -116,6 +116,8 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     }
     rows[count] = actionButton(cc, i18n.tr("Add user…"), 0, addUserClicked, !s.unlocked or s.auth != null or s.form != .none);
     count += 1;
+    rows[count] = .{ .name = "users_keys", .kind = .{ .button = .{ .label = i18n.tr("Keys & Certificates"), .owner = cc, .id = @intFromEnum(panel.Page.keys), .on_click = panel.pageClicked } }, .height = .{ .fixed = 34 } };
+    count += 1;
     switch (s.form) {
         .add => {
             rows[count] = try buildAddForm(s, cc, a);
