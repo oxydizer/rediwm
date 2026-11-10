@@ -8,8 +8,8 @@
 //! The inhibitor on the keyboard-focused surface is granted without a prompt,
 //! as sway does. While it is active compositor bindings and modifier gestures
 //! (modifier-drag pan, Alt+wheel zoom) belong to the client. Hardware keys,
-//! Ctrl+Alt+F<n>, the lock screen and authentication dialogs still come
-//! first, and the `restore_shortcuts` binding (Super+Escape) revokes the
+//! Ctrl+Alt+F<n>, System Monitor, the lock screen and authentication dialogs
+//! still come first, and the `restore_shortcuts` binding (Super+Escape) revokes the
 //! grant until focus leaves the surface or the client asks again, so a
 //! client that also locks the pointer can never trap the user.
 const wl = @import("wayland").server.wl;

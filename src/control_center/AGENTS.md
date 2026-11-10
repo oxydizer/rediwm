@@ -78,6 +78,17 @@ helpers (and `panel.ControlCenter`); `sections/` one file per page.
 * `sections/users_helper.zig` owns the account helper request and authorization
   lifetime; `users.zig` owns the account UI.
 
+* **Keys & Certificates** (`sections/keys*.zig`) owns a `keys/client.zig` only
+  while selected. The unprivileged sibling `rediwm-keys` reads key files; the
+  compositor receives metadata and public keys only. The client's single
+  in-flight request has an absolute deadline and owns a child process group;
+  hide/close/lock cancels it, and idle has no worker or timer. Copy snapshots
+  into the section arena before retaining widget strings. Secret fields use
+  locked storage and requests are encoded with the secure allocator, wiped on
+  submit, cancellation, page changes and lock. Never put a passphrase in tool
+  argv, environment, a section arena or logs. See `docs/plans/keys-certificates.md`
+  for the currently supported SSH formats and the later agent/certificate phases.
+
 ## Network page
 
 * **The page is `sections/network*.zig`:** `network.zig` (section state, the

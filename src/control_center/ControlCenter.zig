@@ -153,6 +153,7 @@ network: network_section.Section = .{},
 bluetooth: bluetooth_section.Section = .{},
 services: services_section.Section = .{},
 printers: printers_section.Section = .{},
+key_settings: @import("sections/keys.zig").Section = .{},
 power_settings: @import("sections/power.zig").Section = .{},
 systemd_client: ?*systemd.Client = null,
 
@@ -250,6 +251,7 @@ pub fn destroy(cc: *ControlCenter) void {
     cc.input.arena.deinit();
     cc.services.deinit();
     cc.printers.deinit();
+    cc.key_settings.deinit();
     if (cc.server.network) |m| m.cancelUnlock();
     cc.network.deinit();
     if (cc.page == .bluetooth) if (cc.server.bluetooth) |m| m.closed();

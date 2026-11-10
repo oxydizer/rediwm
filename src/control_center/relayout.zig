@@ -162,6 +162,7 @@ pub fn layoutContent(cc: *ControlCenter) void {
         if (cc.page == .network) network_section.restoreFocus(&cc.network, cc);
         if (cc.page == .bluetooth) bluetooth_section.restoreFocus(&cc.bluetooth, cc);
         if (cc.page == .printers) cc.printers.restoreFocus(cc);
+        if (cc.page == .keys) cc.key_settings.restoreFocus(cc);
     }
     settings_search.reveal(cc);
     cc.dirty = true;

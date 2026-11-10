@@ -21,7 +21,9 @@ pub fn sample(buf: []u8) common.System {
     if (common.readAt(c.AT_FDCWD, "/proc/net/dev", buf)) |bytes| {
         result.network = parseNetwork(bytes);
     } else |_| {}
-    result.temperature_c = temperature(buf);
+    const temperatures = readTemperatures("/sys/class/hwmon", "/sys/class/thermal", buf);
+    result.temperature_c = temperatures.cpu;
+    result.gpu_temperature_c = temperatures.gpu;
     return result;
 }
 
@@ -54,43 +56,55 @@ fn number(path: [*:0]const u8, buf: []u8) ?f64 {
     return if (std.math.isFinite(value)) value else null;
 }
 
-/// Only CPU sensors: do not silently substitute a disk, GPU or ACPI sensor.
-fn temperature(buf: []u8) ?f64 {
-    var hottest: ?f64 = null;
-    const dir = c.opendir("/sys/class/hwmon") orelse return thermalTemperature(buf);
+pub const Temperatures = struct { cpu: ?f64 = null, gpu: ?f64 = null };
+
+/// Keep CPU and GPU sensors separate; never substitute disk or ACPI readings.
+pub fn readTemperatures(hwmon: [:0]const u8, thermal: [:0]const u8, buf: []u8) Temperatures {
+    var result: Temperatures = .{};
+    hwmonTemperatures(hwmon, buf, &result);
+    if (result.cpu == null) result.cpu = thermalTemperature(thermal, buf);
+    return result;
+}
+
+fn hwmonTemperatures(root: [:0]const u8, buf: []u8, result: *Temperatures) void {
+    const dir = c.opendir(root) orelse return;
     defer _ = c.closedir(dir);
     while (c.readdir(dir)) |entry| {
         const name = std.mem.sliceTo(entry.*.d_name[0..], 0);
         if (!std.mem.startsWith(u8, name, "hwmon")) continue;
         var path_buf: [512]u8 = undefined;
-        const driver_path = std.fmt.bufPrintSentinel(&path_buf, "/sys/class/hwmon/{s}/name", .{name}, 0) catch continue;
+        const driver_path = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}/name", .{ root, name }, 0) catch continue;
         const driver = std.mem.trim(u8, common.readAt(c.AT_FDCWD, driver_path, buf) catch continue, " \n");
-        if (!std.mem.eql(u8, driver, "coretemp") and !std.mem.eql(u8, driver, "k10temp") and !std.mem.eql(u8, driver, "zenpower")) continue;
-        const path = std.fmt.bufPrintSentinel(&path_buf, "/sys/class/hwmon/{s}", .{name}, 0) catch continue;
+        const cpu = std.mem.eql(u8, driver, "coretemp") or std.mem.eql(u8, driver, "k10temp") or std.mem.eql(u8, driver, "zenpower");
+        const gpu = std.mem.eql(u8, driver, "amdgpu") or std.mem.eql(u8, driver, "radeon") or std.mem.eql(u8, driver, "nouveau") or std.mem.eql(u8, driver, "i915") or std.mem.eql(u8, driver, "xe");
+        if (!cpu and !gpu) continue;
+        const path = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ root, name }, 0) catch continue;
         const sensors = c.opendir(path) orelse continue;
         defer _ = c.closedir(sensors);
         while (c.readdir(sensors)) |sensor| {
             const file = std.mem.sliceTo(sensor.*.d_name[0..], 0);
             if (!std.mem.startsWith(u8, file, "temp") or !std.mem.endsWith(u8, file, "_input")) continue;
-            const input = std.fmt.bufPrintSentinel(&path_buf, "/sys/class/hwmon/{s}/{s}", .{ name, file }, 0) catch continue;
-            keepTemperature(&hottest, number(input, buf));
+            // GPU temp1 is the die/package (AMD edge); later channels can
+            // describe junction or VRAM and must not silently replace it.
+            if (gpu and !std.mem.eql(u8, file, "temp1_input")) continue;
+            const input = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}/{s}", .{ root, name, file }, 0) catch continue;
+            keepTemperature(if (cpu) &result.cpu else &result.gpu, number(input, buf));
         }
     }
-    return hottest orelse thermalTemperature(buf);
 }
 
-fn thermalTemperature(buf: []u8) ?f64 {
+fn thermalTemperature(root: [:0]const u8, buf: []u8) ?f64 {
     var hottest: ?f64 = null;
-    const dir = c.opendir("/sys/class/thermal") orelse return null;
+    const dir = c.opendir(root) orelse return null;
     defer _ = c.closedir(dir);
     while (c.readdir(dir)) |entry| {
         const name = std.mem.sliceTo(entry.*.d_name[0..], 0);
         if (!std.mem.startsWith(u8, name, "thermal_zone")) continue;
         var path_buf: [512]u8 = undefined;
-        const type_path = std.fmt.bufPrintSentinel(&path_buf, "/sys/class/thermal/{s}/type", .{name}, 0) catch continue;
+        const type_path = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}/type", .{ root, name }, 0) catch continue;
         const kind = std.mem.trim(u8, common.readAt(c.AT_FDCWD, type_path, buf) catch continue, " \n");
         if (!std.mem.eql(u8, kind, "x86_pkg_temp") and !std.mem.eql(u8, kind, "cpu-thermal") and !std.mem.startsWith(u8, kind, "cpu_thermal")) continue;
-        const input = std.fmt.bufPrintSentinel(&path_buf, "/sys/class/thermal/{s}/temp", .{name}, 0) catch continue;
+        const input = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}/temp", .{ root, name }, 0) catch continue;
         keepTemperature(&hottest, number(input, buf));
     }
     return hottest;

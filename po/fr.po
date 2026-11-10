@@ -1374,10 +1374,6 @@ msgstr "Impossible d'appliquer l'option d'imprimante."
 msgid "Could not apply this choice. Please try again."
 msgstr "Impossible d'appliquer ce choix. Réessayez."
 
-#: src/session/power_requests.zig
-msgid "Could not build the request."
-msgstr "Impossible de construire la requête."
-
 #: src/files/properties.zig
 msgid "Could not change permissions"
 msgstr "Impossible de modifier les permissions"
@@ -7735,3 +7731,283 @@ msgstr ""
 #: src/control_center/search_index.zig
 msgid "mouse touchpad trackball default custom inherit"
 msgstr ""
+
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "A file already exists at that location. Choose another name."
+msgstr "Un fichier existe déjà à cet emplacement. Choisissez un autre nom."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "An empty passphrase leaves the private key unencrypted."
+msgstr "Une phrase secrète vide laisse la clé privée non chiffrée."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Back to SSH keys"
+msgstr "Retour aux clés SSH"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Change passphrase"
+msgstr "Modifier la phrase secrète"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Change passphrase…"
+msgstr "Modifier la phrase secrète…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Comment"
+msgstr "Commentaire"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Confirm passphrase"
+msgstr "Confirmer la phrase secrète"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Copy public key"
+msgstr "Copier la clé publique"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Could not load SSH keys."
+msgstr "Impossible de démarrer l’assistant de clés."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Could not start the key operation."
+msgstr "Impossible de lancer l’opération sur la clé."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Current passphrase"
+msgstr "Phrase secrète actuelle"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Edit comment…"
+msgstr "Modifier le commentaire…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Edit label…"
+msgstr "Modifier le libellé…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Enter a filename without slashes or a leading dot."
+msgstr "Saisissez un nom de fichier sans barre oblique ni point initial."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Filename in ~/.ssh"
+msgstr "Nom du fichier dans ~/.ssh"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Fix permissions"
+msgstr "Corriger les permissions"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Generate key"
+msgstr "Générer la clé"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Install OpenSSH to generate or change keys."
+msgstr "Installez OpenSSH pour générer ou modifier des clés."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Install gio to move keys to Trash."
+msgstr "Installez gio pour déplacer les clés vers la corbeille."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Keys & Certificates"
+msgstr "Clés et certificats"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Label"
+msgstr "Libellé"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Labels apply to every copy of this public fingerprint."
+msgstr "Les libellés s’appliquent à toutes les copies de cette empreinte publique."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Manage the current user's keys in ~/.ssh."
+msgstr "Gérez les clés de l’utilisateur actuel dans ~/.ssh."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Missing .pub file"
+msgstr "Fichier .pub manquant"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Move this key to Trash?"
+msgstr "Déplacer cette clé vers la corbeille ?"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Move to Trash…"
+msgstr "Déplacer vers la corbeille…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New Ed25519 key"
+msgstr "Nouvelle clé Ed25519"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New SSH key"
+msgstr "Nouvelle clé SSH"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New key…"
+msgstr "Nouvelle clé…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New passphrase"
+msgstr "Nouvelle phrase secrète"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New passphrase (optional)"
+msgstr "Nouvelle phrase secrète (facultative)"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "No passphrase"
+msgstr "Sans phrase secrète"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "No supported SSH keys found."
+msgstr "Aucune clé SSH prise en charge trouvée."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Passphrase protected"
+msgstr "Protégée par une phrase secrète"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Public file does not match"
+msgstr "Le fichier public ne correspond pas"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Public key copied."
+msgstr "Clé publique copiée."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Public key only"
+msgstr "Clé publique uniquement"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Recreate missing .pub file"
+msgstr "Recréer le fichier .pub manquant"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "SSH keys"
+msgstr "Clés SSH"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Some files were skipped: unsupported, unreadable, too large or unsafe to open."
+msgstr "Certains fichiers ont été ignorés : format non pris en charge, illisibles, trop volumineux ou dangereux à ouvrir."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The .ssh directory is accessible to other users. Fix permissions from a key's details."
+msgstr "Le dossier .ssh est accessible aux autres utilisateurs. Corrigez ses permissions depuis les détails d’une clé."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The key changed since it was selected. Refresh and try again."
+msgstr "La clé a changé depuis sa sélection. Actualisez et réessayez."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The key could not be changed. Check the current passphrase."
+msgstr "Impossible de modifier la clé. Vérifiez la phrase secrète actuelle."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Could not load SSH keys. Refresh to try again."
+msgstr "L’assistant de clés a échoué. Actualisez pour réessayer."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Loading SSH keys timed out. Refresh to try again."
+msgstr "Le délai de l’assistant de clés a expiré. Actualisez pour réessayer."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The key operation could not be completed. Refresh and try again."
+msgstr "Impossible de terminer l’opération sur la clé. Actualisez et réessayez."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The passphrases do not match. Enter them again."
+msgstr "Les phrases secrètes ne correspondent pas. Saisissez-les à nouveau."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "This location and its matching .pub file will move to Trash. Other copies stay where they are. References in SSH configuration and servers may still need this key."
+msgstr "Ce fichier et son fichier .pub correspondant seront déplacés vers la corbeille. Les autres copies resteront à leur emplacement. Les références dans la configuration SSH et les serveurs peuvent encore nécessiter cette clé."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Unsafe permissions"
+msgstr "Permissions non sûres"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Use at most 512 bytes without line breaks or control characters."
+msgstr "Utilisez au plus 512 octets sans saut de ligne ni caractère de contrôle."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Weak algorithm or key size"
+msgstr "Algorithme ou taille de clé faible"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Your SSH keys, public identities and passphrases."
+msgstr "Vos clés SSH, identités publiques et phrases secrètes."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "copy public permissions label comment delete trash"
+msgstr "copier publique permissions libellé commentaire supprimer corbeille"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "generate ed25519 passphrase"
+msgstr "générer ed25519 phrase secrète"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "ssh security public private identity fingerprint passphrase"
+msgstr "ssh sécurité publique privée identité empreinte phrase secrète"
+
+#: src/system_monitor/app_footer.zig
+msgid "GPU"
+msgstr "GPU"
