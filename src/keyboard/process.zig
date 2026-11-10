@@ -84,7 +84,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
             if (generation != 0) {
                 if (keyboard.server.text_input) |relay| {
                     if (relay.grab_generation == generation) {
-                        if (relay.keyboardGrab(wlr_keyboard)) |grab| grab.sendKey(time_msec, event_keycode, state);
+                        if (relay.keyboardGrab(wlr_keyboard, .state)) |grab| grab.sendKey(time_msec, event_keycode, state);
                     }
                 }
                 return;
@@ -495,7 +495,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         };
         keyboard.server.input.seat.setKeyboard(wlr_keyboard);
         @import("../input/layouts.zig").activate(keyboard);
-        const grab = if (keyboard.server.text_input) |relay| relay.keyboardGrab(wlr_keyboard) else null;
+        const grab = if (keyboard.server.text_input) |relay| relay.keyboardGrab(wlr_keyboard, .new_input) else null;
         if (grab) |im_grab| {
             im_grab.sendKey(time_msec, event_keycode, state);
             if (state == .pressed and event_keycode < keyboard.grab_pressed.len)

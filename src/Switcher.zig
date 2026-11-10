@@ -74,6 +74,11 @@ pub fn active(self: *const Self) bool {
 pub fn triggerHeld(self: *const Self, server: *Server) bool {
     var it = server.input.keyboards.iterator(.forward);
     while (it.next()) |keyboard| {
+        // The input method's own virtual keyboard echoes what the compositor
+        // forwarded to it; while the switcher owns input that echo can lag or
+        // go stale, so counting it could leave a released trigger looking
+        // held. Only real devices keep the gesture alive.
+        if (server.text_input) |relay| if (relay.isMethodEcho(keyboard.device)) continue;
         const mods = keyboard.device.toKeyboard().getModifiers();
         if (switch (self.trigger) {
             .alt => mods.alt,

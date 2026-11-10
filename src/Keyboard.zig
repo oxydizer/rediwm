@@ -129,7 +129,7 @@ fn handleModifiers(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Key
         if (lock.client) |client| if (client.focused != null) keyboard.server.input.seat.keyboardNotifyModifiers(&wlr_keyboard.modifiers);
         return;
     }
-    const grab = if (keyboard.server.text_input) |relay| relay.keyboardGrab(wlr_keyboard) else null;
+    const grab = if (keyboard.server.text_input) |relay| relay.keyboardGrab(wlr_keyboard, .state) else null;
     if (grab) |im_grab| im_grab.sendModifiers(&wlr_keyboard.modifiers) else keyboard.server.input.seat.keyboardNotifyModifiers(&wlr_keyboard.modifiers);
 
     // Accept only when the modifier that opened the carousel is released.
