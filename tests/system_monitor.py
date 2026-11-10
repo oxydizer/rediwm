@@ -399,7 +399,11 @@ def run(scale, workspace):
                 settled()
                 window_id = monitor()["id"]
                 monitor_pid = monitor()["pid"]
+                wait_for(lambda: gpu_trace.read_text().splitlines()[-1] == "temperature",
+                         "reopened monitor did not start collecting")
                 click(box()["width"] - 80, 171)
+                wait_for(lambda: gpu_trace.read_text().splitlines()[-1] == "shutdown",
+                         "monitor did not pause before minimizing")
                 ipc.minimize(window_id)
                 chord(29, 56, 111)
                 wait_for(lambda: not monitor()["is_minimized"], "paused monitor did not restore")
