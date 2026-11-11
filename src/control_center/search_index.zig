@@ -158,6 +158,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .appearance, .title = i18n.msg("Taskbar theme"), .target = "taskbar_theme", .keywords = i18n.msg("panel colors colours") },
     .{ .page = .appearance, .title = i18n.msg("Dark mode"), .target = "dark_mode", .keywords = i18n.msg("light appearance theme") },
     .{ .page = .appearance, .title = i18n.msg("Apply GTK colors"), .target = "apply_gtk_colors", .keywords = i18n.msg("application colours theme") },
+    .{ .page = .appearance, .title = i18n.msg("Follow RediWM application colors"), .target = "follow_app_colors", .keywords = i18n.msg("browser brave chrome firefox falkon gtk qt colours theme sync") },
     .{ .page = .appearance, .title = i18n.msg("Apply Qt colors"), .target = "apply_qt_colors", .keywords = i18n.msg("application colours theme") },
     .{ .page = .appearance, .title = i18n.msg("Launch splash"), .target = "launch_splash", .keywords = i18n.msg("startup welcome animation") },
     .{ .page = .appearance, .title = i18n.msg("Flames while moving windows"), .target = "effect_window_move", .keywords = i18n.msg("effects fire trail ribbon drag animation") },

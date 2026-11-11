@@ -265,6 +265,8 @@ pub const CompositorConfig = struct {
     /// Colour scheme apps are told to prefer through the Settings portal
     /// (`session/settings_portal.zig`): dark when true, light when false.
     dark_mode: bool = false,
+    /// Export the main palette to installed GTK/Qt integrations on theme changes.
+    follow_app_colors: bool = false,
     /// Delay before showing a placeholder frame for an unmapped launch (ms).
     /// 0 disables the placeholder frame.
     placeholder_delay_ms: u32 = 0,

@@ -640,6 +640,10 @@ msgstr ""
 msgid "Automatic tiling"
 msgstr ""
 
+#: src/control_center/sections/appearance_colors.zig
+msgid "Automatic updates are off. Applications keep the last applied colors."
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Available Devices"
 msgstr ""
@@ -1852,6 +1856,10 @@ msgstr ""
 
 #: src/files/app_places.zig
 msgid "Could not save Places"
+msgstr ""
+
+#: src/control_center/sections/appearance_colors.zig
+msgid "Could not save application color preference: {reason}."
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -3104,8 +3112,24 @@ msgstr ""
 msgid "Folders only"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "Follow RediWM application colors"
+msgstr ""
+
 #: src/control_center/sections/power.zig
 msgid "Follow lid action"
+msgstr ""
+
+#: src/control_center/sections/appearance_colors.zig
+msgid "Following GTK colors. Install qt5ct or qt6ct to include Qt apps. Choose GTK in Brave or Chrome, or System theme in Firefox; restart apps once if needed."
+msgstr ""
+
+#: src/control_center/sections/appearance_colors.zig
+msgid "Following application colors. GTK live updates are unavailable; restart GTK apps after theme changes. Choose GTK in Brave or Chrome, System theme in Firefox, or Linux in Falkon."
+msgstr ""
+
+#: src/control_center/sections/appearance_colors.zig
+msgid "Following the main theme. Choose GTK in Brave or Chrome, System theme in Firefox, or Linux in Falkon. Restart apps once if needed; apps with their own styles may differ."
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7977,6 +8001,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "brightness plugged battery"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "browser brave chrome firefox falkon gtk qt colours theme sync"
 msgstr ""
 
 #: src/control_center/search_index.zig

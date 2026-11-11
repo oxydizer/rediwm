@@ -190,6 +190,7 @@ pub const source =
     \\xwayland_native_scaling = false # sharp X11 apps on fractional scales (requires restart)
     \\xwayland_scale = 0 # global render factor: 0 = automatic, 1.0-4.0 = explicit (requires restart)
     \\dark_mode             = false # apps and web pages prefer dark (live; via the Settings portal)
+    \\follow_app_colors     = false # keep GTK/Qt application colors in sync with the main theme
     \\placeholder_delay_ms  = 0     # show splash only if app hasn't appeared after N ms (0 disables)
     \\# wallpaper = ""               # empty = RediWM's; a file in ~/.local/share/rediwm/wallpapers, or a path
     \\lid_close             = "display_off" # closing the laptop lid: display_off (built-in screen off while another display is on), lock, suspend, ignore

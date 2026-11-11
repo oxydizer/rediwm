@@ -32,6 +32,14 @@ wayland-protocols and GLES2; D-Bus suites also need PyGObject,
 App checks include [calculator](tests/calculator.py), [editor](tests/editor.py)
 and [editor visuals](tests/editor_visuals.py).
 
+Application colors: `python3 tests/app_colors.py` checks snapshot exports and
+opt-in following with a private bus, scratch HOME/XDG directories, and real
+GTK3/GTK4/Qt5/Qt6 palette probes when installed. It keeps clients open across
+theme changes, closes Settings, checks portal publication and compositor restart,
+and verifies that disabling following stops exports. Repeat with
+`REDIWM_TEST_SCALE=1.5`. Browser chrome still needs a visual check with isolated
+profiles in GTK/System/Linux theme mode; never use the host browser profile.
+
 SSH keys: `zig build test-keys` and
 `dbus-run-session -- python3 tests/keys_settings.py` (repeat with
 `REDIWM_TEST_SCALE=1.5`). Fixtures generate OpenSSH and legacy RSA keys in a

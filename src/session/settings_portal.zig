@@ -12,12 +12,15 @@
 //! Rides the notifications manager's session-bus connection, so it is up in
 //! exactly the sessions that connection is (a real login, or
 //! REDIWM_FORCE_DBUS=1).
+//! Opt-in application colors additionally publish `gtk-theme` after the
+//! reloadable palette files have been committed.
 const std = @import("std");
 
 const dbus = @import("dbus");
 const wire = dbus.wire;
 const Server = @import("../Server.zig");
 const anim = @import("ui").anim;
+const app_colors = @import("../config_runtime/app_colors.zig");
 
 const log = std.log.scoped(.settings_portal);
 
@@ -30,6 +33,7 @@ pub const appearance_namespace = "org.freedesktop.appearance";
 pub const color_scheme_key = "color-scheme";
 pub const gnome_interface_namespace = "org.gnome.desktop.interface";
 pub const enable_animations_key = "enable-animations";
+pub const gtk_theme_key = "gtk-theme";
 const portal_frontend_name = "org.freedesktop.portal.Desktop";
 const portal_frontend_iface = "org.freedesktop.portal.Settings";
 const not_found_error = "org.freedesktop.portal.Error.NotFound";
@@ -124,6 +128,21 @@ pub fn emitEnableAnimations(server: *Server, served: ?bool) void {
     };
 }
 
+pub fn emitGtkTheme(server: *Server) void {
+    const name = app_colors.gtkTheme(server) orelse return;
+    const mgr = server.notifications orelse return;
+    const conn = mgr.conn orelse return;
+    var body: wire.Writer = .{ .allocator = mgr.allocator };
+    defer body.deinit();
+    body.string(gnome_interface_namespace) catch return;
+    body.string(gtk_theme_key) catch return;
+    body.variant("s") catch return;
+    body.string(name) catch return;
+    conn.signal(object_path, interface, "SettingChanged", "ssv", &body) catch |err| {
+        if (err != error.NotRegistered) log.warn("GTK SettingChanged failed: {}", .{err});
+    };
+}
+
 /// Namespace patterns as xdg-desktop-portal documents them: an empty list or
 /// an empty string matches everything, and a trailing `*` matches a prefix.
 pub fn namespaceMatches(pattern: []const u8, namespace: []const u8) bool {
@@ -133,7 +152,7 @@ pub fn namespaceMatches(pattern: []const u8, namespace: []const u8) bool {
 }
 
 /// `a{sa{sv}}` for ReadAll. `patterns` is the request's `as` array reader.
-fn writeReadAll(body: *wire.Writer, patterns: wire.Reader, scheme: ColorScheme, enable_animations: ?bool) !void {
+fn writeReadAll(body: *wire.Writer, patterns: wire.Reader, scheme: ColorScheme, enable_animations: ?bool, gtk_theme: ?[]const u8) !void {
     var reader = patterns;
     var match_appearance = reader.offset == reader.bytes.len;
     var match_gnome = match_appearance;
@@ -150,20 +169,26 @@ fn writeReadAll(body: *wire.Writer, patterns: wire.Reader, scheme: ColorScheme, 
         try body.alignTo(8);
         try body.string(color_scheme_key);
         try body.variant("u");
-        try body.uint32(@intFromEnum(scheme));
+        try body.uint32(@backingInt(scheme));
         try body.endArray(values);
     }
-    if (enable_animations) |enabled| {
-        if (match_gnome) {
-            try body.alignTo(8);
-            try body.string(gnome_interface_namespace);
-            const values = try body.beginArray(8);
+    if (match_gnome and (enable_animations != null or gtk_theme != null)) {
+        try body.alignTo(8);
+        try body.string(gnome_interface_namespace);
+        const values = try body.beginArray(8);
+        if (enable_animations) |enabled| {
             try body.alignTo(8);
             try body.string(enable_animations_key);
             try body.variant("b");
             try body.boolean(enabled);
-            try body.endArray(values);
         }
+        if (gtk_theme) |name| {
+            try body.alignTo(8);
+            try body.string(gtk_theme_key);
+            try body.variant("s");
+            try body.string(name);
+        }
+        try body.endArray(values);
     }
     try body.endArray(namespaces);
 }
@@ -172,7 +197,7 @@ fn writeSettingChanged(body: *wire.Writer, scheme: ColorScheme) !void {
     try body.string(appearance_namespace);
     try body.string(color_scheme_key);
     try body.variant("u");
-    try body.uint32(@intFromEnum(scheme));
+    try body.uint32(@backingInt(scheme));
 }
 
 fn writeEnableAnimationsChanged(body: *wire.Writer, enabled: bool) !void {
@@ -194,6 +219,7 @@ fn handleReadAll(owner: ?*anyopaque, conn: *dbus.Connection, request: wire.Messa
         patterns,
         colorScheme(server.config.compositor.dark_mode),
         anim.servedEnableAnimations(server.config.animations),
+        app_colors.gtkTheme(server),
     );
     try conn.reply(request, "a{sa{sv}}", &body);
 }
@@ -208,7 +234,7 @@ fn handleRead(owner: ?*anyopaque, conn: *dbus.Connection, request: wire.Message)
     defer body.deinit();
     if (std.mem.eql(u8, namespace, appearance_namespace) and std.mem.eql(u8, key, color_scheme_key)) {
         try body.variant("u");
-        try body.uint32(@intFromEnum(colorScheme(server.config.compositor.dark_mode)));
+        try body.uint32(@backingInt(colorScheme(server.config.compositor.dark_mode)));
         try conn.reply(request, "v", &body);
         return;
     }
@@ -216,6 +242,14 @@ fn handleRead(owner: ?*anyopaque, conn: *dbus.Connection, request: wire.Message)
         if (anim.servedEnableAnimations(server.config.animations)) |enabled| {
             try body.variant("b");
             try body.boolean(enabled);
+            try conn.reply(request, "v", &body);
+            return;
+        }
+    }
+    if (std.mem.eql(u8, namespace, gnome_interface_namespace) and std.mem.eql(u8, key, gtk_theme_key)) {
+        if (app_colors.gtkTheme(server)) |name| {
+            try body.variant("s");
+            try body.string(name);
             try conn.reply(request, "v", &body);
             return;
         }
@@ -282,8 +316,8 @@ test "settings portal namespace patterns" {
 test "settings portal color scheme follows dark_mode, off is explicit light" {
     try std.testing.expectEqual(ColorScheme.prefer_dark, colorScheme(true));
     try std.testing.expectEqual(ColorScheme.prefer_light, colorScheme(false));
-    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(colorScheme(true)));
-    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(colorScheme(false)));
+    try std.testing.expectEqual(@as(u32, 1), @backingInt(colorScheme(true)));
+    try std.testing.expectEqual(@as(u32, 2), @backingInt(colorScheme(false)));
 }
 
 fn expectReadAll(patterns: []const []const u8, expect_appearance: bool) !void {
@@ -298,7 +332,7 @@ fn expectReadAll(patterns: []const []const u8, expect_appearance: bool) !void {
 
     var body: wire.Writer = .{ .allocator = allocator };
     defer body.deinit();
-    try writeReadAll(&body, pattern_reader, .prefer_dark, null);
+    try writeReadAll(&body, pattern_reader, .prefer_dark, null, null);
     // encode validates the body against the signature.
     var msg = try wire.encode(allocator, .method_return, 0, 2, .{ .reply_serial = 1, .destination = ":1.1", .signature = "a{sa{sv}}" }, &body);
     defer msg.deinit();
@@ -325,7 +359,7 @@ test "settings portal ReadAll filters namespaces and encodes a{sa{sv}}" {
     try expectReadAll(&.{"org.gnome.*"}, false);
 }
 
-test "settings portal ReadAll includes enable-animations when we own it" {
+test "settings portal ReadAll includes animation and GTK keys in one namespace" {
     const allocator = std.testing.allocator;
     var request: wire.Writer = .{ .allocator = allocator };
     defer request.deinit();
@@ -337,7 +371,7 @@ test "settings portal ReadAll includes enable-animations when we own it" {
 
     var body: wire.Writer = .{ .allocator = allocator };
     defer body.deinit();
-    try writeReadAll(&body, pattern_reader, .prefer_light, false);
+    try writeReadAll(&body, pattern_reader, .prefer_light, false, "RediWM-b");
     var msg = try wire.encode(allocator, .method_return, 0, 2, .{ .reply_serial = 1, .destination = ":1.1", .signature = "a{sa{sv}}" }, &body);
     defer msg.deinit();
     var reader = (try wire.decode(msg.bytes.items)).body;
@@ -349,6 +383,10 @@ test "settings portal ReadAll includes enable-animations when we own it" {
     try std.testing.expectEqualStrings(enable_animations_key, try values.string());
     try std.testing.expectEqualStrings("b", try values.variant());
     try std.testing.expectEqual(false, try values.boolean());
+    try values.alignTo(8);
+    try std.testing.expectEqualStrings(gtk_theme_key, try values.string());
+    try std.testing.expectEqualStrings("s", try values.variant());
+    try std.testing.expectEqualStrings("RediWM-b", try values.string());
     try values.done();
     try namespaces.done();
     try reader.done();

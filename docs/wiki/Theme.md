@@ -39,10 +39,51 @@ follows it), and default to false.
 
 ## GTK and Qt app colors
 
+**Follow RediWM application colors** (Settings → Appearance) keeps compatible
+applications in sync with the main theme. It is off by default and is saved as
+`[compositor] follow_app_colors = true`. Following continues with Settings closed
+and applies the current palette at login. Turning it off stops future exports
+and leaves the last applied colors in place. The taskbar override is not used.
+
+In **Brave and Chrome**, select **Use GTK** (or **Use Qt**) in the browser's Appearance settings;
+in **Firefox**, enable **System theme — auto**; in **Falkon**, select its native
+**Linux** theme. RediWM uses the standard toolkit settings, so it does not create
+or edit browser profiles or require any of these browsers to be installed.
+Browsers keep their own layout, and some colors may be derived from the palette.
+An application with a custom theme can override the system colors.
+
+GTK following installs two reusable themes, `RediWM-a` and `RediWM-b`, under
+`$XDG_DATA_HOME/themes` (else `~/.local/share/themes`). Changes select the next
+theme only after its files are ready. RediWM updates `gtk-theme-name` in GTK3/4
+`settings.ini`, publishes `org.gnome.desktop.interface` / `gtk-theme` through
+the Settings portal, and uses **gsettings** to notify native Wayland clients.
+The previous GSettings value is kept in
+`$XDG_CONFIG_HOME/rediwm/gtk-theme.gsettings-backup`. The themes' base stylesheet
+is Adwaita light or dark to match the palette, whatever `dark_mode` says.
+GTK3's user `gtk.css` outranks every theme, and other palette generators
+(matugen/DMS, KDE's `colors.css`) define colors there. Following replaces
+RediWM's old snapshot import with a marked block of aliases at the end of that
+file (`@define-color window_bg_color @rediwm_window_bg_color;` …); they win
+over earlier definitions and resolve against whichever `RediWM-*` theme is
+loaded, so running apps still change live. Other user CSS is kept. GTK4's
+`gtk.css` gets no aliases (libadwaita loads no named theme). Restart apps once
+when migrating from a snapshot.
+Without a working GSettings helper/session bus, RediWM exports a snapshot and
+Settings reports that GTK apps need restarting after changes. X11 clients
+without a settings manager and sandboxed apps without access to the generated
+theme may also need additional setup; libadwaita or custom app styles may differ.
+
+Qt following updates whichever of **qt5ct** and **qt6ct** are installed and
+notifies their palette watchers. Missing Qt tools do not prevent GTK following.
+New RediWM launches use the palette plugin; already-running Qt apps may need
+one restart, and apps launched outside RediWM may need a new login. No polling
+or background exporter remains active while the palette is unchanged.
+
 **Apply GTK colors** and **Apply Qt colors** (Settings → Appearance, below the
 theme selectors) export the main theme's app backgrounds, toolbar, sidebar, text
 and shell accent; the taskbar override is not used. Exports are snapshots: apply
-again after changing a theme, then restart the apps.
+again after changing a theme, then restart the apps. These manual buttons are
+shown only while automatic following is off.
 
 **GTK:** written to `gtk-3.0/rediwm-colors.css` and `gtk-4.0/rediwm-colors.css`
 under `$XDG_CONFIG_HOME` (else `~/.config`), with a marked import added at the
@@ -52,8 +93,16 @@ common widget overrides, GTK4 also the CSS variables recent libadwaita uses. No
 theme package is patched and the dark-mode preference is never flipped.
 
 **Qt:** needs **qt5ct** (Qt 5) or **qt6ct** (Qt 6). The toolkit configs select
-native `colors/rediwm.conf` palettes and the palette-aware Fusion style; other
-preferences are kept. RediWM launches get the platform theme at once; sign in
+native `colors/rediwm.conf` palettes and the **RediWM** style; other
+preferences are kept. The RediWM style is Fusion except that title bars use the
+window colour: Fusion fills an active title bar with the accent, and Chromium's
+Qt mode (Brave, Chrome) samples that title bar as its whole frame. It is built
+per Qt major when that Qt's development files and `moc` are present
+(`-Dqt-style`, default: when found), installed as
+`lib/rediwm/qt<N>/styles/librediwm-style.so`, and found through
+`QT_PLUGIN_PATH`; a Qt major without it gets Fusion. Launches get an empty
+`QT_STYLE_OVERRIDE`, so an inherited override (e.g. kvantum) no longer applies.
+RediWM launches get the platform theme at once; sign in
 again for apps activated by D-Bus or launched elsewhere. The opt-in is recorded
 in `rediwm/app-colors.conf`. KDE apps such as Dolphin read `kdeglobals`, so the
 export also rewrites its `[Colors:*]` groups (Window, View, Button, Selection,
@@ -67,7 +116,10 @@ as `<filename>.rediwm-backup`, and later applications keep that first backup. A
 symlinked `gtk.css` or Qt config (e.g. from another theming tool) is replaced by
 a regular file with its current contents plus the RediWM block; the target is not
 modified. A symlinked config *folder* is refused and reported in Settings. To
-undo GTK, remove the marked import blocks from both `gtk.css` files (or restore
+undo following, turn it off, restore the backed-up GTK `settings.ini` files
+(or remove their `gtk-theme-name` entry if there was no previous file), and
+restore the saved GSettings theme value. The generated themes can then be removed.
+To undo GTK snapshots or following's aliases, remove the marked blocks from both `gtk.css` files (or restore
 the backups). To undo Qt, restore the qt5ct/qt6ct and `kdeglobals` backups (or
 delete configs the export created if none exists), remove
 `rediwm/app-colors.conf`, and sign in again.

@@ -31,7 +31,6 @@ const start_button = @import("../../taskbar/start_button.zig");
 const menu_size = @import("../../start_menu/size.zig");
 const wlr = @import("wlroots");
 const app_theme = @import("config").app_theme;
-const AppColorsJob = @import("../../config_runtime/app_theme.zig").Job;
 const appearance_wallpaper = @import("appearance_wallpaper.zig");
 const appearance_colors = @import("appearance_colors.zig");
 const appearance_themes = @import("appearance_themes.zig");
@@ -51,9 +50,6 @@ pub const stopStrip = appearance_wallpaper.stopStrip;
 pub const deinit = appearance_wallpaper.deinit;
 pub const appColorsNote = appearance_colors.appColorsNote;
 pub const onApplyAppColors = appearance_colors.onApplyAppColors;
-pub const appColorsFailure = appearance_colors.appColorsFailure;
-pub const finishAppColors = appearance_colors.finishAppColors;
-pub const appColorsReady = appearance_colors.appColorsReady;
 pub const stripWake = appearance_wallpaper.stripWake;
 pub const restartStrip = appearance_wallpaper.restartStrip;
 pub const buildWallpaper = appearance_wallpaper.buildWallpaper;
@@ -254,10 +250,10 @@ pub const Section = struct {
     icon_theme_names: []const []const u8 = &.{},
 
     taskbar_theme_row_children: [2]Widget = undefined,
-    app_colors_children: [3]Widget = undefined,
+    app_colors_children: [4]Widget = undefined,
+    app_colors_len: usize = 4,
+    follow_colors_children: [2]Widget = undefined,
     app_colors_buttons: [2]Widget = undefined,
-    app_colors_job: ?*AppColorsJob = null,
-    app_colors_source: ?*wl.EventSource = null,
     app_colors_message: []const u8 = "",
     app_colors_message_buf: [384]u8 = undefined,
     dark_row_children: [2]Widget = undefined,
@@ -508,7 +504,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.icon_theme_row },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.theme_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_theme_row_children },
-        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.app_colors_children },
+        .{ .kind = .container, .direction = .column, .gap = 8, .children = out.app_colors_children[0..out.app_colors_len] },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dark_row_children },
         .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.wallpaper_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.splash_row_children },
@@ -549,7 +545,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
             at += 1;
         }
         for (group.rows) |row| {
-            out.group_storage[at] = out.row_storage[@intFromEnum(row)];
+            out.group_storage[at] = out.row_storage[@backingInt(row)];
             at += 1;
         }
         // An untitled group is one row that brings its own title.
@@ -637,8 +633,8 @@ comptime {
     // Every row is shown exactly once.
     var seen = @as([row_count]bool, @splat(false));
     for (groups) |group| for (group.rows) |row| {
-        if (seen[@intFromEnum(row)]) @compileError("row in two groups: " ++ @tagName(row));
-        seen[@intFromEnum(row)] = true;
+        if (seen[@backingInt(row)]) @compileError("row in two groups: " ++ @tagName(row));
+        seen[@backingInt(row)] = true;
     };
-    for (seen, 0..) |shown, i| if (!shown) @compileError("row in no group: " ++ @tagName(@as(Row, @enumFromInt(i))));
+    for (seen, 0..) |shown, i| if (!shown) @compileError("row in no group: " ++ @tagName(@as(Row, @fromBackingInt(@intCast(i)))));
 }

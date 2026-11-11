@@ -14,6 +14,9 @@ pub const InputMethod = @import("config").types.InputMethod;
 
 pub const Spec = struct {
     qt_app_colors: bool = false,
+    follow_app_colors: bool = false,
+    /// Directories holding the RediWM Qt style, prepended to QT_PLUGIN_PATH.
+    qt_plugin_path: ?[]const u8 = null,
     region: @import("config").loader.RegionConfig = .{},
     input_method: InputMethod = .none,
     /// Resolved by the compositor before private supervisor fields are
@@ -34,12 +37,27 @@ pub const Spec = struct {
     cursor_path: ?[]const u8 = null,
 };
 
+fn prependPluginPath(map: *Map, ours: []const u8) !void {
+    const inherited = map.get("QT_PLUGIN_PATH") orelse "";
+    if (std.mem.startsWith(u8, inherited, ours) and (inherited.len == ours.len or inherited[ours.len] == ':')) return;
+    if (inherited.len == 0) return map.put("QT_PLUGIN_PATH", ours);
+    const joined = try std.fmt.allocPrint(map.allocator, "{s}:{s}", .{ ours, inherited });
+    defer map.allocator.free(joined);
+    try map.put("QT_PLUGIN_PATH", joined);
+}
+
 pub fn apply(map: *Map, spec: Spec) !void {
     try applyRegion(map, spec.region);
+    // A fixed GTK_THEME prevents GtkSettings changes from selecting the next
+    // palette. Following is explicit opt-in; preserve it otherwise.
+    if (spec.follow_app_colors) _ = map.swapRemove("GTK_THEME");
     if (spec.qt_app_colors) {
         try map.put("QT_QPA_PLATFORMTHEME", @import("config").app_theme.qt_platform);
         try map.put("QT_QPA_PLATFORMTHEME_QT6", "qt6ct");
-        try map.put("QT_STYLE_OVERRIDE", "Fusion");
+        // Empty cancels an inherited override (kvantum) without one of our
+        // own, so qt5ct/qt6ct pick the RediWM style or Fusion per Qt major.
+        try map.put("QT_STYLE_OVERRIDE", "");
+        if (spec.qt_plugin_path) |ours| try prependPluginPath(map, ours);
     }
     // Private supervisor authority must never escape to descendant launches.
     inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "REDIWM_LOGIN_STARTED_NS" }) |key| _ = map.swapRemove(key);
@@ -235,16 +253,24 @@ test "private session authority and stale activation tokens never reach children
     try std.testing.expectEqualStrings("1", map.get("REDIWM_APP_SCOPES").?);
 }
 
-test "Qt app colors override inherited theming only after explicit opt in" {
+test "app colors override inherited theming only after explicit opt in" {
     var map = Map.init(std.testing.allocator);
     defer map.deinit();
     try map.put("QT_QPA_PLATFORMTHEME", "gtk3");
     try map.put("QT_STYLE_OVERRIDE", "kvantum");
+    try map.put("GTK_THEME", "Adwaita");
     try apply(&map, .{});
     try std.testing.expectEqualStrings("gtk3", map.get("QT_QPA_PLATFORMTHEME").?);
     try std.testing.expectEqualStrings("kvantum", map.get("QT_STYLE_OVERRIDE").?);
-    try apply(&map, .{ .qt_app_colors = true });
+    try std.testing.expectEqualStrings("Adwaita", map.get("GTK_THEME").?);
+    try map.put("QT_PLUGIN_PATH", "/opt/plugins");
+    try apply(&map, .{ .qt_app_colors = true, .follow_app_colors = true, .qt_plugin_path = "/usr/lib/rediwm/qt6:/usr/lib/rediwm/qt5" });
+    try std.testing.expect(map.get("GTK_THEME") == null);
+    try std.testing.expectEqualStrings("/usr/lib/rediwm/qt6:/usr/lib/rediwm/qt5:/opt/plugins", map.get("QT_PLUGIN_PATH").?);
+    // Reapplying (a restarted compositor inherits its own value) adds nothing.
+    try apply(&map, .{ .qt_app_colors = true, .qt_plugin_path = "/usr/lib/rediwm/qt6:/usr/lib/rediwm/qt5" });
+    try std.testing.expectEqualStrings("/usr/lib/rediwm/qt6:/usr/lib/rediwm/qt5:/opt/plugins", map.get("QT_PLUGIN_PATH").?);
     try std.testing.expectEqualStrings("qt5ct", map.get("QT_QPA_PLATFORMTHEME").?);
     try std.testing.expectEqualStrings("qt6ct", map.get("QT_QPA_PLATFORMTHEME_QT6").?);
-    try std.testing.expectEqualStrings("Fusion", map.get("QT_STYLE_OVERRIDE").?);
+    try std.testing.expectEqualStrings("", map.get("QT_STYLE_OVERRIDE").?);
 }

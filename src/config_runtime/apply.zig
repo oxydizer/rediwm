@@ -199,6 +199,10 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
 
     const theme_changed = pack_changed or !themeEql(old.theme, new.theme) or old.compositor.border_radius != new.compositor.border_radius;
     const taskbar_theme_changed = !theme_mod.taskbarOverrideEql(old.taskbar_theme, new.taskbar_theme);
+    if (theme_changed or old.compositor.follow_app_colors != new.compositor.follow_app_colors or old.compositor.dark_mode != new.compositor.dark_mode) {
+        @import("app_colors.zig").sync(server);
+        if (server.input.open_control_center) |cc| cc.refresh();
+    }
     if (theme_changed) {
         server.saveLoginTheme();
         if (server.notifications) |manager| manager.themeChanged();

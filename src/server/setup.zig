@@ -152,6 +152,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     };
 
     try initSession(server, world_tree);
+    @import("../config_runtime/app_colors.zig").sync(server);
 }
 
 fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
@@ -177,6 +178,7 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
                 break :blk false;
             };
         } else |_| {}
+        server.app_colors.qt_styles = @import("../config_runtime/app_theme.zig").findQtStyles(io);
     }
 
     if (!greeter) @import("../config_runtime/region.zig").applyTimezone(@import("../main.zig").gpa, loaded.region.timezone, environ.getPosix("TZ")) catch |err| {

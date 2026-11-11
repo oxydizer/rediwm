@@ -84,7 +84,7 @@ pub fn onFontSizeChanged(owner: ?*anyopaque, _: usize, index: usize) void {
 }
 
 pub fn onRadiusChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    theme.applyRadiusPreset(&theme.global, @enumFromInt(index));
+    theme.applyRadiusPreset(&theme.global, @fromBackingInt(@intCast(index)));
     applyThemeChange(section(owner));
 }
 
@@ -199,11 +199,11 @@ pub fn onTaskbarPositionChanged(owner: ?*anyopaque, _: usize, index: usize) void
     if (index > 1) return;
     const s = section(owner);
     const server = s.cc.server;
-    const position: @TypeOf(server.config.compositor.taskbar_position) = @enumFromInt(index);
+    const position: @TypeOf(server.config.compositor.taskbar_position) = @fromBackingInt(@intCast(index));
     if (position == server.config.compositor.taskbar_position) return;
     setting_save.saveCompositor(main.gpa, server.io, server.config.path, "taskbar_position", position) catch |err| {
         std.log.warn("could not save taskbar position: {}", .{err});
-        s.taskbar_position_children[1].kind.segmented.selected = @intFromEnum(server.config.compositor.taskbar_position);
+        s.taskbar_position_children[1].kind.segmented.selected = @backingInt(server.config.compositor.taskbar_position);
         s.taskbar_position_children[1].markDirty();
         return;
     };
@@ -215,11 +215,11 @@ pub fn onTaskbarAlignmentChanged(owner: ?*anyopaque, _: usize, index: usize) voi
     if (index > 2) return;
     const s = section(owner);
     const server = s.cc.server;
-    const alignment: @TypeOf(server.config.compositor.taskbar_alignment) = @enumFromInt(index);
+    const alignment: @TypeOf(server.config.compositor.taskbar_alignment) = @fromBackingInt(@intCast(index));
     if (alignment == server.config.compositor.taskbar_alignment) return;
     setting_save.saveCompositor(main.gpa, server.io, server.config.path, "taskbar_alignment", alignment) catch |err| {
         std.log.warn("could not save taskbar alignment: {}", .{err});
-        s.taskbar_alignment_children[1].kind.segmented.selected = @intFromEnum(server.config.compositor.taskbar_alignment);
+        s.taskbar_alignment_children[1].kind.segmented.selected = @backingInt(server.config.compositor.taskbar_alignment);
         s.taskbar_alignment_children[1].markDirty();
         return;
     };
@@ -231,7 +231,7 @@ pub fn onFocusZoomChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     if (index >= focus_zoom_labels.len) return;
     const s = section(owner);
     const server = section(owner).cc.server;
-    const mode: @import("../../camera.zig").FocusZoom = @enumFromInt(index);
+    const mode: @import("../../camera.zig").FocusZoom = @fromBackingInt(@intCast(index));
     setting_save.saveCompositor(main.gpa, server.io, server.config.path, "focus_zoom", mode) catch |err| {
         std.log.warn("could not save focus_zoom: {}", .{err});
         return;
@@ -246,11 +246,11 @@ pub fn onSwitcherStyleChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     if (index > 1) return;
     const s = section(owner);
     const server = s.cc.server;
-    const style: @TypeOf(server.config.compositor.switcher_style) = @enumFromInt(index);
+    const style: @TypeOf(server.config.compositor.switcher_style) = @fromBackingInt(@intCast(index));
     if (style == server.config.compositor.switcher_style) return;
     setting_save.saveCompositor(main.gpa, server.io, server.config.path, "switcher_style", style) catch |err| {
         std.log.warn("could not save switcher style: {}", .{err});
-        s.switcher_style_children[1].kind.segmented.selected = @intFromEnum(server.config.compositor.switcher_style);
+        s.switcher_style_children[1].kind.segmented.selected = @backingInt(server.config.compositor.switcher_style);
         s.switcher_style_children[1].markDirty();
         return;
     };
@@ -343,6 +343,7 @@ pub fn onDarkModeChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     if (server.config.compositor.dark_mode == on) return;
     server.config.compositor.dark_mode = on;
     settings_portal.emitColorScheme(server);
+    @import("../../config_runtime/app_colors.zig").sync(server);
     setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dark_mode", on) catch |err| {
         std.log.warn("could not save dark_mode: {}", .{err});
     };

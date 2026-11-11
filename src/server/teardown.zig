@@ -22,6 +22,7 @@ pub fn deinit(server: *Server) void {
     server.startup_tasks.deinit();
     server.reveal.deinit();
     server.session_startup.deinit();
+    server.app_colors.deinit();
     if (!already_terminating) {
         if (server.layout_autosave) |as| as.saveNow();
     }

@@ -165,6 +165,7 @@ pub const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(Composi
     .xwayland_native_scaling = .boolean,
     .xwayland_scale = .{ .float = .{ .min = 0, .max = 4 } },
     .dark_mode = .boolean,
+    .follow_app_colors = .boolean,
     .placeholder_delay_ms = .{ .uint = .{ .min = 0, .max = 10_000 } },
     .wallpaper = .string,
     .sound_theme = .string,
