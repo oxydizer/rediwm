@@ -87,7 +87,8 @@ def check_border(ipc, wid, scale, tmp, capture):
             ipc.move_cursor(body["x"] + body["width"] // 2, body["y"] + body["height"] // 2)
             image = capture()
             x = round((frame["x"] + frame["width"] / 2) * scale)
-            bottom = round((frame["y"] + frame["height"]) * scale)
+            # Edges snap half up; Python's round() would take 928.5 to 928.
+            bottom = int((frame["y"] + frame["height"]) * scale + .5)
             for offset in range(int(border * scale + .5)):
                 pixel = image.getpixel((x, bottom - 1 - offset))
                 assert max(abs(a - b) for a, b in zip(pixel, (115, 124, 104))) <= 3, (border, offset, pixel)

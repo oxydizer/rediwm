@@ -92,7 +92,7 @@ def run(scale):
                 assert colors.get((26, 32, 33), 0) > 30, colors
                 assert colors.get((52, 61, 62), 0) > 30, colors
                 debug = ipc.get_window_debug(wid)
-                assert debug["titlebar_height"] == 50, debug
+                assert debug["titlebar_height"] == 48, debug
                 assert debug["frame_border"] == debug["footer_height"] == 2, debug
                 controls = {w["name"]: w for w in ipc.get_widget_tree(f"window/{wid}")["widgets"]}
                 close = controls["close"]["box"]

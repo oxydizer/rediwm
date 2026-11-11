@@ -10,18 +10,18 @@ font = "Manrope"
 mono_font = "JetBrains Mono"
 font_size = 13
 title_size = 13.5
-chrome_height = 50
+chrome_height = 48
 chrome_control_gap = 8
 chrome_control_right_pad = 2
 chrome_control_offset_y = 5
 chrome_round_buttons = false
 chrome_button_bevel = 7
 # Raised title tab, a 45-degree step down, and four clipped corners. The step
-# is the title plate's slant moved out by the plate inset: 310 wide, 38 slant
-# (50 - 2 * 6) and inset 6 give x - y = 266 + 6 * sqrt(2). Change them together.
-# Below ~296 px wide the outline cannot fit and the window uses rounded corners;
+# is the title plate's slant moved out by the plate inset: 310 wide, 36 slant
+# (48 - 2 * 6) and inset 6 give x - y = 268 + 6 * sqrt(2). Change them together.
+# Below ~298 px wide the outline cannot fit and the window uses rounded corners;
 # maximized windows stay rectangular.
-window_shape = "0 14, 14 0, 274.5 0, 281.5 7, -14 7, -0 21, -0 -12, -12 -0, 12 -0, 0 -12"
+window_shape = "0 14, 14 0, 276.5 0, 283.5 7, -14 7, -0 21, -0 -12, -12 -0, 12 -0, 0 -12"
 window_bg = "#111516"
 window_fg = "#E3E5E3"
 window_dim = "#A2A8A6"
@@ -32,12 +32,12 @@ window_divider = "#2A3030"
 window_title_plate = "#FAEB01"
 window_title_plate_width = 310
 window_title_plate_fg = "#111400"
-# Plate geometry; slant is a fraction of chrome_height (38 of 50: 45 degrees).
+# Plate geometry; slant is a fraction of chrome_height (36 of 48: 45 degrees).
 # With an outline the plate follows its cut corners at the inset; the bevel
 # applies to rectangular (maximized) frames.
 window_title_plate_inset = 6
 window_title_plate_bevel = 7
-window_title_plate_slant = 0.76
+window_title_plate_slant = 0.75
 window_title_plate_control_gap = 8
 window_title_plate_text_padding = 8
 window_corner_accent = "#FAEB01"

@@ -31,7 +31,7 @@ def check_narrow(ipc, scale, tmp, capture, crop):
             config = original.replace('[compositor]', '[compositor]\nwindow_tab_apps = ["blackout-narrow"]', 1) if grouped else original
             config_path.write_text(config)
             ipc.reload_config()
-            for width in (360, 292, 291, 278, 270, 250, 210, 360):
+            for width in (360, 294, 293, 278, 270, 250, 210, 360):
                 ipc.action("set_window_size", {"id": wid, "width": width, "height": 300})
                 wait_for(lambda: ipc.get_window_debug(wid)["client_box"]["width"] == width,
                          f"narrow resize to {width}")
@@ -45,9 +45,9 @@ def check_narrow(ipc, scale, tmp, capture, crop):
                 ipc.wait_for_frame()
                 fallback = capture()
                 same = crop(actual, box, rect).tobytes() == crop(fallback, box, rect).tobytes()
-                # The raised step and the right chamfer need 295.5 logical px,
+                # The raised step and the right chamfer need 297.5 logical px,
                 # including the two 2 px borders around the client.
-                assert same == (box["width"] < 295.5), (grouped, width, box, same)
+                assert same == (box["width"] < 297.5), (grouped, width, box, same)
                 config_path.write_text(config)
                 ipc.reload_config()
                 ipc.wait_for_frame()
