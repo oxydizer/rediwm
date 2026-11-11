@@ -40,6 +40,8 @@ pub const Theme = struct {
     chrome_control_offset_y: f32 = 0,
     /// Circular window controls and pill-shaped tabs, including tab controls.
     chrome_round_buttons: bool = false,
+    /// Straight 45-degree cuts on window controls, in reference units; overrides round buttons.
+    chrome_button_bevel: f32 = 0,
     /// A polygon outline for server-decorated windows instead of the rounded
     /// rectangle (syntax in `window_shape.zig`); empty keeps `radius_lg`.
     window_shape: []const u8 = "",
@@ -77,6 +79,8 @@ pub const Theme = struct {
     window_dim: [4]f32 = .{ 214.0 / 255.0, 214.0 / 255.0, 214.0 / 255.0, 1 }, // #d6d6d6
     window_border: [4]f32 = .{ 1, 1, 1, 0.09 },
     window_border_hover: [4]f32 = .{ 1, 1, 1, 0.13 },
+    /// Outer window frame, logical px (1–16, rounded to whole pixels).
+    window_border_width: f32 = 1,
     /// Active window outline in opt-in workspace mode (#ed1b2e).
     workspace_active_border: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 1 },
     window_divider: [4]f32 = .{ 1, 1, 1, 0.045 },
@@ -327,6 +331,8 @@ pub const Theme = struct {
     start_menu_width: f32 = 0,
     start_menu_max_height: f32 = 0,
     start_menu_radius: f32 = 14.0,
+    /// Straight 45-degree panel corners instead of start_menu_radius; zero is rounded.
+    start_menu_bevel: f32 = 0,
     start_menu_bg: [4]f32 = .{ 29.0 / 255.0, 34.0 / 255.0, 41.0 / 255.0, 0.98 }, // #1d2229
     start_menu_border: [4]f32 = .{ 1, 1, 1, 0.12 },
     start_menu_search_bg: [4]f32 = .{ 21.0 / 255.0, 26.0 / 255.0, 31.0 / 255.0, 1 },

@@ -38,7 +38,7 @@ fn state(top: *Top) State {
         .constraints = c,
         .horizontal = 2 * top.borderWidth(),
         // Fullscreen/maximize decoration suppression must not alter the saved tile.
-        .vertical = top.titlebarHeight() + if (top.hasServerDecorations()) @import("chrome.zig").frame_border else @as(i32, 0),
+        .vertical = top.titlebarHeight() + if (top.hasServerDecorations()) @import("chrome.zig").frameBorder() else @as(i32, 0),
         .excluded = isFloating(top) or top.tile != null or top.currentIdentity().dialog or fixed,
         .suspended = top.minimized or top.fullscreen or top.maximized,
         .hidden = top.tab_hidden,

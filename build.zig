@@ -318,4 +318,6 @@ pub fn build(b: *std.Build) void {
     run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the nested compositor (pass a client command after --)");
     run_step.dependOn(&run_cmd.step);
+    // Last: it lists every executable registered above.
+    @import("build/install_paths.zig").writeProgramList(b);
 }

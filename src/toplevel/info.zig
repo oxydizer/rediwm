@@ -377,7 +377,7 @@ pub fn chromeAcceptsInput(buffer: *sn.Buffer, sx: *f64, sy: *f64) callconv(.c) b
     _ = toplevel.frame_tree.node.coords(&fx, &fy);
     const local = geometry.toLocal(@as(f64, @floatFromInt(ox)) + sx.*, @as(f64, @floatFromInt(oy)) + sy.*, fx, fy);
     const has_control = toplevel.controlAt(local.x, local.y) != null or toplevel.tabAt(local.x, local.y) != .none;
-    if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frame_border, chrome.frame_border, has_control) != null) {
+    if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frameBorder(), chrome.frameBorder(), has_control) != null) {
         return true;
     }
 

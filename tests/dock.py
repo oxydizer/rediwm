@@ -1248,10 +1248,10 @@ def positions():
                             width, height = output['logical_width'], output['logical_height'] - bar['height']
                             if vertical:
                                 assert box['y'] == y0 + (height - box['height']) // 2, box
-                                assert box['x'] == (x0 + 5 if position == 'left' else x0 + width - size - 5), box
+                                assert box['x'] == (x0 if position == 'left' else x0 + width - size), box
                             else:
                                 assert box['x'] == x0 + (width - box['width']) // 2, box
-                                assert box['y'] == (y0 + 5 if position == 'top' else y0 + height - size - 5), box
+                                assert box['y'] == (y0 if position == 'top' else y0 + height - size), box
                             buttons = [w['global_box'] for w in ui.widgets('dock') if w['name']]
                             along, cross = ('y', 'x') if vertical else ('x', 'y')
                             assert all(a[along] < b[along] and a[cross] == b[cross] for a, b in zip(buttons, buttons[1:])), buttons

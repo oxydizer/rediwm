@@ -50,6 +50,14 @@ pub inline fn sdRoundedBox(px: f32, py: f32, x: f32, y: f32, w: f32, h: f32, rad
     return @min(@max(qx, qy), 0) + @sqrt(outside_x * outside_x + outside_y * outside_y) - r;
 }
 
+/// Edge distance for a box with straight 45-degree cuts, as used by widget highlights.
+pub inline fn sdBeveledBox(px: f32, py: f32, x: f32, y: f32, w: f32, h: f32, bevel: f32) f32 {
+    const dx = @abs(px - x - w / 2);
+    const dy = @abs(py - y - h / 2);
+    const cut = @min(@max(0, bevel), @min(w, h) / 2);
+    return @max(@max(dx - w / 2, dy - h / 2), (dx + dy - w / 2 - h / 2 + cut) / std.math.sqrt2);
+}
+
 /// Pixel coverage of a point at signed `distance` from an edge: a one-pixel
 /// ramp centred on the edge.
 pub inline fn coverage(distance: f32) f32 {

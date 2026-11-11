@@ -1,7 +1,61 @@
 """Interactive corner feedback checks, called by the Blackout visual suite."""
+import os
+import subprocess
 import time
 
-from desktop_zoom import wait_for
+from desktop_zoom import build_client, wait_for
+from ipc_client import stop_process
+
+
+def check_narrow(ipc, scale, tmp, capture, crop):
+    """An outline that no longer fits must match the ordinary frame fallback."""
+    config_path = tmp / "rediwm-config.toml"
+    original = config_path.read_text()
+    # Files has a 360 px minimum. Use the existing resizable xdg fixture to
+    # exercise smaller frames, including the grouped titlebar in the report.
+    build_client(tmp)
+    display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
+    client = subprocess.Popen([str(tmp / "client"), "--app-id", "blackout-narrow", "--title", "Narrow"],
+        env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display,
+                 REDIWM_TEST_DECORATION="server", REDIWM_TEST_RESIZE="1"),
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        window = wait_for(lambda: next((w for w in ipc.get_windows()
+                                        if w["app_id"] == "blackout-narrow"), None), "narrow client")
+        wid = window["id"]
+        ipc.set_zoom(wid, 100)
+        ipc.action("move_window_to", {"id": wid, "x": 80, "y": 80})
+        ipc.focus_window(wid)
+        ipc.move_cursor(10, 10)
+        for grouped in (False, True):
+            config = original.replace('[compositor]', '[compositor]\nwindow_tab_apps = ["blackout-narrow"]', 1) if grouped else original
+            config_path.write_text(config)
+            ipc.reload_config()
+            for width in (360, 292, 291, 278, 270, 250, 210, 360):
+                ipc.action("set_window_size", {"id": wid, "width": width, "height": 300})
+                wait_for(lambda: ipc.get_window_debug(wid)["client_box"]["width"] == width,
+                         f"narrow resize to {width}")
+                ipc.wait_for("window_geometry_settled", window_id=wid)
+                box = ipc.get_window_debug(wid)["chrome_box"]
+                rect = (0, 0, box["width"], ipc.get_window_debug(wid)["titlebar_height"])
+                actual = capture()
+                actual.save(f"/tmp/blackout-narrow-{width}-{scale}.png")
+                config_path.write_text(config + '\nwindow_shape = ""\n')
+                ipc.reload_config()
+                ipc.wait_for_frame()
+                fallback = capture()
+                same = crop(actual, box, rect).tobytes() == crop(fallback, box, rect).tobytes()
+                # The raised step and the right chamfer need 295.5 logical px,
+                # including the two 2 px borders around the client.
+                assert same == (box["width"] < 295.5), (grouped, width, box, same)
+                config_path.write_text(config)
+                ipc.reload_config()
+                ipc.wait_for_frame()
+    finally:
+        stop_process(client)
+        wait_for(lambda: not any(w["app_id"] == "blackout-narrow" for w in ipc.get_windows()), "narrow client closed")
+        config_path.write_text(original)
+        ipc.reload_config()
 
 
 def check_resize(ipc, wid, scale, tmp, capture, crop, yellow):

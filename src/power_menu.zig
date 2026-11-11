@@ -432,7 +432,7 @@ pub const PowerMenu = struct {
             const focused = menu.keyboard_focus == i;
             const highlighted = focused or card.kind.row.state == .hover or card.kind.row.state == .press;
             if (highlighted) target = i;
-            const color = if (highlighted) theme.global.danger else theme.global.fg;
+            const color = if (highlighted) theme.shellPalette().accent else theme.global.fg;
             if (card.kind.row.selected != focused or !std.meta.eql(menu.tile_pairs[i][0].kind.icon.color, color)) {
                 card.kind.row.selected = focused;
                 menu.tile_pairs[i][0].kind.icon.color = color;
@@ -468,7 +468,7 @@ pub const PowerMenu = struct {
         const a = &menu.cards[menu.selected orelse index];
         const b = &menu.cards[menu.selected orelse @min(index + 1, tiles.len - 1)];
         const fraction = slot - @as(f32, @floatFromInt(index));
-        var border = theme.global.danger;
+        var border = theme.shellPalette().accent;
         border[3] *= alpha;
         const pressed = if (menu.highlight_target) |id| menu.cards[id].kind.row.state == .press else false;
         renderer.fillRect(

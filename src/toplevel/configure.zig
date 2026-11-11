@@ -124,8 +124,7 @@ pub fn shapePolygon(toplevel: *const Toplevel, width: i32, height: i32) ?window_
     const cache = &shape_cache;
     if (text.len > cache.text.len) {
         const outline = (window_shape.parse(text) catch return null) orelse return null;
-        const resolved = window_shape.resolve(outline, @floatFromInt(width), @floatFromInt(height), density);
-        return if (window_shape.usable(resolved)) resolved else null;
+        return window_shape.resolveFitting(outline, @floatFromInt(width), @floatFromInt(height), density);
     }
     if (!cache.parsed or !std.mem.eql(u8, cache.text[0..cache.len], text)) {
         cache.outline = window_shape.parse(text) catch null;
@@ -136,8 +135,7 @@ pub fn shapePolygon(toplevel: *const Toplevel, width: i32, height: i32) ?window_
     }
     const outline = cache.outline orelse return null;
     if (cache.width != width or cache.height != height or cache.density != density) {
-        const resolved = window_shape.resolve(outline, @floatFromInt(width), @floatFromInt(height), density);
-        cache.resolved = if (window_shape.usable(resolved)) resolved else null;
+        cache.resolved = window_shape.resolveFitting(outline, @floatFromInt(width), @floatFromInt(height), density);
         cache.width = width;
         cache.height = height;
         cache.density = density;

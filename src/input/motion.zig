@@ -427,7 +427,7 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             const local = toplevel.frameLocal(input.cursor.x, input.cursor.y);
             const has_control = toplevel.controlAt(hit_chrome.sx, hit_chrome.sy) != null or toplevel.tabAt(hit_chrome.sx, hit_chrome.sy) != .none;
             toplevel.hoverTab(hit_chrome.sx, hit_chrome.sy);
-            if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frame_border, chrome.frame_border, has_control)) |edges| {
+            if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frameBorder(), chrome.frameBorder(), has_control)) |edges| {
                 input.hovered_resize_edges = edges;
                 input.setHover(toplevel, null);
                 input.setNamedCursor(edges.cursorName());

@@ -65,9 +65,9 @@ pub fn animateChromeSize(toplevel: *Toplevel, width: i32, height: i32, wait: Con
 
 pub fn chromeSizeForClient(toplevel: *const Toplevel, client_w: i32, client_h: i32) struct { w: i32, h: i32 } {
     if (!toplevel.hasServerDecorations()) return .{ .w = client_w, .h = client_h };
-    const footer = chrome.frame_border;
+    const footer = chrome.frameBorder();
     return .{
-        .w = client_w + 2 * chrome.frame_border,
+        .w = client_w + 2 * chrome.frameBorder(),
         .h = client_h + toplevel.titlebarHeight() + footer,
     };
 }

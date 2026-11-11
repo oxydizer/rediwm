@@ -14,6 +14,7 @@ const Memo = struct {
     color: [4]f32,
     // Device-independent side of each corner's square, in logical px.
     extent: i32,
+    border: i32,
     stroke: f32,
     inset: f32,
     end_padding: f32,
@@ -105,6 +106,7 @@ pub fn syncCornerAccents(t: *Toplevel) !void {
             .density = density,
             .color = palette.window_corner_accent,
             .extent = extent,
+            .border = chrome.frameBorder(),
             .stroke = palette.window_corner_width,
             .inset = palette.window_corner_inset,
             .end_padding = palette.window_corner_end_padding,
@@ -153,7 +155,7 @@ pub fn syncCornerAccents(t: *Toplevel) !void {
 
 /// How far from the outline the stroke's ink can lie, in logical px.
 fn reach(memo: Memo) f32 {
-    return @as(f32, @floatFromInt(chrome.frame_border)) + (memo.inset + memo.stroke) * memo.density + 1;
+    return @as(f32, @floatFromInt(memo.border)) + (memo.inset + memo.stroke) * memo.density + 1;
 }
 
 /// What the corner whose square starts at (`x`, `y`) shows of the outline. A
@@ -167,7 +169,7 @@ fn cornerKey(memo: Memo, polygon: ?ui.window_shape.Resolved, radius: f32, x: i32
 fn paint(buffer: *PanelBuffer, memo: Memo, polygon: ?ui.window_shape.Resolved, radius: f32, x: i32, y: i32, width: i32, height: i32) void {
     const color: ui.text.Color = .{ .r = memo.color[0], .g = memo.color[1], .b = memo.color[2], .a = memo.color[3] };
     const extent: f32 = @floatFromInt(memo.extent);
-    const inset = @as(f32, @floatFromInt(chrome.frame_border)) + memo.inset * memo.density;
+    const inset = @as(f32, @floatFromInt(memo.border)) + memo.inset * memo.density;
     const stroke = memo.stroke * memo.density;
     // The stroke is the band `inset` to `inset + stroke` inside the outline.
     // Its ink ends half a device pixel beyond either side.
@@ -196,7 +198,7 @@ fn paint(buffer: *PanelBuffer, memo: Memo, polygon: ?ui.window_shape.Resolved, r
                 dx += @intFromFloat(clear);
                 continue;
             }
-            // Leave the output pass's one-pixel ring untouched. This stroke is
+            // Leave the output pass's frame ring untouched. This stroke is
             // just inside it; all pixels still inherit frame opacity and clipping.
             const coverage = ui.sdf.coverage((distance + inset) * memo.scale) *
                 ui.sdf.coverage((-distance - inset - stroke) * memo.scale);

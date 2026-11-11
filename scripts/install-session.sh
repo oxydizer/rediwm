@@ -62,8 +62,15 @@ if [ "${built_prefix%/}" != "${prefix%/}" ]; then
     echo "Build targets $built_prefix, not $prefix. Rebuild with --prefix=$prefix (prebuilt releases cannot be relocated)." >&2
     exit 1
 fi
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-monitor rediwm-editor rediwm-pdf rediwm-player rediwm-share-picker rediwm-dm rediwm-accounts-helper rediwm-restart; do
-    test -x "$release_dir/bin/$binary"
+# The build lists the programs it installed (build/install_paths.zig); a stale
+# file left in bin/ by an older build is not on it.
+if [ ! -f "$release_dir/programs" ]; then
+    echo "$release_dir has no program list. Rebuild it with this checkout." >&2
+    exit 1
+fi
+grep -qx rediwm "$release_dir/programs" || { echo "$release_dir/programs does not list rediwm" >&2; exit 1; }
+for binary in $(cat "$release_dir/programs"); do
+    test -x "$release_dir/bin/$binary" || { echo "$release_dir/bin/$binary is missing" >&2; exit 1; }
 done
 as_root sh "$repo_dir/scripts/install-session-root.sh" "$repo_dir" "$release_dir" "$dm_flag"
 if [ "$restart" = no ]; then

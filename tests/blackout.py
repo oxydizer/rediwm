@@ -92,6 +92,8 @@ def run(scale):
                 assert colors.get((26, 32, 33), 0) > 30, colors
                 assert colors.get((52, 61, 62), 0) > 30, colors
                 debug = ipc.get_window_debug(wid)
+                assert debug["titlebar_height"] == 50, debug
+                assert debug["frame_border"] == debug["footer_height"] == 2, debug
                 controls = {w["name"]: w for w in ipc.get_widget_tree(f"window/{wid}")["widgets"]}
                 close = controls["close"]["box"]
                 assert close["x"] + close["width"] > debug["chrome_box"]["width"] - 14, close
@@ -104,6 +106,16 @@ def run(scale):
 
                 from blackout_config import check_config
                 check_config(ipc, wid, scale, tmp, capture, crop, yellow)
+
+                from blackout_shapes import check_shapes
+                check_shapes(ipc, wid, scale, tmp, capture)
+
+                from blackout_resize import check_narrow
+                ipc.minimize(wid)
+                try:
+                    check_narrow(ipc, scale, tmp, capture, crop)
+                finally:
+                    ipc.restore(wid)
 
                 # Narrow widths retain working window controls and a clipped title.
                 ipc.action("set_window_size", {"id": wid, "width": 360, "height": 300})

@@ -47,9 +47,9 @@ pub fn applySizeClip(toplevel: *Toplevel) void {
         return;
     }
     const decorated = toplevel.hasServerDecorations();
-    const cw = if (decorated) @max(toplevel.chrome_width - 2 * chrome.frame_border, 0) else toplevel.chrome_width;
+    const cw = if (decorated) @max(toplevel.chrome_width - 2 * chrome.frameBorder(), 0) else toplevel.chrome_width;
     const ch = if (decorated)
-        @max(toplevel.chrome_height - toplevel.titlebarHeight() - chrome.frame_border, 0)
+        @max(toplevel.chrome_height - toplevel.titlebarHeight() - chrome.frameBorder(), 0)
     else
         toplevel.chrome_height;
     const n = toplevel.surfaceScale();

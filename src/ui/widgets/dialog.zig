@@ -89,7 +89,7 @@ pub fn paintTitlebar(r: *Renderer, box: Rect) void {
     r.fillRect(box.x, box.y, box.w, box.h, .{
         .color = .{ t.window_bg[0], t.window_bg[1], t.window_bg[2], 1 },
         .radius = t.radius_lg,
-        .border_width = chrome.frame_border,
+        .border_width = 1,
         .border_color = t.window_border,
     });
     r.fillRect(box.x + 1, box.y + height - 1, box.w - 2, 1, .{ .color = t.window_divider });

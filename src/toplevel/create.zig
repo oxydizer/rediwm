@@ -320,8 +320,8 @@ pub fn createPlaceholder(
         toplevel.maximized = true;
         if (target_out) |out| {
             const usable = out.usableBox();
-            const footer = chrome.frame_border;
-            const mw = usable.width - 2 * chrome.frame_border;
+            const footer = chrome.frameBorder();
+            const mw = usable.width - 2 * chrome.frameBorder();
             const mh = usable.height - toplevel.titlebarHeight() - footer;
             toplevel.backend.placeholder.client_width = @max(1, mw);
             toplevel.backend.placeholder.client_height = @max(1, mh);
@@ -331,8 +331,8 @@ pub fn createPlaceholder(
             toplevel.placed = true;
         }
     } else if (target_out) |out| {
-        const footer = chrome.frame_border;
-        const natural_w = init_w + 2 * chrome.frame_border;
+        const footer = chrome.frameBorder();
+        const natural_w = init_w + 2 * chrome.frameBorder();
         const natural_h = init_h + toplevel.titlebarHeight() + footer;
         const geom = pickInitialPlacement(server, out, open_rules, null, natural_w, natural_h);
         toplevel.setPosition(geom.x, geom.y);
