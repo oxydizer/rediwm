@@ -62,6 +62,12 @@ pub const Geometry = struct {
         };
     }
 
+    /// The keyboard layout button, bottom left, in the same units (the
+    /// greeter's session chooser sits there instead).
+    pub fn layoutButton(geo: Geometry) text_field.Rect {
+        return .{ .x = 30, .y = geo.h / geo.s - 96, .w = 90, .h = 76 };
+    }
+
     /// The Unlock / Log In button, in the same units.
     pub fn submit(geo: Geometry) text_field.Rect {
         return .{ .x = geo.left / geo.s, .y = geo.top / geo.s + 508, .w = 390, .h = 52 };
@@ -291,7 +297,19 @@ pub fn paint(r: *ui.paint.Renderer, lock: *Lock, w: f32, h: f32, clock_24h: bool
         .label = if (i == 0) i18n.tr("Power") else i18n.tr("Restart"),
     }, .{ .focused = lock.focus == 3 + i });
     r.fillRect(w - 120 * s, h - 90 * s, s, 34 * s, .{ .color = ui.theme.global.lock_divider });
+    if (layoutButtonShown(lock)) ui.widgets.button.paint(&zoomed, geo.layoutButton(), .{
+        .variant = .ghost,
+        .size = .sm,
+        .stacked = true,
+        .leading_icon = .keyboard,
+        .label = lock.layout_label[0..lock.layout_label_len],
+    }, .{ .focused = lock.focus == lock_mod.focus_layout });
     return .{ .caret = field.caret, .factor = s };
+}
+
+/// See `Lock.refreshLayoutLabel`.
+pub fn layoutButtonShown(lock: *const Lock) bool {
+    return lock.layout_label_len > 0;
 }
 
 /// Greeter: account arrows beside the picture, session chooser bottom-left.

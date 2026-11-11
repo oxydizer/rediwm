@@ -205,6 +205,8 @@ config_watcher: ?watcher_mod.ConfigWatcher = null,
 config_generation: u64 = 1,
 config_reload_error: ?[]const u8 = null,
 layout_keyboard: ?*@import("Keyboard.zig") = null,
+/// Keyboard layouts and Fcitx input methods (`input_sources.zig`).
+input_sources: ?*@import("input_sources.zig").Manager = null,
 start_menu_catalog: *applications.Catalog,
 launcher_history: @import("start_menu/history.zig").History = .{},
 /// Memoizes `iconNameForAppId`, which is three linear scans over the whole

@@ -230,6 +230,11 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
     errdefer server.launch_feedback.deinit();
     server.text_input = @import("../input/text_input.zig").create(server) catch return error.TextInputManagerCreateFailed;
     errdefer if (server.text_input) |relay| relay.destroy();
+    server.input_sources = @import("../input_sources.zig").Manager.create(server) catch null;
+    errdefer if (server.input_sources) |sources| {
+        server.input_sources = null;
+        sources.deinit();
+    };
 
     server.idle = idle_mod.IdleManager.create(server, server.config.idle) catch |err| blk: {
         log.warn("init: could not create idle manager: {}", .{err});

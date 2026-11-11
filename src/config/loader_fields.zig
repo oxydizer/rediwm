@@ -53,6 +53,7 @@ pub const input_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(InputConfig)
     .xkb_variant = .string,
     .xkb_options = .string,
     .xkb_model = .string,
+    .xkb_labels = .string,
     .natural_scroll = .boolean,
     .invert_scroll = .boolean,
     .pointer_speed = .{ .float = .{ .min = -1, .max = 1 } },

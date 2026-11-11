@@ -26,44 +26,13 @@ const pan_speed_values = [4]f32{ 1, 2, 3, 4 };
 const pan_speed_labels = [_][]const u8{ "1x", "2x", "3x", "4x" };
 const pan_speed_segmented_width: f32 = 180;
 
-const KeyboardLayout = struct { label: []const u8, layout: []const u8, variant: []const u8 = "" };
-
-// Layout names are shown in their own language, so they are not translated.
-const keyboard_layouts = [_]KeyboardLayout{
-    .{ .label = "English (US, QWERTY)", .layout = "us" }, // i18n: raw
-    .{ .label = "Français (AZERTY)", .layout = "fr" }, // i18n: raw
-    .{ .label = "Français (BÉPO)", .layout = "fr", .variant = "bepo" }, // i18n: raw
-    .{ .label = "Belge (AZERTY)", .layout = "be" }, // i18n: raw
-    .{ .label = "Suisse romand (QWERTZ)", .layout = "ch", .variant = "fr" }, // i18n: raw
-    .{ .label = "Canadien multilingue", .layout = "ca", .variant = "multix" }, // i18n: raw
-    .{ .label = "Deutsch (QWERTZ)", .layout = "de" }, // i18n: raw
-    .{ .label = "Español", .layout = "es" }, // i18n: raw
-    .{ .label = "Italiano", .layout = "it" }, // i18n: raw
-    .{ .label = "Português", .layout = "pt" }, // i18n: raw
-    .{ .label = "English (UK)", .layout = "gb" }, // i18n: raw
-    .{ .label = "English (Dvorak)", .layout = "us", .variant = "dvorak" }, // i18n: raw
-    .{ .label = "Русский", .layout = "ru" }, // i18n: raw
-};
-
-const keyboard_layout_labels = blk: {
-    var out: [keyboard_layouts.len][]const u8 = undefined;
-    for (keyboard_layouts, 0..) |l, i| out[i] = l.label;
-    const final = out;
-    break :blk final;
-};
-
-fn keyboardLayoutIndex(cfg: anytype) ?usize {
-    for (keyboard_layouts, 0..) |l, i| {
-        if (std.mem.eql(u8, l.layout, cfg.xkb_layout) and std.mem.eql(u8, l.variant, cfg.xkb_variant)) return i;
-    }
-    return null;
-}
-
 pub const Section = struct {
     root: Widget = undefined,
     top_children: [2]Widget = undefined,
     row_storage: [7]Widget = undefined,
     row_count: usize = 0,
+    /// The first keyboard row: Settings puts the Input Sources card before it.
+    keyboard_row: usize = 0,
     selector_children: [4]Widget = undefined,
     selector_header_children: [2]Widget = undefined,
     speed_group_children: [2]Widget = undefined,
@@ -73,7 +42,6 @@ pub const Section = struct {
     bool_row_children: [bool_keys.len][2]Widget = undefined,
     bool_label_children: [bool_keys.len][2]Widget = undefined,
     speed_value_buf: [16]u8 = undefined,
-    layout_row_children: [2]Widget = undefined,
     pan_speed_row_children: [2]Widget = undefined,
     delay_row_children: [2]Widget = undefined,
     rate_row_children: [2]Widget = undefined,
@@ -514,17 +482,7 @@ pub fn build(out: *Section, input: *Input) void {
     const pan_speed_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.pan_speed_row_children };
     layout.appendRow(&out.row_storage, &row_count, pan_speed_row);
 
-    out.layout_row_children = .{
-        fgLabel(i18n.tr("Keyboard layout")),
-        .{
-            .name = "keyboard_layout",
-            .kind = .{ .select = .{ .labels = &keyboard_layout_labels, .selected = keyboardLayoutIndex(input.server.config.input), .placeholder = i18n.tr("Custom (config file)"), .owner = out, .on_change = &onKeyboardLayoutPicked } },
-            .width = .{ .fixed = 220 },
-        },
-    };
-    const layout_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.layout_row_children };
-    layout.appendRow(&out.row_storage, &row_count, layout_row);
-
+    out.keyboard_row = row_count;
     out.delay_row_children = .{
         fgLabel(i18n.tr("Repeat delay")),
         .{ .name = "repeat_delay", .kind = .{ .stepper = .{ .value = repeat.delay, .min = 100, .max = 2000, .step = default_delay_step, .unit = "ms", .owner = out, .on_change = &onRepeatDelayChanged } } },
@@ -546,24 +504,6 @@ pub fn build(out: *Section, input: *Input) void {
         .{ .name = "input", .kind = .container, .direction = .column, .gap = 12, .children = out.row_storage[0..row_count] },
     };
     out.root = .{ .name = "input", .kind = .container, .direction = .column, .gap = 8, .children = &out.top_children };
-}
-
-// Only the file is written here: the reload diffs it against the live config
-// and recompiles the keymap on every keyboard (`config_runtime/apply.zig`).
-fn onKeyboardLayoutPicked(owner: ?*anyopaque, _: usize, index: usize) void {
-    const s: *Section = @ptrCast(@alignCast(owner orelse return));
-    if (index >= keyboard_layouts.len) return;
-    const server = s.input.server;
-    const choice = keyboard_layouts[index];
-    const save = @import("config").setting_save;
-    save.saveInput(@import("../../main.zig").gpa, server.io, server.config.path, "xkb_layout", choice.layout) catch |err| {
-        std.log.warn("could not save keyboard layout: {}", .{err});
-        return;
-    };
-    save.saveInput(@import("../../main.zig").gpa, server.io, server.config.path, "xkb_variant", choice.variant) catch |err| {
-        std.log.warn("could not save keyboard variant: {}", .{err});
-    };
-    @import("../../config_runtime/watcher.zig").reloadConfig(server);
 }
 
 fn onPanSpeedChanged(owner: ?*anyopaque, _: usize, index: usize) void {

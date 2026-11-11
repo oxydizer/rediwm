@@ -44,6 +44,9 @@ pub const Action = union(enum) {
     brightness_up,
     brightness_down,
     power_profile_cycle,
+    /// The next or previous keyboard layout or input method (`input_sources.zig`).
+    input_source_next,
+    input_source_prev,
     spawn: []const u8,
     close_window,
     toggle_fullscreen,
@@ -97,6 +100,12 @@ pub fn isHardwareAction(action: Action) bool {
         .volume_up, .volume_down, .volume_mute, .mic_mute, .brightness_up, .brightness_down => true,
         else => false,
     };
+}
+
+/// Switching keyboard layouts also works on the lock screen (layouts only:
+/// input methods never reach it), where passwords are typed.
+pub fn worksWhileLocked(action: Action) bool {
+    return isHardwareAction(action) or action == .input_source_next or action == .input_source_prev;
 }
 
 pub fn repeats(action: Action) bool {

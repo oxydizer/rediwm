@@ -329,6 +329,7 @@ pub fn runMsg(init: std.process.Init, allocator: std.mem.Allocator) !void {
             .match_window_rules => try printUnwrappedJson(ok_val, "MatchWindowRules"),
             .shell_state => try printUnwrappedJson(ok_val, "ShellState"),
             .keyboard_layouts => try printUnwrappedJson(ok_val, "KeyboardLayouts"),
+            .input_sources => try printUnwrappedJson(ok_val, "InputSources"),
             .text_input => try printUnwrappedJson(ok_val, "TextInput"),
             .input_state => try printUnwrappedJson(ok_val, "InputState"),
             .hit_test => try printUnwrappedJson(ok_val, "HitTest"),

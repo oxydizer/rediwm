@@ -76,9 +76,17 @@ pub fn resolveWindowPicker(output: *Output) ?PanelRoot {
     return .{ .root = &menu.picker_root, .box = menu.box };
 }
 
+/// The taskbar's input source list: rows `source_<n>` and `input_settings`.
+pub fn resolveInputSources(output: *Output) ?PanelRoot {
+    const menu = &output.server.input.window_menu;
+    if (menu.output != output or menu.node == null or !menu.sources) return null;
+    return .{ .root = &menu.picker_root, .box = menu.box };
+}
+
 pub const panel_registry = [_]PanelRegistryEntry{
     .{ .name = "dock", .resolve = resolveDock },
     .{ .name = "window_picker", .resolve = resolveWindowPicker },
+    .{ .name = "input_sources", .resolve = resolveInputSources },
     .{ .name = "start_menu", .resolve = resolveStartMenu },
     .{ .name = "control_center", .resolve = resolveControlCenter },
     .{ .name = "power_menu", .resolve = resolvePowerMenu },

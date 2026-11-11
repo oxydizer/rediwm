@@ -80,6 +80,10 @@ pub fn deinit(server: *Server) void {
         relay.destroy();
         server.text_input = null;
     }
+    if (server.input_sources) |sources| {
+        server.input_sources = null;
+        sources.deinit();
+    }
 
     server.new_output.link.remove();
     server.new_layer.link.remove();

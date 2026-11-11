@@ -90,6 +90,8 @@ pub const GesturePhase = protocol_results.GesturePhase;
 pub const OutputConfigPatch = protocol_results.OutputConfigPatch;
 pub const MoveWindowToParams = protocol_results.MoveWindowToParams;
 pub const KeyboardLayoutsData = protocol_results.KeyboardLayoutsData;
+pub const InputSourcesData = protocol_results.InputSourcesData;
+pub const InputSourceData = protocol_results.InputSourceData;
 pub const LayoutTarget = protocol_results.LayoutTarget;
 pub const ConfigLoadedEvent = protocol_results.ConfigLoadedEvent;
 pub const ThemeToken = protocol_results.ThemeToken;
@@ -166,6 +168,7 @@ pub const Action = union(enum) {
     set_accent_color: struct { color: [4]f32, persist: bool = true },
     set_night_light: struct { enabled: ?bool = null, temperature: ?u16 = null, persist: bool = true },
     switch_layout: LayoutTarget,
+    switch_input_source: LayoutTarget,
     open_appearance,
     focus_window: struct { id: u64 },
     close_window: struct { id: ?u64 = null },
@@ -267,6 +270,7 @@ pub const Request = union(enum) {
     get_theme,
     get_processes,
     get_keyboard_layouts,
+    get_input_sources,
     version,
     capabilities,
     describe_ipc,
@@ -359,6 +363,7 @@ pub const ResponsePayload = union(enum) {
     async_pending,
     text_input: TextInputResult,
     keyboard_layouts: KeyboardLayoutsData,
+    input_sources: InputSourcesData,
     list_panels: ListPanelsResult,
     click_widget: WidgetPointResult,
     hover_widget: WidgetPointResult,
@@ -387,6 +392,7 @@ pub const Event = union(enum) {
     window_urgency_changed: struct { seq: u64, id: u64, urgent: bool },
     keyboard_layouts_changed: struct { seq: u64, keyboard_layouts: KeyboardLayoutsData },
     keyboard_layout_switched: struct { seq: u64, idx: u32 },
+    input_source_changed: struct { seq: u64, input_sources: InputSourcesData },
     config_loaded: ConfigLoadedEvent,
     polkit_prompt_opened: PolkitPromptEvent,
     polkit_prompt_closed: PolkitPromptEvent,

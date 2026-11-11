@@ -20,6 +20,15 @@
   text.
 * **Layouts:** layout-zero fallback is for binding lookup only; text uses the
   active XKB state.
+* **Input sources** (`input_sources.zig`, `input_sources/`): the config's
+  layouts (XKB groups, at most four) plus Fcitx5's methods, read and switched
+  over D-Bus, never written. The active group is global: switching sets it on
+  every keyboard with the config keymap; a keyboard that switches itself (a
+  `grp:` toggle, `layouts.observe`) moves it and the others follow from an
+  idle callback, never inside their own modifiers signal. Fcitx has no
+  current-method signal: any signal from its unique name re-asks
+  `CurrentInputMethod`. The lock types with layouts only (`cycleLayouts`).
+  `tests/input_sources.py` uses a fake Fcitx on a private session bus.
 * **Shell key repeat:** one `shell_repeat` per keyboard; a new shell target
   needs a `ShellTarget` case, a freeable panel calls `forgetShellTarget`.
   Return, Escape, Tab and modifier chords never repeat.

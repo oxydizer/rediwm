@@ -1,4 +1,5 @@
-//! The taskbar's window actions. Input owns one menu across all outputs.
+//! The taskbar's window actions, and the input source list its keyboard
+//! layout item opens. Input owns one menu across all outputs.
 const i18n = @import("i18n");
 const std = @import("std");
 const wlr = @import("wlroots");
@@ -31,6 +32,10 @@ pub const Menu = struct {
     visible_rows: usize = 0,
     picker_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
     picker_root: ui.layout.Widget = .{ .kind = .container },
+    /// The input source list (`openSources`): one row per source, then Settings.
+    sources: bool = false,
+    source_count: usize = 0,
+    anchor_x: i32 = 0,
 
     const padding = 6;
     const row_height = 32;
@@ -60,19 +65,54 @@ pub const Menu = struct {
 
     pub fn open(self: *Menu, bar: *Taskbar, target: *Toplevel, x: i32) void {
         const output = Output.fromWlr(bar.wlr_output) orelse return;
-        self.openOn(output, bar, null, target, null, null, x, 0, &.{});
+        self.openOn(output, bar, null, target, null, null, x, 0, &.{}, 0);
+    }
+
+    /// The input sources, anchored above (or below) the taskbar item at `x`.
+    pub fn openSources(self: *Menu, bar: *Taskbar, x: i32) void {
+        const sources = bar.server.input_sources orelse return;
+        const output = Output.fromWlr(bar.wlr_output) orelse return;
+        if (self.sources and self.node != null and self.bar == bar) {
+            self.close();
+            return;
+        }
+        self.openOn(output, bar, null, null, null, null, x - 140 + @divTrunc(Taskbar.trayHit(), 2), 0, &.{}, sources.sources().len);
+        self.anchor_x = x;
+    }
+
+    /// The list or the active source changed while it is open.
+    pub fn sourcesChanged(self: *Menu) void {
+        if (!self.sources or self.node == null) return;
+        const bar = self.bar orelse return;
+        const count = if (bar.server.input_sources) |s| s.sources().len else 0;
+        if (count != self.source_count) {
+            // A new height; open again in place, keeping the keyboard selection.
+            const selected = self.selected;
+            const x = self.anchor_x;
+            self.close();
+            self.openSources(bar, x);
+            if (selected) |i| if (i < self.itemCount()) {
+                self.selected = i;
+                self.paint();
+            };
+            return;
+        }
+        self.paint();
     }
 
     pub fn openDock(self: *Menu, dock: *Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, pin: ?[]const u8, x: i32, y: i32) void {
-        self.openOn(dock.output orelse return, null, dock, target, shortcut, pin, x, y, &.{});
+        self.openOn(dock.output orelse return, null, dock, target, shortcut, pin, x, y, &.{}, 0);
     }
 
     pub fn openDockWindows(self: *Menu, dock: *Dock, ids: []const u64, shortcut: ?Dock.Shortcut, x: i32, y: i32) void {
-        self.openOn(dock.output orelse return, null, dock, null, shortcut, null, x, y, ids);
+        self.openOn(dock.output orelse return, null, dock, null, shortcut, null, x, y, ids, 0);
     }
 
-    fn openOn(self: *Menu, output: *Output, bar: ?*Taskbar, dock: ?*Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, pin: ?[]const u8, x: i32, pointer_y: i32, ids: []const u64) void {
+    /// `sources` > 0 opens the input source list with that many sources.
+    fn openOn(self: *Menu, output: *Output, bar: ?*Taskbar, dock: ?*Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, pin: ?[]const u8, x: i32, pointer_y: i32, ids: []const u64, sources: usize) void {
         self.close();
+        self.sources = sources > 0;
+        self.source_count = sources;
         const server = output.server;
         const input = &server.input;
         if (input.open_start_menu) |other| if (Output.fromWlr(other.wlr_output)) |out| out.closeStartMenu();
@@ -82,7 +122,7 @@ pub const Menu = struct {
         if (input.open_calendar) |other| other.output.closeCalendar();
         if (server.tray) |tray| tray.closeMenu();
         const bounds = output.dockAreaBox();
-        const width = @min(if (ids.len > 0) @as(i32, 360) else 216, bounds.width);
+        const width = @min(if (ids.len > 0) @as(i32, 360) else if (self.sources) @as(i32, 280) else 216, bounds.width);
         self.node = server.overlay_tree.createSceneBuffer(null) catch return;
         if (ids.len > 0) self.window_ids = gpa.dupe(u64, ids) catch {
             self.close();
@@ -137,10 +177,17 @@ pub const Menu = struct {
     }
 
     pub fn close(self: *Menu) void {
+        const was_sources = self.sources and self.node != null;
+        const bar = self.bar;
         if (self.node) |node| node.node.destroy();
         gpa.free(self.window_ids);
         self.picker_arena.deinit();
         self.* = .{};
+        if (was_sources) if (bar) |b| {
+            b.tray_dirty[@backingInt(Taskbar.TrayKind.input_source)] = true;
+            b.markDirty(Taskbar.paint_tray);
+            b.wlr_output.scheduleFrame();
+        };
     }
 
     pub fn references(self: *const Menu, top: *Toplevel) bool {
@@ -156,10 +203,11 @@ pub const Menu = struct {
     }
 
     fn rowGap(self: *const Menu) i32 {
-        return if (self.window_ids.len > 0) 2 else separator;
+        return if (self.window_ids.len > 0 or self.sources) 2 else separator;
     }
 
     fn itemCount(self: *const Menu) usize {
+        if (self.sources) return self.source_count + 1;
         return if (self.window_ids.len > 0) self.window_ids.len else self.actions().len;
     }
 
@@ -252,6 +300,15 @@ pub const Menu = struct {
 
     fn activate(self: *Menu) void {
         const index = self.selected orelse return;
+        if (self.sources) {
+            const output = self.output.?;
+            const count = self.source_count;
+            self.close();
+            if (index < count) {
+                if (output.server.input_sources) |sources| _ = sources.select(index);
+            } else output.openInputSettings();
+            return;
+        }
         if (self.window_ids.len > 0) {
             const top = self.findWindow(self.window_ids[index]);
             const output = self.output.?;
@@ -290,7 +347,7 @@ pub const Menu = struct {
         renderer.palette = t;
         const width: f32 = @floatFromInt(self.box.width);
         renderer.fillRect(0, 0, width, @floatFromInt(self.box.height), .{ .color = if (self.window_ids.len > 0) t.start_menu_bg else t.window_bg, .radius = 12, .border_width = 1, .border_color = t.border });
-        if (self.window_ids.len > 0) self.paintWindows(&renderer) else for (self.actions(), 0..) |action, i| {
+        if (self.sources) self.paintSources(&renderer) else if (self.window_ids.len > 0) self.paintWindows(&renderer) else for (self.actions(), 0..) |action, i| {
             const y: f32 = @floatFromInt(self.rowY(i));
             if (i > 0) renderer.fillRect(12, y - 4, @max(0, width - 24), 1, .{ .color = t.border_soft });
             const row: ui.layout.Widget = .{
@@ -308,6 +365,50 @@ pub const Menu = struct {
         node.setFilterMode(.bilinear);
         node.node.setPosition(self.box.x, self.box.y);
         node.node.raiseToTop();
+    }
+
+    /// One row per source: its indicator text in a small badge, its name and a
+    /// check on the active one; then a row that opens Settings → Input. Named
+    /// rows also serve IPC (`input_sources` panel).
+    fn paintSources(self: *Menu, renderer: *ui.paint.Renderer) void {
+        self.picker_root = .{ .kind = .container };
+        _ = self.picker_arena.reset(.retain_capacity);
+        const a = self.picker_arena.allocator();
+        const output = self.output.?;
+        const manager = output.server.input_sources orelse return;
+        const list = manager.sources();
+        const count = @min(list.len, self.source_count);
+        const active = manager.activeIndex();
+        const t = ui.theme.global;
+        const width: f32 = @floatFromInt(self.box.width);
+        const rows = a.alloc(ui.layout.Widget, count + 1) catch return;
+        for (rows, 0..) |*row, index| {
+            const y: f32 = @floatFromInt(self.rowY(index));
+            const is_source = index < count;
+            row.* = .{
+                .name = if (is_source) std.fmt.allocPrint(a, "source_{d}", .{index}) catch return else "input_settings",
+                .kind = .{ .row = .{ .state = if (self.selected == index) .hover else .idle, .selected = is_source and active == index } },
+                .computed_x = padding,
+                .computed_y = y,
+                .computed_width = @max(0, width - 2 * padding),
+                .computed_height = row_height,
+            };
+            if (index == count and count > 0) renderer.fillRect(12, y - 1, @max(0, width - 24), 1, .{ .color = t.border_soft });
+            ui.paint.paint(row, renderer);
+            if (!is_source) {
+                renderer.drawIcon(18, y + 8, 16, 16, .{ .id = .settings, .color = t.window_fg });
+                renderer.drawText(44, y, @max(0, width - 60), row_height, .{ .content = i18n.tr("Input settings…"), .font_size = t.font_size, .color = t.window_fg });
+                continue;
+            }
+            const source = list[index];
+            renderer.fillRect(16, y + 6, 36, row_height - 12, .{ .color = t.surface_hover, .radius = 5 });
+            const label_w: f32 = @floatFromInt(ui.text.measureWidth(source.label, .manrope_heavy, t.font_size - 1, output.wlr_output.scale) catch 0);
+            renderer.drawText(16 + @max(0, (36 - label_w) / 2), y, 36, row_height, .{ .content = source.label, .font_size = t.font_size - 1, .weight = 700, .color = t.window_fg });
+            const dim = source.kind == .fcitx and !manager.fcitxRunning();
+            renderer.drawText(62, y, @max(0, width - 100), row_height, .{ .content = source.name, .font_size = t.font_size, .color = if (dim) t.dim else t.window_fg });
+            if (active == index) renderer.drawIcon(width - 34, y + 8, 16, 16, .{ .id = .checkmark, .color = t.accent });
+        }
+        self.picker_root = .{ .kind = .container, .computed_width = width, .computed_height = @floatFromInt(self.box.height), .children = rows };
     }
 
     fn paintWindows(self: *Menu, renderer: *ui.paint.Renderer) void {

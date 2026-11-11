@@ -85,6 +85,9 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
             }
         }
     }
+    if (!@import("config").keymap.namesEqual(old.input, new.input) or !std.mem.eql(u8, old.input.xkb_labels, new.input.xkb_labels)) {
+        if (server.input_sources) |sources| sources.reload();
+    }
 
     if (old.compositor.canvas_columns != new.compositor.canvas_columns or
         old.compositor.canvas_rows != new.compositor.canvas_rows)

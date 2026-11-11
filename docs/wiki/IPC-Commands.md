@@ -104,6 +104,8 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 | **[auto]** `swipe` | none | phase, `dx`, `dy`, `fingers`, `cancelled` |
 | `get_keyboard_layouts` | `keyboard-layouts` | zero-based active index |
 | `switch_layout` | `switch-layout <next\|prev\|index>` | |
+| `get_input_sources` | `input-sources` | layouts and Fcitx methods, zero-based `active` and `active_layout` |
+| `switch_input_source` | `switch-input-source <next\|prev\|index>` | event `InputSourceChanged` |
 
 ## Screenshots and pixels
 

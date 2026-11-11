@@ -90,6 +90,8 @@
 {"Ok":{"TextInput":{"input_method":{"connected":true,"active":true,"keyboard_grab":true,"popup_count":7},"focused":{"window_id":7,"enabled":true,"features":7,"content_purpose":7,"content_hint":7,"cursor_rectangle":{"x":7,"y":7,"width":7,"height":7},"surrounding_bytes":7,"pending":true},"popups":[{"mapped":true,"visible":true,"x":7,"y":7,"width":7,"height":7,"output":"text \"quoted\"\n\\"}]}}}
 {"Ok":{"KeyboardLayouts":{"names":["text \"quoted\"\n\\"],"current_idx":null}}}
 {"Ok":{"KeyboardLayouts":{"names":["text \"quoted\"\n\\"],"current_idx":7}}}
+{"Ok":{"InputSources":{"sources":[{"kind":"text \"quoted\"\n\\","id":"text \"quoted\"\n\\","name":"text \"quoted\"\n\\","label":"text \"quoted\"\n\\"}],"active":null,"active_layout":null,"fcitx_running":false}}}
+{"Ok":{"InputSources":{"sources":[{"kind":"text \"quoted\"\n\\","id":"text \"quoted\"\n\\","name":"text \"quoted\"\n\\","label":"text \"quoted\"\n\\"}],"active":7,"active_layout":7,"fcitx_running":true}}}
 {"Ok":{"ListPanels":{"panels":[{"name":"text \"quoted\"\n\\","open":false,"box":null}]}}}
 {"Ok":{"ListPanels":{"panels":[{"name":"text \"quoted\"\n\\","open":true,"box":{"x":7,"y":7,"width":7,"height":7}}]}}}
 {"Ok":{"ClickWidget":{"point":{"x":0,"y":0},"x":0,"y":0}}}

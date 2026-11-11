@@ -110,6 +110,17 @@ pub fn parseCommand(cli: FlagParser, arg: []const u8) !void {
             opts.command = .{ .switch_layout = if (std.ascii.eqlIgnoreCase(value, "next")) .next else if (std.ascii.eqlIgnoreCase(value, "prev")) .prev else .{ .index = std.fmt.parseInt(u32, value, 10) catch return error.InvalidArguments } };
             arg_idx.* += 1;
         },
+        .get_input_sources => {
+            opts.command = .input_sources;
+            arg_idx.* += 1;
+        },
+        .switch_input_source => {
+            arg_idx.* += 1;
+            if (arg_idx.* >= raw_args.len) return error.InvalidArguments;
+            const value = std.mem.span(raw_args[arg_idx.*]);
+            opts.command = .{ .switch_input_source = if (std.ascii.eqlIgnoreCase(value, "next")) .next else if (std.ascii.eqlIgnoreCase(value, "prev")) .prev else .{ .index = std.fmt.parseInt(u32, value, 10) catch return error.InvalidArguments } };
+            arg_idx.* += 1;
+        },
         .get_text_input => {
             opts.command = .text_input;
             arg_idx.* += 1;

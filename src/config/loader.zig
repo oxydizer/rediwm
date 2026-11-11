@@ -93,6 +93,9 @@ pub const InputConfig = struct {
     xkb_variant: []const u8 = "",
     xkb_options: []const u8 = "",
     xkb_model: []const u8 = "",
+    /// Optional indicator texts for the layouts above, by position
+    /// (`input_sources.zig`); empty entries use the layout's language code.
+    xkb_labels: []const u8 = "",
     natural_scroll: bool = true,
     // Compositor-side flip applied to every scroll axis event regardless of
     // device/backend support, unlike `natural_scroll` which only takes

@@ -13,7 +13,10 @@ const log = std.log.scoped(.config);
 const gpa = @import("../main.zig").gpa;
 
 pub fn executeAction(server: *Server, action: Action) void {
-    if (server.locker != null and !keybinds.isHardwareAction(action)) return;
+    if (server.locker != null and !keybinds.isHardwareAction(action)) {
+        if (keybinds.worksWhileLocked(action)) if (server.input_sources) |sources| sources.cycleLayouts();
+        return;
+    }
     if (server.world.workspaces.active) switch (action) {
         .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down => return,
         else => {},
@@ -30,6 +33,8 @@ pub fn executeAction(server: *Server, action: Action) void {
         },
         .volume_up, .volume_down, .volume_mute, .mic_mute, .brightness_up, .brightness_down => @import("../hardware_keys.zig").execute(server, action),
         .power_profile_cycle => if (server.power_profiles) |pp| pp.cycle(),
+        .input_source_next => if (server.input_sources) |sources| sources.cycle(true),
+        .input_source_prev => if (server.input_sources) |sources| sources.cycle(false),
         .spawn => |cmd| launchPreferred(server, cmd),
         .close_window => if (focusedToplevel(server)) |t| t.sendClose(),
         .toggle_fullscreen => if (focusedToplevel(server)) |t| t.toggleFullscreen(),

@@ -41,6 +41,10 @@ agent. Requires OpenSSH, OpenSSL and `gio`; `GIO_USE_VFS=local` keeps Trash
 within the fixture. `--helper-only` skips the compositor; `--bin-dir` selects
 the helper and compositor builds together.
 
+Keyboard layouts and input methods: `python3 tests/input_sources.py` starts
+its own `dbus-run-session` with a fake Fcitx5 controller; it never reaches the
+host's Fcitx. Layout labels need libxkbregistry.
+
 ## Isolation and harness
 
 - Use a private headless compositor, temporary home/XDG directories and private

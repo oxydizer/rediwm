@@ -754,6 +754,21 @@ pub const specs = [_]CommandSpec{
         .cli = .{ .name = "switch-layout", .synopsis = "<next|prev|index>" },
     },
     .{
+        .id = .get_input_sources,
+        .kind = .query,
+        .description = "Inspect keyboard layouts and Fcitx input methods, and the zero-based active source",
+        .description_order = 110,
+        .cli = .{ .name = "input-sources" },
+    },
+    .{
+        .id = .switch_input_source,
+        .kind = .action,
+        .description = "Switch to a keyboard layout or Fcitx input method; index is zero-based",
+        .params_schema = "{\"source\": \"next\" | \"prev\" | number}",
+        .description_order = 111,
+        .cli = .{ .name = "switch-input-source", .synopsis = "<next|prev|index>" },
+    },
+    .{
         .id = .list_panels,
         .kind = .query,
         .description = "List registered UI panels and their open state",

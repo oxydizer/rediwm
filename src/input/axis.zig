@@ -176,7 +176,7 @@ pub fn processAxis(
         },
         .taskbar => |hit| {
             if (orientation == .vertical_scroll) {
-                hit.bar.scrollVolume(hit.sx, hit.sy, ui_scroll.axisDeltaPx(delta, delta_discrete));
+                hit.bar.scrollVolume(hit.sx, hit.sy, ui_scroll.axisDeltaPx(delta, delta_discrete), notch);
             }
             return;
         },

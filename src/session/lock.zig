@@ -86,6 +86,10 @@ pub const Lock = struct {
     avatar: ?png.Image = null,
     /// Volume and brightness sliders; none in the greeter.
     controls: Controls = .{},
+    /// The active keyboard layout's text for the layout button; empty hides
+    /// it (one layout, or the greeter). Copied, so painting needs no server.
+    layout_label: [24]u8 = undefined,
+    layout_label_len: u8 = 0,
 
     pub fn start(server: *Server) void {
         if (server.locker != null) return;
@@ -137,6 +141,7 @@ pub const Lock = struct {
         server.switcher.cancel();
         server.screenshot_selector.cancel();
         server.locker = self;
+        self.refreshLayoutLabel();
         if (server.bluetooth) |bluetooth| bluetooth.closed();
         if (server.input.open_control_center) |cc| {
             cc.bluetooth.clearPin();
@@ -291,6 +296,8 @@ pub const Lock = struct {
 
     pub const changed = lock_events.changed;
     pub const themeChanged = lock_events.themeChanged;
+    pub const inputSourceChanged = lock_events.inputSourceChanged;
+    pub const refreshLayoutLabel = lock_events.refreshLayoutLabel;
     pub const controlsChanged = lock_events.controlsChanged;
     pub const showControl = lock_events.showControl;
     pub const showControls = lock_events.showControls;
@@ -332,6 +339,8 @@ pub const unlock_hint = "Press Enter to unlock";
 pub const login_hint = "Press Enter to log in";
 pub const focus_account: u8 = 5;
 pub const focus_session: u8 = 6;
+/// The keyboard layout button (`lock_view.layoutButtonShown`).
+pub const focus_layout: u8 = 7;
 
 const lock_view = @import("lock_view.zig");
 pub const Geometry = lock_view.Geometry;

@@ -51,6 +51,8 @@ const source_entries = [_]SourceEntry{
     .{ .page = .general, .title = i18n.msg("Brightness"), .target = "@Brightness", .heading = i18n.msg("Brightness"), .keywords = i18n.msg("backlight screen light") },
     .{ .page = .general, .title = i18n.msg("Open files with a single click"), .target = "files_single_click_open", .keywords = i18n.msg("double click folders") },
     .{ .page = .general, .title = i18n.msg("Built-in audio player"), .target = "files_audio_player", .keywords = i18n.msg("music play sound mp3 flac wav files") },
+    .{ .page = .input, .title = i18n.msg("Input sources"), .target = "input_sources", .keywords = i18n.msg("keyboard layout language input method ime fcitx switch") },
+    .{ .page = .input, .title = i18n.msg("Layout switch keys"), .target = "input_source_switch_with", .keywords = i18n.msg("keyboard layout alt shift caps lock toggle") },
     .{ .page = .input, .title = i18n.msg("Pointer device"), .target = "pointer_device", .keywords = i18n.msg("mouse touchpad trackpad select") },
     .{ .page = .input, .title = i18n.msg("Show all devices"), .target = "pointer_show_all", .keywords = i18n.msg("mouse touchpad trackpad select") },
     .{ .page = .input, .title = i18n.msg("Reset pointer settings"), .target = "pointer_reset", .keywords = i18n.msg("mouse touchpad trackball default custom inherit") },

@@ -166,6 +166,21 @@ pub fn saveCanvas(allocator: std.mem.Allocator, io: Io, path: []const u8, column
     try writeValidated(allocator, io, path, result);
 }
 
+/// The keyboard layout lists (`input_sources.zig`) in one write, so a reload
+/// never sees a layout list paired with the previous variants.
+pub fn saveInputSources(allocator: std.mem.Allocator, io: Io, path: []const u8, layout: []const u8, variant: []const u8, labels: []const u8) !void {
+    if (path.len == 0) return error.NoConfigPath;
+    const original = try Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1 << 20));
+    defer allocator.free(original);
+    const with_layout = try patch(allocator, original, "input", "xkb_layout", layout);
+    defer allocator.free(with_layout);
+    const with_variant = try patch(allocator, with_layout, "input", "xkb_variant", variant);
+    defer allocator.free(with_variant);
+    const result = try patch(allocator, with_variant, "input", "xkb_labels", labels);
+    defer allocator.free(result);
+    try writeValidated(allocator, io, path, result);
+}
+
 pub fn writeValidated(allocator: std.mem.Allocator, io: Io, path: []const u8, result: []const u8) !void {
     var checked = try loader.parse(allocator, result, path);
     defer checked.deinit();

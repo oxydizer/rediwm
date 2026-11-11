@@ -247,6 +247,17 @@ pub fn buildRequest(allocator: std.mem.Allocator, command: Command) !std.ArrayLi
             }
             try bw.writeAll("}}\n");
         },
+        .input_sources => try req_buf.appendSlice(allocator, "{\"version\":1,\"command\":\"get_input_sources\"}\n"),
+        .switch_input_source => |target| {
+            const bw = protocol.BufferWriter{ .list = &req_buf, .allocator = allocator };
+            try bw.writeAll("{\"version\":1,\"command\":\"switch_input_source\",\"params\":{\"source\":");
+            switch (target) {
+                .next => try bw.writeAll("\"next\""),
+                .prev => try bw.writeAll("\"prev\""),
+                .index => |idx| try bw.print("{d}", .{idx}),
+            }
+            try bw.writeAll("}}\n");
+        },
         .text_input => try req_buf.appendSlice(allocator, "{\"version\":1,\"command\":\"get_text_input\"}\n"),
         .input_state => try req_buf.appendSlice(allocator, "{\"version\":1,\"command\":\"get_input_state\"}\n"),
         .hit_test => |p| {

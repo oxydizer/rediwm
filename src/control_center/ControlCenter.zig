@@ -148,6 +148,7 @@ region: region_section.Section = .{},
 portals: portal_section.Section = .{},
 default_apps: default_apps_section.Section = .{},
 input: input_section.Section = .{},
+input_sources: @import("sections/input_sources.zig").Section = .{},
 users: users_section.Section = .{},
 network: network_section.Section = .{},
 bluetooth: bluetooth_section.Section = .{},
@@ -249,6 +250,7 @@ pub fn destroy(cc: *ControlCenter) void {
     cc.welcome.deinit();
     cc.search.deinit();
     cc.input.arena.deinit();
+    cc.input_sources.deinit();
     cc.services.deinit();
     cc.printers.deinit();
     cc.key_settings.deinit();

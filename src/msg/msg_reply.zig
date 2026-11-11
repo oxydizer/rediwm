@@ -527,6 +527,8 @@ pub fn printTextReply(val: std.json.Value) void {
                 }
             } else if (obj.get("KeyboardLayouts")) |state| {
                 printOut("Keyboard layouts:\n{f}\n", .{std.json.fmt(state, .{ .whitespace = .indent_2 })});
+            } else if (obj.get("InputSources")) |state| {
+                printOut("Input sources:\n{f}\n", .{std.json.fmt(state, .{ .whitespace = .indent_2 })});
             } else if (obj.get("TextInput")) |state| {
                 printOut("Text input:\n{f}\n", .{std.json.fmt(state, .{ .whitespace = .indent_2 })});
             } else if (obj.get("Notifications")) |notif_val| {

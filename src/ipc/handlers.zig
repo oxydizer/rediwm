@@ -113,6 +113,7 @@ pub fn handleRequest(
         .get_theme => return @import("settings.zig").getTheme(server, allocator),
         .get_processes => return @import("processes.zig").start(server, request_id, client),
         .get_keyboard_layouts => return .{ .ok = .{ .keyboard_layouts = try @import("../input/layouts.zig").inspect(server, allocator) } },
+        .get_input_sources => return .{ .ok = .{ .input_sources = try inputSourcesData(server, allocator) } },
         .version => {
             return .{ .ok = .{ .version = "0.1.0" } };
         },
@@ -355,6 +356,15 @@ pub fn handleAction(
             @import("../input/layouts.zig").switchLayout(server, target) catch |err| return .{ .err = @errorName(err) };
             return .{ .ok = .handled };
         },
+        .switch_input_source => |target| {
+            const sources = server.input_sources orelse return .{ .err = "Unsupported" };
+            switch (target) {
+                .next => sources.cycle(true),
+                .prev => sources.cycle(false),
+                .index => |index| if (!sources.select(index)) return .{ .err = "InvalidSourceIndex" },
+            }
+            return .{ .ok = .handled };
+        },
         .reload_config => {
             @import("../config_runtime/watcher.zig").reloadConfig(server);
             return .{ .ok = .handled };
@@ -480,4 +490,19 @@ pub const DumpTarget = enum {
 
 test {
     _ = @import("handlers_tests.zig");
+}
+
+/// The input source list as IPC reports it (also the `InputSourceChanged` body).
+pub fn inputSourcesData(server: *Server, allocator: std.mem.Allocator) !protocol.InputSourcesData {
+    const manager = server.input_sources orelse return .{};
+    const list = manager.sources();
+    const out = try allocator.alloc(protocol.InputSourceData, list.len);
+    for (list, out) |source, *item| item.* = .{ .kind = @tagName(source.kind), .id = source.id, .name = source.name, .label = source.label };
+    const active_layout: ?u32 = if (list.len == 0) null else @intCast(@min(manager.active_group, manager.layoutCount() -| 1));
+    return .{
+        .sources = out,
+        .active = if (manager.activeIndex()) |index| @intCast(index) else null,
+        .active_layout = active_layout,
+        .fcitx_running = manager.fcitxRunning(),
+    };
 }

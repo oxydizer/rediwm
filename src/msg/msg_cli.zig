@@ -33,6 +33,8 @@ pub const Command = union(enum) {
     text_input,
     keyboard_layouts,
     switch_layout: protocol.LayoutTarget,
+    input_sources,
+    switch_input_source: protocol.LayoutTarget,
     hit_test: struct { x: i32, y: i32, output: ?[]const u8 = null },
     scene_tree: struct { max_depth: ?u32 = null },
     layers,

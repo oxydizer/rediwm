@@ -24,6 +24,8 @@ const targetEql = Taskbar.targetEql;
 const markPaintCauseFromTarget = Taskbar.markPaintCauseFromTarget;
 const trayItem = Taskbar.trayItem;
 
+const source_scroll_step: f32 = 60;
+
 pub fn hitTest(bar: *Taskbar, sx: f64, sy: f64) Target {
     const bh = bar.box.height;
     if (sy < 0 or sy >= @as(f64, @floatFromInt(bh))) return .none;
@@ -145,6 +147,10 @@ pub fn pointerPress(bar: *Taskbar, sx: f64, sy: f64) void {
             if (@as(TrayKind, @enumFromInt(i)) == .wired) {
                 if (Output.fromWlr(bar.wlr_output)) |out| out.openNetworkSettings();
             }
+            if (@as(TrayKind, @enumFromInt(i)) == .input_source) {
+                const x = bar.box.x + @as(i32, @intFromFloat(@round(bar.trayPositions()[i])));
+                bar.server.input.window_menu.openSources(bar, x);
+            }
             if (@as(TrayKind, @enumFromInt(i)) == .power) {
                 if (Output.fromWlr(bar.wlr_output)) |out| out.openPowerMenu();
             }
@@ -166,14 +172,28 @@ pub fn pointerPress(bar: *Taskbar, sx: f64, sy: f64) void {
     if (did_mutate) bar.wlr_output.scheduleFrame();
 }
 
-/// Scroll wheel over the volume tray icon: ±`volume_scroll_step` per tick.
-/// Called from Input.processAxis's scroll-hit switch — the taskbar itself
-/// has no other scrollable surface, so this is the only scroll case it needs.
-pub fn scrollVolume(bar: *Taskbar, sx: f64, sy: f64, delta_px: f32) void {
+/// Scroll wheel over the volume tray icon: ±`volume_scroll_step` per tick;
+/// over the input source item, the next or previous source per notch (a
+/// touchpad steps every `source_scroll_step` px). Called from
+/// Input.processAxis's scroll-hit switch.
+pub fn scrollVolume(bar: *Taskbar, sx: f64, sy: f64, delta_px: f32, notch: bool) void {
     const idx = switch (bar.hitTest(sx, sy)) {
         .tray => |i| i,
         else => return,
     };
+    if (@as(TrayKind, @enumFromInt(idx)) == .input_source) {
+        const sources = bar.server.input_sources orelse return;
+        if (notch) {
+            if (delta_px != 0) sources.cycle(delta_px > 0);
+            return;
+        }
+        bar.source_scroll += delta_px;
+        while (@abs(bar.source_scroll) >= source_scroll_step) {
+            sources.cycle(bar.source_scroll > 0);
+            bar.source_scroll -= std.math.copysign(source_scroll_step, bar.source_scroll);
+        }
+        return;
+    }
     if (@as(TrayKind, @enumFromInt(idx)) != .volume) return;
     const mgr = bar.server.audio orelse return;
     // Natural convention: scrolling up (negative delta) raises volume.

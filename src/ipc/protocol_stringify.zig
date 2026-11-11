@@ -58,6 +58,9 @@ pub fn stringifyResponsePayload(payload: ResponsePayload, writer: anytype) !void
             try writer.print("{f}", .{std.json.fmt(v, .{})});
             try writer.writeByte('}');
         },
+        .input_sources => |data| {
+            try writer.print("{{\"InputSources\":{f}}}", .{std.json.fmt(data, .{})});
+        },
         .keyboard_layouts => |layouts| {
             try writer.print("{{\"KeyboardLayouts\":{f}}}", .{std.json.fmt(layouts, .{})});
         },
@@ -678,11 +681,12 @@ pub fn stringifyNotifications(n: GetNotificationsResult, writer: anytype) !void 
 
 pub fn stringifyEvent(event: Event, writer: anytype) !void {
     switch (event) {
-        inline .window_urgency_changed, .keyboard_layouts_changed, .keyboard_layout_switched, .config_loaded => |ev, tag| {
+        inline .window_urgency_changed, .keyboard_layouts_changed, .keyboard_layout_switched, .input_source_changed, .config_loaded => |ev, tag| {
             const name = comptime switch (tag) {
                 .window_urgency_changed => "WindowUrgencyChanged",
                 .keyboard_layouts_changed => "KeyboardLayoutsChanged",
                 .keyboard_layout_switched => "KeyboardLayoutSwitched",
+                .input_source_changed => "InputSourceChanged",
                 .config_loaded => "ConfigLoaded",
                 else => unreachable,
             };

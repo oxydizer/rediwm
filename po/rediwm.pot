@@ -219,6 +219,10 @@ msgstr ""
 msgid "Add a printer"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Add layout…"
+msgstr ""
+
 #: src/files/app_model.zig
 msgid "Add to applications"
 msgstr ""
@@ -321,6 +325,19 @@ msgstr ""
 
 #: src/files/app_places.zig
 msgid "Already in Places"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Also switch with"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+#.  raw
+msgid "Alt+Shift"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Always"
 msgstr ""
 
 #: src/files/open_with.zig
@@ -587,7 +604,7 @@ msgstr ""
 msgid "Auto-join this network"
 msgstr ""
 
-#: src/control_center/sections/network_details.zig
+#: src/control_center/sections/input_sources.zig
 msgid "Automatic"
 msgstr ""
 
@@ -609,6 +626,10 @@ msgstr ""
 
 #: src/control_center/sections/power.zig
 msgid "Automatic power actions are inactive in this session."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Automatic shows it while there is more than one source."
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -745,6 +766,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "Border glow"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Both Shift keys"
 msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
@@ -1017,6 +1042,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Canvas · RediWM preset"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Caps Lock"
 msgstr ""
 
 #: src/session/lock_view.zig
@@ -1405,6 +1434,10 @@ msgstr ""
 
 #: src/control_center/sections/network_proxy.zig
 msgid "Configuration URL"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Configure in Fcitx…"
 msgstr ""
 
 #: src/control_center/sections/network.zig
@@ -2021,6 +2054,10 @@ msgstr ""
 msgid "Crop"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Ctrl+Shift"
+msgstr ""
+
 #: src/control_center/sections/region.zig
 msgid "Currency"
 msgstr ""
@@ -2053,12 +2090,12 @@ msgstr ""
 msgid "Custom"
 msgstr ""
 
-#: src/control_center/sections/input.zig
-msgid "Custom (config file)"
-msgstr ""
-
 #: src/control_center/sections/portals.zig
 msgid "Custom ({name})"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Custom ({option})"
 msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
@@ -2803,6 +2840,18 @@ msgstr ""
 msgid "Failed to start transfer job"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Fcitx 5 is not running. Its input methods appear here while it runs."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Fcitx manages its own list; RediWM only switches between its methods."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Fcitx's current group has no input methods besides keyboards."
+msgstr ""
+
 #: src/files/torrents.zig
 msgid "Fetching file list…"
 msgstr ""
@@ -3119,6 +3168,10 @@ msgstr ""
 msgid "Forward"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Four keyboard layouts is the most XKB allows."
+msgstr ""
+
 #: src/control_center/sections/region.zig
 msgid "Friday"
 msgstr ""
@@ -3359,6 +3412,26 @@ msgstr ""
 msgid "Input"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Input Sources"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Input methods (Fcitx 5)"
+msgstr ""
+
+#: src/taskbar/window_menu.zig
+msgid "Input settings…"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Input sources"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Input sources are unavailable."
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Input · Keyboard, mouse or controller"
 msgstr ""
@@ -3547,10 +3620,6 @@ msgstr ""
 msgid "Keyboard backlight"
 msgstr ""
 
-#: src/control_center/sections/input.zig
-msgid "Keyboard layout"
-msgstr ""
-
 #: src/control_center/search_index.zig
 msgid "Keyboard repeat delay"
 msgstr ""
@@ -3621,6 +3690,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Launcher"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Layout switch keys"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -3717,6 +3790,10 @@ msgstr ""
 
 #: src/images/app_render.zig
 msgid "Loading image…"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Loading layouts…"
 msgstr ""
 
 #: src/control_center/sections/printers.zig
@@ -3987,6 +4064,10 @@ msgstr ""
 msgid "Move To Workspace"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Move down"
+msgstr ""
+
 #: src/control_center/sections/appearance_rows.zig
 msgid "Move file manager aside"
 msgstr ""
@@ -4037,6 +4118,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Move to workspace."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Move up"
 msgstr ""
 
 #: src/control_center/welcome.zig
@@ -4143,7 +4228,7 @@ msgstr ""
 msgid "NetworkManager unavailable"
 msgstr ""
 
-#: src/control_center/sections/power.zig
+#: src/control_center/sections/input_sources.zig
 msgid "Never"
 msgstr ""
 
@@ -4209,6 +4294,10 @@ msgstr ""
 
 #: src/editor/app_search.zig
 msgid "Next"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Next Input Source"
 msgstr ""
 
 #: src/session/lock_view.zig
@@ -4293,6 +4382,10 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "No internet connection"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "No layouts match."
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -4581,6 +4674,11 @@ msgstr ""
 
 #: src/files/properties.zig
 msgid "Only the owner can change permissions"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+#.  raw
+msgid "Only the shortcut (Super+Shift+Space)"
 msgstr ""
 
 #: src/files/appimage.zig
@@ -5045,6 +5143,10 @@ msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "Previous"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Previous Input Source"
 msgstr ""
 
 #: src/session/lock_view.zig
@@ -5933,6 +6035,10 @@ msgstr ""
 msgid "Search domains"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Search layouts or languages…"
+msgstr ""
+
 #: src/system_monitor/app.zig
 msgid "Search name, PID or user"
 msgstr ""
@@ -6135,6 +6241,10 @@ msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "Show in folder"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Show in taskbar"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -6462,11 +6572,19 @@ msgid "Swap the focused tile up."
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
+msgid "Switch to the next keyboard layout or input method."
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next window."
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Switch to the previous keyboard layout or input method."
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -6895,6 +7013,10 @@ msgstr ""
 
 #: src/printing/admin.zig
 msgid "The system service manager is unavailable; start CUPS using your distribution's service tools."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "The taskbar shows the active source. Click it, or press Super+Shift+Space, to switch."
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7685,6 +7807,10 @@ msgstr ""
 msgid "Write"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "XKB switch keys change keyboard layouts only."
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Xwayland scale"
 msgstr ""
@@ -8003,6 +8129,14 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "keep icons in place"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "keyboard layout alt shift caps lock toggle"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "keyboard layout language input method ime fcitx switch"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8579,6 +8713,10 @@ msgstr[1] ""
 
 #: src/files/app_torrents.zig
 msgid "{rate} KiB/s"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "{shown} of {total} layouts; type to narrow the list."
 msgstr ""
 
 #: src/files/properties.zig

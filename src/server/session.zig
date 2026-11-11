@@ -164,6 +164,7 @@ pub fn startDesktopService(server: *Server, step: usize) bool {
                 }
             }
         },
+        5 => if (server.input_sources) |sources| sources.startServices(),
         else => return false,
     }
     return true;

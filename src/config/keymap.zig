@@ -1,5 +1,6 @@
 const std = @import("std");
 const xkb = @import("xkbcommon");
+const input_sources = @import("input_sources.zig");
 
 /// Empty names deliberately defer to XKB_DEFAULT_* and xkbcommon defaults.
 pub fn compile(allocator: std.mem.Allocator, cfg: anytype) !*xkb.Keymap {
@@ -8,10 +9,20 @@ pub fn compile(allocator: std.mem.Allocator, cfg: anytype) !*xkb.Keymap {
     const a = arena.allocator();
     const context = xkb.Context.new(.no_flags) orelse return error.InvalidKeymap;
     defer context.unref();
+    // X11, Xwayland and older clients know four groups; later layouts are dropped.
+    var layout_names: []const u8 = cfg.xkb_layout;
+    var variant_names: []const u8 = cfg.xkb_variant;
+    const sources = input_sources.split(cfg);
+    if (sources.dropped > 0) {
+        std.log.scoped(.config).warn("only the first {d} keyboard layouts are used; {d} more ignored", .{ input_sources.max_layouts, sources.dropped });
+        const joined = try input_sources.join(a, sources.slice());
+        layout_names = joined.layout;
+        variant_names = joined.variant;
+    }
     const names = xkb.RuleNames{
         .rules = null,
-        .layout = try name(a, cfg.xkb_layout),
-        .variant = try name(a, cfg.xkb_variant),
+        .layout = try name(a, layout_names),
+        .variant = try name(a, variant_names),
         .options = try name(a, cfg.xkb_options),
         .model = try name(a, cfg.xkb_model),
     };

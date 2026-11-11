@@ -189,5 +189,5 @@ pub fn appendLive(
 
 pub fn trayPositions(bar: *Taskbar) [tray_count]f32 {
     const positions = bar.rightLayout().x;
-    return .{ positions[@intFromEnum(taskbar_items.Item.volume)] orelse 0, positions[@intFromEnum(taskbar_items.Item.wifi)] orelse 0, positions[@intFromEnum(taskbar_items.Item.power)] orelse 0, positions[@intFromEnum(taskbar_items.Item.wired)] orelse 0 };
+    return .{ positions[@intFromEnum(taskbar_items.Item.volume)] orelse 0, positions[@intFromEnum(taskbar_items.Item.wifi)] orelse 0, positions[@intFromEnum(taskbar_items.Item.power)] orelse 0, positions[@intFromEnum(taskbar_items.Item.wired)] orelse 0, positions[@intFromEnum(taskbar_items.Item.input_source)] orelse 0 };
 }
