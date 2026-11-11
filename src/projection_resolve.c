@@ -181,6 +181,7 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
     }
     struct rediwm_content *content = &item->content;
     content->src_box = b->src_box;
+    memcpy(content->sector_rect, b->sector_rect, sizeof(content->sector_rect));
     content->transform = b->transform;
     content->opacity = b->opacity;
     content->filter_mode = rediwm_filter_at_scale(w->t.scale, b->filter_mode);

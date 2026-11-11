@@ -95,7 +95,7 @@ static const char shaped_vertex[] =
     /* Only the polygon programs (POLY, built on demand) carry it: the others */ \
     /* compile to what they did before polygons existed. */ \
     "\n#ifdef POLY\n" \
-    "uniform float npoly; uniform vec2 poly[17], sector_map; uniform vec4 sector_coords[2];" \
+    "uniform float npoly; uniform vec2 poly[17], sector_map; uniform vec4 sector_coords[2], sector_rect;" \
     "float sdpoly(vec2 p){ float d=dot(p-poly[0],p-poly[0]); float s=1.;" \
     "for(int i=0;i<16;i++){ if(float(i)>=npoly) break; vec2 a=poly[i], b=poly[i+1];" \
     "vec2 e=b-a, w=p-a; float h=clamp(dot(w,e)/max(dot(e,e),1e-4),0.,1.); vec2 q=w-e*h; d=min(d,dot(q,q));" \
@@ -114,6 +114,12 @@ static const char shaped_vertex[] =
     "float across=dot(q,vec2(-poly[2].y,poly[2].x))*sector_map.y;" \
     "float angle=r>.00001?atan(across,dot(q,poly[2])):0.;" \
     "return vec2(.5+angle/(2.*atan(poly[3].y,poly[3].x)),(poly[1].y-r)/sector_map.x); }" \
+    /* A draw that fills only sector_rect of the polar image: its coverage at `p`, */ \
+    /* in units of that part. The edges are softened over a device pixel: one */ \
+    /* unit across is the arc at this radius, one unit down the mapped height. */ \
+    "float sector_part(vec2 p){" \
+    "vec2 px=vec2(length(local-poly[0])*2.*atan(poly[3].y,poly[3].x),sector_map.x)*sector_rect.zw;" \
+    "vec2 e=clamp(p*px+.5,0.,1.)*clamp((1.-p)*px+.5,0.,1.); return e.x*e.y; }" \
     "\n#endif\n" \
     "float sdf(vec2 p, vec4 r){" \
     "\n#ifdef POLY\n" \
@@ -159,14 +165,28 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "float a=f>=.99999?0.:clamp((c-f)/(1.-f),0.,1.); gl_FragColor=vec4(rgb*a,a); return; }"
     "if(mode>1.5){ float s=clamp(1.-sdf(local-offset,radii)/softness,0.,1.); s=s*s*(3.-2.*s);"
     "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=color*s; return; }"
-    "vec4 c=color; if(mode<.5){ vec2 at=uv; float content=1.;"
+    "vec4 c=color;"
+    "\n#ifdef POLY\n"
+    // How much of this fragment a draw that fills only part of a polar image
+    // (sector_rect) takes part in: the body and the ring over it alike.
+    "float part=1.;"
+    "\n#endif\n"
+    "if(mode<.5){ vec2 at=uv; float content=1.;"
     "\n#ifdef POLY\n"
     "if(use_shape>.5&&npoly<-.5&&sector_map.x>0.){ vec2 p=sector_uv(local);"
-    "content=clamp((1.-p.y)*sector_map.x+.5,0.,1.); p=clamp(p,0.,1.);"
+    "content=clamp((1.-p.y)*sector_map.x+.5,0.,1.);"
+    "if(sector_rect.z>0.){ p=(p-sector_rect.xy)/sector_rect.zw; part=sector_part(p); }"
+    "p=clamp(p,0.,1.);"
     "at=mix(mix(sector_coords[0].xy,sector_coords[0].zw,p.x),"
     "mix(sector_coords[1].xy,sector_coords[1].zw,p.x),p.y); }"
     "\n#endif\n"
     "c=texture2D(tex,at); if(opaque>.5)c.a=1.; c*=alpha*content; }"
+    // A colour standing for such a part (a single-pixel buffer) ends with the
+    // image and the part too. One that stands for the whole image is unchanged.
+    "\n#ifdef POLY\n"
+    "else if(mode<1.5&&use_shape>.5&&npoly<-.5&&sector_map.x>0.&&sector_rect.z>0.){ vec2 p=sector_uv(local);"
+    "c*=clamp((1.-p.y)*sector_map.x+.5,0.,1.); part=sector_part((p-sector_rect.xy)/sector_rect.zw); }"
+    "\n#endif\n"
     // Without a shape (every plain draw) the colour is written as it is: the
     // plain programs are gone (stage 5, D4), and this costs one uniform branch.
     "if(use_shape<.5){ gl_FragColor=vec4(grade(c.rgb),c.a); return; }"
@@ -178,7 +198,11 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "if(glow.z>0.){ float g=clamp(1.-length(local-glow.xy)/glow.z,0.,1.); g=g*g*(3.-2.*g);"
     "float t=glow.w>0.?1.-smoothstep(0.,1.,(-d-border)/glow.w):w;"
     "o=o*(1.-gcolor.a*g*t)+gcolor*(g*t); }"
-    "o.rgb=grade(o.rgb); gl_FragColor=o*cov(d); }";
+    "o.rgb=grade(o.rgb); gl_FragColor=o*cov(d);"
+    "\n#ifdef POLY\n"
+    "gl_FragColor*=part;"
+    "\n#endif\n"
+    "}";
 
 // The backdrop blur (stage 5b): glass.c's kernel, 49 taps, sigma in texels of the
 // target, reading a source texture that may be larger than the region (scratch),
@@ -253,6 +277,7 @@ bool scene_pass_program_init(struct program *p, unsigned bit, const char *vertex
     p->poly = glGetUniformLocation(p->id, "poly[0]");
     p->sector_map = glGetUniformLocation(p->id, "sector_map");
     p->sector_coords = glGetUniformLocation(p->id, "sector_coords[0]");
+    p->sector_rect = glGetUniformLocation(p->id, "sector_rect");
     p->border = glGetUniformLocation(p->id, "border");
     p->bcolor = glGetUniformLocation(p->id, "bcolor");
     p->glow = glGetUniformLocation(p->id, "glow");

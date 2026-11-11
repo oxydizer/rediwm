@@ -73,6 +73,7 @@ static void shape_for(struct rediwm_pass_shape *s, const struct rediwm_clip *c, 
     s->sector_texture_height = (float)(c->sector_texture_height * v->scale);
     s->sector_texture_flip = v->transform >= WL_OUTPUT_TRANSFORM_FLIPPED ? -1.f : 1.f;
     s->sector_texture_transform = v->transform;
+    memset(s->sector_texture_rect, 0, sizeof(s->sector_texture_rect));
     s->border = c->border > 0 ? fmaxf(1.f, roundf((float)(c->border * v->scale))) : 0.f;
     for (int i = 0; i < 4; i++) s->border_color[i] = c->border_color[i];
     s->glow_radius = s->glow_depth = 0;
@@ -254,6 +255,7 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
         pixman_region32_subtract(&clip, &clip, &core);
     }
     const struct rediwm_content *c = &e->item.content;
+    if (shaped) memcpy(shape.sector_texture_rect, c->sector_rect, sizeof(shape.sector_texture_rect));
     // A window that is not the focus is drawn dimmed, whole: the pass grades each
     // draw (the interior, the rim and the ring alike) until it is reset below.
     graded = c->dim_brightness > 0 || c->dim_saturation > 0;

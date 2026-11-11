@@ -149,6 +149,36 @@ static void gate_sector_texture(struct rediwm_scene_renderer *r, struct wlr_buff
     const uint8_t *empty = at(img, 140, 90);
     for (int ch = 0; ch < 3; ch++)
         check(diff(empty[ch], (int)lround(BG[ch] * 255)) <= 1, "sector short source smeared its bottom row");
+    // A part of the image (a subsurface of the previewed window): the texture's
+    // whole source lands in its part, and nothing of the draw outside it.
+    struct rediwm_pass_shape part = {
+        .box = {20, 20, 240, 240},
+        .sector = {.center = {120, 120}, .radii = {30, 110}, .axis = {0, -1},
+                   .half_angle = {(float)cos(half), (float)sin(half)}},
+        .sector_texture_height = 80, .sector_texture_flip = 1,
+        .sector_texture_rect = {.25f, .25f, .5f, .5f},
+        .border = 2, .border_color = {0.f, .8f, .9f, 1.f},
+    };
+    pass = begin_fill(r, buf, BG, NULL);
+    rediwm_scene_pass_add_texture_shaped(pass, &(struct wlr_render_texture_options){
+        .texture = texture, .dst_box = part.box,
+        .src_box = {16, 24, 96, 80}, .filter_mode = WLR_SCALE_FILTER_BILINEAR,
+    }, &part);
+    finish(pass);
+    read_image(r, buf, img);
+    // Image row v sits at radius 110 - 80 v along the axis (straight up): the
+    // part spans rows .25 to .75, radii 90 down to 50.
+    const uint8_t *inside = at(img, 140, 140 - 70), *above = at(img, 140, 140 - 100),
+        *below = at(img, 140, 140 - 40), *rim = at(img, 140, 140 - 109);
+    // That pixel's centre is half a pixel right of the axis, at radius 69.5.
+    const double part_u = (.5 + atan2(.5, 69.5) / (2 * half) - .25) / .5, part_v = ((110 - hypot(.5, 69.5)) / 80 - .25) / .5;
+    check(diff(inside[0], (int)lround(2 * (16 + 96 * part_u - .5))) <= 2 &&
+          diff(inside[1], (int)lround(2 * (24 + 80 * part_v - .5))) <= 2, "sector part does not show its source's middle at its own");
+    for (int ch = 0; ch < 3; ch++) {
+        check(diff(above[ch], (int)lround(BG[ch] * 255)) <= 1 && diff(below[ch], (int)lround(BG[ch] * 255)) <= 1,
+              "sector part drew outside its rows");
+        check(diff(rim[ch], (int)lround(BG[ch] * 255)) <= 1, "sector part drew the ring outside itself");
+    }
     wlr_texture_destroy(texture);
     printf("PASS: sector previews retain top rows, crop only the bottom and preserve source/output transforms (max diff %d)\n", worst);
 }

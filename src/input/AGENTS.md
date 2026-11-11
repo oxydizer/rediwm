@@ -37,6 +37,11 @@
   focus; new compositor input modes go in `motionReachesClient` or
   `candidate`. `sendDeactivated` destroys oneshots synchronously: clear
   `active` first.
+* **The switcher owns the pointer** while it is up: opening it clears pointer
+  focus and shows the arrow (a client's hidden or text cursor would otherwise
+  stay, since no motion reaches it), unless a press or grab is in progress.
+  User-driven ends go through `Switcher.close`, which re-runs
+  `processCursorMotion`; forced teardowns call `cancel` alone.
 * **Shortcuts inhibit** gates only the switcher, screenshot shortcuts and
   final dispatch; hardware keys, VT switching, System Monitor and open panels
   still win. System Monitor dismisses transient input owners and revokes the

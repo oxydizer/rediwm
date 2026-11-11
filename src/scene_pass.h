@@ -57,6 +57,11 @@ struct rediwm_pass_shape {
   // are tracked separately so the source is never rotated or mirrored twice.
   float sector_texture_height, sector_texture_flip;
   enum wl_output_transform sector_texture_transform;
+  // With polar framing: the part of that image this texture fills, as fractions
+  // of it (x, y, width, height), so several textures share one framing (a
+  // window and its subsurfaces). Nothing is drawn outside it, the ring
+  // included. A zero width is the whole image.
+  float sector_texture_rect[4];
   // Width of the ring just inside the edge. The same fragment that draws the body
   // composites the ring over it, then applies the shape's coverage, so a
   // translucent border tints the fill beneath it, as the legacy border rects do,

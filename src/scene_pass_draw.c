@@ -54,6 +54,7 @@ void scene_pass_set_shape(const struct pass *p, const struct program *g, const s
     glUniform4f(g->radii, s->radii[0], s->radii[1], s->radii[2], s->radii[3]);
     const bool sector = s->sector.radii[1] > 0;
     if (g->sector_map >= 0) glUniform2f(g->sector_map, s->sector_texture_height, s->sector_texture_flip);
+    if (g->sector_rect >= 0) glUniform4fv(g->sector_rect, 1, s->sector_texture_rect);
     if (g->npoly >= 0) glUniform1f(g->npoly, sector ? -1.f : (float)s->poly_count);
     if (sector && g->poly >= 0) {
         const float payload[4][2] = {

@@ -378,6 +378,8 @@ struct rediwm_content {
   float dim_brightness, dim_saturation;
   float color[4];
   struct wlr_fbox src_box;
+  // `rediwm_buffer.sector_rect`: a zero width is the whole radially mapped image.
+  float sector_rect[4];
   enum wl_output_transform transform;
   enum wlr_scale_filter_mode filter_mode;
   enum wlr_color_transfer_function transfer_function;
@@ -395,6 +397,8 @@ static inline bool rediwm_content_equal(const struct rediwm_content *a,
          a->color[3] == b->color[3] && a->src_box.x == b->src_box.x &&
          a->src_box.y == b->src_box.y && a->src_box.width == b->src_box.width &&
          a->src_box.height == b->src_box.height && a->transform == b->transform &&
+         a->sector_rect[0] == b->sector_rect[0] && a->sector_rect[1] == b->sector_rect[1] &&
+         a->sector_rect[2] == b->sector_rect[2] && a->sector_rect[3] == b->sector_rect[3] &&
          a->filter_mode == b->filter_mode &&
          a->transfer_function == b->transfer_function &&
          a->primaries == b->primaries && a->color_encoding == b->color_encoding &&

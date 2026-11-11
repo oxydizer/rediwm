@@ -65,6 +65,7 @@ static struct wlr_client_buffer *new_client(void) {
 }
 static void init_surface(struct wlr_surface *surface) {
   wl_signal_init(&surface->events.destroy);
+  wl_signal_init(&surface->events.commit);
   wl_list_init(&surface->current_outputs);
   pixman_region32_init_rect(&surface->buffer_damage, 0, 0, 40, 30);
   surface->buffer = new_client();
@@ -90,9 +91,11 @@ int main(void) {
   assert(preview->buffer == &a.buffer->base);
   assert(preview->wait_timeline == &acquire_a && preview->wait_point == 11);
   assert(a.buffer->private.n_ignore_locks == 1 && acquire_a.private.n_refs == 1);
+  assert(rediwm_switcher_preview_get_surface(preview) == &a);
+  // A commit is followed without the caller: the binding listens for it.
   a.current.seq++;
   state_a.acquire_point = 12;
-  assert(rediwm_switcher_preview_set_surface(preview, &a));
+  wl_signal_emit_mutable(&a.events.commit, &a);
   assert(a.buffer->private.n_ignore_locks == 1 && acquire_a.private.n_refs == 1);
   assert(preview->wait_point == 12);
   struct wl_event_loop *loop = wl_event_loop_create();
@@ -108,19 +111,20 @@ int main(void) {
   assert(rediwm_switcher_preview_set_surface(preview, &b));
   assert(a.buffer->private.n_ignore_locks == 0 && b.buffer->private.n_ignore_locks == 1);
   assert(acquire_a.private.n_refs == 0 && acquire_b.private.n_refs == 1);
-  assert(wl_list_empty(&a.events.destroy.listener_list));
+  assert(wl_list_empty(&a.events.destroy.listener_list) && wl_list_empty(&a.events.commit.listener_list));
   wl_signal_emit_mutable(&preview->events.output_sample, &sample);
   assert(released == 2 && last_state == &state_b);
   // Source-first teardown clears content but leaves the preview safe to reuse.
   wl_signal_emit_mutable(&b.events.destroy, NULL);
   assert(!preview->buffer && !preview->wait_timeline && b.buffer->private.n_ignore_locks == 0);
-  assert(wl_list_empty(&b.events.destroy.listener_list));
+  assert(wl_list_empty(&b.events.destroy.listener_list) && wl_list_empty(&b.events.commit.listener_list));
+  assert(!rediwm_switcher_preview_get_surface(preview));
   wl_signal_emit_mutable(&preview->events.output_sample, &sample);
   assert(released == 2);
   assert(rediwm_switcher_preview_set_surface(preview, &a));
   // Node-first teardown must detach the source listener before freeing the node.
   rediwm_node_destroy(&preview->node);
-  assert(wl_list_empty(&a.events.destroy.listener_list));
+  assert(wl_list_empty(&a.events.destroy.listener_list) && wl_list_empty(&a.events.commit.listener_list));
   assert(a.buffer->private.n_ignore_locks == 0 && acquire_a.private.n_refs == 0);
   wl_signal_emit_mutable(&a.events.destroy, NULL);
   wlr_buffer_unlock(&a.buffer->base);

@@ -379,6 +379,15 @@ void rediwm_buffer_set_transform(struct rediwm_buffer *b, enum wl_output_transfo
   changed(&b->node);
 }
 
+void rediwm_buffer_set_sector_rect(struct rediwm_buffer *b, const float rect[4]) {
+  const float none[4] = {0};
+  const float *next = rect ? rect : none;
+  if (next[0] == b->sector_rect[0] && next[1] == b->sector_rect[1] &&
+      next[2] == b->sector_rect[2] && next[3] == b->sector_rect[3]) return;
+  for (int i = 0; i < 4; i++) b->sector_rect[i] = next[i];
+  changed(&b->node);
+}
+
 void rediwm_buffer_set_opaque_region(struct rediwm_buffer *b, const pixman_region32_t *region) {
   if (!region) {
     if (!pixman_region32_not_empty(&b->opaque_region)) return;

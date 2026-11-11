@@ -92,9 +92,6 @@ pub fn open(self: *Switcher, server: *Server) !void {
         const group = &self.circle.groups.items[group_index];
         const tree = try self.tree.?.createSceneTree();
         const fill = try col.createRect(tree, 1, 1, col.Straight.fromRgba(theme.global.switcher_item_bg).premultiply());
-        const preview = try tree.createSceneBuffer(null);
-        preview.setFilterMode(.bilinear);
-        preview.point_accepts_input = Switcher.ignoreInput;
         const icon_image = try PanelBuffer.create(40, 40, self.scale);
         defer icon_image.base.drop();
         r = ui.paint.Renderer.init(icon_image.pixels, icon_image.width, icon_image.height, self.scale);
@@ -104,21 +101,23 @@ pub fn open(self: *Switcher, server: *Server) !void {
         // Only the hub presents an icon. Keep this node as the shared icon
         // loader's storage while the sector itself shows uninterrupted content.
         icon.node.setEnabled(false);
-        var card: Switcher.Card = .{
+        const card: Switcher.Card = .{
             .id = tl.id,
             .icon = icon,
             .icon_buffer = &icon_image.base,
             .icon_source = .{ .x = 0, .y = 0, .width = @floatFromInt(icon_image.width), .height = @floatFromInt(icon_image.height) },
             .tree = tree,
             .fill = fill,
-            .preview = preview,
             .group = group_index,
             .member = group.count,
         };
-        Switcher.updatePreview(&card, tl);
+        // Stored first: `cancel` then owns the card's content on any error.
         try self.cards.append(gpa, card);
         try group.members.append(gpa, index);
         group.count += 1;
+        const stored = &self.cards.items[index];
+        _ = try stored.content.addNode(tree, Switcher.ignoreInput);
+        Switcher.updatePreview(stored, tl);
     }
     // Seed every card's animated stack slot at its resting depth so an
     // unselected group's cascade renders correctly without having to wait
@@ -298,7 +297,7 @@ pub fn tick(self: *Switcher, output: *Output, now: i64) bool {
     // it needs a frame boundary to keep sampling `appear` against, and this
     // is the one place already called every frame while the switcher lives.
     if (self.circle.closing and self.circle.appear.settled(now)) {
-        self.cancel();
+        self.close(output.server);
         return false;
     }
     const box = output.usableBox();
@@ -371,17 +370,32 @@ fn placeCard(self: *Switcher, card: *Switcher.Card, sector: layout.Sector, depth
     // fully fanned-out stack reads clearly instead of staying half-shadowed.
     const dim: f32 = if (depth > 0) @floatCast(0.18 * (1 - 0.7 * progress)) else 0;
     _ = projection.setTreeDim(&tree.node, dim, 0);
-    const preview = card.preview.?;
     // A full-size preview supplies the shape's body and ring itself. Drawing
     // the fallback underneath it would apply edge coverage and border twice.
     card.fill.?.node.setEnabled(card.pw <= 0);
-    preview.node.setEnabled(card.pw > 0);
     if (card.pw <= 0) return;
-    // The shader fans the complete source width around the outer arc, keeping
+    // The shader fans the complete window width around the outer arc, keeping
     // its header visible. The hub crops the bottom of tall windows. Live client
     // buffers still pass straight through, without CPU readback or copies.
-    preview.setSourceBox(&card.source);
-    preview.setDestSize(sector.width, sector.height);
+    // Every surface of the window covers the sector's box and names the part
+    // of the fanned window it fills; the shader draws it nowhere else.
+    const stack = &card.content;
+    const w: f32 = @floatFromInt(stack.width);
+    const h: f32 = @floatFromInt(stack.height);
+    for (stack.active()) |layer| {
+        const node = layer.node;
+        const whole = layer.x == 0 and layer.y == 0 and layer.width == stack.width and layer.height == stack.height;
+        const part: [4]f32 = .{
+            @as(f32, @floatFromInt(layer.x)) / w,
+            @as(f32, @floatFromInt(layer.y)) / h,
+            @as(f32, @floatFromInt(layer.width)) / w,
+            @as(f32, @floatFromInt(layer.height)) / h,
+        };
+        node.setSectorRect(if (whole) null else &part);
+        node.setSourceBox(&layer.source);
+        node.setDestSize(sector.width, sector.height);
+        node.node.setEnabled(true);
+    }
 }
 
 /// The window-count badge for a multi-window group, held over the focused
@@ -497,7 +511,11 @@ fn updateArrow(self: *Switcher, now: i64) void {
     // uses for the wheel's own rotation.
     const current: f64 = self.circle.arrow_angle.to;
     const delta = @mod(target - current + std.math.pi, tau) - std.math.pi;
-    self.circle.arrow_angle.retargetTo(now, @floatCast(current + delta), ui.anim.curveFor(.switcher_scroll));
+    // Only a new target: an arrow that has never moved is not an animation yet,
+    // and committing its resting angle again every frame would report a fresh
+    // sample each time, repainting it and keeping a held switcher drawing.
+    const next: f32 = @floatCast(current + delta);
+    if (next != self.circle.arrow_angle.to) self.circle.arrow_angle.retargetTo(now, next, ui.anim.curveFor(.switcher_scroll));
     // The orbit is much wider than the glyph: sample at subpixel arc steps.
     if (!self.circle.arrow_angle.sampleChanged(now, 0.003)) return;
 

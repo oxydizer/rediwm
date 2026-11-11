@@ -41,7 +41,11 @@ chrome, capture, or retained panel painting. General rules remain in
   the source's top follows the outer arc, and its full height extends inward.
   Changing that height damages the whole sector. Ordinary shapes keep rectangular
   sampling; the radial path removes the output transform from source UVs because
-  the sector axis already carries it.
+  the sector axis already carries it. Several buffers can share one radial image
+  (a switcher thumbnail's surface and its subsurfaces): each covers the sector's
+  box and names its part with `Buffer.setSectorRect` (fractions of the image),
+  which reaches the shader as `sector_texture_rect`; nothing of that draw, ring
+  included, lands outside its part.
   The taskbar uses the same clip on its tree (`Taskbar.applyClip`) with its raster
   outer edge left hard (`taskbar/shape.zig` `paintPolygon`: row spans, a distance
   only near an edge).
