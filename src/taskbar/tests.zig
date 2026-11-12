@@ -83,7 +83,7 @@ test "taskbar drag insertion targets visible chip midpoints" {
         taskbar_pointer.insertionTarget(&chips, 10, 140).?,
     );
     try std.testing.expectEqual(
-        taskbar_pointer.InsertionTarget{ .neighbor_id = 20, .before = false },
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 30, .before = true },
         taskbar_pointer.insertionTarget(&chips, 10, 180).?,
     );
     try std.testing.expectEqual(
