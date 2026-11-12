@@ -27,6 +27,63 @@ const trayItem = Taskbar.trayItem;
 
 const source_scroll_step: f32 = 60;
 
+/// A visible chip's horizontal bounds, used to calculate a drag insertion slot.
+pub const ChipSlot = struct {
+    id: u64,
+    x: f64,
+    width: f64,
+};
+
+pub const InsertionTarget = struct {
+    neighbor_id: u64,
+    before: bool,
+};
+
+/// Find the visible chip immediately after the dragged chip's insertion
+/// point. The dragged chip itself is excluded from the slot calculation.
+pub fn insertionTarget(chips: []const ChipSlot, dragged_id: u64, x: f64) ?InsertionTarget {
+    var last_id: ?u64 = null;
+    for (chips) |chip| {
+        if (chip.id == dragged_id) continue;
+        last_id = chip.id;
+        if (x < chip.x + chip.width / 2) {
+            return .{ .neighbor_id = chip.id, .before = true };
+        }
+    }
+    const id = last_id orelse return null;
+    return .{ .neighbor_id = id, .before = false };
+}
+
+/// Move a dragged chip to the slot currently indicated by the pointer.
+/// Persistent entries for hidden windows remain in the order.
+pub fn dragMove(bar: *Taskbar, dragged_id: u64, x: f64) bool {
+    const from = Taskbar.chipOrderIndex(bar.chip_order.items, dragged_id) orelse return false;
+    if (bar.chip_order.items.len < 2) return false;
+
+    const now_ms = nowMs();
+    var slots: std.ArrayList(ChipSlot) = .empty;
+    defer slots.deinit(@import("../main.zig").gpa);
+    for (bar.chips.items) |chip| {
+        slots.append(@import("../main.zig").gpa, .{
+            .id = chip.toplevel.id,
+            .x = chip.renderX(now_ms),
+            .width = chip.width,
+        }) catch return false;
+    }
+
+    const target = insertionTarget(slots.items, dragged_id, x) orelse return false;
+    const neighbor_index = Taskbar.chipOrderIndex(bar.chip_order.items, target.neighbor_id) orelse return false;
+    const insertion_index = neighbor_index + @intFromBool(!target.before);
+    const to = if (from < insertion_index) insertion_index - 1 else insertion_index;
+    if (to >= bar.chip_order.items.len or from == to) return false;
+
+    if (!Taskbar.moveChipOrder(bar.chip_order.items, from, to)) return false;
+    _ = bar.reconcile(now_ms);
+    bar.server.scheduleFrames();
+    bar.wlr_output.scheduleFrame();
+    return true;
+}
+
 pub fn hitTest(bar: *Taskbar, sx: f64, sy: f64) Target {
     const bh = bar.box.height;
     if (sy < 0 or sy >= @as(f64, @floatFromInt(bh))) return .none;

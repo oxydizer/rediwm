@@ -525,6 +525,12 @@ pub fn detachOutput(input: *Input, output: *Output) void {
 
 pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
     if (input.window_menu.references(toplevel)) input.window_menu.close();
+    if (input.taskbar_drag) |session| {
+        if (session.window_id == toplevel.id) {
+            input.taskbar_drag = null;
+            input.setDefaultCursor();
+        }
+    }
     if (input.hovered_toplevel == toplevel) input.hovered_toplevel = null;
     if (input.glow_toplevel == toplevel) input.glow_toplevel = null;
     input.drag_dodge.detach(toplevel);
@@ -537,7 +543,10 @@ pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
 pub fn detachTaskbar(input: *Input, bar: *Taskbar) void {
     if (input.window_menu.bar == bar) input.window_menu.close();
     if (input.taskbar_drag) |session| {
-        if (session.bar == bar) input.taskbar_drag = null;
+        if (session.bar == bar) {
+            input.taskbar_drag = null;
+            input.setDefaultCursor();
+        }
     }
     if (input.hovered_taskbar == bar) {
         input.hovered_taskbar = null;

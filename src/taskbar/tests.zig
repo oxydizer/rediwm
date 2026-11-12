@@ -5,6 +5,7 @@ const Taskbar = @import("../Taskbar.zig");
 const geometry = @import("../geometry.zig");
 const icon_service = @import("../icon_service.zig");
 const battery = @import("../taskbar/battery.zig");
+const taskbar_pointer = @import("../taskbar/pointer.zig");
 const text = @import("ui").text;
 const ui_theme = @import("ui").theme;
 const default_bar_height = Taskbar.default_bar_height;
@@ -68,6 +69,41 @@ test "taskbar chip order ignores invalid and unchanged moves" {
     try std.testing.expect(!Taskbar.moveChipOrder(&order, 3, 0));
     try std.testing.expect(!Taskbar.moveChipOrder(&order, 0, 3));
     try std.testing.expectEqualSlices(u64, &original, &order);
+}
+
+test "taskbar drag insertion targets visible chip midpoints" {
+    const chips = [_]taskbar_pointer.ChipSlot{
+        .{ .id = 10, .x = 0, .width = 100 },
+        .{ .id = 20, .x = 110, .width = 100 },
+        .{ .id = 30, .x = 220, .width = 100 },
+    };
+
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 20, .before = true },
+        taskbar_pointer.insertionTarget(&chips, 10, 140).?,
+    );
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 20, .before = false },
+        taskbar_pointer.insertionTarget(&chips, 10, 180).?,
+    );
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 30, .before = true },
+        taskbar_pointer.insertionTarget(&chips, 10, 220).?,
+    );
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 30, .before = false },
+        taskbar_pointer.insertionTarget(&chips, 10, 400).?,
+    );
+}
+
+test "taskbar drag insertion ignores the dragged chip and handles a lone chip" {
+    const chips = [_]taskbar_pointer.ChipSlot{
+        .{ .id = 10, .x = 0, .width = 100 },
+    };
+    try std.testing.expectEqual(
+        @as(?taskbar_pointer.InsertionTarget, null),
+        taskbar_pointer.insertionTarget(&chips, 10, 50),
+    );
 }
 
 test "chip/tile/tray sizing matches default theme" {

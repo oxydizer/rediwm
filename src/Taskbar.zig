@@ -543,6 +543,10 @@ pub const pointerLeave = taskbar_pointer.pointerLeave;
 pub const setHover = taskbar_pointer.setHover;
 pub const pointerPress = taskbar_pointer.pointerPress;
 pub const pointerPressChip = taskbar_pointer.pointerPressChip;
+pub const dragMove = taskbar_pointer.dragMove;
+pub const ChipSlot = taskbar_pointer.ChipSlot;
+pub const InsertionTarget = taskbar_pointer.InsertionTarget;
+pub const insertionTarget = taskbar_pointer.insertionTarget;
 pub const scrollVolume = taskbar_pointer.scrollVolume;
 
 // taskbar/classify.zig
