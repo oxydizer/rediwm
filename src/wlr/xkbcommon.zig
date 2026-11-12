@@ -88,6 +88,8 @@ pub const Keymap = opaque {
 pub const State = opaque {
     pub const Component = enum(c_int) {
         _,
+        pub const layout_depressed = 1 << 4;
+        pub const layout_latched = 1 << 5;
         pub const layout_locked = 1 << 6;
         pub const layout_effective = 1 << 7;
     };
