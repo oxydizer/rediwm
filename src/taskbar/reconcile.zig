@@ -73,6 +73,28 @@ pub fn chipOrderIndex(order: []const u64, id: u64) ?usize {
     return std.mem.indexOfScalar(u64, order, id);
 }
 
+/// Moves an existing chip to another position without changing the relative
+/// order of the other chips. Returns false for invalid or unchanged moves.
+pub fn moveChipOrder(order: []u64, from: usize, to: usize) bool {
+    if (from >= order.len or to >= order.len or from == to) return false;
+
+    const id = order[from];
+    if (from < to) {
+        var i = from;
+        while (i < to) : (i += 1) {
+            order[i] = order[i + 1];
+        }
+    } else {
+        var i = from;
+        while (i > to) {
+            order[i] = order[i - 1];
+            i -= 1;
+        }
+    }
+    order[to] = id;
+    return true;
+}
+
 fn chipOrderLessThan(order: []const u64, a: *Toplevel, b: *Toplevel) bool {
     const a_index = chipOrderIndex(order, a.id) orelse return taskbarOrderLessThan({}, a, b);
     const b_index = chipOrderIndex(order, b.id) orelse return taskbarOrderLessThan({}, a, b);

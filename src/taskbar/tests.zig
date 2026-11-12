@@ -46,6 +46,30 @@ test "taskbar chip order looks up stable window IDs" {
     try std.testing.expectEqual(@as(?usize, null), Taskbar.chipOrderIndex(&order, 99));
 }
 
+test "taskbar chip order moves forward and preserves other IDs" {
+    var order = [_]u64{ 10, 20, 30, 40, 50 };
+
+    try std.testing.expect(Taskbar.moveChipOrder(&order, 1, 4));
+    try std.testing.expectEqualSlices(u64, &.{ 10, 30, 40, 50, 20 }, &order);
+}
+
+test "taskbar chip order moves backward and preserves other IDs" {
+    var order = [_]u64{ 10, 20, 30, 40, 50 };
+
+    try std.testing.expect(Taskbar.moveChipOrder(&order, 4, 1));
+    try std.testing.expectEqualSlices(u64, &.{ 10, 50, 20, 30, 40 }, &order);
+}
+
+test "taskbar chip order ignores invalid and unchanged moves" {
+    var order = [_]u64{ 10, 20, 30 };
+    const original = order;
+
+    try std.testing.expect(!Taskbar.moveChipOrder(&order, 1, 1));
+    try std.testing.expect(!Taskbar.moveChipOrder(&order, 3, 0));
+    try std.testing.expect(!Taskbar.moveChipOrder(&order, 0, 3));
+    try std.testing.expectEqualSlices(u64, &original, &order);
+}
+
 test "chip/tile/tray sizing matches default theme" {
     const saved = ui_theme.global;
     defer ui_theme.global = saved;

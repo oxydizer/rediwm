@@ -526,6 +526,7 @@ pub const refreshStartLogo = taskbar_reconcile.refreshStartLogo;
 pub const updateIcon = taskbar_reconcile.updateIcon;
 pub const taskbarOrderLessThan = taskbar_reconcile.taskbarOrderLessThan;
 pub const chipOrderIndex = taskbar_reconcile.chipOrderIndex;
+pub const moveChipOrder = taskbar_reconcile.moveChipOrder;
 pub const reconcile = taskbar_reconcile.reconcile;
 
 // taskbar/tick.zig
