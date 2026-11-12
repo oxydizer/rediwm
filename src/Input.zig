@@ -228,6 +228,7 @@ gesture: enum { none, client_pinch, client_swipe, compositor_pinch, compositor_s
 /// Two-finger touchpad scroll over empty desktop, distinct from middle-drag.
 finger_pan: bool = false,
 zoom_scroll: @import("camera.zig").ZoomScroll = .{},
+taskbar_focus_scroll: @import("camera.zig").ZoomScroll = .{},
 zoom_device: ?*wlr.InputDevice = null,
 zoom_target_id: u64 = 0,
 active_buttons: u32 = 0,
