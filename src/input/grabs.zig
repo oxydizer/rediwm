@@ -176,6 +176,78 @@ pub fn heldGlass(input: *const Input) ?*glass.Effect {
     return toplevel.glass_effect;
 }
 
+/// Find the opposite manually tiled half sharing this window's inner edge.
+/// Only an unambiguous, geometrically adjacent pair is eligible.
+fn manualHalfPeer(input: *Input, toplevel: *Toplevel, edges: resize.Edges) ?*Toplevel {
+    const tile = toplevel.tile orelse return null;
+    const peer_tile: snap.Tile = switch (tile) {
+        .left => blk: {
+            if (!edges.right or edges.left or edges.top or edges.bottom) return null;
+            break :blk .right;
+        },
+        .right => blk: {
+            if (!edges.left or edges.right or edges.top or edges.bottom) return null;
+            break :blk .left;
+        },
+        else => return null,
+    };
+
+    if (toplevel.auto_target != null) return null;
+    const output = toplevel.currentOutput() orelse return null;
+    const target = toplevel.tile_target orelse return null;
+    const position = input.server.world.toLayout(
+        @floatFromInt(target.x),
+        @floatFromInt(target.y),
+    );
+    const frame = toplevel.chromeSizeForClient(target.width, target.height);
+    const frame_width = @as(f64, @floatFromInt(frame.w)) * toplevel.zoom();
+    const frame_height = @as(f64, @floatFromInt(frame.h)) * toplevel.zoom();
+    const gap: f64 = @floatFromInt(input.server.config.compositor.windowGap());
+
+    var found: ?*Toplevel = null;
+    var it = input.server.world.toplevels.iterator(.forward);
+    while (it.next()) |candidate| {
+        if (candidate == toplevel or
+            candidate.tile != peer_tile or
+            candidate.tile_target == null or
+            candidate.auto_target != null or
+            candidate.workspace_id != toplevel.workspace_id or
+            !candidate.in_world or
+            candidate.minimized or
+            candidate.tab_hidden or
+            candidate.closing or
+            !candidate.isMapped() or
+            !@import("../workspaces.zig").visible(candidate) or
+            candidate.currentOutput() != output)
+        {
+            continue;
+        }
+
+        const peer_target = candidate.tile_target.?;
+        const peer_position = input.server.world.toLayout(
+            @floatFromInt(peer_target.x),
+            @floatFromInt(peer_target.y),
+        );
+        const peer_frame = candidate.chromeSizeForClient(peer_target.width, peer_target.height);
+        const peer_width = @as(f64, @floatFromInt(peer_frame.w)) * candidate.zoom();
+        const peer_height = @as(f64, @floatFromInt(peer_frame.h)) * candidate.zoom();
+
+        const vertical_error = @abs(position.y - peer_position.y);
+        const height_error = @abs(frame_height - peer_height);
+        const separation = if (tile == .left)
+            peer_position.x - (position.x + frame_width)
+        else
+            position.x - (peer_position.x + peer_width);
+
+        if (vertical_error > 2 or height_error > 2 or @abs(separation - gap) > 2) continue;
+
+        // Never couple an arbitrary window when more than one candidate fits.
+        if (found != null) return null;
+        found = candidate;
+    }
+    return found;
+}
+
 pub fn startResize(
     input: *Input,
     toplevel: *Toplevel,
@@ -187,6 +259,7 @@ pub fn startResize(
     if (@import("../tiling_grab.zig").begin(input, toplevel, wlr_edges, initiating_button)) return;
     const edges = resize.Edges.fromWlr(wlr_edges);
     if (edges.isNone()) return;
+    const peer = manualHalfPeer(input, toplevel, edges);
 
     if (toplevel.minimized or
         toplevel.isMaximized() or
@@ -200,14 +273,20 @@ pub fn startResize(
         input.cancelResize();
     }
 
-    // Resizing a tile makes it an ordinary window of the tile's geometry.
+    // A paired manual half keeps both tile identities. An ordinary resize
+    // still converts the active tile into a floating window.
     const layout_before = toplevel.layout();
     const layout_gesture = @import("../layout_undo.zig").beginGesture(input.server, toplevel.workspace_id);
-    toplevel.leaveLayout();
+    if (peer == null) toplevel.leaveLayout();
     input.server.world.focus(toplevel);
     toplevel.finishZoomAnimation();
     toplevel.finishMoveAnimation();
     toplevel.finishSizeAnimation();
+    if (peer) |peer_toplevel| {
+        peer_toplevel.finishZoomAnimation();
+        peer_toplevel.finishMoveAnimation();
+        peer_toplevel.finishSizeAnimation();
+    }
     input.setHover(null, null);
 
     input.cursor_mode = .resize;
@@ -238,6 +317,36 @@ pub fn startResize(
         edges,
     );
 
+    // The peer tracks the same pointer, but resizes its opposite edge:
+    // growing one half therefore shrinks the other by the same amount.
+    const peer_session: ?Input.ResizePeerSession = if (peer) |peer_toplevel| blk: {
+        const peer_geom = peer_toplevel.clientGeometry();
+        const peer_target = peer_toplevel.tile_target.?;
+        const peer_client_w = if (peer_geom.width > 0) peer_geom.width else peer_target.width;
+        const peer_client_h = if (peer_geom.height > 0) peer_geom.height else peer_target.height;
+        const peer_edges: resize.Edges = .{
+            .left = edges.right,
+            .right = edges.left,
+        };
+        const peer_snapshot = resize.createSnapshot(
+            input.server.world.toWorld(input.cursor.x, input.cursor.y).x / peer_toplevel.worldScale(),
+            input.server.world.toWorld(input.cursor.x, input.cursor.y).y / peer_toplevel.worldScale(),
+            peer_toplevel.x,
+            peer_toplevel.y,
+            peer_client_w,
+            peer_client_h,
+            peer_toplevel.titlebarHeight(),
+            peer_toplevel.borderWidth(),
+            peer_toplevel.footerHeight(),
+            peer_edges,
+        );
+        break :blk .{
+            .toplevel = peer_toplevel,
+            .snapshot = peer_snapshot,
+            .latest_desired_size = .{ .width = peer_client_w, .height = peer_client_h },
+        };
+    } else null;
+
     const gen = input.next_session_generation;
     input.next_session_generation += 1;
 
@@ -251,6 +360,7 @@ pub fn startResize(
         .edges = edges,
         .snapshot = snapshot,
         .latest_desired_size = .{ .width = client_w, .height = client_h },
+        .peer = peer_session,
         .dirty = false,
         .pacing_output = pacing_output,
     };
@@ -287,10 +397,20 @@ pub fn finishResize(input: *Input) void {
     // pending. Otherwise dirty is cleared here, so flushResizeConfigure ignores
     // a settling session (it used to return early on `settling`).
     session.dirty = !std.meta.eql(shown, final_size);
-    if (!session.dirty) {
+    if (!session.dirty and session.outstanding_configure == .none) {
         session.outstanding_configure = toplevel.requestSize(final_size.width, final_size.height);
         session.last_sent_width = final_size.width;
         session.last_sent_height = final_size.height;
+    }
+
+    if (session.peer) |*peer| {
+        if (peer.dirty and peer.outstanding_configure == .none) {
+            const peer_size = peer.latest_desired_size;
+            peer.outstanding_configure = peer.toplevel.requestSize(peer_size.width, peer_size.height);
+            peer.last_sent_width = peer_size.width;
+            peer.last_sent_height = peer_size.height;
+            peer.dirty = false;
+        }
     }
 
     input.cursor_mode = .passthrough;
@@ -319,6 +439,7 @@ pub fn finishResize(input: *Input) void {
 pub fn cancelResize(input: *Input) void {
     const session = input.resize_session orelse return;
     const toplevel = session.toplevel;
+    const peer = session.peer;
     @import("../effects/window_move.zig").cancelFor(input.server, toplevel.id);
 
     input.resize_session = null;
@@ -329,9 +450,19 @@ pub fn cancelResize(input: *Input) void {
 
     if (toplevel.isMapped()) {
         toplevel.setResizing(false);
-        const geom = toplevel.clientGeometry();
-        if (geom.width > 0 and geom.height > 0) {
-            _ = toplevel.requestSize(geom.width, geom.height);
+        _ = toplevel.requestSize(
+            session.snapshot.initial_client_width,
+            session.snapshot.initial_client_height,
+        );
+        toplevel.setPosition(session.snapshot.initial_frame_x, session.snapshot.initial_frame_y);
+    }
+    if (peer) |pair| {
+        if (pair.toplevel.isMapped()) {
+            _ = pair.toplevel.requestSize(
+                pair.snapshot.initial_client_width,
+                pair.snapshot.initial_client_height,
+            );
+            pair.toplevel.setPosition(pair.snapshot.initial_frame_x, pair.snapshot.initial_frame_y);
         }
     }
     input.processCursorMotion(0);
@@ -340,32 +471,55 @@ pub fn cancelResize(input: *Input) void {
 pub fn flushResizeConfigure(input: *Input, output: *Output) void {
     const session = &(input.resize_session orelse return);
     if (session.pacing_output != null and session.pacing_output != output) return;
-    if (!session.dirty) return;
-    if (session.outstanding_configure != .none) return;
-
     const toplevel = session.toplevel;
-    const desired = @import("../effects/window_move.zig").resizeSize(toplevel, Toplevel.nowMs(), session.latest_desired_size);
-    const following = !std.meta.eql(desired, session.latest_desired_size);
+    if (session.dirty and session.outstanding_configure == .none) {
+        const desired = @import("../effects/window_move.zig").resizeSize(
+            toplevel,
+            Toplevel.nowMs(),
+            session.latest_desired_size,
+        );
+        const following = !std.meta.eql(desired, session.latest_desired_size);
 
-    if (desired.width == session.last_sent_width and desired.height == session.last_sent_height) {
-        session.dirty = following;
-        if (session.settling and !following) input.finishSettlement(session.generation);
-        return;
+        if (desired.width == session.last_sent_width and desired.height == session.last_sent_height) {
+            session.dirty = following;
+        } else {
+            session.outstanding_configure = toplevel.requestSize(desired.width, desired.height);
+            session.last_sent_width = desired.width;
+            session.last_sent_height = desired.height;
+            session.dirty = following;
+        }
     }
 
-    session.outstanding_configure = toplevel.requestSize(desired.width, desired.height);
-    session.last_sent_width = desired.width;
-    session.last_sent_height = desired.height;
-    session.dirty = following;
-    if (session.settling and !following and session.outstanding_configure == .none) input.finishSettlement(session.generation);
+    if (session.peer) |*peer| {
+        if (peer.dirty and peer.outstanding_configure == .none) {
+            const desired = peer.latest_desired_size;
+            if (desired.width == peer.last_sent_width and desired.height == peer.last_sent_height) {
+                peer.dirty = false;
+            } else {
+                peer.outstanding_configure = peer.toplevel.requestSize(desired.width, desired.height);
+                peer.last_sent_width = desired.width;
+                peer.last_sent_height = desired.height;
+                peer.dirty = false;
+            }
+        }
+    }
+
+    const peer_dirty = if (session.peer) |peer| peer.dirty else false;
+    if (session.settling and !session.dirty and !peer_dirty and !session.hasOutstandingConfigure()) {
+        input.finishSettlement(session.generation);
+    }
 }
 
 pub fn finishSettlement(input: *Input, generation: u64) void {
     if (input.resize_session) |session| {
         if (session.generation == generation) {
             const toplevel = session.toplevel;
+            const peer = if (session.peer) |pair| pair.toplevel else null;
             input.resize_session = null;
             toplevel.syncChrome(false, Toplevel.nowMs()) catch {};
+            if (peer) |peer_toplevel| {
+                peer_toplevel.syncChrome(false, Toplevel.nowMs()) catch {};
+            }
         }
     }
 }

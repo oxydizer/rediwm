@@ -583,22 +583,42 @@ pub fn processResize(input: *Input) void {
     if (session.settling) return;
 
     const toplevel = session.toplevel;
-    const constraints = toplevel.sizeConstraints();
+    const cursor_world = input.server.world.toWorld(input.cursor.x, input.cursor.y);
 
-    // Use the same unscaled cursor space as the resize snapshot.
-    const cursor_wx = input.server.world.toWorld(input.cursor.x, input.cursor.y).x / toplevel.worldScale();
-    const cursor_wy = input.server.world.toWorld(input.cursor.x, input.cursor.y).y / toplevel.worldScale();
-
+    // Each participant measures the same pointer in its own unscaled
+    // client space. Their snapshots select opposite edges, so the shared
+    // boundary moves in opposite directions while both outer edges stay put.
     const desired = resize.computeDesiredClientSize(
         session.snapshot,
-        cursor_wx,
-        cursor_wy,
-        constraints,
+        cursor_world.x / toplevel.worldScale(),
+        cursor_world.y / toplevel.worldScale(),
+        toplevel.sizeConstraints(),
     );
+    var changed = false;
     if (desired.width != session.latest_desired_size.width or desired.height != session.latest_desired_size.height) {
         session.latest_desired_size = desired;
         session.dirty = true;
+        changed = true;
         @import("../effects/window_move.zig").resizeMotion(toplevel);
+    }
+
+    if (session.peer) |*peer| {
+        const peer_desired = resize.computeDesiredClientSize(
+            peer.snapshot,
+            cursor_world.x / peer.toplevel.worldScale(),
+            cursor_world.y / peer.toplevel.worldScale(),
+            peer.toplevel.sizeConstraints(),
+        );
+        if (peer_desired.width != peer.latest_desired_size.width or
+            peer_desired.height != peer.latest_desired_size.height)
+        {
+            peer.latest_desired_size = peer_desired;
+            peer.dirty = true;
+            changed = true;
+        }
+    }
+
+    if (changed) {
         if (session.pacing_output) |out| {
             out.wlr_output.scheduleFrame();
         } else {

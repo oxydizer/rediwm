@@ -350,7 +350,7 @@ pub fn insideFrame(toplevel: *Toplevel, px: f32, py: f32) bool {
 
 pub fn isResizing(toplevel: *Toplevel) bool {
     const session = toplevel.server.input.resize_session orelse return false;
-    return session.toplevel == toplevel;
+    return session.includes(toplevel);
 }
 
 pub fn isGeometrySettled(toplevel: *Toplevel, now_ms: i64) bool {
