@@ -13,22 +13,6 @@ const Keyboard = @This();
 
 const log = std.log.scoped(.keyboard);
 
-extern "c" fn fopen(filename: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
-extern "c" fn fputs(str: [*:0]const u8, stream: *anyopaque) c_int;
-extern "c" fn fclose(stream: *anyopaque) c_int;
-
-fn dumpRuntimeKeymap(wlr_keyboard: *wlr.Keyboard) void {
-    const file = fopen("/tmp/rediwm-runtime-keymap", "w") orelse {
-        log.warn("could not open runtime keymap dump", .{});
-        return;
-    };
-    defer _ = fclose(file);
-
-    if (fputs(wlr_keyboard.keymap_string, file) < 0) {
-        log.warn("could not write runtime keymap dump", .{});
-    }
-}
-
 const keybinds = @import("config").keybinds;
 const ControlCenter = @import("control_center/panel.zig").ControlCenter;
 const StartMenu = @import("start_menu/panel.zig").StartMenu;
@@ -101,7 +85,6 @@ fn createInternal(server: *Server, device: *wlr.InputDevice, synthetic: bool) !v
     wlr_keyboard.events.keymap.add(&keyboard.keymap);
     wlr_keyboard.events.modifiers.add(&keyboard.modifiers);
     wlr_keyboard.events.key.add(&keyboard.key);
-    dumpRuntimeKeymap(wlr_keyboard);
     device.events.destroy.add(&keyboard.destroy);
 
     if (!virtual) server.input.seat.setKeyboard(wlr_keyboard);
@@ -109,12 +92,8 @@ fn createInternal(server: *Server, device: *wlr.InputDevice, synthetic: bool) !v
     if (!virtual) @import("input/layouts.zig").activate(keyboard);
 }
 
-fn handleKeymap(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Keyboard) void {
+fn handleKeymap(listener: *wl.Listener(*wlr.Keyboard), _: *wlr.Keyboard) void {
     const keyboard: *Keyboard = @fieldParentPtr("keymap", listener);
-    dumpRuntimeKeymap(wlr_keyboard);
-    log.info("runtime keymap begin\n{s}\nruntime keymap end", .{
-        std.mem.span(wlr_keyboard.keymap_string),
-    });
     @import("input/layouts.zig").changed(keyboard, true);
 }
 
@@ -125,20 +104,6 @@ fn handleModifiers(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Key
     _ = keyboard.server.world.peekTarget();
     keyboard.server.scheduleFrames();
     const mods = wlr_keyboard.getModifiers();
-    if (keyboard.server.input_sources) |sources| {
-        const state = wlr_keyboard.xkb_state.?;
-        log.info(
-            "layout state: depressed={d} latched={d} locked={d} effective={d} wlr={d} manager={d}",
-            .{
-                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_depressed)),
-                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_latched)),
-                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_locked)),
-                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_effective)),
-                wlr_keyboard.modifiers.group,
-                sources.active_group,
-            },
-        );
-    }
     if (keyboard.server.locker == null) {
         if (keyboard.server.input.open_control_center) |cc| {
             if (cc.hasKeyboardFocus() and cc.page == .shortcuts and cc.shortcuts.editing != null and keyboard.server.input.open_start_menu == null) {
@@ -211,34 +176,7 @@ pub fn switchVt(keyboard: *Keyboard, syms: []const xkb.Keysym) bool {
 
 pub fn handleKey(listener: *wl.Listener(*wlr.Keyboard.event.Key), event: *wlr.Keyboard.event.Key) void {
     const keyboard: *Keyboard = @fieldParentPtr("key", listener);
-    const wlr_keyboard = keyboard.device.toKeyboard();
-    const key_name = if (wlr_keyboard.keymap) |keymap|
-        (keymap.keyGetName(event.keycode + 8) orelse "unknown")
-    else
-        "no-keymap";
-    if (wlr_keyboard.xkb_state) |state| {
-        log.info(
-            "key event: key={s} code={d} state={s} effective={d} locked={d} wlr={d}",
-            .{
-                key_name,
-                event.keycode,
-                if (event.state == .pressed) "pressed" else "released",
-                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_effective)),
-                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_locked)),
-                wlr_keyboard.modifiers.group,
-            },
-        );
-    }
     keyboard.processKey(event.time_msec, event.keycode, event.state);
-    if (wlr_keyboard.xkb_state) |state| {
-        log.info(
-            "after processKey: effective={d} locked={d}",
-            .{
-                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_effective)),
-                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_locked)),
-            },
-        );
-    }
 }
 
 /// Focus enters must contain only keys delivered to clients. A raw hardware
