@@ -584,16 +584,39 @@ pub fn processResize(input: *Input) void {
 
     const toplevel = session.toplevel;
     const cursor_world = input.server.world.toWorld(input.cursor.x, input.cursor.y);
+    const cursor_x = cursor_world.x / toplevel.worldScale();
+    const cursor_y = cursor_world.y / toplevel.worldScale();
+    const active_constraints = toplevel.sizeConstraints();
 
     // Each participant measures the same pointer in its own unscaled
     // client space. Their snapshots select opposite edges, so the shared
     // boundary moves in opposite directions while both outer edges stay put.
-    const desired = resize.computeDesiredClientSize(
+    var desired = resize.computeDesiredClientSize(
         session.snapshot,
-        cursor_world.x / toplevel.worldScale(),
-        cursor_world.y / toplevel.worldScale(),
-        toplevel.sizeConstraints(),
+        cursor_x,
+        cursor_y,
+        active_constraints,
     );
+    var peer_desired: ?resize.ClientSize = null;
+    if (session.peer) |peer| {
+        if (resize.computeCoupledHorizontalClientSizes(
+            session.snapshot,
+            peer.snapshot,
+            cursor_x,
+            active_constraints,
+            peer.toplevel.sizeConstraints(),
+        )) |coupled| {
+            desired = coupled.active;
+            peer_desired = coupled.peer;
+        } else {
+            peer_desired = resize.computeDesiredClientSize(
+                peer.snapshot,
+                cursor_world.x / peer.toplevel.worldScale(),
+                cursor_world.y / peer.toplevel.worldScale(),
+                peer.toplevel.sizeConstraints(),
+            );
+        }
+    }
     var changed = false;
     if (desired.width != session.latest_desired_size.width or desired.height != session.latest_desired_size.height) {
         session.latest_desired_size = desired;
@@ -603,16 +626,11 @@ pub fn processResize(input: *Input) void {
     }
 
     if (session.peer) |*peer| {
-        const peer_desired = resize.computeDesiredClientSize(
-            peer.snapshot,
-            cursor_world.x / peer.toplevel.worldScale(),
-            cursor_world.y / peer.toplevel.worldScale(),
-            peer.toplevel.sizeConstraints(),
-        );
-        if (peer_desired.width != peer.latest_desired_size.width or
-            peer_desired.height != peer.latest_desired_size.height)
+        const next_size = peer_desired.?;
+        if (next_size.width != peer.latest_desired_size.width or
+            next_size.height != peer.latest_desired_size.height)
         {
-            peer.latest_desired_size = peer_desired;
+            peer.latest_desired_size = next_size;
             peer.dirty = true;
             changed = true;
         }

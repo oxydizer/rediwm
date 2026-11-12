@@ -210,6 +210,14 @@ pub fn positionDuringResize(toplevel: *Toplevel) void {
             initial_x + @as(i32, @intFromFloat(@round(dx * toplevel.worldScale()))),
             initial_y + @as(i32, @intFromFloat(@round(dy * toplevel.worldScale()))),
         );
+        if (session.peer != null and toplevel.tile != null) {
+            if (toplevel.tile_target) |*target| {
+                target.x = toplevel.x;
+                target.y = toplevel.y;
+                target.width = geom.width;
+                target.height = geom.height;
+            }
+        }
     }
 }
 

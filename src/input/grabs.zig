@@ -223,6 +223,10 @@ fn manualHalfPeer(input: *Input, toplevel: *Toplevel, edges: resize.Edges) ?*Top
             continue;
         }
 
+        // One pointer delta maps to one shared client-width delta only when
+        // both halves use the same presented client scale.
+        if (@abs(candidate.worldScale() - toplevel.worldScale()) > 0.0001) continue;
+
         const peer_target = candidate.tile_target.?;
         const peer_position = input.server.world.toLayout(
             @floatFromInt(peer_target.x),
@@ -367,6 +371,7 @@ pub fn startResize(
     @import("../effects/window_move.zig").startResize(toplevel);
 
     toplevel.setResizing(true);
+    if (peer) |peer_toplevel| peer_toplevel.setResizing(true);
     const wait = toplevel.requestSize(client_w, client_h);
     if (input.resize_session) |*sess| {
         sess.outstanding_configure = wait;
@@ -391,12 +396,17 @@ pub fn finishResize(input: *Input) void {
     if (@import("../effects/window_move.zig").resizeEnabled(input.server)) input.server.scheduleFrames();
 
     toplevel.setResizing(false);
+    if (session.peer) |peer| peer.toplevel.setResizing(false);
     const final_size = session.latest_desired_size;
     const shown = @import("../effects/window_move.zig").resizeSize(toplevel, Toplevel.nowMs(), final_size);
     // Only a follow-through still easing toward the final size leaves work
     // pending. Otherwise dirty is cleared here, so flushResizeConfigure ignores
     // a settling session (it used to return early on `settling`).
-    session.dirty = !std.meta.eql(shown, final_size);
+    // Preserve a final pointer size that has not yet been sent because an
+    // earlier configure is still outstanding.
+    session.dirty = !std.meta.eql(shown, final_size) or
+        session.last_sent_width != final_size.width or
+        session.last_sent_height != final_size.height;
     if (!session.dirty and session.outstanding_configure == .none) {
         session.outstanding_configure = toplevel.requestSize(final_size.width, final_size.height);
         session.last_sent_width = final_size.width;
@@ -432,7 +442,10 @@ pub fn finishResize(input: *Input) void {
 
     // Compositor-owned windows have already applied the final size and
     // position; no client commit will arrive to finish their resize session.
-    if (!session.dirty and session.outstanding_configure == .none) input.finishSettlement(session.generation);
+    const peer_dirty = if (session.peer) |peer| peer.dirty else false;
+    if (!session.dirty and !peer_dirty and !session.hasOutstandingConfigure()) {
+        input.finishSettlement(session.generation);
+    }
     input.processCursorMotion(0);
 }
 
@@ -458,6 +471,7 @@ pub fn cancelResize(input: *Input) void {
     }
     if (peer) |pair| {
         if (pair.toplevel.isMapped()) {
+            pair.toplevel.setResizing(false);
             _ = pair.toplevel.requestSize(
                 pair.snapshot.initial_client_width,
                 pair.snapshot.initial_client_height,
@@ -487,6 +501,7 @@ pub fn flushResizeConfigure(input: *Input, output: *Output) void {
             session.last_sent_width = desired.width;
             session.last_sent_height = desired.height;
             session.dirty = following;
+            toplevel.positionDuringResize();
         }
     }
 
@@ -500,6 +515,7 @@ pub fn flushResizeConfigure(input: *Input, output: *Output) void {
                 peer.last_sent_width = desired.width;
                 peer.last_sent_height = desired.height;
                 peer.dirty = false;
+                peer.toplevel.positionDuringResize();
             }
         }
     }

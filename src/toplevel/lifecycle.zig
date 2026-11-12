@@ -34,11 +34,9 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
 
             toplevel.positionDuringResize();
 
-            // An acknowledgement can carry no pixel damage. Pending resize
-            // work of the flame (following the pointer, or left over once it
-            // has faded away) still needs a frame; plain resizes already
-            // scheduled theirs, so with the effect off nothing changes.
-            if (@import("../effects/window_move.zig").resizeEnabled(toplevel.server) and session.dirty and session.outstanding_configure == .none) {
+            // An acknowledgement can carry no pixel damage. Any newer
+            // pointer size waiting behind this configure still needs a frame.
+            if (session.dirty and session.outstanding_configure == .none) {
                 if (session.pacing_output) |output| output.wlr_output.scheduleFrame() else toplevel.server.scheduleFrames();
             }
 
@@ -51,7 +49,7 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
             }
         } else if (session.peer) |*peer| {
             if (peer.toplevel == toplevel) {
-            toplevel.positionDuringResize();
+                toplevel.positionDuringResize();
                 if (peer.outstanding_configure == .x11_commit) {
                     peer.outstanding_configure = .none;
                 } else if (peer.outstanding_configure != .none) {
@@ -60,9 +58,9 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
                     }
                 }
 
-            if (peer.dirty and peer.outstanding_configure == .none) {
-                if (session.pacing_output) |output| output.wlr_output.scheduleFrame() else toplevel.server.scheduleFrames();
-            }
+                if (peer.dirty and peer.outstanding_configure == .none) {
+                    if (session.pacing_output) |output| output.wlr_output.scheduleFrame() else toplevel.server.scheduleFrames();
+                }
 
                 // The peer has its own protocol configure lifecycle. Its
                 // commit must not clear or settle the active window's wait.
