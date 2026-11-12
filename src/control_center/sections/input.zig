@@ -15,6 +15,7 @@ const Pointer = @import("../../Pointer.zig");
 const gpa = @import("../../main.zig").gpa;
 const config = @import("config");
 const libinput = @import("../../libinput.zig");
+const xkb_registry = @import("../../input/xkb_registry.zig");
 
 const bool_keys = [_][]const u8{ "natural_scroll", "left_handed", "tap_to_click", "tap_drag", "disable_while_typing" };
 
@@ -26,37 +27,29 @@ const pan_speed_values = [4]f32{ 1, 2, 3, 4 };
 const pan_speed_labels = [_][]const u8{ "1x", "2x", "3x", "4x" };
 const pan_speed_segmented_width: f32 = 180;
 
-const KeyboardLayout = struct { label: []const u8, layout: []const u8, variant: []const u8 = "" };
-
-// Layout names are shown in their own language, so they are not translated.
-const keyboard_layouts = [_]KeyboardLayout{
-    .{ .label = "English (US, QWERTY)", .layout = "us" }, // i18n: raw
-    .{ .label = "Français (AZERTY)", .layout = "fr" }, // i18n: raw
-    .{ .label = "Français (BÉPO)", .layout = "fr", .variant = "bepo" }, // i18n: raw
-    .{ .label = "Belge (AZERTY)", .layout = "be" }, // i18n: raw
-    .{ .label = "Suisse romand (QWERTZ)", .layout = "ch", .variant = "fr" }, // i18n: raw
-    .{ .label = "Canadien multilingue", .layout = "ca", .variant = "multix" }, // i18n: raw
-    .{ .label = "Deutsch (QWERTZ)", .layout = "de" }, // i18n: raw
-    .{ .label = "Español", .layout = "es" }, // i18n: raw
-    .{ .label = "Italiano", .layout = "it" }, // i18n: raw
-    .{ .label = "Português", .layout = "pt" }, // i18n: raw
-    .{ .label = "English (UK)", .layout = "gb" }, // i18n: raw
-    .{ .label = "English (Dvorak)", .layout = "us", .variant = "dvorak" }, // i18n: raw
-    .{ .label = "Русский", .layout = "ru" }, // i18n: raw
-};
-
-const keyboard_layout_labels = blk: {
-    var out: [keyboard_layouts.len][]const u8 = undefined;
-    for (keyboard_layouts, 0..) |l, i| out[i] = l.label;
-    const final = out;
-    break :blk final;
-};
-
-fn keyboardLayoutIndex(cfg: anytype) ?usize {
-    for (keyboard_layouts, 0..) |l, i| {
-        if (std.mem.eql(u8, l.layout, cfg.xkb_layout) and std.mem.eql(u8, l.variant, cfg.xkb_variant)) return i;
+fn keyboardLayoutIndex(cfg: anytype, layouts: []const xkb_registry.Layout) ?usize {
+    for (layouts, 0..) |item, i| {
+        if (std.mem.eql(u8, item.name, cfg.xkb_layout)) return i;
     }
     return null;
+}
+
+fn loadKeyboardLayouts(s: *Section) void {
+    const allocator = s.arena.allocator();
+    s.keyboard_layouts = xkb_registry.enumerate(allocator) catch |err| {
+        std.log.warn("could not enumerate XKB layouts: {}", .{err});
+        s.keyboard_layouts = &.{};
+        s.keyboard_layout_labels = &.{};
+        return;
+    };
+
+    const labels = allocator.alloc([]const u8, s.keyboard_layouts.len) catch {
+        s.keyboard_layouts = &.{};
+        s.keyboard_layout_labels = &.{};
+        return;
+    };
+    for (s.keyboard_layouts, 0..) |item, i| labels[i] = item.label;
+    s.keyboard_layout_labels = labels;
 }
 
 pub const Section = struct {
@@ -74,6 +67,8 @@ pub const Section = struct {
     bool_label_children: [bool_keys.len][2]Widget = undefined,
     speed_value_buf: [16]u8 = undefined,
     layout_row_children: [2]Widget = undefined,
+    keyboard_layouts: []xkb_registry.Layout = &.{},
+    keyboard_layout_labels: [][]const u8 = &.{},
     pan_speed_row_children: [2]Widget = undefined,
     delay_row_children: [2]Widget = undefined,
     rate_row_children: [2]Widget = undefined,
@@ -492,6 +487,7 @@ pub fn build(out: *Section, input: *Input) void {
     out.input = input;
     var row_count: usize = 0;
     const pointer = buildSelector(out, &row_count);
+    loadKeyboardLayouts(out);
     buildSpeed(out, pointer, &row_count);
     out.bool_rows = .{
         buildToggle(out, pointer, 0, "natural_scroll", i18n.tr("Natural scroll"), libinput.getNaturalScroll, libinput.setNaturalScroll),
@@ -515,10 +511,20 @@ pub fn build(out: *Section, input: *Input) void {
     layout.appendRow(&out.row_storage, &row_count, pan_speed_row);
 
     out.layout_row_children = .{
-        fgLabel(i18n.tr("Keyboard layout")),
+        fgLabel(i18n.tr("Language")),
         .{
-            .name = "keyboard_layout",
-            .kind = .{ .select = .{ .labels = &keyboard_layout_labels, .selected = keyboardLayoutIndex(input.server.config.input), .placeholder = i18n.tr("Custom (config file)"), .owner = out, .on_change = &onKeyboardLayoutPicked } },
+            .name = "keyboard_language",
+            .kind = .{ .select = .{
+                .labels = out.keyboard_layout_labels,
+                .selected = keyboardLayoutIndex(input.server.config.input, out.keyboard_layouts),
+                .disabled = out.keyboard_layouts.len == 0,
+                .placeholder = if (out.keyboard_layouts.len == 0)
+                    i18n.tr("Keyboard layouts unavailable")
+                else
+                    i18n.tr("Custom (config file)"),
+                .owner = out,
+                .on_change = &onKeyboardLayoutPicked,
+            } },
             .width = .{ .fixed = 220 },
         },
     };
@@ -552,16 +558,21 @@ pub fn build(out: *Section, input: *Input) void {
 // and recompiles the keymap on every keyboard (`config_runtime/apply.zig`).
 fn onKeyboardLayoutPicked(owner: ?*anyopaque, _: usize, index: usize) void {
     const s: *Section = @ptrCast(@alignCast(owner orelse return));
-    if (index >= keyboard_layouts.len) return;
+    if (index >= s.keyboard_layouts.len) return;
+
     const server = s.input.server;
-    const choice = keyboard_layouts[index];
+    const choice = s.keyboard_layouts[index];
+    if (std.mem.eql(u8, server.config.input.xkb_layout, choice.name)) return;
+
     const save = @import("config").setting_save;
-    save.saveInput(@import("../../main.zig").gpa, server.io, server.config.path, "xkb_layout", choice.layout) catch |err| {
+    save.saveInput(gpa, server.io, server.config.path, "xkb_layout", choice.name) catch |err| {
         std.log.warn("could not save keyboard layout: {}", .{err});
         return;
     };
-    save.saveInput(@import("../../main.zig").gpa, server.io, server.config.path, "xkb_variant", choice.variant) catch |err| {
-        std.log.warn("could not save keyboard variant: {}", .{err});
+    // Variants belong to a specific base layout. Do not carry one over when
+    // the user selects a different language/layout.
+    save.saveInput(gpa, server.io, server.config.path, "xkb_variant", "") catch |err| {
+        std.log.warn("could not clear keyboard variant: {}", .{err});
     };
     @import("../../config_runtime/watcher.zig").reloadConfig(server);
 }

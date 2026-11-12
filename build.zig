@@ -176,6 +176,7 @@ pub fn build(b: *std.Build) void {
     compositor.root_module.linkSystemLibrary("cups", .{});
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
     compositor.root_module.linkSystemLibrary("xkbcommon", .{});
+    compositor.root_module.linkSystemLibrary("xkbregistry", .{});
     compositor.root_module.linkSystemLibrary("pixman-1", .{});
     compositor.root_module.linkSystemLibrary("freetype2", .{});
     compositor.root_module.linkSystemLibrary("harfbuzz", .{});
