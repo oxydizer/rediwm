@@ -120,6 +120,7 @@ pub const TaskbarDragSession = struct {
     origin_index: usize,
     press_x: f64,
     press_y: f64,
+    dragging: bool = false,
 };
 
 server: *Server,

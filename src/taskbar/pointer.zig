@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Taskbar = @import("../Taskbar.zig");
+const Toplevel = @import("../Toplevel.zig");
 const anim = @import("ui").anim;
 const battery = @import("../taskbar/battery.zig");
 const start_button = @import("../taskbar/start_button.zig");
@@ -99,9 +100,40 @@ pub fn setHover(bar: *Taskbar, target: Target, to: f32, now_ms: i64) void {
     }
 }
 
-// Clicks act on press, matching Input.cursorButton's existing convention
-// (window chrome and focus both act on press; release is never routed
-// further than clearing the cursor mode).
+fn pressChip(bar: *Taskbar, toplevel: *Toplevel) void {
+    const now_ms = nowMs();
+    bar.markDirty(paint_chips | paint_press);
+    for (bar.chips.items) |*chip| {
+        if (chip.toplevel == toplevel) {
+            chip.dirty = true;
+            chip.press.pulseTo(now_ms, press_scale, 1, anim.curveFor(.taskbar_press));
+            break;
+        }
+    }
+    if (Output.fromWlr(bar.wlr_output)) |output| {
+        const world = &bar.server.world;
+        const focused = @import("../ipc/handlers.zig").findFocusedToplevel(bar.server) == toplevel;
+        if (!toplevel.minimized and focused and world.isWindowVisible(toplevel, output)) {
+            toplevel.minimize();
+        } else {
+            if (toplevel.minimized) toplevel.restore() else world.focus(toplevel);
+            world.navigateTo(toplevel, output);
+        }
+    }
+}
+
+/// Complete a deferred chip click by stable window ID.
+pub fn pointerPressChip(bar: *Taskbar, window_id: u64) void {
+    for (bar.chips.items) |chip| {
+        if (chip.toplevel.id == window_id) {
+            pressChip(bar, chip.toplevel);
+            bar.wlr_output.scheduleFrame();
+            return;
+        }
+    }
+}
+
+// Non-chip taskbar actions still act immediately on press.
 pub fn pointerPress(bar: *Taskbar, sx: f64, sy: f64) void {
     const now_ms = nowMs();
     var did_mutate = false;
@@ -116,25 +148,8 @@ pub fn pointerPress(bar: *Taskbar, sx: f64, sy: f64) void {
             if (Output.fromWlr(bar.wlr_output)) |output| output.toggleStartMenu();
         },
         .chip => |toplevel| {
-            bar.markDirty(paint_chips | paint_press);
             did_mutate = true;
-            for (bar.chips.items) |*chip| {
-                if (chip.toplevel == toplevel) {
-                    chip.dirty = true;
-                    chip.press.pulseTo(now_ms, press_scale, 1, anim.curveFor(.taskbar_press));
-                    break;
-                }
-            }
-            if (Output.fromWlr(bar.wlr_output)) |output| {
-                const world = &bar.server.world;
-                const focused = @import("../ipc/handlers.zig").findFocusedToplevel(bar.server) == toplevel;
-                if (!toplevel.minimized and focused and world.isWindowVisible(toplevel, output)) {
-                    toplevel.minimize();
-                } else {
-                    if (toplevel.minimized) toplevel.restore() else world.focus(toplevel);
-                    world.navigateTo(toplevel, output);
-                }
-            }
+            pressChip(bar, toplevel);
         },
         .tray => |i| {
             bar.markDirty(paint_tray | paint_press);

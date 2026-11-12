@@ -270,6 +270,15 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
 }
 
 pub fn passthroughMotion(input: *Input, time_msec: u32) void {
+    if (input.taskbar_drag) |*session| {
+        const dx = input.cursor.x - session.press_x;
+        const dy = input.cursor.y - session.press_y;
+        const threshold: f64 = 6;
+        if (!session.dragging and dx * dx + dy * dy >= threshold * threshold) {
+            session.dragging = true;
+        }
+        return;
+    }
     if (input.dock_drag.motion(input)) return;
     // Shell controls keep receiving motion until release, just like a client's
     // implicit grab. A scrollbar drag may leave the whole window or panel.
