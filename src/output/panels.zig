@@ -129,10 +129,10 @@ pub fn openNetworkSettings(output: *Output) void {
     if (output.server.input.open_control_center) |cc| cc.selectPage(.network);
 }
 
-/// Opens Settings on its Input page (the input source list).
+/// Opens Settings on its Region & Language page (the input source list).
 pub fn openInputSettings(output: *Output) void {
     output.toggleControlCenter();
-    if (output.server.input.open_control_center) |cc| cc.selectPage(.input);
+    if (output.server.input.open_control_center) |cc| cc.selectPage(.region);
 }
 
 /// Closes the settings window, like its titlebar close button.
