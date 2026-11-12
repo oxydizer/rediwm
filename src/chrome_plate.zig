@@ -6,8 +6,8 @@ const theme = @import("ui").theme;
 const shape = @import("ui").window_shape;
 
 /// Retained chrome must include every plate geometry input in its cache key.
-pub fn geometry(t: theme.Theme) [5]f32 {
-    return .{ t.window_title_plate_inset, t.window_title_plate_bevel, t.window_title_plate_slant, t.window_title_plate_control_gap, t.window_title_plate_text_padding };
+pub fn geometry(t: theme.Theme) [6]f32 {
+    return .{ t.window_title_plate_inset, t.window_title_plate_bevel, t.window_title_plate_slant, t.window_title_plate_control_gap, t.window_title_plate_text_padding, t.window_title_plate_bottom_bevel };
 }
 
 pub fn width(frame_width: i32, state: chrome.ChromeState) f32 {
@@ -37,10 +37,13 @@ pub fn polygon(frame_width: i32, state: chrome.ChromeState) ?shape.Resolved {
     // configured bevels cannot produce crossing edges.
     const bevel = @min(t.window_title_plate_bevel * d, @min((w - left) / 2, h - 2 * inset));
     const slant = @min(t.window_title_plate_slant * h, w - left - bevel);
-    var result: shape.Resolved = .{ .count = 5 };
-    result.points[0..5].* = .{
-        .{ left, h - inset },  .{ left, inset + bevel }, .{ left + bevel, inset },
-        .{ w - slant, inset }, .{ w, h - inset },
+    const bottom = @max(0, @min(t.window_title_plate_bottom_bevel * d, @min((w - left) / 2, h - 2 * inset - bevel)));
+    // Points 3 and 4 are the top and bottom of the slant (`titleRight`,
+    // `right`); a bottom bevel adds its far end last, never a zero-length edge.
+    var result: shape.Resolved = .{ .count = if (bottom > 0) 6 else 5 };
+    result.points[0..6].* = .{
+        .{ left, h - inset - bottom }, .{ left, inset + bevel }, .{ left + bevel, inset },
+        .{ w - slant, inset },         .{ w, h - inset },        .{ left + bottom, h - inset },
     };
     return result;
 }

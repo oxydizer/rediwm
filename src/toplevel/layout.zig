@@ -24,7 +24,7 @@ pub fn setMaximizedOn(toplevel: *Toplevel, output: *Output) void {
     const usable = output.usableBox();
     if (usable.width <= 0 or usable.height <= 0) return;
 
-    const footer = if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
+    const footer = if (toplevel.hasServerDecorations()) chrome.frameBorder() else 0;
     const scale = toplevel.zoom();
     const width = @as(i32, @intFromFloat(@floor(@as(f64, @floatFromInt(usable.width)) / scale))) - 2 * toplevel.borderWidth();
     const height = @as(i32, @intFromFloat(@floor(@as(f64, @floatFromInt(usable.height)) / scale))) - toplevel.titlebarHeight() - footer;
@@ -155,7 +155,7 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
 
     const rect = tiling.tileRect(usable, tile, toplevel.server.config.compositor.windowGap());
     // cornerRadius() still reads maximized until an xdg client acks leaving it.
-    const footer = if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
+    const footer = if (toplevel.hasServerDecorations()) chrome.frameBorder() else 0;
     const scale = toplevel.zoom();
     const width = @as(i32, @intFromFloat(@floor(@as(f64, @floatFromInt(rect.width)) / scale))) - 2 * toplevel.borderWidth();
     const height = @as(i32, @intFromFloat(@floor(@as(f64, @floatFromInt(rect.height)) / scale))) - toplevel.titlebarHeight() - footer;
@@ -186,7 +186,7 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
 /// a window still opening takes its first tile at once.
 pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box, animate: bool) void {
     if (!toplevel.in_world or toplevel.fullscreen or toplevel.maximized) return;
-    const footer = if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
+    const footer = if (toplevel.hasServerDecorations()) chrome.frameBorder() else 0;
     const target: RestoreGeometry = .{
         .x = rect.x,
         .y = rect.y,

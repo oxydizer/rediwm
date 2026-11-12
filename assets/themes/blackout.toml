@@ -10,47 +10,57 @@ font = "Manrope"
 mono_font = "JetBrains Mono"
 font_size = 13
 title_size = 13.5
-chrome_height = 42
+chrome_height = 48
 chrome_control_gap = 8
 chrome_control_right_pad = 2
 chrome_control_offset_y = 5
 chrome_round_buttons = false
+chrome_button_bevel = 7
 # Raised title tab, a 45-degree step down, and four clipped corners. The step
-# is the title plate's slant moved out by the plate inset: 310 wide, 30 slant
-# (42 - 2 * 6) and inset 6 give x - y = 274 + 6 * sqrt(2). Change them together.
-# Below ~304 px wide the outline cannot fit and the window is a plain rectangle;
+# is the title plate's slant moved out by the plate inset: 307.60 wide, 34 slant
+# (48 - 2 * 7) and inset 7 give x - y = 266.60 + 7 * sqrt(2) = 276.5. Change
+# them together. The inset leaves 2 px beyond the outer and inner borders (2 + 3 px).
+# Below ~298 px wide the outline cannot fit and the window uses rounded corners;
 # maximized windows stay rectangular.
-window_shape = "0 14, 14 0, 282.5 0, 289.5 7, -14 7, -0 21, -0 -12, -12 -0, 12 -0, 0 -12"
+window_shape = "0 14, 14 0, 276.5 0, 283.5 7, -14 7, -0 21, -0 -12, -12 -0, 12 -0, 0 -12"
 window_bg = "#111516"
 window_fg = "#E3E5E3"
 window_dim = "#A2A8A6"
 window_border = "#3B4242"
 window_border_hover = "#737C68"
+window_border_width = 2
+# Yellow corners occupy this continuous inner band, flush against the outer ring.
+# Both borders reserve space outside the client content.
+window_inner_border = "#2B3233"
+window_inner_border_width = 3
 window_divider = "#2A3030"
-window_title_plate = "#FAEB01"
-window_title_plate_width = 310
+window_title_plate = "#FBE301"
+window_title_plate_width = 307.60
 window_title_plate_fg = "#111400"
-# Plate geometry; slant is a fraction of chrome_height (30 of 42: 45 degrees).
+# Plate geometry; slant is a fraction of chrome_height (34 of 48: 45 degrees).
 # With an outline the plate follows its cut corners at the inset; the bevel
 # applies to rectangular (maximized) frames.
-window_title_plate_inset = 6
+window_title_plate_inset = 7
 window_title_plate_bevel = 7
-window_title_plate_slant = 0.7142857
+window_title_plate_bottom_bevel = 7
+window_title_plate_slant = 0.7083333333
 window_title_plate_control_gap = 8
 window_title_plate_text_padding = 8
-window_corner_accent = "#FAEB01"
-window_corner_extent = 34
+window_corner_accent = "#FBE301"
+window_corner_extent = 40
 window_corner_resize_extra = 18
 window_corner_width = 3
 # Extra inset beyond the frame ring; resize/restore durations in milliseconds.
 window_corner_inset = 0
 window_corner_end_padding = 2
+# The yellow fills the inner band; its ends keep their 45-degree cuts.
+window_corner_cut_ends = true
 window_corner_resize_ms = 140
 window_corner_restore_ms = 180
 window_corner_resize_ease = "out_cubic"
-window_close_hover = "#FAEB01"
+window_close_hover = "#FBE301"
 window_close_fg = "#111400"
-workspace_active_border = "#FAEB01"
+workspace_active_border = "#FBE301"
 
 app_bg = "#101314"
 app_fg = "#E3E5E3"
@@ -67,21 +77,21 @@ app_nav_selected = "#454719"
 # icons carry the accent without requiring per-app selection text overrides.
 app_sidebar_selected = "#454719"
 app_sidebar_hover = "#252B2B"
-app_sidebar_selected_marker = "#FAEB01"
+app_sidebar_selected_marker = "#FBE301"
 app_sidebar_item_radius = 5
 app_highlight_bevel = 7
 app_divider = "#303737"
-app_icon = "#FAEB01"
+app_icon = "#FBE301"
 app_menu_bg = "#171B1C"
 app_field_bg = "#0D1011"
 app_field_border = "#343C3C"
 text_secondary = "#A2A8A6"
-file_folder_back = "#A89D00"
-file_folder_front = "#FAEB01"
+file_folder_back = "#A99800"
+file_folder_front = "#FBE301"
 file_document = "#D7DBD9"
 file_document_lines = "#515A58"
-scrollbar_thumb = "#E4D500"
-scrollbar_thumb_active = "#FFF233"
+scrollbar_thumb = "#E5CE00"
+scrollbar_thumb_active = "#FFEA33"
 scrollbar_track = "#1A2021"
 scrollbar_track_stripe = "#343D3E"
 # Distances along the scrollbar; slope 1 makes 45-degree diagonal bands.
@@ -89,18 +99,18 @@ scrollbar_track_stripe_period = 10
 scrollbar_track_stripe_width = 5
 scrollbar_track_stripe_slope = 1
 scrollbar_glow = 0
-scrollbar_width = 8
+scrollbar_width = 10
 scrollbar_radius = 3
 
 bg = "#101314"
 fg = "#E3E5E3"
 dim = "#A2A8A6"
 faint = "#747E7B"
-accent = "#FAEB01"
-accent_2 = "#D3C600"
-accent_3 = "#A89D00"
+accent = "#FBE301"
+accent_2 = "#D4BF00"
+accent_3 = "#A99800"
 on_accent = "#111400"
-shell_accent = "#FAEB01"
+shell_accent = "#FBE301"
 shell_on_accent = "#111400"
 danger = "#F06A51"
 surface = "#202627"
@@ -108,8 +118,8 @@ surface_hover = "#303737"
 border = "#3B4242"
 border_soft = "#2A3030"
 border_hover = "#737C68"
-border_focus = "#FAEB01"
-border_glow = "rgba(250,235,1,0.55)"
+border_focus = "#FBE301"
+border_glow = "rgba(251,227,1,0.55)"
 glass = "#15191A"
 glass_strong = "#171B1C"
 shadow = "rgba(0,0,0,0.65)"
@@ -118,10 +128,10 @@ shadow_offset_y = 6
 field_bg = "#0D1011"
 field_border = "#343C3C"
 selection_alpha = 0.28
-toggle_on = "#FAEB01"
+toggle_on = "#FBE301"
 toggle_thumb = "#E3E5E3"
 slider_track = "#343C3C"
-control_thumb = "#FAEB01"
+control_thumb = "#FBE301"
 
 radius = 5
 radius_md = 6
@@ -143,20 +153,21 @@ dock_border = "#3B4242"
 dock_bevel = 14
 dock_item_bg = "#171B1C"
 dock_item_border = "#2A3030"
-dock_item_hover_border = "#FAEB01"
+dock_item_hover_border = "#FBE301"
 dock_item_bevel = 7
 dock_icon_grey = 1
 # A short status bar in the top-right corner, its one exposed corner cut.
 taskbar_length = 20
 taskbar_shape = "0 0, -0 0, -0 -0, 16 -0, 0 -16"
-start_button_logo_color = "#FAEB01"
-start_button_indicator = "#FAEB01"
+start_button_logo_color = "#FBE301"
+start_button_indicator = "#FBE301"
 start_menu_bg = "#15191A"
+start_menu_bevel = 16
 start_menu_border = "#3B4242"
 start_menu_search_bg = "#0D1011"
 start_menu_selected_bg = "#454719"
-start_menu_selected_border = "#8F8700"
-start_menu_selected_marker = "#FAEB01"
+start_menu_selected_border = "#908200"
+start_menu_selected_marker = "#FBE301"
 popup_bg = "#171B1C"
 popup_border = "#3B4242"
 popup_card_bg = "#202627"
@@ -171,7 +182,7 @@ switcher_bg = "#111516"
 switcher_border = "#3B4242"
 switcher_item_bg = "#202627"
 switcher_item_border = "#343C3C"
-switcher_selected_border = "#FAEB01"
+switcher_selected_border = "#FBE301"
 switcher_fg = "#E3E5E3"
 switcher_dim = "#A2A8A6"
 switcher_icon_bg = "#303737"
@@ -179,14 +190,14 @@ lock_bg = "#101314"
 lock_fg = "#E3E5E3"
 lock_dim = "#A2A8A6"
 lock_divider = "#3B4242"
-lock_session_fg = "#FAEB01"
+lock_session_fg = "#FBE301"
 lock_wallpaper_opacity = 0.15
 power_menu_bevel = 16
 terminal_bg = "#101314"
 terminal_fg = "#E3E5E3"
-terminal_cursor = "#FAEB01"
-terminal_yellow = "#D3C600"
-terminal_bright_yellow = "#FAEB01"
+terminal_cursor = "#FBE301"
+terminal_yellow = "#D4BF00"
+terminal_bright_yellow = "#FBE301"
 
 [layout]
 # Status items only: the start menu stays on Super, windows on Alt+Tab.

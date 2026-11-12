@@ -113,6 +113,7 @@ rediwm-msg close-panel start_menu
 rediwm-msg action set-master-volume --volume 0.4
 rediwm-msg action toggle-mute
 rediwm-msg switch-layout next
+rediwm-msg switch-input-source next
 ```
 
 **Anything without a subcommand**

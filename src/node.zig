@@ -171,6 +171,7 @@ pub const Buffer = extern struct {
     dst_width: c_int,
     dst_height: c_int,
     transform: wl.Output.Transform,
+    sector_rect: [4]f32,
     opaque_region: pixman.Region32,
     buffer_width: c_int,
     buffer_height: c_int,
@@ -214,6 +215,10 @@ pub const Buffer = extern struct {
     pub const setFilterMode = rediwm_buffer_set_filter_mode;
     extern fn rediwm_buffer_set_transform(buffer: *Buffer, transform: wl.Output.Transform) void;
     pub const setTransform = rediwm_buffer_set_transform;
+    extern fn rediwm_buffer_set_sector_rect(buffer: *Buffer, rect: ?*const [4]f32) void;
+    /// Under a radially mapped tree clip: the part of the mapped image this
+    /// node fills (x, y, width, height as fractions); null is all of it.
+    pub const setSectorRect = rediwm_buffer_set_sector_rect;
     extern fn rediwm_buffer_set_opaque_region(buffer: *Buffer, region: ?*const pixman.Region32) void;
     pub const setOpaqueRegion = rediwm_buffer_set_opaque_region;
 

@@ -68,10 +68,10 @@ pub fn handleStateRequest(
             const geometry_box = toplevel.clientGeometry();
             const decorated = toplevel.hasServerDecorations();
             const radius: f32 = toplevel.cornerRadius();
-            const footer = chrome.frame_border;
+            const footer = chrome.frameBorder();
 
             const client_box: protocol.RectData = .{
-                .x = toplevel.x + if (decorated) chrome.frame_border else 0,
+                .x = toplevel.x + if (decorated) chrome.frameBorder() else 0,
                 .y = toplevel.y + toplevel.titlebarHeight(),
                 .width = geometry_box.width,
                 .height = geometry_box.height,
@@ -108,7 +108,7 @@ pub fn handleStateRequest(
                         .chrome_box = chrome_box,
                         .titlebar_height = toplevel.titlebarHeight(),
                         .footer_height = if (decorated) footer else 0,
-                        .frame_border = if (decorated) chrome.frame_border else 0,
+                        .frame_border = if (decorated) chrome.frameBorder() else 0,
                         .frame_radius = if (decorated) radius else 0,
                         .decoration_mode = if (decorated) "server" else "client",
                         .minimized = toplevel.minimized,

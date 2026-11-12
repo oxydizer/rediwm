@@ -209,6 +209,8 @@ pub fn applyPresentation(menu: *StartMenu, now_ms: i64) void {
     if (menu.panel_box.width <= 0 or menu.panel_box.height <= 0) return;
     const t = menu.slide.value(now_ms);
     panel_present.applySlide(menu.buffer_node, menu.panel_box, t, if (menu.server.config.compositor.taskbar_position == .top) -slide_distance else slide_distance);
-    glass.Effect.configure(menu.glass_effect, theme.global.start_menu_radius, t);
+    // Keep the rounded blur inside a straight corner cut, as on the dock.
+    const radius = @max(theme.global.start_menu_radius, theme.global.start_menu_bevel * 1.71);
+    glass.Effect.configure(menu.glass_effect, radius, t);
     if (menu.state == .opening and (menu.slide.settled(now_ms) or panel_present.slideOffset(t, slide_distance) == 0)) menu.state = .open;
 }

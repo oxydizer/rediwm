@@ -39,6 +39,9 @@ makedepends=(
   'zig>=0.17.0'
   'pkgconf'
   'boost'
+  # The RediWM Qt style plugins; Qt apps bring their own Qt at run time.
+  'qt5-base'
+  'qt6-base'
 )
 optdepends=(
   'xorg-xwayland: run X11 applications'
@@ -65,7 +68,7 @@ pkgver() {
 build() {
   cd "$_pkgname"
   zig build -Doptimize=ReleaseSafe -j"$(nproc)" \
-    -Dinstall-prefix=/usr \
+    -Dinstall-prefix=/usr -Dqt-style=true \
     --prefix "$srcdir/rediwm-build-prefix"
 }
 

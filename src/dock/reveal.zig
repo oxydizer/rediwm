@@ -11,8 +11,8 @@ const anim = ui.anim;
 const Self = @import("../Dock.zig");
 const max_pins = Self.max_pins;
 const Shortcut = Self.Shortcut;
-const edge_margin = Self.edge_margin;
-const window_margin = Self.window_margin;
+/// Pointer tolerance around a shown auto-hiding dock, independent of layout.
+const pointer_margin = 5;
 const edge_band = Self.edge_band;
 const reveal_delay_ms = Self.reveal_delay_ms;
 const hide_delay_ms = Self.hide_delay_ms;
@@ -20,23 +20,22 @@ const slide_distance = Self.slide_distance;
 const Metrics = Self.Metrics;
 const shownIn = Self.shownIn;
 
-/// What a dock reserves along `area`'s edge for windows: its thickness and the
-/// gap on either side. Nothing when it floats over them (auto-hide), is off, or
+/// What a dock reserves along `area`'s edge for windows: exactly its thickness.
+/// Nothing when it floats over them (auto-hide), is off, or
 /// does not fit and so shows nothing.
 pub fn reservedStrip(server: *const Server, area: wlr.Box) i32 {
     if (!reserves(&server.config.compositor)) return 0;
-    const reach = footprint(server, area);
-    return if (reach == 0) 0 else reach + window_margin;
+    return footprint(server, area);
 }
 
-/// How far a resting dock reaches in from its edge of `area`: its thickness and
-/// the gap to the edge, whether it reserves that strip or auto-hides. Read from
+/// How far a resting dock reaches in from its edge of `area`: its thickness,
+/// whether it reserves that strip or auto-hides. Read from
 /// the configuration alone, like `reservedStrip`, so what keeps clear of it (the
 /// OSD) stays put while an auto-hiding dock comes and goes.
 pub fn footprint(server: *const Server, area: wlr.Box) i32 {
     const c = &server.config.compositor;
     if (server.greeter_mode or !c.dock_enabled or !fits(c, area)) return 0;
-    return @as(i32, @intCast(c.dock_height)) + edge_margin;
+    return @intCast(c.dock_height);
 }
 
 /// Whether the dock, as configured, keeps windows out of its strip. A change
@@ -112,7 +111,7 @@ pub fn menuOpen(self: *const Self) bool {
 }
 
 /// Whether the pointer at layout position `x`, `y` wants the dock: it is at the
-/// output edge the dock is on, or on the dock (and the gap beside it) once shown.
+/// output edge the dock is on, or on or just beside the dock once shown.
 pub fn nearPointer(self: *const Self, output: *Output, x: f64, y: f64) bool {
     const c = &output.server.config.compositor;
     if (!c.dock_auto_hide or !self.visible) return false;
@@ -129,8 +128,8 @@ pub fn nearPointer(self: *const Self, output: *Output, x: f64, y: f64) bool {
     if (at_edge) return true;
     // Only a dock that is out can be pointed at: where it would be is windows.
     if (!self.shown) return false;
-    return (px >= self.box.x - edge_margin and px < self.box.x + self.box.width + edge_margin and
-        py >= self.box.y - edge_margin and py < self.box.y + self.box.height + edge_margin) or
+    return (px >= self.box.x - pointer_margin and px < self.box.x + self.box.width + pointer_margin and
+        py >= self.box.y - pointer_margin and py < self.box.y + self.box.height + pointer_margin) or
         self.buttonAt(@floatCast(x - @as(f64, @floatFromInt(self.box.x))), @floatCast(y - @as(f64, @floatFromInt(self.box.y)))) != null;
 }
 

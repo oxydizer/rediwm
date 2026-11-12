@@ -379,7 +379,7 @@ pub fn processClientButton(
             if (button == btn_left) {
                 const local = res.toplevel.frameLocal(input.cursor.x, input.cursor.y);
                 const has_control = res.toplevel.controlAt(res.sx, res.sy) != null or res.toplevel.tabAt(res.sx, res.sy) != .none;
-                if (resize.detectResizeEdges(local.x, local.y, res.toplevel.chrome_width, res.toplevel.chrome_height, res.toplevel.titlebarHeight(), chrome.frame_border, chrome.frame_border, has_control)) |edges| {
+                if (resize.detectResizeEdges(local.x, local.y, res.toplevel.chrome_width, res.toplevel.chrome_height, res.toplevel.titlebarHeight(), chrome.frameBorder(), chrome.frameBorder(), has_control)) |edges| {
                     input.startResize(res.toplevel, edges.toWlr(), device, button);
                     return;
                 }

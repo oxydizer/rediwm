@@ -42,7 +42,7 @@ pub fn titlebarHeight(toplevel: *const Toplevel) i32 {
 }
 
 pub fn borderWidth(toplevel: *const Toplevel) i32 {
-    return if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
+    return if (toplevel.hasServerDecorations()) chrome.frameBorder() else 0;
 }
 
 pub fn hasWorkspaceFocusBorder(toplevel: *const Toplevel) bool {
@@ -55,7 +55,7 @@ pub fn borderColor(toplevel: *const Toplevel) col.Premul {
 
 pub fn footerHeight(toplevel: *const Toplevel) i32 {
     if (!toplevel.hasServerDecorations()) return 0;
-    return chrome.frame_border;
+    return chrome.frameBorder();
 }
 
 pub fn frameLocal(toplevel: *const Toplevel, lx: f64, ly: f64) geometry.Vec2 {

@@ -129,6 +129,12 @@ pub fn openNetworkSettings(output: *Output) void {
     if (output.server.input.open_control_center) |cc| cc.selectPage(.network);
 }
 
+/// Opens Settings on its Input page (the input source list).
+pub fn openInputSettings(output: *Output) void {
+    output.toggleControlCenter();
+    if (output.server.input.open_control_center) |cc| cc.selectPage(.input);
+}
+
 /// Closes the settings window, like its titlebar close button.
 pub fn closeControlCenter(output: *Output) void {
     const cc = output.server.input.open_control_center orelse return;

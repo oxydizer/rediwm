@@ -85,6 +85,9 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
             }
         }
     }
+    if (!@import("config").keymap.namesEqual(old.input, new.input) or !std.mem.eql(u8, old.input.xkb_labels, new.input.xkb_labels)) {
+        if (server.input_sources) |sources| sources.reload();
+    }
 
     if (old.compositor.canvas_columns != new.compositor.canvas_columns or
         old.compositor.canvas_rows != new.compositor.canvas_rows)
@@ -196,10 +199,14 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
 
     const theme_changed = pack_changed or !themeEql(old.theme, new.theme) or old.compositor.border_radius != new.compositor.border_radius;
     const taskbar_theme_changed = !theme_mod.taskbarOverrideEql(old.taskbar_theme, new.taskbar_theme);
+    if (theme_changed or old.compositor.follow_app_colors != new.compositor.follow_app_colors or old.compositor.dark_mode != new.compositor.dark_mode) {
+        @import("app_colors.zig").sync(server);
+        if (server.input.open_control_center) |cc| cc.refresh();
+    }
     if (theme_changed) {
         server.saveLoginTheme();
         if (server.notifications) |manager| manager.themeChanged();
-        if (server.desktop) |desktop| desktop.app.themeChanged();
+        if (server.desktop) |desktop| desktop.themeChanged();
         if (server.locker) |lock| lock.themeChanged();
         server.refreshTaskbarsGeometry();
         var top_it = server.world.toplevels.iterator(.forward);

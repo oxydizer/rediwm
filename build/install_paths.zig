@@ -62,3 +62,41 @@ pub fn configure(b: *std.Build, path: []const u8, prefix: []const u8) std.Build.
     const contents = std.mem.replaceOwned(u8, b.allocator, bytes, "@BINDIR@", b.fmt("{s}/bin", .{prefix})) catch @panic("out of memory");
     return b.addWriteFiles().add(std.fs.path.basename(path), contents);
 }
+
+/// Writes `programs` beside `install-prefix`: every executable the install step
+/// puts in bin/, one per line. The install scripts read it instead of keeping
+/// their own lists, so a new helper cannot be left out, and a stale file
+/// lingering in an old output directory (zig build never deletes) is ignored.
+/// Call last in `build()`, after every artifact is registered.
+pub fn writeProgramList(b: *std.Build) void {
+    var names: std.ArrayList([]const u8) = .empty;
+    var seen: std.AutoHashMapUnmanaged(*std.Build.Step, void) = .empty;
+    collectPrograms(b, b.getInstallStep(), &names, &seen);
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn less(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.order(u8, x, y) == .lt;
+        }
+    }.less);
+    var text: std.ArrayList(u8) = .empty;
+    for (names.items) |name| text.print(b.allocator, "{s}\n", .{name}) catch @panic("out of memory");
+    const list = b.addWriteFiles().add("programs", text.items);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(list, .prefix, "programs").step);
+}
+
+fn collectPrograms(b: *std.Build, step: *std.Build.Step, names: *std.ArrayList([]const u8), seen: *std.AutoHashMapUnmanaged(*std.Build.Step, void)) void {
+    if ((seen.getOrPut(b.allocator, step) catch @panic("out of memory")).found_existing) return;
+    var program: ?[]const u8 = null;
+    if (step.cast(std.Build.Step.InstallArtifact)) |install| {
+        const in_bin = if (install.dest_dir) |dir| dir == .bin else false;
+        if (in_bin and install.artifact.kind == .exe) program = install.dest_sub_path orelse install.artifact.out_filename;
+    }
+    // Programs built by an external command (the transfers helper) install as files.
+    if (step.cast(std.Build.Step.InstallFile)) |install| {
+        if (install.dir == .bin) program = install.dest_rel_path;
+    }
+    if (program) |name| {
+        if (std.mem.indexOfScalar(u8, name, '/') != null) std.debug.panic("program {s} is installed below bin/", .{name});
+        names.append(b.allocator, name) catch @panic("out of memory");
+    }
+    for (step.dependencies.items) |dep| collectPrograms(b, dep, names, seen);
+}

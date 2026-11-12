@@ -83,6 +83,10 @@ struct rediwm_buffer {
   struct wlr_fbox src_box;
   int dst_width, dst_height;
   enum wl_output_transform transform;
+  // Under a tree clip that maps its texture radially (`sector_texture_height`): the
+  // part of the mapped image this node fills, as fractions of it (x, y, width,
+  // height). A zero width is all of it. Elsewhere it is not used.
+  float sector_rect[4];
   pixman_region32_t opaque_region;
   // The size of the buffer as last set, kept for when the renderer releases it.
   int buffer_width, buffer_height;
@@ -204,6 +208,8 @@ void rediwm_buffer_set_source_box(struct rediwm_buffer *, const struct wlr_fbox 
 void rediwm_buffer_set_opacity(struct rediwm_buffer *, float opacity);
 void rediwm_buffer_set_filter_mode(struct rediwm_buffer *, enum wlr_scale_filter_mode);
 void rediwm_buffer_set_transform(struct rediwm_buffer *, enum wl_output_transform);
+// See `sector_rect`; NULL is the whole image.
+void rediwm_buffer_set_sector_rect(struct rediwm_buffer *, const float rect[4]);
 // A copy of the region, in buffer-local units; NULL clears it.
 void rediwm_buffer_set_opaque_region(struct rediwm_buffer *, const pixman_region32_t *);
 // The size the buffer node is shown at when nothing sets one: the destination, else

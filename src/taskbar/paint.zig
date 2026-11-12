@@ -180,24 +180,32 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
     }
     if (part == .tray) {
         const i = part.tray;
-        const alert = switch (@as(TrayKind, @enumFromInt(i))) {
+        const kind: TrayKind = @enumFromInt(i);
+        const alert = switch (kind) {
             .volume => bar.audio_muted,
             .wifi, .wired => bar.network_offline,
-            .power => false,
+            .power, .input_source => false,
         };
         const color = if (alert) blk: {
             var danger = Color.fromRgba(ui_theme.taskbar(.danger));
-            if ((@as(TrayKind, @enumFromInt(i)) == .wifi or @as(TrayKind, @enumFromInt(i)) == .wired) and bar.blink_dim) danger.a *= 0.25;
+            if ((kind == .wifi or kind == .wired) and bar.blink_dim) danger.a *= 0.25;
             break :blk danger;
         } else Color.lerp(Color.tray_icon(), Color.tray_icon_hover(), hover);
-        const size = 20 * press;
-        var renderer = @import("ui").paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
-        renderer.drawIcon(bar.trayPositions()[i] + @as(f32, @floatFromInt(trayHit())) / 2 - size / 2 - @as(f32, @floatFromInt(origin_x)), @as(f32, @floatFromInt(bar.box.height)) / 2 - size / 2 - @as(f32, @floatFromInt(origin_y)), size, size, .{ .id = switch (@as(TrayKind, @enumFromInt(i))) {
-            .wifi => .wifi,
-            .wired => .ethernet,
-            .volume => if (bar.audio_muted) .volume_muted else .volume,
-            .power => .power,
-        }, .color = .{ color.r, color.g, color.b, color.a } });
+        const tx = bar.trayPositions()[i] - @as(f32, @floatFromInt(origin_x));
+        const hit: f32 = @floatFromInt(trayHit());
+        if (kind == .input_source) {
+            paintSourceLabel(bar, buf, tx, @as(f32, @floatFromInt(@divTrunc(bar.box.height - trayHit(), 2) - origin_y)), hit, press, color, scale);
+        } else {
+            const size = 20 * press;
+            var renderer = @import("ui").paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
+            renderer.drawIcon(tx + hit / 2 - size / 2, @as(f32, @floatFromInt(bar.box.height)) / 2 - size / 2 - @as(f32, @floatFromInt(origin_y)), size, size, .{ .id = switch (kind) {
+                .wifi => .wifi,
+                .wired => .ethernet,
+                .volume => if (bar.audio_muted) .volume_muted else .volume,
+                .power => .power,
+                .input_source => unreachable,
+            }, .color = .{ color.r, color.g, color.b, color.a } });
+        }
     }
     drawPartText(bar, now_ms, part, buf, origin_x, origin_y);
     node.node.setPosition(origin_x, origin_y);
@@ -216,6 +224,24 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
         .capture => 0,
         .battery => paint_tray,
     });
+}
+
+/// The active input source's text ("EN", "あ") centred in its tray target,
+/// shrinking for longer labels so three characters and a subscript still fit.
+fn paintSourceLabel(bar: *Taskbar, buf: *BarBuffer, x: f32, y: f32, hit: f32, press: f32, color: Color, scale: f32) void {
+    const sources = bar.server.input_sources orelse return;
+    const label = sources.activeLabel();
+    if (label.len == 0) return;
+    const text = @import("ui").text;
+    var size: f32 = 13 * press;
+    var width = text.measureWidth(label, .manrope_bold, size, scale) catch return;
+    const room: i32 = @intFromFloat(hit - 6);
+    while (width > room and size > 8) {
+        size -= 1;
+        width = text.measureWidth(label, .manrope_bold, size, scale) catch return;
+    }
+    const left: i32 = @intFromFloat(@round(x + (hit - @as(f32, @floatFromInt(width))) / 2));
+    Taskbar.drawCenteredText(buf.pixels, buf.width, buf.height, .{ .x = left, .y = @intFromFloat(@round(y)), .w = width + 1, .h = @intFromFloat(hit) }, label, .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a }, scale, .manrope_bold, size) catch {};
 }
 
 /// Bilinear sample of an icon raster. `x`/`y` are logical offsets from the

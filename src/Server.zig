@@ -205,6 +205,8 @@ config_watcher: ?watcher_mod.ConfigWatcher = null,
 config_generation: u64 = 1,
 config_reload_error: ?[]const u8 = null,
 layout_keyboard: ?*@import("Keyboard.zig") = null,
+/// Keyboard layouts and Fcitx input methods (`input_sources.zig`).
+input_sources: ?*@import("input_sources.zig").Manager = null,
 start_menu_catalog: *applications.Catalog,
 launcher_history: @import("start_menu/history.zig").History = .{},
 /// Memoizes `iconNameForAppId`, which is three linear scans over the whole
@@ -265,6 +267,7 @@ rfkill_before: ?@import("platform").rfkill.State = null,
 bluetooth: ?*@import("bluetooth.zig").Manager = null,
 services: ?*services_mod.Manager = null,
 qt_app_colors: bool = false,
+app_colors: @import("config_runtime/app_colors.zig").State = .{},
 pending_launches: std.ArrayList(*@import("start_menu/launch.zig").Pending) = .empty,
 layout_autosave: ?*layout_autosave_mod.Autosave = null,
 session: ?*wlr.Session = null,
@@ -396,6 +399,8 @@ pub fn applyChildEnvWithToken(server: *Server, map: *child_env.Map, token: ?[]co
 
     try child_env.apply(map, .{
         .qt_app_colors = !server.greeter_mode and server.qt_app_colors,
+        .follow_app_colors = !server.greeter_mode and server.config.compositor.follow_app_colors,
+        .qt_plugin_path = server.app_colors.qt_styles.path,
         .region = server.config.region,
         .input_method = server.config.input_method.env,
         .app_scopes = server.app_scopes != null,

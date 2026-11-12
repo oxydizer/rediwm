@@ -1,0 +1,7 @@
+{
+  "source": "redi-iso/redinit/src",
+  "sha256": {
+    "ctl_client.zig": "c26ed5bd3dab0d42956c374dc0a481db83a7846ca3aecfd1da9b74a7f4a62433",
+    "ctl_proto.zig": "96afa58566b9bebc2913dccc617772257a52ed566bc85ec6b55821e2c1c7d541"
+  }
+}

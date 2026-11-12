@@ -32,6 +32,7 @@ no waybar/greeter/launcher/notification daemon to wire up.
 | `rediwm-desktop` | desktop icons and wallpaper |
 | `rediwm-share-picker` | screen sharing picker |
 | `rediwm-accounts-helper` | root helper for account management, runs under `pkexec` |
+| `rediwm-keys` | unprivileged helper that reads `~/.ssh` for Settings → Keys & Certificates |
 
 ## Other docs in the repo
 

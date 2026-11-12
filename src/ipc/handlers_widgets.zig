@@ -422,6 +422,23 @@ pub fn buildTaskbarWidgetTree(
         });
     }
 
+    if (bar.itemBox(.input_source)) |source_box| {
+        const label = if (server.input_sources) |sources| sources.activeLabel() else "";
+        try widgets.append(allocator, .{
+            .id = widgets.items.len + 1,
+            .parent_index = 0,
+            .role = "button",
+            .name = "input_source",
+            .path = "taskbar/input_source",
+            .semantic_id = "tray_input_source",
+            .label = try allocator.dupe(u8, label),
+            .box = .{ .x = source_box.x - bar.box.x, .y = source_box.y - bar.box.y, .width = source_box.width, .height = source_box.height },
+            .global_box = .{ .x = source_box.x, .y = source_box.y, .width = source_box.width, .height = source_box.height },
+            .visible = true,
+            .is_disabled = false,
+        });
+    }
+
     if (bar.itemBox(.power)) |pbox| {
         try widgets.append(allocator, .{
             .id = widgets.items.len + 1,

@@ -9,6 +9,7 @@ const Context = @import("build/context.zig").Context;
 const protocols = @import("build/protocols.zig");
 const apps = @import("build/apps.zig");
 const player_build = @import("build/player.zig");
+const qt_style = @import("build/qt_style.zig");
 const data = @import("build/data.zig");
 const session_build = @import("build/session.zig");
 const tests = @import("build/tests.zig");
@@ -76,6 +77,14 @@ pub fn build(b: *std.Build) void {
     const memory_mod = b.createModule(.{ .root_source_file = b.path("src/memory/allocator.zig"), .target = target, .optimize = optimize });
     // The OS-specific parts (children, file watching, own path): std only.
     const platform_mod = b.createModule(.{ .root_source_file = b.path("src/platform/mod.zig"), .target = target, .optimize = optimize });
+    // Exact copies of Redinit's exported client/wire modules; no compositor protocol implementation.
+    const redi_options = b.addOptions();
+    redi_options.addOption([]const u8, "name", "redinit");
+    const redi_proto = b.createModule(.{ .root_source_file = b.path("src/platform/redinit_client/ctl_proto.zig"), .target = target, .optimize = optimize });
+    redi_proto.addOptions("config", redi_options);
+    const redi_client = b.createModule(.{ .root_source_file = b.path("src/platform/redinit_client/ctl_client.zig"), .target = target, .optimize = optimize });
+    redi_client.addImport("ctl_proto", redi_proto);
+    platform_mod.addImport("redi_ctl", redi_client);
     const i18n_tool = b.addExecutable(.{ .name = "i18n-tool", .root_module = b.createModule(.{ .root_source_file = b.path("tools/i18n.zig"), .target = b.graph.host, .optimize = .safe }) });
     const catalog_compile = b.addRunArtifact(i18n_tool);
     catalog_compile.setCwd(b.path("."));
@@ -250,6 +259,7 @@ pub fn build(b: *std.Build) void {
     };
     const app = apps.add(ctx);
     player_build.add(ctx);
+    qt_style.add(ctx);
     const files = app.files;
     const images = app.images;
     const monitor = app.monitor;
@@ -319,4 +329,6 @@ pub fn build(b: *std.Build) void {
     run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the nested compositor (pass a client command after --)");
     run_step.dependOn(&run_cmd.step);
+    // Last: it lists every executable registered above.
+    @import("build/install_paths.zig").writeProgramList(b);
 }

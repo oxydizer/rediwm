@@ -364,9 +364,10 @@ pub fn buildTree(menu: *StartMenu) void {
     footer_widget.* = .{
         .kind = .{ .rect = .{
             .color = .{ 0, 0, 0, 0 },
-            .border_width = 1,
+            .border_width = if (t.start_menu_bevel > 0) 0 else 1,
             .border_color = t.border_soft,
         } },
+        .underlay = if (t.start_menu_bevel > 0) .{ .owner = null, .paint = paintFooterDivider } else null,
         .direction = .row,
         .@"align" = .center,
         .justify = .space_between,
@@ -416,6 +417,7 @@ pub fn buildTree(menu: *StartMenu) void {
         .kind = .{ .rect = .{
             .color = t.start_menu_bg,
             .radius = t.start_menu_radius,
+            .bevel = t.start_menu_bevel,
             .border_width = 1,
             .border_color = t.start_menu_border,
         } },
@@ -436,4 +438,9 @@ pub fn buildTree(menu: *StartMenu) void {
         ui.measure.measure(&menu.root, width, height);
         ui.arrange.arrange(&menu.root, 0, 0, width, height);
     }
+}
+
+// The panel owns its beveled outer border; the footer needs only a separator.
+fn paintFooterDivider(_: ?*anyopaque, widget: *const Widget, renderer: *ui.paint.Renderer) void {
+    renderer.fillRect(widget.computed_x, widget.computed_y, widget.computed_width, 1, .{ .color = (renderer.palette orelse theme.global).border_soft });
 }

@@ -447,6 +447,7 @@ pub const closeStartMenu = output_panels.closeStartMenu;
 pub const syncStartMenu = output_panels.syncStartMenu;
 pub const toggleControlCenter = output_panels.toggleControlCenter;
 pub const openNetworkSettings = output_panels.openNetworkSettings;
+pub const openInputSettings = output_panels.openInputSettings;
 pub const closeControlCenter = output_panels.closeControlCenter;
 pub const openPowerMenu = output_panels.openPowerMenu;
 pub const closePowerMenu = output_panels.closePowerMenu;

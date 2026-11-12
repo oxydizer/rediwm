@@ -8,8 +8,12 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 pub const Toolkit = enum { gtk, qt };
-pub const QtSupport = struct { qt5: bool, qt6: bool };
+/// `style5`/`style6`: the RediWM Qt style plugin is installed for that major.
+pub const QtSupport = struct { qt5: bool, qt6: bool, style5: bool = false, style6: bool = false };
 pub const qt_platform = "qt5ct"; // qt6ct also advertises this plugin key.
+/// Fusion with neutral title bars (src/qt_style/); Fusion where it is missing.
+pub const qt_style = "RediWM";
+pub const follow = @import("app_theme_follow.zig");
 
 pub fn configHome(a: Allocator, env: std.process.Environ) ![]u8 {
     if (env.getPosix("XDG_CONFIG_HOME")) |path| if (std.fs.path.isAbsolute(path)) return a.dupe(u8, path);
@@ -89,6 +93,11 @@ fn blend(fg: Color, bg: Color, alpha: f32) Color {
     var result: Color = undefined;
     for (&result, fg, bg) |*v, f, b| v.* = @intFromFloat(@round(@as(f32, @floatFromInt(f)) * alpha + @as(f32, @floatFromInt(b)) * (1 - alpha)));
     return result;
+}
+
+/// Whether the palette needs a dark base stylesheet beneath it.
+pub fn isDark(p: Palette) bool {
+    return contrast(p.bg)[0] == 255;
 }
 
 fn contrast(c: Color) Color {
@@ -282,6 +291,19 @@ pub fn patchIni(a: Allocator, content: []const u8, section: []const u8, key: []c
 const css_begin = "/* BEGIN REDIWM APP COLORS */";
 const css_end = "/* END REDIWM APP COLORS */";
 pub fn patchCss(a: Allocator, content: []const u8) ![]u8 {
+    return replaceManagedCss(a, content, "@import url(\"rediwm-colors.css\");\n");
+}
+
+/// Later rules and named colors win over other palette generators, so the
+/// block goes last.
+pub fn replaceManagedCss(a: Allocator, content: []const u8, body: []const u8) ![]u8 {
+    const original = try removeManagedCss(a, content);
+    defer a.free(original);
+    return std.fmt.allocPrint(a, "{s}" ++ css_begin ++ "\n{s}" ++ css_end ++ "\n", .{ original, body });
+}
+
+/// Named themes must not compete with a stale, higher-priority snapshot.
+pub fn removeManagedCss(a: Allocator, content: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(a);
     var rest = content;
@@ -294,15 +316,10 @@ pub fn patchCss(a: Allocator, content: []const u8) ![]u8 {
     if (std.mem.indexOf(u8, rest, css_end) != null) return error.InvalidManagedCss;
     try out.appendSlice(a, rest);
     if (out.items.len > 0 and out.items[out.items.len - 1] != '\n') try out.append(a, '\n');
-    // The import goes last: GTK keeps the final @define-color and the later of
-    // two equal rules, and generators such as matugen/DMS import their own
-    // palette into gtk.css. Applying must win over those.
-    const result = try std.fmt.allocPrint(a, "{s}" ++ css_begin ++ "\n@import url(\"rediwm-colors.css\");\n" ++ css_end ++ "\n", .{out.items});
-    out.deinit(a);
-    return result;
+    return out.toOwnedSlice(a);
 }
 
-fn readOptional(a: Allocator, io: Io, path: []const u8) !?[]u8 {
+pub fn readOptional(a: Allocator, io: Io, path: []const u8) !?[]u8 {
     // Follows a file symlink: the link target's content is what gets merged.
     const stat = Io.Dir.cwd().statFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
@@ -313,12 +330,12 @@ fn readOptional(a: Allocator, io: Io, path: []const u8) !?[]u8 {
 }
 
 const Change = struct { path: []const u8, data: []const u8, original: ?[]const u8, link: ?[]const u8, temp: []const u8, permissions: Io.File.Permissions };
-const Transaction = struct {
+pub const Transaction = struct {
     a: Allocator,
     io: Io,
     changes: std.ArrayList(Change) = .empty,
 
-    fn add(self: *Transaction, path: []const u8, data: []const u8, backup: bool) !void {
+    pub fn add(self: *Transaction, path: []const u8, data: []const u8, backup: bool) !void {
         var parent = std.fs.path.dirname(path);
         while (parent) |dir| : (parent = std.fs.path.dirname(dir)) {
             if (dir.len <= 1) break;
@@ -345,7 +362,7 @@ const Transaction = struct {
         try self.changes.append(self.a, .{ .path = path, .data = data, .original = original, .link = link, .temp = try std.fmt.allocPrint(self.a, "{s}.rediwm-tmp", .{path}), .permissions = permissions });
     }
 
-    fn commit(self: *Transaction) !void {
+    pub fn commit(self: *Transaction) !void {
         var staged: usize = 0;
         defer for (self.changes.items[0..staged]) |change| Io.Dir.cwd().deleteFile(self.io, change.temp) catch {};
         // Stage every file before publishing any; failure on a later target
@@ -397,6 +414,12 @@ const Transaction = struct {
 };
 
 pub fn apply(a: Allocator, io: Io, home: []const u8, toolkit: Toolkit, p: Palette, support: QtSupport) !void {
+    return applyRevision(a, io, home, toolkit, p, support, null);
+}
+
+/// A palette revision in the watched config directory wakes qt5ct/qt6ct even
+/// when only the palette in its colors/ subdirectory changed.
+pub fn applyRevision(a: Allocator, io: Io, home: []const u8, toolkit: Toolkit, p: Palette, support: QtSupport, revision: ?[]const u8) !void {
     var arena: std.heap.ArenaAllocator = .init(a);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -411,14 +434,15 @@ pub fn apply(a: Allocator, io: Io, home: []const u8, toolkit: Toolkit, p: Palett
         .qt => {
             if (!support.qt5 and !support.qt6) return error.QtToolsMissing;
             const colors = try qtColors(alloc, p);
-            for ([_][]const u8{ "qt5ct", "qt6ct" }, [_]bool{ support.qt5, support.qt6 }) |version, installed| {
+            for ([_][]const u8{ "qt5ct", "qt6ct" }, [_]bool{ support.qt5, support.qt6 }, [_]bool{ support.style5, support.style6 }) |version, installed, styled| {
                 if (!installed) continue;
                 const scheme = try std.fs.path.join(alloc, &.{ home, version, "colors/rediwm.conf" });
                 const config = try std.fmt.allocPrint(alloc, "{s}/{s}/{s}.conf", .{ home, version, version });
                 var content: []const u8 = try readOptional(alloc, io, config) orelse "";
                 content = try patchIni(alloc, content, "Appearance", "custom_palette", "true");
                 content = try patchIni(alloc, content, "Appearance", "color_scheme_path", try quotedPath(alloc, scheme));
-                content = try patchIni(alloc, content, "Appearance", "style", "Fusion");
+                content = try patchIni(alloc, content, "Appearance", "style", if (styled) qt_style else "Fusion");
+                if (revision) |value| content = try patchIni(alloc, content, "RediWM", "palette_revision", value);
                 try tx.add(scheme, colors, false);
                 try tx.add(config, content, true);
             }

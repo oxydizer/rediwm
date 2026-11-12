@@ -13,7 +13,13 @@ chrome, capture, or retained panel painting. General rules remain in
   colour (× window opacity); the pass composites the ring over the body, so
   something must be drawn under every ring pixel: the titlebar `ChromeBuffer`
   (a plain band) on top and the three `frame_fills` rects beside and below the
-  client. The footer is `frame_border`. `shadow_tree`, the resize-grab tree and
+  client. `chrome.outerBorder()` resolves `window_border_width` for the outer ring.
+  `chrome.frameBorder()` adds `window_inner_border_width` for client offsets,
+  side fills, footer and resize/layout geometry. The optional inner ring
+  (`toplevel/inner_border.zig`) paints `window_inner_border` in four disjoint,
+  memoized perimeter strips, below corner accents and above the clipped client
+  corners. Its width is reserved even when its color is transparent. Corner rasters
+  and titlebar memos include it for live reloads. `shadow_tree`, the resize-grab tree and
   every xdg popup carry `setTreeUnclipped` (a new node that hangs outside the
   window needs it too). The shadow is analytic (`setTreeShadow` on
   `shadow_tree`, the CPU formula's smoothstep); its leaf `shadow_node` has no
@@ -39,7 +45,11 @@ chrome, capture, or retained panel painting. General rules remain in
   the source's top follows the outer arc, and its full height extends inward.
   Changing that height damages the whole sector. Ordinary shapes keep rectangular
   sampling; the radial path removes the output transform from source UVs because
-  the sector axis already carries it.
+  the sector axis already carries it. Several buffers can share one radial image
+  (a switcher thumbnail's surface and its subsurfaces): each covers the sector's
+  box and names its part with `Buffer.setSectorRect` (fractions of the image),
+  which reaches the shader as `sector_texture_rect`; nothing of that draw, ring
+  included, lands outside its part.
   The taskbar uses the same clip on its tree (`Taskbar.applyClip`) with its raster
   outer edge left hard (`taskbar/shape.zig` `paintPolygon`: row spans, a distance
   only near an edge).
@@ -63,6 +73,10 @@ chrome, capture, or retained panel painting. General rules remain in
   `window_corner_restore_ms`, and `window_corner_resize_ease`; live timing edits
   continue from the displayed length. `window_corner_inset` adds space beyond
   the frame ring, and `window_corner_end_padding` shortens the stroke endpoints.
+  `window_corner_casing(_width)` wraps the stroke in a band of its own (the
+  stroke moves in by its width, `reach` covers it); `window_corner_cut_ends`
+  cuts both at 45 degrees with the outer edge longest, the casing's sharp tip
+  capped at its end.
   `window_title_plate*` paints an angled title label, limits text before its
   slant and leaves grouped tabs to their existing painter. Its tokens belong
   in `TitlebarMemo` so reload and partial title repaint agree.
@@ -82,10 +96,17 @@ chrome, capture, or retained panel painting. General rules remain in
   outline, so `chrome_plate.mask` keeps the last one: a resize or a title
   change reads it and works out no distance.
   `Toplevel.shapePolygon` keeps the parsed outline and the last frame's
-  polygon: every client commit asks for it several times.
+  polygon: every client commit asks for it several times. `resolveFitting`
+  rejects fixed cuts that overtake their opposite anchors on small frames,
+  before clamping can turn a raised step backwards; the clip, plate, shadow
+  and corner accents then share the rounded-rectangle fallback.
   `chrome_control_right_pad` and `chrome_control_offset_y` move the shared
   control rectangles, including painting and input. `controlInsets` measures
   the polygon at the shifted control rows while leaving the icon centred.
+  `chrome_button_bevel` cuts the moving control highlight and is part of the
+  titlebar memo. `start_menu_bevel` uses the shared beveled widget raster for
+  both Start panels; their blur rounds inside the cut, and a beveled footer
+  draws only its separator so it cannot leave square edges outside the panel.
 * **Buffer size ≠ scene size** at fractional scale (`round(len*s)` vs
   `round((off+len)*s)-round(off*s)`). Chrome/panel buffers filter bilinearly:
   never re-raster per device-grid phase (`ChromeBuffer.create` costs 2–8 ms).

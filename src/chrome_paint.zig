@@ -152,6 +152,7 @@ pub const Controls = struct {
     chip_width: f32 = 0,
     chip_height: f32 = 0,
     chip_radius: f32 = 0,
+    chip_bevel: f32 = 0,
     chip_fill: Color = undefined,
     chip_alpha: f32 = 0,
     min_ink: Color,
@@ -199,6 +200,7 @@ pub const Controls = struct {
             controls.chip_x = mix(@floatFromInt(a_btn.x), @floatFromInt(b_btn.x), t);
             controls.chip_y = mix(@floatFromInt(a_btn.y), @floatFromInt(b_btn.y), t);
             controls.chip_radius = window_chrome.cornerRadius(theme.global.chrome_round_buttons, controls.chip_width, controls.chip_height, btn_radius * density);
+            controls.chip_bevel = theme.global.chrome_button_bevel * density;
             controls.chip_fill = Color.lerp(Color.control_hover(), Color.close_hover(), clamp01(pos - 1));
             controls.chip_alpha = clamp01(chip_alpha);
         }
@@ -212,7 +214,11 @@ pub const Controls = struct {
     pub fn paint(c: *const Controls, base: Color, px: f32, py: f32) Color {
         var color = base;
         if (c.show_chip) {
-            const chip = edgeCoverage(sdRoundedBox(px, py, c.chip_x, c.chip_y, c.chip_width, c.chip_height, c.chip_radius), c.scale);
+            const distance = if (c.chip_bevel > 0)
+                sdf.sdBeveledBox(px, py, c.chip_x, c.chip_y, c.chip_width, c.chip_height, c.chip_bevel)
+            else
+                sdRoundedBox(px, py, c.chip_x, c.chip_y, c.chip_width, c.chip_height, c.chip_radius);
+            const chip = edgeCoverage(distance, c.scale);
             if (chip > 0) color = c.chip_fill.scaled(chip * c.chip_alpha).over(color);
         }
         const g = c.glyph_scale;

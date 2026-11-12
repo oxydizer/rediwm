@@ -10,6 +10,11 @@ Desktop keyboard focus and compositor drop targets are in the root
   damaged tiles get new buffers. Rasterize the selection band once per paint;
   repair clips snap outward to device pixels. Labels/icons are rasterized at
   exact scale.
+  Selection colours come from `Theme.desktopSelectionColor`,
+  `desktopSelectionBorder` and `desktopSelectedColor`: explicit desktop tokens
+  win, otherwise they follow the shell accent, including on live reload.
+  Call `Desktop.themeChanged` so cache invalidation also schedules its paint;
+  an unrelated output frame alone does not pass the desktop's pending gate.
 * **The grid fills the output.** Columns count from the right (saved cells
   keep their meaning) and share the whole width: cells are at least 96px and
   stretch by a few pixels so the first and last column sit the same distance

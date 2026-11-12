@@ -246,6 +246,16 @@ pub fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.Rou
             };
             return .{ .switch_layout = target };
         },
+        .switch_input_source => {
+            const p = params orelse return error.InvalidRequest;
+            const value = p.get("source") orelse return error.InvalidRequest;
+            const target: LayoutTarget = switch (value) {
+                .string => |name| if (std.ascii.eqlIgnoreCase(name, "next")) .next else if (std.ascii.eqlIgnoreCase(name, "prev")) .prev else return error.InvalidRequest,
+                .integer => |idx| .{ .index = std.math.cast(u32, idx) orelse return error.InvalidRequest },
+                else => return error.InvalidRequest,
+            };
+            return .{ .switch_input_source = target };
+        },
         .focus_window => {
             const p = params orelse return error.InvalidRequest;
             const id_v = p.get("id") orelse p.get("window_id") orelse return error.InvalidRequest;

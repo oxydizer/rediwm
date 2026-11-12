@@ -79,6 +79,7 @@ pub fn buildTree(cc: *ControlCenter) void {
     if (cc.page == .network and cc.built_page == .network) cc.network.captureFocus();
     if (cc.page == .printers and cc.built_page == .printers) cc.printers.capture();
     if (cc.page == .keys and cc.built_page == .keys) cc.key_settings.capture();
+    if (cc.page == .input and cc.built_page == .input) cc.input_sources.capture();
     if (cc.page == .appearance) appearance_section.captureItemFocus(&cc.appearance);
     ui.input.reset();
     const has_services = if (cc.systemd_client) |client| client.available() else false;
@@ -195,7 +196,11 @@ pub fn buildTree(cc: *ControlCenter) void {
                 network_section.build(&cc.network, cc);
                 cc.append(cc.network.root);
             },
-            .input => for (cc.input.row_storage[0..cc.input.row_count]) |*row| {
+            .input => for (cc.input.row_storage[0..cc.input.row_count], 0..) |*row, i| {
+                if (i == cc.input.keyboard_row) {
+                    @import("sections/input_sources.zig").build(&cc.input_sources, cc);
+                    cc.append(cc.input_sources.root);
+                }
                 var framed = card(row.children);
                 framed.name = "input";
                 framed.direction = row.direction;
@@ -277,6 +282,9 @@ pub fn buildTree(cc: *ControlCenter) void {
     cc.root.linkParents();
     if (!cc.search.empty() and cc.page == .services and cc.services.search_focus) {
         if (cc.services.search) |field| ui.input.current.focus(&cc.root, field);
+    }
+    if (!cc.search.empty() and cc.page == .input and cc.input_sources.search_focus) {
+        if (cc.input_sources.search) |field| ui.input.current.focus(&cc.root, field);
     }
     if (!cc.search.empty() and cc.page == .users) {
         if (users_section.initialFormFocus(&cc.users)) |field| ui.input.current.focus(&cc.root, field);

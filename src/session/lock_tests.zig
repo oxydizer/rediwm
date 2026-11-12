@@ -554,3 +554,33 @@ test "greeter appearance follows account selection and resets missing or broken 
     try std.testing.expect(lock.greeter_appearance == null);
     try std.testing.expectEqual(lock.greeter_default_theme.lock_bg, ui.theme.global.lock_bg);
 }
+
+test "the lock shows the active keyboard layout only while there are several" {
+    var lock = Lock{ .server = undefined, .timer = undefined };
+    const width: i32 = 1280;
+    const height: i32 = 720;
+    const geo = Geometry.init(@floatFromInt(width), @floatFromInt(height));
+    const button = geo.layoutButton();
+    var counts: [2]usize = undefined;
+    for ([_][]const u8{ "", "DE" }, 0..) |label, i| {
+        @memcpy(lock.layout_label[0..label.len], label);
+        lock.layout_label_len = @intCast(label.len);
+        const buf = try Buffer.create(width, height, 1);
+        defer buf.base.drop();
+        @memset(buf.pixels, 0xff090b12);
+        var renderer = ui.paint.Renderer{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = 1 };
+        _ = paint(&renderer, &lock, @floatFromInt(width), @floatFromInt(height), true);
+        var changed: usize = 0;
+        const x0: usize = @intFromFloat(button.x * geo.s);
+        const y0: usize = @intFromFloat(button.y * geo.s);
+        for (y0..y0 + @as(usize, @intFromFloat(button.h * geo.s))) |y| {
+            for (x0..x0 + @as(usize, @intFromFloat(button.w * geo.s))) |x| {
+                if (buf.pixels[y * @as(usize, @intCast(width)) + x] != 0xff090b12) changed += 1;
+            }
+        }
+        counts[i] = changed;
+    }
+    // One layout draws nothing there; several draw the keyboard and its code.
+    try std.testing.expectEqual(@as(usize, 0), counts[0]);
+    try std.testing.expect(counts[1] > 50);
+}

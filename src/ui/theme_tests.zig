@@ -58,6 +58,23 @@ test "parse reads the spec's example theme file" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.40), t.border_focus[3], 1e-6);
 }
 
+test "desktop selection inherits the shell accent and preserves explicit colours" {
+    var t: Theme = .{};
+    try std.testing.expectEqual([4]f32{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 1 }, t.desktopSelectionBorder());
+    t.start_menu_selected_marker = .{ 0, 1, 0, 1 };
+    try std.testing.expectEqual([4]f32{ 0, 1, 0, 0.15 }, t.desktopSelectionColor());
+    t.shell_accent = .{ 1, 0.8, 0, 0.5 };
+    try std.testing.expectEqual([4]f32{ 1, 0.8, 0, 0.06 }, t.desktopSelectedColor());
+    try std.testing.expectEqual([4]f32{ 1, 0.8, 0, 0.075 }, t.desktopSelectionColor());
+    try std.testing.expectEqual(t.shell_accent.?, t.desktopSelectionBorder());
+    t.desktop_selection = .{ 0, 0, 0, 0 };
+    t.desktop_selection_border = .{ 0, 0, 1, 1 };
+    t.desktop_selected = .{ 0, 1, 0, 0.2 };
+    try std.testing.expectEqual(t.desktop_selection.?, t.desktopSelectionColor());
+    try std.testing.expectEqual(t.desktop_selection_border.?, t.desktopSelectionBorder());
+    try std.testing.expectEqual(t.desktop_selected.?, t.desktopSelectedColor());
+}
+
 test "writeInto then parse round-trips every field" {
     var t: Theme = .{};
     t.clock_bold = true;
@@ -73,6 +90,8 @@ test "writeInto then parse round-trips every field" {
     t.font_size = 14;
     t.radius_md = 9;
     t.radius_lg = 12;
+    t.window_border_width = 2;
+    t.window_inner_border_width = 3;
     t.glass = .{ 0.2, 0.4, 0.6, 0.56 };
     t.taskbar_bg = .{ 0.1, 0.2, 0.3, 0.62 };
     t.start_button_icon = "/tmp/custom logo.svg";
@@ -263,6 +282,14 @@ test "chrome geometry validates and survives theme serialization" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
+    for ([_][]const u8{ "0", "17", "nan", "inf" }) |value| {
+        var t: Theme = .{};
+        try std.testing.expectError(error.InvalidSize, applyKey(a, &t, "window_border_width", value));
+    }
+    for ([_][]const u8{ "-1", "17", "nan", "inf" }) |value| {
+        var t: Theme = .{};
+        try std.testing.expectError(error.InvalidSize, applyKey(a, &t, "window_inner_border_width", value));
+    }
     for ([_][]const u8{ "0", "27", "85", "nan", "inf" }) |value| {
         var t: Theme = .{};
         try std.testing.expectError(error.InvalidSize, applyKey(a, &t, "chrome_height", value));
@@ -276,11 +303,13 @@ test "chrome geometry validates and survives theme serialization" {
         try std.testing.expectError(error.InvalidBoolean, applyKey(a, &t, "chrome_round_buttons", value));
     }
     try std.testing.expect(!(try parse(a, "[theme]\nchrome_round_buttons = false\n")).chrome_round_buttons);
-    const t = try parse(a, "[theme]\nchrome_height = 28\nchrome_control_gap = 0\nchrome_round_buttons = true\n");
+    const t = try parse(a, "[theme]\nchrome_height = 28\nchrome_control_gap = 0\nchrome_round_buttons = true\nwindow_border_width = 2\nwindow_inner_border_width = 3\n");
     var buf: std.ArrayList(u8) = .empty;
     try writeInto(a, &buf, t);
     const restored = try parse(a, buf.items);
     try std.testing.expectEqual(@as(f32, 28), restored.chrome_height);
+    try std.testing.expectEqual(@as(f32, 2), restored.window_border_width);
+    try std.testing.expectEqual(@as(f32, 3), restored.window_inner_border_width);
     try std.testing.expectEqual(@as(f32, 0), restored.chrome_control_gap);
     try std.testing.expect(restored.chrome_round_buttons);
 }

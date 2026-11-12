@@ -1473,5 +1473,52 @@
       "code": 1,
       "saved": null
     }
+  },
+  {
+    "args": [
+      "input-sources"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "get_input_sources"
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "switch-input-source",
+      "next"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "switch_input_source",
+        "params": {
+          "source": "next"
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
+  },
+  {
+    "args": [
+      "switch-input-source",
+      "2"
+    ],
+    "expected": {
+      "request": {
+        "version": 1,
+        "command": "switch_input_source",
+        "params": {
+          "source": 2
+        }
+      },
+      "code": 0,
+      "saved": null
+    }
   }
 ]

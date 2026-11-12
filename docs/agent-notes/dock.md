@@ -41,7 +41,9 @@ taskbar, OSD and input integration. General rules remain in
 * **The dock reserves space only when it doesn't auto-hide.** `Output.usableBox`
   is `dockAreaBox` (output less the taskbar) less `Dock.reservedStrip`, a pure
   function of config and that box (`Dock.fits`), so it never flips with a lock
-  or fullscreen window. The dock and the taskbar's popups/menus are placed in
+  or fullscreen window. The dock is flush with its edge of `dockAreaBox` and
+  reserves exactly its thickness, with no extra gap before windows. The dock
+  and the taskbar's popups/menus are placed in
   `dockAreaBox`, never `usableBox`. A setting that changes the strip calls
   `applyTaskbarPosition` (`Dock.reserves` before/after). The OSD keeps clear
   of `Dock.footprint` (the resting dock, auto-hiding or not) on the bottom

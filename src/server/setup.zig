@@ -152,6 +152,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     };
 
     try initSession(server, world_tree);
+    @import("../config_runtime/app_colors.zig").sync(server);
 }
 
 fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
@@ -177,6 +178,7 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
                 break :blk false;
             };
         } else |_| {}
+        server.app_colors.qt_styles = @import("../config_runtime/app_theme.zig").findQtStyles(io);
     }
 
     if (!greeter) @import("../config_runtime/region.zig").applyTimezone(@import("../main.zig").gpa, loaded.region.timezone, environ.getPosix("TZ")) catch |err| {
@@ -230,6 +232,11 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
     errdefer server.launch_feedback.deinit();
     server.text_input = @import("../input/text_input.zig").create(server) catch return error.TextInputManagerCreateFailed;
     errdefer if (server.text_input) |relay| relay.destroy();
+    server.input_sources = @import("../input_sources.zig").Manager.create(server) catch null;
+    errdefer if (server.input_sources) |sources| {
+        server.input_sources = null;
+        sources.deinit();
+    };
 
     server.idle = idle_mod.IdleManager.create(server, server.config.idle) catch |err| blk: {
         log.warn("init: could not create idle manager: {}", .{err});

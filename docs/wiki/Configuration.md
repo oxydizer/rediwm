@@ -60,6 +60,36 @@ time vertically. These two options apply only to the taskbar clock.
 weekday headings and date positions in the taskbar calendar. Existing configs
 keep 12-hour time and Sunday first until changed.
 
+## Keyboard layouts and input methods
+
+Settings → Input → **Input Sources** adds (from a searchable list of every XKB
+layout), reorders and removes keyboard layouts. They are saved as the usual
+comma lists, in order:
+
+```toml
+[input]
+xkb_layout = "us,de,jp"
+xkb_variant = ",nodeadkeys,"   # by position
+xkb_labels = ",,JP"            # optional indicator texts by position
+```
+
+XKB, X11 and Xwayland allow four layouts; later ones are ignored. The taskbar's
+input source item shows the active one by its language code (EN, DE, JA) or the
+label you set, and appears automatically once there is more than one source
+(`~right:input_source` in `taskbar_items`; Settings can show it always or
+never). Click it for the list, scroll over it to step through, or press
+Super+Shift+Space (`input_source_next` / `input_source_prev`). Settings can
+also turn on XKB's own switch keys (Alt+Shift, Ctrl+Shift, Caps Lock, both
+Shifts), which edit `xkb_options` and switch layouts only. The lock screen
+shows a layout button while there are several, and the shortcut works there.
+
+While Fcitx 5 runs (`[input_method] env = "fcitx"` and an `[[autostart]]`
+for `fcitx5 -d`), the input methods of its current group follow the layouts
+in the list (its `keyboard-*` entries are left out: layouts are RediWM's).
+RediWM switches between them and follows switches made in Fcitx, but never
+changes Fcitx's own configuration; use `fcitx5-configtool` (Settings has a
+button) to add or remove methods. Input methods never reach the lock screen.
+
 ## Handy `[compositor]` keys
 
 Settings → Appearance includes **Dock position**, **Dock size** and **Dock hover zoom**.
@@ -114,7 +144,10 @@ The center group stays centered on the display when it fits, and shifts or
 narrows the window list to avoid the side groups.
 
 For example, `taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray",
-"right:battery", "~right:wifi", "~right:wired", "right:volume", "right:clock", "-right:power"]` is the default.
+"right:battery", "~right:wifi", "~right:wired", "~right:input_source", "right:volume", "right:clock",
+"-right:power"]` is the default. The keyboard layout item (`input_source`) is
+described under "Keyboard layouts and input methods"; older lists gain it
+before Volume, automatic.
 Wi-Fi and Ethernet are automatic (the `~` prefix): Wi-Fi shows only when the
 machine has a wireless adapter, and Ethernet only while a cable is connected;
 Wi-Fi opens the network menu, Ethernet opens Settings → Network. Turning an item

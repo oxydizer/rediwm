@@ -26,10 +26,6 @@ pub const max_pins = 16;
 /// `trash` follows `dock_show_trash`; the others `dock_hidden_shortcuts`.
 pub const Shortcut = enum { applications, files, terminal, settings, trash };
 pub const shortcut_count = std.enums.values(Shortcut).len;
-/// The gap between the dock and its output edge, and the one between it and the
-/// windows when it reserves its strip.
-pub const edge_margin = 5;
-pub const window_margin = 10;
 /// Auto-hide: the outermost pixels of the edge that reveal the dock, how long
 /// the pointer must stay (so a pass over the edge shows nothing) or stay away
 /// (so a slip off the dock hides nothing), and how far the dock travels while

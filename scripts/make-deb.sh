@@ -13,10 +13,12 @@ rel="$repo/zig-out/release-safe"
 out=${1:-$repo/zig-out}
 version=$(grep -o '\.version = "[^"]*"' "$repo/build.zig.zon" | cut -d'"' -f2)
 arch=$(dpkg --print-architecture)
-bins="rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-player rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper rediwm-restart"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [ -x "$rel/bin/rediwm" ] || die "$rel is missing: build ReleaseSafe first"
+# The programs the build installed (build/install_paths.zig), not a glob of bin/.
+[ -f "$rel/programs" ] || die "$rel has no program list: rebuild it with this checkout"
+bins=$(cat "$rel/programs")
 command -v dpkg-deb >/dev/null || die "dpkg-deb is required"
 
 root=$(mktemp -d)

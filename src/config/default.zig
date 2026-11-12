@@ -95,8 +95,11 @@ pub const source =
     \\disable_while_typing = true
     \\disable_while_typing_touchpad = true
     \\# Empty XKB names use XKB_DEFAULT_* or system defaults.
+    \\# Several layouts are input sources (at most 4): the taskbar shows the active
+    \\# one and switches on click; super+shift+space cycles them.
     \\xkb_layout = ""              # e.g. "fr" for AZERTY, "us,ru"
-    \\xkb_variant = ""
+    \\xkb_variant = ""             # by position, e.g. ",nodeadkeys"
+    \\xkb_labels = ""              # optional indicator texts by position, e.g. ",,JP"
     \\xkb_options = ""             # e.g. "grp:caps_toggle"
     \\xkb_model = ""
     \\key_repeat_delay  = 400       # ms
@@ -150,9 +153,10 @@ pub const source =
     \\# Taskbar sections, ordered within each section; prefix with - to hide an item.
     \\taskbar_position = "bottom" # top or bottom
     \\taskbar_alignment = "center" # left, center or right; visible below 100% length
-    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "right:volume", "right:clock", "-right:power"]
+    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "~right:input_source", "right:volume", "right:clock", "-right:power"]
     \\# A ~ prefix (~right:wifi, ~right:wired) shows the item only while a wireless adapter
-    \\# exists, or a cable is connected; a plain or - entry always shows or hides it.
+    \\# exists, or a cable is connected, and ~right:input_source while there is more than
+    \\# one keyboard layout or input method; a plain or - entry always shows or hides it.
     \\# Hiding capture (-right:capture) removes the recording/sharing indicator; not recommended.
     \\focus_follows_mouse   = false
     \\canvas_columns        = 3      # screens wide (1-10)
@@ -186,6 +190,7 @@ pub const source =
     \\xwayland_native_scaling = false # sharp X11 apps on fractional scales (requires restart)
     \\xwayland_scale = 0 # global render factor: 0 = automatic, 1.0-4.0 = explicit (requires restart)
     \\dark_mode             = false # apps and web pages prefer dark (live; via the Settings portal)
+    \\follow_app_colors     = false # keep GTK/Qt application colors in sync with the main theme
     \\placeholder_delay_ms  = 0     # show splash only if app hasn't appeared after N ms (0 disables)
     \\# wallpaper = ""               # empty = RediWM's; a file in ~/.local/share/rediwm/wallpapers, or a path
     \\lid_close             = "display_off" # closing the laptop lid: display_off (built-in screen off while another display is on), lock, suspend, ignore
@@ -379,6 +384,7 @@ pub const source =
     \\"super+b"           = "spawn firefox"
     \\"super+e"           = "spawn default-file-manager"
     \\"super+space"       = "toggle_start_menu"
+    \\"super+shift+space" = "input_source_next"
     \\
     \\# Window management
     \\"super+q"           = "close_window"

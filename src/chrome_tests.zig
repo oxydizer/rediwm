@@ -116,6 +116,14 @@ test "chrome geometry changes invalidate retained titlebar pixels" {
     const saved = theme.global;
     defer theme.global = saved;
     const before = TitlebarMemo.capture(400, null, .{});
+    theme.global.window_border_width = 2;
+    try std.testing.expectEqual(@as(i32, 2), chrome_mod.frameBorder());
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    theme.global.window_inner_border_width = 3;
+    try std.testing.expectEqual(@as(i32, 5), chrome_mod.frameBorder());
+    try std.testing.expectEqual(@as(i32, 2), chrome_mod.outerBorder());
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    theme.global = saved;
     theme.global.chrome_control_gap += 1;
     const spaced = TitlebarMemo.capture(400, null, .{});
     try std.testing.expect(!before.eql(spaced));
@@ -134,6 +142,9 @@ test "chrome geometry changes invalidate retained titlebar pixels" {
     try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
     theme.global = saved;
     theme.global.chrome_control_offset_y = 5;
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    theme.global = saved;
+    theme.global.chrome_button_bevel = 7;
     try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
     inline for (.{ "window_title_plate_inset", "window_title_plate_bevel", "window_title_plate_slant", "window_title_plate_control_gap", "window_title_plate_text_padding" }) |field| {
         theme.global = saved;

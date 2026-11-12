@@ -52,6 +52,7 @@ const PassShape = extern struct {
     sector_texture_height: f32 = 0,
     sector_texture_flip: f32 = 0,
     sector_texture_transform: c_int = 0,
+    sector_texture_rect: [4]f32 = @splat(0),
     border: f32 = 0,
     border_color: [4]f32 = @splat(0),
     glow_center: [2]f32 = .{ 0, 0 },

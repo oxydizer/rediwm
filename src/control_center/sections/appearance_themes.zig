@@ -97,8 +97,9 @@ pub fn onResetStartLogo(owner: ?*anyopaque, _: usize) void {
 }
 
 pub fn refreshTheme(server: *@import("../../Server.zig"), taskbar_geometry: bool) void {
+    @import("../../config_runtime/app_colors.zig").sync(server);
     server.saveLoginTheme();
-    if (server.desktop) |desktop| desktop.app.themeChanged();
+    if (server.desktop) |desktop| desktop.themeChanged();
     @import("ui").text.setPreferredFamilies(theme.global.font, theme.global.mono_font);
     if (taskbar_geometry) server.refreshTaskbarsGeometry() else server.refreshTaskbars();
     var it = server.world.toplevels.iterator(.forward);

@@ -283,7 +283,7 @@ test "every v1 command parses" {
         \\"condition":"menu_opened","timeout_ms":42,"seconds":2,"enabled":true,
         \\"blank_after_seconds":600,"suspend_after_seconds":0,"desktop_id":"example.desktop",
         \\"action":"toggle_split","action_key":"default","phase":"begin","scale":1.2,"rotation":0,
-        \\"fingers":2,"cancelled":false,"layout":"next","path":"start_menu/settings","at":0.5,
+        \\"fingers":2,"cancelled":false,"layout":"next","source":"next","path":"start_menu/settings","at":0.5,
         \\"service":"alpha.service","mode":"on","event":"bell","color":"#aabbcc","workspace":2,"automatic":true,"gap":12,"apps":["utility*"]}
     ;
     inline for (protocol.commands.specs) |s| {
@@ -334,6 +334,10 @@ test "layout switch validates targets" {
         try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(a, json));
     }
     try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(a, "{\"version\":1,\"command\":\"switch_layout\",\"params\":{}}"));
+    const source = try protocol.parseRequest(a, "{\"version\":1,\"command\":\"switch_input_source\",\"params\":{\"source\":2}}");
+    try std.testing.expectEqual(@as(u32, 2), source.action.switch_input_source.index);
+    try std.testing.expectEqual(protocol.LayoutTarget.prev, (try protocol.parseRequest(a, "{\"version\":1,\"command\":\"switch_input_source\",\"params\":{\"source\":\"prev\"}}")).action.switch_input_source);
+    try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(a, "{\"version\":1,\"command\":\"switch_input_source\",\"params\":{\"source\":\"first\"}}"));
 }
 
 test "urgency event has stable window identity and boolean state" {

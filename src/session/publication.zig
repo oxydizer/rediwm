@@ -7,7 +7,7 @@ const c = std.c;
 const sys = @import("login_sys.zig");
 
 pub const owner_key = "REDIWM_ACTIVATION_OWNER";
-pub const allowlist = [_][]const u8{ "WAYLAND_DISPLAY", "DISPLAY", "REDIWM_SOCKET", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "PATH", "QT_QPA_PLATFORMTHEME", "QT_QPA_PLATFORMTHEME_QT6", "QT_STYLE_OVERRIDE", owner_key };
+pub const allowlist = [_][]const u8{ "WAYLAND_DISPLAY", "DISPLAY", "REDIWM_SOCKET", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "PATH", "QT_QPA_PLATFORMTHEME", "QT_QPA_PLATFORMTHEME_QT6", "QT_STYLE_OVERRIDE", "QT_PLUGIN_PATH", owner_key };
 
 pub const Env = std.StringArrayHashMapUnmanaged([]const u8);
 pub const Pair = struct { key: []const u8, value: []const u8 };
@@ -299,13 +299,16 @@ test "Qt app colors activation lease restores the previous desktop theme" {
     try f.owner.publish(&.{
         .{ .key = "QT_QPA_PLATFORMTHEME", .value = "qt5ct" },
         .{ .key = "QT_QPA_PLATFORMTHEME_QT6", .value = "qt6ct" },
-        .{ .key = "QT_STYLE_OVERRIDE", .value = "Fusion" },
+        .{ .key = "QT_STYLE_OVERRIDE", .value = "" },
+        .{ .key = "QT_PLUGIN_PATH", .value = "/usr/local/lib/rediwm/qt6" },
     });
+    try testing.expectEqualStrings("/usr/local/lib/rediwm/qt6", f.bus.env.get("QT_PLUGIN_PATH").?);
     try testing.expectEqualStrings("qt5ct", f.bus.env.get("QT_QPA_PLATFORMTHEME").?);
     try f.owner.restore();
     try testing.expectEqualStrings("gtk3", f.bus.env.get("QT_QPA_PLATFORMTHEME").?);
     try testing.expect(!f.bus.env.contains("QT_QPA_PLATFORMTHEME_QT6"));
     try testing.expect(!f.bus.env.contains("QT_STYLE_OVERRIDE"));
+    try testing.expect(!f.bus.env.contains("QT_PLUGIN_PATH"));
 }
 
 test "a value changed by someone else is not clobbered" {

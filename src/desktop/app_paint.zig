@@ -45,9 +45,9 @@ pub fn drawBand(self: *App, cr: *c.cairo_t) void {
     const r = self.selectionRect();
     const rad: f64 = @min(@as(f64, damage_mod.rubberband_radius), @as(f64, @floatFromInt(@min(r.w, r.h))) / 2.0);
     rounded(cr, r.x, r.y, r.w, r.h, rad);
-    shell_cairo.setSource(cr, appearance_theme.global.desktop_selection);
+    shell_cairo.setSource(cr, appearance_theme.global.desktopSelectionColor());
     c.cairo_fill_preserve(cr);
-    shell_cairo.setSource(cr, appearance_theme.global.desktop_selection_border);
+    shell_cairo.setSource(cr, appearance_theme.global.desktopSelectionBorder());
     c.cairo_set_line_width(cr, 1);
     c.cairo_stroke(cr);
 }
@@ -265,7 +265,7 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
             const y = py + 64 + @as(i32, @intCast(row)) * 32;
             if (index == self.choice) {
                 rounded(cr, px + 8, y, 464, 32, 4);
-                shell_cairo.setSource(cr, appearance_theme.global.desktop_selection);
+                shell_cairo.setSource(cr, appearance_theme.global.desktopSelectionColor());
                 c.cairo_fill(cr);
             }
             label(cr, entry.name, px + 12, y, 456, 32, false);

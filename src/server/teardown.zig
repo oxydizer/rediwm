@@ -22,6 +22,7 @@ pub fn deinit(server: *Server) void {
     server.startup_tasks.deinit();
     server.reveal.deinit();
     server.session_startup.deinit();
+    server.app_colors.deinit();
     if (!already_terminating) {
         if (server.layout_autosave) |as| as.saveNow();
     }
@@ -79,6 +80,10 @@ pub fn deinit(server: *Server) void {
     if (server.text_input) |relay| {
         relay.destroy();
         server.text_input = null;
+    }
+    if (server.input_sources) |sources| {
+        server.input_sources = null;
+        sources.deinit();
     }
 
     server.new_output.link.remove();

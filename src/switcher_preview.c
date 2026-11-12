@@ -19,7 +19,7 @@ struct preview_binding {
   struct wlr_surface *surface;
   struct wlr_client_buffer *marked;
   uint32_t commit_seq;
-  struct wl_listener node_destroy, surface_destroy, output_sample;
+  struct wl_listener node_destroy, surface_destroy, surface_commit, output_sample;
 };
 
 static void unmark_buffer(struct preview_binding *binding) {
@@ -34,6 +34,7 @@ static void destroy_binding(struct wlr_addon *addon) {
   unmark_buffer(binding);
   wl_list_remove(&binding->node_destroy.link);
   wl_list_remove(&binding->surface_destroy.link);
+  wl_list_remove(&binding->surface_commit.link);
   wl_list_remove(&binding->output_sample.link);
   wlr_addon_finish(addon);
   free(binding);
@@ -62,7 +63,7 @@ static void handle_output_sample(struct wl_listener *listener, void *data) {
   const struct rediwm_output_sample_event *event = data;
   if (!binding->surface || !event->release_timeline) return;
   // Commits and output rendering run synchronously on the Wayland event loop.
-  // The caller updates the binding on each commit, before the next pass starts.
+  // The binding follows each commit itself, before the next pass starts.
   assert(binding->commit_seq == binding->surface->current.seq);
   struct wlr_linux_drm_syncobj_surface_v1_state *state =
       wlr_linux_drm_syncobj_v1_get_surface_state(binding->surface);
@@ -76,12 +77,46 @@ static struct preview_binding *find_binding(struct rediwm_buffer *preview) {
   return addon ? wl_container_of(addon, binding, addon) : NULL;
 }
 
+// Show the bound surface's current buffer, with what its last commit damaged and
+// its acquire point.
+static void refresh(struct preview_binding *binding) {
+  struct wlr_surface *surface = binding->surface;
+  unmark_buffer(binding);
+  struct wlr_client_buffer *buffer = surface ? surface->buffer : NULL;
+  struct rediwm_buffer_options options = {0};
+  if (surface) {
+    binding->commit_seq = surface->current.seq;
+    options.damage = &surface->buffer_damage;
+    struct wlr_linux_drm_syncobj_surface_v1_state *state =
+        wlr_linux_drm_syncobj_v1_get_surface_state(surface);
+    if (state) {
+      options.wait_timeline = state->acquire_timeline;
+      options.wait_point = state->acquire_point;
+    }
+  }
+  if (buffer && (!buffer->source ||
+      !wlr_single_pixel_buffer_v1_try_from_buffer(buffer->source))) {
+    // Just like a surface node: a live thumbnail sees in-place shm updates.
+    buffer->private.n_ignore_locks++;
+    binding->marked = buffer;
+  }
+  rediwm_buffer_set_buffer_with_options(binding->preview, buffer ? &buffer->base : NULL, &options);
+}
+
+static void handle_surface_commit(struct wl_listener *listener, void *data) {
+  (void)data;
+  struct preview_binding *binding = wl_container_of(listener, binding, surface_commit);
+  refresh(binding);
+}
+
 static struct preview_binding *create_binding(struct rediwm_buffer *preview) {
   struct preview_binding *binding = calloc(1, sizeof(*binding));
   if (!binding) return NULL;
   binding->preview = preview;
   wlr_addon_init(&binding->addon, &preview->node.addons, NULL, &binding_impl);
   wl_list_init(&binding->surface_destroy.link);
+  wl_list_init(&binding->surface_commit.link);
+  binding->surface_commit.notify = handle_surface_commit;
   binding->node_destroy.notify = handle_node_destroy;
   wl_signal_add(&preview->node.events.destroy, &binding->node_destroy);
   binding->surface_destroy.notify = handle_surface_destroy;
@@ -94,8 +129,12 @@ static void follow_surface(struct preview_binding *binding, struct wlr_surface *
   if (binding->surface == surface) return;
   wl_list_remove(&binding->surface_destroy.link);
   wl_list_init(&binding->surface_destroy.link);
+  wl_list_remove(&binding->surface_commit.link);
+  wl_list_init(&binding->surface_commit.link);
   binding->surface = surface;
-  if (surface) wl_signal_add(&surface->events.destroy, &binding->surface_destroy);
+  if (!surface) return;
+  wl_signal_add(&surface->events.destroy, &binding->surface_destroy);
+  wl_signal_add(&surface->events.commit, &binding->surface_commit);
 }
 
 bool rediwm_switcher_preview_set_owned(struct rediwm_buffer *preview,
@@ -132,25 +171,11 @@ bool rediwm_switcher_preview_set_surface(struct rediwm_buffer *preview,
     if (!binding) return false;
   }
   follow_surface(binding, surface);
-  unmark_buffer(binding);
-  struct wlr_client_buffer *buffer = surface ? surface->buffer : NULL;
-  struct rediwm_buffer_options options = {0};
-  if (surface) {
-    binding->commit_seq = surface->current.seq;
-    options.damage = &surface->buffer_damage;
-    struct wlr_linux_drm_syncobj_surface_v1_state *state =
-        wlr_linux_drm_syncobj_v1_get_surface_state(surface);
-    if (state) {
-      options.wait_timeline = state->acquire_timeline;
-      options.wait_point = state->acquire_point;
-    }
-  }
-  if (buffer && (!buffer->source ||
-      !wlr_single_pixel_buffer_v1_try_from_buffer(buffer->source))) {
-    // Just like a surface node: a live thumbnail sees in-place shm updates.
-    buffer->private.n_ignore_locks++;
-    binding->marked = buffer;
-  }
-  rediwm_buffer_set_buffer_with_options(preview, buffer ? &buffer->base : NULL, &options);
+  refresh(binding);
   return true;
+}
+
+struct wlr_surface *rediwm_switcher_preview_get_surface(struct rediwm_buffer *preview) {
+  struct preview_binding *binding = find_binding(preview);
+  return binding ? binding->surface : NULL;
 }

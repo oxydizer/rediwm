@@ -16,6 +16,7 @@ fn eventMatchesFilter(filter: ?protocol.EventFilter, event: protocol.Event) bool
     const event_name: []const u8 = switch (event) {
         .keyboard_layouts_changed => "keyboard_layouts_changed",
         .keyboard_layout_switched => "keyboard_layout_switched",
+        .input_source_changed => "input_source_changed",
         .config_loaded => "config_loaded",
         .polkit_prompt_opened => "polkit_prompt_opened",
         .polkit_prompt_closed => "polkit_prompt_closed",
@@ -346,6 +347,15 @@ pub fn onKeyboardLayoutSwitched(server: *Server, idx: u32) void {
     const ipc = server.ipc orelse return;
     ipc.seq += 1;
     broadcastEvent(ipc, .{ .keyboard_layout_switched = .{ .seq = ipc.seq, .idx = idx } });
+}
+
+pub fn onInputSourceChanged(server: *Server) void {
+    const ipc = server.ipc orelse return;
+    var arena = std.heap.ArenaAllocator.init(ipc.allocator);
+    defer arena.deinit();
+    const data = handlers.inputSourcesData(server, arena.allocator()) catch return;
+    ipc.seq += 1;
+    broadcastEvent(ipc, .{ .input_source_changed = .{ .seq = ipc.seq, .input_sources = data } });
 }
 
 pub fn onWidgetChanged(ipc: *ipc_server_mod.Server, panel: []const u8, node: protocol.WidgetNodeData) void {

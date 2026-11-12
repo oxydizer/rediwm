@@ -14,7 +14,6 @@ const wallpapers = @import("../../wallpapers.zig");
 const wallpaper_strip = @import("../../wallpaper_strip.zig");
 const folder_picker = @import("../folder_picker.zig");
 const wl = @import("wayland").server.wl;
-const finishAppColors = @import("appearance_colors.zig").finishAppColors;
 const section = @import("appearance_dock.zig").section;
 const segmented_width = @import("appearance.zig").segmented_width;
 const Section = @import("appearance.zig").Section;
@@ -61,7 +60,6 @@ pub fn stopStrip(out: *Section) void {
 
 pub fn deinit(out: *Section) void {
     stopStrip(out);
-    finishAppColors(out, false);
     if (out.theme_pending_path) |p| main.gpa.free(p);
     out.theme_pending_path = null;
 }

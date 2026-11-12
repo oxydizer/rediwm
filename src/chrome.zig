@@ -16,7 +16,9 @@ const plate = @import("chrome_plate.zig");
 
 // App dialogs use these same decoration metrics and control hit targets.
 const window_chrome = @import("ui").window_chrome;
-pub const frame_border = window_chrome.frame_border;
+pub const frameBorder = window_chrome.frameBorder;
+pub const outerBorder = window_chrome.outerBorder;
+pub const innerBorder = window_chrome.innerBorder;
 pub const Metrics = window_chrome.Metrics;
 pub const frameRadius = window_chrome.frameRadius;
 
@@ -129,6 +131,7 @@ pub const TitlebarMemo = struct {
     icon: ?icon_service.Entry,
     glass: [4]f32,
     border: [4]f32,
+    border_width: i32 = 1,
     border_soft: [4]f32,
     fg: [4]f32,
     dim: [4]f32,
@@ -143,12 +146,13 @@ pub const TitlebarMemo = struct {
     chrome_control_right_pad: f32 = 12,
     chrome_control_offset_y: f32 = 0,
     chrome_round_buttons: bool = false,
+    chrome_button_bevel: f32 = 0,
     top_band: [4]f32 = @splat(0),
     top_band_height: f32 = 0,
     title_plate: [4]f32 = @splat(0),
     title_plate_width: f32 = 0,
     title_plate_fg: ?[4]f32 = null,
-    title_plate_geometry: [5]f32 = @splat(0),
+    title_plate_geometry: [6]f32 = @splat(0),
     title_plate_outline: u64 = 0,
     inset_left: i32 = 0,
     inset_right: i32 = 0,
@@ -172,6 +176,7 @@ pub const TitlebarMemo = struct {
             .icon = state.icon,
             .glass = t.window_bg,
             .border = t.window_border,
+            .border_width = frameBorder(),
             .border_soft = t.window_divider,
             .fg = t.window_fg,
             .dim = t.window_dim,
@@ -186,6 +191,7 @@ pub const TitlebarMemo = struct {
             .chrome_control_right_pad = t.chrome_control_right_pad,
             .chrome_control_offset_y = t.chrome_control_offset_y,
             .chrome_round_buttons = t.chrome_round_buttons,
+            .chrome_button_bevel = t.chrome_button_bevel,
             .top_band = t.window_top_band,
             .top_band_height = t.window_top_band_height,
             .title_plate = t.window_title_plate,
@@ -220,6 +226,8 @@ pub const TitlebarMemo = struct {
     pub fn eql(a: TitlebarMemo, b: TitlebarMemo) bool {
         if (a.font_generation != b.font_generation) return false;
         if (a.width != b.width) return false;
+        if (a.border_width != b.border_width) return false;
+        if (a.chrome_button_bevel != b.chrome_button_bevel) return false;
         if (a.density != b.density) return false;
         if (a.active != b.active) return false;
         if (a.workspace_focus != b.workspace_focus) return false;
@@ -406,7 +414,7 @@ pub const ChromeBuffer = struct {
         const m: Metrics = .{ .density = state.density };
         const title_left: i32 = state.inset_left + if (state.icon != null) m.length(title_inset) + m.iconSize() + m.length(title_icon_gap) else m.length(title_inset);
         const controls_left = @min(controlRectScaled(state.controlsWidth(logical_width), .minimize, state.density).x, plate.titleRight(logical_width, state) orelse std.math.maxInt(i32));
-        return .{ .x = title_left, .y = 0, .w = @max(0, controls_left - title_left), .h = m.titlebarHeight() - frame_border };
+        return .{ .x = title_left, .y = 0, .w = @max(0, controls_left - title_left), .h = m.titlebarHeight() - frameBorder() };
     }
 
     /// Logical width the current title can ink, measured from the title

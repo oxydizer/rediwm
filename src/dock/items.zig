@@ -13,7 +13,6 @@ const Self = @import("../Dock.zig");
 const max_pins = Self.max_pins;
 const Shortcut = Self.Shortcut;
 const shortcut_count = Self.shortcut_count;
-const edge_margin = Self.edge_margin;
 const Metrics = Self.Metrics;
 const clicked = Self.clicked;
 
@@ -119,15 +118,15 @@ pub fn openWindowPicker(self: *Self, index: usize) bool {
     return output.server.input.window_menu.node != null;
 }
 
-/// Where the dock rests in `area`: centred along its edge, `edge_margin` in.
+/// Where the dock rests in `area`: centred along and flush with its edge.
 pub fn place(self: *Self, area: wlr.Box) void {
     self.box.x = area.x + @divTrunc(area.width - self.box.width, 2);
     self.box.y = area.y + @divTrunc(area.height - self.box.height, 2);
     switch (self.position) {
-        .top => self.box.y = area.y + edge_margin,
-        .bottom => self.box.y = area.y + area.height - self.box.height - edge_margin,
-        .left => self.box.x = area.x + edge_margin,
-        .right => self.box.x = area.x + area.width - self.box.width - edge_margin,
+        .top => self.box.y = area.y,
+        .bottom => self.box.y = area.y + area.height - self.box.height,
+        .left => self.box.x = area.x,
+        .right => self.box.x = area.x + area.width - self.box.width,
     }
 }
 

@@ -139,6 +139,7 @@ pub const Readiness = struct {
             .QT_QPA_PLATFORMTHEME = map.get("QT_QPA_PLATFORMTHEME"),
             .QT_QPA_PLATFORMTHEME_QT6 = map.get("QT_QPA_PLATFORMTHEME_QT6"),
             .QT_STYLE_OVERRIDE = map.get("QT_STYLE_OVERRIDE"),
+            .QT_PLUGIN_PATH = map.get("QT_PLUGIN_PATH"),
         }, .{ .emit_null_optional_fields = false });
         defer allocator.free(message);
 

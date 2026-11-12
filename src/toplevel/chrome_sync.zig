@@ -25,7 +25,10 @@ const nowMs = Toplevel.nowMs;
 /// border/titlebar colors already do.
 pub fn refreshTheme(toplevel: *Toplevel) void {
     defer @import("../auto_tiling.zig").observe(toplevel);
-    const height_changed = if (toplevel.last_titlebar) |memo| memo.chrome_height != theme.global.chrome_height else false;
+    const geometry_changed = if (toplevel.last_titlebar) |memo|
+        memo.chrome_height != theme.global.chrome_height or memo.border_width != chrome.frameBorder()
+    else
+        false;
     switch (toplevel.backend) {
         .placeholder => |*ph| col.setRect(ph.body_rect, col.Straight.fromRgba(theme.global.window_bg).premultiply()),
         .shell => |*sw| if (sw.control_center) |cc| cc.requestRepaint(),
@@ -34,8 +37,8 @@ pub fn refreshTheme(toplevel: *Toplevel) void {
     syncChrome(toplevel, true, nowMs()) catch |err| {
         log.warn("refreshTheme: could not rebuild chrome: {}", .{err});
     };
-    // A changed titlebar height must keep tiled frames inside their tile.
-    if (height_changed and toplevel.in_world) {
+    // Changed decoration extents must keep tiled frames inside their tile.
+    if (geometry_changed and toplevel.in_world) {
         if (toplevel.tile) |tile| {
             if (toplevel.currentOutput()) |out| toplevel.setTiledOn(out, tile);
         }
@@ -129,13 +132,14 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
         toplevel.last_painted_hover = 0;
         toplevel.syncBorders(animated.w, animated.h);
         toplevel.applyShape();
+        try toplevel.syncInnerBorder();
         try toplevel.syncCornerAccents();
         return;
     }
 
     const radius: f32 = toplevel.cornerRadius();
-    const natural_w = geometry_box.width + 2 * chrome.frame_border;
-    const natural_h = geometry_box.height + toplevel.titlebarHeight() + chrome.frame_border;
+    const natural_w = geometry_box.width + 2 * chrome.frameBorder();
+    const natural_h = geometry_box.height + toplevel.titlebarHeight() + chrome.frameBorder();
     const animated = visualChromeSize(toplevel, now_ms, natural_w, natural_h);
     const width = animated.w;
     const height = animated.h;
@@ -194,12 +198,13 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
 
     toplevel.syncBorders(width, height);
     toplevel.applyShape();
+    try toplevel.syncInnerBorder();
     try toplevel.syncCornerAccents();
     toplevel.syncResizeGrab(width, height);
     if (rebuild_shadow) try toplevel.syncShadow(width, height, radius);
 
     // wlr_scene_xdg_surface_create origin is the geometry top-left.
-    toplevel.content_tree.node.setPosition(chrome.frame_border, toplevel.titlebarHeight());
+    toplevel.content_tree.node.setPosition(chrome.frameBorder(), toplevel.titlebarHeight());
     switch (toplevel.backend) {
         .placeholder => |*ph| ph.body_rect.setSize(geometry_box.width, geometry_box.height),
         else => {},
@@ -343,7 +348,7 @@ pub fn applyShape(toplevel: *Toplevel) void {
         .width = toplevel.chrome_width,
         .height = toplevel.chrome_height,
         .radii = .{ radius, radius, radius, radius },
-        .border = @floatFromInt(chrome.frame_border),
+        .border = @floatFromInt(chrome.outerBorder()),
         .border_color = ring.rgba,
     };
     if (toplevel.shapePolygon(toplevel.chrome_width, toplevel.chrome_height)) |polygon| {
@@ -372,7 +377,7 @@ pub fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
         // coordinates stay unchanged, and the content remains above the stroke.
         const color = toplevel.borderColor();
         for (toplevel.border_rects) |rect| col.setRect(rect, color);
-        const edge = chrome.frame_border;
+        const edge = chrome.outerBorder();
         toplevel.border_rects[0].node.setPosition(-edge, -edge);
         toplevel.border_rects[0].setSize(width + 2 * edge, edge);
         toplevel.border_rects[1].node.setPosition(-edge, 0);
@@ -387,7 +392,7 @@ pub fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
     // translucent chrome twice at the joins. The ring over the fills, the
     // titlebar and the client's edge is the shape's.
     const body_top = toplevel.titlebarHeight();
-    const edge = chrome.frame_border;
+    const edge = chrome.frameBorder();
     const body_height = @max(0, height - body_top - edge);
     for (toplevel.frame_fills) |rect| col.setRect(rect, chrome.fillColor());
     toplevel.frame_fills[0].node.setPosition(0, body_top);

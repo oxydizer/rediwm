@@ -121,7 +121,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
             }
             for (keyboard.bindingSyms(keycode)) |sym| {
                 const action = keyboard.server.config.lookupKeybind(wlr_keyboard.getModifiers(), sym) orelse continue;
-                if (!keybinds.isHardwareAction(action)) continue;
+                if (!keybinds.isHardwareAction(action) and !(keyboard.server.locker != null and keybinds.worksWhileLocked(action))) continue;
                 keyboard.stopRepeat();
                 keyboard.hardware_consumed[event_keycode] = true;
                 keyboard.server.executeAction(action);

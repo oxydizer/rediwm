@@ -26,7 +26,14 @@ umask 022
 install -d "${bindir}"
 stage=$(mktemp -d "${bindir}/.rediwm-install.XXXXXX")
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-player rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper rediwm-restart; do
+# Every program the build installed, from its own list (build/install_paths.zig),
+# never a glob of bin/: zig build leaves retired programs behind there.
+programs=$(cat "$release_dir/programs")
+for binary in $programs; do
+    case "$binary" in
+        rediwm|rediwm-*) case "$binary" in *[!a-z0-9-]*) echo "Invalid program name: $binary" >&2; exit 1 ;; esac ;;
+        *) echo "Invalid program name: $binary" >&2; exit 1 ;;
+    esac
     install -m755 "$release_dir/bin/$binary" "$stage/$binary"
 done
 install -Dm644 "$release_dir/share/applications/rediwm-theme.desktop" "${datadir}/applications/rediwm-theme.desktop"
@@ -94,7 +101,7 @@ for pack in "$release_dir"/share/rediwm/themes/*/; do
     rm -rf "${datadir}/rediwm/themes/$name"
     mv -T "${datadir}/rediwm/themes/.$name-new" "${datadir}/rediwm/themes/$name"
 done
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-player rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper rediwm-restart; do
+for binary in $programs; do
     mv -fT "$stage/$binary" "${bindir}/$binary"
 done
 # The compositor draws the desktop itself; the old client is retired.

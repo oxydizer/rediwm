@@ -16,6 +16,25 @@ pub fn changed(self: *Lock) void {
     self.server.scheduleFrames();
 }
 
+/// The active keyboard layout changed: the lock's layout button shows it.
+pub fn inputSourceChanged(self: *Lock) void {
+    self.refreshLayoutLabel();
+    if (self.greeter == null) self.changed();
+}
+
+/// Several layouts on the user's lock (never the greeter): passwords are often
+/// typed with the wrong one.
+pub fn refreshLayoutLabel(self: *Lock) void {
+    self.layout_label_len = 0;
+    if (self.greeter != null) return;
+    const sources = self.server.input_sources orelse return;
+    if (sources.layoutCount() < 2) return;
+    const label = sources.activeLayoutLabel();
+    const n = @min(label.len, self.layout_label.len);
+    @memcpy(self.layout_label[0..n], label[0..n]);
+    self.layout_label_len = @intCast(n);
+}
+
 /// A reskin invalidates both the screen and its small controls raster.
 pub fn themeChanged(self: *Lock) void {
     var outputs = self.server.outputs.iterator(.forward);

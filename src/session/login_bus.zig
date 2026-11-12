@@ -6,6 +6,7 @@ const wl = @import("wayland").server.wl;
 const dbus = @import("dbus");
 const sys = @import("login_sys.zig");
 const publication = @import("publication.zig");
+const native = @import("platform").redinit;
 
 const wire = dbus.wire;
 const Connection = dbus.Connection;
@@ -31,13 +32,17 @@ pub fn Client(comptime Login: type) type {
         user_address: []const u8,
         system: ?*Connection = null,
         user: ?*Connection = null,
+        redinit_socket: ?[:0]u8 = null,
 
         pub fn init(allocator: std.mem.Allocator, system_address: []const u8, user_address: []const u8) !Self {
+            const loop = try wl.EventLoop.create();
+            errdefer loop.destroy();
             return .{
                 .allocator = allocator,
-                .loop = try wl.EventLoop.create(),
+                .loop = loop,
                 .system_address = system_address,
                 .user_address = user_address,
+                .redinit_socket = try native.fromBusAddress(allocator, user_address),
             };
         }
 
@@ -46,6 +51,7 @@ pub fn Client(comptime Login: type) type {
             if (self.login_owner) |owner| self.allocator.free(owner);
             if (self.system) |conn| conn.destroy();
             if (self.user) |conn| conn.destroy();
+            if (self.redinit_socket) |socket| self.allocator.free(socket);
             self.loop.destroy();
         }
 
@@ -138,6 +144,17 @@ pub fn Client(comptime Login: type) type {
 
         /// The systemd user manager's environment.
         pub fn environment(self: *Self, arena: std.mem.Allocator) !Env {
+            if (self.redinit_socket) |socket| {
+                const assignments = try native.environment(socket, arena);
+                defer arena.free(assignments);
+                var result: Env = .empty;
+                for (assignments) |entry| {
+                    defer arena.free(entry);
+                    const eq = std.mem.indexOfScalar(u8, entry, '=') orelse continue;
+                    try result.put(arena, try arena.dupe(u8, entry[0..eq]), try arena.dupe(u8, entry[eq + 1 ..]));
+                }
+                return result;
+            }
             var reply = try self.getProperty(.user, systemd1, "/org/freedesktop/systemd1", systemd1 ++ ".Manager", "Environment");
             defer reply.deinit(self.allocator);
             var r = reply.reader();
@@ -153,6 +170,15 @@ pub fn Client(comptime Login: type) type {
         }
 
         pub fn systemd(self: *Self, values: []const Pair, absent: []const []const u8) !void {
+            if (self.redinit_socket) |socket| {
+                var arena: std.heap.ArenaAllocator = .init(self.allocator);
+                defer arena.deinit();
+                var assignments: std.ArrayList([]const u8) = .empty;
+                for (values) |pair| try assignments.append(arena.allocator(), try std.fmt.allocPrint(arena.allocator(), "{s}={s}", .{ pair.key, pair.value }));
+                if (assignments.items.len != 0) try native.changeEnvironment(socket, arena.allocator(), true, assignments.items);
+                if (absent.len != 0) try native.changeEnvironment(socket, arena.allocator(), false, absent);
+                return;
+            }
             if (values.len > 0) {
                 var body: wire.Writer = .{ .allocator = self.allocator };
                 defer body.deinit();

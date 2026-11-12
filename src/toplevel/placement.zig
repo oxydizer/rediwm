@@ -255,7 +255,7 @@ pub fn configureInitialXdgState(toplevel: *Toplevel) void {
         toplevel.maximized = true;
         if (target_out) |out| {
             const usable = out.usableBox();
-            const footer = if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
+            const footer = if (toplevel.hasServerDecorations()) chrome.frameBorder() else 0;
             const mw = usable.width - 2 * toplevel.borderWidth();
             const mh = usable.height - toplevel.titlebarHeight() - footer;
             _ = adapter.xdg_toplevel.setSize(@max(1, mw), @max(1, mh));

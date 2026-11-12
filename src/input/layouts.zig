@@ -28,6 +28,7 @@ pub fn activate(keyboard: *Keyboard) void {
         server.layout_keyboard = keyboard;
         keyboard.layout_idx = current(keyboard);
         events.onKeyboardLayoutsChanged(server);
+        if (server.input_sources) |sources| sources.observe(keyboard, keyboard.layout_idx, true);
     } else changed(keyboard, false);
 }
 
@@ -38,6 +39,7 @@ pub fn changed(keyboard: *Keyboard, keymap: bool) void {
     if (keyboard.server.layout_keyboard != keyboard) return;
     if (keymap) events.onKeyboardLayoutsChanged(keyboard.server) else if (idx != previous) {
         if (idx) |value| events.onKeyboardLayoutSwitched(keyboard.server, value);
+        if (keyboard.server.input_sources) |sources| sources.observe(keyboard, idx, false);
     }
 }
 

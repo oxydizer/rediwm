@@ -17,6 +17,7 @@ const wire = dbus.wire;
 const wl = @import("wayland").server.wl;
 const Server = @import("../Server.zig");
 const activation = @import("activation.zig");
+const Native = @import("redinit_scopes.zig").Worker;
 
 const log = std.log.scoped(.app_scope);
 
@@ -118,6 +119,8 @@ pub const Scopes = struct {
     unavailable: bool = false,
     closing: bool = false,
     queued: std.ArrayList(Unit) = .empty,
+    native: ?*Native = null,
+    native_checked: bool = false,
 
     pub fn create(allocator: std.mem.Allocator, loop: *wl.EventLoop, environ: std.process.Environ) !*Scopes {
         const self = try allocator.create(Scopes);
@@ -128,6 +131,7 @@ pub const Scopes = struct {
     /// Before the event loop is destroyed.
     pub fn destroy(self: *Scopes) void {
         self.closing = true;
+        if (self.native) |native| native.destroy();
         if (self.conn) |conn| conn.destroy();
         self.queued.deinit(self.allocator);
         self.allocator.destroy(self);
@@ -135,6 +139,11 @@ pub const Scopes = struct {
 
     pub fn place(self: *Scopes, pid: i32, app_id: []const u8) void {
         if (self.unavailable or pid <= 0) return;
+        if (!self.native_checked) {
+            self.native = Native.create(self.environ) catch null;
+            self.native_checked = true;
+        }
+        if (self.native) |native| return native.place(pid, app_id);
         const unit = unitName(pid, app_id);
         if (self.ready) return self.start(unit);
         if (self.conn == null or self.conn.?.closed) self.connect() catch |err| {

@@ -162,7 +162,9 @@ capture_sessions: usize = 0,
 start: start_button.State = .{},
 start_logo: ?icon_service.Entry = null,
 chips: std.ArrayList(ChipState) = .empty,
-tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired } },
+tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired }, .{ .kind = .input_source } },
+// Touchpad scrolling over the input source item, gathered into steps.
+source_scroll: f32 = 0,
 capture_hover: Anim = .{},
 capture_press: Anim = .{ .to = 1 },
 hover_target: Target = .none,
@@ -179,7 +181,8 @@ audio_muted: bool = false,
 // colour, like a muted speaker. Pushed by `network.Manager`, never polled.
 network_offline: bool = false,
 // Whether a wireless adapter exists and a cable is connected: decides the
-// automatic Wi-Fi and Ethernet items. Pushed by `network.Manager`.
+// automatic Wi-Fi and Ethernet items. Pushed by `network.Manager`; its
+// `input_sources` part comes from `input_sources.Manager`.
 network_presence: taskbar_items.Presence = .{},
 // While offline the wifi icon also blinks (one cycle a second) so a dropped
 // connection stands out. A real deadline only while offline: the timer is
@@ -213,8 +216,8 @@ pub const BarBuffer = taskbar_types.BarBuffer;
 pub const ChipPaint = taskbar_types.ChipPaint;
 pub const ChipFlat = taskbar_types.ChipFlat;
 
-// `wired` comes last so the IPC tray indices of the other icons stay put.
-pub const TrayKind = enum { volume, wifi, power, wired };
+// New kinds come last so the IPC tray indices of the others stay put.
+pub const TrayKind = enum { volume, wifi, power, wired, input_source };
 pub const tray_count = @typeInfo(TrayKind).@"enum".field_names.len;
 
 pub const AppKind = enum { file_explorer, notes, terminal, settings, text_doc, browser, other };
@@ -272,7 +275,11 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
         .glass_effect = glass_effect,
         .battery_state = server.power_policy.state,
         .network_offline = if (server.network) |network| network.offline() else false,
-        .network_presence = if (server.network) |network| network.presence() else .{},
+        .network_presence = presence: {
+            var presence: taskbar_items.Presence = if (server.network) |network| network.presence() else .{};
+            presence.input_sources = if (server.input_sources) |sources| sources.switchable() else false;
+            break :presence presence;
+        },
         .clock_minute = @divFloor(c_time.time(null), 60),
         .timer = undefined,
     };
@@ -351,7 +358,9 @@ pub fn applyNetwork(bar: *Taskbar, offline: bool) void {
 
 /// An adapter or a cable appearing or going shows or hides the automatic
 /// items, which moves their neighbours like a battery coming or going.
-pub fn applyNetworkPresence(bar: *Taskbar, next: taskbar_items.Presence) void {
+pub fn applyNetworkPresence(bar: *Taskbar, network: taskbar_items.Presence) void {
+    var next = network;
+    next.input_sources = bar.network_presence.input_sources;
     if (std.meta.eql(next, bar.network_presence)) return;
     bar.network_presence = next;
     _ = bar.reconcile(nowMs());
@@ -359,6 +368,26 @@ pub fn applyNetworkPresence(bar: *Taskbar, next: taskbar_items.Presence) void {
     bar.clock_dirty = true;
     bar.capture_dirty = true;
     bar.markDirty(paint_tray | paint_clock | paint_capture);
+    bar.wlr_output.scheduleFrame();
+}
+
+/// The active input source or the number of sources changed. Only the
+/// indicator repaints unless it appears or goes, which moves its neighbours.
+pub fn applyInputSource(bar: *Taskbar, presence_changed: bool) void {
+    const switchable = if (bar.server.input_sources) |sources| sources.switchable() else false;
+    if (presence_changed or switchable != bar.network_presence.input_sources) {
+        var next = bar.network_presence;
+        next.input_sources = switchable;
+        bar.network_presence = next;
+        _ = bar.reconcile(nowMs());
+        bar.tray_dirty = @splat(true);
+        bar.clock_dirty = true;
+        bar.capture_dirty = true;
+        bar.markDirty(paint_tray | paint_clock | paint_capture);
+    } else {
+        bar.tray_dirty[@backingInt(TrayKind.input_source)] = true;
+        bar.markDirty(paint_tray);
+    }
     bar.wlr_output.scheduleFrame();
 }
 

@@ -365,9 +365,95 @@ def run_pagination(scale):
             log.close()
 
 
+def run_content_and_pointer(scale, style):
+    """A window's subsurfaces are part of its thumbnail (browsers of the Firefox
+    family and video players draw their content into one), and the switcher
+    owns the pointer: a cursor the client under it had hidden shows again."""
+    with tempfile.TemporaryDirectory(prefix='rediwm-switcher-content-') as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        wallpaper = tmp / 'wallpaper.png'
+        Image.new('RGB', (32, 32), (20, 24, 30)).save(wallpaper)
+        proc, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'gles2'), config_content=f'[compositor]\nwallpaper = "{wallpaper}"\nswitcher_style = "{style}"\n')
+        clients = []
+        try:
+            with IPCClient(tmp) as ipc:
+                ipc.wait_for('wallpaper_presented', timeout_ms=10000)
+                display = next(p.name for p in tmp.glob('wayland-*') if not p.name.endswith('.lock'))
+                env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display)
+                # "Hider" hides the cursor whenever the pointer enters it, like
+                # a terminal after a key press or a player during playback.
+                for i, (title, extra) in enumerate((('Plain', {}), ('Hider', {'REDIWM_TEST_HIDE_CURSOR': '1'}))):
+                    clients.append(subprocess.Popen([str(tmp / 'client'), '--title', title, '--app-id', f'org.rediwm.switcher.{title.lower()}'],
+                        env=dict(env, **extra), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+                    wait_for(lambda: len(ipc.get_windows()) == i + 1, 'map content fixture')
+                ids = {w['title']: w['id'] for w in ipc.get_windows()}
+                for wid in ids.values(): ipc.wait_for('window_geometry_settled', window_id=wid, timeout_ms=5000)
+
+                def pointer():
+                    state = ipc.get_input_state()
+                    return state['cursor_source'], state['pointer_focused_window_id']
+
+                ipc.action('focus_window', {'id': ids['Hider']})
+                box = ipc.get_window_debug(ids['Hider'])['client_box']
+                # Away from the green child surface, on the window's own.
+                ipc.move_cursor(box['x'] + 300, box['y'] + 200)
+                wait_for(lambda: pointer() == ('hidden', ids['Hider']), 'the fixture hides its cursor')
+                ipc.key(56, True)
+                ipc.key_down_up(15)
+                assert pointer() == ('default', None), ('the switcher left the pointer with the client', pointer())
+                ipc.move_cursor(box['x'] + 310, box['y'] + 210)
+                assert pointer() == ('default', None), ('motion over the switcher lost the arrow', pointer())
+                ipc.key_down_up(1)  # Escape keeps focus where it was
+                ipc.key(56, False)
+                # Without any motion the pointer is back in the window under it.
+                wait_for(lambda: pointer() == ('hidden', ids['Hider']), 'closing the switcher returns the pointer')
+                # Accepting hands it to whatever is under the pointer afterwards.
+                ipc.key(56, True)
+                ipc.key_down_up(15)
+                ipc.key(56, False)
+                wait_for(lambda: ipc.get_focused_window()['id'] == ids['Plain'], 'switch to the other window')
+                wait_for(lambda: pointer()[1] is not None, 'accepting returns the pointer')
+
+                # Nothing but the switcher can show the fixture's green child
+                # surface once both windows are minimized.
+                def green():
+                    path = tmp / 'content.png'
+                    path.unlink(missing_ok=True)
+                    ipc.screenshot(path=str(path))
+                    wait_for(path.exists, 'capture')
+                    image = Image.open(path).convert('RGB')
+                    if dest := os.environ.get('REDIWM_SWITCHER_PREVIEW'):
+                        Path(dest).mkdir(parents=True, exist_ok=True)
+                        image.save(Path(dest) / f'{style}-content-{scale}.png')
+                    return sum(g > 200 and r < 60 and b < 60 for r, g, b in image.getdata())
+                for wid in ids.values(): ipc.minimize(wid)
+                time.sleep(.5)
+                assert green() == 0, 'a minimized fixture is still on screen'
+                ipc.key(29, True)
+                ipc.key_down_up(15)
+                time.sleep(.6)
+                shown = green()
+                ipc.key_down_up(1)
+                ipc.key(29, False)
+                # Two thumbnails, each with the 60x40 child of a 400x260 window.
+                assert shown > 60 * float(scale) ** 2, ('subsurfaces missing from the thumbnails', shown)
+                assert proc.poll() is None
+                print(f'PASS switcher subsurface content and pointer style={style} scale={scale}')
+        except Exception:
+            print((tmp / 'compositor.log').read_text()[-6000:])
+            raise
+        finally:
+            for client in clients: stop_process(client)
+            stop_process(proc)
+            log.close()
+
+
 if __name__ == '__main__':
     for style in ('linear', 'circular'):
         for modifier in (56, 29):
             for scale in ('1', '1.5'): run(scale, modifier, style)
     for scale in ('1', '1.5'): run_pagination(scale)
     for scale in ('1', '1.5'): run_group_cycle(scale)
+    for style in ('linear', 'circular'):
+        for scale in ('1', '1.5'): run_content_and_pointer(scale, style)

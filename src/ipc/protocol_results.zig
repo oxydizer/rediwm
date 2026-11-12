@@ -325,6 +325,22 @@ pub const KeyboardLayoutsData = struct {
 
 pub const LayoutTarget = union(enum) { next, prev, index: u32 };
 
+/// One keyboard layout ("xkb") or Fcitx input method ("fcitx").
+pub const InputSourceData = struct {
+    kind: []const u8,
+    id: []const u8,
+    name: []const u8,
+    label: []const u8,
+};
+
+pub const InputSourcesData = struct {
+    sources: []const InputSourceData = &.{},
+    active: ?u32 = null,
+    /// The active keyboard layout's index among the sources.
+    active_layout: ?u32 = null,
+    fcitx_running: bool = false,
+};
+
 pub const ConfigLoadedEvent = struct {
     seq: u64,
     generation: u64,

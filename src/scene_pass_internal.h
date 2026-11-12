@@ -29,7 +29,7 @@ struct program {
     GLint target, dst, color, alpha, opaque, sampler, coords;
     // Shaped programs only (-1 elsewhere): the shape, and the shadow's own terms.
     GLint mode, origin, size, radii, npoly, poly, border, bcolor, glow, gcolor, offset, softness, hide, use_shape, dim;
-    GLint sector_map, sector_coords;
+    GLint sector_map, sector_coords, sector_rect;
     // What `dim` holds now (a uniform keeps its value between draws and passes).
     float dim_brightness, dim_saturation;
     // The backdrop composite (shaped mode 3) and the blur program.
@@ -143,6 +143,9 @@ static inline bool shape_usable(const struct rediwm_pass_shape *s) {
         (s->sector_texture_flip != 1 && s->sector_texture_flip != -1) ||
         s->sector_texture_transform < WL_OUTPUT_TRANSFORM_NORMAL ||
         s->sector_texture_transform > WL_OUTPUT_TRANSFORM_FLIPPED_270)) return false;
+    for (int i = 0; i < 4; i++) if (!isfinite(s->sector_texture_rect[i])) return false;
+    if (s->sector_texture_rect[2] < 0 || s->sector_texture_rect[3] < 0 ||
+        (s->sector_texture_rect[2] > 0 && s->sector_texture_rect[3] <= 0)) return false;
     for (int i = 0; i < 4; i++) if (!isfinite(s->border_color[i]) || !isfinite(s->glow_color[i])) return false;
     return isfinite(s->glow_radius) && isfinite(s->glow_depth) && s->glow_radius >= 0 && s->glow_depth >= 0 &&
         isfinite(s->glow_center[0]) && isfinite(s->glow_center[1]);

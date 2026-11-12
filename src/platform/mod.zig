@@ -22,6 +22,7 @@ pub const watch = @import("watch.zig");
 pub const seccomp = @import("seccomp.zig");
 pub const system = @import("system.zig");
 pub const tool = @import("tool.zig");
+pub const redinit = @import("redinit.zig");
 pub const key_scan = @import("key_scan.zig");
 
 test {

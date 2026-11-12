@@ -17,6 +17,7 @@ test {
     _ = @import("config").keymap;
     _ = @import("input/repeat_keys.zig");
     _ = @import("input/wheel_debounce.zig");
+    _ = @import("input_sources.zig");
     _ = @import("pointer_identity.zig");
     _ = @import("pointer_presentation.zig");
     _ = @import("ui").key_repeat;

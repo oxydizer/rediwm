@@ -35,9 +35,10 @@ pub fn iconPattern(cr: *c.cairo_t, ic: *Icon, key: IconRaster.Key, name: []const
     if (ic.selection_amount > 0 or ic.hover_amount > 0) {
         rounded(cr, r.x, r.y, r.w, if (key.renaming) 68 else r.h, 8);
         const t = appearance_theme.global;
+        const selected = t.desktopSelectedColor();
         var fill: [4]f32 = undefined;
-        for (0..3) |i| fill[i] = @floatCast(t.desktop_hover[i] + (t.desktop_selected[i] - t.desktop_hover[i]) * ic.selection_amount);
-        fill[3] = @floatCast(t.desktop_selected[3] * ic.selection_amount + t.desktop_hover[3] * ic.hover_amount * (1 - ic.selection_amount));
+        for (0..3) |i| fill[i] = @floatCast(t.desktop_hover[i] + (selected[i] - t.desktop_hover[i]) * ic.selection_amount);
+        fill[3] = @floatCast(selected[3] * ic.selection_amount + t.desktop_hover[3] * ic.hover_amount * (1 - ic.selection_amount));
         shell_cairo.setSource(cr, fill);
         c.cairo_fill(cr);
     }
@@ -78,7 +79,7 @@ pub fn iconPattern(cr: *c.cairo_t, ic: *Icon, key: IconRaster.Key, name: []const
     c.cairo_restore(cr);
     if (ic.selection_amount > 0 and !key.renaming) {
         rounded(cr, ox + 4, r.y + 71, 88, 34, 3);
-        var fill = appearance_theme.global.desktop_selection;
+        var fill = appearance_theme.global.desktopSelectionColor();
         fill[3] *= @floatCast(ic.selection_amount);
         shell_cairo.setSource(cr, fill);
         c.cairo_fill(cr);
