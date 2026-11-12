@@ -57,7 +57,7 @@ seam for other operating systems.
 | Host | Methods | What |
 |---|---|---|
 | `Server.zig` | `server/` | startup and teardown, outputs, frames, wakeups, wallpaper |
-| `World.zig` | `world/` | window list, focus, the camera, zoom, pan and pinch |
+| `World.zig` | `world/` | window list, focus, the camera, zoom, pan and pinch; `overview.zig` owns the temporary spread, `overview_cards.zig` its live presentation, `overview_layout.zig` its grid |
 | `Toplevel.zig` | `toplevel/` | a window; `xdg.zig`, `xwayland_surface.zig` adapt the protocols |
 | `Output.zig` | `output/` | one monitor: frames, layout, modes, panels, wallpaper |
 | `Input.zig` | `input/` | seat, pointer, gestures, drags (`input/AGENTS.md`) |

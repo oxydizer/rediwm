@@ -77,6 +77,7 @@ For custom prefixes and distribution packages, see
 | Alt+Tab | window switcher |
 | Super+1…5, Super+=/-/0 | window zoom |
 | Super+Shift+=/-/0 | desktop zoom |
+| Super+A | canvas window overview |
 | Super+L | lock |
 | Ctrl+Shift+S, Print | region / full-screen screenshot |
 | Super+Z | undo the last window move or resize |

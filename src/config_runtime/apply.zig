@@ -23,6 +23,7 @@ const themeEql = loader.themeEql;
 const wheelAccel = loader.wheelAccel;
 pub const applyInactiveOpacity = applyWindowOpacity;
 pub fn applyDiff(server: *Server, old: Config, new: Config) void {
+    server.world.overview.cancel(&server.world);
     const pack_changed = !std.mem.eql(u8, old.theme_base, new.theme_base) or
         !std.mem.eql(u8, if (old.theme_pack) |p| p.root else "", if (new.theme_pack) |p| p.root else "") or
         !std.mem.eql(u8, if (old.theme_pack) |p| p.bytes else "", if (new.theme_pack) |p| p.bytes else "");

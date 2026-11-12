@@ -99,7 +99,7 @@ pub const Section = struct {
 fn group(action: keys.Action) usize {
     return switch (action) {
         .toggle_floating, .toggle_split, .toggle_workspace_tiling, .swap_left, .swap_right, .swap_up, .swap_down, .resize_split_left, .resize_split_right, .resize_split_up, .resize_split_down, .close_window, .toggle_fullscreen, .toggle_maximize, .tile_left, .tile_right, .tile_up, .tile_down => 0,
-        .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down, .focus_next, .focus_prev, .focus_left, .focus_right, .focus_up, .focus_down, .save_layout, .restore_layout, .undo => 1,
+        .toggle_overview, .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down, .focus_next, .focus_prev, .focus_left, .focus_right, .focus_up, .focus_down, .save_layout, .restore_layout, .undo => 1,
         .spawn, .toggle_start_menu, .input_source_next, .input_source_prev => 2,
         .screenshot_region, .screenshot_output => 3,
         .volume_up, .volume_down, .volume_mute, .mic_mute, .brightness_up, .brightness_down, .power_profile_cycle => 4,
@@ -253,6 +253,7 @@ fn descriptionFor(action: keys.Action, buf: []u8) []const u8 {
         .zoom_in => i18n.tr("Increase the focused window's size."),
         .zoom_out => i18n.tr("Decrease the focused window's size."),
         .zoom_reset => i18n.tr("Restore the focused window's size."),
+        .toggle_overview => i18n.tr("Spread all canvas windows into a grid, including minimized windows."),
         .camera_zoom_in => i18n.tr("Zoom into the desktop canvas."),
         .camera_zoom_out => i18n.tr("Zoom out of the desktop canvas."),
         .camera_zoom_reset => i18n.tr("Restore the desktop zoom."),
@@ -339,6 +340,7 @@ fn actionTitle(action: keys.Action) []const u8 {
         .zoom_in => i18n.tr("Zoom In"),
         .zoom_out => i18n.tr("Zoom Out"),
         .zoom_reset => i18n.tr("Zoom Reset"),
+        .toggle_overview => i18n.tr("Window Overview"),
         .camera_zoom_in => i18n.tr("Camera Zoom In"),
         .camera_zoom_out => i18n.tr("Camera Zoom Out"),
         .camera_zoom_reset => i18n.tr("Camera Zoom Reset"),

@@ -43,6 +43,10 @@ pub fn processButton(
         input.processCursorMotion(time_msec);
         return;
     }
+    if (state == .released and input.overview_buttons & map_bit != 0) {
+        input.overview_buttons &= ~map_bit;
+        return;
+    }
     if (input.server.locker) |lock| {
         // Before the client: a drag begun on the built-in screen must end.
         if (state == .released and button == btn_left) lock.pointerReleased();
@@ -59,6 +63,13 @@ pub fn processButton(
     if (input.server.polkit_dialog) |dialog| {
         if (state == .pressed) input.polkit_buttons |= polkit_bit;
         if (button == btn_left) dialog.button(state == .pressed, input.cursor.x, input.cursor.y);
+        return;
+    }
+    if (input.server.world.overview.active()) {
+        if (state == .pressed) {
+            input.overview_buttons |= map_bit;
+            input.server.world.overview.press(&input.server.world, button);
+        }
         return;
     }
     const screenshot_bit: u32 = if (button >= 272 and button < 304) @as(u32, 1) << @as(u5, @intCast(button - 272)) else 0;

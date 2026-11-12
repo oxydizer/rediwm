@@ -14,6 +14,7 @@
 | Alt+Tab | window switcher |
 | Super+1..5, Super+=/-/0 | window zoom |
 | Super+Shift+=/-/0 | desktop zoom |
+| Super+A | canvas window overview |
 | Super+L | lock |
 | Ctrl+Shift+S, Print | region / full-screen screenshot |
 | Super+Z | undo the last window move or resize |
@@ -40,6 +41,25 @@ world positions. Desktop icons and the taskbar stay fixed on screen by default.
 The mini map shows where you are and hides itself after a moment.
 
 The volume/brightness OSD also shows the desktop zoom percentage.
+
+Press **Super+A** to spread the canvas windows into separate live previews on
+the monitor under the pointer. Four windows form a 2×2 grid; five form two
+centred above three. Previews preserve aspect ratios, with gaps and readable
+titles beneath them. Offscreen and minimized windows are included; hidden tabs
+are excluded.
+
+Click a preview, or select one with the arrow keys and press Enter, to visit it.
+Selecting a minimized window restores it. Escape, Super+A again, or clicking
+empty space returns to the previous view and leaves minimized windows minimized.
+The spread changes only presentation: window positions, sizes and saved depths
+stay intact. This overview applies to canvas mode.
+
+With `focus_zoom` enabled, accepting a window applies its normal focus boost or
+camera depth. Cancelling still restores the original view.
+
+The action is `toggle_overview`. Its default Super+A binding is added to existing
+canvas configs unless that key is already assigned. Set `"super+a" = "noop"`
+under `[keybinds]` to disable it, or change it in Settings → Keyboard Shortcuts.
 
 ## Window switcher
 

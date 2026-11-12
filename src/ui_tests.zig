@@ -58,6 +58,7 @@ test {
     _ = @import("panel_paint.zig");
     _ = @import("resize.zig");
     _ = @import("camera.zig");
+    _ = @import("world/overview_layout.zig");
     _ = @import("mini_map_geometry.zig");
     _ = @import("switcher/layout.zig");
     _ = @import("calendar.zig");

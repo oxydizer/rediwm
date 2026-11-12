@@ -520,6 +520,7 @@ pub const CursorState = struct {
 
 pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     const output: *Output = @fieldParentPtr("destroy", listener);
+    output.server.world.overview.cancel(&output.server.world);
     if (output.tearing_idle) |source| source.remove();
     output.tearing_idle = null;
     if (output.server.screenshot_selector.output == output) output.server.screenshot_selector.cancel();

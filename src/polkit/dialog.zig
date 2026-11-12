@@ -64,6 +64,7 @@ pub const Dialog = struct {
         @import("../extra_protocols.zig").rediwm_protocols_revoke(server.extra_protocols);
         // End active capture before any authentication pixels are presented.
         if (server.capture_mgr) |manager| manager.stopAll();
+        server.world.overview.cancel(&server.world);
         server.switcher.cancel();
         server.screenshot_selector.cancel();
         server.input.clearGrab();

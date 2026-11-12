@@ -70,9 +70,14 @@ pub fn releaseIcon(toplevel: *Toplevel) void {
 /// Density of the sharpest output touched by the displayed frame. Keep the
 /// previous density while offscreen to avoid repainting invisible windows.
 pub fn syncOutputScale(toplevel: *Toplevel) void {
-    const origin = toplevel.server.world.toLayout(@floatFromInt(toplevel.x), @floatFromInt(toplevel.y));
-    const width = @as(f64, @floatFromInt(toplevel.chrome_width)) * toplevel.zoom();
-    const height = @as(f64, @floatFromInt(toplevel.chrome_height)) * toplevel.zoom();
+    var origin = toplevel.server.world.toLayout(@floatFromInt(toplevel.x), @floatFromInt(toplevel.y));
+    var width = @as(f64, @floatFromInt(toplevel.chrome_width)) * toplevel.zoom();
+    var height = @as(f64, @floatFromInt(toplevel.chrome_height)) * toplevel.zoom();
+    if (@import("../world/overview_cards.zig").find(&toplevel.server.world.overview, toplevel.id)) |card| {
+        origin = .{ .x = card.presented.x, .y = card.presented.y };
+        width = card.presented.width;
+        height = card.presented.height;
+    }
     var scale: f32 = 0;
     var it = toplevel.server.outputs.iterator(.forward);
     while (it.next()) |out| {
