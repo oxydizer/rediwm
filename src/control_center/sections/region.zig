@@ -9,8 +9,8 @@ const gpa = @import("../../main.zig").gpa;
 const config = @import("config");
 const wl = @import("wayland").server.wl;
 const Child = @import("../../session/child.zig");
+const input_sources_section = @import("input_sources.zig");
 const c = @import("c");
-const xkb_registry = @import("../../input/xkb_registry.zig");
 
 const days = [_]i18n.Message{ i18n.msg("Sunday"), i18n.msg("Monday"), i18n.msg("Tuesday"), i18n.msg("Wednesday"), i18n.msg("Thursday"), i18n.msg("Friday"), i18n.msg("Saturday") };
 
@@ -23,10 +23,6 @@ pub const Section = struct {
     zones: std.ArrayList([]const u8) = .empty,
     values: [3][]const []const u8 = .{ &.{}, &.{}, &.{} },
     loaded: bool = false,
-    keyboard_layouts: []xkb_registry.Layout = &.{},
-    keyboard_layout_labels: [][]const u8 = &.{},
-    keyboard_variant_values: [][]const u8 = &.{},
-    keyboard_variant_labels: [][]const u8 = &.{},
     locale_child: ?*Child = null,
     locale_source: ?*wl.EventSource = null,
     locale_fd: i32 = -1,
@@ -48,71 +44,9 @@ fn less(_: void, lhs: []const u8, rhs: []const u8) bool {
     return std.mem.lessThan(u8, lhs, rhs);
 }
 
-fn loadKeyboardLayouts(s: *Section) void {
-    const a = s.options.allocator();
-    s.keyboard_layouts = xkb_registry.enumerate(a) catch |err| {
-        std.log.warn("could not enumerate XKB layouts: {}", .{err});
-        return;
-    };
-    const labels = a.alloc([]const u8, s.keyboard_layouts.len) catch {
-        s.keyboard_layouts = &.{};
-        return;
-    };
-    for (s.keyboard_layouts, 0..) |item, i| labels[i] = item.label;
-    s.keyboard_layout_labels = labels;
-}
-
-fn keyboardLayoutIndex(name: []const u8, layouts: []const xkb_registry.Layout) ?usize {
-    for (layouts, 0..) |item, i| {
-        if (std.mem.eql(u8, item.name, name)) return i;
-    }
-    return null;
-}
-
-fn keyboardVariantIndex(name: []const u8, values: []const []const u8) ?usize {
-    for (values, 0..) |value, i| {
-        if (std.mem.eql(u8, value, name)) return i;
-    }
-    return null;
-}
-
-fn loadKeyboardVariants(
-    s: *Section,
-    a: std.mem.Allocator,
-    layout_name: []const u8,
-    current_variant: []const u8,
-) !void {
-    const variants = try xkb_registry.enumerateVariants(a, layout_name);
-    var current_found = current_variant.len == 0;
-    for (variants) |variant| {
-        if (std.mem.eql(u8, variant.name, current_variant)) current_found = true;
-    }
-
-    const extra: usize = if (current_found) 0 else 1;
-    const values = try a.alloc([]const u8, variants.len + 1 + extra);
-    const labels = try a.alloc([]const u8, variants.len + 1 + extra);
-    values[0] = "";
-    labels[0] = tr("Default");
-
-    var count: usize = 1;
-    for (variants) |variant| {
-        values[count] = variant.name;
-        labels[count] = variant.label;
-        count += 1;
-    }
-    if (!current_found) {
-        values[count] = current_variant;
-        labels[count] = try i18n.allocPrint(a, tr("Current: {variant}"), .{ .variant = current_variant });
-        count += 1;
-    }
-    s.keyboard_variant_values = values[0..count];
-    s.keyboard_variant_labels = labels[0..count];
-}
-
 fn loadOptions(s: *Section, cc: *panel.ControlCenter) !void {
     s.loaded = true;
     const a = s.options.allocator();
-    loadKeyboardLayouts(s);
     try s.zones.append(a, "UTC");
     const table = std.Io.Dir.readFileAlloc(.cwd(), cc.server.io, "/usr/share/zoneinfo/zone.tab", a, .limited(1 << 20)) catch "";
     var lines = std.mem.splitScalar(u8, table, '\n');
@@ -365,10 +299,11 @@ fn previews(a: std.mem.Allocator, prefs: config.loader.RegionConfig) !W {
 pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     if (!s.loaded and !cc.server.greeter_mode) loadOptions(s, cc) catch {};
     _ = s.arena.reset(.retain_capacity);
-    s.root = tree(s, cc, s.arena.allocator()) catch panel.outOfMemory();
+    input_sources_section.build(&cc.input_sources, cc);
+    s.root = tree(s, cc, s.arena.allocator(), cc.input_sources.root) catch panel.outOfMemory();
 }
 
-fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
+fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, keyboard_sources: W) !W {
     const prefs = cc.server.config.region;
     const stacked = cc.panel_box.width < 1100;
     const content_width = @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100;
@@ -380,50 +315,8 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         try choice(s, cc, a, "language", 1, s.locales.items, localeName(cc, "LC_MESSAGES"), nlItem("_NL_IDENTIFICATION_LANGUAGE")),
     });
 
-    const input = cc.server.config.input;
-    const selected_layout = keyboardLayoutIndex(input.xkb_layout, s.keyboard_layouts);
-    if (selected_layout) |index| {
-        loadKeyboardVariants(s, a, s.keyboard_layouts[index].name, input.xkb_variant) catch |err| {
-            std.log.warn("could not enumerate XKB variants: {}", .{err});
-            s.keyboard_variant_values = &.{};
-            s.keyboard_variant_labels = &.{};
-        };
-    } else {
-        s.keyboard_variant_values = &.{};
-        s.keyboard_variant_labels = &.{};
-    }
-    var keyboard = try card(a, &.{
-        panel.sectionTitle(tr("Keyboard")),
-        text(tr("Language"), 13, false),
-        .{
-            .name = "keyboard_language",
-            .kind = .{ .select = .{
-                .labels = s.keyboard_layout_labels,
-                .selected = selected_layout,
-                .disabled = s.keyboard_layouts.len == 0,
-                .placeholder = if (s.keyboard_layouts.len == 0)
-                    tr("Keyboard layouts unavailable")
-                else
-                    tr("Custom (config file)"),
-                .owner = cc,
-                .on_change = keyboardLayoutChanged,
-            } },
-            .width = .{ .percent = 1 },
-        },
-        text(tr("Variant"), 13, false),
-        .{
-            .name = "keyboard_variant",
-            .kind = .{ .select = .{
-                .labels = s.keyboard_variant_labels,
-                .selected = if (selected_layout != null) keyboardVariantIndex(input.xkb_variant, s.keyboard_variant_values) else null,
-                .disabled = selected_layout == null or s.keyboard_variant_values.len == 0,
-                .placeholder = tr("Select a keyboard layout"),
-                .owner = cc,
-                .on_change = keyboardVariantChanged,
-            } },
-            .width = .{ .percent = 1 },
-        },
-    });
+    var keyboard = keyboard_sources;
+    keyboard.name = "keyboard";
 
     var region = try card(a, &.{
         panel.sectionTitle(tr("Region")),
@@ -489,40 +382,6 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     if (s.message.len == 0) root.children = root.children[0..3];
     root.width = .{ .percent = 1 };
     return root;
-}
-
-fn keyboardLayoutChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
-    if (index >= cc.region.keyboard_layouts.len) return;
-
-    const selected = cc.region.keyboard_layouts[index];
-    const server = cc.server;
-    if (std.mem.eql(u8, server.config.input.xkb_layout, selected.name)) return;
-
-    config.setting_save.saveInput(gpa, server.io, server.config.path, "xkb_layout", selected.name) catch {
-        cc.region.message = tr("Could not save. Check the configuration file and try again.");
-        cc.refresh();
-        return;
-    };
-    // A variant belongs to its base layout; clear it when changing languages.
-    config.setting_save.saveInput(gpa, server.io, server.config.path, "xkb_variant", "") catch |err| {
-        std.log.warn("could not clear keyboard variant: {}", .{err});
-    };
-    @import("../../config_runtime/watcher.zig").reloadConfig(server);
-}
-
-fn keyboardVariantChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
-    if (index >= cc.region.keyboard_variant_values.len) return;
-
-    const variant = cc.region.keyboard_variant_values[index];
-    if (std.mem.eql(u8, cc.server.config.input.xkb_variant, variant)) return;
-    config.setting_save.saveInput(gpa, cc.server.io, cc.server.config.path, "xkb_variant", variant) catch {
-        cc.region.message = tr("Could not save. Check the configuration file and try again.");
-        cc.refresh();
-        return;
-    };
-    @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
 }
 
 fn save(owner: ?*anyopaque, comptime key: []const u8, value: @FieldType(config.loader.RegionConfig, key)) void {
