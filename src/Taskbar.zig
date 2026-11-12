@@ -162,6 +162,9 @@ capture_sessions: usize = 0,
 start: start_button.State = .{},
 start_logo: ?icon_service.Entry = null,
 chips: std.ArrayList(ChipState) = .empty,
+// Stable window IDs in taskbar presentation order. This is deliberately
+// independent of `world.toplevels`, which remains the focus/raise stack.
+chip_order: std.ArrayList(u64) = .empty,
 tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired }, .{ .kind = .input_source } },
 // Touchpad scrolling over the input source item, gathered into steps.
 source_scroll: f32 = 0,
@@ -318,6 +321,7 @@ pub fn destroy(bar: *Taskbar) void {
         if (chip.icon) |e| bar.server.iconRelease(e.id);
     }
     bar.chips.deinit(gpa);
+    bar.chip_order.deinit(gpa);
     bar.tree.node.destroy();
     gpa.destroy(bar);
 }
@@ -521,6 +525,7 @@ pub const battery_width = battery_badge.width;
 pub const refreshStartLogo = taskbar_reconcile.refreshStartLogo;
 pub const updateIcon = taskbar_reconcile.updateIcon;
 pub const taskbarOrderLessThan = taskbar_reconcile.taskbarOrderLessThan;
+pub const chipOrderIndex = taskbar_reconcile.chipOrderIndex;
 pub const reconcile = taskbar_reconcile.reconcile;
 
 // taskbar/tick.zig

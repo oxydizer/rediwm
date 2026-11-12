@@ -37,6 +37,15 @@ const chipTitleRect = Taskbar.chipTitleRect;
 const drawChipTitle = Taskbar.drawChipTitle;
 const paintChipTitleColumns = Taskbar.paintChipTitleColumns;
 
+test "taskbar chip order looks up stable window IDs" {
+    const order = [_]u64{ 42, 7, 19 };
+
+    try std.testing.expectEqual(@as(?usize, 0), Taskbar.chipOrderIndex(&order, 42));
+    try std.testing.expectEqual(@as(?usize, 1), Taskbar.chipOrderIndex(&order, 7));
+    try std.testing.expectEqual(@as(?usize, 2), Taskbar.chipOrderIndex(&order, 19));
+    try std.testing.expectEqual(@as(?usize, null), Taskbar.chipOrderIndex(&order, 99));
+}
+
 test "chip/tile/tray sizing matches default theme" {
     const saved = ui_theme.global;
     defer ui_theme.global = saved;
