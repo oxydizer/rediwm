@@ -271,10 +271,12 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
 
 pub fn passthroughMotion(input: *Input, time_msec: u32) void {
     if (input.taskbar_drag) |*session| {
-        const dx = input.cursor.x - session.press_x;
-        const dy = input.cursor.y - session.press_y;
-        const threshold: f64 = 6;
-        if (!session.dragging and dx * dx + dy * dy >= threshold * threshold) {
+        if (!session.dragging and @import("../taskbar/pointer.zig").dragThresholdCrossed(
+            session.press_x,
+            session.press_y,
+            input.cursor.x,
+            input.cursor.y,
+        )) {
             session.dragging = true;
         }
         if (session.dragging) {

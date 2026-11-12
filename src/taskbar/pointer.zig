@@ -26,6 +26,14 @@ const markPaintCauseFromTarget = Taskbar.markPaintCauseFromTarget;
 const trayItem = Taskbar.trayItem;
 
 const source_scroll_step: f32 = 60;
+pub const drag_threshold: f64 = 6;
+
+/// Whether pointer movement from the initial press is large enough to drag.
+pub fn dragThresholdCrossed(press_x: f64, press_y: f64, x: f64, y: f64) bool {
+    const dx = x - press_x;
+    const dy = y - press_y;
+    return dx * dx + dy * dy >= drag_threshold * drag_threshold;
+}
 
 /// A visible chip's horizontal bounds, used to calculate a drag insertion slot.
 pub const ChipSlot = struct {

@@ -106,6 +106,36 @@ test "taskbar drag insertion ignores the dragged chip and handles a lone chip" {
     );
 }
 
+test "taskbar drag threshold distinguishes clicks from drags" {
+    const crossed = taskbar_pointer.dragThresholdCrossed;
+
+    try std.testing.expect(!crossed(100, 100, 105.99, 100));
+    try std.testing.expect(crossed(100, 100, 106, 100));
+    try std.testing.expect(crossed(100, 100, 107, 100));
+    try std.testing.expect(!crossed(100, 100, 104, 104));
+    try std.testing.expect(crossed(100, 100, 104.25, 104.25));
+}
+
+test "taskbar drag insertion handles exact midpoints and a non-leading dragged chip" {
+    const chips = [_]taskbar_pointer.ChipSlot{
+        .{ .id = 10, .x = 0, .width = 100 },
+        .{ .id = 20, .x = 110, .width = 100 },
+        .{ .id = 30, .x = 220, .width = 100 },
+    };
+
+    // At the midpoint, the insertion point is after that chip.
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 30, .before = true },
+        taskbar_pointer.insertionTarget(&chips, 10, 160).?,
+    );
+
+    // Excluding a dragged chip in the middle still finds the correct slot.
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 10, .before = true },
+        taskbar_pointer.insertionTarget(&chips, 20, 25).?,
+    );
+}
+
 test "chip/tile/tray sizing matches default theme" {
     const saved = ui_theme.global;
     defer ui_theme.global = saved;
