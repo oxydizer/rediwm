@@ -124,6 +124,10 @@ pub const IconId = enum {
     trash_can,
     play,
     pause,
+    /// Media transport: a bar before a leftward triangle, its mirror, and a square.
+    skip_previous,
+    skip_next,
+    stop,
     view_grid,
     view_list,
     sort,

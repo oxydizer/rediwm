@@ -264,10 +264,16 @@ See `docs/files-torrents.md` for dependencies, storage and lifecycle.
 `app_audio_bar.zig` lays out the now-playing bar between toolbar groups, or
 in an extra row on narrow windows (`contentTop` includes it). It appears for
 playing and paused tracks, independently of the current folder; stopped/ended
-playback and file choosers have no bar. Controls use the shared buttons and Settings-style slider
-widgets and MPRIS through `player_link`; playing progress and slider feedback schedule
-repaint deadlines. Hover keys 920–923 damage the bar. `tests/files_audio.py`
-covers toolbar seeking, folder navigation, narrow layout, pause/resume and Stop.
+playback and file choosers have no bar. Controls are shared circular buttons
+(Previous, Play/Pause, Next, Stop, Playlist), the Settings slider through
+`ui.paint.paintSlider` (never the shaded variant directly) and MPRIS through
+`player_link`. Under 520 px the title and time stack above the slider in a
+40 px bar; wider bars put them on one row with the time in a value pill.
+Previous/Next step through the playlist snapshot with OpenUri (Previous
+restarts a track past 3 s) and are disabled at its ends. Playing progress and
+slider feedback schedule repaint deadlines. Hover keys 920–925 damage the bar.
+`tests/files_audio.py` covers toolbar seeking, Previous/Next, folder
+navigation, wide and narrow layouts, pause/resume and Stop.
 
 `app_audio_playlist.zig` owns the playlist popover (click, keyboard and scrolling).
 The link thread snapshots supported audio files beside the playing track, sorted

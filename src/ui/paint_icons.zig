@@ -48,6 +48,15 @@ pub fn iconDistance(id: IconId, px: f32, py: f32, cx: f32, cy: f32, half: f32, t
         .play => sdf.sdQuad(px, py, cx - half * 0.65, cy - half, cx + half, cy, cx - half * 0.65, cy + half, cx - half * 0.65, cy),
         // `.play` rotated a quarter turn: same degenerate quad, tip at the top.
         .caret_up => sdf.sdQuad(px, py, cx - half, cy + half * 0.65, cx, cy - half, cx + half, cy + half * 0.65, cx, cy + half * 0.65),
+        .skip_next => @min(
+            sdf.sdQuad(px, py, cx - half * 0.9, cy - half * 0.9, cx + half * 0.45, cy, cx - half * 0.9, cy + half * 0.9, cx - half * 0.9, cy),
+            sdBox(px, py, cx + half * 0.72, cy, half * 0.18, half * 0.9),
+        ),
+        .skip_previous => @min(
+            sdf.sdQuad(px, py, cx + half * 0.9, cy - half * 0.9, cx - half * 0.45, cy, cx + half * 0.9, cy + half * 0.9, cx + half * 0.9, cy),
+            sdBox(px, py, cx - half * 0.72, cy, half * 0.18, half * 0.9),
+        ),
+        .stop => sdRoundedBoxCentered(px, py, cx, cy, half * 0.75, half * 0.75, half * 0.15),
         .pause => @min(sdBox(px, py, cx - half * 0.45, cy, half * 0.22, half), sdBox(px, py, cx + half * 0.45, cy, half * 0.22, half)),
         .minimize => sdSegment(px, py, cx - half, cy, cx + half, cy, t),
         .drag_handle => @min(
