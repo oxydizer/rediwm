@@ -10,6 +10,7 @@ const config = @import("config");
 const wl = @import("wayland").server.wl;
 const Child = @import("../../session/child.zig");
 const c = @import("c");
+const xkb_registry = @import("../../input/xkb_registry.zig");
 
 const days = [_]i18n.Message{ i18n.msg("Sunday"), i18n.msg("Monday"), i18n.msg("Tuesday"), i18n.msg("Wednesday"), i18n.msg("Thursday"), i18n.msg("Friday"), i18n.msg("Saturday") };
 
@@ -22,6 +23,10 @@ pub const Section = struct {
     zones: std.ArrayList([]const u8) = .empty,
     values: [3][]const []const u8 = .{ &.{}, &.{}, &.{} },
     loaded: bool = false,
+    keyboard_layouts: []xkb_registry.Layout = &.{},
+    keyboard_layout_labels: [][]const u8 = &.{},
+    keyboard_variant_values: [][]const u8 = &.{},
+    keyboard_variant_labels: [][]const u8 = &.{},
     locale_child: ?*Child = null,
     locale_source: ?*wl.EventSource = null,
     locale_fd: i32 = -1,
@@ -43,9 +48,71 @@ fn less(_: void, lhs: []const u8, rhs: []const u8) bool {
     return std.mem.lessThan(u8, lhs, rhs);
 }
 
+fn loadKeyboardLayouts(s: *Section) void {
+    const a = s.options.allocator();
+    s.keyboard_layouts = xkb_registry.enumerate(a) catch |err| {
+        std.log.warn("could not enumerate XKB layouts: {}", .{err});
+        return;
+    };
+    const labels = a.alloc([]const u8, s.keyboard_layouts.len) catch {
+        s.keyboard_layouts = &.{};
+        return;
+    };
+    for (s.keyboard_layouts, 0..) |item, i| labels[i] = item.label;
+    s.keyboard_layout_labels = labels;
+}
+
+fn keyboardLayoutIndex(name: []const u8, layouts: []const xkb_registry.Layout) ?usize {
+    for (layouts, 0..) |item, i| {
+        if (std.mem.eql(u8, item.name, name)) return i;
+    }
+    return null;
+}
+
+fn keyboardVariantIndex(name: []const u8, values: []const []const u8) ?usize {
+    for (values, 0..) |value, i| {
+        if (std.mem.eql(u8, value, name)) return i;
+    }
+    return null;
+}
+
+fn loadKeyboardVariants(
+    s: *Section,
+    a: std.mem.Allocator,
+    layout_name: []const u8,
+    current_variant: []const u8,
+) !void {
+    const variants = try xkb_registry.enumerateVariants(a, layout_name);
+    var current_found = current_variant.len == 0;
+    for (variants) |variant| {
+        if (std.mem.eql(u8, variant.name, current_variant)) current_found = true;
+    }
+
+    const extra: usize = if (current_found) 0 else 1;
+    const values = try a.alloc([]const u8, variants.len + 1 + extra);
+    const labels = try a.alloc([]const u8, variants.len + 1 + extra);
+    values[0] = "";
+    labels[0] = tr("Default");
+
+    var count: usize = 1;
+    for (variants) |variant| {
+        values[count] = variant.name;
+        labels[count] = variant.label;
+        count += 1;
+    }
+    if (!current_found) {
+        values[count] = current_variant;
+        labels[count] = try i18n.allocPrint(a, tr("Current: {variant}"), .{ .variant = current_variant });
+        count += 1;
+    }
+    s.keyboard_variant_values = values[0..count];
+    s.keyboard_variant_labels = labels[0..count];
+}
+
 fn loadOptions(s: *Section, cc: *panel.ControlCenter) !void {
     s.loaded = true;
     const a = s.options.allocator();
+    loadKeyboardLayouts(s);
     try s.zones.append(a, "UTC");
     const table = std.Io.Dir.readFileAlloc(.cwd(), cc.server.io, "/usr/share/zoneinfo/zone.tab", a, .limited(1 << 20)) catch "";
     var lines = std.mem.splitScalar(u8, table, '\n');
@@ -217,7 +284,7 @@ fn card(a: std.mem.Allocator, items: []const W) !W {
 }
 
 fn info(a: std.mem.Allocator, name: []const u8, value: []const u8) !W {
-    return container(a, .column, &.{ text(name, 12, true), text(value, 14, false) });
+    return card(a, &.{ text(name, 12, false), text(value, 14, true) });
 }
 
 fn localeName(cc: *panel.ControlCenter, category: []const u8) []const u8 {
@@ -284,10 +351,14 @@ fn previews(a: std.mem.Allocator, prefs: config.loader.RegionConfig) !W {
     _ = c.uselocale(previous);
     const currency_len = c.strfmon_l(&currency, currency.len, locale, "%n", @as(f64, 1234.56));
     return container(a, .column, &.{
+        try container(a, .row, &.{
         try info(a, tr("Date"), try a.dupe(u8, std.mem.sliceTo(&date, 0))),
         try info(a, tr("Time"), try a.dupe(u8, std.mem.trim(u8, std.mem.sliceTo(&time, 0), " "))),
+        }),
+        try container(a, .row, &.{
         try info(a, tr("Number"), if (number_len > 0 and number_len < number.len) try a.dupe(u8, std.mem.sliceTo(&number, 0)) else tr("Unavailable")),
         try info(a, tr("Currency"), if (std.mem.span(c.nl_langinfo_l(currency_item, locale)).len == 0) tr("Not specified") else if (currency_len > 0) try a.dupe(u8, std.mem.trim(u8, std.mem.sliceTo(&currency, 0), " ")) else tr("Unavailable")),
+        }),
     });
 }
 
@@ -302,16 +373,65 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const stacked = cc.panel_box.width < 1100;
     const content_width = @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100;
     const paragraph_width = if (stacked) content_width else (content_width - 12) / 2;
-    const language = try card(a, &.{
+    var language = try card(a, &.{
         panel.sectionTitle(tr("Language")),
+        .{ .kind = .container, .direction = .column, .height = .{ .fixed = 56 } },
         text(tr("Application language"), 13, false),
         try choice(s, cc, a, "language", 1, s.locales.items, localeName(cc, "LC_MESSAGES"), nlItem("_NL_IDENTIFICATION_LANGUAGE")),
     });
-    const region = try card(a, &.{
+
+    const input = cc.server.config.input;
+    const selected_layout = keyboardLayoutIndex(input.xkb_layout, s.keyboard_layouts);
+    if (selected_layout) |index| {
+        loadKeyboardVariants(s, a, s.keyboard_layouts[index].name, input.xkb_variant) catch |err| {
+            std.log.warn("could not enumerate XKB variants: {}", .{err});
+            s.keyboard_variant_values = &.{};
+            s.keyboard_variant_labels = &.{};
+        };
+    } else {
+        s.keyboard_variant_values = &.{};
+        s.keyboard_variant_labels = &.{};
+    }
+    var keyboard = try card(a, &.{
+        panel.sectionTitle(tr("Keyboard")),
+        text(tr("Language"), 13, false),
+        .{
+            .name = "keyboard_language",
+            .kind = .{ .select = .{
+                .labels = s.keyboard_layout_labels,
+                .selected = selected_layout,
+                .disabled = s.keyboard_layouts.len == 0,
+                .placeholder = if (s.keyboard_layouts.len == 0)
+                    tr("Keyboard layouts unavailable")
+                else
+                    tr("Custom (config file)"),
+                .owner = cc,
+                .on_change = keyboardLayoutChanged,
+            } },
+            .width = .{ .percent = 1 },
+        },
+        text(tr("Variant"), 13, false),
+        .{
+            .name = "keyboard_variant",
+            .kind = .{ .select = .{
+                .labels = s.keyboard_variant_labels,
+                .selected = if (selected_layout != null) keyboardVariantIndex(input.xkb_variant, s.keyboard_variant_values) else null,
+                .disabled = selected_layout == null or s.keyboard_variant_values.len == 0,
+                .placeholder = tr("Select a keyboard layout"),
+                .owner = cc,
+                .on_change = keyboardVariantChanged,
+            } },
+            .width = .{ .percent = 1 },
+        },
+    });
+
+    var region = try card(a, &.{
         panel.sectionTitle(tr("Region")),
         text(tr("Regional formats"), 13, false),
         try choice(s, cc, a, "formats", 2, s.locales.items, localeName(cc, "LC_TIME"), nlItem("_NL_ADDRESS_COUNTRY_NAME")),
-        try paragraph(a, tr("Date format for the taskbar; date, number and currency formats for new apps."), paragraph_width),
+        text(tr("Date format for the taskbar; date, number and currency formats for new apps."), 12, true),
+        text(tr("Formats Preview"), 12, true),
+        try previews(a, prefs),
     });
     var toggle = try container(a, .row, &.{
         text(tr("Use 24-hour time"), 13, false),
@@ -331,7 +451,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     });
     day_toggle.justify = .space_between;
     day_toggle.@"align" = .center;
-    const timing = try card(a, &.{
+    var timing = try card(a, &.{
         panel.sectionTitle(tr("Time & Date")),
         text(tr("Time zone"), 13, false),
         try choice(s, cc, a, "timezone", 0, s.zones.items, try timezone(a, cc), null),
@@ -344,11 +464,21 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         .{ .name = "first_day_of_week", .kind = .{ .select = .{ .labels = panel.translatedLabels(&days), .selected = @intFromEnum(prefs.first_day_of_week), .owner = cc, .on_change = firstDayChanged } }, .width = .{ .percent = 1 } },
         try paragraph(a, tr("Changes the taskbar calendar."), paragraph_width),
     });
-    const preview = try card(a, &.{ panel.sectionTitle(tr("Formats Preview")), try previews(a, prefs) });
-    var body = try container(a, if (stacked) .column else .row, &.{
-        try container(a, .column, &.{ language, timing }),
-        try container(a, .column, &.{ region, preview }),
-    });
+    language.width = .{ .flex = 1 };
+    keyboard.width = .{ .flex = 1 };
+    timing.width = .{ .flex = 1 };
+    region.width = .{ .flex = 1 };
+
+    var top_row = try container(a, .row, &.{ language, keyboard });
+    top_row.@"align" = .stretch;
+
+    var bottom_row = try container(a, .row, &.{ timing, region });
+    bottom_row.@"align" = .stretch;
+
+    var body = try container(a, .column, if (stacked)
+        &.{ language, keyboard, timing, region }
+    else
+        &.{ top_row, bottom_row });
     body.width = .{ .percent = 1 };
     var root = try container(a, .column, &.{
         try paragraph(a, tr("Saved for your user’s RediWM session only; system defaults are unchanged."), paragraph_width),
@@ -359,6 +489,40 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     if (s.message.len == 0) root.children = root.children[0..3];
     root.width = .{ .percent = 1 };
     return root;
+}
+
+fn keyboardLayoutChanged(owner: ?*anyopaque, _: usize, index: usize) void {
+    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    if (index >= cc.region.keyboard_layouts.len) return;
+
+    const selected = cc.region.keyboard_layouts[index];
+    const server = cc.server;
+    if (std.mem.eql(u8, server.config.input.xkb_layout, selected.name)) return;
+
+    config.setting_save.saveInput(gpa, server.io, server.config.path, "xkb_layout", selected.name) catch {
+        cc.region.message = tr("Could not save. Check the configuration file and try again.");
+        cc.refresh();
+        return;
+    };
+    // A variant belongs to its base layout; clear it when changing languages.
+    config.setting_save.saveInput(gpa, server.io, server.config.path, "xkb_variant", "") catch |err| {
+        std.log.warn("could not clear keyboard variant: {}", .{err});
+    };
+    @import("../../config_runtime/watcher.zig").reloadConfig(server);
+}
+
+fn keyboardVariantChanged(owner: ?*anyopaque, _: usize, index: usize) void {
+    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    if (index >= cc.region.keyboard_variant_values.len) return;
+
+    const variant = cc.region.keyboard_variant_values[index];
+    if (std.mem.eql(u8, cc.server.config.input.xkb_variant, variant)) return;
+    config.setting_save.saveInput(gpa, cc.server.io, cc.server.config.path, "xkb_variant", variant) catch {
+        cc.region.message = tr("Could not save. Check the configuration file and try again.");
+        cc.refresh();
+        return;
+    };
+    @import("../../config_runtime/watcher.zig").reloadConfig(cc.server);
 }
 
 fn save(owner: ?*anyopaque, comptime key: []const u8, value: @FieldType(config.loader.RegionConfig, key)) void {

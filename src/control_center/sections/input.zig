@@ -15,7 +15,6 @@ const Pointer = @import("../../Pointer.zig");
 const gpa = @import("../../main.zig").gpa;
 const config = @import("config");
 const libinput = @import("../../libinput.zig");
-const xkb_registry = @import("../../input/xkb_registry.zig");
 
 const bool_keys = [_][]const u8{ "natural_scroll", "left_handed", "tap_to_click", "tap_drag", "disable_while_typing" };
 
@@ -26,31 +25,6 @@ const default_rate_step: f32 = 5;
 const pan_speed_values = [4]f32{ 1, 2, 3, 4 };
 const pan_speed_labels = [_][]const u8{ "1x", "2x", "3x", "4x" };
 const pan_speed_segmented_width: f32 = 180;
-
-fn keyboardLayoutIndex(cfg: anytype, layouts: []const xkb_registry.Layout) ?usize {
-    for (layouts, 0..) |item, i| {
-        if (std.mem.eql(u8, item.name, cfg.xkb_layout)) return i;
-    }
-    return null;
-}
-
-fn loadKeyboardLayouts(s: *Section) void {
-    const allocator = s.arena.allocator();
-    s.keyboard_layouts = xkb_registry.enumerate(allocator) catch |err| {
-        std.log.warn("could not enumerate XKB layouts: {}", .{err});
-        s.keyboard_layouts = &.{};
-        s.keyboard_layout_labels = &.{};
-        return;
-    };
-
-    const labels = allocator.alloc([]const u8, s.keyboard_layouts.len) catch {
-        s.keyboard_layouts = &.{};
-        s.keyboard_layout_labels = &.{};
-        return;
-    };
-    for (s.keyboard_layouts, 0..) |item, i| labels[i] = item.label;
-    s.keyboard_layout_labels = labels;
-}
 
 pub const Section = struct {
     root: Widget = undefined,
@@ -66,9 +40,6 @@ pub const Section = struct {
     bool_row_children: [bool_keys.len][2]Widget = undefined,
     bool_label_children: [bool_keys.len][2]Widget = undefined,
     speed_value_buf: [16]u8 = undefined,
-    layout_row_children: [2]Widget = undefined,
-    keyboard_layouts: []xkb_registry.Layout = &.{},
-    keyboard_layout_labels: [][]const u8 = &.{},
     pan_speed_row_children: [2]Widget = undefined,
     delay_row_children: [2]Widget = undefined,
     rate_row_children: [2]Widget = undefined,
@@ -487,7 +458,6 @@ pub fn build(out: *Section, input: *Input) void {
     out.input = input;
     var row_count: usize = 0;
     const pointer = buildSelector(out, &row_count);
-    loadKeyboardLayouts(out);
     buildSpeed(out, pointer, &row_count);
     out.bool_rows = .{
         buildToggle(out, pointer, 0, "natural_scroll", i18n.tr("Natural scroll"), libinput.getNaturalScroll, libinput.setNaturalScroll),
@@ -510,27 +480,6 @@ pub fn build(out: *Section, input: *Input) void {
     const pan_speed_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.pan_speed_row_children };
     layout.appendRow(&out.row_storage, &row_count, pan_speed_row);
 
-    out.layout_row_children = .{
-        fgLabel(i18n.tr("Language")),
-        .{
-            .name = "keyboard_language",
-            .kind = .{ .select = .{
-                .labels = out.keyboard_layout_labels,
-                .selected = keyboardLayoutIndex(input.server.config.input, out.keyboard_layouts),
-                .disabled = out.keyboard_layouts.len == 0,
-                .placeholder = if (out.keyboard_layouts.len == 0)
-                    i18n.tr("Keyboard layouts unavailable")
-                else
-                    i18n.tr("Custom (config file)"),
-                .owner = out,
-                .on_change = &onKeyboardLayoutPicked,
-            } },
-            .width = .{ .fixed = 220 },
-        },
-    };
-    const layout_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.layout_row_children };
-    layout.appendRow(&out.row_storage, &row_count, layout_row);
-
     out.delay_row_children = .{
         fgLabel(i18n.tr("Repeat delay")),
         .{ .name = "repeat_delay", .kind = .{ .stepper = .{ .value = repeat.delay, .min = 100, .max = 2000, .step = default_delay_step, .unit = "ms", .owner = out, .on_change = &onRepeatDelayChanged } } },
@@ -552,29 +501,6 @@ pub fn build(out: *Section, input: *Input) void {
         .{ .name = "input", .kind = .container, .direction = .column, .gap = 12, .children = out.row_storage[0..row_count] },
     };
     out.root = .{ .name = "input", .kind = .container, .direction = .column, .gap = 8, .children = &out.top_children };
-}
-
-// Only the file is written here: the reload diffs it against the live config
-// and recompiles the keymap on every keyboard (`config_runtime/apply.zig`).
-fn onKeyboardLayoutPicked(owner: ?*anyopaque, _: usize, index: usize) void {
-    const s: *Section = @ptrCast(@alignCast(owner orelse return));
-    if (index >= s.keyboard_layouts.len) return;
-
-    const server = s.input.server;
-    const choice = s.keyboard_layouts[index];
-    if (std.mem.eql(u8, server.config.input.xkb_layout, choice.name)) return;
-
-    const save = @import("config").setting_save;
-    save.saveInput(gpa, server.io, server.config.path, "xkb_layout", choice.name) catch |err| {
-        std.log.warn("could not save keyboard layout: {}", .{err});
-        return;
-    };
-    // Variants belong to a specific base layout. Do not carry one over when
-    // the user selects a different language/layout.
-    save.saveInput(gpa, server.io, server.config.path, "xkb_variant", "") catch |err| {
-        std.log.warn("could not clear keyboard variant: {}", .{err});
-    };
-    @import("../../config_runtime/watcher.zig").reloadConfig(server);
 }
 
 fn onPanSpeedChanged(owner: ?*anyopaque, _: usize, index: usize) void {
