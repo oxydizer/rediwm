@@ -305,12 +305,10 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 
 fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, keyboard_sources: W) !W {
     const prefs = cc.server.config.region;
-    const stacked = cc.panel_box.width < 1100;
     const content_width = @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100;
-    const paragraph_width = if (stacked) content_width else (content_width - 12) / 2;
+    const paragraph_width = content_width;
     var language = try card(a, &.{
         panel.sectionTitle(tr("Language")),
-        .{ .kind = .container, .direction = .column, .height = .{ .fixed = 56 } },
         text(tr("Application language"), 13, false),
         try choice(s, cc, a, "language", 1, s.locales.items, localeName(cc, "LC_MESSAGES"), nlItem("_NL_IDENTIFICATION_LANGUAGE")),
     });
@@ -362,16 +360,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, keyboard_so
     timing.width = .{ .flex = 1 };
     region.width = .{ .flex = 1 };
 
-    var top_row = try container(a, .row, &.{ language, keyboard });
-    top_row.@"align" = .stretch;
-
-    var bottom_row = try container(a, .row, &.{ timing, region });
-    bottom_row.@"align" = .stretch;
-
-    var body = try container(a, .column, if (stacked)
-        &.{ language, keyboard, timing, region }
-    else
-        &.{ top_row, bottom_row });
+    var body = try container(a, .column, &.{ language, keyboard, timing, region });
     body.width = .{ .percent = 1 };
     var root = try container(a, .column, &.{
         try paragraph(a, tr("Saved for your user’s RediWM session only; system defaults are unchanged."), paragraph_width),
