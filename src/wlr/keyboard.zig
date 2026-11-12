@@ -145,4 +145,27 @@ pub const Keyboard = extern struct {
             modifiers.group,
         );
     }
+
+    /// Change the locked XKB layout without round-tripping server state
+    /// through xkb_state_update_mask(). Keep wlroots' cached group in sync
+    /// and emit its normal modifier signal for seat/client notification.
+    pub fn setLayoutGroup(keyboard: *Keyboard, group: xkb.LayoutIndex) void {
+        const state = keyboard.xkb_state orelse return;
+        _ = xkb.State.updateLatchedLocked(
+            state,
+            0,
+            0,
+            false,
+            0,
+            0,
+            0,
+            true,
+            @intCast(group),
+        );
+
+        const effective = state.serializeLayout(@enumFromInt(xkb.State.Component.layout_effective));
+        if (keyboard.modifiers.group == effective) return;
+        keyboard.modifiers.group = effective;
+        keyboard.events.modifiers.emit(keyboard);
+    }
 };

@@ -3,6 +3,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const anim = @import("anim.zig");
+const fold = @import("fold.zig");
+const Widget = @import("layout.zig").Widget;
 const text_input_widget = @import("widgets/text_input.zig");
 const select_widget = @import("widgets/select.zig");
 const input_mod = @import("input.zig");
@@ -10,6 +12,75 @@ const Dispatcher = input_mod.Dispatcher;
 const Key = input_mod.Key;
 const Mods = input_mod.Mods;
 const KeyOutcome = input_mod.KeyOutcome;
+
+const type_select_timeout_ms: i64 = 1000;
+
+fn sameFolded(a: []const u8, b: []const u8) bool {
+    return fold.eql(a, b, .{ .turkish = @import("i18n").isTurkish() });
+}
+
+fn typeSelect(self: *Dispatcher, widget: *Widget, chars: []const u8) void {
+    const state = &self.type_select;
+    const now = anim.nowMs();
+    const options: fold.Options = .{ .turkish = @import("i18n").isTurkish() };
+    const expired = state.len == 0 or now - state.last_ms > type_select_timeout_ms;
+    const data = widget.kind.select;
+
+    // Repeating one character cycles through choices with that prefix.
+    if (!expired and state.len == chars.len and sameFolded(state.buffer[0..state.len], chars)) {
+        state.last_ms = now;
+        for (0..data.labels.len) |offset| {
+            const index = (data.highlighted + 1 + offset) % data.labels.len;
+            if (std.mem.indexOfScalar(usize, data.disabled_options, index) != null) continue;
+            if (fold.startsWith(data.labels[index], chars, options)) {
+                select_widget.highlight(widget, index);
+                return;
+            }
+        }
+        return;
+    }
+
+    if (expired or chars.len > state.buffer.len - state.len) state.len = 0;
+    if (chars.len > state.buffer.len) return;
+    @memcpy(state.buffer[state.len..][0..chars.len], chars);
+    state.len += chars.len;
+    state.last_ms = now;
+
+    const prefix = state.buffer[0..state.len];
+    var found: ?usize = null;
+    for (data.labels, 0..) |label, index| {
+        if (std.mem.indexOfScalar(usize, data.disabled_options, index) != null) continue;
+        if (fold.startsWith(label, prefix, options)) {
+            found = index;
+            break;
+        }
+    }
+
+    // If the accumulated prefix has no match, treat this key as a fresh query.
+    if (found == null and state.len > chars.len) {
+        @memcpy(state.buffer[0..chars.len], chars);
+        state.len = chars.len;
+        for (data.labels, 0..) |label, index| {
+            if (std.mem.indexOfScalar(usize, data.disabled_options, index) != null) continue;
+            if (fold.startsWith(label, chars, options)) {
+                found = index;
+                break;
+            }
+        }
+    }
+    if (found) |index| select_widget.highlight(widget, index);
+}
+
+test "dropdown type-ahead accumulates multiple characters" {
+    var dispatcher: Dispatcher = .{};
+    var widget: Widget = .{ .kind = .{ .select = .{
+        .labels = &.{ "Russian", "Croatian", "Czech" },
+    } } };
+    typeSelect(&dispatcher, &widget, "C");
+    typeSelect(&dispatcher, &widget, "R");
+    typeSelect(&dispatcher, &widget, "O");
+    try std.testing.expectEqual(@as(usize, 1), widget.kind.select.highlighted);
+}
 
 pub fn keyEvent(self: *Dispatcher, allocator: Allocator, key: Key, mods: Mods) !KeyOutcome {
     const widget = self.focused orelse return .{};
@@ -27,14 +98,7 @@ pub fn keyEvent(self: *Dispatcher, allocator: Allocator, key: Key, mods: Mods) !
                     if (widget.kind.select.open) select_widget.commit(widget, widget.kind.select.highlighted) else select_widget.open(widget);
                 } else if (chars.len > 0) {
                     if (!widget.kind.select.open) select_widget.open(widget);
-                    const d = widget.kind.select;
-                    for (0..d.labels.len) |offset| {
-                        const i = (d.highlighted + 1 + offset) % d.labels.len;
-                        if (std.ascii.startsWithIgnoreCase(d.labels[i], chars)) {
-                            select_widget.highlight(widget, i);
-                            break;
-                        }
-                    }
+                    typeSelect(self, widget, chars);
                 }
             },
             .up, .down, .home, .end, .page_up, .page_down => {

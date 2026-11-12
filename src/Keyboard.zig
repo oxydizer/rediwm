@@ -103,6 +103,18 @@ fn handleModifiers(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Key
     _ = keyboard.server.world.peekTarget();
     keyboard.server.scheduleFrames();
     const mods = wlr_keyboard.getModifiers();
+    if (keyboard.server.input_sources) |sources| {
+        const state = wlr_keyboard.xkb_state.?;
+        log.info(
+            "layout state: effective={d} locked={d} wlr={d} manager={d}",
+            .{
+                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_effective)),
+                state.serializeLayout(@enumFromInt(xkb.State.Component.layout_locked)),
+                wlr_keyboard.modifiers.group,
+                sources.active_group,
+            },
+        );
+    }
     if (keyboard.server.locker == null) {
         if (keyboard.server.input.open_control_center) |cc| {
             if (cc.hasKeyboardFocus() and cc.page == .shortcuts and cc.shortcuts.editing != null and keyboard.server.input.open_start_menu == null) {

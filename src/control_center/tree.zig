@@ -279,13 +279,15 @@ pub fn buildTree(cc: *ControlCenter) void {
     if (!cc.search.empty() and cc.page == .services and cc.services.search_focus) {
         if (cc.services.search) |field| ui.input.current.focus(&cc.root, field);
     }
-    if (!cc.search.empty() and cc.page == .region and cc.input_sources.search_focus) {
+    if (cc.page == .region and cc.input_sources.search_focus) {
         if (cc.input_sources.search) |field| ui.input.current.focus(&cc.root, field);
     }
     if (!cc.search.empty() and cc.page == .users) {
         if (users_section.initialFormFocus(&cc.users)) |field| ui.input.current.focus(&cc.root, field);
     }
-    if (cc.search.focused or cc.search.request_focus) {
+    if (cc.page == .region and cc.input_sources.picker_open and cc.input_sources.search_focus) {
+        // The Region & Language picker owns focus while it is open.
+    } else if (cc.search.focused or cc.search.request_focus) {
         if (cc.search.initialized) ui.input.current.focus(&cc.root, &cc.search.field);
         cc.search.request_focus = false;
     }

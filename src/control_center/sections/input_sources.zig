@@ -11,6 +11,7 @@ const W = ui.layout.Widget;
 const config = @import("config");
 const config_sources = config.input_sources;
 const taskbar_items = config.taskbar_items;
+const fold = ui.fold;
 const panel = @import("../panel.zig");
 const gpa = @import("../../main.zig").gpa;
 
@@ -60,7 +61,7 @@ pub const Section = struct {
     search_focus: bool = false,
     results: []Result = &.{},
     language_keys: []const []const u8 = &.{},
-    selected_language: [16]u8 = @splat(0),
+    selected_language: [128]u8 = @splat(0),
     selected_language_len: usize = 0,
     message: []const u8 = "",
 
@@ -188,17 +189,15 @@ fn contentWidth(cc: *panel.ControlCenter) f32 {
 }
 
 fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Allocator, saved: ?ui.layout.TextInputData, layouts: []const config_sources.Layout) !W {
-    const field = try a.create(W);
-    field.* = .{
+    const field: W = .{
         .name = "input_source_search",
         .kind = .{ .text_input = saved orelse .{ .field = .{ .leading_icon = .search }, .placeholder = tr("Search layouts or languages…"), .value = try gpa.dupe(u8, ""), .owner = cc, .on_change = searchChanged } },
         .height = .{ .fixed = 36 },
         .width = .{ .percent = 1 },
     };
-    s.search = field;
     const query = std.mem.trim(u8, field.kind.text_input.value, " ");
     var children: std.ArrayList(W) = .empty;
-    try children.append(a, field.*);
+    try children.append(a, field);
     var groups: std.ArrayList(LanguageGroup) = .empty;
     var results: std.ArrayList(Result) = .empty;
     var rows: std.ArrayList(W) = .empty;
@@ -210,7 +209,7 @@ fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Al
             var id_buf: [160]u8 = undefined;
             const spelled = (config_sources.Layout{ .layout = entry.layout, .variant = entry.variant }).format(&id_buf);
             if (!matches(query, &.{ entry.description, entry.layout, entry.variant, entry.brief, entry.languages, spelled })) continue;
-            try appendLanguageGroup(a, &groups, if (entry.brief.len > 0) entry.brief else entry.layout, languageName(entry.description));
+            try appendLanguageGroup(a, &groups, languageName(entry.description), languageName(entry.description));
         },
         .unavailable => for (fallback) |entry| {
             if (configured(layouts, entry.layout, entry.variant)) continue;
@@ -224,7 +223,7 @@ fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Al
     for (groups.items, 0..) |group, i| {
         keys[i] = group.key;
         labels[i] = group.label;
-        if (s.selected_language_len > 0 and std.mem.eql(u8, group.key, s.selected_language[0..s.selected_language_len])) selected = i;
+        if (s.selected_language_len > 0 and fold.eql(group.key, s.selected_language[0..s.selected_language_len], .{})) selected = i;
     }
     if (selected == null and groups.items.len > 0) selected = 0;
     s.language_keys = keys;
@@ -252,8 +251,8 @@ fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Al
         .loading => {},
         .ready => for (manager.catalog.?.entries) |entry| {
             if (configured(layouts, entry.layout, entry.variant)) continue;
-            const key = if (entry.brief.len > 0) entry.brief else entry.layout;
-            if (!std.mem.eql(u8, key, s.selected_language[0..s.selected_language_len])) continue;
+            const key = languageName(entry.description);
+            if (!fold.eql(key, s.selected_language[0..s.selected_language_len], .{})) continue;
             var id_buf: [160]u8 = undefined;
             const spelled = (config_sources.Layout{ .layout = entry.layout, .variant = entry.variant }).format(&id_buf);
             if (!matches(query, &.{ entry.description, entry.layout, entry.variant, entry.brief, entry.languages, spelled })) continue;
@@ -264,7 +263,7 @@ fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Al
         },
         .unavailable => for (fallback) |entry| {
             if (configured(layouts, entry.layout, entry.variant)) continue;
-            if (!std.mem.eql(u8, languageName(entry.name), s.selected_language[0..s.selected_language_len])) continue;
+            if (!fold.eql(languageName(entry.name), s.selected_language[0..s.selected_language_len], .{})) continue;
             if (!matches(query, &.{ entry.name, entry.layout, entry.variant })) continue;
             total += 1;
             var id_buf: [160]u8 = undefined;
@@ -283,12 +282,14 @@ fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Al
         try children.append(a, try column(a, rows.items, 2));
         if (total > rows.items.len) try children.append(a, text(try i18n.allocPrint(a, tr("{shown} of {total} layouts; type to narrow the list."), .{ .shown = rows.items.len, .total = total }), 11, true));
     }
-    return column(a, children.items, 8);
+    var result = try column(a, children.items, 8);
+    s.search = &result.children[0];
+    return result;
 }
 
 fn appendLanguageGroup(a: std.mem.Allocator, groups: *std.ArrayList(LanguageGroup), key: []const u8, label: []const u8) !void {
     for (groups.items) |group| {
-        if (std.mem.eql(u8, group.key, key)) return;
+        if (fold.eql(group.key, key, .{})) return;
     }
     try groups.append(a, .{ .key = key, .label = label });
 }
@@ -350,6 +351,16 @@ fn matches(query: []const u8, fields: []const []const u8) bool {
         if (!found) return false;
     }
     return true;
+}
+
+test "language groups merge identical visible language names" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var groups: std.ArrayList(LanguageGroup) = .empty;
+    try appendLanguageGroup(arena.allocator(), &groups, "English", "English");
+    try appendLanguageGroup(arena.allocator(), &groups, "english", "english");
+    try appendLanguageGroup(arena.allocator(), &groups, "Croatian", "Croatian");
+    try std.testing.expectEqual(@as(usize, 2), groups.items.len);
 }
 
 fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {

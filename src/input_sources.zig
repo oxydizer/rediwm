@@ -339,9 +339,7 @@ pub const Manager = struct {
         if (!self.follows(keyboard)) return;
         const kb = keyboard.device.toKeyboard();
         if (kb.modifiers.group == self.active_group) return;
-        var mods = kb.modifiers;
-        mods.group = self.active_group;
-        kb.notifyModifiers(mods);
+        kb.setLayoutGroup(self.active_group);
     }
 
     pub fn scheduleSync(self: *Manager) void {
