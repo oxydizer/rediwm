@@ -206,7 +206,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     if (theme_changed) {
         server.saveLoginTheme();
         if (server.notifications) |manager| manager.themeChanged();
-        if (server.desktop) |desktop| desktop.app.themeChanged();
+        if (server.desktop) |desktop| desktop.themeChanged();
         if (server.locker) |lock| lock.themeChanged();
         server.refreshTaskbarsGeometry();
         var top_it = server.world.toplevels.iterator(.forward);

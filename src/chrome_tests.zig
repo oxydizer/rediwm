@@ -119,6 +119,10 @@ test "chrome geometry changes invalidate retained titlebar pixels" {
     theme.global.window_border_width = 2;
     try std.testing.expectEqual(@as(i32, 2), chrome_mod.frameBorder());
     try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    theme.global.window_inner_border_width = 3;
+    try std.testing.expectEqual(@as(i32, 5), chrome_mod.frameBorder());
+    try std.testing.expectEqual(@as(i32, 2), chrome_mod.outerBorder());
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
     theme.global = saved;
     theme.global.chrome_control_gap += 1;
     const spaced = TitlebarMemo.capture(400, null, .{});

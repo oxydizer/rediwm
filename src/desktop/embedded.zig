@@ -344,6 +344,11 @@ pub const Desktop = struct {
         if (self.output) |output| output.wlr_output.scheduleFrame();
     }
 
+    pub fn themeChanged(self: *Desktop) void {
+        self.app.themeChanged();
+        self.schedule();
+    }
+
     /// Runs from the output's frame handler, before projection is synced.
     /// Returns whether the desktop is still animating.
     pub fn frame(self: *Desktop, output: *Output) bool {

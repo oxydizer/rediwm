@@ -19,7 +19,15 @@ pub const ControlKind = enum { minimize, maximize, close };
 
 // Charcoal header with evenly spaced, unboxed window controls.
 pub fn frameBorder() i32 {
+    return outerBorder() + innerBorder();
+}
+
+pub fn outerBorder() i32 {
     return @intFromFloat(@round(std.math.clamp(theme.global.window_border_width, 1, 16)));
+}
+
+pub fn innerBorder() i32 {
+    return @intFromFloat(@round(std.math.clamp(theme.global.window_inner_border_width, 0, 16)));
 }
 const btn_size: i32 = 34;
 const close_size: i32 = 34;

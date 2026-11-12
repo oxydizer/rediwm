@@ -17,6 +17,8 @@ const plate = @import("chrome_plate.zig");
 // App dialogs use these same decoration metrics and control hit targets.
 const window_chrome = @import("ui").window_chrome;
 pub const frameBorder = window_chrome.frameBorder;
+pub const outerBorder = window_chrome.outerBorder;
+pub const innerBorder = window_chrome.innerBorder;
 pub const Metrics = window_chrome.Metrics;
 pub const frameRadius = window_chrome.frameRadius;
 
@@ -150,7 +152,7 @@ pub const TitlebarMemo = struct {
     title_plate: [4]f32 = @splat(0),
     title_plate_width: f32 = 0,
     title_plate_fg: ?[4]f32 = null,
-    title_plate_geometry: [5]f32 = @splat(0),
+    title_plate_geometry: [6]f32 = @splat(0),
     title_plate_outline: u64 = 0,
     inset_left: i32 = 0,
     inset_right: i32 = 0,

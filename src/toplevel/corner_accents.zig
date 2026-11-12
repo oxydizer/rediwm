@@ -18,6 +18,9 @@ const Memo = struct {
     stroke: f32,
     inset: f32,
     end_padding: f32,
+    casing: [4]f32,
+    casing_width: f32,
+    cut_ends: bool,
 };
 
 /// What the last sync saw: an unchanged client commit stops at comparing it.
@@ -106,10 +109,16 @@ pub fn syncCornerAccents(t: *Toplevel) !void {
             .density = density,
             .color = palette.window_corner_accent,
             .extent = extent,
-            .border = chrome.frameBorder(),
-            .stroke = palette.window_corner_width,
+            .border = chrome.outerBorder(),
+            // Reserved frame bands keep their logical width on X11 too;
+            // density still scales the length and free-standing accents.
+            .stroke = palette.window_corner_width / (if (chrome.innerBorder() > 0) density else 1),
             .inset = palette.window_corner_inset,
             .end_padding = palette.window_corner_end_padding,
+            .casing = palette.window_corner_casing,
+            // A transparent casing is none, but it still keeps its room.
+            .casing_width = palette.window_corner_casing_width,
+            .cut_ends = palette.window_corner_cut_ends,
         },
         .width = width,
         .height = height,
@@ -155,7 +164,7 @@ pub fn syncCornerAccents(t: *Toplevel) !void {
 
 /// How far from the outline the stroke's ink can lie, in logical px.
 fn reach(memo: Memo) f32 {
-    return @as(f32, @floatFromInt(memo.border)) + (memo.inset + memo.stroke) * memo.density + 1;
+    return @as(f32, @floatFromInt(memo.border)) + (memo.inset + memo.stroke + 2 * memo.casing_width) * memo.density + 1;
 }
 
 /// What the corner whose square starts at (`x`, `y`) shows of the outline. A
@@ -168,13 +177,28 @@ fn cornerKey(memo: Memo, polygon: ?ui.window_shape.Resolved, radius: f32, x: i32
 
 fn paint(buffer: *PanelBuffer, memo: Memo, polygon: ?ui.window_shape.Resolved, radius: f32, x: i32, y: i32, width: i32, height: i32) void {
     const color: ui.text.Color = .{ .r = memo.color[0], .g = memo.color[1], .b = memo.color[2], .a = memo.color[3] };
+    const casing_color: ui.text.Color = .{ .r = memo.casing[0], .g = memo.casing[1], .b = memo.casing[2], .a = memo.casing[3] };
     const extent: f32 = @floatFromInt(memo.extent);
+    // The ink is the band `inset` to `inset + band` inside the outline: the
+    // casing, the stroke `case` further in, and the casing again.
     const inset = @as(f32, @floatFromInt(memo.border)) + memo.inset * memo.density;
     const stroke = memo.stroke * memo.density;
-    // The stroke is the band `inset` to `inset + stroke` inside the outline.
+    const case = memo.casing_width * memo.density;
+    const band = stroke + 2 * case;
+    const cased = case > 0 and memo.casing[3] > 0;
+    // Ends: the casing reaches `end_padding` short of the square and the
+    // stroke the casing width short of that. A cut end runs at 45 degrees,
+    // from the outer edge to the inner edge `stroke` shorter. The casing's
+    // cut is the stroke's moved out by the casing width, square to it, and
+    // its sharp tip is capped at the casing's end rather than growing a barb.
+    const cut: f32 = if (memo.cut_ends) 1 else 0;
+    const casing_end = extent - memo.end_padding * memo.density;
+    const stroke_end = casing_end - case;
+    const casing_cut = stroke_end + case * (1 + cut * std.math.sqrt2);
+    const end_scale = memo.scale / @sqrt(1 + cut * cut);
     // Its ink ends half a device pixel beyond either side.
-    const centre = -(inset + stroke / 2);
-    const half = stroke / 2 + 0.5 / memo.scale;
+    const centre = -(inset + band / 2);
+    const half = band / 2 + 0.5 / memo.scale;
     const stride: usize = @intCast(buffer.width);
     // A raster outlives a resize, so it must not depend on where the frame's far
     // edges were when it was painted: the polygon is measured in f64, and a
@@ -198,11 +222,21 @@ fn paint(buffer: *PanelBuffer, memo: Memo, polygon: ?ui.window_shape.Resolved, r
                 dx += @intFromFloat(clear);
                 continue;
             }
-            // Leave the output pass's frame ring untouched. This stroke is
-            // just inside it; all pixels still inherit frame opacity and clipping.
-            const coverage = ui.sdf.coverage((distance + inset) * memo.scale) *
-                ui.sdf.coverage((-distance - inset - stroke) * memo.scale);
-            const end = ui.sdf.coverage((@max(along_x, along_y) - extent + memo.end_padding * memo.density) * memo.scale);
+            // Leave the output pass's frame ring untouched. This band is just
+            // inside it; all pixels still inherit frame opacity and clipping.
+            // Near an end one coordinate runs along the arm and the other is
+            // small, so the larger one is how far along the stroke a pixel is.
+            const along = @max(along_x, along_y);
+            // How far in from the band's outer edge.
+            const depth = -distance - inset;
+            if (cased) {
+                const coverage = ui.sdf.coverage(-depth * memo.scale) * ui.sdf.coverage((depth - band) * memo.scale);
+                const end = @min(ui.sdf.coverage((along - casing_cut + cut * depth) * end_scale), ui.sdf.coverage((along - casing_end) * memo.scale));
+                if (coverage * end > 0) ui.text.blendPixel(&buffer.pixels[dy * stride + dx], casing_color, coverage * end);
+            }
+            const inner = depth - case;
+            const coverage = ui.sdf.coverage(-inner * memo.scale) * ui.sdf.coverage((inner - stroke) * memo.scale);
+            const end = ui.sdf.coverage((along - stroke_end + cut * inner) * end_scale);
             if (coverage * end > 0) ui.text.blendPixel(&buffer.pixels[dy * stride + dx], color, coverage * end);
         }
     }

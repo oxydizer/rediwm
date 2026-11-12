@@ -13,8 +13,12 @@ chrome, capture, or retained panel painting. General rules remain in
   colour (× window opacity); the pass composites the ring over the body, so
   something must be drawn under every ring pixel: the titlebar `ChromeBuffer`
   (a plain band) on top and the three `frame_fills` rects beside and below the
-  client. `chrome.frameBorder()` resolves `window_border_width` for the ring,
-  client offsets, side fills, footer and resize/layout geometry. Corner rasters
+  client. `chrome.outerBorder()` resolves `window_border_width` for the outer ring.
+  `chrome.frameBorder()` adds `window_inner_border_width` for client offsets,
+  side fills, footer and resize/layout geometry. The optional inner ring
+  (`toplevel/inner_border.zig`) paints `window_inner_border` in four disjoint,
+  memoized perimeter strips, below corner accents and above the clipped client
+  corners. Its width is reserved even when its color is transparent. Corner rasters
   and titlebar memos include it for live reloads. `shadow_tree`, the resize-grab tree and
   every xdg popup carry `setTreeUnclipped` (a new node that hangs outside the
   window needs it too). The shadow is analytic (`setTreeShadow` on
@@ -69,6 +73,10 @@ chrome, capture, or retained panel painting. General rules remain in
   `window_corner_restore_ms`, and `window_corner_resize_ease`; live timing edits
   continue from the displayed length. `window_corner_inset` adds space beyond
   the frame ring, and `window_corner_end_padding` shortens the stroke endpoints.
+  `window_corner_casing(_width)` wraps the stroke in a band of its own (the
+  stroke moves in by its width, `reach` covers it); `window_corner_cut_ends`
+  cuts both at 45 degrees with the outer edge longest, the casing's sharp tip
+  capped at its end.
   `window_title_plate*` paints an angled title label, limits text before its
   slant and leaves grouped tabs to their existing painter. Its tokens belong
   in `TitlebarMemo` so reload and partial title repaint agree.

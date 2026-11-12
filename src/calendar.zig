@@ -166,7 +166,7 @@ pub const Calendar = struct {
             const today = current and self.year == tm.tm_year + 1900 and self.month == tm.tm_mon + 1 and day == tm.tm_mday;
             if (today) r.fillRect(20 + x * 47 + 5, y, 37, 37, .{ .color = t.accent, .radius = 6 });
             var number: [4]u8 = undefined;
-            centered(&r, x, y, std.fmt.bufPrint(&number, "{d}", .{day}) catch "", 14, if (today) .{ 1, 1, 1, 1 } else if (current) t.text_secondary else t.faint);
+            centered(&r, x, y, std.fmt.bufPrint(&number, "{d}", .{day}) catch "", 14, if (today) t.on_accent else if (current) t.text_secondary else t.faint);
         }
         self.buffer_node.setBuffer(&buf.base);
         self.buffer_node.setDestSize(@max(1, width), @max(1, height));

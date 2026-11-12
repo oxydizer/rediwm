@@ -22,14 +22,14 @@ def check_config(ipc, wid, scale, tmp, capture, crop, yellow):
         check_border(ipc, wid, scale, tmp, capture)
         before = capture()
         box = ipc.get_window_debug(wid)["chrome_box"]
-        sample = (round((box["x"] + 80) * scale), round((box["y"] + 8) * scale))
+        sample = (round((box["x"] + 80) * scale), round((box["y"] + 14) * scale))
         assert yellow(before.getpixel(sample)), "title plate depends on pack name"
         check_power_menu(ipc, scale, capture, crop, yellow)
         body = ipc.get_window_debug(wid)["client_box"]
         track_box = (body["width"] - 18, 120, 18, 160)
         old_track = crop(before, body, track_box).tobytes()
         values = {
-            "window_title_plate_inset": 10,
+            "window_title_plate_inset": 16,
             "window_title_plate_bevel": 2,
             "window_title_plate_slant": 0.25,
             "window_title_plate_control_gap": 20,
@@ -57,7 +57,8 @@ def check_config(ipc, wid, scale, tmp, capture, crop, yellow):
 
         after = wait_for(changed, "live plate/stripe geometry overrides")
         def endpoint(image):
-            strip = crop(image, box, (0, box["height"] - 4, 80, 3))
+            # Inside the outer ring, 1 px further in with the inset.
+            strip = crop(image, box, (0, box["height"] - 6, 80, 4))
             return max((x for x in range(strip.width)
                         if any(yellow(strip.getpixel((x, y))) for y in range(strip.height))), default=0)
         assert 5 * scale <= endpoint(before) - endpoint(after) <= 7 * scale, "corner padding ignored"
@@ -73,17 +74,17 @@ def check_border(ipc, wid, scale, tmp, capture):
     original = config_path.read_text()
     client = ipc.get_window_debug(wid)["client_box"]
     try:
-        for border in (2, 1, 2):
-            config_path.write_text(original + f"\nwindow_border_width = {border}\n")
+        for border, inner in ((2, 3), (1, 3), (2, 5), (2, 0), (2, 3)):
+            config_path.write_text(original + f"\nwindow_border_width = {border}\nwindow_inner_border_width = {inner}\n")
             ipc.reload_config()
             ipc.wait_for("window_geometry_settled", window_id=wid)
             debug = ipc.get_window_debug(wid)
             body, frame = debug["client_box"], debug["chrome_box"]
-            assert debug["frame_border"] == debug["footer_height"] == border, debug
+            assert debug["frame_border"] == debug["footer_height"] == border + inner, debug
             assert (body["width"], body["height"]) == (client["width"], client["height"]), debug
-            assert body["x"] == frame["x"] + border, debug
-            assert frame["width"] == body["width"] + 2 * border, debug
-            assert frame["height"] == body["height"] + debug["titlebar_height"] + border, debug
+            assert body["x"] == frame["x"] + border + inner, debug
+            assert frame["width"] == body["width"] + 2 * (border + inner), debug
+            assert frame["height"] == body["height"] + debug["titlebar_height"] + border + inner, debug
             ipc.move_cursor(body["x"] + body["width"] // 2, body["y"] + body["height"] // 2)
             image = capture()
             x = round((frame["x"] + frame["width"] / 2) * scale)
@@ -92,6 +93,46 @@ def check_border(ipc, wid, scale, tmp, capture):
             for offset in range(int(border * scale + .5)):
                 pixel = image.getpixel((x, bottom - 1 - offset))
                 assert max(abs(a - b) for a, b in zip(pixel, (115, 124, 104))) <= 3, (border, offset, pixel)
+            if inner:
+                # Follow all four sides, including the lowered top edge. The
+                # band touches the ring and occupies reserved client margins.
+                mid = border + inner / 2
+                points = ((mid, frame["height"] / 2),
+                          (frame["width"] - mid, frame["height"] / 2),
+                          (frame["width"] / 2, frame["height"] - mid),
+                          (frame["width"] - 100, 7 + mid))
+                for px, py in points:
+                    pixel = image.getpixel((int((frame["x"] + px) * scale),
+                                            int((frame["y"] + py) * scale)))
+                    assert max(abs(a - b) for a, b in zip(pixel, (43, 50, 51))) <= 3, (border, inner, px, py, pixel)
+            if inner == 3:
+                # Yellow starts immediately after the outer ring, replacing
+                # the dark band for the entire stroke width, with no casing gap.
+                y = int((frame["y"] + frame["height"] - 25) * scale)
+                for depth in (border + .75, border + inner - .75):
+                    pixel = image.getpixel((int((frame["x"] + depth) * scale), y))
+                    assert pixel[0] > 180 and pixel[1] > 170 and pixel[2] < 60, (depth, pixel)
+                # Every beveled end has its longest edge toward the outside.
+                for right in (False, True):
+                    for bottom_edge in (False, True):
+                        for vertical in (False, True):
+                            ends = []
+                            for depth in (border + .75, border + inner - .75):
+                                end = 0
+                                for along in range(round(45 * scale)):
+                                    px, py = (depth, along / scale) if vertical else (along / scale, depth)
+                                    if right:
+                                        px = frame["width"] - px
+                                    if bottom_edge:
+                                        py = frame["height"] - py
+                                    elif right and not vertical:
+                                        py += 7  # The lowered top-right edge.
+                                    pixel = image.getpixel((int((frame["x"] + px) * scale),
+                                                            int((frame["y"] + py) * scale)))
+                                    if pixel[0] > 180 and pixel[1] > 170 and pixel[2] < 60:
+                                        end = along
+                                ends.append(end)
+                            assert ends[0] > ends[1], (right, bottom_edge, vertical, ends)
         image.save(f"/tmp/blackout-border-{scale}.png")
     finally:
         config_path.write_text(original)

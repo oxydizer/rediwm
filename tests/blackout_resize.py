@@ -46,7 +46,7 @@ def check_narrow(ipc, scale, tmp, capture, crop):
                 fallback = capture()
                 same = crop(actual, box, rect).tobytes() == crop(fallback, box, rect).tobytes()
                 # The raised step and the right chamfer need 297.5 logical px,
-                # including the two 2 px borders around the client.
+                # including both reserved frame bands around the client.
                 assert same == (box["width"] < 297.5), (grouped, width, box, same)
                 config_path.write_text(config)
                 ipc.reload_config()
@@ -72,7 +72,8 @@ def check_resize(ipc, wid, scale, tmp, capture, crop, yellow):
     def length():
         image = capture()
         box = ipc.get_window_debug(wid)["chrome_box"]
-        strip = crop(image, box, (0, box["height"] - 4, 80, 3))
+        # The stroke fills the inner band, 2 to 5 px inside the outline.
+        strip = crop(image, box, (0, box["height"] - 5, 80, 3))
         return max((x for x in range(strip.width)
                     if any(yellow(strip.getpixel((x, y))) for y in range(strip.height))), default=0)
 

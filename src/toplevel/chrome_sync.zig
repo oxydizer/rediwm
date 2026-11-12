@@ -132,6 +132,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
         toplevel.last_painted_hover = 0;
         toplevel.syncBorders(animated.w, animated.h);
         toplevel.applyShape();
+        try toplevel.syncInnerBorder();
         try toplevel.syncCornerAccents();
         return;
     }
@@ -197,6 +198,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
 
     toplevel.syncBorders(width, height);
     toplevel.applyShape();
+    try toplevel.syncInnerBorder();
     try toplevel.syncCornerAccents();
     toplevel.syncResizeGrab(width, height);
     if (rebuild_shadow) try toplevel.syncShadow(width, height, radius);
@@ -346,7 +348,7 @@ pub fn applyShape(toplevel: *Toplevel) void {
         .width = toplevel.chrome_width,
         .height = toplevel.chrome_height,
         .radii = .{ radius, radius, radius, radius },
-        .border = @floatFromInt(chrome.frameBorder()),
+        .border = @floatFromInt(chrome.outerBorder()),
         .border_color = ring.rgba,
     };
     if (toplevel.shapePolygon(toplevel.chrome_width, toplevel.chrome_height)) |polygon| {
@@ -375,7 +377,7 @@ pub fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
         // coordinates stay unchanged, and the content remains above the stroke.
         const color = toplevel.borderColor();
         for (toplevel.border_rects) |rect| col.setRect(rect, color);
-        const edge = chrome.frameBorder();
+        const edge = chrome.outerBorder();
         toplevel.border_rects[0].node.setPosition(-edge, -edge);
         toplevel.border_rects[0].setSize(width + 2 * edge, edge);
         toplevel.border_rects[1].node.setPosition(-edge, 0);

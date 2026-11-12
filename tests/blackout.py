@@ -93,10 +93,10 @@ def run(scale):
                 assert colors.get((52, 61, 62), 0) > 30, colors
                 debug = ipc.get_window_debug(wid)
                 assert debug["titlebar_height"] == 48, debug
-                assert debug["frame_border"] == debug["footer_height"] == 2, debug
+                assert debug["frame_border"] == debug["footer_height"] == 5, debug
                 controls = {w["name"]: w for w in ipc.get_widget_tree(f"window/{wid}")["widgets"]}
                 close = controls["close"]["box"]
-                assert close["x"] + close["width"] > debug["chrome_box"]["width"] - 14, close
+                assert close["x"] + close["width"] > debug["chrome_box"]["width"] - 17, close
                 assert close["y"] + close["height"] / 2 > debug["titlebar_height"] / 2 + 3, close
                 # Keep a real rendered preview for review (never the reference image).
                 shot.save(f"/tmp/blackout-preview-{scale}.png")

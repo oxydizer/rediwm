@@ -168,6 +168,9 @@ pub fn applyKey(allocator: Allocator, t: *Theme, name_in: []const u8, value: []c
             if (comptime std.mem.eql(u8, name, "window_border_width")) {
                 if (number < 1 or number > 16) return error.InvalidSize;
             }
+            if (comptime std.mem.eql(u8, name, "window_inner_border_width")) {
+                if (number > 16) return error.InvalidSize;
+            }
             if (comptime std.mem.eql(u8, name, "chrome_control_gap")) {
                 if (number > 24) return error.InvalidSize;
             }
