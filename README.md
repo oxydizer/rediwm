@@ -11,10 +11,22 @@ that draws its whole shell itself: taskbar, start menu, settings, lock and login
 screens, notifications and OSDs, all in one process, benchmarked against
 [labwc](https://labwc.github.io/) to stay as lean (< 200mb idle ram usage, <1% CPU usage)
 
+## Themes
 |  |  |
 | :---: | :---: |
 | <img width="100%" alt="Screenshot 1" src="https://github.com/user-attachments/assets/b4cbd48c-ccab-452e-8457-2d1b8c096def" /> | <img width="100%" alt="Screenshot 2" src="https://github.com/user-attachments/assets/10f9becc-bcd9-4089-872b-4a03d1dba818" /> |
 | <img width="100%" alt="Screenshot 3" src="https://github.com/user-attachments/assets/a0ccd5f3-7476-4171-80c5-5f74a751e6b7" /> | <img width="100%" alt="Screenshot 4" src="https://github.com/user-attachments/assets/dd0cdae7-4c4d-401c-9624-80895897d0de" /> |
+
+
+## Built-in apps
+
+| Settings | File manager |
+| :---: | :---: |
+| <img width="600" alt="Settings" src="https://github.com/user-attachments/assets/80af0119-b57c-4642-9092-3e4885aab92e" /> | <img width="600" alt="File manager" src="https://github.com/user-attachments/assets/57d244a3-7ae1-4456-8139-f5320caa688c" /> |
+
+| Image/PDF viewer | Text editor |
+| :---: | :---: |
+| <img width="1448" height="1086" alt="753587f5-7323-44b9-90b3-33aeea99eff2" src="https://github.com/user-attachments/assets/47c51bdd-2879-4e52-b5e5-0faf2b85ec05" /> | <img width="1672" height="941" alt="7a4fecc7-406b-4010-9420-fb5d35abdeaa" src="https://github.com/user-attachments/assets/91b25a5d-140d-43ea-a33f-b8f1921e0288" /> |
 
 ## Features
 
