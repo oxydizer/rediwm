@@ -41,16 +41,7 @@ fn drawSidebarHeader(
     y: i32,
     content_width: f64,
     expanded: bool,
-    hovered: bool,
 ) void {
-    if (hovered) {
-        shell_ui.drawSidebarHover(cr, .{
-            .x = 12,
-            .y = @floatFromInt(y + 2),
-            .w = @floatCast(@max(0, content_width - 24)),
-            .h = 28,
-        }, 0.8);
-    }
     setSource(cr, ui_theme.global.sidebarForeground());
     drawText(cr, label, 24, @as(f64, @floatFromInt(y)) + 21, shell_ui.headingSize(), true);
     if (shell_ui.Layer.begin(cr, .{
@@ -66,6 +57,32 @@ fn drawSidebarHeader(
         });
         layer.finish();
     }
+}
+
+/// Draws the same theme-configured edge light used by sidebar rows.
+fn drawSidebarHeaderProximity(
+    self: *App,
+    cr: *c.cairo_t,
+    card: app_model.SidebarCardGeometry,
+    content_width: f64,
+) void {
+    shell_ui.drawProximityGlow(
+        cr,
+        .{
+            .x = 12,
+            .y = @floatFromInt(card.y + 2),
+        .w = @floatCast(@max(@as(f64, 0), content_width - 24)),
+            .h = 28,
+        },
+        ui_theme.global.app_sidebar_item_radius,
+        .{ .x = self.mouse_x, .y = self.mouse_y },
+        .{
+            .x = 8,
+            .y = @floatFromInt(card.y),
+            .w = @floatCast(@max(@as(f64, 0), content_width - 16)),
+            .h = @floatFromInt(card.header_height),
+        },
+    );
 }
 
 /// Draws the theme-configured edge light in the section's legacy row
@@ -313,8 +330,8 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
             @max(0, content_width - 16),
             @floatFromInt(height),
         );
-        const hovered = self.hoverKey() == 940 + i;
-        drawSidebarHeader(cr, section_names[i], card.y, content_width, card.expanded, hovered);
+        drawSidebarHeaderProximity(self, cr, card, content_width);
+        drawSidebarHeader(cr, section_names[i], card.y, content_width, card.expanded);
     }
 
     const places_card = layout.cards[@intFromEnum(app_model.SidebarSection.places)];

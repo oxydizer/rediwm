@@ -547,6 +547,35 @@ pub fn damageSidebarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
         };
         damage = if (damage) |current| unionRect(current, row_damage) else row_damage;
     }
+
+    // Card headers use the same proximity light as their rows.
+    for (layout.cards) |card| {
+        if (!card.visible) continue;
+
+        const rect: button_widget.Rect = .{
+            .x = 12,
+            .y = @floatFromInt(card.y + 2),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 40)),
+            .h = 28,
+        };
+        const clip: button_widget.Rect = .{
+            .x = 8,
+            .y = @floatFromInt(card.y),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
+            .h = @floatFromInt(card.header_height),
+        };
+        const before = button_widget.sampleProximity(rect, @floatCast(old_x), @floatCast(old_y), clip);
+        const after = button_widget.sampleProximity(rect, @floatCast(new_x), @floatCast(new_y), clip);
+        if (@min(before.distance, after.distance) > reach) continue;
+
+        const header_damage: header.Rect = .{
+            .x = rect.x,
+            .y = rect.y,
+            .w = rect.w,
+            .h = rect.h,
+        };
+        damage = if (damage) |current| unionRect(current, header_damage) else header_damage;
+    }
     if (damage) |rect| self.addDamage(rect);
 }
 
