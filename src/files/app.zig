@@ -122,11 +122,8 @@ pub const App = struct {
     show_hidden: bool = false,
     list_view: bool = false,
     non_git_list_view: ?bool = null,
-    /// The sidebar accordion selection. Git's branch-list expansion remains
-    /// independent in `git_expanded`.
-    sidebar_section: app_model.SidebarSection = .places,
-    /// Set only after an explicit section choice; later activity may respect it.
-    sidebar_section_selected: bool = false,
+    /// Each sidebar section expands independently. Places is open by default.
+    sidebar_expanded: [4]bool = .{ true, false, false, false },
     git_expanded: bool = true,
     /// The "Git View" checkbox: off shows a repository like any other folder.
     git_view: bool = true,

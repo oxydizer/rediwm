@@ -64,7 +64,7 @@ test "Git layout has two columns, scrollable sidebar and display-only deleted ro
     app.changed_only = true;
     app.search.text.clearRetainingCapacity();
     // Git's body follows its shared accordion header geometry.
-    app.sidebar_section = .git;
+    app.sidebar_expanded[@intFromEnum(@import("app_model.zig").SidebarSection.git)] = true;
     const git_geometry = app.sidebarLayout().cards[@intFromEnum(@import("app_model.zig").SidebarSection.git)];
     try std.testing.expect(git_geometry.visible and git_geometry.expanded);
     try std.testing.expectEqual(

@@ -122,20 +122,19 @@ pub const SidebarLayout = struct {
 
     cards: [4]SidebarCardGeometry,
 
-    /// Positions visible cards in section order. Hidden cards consume no
-    /// space; only the selected section receives its body height.
+    /// Positions visible cards in section order. Every expanded card
+    /// receives its body height independently.
     pub fn init(
         top: i32,
         body_heights: [4]i32,
         visible: [4]bool,
-        expanded_section: SidebarSection,
+        expanded_sections: [4]bool,
     ) SidebarLayout {
         var result: SidebarLayout = .{ .cards = undefined };
         var y = top;
 
         for (0..4) |i| {
-            const section: SidebarSection = @enumFromInt(i);
-            const expanded = visible[i] and section == expanded_section;
+            const expanded = visible[i] and expanded_sections[i];
             const card: SidebarCardGeometry = .{
                 .y = y,
                 .header_height = header_height,

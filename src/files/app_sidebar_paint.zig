@@ -119,8 +119,8 @@ fn drawSidebarRowProximity(
     );
 }
 
-/// The shared accordion geometry. Body sizes come from the existing section
-/// implementations; only the selected visible card receives its body.
+/// The shared accordion geometry. Every expanded visible card receives
+/// its body, with all cards stacked in section order.
 pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
     const top = self.contentTop() - self.sidebar_scroll;
     const pin_bottom = self.pinRowY(self.pins.items.items.len);
@@ -138,7 +138,7 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
         top,
         .{ places_body, disks_body, git_body, transfers_body },
         .{ true, true, self.repository() != null, self.torrentSidebarHeight() > 0 },
-        self.sidebar_section,
+        self.sidebar_expanded,
     );
 }
 

@@ -507,8 +507,8 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
     }
     if (button == 0x110) {
         if (self.sidebarHeaderAt(x, y)) |section| {
-            self.sidebar_section = section;
-            self.sidebar_section_selected = true;
+            const index = @intFromEnum(section);
+            self.sidebar_expanded[index] = !self.sidebar_expanded[index];
             self.clampSidebarScroll();
             self.invalidate();
             return;
