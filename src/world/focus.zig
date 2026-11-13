@@ -34,6 +34,7 @@ pub fn isSurfaceOrOwnPopupOf(surface: *wlr.Surface, toplevel_surface: *wlr.Surfa
 /// subsurface, or the window's own surface when null).
 pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) void {
     if (world.server.locker != null or world.server.polkit_dialog != null) return;
+    world.overview.cancel(world);
     // Only windows in the stack can be raised; the reorder below needs the link.
     if (!toplevel.in_world) return;
     world.workspaces.reveal(toplevel);
@@ -178,7 +179,7 @@ pub fn cycleFocusPrev(world: *World) void {
 /// after leaving the taskbar. Also called from input events so a quick release
 /// and re-press between frames cannot retain the previous preview.
 pub fn peekTarget(world: *World) ?*Toplevel {
-    if (world.workspaces.active) return null;
+    if (world.workspaces.active or world.overview.active()) return null;
     const input = &world.server.input;
     var held = false;
     var keyboards = input.keyboards.iterator(.forward);
@@ -251,6 +252,8 @@ pub fn tickHover(world: *World, now_ms: i64) bool {
         _ = toplevel.peek_level.sampleChanged(now_ms, anim.quantum_alpha);
         if (!toplevel.peek_mix.settled(now_ms) or !toplevel.peek_level.settled(now_ms)) animating = true;
     }
+
+    if (world.overview.update(world, now_ms)) animating = true;
 
     var close_it = world.closing.iterator(.forward);
     while (close_it.next()) |toplevel| {

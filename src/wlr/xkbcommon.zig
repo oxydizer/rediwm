@@ -111,6 +111,19 @@ pub const State = opaque {
     ) Component;
     pub const updateMask = xkb_state_update_mask;
 
+    extern fn xkb_state_update_latched_locked(
+        state: *State,
+        affect_latched_mods: ModMask,
+        latched_mods: ModMask,
+        affect_latched_layout: bool,
+        latched_layout: i32,
+        affect_locked_mods: ModMask,
+        locked_mods: ModMask,
+        affect_locked_layout: bool,
+        locked_layout: i32,
+    ) Component;
+    pub const updateLatchedLocked = xkb_state_update_latched_locked;
+
     extern fn xkb_state_key_get_syms(state: *State, key: Keycode, syms_out: *?[*]const Keysym) c_int;
     pub fn keyGetSyms(state: *State, key: Keycode) []const Keysym {
         var ptr: ?[*]const Keysym = undefined;

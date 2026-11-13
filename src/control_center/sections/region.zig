@@ -9,6 +9,7 @@ const gpa = @import("../../main.zig").gpa;
 const config = @import("config");
 const wl = @import("wayland").server.wl;
 const Child = @import("../../session/child.zig");
+const input_sources_section = @import("input_sources.zig");
 const c = @import("c");
 
 const days = [_]i18n.Message{ i18n.msg("Sunday"), i18n.msg("Monday"), i18n.msg("Tuesday"), i18n.msg("Wednesday"), i18n.msg("Thursday"), i18n.msg("Friday"), i18n.msg("Saturday") };
@@ -217,7 +218,7 @@ fn card(a: std.mem.Allocator, items: []const W) !W {
 }
 
 fn info(a: std.mem.Allocator, name: []const u8, value: []const u8) !W {
-    return container(a, .column, &.{ text(name, 12, true), text(value, 14, false) });
+    return card(a, &.{ text(name, 12, false), text(value, 14, true) });
 }
 
 fn localeName(cc: *panel.ControlCenter, category: []const u8) []const u8 {
@@ -284,34 +285,44 @@ fn previews(a: std.mem.Allocator, prefs: config.loader.RegionConfig) !W {
     _ = c.uselocale(previous);
     const currency_len = c.strfmon_l(&currency, currency.len, locale, "%n", @as(f64, 1234.56));
     return container(a, .column, &.{
+        try container(a, .row, &.{
         try info(a, tr("Date"), try a.dupe(u8, std.mem.sliceTo(&date, 0))),
         try info(a, tr("Time"), try a.dupe(u8, std.mem.trim(u8, std.mem.sliceTo(&time, 0), " "))),
+        }),
+        try container(a, .row, &.{
         try info(a, tr("Number"), if (number_len > 0 and number_len < number.len) try a.dupe(u8, std.mem.sliceTo(&number, 0)) else tr("Unavailable")),
         try info(a, tr("Currency"), if (std.mem.span(c.nl_langinfo_l(currency_item, locale)).len == 0) tr("Not specified") else if (currency_len > 0) try a.dupe(u8, std.mem.trim(u8, std.mem.sliceTo(&currency, 0), " ")) else tr("Unavailable")),
+        }),
     });
 }
 
 pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     if (!s.loaded and !cc.server.greeter_mode) loadOptions(s, cc) catch {};
     _ = s.arena.reset(.retain_capacity);
-    s.root = tree(s, cc, s.arena.allocator()) catch panel.outOfMemory();
+    input_sources_section.build(&cc.input_sources, cc);
+    s.root = tree(s, cc, s.arena.allocator(), cc.input_sources.root) catch panel.outOfMemory();
 }
 
-fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
+fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, keyboard_sources: W) !W {
     const prefs = cc.server.config.region;
-    const stacked = cc.panel_box.width < 1100;
     const content_width = @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100;
-    const paragraph_width = if (stacked) content_width else (content_width - 12) / 2;
-    const language = try card(a, &.{
+    const paragraph_width = content_width;
+    var language = try card(a, &.{
         panel.sectionTitle(tr("Language")),
         text(tr("Application language"), 13, false),
         try choice(s, cc, a, "language", 1, s.locales.items, localeName(cc, "LC_MESSAGES"), nlItem("_NL_IDENTIFICATION_LANGUAGE")),
     });
-    const region = try card(a, &.{
+
+    var keyboard = keyboard_sources;
+    keyboard.name = "keyboard";
+
+    var region = try card(a, &.{
         panel.sectionTitle(tr("Region")),
         text(tr("Regional formats"), 13, false),
         try choice(s, cc, a, "formats", 2, s.locales.items, localeName(cc, "LC_TIME"), nlItem("_NL_ADDRESS_COUNTRY_NAME")),
-        try paragraph(a, tr("Date format for the taskbar; date, number and currency formats for new apps."), paragraph_width),
+        text(tr("Date format for the taskbar; date, number and currency formats for new apps."), 12, true),
+        text(tr("Formats Preview"), 12, true),
+        try previews(a, prefs),
     });
     var toggle = try container(a, .row, &.{
         text(tr("Use 24-hour time"), 13, false),
@@ -331,7 +342,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     });
     day_toggle.justify = .space_between;
     day_toggle.@"align" = .center;
-    const timing = try card(a, &.{
+    var timing = try card(a, &.{
         panel.sectionTitle(tr("Time & Date")),
         text(tr("Time zone"), 13, false),
         try choice(s, cc, a, "timezone", 0, s.zones.items, try timezone(a, cc), null),
@@ -344,11 +355,12 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         .{ .name = "first_day_of_week", .kind = .{ .select = .{ .labels = panel.translatedLabels(&days), .selected = @intFromEnum(prefs.first_day_of_week), .owner = cc, .on_change = firstDayChanged } }, .width = .{ .percent = 1 } },
         try paragraph(a, tr("Changes the taskbar calendar."), paragraph_width),
     });
-    const preview = try card(a, &.{ panel.sectionTitle(tr("Formats Preview")), try previews(a, prefs) });
-    var body = try container(a, if (stacked) .column else .row, &.{
-        try container(a, .column, &.{ language, timing }),
-        try container(a, .column, &.{ region, preview }),
-    });
+    language.width = .{ .flex = 1 };
+    keyboard.width = .{ .flex = 1 };
+    timing.width = .{ .flex = 1 };
+    region.width = .{ .flex = 1 };
+
+    var body = try container(a, .column, &.{ language, keyboard, timing, region });
     body.width = .{ .percent = 1 };
     var root = try container(a, .column, &.{
         try paragraph(a, tr("Saved for your user’s RediWM session only; system defaults are unchanged."), paragraph_width),

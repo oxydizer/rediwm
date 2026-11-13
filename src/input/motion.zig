@@ -232,6 +232,10 @@ fn updateWidgetProximity(input: *Input) void {
 
 pub fn processCursorMotion(input: *Input, time_msec: u32) void {
     if (input.server.locker != null or input.server.polkit_dialog != null) return;
+    if (input.server.world.overview.active()) {
+        input.server.world.overview.motion(&input.server.world, input.cursor.x, input.cursor.y);
+        return;
+    }
     if (input.server.switcher.active()) {
         input.server.switcher.motion(input.cursor.x, input.cursor.y);
         return;

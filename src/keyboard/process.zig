@@ -174,6 +174,8 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         }
     }
 
+    if (@import("overview.zig").process(keyboard, event_keycode, state)) return;
+
     if (event_keycode < keyboard.battery_consumed.len and state == .released and keyboard.battery_consumed[event_keycode]) {
         keyboard.battery_consumed[event_keycode] = false;
         return;

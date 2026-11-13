@@ -170,24 +170,32 @@ def run():
                     click(*found)
                     wait_for(lambda: status() == 's "Playing"', "third click did not resume")
                     # The toolbar follows playback and remains usable while paused.
-                    click(306, 82)
+                    click(338, 82)
                     wait_for(lambda: status() == 's "Paused"', "toolbar did not pause")
-                    click(460, 93)
+                    # Narrow inline bar: Previous, Play, Next, then the title and
+                    # time above the Settings slider (x 402-578), Stop, Playlist.
+                    click(500, 90)
                     wait_for(lambda: int(mpris("Position").split()[1]) > 10_000_000,
                              "toolbar seek did not move position")
                     # The shared scrollbar thumb also supports dragging outside
                     # its gutter, without resuming a paused track.
-                    move(460, 91)
+                    move(500, 89)
                     action("pointer_button", {"button": 272, "pressed": True})
                     move(400, 110)
                     action("pointer_button", {"button": 272, "pressed": False})
                     wait_for(lambda: int(mpris("Position").split()[1]) < 10_000_000,
                              "scrollbar drag did not seek backwards")
                     assert status() == 's "Paused"'
-                    click(460, 91)
+                    click(500, 89)
                     wait_for(lambda: int(mpris("Position").split()[1]) > 10_000_000,
                              "scrollbar click did not seek forwards")
                     shot("toolbar-paused")
+                    # Previous restarts a track that has played past 3 s; the
+                    # first track has nothing before it either way.
+                    click(304, 82)
+                    wait_for(lambda: int(mpris("Position").split()[1]) < 3_000_000,
+                             "Previous did not restart the track")
+                    assert "song.wav" in mpris("Metadata"), mpris("Metadata")
                     # Navigation must not hide the controls for the current track.
                     click(92, 28)  # Up to Home
                     shot("toolbar-other-folder")
@@ -208,16 +216,29 @@ def run():
                     wait_for(lambda: "zz-09.wav" in mpris("Metadata"),
                              "playlist keyboard navigation did not reach last track")
                     click(644, 82)  # dismiss playlist
-                    click(306, 82)
+                    # The last track has no Next; Previous early in a track
+                    # goes back one, and Next returns.
+                    move(372, 82)
+                    assert cursor() != "pointer", "Next is enabled on the last track"
+                    click(304, 82)
+                    wait_for(lambda: "zz-08.wav" in mpris("Metadata"), "Previous did not go back a track")
+                    click(372, 82)
+                    wait_for(lambda: "zz-09.wav" in mpris("Metadata"), "Next did not advance a track")
+                    click(338, 82)
                     wait_for(lambda: status() == 's "Paused"', "playlist track did not pause")
+                    # A wide window fits the title and the time pill beside the slider.
+                    action("set_window_size", {"id": win["id"], "width": 1200, "height": 540})
+                    wait_for(lambda: box()["width"] == 1200, "Files did not resize")
+                    time.sleep(.5)
+                    shot("toolbar-wide")
                     # A narrow window gives the player its own row.
                     action("set_window_size", {"id": win["id"], "width": 560, "height": 500})
                     wait_for(lambda: box()["width"] == 560, "Files did not resize")
                     time.sleep(.5)
                     shot("toolbar-narrow")
-                    click(38, 176)
+                    click(70, 176)
                     wait_for(lambda: status() == 's "Playing"', "narrow toolbar did not resume")
-                    click(74, 176)
+                    click(488, 176)
                     wait_for(lambda: status() == "", "toolbar Stop did not exit player")
                     shot("toolbar-stopped")
                     action("set_window_size", {"id": win["id"], "width": 960, "height": 540})
@@ -226,9 +247,9 @@ def run():
                     click(28, 28)  # Back to Music
                     click(*found)
                     wait_for(lambda: status() == 's "Playing"', "play did not restart")
-                    click(306, 82)
+                    click(338, 82)
                     wait_for(lambda: status() == 's "Paused"', "toolbar did not pause restarted track")
-                    click(306, 82)
+                    click(338, 82)
                     wait_for(lambda: status() == 's "Playing"', "toolbar did not resume")
                     click(726, 82)  # list view: the button sits right of the name
                     time.sleep(.6)

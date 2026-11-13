@@ -250,13 +250,13 @@ const ParseState = struct {
 
         if (state.seen_keybinds) {
             // Keep laptop controls, System Monitor, nested-session switching, the
-            // input source shortcut and the way out of an inhibiting client
+            // overview, input source shortcut and the way out of an inhibiting client
             // available in existing configs too.
             // Explicit bindings (including noop) always take precedence.
             const defaults = try parseKeybindsOnly(cfg.arena.allocator(), default_file.source);
             for (defaults) |bind| {
                 const nested_switcher = bind.modifiers.ctrl and (bind.action == .focus_next or bind.action == .focus_prev);
-                if (!keybinds.isHardwareAction(bind.action) and !nested_switcher and bind.action != .restore_shortcuts and bind.action != .open_system_monitor and bind.action != .input_source_next) continue;
+                if (!keybinds.isHardwareAction(bind.action) and !nested_switcher and bind.action != .restore_shortcuts and bind.action != .open_system_monitor and bind.action != .input_source_next and bind.action != .toggle_overview) continue;
                 const key = keybinds.pack(bind.modifiers, bind.sym);
                 var overridden = false;
                 for (state.bind_list.items) |custom| {

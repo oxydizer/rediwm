@@ -18,6 +18,9 @@ pub fn sample(buf: []u8) common.System {
                 result.uptime_seconds = @intFromFloat(seconds);
         }
     } else |_| {}
+    if (common.readAt(c.AT_FDCWD, "/proc/loadavg", buf)) |bytes| {
+        parseLoad(bytes, &result);
+    } else |_| {}
     if (common.readAt(c.AT_FDCWD, "/proc/net/dev", buf)) |bytes| {
         result.network = parseNetwork(bytes);
     } else |_| {}
@@ -25,6 +28,20 @@ pub fn sample(buf: []u8) common.System {
     result.temperature_c = temperatures.cpu;
     result.gpu_temperature_c = temperatures.gpu;
     return result;
+}
+
+/// "0.52 0.58 0.59 2/1234 5678": three averages, then running/total threads.
+pub fn parseLoad(bytes: []const u8, result: *common.System) void {
+    var fields = std.mem.tokenizeAny(u8, bytes, " \t\n");
+    var load: [3]f64 = undefined;
+    for (&load) |*value| {
+        value.* = std.fmt.parseFloat(f64, fields.next() orelse return) catch return;
+        if (!std.math.isFinite(value.*) or value.* < 0) return;
+    }
+    result.load = load;
+    const entities = fields.next() orelse return;
+    const slash = std.mem.indexOfScalar(u8, entities, '/') orelse return;
+    result.threads = std.fmt.parseInt(u64, entities[slash + 1 ..], 10) catch null;
 }
 
 pub fn parseNetwork(bytes: []const u8) ?common.Network {

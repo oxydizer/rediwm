@@ -19,6 +19,7 @@ pub fn deinit(server: *Server) void {
     // here. In both cases save before tearing down Xwayland or native clients.
     const already_terminating = server.shutting_down;
     server.shutting_down = true;
+    server.world.overview.cancel(&server.world);
     server.startup_tasks.deinit();
     server.reveal.deinit();
     server.session_startup.deinit();

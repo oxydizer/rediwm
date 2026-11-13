@@ -39,6 +39,10 @@ pub fn protectedName(name: []const u8) bool {
 }
 
 pub const Cpu = struct { total: u64, idle: u64 };
+/// One online logical CPU's counters; `id` survives offline CPUs in between.
+pub const Core = struct { id: u32, cpu: Cpu };
+/// The expanded CPU card shows at most this many cores.
+pub const max_cores = 1024;
 pub const System = struct {
     logical_cpus: ?u32 = null,
     frequency_ghz: ?f64 = null,
@@ -46,6 +50,10 @@ pub const System = struct {
     temperature_c: ?f64 = null,
     gpu_temperature_c: ?f64 = null,
     network: ?Network = null,
+    /// 1, 5 and 15 minute load averages.
+    load: ?[3]f64 = null,
+    /// Every thread on the system (Linux reports it beside the load).
+    threads: ?u64 = null,
 };
 pub const Network = struct { received: u64 = 0, sent: u64 = 0, interfaces: u64 = 0 };
 pub const NetworkRate = struct { received: f64, sent: f64 };
@@ -78,6 +86,12 @@ pub const Memory = struct {
     available: u64,
     swap_total: ?u64,
     swap_free: ?u64,
+    /// Never used, not even as cache.
+    free: ?u64 = null,
+    /// Buffers and page cache the kernel can reclaim (free(1)'s buff/cache).
+    cached: ?u64 = null,
+    /// tmpfs and shared memory, counted inside `cached`.
+    shared: ?u64 = null,
     pub fn used(self: Memory) u64 {
         return self.total -| self.available;
     }

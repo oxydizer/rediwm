@@ -1,4 +1,8 @@
 //! CPU and RAM cards: current values beside a bounded, gap-aware history.
+//! Clicking a card grows it to the full width (`app_summary_cpu.zig`,
+//! `app_summary_ram.zig`) while the other slides away; the expanded card's
+//! surface or collapse button brings both back. The cards and that button are shared
+//! widgets placed here after the tree is arranged; their pixels are ours.
 const std = @import("std");
 const i18n = @import("i18n");
 const tr = i18n.tr;
@@ -9,65 +13,158 @@ const c = @import("../files/c.zig").api;
 const app = @import("app.zig");
 const App = app.App;
 const Rect = cairo.Rect;
+const cpu_view = @import("app_summary_cpu.zig");
+const ram_view = @import("app_summary_ram.zig");
 const Position = struct { x: f64, y: f64 };
 
-pub fn paint(self: *App, cr: *c.cairo_t) void {
-    const width = (@as(f32, @floatFromInt(self.w)) - 48) / 2;
-    for (0..2) |index| paintCard(self, cr, index, .{
-        .x = 16 + @as(f32, @floatFromInt(index)) * (width + 16),
-        .y = 14,
-        .w = width,
-        .h = 122,
-    });
+pub const top: f32 = 14;
+pub const card_h: f32 = 122;
+const collapse_size: f32 = 28;
+/// What an expanded card keeps clear at its right for the collapse button.
+pub const collapse_room: f32 = collapse_size + 22;
+
+/// Both cards' boxes at the current expansion; the hidden one may lie
+/// outside the summary area while it slides away.
+fn boxes(self: *const App) [2]Rect {
+    const full = @as(f32, @floatFromInt(self.w)) - 32;
+    const half = (full - 16) / 2;
+    const t = std.math.clamp(self.card_t, 0, 1);
+    const grow = (full - half) * t;
+    var out: [2]Rect = undefined;
+    if (self.card == 0) {
+        out[0] = .{ .x = 16, .y = top, .w = half + grow, .h = card_h };
+        out[1] = .{ .x = 32 + half + grow, .y = top, .w = half, .h = card_h };
+    } else {
+        out[1] = .{ .x = 32 + half - (16 + half) * t, .y = top, .w = half + grow, .h = card_h };
+        out[0] = .{ .x = out[1].x - 16 - half, .y = top, .w = half, .h = card_h };
+    }
+    return out;
 }
 
-fn paintCard(self: *App, cr: *c.cairo_t, index: usize, box: Rect) void {
-    const compact = box.w < 420;
-    const info_width = std.math.clamp(box.w * 0.38, 200, 260);
-    const accent = theme.shellPalette().accent;
-    const snap = self.model.snapshot;
-    const mem = if (snap) |s| s.memory else null;
-    const percent: ?f64 = if (index == 0)
-        (if (snap) |s| s.cpu_percent else null)
-    else if (mem) |m|
-        (if (m.total > 0) @as(f64, @floatFromInt(m.used())) * 100 / @as(f64, @floatFromInt(m.total)) else null)
-    else
-        null;
+/// The visible cards toggle expansion; the hidden card cannot take clicks.
+pub fn layout(self: *App) void {
+    const placed = boxes(self);
+    for (self.cards[0..2], placed, 0..) |*card, box, index| place(card, if (self.card_open and index != self.card) null else box);
+    const open = placed[self.card];
+    place(&self.cards[2], if (self.card_open) .{
+        .x = open.x + open.w - collapse_size - 12,
+        .y = open.y + 10,
+        .w = collapse_size,
+        .h = collapse_size,
+    } else null);
+}
+
+fn place(widget: *ui.layout.Widget, box: ?Rect) void {
+    const b = box orelse Rect{ .x = -1, .y = -1, .w = 0, .h = 0 };
+    ui.measure.measure(widget, b.w, b.h);
+    ui.arrange.arrange(widget, b.x, b.y, b.w, b.h);
+}
+
+pub fn paint(self: *App, cr: *c.cairo_t) void {
+    const full = @as(f32, @floatFromInt(self.w)) - 32;
+    c.cairo_save(cr);
+    defer c.cairo_restore(cr);
+    c.cairo_rectangle(cr, 16, top, full, card_h);
+    c.cairo_clip(cr);
+    const t = std.math.clamp(self.card_t, 0, 1);
+    for (boxes(self), 0..) |box, index| {
+        const leaving = t > 0 and index != self.card;
+        if (leaving and t >= 1) continue;
+        const group = leaving;
+        if (group) c.cairo_push_group(cr);
+        paintFrame(self, cr, index, box);
+        if (index == self.card and t > 0) {
+            // Cross-fade through the midpoint: compact content out, expanded in.
+            const expanded = t >= 0.5;
+            const alpha = if (expanded) 2 * t - 1 else 1 - 2 * t;
+            if (alpha > 0) {
+                if (alpha < 1) c.cairo_push_group(cr);
+                if (!expanded) paintCompact(self, cr, index, box) else if (index == 0) cpu_view.paint(self, cr, box) else ram_view.paint(self, cr, box);
+                if (alpha < 1) {
+                    c.cairo_pop_group_to_source(cr);
+                    c.cairo_paint_with_alpha(cr, alpha);
+                }
+            }
+        } else paintCompact(self, cr, index, box);
+        if (group) {
+            c.cairo_pop_group_to_source(cr);
+            c.cairo_paint_with_alpha(cr, 1 - t);
+        }
+    }
+}
+
+fn paintFrame(self: *App, cr: *c.cairo_t, index: usize, box: Rect) void {
+    const card = &self.cards[index];
+    const lit = card.kind.row.state == .hover or card.kind.row.state == .press or self.dispatcher.focused == card;
+    var border = theme.global.app_divider;
+    if (lit) {
+        border = theme.shellPalette().accent;
+        border[3] *= 0.7;
+    }
     if (cairo.Layer.begin(cr, box)) |value| {
         var layer = value;
         layer.renderer.fillRect(0.5, 0.5, box.w - 1, box.h - 1, .{
             .color = theme.global.app_bar,
             .radius = theme.global.radius_md,
             .border_width = 1,
-            .border_color = theme.global.app_divider,
+            .border_color = border,
         });
-        const badge: f32 = if (compact) 28 else 36;
-        var tint = accent;
-        tint[3] *= 0.14;
-        layer.renderer.fillRect(12, 12, badge, badge, .{ .color = tint, .radius = theme.global.radius });
-        layer.renderer.drawIcon(17, 17, badge - 10, badge - 10, .{ .id = if (index == 0) .cpu else .ram, .color = accent });
         layer.finish();
     }
+}
+
+/// The icon badge at a card's top-left; `compact` is the narrow layout.
+pub fn paintBadge(cr: *c.cairo_t, index: usize, box: Rect, compact: bool) void {
+    const accent = theme.shellPalette().accent;
+    const badge: f32 = if (compact) 28 else 36;
+    if (cairo.Layer.begin(cr, .{ .x = box.x + 12, .y = box.y + 12, .w = badge, .h = badge })) |value| {
+        var layer = value;
+        var tint = accent;
+        tint[3] *= 0.14;
+        layer.renderer.fillRect(0, 0, badge, badge, .{ .color = tint, .radius = theme.global.radius });
+        layer.renderer.drawIcon(5, 5, badge - 10, badge - 10, .{ .id = if (index == 0) .cpu else .ram, .color = accent });
+        layer.finish();
+    }
+}
+
+pub fn cpuPercent(self: *const App) ?f64 {
+    return if (self.model.snapshot) |s| s.cpu_percent else null;
+}
+
+pub fn memoryPercent(self: *const App) ?f64 {
+    const m = (self.model.snapshot orelse return null).memory orelse return null;
+    return if (m.total > 0) @as(f64, @floatFromInt(m.used())) * 100 / @as(f64, @floatFromInt(m.total)) else null;
+}
+
+/// The card's large current percentage.
+pub fn paintPercent(cr: *c.cairo_t, percent: ?f64, box: Rect, scale: f32) void {
+    var buf: [32]u8 = undefined;
+    const text = if (percent) |p| std.fmt.bufPrint(&buf, "{d:.1}%", .{p}) catch "—" else "—";
+    label(cr, text, box, cairo.headingSize() * scale, true);
+}
+
+fn paintCompact(self: *App, cr: *c.cairo_t, index: usize, box: Rect) void {
+    const compact = box.w < 420;
+    const info_width = std.math.clamp(box.w * 0.38, 200, 260);
+    const snap = self.model.snapshot;
+    const mem = if (snap) |s| s.memory else null;
+    const percent = if (index == 0) cpuPercent(self) else memoryPercent(self);
+    paintBadge(cr, index, box, compact);
     const text_x = box.x + (if (compact) @as(f32, 48) else 62);
     const text_w = if (compact) box.w - 166 else info_width - 76;
     label(cr, if (index == 0) tr("CPU") else tr("RAM"), .{ .x = text_x, .y = box.y + 10, .w = text_w, .h = 24 }, cairo.headingSize() * 1.25, true);
     var buf: [128]u8 = undefined;
-    const percent_text = if (percent) |p| std.fmt.bufPrint(&buf, "{d:.1}%", .{p}) catch "—" else "—";
     const number_box: Rect = if (compact)
         .{ .x = box.x + box.w - 118, .y = box.y + 8, .w = 106, .h = 36 }
     else
         .{ .x = text_x, .y = box.y + (if (index == 0) @as(f32, 36) else 58), .w = text_w, .h = 40 };
-    label(cr, percent_text, number_box, cairo.headingSize() * (if (compact) @as(f32, 2.2) else 2.6), true);
+    paintPercent(cr, percent, number_box, if (compact) 2.2 else 2.6);
     const details: Rect = if (compact)
         .{ .x = box.x + 12, .y = box.y + 43, .w = box.w - 24, .h = 22 }
     else
         .{ .x = text_x, .y = box.y + (if (index == 0) @as(f32, 84) else 34), .w = text_w, .h = 24 };
     if (index == 0) {
-        var count_buf: [48]u8 = undefined;
-        const system = if (snap) |s| s.system else @import("proc.zig").System{};
-        const count = if (system.logical_cpus) |n| i18n.fmt(&count_buf, i18n.trn("{n} CPU", "{n} CPUs", n), .{ .n = n }) catch "—" else "—";
-        const text = if (system.frequency_ghz) |ghz| std.fmt.bufPrint(&buf, "{d:.1} GHz · {s}", .{ ghz, count }) catch "—" else count;
-        label(cr, text, details, cairo.textSize(), false);
+        label(cr, cpuLine(self, &buf), details, cairo.textSize(), false);
     } else {
         const text = if (mem) |m| app.bytesPair(&buf, m.used(), m.total) else "—";
         label(cr, text, details, cairo.textSize(), false);
@@ -82,25 +179,52 @@ fn paintCard(self: *App, cr: *c.cairo_t, index: usize, box: Rect) void {
         .{ .x = box.x + 12, .y = box.y + 78, .w = box.w - 32 - axis_w, .h = 32 }
     else
         .{ .x = box.x + info_width, .y = box.y + 18, .w = box.w - info_width - axis_w - 20, .h = 84 };
-    paintGrid(cr, graph, index, if (mem) |m| m.total else null, compact);
-    paintHistory(self, cr, index, graph);
-    if (!compact) label(cr, tr("60 seconds"), .{ .x = graph.x, .y = box.y + 104, .w = graph.w, .h = 16 }, cairo.statusSize(), false);
+    paintGraph(self, cr, index, graph, compact);
 }
 
-fn label(cr: *c.cairo_t, text: []const u8, box: Rect, size: f32, bold: bool) void {
+/// "3.2 GHz · 16 CPUs", or just the count without a frequency.
+pub fn cpuLine(self: *const App, buf: []u8) []const u8 {
+    var count_buf: [48]u8 = undefined;
+    const system = if (self.model.snapshot) |s| s.system else @import("proc.zig").System{};
+    const count = if (system.logical_cpus) |n| i18n.fmt(&count_buf, i18n.trn("{n} CPU", "{n} CPUs", n), .{ .n = n }) catch "—" else "—";
+    return if (system.frequency_ghz) |ghz| std.fmt.bufPrint(buf, "{d:.1} GHz · {s}", .{ ghz, count }) catch "—" else std.fmt.bufPrint(buf, "{s}", .{count}) catch "—";
+}
+
+/// The 60-second history with its grid, axis and caption (not when compact).
+pub fn paintGraph(self: *const App, cr: *c.cairo_t, index: usize, graph: Rect, compact: bool) void {
+    const total = if (self.model.snapshot) |s| if (s.memory) |m| m.total else null else null;
+    paintGrid(cr, graph, index, total, compact);
+    paintHistory(self, cr, index, graph);
+    if (!compact) label(cr, tr("60 seconds"), .{ .x = graph.x, .y = graph.y + graph.h + 2, .w = graph.w, .h = 16 }, cairo.statusSize(), false);
+}
+
+pub fn label(cr: *c.cairo_t, text: []const u8, box: Rect, size: f32, bold: bool) void {
     app.textBox(cr, text, box, size, bold, theme.global.window_fg);
 }
 
-fn paintMeter(cr: *c.cairo_t, box: Rect, percent: ?f64) void {
+/// Like `label`, ending at the box's right edge.
+pub fn labelRight(cr: *c.cairo_t, text: []const u8, box: Rect, size: f32, bold: bool) void {
+    const width: f32 = @floatCast(cairo.measureText(cr, text, size, bold));
+    const x = @max(box.x, box.x + box.w - width);
+    label(cr, text, .{ .x = x, .y = box.y, .w = box.x + box.w - x, .h = box.h }, size, bold);
+}
+
+pub fn paintMeter(cr: *c.cairo_t, box: Rect, percent: ?f64) void {
+    if (box.w <= 0 or box.h <= 0) return;
     if (cairo.Layer.begin(cr, box)) |value| {
         var layer = value;
-        layer.renderer.fillRect(0, 0, box.w, box.h, .{ .color = theme.global.app_divider, .radius = box.h / 2 });
-        if (percent) |p| {
-            const width = box.w * @as(f32, @floatCast(std.math.clamp(p / 100, 0, 1)));
-            if (width > 0) layer.renderer.fillRect(0, 0, width, box.h, .{ .color = theme.shellPalette().accent, .radius = @min(width, box.h) / 2 });
-        }
+        drawMeter(&layer.renderer, .{ .x = 0, .y = 0, .w = box.w, .h = box.h }, percent);
         layer.finish();
     }
+}
+
+/// A rounded track filled to `percent`, in the renderer's coordinates.
+pub fn drawMeter(renderer: *ui.paint.Renderer, box: Rect, percent: ?f64) void {
+    if (box.w <= 0 or box.h <= 0) return;
+    renderer.fillRect(box.x, box.y, box.w, box.h, .{ .color = theme.global.app_divider, .radius = box.h / 2 });
+    const p = percent orelse return;
+    const width = box.w * @as(f32, @floatCast(std.math.clamp(p / 100, 0, 1)));
+    if (width > 0) renderer.fillRect(box.x, box.y, width, box.h, .{ .color = theme.shellPalette().accent, .radius = @min(width, box.h) / 2 });
 }
 
 fn axisLabel(buf: []u8, index: usize, total: ?u64, quarter: usize) []const u8 {
@@ -111,7 +235,7 @@ fn axisLabel(buf: []u8, index: usize, total: ?u64, quarter: usize) []const u8 {
     return app.bytesLabel(buf, bytes / 4 * quarter + bytes % 4 * quarter / 4);
 }
 
-fn axisWidth(cr: *c.cairo_t, index: usize, total: ?u64) f32 {
+pub fn axisWidth(cr: *c.cairo_t, index: usize, total: ?u64) f32 {
     var width: f32 = 0;
     var buf: [32]u8 = undefined;
     for (0..5) |quarter| width = @max(width, @as(f32, @floatCast(cairo.measureText(cr, axisLabel(&buf, index, total, quarter), cairo.statusSize(), false))));
@@ -179,15 +303,15 @@ fn paintSegment(cr: *c.cairo_t, points: []const Position, bottom: f64) void {
         c.cairo_fill(cr);
         return;
     }
-    var top = bottom;
+    var top_y = bottom;
     c.cairo_move_to(cr, points[0].x, bottom);
     for (points) |point| {
         c.cairo_line_to(cr, point.x, point.y);
-        top = @min(top, point.y);
+        top_y = @min(top_y, point.y);
     }
     c.cairo_line_to(cr, points[points.len - 1].x, bottom);
     c.cairo_close_path(cr);
-    const gradient = c.cairo_pattern_create_linear(0, top, 0, @max(top + 1, bottom));
+    const gradient = c.cairo_pattern_create_linear(0, top_y, 0, @max(top_y + 1, bottom));
     defer c.cairo_pattern_destroy(gradient);
     c.cairo_pattern_add_color_stop_rgba(gradient, 0, accent[0], accent[1], accent[2], accent[3] * 0.28);
     c.cairo_pattern_add_color_stop_rgba(gradient, 1, accent[0], accent[1], accent[2], accent[3] * 0.025);

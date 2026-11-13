@@ -152,3 +152,10 @@ logind services, fake sysfs events, and a fake brightnessctl. Repeat with
 qualify lid close/open, external-monitor removal with the lid closed, suspend
 and resume after unplugging, keyboard lighting and firmware charging-limit
 readback. Keep real power actions out of automated tests.
+
+Canvas overview: `python3 tests/overview.py` checks the rendered 2×2 and
+2+3 grids, live minimized previews, restoration, pointer and keyboard selection,
+consumed input, client teardown, config reload and reduced motion in a private headless session. Repeat with
+`REDIWM_TEST_SCALE=1.5 REDIWM_TEST_OUTPUTS=2`. Also run `focus_zoom.py`,
+`desktop_zoom.py`, `keyboard_shortcuts.py`, `shortcuts_inhibit.py`,
+`pointer_constraints.py` and `switcher_ime.py` after changing its input routing.

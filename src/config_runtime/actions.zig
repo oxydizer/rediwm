@@ -17,6 +17,7 @@ pub fn executeAction(server: *Server, action: Action) void {
         if (keybinds.worksWhileLocked(action)) if (server.input_sources) |sources| sources.cycleLayouts();
         return;
     }
+    if (action != .toggle_overview and !keybinds.isHardwareAction(action)) server.world.overview.cancel(&server.world);
     if (server.world.workspaces.active) switch (action) {
         .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down => return,
         else => {},
@@ -49,6 +50,7 @@ pub fn executeAction(server: *Server, action: Action) void {
         .zoom_in => zoomFocused(server, -1),
         .zoom_out => zoomFocused(server, 1),
         .zoom_reset => setFocusedZoom(server, 0),
+        .toggle_overview => server.world.overview.toggle(&server.world),
         .camera_zoom_in => cameraZoom(server, -1),
         .camera_zoom_out => cameraZoom(server, 1),
         .camera_zoom_reset => cameraZoomReset(server),

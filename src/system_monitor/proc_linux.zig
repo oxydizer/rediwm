@@ -55,6 +55,31 @@ pub fn parseUids(bytes: []const u8) ?Uids {
 pub fn parseCpu(bytes: []const u8) ?Cpu {
     var fields = std.mem.tokenizeAny(u8, bytes[0 .. std.mem.indexOfScalar(u8, bytes, '\n') orelse bytes.len], " \t");
     if (!std.mem.eql(u8, fields.next() orelse return null, "cpu")) return null;
+    return cpuFields(&fields);
+}
+
+/// The `cpuN` lines in order; offline CPUs have none, so `id` keeps N.
+pub fn parseCores(bytes: []const u8, out: []common.Core) usize {
+    var count: usize = 0;
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |line| {
+        if (count == out.len) break;
+        var fields = std.mem.tokenizeAny(u8, line, " \t");
+        const name = fields.next() orelse continue;
+        if (!std.mem.startsWith(u8, name, "cpu")) {
+            // The per-CPU lines follow the total; anything else ends them.
+            if (count > 0) break;
+            continue;
+        }
+        if (name.len == 3) continue;
+        const id = std.fmt.parseInt(u32, name[3..], 10) catch continue;
+        out[count] = .{ .id = id, .cpu = cpuFields(&fields) orelse continue };
+        count += 1;
+    }
+    return count;
+}
+
+fn cpuFields(fields: *std.mem.TokenIterator(u8, .any)) ?Cpu {
     var out: Cpu = .{ .total = 0, .idle = 0 };
     var count: usize = 0;
     // guest and guest_nice are already included in user/nice.
@@ -72,11 +97,22 @@ pub fn parseMemory(bytes: []const u8) ?Memory {
     var available: ?u64 = null;
     var swap_total: ?u64 = null;
     var swap_free: ?u64 = null;
+    // Free, buff/cache (Buffers + Cached + SReclaimable) and Shmem.
+    var extra: [5]?u64 = @splat(null);
+    const extra_keys = [_][]const u8{ "MemFree:", "Buffers:", "Cached:", "SReclaimable:", "Shmem:" };
     var lines = std.mem.splitScalar(u8, bytes, '\n');
     while (lines.next()) |line| {
         var fields = std.mem.tokenizeAny(u8, line, " \t");
         const key = fields.next() orelse continue;
+        const slot = for (extra_keys, 0..) |name, i| {
+            if (std.mem.eql(u8, key, name)) break i;
+        } else null;
         const relevant = std.mem.eql(u8, key, "MemTotal:") or std.mem.eql(u8, key, "MemAvailable:") or std.mem.eql(u8, key, "SwapTotal:") or std.mem.eql(u8, key, "SwapFree:");
+        if (slot) |i| {
+            const kb = std.fmt.parseInt(u64, fields.next() orelse continue, 10) catch continue;
+            extra[i] = std.math.mul(u64, kb, 1024) catch null;
+            continue;
+        }
         if (!relevant) continue;
         const kb = std.fmt.parseInt(u64, fields.next() orelse return null, 10) catch return null;
         if (!std.mem.eql(u8, fields.next() orelse return null, "kB")) return null;
@@ -86,7 +122,19 @@ pub fn parseMemory(bytes: []const u8) ?Memory {
         if (std.mem.eql(u8, key, "SwapTotal:")) swap_total = value;
         if (std.mem.eql(u8, key, "SwapFree:")) swap_free = value;
     }
-    return .{ .total = total orelse return null, .available = available orelse return null, .swap_total = swap_total, .swap_free = swap_free };
+    const cached: ?u64 = if (extra[1] != null and extra[2] != null)
+        extra[1].? +| extra[2].? +| (extra[3] orelse 0)
+    else
+        null;
+    return .{
+        .total = total orelse return null,
+        .available = available orelse return null,
+        .swap_total = swap_total,
+        .swap_free = swap_free,
+        .free = extra[0],
+        .cached = cached,
+        .shared = extra[4],
+    };
 }
 
 pub const Process = struct {
@@ -144,6 +192,10 @@ pub const List = struct {
 
 pub fn cpuTotals(buf: []u8) ?Cpu {
     return parseCpu(readAt(c.AT_FDCWD, "/proc/stat", buf) catch return null);
+}
+
+pub fn cpuCores(buf: []u8, out: []common.Core) usize {
+    return parseCores(readAt(c.AT_FDCWD, "/proc/stat", buf) catch return 0, out);
 }
 
 pub fn memoryTotals(buf: []u8) ?Memory {

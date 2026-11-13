@@ -453,6 +453,12 @@ pub const Caret = input_caret.Caret;
 /// it at paint time, so there is nothing to thread through the tree.
 pub var caret_config: CaretConfig = .{};
 
+const TypeSelect = struct {
+    buffer: [64]u8 = @splat(0),
+    len: usize = 0,
+    last_ms: i64 = 0,
+};
+
 pub const Dispatcher = struct {
     surface: interaction_surface.Surface = .{},
     hovered: ?*Widget = null,
@@ -470,6 +476,8 @@ pub const Dispatcher = struct {
     /// rebuilds its tree (and so resets its dispatcher) on every keystroke,
     /// which is precisely when a caret must *not* forget where it was.
     caret: Caret = .{},
+    /// Dropdown type-ahead survives page rebuilds without retaining tree data.
+    type_select: TypeSelect = .{},
     /// Text input the pointer is currently sweeping a selection across.
     text_drag: ?*Widget = null,
     /// Multi-click run: a second press close enough in time and space to the
@@ -482,12 +490,12 @@ pub const Dispatcher = struct {
     /// Drop every pointer into a widget tree. Safe after that tree has
     /// been freed — unlike `pointerMotion`, this does not dereference.
     pub fn reset(self: *Dispatcher) void {
-        self.* = .{ .caret = self.caret };
+        self.* = .{ .caret = self.caret, .type_select = self.type_select };
     }
 
     pub fn bindTree(self: *Dispatcher, root: *Widget) void {
         if (self.tree == root) return;
-        self.* = .{ .tree = root, .caret = self.caret };
+        self.* = .{ .tree = root, .caret = self.caret, .type_select = self.type_select };
     }
 
     /// The pointer is over something else now, so no scrollbar thumb of `root`

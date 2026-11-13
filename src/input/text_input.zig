@@ -71,7 +71,7 @@ pub const GrabPurpose = enum { new_input, state };
 pub fn keyboardGrab(self: *Self, keyboard: *wlr.Keyboard, purpose: GrabPurpose) ?*wlr.InputMethodV2.KeyboardGrab {
     const input = &self.server.input;
     if (self.server.locker != null or self.server.polkit_dialog != null) return null;
-    if (purpose == .new_input and (self.server.switcher.active() or
+    if (purpose == .new_input and (self.server.switcher.active() or self.server.world.overview.active() or
         input.open_wifi != null or input.open_battery != null or input.open_calendar != null or input.open_start_menu != null or (if (input.open_control_center) |cc| cc.hasKeyboardFocus() else false) or input.open_power_menu != null)) return null;
     const method = self.method orelse return null;
     const grab = self.grab orelse return null;
@@ -380,7 +380,7 @@ pub fn updatePopups(self: *Self) void {
     while (it.next()) |popup| {
         const visible = visible: {
             const shell = &self.server.input;
-            if (self.server.locker != null or self.server.polkit_dialog != null or self.server.switcher.active() or
+            if (self.server.locker != null or self.server.polkit_dialog != null or self.server.switcher.active() or self.server.world.overview.active() or
                 shell.open_start_menu != null or shell.open_wifi != null or shell.open_battery != null or shell.open_calendar != null or shell.open_power_menu != null or
                 (if (shell.open_control_center) |cc| cc.hasKeyboardFocus() else false)) break :visible false;
             const input = (self.active orelse break :visible false).input;

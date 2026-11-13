@@ -27,6 +27,7 @@ toplevels: wl.list.Head(Toplevel, .link) = undefined,
 closing: wl.list.Head(Toplevel, .closing_link) = undefined,
 workspaces: @import("workspaces.zig") = .{},
 camera: camera_mod.Camera = .{},
+overview: @import("world/overview.zig") = .{},
 bounds: camera_mod.Bounds = .{},
 mini_map: @import("mini_map.zig") = .{},
 camera_event_pending: bool = false,
@@ -111,7 +112,7 @@ pub fn syncPresentation(world: *World) void {
     const now = anim.nowMs();
     var it = world.toplevels.iterator(.forward);
     while (it.next()) |toplevel| {
-        if (toplevel.zoom_boost_value != 0 or world.server.config.compositor.focus_zoom == .camera) {
+        if (world.overview.active() or toplevel.zoom_boost_value != 0 or world.server.config.compositor.focus_zoom == .camera) {
             toplevel.applyVisualTransform(now);
             toplevel.applyOpacity(now);
         }

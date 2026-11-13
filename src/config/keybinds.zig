@@ -62,6 +62,7 @@ pub const Action = union(enum) {
     zoom_in,
     zoom_out,
     zoom_reset,
+    toggle_overview,
     camera_zoom_in,
     camera_zoom_out,
     camera_zoom_reset,

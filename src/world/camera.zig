@@ -97,13 +97,13 @@ pub fn applyCamera(world: *World) void {
 }
 
 pub fn allowsOverscroll(world: *const World) bool {
-    return world.panning or world.pan_x.active() or world.pan_y.active();
+    return world.overview.active() or world.panning or world.pan_x.active() or world.pan_y.active();
 }
 
 /// True while the camera is being dragged or its springs/fling are in flight.
 /// Glass holds every backdrop for that interval and refreshes on the settle frame.
 pub fn holdingGlass(world: *const World) bool {
-    return world.panning or world.pinching or world.pan_x.active() or world.pan_y.active() or world.zoom_anim.active();
+    return (world.overview.active() and world.overview.spread.active()) or world.panning or world.pinching or world.pan_x.active() or world.pan_y.active() or world.zoom_anim.active();
 }
 
 /// Analytic camera at `now_ms`, for IPC. Presentation still uses `world.camera`
@@ -301,10 +301,10 @@ pub fn tickCamera(world: *World, now_ms: i64) bool {
     if (!world.panning and !world.zoom_keeps_anchor) {
         const pan_x_live = world.pan_x.active();
         const pan_y_live = world.pan_y.active();
-        if (tickPanAxis(&world.pan_x, &world.camera.offset_x, now_ms, true, world.bounds, world.camera.zoom())) {
+        if (tickPanAxis(&world.pan_x, &world.camera.offset_x, now_ms, true, world.bounds, world.camera.zoom(), !world.overview.active())) {
             animating = true;
         }
-        if (tickPanAxis(&world.pan_y, &world.camera.offset_y, now_ms, false, world.bounds, world.camera.zoom())) {
+        if (tickPanAxis(&world.pan_y, &world.camera.offset_y, now_ms, false, world.bounds, world.camera.zoom(), !world.overview.active())) {
             animating = true;
         }
         if (pan_x_live or pan_y_live) moved = true;
@@ -324,6 +324,7 @@ pub fn tickPanAxis(
     is_x: bool,
     bounds: camera_mod.Bounds,
     zoom: f64,
+    constrain: bool,
 ) bool {
     if (!a.active()) return false;
     _ = a.sampleChanged(now_ms, anim.quantum_px);
@@ -343,7 +344,7 @@ pub fn tickPanAxis(
     dest.* = value;
     if (a.settled(now_ms)) {
         const rest: f64 = a.to;
-        dest.* = if (rest < lo) lo else if (rest > hi) hi else rest;
+        dest.* = if (!constrain) rest else if (rest < lo) lo else if (rest > hi) hi else rest;
         a.cancel(@floatCast(dest.*));
         return false;
     }

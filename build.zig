@@ -59,6 +59,8 @@ pub fn build(b: *std.Build) void {
     wlr_facade.addImport("pixman", pixman);
     wlr_facade.addImport("xkbcommon", xkbcommon);
     wlr_facade.linkSystemLibrary("wlroots-0.20", .{});
+    // Keyboard.setLayoutGroup calls xkbcommon directly (xkb_state_update_latched_locked).
+    wlr_facade.linkSystemLibrary("xkbcommon", .{});
     const wlr_c = support.cTranslation(b, target, optimize, b.path("src/wlr/c.h"), &.{"wlroots-0.20"});
 
     // These public wlroots headers include protocol headers which wlroots

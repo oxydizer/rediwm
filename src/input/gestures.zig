@@ -55,7 +55,7 @@ pub fn cursorHoldEnd(listener: *wl.Listener(*wlr.Pointer.event.HoldEnd), event: 
 
 /// Camera changes cannot invalidate an in-flight client or compositor grab.
 pub fn canZoom(input: *Input) bool {
-    if (input.server.world.workspaces.active) return false;
+    if (input.server.world.workspaces.active or input.server.world.overview.active()) return false;
     if (input.server.world.mini_map.dragging) return false;
     if (input.active_buttons != 0 or input.resize_session != null or input.seat.pointerHasGrab()) return false;
     if (input.server.world.pinching) return false;
@@ -71,14 +71,14 @@ pub fn clientSurfaceHit(hit: scene_data.Hit) bool {
 }
 
 pub fn compositorOwnsPinch(input: *Input) bool {
-    if (input.server.world.workspaces.active) return false;
+    if (input.server.world.workspaces.active or input.server.world.overview.active()) return false;
     if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return false;
     if (input.cursor_mode == .move or input.cursor_mode == .resize or input.resize_session != null) return false;
     return !clientSurfaceHit(scene_data.hitTest(input.server, input.cursor.x, input.cursor.y));
 }
 
 pub fn compositorOwnsSwipe(input: *Input, fingers: u32) bool {
-    if (input.server.world.workspaces.active) return false;
+    if (input.server.world.workspaces.active or input.server.world.overview.active()) return false;
     if (fingers != 2) return false;
     if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return false;
     if (input.cursor_mode != .passthrough or input.resize_session != null) return false;
@@ -86,7 +86,7 @@ pub fn compositorOwnsSwipe(input: *Input, fingers: u32) bool {
 }
 
 pub fn handlePinchBegin(input: *Input, time_msec: u32, fingers: u32) void {
-    if (input.server.polkit_dialog != null) return;
+    if (input.server.polkit_dialog != null or input.server.world.overview.active()) return;
     if (input.server.idle) |im| im.notifyActivity(.pointer);
     if (input.gesture == .compositor_swipe) {
         input.server.world.endPanGesture();
@@ -103,7 +103,7 @@ pub fn handlePinchBegin(input: *Input, time_msec: u32, fingers: u32) void {
 }
 
 pub fn handlePinchUpdate(input: *Input, time_msec: u32, dx: f64, dy: f64, scale: f64, rotation: f64) void {
-    if (input.server.polkit_dialog != null) return;
+    if (input.server.polkit_dialog != null or input.server.world.overview.active()) return;
     if (input.gesture == .compositor_pinch) {
         input.server.world.pinchTo(scale);
         return;
@@ -125,7 +125,7 @@ pub fn handlePinchEnd(input: *Input, time_msec: u32, cancelled: bool) void {
 }
 
 pub fn handleSwipeBegin(input: *Input, time_msec: u32, fingers: u32) void {
-    if (input.server.polkit_dialog != null) return;
+    if (input.server.polkit_dialog != null or input.server.world.overview.active()) return;
     if (input.server.idle) |im| im.notifyActivity(.pointer);
     if (input.gesture == .compositor_pinch) {
         input.server.world.endPinch(false);
@@ -141,7 +141,7 @@ pub fn handleSwipeBegin(input: *Input, time_msec: u32, fingers: u32) void {
 }
 
 pub fn handleSwipeUpdate(input: *Input, time_msec: u32, dx: f64, dy: f64) void {
-    if (input.server.polkit_dialog != null) return;
+    if (input.server.polkit_dialog != null or input.server.world.overview.active()) return;
     if (input.gesture == .compositor_swipe) {
         const z = input.server.world.camera.zoom();
         const pan_speed = input.server.config.input.pan_speed;

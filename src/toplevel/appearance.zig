@@ -37,7 +37,11 @@ pub fn effectiveOpacity(toplevel: *Toplevel, now_ms: i64) f32 {
     const inactive = std.math.clamp(toplevel.server.config.compositor.inactive_opacity, 0, 1);
     const normal = (toplevel.live_rules.opacity orelse 1) * (if (toplevel == focused) @as(f32, 1) else inactive);
     const mix = toplevel.peek_mix.value(now_ms);
-    return (normal * (1 - mix) + toplevel.peek_level.value(now_ms) * mix) * toplevel.cameraFocusOpacity();
+    const overview = &toplevel.server.world.overview;
+    const spread = if (overview.contains(toplevel.id)) @as(f32, @floatCast(overview.amount(now_ms))) else 0;
+    const hidden = overview.contains(toplevel.id) and toplevel.minimized and overview.activate != toplevel.id;
+    const opacity = if (hidden) 0 else (normal * (1 - mix) + toplevel.peek_level.value(now_ms) * mix) * toplevel.cameraFocusOpacity();
+    return opacity + (1 - opacity) * spread;
 }
 
 /// 1 for a window that should show dimmed: not the focus, unless the dim is off,
@@ -55,7 +59,9 @@ pub fn dimTarget(toplevel: *Toplevel) f32 {
 pub fn applyDim(toplevel: *Toplevel, now_ms: i64) void {
     const target = toplevel.dimTarget();
     if (toplevel.dim_anim.to != target) toplevel.dim_anim.retargetTo(now_ms, target, anim.curveFor(.window_dim));
-    const level = toplevel.dim_anim.value(now_ms) * (1 - toplevel.peek_mix.value(now_ms));
+    const overview = &toplevel.server.world.overview;
+    const spread = if (overview.contains(toplevel.id)) @as(f32, @floatCast(overview.amount(now_ms))) else 0;
+    const level = toplevel.dim_anim.value(now_ms) * (1 - toplevel.peek_mix.value(now_ms)) * (1 - spread);
     // Whole levels of an 8-bit channel: a finer step shows nothing and would only repaint.
     const amount = std.math.clamp(@round(level * toplevel.server.config.compositor.inactive_dim_amount * 255) / 255, 0, 1);
     if (amount == toplevel.dim_shown) return;

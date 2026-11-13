@@ -138,6 +138,7 @@ pub const Lock = struct {
         announce(server, true);
         _ = c.mlock(&self.password, self.password.len);
         platform.process.denyDumps() catch {};
+        server.world.overview.cancel(&server.world);
         server.switcher.cancel();
         server.screenshot_selector.cancel();
         server.locker = self;

@@ -49,7 +49,7 @@ pub fn processAxis(
     }
     if (input.server.polkit_dialog != null or input.server.screenshot_selector.output != null) return;
     if (input.server.world.mini_map.dragging) return;
-    if (input.server.switcher.active()) return;
+    if (input.server.switcher.active() or input.server.world.overview.active()) return;
     // Flip here, before zoom/UI/client branches, so `invert_scroll` behaves
     // like `natural_scroll` would if libinput's device toggle applied to
     // this device: a single, uniform reversal rather than one per consumer.

@@ -407,6 +407,7 @@ pub const source =
     \\"super+0"           = "zoom_reset"
     \\
     \\# Camera
+    \\"super+a"           = "toggle_overview"
     \\"super+shift+equal" = "camera_zoom_in"
     \\"super+shift+minus" = "camera_zoom_out"
     \\"super+shift+0"     = "camera_zoom_reset"

@@ -252,6 +252,7 @@ mini_map_buttons: u32 = 0,
 /// A click can accept/cancel the switcher mid-press; its matching release
 /// must still be swallowed rather than reaching whatever is now focused.
 switcher_buttons: u32 = 0,
+overview_buttons: u32 = 0,
 /// Last known (surface-local, world) correspondence for whichever ordinary
 /// client surface currently holds pointer focus, refreshed on every real
 /// hit. Lets passthroughMotion's implicit grab (see below) keep reporting

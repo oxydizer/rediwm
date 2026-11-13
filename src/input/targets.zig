@@ -36,7 +36,7 @@ pub fn isSuperHeld(input: *Input) bool {
 
 /// The `.super_key` pan trigger: `[input] pan_modifier` held on any keyboards.
 pub fn isPanModifierHeld(input: *Input) bool {
-    if (input.server.world.workspaces.active) return false;
+    if (input.server.world.workspaces.active or input.server.world.overview.active()) return false;
     return switch (input.server.config.input.pan_modifier) {
         .super => input.isSuperHeld(),
         .super_alt => input.isDesktopZoomHeld(),
@@ -103,7 +103,7 @@ pub fn focusedSurfaceToLayout(input: *const Input, sx: f64, sy: f64) geometry.Ve
 /// rather than to a compositor grab, pan, selector, menu or lock.
 pub fn motionReachesClient(input: *const Input) bool {
     const server = input.server;
-    if (server.locker != null or server.polkit_dialog != null or server.switcher.active()) return false;
+    if (server.locker != null or server.polkit_dialog != null or server.switcher.active() or server.world.overview.active()) return false;
     if (server.screenshot_selector.output != null) return false;
     if (input.cursor_mode != .passthrough or input.grabbed_toplevel != null or input.resize_session != null) return false;
     if (input.server.world.mini_map.dragging) return false;
@@ -118,7 +118,7 @@ pub fn motionReachesClient(input: *const Input) bool {
 /// menus, grabs and click-outside dismissal behave as for a mouse.
 pub fn directInputReachesClients(input: *Input) bool {
     const server = input.server;
-    if (server.locker != null or server.polkit_dialog != null or server.switcher.active()) return false;
+    if (server.locker != null or server.polkit_dialog != null or server.switcher.active() or server.world.overview.active()) return false;
     if (server.screenshot_selector.output != null) return false;
     if (input.cursor_mode != .passthrough or input.grabbed_toplevel != null or input.resize_session != null) return false;
     if (input.server.world.mini_map.dragging) return false;

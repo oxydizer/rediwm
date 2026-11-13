@@ -64,17 +64,33 @@ pub fn toggle(self: *App) void {
     self.audio_bar.playlist_wheel = 0;
     self.cancelWheel();
     if (self.audio_bar.playlist_open) {
-        if (self.audio_bar.playlist) |list| {
-            for (0..list.count()) |i| {
-                if (self.audio_state.isTrack(list.path(i))) {
-                    self.audio_bar.playlist_selected = i;
-                    break;
-                }
-            }
-        }
+        if (current(self)) |i| self.audio_bar.playlist_selected = i;
         reveal(self);
     }
     self.invalidate();
+}
+
+/// The playing track's place in the snapshot, if it is there.
+fn current(self: *App) ?usize {
+    const list = self.audio_bar.playlist orelse return null;
+    for (0..list.count()) |i| {
+        if (self.audio_state.isTrack(list.path(i))) return i;
+    }
+    return null;
+}
+
+/// The snapshot entry `delta` tracks away from the playing one.
+pub fn neighbour(self: *App, delta: isize) ?usize {
+    const index = current(self) orelse return null;
+    const target = @as(isize, @intCast(index)) + delta;
+    return if (target >= 0 and target < count(self)) @intCast(target) else null;
+}
+
+/// Previous and Next: another track of the snapshot, like a click on its row.
+pub fn skip(self: *App, delta: isize) void {
+    const index = neighbour(self, delta) orelse return;
+    activate(self, index);
+    reveal(self);
 }
 
 fn activate(self: *App, index: usize) void {

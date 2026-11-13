@@ -644,6 +644,10 @@ msgstr ""
 msgid "Automatic updates are off. Applications keep the last applied colors."
 msgstr ""
 
+#: src/system_monitor/app_summary_ram.zig
+msgid "Available"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Available Devices"
 msgstr ""
@@ -938,6 +942,10 @@ msgstr ""
 
 #: src/network/manager.zig
 msgid "Cable unplugged"
+msgstr ""
+
+#: src/system_monitor/app_summary_ram.zig
+msgid "Cached"
 msgstr ""
 
 #: src/files/app_model.zig
@@ -1398,6 +1406,10 @@ msgstr ""
 
 #: src/files/app_paint.zig
 msgid "Closing ends this shell and its running jobs."
+msgstr ""
+
+#: src/system_monitor/app.zig
+msgid "Collapse"
 msgstr ""
 
 #: src/system_monitor/app_footer.zig
@@ -3196,6 +3208,10 @@ msgstr ""
 msgid "Four keyboard layouts is the most XKB allows."
 msgstr ""
 
+#: src/system_monitor/app_summary_ram.zig
+msgid "Free"
+msgstr ""
+
 #: src/control_center/sections/region.zig
 msgid "Friday"
 msgstr ""
@@ -3680,7 +3696,7 @@ msgstr ""
 msgid "Labels apply to every copy of this public fingerprint."
 msgstr ""
 
-#: src/control_center/sections/region.zig
+#: src/control_center/sections/input_sources.zig
 msgid "Language"
 msgstr ""
 
@@ -3790,6 +3806,10 @@ msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "List"
+msgstr ""
+
+#: src/system_monitor/app_summary_cpu.zig
+msgid "Load"
 msgstr ""
 
 #: src/control_center/sections/printers_tools.zig
@@ -4066,6 +4086,10 @@ msgstr ""
 
 #: src/control_center/welcome.zig
 msgid "More settings"
+msgstr ""
+
+#: src/system_monitor/app_summary_ram.zig
+msgid "Most memory"
 msgstr ""
 
 #: src/control_center/sections/appearance.zig
@@ -4406,6 +4430,10 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "No internet connection"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "No layouts match this search."
 msgstr ""
 
 #: src/control_center/sections/input_sources.zig
@@ -4973,6 +5001,10 @@ msgstr ""
 msgid "Pending"
 msgstr ""
 
+#: src/system_monitor/app_summary_cpu.zig
+msgid "Per-core load is unavailable"
+msgstr ""
+
 #: src/control_center/sections/power.zig
 msgid "Performance"
 msgstr ""
@@ -5165,7 +5197,7 @@ msgstr ""
 msgid "Prevent this device from connecting."
 msgstr ""
 
-#: src/files/app_torrents.zig
+#: src/files/app_audio_bar.zig
 msgid "Previous"
 msgstr ""
 
@@ -6435,6 +6467,10 @@ msgstr ""
 msgid "Speed"
 msgstr ""
 
+#: src/control_center/sections/shortcuts.zig
+msgid "Spread all canvas windows into a grid, including minimized windows."
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Standard"
 msgstr ""
@@ -6561,6 +6597,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Suspend Auto"
+msgstr ""
+
+#: src/system_monitor/app_summary_ram.zig
+msgid "Swap"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -7559,6 +7599,10 @@ msgstr ""
 msgid "Use suggested resolution"
 msgstr ""
 
+#: src/system_monitor/app_summary_ram.zig
+msgid "Used"
+msgstr ""
+
 #: src/control_center/sections/default_apps.zig
 msgid "Used for desktop folders, app shortcuts and apps that run in a terminal."
 msgstr ""
@@ -7717,6 +7761,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Window Management"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Window Overview"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -8736,6 +8784,12 @@ msgstr[1] ""
 #: src/control_center/sections/services.zig
 msgid "{n} service, {enabled} enabled"
 msgid_plural "{n} services, {enabled} enabled"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/system_monitor/app_summary_cpu.zig
+msgid "{n} thread"
+msgid_plural "{n} threads"
 msgstr[0] ""
 msgstr[1] ""
 

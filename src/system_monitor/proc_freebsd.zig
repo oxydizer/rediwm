@@ -162,6 +162,26 @@ pub fn cpuTotals(_: []u8) ?common.Cpu {
     return .{ .total = total, .idle = @intCast(@max(times[4], 0)) };
 }
 
+/// `kern.cp_times`: the same five counters per CPU up to `mp_maxid`; absent
+/// CPUs read all zero and are skipped, so `id` keeps the CPU number.
+pub fn cpuCores(buf: []u8, out: []common.Core) usize {
+    const per_cpu = 5 * @sizeOf(c_long);
+    var len: usize = buf.len - buf.len % per_cpu;
+    if (std.c.sysctlbyname("kern.cp_times", buf.ptr, &len, null, 0) != 0 or len % per_cpu != 0) return 0;
+    var count: usize = 0;
+    for (0..len / per_cpu) |cpu| {
+        if (count == out.len) break;
+        var times: [5]c_long = undefined;
+        @memcpy(std.mem.asBytes(&times), buf[cpu * per_cpu ..][0..per_cpu]);
+        var total: u64 = 0;
+        for (times) |ticks| total += @intCast(@max(ticks, 0));
+        if (total == 0) continue;
+        out[count] = .{ .id = @intCast(cpu), .cpu = .{ .total = total, .idle = @intCast(@max(times[4], 0)) } };
+        count += 1;
+    }
+    return count;
+}
+
 /// Available is free plus inactive pages. Swap is not read.
 pub fn memoryTotals(_: []u8) ?common.Memory {
     const page = common.pageSize();
@@ -174,6 +194,8 @@ pub fn memoryTotals(_: []u8) ?common.Memory {
         .available = @min(total, (@as(u64, free) + inactive) * page),
         .swap_total = null,
         .swap_free = null,
+        .free = @min(total, @as(u64, free) * page),
+        .cached = @min(total, @as(u64, inactive) * page),
     };
 }
 
@@ -189,6 +211,8 @@ pub fn systemStats(_: []u8) common.System {
     if (sysctlValue(c_int, "dev.cpu.0.freq")) |mhz| if (mhz > 0) {
         result.frequency_ghz = @as(f64, @floatFromInt(mhz)) / 1000;
     };
+    var load: [3]f64 = undefined;
+    if (c.getloadavg(&load, 3) == 3) result.load = load;
     var uptime: c.struct_timespec = undefined;
     if (c.clock_gettime(c.CLOCK_UPTIME, &uptime) == 0 and uptime.tv_sec >= 0)
         result.uptime_seconds = @intCast(uptime.tv_sec);

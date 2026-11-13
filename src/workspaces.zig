@@ -92,6 +92,7 @@ pub fn reveal(self: *Self, top: *Top) void {
 }
 
 pub fn cancelGestures(server: *Server) void {
+    server.world.overview.cancel(&server.world);
     server.switcher.cancel();
     _ = server.input.cancelDrag();
     server.input.clearGrab();
