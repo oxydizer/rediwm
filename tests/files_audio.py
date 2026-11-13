@@ -296,6 +296,23 @@ def run():
                     action("close_window", {"id": win["id"]})
                     wait_for(lambda: not windows(), "Files did not close")
                     win = open_files()
+                    # Files remembers list view across launches. Switch back
+                    # to grid so the preview click targets the song icon.
+                    click(691, 82)
+                    time.sleep(.6)
+                    # An explicit default must not suppress built-in preview.
+                    shot("explicit-default-view")
+                    move(*found)
+                    assert cursor() == "pointer", (
+                        "audio preview control is not hit-testable with an explicit default: "
+                        + cursor()
+                    )
+                    click(*found)
+                    wait_for(lambda: status() == 's "Playing"',
+                             "explicit default suppressed the audio preview button")
+                    assert "song.wav" in mpris("Metadata"), mpris("Metadata")
+                    stop_player()
+                    click(726, 82)  # switch to list view
                     click(LIST_NAME_X, LIST_SONG_Y, times=2)
                     wait_for(marker.exists, "the explicit default application was not used")
                     assert marker.read_text() == str(music / "song.wav"), marker.read_text()
