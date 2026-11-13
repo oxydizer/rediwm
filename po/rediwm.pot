@@ -3696,7 +3696,7 @@ msgstr ""
 msgid "Labels apply to every copy of this public fingerprint."
 msgstr ""
 
-#: src/control_center/sections/region.zig
+#: src/control_center/sections/input_sources.zig
 msgid "Language"
 msgstr ""
 
@@ -4430,6 +4430,10 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "No internet connection"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "No layouts match this search."
 msgstr ""
 
 #: src/control_center/sections/input_sources.zig
