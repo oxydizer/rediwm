@@ -79,6 +79,13 @@ pub fn playsBuiltin(self: *App, path: []const u8) bool {
     return !associations.hasExplicitDefault(path, bundled_id);
 }
 
+/// Whether the built-in player can preview this file, independently of the
+/// user's default application for opening it.
+fn canPreviewAudio(self: *App, path: []const u8) bool {
+    return self.audio_player and self.chooser == null and
+        self.history.archive_len == 0 and formats.candidate(path);
+}
+
 /// Hands `path` to the player, starting it if needed. False when it cannot be
 /// reached at all.
 pub fn playAudio(self: *App, path: []const u8) bool {
@@ -94,9 +101,9 @@ pub fn playAudio(self: *App, path: []const u8) bool {
 }
 
 fn audioItem(self: *App, index: usize) bool {
-    if (!self.audio_player or self.audio_link == null or self.chooser != null or self.transfer_view.active or index >= self.items.items.len) return false;
+    if (self.audio_link == null or self.transfer_view.active or index >= self.items.items.len) return false;
     const item = self.items.items[index];
-    return !item.is_dir and !item.is_broken and !item.missing and formats.candidate(item.name) and playsBuiltin(self, item.path);
+    return !item.is_dir and !item.is_broken and !item.missing and canPreviewAudio(self, item.path);
 }
 
 fn isCurrent(self: *App, index: usize) bool {
@@ -106,8 +113,7 @@ fn isCurrent(self: *App, index: usize) bool {
 const button_size: f64 = 28;
 
 /// The button's box in window coordinates: right-aligned in the name column in
-/// list view, over the icon in the grid, where it only shows on the item under
-/// the pointer or the one playing.
+/// list view, over the icon in the grid.
 fn buttonRect(self: *App, index: usize) ?header.Rect {
     if (!audioItem(self, index)) return null;
     const row: i32 = @intCast(index / @as(usize, @intCast(self.columns())));
@@ -117,7 +123,6 @@ fn buttonRect(self: *App, index: usize) ?header.Rect {
         if (name.w < 120) return null;
         return .{ .x = name.x + name.w - 4 - button_size, .y = y + (@as(f64, @floatFromInt(self.cardHeight())) - button_size) / 2, .w = button_size, .h = button_size };
     }
-    if (!isCurrent(self, index) and self.itemAt(self.mouse_x, self.mouse_y) != index) return null;
     const icon = self.itemIconRect(@intCast(index));
     return .{ .x = icon.x + (icon.w - button_size) / 2, .y = icon.y + (icon.h - button_size) / 2, .w = button_size, .h = button_size };
 }
@@ -146,6 +151,28 @@ pub fn renderAudioButton(self: *App, cr: *@import("c.zig").api.cairo_t, index: u
         c.cairo_arc(cr, rect.x + rect.w / 2, rect.y + rect.h / 2, rect.w / 2 - 1, 0, 2 * std.math.pi);
         c.cairo_fill(cr);
     }
+    if (hover) {
+        // A soft circular accent glow sits beneath the play/pause glyph,
+        // replacing the ghost button's rectangular hover surface.
+        const accent = theme.shellPalette().accent;
+        const cx = rect.x + rect.w / 2;
+        const cy = rect.y + rect.h / 2;
+        const glow_radius: f64 = 20;
+        const glow = c.cairo_pattern_create_radial(cx, cy, 2, cx, cy, glow_radius) orelse return;
+        defer c.cairo_pattern_destroy(glow);
+        c.cairo_pattern_add_color_stop_rgba(
+            glow,
+            0,
+            accent[0],
+            accent[1],
+            accent[2],
+            @floatCast(accent[3] * 0.40),
+        );
+        c.cairo_pattern_add_color_stop_rgba(glow, 1, accent[0], accent[1], accent[2], 0);
+        c.cairo_set_source(cr, glow);
+        c.cairo_rectangle(cr, cx - glow_radius, cy - glow_radius, glow_radius * 2, glow_radius * 2);
+        c.cairo_fill(cr);
+    }
     ui.drawProgressRing(cr, .{ .x = rect.x, .y = rect.y, .w = rect.w, .h = rect.h }, if (current) self.audio_state.fraction(draw.nowMs()) else 0, theme.shellPalette().accent);
     var layer = ui.Layer.begin(cr, .{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = button_size, .h = button_size }) orelse return;
     defer layer.finish();
@@ -154,7 +181,7 @@ pub fn renderAudioButton(self: *App, cr: *@import("c.zig").api.cairo_t, index: u
         .size = .sm,
         .icon = if (playing) .pause else .play,
         .label = if (playing) tr("Pause") else tr("Play"),
-    }, .{ .pointer = if (hover) .hover else .idle });
+    }, .{ .pointer = .idle });
 }
 
 /// The row whose button is under the pointer.
