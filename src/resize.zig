@@ -103,6 +103,80 @@ pub const SizeConstraints = struct {
 
 pub const ClientSize = struct { width: i32, height: i32 };
 
+pub const CoupledClientSizes = struct {
+    active: ClientSize,
+    peer: ClientSize,
+};
+
+fn effectiveMinWidth(constraints: SizeConstraints) i32 {
+    var min_width = @max(1, constraints.min_width);
+    if (constraints.control_min_width > min_width and
+        (constraints.max_width == 0 or constraints.control_min_width <= constraints.max_width))
+    {
+        min_width = @intCast(constraints.control_min_width);
+    }
+    return min_width;
+}
+
+/// Resize two opposite horizontal edges from one pointer delta. Both widths
+/// share one integer delta, clamped to the intersection of both clients'
+/// constraints, so their common boundary cannot split.
+pub fn computeCoupledHorizontalClientSizes(
+    active_snapshot: ResizeSnapshot,
+    peer_snapshot: ResizeSnapshot,
+    cursor_x: f64,
+    active_constraints: SizeConstraints,
+    peer_constraints: SizeConstraints,
+) ?CoupledClientSizes {
+    const direction: i32 = if (active_snapshot.edges.right and peer_snapshot.edges.left)
+        1
+    else if (active_snapshot.edges.left and peer_snapshot.edges.right)
+        -1
+    else
+        return null;
+
+    const active_min = effectiveMinWidth(active_constraints);
+    const peer_min = effectiveMinWidth(peer_constraints);
+    const lower_from_active = active_min - active_snapshot.initial_client_width;
+    const lower_from_peer = if (peer_constraints.max_width > 0)
+        peer_snapshot.initial_client_width - peer_constraints.max_width
+    else
+        std.math.minInt(i32);
+    const upper_from_active = if (active_constraints.max_width > 0)
+        active_constraints.max_width - active_snapshot.initial_client_width
+    else
+        std.math.maxInt(i32);
+    const upper_from_peer = peer_snapshot.initial_client_width - peer_min;
+    const lower = @max(lower_from_active, lower_from_peer);
+    const upper = @min(upper_from_active, upper_from_peer);
+
+    // If constraints changed so that no shared boundary is feasible, keep
+    // the existing boundary instead of allowing independent clamps to split.
+    const raw_delta = (cursor_x - active_snapshot.initial_cursor_x) *
+        @as(f64, @floatFromInt(direction));
+    const bounded_delta = if (lower <= upper)
+        std.math.clamp(raw_delta, @as(f64, @floatFromInt(lower)), @as(f64, @floatFromInt(upper)))
+    else
+        0;
+    const delta: i32 = @intFromFloat(@round(bounded_delta));
+
+    var active_size = computeDesiredClientSize(
+        active_snapshot,
+        active_snapshot.initial_cursor_x,
+        active_snapshot.initial_cursor_y,
+        active_constraints,
+    );
+    var peer_size = computeDesiredClientSize(
+        peer_snapshot,
+        peer_snapshot.initial_cursor_x,
+        peer_snapshot.initial_cursor_y,
+        peer_constraints,
+    );
+    active_size.width = active_snapshot.initial_client_width + delta;
+    peer_size.width = peer_snapshot.initial_client_width - delta;
+    return .{ .active = active_size, .peer = peer_size };
+}
+
 pub fn computeDesiredClientSize(
     snapshot: ResizeSnapshot,
     cursor_x: f64,
@@ -341,6 +415,21 @@ test "resize geometry calculation for all 8 directions" {
         try std.testing.expectEqual(@as(i32, 80), pos.x);
         try std.testing.expectEqual(@as(i32, 60), pos.y);
     }
+}
+
+test "coupled horizontal resize clamps one shared boundary to both clients" {
+    const active = createSnapshot(100, 200, 0, 0, 800, 600, 0, 1, 0, .{ .right = true });
+    const peer = createSnapshot(100, 200, 801, 0, 800, 600, 0, 1, 0, .{ .left = true });
+    const active_limits = SizeConstraints{ .min_width = 200, .max_width = 1000 };
+    const peer_limits = SizeConstraints{ .min_width = 300, .max_width = 900 };
+
+    const grow = computeCoupledHorizontalClientSizes(active, peer, 600, active_limits, peer_limits).?;
+    try std.testing.expectEqual(@as(i32, 1000), grow.active.width);
+    try std.testing.expectEqual(@as(i32, 600), grow.peer.width);
+
+    const shrink = computeCoupledHorizontalClientSizes(active, peer, -400, active_limits, peer_limits).?;
+    try std.testing.expectEqual(@as(i32, 700), shrink.active.width);
+    try std.testing.expectEqual(@as(i32, 900), shrink.peer.width);
 }
 
 test "quadrant selection for Alt + right-drag" {

@@ -70,6 +70,17 @@ pub const PanSession = struct {
     inhibited: bool = false,
 };
 
+/// The other half of a manually tiled pair being resized together.
+pub const ResizePeerSession = struct {
+    toplevel: *Toplevel,
+    snapshot: resize.ResizeSnapshot,
+    latest_desired_size: resize.ClientSize,
+    dirty: bool = false,
+    outstanding_configure: Toplevel.ConfigureWait = .none,
+    last_sent_width: i32 = 0,
+    last_sent_height: i32 = 0,
+};
+
 pub const ResizeSession = struct {
     toplevel: *Toplevel,
     generation: u64,
@@ -78,12 +89,27 @@ pub const ResizeSession = struct {
     edges: resize.Edges,
     snapshot: resize.ResizeSnapshot,
     latest_desired_size: resize.ClientSize,
+    peer: ?ResizePeerSession = null,
     dirty: bool = false,
     pacing_output: ?*Output = null,
     outstanding_configure: Toplevel.ConfigureWait = .none,
     last_sent_width: i32 = 0,
     last_sent_height: i32 = 0,
     settling: bool = false,
+
+    /// Whether a toplevel participates in this resize gesture.
+    pub fn includes(self: *const ResizeSession, toplevel: *const Toplevel) bool {
+        if (self.toplevel == toplevel) return true;
+        const peer = self.peer orelse return false;
+        return peer.toplevel == toplevel;
+    }
+
+    /// Whether either participant is still waiting for its client configure.
+    pub fn hasOutstandingConfigure(self: *const ResizeSession) bool {
+        if (self.outstanding_configure != .none) return true;
+        const peer = self.peer orelse return false;
+        return peer.outstanding_configure != .none;
+    }
 };
 
 server: *Server,
@@ -492,7 +518,7 @@ pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
     input.drag_dodge.detach(toplevel);
     if (input.grabbed_toplevel == toplevel) input.clearGrab();
     if (input.resize_session) |session| {
-        if (session.toplevel == toplevel) input.cancelResize();
+        if (session.includes(toplevel)) input.cancelResize();
     }
 }
 

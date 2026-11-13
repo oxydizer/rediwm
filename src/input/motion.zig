@@ -587,22 +587,60 @@ pub fn processResize(input: *Input) void {
     if (session.settling) return;
 
     const toplevel = session.toplevel;
-    const constraints = toplevel.sizeConstraints();
+    const cursor_world = input.server.world.toWorld(input.cursor.x, input.cursor.y);
+    const cursor_x = cursor_world.x / toplevel.worldScale();
+    const cursor_y = cursor_world.y / toplevel.worldScale();
+    const active_constraints = toplevel.sizeConstraints();
 
-    // Use the same unscaled cursor space as the resize snapshot.
-    const cursor_wx = input.server.world.toWorld(input.cursor.x, input.cursor.y).x / toplevel.worldScale();
-    const cursor_wy = input.server.world.toWorld(input.cursor.x, input.cursor.y).y / toplevel.worldScale();
-
-    const desired = resize.computeDesiredClientSize(
+    // Each participant measures the same pointer in its own unscaled
+    // client space. Their snapshots select opposite edges, so the shared
+    // boundary moves in opposite directions while both outer edges stay put.
+    var desired = resize.computeDesiredClientSize(
         session.snapshot,
-        cursor_wx,
-        cursor_wy,
-        constraints,
+        cursor_x,
+        cursor_y,
+        active_constraints,
     );
+    var peer_desired: ?resize.ClientSize = null;
+    if (session.peer) |peer| {
+        if (resize.computeCoupledHorizontalClientSizes(
+            session.snapshot,
+            peer.snapshot,
+            cursor_x,
+            active_constraints,
+            peer.toplevel.sizeConstraints(),
+        )) |coupled| {
+            desired = coupled.active;
+            peer_desired = coupled.peer;
+        } else {
+            peer_desired = resize.computeDesiredClientSize(
+                peer.snapshot,
+                cursor_world.x / peer.toplevel.worldScale(),
+                cursor_world.y / peer.toplevel.worldScale(),
+                peer.toplevel.sizeConstraints(),
+            );
+        }
+    }
+    var changed = false;
     if (desired.width != session.latest_desired_size.width or desired.height != session.latest_desired_size.height) {
         session.latest_desired_size = desired;
         session.dirty = true;
+        changed = true;
         @import("../effects/window_move.zig").resizeMotion(toplevel);
+    }
+
+    if (session.peer) |*peer| {
+        const next_size = peer_desired.?;
+        if (next_size.width != peer.latest_desired_size.width or
+            next_size.height != peer.latest_desired_size.height)
+        {
+            peer.latest_desired_size = next_size;
+            peer.dirty = true;
+            changed = true;
+        }
+    }
+
+    if (changed) {
         if (session.pacing_output) |out| {
             out.wlr_output.scheduleFrame();
         } else {

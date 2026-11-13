@@ -34,19 +34,40 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
 
             toplevel.positionDuringResize();
 
-            // An acknowledgement can carry no pixel damage. Pending resize
-            // work of the flame (following the pointer, or left over once it
-            // has faded away) still needs a frame; plain resizes already
-            // scheduled theirs, so with the effect off nothing changes.
-            if (@import("../effects/window_move.zig").resizeEnabled(toplevel.server) and session.dirty and session.outstanding_configure == .none) {
+            // An acknowledgement can carry no pixel damage. Any newer
+            // pointer size waiting behind this configure still needs a frame.
+            if (session.dirty and session.outstanding_configure == .none) {
                 if (session.pacing_output) |output| output.wlr_output.scheduleFrame() else toplevel.server.scheduleFrames();
             }
 
             // A queued pre-release commit must not discard the fixed-edge
-            // snapshot before the client acknowledges the final resize size.
-            if (session.settling and !session.dirty and session.outstanding_configure == .none) {
+            // snapshot before both clients acknowledge their final sizes.
+            const peer_dirty = if (session.peer) |peer| peer.dirty else false;
+            if (session.settling and !session.dirty and !peer_dirty and !session.hasOutstandingConfigure()) {
                 const gen = session.generation;
                 toplevel.server.input.finishSettlement(gen);
+            }
+        } else if (session.peer) |*peer| {
+            if (peer.toplevel == toplevel) {
+                toplevel.positionDuringResize();
+                if (peer.outstanding_configure == .x11_commit) {
+                    peer.outstanding_configure = .none;
+                } else if (peer.outstanding_configure != .none) {
+                    if (toplevel.configureCompleted(peer.outstanding_configure)) {
+                        peer.outstanding_configure = .none;
+                    }
+                }
+
+                if (peer.dirty and peer.outstanding_configure == .none) {
+                    if (session.pacing_output) |output| output.wlr_output.scheduleFrame() else toplevel.server.scheduleFrames();
+                }
+
+                // The peer has its own protocol configure lifecycle. Its
+                // commit must not clear or settle the active window's wait.
+                if (session.settling and !session.dirty and !peer.dirty and !session.hasOutstandingConfigure()) {
+                    const gen = session.generation;
+                    toplevel.server.input.finishSettlement(gen);
+                }
             }
         }
     }

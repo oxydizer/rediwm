@@ -191,12 +191,18 @@ pub fn setZoomAnimated(toplevel: *Toplevel, index: usize, lx: f64, ly: f64) void
 // soon as their size changes too.
 pub fn positionDuringResize(toplevel: *Toplevel) void {
     const session = toplevel.server.input.resize_session orelse return;
-    if (session.toplevel != toplevel) return;
+    const snapshot = if (session.toplevel == toplevel)
+        session.snapshot
+    else blk: {
+        const peer = session.peer orelse return;
+        if (peer.toplevel != toplevel) return;
+        break :blk peer.snapshot;
+    };
     const geom = toplevel.clientGeometry();
     if (geom.width > 0 and geom.height > 0) {
-        const pos = resize.computeFramePosition(session.snapshot, geom.width, geom.height);
-        const initial_x = session.snapshot.initial_frame_x;
-        const initial_y = session.snapshot.initial_frame_y;
+        const pos = resize.computeFramePosition(snapshot, geom.width, geom.height);
+        const initial_x = snapshot.initial_frame_x;
+        const initial_y = snapshot.initial_frame_y;
         // The fixed opposite edge is in displayed world coordinates.
         const dx: f64 = @floatFromInt(pos.x - initial_x);
         const dy: f64 = @floatFromInt(pos.y - initial_y);
@@ -204,6 +210,14 @@ pub fn positionDuringResize(toplevel: *Toplevel) void {
             initial_x + @as(i32, @intFromFloat(@round(dx * toplevel.worldScale()))),
             initial_y + @as(i32, @intFromFloat(@round(dy * toplevel.worldScale()))),
         );
+        if (session.peer != null and toplevel.tile != null) {
+            if (toplevel.tile_target) |*target| {
+                target.x = toplevel.x;
+                target.y = toplevel.y;
+                target.width = geom.width;
+                target.height = geom.height;
+            }
+        }
     }
 }
 
