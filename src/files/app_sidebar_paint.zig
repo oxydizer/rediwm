@@ -23,12 +23,26 @@ const drawText = @import("app_draw.zig").drawText;
 const fontMetrics = @import("app_draw.zig").fontMetrics;
 const deviceLabel = App.deviceLabel;
 
+/// A quiet surface separating the sidebar's four functional sections.
+fn drawSidebarCard(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64) void {
+    if (w <= 0 or h <= 0) return;
+    roundedRect(cr, x, y, w, h, 9);
+    setSource(cr, withAlpha(ui_theme.global.app_item_hover, 0.18));
+    c.cairo_fill_preserve(cr);
+    setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), 0.08));
+    c.cairo_set_line_width(cr, 1);
+    c.cairo_stroke(cr);
+}
+
 /// DEVICES: a heading and one row per volume, dimmed while unmounted, with
 /// an eject button on the mounted ones.
 pub fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {
-    if (self.device_list.items.len == 0) return;
     setSource(cr, ui_theme.global.sidebarForeground());
-    drawText(cr, tr("DEVICES"), 24, @floatFromInt(self.placeY(self.deviceBase()) - 12), shell_ui.headingSize(), true);
+    drawText(cr, tr("DISKS"), 24, @floatFromInt(self.placeY(self.deviceBase()) - 12), shell_ui.headingSize(), true);
+    if (self.device_list.items.len == 0) {
+        drawText(cr, tr("No removable volumes"), 32, @floatFromInt(self.placeY(self.deviceBase()) + 20), shell_ui.statusSize(), false);
+        return;
+    }
     const hovered = self.hoverKey();
     for (self.device_list.items, 0..) |*volume, k| {
         const index = self.deviceBase() + k;
@@ -148,6 +162,41 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
     c.cairo_set_operator(cr, c.CAIRO_OPERATOR_SOURCE);
     c.cairo_paint(cr);
     c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
+
+    // Keep the existing functional sections, but give each its own visual
+    // surface. Places includes built-in locations and pins; disks are
+    // separated from navigation; torrents and file operations share
+    // Transfers; Git remains contextual to an open repository.
+    const pin_count = self.pins.items.items.len;
+    const pin_bottom = self.pinRowY(pin_count);
+    drawSidebarCard(
+        cr,
+        8,
+        @floatFromInt(self.contentTop() + 4),
+        @max(0, content_width - 16),
+        @floatFromInt(@max(0, pin_bottom + 16 - self.contentTop() - 4)),
+    );
+    const disks_y = pin_bottom + 24;
+    drawSidebarCard(
+        cr,
+        8,
+        @floatFromInt(disks_y),
+        @max(0, content_width - 16),
+        @floatFromInt(self.deviceBlock() + 8),
+    );
+    const transfers_y = pin_bottom + 32 + self.deviceBlock();
+    drawSidebarCard(
+        cr,
+        8,
+        @floatFromInt(transfers_y),
+        @max(0, content_width - 16),
+        @floatFromInt(self.torrentSidebarHeight() + self.fileOpsSidebarHeight() + 4),
+    );
+    if (self.repository() != null) {
+        const git_card = self.gitCard();
+        drawSidebarCard(cr, git_card.x - 2, git_card.y - 4, git_card.w + 4, git_card.h + 8);
+    }
+
     self.renderTorrentSidebar(cr);
     self.renderFileOpsSidebar(cr);
     self.renderGitSidebar(cr, content_width);

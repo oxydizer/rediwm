@@ -233,7 +233,7 @@ test "pins sit after Projects, take drops by gap and keep the rows in drawn orde
     try std.testing.expectEqual(places_bottom + 2 * step, app.placeY(App.pin_base + 1));
 }
 
-test "Sidebar lists devices under Places; only mounted ones eject" {
+test "Sidebar separates Disks from Places; only mounted volumes eject" {
     var app = try testApp();
     defer app.deinit();
     app.h = 1000;
@@ -249,7 +249,7 @@ test "Sidebar lists devices under Places; only mounted ones eject" {
     const step = app.placeStep();
     try std.testing.expectEqual(last_place_y + 44 + step, app.placeY(mounted));
     try std.testing.expectEqual(app.placeY(mounted) + step, app.placeY(unmounted));
-    try std.testing.expectEqual(extent + 44 + 2 * step, app.sidebarExtent());
+    try std.testing.expectEqual(extent + 44 + 2 * step - 64, app.sidebarExtent());
 
     const row_y: f64 = @floatFromInt(app.placeY(mounted) + 10);
     try std.testing.expectEqual(@as(?usize, mounted), app.placeAt(70, row_y));

@@ -182,10 +182,12 @@ pub fn deviceAt(self: *App, index: usize) ?*const volumes_mod.Volume {
     };
 }
 
-/// Height DEVICES adds below Places, heading included.
+/// Height DISKS adds below Places, heading included. Keep an empty card
+/// visible so the sidebar's section structure does not jump when devices
+/// are connected or removed.
 pub fn deviceBlock(self: *App) i32 {
     const count: i32 = @intCast(self.device_list.items.len);
-    return if (count == 0) 0 else 44 + count * self.placeStep();
+    return if (count == 0) 64 else 44 + count * self.placeStep();
 }
 
 /// The eject button at a mounted device row's right edge.
