@@ -10,9 +10,58 @@ const pins_mod = @import("pins.zig");
 const MenuKind = @import("app_model.zig").MenuKind;
 const FileAction = @import("app_model.zig").FileAction;
 const Sort = @import("app_model.zig").Sort;
+const app_model = @import("app_model.zig");
 const app_tests = @import("app_tests.zig");
 const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
+
+test "sidebar accordion defaults to Places without changing Git branch expansion" {
+    var app = try testApp();
+    defer app.deinit();
+
+    try std.testing.expectEqual(app_model.SidebarSection.places, app.sidebar_section);
+    try std.testing.expect(!app.sidebar_section_selected);
+    try std.testing.expect(app.git_expanded);
+}
+
+test "sidebar layout uses shared headers and only expanded visible body" {
+    const body_heights = [_]i32{ 80, 40, 64, 120 };
+    const visible = [_]bool{ true, true, false, true };
+
+    const places_expanded = app_model.SidebarLayout.init(
+        100,
+        body_heights,
+        visible,
+        .places,
+    );
+    const places = places_expanded.cards[@intFromEnum(app_model.SidebarSection.places)];
+    const disks = places_expanded.cards[@intFromEnum(app_model.SidebarSection.disks)];
+    const git = places_expanded.cards[@intFromEnum(app_model.SidebarSection.git)];
+    const transfers = places_expanded.cards[@intFromEnum(app_model.SidebarSection.transfers)];
+
+    try std.testing.expectEqual(@as(i32, 100), places.y);
+    try std.testing.expectEqual(@as(i32, 112), places.height());
+    try std.testing.expectEqual(@as(i32, 220), disks.y);
+    try std.testing.expectEqual(@as(i32, 32), disks.height());
+    try std.testing.expect(!git.visible);
+    try std.testing.expectEqual(@as(i32, 260), transfers.y);
+    try std.testing.expectEqual(@as(i32, 32), transfers.height());
+
+    const transfers_expanded = app_model.SidebarLayout.init(
+        100,
+        body_heights,
+        visible,
+        .transfers,
+    );
+    const collapsed_places = transfers_expanded.cards[@intFromEnum(app_model.SidebarSection.places)];
+    const collapsed_disks = transfers_expanded.cards[@intFromEnum(app_model.SidebarSection.disks)];
+    const expanded_transfers = transfers_expanded.cards[@intFromEnum(app_model.SidebarSection.transfers)];
+
+    try std.testing.expectEqual(@as(i32, 32), collapsed_places.height());
+    try std.testing.expectEqual(@as(i32, 140), collapsed_disks.y);
+    try std.testing.expectEqual(@as(i32, 180), expanded_transfers.y);
+    try std.testing.expectEqual(@as(i32, 152), expanded_transfers.height());
+}
 
 test "list column resize pushes following columns and scrolls in Files and chooser" {
     for ([_]bool{ false, true }) |chooser| {

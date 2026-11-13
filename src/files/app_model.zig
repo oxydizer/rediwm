@@ -93,6 +93,64 @@ pub const FileAction = enum {
 };
 pub const Sort = enum { name, name_desc, size, modified, type, size_asc, modified_asc, type_desc };
 
+/// The four first-class sections in the Files sidebar, in display order.
+pub const SidebarSection = enum(u2) {
+    places,
+    disks,
+    git,
+    transfers,
+};
+
+/// Shared geometry for one sidebar accordion card.
+pub const SidebarCardGeometry = struct {
+    y: i32,
+    header_height: i32,
+    body_height: i32,
+    visible: bool,
+    expanded: bool,
+
+    pub fn height(self: SidebarCardGeometry) i32 {
+        if (!self.visible) return 0;
+        return self.header_height + (if (self.expanded) self.body_height else 0);
+    }
+};
+
+/// Vertical layout contract shared by all sidebar cards.
+pub const SidebarLayout = struct {
+    pub const header_height: i32 = 32;
+    pub const gap: i32 = 8;
+
+    cards: [4]SidebarCardGeometry,
+
+    /// Positions visible cards in section order. Hidden cards consume no
+    /// space; only the selected section receives its body height.
+    pub fn init(
+        top: i32,
+        body_heights: [4]i32,
+        visible: [4]bool,
+        expanded_section: SidebarSection,
+    ) SidebarLayout {
+        var result: SidebarLayout = .{ .cards = undefined };
+        var y = top;
+
+        for (0..4) |i| {
+            const section: SidebarSection = @enumFromInt(i);
+            const expanded = visible[i] and section == expanded_section;
+            const card: SidebarCardGeometry = .{
+                .y = y,
+                .header_height = header_height,
+                .body_height = body_heights[i],
+                .visible = visible[i],
+                .expanded = expanded,
+            };
+            result.cards[i] = card;
+            if (visible[i]) y += card.height() + gap;
+        }
+
+        return result;
+    }
+};
+
 pub const SizeState = union(enum) {
     running: *dirsize.Job,
     done: struct {
