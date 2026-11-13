@@ -16,6 +16,7 @@ pub const ConflictAction = enum {
 pub const JobState = enum {
     idle,
     running,
+    paused,
     waiting_conflict,
     finished,
 };
@@ -43,6 +44,7 @@ pub const ItemResult = struct {
 
 pub const ProgressInfo = struct {
     state: JobState,
+    kind: OpKind = .copy,
     total_items: usize = 0,
     processed_items: usize = 0,
     total_bytes: u64 = 0,
@@ -228,7 +230,9 @@ fn measureBytes(
     allocator: Allocator,
     path: []const u8,
     cancel: ?*std.atomic.Value(bool),
+    runner: ?*JobRunner,
 ) !u64 {
+    if (runner) |job| if (!job.waitIfResumed(cancel)) return error.Cancelled;
     if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
 
     const path_z = try allocator.dupeSentinel(u8, path, 0);
@@ -250,6 +254,7 @@ fn measureBytes(
 
     var total: u64 = 0;
     while (true) {
+        if (runner) |job| if (!job.waitIfResumed(cancel)) return error.Cancelled;
         if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
 
         std.c._errno().* = 0;
@@ -262,7 +267,7 @@ fn measureBytes(
 
         const child = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ path, name });
         defer allocator.free(child);
-        const child_bytes = try measureBytes(allocator, child, cancel);
+        const child_bytes = try measureBytes(allocator, child, cancel, runner);
         if (child_bytes > std.math.maxInt(u64) - total) return error.SizeOverflow;
         total += child_bytes;
     }
@@ -299,6 +304,10 @@ fn copyFileContentsTracked(
 
     var buf: [65536]u8 = undefined;
     while (true) {
+        if (runner) |job| if (!job.waitIfResumed(cancel)) {
+            _ = c.unlink(dst_z);
+            return error.Cancelled;
+        };
         if (cancel != null and cancel.?.load(.acquire)) {
             _ = c.unlink(dst_z);
             return error.Cancelled;
@@ -350,6 +359,7 @@ fn copyRecursiveTracked(
     cancel: ?*std.atomic.Value(bool),
     runner: ?*JobRunner,
 ) !void {
+    if (runner) |job| if (!job.waitIfResumed(cancel)) return error.Cancelled;
     if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
 
     const src_z = try allocator.dupeSentinel(u8, src, 0);
@@ -442,6 +452,10 @@ fn crossDeviceMoveTracked(
 
     // Copy cleans up only destinations it created; a raced existing target is preserved.
     try copyRecursiveTracked(allocator, src, dst, cancel, runner);
+    if (runner) |job| if (!job.waitIfResumed(cancel)) {
+        deleteRecursive(allocator, dst) catch {};
+        return error.Cancelled;
+    };
     if (cancel != null and cancel.?.load(.acquire)) {
         deleteRecursive(allocator, dst) catch {};
         return error.Cancelled;
@@ -463,6 +477,7 @@ fn moveItemTracked(
     runner: ?*JobRunner,
     source_bytes: u64,
 ) !void {
+    if (runner) |job| if (!job.waitIfResumed(cancel)) return error.Cancelled;
     if (isDescendantOrSame(src, dst)) return error.CannotMoveIntoDescendant;
     if (std.mem.eql(u8, src, dst)) return;
 
@@ -486,6 +501,7 @@ pub const JobRunner = struct {
     thread: ?std.Thread = null,
     wake_fd: c_int = -1,
     cancel_flag: std.atomic.Value(bool) = .init(false),
+    pause_requested: bool = false,
 
     // Protected by mutex
     state: JobState = .idle,
@@ -597,7 +613,7 @@ pub const JobRunner = struct {
 
     fn startImpl(self: *JobRunner, kind: OpKind, sources: []const []const u8, dest_dir: []const u8, default_conflict: ConflictAction, member: ?[]const u8) !void {
         const progress = self.pollProgress();
-        if (progress.state == .running or progress.state == .waiting_conflict) return error.Busy;
+        if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) return error.Busy;
         if (self.thread) |t| {
             t.join();
             self.thread = null;
@@ -625,6 +641,7 @@ pub const JobRunner = struct {
         self.default_conflict = default_conflict;
         self.state = .running;
         self.cancel_flag.store(false, .release);
+        self.pause_requested = false;
 
         self.total_items = self.sources.items.len;
         self.processed_items = 0;
@@ -650,11 +667,50 @@ pub const JobRunner = struct {
     pub fn cancel(self: *JobRunner) void {
         self.cancel_flag.store(true, .release);
         _ = c.pthread_mutex_lock(&self.mutex);
+        self.pause_requested = false;
         if (self.state == .waiting_conflict) {
             self.conflict_action = .cancel;
-            _ = c.pthread_cond_signal(&self.cond);
+        }
+        _ = c.pthread_cond_broadcast(&self.cond);
+        _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    /// Request a cooperative pause. The worker acknowledges it at its next
+    /// safe point, after the current file chunk or directory entry.
+    pub fn pause(self: *JobRunner) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        if (self.state == .running and (self.kind == .copy or self.kind == .move)) {
+            self.pause_requested = true;
+            self.notify();
         }
         _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    pub fn resumeJob(self: *JobRunner) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        if (self.state == .paused) {
+            self.pause_requested = false;
+            self.state = .running;
+            _ = c.pthread_cond_broadcast(&self.cond);
+            self.notify();
+        }
+        _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    /// Called only by the worker. A paused state means the worker has reached
+    /// a safe point and is no longer doing filesystem work.
+    fn waitIfResumed(self: *JobRunner, cancel_flag: ?*std.atomic.Value(bool)) bool {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        while (self.pause_requested and (cancel_flag == null or !cancel_flag.?.load(.acquire))) {
+            if (self.state != .paused) {
+                self.state = .paused;
+                self.notify();
+            }
+            _ = c.pthread_cond_wait(&self.cond, &self.mutex);
+        }
+        const should_continue = cancel_flag == null or !cancel_flag.?.load(.acquire);
+        _ = c.pthread_mutex_unlock(&self.mutex);
+        return should_continue;
     }
 
     pub fn resolveConflict(self: *JobRunner, action: ConflictAction) void {
@@ -673,6 +729,7 @@ pub const JobRunner = struct {
 
         return .{
             .state = self.state,
+            .kind = self.kind,
             .total_items = self.total_items,
             .processed_items = self.processed_items,
             .total_bytes = self.total_bytes,
@@ -811,7 +868,7 @@ pub const JobRunner = struct {
                     known = false;
                     break;
                 }
-                const bytes = measureBytes(self.allocator, src, &self.cancel_flag) catch {
+                const bytes = measureBytes(self.allocator, src, &self.cancel_flag, self) catch {
                     known = false;
                     break;
                 };

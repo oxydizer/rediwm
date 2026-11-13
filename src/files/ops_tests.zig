@@ -474,6 +474,66 @@ test "cancelling an active copy removes partial output and preserves source" {
     try std.testing.expect(!testFileExists(dst));
 }
 
+test "paused copy stops at a safe point and resumes" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+    try ops_mod.createFolder(a, tmp, "dest");
+    const dest = try std.fmt.allocPrint(a, "{s}/dest", .{tmp});
+    defer a.free(dest);
+    const src = try std.fmt.allocPrintSentinel(a, "{s}/large", .{tmp}, 0);
+    defer a.free(src);
+    const fd = c.open(src, c.O_CREAT | c.O_WRONLY | c.O_CLOEXEC, @as(c_uint, 0o600));
+    try std.testing.expect(fd >= 0);
+    defer _ = c.close(fd);
+    try std.testing.expect(c.ftruncate(fd, 512 * 1024 * 1024) == 0);
+
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+    try runner.start(.copy, &.{src}, dest, .ask);
+
+    var started = false;
+    for (0..1000) |_| {
+        if (runner.pollProgress().transferred_bytes > 0) {
+            started = true;
+            break;
+        }
+        _ = c.usleep(1000);
+    }
+    try std.testing.expect(started);
+
+    runner.pause();
+    var paused = false;
+    for (0..1000) |_| {
+        if (runner.pollProgress().state == .paused) {
+            paused = true;
+            break;
+        }
+        _ = c.usleep(1000);
+    }
+    try std.testing.expect(paused);
+    const paused_bytes = runner.pollProgress().transferred_bytes;
+    _ = c.usleep(20 * 1000);
+    try std.testing.expectEqual(paused_bytes, runner.pollProgress().transferred_bytes);
+
+    runner.resumeJob();
+    var resumed = false;
+    for (0..1000) |_| {
+        if (runner.pollProgress().state == .running) {
+            resumed = true;
+            break;
+        }
+        _ = c.usleep(1000);
+    }
+    try std.testing.expect(resumed);
+    runner.cancel();
+    runner.thread.?.join();
+    runner.thread = null;
+    try std.testing.expect(runner.pollProgress().cancelled);
+    try std.testing.expect(testFileExists(src));
+}
+
 test "failed copy and cross-device fallback never remove an existing destination" {
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;

@@ -195,12 +195,15 @@ pub fn sync(self: *App) void {
                     }
                 } else self.refresh();
             }
-        } else if (progress.state == .running or progress.state == .waiting_conflict) {
+        } else if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
             self.job_was_running = true;
-            if (self.job_progress != progress.processed_items or self.job_state != progress.state) self.invalidate();
+            if (self.job_progress != progress.processed_items or
+                self.job_state != progress.state or
+                self.job_transferred_bytes != progress.transferred_bytes) self.invalidate();
         }
         self.job_progress = progress.processed_items;
         self.job_state = progress.state;
+        self.job_transferred_bytes = progress.transferred_bytes;
     }
     if (self.status_notice != null and nowMs() >= self.status_notice_until) {
         self.allocator.free(self.status_notice.?);

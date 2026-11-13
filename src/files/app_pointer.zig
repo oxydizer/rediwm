@@ -19,6 +19,7 @@ const gitBranchRow = App.gitBranchRow;
 // Input handlers
 pub fn hoverKey(self: *App) usize {
     if (self.dialog) |dlg| if (dlg.kind == .transfers) return self.transfersHover();
+    if (self.dialog == null and self.fileOpsSidebarHit(self.mouse_x, self.mouse_y)) return std.math.maxInt(usize) - 2002;
     if (self.dialog == null and self.torrentSidebarHit(self.mouse_x, self.mouse_y)) return std.math.maxInt(usize) - 2001;
     const x = self.mouse_x;
     const y = self.mouse_y;
@@ -502,6 +503,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             return;
         }
     }
+    if (self.fileOpsSidebarClick(x, y)) return;
     if (self.torrentSidebarHit(x, y)) {
         self.openTransfers();
         return;

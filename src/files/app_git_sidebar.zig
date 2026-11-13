@@ -51,7 +51,7 @@ pub fn gitCardHeight(self: *App) f64 {
 }
 
 pub fn gitCard(self: *App) header.Rect {
-    return .{ .x = 10, .y = @floatFromInt(self.pinRowY(self.pins.items.items.len) + 44 + self.deviceBlock() + self.torrentSidebarHeight()), .w = @floatFromInt(self.sidebarWidth() - 20 - self.scrollbarGutter()), .h = self.gitCardHeight() };
+    return .{ .x = 10, .y = @floatFromInt(self.pinRowY(self.pins.items.items.len) + 44 + self.deviceBlock() + self.torrentSidebarHeight() + self.fileOpsSidebarHeight()), .w = @floatFromInt(self.sidebarWidth() - 20 - self.scrollbarGutter()), .h = self.gitCardHeight() };
 }
 
 pub fn renderGitSidebar(self: *App, cr: *c.cairo_t, content_width: f64) void {

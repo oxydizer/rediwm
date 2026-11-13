@@ -10,6 +10,7 @@ const recent = @import("recent.zig");
 const icons = @import("../icon_cache.zig");
 const shell_ui = @import("ui").cairo;
 const ui_theme = @import("ui").theme;
+const button_widget = @import("ui").widgets.button;
 const pins_mod = @import("pins.zig");
 const places = App.places;
 const places_start = App.places_start;
@@ -148,6 +149,7 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
     c.cairo_paint(cr);
     c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
     self.renderTorrentSidebar(cr);
+    self.renderFileOpsSidebar(cr);
     self.renderGitSidebar(cr, content_width);
     // Under the labels: the glide passes over the PLACES heading.
     const glide = self.nav_hover.frame;
@@ -244,7 +246,111 @@ pub fn renderPinDrop(self: *App, cr: *c.cairo_t) void {
 
 // Bottom of the sidebar content in scrolled coordinates: the Git card is the last section.
 pub fn sidebarExtent(self: *App) i32 {
-    return self.pinRowY(self.pins.items.items.len) + self.sidebar_scroll + 8 + self.deviceBlock() + self.gitSidebarHeight() + self.torrentSidebarHeight();
+    return self.pinRowY(self.pins.items.items.len) + self.sidebar_scroll + 8 + self.deviceBlock() +
+        self.torrentSidebarHeight() + self.fileOpsSidebarHeight() + self.gitSidebarHeight();
+}
+
+fn fileOpsBox(self: *App) shell_ui.Rect {
+    return .{
+        .x = 12,
+        .y = @floatFromInt(self.pinRowY(self.pins.items.items.len) + 40 + self.deviceBlock() + self.torrentSidebarHeight()),
+        .w = @floatFromInt(@max(0, self.sidebarWidth() - 24 - self.scrollbarGutter())),
+        .h = 104,
+    };
+}
+
+pub fn fileOpsSidebarHeight(self: *App) i32 {
+    const runner = self.job_runner orelse return 0;
+    const state = runner.pollProgress().state;
+    return if (state == .running or state == .paused or state == .waiting_conflict) 112 else 0;
+}
+
+pub fn fileOpsSidebarHit(self: *App, x: f64, y: f64) bool {
+    if (self.fileOpsSidebarHeight() == 0 or self.chooser != null or self.dialog != null) return false;
+    if (self.sidebarWidth() == 0 or y < @as(f64, @floatFromInt(self.contentTop())) or
+        y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return false;
+    const area = fileOpsBox(self);
+    return x >= area.x and x < area.x + area.w and y >= area.y and y < area.y + area.h;
+}
+
+pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
+    if (!self.fileOpsSidebarHit(x, y)) return false;
+    const runner = self.job_runner orelse return true;
+    const progress = runner.pollProgress();
+    const area = fileOpsBox(self);
+    const local_y = y - area.y;
+    const cancel_left = area.x + area.w - 64;
+    if (local_y >= 68 and local_y <= 98 and x >= cancel_left and x <= area.x + area.w - 8) {
+        runner.cancel();
+    } else if ((progress.kind == .copy or progress.kind == .move) and
+        local_y >= 68 and local_y <= 98 and x >= area.x + area.w - 124 and x < cancel_left - 4)
+    {
+        if (progress.state == .paused) {
+            runner.resumeJob();
+        } else if (progress.state == .running) {
+            runner.pause();
+        }
+    }
+    self.invalidate();
+    return true;
+}
+
+pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
+    const runner = self.job_runner orelse return;
+    const progress = runner.pollProgress();
+    if (progress.state != .running and progress.state != .paused and progress.state != .waiting_conflict) return;
+    const area = fileOpsBox(self);
+    if (area.w < 120) return;
+
+    const palette = ui_theme.shellPalette();
+    drawText(cr, tr("FILE OPERATIONS"), 24, area.y + 18, shell_ui.headingSize(), true);
+
+    const fraction: f64 = if (progress.total_bytes_known and progress.total_bytes > 0)
+        @min(1.0, @as(f64, @floatFromInt(progress.transferred_bytes)) / @as(f64, @floatFromInt(progress.total_bytes)))
+    else
+        0;
+    shell_ui.drawProgressRing(cr, .{ .x = area.x + 12, .y = area.y + 30, .w = 28, .h = 28 }, fraction, palette.accent);
+
+    var percent_buf: [32]u8 = undefined;
+    const percent: u64 = @intFromFloat(fraction * 100);
+    const status = if (progress.state == .paused)
+        tr("Paused")
+    else if (progress.state == .waiting_conflict)
+        tr("Waiting for decision")
+    else if (progress.measuring)
+        tr("Measuring…")
+    else if (progress.total_bytes_known)
+        std.fmt.bufPrint(&percent_buf, "{d}%", .{percent}) catch ""
+    else
+        tr("Working…");
+    drawText(cr, status, area.x + 48, area.y + 43, shell_ui.statusSize(), false);
+    drawEllipsis(cr, if (progress.current_name.len > 0) progress.current_name else tr("Preparing…"),
+        area.x + 48, area.y + 61, area.w - 58, shell_ui.statusSize(), false);
+
+    const can_pause = (progress.kind == .copy or progress.kind == .move) and
+        (progress.state == .running or progress.state == .paused);
+    if (can_pause) {
+        const rect = shell_ui.Rect{ .x = area.w - 120, .y = 68, .w = 52, .h = 26 };
+        var layer = shell_ui.Layer.begin(cr, .{ .x = area.x + rect.x, .y = area.y + rect.y, .w = rect.w, .h = rect.h }) orelse return;
+        defer layer.finish();
+        const hovered = rect.x + area.x <= self.mouse_x and self.mouse_x <= rect.x + area.x + rect.w and
+            rect.y + area.y <= self.mouse_y and self.mouse_y <= rect.y + area.y + rect.h;
+        button_widget.paint(&layer.renderer, layer.local(), .{
+            .label = if (progress.state == .paused) tr("Resume") else tr("Pause"),
+            .variant = .ghost,
+            .size = .sm,
+        }, .{ .pointer = if (hovered) .hover else .idle });
+    }
+    const cancel_rect = shell_ui.Rect{ .x = area.w - 64, .y = 68, .w = 56, .h = 26 };
+    var cancel_layer = shell_ui.Layer.begin(cr, .{ .x = area.x + cancel_rect.x, .y = area.y + cancel_rect.y, .w = cancel_rect.w, .h = cancel_rect.h }) orelse return;
+    defer cancel_layer.finish();
+    const cancel_hovered = cancel_rect.x + area.x <= self.mouse_x and self.mouse_x <= cancel_rect.x + area.x + cancel_rect.w and
+        cancel_rect.y + area.y <= self.mouse_y and self.mouse_y <= cancel_rect.y + area.y + cancel_rect.h;
+    button_widget.paint(&cancel_layer.renderer, cancel_layer.local(), .{
+        .label = tr("Cancel"),
+        .variant = .ghost,
+        .size = .sm,
+    }, .{ .pointer = if (cancel_hovered) .hover else .idle });
 }
 
 pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {

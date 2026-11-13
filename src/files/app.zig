@@ -272,6 +272,7 @@ pub const App = struct {
     extract_picker_bytes: std.ArrayList(u8) = .empty,
     job_cut_revision: ?usize = null,
     job_progress: usize = std.math.maxInt(usize),
+    job_transferred_bytes: u64 = 0,
     job_state: ops_mod.JobState = .idle,
     status_notice: ?[]u8 = null,
     status_notice_until: i64 = 0,
@@ -789,6 +790,10 @@ pub const App = struct {
     pub const drawPackPlaceIcon = app_sidebar_paint.drawPackPlaceIcon;
     pub const renderSidebar = app_sidebar_paint.renderSidebar;
     pub const renderPinDrop = app_sidebar_paint.renderPinDrop;
+    pub const fileOpsSidebarHeight = app_sidebar_paint.fileOpsSidebarHeight;
+    pub const fileOpsSidebarHit = app_sidebar_paint.fileOpsSidebarHit;
+    pub const fileOpsSidebarClick = app_sidebar_paint.fileOpsSidebarClick;
+    pub const renderFileOpsSidebar = app_sidebar_paint.renderFileOpsSidebar;
 
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
