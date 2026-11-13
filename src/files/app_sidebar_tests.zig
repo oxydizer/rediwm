@@ -63,6 +63,41 @@ test "sidebar layout uses shared headers and only expanded visible body" {
     try std.testing.expectEqual(@as(i32, 152), expanded_transfers.height());
 }
 
+test "sidebar header clicks select sections without collapsing the active card" {
+    var app = try testApp();
+    defer app.deinit();
+
+    try std.testing.expectEqual(app_model.SidebarSection.places, app.sidebar_section);
+    try std.testing.expect(!app.sidebar_section_selected);
+
+    const layout = app.sidebarLayout();
+    const disks = layout.cards[@intFromEnum(app_model.SidebarSection.disks)];
+    try std.testing.expect(disks.visible);
+    const x: f64 = 32;
+    const y: f64 = @floatFromInt(disks.y + @divTrunc(disks.header_height, 2));
+
+    try std.testing.expectEqual(app_model.SidebarSection.disks, app.sidebarHeaderAt(x, y).?);
+    app.handleMotion(x, y);
+    app.handleButton(0x110, true);
+
+    try std.testing.expectEqual(app_model.SidebarSection.disks, app.sidebar_section);
+    try std.testing.expect(app.sidebar_section_selected);
+    try std.testing.expect(app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)].expanded);
+
+    // Recompute its position after Places collapses. Clicking the active
+    // header is idempotent, not a collapse toggle.
+    const selected_disks = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)];
+    const selected_y: f64 = @floatFromInt(selected_disks.y + @divTrunc(selected_disks.header_height, 2));
+    app.handleMotion(x, selected_y);
+    app.handleButton(0x110, true);
+    try std.testing.expectEqual(app_model.SidebarSection.disks, app.sidebar_section);
+    try std.testing.expect(app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)].expanded);
+
+    const body_y: f64 = @floatFromInt(selected_disks.y + selected_disks.header_height + 1);
+    try std.testing.expectEqual(@as(?app_model.SidebarSection, null), app.sidebarHeaderAt(x, body_y));
+    try std.testing.expectEqual(@as(?app_model.SidebarSection, null), app.sidebarHeaderAt(-1, selected_y));
+}
+
 test "list column resize pushes following columns and scrolls in Files and chooser" {
     for ([_]bool{ false, true }) |chooser| {
         var app = try testApp();

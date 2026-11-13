@@ -82,6 +82,24 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
     );
 }
 
+/// Returns the visible accordion header under the pointer. Card bodies are
+/// deliberately excluded so section selection cannot steal their controls.
+pub fn sidebarHeaderAt(self: *App, x: f64, y: f64) ?app_model.SidebarSection {
+    if (self.sidebarWidth() <= 16 or
+        x < 8 or x >= @as(f64, @floatFromInt(self.sidebarWidth() - 8)) or
+        y < @as(f64, @floatFromInt(self.contentTop())) or
+        y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return null;
+
+    const layout = self.sidebarLayout();
+    for (layout.cards, 0..) |card, i| {
+        if (!card.visible) continue;
+        const top: f64 = @floatFromInt(card.y);
+        const bottom = top + @as(f64, @floatFromInt(card.header_height));
+        if (y >= top and y < bottom) return @enumFromInt(i);
+    }
+    return null;
+}
+
 /// DEVICES: a heading and one row per volume, dimmed while unmounted, with
 /// an eject button on the mounted ones.
 pub fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {

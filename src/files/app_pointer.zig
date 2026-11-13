@@ -503,6 +503,15 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             return;
         }
     }
+    if (button == 0x110) {
+        if (self.sidebarHeaderAt(x, y)) |section| {
+            self.sidebar_section = section;
+            self.sidebar_section_selected = true;
+            self.clampSidebarScroll();
+            self.invalidate();
+            return;
+        }
+    }
     if (self.fileOpsSidebarClick(x, y)) return;
     if (self.torrentSidebarHit(x, y)) {
         self.openTransfers();
