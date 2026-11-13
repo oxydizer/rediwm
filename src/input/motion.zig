@@ -274,6 +274,23 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
 }
 
 pub fn passthroughMotion(input: *Input, time_msec: u32) void {
+    if (input.taskbar_drag) |*session| {
+        if (!session.dragging and @import("../taskbar/pointer.zig").dragThresholdCrossed(
+            session.press_x,
+            session.press_y,
+            input.cursor.x,
+            input.cursor.y,
+        )) {
+            session.dragging = true;
+        }
+        if (session.dragging) {
+            input.setNamedCursor("grabbing");
+            // Taskbar coordinates are in layout space. The drag remains
+            // associated with its original bar even after leaving its bounds.
+            _ = session.bar.dragMove(session.window_id, input.cursor.x - @as(f64, @floatFromInt(session.bar.box.x)));
+        }
+        return;
+    }
     if (input.dock_drag.motion(input)) return;
     // Shell controls keep receiving motion until release, just like a client's
     // implicit grab. A scrollbar drag may leave the whole window or panel.
@@ -419,7 +436,15 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.hovered_taskbar = res.bar;
             res.bar.pointerMotion(res.sx, res.sy);
             input.setHover(null, null);
-            input.setDefaultCursor();
+            if (input.taskbar_drag) |session| {
+                if (session.dragging) {
+                    input.setNamedCursor("grabbing");
+                } else {
+                    input.setDefaultCursor();
+                }
+            } else {
+                input.setDefaultCursor();
+            }
             input.seat.pointerClearFocus();
         },
         .chrome => |hit_chrome| {

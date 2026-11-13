@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Taskbar = @import("../Taskbar.zig");
+const Toplevel = @import("../Toplevel.zig");
 const anim = @import("ui").anim;
 const battery = @import("../taskbar/battery.zig");
 const start_button = @import("../taskbar/start_button.zig");
@@ -25,6 +26,71 @@ const markPaintCauseFromTarget = Taskbar.markPaintCauseFromTarget;
 const trayItem = Taskbar.trayItem;
 
 const source_scroll_step: f32 = 60;
+pub const drag_threshold: f64 = 6;
+
+/// Whether pointer movement from the initial press is large enough to drag.
+pub fn dragThresholdCrossed(press_x: f64, press_y: f64, x: f64, y: f64) bool {
+    const dx = x - press_x;
+    const dy = y - press_y;
+    return dx * dx + dy * dy >= drag_threshold * drag_threshold;
+}
+
+/// A visible chip's horizontal bounds, used to calculate a drag insertion slot.
+pub const ChipSlot = struct {
+    id: u64,
+    x: f64,
+    width: f64,
+};
+
+pub const InsertionTarget = struct {
+    neighbor_id: u64,
+    before: bool,
+};
+
+/// Find the visible chip immediately after the dragged chip's insertion
+/// point. The dragged chip itself is excluded from the slot calculation.
+pub fn insertionTarget(chips: []const ChipSlot, dragged_id: u64, x: f64) ?InsertionTarget {
+    var last_id: ?u64 = null;
+    for (chips) |chip| {
+        if (chip.id == dragged_id) continue;
+        last_id = chip.id;
+        if (x < chip.x + chip.width / 2) {
+            return .{ .neighbor_id = chip.id, .before = true };
+        }
+    }
+    const id = last_id orelse return null;
+    return .{ .neighbor_id = id, .before = false };
+}
+
+/// Move a dragged chip to the slot currently indicated by the pointer.
+/// Persistent entries for hidden windows remain in the order.
+pub fn dragMove(bar: *Taskbar, dragged_id: u64, x: f64) bool {
+    const from = Taskbar.chipOrderIndex(bar.chip_order.items, dragged_id) orelse return false;
+    if (bar.chip_order.items.len < 2) return false;
+
+    const now_ms = nowMs();
+    var slots: std.ArrayList(ChipSlot) = .empty;
+    defer slots.deinit(@import("../main.zig").gpa);
+    for (bar.chips.items) |chip| {
+        slots.append(@import("../main.zig").gpa, .{
+            .id = chip.toplevel.id,
+            .x = chip.renderX(now_ms),
+            .width = chip.width,
+        }) catch return false;
+    }
+
+    const target = insertionTarget(slots.items, dragged_id, x) orelse return false;
+    const neighbor_index = Taskbar.chipOrderIndex(bar.chip_order.items, target.neighbor_id) orelse return false;
+    const insertion_index = neighbor_index + @intFromBool(!target.before);
+    const to = if (from < insertion_index) insertion_index - 1 else insertion_index;
+    if (to >= bar.chip_order.items.len or from == to) return false;
+
+    if (!Taskbar.moveChipOrder(bar.chip_order.items, from, to)) return false;
+    _ = bar.reconcile(now_ms);
+    bar.server.scheduleFrames();
+    bar.wlr_output.scheduleFrame();
+    return true;
+}
 
 pub fn hitTest(bar: *Taskbar, sx: f64, sy: f64) Target {
     const bh = bar.box.height;
@@ -99,9 +165,40 @@ pub fn setHover(bar: *Taskbar, target: Target, to: f32, now_ms: i64) void {
     }
 }
 
-// Clicks act on press, matching Input.cursorButton's existing convention
-// (window chrome and focus both act on press; release is never routed
-// further than clearing the cursor mode).
+fn pressChip(bar: *Taskbar, toplevel: *Toplevel) void {
+    const now_ms = nowMs();
+    bar.markDirty(paint_chips | paint_press);
+    for (bar.chips.items) |*chip| {
+        if (chip.toplevel == toplevel) {
+            chip.dirty = true;
+            chip.press.pulseTo(now_ms, press_scale, 1, anim.curveFor(.taskbar_press));
+            break;
+        }
+    }
+    if (Output.fromWlr(bar.wlr_output)) |output| {
+        const world = &bar.server.world;
+        const focused = @import("../ipc/handlers.zig").findFocusedToplevel(bar.server) == toplevel;
+        if (!toplevel.minimized and focused and world.isWindowVisible(toplevel, output)) {
+            toplevel.minimize();
+        } else {
+            if (toplevel.minimized) toplevel.restore() else world.focus(toplevel);
+            world.navigateTo(toplevel, output);
+        }
+    }
+}
+
+/// Complete a deferred chip click by stable window ID.
+pub fn pointerPressChip(bar: *Taskbar, window_id: u64) void {
+    for (bar.chips.items) |chip| {
+        if (chip.toplevel.id == window_id) {
+            pressChip(bar, chip.toplevel);
+            bar.wlr_output.scheduleFrame();
+            return;
+        }
+    }
+}
+
+// Non-chip taskbar actions still act immediately on press.
 pub fn pointerPress(bar: *Taskbar, sx: f64, sy: f64) void {
     const now_ms = nowMs();
     var did_mutate = false;
@@ -116,25 +213,8 @@ pub fn pointerPress(bar: *Taskbar, sx: f64, sy: f64) void {
             if (Output.fromWlr(bar.wlr_output)) |output| output.toggleStartMenu();
         },
         .chip => |toplevel| {
-            bar.markDirty(paint_chips | paint_press);
             did_mutate = true;
-            for (bar.chips.items) |*chip| {
-                if (chip.toplevel == toplevel) {
-                    chip.dirty = true;
-                    chip.press.pulseTo(now_ms, press_scale, 1, anim.curveFor(.taskbar_press));
-                    break;
-                }
-            }
-            if (Output.fromWlr(bar.wlr_output)) |output| {
-                const world = &bar.server.world;
-                const focused = @import("../ipc/handlers.zig").findFocusedToplevel(bar.server) == toplevel;
-                if (!toplevel.minimized and focused and world.isWindowVisible(toplevel, output)) {
-                    toplevel.minimize();
-                } else {
-                    if (toplevel.minimized) toplevel.restore() else world.focus(toplevel);
-                    world.navigateTo(toplevel, output);
-                }
-            }
+            pressChip(bar, toplevel);
         },
         .tray => |i| {
             bar.markDirty(paint_tray | paint_press);

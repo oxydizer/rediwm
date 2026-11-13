@@ -8,6 +8,7 @@ const control_center = @import("../control_center/panel.zig");
 const Keyboard = @import("../Keyboard.zig");
 const Output = @import("../Output.zig");
 const Pointer = @import("../Pointer.zig");
+const Taskbar = @import("../Taskbar.zig");
 const chrome = @import("../chrome.zig");
 const resize = @import("../resize.zig");
 const scene_data = @import("../scene_data.zig");
@@ -171,6 +172,17 @@ pub fn processButton(
         input.server.undo.nextPress();
     } else if (state == .released) {
         if (input.active_buttons > 0) input.active_buttons -= 1;
+    }
+
+    // A taskbar chip press becomes a click only when released before the
+    // pointer crosses the drag threshold. A drag must never also activate it.
+    if (state == .released and button == btn_left) {
+        if (input.taskbar_drag) |session| {
+            input.taskbar_drag = null;
+            if (!session.dragging) session.bar.pointerPressChip(session.window_id);
+            input.processCursorMotion(time_msec);
+            return;
+        }
     }
 
     if (input.tiling_grab) |session| {
@@ -382,6 +394,23 @@ pub fn processClientButton(
             return;
         },
         .taskbar => |res| {
+            if (button == btn_left) {
+                switch (res.bar.hitTest(res.sx, res.sy)) {
+                    .chip => |toplevel| {
+                        if (Taskbar.chipOrderIndex(res.bar.chip_order.items, toplevel.id)) |origin_index| {
+                            input.taskbar_drag = .{
+                                .bar = res.bar,
+                                .window_id = toplevel.id,
+                                .origin_index = origin_index,
+                                .press_x = input.cursor.x,
+                                .press_y = input.cursor.y,
+                            };
+                            return;
+                        }
+                    },
+                    else => {},
+                }
+            }
             res.bar.pointerPress(res.sx, res.sy);
             return;
         },

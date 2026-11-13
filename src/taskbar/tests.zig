@@ -5,6 +5,7 @@ const Taskbar = @import("../Taskbar.zig");
 const geometry = @import("../geometry.zig");
 const icon_service = @import("../icon_service.zig");
 const battery = @import("../taskbar/battery.zig");
+const taskbar_pointer = @import("../taskbar/pointer.zig");
 const text = @import("ui").text;
 const ui_theme = @import("ui").theme;
 const default_bar_height = Taskbar.default_bar_height;
@@ -36,6 +37,104 @@ const fillChipColumns = Taskbar.fillChipColumns;
 const chipTitleRect = Taskbar.chipTitleRect;
 const drawChipTitle = Taskbar.drawChipTitle;
 const paintChipTitleColumns = Taskbar.paintChipTitleColumns;
+
+test "taskbar chip order looks up stable window IDs" {
+    const order = [_]u64{ 42, 7, 19 };
+
+    try std.testing.expectEqual(@as(?usize, 0), Taskbar.chipOrderIndex(&order, 42));
+    try std.testing.expectEqual(@as(?usize, 1), Taskbar.chipOrderIndex(&order, 7));
+    try std.testing.expectEqual(@as(?usize, 2), Taskbar.chipOrderIndex(&order, 19));
+    try std.testing.expectEqual(@as(?usize, null), Taskbar.chipOrderIndex(&order, 99));
+}
+
+test "taskbar chip order moves forward and preserves other IDs" {
+    var order = [_]u64{ 10, 20, 30, 40, 50 };
+
+    try std.testing.expect(Taskbar.moveChipOrder(&order, 1, 4));
+    try std.testing.expectEqualSlices(u64, &.{ 10, 30, 40, 50, 20 }, &order);
+}
+
+test "taskbar chip order moves backward and preserves other IDs" {
+    var order = [_]u64{ 10, 20, 30, 40, 50 };
+
+    try std.testing.expect(Taskbar.moveChipOrder(&order, 4, 1));
+    try std.testing.expectEqualSlices(u64, &.{ 10, 50, 20, 30, 40 }, &order);
+}
+
+test "taskbar chip order ignores invalid and unchanged moves" {
+    var order = [_]u64{ 10, 20, 30 };
+    const original = order;
+
+    try std.testing.expect(!Taskbar.moveChipOrder(&order, 1, 1));
+    try std.testing.expect(!Taskbar.moveChipOrder(&order, 3, 0));
+    try std.testing.expect(!Taskbar.moveChipOrder(&order, 0, 3));
+    try std.testing.expectEqualSlices(u64, &original, &order);
+}
+
+test "taskbar drag insertion targets visible chip midpoints" {
+    const chips = [_]taskbar_pointer.ChipSlot{
+        .{ .id = 10, .x = 0, .width = 100 },
+        .{ .id = 20, .x = 110, .width = 100 },
+        .{ .id = 30, .x = 220, .width = 100 },
+    };
+
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 20, .before = true },
+        taskbar_pointer.insertionTarget(&chips, 10, 140).?,
+    );
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 30, .before = true },
+        taskbar_pointer.insertionTarget(&chips, 10, 180).?,
+    );
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 30, .before = true },
+        taskbar_pointer.insertionTarget(&chips, 10, 220).?,
+    );
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 30, .before = false },
+        taskbar_pointer.insertionTarget(&chips, 10, 400).?,
+    );
+}
+
+test "taskbar drag insertion ignores the dragged chip and handles a lone chip" {
+    const chips = [_]taskbar_pointer.ChipSlot{
+        .{ .id = 10, .x = 0, .width = 100 },
+    };
+    try std.testing.expectEqual(
+        @as(?taskbar_pointer.InsertionTarget, null),
+        taskbar_pointer.insertionTarget(&chips, 10, 50),
+    );
+}
+
+test "taskbar drag threshold distinguishes clicks from drags" {
+    const crossed = taskbar_pointer.dragThresholdCrossed;
+
+    try std.testing.expect(!crossed(100, 100, 105.99, 100));
+    try std.testing.expect(crossed(100, 100, 106, 100));
+    try std.testing.expect(crossed(100, 100, 107, 100));
+    try std.testing.expect(!crossed(100, 100, 104, 104));
+    try std.testing.expect(crossed(100, 100, 104.25, 104.25));
+}
+
+test "taskbar drag insertion handles exact midpoints and a non-leading dragged chip" {
+    const chips = [_]taskbar_pointer.ChipSlot{
+        .{ .id = 10, .x = 0, .width = 100 },
+        .{ .id = 20, .x = 110, .width = 100 },
+        .{ .id = 30, .x = 220, .width = 100 },
+    };
+
+    // At the midpoint, the insertion point is after that chip.
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 30, .before = true },
+        taskbar_pointer.insertionTarget(&chips, 10, 160).?,
+    );
+
+    // Excluding a dragged chip in the middle still finds the correct slot.
+    try std.testing.expectEqual(
+        taskbar_pointer.InsertionTarget{ .neighbor_id = 10, .before = true },
+        taskbar_pointer.insertionTarget(&chips, 20, 25).?,
+    );
+}
 
 test "chip/tile/tray sizing matches default theme" {
     const saved = ui_theme.global;

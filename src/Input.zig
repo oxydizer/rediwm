@@ -112,6 +112,17 @@ pub const ResizeSession = struct {
     }
 };
 
+/// A left-button press on a taskbar chip, retained while deciding whether
+/// the gesture is a click or a drag.
+pub const TaskbarDragSession = struct {
+    bar: *Taskbar,
+    window_id: u64,
+    origin_index: usize,
+    press_x: f64,
+    press_y: f64,
+    dragging: bool = false,
+};
+
 server: *Server,
 seat: *wlr.Seat,
 cursor: *wlr.Cursor,
@@ -203,6 +214,7 @@ hovered_toplevel: ?*Toplevel = null,
 /// The window whose edge highlight follows the pointer (`updateBorderGlow`).
 glow_toplevel: ?*Toplevel = null,
 hovered_taskbar: ?*Taskbar = null,
+taskbar_drag: ?TaskbarDragSession = null,
 tray_buttons: u32 = 0,
 hovered_toast: ?*@import("notifications/toast.zig").Toast = null,
 grabbed_toplevel: ?*Toplevel = null,
@@ -514,6 +526,12 @@ pub fn detachOutput(input: *Input, output: *Output) void {
 
 pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
     if (input.window_menu.references(toplevel)) input.window_menu.close();
+    if (input.taskbar_drag) |session| {
+        if (session.window_id == toplevel.id) {
+            input.taskbar_drag = null;
+            input.setDefaultCursor();
+        }
+    }
     if (input.hovered_toplevel == toplevel) input.hovered_toplevel = null;
     if (input.glow_toplevel == toplevel) input.glow_toplevel = null;
     input.drag_dodge.detach(toplevel);
@@ -525,6 +543,12 @@ pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
 
 pub fn detachTaskbar(input: *Input, bar: *Taskbar) void {
     if (input.window_menu.bar == bar) input.window_menu.close();
+    if (input.taskbar_drag) |session| {
+        if (session.bar == bar) {
+            input.taskbar_drag = null;
+            input.setDefaultCursor();
+        }
+    }
     if (input.hovered_taskbar == bar) {
         input.hovered_taskbar = null;
         input.server.scheduleFrames();

@@ -68,6 +68,39 @@ pub fn taskbarOrderLessThan(_: void, a: *Toplevel, b: *Toplevel) bool {
     return (if (a.tab_group != 0) a.tab_group else a.id) < (if (b.tab_group != 0) b.tab_group else b.id);
 }
 
+/// Returns a window's position in the taskbar-owned order, if present.
+pub fn chipOrderIndex(order: []const u64, id: u64) ?usize {
+    return std.mem.indexOfScalar(u64, order, id);
+}
+
+/// Moves an existing chip to another position without changing the relative
+/// order of the other chips. Returns false for invalid or unchanged moves.
+pub fn moveChipOrder(order: []u64, from: usize, to: usize) bool {
+    if (from >= order.len or to >= order.len or from == to) return false;
+
+    const id = order[from];
+    if (from < to) {
+        var i = from;
+        while (i < to) : (i += 1) {
+            order[i] = order[i + 1];
+        }
+    } else {
+        var i = from;
+        while (i > to) {
+            order[i] = order[i - 1];
+            i -= 1;
+        }
+    }
+    order[to] = id;
+    return true;
+}
+
+fn chipOrderLessThan(order: []const u64, a: *Toplevel, b: *Toplevel) bool {
+    const a_index = chipOrderIndex(order, a.id) orelse return taskbarOrderLessThan({}, a, b);
+    const b_index = chipOrderIndex(order, b.id) orelse return taskbarOrderLessThan({}, a, b);
+    return a_index < b_index;
+}
+
 // Returns whether any chip needs a frame: a new raster, a FLIP, or removal.
 pub fn reconcile(bar: *Taskbar, now_ms: i64) bool {
     var changed = false;
@@ -79,6 +112,43 @@ pub fn reconcile(bar: *Taskbar, now_ms: i64) bool {
         visible.append(gpa, toplevel) catch break;
     }
     std.mem.sort(*Toplevel, visible.items, {}, taskbarOrderLessThan);
+
+    // Keep order entries for live windows even while they are hidden, on
+    // another workspace/output, or temporarily excluded from the taskbar.
+    // Only a window that has left the world is removed.
+    var order_index: usize = 0;
+    while (order_index < bar.chip_order.items.len) {
+        const id = bar.chip_order.items[order_index];
+        var live = false;
+        var world_it = bar.server.world.toplevels.iterator(.forward);
+        while (world_it.next()) |toplevel| {
+            if (toplevel.id == id) {
+                live = true;
+                break;
+            }
+        }
+        if (live) {
+            order_index += 1;
+        } else {
+            _ = bar.chip_order.orderedRemove(order_index);
+        }
+    }
+
+    // Seed new windows in the existing stable order. Once a window has an
+    // entry, later focus changes and reconciliation cannot move it.
+    var custom_order_ready = true;
+    bar.chip_order.ensureTotalCapacity(gpa, bar.chip_order.items.len + visible.items.len) catch {
+        log.err("reconcile: could not reserve taskbar order", .{});
+        custom_order_ready = false;
+    };
+    if (custom_order_ready) {
+        for (visible.items) |toplevel| {
+            if (chipOrderIndex(bar.chip_order.items, toplevel.id) == null) {
+                bar.chip_order.appendAssumeCapacity(toplevel.id);
+            }
+        }
+        std.mem.sort(*Toplevel, visible.items, bar.chip_order.items, chipOrderLessThan);
+    }
 
     const layout = bar.calculateLayout(visible.items.len);
     if (!std.meta.eql(layout, bar.item_layout)) {
