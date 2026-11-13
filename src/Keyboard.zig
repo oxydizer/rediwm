@@ -12,6 +12,7 @@ const gpa = @import("main.zig").gpa;
 const Keyboard = @This();
 
 const log = std.log.scoped(.keyboard);
+
 const keybinds = @import("config").keybinds;
 const ControlCenter = @import("control_center/panel.zig").ControlCenter;
 const StartMenu = @import("start_menu/panel.zig").StartMenu;

@@ -31,8 +31,6 @@ pub const Section = struct {
     top_children: [2]Widget = undefined,
     row_storage: [7]Widget = undefined,
     row_count: usize = 0,
-    /// The first keyboard row: Settings puts the Input Sources card before it.
-    keyboard_row: usize = 0,
     selector_children: [4]Widget = undefined,
     selector_header_children: [2]Widget = undefined,
     speed_group_children: [2]Widget = undefined,
@@ -482,7 +480,6 @@ pub fn build(out: *Section, input: *Input) void {
     const pan_speed_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.pan_speed_row_children };
     layout.appendRow(&out.row_storage, &row_count, pan_speed_row);
 
-    out.keyboard_row = row_count;
     out.delay_row_children = .{
         fgLabel(i18n.tr("Repeat delay")),
         .{ .name = "repeat_delay", .kind = .{ .stepper = .{ .value = repeat.delay, .min = 100, .max = 2000, .step = default_delay_step, .unit = "ms", .owner = out, .on_change = &onRepeatDelayChanged } } },

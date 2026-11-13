@@ -11,6 +11,7 @@ const W = ui.layout.Widget;
 const config = @import("config");
 const config_sources = config.input_sources;
 const taskbar_items = config.taskbar_items;
+const fold = ui.fold;
 const panel = @import("../panel.zig");
 const gpa = @import("../../main.zig").gpa;
 
@@ -50,6 +51,7 @@ const switch_options = [_]struct { option: []const u8, label: i18n.Message }{
 const show_labels = [_]i18n.Message{ i18n.msg("Automatic"), i18n.msg("Always"), i18n.msg("Never") };
 
 const Result = struct { layout: []const u8, variant: []const u8 };
+const LanguageGroup = struct { key: []const u8, label: []const u8 };
 
 pub const Section = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
@@ -58,6 +60,9 @@ pub const Section = struct {
     search: ?*W = null,
     search_focus: bool = false,
     results: []Result = &.{},
+    language_keys: []const []const u8 = &.{},
+    selected_language: [128]u8 = @splat(0),
+    selected_language_len: usize = 0,
     message: []const u8 = "",
 
     /// Before a rebuild. A picker that just opened has no field yet and keeps
@@ -184,17 +189,16 @@ fn contentWidth(cc: *panel.ControlCenter) f32 {
 }
 
 fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Allocator, saved: ?ui.layout.TextInputData, layouts: []const config_sources.Layout) !W {
-    const field = try a.create(W);
-    field.* = .{
+    const field: W = .{
         .name = "input_source_search",
         .kind = .{ .text_input = saved orelse .{ .field = .{ .leading_icon = .search }, .placeholder = tr("Search layouts or languages…"), .value = try gpa.dupe(u8, ""), .owner = cc, .on_change = searchChanged } },
         .height = .{ .fixed = 36 },
         .width = .{ .percent = 1 },
     };
-    s.search = field;
     const query = std.mem.trim(u8, field.kind.text_input.value, " ");
     var children: std.ArrayList(W) = .empty;
-    try children.append(a, field.*);
+    try children.append(a, field);
+    var groups: std.ArrayList(LanguageGroup) = .empty;
     var results: std.ArrayList(Result) = .empty;
     var rows: std.ArrayList(W) = .empty;
     var total: usize = 0;
@@ -205,6 +209,53 @@ fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Al
             var id_buf: [160]u8 = undefined;
             const spelled = (config_sources.Layout{ .layout = entry.layout, .variant = entry.variant }).format(&id_buf);
             if (!matches(query, &.{ entry.description, entry.layout, entry.variant, entry.brief, entry.languages, spelled })) continue;
+            try appendLanguageGroup(a, &groups, languageName(entry.description), languageName(entry.description));
+        },
+        .unavailable => for (fallback) |entry| {
+            if (configured(layouts, entry.layout, entry.variant)) continue;
+            if (!matches(query, &.{ entry.name, entry.layout, entry.variant })) continue;
+            try appendLanguageGroup(a, &groups, languageName(entry.name), languageName(entry.name));
+        },
+    }
+    const keys = try a.alloc([]const u8, groups.items.len);
+    var labels = try a.alloc([]const u8, groups.items.len);
+    var selected: ?usize = null;
+    for (groups.items, 0..) |group, i| {
+        keys[i] = group.key;
+        labels[i] = group.label;
+        if (s.selected_language_len > 0 and fold.eql(group.key, s.selected_language[0..s.selected_language_len], .{})) selected = i;
+    }
+    if (selected == null and groups.items.len > 0) selected = 0;
+    s.language_keys = keys;
+    if (selected) |i| {
+        const key = keys[i];
+        s.selected_language_len = @min(key.len, s.selected_language.len);
+        @memcpy(s.selected_language[0..s.selected_language_len], key[0..s.selected_language_len]);
+    } else {
+        s.selected_language_len = 0;
+    }
+    if (groups.items.len > 0) {
+        try children.append(a, text(tr("Language"), 13, false));
+        try children.append(a, .{
+            .name = "input_source_language",
+            .kind = .{ .select = .{
+                .labels = labels,
+                .selected = selected,
+                .owner = cc,
+                .on_change = languageChanged,
+            } },
+            .width = .{ .percent = 1 },
+        });
+    }
+    switch (manager.catalogState()) {
+        .loading => {},
+        .ready => for (manager.catalog.?.entries) |entry| {
+            if (configured(layouts, entry.layout, entry.variant)) continue;
+            const key = languageName(entry.description);
+            if (!fold.eql(key, s.selected_language[0..s.selected_language_len], .{})) continue;
+            var id_buf: [160]u8 = undefined;
+            const spelled = (config_sources.Layout{ .layout = entry.layout, .variant = entry.variant }).format(&id_buf);
+            if (!matches(query, &.{ entry.description, entry.layout, entry.variant, entry.brief, entry.languages, spelled })) continue;
             total += 1;
             if (results.items.len >= max_results) continue;
             try rows.append(a, try resultRow(cc, a, results.items.len, entry.description, try a.dupe(u8, spelled)));
@@ -212,6 +263,7 @@ fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Al
         },
         .unavailable => for (fallback) |entry| {
             if (configured(layouts, entry.layout, entry.variant)) continue;
+            if (!fold.eql(languageName(entry.name), s.selected_language[0..s.selected_language_len], .{})) continue;
             if (!matches(query, &.{ entry.name, entry.layout, entry.variant })) continue;
             total += 1;
             var id_buf: [160]u8 = undefined;
@@ -222,11 +274,40 @@ fn picker(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Al
     }
     s.results = results.items;
     if (manager.catalogState() != .loading) {
-        if (rows.items.len == 0) try children.append(a, text(tr("No layouts match."), 12, true));
+        if (groups.items.len == 0) {
+            try children.append(a, text(tr("No layouts match."), 12, true));
+        } else if (rows.items.len == 0) {
+            try children.append(a, text(tr("No layouts match this search."), 12, true));
+        }
         try children.append(a, try column(a, rows.items, 2));
         if (total > rows.items.len) try children.append(a, text(try i18n.allocPrint(a, tr("{shown} of {total} layouts; type to narrow the list."), .{ .shown = rows.items.len, .total = total }), 11, true));
     }
-    return column(a, children.items, 8);
+    var result = try column(a, children.items, 8);
+    s.search = &result.children[0];
+    return result;
+}
+
+fn appendLanguageGroup(a: std.mem.Allocator, groups: *std.ArrayList(LanguageGroup), key: []const u8, label: []const u8) !void {
+    for (groups.items) |group| {
+        if (fold.eql(group.key, key, .{})) return;
+    }
+    try groups.append(a, .{ .key = key, .label = label });
+}
+
+fn languageName(description: []const u8) []const u8 {
+    const end = std.mem.indexOfScalar(u8, description, '(') orelse description.len;
+    return std.mem.trim(u8, description[0..end], " ");
+}
+
+fn languageChanged(ctx: ?*anyopaque, _: usize, index: usize) void {
+    const cc = owner(ctx);
+    const s = &cc.input_sources;
+    if (index >= s.language_keys.len) return;
+    const key = s.language_keys[index];
+    if (key.len > s.selected_language.len) return;
+    s.selected_language_len = key.len;
+    @memcpy(s.selected_language[0..key.len], key);
+    cc.refresh();
 }
 
 fn resultRow(cc: *panel.ControlCenter, a: std.mem.Allocator, index: usize, name: []const u8, spelled: []const u8) !W {
@@ -270,6 +351,16 @@ fn matches(query: []const u8, fields: []const []const u8) bool {
         if (!found) return false;
     }
     return true;
+}
+
+test "language groups merge identical visible language names" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var groups: std.ArrayList(LanguageGroup) = .empty;
+    try appendLanguageGroup(arena.allocator(), &groups, "English", "English");
+    try appendLanguageGroup(arena.allocator(), &groups, "english", "english");
+    try appendLanguageGroup(arena.allocator(), &groups, "Croatian", "Croatian");
+    try std.testing.expectEqual(@as(usize, 2), groups.items.len);
 }
 
 fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {

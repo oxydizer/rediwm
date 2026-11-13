@@ -70,9 +70,5 @@ pub fn switchLayout(server: *Server, target: protocol.LayoutTarget) !void {
         .index => |value| if (value < count) value else return error.InvalidLayoutIndex,
     };
     if (next == idx) return;
-    // wlroots applies this through XKB and emits modifiers, preserving held,
-    // latched and locked modifiers and normal client/IME routing.
-    var mods = kb.modifiers;
-    mods.group = next;
-    kb.notifyModifiers(mods);
+    kb.setLayoutGroup(next);
 }
