@@ -12,7 +12,7 @@ reached. Covers:
   Fcitx follows from any signal it emits, a group change re-reads the list,
   and the methods go when Fcitx leaves the bus. RediWM never calls a method
   that writes Fcitx's configuration.
-- Settings → Input → Input Sources: add from the registry search, reorder
+- Settings → Region & Language → Input Sources: add from the registry search, reorder
   (the active layout keeps its place by identity), remove, "Show in taskbar".
 Requires PyGObject and dbus-run-session.
 """
@@ -293,7 +293,7 @@ def test_settings(tmp):
             assert indicator(ipc) is None, "one layout shows no automatic indicator"
             ipc.action("open_control_center")
             ui.wait_settled("control_center")
-            ui.click("Input", panel="control_center")
+            ui.click("Region & Language", panel="control_center")
             ui.wait_settled("control_center")
             ui.scroll_into_view("input_source_add")
             assert ui.find("input_source_0", panel="control_center")
