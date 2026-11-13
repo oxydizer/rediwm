@@ -71,6 +71,14 @@ https://github.com/user-attachments/assets/a9f8529d-19c4-4a45-a4be-95a184bde15f
     <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/47c51bdd-2879-4e52-b5e5-0faf2b85ec05"><img src="https://github.com/user-attachments/assets/47c51bdd-2879-4e52-b5e5-0faf2b85ec05" alt="RediWM image and PDF viewer" width="440" /></a></td>
     <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/91b25a5d-140d-43ea-a33f-b8f1921e0288"><img src="https://github.com/user-attachments/assets/91b25a5d-140d-43ea-a33f-b8f1921e0288" alt="RediWM text editor" width="440" /></a></td>
   </tr>
+   <tr>
+    <th width="50%" align="center">System Monitor</th>
+    <th width="50%" align="center">Dock</th>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/68664e4d-fd05-481c-af06-3f29740397cc"><img src="https://github.com/user-attachments/assets/68664e4d-fd05-481c-af06-3f29740397cc" alt="RediWM image and PDF viewer" width="440" /></a></td>
+    <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/e9435010-4c3a-4424-bd56-c8a9e271ba11"><img src="https://github.com/user-attachments/assets/e9435010-4c3a-4424-bd56-c8a9e271ba11" alt="RediWM text editor" width="440" /></a></td>
+  </tr>
 </table>
 
 <hr />
@@ -169,7 +177,6 @@ For custom prefixes and distribution packages, see [Installation layouts and pac
 | <kbd>Alt</kbd> + <kbd>Tab</kbd> | Switch windows |
 | <kbd>Super</kbd> + <kbd>1…5</kbd> or <kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Zoom a window |
 | <kbd>Super</kbd> + <kbd>Shift</kbd> + <kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Zoom the desktop |
-| <kbd>Super</kbd> + <kbd>A</kbd> | Canvas window overview |
 | <kbd>Super</kbd> + <kbd>L</kbd> | Lock the screen |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd> / <kbd>Print</kbd> | Region / full-screen screenshot |
 | <kbd>Super</kbd> + <kbd>Z</kbd> | Undo the last window move or resize |
