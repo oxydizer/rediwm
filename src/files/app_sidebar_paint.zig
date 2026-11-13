@@ -68,6 +68,40 @@ fn drawSidebarHeader(
     }
 }
 
+/// Draws the theme-configured edge light in the section's legacy row
+/// coordinate space. The pointer is translated to match the Cairo context.
+fn drawSidebarRowProximity(
+    self: *App,
+    cr: *c.cairo_t,
+    index: usize,
+    card: app_model.SidebarCardGeometry,
+    source_top: i32,
+) void {
+    const row = self.placeRect(index);
+    const translation = card.y + card.header_height - source_top;
+    const clip: shell_ui.Rect = .{
+        .x = 8,
+        .y = @floatFromInt(source_top),
+        .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
+        .h = @floatFromInt(card.body_height),
+    };
+    shell_ui.drawProximityGlow(
+        cr,
+        .{
+            .x = @floatCast(row.x),
+            .y = @floatCast(row.y),
+            .w = @floatCast(row.w),
+            .h = @floatCast(row.h),
+        },
+        ui_theme.global.app_sidebar_item_radius,
+        .{
+            .x = self.mouse_x,
+            .y = self.mouse_y - @as(f64, @floatFromInt(translation)),
+        },
+        clip,
+    );
+}
+
 /// The shared accordion geometry. Body sizes come from the existing section
 /// implementations; only the selected visible card receives its body.
 pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
@@ -150,6 +184,8 @@ pub fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {
             const row = self.placeRect(index);
             shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
         }
+        const disks_card = self.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)];
+        drawSidebarRowProximity(self, cr, index, disks_card, self.pinRowY(self.pins.items.items.len) + 24);
         if (shell_ui.Layer.begin(cr, .{ .x = 21, .y = @floatCast(y + 3), .w = 24, .h = 24 })) |icon_layer| {
             var layer = icon_layer;
             layer.renderer.drawIcon(0, 0, 24, 24, .{ .id = if (volume.kind == .stick) .usb_stick else .drive, .color = withAlpha(ui_theme.global.app_icon, alpha) });
@@ -286,12 +322,6 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
         const old_top = self.contentTop() - self.sidebar_scroll;
         c.cairo_save(cr);
         c.cairo_translate(cr, 0, @floatFromInt(places_card.y + places_card.header_height - old_top));
-        // The hover glide remains aligned with the existing Places rows.
-        const glide = self.nav_hover.frame;
-        if (glide.alpha > 0) {
-            const box = self.navHighlight(glide);
-            shell_ui.drawSidebarHover(cr, .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) }, glide.alpha);
-        }
         for (0..self.deviceBase()) |i| {
             if (!self.placeVisible(i)) continue;
             const y: f64 = @floatFromInt(self.placeY(i));
@@ -309,6 +339,7 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
                 const row = self.placeRect(i);
                 shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
             }
+            drawSidebarRowProximity(self, cr, i, places_card, old_top);
             setSource(cr, withAlpha(ui_theme.global.app_icon, alpha));
             if (!self.drawPackPlaceIcon(cr, i, y, alpha)) {
                 if (i < places_start) {

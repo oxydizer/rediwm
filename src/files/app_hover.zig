@@ -502,6 +502,54 @@ pub fn damageToolbarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
     if (damage) |rect| self.addDamage(rect);
 }
 
+/// Repaint sidebar rows whose pointer-proximity light may have changed.
+pub fn damageSidebarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, new_y: f64) void {
+    const reach = ui_theme.global.border_glow_reach;
+    if (!button_widget.proximityGlowVisible(ui_theme.global)) return;
+
+    var damage: ?header.Rect = null;
+    const layout = self.sidebarLayout();
+    for (0..self.rowCount()) |index| {
+        if (!self.placeVisible(index)) continue;
+
+        const card_index: usize = if (index < self.deviceBase()) 0 else 1;
+        const card = layout.cards[card_index];
+        if (!card.expanded) continue;
+
+        const source_top = if (card_index == 0)
+            self.contentTop() - self.sidebar_scroll
+        else
+            self.pinRowY(self.pins.items.items.len) + 24;
+        var row = self.placeRect(index);
+        row.y += @floatFromInt(card.y + card.header_height - source_top);
+
+        const rect: button_widget.Rect = .{
+            .x = @floatCast(row.x),
+            .y = @floatCast(row.y),
+            .w = @floatCast(row.w),
+            .h = @floatCast(row.h),
+        };
+        const clip: button_widget.Rect = .{
+            .x = 8,
+            .y = @floatFromInt(card.y + card.header_height),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
+            .h = @floatFromInt(card.body_height),
+        };
+        const before = button_widget.sampleProximity(rect, @floatCast(old_x), @floatCast(old_y), clip);
+        const after = button_widget.sampleProximity(rect, @floatCast(new_x), @floatCast(new_y), clip);
+        if (@min(before.distance, after.distance) > reach) continue;
+
+        const row_damage: header.Rect = .{
+            .x = row.x,
+            .y = row.y,
+            .w = row.w,
+            .h = row.h,
+        };
+        damage = if (damage) |current| unionRect(current, row_damage) else row_damage;
+    }
+    if (damage) |rect| self.addDamage(rect);
+}
+
 /// Samples the hover highlights and queues damage for what moved or
 /// faded. Once per loop, before painting: the painters draw the sampled
 /// `frame`, so a partial repaint and a complete one agree.

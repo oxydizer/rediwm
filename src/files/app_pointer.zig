@@ -136,6 +136,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     self.updateDialogSurface();
     self.updateItemSurface();
     self.damageToolbarProximity(old_x, old_y, x, y);
+    self.damageSidebarProximity(old_x, old_y, x, y);
     if (self.selection_band != null) self.updateSelectionBand();
     if (self.text_dragging) {
         self.placeCaret(x, true);
