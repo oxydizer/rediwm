@@ -25,3 +25,13 @@ test "network totals exclude loopback and compare interface sets independent of 
     try std.testing.expect(linux.parseNetwork(header ++ "eth0: 1 2 3\n") == null);
     try std.testing.expect(linux.parseNetwork("unavailable") == null);
 }
+
+test "load averages and the thread count come from /proc/loadavg" {
+    var system: proc.System = .{};
+    linux.parseLoad("0.52 0.58 1.50 2/1234 5678\n", &system);
+    try std.testing.expectEqual([3]f64{ 0.52, 0.58, 1.50 }, system.load.?);
+    try std.testing.expectEqual(@as(u64, 1234), system.threads.?);
+    var broken: proc.System = .{};
+    linux.parseLoad("0.5 nan", &broken);
+    try std.testing.expect(broken.load == null and broken.threads == null);
+}

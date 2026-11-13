@@ -206,6 +206,27 @@ def run(scale, workspace):
                 assert shot("initial").getpixel((4, 4)) == (32, 48, 64)
                 assert "temperature" in gpu_trace.read_text().splitlines(), "GPU telemetry was not sampled"
 
+                # A card expands to the full width over the gap between the two;
+                # clicking its body, its collapse button or Escape brings both back.
+                def gap_pixel(name):
+                    image = shot(name)
+                    factor = image.width / box()["width"]
+                    return image.getpixel((round(box()["width"] / 2 * factor), round(75 * factor)))
+                assert gap_pixel("cards") == (32, 48, 64)
+                for name, card_x in (("cpu", 120), ("ram", box()["width"] - 120)):
+                    for dismiss in ("pane", "button", "escape"):
+                        click(card_x, 75)
+                        time.sleep(1)
+                        assert gap_pixel(f"{name}-expanded-{dismiss}") != (32, 48, 64), f"{name} card did not expand"
+                        if dismiss == "pane":
+                            click(box()["width"] / 2, 75)
+                        elif dismiss == "button":
+                            click(box()["width"] - 42, 38)
+                        else:
+                            chord(1)
+                        time.sleep(1)
+                        assert gap_pixel(f"{name}-collapsed-{dismiss}") == (32, 48, 64), f"{name} card did not collapse via {dismiss}"
+
                 # Background collection follows visibility, independently of keyboard focus.
                 ipc.open_control_center()
                 before = switches(monitor_pid)

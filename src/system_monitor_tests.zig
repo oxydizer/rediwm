@@ -36,6 +36,8 @@ test "monitor backend lists and describes this process and the machine" {
 
     const cpu = proc.cpuTotals(&buf).?;
     try std.testing.expect(cpu.total > 0 and cpu.idle <= cpu.total);
+    var cores: [proc.max_cores]proc.Core = undefined;
+    try std.testing.expect(proc.cpuCores(&buf, &cores) > 0);
     const memory = proc.memoryTotals(&buf).?;
     try std.testing.expect(memory.total > 0 and memory.available <= memory.total);
     try std.testing.expect(proc.ticksPerSecond() > 0 and proc.pageSize() > 0);
@@ -57,6 +59,22 @@ test "monitor CPU excludes guest accounting and rejects reset counters and PID r
     try std.testing.expectEqual(@as(u64, 640), before.total);
     try std.testing.expectApproxEqAbs(@as(f64, 50), proc.cpuPercent(before, after).?, 0.001);
     try std.testing.expect(proc.cpuPercent(after, before) == null);
+    // Per-CPU lines keep their numbers across an offline CPU and stop at intr.
+    var cores: [4]proc.Core = undefined;
+    const listed = linux.parseCores("cpu 9 9 9 9\ncpu0 10 0 0 30\ncpu2 1 2 3 4 5\nintr 5 6\ncpu3 1 1 1 1\n", &cores);
+    try std.testing.expectEqual(@as(usize, 2), listed);
+    try std.testing.expectEqual(@as(u32, 2), cores[1].id);
+    try std.testing.expectEqual(proc.Cpu{ .total = 40, .idle = 30 }, cores[0].cpu);
+    try std.testing.expectEqual(@as(usize, 1), linux.parseCores("cpu0 1 1 1 1\ncpu1 1 1 1 1\n", cores[0..1]));
+    var snap: collector.Snapshot = .{ .arena = .init(std.testing.allocator), .processes = &.{}, .at_ns = 0, .cpu = null, .memory = null };
+    defer snap.arena.deinit();
+    var now = [_]proc.Core{ .{ .id = 0, .cpu = .{ .total = 200, .idle = 50 } }, .{ .id = 3, .cpu = .{ .total = 200, .idle = 200 } } };
+    var percent = [_]?f64{ null, null };
+    snap.cores = &now;
+    snap.core_percent = &percent;
+    collector.corePercents(&snap, &.{ .{ .id = 3, .cpu = .{ .total = 100, .idle = 100 } }, .{ .id = 0, .cpu = .{ .total = 100, .idle = 50 } } });
+    try std.testing.expectApproxEqAbs(@as(f64, 100), percent[0].?, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), percent[1].?, 0.001);
     var first: proc.Stat = .{ .name = "", .state = 'R', .cpu = 100, .start = 10, .rss = 0 };
     var second = first;
     second.cpu = 350;
@@ -68,6 +86,11 @@ test "monitor memory uses available rather than free and bounds missing values" 
     const mem = linux.parseMemory("MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 400 kB\nSwapTotal: 500 kB\nSwapFree: 250 kB\n").?;
     try std.testing.expectEqual(@as(u64, 600 * 1024), mem.used());
     try std.testing.expectEqual(@as(u64, 500 * 1024), mem.swap_total.?);
+    try std.testing.expectEqual(@as(u64, 100 * 1024), mem.free.?);
+    try std.testing.expect(mem.cached == null);
+    const detail = linux.parseMemory("MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 400 kB\nBuffers: 10 kB\nCached: 200 kB\nShmem: 30 kB\nSReclaimable: 20 kB\n").?;
+    try std.testing.expectEqual(@as(u64, 230 * 1024), detail.cached.?);
+    try std.testing.expectEqual(@as(u64, 30 * 1024), detail.shared.?);
     try std.testing.expect(linux.parseMemory("MemTotal: 1000 kB\nMemFree: 100 kB\n") == null);
     try std.testing.expect(linux.parseMemory("MemTotal: 18446744073709551615 kB\nMemAvailable: 1 kB") == null);
 }

@@ -45,6 +45,14 @@ pub const App = struct {
     py: f32 = -1,
     root: W = .{ .kind = .container },
     sections: [6]W = undefined,
+    /// CPU card, RAM card, collapse button (`app_summary.zig` places them).
+    cards: [3]W = undefined,
+    /// The card that is expanded, or was last; `card_t` eases 0 → 1 open.
+    card: usize = 0,
+    card_open: bool = false,
+    card_anim: ui.anim.Anim = .{},
+    card_t: f32 = 0,
+    card_request: ?usize = null,
     toolbar: [3]W = undefined,
     headers: [6]W = undefined,
     header_labels: [6][64]u8 = undefined,
@@ -127,9 +135,17 @@ pub const App = struct {
             self.button(tr("Force quit…"), 3, 124),
         };
         self.footer[1].kind.button.destructive = true;
+        for (self.cards[0..2], 0..) |*card, i| card.* = .{
+            .name = if (i == 0) "monitor_cpu_card" else "monitor_ram_card",
+            .kind = .{ .row = .{ .owner = self, .id = 30 + i, .on_click = clicked, .underlay = true } },
+        };
+        self.cards[2] = self.button(tr("Collapse"), 32, 28);
+        self.cards[2].height = .{ .fixed = 28 };
+        self.cards[2].kind.button.icon = .minimize;
+        self.cards[2].kind.button.variant = .ghost;
         for (self.footer[1..]) |*control| control.height = .{ .fixed = 38 };
         self.sections = .{
-            .{ .kind = .container, .height = .{ .fixed = 150 } },
+            .{ .kind = .container, .height = .{ .fixed = 150 }, .children = &self.cards },
             .{ .kind = .container, .height = .{ .fixed = 50 }, .padding = .{ .left = 16, .right = 16, .top = 4 }, .gap = 8, .children = &self.toolbar },
             .{ .kind = .container, .height = .{ .fixed = 36 }, .padding = .{ .left = 16, .right = scrollbar.gutter(theme.global.scrollbar_width) + 16 }, .children = &self.headers },
             .{ .kind = .container, .height = .{ .flex = 1 } },
@@ -151,6 +167,7 @@ pub const App = struct {
         ui.measure.measure(&self.root, @floatFromInt(self.w), @floatFromInt(self.h));
         ui.arrange.arrange(&self.root, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h));
         self.layoutFooter();
+        summary.layout(self);
         const box = self.dialogBox();
         ui.measure.measure(&self.modal, 252, 34);
         ui.arrange.arrange(&self.modal, box.x + box.w - 276, box.y + box.h - 50, 252, 34);
@@ -182,6 +199,7 @@ pub const App = struct {
             10...15 => self.model.setSort(@fromBackingInt(@intCast(id - 10))),
             20 => self.pending = .cancel,
             21 => self.pending = .force,
+            30...32 => self.card_request = id - 30,
             else => {},
         }
         self.dirty = true;
@@ -197,7 +215,27 @@ pub const App = struct {
         const row = self.model.selectedProcess() orelse return false;
         return row.uids != null and proc.owned(row.uids.?, self.model.uid) and !row.protected and row.state != 'Z' and row.state != 'X';
     }
+    /// Toggles card 0/1 or collapses (2) once dispatch has returned, then
+    /// re-targets the pointer: the widget under it just moved or vanished.
+    fn applyCardRequest(self: *App) void {
+        const request = self.card_request orelse return;
+        self.card_request = null;
+        if (request < 2) {
+            // A card still sliding back can't take over mid-way.
+            if ((self.card_open or self.card_t > 0) and request != self.card) return;
+            self.card = request;
+            self.card_open = !self.card_open;
+        } else self.card_open = false;
+        const now = ui.key_repeat.nowMs();
+        self.card_anim.retargetTo(now, if (self.card_open) 1 else 0, ui.anim.curveFor(.panel_slide));
+        self.layout();
+        // The card stays focusable while open; only the collapse button vanishes.
+        if (!self.card_open and self.dispatcher.focused == &self.cards[2]) self.dispatcher.focus(&self.root, &self.cards[self.card]);
+        self.dispatcher.pointerMotion(self.tree(), self.px, self.py);
+        self.dirty = true;
+    }
     fn applyPending(self: *App) void {
+        self.applyCardRequest();
         const pending = self.pending;
         self.pending = .none;
         if (pending == .none) return;
@@ -318,6 +356,11 @@ pub const App = struct {
             ui.widgets.text_input.selectAll(&self.toolbar[0]);
             return;
         }
+        if (sym == c.XKB_KEY_Escape and self.card_open and self.dispatcher.focused != &self.toolbar[0]) {
+            self.card_request = 2;
+            self.applyPending();
+            return;
+        }
         if (sym == c.XKB_KEY_Escape) {
             if (self.toolbar[0].kind.text_input.value.len > 0) {
                 ui.widgets.text_input.selectAll(&self.toolbar[0]);
@@ -375,6 +418,7 @@ pub const App = struct {
     fn activateFocused(self: *App) void {
         const focused = self.dispatcher.focused orelse return;
         if (focused.kind == .button) ui.widgets.button.press(focused);
+        if (focused.kind == .row) if (focused.kind.row.on_click) |click| click(focused.kind.row.owner, focused.kind.row.id);
         self.applyPending();
     }
     pub fn keyRepeats(self: *App, sym: u32, text: []const u8) bool {
@@ -405,6 +449,12 @@ pub const App = struct {
         return scrollbar.Geometry.compute(.vertical, .{ .x = list.x + list.w - gutter, .y = list.y, .w = gutter, .h = list.h }, list.h, @as(f32, @floatFromInt(self.model.rows.items.len)) * @as(f32, @floatCast(row_h)), @floatCast(self.model.scroll));
     }
     pub fn stepAnimations(self: *App, now: i64) void {
+        const t = if (self.card_anim.settled(now)) self.card_anim.to else self.card_anim.value(now);
+        if (t != self.card_t) {
+            self.card_t = t;
+            self.layout();
+            self.dirty = true;
+        }
         const index = self.processAt();
         const hovered = if (index) |i| blk: {
             const identity = self.model.snapshot.?.processes[self.model.rows.items[i]].identity;
@@ -444,7 +494,7 @@ pub const App = struct {
     pub fn animationTimeout(self: *App, now: i64) ?u32 {
         if (self.suspended) return null;
         var timeout: ?u32 = if (self.bar.active) 16 else if (self.bar.deadline) |deadline| @intCast(@min(60000, @max(0, deadline - now))) else null;
-        if (self.row_hover.animating(now)) timeout = 16;
+        if (self.row_hover.animating(now) or !self.card_anim.settled(now)) timeout = 16;
         for (self.selections.items) |selection| if (!selection.fade.animation.settled(now)) {
             timeout = if (timeout) |existing| @min(existing, 16) else 16;
             break;

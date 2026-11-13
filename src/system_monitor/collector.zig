@@ -23,6 +23,9 @@ pub const Snapshot = struct {
     at_ns: u64,
     cpu: ?proc.Cpu,
     cpu_percent: ?f64 = null,
+    /// Online logical CPUs' counters and, from the second sample, their load.
+    cores: []proc.Core = &.{},
+    core_percent: []?f64 = &.{},
     memory: ?proc.Memory,
     system: proc.System = .{},
     network_rate: ?proc.NetworkRate = null,
@@ -42,6 +45,11 @@ pub fn sample(cancelled: *const std.atomic.Value(u64), generation: u64) !*Snapsh
     const arena = snapshot.arena.allocator();
     var buf: [65536]u8 = undefined;
     snapshot.cpu = proc.cpuTotals(&buf);
+    var cores: [proc.max_cores]proc.Core = undefined;
+    const core_count = proc.cpuCores(&buf, &cores);
+    snapshot.cores = try arena.dupe(proc.Core, cores[0..core_count]);
+    snapshot.core_percent = try arena.alloc(?f64, core_count);
+    @memset(snapshot.core_percent, null);
     snapshot.memory = proc.memoryTotals(&buf);
     snapshot.system = proc.systemStats(&buf);
     var list = proc.List.open() orelse {
@@ -172,6 +180,8 @@ pub const Worker = struct {
         defer previous.deinit(a);
         var last_at: u64 = 0;
         var last_cpu: ?proc.Cpu = null;
+        var last_cores: [proc.max_cores]proc.Core = undefined;
+        var last_core_count: usize = 0;
         var last_network: ?proc.Network = null;
         var observed: u64 = std.math.maxInt(u64);
         var deadline: u64 = 0;
@@ -183,6 +193,7 @@ pub const Worker = struct {
                 previous.clearRetainingCapacity();
                 last_at = 0;
                 last_cpu = null;
+                last_core_count = 0;
                 last_network = null;
                 deadline = 0;
             }
@@ -205,6 +216,9 @@ pub const Worker = struct {
                 if (last_cpu) |before| if (snap.cpu) |after| {
                     snap.cpu_percent = proc.cpuPercent(before, after);
                 };
+                corePercents(snap, last_cores[0..last_core_count]);
+                last_core_count = snap.cores.len;
+                @memcpy(last_cores[0..last_core_count], snap.cores);
                 if (last_network) |before| if (snap.system.network) |after| {
                     snap.network_rate = proc.networkRate(before, after, snap.at_ns -| last_at);
                 };
@@ -239,6 +253,16 @@ pub const Worker = struct {
         }
     }
 };
+
+/// Pairs cores by id: one going offline shifts the rest of the list.
+pub fn corePercents(snap: *Snapshot, before: []const proc.Core) void {
+    for (snap.cores, snap.core_percent, 0..) |core, *percent, i| {
+        const previous = if (i < before.len and before[i].id == core.id) before[i] else for (before) |other| {
+            if (other.id == core.id) break other;
+        } else continue;
+        percent.* = proc.cpuPercent(previous.cpu, core.cpu);
+    }
+}
 
 pub fn wake(fd: c_int) void {
     const one: u64 = 1;

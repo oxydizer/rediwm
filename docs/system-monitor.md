@@ -9,7 +9,24 @@ client has inhibited compositor shortcuts.
 CPU and RAM summary cards show large current percentages and shaded 60-second
 graphs. CPU includes its reported frequency and logical CPU count; RAM includes
 used/total capacity and a usage bar. Graph axes show CPU percentages and memory
-capacity. The cards use a compact layout in narrow windows. System RAM usage is
+capacity. The cards use a compact layout in narrow windows.
+
+Click a card (or focus it with Tab and press Enter) to expand it to the full
+width; the other card slides away. Click the expanded card again, use the
+collapse button at its top-right corner, or press Escape outside the search
+field to bring both cards back.
+Expanded CPU adds a vertical load meter made of horizontal segments for every
+online logical CPU. The meters fill from the bottom and are about two digits
+wide, with kernel CPU numbers and percentages when there is room. Many-core
+machines drop the percentages, then the numbers, and use narrower meters if
+needed. The card also shows the 1, 5 and 15 minute load averages and the system's
+thread count. Expanded RAM adds a bar of used
+memory and reclaimable cache, then used, cached (buffers, page cache and
+reclaimable slab, as `free` reports buff/cache), swap, available, free and
+shared (tmpfs and shared memory) amounts, and the four processes of any user
+holding the most resident memory. Both keep the 60-second graph when the
+window is wide enough. FreeBSD reports cached memory as inactive pages and
+has no shared figure or thread count. System RAM usage is
 `MemTotal - MemAvailable`; process memory is resident memory. A process
 using one CPU core reads 100%, so multithreaded processes can exceed 100%.
 New processes and the first sample after resuming show an em dash until
