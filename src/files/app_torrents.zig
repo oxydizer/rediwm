@@ -32,7 +32,7 @@ pub const View = struct {
 };
 /// Transfers are hidden for now: no sidebar entry, no helper started, no
 /// dialogs. Flip to bring the feature back; the rest of the code is intact.
-pub const enabled = false;
+pub const enabled = true;
 
 pub fn startTorrents(self: *App) void {
     if (!enabled) return;
