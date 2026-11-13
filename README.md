@@ -25,6 +25,8 @@
 
 No separate bar to configure. No launcher to bolt on. No notification daemon to wire up. **Just one desktop, built together.**
 
+https://github.com/user-attachments/assets/a9f8529d-19c4-4a45-a4be-95a184bde15f
+
 <table width="100%">
   <tr>
     <td width="25%" align="center" valign="top"><h3>1–2s</h3><b>From start to desktop</b></td>
@@ -41,10 +43,10 @@ No separate bar to configure. No launcher to bolt on. No notification daemon to 
 <table align="center" width="100%">
   <tr>
     <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/b4cbd48c-ccab-452e-8457-2d1b8c096def"><img src="https://github.com/user-attachments/assets/b4cbd48c-ccab-452e-8457-2d1b8c096def" alt="RediWM theme showcase 1" width="440" height="275" /></a></td>
-    <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/10f9becc-bcd9-4089-872b-4a03d1dba818"><img src="https://github.com/user-attachments/assets/10f9becc-bcd9-4089-872b-4a03d1dba818" alt="RediWM theme showcase 2" width="440" height="275" /></a></td>
+    <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/a65979e4-17d5-488d-8d0a-fc1a8d2d2c82"><img src="https://github.com/user-attachments/assets/a65979e4-17d5-488d-8d0a-fc1a8d2d2c82" alt="RediWM theme showcase 3" width="440" height="275" /></a></td>
   </tr>
   <tr>
-    <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/a65979e4-17d5-488d-8d0a-fc1a8d2d2c82"><img src="https://github.com/user-attachments/assets/a65979e4-17d5-488d-8d0a-fc1a8d2d2c82" alt="RediWM theme showcase 3" width="440" height="275" /></a></td>
+    <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/10f9becc-bcd9-4089-872b-4a03d1dba818"><img src="https://github.com/user-attachments/assets/10f9becc-bcd9-4089-872b-4a03d1dba818" alt="RediWM theme showcase 2" width="440" height="275" /></a></td>
     <td width="50%" align="center" valign="middle"><a href="https://github.com/user-attachments/assets/dd0cdae7-4c4d-401c-9624-80895897d0de"><img src="https://github.com/user-attachments/assets/dd0cdae7-4c4d-401c-9624-80895897d0de" alt="RediWM theme showcase 4" width="440" height="275" /></a></td>
   </tr>
 </table>
