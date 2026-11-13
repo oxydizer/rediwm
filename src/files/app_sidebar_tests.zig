@@ -66,6 +66,8 @@ test "sidebar layout uses shared headers and only expanded visible body" {
 test "sidebar header clicks select sections without collapsing the active card" {
     var app = try testApp();
     defer app.deinit();
+    app.w = 800;
+    app.h = 1000;
 
     try std.testing.expectEqual(app_model.SidebarSection.places, app.sidebar_section);
     try std.testing.expect(!app.sidebar_section_selected);
@@ -96,6 +98,31 @@ test "sidebar header clicks select sections without collapsing the active card" 
     const body_y: f64 = @floatFromInt(selected_disks.y + selected_disks.header_height + 1);
     try std.testing.expectEqual(@as(?app_model.SidebarSection, null), app.sidebarHeaderAt(x, body_y));
     try std.testing.expectEqual(@as(?app_model.SidebarSection, null), app.sidebarHeaderAt(-1, selected_y));
+}
+
+test "sidebar body geometry rejects hidden areas and translates legacy section coordinates" {
+    var app = try testApp();
+    defer app.deinit();
+
+    const places = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.places)];
+    const places_y = @as(f64, @floatFromInt(places.y + places.header_height)) + 5;
+    const places_source_top = app.contentTop() - app.sidebar_scroll;
+    try std.testing.expectEqual(@as(?f64, @as(f64, @floatFromInt(places_source_top)) + 5), app.sidebarBodyY(.places, 70, places_y));
+    try std.testing.expectEqual(@as(?f64, null), app.sidebarBodyY(.places, 7, places_y));
+    try std.testing.expectEqual(@as(?f64, @floatFromInt(places_source_top)), app.sidebarBodyY(.places, 70, @floatFromInt(places.y + places.header_height)));
+    try std.testing.expectEqual(@as(?f64, null), app.sidebarBodyY(.places, 70, @as(f64, @floatFromInt(places.y + places.header_height + places.body_height))));
+
+    // The compact Disks header is not an interactive body while Places owns
+    // the accordion, even if a stale legacy device row would overlap it.
+    try std.testing.expectEqual(@as(?f64, null), app.sidebarBodyY(.disks, 70, places_y));
+
+    app.sidebar_section = .disks;
+    const disks = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)];
+    const disks_y = @as(f64, @floatFromInt(disks.y + disks.header_height)) + 5;
+    const disks_source_top = app.pinRowY(app.pins.items.items.len) + 24;
+    try std.testing.expect(disks.expanded);
+    try std.testing.expectEqual(@as(?f64, @as(f64, @floatFromInt(disks_source_top)) + 5), app.sidebarBodyY(.disks, 70, disks_y));
+    try std.testing.expectEqual(@as(?f64, null), app.sidebarBodyY(.places, 70, disks_y));
 }
 
 test "list column resize pushes following columns and scrolls in Files and chooser" {
@@ -167,7 +194,12 @@ test "sidebar menus unpin only Places and close gaps without changing selection"
     app.items.items[0].selected = true;
     const y = app.placeY(App.places_start);
     const last_place_y = app.placeY(App.pin_base - 1);
-    app.handleMotion(70, @floatFromInt(y + 10));
+    const places_card = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.places)];
+    const places_body_top = places_card.y + places_card.header_height;
+    const places_source_top = app.contentTop() - app.sidebar_scroll;
+    const screen_row_y = @as(f64, @floatFromInt(places_body_top)) +
+        @as(f64, @floatFromInt(y - places_source_top));
+    app.handleMotion(70, screen_row_y + 10);
     app.handleButton(0x111, true);
     try std.testing.expectEqual(MenuKind.sidebar, app.menu.?);
     try std.testing.expectEqualStrings("Open in New Window", app.menuLabels()[1]);
@@ -176,11 +208,11 @@ test "sidebar menus unpin only Places and close gaps without changing selection"
     app.runMenu(3); // Properties must not alter pinned places.
     app.closeDialog();
     try std.testing.expect(app.placeVisible(App.places_start));
-    app.openMenu(.sidebar, 70, @floatFromInt(y));
+    app.openMenu(.sidebar, 70, screen_row_y);
     app.runMenu(2);
     try std.testing.expect(!app.placeVisible(App.places_start));
     try std.testing.expectEqual(y, app.placeY(App.places_start + 1));
-    try std.testing.expectEqual(@as(?usize, App.places_start + 1), app.placeAt(70, @floatFromInt(y + 10)));
+    try std.testing.expectEqual(@as(?usize, App.places_start + 1), app.placeAt(70, screen_row_y + 10));
     try std.testing.expectEqual(last_place_y - app.placeStep(), app.placeY(App.pin_base - 1));
     try std.testing.expect(app.items.items[0].selected);
     for ([_]usize{ 0, 1 }) |index| {
@@ -250,20 +282,26 @@ test "pins sit after Projects, take drops by gap and keep the rows in drawn orde
     app.device_list.items = &volumes;
     try std.testing.expectEqual(App.pin_base + 2, app.deviceBase());
     try std.testing.expectEqual(app.placeY(App.pin_base + 1) + 44 + step, app.placeY(app.deviceBase()));
-    try std.testing.expectEqual(@as(?usize, App.pin_base + 1), app.placeAt(70, @floatFromInt(app.placeY(App.pin_base + 1) + 10)));
-    app.handleMotion(70, @floatFromInt(app.placeY(App.pin_base + 1) + 10));
+    const places_card = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.places)];
+    const places_body_top = places_card.y + places_card.header_height;
+    const places_source_top = app.contentTop() - app.sidebar_scroll;
+    const places_screen_offset: f64 = @floatFromInt(places_body_top - places_source_top);
+    const pin_screen_y = @as(f64, @floatFromInt(places_body_top)) +
+        @as(f64, @floatFromInt(app.placeY(App.pin_base + 1) + 10 - places_source_top));
+    try std.testing.expectEqual(@as(?usize, App.pin_base + 1), app.placeAt(70, pin_screen_y));
+    app.handleMotion(70, pin_screen_y);
     try std.testing.expectEqual(@as(usize, 801), app.hoverKey());
     app.device_list.items = &.{};
 
     // A drag snaps to the nearest gap from anywhere on PLACES, and only there.
-    const desktop: f64 = @floatFromInt(app.placeY(App.places_start) + 10);
-    const first_gap = app.pinBoundary(0);
+    const desktop: f64 = @as(f64, @floatFromInt(app.placeY(App.places_start) + 10)) + places_screen_offset;
+    const first_gap = app.pinBoundary(0) + places_screen_offset;
     try std.testing.expectEqual(@as(?usize, 0), app.pinSlotAt(70, desktop));
     try std.testing.expectEqual(@as(?usize, 0), app.pinSlotAt(70, first_gap + 4));
-    try std.testing.expectEqual(@as(?usize, 1), app.pinSlotAt(70, app.pinBoundary(1) - 4));
-    try std.testing.expectEqual(@as(?usize, 2), app.pinSlotAt(70, app.pinBoundary(2) + 10));
-    try std.testing.expectEqual(@as(?usize, null), app.pinSlotAt(70, @floatFromInt(app.placeY(0) + 10)));
-    try std.testing.expectEqual(@as(?usize, null), app.pinSlotAt(70, app.pinBoundary(2) + 40));
+    try std.testing.expectEqual(@as(?usize, 1), app.pinSlotAt(70, app.pinBoundary(1) - 4 + places_screen_offset));
+    try std.testing.expectEqual(@as(?usize, 2), app.pinSlotAt(70, app.pinBoundary(2) + 10 + places_screen_offset));
+    try std.testing.expectEqual(@as(?usize, null), app.pinSlotAt(70, @as(f64, @floatFromInt(app.placeY(0) + 10)) + places_screen_offset));
+    try std.testing.expectEqual(@as(?usize, null), app.pinSlotAt(70, app.pinBoundary(2) + 40 + places_screen_offset));
     try std.testing.expectEqual(@as(?usize, null), app.pinSlotAt(400, desktop));
     try std.testing.expect(app.dropMotion(70, first_gap + 4));
     try std.testing.expectEqual(@as(?usize, 0), app.pin_drop);
@@ -273,9 +311,13 @@ test "pins sit after Projects, take drops by gap and keep the rows in drawn orde
     try std.testing.expect(!app.dropMotion(400, desktop));
 
     // The Trash row is a drop target of its own, above the pins' gaps.
-    const trash_row: f64 = @floatFromInt(app.placeY(App.trash_place) + 10);
+    const trash_row: f64 = @as(f64, @floatFromInt(app.placeY(App.trash_place) + 10)) +
+        places_screen_offset;
     try std.testing.expect(app.trashDropAt(70, trash_row));
-    try std.testing.expect(!app.trashDropAt(70, @floatFromInt(app.placeY(0) + 10)));
+    try std.testing.expect(!app.trashDropAt(
+        70,
+        @as(f64, @floatFromInt(app.placeY(0) + 10)) + places_screen_offset,
+    ));
     try std.testing.expect(!app.trashDropAt(70, desktop));
     try std.testing.expectEqual(@as(?usize, null), app.pinSlotAt(70, trash_row));
     app.dirty = false;
@@ -337,18 +379,30 @@ test "Sidebar separates Disks from Places; only mounted volumes eject" {
     // compact height when volumes are added.
     try std.testing.expectEqual(extent, app.sidebarExtent());
 
-    const row_y: f64 = @floatFromInt(app.placeY(mounted) + 10);
+    const collapsed_disks = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)];
+    const collapsed_body_y: f64 = @floatFromInt(collapsed_disks.y + collapsed_disks.header_height + 1);
+    try std.testing.expectEqual(@as(?usize, null), app.placeAt(70, collapsed_body_y));
+    try std.testing.expectEqual(@as(?usize, null), app.pinSlotAt(70, collapsed_body_y));
+
+    app.sidebar_section = .disks;
+    const disks = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)];
+    const screen_body_top = disks.y + disks.header_height;
+    const source_body_top = app.pinRowY(app.pins.items.items.len) + 24;
+    const disks_screen_offset: f64 = @floatFromInt(screen_body_top - source_body_top);
+    const row_y: f64 = @as(f64, @floatFromInt(app.placeY(mounted) + 10)) + disks_screen_offset;
     try std.testing.expectEqual(@as(?usize, mounted), app.placeAt(70, row_y));
     const button = app.ejectRect(mounted);
-    try std.testing.expectEqual(@as(?usize, 0), app.ejectAt(button.x + 5, button.y + 5));
+    const button_y = button.y + screen_body_top - source_body_top;
+    try std.testing.expectEqual(@as(?usize, 0), app.ejectAt(button.x + 5, button_y + 5));
     try std.testing.expectEqual(@as(?usize, null), app.ejectAt(70, row_y));
     const other = app.ejectRect(unmounted);
-    try std.testing.expectEqual(@as(?usize, null), app.ejectAt(other.x + 5, other.y + 5));
-    app.handleMotion(button.x + 5, button.y + 5);
+    const other_y = other.y + screen_body_top - source_body_top;
+    try std.testing.expectEqual(@as(?usize, null), app.ejectAt(other.x + 5, other_y + 5));
+    app.handleMotion(button.x + 5, button_y + 5);
     try std.testing.expectEqual(@as(usize, 700), app.hoverKey());
     app.handleMotion(70, row_y);
     try std.testing.expectEqual(@as(usize, 600), app.hoverKey());
-    app.handleMotion(70, @floatFromInt(app.placeY(unmounted) + 10));
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(unmounted) + 10)) + disks_screen_offset);
     try std.testing.expectEqual(@as(usize, 601), app.hoverKey());
 
     app.menu = .device;

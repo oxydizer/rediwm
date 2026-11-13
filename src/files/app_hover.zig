@@ -228,13 +228,26 @@ pub fn updateSidebarSurface(self: *App) void {
         _ = self.sidebar_surface.pointerMotion(null);
         return;
     };
+    const is_places = index < self.deviceBase();
+    const body_y = self.sidebarBodyY(
+        if (is_places) .places else .disks,
+        self.mouse_x,
+        self.mouse_y,
+    ) orelse {
+        _ = self.sidebar_surface.pointerMotion(null);
+        return;
+    };
     const eject = self.ejectAt(self.mouse_x, self.mouse_y);
     const key: usize = if (eject) |k| 700 + k else switch (self.rowKind(index)) {
         .builtin => |b| 300 + b,
         .pin => |j| 800 + j,
         .device => |k| 600 + k,
     };
-    const bounds = if (eject != null) self.ejectRect(index) else self.placeRect(index);
+    var bounds = if (eject != null) self.ejectRect(index) else self.placeRect(index);
+    bounds.y += self.mouse_y - body_y;
+    const layout = self.sidebarLayout();
+    const card = layout.cards[if (is_places) 0 else 1];
+    const body_top = card.y + card.header_height;
 
     _ = self.sidebar_surface.pointerMotion(.{
         .id = @intCast(key),
@@ -245,10 +258,10 @@ pub fn updateSidebarSurface(self: *App) void {
             .h = @floatCast(bounds.h),
         },
         .clip = .{
-            .x = 0,
-            .y = @floatFromInt(self.contentTop()),
-            .w = @floatFromInt(self.sidebarWidth()),
-            .h = @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()),
+            .x = 8,
+            .y = @floatFromInt(body_top),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
+            .h = @floatFromInt(card.body_height),
         },
         .role = .interactive,
     });

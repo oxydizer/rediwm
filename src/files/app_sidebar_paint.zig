@@ -65,7 +65,7 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
     const top = self.contentTop() - self.sidebar_scroll;
     const pin_bottom = self.pinRowY(self.pins.items.items.len);
     const old_places_top = self.contentTop() - self.sidebar_scroll;
-    const places_body = @max(0, pin_bottom + 16 - old_places_top - app_model.SidebarLayout.header_height);
+    const places_body = @max(0, pin_bottom + 16 - old_places_top);
     const disks_body = @max(0, self.deviceBlock() - app_model.SidebarLayout.header_height);
     const git_body: i32 = if (self.repository() != null)
         @intFromFloat(self.gitCardHeight())
@@ -98,6 +98,30 @@ pub fn sidebarHeaderAt(self: *App, x: f64, y: f64) ?app_model.SidebarSection {
         if (y >= top and y < bottom) return @enumFromInt(i);
     }
     return null;
+}
+
+/// Maps a pointer position in an expanded card body back to the coordinate
+/// space used by that section's existing content. Sections already rendered
+/// in accordion coordinates (Git and Transfers) pass through unchanged.
+pub fn sidebarBodyY(self: *App, section: app_model.SidebarSection, x: f64, y: f64) ?f64 {
+    const layout = self.sidebarLayout();
+    const card = layout.cards[@intFromEnum(section)];
+    if (!card.visible or !card.expanded or card.body_height <= 0) return null;
+
+    const left: f64 = 8;
+    const right = @as(f64, @floatFromInt(self.sidebarWidth() - self.scrollbarGutter() - 8));
+    if (x < left or x >= right) return null;
+
+    const body_top: f64 = @floatFromInt(card.y + card.header_height);
+    const body_bottom = body_top + @as(f64, @floatFromInt(card.body_height));
+    if (y < body_top or y >= body_bottom) return null;
+
+    const source_top: i32 = switch (section) {
+        .places => self.contentTop() - self.sidebar_scroll,
+        .disks => self.pinRowY(self.pins.items.items.len) + 24,
+        .git, .transfers => card.y + card.header_height,
+    };
+    return y - body_top + @as(f64, @floatFromInt(source_top));
 }
 
 /// DEVICES: a heading and one row per volume, dimmed while unmounted, with

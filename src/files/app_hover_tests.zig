@@ -198,15 +198,18 @@ test "sidebar hover glides between places and leaves the current one to its own 
     defer app.deinit();
     app.loading = false;
     app.dirty = false;
+    const places_card = app.sidebarLayout().cards[@intFromEnum(@import("app_model.zig").SidebarSection.places)];
+    const places_source_top = app.contentTop() - app.sidebar_scroll;
+    const places_screen_offset: f64 = @floatFromInt(places_card.y + places_card.header_height - places_source_top);
     // Home is the current place (history starts at home_dir).
-    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(0))) + 10);
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(0))) + 10 + places_screen_offset);
     app.dirty = false;
     app.stepHover(1000);
     app.stepHover(4000);
     try std.testing.expectEqual(@as(f32, 0), app.nav_hover.frame.alpha);
     try std.testing.expect(!app.dirty and !app.hover_active);
 
-    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(1))) + 10);
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(1))) + 10 + places_screen_offset);
     app.stepHover(5000);
     app.stepHover(5050);
     try std.testing.expect(app.dirty and app.paint_damage != null);
@@ -225,7 +228,7 @@ test "sidebar hover glides between places and leaves the current one to its own 
         try std.testing.expectEqual(first.y + first.h, next.y);
         var y = first.y;
         while (y < next.y + next.h) : (y += 1) {
-            app.mouse_y = y;
+            app.mouse_y = y + places_screen_offset;
             app.updateSidebarSurface();
             try std.testing.expect(app.hoveredPlace() != null);
         }
@@ -233,7 +236,7 @@ test "sidebar hover glides between places and leaves the current one to its own 
     app.h = original_height;
 
     // Three places down: partway, the highlight sits between the two rows.
-    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(4))) + 10);
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(4))) + 10 + places_screen_offset);
     app.stepHover(8100);
     app.stepHover(8150);
     const mid = app.nav_hover.frame;
@@ -256,13 +259,16 @@ test "sidebar surface owns place hover and clears modal and departed targets" {
     defer app.deinit();
     app.loading = false;
 
-    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(1))) + 10);
+    const places_card = app.sidebarLayout().cards[@intFromEnum(@import("app_model.zig").SidebarSection.places)];
+    const places_source_top = app.contentTop() - app.sidebar_scroll;
+    const places_screen_offset: f64 = @floatFromInt(places_card.y + places_card.header_height - places_source_top);
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(1))) + 10 + places_screen_offset);
     try std.testing.expectEqual(@as(u64, 301), app.sidebar_surface.hovered.?.id);
     try std.testing.expectEqual(@as(?usize, 1), app.hoveredPlace());
 
     // The current place keeps its identity for pointer damage, but paints
     // its own selected fill instead of receiving the hover glide.
-    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(0))) + 10);
+    app.handleMotion(70, @as(f64, @floatFromInt(app.placeY(0))) + 10 + places_screen_offset);
     try std.testing.expectEqual(@as(u64, 300), app.sidebar_surface.hovered.?.id);
     try std.testing.expectEqual(@as(?usize, null), app.hoveredPlace());
 

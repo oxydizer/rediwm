@@ -154,10 +154,19 @@ pub fn placeAt(self: *App, x: f64, y: f64) ?usize {
     if (self.sidebarScrollbar()) |bar| {
         if (bar.overTrack(@floatCast(x), @floatCast(y))) return null;
     }
-    for (0..self.rowCount()) |i| {
-        if (!self.placeVisible(i)) continue;
-        const row = self.placeRect(i);
-        if (y >= row.y and y < row.y + row.h) return i;
+    if (self.sidebarBodyY(.places, x, y)) |body_y| {
+        for (0..self.deviceBase()) |i| {
+            if (!self.placeVisible(i)) continue;
+            const row = self.placeRect(i);
+            if (body_y >= row.y and body_y < row.y + row.h) return i;
+        }
+    }
+    if (self.sidebarBodyY(.disks, x, y)) |body_y| {
+        for (self.deviceBase()..self.rowCount()) |i| {
+            if (!self.placeVisible(i)) continue;
+            const row = self.placeRect(i);
+            if (body_y >= row.y and body_y < row.y + row.h) return i;
+        }
     }
     return null;
 }
@@ -200,7 +209,8 @@ pub fn ejectRect(self: *App, index: usize) header.Rect {
 pub fn ejectAt(self: *App, x: f64, y: f64) ?usize {
     const index = self.placeAt(x, y) orelse return null;
     const volume = self.deviceAt(index) orelse return null;
-    if (volume.mount == null or !self.ejectRect(index).contains(x, y)) return null;
+    const body_y = self.sidebarBodyY(.disks, x, y) orelse return null;
+    if (volume.mount == null or !self.ejectRect(index).contains(x, body_y)) return null;
     return index - self.deviceBase();
 }
 
@@ -219,11 +229,12 @@ pub fn pinSlotAt(self: *App, x: f64, y: f64) ?usize {
     if (self.sidebarScrollbar()) |bar| {
         if (x >= @as(f64, bar.track.x)) return null;
     }
+    const body_y = self.sidebarBodyY(.places, x, y) orelse return null;
     const step: f64 = @floatFromInt(self.placeStep());
     const count = self.pins.items.items.len;
     const top: f64 = @floatFromInt(self.placeY(places_start) - 30);
-    if (y < top or y >= self.pinBoundary(count) + 16) return null;
-    const nearest = @round((y - self.pinBoundary(0)) / step);
+    if (body_y < top or body_y >= self.pinBoundary(count) + 16) return null;
+    const nearest = @round((body_y - self.pinBoundary(0)) / step);
     return @intFromFloat(std.math.clamp(nearest, 0, @as(f64, @floatFromInt(count))));
 }
 
