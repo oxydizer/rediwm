@@ -45,6 +45,10 @@ pub const ProgressInfo = struct {
     state: JobState,
     total_items: usize = 0,
     processed_items: usize = 0,
+    total_bytes: u64 = 0,
+    transferred_bytes: u64 = 0,
+    total_bytes_known: bool = false,
+    measuring: bool = false,
     success_count: usize = 0,
     skipped_count: usize = 0,
     failed_count: usize = 0,
@@ -218,7 +222,64 @@ pub fn generateUniqueName(allocator: Allocator, dest_dir: []const u8, original_n
     return error.TooManyDuplicates;
 }
 
+/// Measures regular-file payload bytes without following symlinks.
+/// Runs on the job worker, never on the UI thread.
+fn measureBytes(
+    allocator: Allocator,
+    path: []const u8,
+    cancel: ?*std.atomic.Value(bool),
+) !u64 {
+    if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
+
+    const path_z = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(path_z);
+
+    var st: c.struct_stat = undefined;
+    if (c.lstat(path_z, &st) != 0) return error.StatFailed;
+
+    const fmt = st.st_mode & c.S_IFMT;
+    if (fmt == c.S_IFLNK) return 0;
+    if (fmt == c.S_IFREG) {
+        if (st.st_size < 0) return error.InvalidFileSize;
+        return @intCast(st.st_size);
+    }
+    if (fmt != c.S_IFDIR) return error.UnsupportedFileType;
+
+    const dir = c.opendir(path_z) orelse return error.OpenDirectoryFailed;
+    defer _ = c.closedir(dir);
+
+    var total: u64 = 0;
+    while (true) {
+        if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
+
+        std.c._errno().* = 0;
+        const entry = c.readdir(dir) orelse {
+            if (std.c._errno().* != 0) return error.ReadDirectoryFailed;
+            break;
+        };
+        const name = std.mem.span(@as([*:0]const u8, @ptrCast(&entry.*.d_name)));
+        if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+
+        const child = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ path, name });
+        defer allocator.free(child);
+        const child_bytes = try measureBytes(allocator, child, cancel);
+        if (child_bytes > std.math.maxInt(u64) - total) return error.SizeOverflow;
+        total += child_bytes;
+    }
+    return total;
+}
+
 pub fn copyFileContents(allocator: Allocator, src_path: []const u8, dst_path: []const u8, cancel: ?*std.atomic.Value(bool)) !void {
+    return copyFileContentsTracked(allocator, src_path, dst_path, cancel, null);
+}
+
+fn copyFileContentsTracked(
+    allocator: Allocator,
+    src_path: []const u8,
+    dst_path: []const u8,
+    cancel: ?*std.atomic.Value(bool),
+    runner: ?*JobRunner,
+) !void {
     const src_z = try allocator.dupeSentinel(u8, src_path, 0);
     defer allocator.free(src_z);
     const dst_z = try allocator.dupeSentinel(u8, dst_path, 0);
@@ -259,6 +320,7 @@ pub fn copyFileContents(allocator: Allocator, src_path: []const u8, dst_path: []
                 return error.WriteFailed;
             }
             written += @intCast(wn);
+            if (runner) |job| job.addTransferredBytes(@intCast(wn));
         }
     }
 }
@@ -278,6 +340,16 @@ pub fn copySymlink(allocator: Allocator, src_path: []const u8, dst_path: []const
 }
 
 pub fn copyRecursive(allocator: Allocator, src: []const u8, dst: []const u8, cancel: ?*std.atomic.Value(bool)) !void {
+    return copyRecursiveTracked(allocator, src, dst, cancel, null);
+}
+
+fn copyRecursiveTracked(
+    allocator: Allocator,
+    src: []const u8,
+    dst: []const u8,
+    cancel: ?*std.atomic.Value(bool),
+    runner: ?*JobRunner,
+) !void {
     if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
 
     const src_z = try allocator.dupeSentinel(u8, src, 0);
@@ -315,10 +387,10 @@ pub fn copyRecursive(allocator: Allocator, src: []const u8, dst: []const u8, can
             const child_dst = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ dst, name });
             defer allocator.free(child_dst);
 
-            try copyRecursive(allocator, child_src, child_dst, cancel);
+            try copyRecursiveTracked(allocator, child_src, child_dst, cancel, runner);
         }
     } else if (fmt == c.S_IFREG) {
-        return copyFileContents(allocator, src, dst, cancel);
+        return copyFileContentsTracked(allocator, src, dst, cancel, runner);
     } else return error.UnsupportedFileType;
 }
 
@@ -356,10 +428,20 @@ pub fn deleteRecursive(allocator: Allocator, path: []const u8) !void {
 }
 
 pub fn crossDeviceMove(allocator: Allocator, src: []const u8, dst: []const u8, cancel: ?*std.atomic.Value(bool)) !void {
+    return crossDeviceMoveTracked(allocator, src, dst, cancel, null);
+}
+
+fn crossDeviceMoveTracked(
+    allocator: Allocator,
+    src: []const u8,
+    dst: []const u8,
+    cancel: ?*std.atomic.Value(bool),
+    runner: ?*JobRunner,
+) !void {
     if (isDescendantOrSame(src, dst)) return error.CannotMoveIntoDescendant;
 
     // Copy cleans up only destinations it created; a raced existing target is preserved.
-    try copyRecursive(allocator, src, dst, cancel);
+    try copyRecursiveTracked(allocator, src, dst, cancel, runner);
     if (cancel != null and cancel.?.load(.acquire)) {
         deleteRecursive(allocator, dst) catch {};
         return error.Cancelled;
@@ -370,6 +452,17 @@ pub fn crossDeviceMove(allocator: Allocator, src: []const u8, dst: []const u8, c
 }
 
 pub fn moveItem(allocator: Allocator, src: []const u8, dst: []const u8, cancel: ?*std.atomic.Value(bool)) !void {
+    return moveItemTracked(allocator, src, dst, cancel, null, 0);
+}
+
+fn moveItemTracked(
+    allocator: Allocator,
+    src: []const u8,
+    dst: []const u8,
+    cancel: ?*std.atomic.Value(bool),
+    runner: ?*JobRunner,
+    source_bytes: u64,
+) !void {
     if (isDescendantOrSame(src, dst)) return error.CannotMoveIntoDescendant;
     if (std.mem.eql(u8, src, dst)) return;
 
@@ -380,9 +473,10 @@ pub fn moveItem(allocator: Allocator, src: []const u8, dst: []const u8, cancel: 
 
     platform.fs.renameNoReplace(src_z, dst_z) catch |err| switch (err) {
         error.PathAlreadyExists => return error.PathAlreadyExists,
-        error.CrossDevice => return crossDeviceMove(allocator, src, dst, cancel),
+        error.CrossDevice => return crossDeviceMoveTracked(allocator, src, dst, cancel, runner),
         else => return error.RenameFailed,
     };
+    if (runner) |job| job.addTransferredBytes(source_bytes);
 }
 
 pub const JobRunner = struct {
@@ -406,6 +500,11 @@ pub const JobRunner = struct {
 
     total_items: usize = 0,
     processed_items: usize = 0,
+    item_bytes: std.ArrayList(u64) = .empty,
+    total_bytes: u64 = 0,
+    transferred_bytes: u64 = 0,
+    total_bytes_known: bool = false,
+    measuring: bool = false,
     success_count: usize = 0,
     skipped_count: usize = 0,
     failed_count: usize = 0,
@@ -462,6 +561,7 @@ pub const JobRunner = struct {
         for (self.sources.items) |s| self.allocator.free(s);
         self.sources.deinit(self.allocator);
         self.outcomes.deinit(self.allocator);
+        self.item_bytes.deinit(self.allocator);
 
         _ = c.pthread_cond_destroy(&self.cond);
         _ = c.pthread_mutex_destroy(&self.mutex);
@@ -517,6 +617,8 @@ pub const JobRunner = struct {
         }
         self.outcomes.clearRetainingCapacity();
         try self.outcomes.appendNTimes(self.allocator, .cancelled, sources.len);
+        self.item_bytes.clearRetainingCapacity();
+        try self.item_bytes.appendNTimes(self.allocator, 0, sources.len);
         self.dest_dir = try self.allocator.dupe(u8, dest_dir);
         if (member) |name| self.member = try self.allocator.dupe(u8, name);
         self.kind = kind;
@@ -526,6 +628,10 @@ pub const JobRunner = struct {
 
         self.total_items = self.sources.items.len;
         self.processed_items = 0;
+        self.total_bytes = 0;
+        self.transferred_bytes = 0;
+        self.total_bytes_known = false;
+        self.measuring = kind == .copy or kind == .move;
         self.success_count = 0;
         self.skipped_count = 0;
         self.failed_count = 0;
@@ -569,6 +675,10 @@ pub const JobRunner = struct {
             .state = self.state,
             .total_items = self.total_items,
             .processed_items = self.processed_items,
+            .total_bytes = self.total_bytes,
+            .transferred_bytes = self.transferred_bytes,
+            .total_bytes_known = self.total_bytes_known,
+            .measuring = self.measuring,
             .success_count = self.success_count,
             .skipped_count = self.skipped_count,
             .failed_count = self.failed_count,
@@ -578,6 +688,18 @@ pub const JobRunner = struct {
             .is_error = self.is_error,
             .cancelled = self.cancel_flag.load(.acquire),
         };
+    }
+
+    fn addTransferredBytes(self: *JobRunner, bytes: u64) void {
+        if (bytes == 0) return;
+        _ = c.pthread_mutex_lock(&self.mutex);
+        if (bytes > std.math.maxInt(u64) - self.transferred_bytes) {
+            self.transferred_bytes = std.math.maxInt(u64);
+        } else {
+            self.transferred_bytes += bytes;
+        }
+        self.notify();
+        _ = c.pthread_mutex_unlock(&self.mutex);
     }
 
     /// Only finished jobs expose results, so their source strings remain stable.
@@ -591,7 +713,7 @@ pub const JobRunner = struct {
         return false;
     }
 
-    fn transfer(self: *JobRunner, src: []const u8) !ItemOutcome {
+    fn transfer(self: *JobRunner, src: []const u8, source_bytes: u64) !ItemOutcome {
         const name = std.fs.path.basename(src);
         var target = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.dest_dir, name });
         defer self.allocator.free(target);
@@ -632,9 +754,9 @@ pub const JobRunner = struct {
         if (self.cancel_flag.load(.acquire)) return .cancelled;
         if (isDescendantOrSame(src, target)) return error.CannotCopyIntoDescendant;
         if (self.kind == .copy) {
-            try copyRecursive(self.allocator, src, target, &self.cancel_flag);
+            try copyRecursiveTracked(self.allocator, src, target, &self.cancel_flag, self);
         } else {
-            try moveItem(self.allocator, src, target, &self.cancel_flag);
+            try moveItemTracked(self.allocator, src, target, &self.cancel_flag, self, source_bytes);
         }
         return .success;
     }
@@ -670,7 +792,7 @@ pub const JobRunner = struct {
             if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
             const path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ stage, name });
             defer self.allocator.free(path);
-            switch (try self.transfer(path)) {
+            switch (try self.transfer(path, 0)) {
                 .cancelled => return .cancelled,
                 .skipped => skipped = true,
                 .failed => return .failed,
@@ -681,13 +803,40 @@ pub const JobRunner = struct {
     }
 
     fn workerThread(self: *JobRunner) void {
+        if (self.kind == .copy or self.kind == .move) {
+            var total: u64 = 0;
+            var known = true;
+            for (self.sources.items, 0..) |src, idx| {
+                if (self.cancel_flag.load(.acquire)) {
+                    known = false;
+                    break;
+                }
+                const bytes = measureBytes(self.allocator, src, &self.cancel_flag) catch {
+                    known = false;
+                    break;
+                };
+                self.item_bytes.items[idx] = bytes;
+                if (bytes > std.math.maxInt(u64) - total) {
+                    known = false;
+                    break;
+                }
+                total += bytes;
+            }
+            _ = c.pthread_mutex_lock(&self.mutex);
+            self.total_bytes = total;
+            self.total_bytes_known = known;
+            self.measuring = false;
+            self.notify();
+            _ = c.pthread_mutex_unlock(&self.mutex);
+        }
+
         for (self.sources.items, 0..) |src, idx| {
             if (self.cancel_flag.load(.acquire)) break;
             _ = c.pthread_mutex_lock(&self.mutex);
             self.current_item_name = std.fs.path.basename(src);
             self.notify();
             _ = c.pthread_mutex_unlock(&self.mutex);
-            const outcome = (if (self.kind == .extract or self.kind == .open_archive_member) self.extractArchive(src) else self.transfer(src)) catch |err| blk: {
+            const outcome = (if (self.kind == .extract or self.kind == .open_archive_member) self.extractArchive(src) else self.transfer(src, self.item_bytes.items[idx])) catch |err| blk: {
                 if (self.kind == .extract or self.kind == .open_archive_member) {
                     _ = c.pthread_mutex_lock(&self.mutex);
                     self.status_message = self.allocator.dupe(u8, archive.message(err)) catch "";

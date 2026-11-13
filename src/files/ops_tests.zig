@@ -252,6 +252,59 @@ test "JobRunner copy with conflict resolution (Skip and Rename)" {
     try std.testing.expect(testFileExists(renamed_dst));
 }
 
+test "JobRunner reports byte totals for recursive copies and moves" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+
+    const source_dir = try std.fmt.allocPrint(a, "{s}/source", .{tmp});
+    defer a.free(source_dir);
+    try ops_mod.createFolder(a, tmp, "source");
+    const nested = try std.fmt.allocPrint(a, "{s}/nested", .{source_dir});
+    defer a.free(nested);
+    try ops_mod.createFolder(a, source_dir, "nested");
+
+    const first = try std.fmt.allocPrint(a, "{s}/first.txt", .{source_dir});
+    defer a.free(first);
+    const second = try std.fmt.allocPrint(a, "{s}/second.txt", .{nested});
+    defer a.free(second);
+    try writeTestFile(first, "hello");
+    try writeTestFile(second, "world!");
+
+    const destination = try std.fmt.allocPrint(a, "{s}/destination", .{tmp});
+    defer a.free(destination);
+    try ops_mod.createFolder(a, tmp, "destination");
+
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+
+    try runner.start(.copy, &.{source_dir}, destination, .ask);
+    runner.thread.?.join();
+    runner.thread = null;
+
+    var progress = runner.pollProgress();
+    try std.testing.expect(progress.total_bytes_known);
+    try std.testing.expect(!progress.measuring);
+    try std.testing.expectEqual(@as(u64, 11), progress.total_bytes);
+    try std.testing.expectEqual(@as(u64, 11), progress.transferred_bytes);
+    try std.testing.expectEqual(@as(usize, 1), progress.success_count);
+
+    const move_source = try std.fmt.allocPrint(a, "{s}/move-me.txt", .{tmp});
+    defer a.free(move_source);
+    try writeTestFile(move_source, "move bytes");
+    try runner.start(.move, &.{move_source}, destination, .ask);
+    runner.thread.?.join();
+    runner.thread = null;
+
+    progress = runner.pollProgress();
+    try std.testing.expect(progress.total_bytes_known);
+    try std.testing.expectEqual(@as(u64, 10), progress.total_bytes);
+    try std.testing.expectEqual(@as(u64, 10), progress.transferred_bytes);
+    try std.testing.expectEqual(@as(usize, 1), progress.success_count);
+    try std.testing.expect(!testFileExists(move_source));
+}
+
 test "deletion dialog owns targets and shares responsive hit geometry" {
     const deletion = @import("../delete_dialog.zig");
     var state: deletion.State = .{};
@@ -401,8 +454,10 @@ test "cancelling an active copy removes partial output and preserves source" {
     try runner.start(.copy, &.{src}, dest, .ask);
     var started = false;
     for (0..1000) |_| {
-        var st: c.struct_stat = undefined;
-        if (c.stat(dst, &st) == 0 and st.st_size > 0) {
+        const progress = runner.pollProgress();
+        if (progress.transferred_bytes > 0) {
+            try std.testing.expect(progress.total_bytes_known);
+            try std.testing.expectEqual(@as(u64, 512 * 1024 * 1024), progress.total_bytes);
             started = true;
             break;
         }
