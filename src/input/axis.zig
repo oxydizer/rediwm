@@ -77,9 +77,12 @@ pub fn processAxis(
     if (scroll_hit == .taskbar) {
         const hit = scroll_hit.taskbar;
         if (hit.bar.appTrayAt(hit.sx, hit.sy)) |index| {
+            input.taskbar_focus_scroll.reset();
             if (input.server.tray) |tray| tray.scroll(index, if (delta_discrete != 0) delta_discrete else @intFromFloat(delta), orientation == .horizontal_scroll);
             return;
         }
+    } else {
+        input.taskbar_focus_scroll.reset();
     }
     if (scroll_hit == .chrome and !input.isAltHeld() and !input.isDesktopZoomHeld()) {
         const res = scroll_hit.chrome;
@@ -176,7 +179,23 @@ pub fn processAxis(
         },
         .taskbar => |hit| {
             if (orientation == .vertical_scroll) {
-                hit.bar.scrollVolume(hit.sx, hit.sy, ui_scroll.axisDeltaPx(delta, delta_discrete), notch);
+                const delta_px = ui_scroll.axisDeltaPx(delta, delta_discrete);
+                if (!hit.bar.scrollVolume(hit.sx, hit.sy, delta_px, notch)) {
+                    const steps = input.taskbar_focus_scroll.feed(
+                        delta_discrete,
+                        delta,
+                        @intCast(@intFromEnum(source)),
+                    );
+                    var remaining = steps;
+                    while (remaining > 0) : (remaining -= 1) {
+                        input.server.world.cycleFocus();
+                    }
+                    while (remaining < 0) : (remaining += 1) {
+                        input.server.world.cycleFocusPrev();
+                    }
+                }
+            } else {
+                input.taskbar_focus_scroll.reset();
             }
             return;
         },

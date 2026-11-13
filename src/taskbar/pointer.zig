@@ -172,34 +172,35 @@ pub fn pointerPress(bar: *Taskbar, sx: f64, sy: f64) void {
     if (did_mutate) bar.wlr_output.scheduleFrame();
 }
 
-/// Scroll wheel over the volume tray icon: ±`volume_scroll_step` per tick;
-/// over the input source item, the next or previous source per notch (a
-/// touchpad steps every `source_scroll_step` px). Called from
-/// Input.processAxis's scroll-hit switch.
-pub fn scrollVolume(bar: *Taskbar, sx: f64, sy: f64, delta_px: f32, notch: bool) void {
+/// Handle scrolling over volume and input-source tray items. Returns true
+/// when the tray item consumes the scroll; false lets the caller handle it.
+/// Volume changes by ±`volume_scroll_step` per tick; input sources cycle per
+/// notch (a touchpad steps every `source_scroll_step` px).
+pub fn scrollVolume(bar: *Taskbar, sx: f64, sy: f64, delta_px: f32, notch: bool) bool {
     const idx = switch (bar.hitTest(sx, sy)) {
         .tray => |i| i,
-        else => return,
+        else => return false,
     };
     if (@as(TrayKind, @enumFromInt(idx)) == .input_source) {
-        const sources = bar.server.input_sources orelse return;
+        const sources = bar.server.input_sources orelse return true;
         if (notch) {
             if (delta_px != 0) sources.cycle(delta_px > 0);
-            return;
+            return true;
         }
         bar.source_scroll += delta_px;
         while (@abs(bar.source_scroll) >= source_scroll_step) {
             sources.cycle(bar.source_scroll > 0);
             bar.source_scroll -= std.math.copysign(source_scroll_step, bar.source_scroll);
         }
-        return;
+        return true;
     }
-    if (@as(TrayKind, @enumFromInt(idx)) != .volume) return;
-    const mgr = bar.server.audio orelse return;
+    if (@as(TrayKind, @enumFromInt(idx)) != .volume) return false;
+    const mgr = bar.server.audio orelse return true;
     // Natural convention: scrolling up (negative delta) raises volume.
     const direction: f32 = if (delta_px < 0) 1 else -1;
     mgr.setMasterVolume(std.math.clamp(mgr.getMasterVolume() + direction * volume_scroll_step, 0, 1));
     bar.tray_dirty[@intFromEnum(TrayKind.volume)] = true;
     bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
+    return true;
 }

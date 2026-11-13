@@ -77,6 +77,12 @@ def run():
                     box = next(chip["box"] for chip in bar["chips"] if chip["window_id"] == wid)
                     ipc.click_at(box["x"] + box["width"] // 2, box["y"] + box["height"] // 2)
 
+                def taskbar_scroll(wid, dy):
+                    bar = ipc.get_shell_state()["taskbars"][0]
+                    box = next(chip["box"] for chip in bar["chips"] if chip["window_id"] == wid)
+                    ipc.move_cursor(box["x"] + box["width"] // 2, box["y"] + box["height"] // 2)
+                    ipc.scroll(0, dy)
+
                 def reset():
                     ipc.action('reset_camera')
                     tick()
@@ -86,6 +92,14 @@ def run():
                 ipc.focus_window(target)
                 ipc.focus_window(other)
                 reset()
+
+                # Scrolling over a taskbar window chip cycles focus; reversing
+                # the scroll restores the previous active window.
+                taskbar_scroll(target, 40)
+                assert ipc.get_focused_window()["id"] != other, "taskbar scroll changes focus"
+                taskbar_scroll(target, -40)
+                assert ipc.get_focused_window()["id"] == other, "reverse taskbar scroll restores focus"
+
                 ipc.action('move_window_to', {"id": target, "x": width + 200, "y": 100})
                 switch_to(target)
                 samples = []
