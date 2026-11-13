@@ -21,7 +21,7 @@ const drawText = @import("app_draw.zig").drawText;
 const measureText = @import("app_draw.zig").measureText;
 
 pub fn gitSidebarHeight(self: *App) i32 {
-    return if (self.repository() != null) 44 + @as(i32, @intFromFloat(self.gitCardHeight())) else 0;
+    return if (self.repository() != null) @as(i32, @intFromFloat(self.gitCardHeight())) else 0;
 }
 
 // HEAD is listed first when it is not a branch (detached or unborn).
@@ -51,14 +51,19 @@ pub fn gitCardHeight(self: *App) f64 {
 }
 
 pub fn gitCard(self: *App) header.Rect {
-    return .{ .x = 10, .y = @floatFromInt(self.pinRowY(self.pins.items.items.len) + 44 + self.deviceBlock() + self.torrentSidebarHeight() + self.fileOpsSidebarHeight()), .w = @floatFromInt(self.sidebarWidth() - 20 - self.scrollbarGutter()), .h = self.gitCardHeight() };
+    const layout = self.sidebarLayout();
+    const card = layout.cards[@intFromEnum(@import("app_model.zig").SidebarSection.git)];
+    return .{
+        .x = 10,
+        .y = @floatFromInt(card.y + card.header_height),
+        .w = @floatFromInt(self.sidebarWidth() - 20 - self.scrollbarGutter()),
+        .h = self.gitCardHeight(),
+    };
 }
 
 pub fn renderGitSidebar(self: *App, cr: *c.cairo_t, content_width: f64) void {
     const repo = self.repository() orelse return;
     const card = self.gitCard();
-    setSource(cr, ui_theme.global.sidebarForeground());
-    drawText(cr, "GIT", 24, card.y - 10, shell_ui.headingSize(), true);
     if (shell_ui.Layer.begin(cr, .{ .x = 23, .y = @floatCast(card.y + 6), .w = 20, .h = 20 })) |icon_layer| {
         var layer = icon_layer;
         layer.renderer.drawIcon(0, 0, 20, 20, .{ .id = .git_branch, .color = ui_theme.global.sidebarForeground() });
@@ -66,11 +71,6 @@ pub fn renderGitSidebar(self: *App, cr: *c.cairo_t, content_width: f64) void {
     }
     setSource(cr, ui_theme.global.sidebarForeground());
     drawEllipsis(cr, std.fs.path.basename(repo.root), 50, card.y + 22, content_width - 80, shell_ui.textSize(), false);
-    if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(content_width - 28), .y = @floatCast(card.y + 9), .w = 14, .h = 14 })) |icon_layer| {
-        var layer = icon_layer;
-        layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = if (self.git_expanded) .chevron_down else .chevron_right, .color = ui_theme.global.sidebarForeground() });
-        layer.finish();
-    }
     if (!self.git_expanded) return;
     const right = content_width - 18;
     const rows = gitBranchRowCount(repo);

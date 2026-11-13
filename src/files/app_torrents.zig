@@ -117,10 +117,16 @@ pub fn confirmTorrent(self: *App) void {
     } else self.setStatusNotice(self.torrents.message(), true);
 }
 pub fn torrentSidebarHeight(self: *App) i32 {
-    return if (enabled and self.chooser == null) 132 else 0;
+    return if (enabled and self.chooser == null) 76 else 0;
 }
 fn sidebarBox(self: *App) Rect {
-    return .{ .x = 12, .y = @floatFromInt(self.pinRowY(self.pins.items.items.len) + 40 + self.deviceBlock()), .w = @floatFromInt(@max(0, self.sidebarWidth() - 24 - self.scrollbarGutter())), .h = 34 };
+    const card = self.sidebarLayout().cards[@intFromEnum(@import("app_model.zig").SidebarSection.transfers)];
+    return .{
+        .x = 12,
+        .y = @floatFromInt(card.y + card.header_height),
+        .w = @floatFromInt(@max(0, self.sidebarWidth() - 24 - self.scrollbarGutter())),
+        .h = @floatFromInt(self.torrentSidebarHeight()),
+    };
 }
 pub fn torrentSidebarHit(self: *App, x: f64, y: f64) bool {
     if (!enabled) return false;
@@ -131,13 +137,12 @@ pub fn renderTorrentSidebar(self: *App, cr: *c.cairo_t) void {
     if (!enabled) return;
     if (self.chooser != null) return;
     const area = sidebarBox(self);
-    var layer = ui.Layer.begin(cr, .{ .x = area.x, .y = area.y, .w = area.w, .h = 92 }) orelse return;
+    var layer = ui.Layer.begin(cr, .{ .x = area.x, .y = area.y, .w = area.w, .h = area.h }) orelse return;
     defer layer.finish();
     var palette = theme.shellPalette();
     palette.fg = theme.global.sidebarForeground();
     palette.button_font_size = ui.textSize();
     layer.renderer.palette = palette;
-    button.paint(&layer.renderer, .{ .x = 0, .y = 0, .w = area.w, .h = 34 }, .{ .label = tr("Transfers"), .leading_icon = .folder, .variant = .ghost, .alignment = .left }, .{ .pointer = if (self.torrentSidebarHit(self.mouse_x, self.mouse_y)) .hover else .idle, .selected = self.transfer_view.active });
     var active: usize = 0;
     var rate: i64 = 0;
     for (self.torrents.items()) |t| {
@@ -146,11 +151,11 @@ pub fn renderTorrentSidebar(self: *App, cr: *c.cairo_t) void {
     }
     var buf: [96]u8 = undefined;
     const label = if (self.torrents.retry_at != null) tr("Connecting…") else if (self.torrents.message().len > 0) tr("Transfers needs attention") else i18n.fmt(&buf, tr("{value} active · {rate} KiB/s"), .{ .value = active, .rate = @divTrunc(rate, 1024) }) catch tr("Transfers");
-    layer.renderer.drawText(12, 38, area.w - 24, 24, .{ .content = label, .font_size = ui.statusSize(), .color = palette.fg });
+    layer.renderer.drawText(12, 20, area.w - 24, 24, .{ .content = label, .font_size = ui.statusSize(), .color = palette.fg });
     if (self.torrents.items().len > 0) {
         const t = self.torrents.items()[0];
-        layer.renderer.drawText(12, 64, area.w - 24, 24, .{ .content = t.name, .font_size = ui.statusSize(), .color = palette.fg });
-        layer.renderer.fillRect(12, 90, (area.w - 24) * @as(f32, @floatFromInt(std.math.clamp(t.progress, 0, 1000000))) / 1000000, 2, .{ .color = palette.accent });
+        layer.renderer.drawText(12, 46, area.w - 24, 24, .{ .content = t.name, .font_size = ui.statusSize(), .color = palette.fg });
+        layer.renderer.fillRect(12, 72, (area.w - 24) * @as(f32, @floatFromInt(std.math.clamp(t.progress, 0, 1000000))) / 1000000, 2, .{ .color = palette.accent });
     }
 }
 fn box(self: *App) Rect {

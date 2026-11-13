@@ -12,6 +12,7 @@ const shell_ui = @import("ui").cairo;
 const ui_theme = @import("ui").theme;
 const button_widget = @import("ui").widgets.button;
 const pins_mod = @import("pins.zig");
+const app_model = @import("app_model.zig");
 const places = App.places;
 const places_start = App.places_start;
 const pin_base = App.pin_base;
@@ -34,11 +35,56 @@ fn drawSidebarCard(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64) void {
     c.cairo_stroke(cr);
 }
 
+fn drawSidebarHeader(
+    cr: *c.cairo_t,
+    label: []const u8,
+    y: i32,
+    content_width: f64,
+    expanded: bool,
+) void {
+    setSource(cr, ui_theme.global.sidebarForeground());
+    drawText(cr, label, 24, @as(f64, @floatFromInt(y)) + 21, shell_ui.headingSize(), true);
+    if (shell_ui.Layer.begin(cr, .{
+        .x = @floatCast(content_width - 28),
+        .y = @floatFromInt(y + 9),
+        .w = 14,
+        .h = 14,
+    })) |icon_layer| {
+        var layer = icon_layer;
+        layer.renderer.drawIcon(0, 0, 14, 14, .{
+            .id = if (expanded) .chevron_down else .chevron_right,
+            .color = ui_theme.global.sidebarForeground(),
+        });
+        layer.finish();
+    }
+}
+
+/// The shared accordion geometry. Body sizes come from the existing section
+/// implementations; only the selected visible card receives its body.
+pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
+    const top = self.contentTop() - self.sidebar_scroll;
+    const pin_bottom = self.pinRowY(self.pins.items.items.len);
+    const old_places_top = self.contentTop() - self.sidebar_scroll;
+    const places_body = @max(0, pin_bottom + 16 - old_places_top - app_model.SidebarLayout.header_height);
+    const disks_body = @max(0, self.deviceBlock() - app_model.SidebarLayout.header_height);
+    const git_body: i32 = if (self.repository() != null)
+        @intFromFloat(self.gitCardHeight())
+    else
+        0;
+    const transfers_body = self.torrentSidebarHeight() +
+        (if (self.fileOpsSidebarHeight() > 0) @as(i32, app_model.SidebarLayout.gap) + self.fileOpsSidebarHeight() else 0);
+
+    return app_model.SidebarLayout.init(
+        top,
+        .{ places_body, disks_body, git_body, transfers_body },
+        .{ true, true, self.repository() != null, self.torrentSidebarHeight() > 0 },
+        self.sidebar_section,
+    );
+}
+
 /// DEVICES: a heading and one row per volume, dimmed while unmounted, with
 /// an eject button on the mounted ones.
 pub fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {
-    setSource(cr, ui_theme.global.sidebarForeground());
-    drawText(cr, tr("DISKS"), 24, @floatFromInt(self.placeY(self.deviceBase()) - 12), shell_ui.headingSize(), true);
     if (self.device_list.items.len == 0) {
         drawText(cr, tr("No removable volumes"), 32, @floatFromInt(self.placeY(self.deviceBase()) + 20), shell_ui.statusSize(), false);
         return;
@@ -163,121 +209,123 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
     c.cairo_paint(cr);
     c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
 
-    // Keep the existing functional sections, but give each its own visual
-    // surface. Places includes built-in locations and pins; disks are
-    // separated from navigation; torrents and file operations share
-    // Transfers; Git remains contextual to an open repository.
-    const pin_count = self.pins.items.items.len;
-    const pin_bottom = self.pinRowY(pin_count);
-    drawSidebarCard(
-        cr,
-        8,
-        @floatFromInt(self.contentTop() + 4),
-        @max(0, content_width - 16),
-        @floatFromInt(@max(0, pin_bottom + 16 - self.contentTop() - 4)),
-    );
-    const disks_y = pin_bottom + 24;
-    drawSidebarCard(
-        cr,
-        8,
-        @floatFromInt(disks_y),
-        @max(0, content_width - 16),
-        @floatFromInt(self.deviceBlock() + 8),
-    );
-    const transfers_y = pin_bottom + 32 + self.deviceBlock();
-    drawSidebarCard(
-        cr,
-        8,
-        @floatFromInt(transfers_y),
-        @max(0, content_width - 16),
-        @floatFromInt(self.torrentSidebarHeight() + self.fileOpsSidebarHeight() + 4),
-    );
-    if (self.repository() != null) {
-        const git_card = self.gitCard();
-        drawSidebarCard(cr, git_card.x - 2, git_card.y - 4, git_card.w + 4, git_card.h + 8);
+    const layout = self.sidebarLayout();
+    const section_names = [_][]const u8{
+        tr("PLACES"),
+        tr("DISKS"),
+        "GIT",
+        tr("TRANSFERS"),
+    };
+    for (layout.cards, 0..) |card, i| {
+        if (!card.visible) continue;
+        const height = card.height();
+        drawSidebarCard(
+            cr,
+            8,
+            @floatFromInt(card.y),
+            @max(0, content_width - 16),
+            @floatFromInt(height),
+        );
+        drawSidebarHeader(cr, section_names[i], card.y, content_width, card.expanded);
     }
 
-    self.renderTorrentSidebar(cr);
-    self.renderFileOpsSidebar(cr);
-    self.renderGitSidebar(cr, content_width);
-    // Under the labels: the glide passes over the PLACES heading.
-    const glide = self.nav_hover.frame;
-    if (glide.alpha > 0) {
-        const box = self.navHighlight(glide);
-        shell_ui.drawSidebarHover(cr, .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) }, glide.alpha);
-    }
-    setSource(cr, ui_theme.global.sidebarForeground());
-    drawText(cr, tr("PLACES"), 24, @floatFromInt(self.placeY(places_start) - 12), shell_ui.headingSize(), true);
-    for (0..self.deviceBase()) |i| {
-        if (!self.placeVisible(i)) continue;
-        const y: f64 = @floatFromInt(self.placeY(i));
-        var buf: [4096]u8 = undefined;
-        const path = self.placePath(i, &buf) orelse continue;
-        const pin: ?pins_mod.Pin = if (self.pinIndex(i)) |j| self.pins.items.items[j] else null;
-        const label = switch (self.rowKind(i)) {
-            .builtin => |b| App.place_labels[b].get(),
-            .pin => pin.?.name(),
-            .device => unreachable,
-        };
-        // A pin whose target is gone stays, dimmed, until it is removed.
-        const alpha: f32 = if (pin != null and pin.?.kind == .missing) 0.5 else 1;
-        const active = !self.transfer_view.active and std.mem.eql(u8, path, self.history.current);
-        if (active) {
-            const row = self.placeRect(i);
-            shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
+    const places_card = layout.cards[@intFromEnum(app_model.SidebarSection.places)];
+    if (places_card.expanded) {
+        const old_top = self.contentTop() - self.sidebar_scroll;
+        c.cairo_save(cr);
+        c.cairo_translate(cr, 0, @floatFromInt(places_card.y + places_card.header_height - old_top));
+        // The hover glide remains aligned with the existing Places rows.
+        const glide = self.nav_hover.frame;
+        if (glide.alpha > 0) {
+            const box = self.navHighlight(glide);
+            shell_ui.drawSidebarHover(cr, .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) }, glide.alpha);
         }
-        setSource(cr, withAlpha(ui_theme.global.app_icon, alpha));
-        if (self.drawPackPlaceIcon(cr, i, y, alpha)) {
-            // The pack's colour artwork replaces this place's plain glyph.
-        } else if (i < places_start) {
-            if (shell_ui.Layer.begin(cr, .{ .x = 21, .y = @floatCast(y + 3), .w = 24, .h = 24 })) |icon_layer| {
-                var layer = icon_layer;
-                layer.renderer.drawIcon(0, 0, 24, 24, .{ .id = switch (i) {
-                    0 => .home,
-                    1 => .trash,
-                    else => .clock,
-                }, .color = withAlpha(ui_theme.global.app_icon, alpha) });
-                layer.finish();
+        for (0..self.deviceBase()) |i| {
+            if (!self.placeVisible(i)) continue;
+            const y: f64 = @floatFromInt(self.placeY(i));
+            var buf: [4096]u8 = undefined;
+            const path = self.placePath(i, &buf) orelse continue;
+            const pin: ?pins_mod.Pin = if (self.pinIndex(i)) |j| self.pins.items.items[j] else null;
+            const label = switch (self.rowKind(i)) {
+                .builtin => |b| App.place_labels[b].get(),
+                .pin => pin.?.name(),
+                .device => unreachable,
+            };
+            const alpha: f32 = if (pin != null and pin.?.kind == .missing) 0.5 else 1;
+            const active = !self.transfer_view.active and std.mem.eql(u8, path, self.history.current);
+            if (active) {
+                const row = self.placeRect(i);
+                shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
             }
-        } else if (pin != null and pin.?.kind == .file) {
-            // A page with a folded corner, like the folder beside it a plain shape.
-            c.cairo_save(cr);
-            c.cairo_set_line_width(cr, 1.5);
-            c.cairo_set_line_join(cr, c.CAIRO_LINE_JOIN_ROUND);
-            c.cairo_move_to(cr, 29, y + 6.5);
-            c.cairo_line_to(cr, 34.5, y + 6.5);
-            c.cairo_line_to(cr, 39.5, y + 11.5);
-            c.cairo_line_to(cr, 39.5, y + 21.5);
-            c.cairo_line_to(cr, 29, y + 21.5);
-            c.cairo_close_path(cr);
-            c.cairo_fill_preserve(cr);
-            c.cairo_stroke(cr);
-            setSource(cr, withAlpha(ui_theme.global.app_icon, alpha * 0.5));
-            c.cairo_move_to(cr, 34.5, y + 6.5);
-            c.cairo_line_to(cr, 39.5, y + 11.5);
-            c.cairo_line_to(cr, 34.5, y + 11.5);
-            c.cairo_close_path(cr);
-            c.cairo_fill(cr);
-            c.cairo_restore(cr);
-        } else {
-            roundedRect(cr, 25, y + 7.5, 8, 5, 1);
-            c.cairo_fill(cr);
-            roundedRect(cr, 25, y + 10.5, 17, 12, 2);
-            c.cairo_fill(cr);
+            setSource(cr, withAlpha(ui_theme.global.app_icon, alpha));
+            if (!self.drawPackPlaceIcon(cr, i, y, alpha)) {
+                if (i < places_start) {
+                    if (shell_ui.Layer.begin(cr, .{ .x = 21, .y = @floatCast(y + 3), .w = 24, .h = 24 })) |icon_layer| {
+                        var layer = icon_layer;
+                        layer.renderer.drawIcon(0, 0, 24, 24, .{ .id = switch (i) {
+                            0 => .home,
+                            1 => .trash,
+                            else => .clock,
+                        }, .color = withAlpha(ui_theme.global.app_icon, alpha) });
+                        layer.finish();
+                    }
+                } else if (pin != null and pin.?.kind == .file) {
+                    c.cairo_save(cr);
+                    c.cairo_set_line_width(cr, 1.5);
+                    c.cairo_set_line_join(cr, c.CAIRO_LINE_JOIN_ROUND);
+                    c.cairo_move_to(cr, 29, y + 6.5);
+                    c.cairo_line_to(cr, 34.5, y + 6.5);
+                    c.cairo_line_to(cr, 39.5, y + 11.5);
+                    c.cairo_line_to(cr, 39.5, y + 21.5);
+                    c.cairo_line_to(cr, 29, y + 21.5);
+                    c.cairo_close_path(cr);
+                    c.cairo_fill_preserve(cr);
+                    c.cairo_stroke(cr);
+                    setSource(cr, withAlpha(ui_theme.global.app_icon, alpha * 0.5));
+                    c.cairo_move_to(cr, 34.5, y + 6.5);
+                    c.cairo_line_to(cr, 39.5, y + 11.5);
+                    c.cairo_line_to(cr, 34.5, y + 11.5);
+                    c.cairo_close_path(cr);
+                    c.cairo_fill(cr);
+                    c.cairo_restore(cr);
+                } else {
+                    roundedRect(cr, 25, y + 7.5, 8, 5, 1);
+                    c.cairo_fill(cr);
+                    roundedRect(cr, 25, y + 10.5, 17, 12, 2);
+                    c.cairo_fill(cr);
+                }
+            }
+            setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), alpha));
+            const metrics = fontMetrics(cr, shell_ui.textSize());
+            drawEllipsis(cr, label, 54, y + (30 - metrics.ascent - metrics.descent) / 2 + metrics.ascent, content_width - 64, shell_ui.textSize(), false);
         }
-        setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), alpha));
-        const metrics = fontMetrics(cr, shell_ui.textSize());
-        drawEllipsis(cr, label, 54, y + (30 - metrics.ascent - metrics.descent) / 2 + metrics.ascent, content_width - 64, shell_ui.textSize(), false);
+        self.renderPinDrop(cr);
+        if (self.trash_drop) {
+            const row = self.placeRect(App.trash_place);
+            roundedRect(cr, row.x, row.y, row.w, row.h, 6);
+            setSource(cr, ui_theme.shellPalette().accent);
+            c.cairo_set_line_width(cr, 2);
+            c.cairo_stroke(cr);
+        }
+        c.cairo_restore(cr);
     }
-    self.renderDevices(cr, content_width);
-    self.renderPinDrop(cr);
-    if (self.trash_drop) {
-        // The drop target outline, as on a folder in the content area.
-        const row = self.placeRect(App.trash_place);
-        roundedRect(cr, row.x, row.y, row.w, row.h, 6);
-        setSource(cr, ui_theme.shellPalette().accent);
-        c.cairo_set_line_width(cr, 2);
-        c.cairo_stroke(cr);
+
+    const disks_card = layout.cards[@intFromEnum(app_model.SidebarSection.disks)];
+    if (disks_card.expanded) {
+        const old_top = self.pinRowY(self.pins.items.items.len) + 24;
+        c.cairo_save(cr);
+        c.cairo_translate(cr, 0, @floatFromInt(disks_card.y + disks_card.header_height - old_top));
+        self.renderDevices(cr, content_width);
+        c.cairo_restore(cr);
+    }
+
+    const git_card = layout.cards[@intFromEnum(app_model.SidebarSection.git)];
+    if (git_card.expanded) self.renderGitSidebar(cr, content_width);
+
+    const transfers_card = layout.cards[@intFromEnum(app_model.SidebarSection.transfers)];
+    if (transfers_card.expanded) {
+        self.renderTorrentSidebar(cr);
+        self.renderFileOpsSidebar(cr);
     }
 }
 
@@ -295,14 +343,19 @@ pub fn renderPinDrop(self: *App, cr: *c.cairo_t) void {
 
 // Bottom of the sidebar content in scrolled coordinates: the Git card is the last section.
 pub fn sidebarExtent(self: *App) i32 {
-    return self.pinRowY(self.pins.items.items.len) + self.sidebar_scroll + 8 + self.deviceBlock() +
-        self.torrentSidebarHeight() + self.fileOpsSidebarHeight() + self.gitSidebarHeight();
+    const layout = self.sidebarLayout();
+    var bottom = self.contentTop() - self.sidebar_scroll;
+    for (layout.cards) |card| {
+        if (card.visible) bottom = @max(bottom, card.y + card.height());
+    }
+    return bottom + self.sidebar_scroll + app_model.SidebarLayout.gap;
 }
 
 fn fileOpsBox(self: *App) shell_ui.Rect {
+    const card = self.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.transfers)];
     return .{
         .x = 12,
-        .y = @floatFromInt(self.pinRowY(self.pins.items.items.len) + 40 + self.deviceBlock() + self.torrentSidebarHeight()),
+        .y = @floatFromInt(card.y + card.header_height + self.torrentSidebarHeight() + app_model.SidebarLayout.gap),
         .w = @floatFromInt(@max(0, self.sidebarWidth() - 24 - self.scrollbarGutter())),
         .h = 104,
     };

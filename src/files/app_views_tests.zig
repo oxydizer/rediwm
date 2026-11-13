@@ -63,8 +63,14 @@ test "Git layout has two columns, scrollable sidebar and display-only deleted ro
     try std.testing.expect(!app.matches(nested));
     app.changed_only = true;
     app.search.text.clearRetainingCapacity();
-    // The Git card is the last sidebar section, below the final place.
-    try std.testing.expect(app.gitCard().y > @as(f64, @floatFromInt(app.placeY(App.pin_base - 1))));
+    // Git's body follows its shared accordion header geometry.
+    app.sidebar_section = .git;
+    const git_geometry = app.sidebarLayout().cards[@intFromEnum(@import("app_model.zig").SidebarSection.git)];
+    try std.testing.expect(git_geometry.visible and git_geometry.expanded);
+    try std.testing.expectEqual(
+        @as(f64, @floatFromInt(git_geometry.y + git_geometry.header_height)),
+        app.gitCard().y,
+    );
     const expanded_extent = app.sidebarExtent();
     app.git_expanded = false;
     // Collapsing hides the current-branch row and the "New branch" row (28px each) and the 4px padding.

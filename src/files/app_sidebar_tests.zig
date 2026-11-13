@@ -298,7 +298,9 @@ test "Sidebar separates Disks from Places; only mounted volumes eject" {
     const step = app.placeStep();
     try std.testing.expectEqual(last_place_y + 44 + step, app.placeY(mounted));
     try std.testing.expectEqual(app.placeY(mounted) + step, app.placeY(unmounted));
-    try std.testing.expectEqual(extent + 44 + 2 * step - 64, app.sidebarExtent());
+    // Places is expanded by default; the collapsed Disks card keeps its
+    // compact height when volumes are added.
+    try std.testing.expectEqual(extent, app.sidebarExtent());
 
     const row_y: f64 = @floatFromInt(app.placeY(mounted) + 10);
     try std.testing.expectEqual(@as(?usize, mounted), app.placeAt(70, row_y));

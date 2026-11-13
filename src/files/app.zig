@@ -794,6 +794,7 @@ pub const App = struct {
     pub const placePath = app_sidebar_paint.placePath;
     pub const drawPackPlaceIcon = app_sidebar_paint.drawPackPlaceIcon;
     pub const renderSidebar = app_sidebar_paint.renderSidebar;
+    pub const sidebarLayout = app_sidebar_paint.sidebarLayout;
     pub const renderPinDrop = app_sidebar_paint.renderPinDrop;
     pub const fileOpsSidebarHeight = app_sidebar_paint.fileOpsSidebarHeight;
     pub const fileOpsSidebarHit = app_sidebar_paint.fileOpsSidebarHit;
