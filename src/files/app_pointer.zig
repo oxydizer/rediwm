@@ -36,6 +36,7 @@ pub fn hoverKey(self: *App) usize {
         (x >= @as(f64, @floatFromInt(self.sidebarWidth())) and y < @as(f64, @floatFromInt(self.contentBottom()))))) return self.transferPaneHover();
     if (self.terminalHit(x, y)) |index| return 900 + index;
     if (self.sidebar_resize != null or self.overSidebarDivider(x, y)) return 0;
+    if (self.sidebarHeaderAt(x, y)) |section| return 940 + @as(usize, @intFromEnum(section));
     if (self.chooser) |opts| {
         if (y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) {
             for (0..4 + opts.choices.len) |i| {

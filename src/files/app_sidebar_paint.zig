@@ -41,7 +41,16 @@ fn drawSidebarHeader(
     y: i32,
     content_width: f64,
     expanded: bool,
+    hovered: bool,
 ) void {
+    if (hovered) {
+        shell_ui.drawSidebarHover(cr, .{
+            .x = 12,
+            .y = @floatFromInt(y + 2),
+            .w = @floatCast(@max(0, content_width - 24)),
+            .h = 28,
+        }, 0.8);
+    }
     setSource(cr, ui_theme.global.sidebarForeground());
     drawText(cr, label, 24, @as(f64, @floatFromInt(y)) + 21, shell_ui.headingSize(), true);
     if (shell_ui.Layer.begin(cr, .{
@@ -268,7 +277,8 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
             @max(0, content_width - 16),
             @floatFromInt(height),
         );
-        drawSidebarHeader(cr, section_names[i], card.y, content_width, card.expanded);
+        const hovered = self.hoverKey() == 940 + i;
+        drawSidebarHeader(cr, section_names[i], card.y, content_width, card.expanded, hovered);
     }
 
     const places_card = layout.cards[@intFromEnum(app_model.SidebarSection.places)];

@@ -16,6 +16,16 @@ const pin_base = App.pin_base;
 
 pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
     if (key >= 920 and key < 926) return @import("app_audio_bar.zig").rect(self);
+    if (key >= 940 and key < 944) {
+        const card = self.sidebarLayout().cards[key - 940];
+        if (!card.visible) return null;
+        return .{
+            .x = 8,
+            .y = @floatFromInt(card.y),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
+            .h = @floatFromInt(card.header_height),
+        };
+    }
     if (key >= std.math.maxInt(usize) - 4096) return null;
     if (key >= 900 and key < 904) return .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) };
     if (key == 0) return .{ .x = 0, .y = 0, .w = 0, .h = 0 };
