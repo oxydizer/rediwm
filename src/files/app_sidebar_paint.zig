@@ -548,7 +548,8 @@ pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
             runner.pause();
         }
     } else {
-        self.openTransfers();
+        self.navigate(runner.dest_dir);
+        self.focus = .file_view;
     }
     self.invalidate();
     return true;
