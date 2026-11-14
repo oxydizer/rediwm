@@ -608,11 +608,19 @@ pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
 
     var speed_buf: [96]u8 = undefined;
     var bytes_buf: [96]u8 = undefined;
-    const speed = i18n.fmt(&speed_buf, tr("{rate} KiB/s"), .{
-        .rate = @divTrunc(self.job_bytes_per_second, 1024),
+    var speed_size_buf: [32]u8 = undefined;
+    var bytes_size_buf: [32]u8 = undefined;
+    const speed = i18n.fmt(&speed_buf, tr("{rate}/s"), .{
+        .rate = @import("app_draw.zig").formatSize(
+            @intCast(@min(self.job_bytes_per_second, @as(u64, std.math.maxInt(i64)))),
+            &speed_size_buf,
+        ),
     }) catch "";
     const transferred = i18n.fmt(&bytes_buf, tr("{value} transferred"), .{
-        .value = @divTrunc(self.job_transferred_bytes, 1024),
+        .value = @import("app_draw.zig").formatSize(
+            @intCast(@min(self.job_transferred_bytes, @as(u64, std.math.maxInt(i64)))),
+            &bytes_size_buf,
+        ),
     }) catch "";
     const details = [_][]const u8{ speed, transferred };
     transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, tr("File transfer"), &details);

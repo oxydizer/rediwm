@@ -934,11 +934,13 @@ pub fn renderTorrentSidebarTip(self: *App, cr: *c.cairo_t) void {
 
     var download_buf: [96]u8 = undefined;
     var upload_buf: [96]u8 = undefined;
-    const download = i18n.fmt(&download_buf, tr("Download: {rate} KiB/s"), .{
-        .rate = @divTrunc(t.download_rate, 1024),
+    var download_size_buf: [32]u8 = undefined;
+    var upload_size_buf: [32]u8 = undefined;
+    const download = i18n.fmt(&download_buf, tr("Download: {rate}/s"), .{
+        .rate = draw.formatSize(t.download_rate, &download_size_buf),
     }) catch "";
-    const upload = i18n.fmt(&upload_buf, tr("Upload: {rate} KiB/s"), .{
-        .rate = @divTrunc(t.upload_rate, 1024),
+    const upload = i18n.fmt(&upload_buf, tr("Upload: {rate}/s"), .{
+        .rate = draw.formatSize(t.upload_rate, &upload_size_buf),
     }) catch "";
     const details = [_][]const u8{ download, upload };
     transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, t.name, &details);

@@ -157,9 +157,14 @@ pub fn renderTorrentTip(self: *App, cr: *c.cairo_t) void {
     var peers_buf: [160]u8 = undefined;
     var known_buf: [96]u8 = undefined;
     var eta_buf: [96]u8 = undefined;
+    var download_size_buf: [32]u8 = undefined;
+    var upload_size_buf: [32]u8 = undefined;
     const progress = if (t.pending) @as(i32, 0) else std.math.clamp(t.progress, 0, 1000000);
     const state = std.fmt.bufPrint(&progress_buf, "{s} · {d}.{d}%", .{ if (self.torrents.fd < 0) tr("Disconnected") else inlineStatus(t), @divTrunc(progress, 10000), @mod(@divTrunc(progress, 1000), 10) }) catch "";
-    const rates = i18n.fmt(&rate_buf, tr("↓ {rate} KiB/s    ↑ {rate2} KiB/s"), .{ .rate = @divTrunc(t.download_rate, 1024), .rate2 = @divTrunc(t.upload_rate, 1024) }) catch "";
+    const rates = i18n.fmt(&rate_buf, tr("↓ {rate}/s    ↑ {rate2}/s"), .{
+        .rate = draw.formatSize(t.download_rate, &download_size_buf),
+        .rate2 = draw.formatSize(t.upload_rate, &upload_size_buf),
+    }) catch "";
     const connected = i18n.fmt(&peers_buf, tr("Connected peers: {peers} · Seeds: {seeds}"), .{ .peers = t.peers, .seeds = t.seeds }) catch "";
     const known = i18n.fmt(&known_buf, tr("Known peers: {value}"), .{ .value = t.known_peers }) catch "";
     const eta = if (@import("torrents.zig").etaSeconds(t)) |seconds|
