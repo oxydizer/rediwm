@@ -798,6 +798,7 @@ pub const App = struct {
     pub const renderPinDrop = app_sidebar_paint.renderPinDrop;
     pub const fileOpsSidebarHeight = app_sidebar_paint.fileOpsSidebarHeight;
     pub const fileOpsSidebarHit = app_sidebar_paint.fileOpsSidebarHit;
+    pub const fileOpsSidebarHover = app_sidebar_paint.fileOpsSidebarHover;
     pub const fileOpsSidebarClick = app_sidebar_paint.fileOpsSidebarClick;
     pub const renderFileOpsSidebar = app_sidebar_paint.renderFileOpsSidebar;
 
