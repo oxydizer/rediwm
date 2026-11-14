@@ -129,7 +129,7 @@ fn sidebarBox(self: *App) Rect {
     return .{
         .x = 12,
         .y = @floatFromInt(card.y + card.header_height),
-        .w = @floatFromInt(@max(0, self.sidebarWidth() - 24 - self.scrollbarGutter())),
+        .w = @floatCast(@max(0, self.sidebarContentWidth() - 24)),
         .h = @floatFromInt(self.torrentSidebarHeight()),
     };
 }
@@ -193,6 +193,7 @@ pub fn renderTorrentSidebar(self: *App, cr: *c.cairo_t) void {
     if (self.chooser != null) return;
     if (self.torrents.items().len == 0) return;
     const area = sidebarBox(self);
+    draw.drawSidebarTransferSurface(cr, area);
     var label: []const u8 = tr("Transfers");
     var fraction: ?f64 = null;
     var pause_icon: ?sidebar_controls.Icon = null;

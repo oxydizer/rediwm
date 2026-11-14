@@ -147,11 +147,11 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
 
 /// The content width used by sidebar painting: the scrollbar track when it
 /// exists, otherwise the final target width while the panel is animating.
-fn sidebarContentWidth(self: *App) f64 {
+pub fn sidebarContentWidth(self: *App) f64 {
     return if (self.sidebarScrollbar()) |bar|
         @as(f64, @floatCast(bar.track.x))
     else
-        @as(f64, @floatFromInt(self.sidebarTargetWidth()));
+        @as(f64, @floatFromInt(@min(self.sidebarTargetWidth(), self.sidebarWidth())));
 }
 
 /// The visible header bounds after applying the same right edge as painting
@@ -483,7 +483,7 @@ pub fn fileOpsBox(self: *App) shell_ui.Rect {
     return .{
         .x = 12,
         .y = @floatFromInt(card.y + card.header_height + self.torrentSidebarHeight() + app_model.SidebarLayout.gap),
-        .w = @floatFromInt(@max(0, self.sidebarWidth() - 24 - self.scrollbarGutter())),
+        .w = @floatCast(@max(0, self.sidebarContentWidth() - 24)),
         .h = 52,
     };
 }
@@ -560,6 +560,8 @@ pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
     if (progress.state != .running and progress.state != .paused and progress.state != .waiting_conflict) return;
     const area = fileOpsBox(self);
     if (area.w < 120) return;
+
+    @import("app_draw.zig").drawSidebarTransferSurface(cr, area);
 
     const palette = ui_theme.shellPalette();
     const fraction: ?f64 = if (progress.total_bytes_known and progress.total_bytes > 0)

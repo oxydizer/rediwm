@@ -152,7 +152,17 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     if (self.menu != null) {
         if (self.menuHit(x, y)) |row| self.menu_selected = row;
     }
-    if (old_hover != self.hoverKey()) self.invalidateHover(old_hover, self.hoverKey());
+    const new_hover = self.hoverKey();
+    if (old_hover != new_hover) {
+        self.invalidateHover(old_hover, new_hover);
+    } else if (new_hover == std.math.maxInt(usize) - 2001 or
+        new_hover == std.math.maxInt(usize) - 2002)
+    {
+        // Sidebar transfer tooltips follow the pointer even while their
+        // owning hover key remains unchanged. Repaint to clear the old
+        // tooltip position before drawing it at the new one.
+        self.invalidate();
+    }
 
     if (self.sidebar_scroll_drag.active) {
         if (self.sidebarScrollbar()) |bar| {

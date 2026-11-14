@@ -802,6 +802,7 @@ pub const App = struct {
     pub const drawPackPlaceIcon = app_sidebar_paint.drawPackPlaceIcon;
     pub const renderSidebar = app_sidebar_paint.renderSidebar;
     pub const sidebarLayout = app_sidebar_paint.sidebarLayout;
+    pub const sidebarContentWidth = app_sidebar_paint.sidebarContentWidth;
     pub const sidebarHeaderAt = app_sidebar_paint.sidebarHeaderAt;
     pub const sidebarHeaderBounds = app_sidebar_paint.sidebarHeaderBounds;
     pub const sidebarBodyY = app_sidebar_paint.sidebarBodyY;

@@ -76,6 +76,17 @@ pub fn drawProgressBar(
     c.cairo_fill(cr);
 }
 
+/// A subtle individual surface for compact transfer entries in the sidebar.
+pub fn drawSidebarTransferSurface(cr: *c.cairo_t, area: anytype) void {
+    if (area.w <= 0 or area.h <= 0) return;
+    roundedRect(cr, area.x, area.y, area.w, area.h, 7);
+    setSource(cr, withAlpha(ui_theme.global.app_item_hover, 0.12));
+    c.cairo_fill_preserve(cr);
+    setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), 0.12));
+    c.cairo_set_line_width(cr, 1);
+    c.cairo_stroke(cr);
+}
+
 /// Shared compact row for file and torrent transfers.
 pub fn drawTransferProgressRow(
     cr: *c.cairo_t,
