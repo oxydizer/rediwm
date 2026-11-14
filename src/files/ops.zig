@@ -508,6 +508,7 @@ pub const JobRunner = struct {
     kind: OpKind = .copy,
     sources: std.ArrayList([]const u8) = .empty,
     outcomes: std.ArrayList(ItemOutcome) = .empty,
+    destination_paths: std.ArrayList([]u8) = .empty,
     dest_dir: []u8 = &[_]u8{},
     member: ?[]u8 = null,
     result_path: ?[]u8 = null,
@@ -517,6 +518,8 @@ pub const JobRunner = struct {
     total_items: usize = 0,
     processed_items: usize = 0,
     item_bytes: std.ArrayList(u64) = .empty,
+    item_transferred_bytes: std.ArrayList(u64) = .empty,
+    current_item_index: usize = std.math.maxInt(usize),
     total_bytes: u64 = 0,
     transferred_bytes: u64 = 0,
     total_bytes_known: bool = false,
@@ -576,8 +579,13 @@ pub const JobRunner = struct {
         self.temporary_dirs.deinit(self.allocator);
         for (self.sources.items) |s| self.allocator.free(s);
         self.sources.deinit(self.allocator);
+        for (self.destination_paths.items) |path| {
+            if (path.len > 0) self.allocator.free(path);
+        }
+        self.destination_paths.deinit(self.allocator);
         self.outcomes.deinit(self.allocator);
         self.item_bytes.deinit(self.allocator);
+        self.item_transferred_bytes.deinit(self.allocator);
 
         _ = c.pthread_cond_destroy(&self.cond);
         _ = c.pthread_mutex_destroy(&self.mutex);
@@ -625,6 +633,10 @@ pub const JobRunner = struct {
         self.state = .idle;
         for (self.sources.items) |s| self.allocator.free(s);
         self.sources.clearRetainingCapacity();
+        for (self.destination_paths.items) |path| {
+            if (path.len > 0) self.allocator.free(path);
+        }
+        self.destination_paths.clearRetainingCapacity();
 
         for (sources) |src| {
             const owned = try self.allocator.dupe(u8, src);
@@ -633,8 +645,12 @@ pub const JobRunner = struct {
         }
         self.outcomes.clearRetainingCapacity();
         try self.outcomes.appendNTimes(self.allocator, .cancelled, sources.len);
+        try self.destination_paths.appendNTimes(self.allocator, &.{}, sources.len);
         self.item_bytes.clearRetainingCapacity();
         try self.item_bytes.appendNTimes(self.allocator, 0, sources.len);
+        self.item_transferred_bytes.clearRetainingCapacity();
+        try self.item_transferred_bytes.appendNTimes(self.allocator, 0, sources.len);
+        self.current_item_index = std.math.maxInt(usize);
         self.dest_dir = try self.allocator.dupe(u8, dest_dir);
         if (member) |name| self.member = try self.allocator.dupe(u8, name);
         self.kind = kind;
@@ -755,8 +771,62 @@ pub const JobRunner = struct {
         } else {
             self.transferred_bytes += bytes;
         }
+        if (self.current_item_index < self.item_transferred_bytes.items.len) {
+            const item_bytes = &self.item_transferred_bytes.items[self.current_item_index];
+            if (bytes > std.math.maxInt(u64) - item_bytes.*) {
+                item_bytes.* = std.math.maxInt(u64);
+            } else {
+                item_bytes.* += bytes;
+            }
+        }
         self.notify();
         _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    /// Returns the visible progress for a top-level copy/move item.
+    /// Completed, skipped and failed outcomes remain visible until the job ends.
+    pub fn progressForPath(self: *JobRunner, path: []const u8) ?f64 {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        if (self.state == .idle or self.state == .finished or
+            (self.kind != .copy and self.kind != .move)) return null;
+
+        for (self.sources.items, 0..) |source, idx| {
+            const source_match = std.mem.eql(u8, source, path);
+            const destination_match = idx < self.destination_paths.items.len and
+                self.destination_paths.items[idx].len > 0 and
+                std.mem.eql(u8, self.destination_paths.items[idx], path);
+            if (!source_match and !destination_match) continue;
+
+            if (idx == self.current_item_index) {
+                const total = self.item_bytes.items[idx];
+                if (total == 0) return 0;
+                return @min(1, @as(f64, @floatFromInt(self.item_transferred_bytes.items[idx])) /
+                    @as(f64, @floatFromInt(total)));
+            }
+
+            return switch (self.outcomes.items[idx]) {
+                .success => 1,
+                .skipped, .failed => 0,
+                .cancelled => null,
+            };
+        }
+        return null;
+    }
+
+    fn recordDestinationPath(self: *JobRunner, path: []const u8) !void {
+        const owned = try self.allocator.alloc(u8, path.len);
+        errdefer self.allocator.free(owned);
+        @memcpy(owned, path);
+
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        if (self.current_item_index >= self.destination_paths.items.len) return;
+        const slot = &self.destination_paths.items[self.current_item_index];
+        if (slot.len > 0) self.allocator.free(slot.*);
+        slot.* = owned;
     }
 
     /// Only finished jobs expose results, so their source strings remain stable.
@@ -774,6 +844,7 @@ pub const JobRunner = struct {
         const name = std.fs.path.basename(src);
         var target = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.dest_dir, name });
         defer self.allocator.free(target);
+        try self.recordDestinationPath(target);
         var buf: [4096]u8 = undefined;
         const target_z = try std.fmt.bufPrintSentinel(&buf, "{s}", .{target}, 0);
         var st: c.struct_stat = undefined;
@@ -805,6 +876,7 @@ pub const JobRunner = struct {
                     const replacement = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.dest_dir, unique });
                     self.allocator.free(target);
                     target = replacement;
+                    try self.recordDestinationPath(target);
                 },
             }
         }
@@ -891,6 +963,7 @@ pub const JobRunner = struct {
             if (self.cancel_flag.load(.acquire)) break;
             _ = c.pthread_mutex_lock(&self.mutex);
             self.current_item_name = std.fs.path.basename(src);
+            self.current_item_index = idx;
             self.notify();
             _ = c.pthread_mutex_unlock(&self.mutex);
             const outcome = (if (self.kind == .extract or self.kind == .open_archive_member) self.extractArchive(src) else self.transfer(src, self.item_bytes.items[idx])) catch |err| blk: {
