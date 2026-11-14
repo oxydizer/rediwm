@@ -132,13 +132,15 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
         @intFromFloat(self.gitCardHeight())
     else
         0;
-    const transfers_body = self.torrentSidebarHeight() +
-        (if (self.fileOpsSidebarHeight() > 0) @as(i32, app_model.SidebarLayout.gap) + self.fileOpsSidebarHeight() else 0);
+    const torrent_height = self.torrentSidebarHeight();
+    const file_ops_height = self.fileOpsSidebarHeight();
+    const transfers_body = torrent_height +
+        (if (file_ops_height > 0) @as(i32, app_model.SidebarLayout.gap) + file_ops_height else 0);
 
     return app_model.SidebarLayout.init(
         top,
         .{ places_body, disks_body, git_body, transfers_body },
-        .{ true, true, self.repository() != null, self.torrentSidebarHeight() > 0 or self.fileOpsSidebarHeight() > 0 },
+        .{ true, true, self.repository() != null, torrent_height > 0 or file_ops_height > 0 },
         self.sidebar_expanded,
     );
 }
@@ -193,6 +195,8 @@ pub fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {
         return;
     }
     const hovered = self.hoverKey();
+    const disks_card = self.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)];
+    const metrics = fontMetrics(cr, shell_ui.textSize());
     for (self.device_list.items, 0..) |*volume, k| {
         const index = self.deviceBase() + k;
         const y: f64 = @floatFromInt(self.placeY(index));
@@ -202,7 +206,6 @@ pub fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {
             const row = self.placeRect(index);
             shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
         }
-        const disks_card = self.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)];
         drawSidebarRowProximity(self, cr, index, disks_card, self.pinRowY(self.pins.items.items.len) + 24);
         if (shell_ui.Layer.begin(cr, .{ .x = 21, .y = @floatCast(y + 3), .w = 24, .h = 24 })) |icon_layer| {
             var layer = icon_layer;
@@ -210,7 +213,6 @@ pub fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {
             layer.finish();
         }
         setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), alpha));
-        const metrics = fontMetrics(cr, shell_ui.textSize());
         var label_buf: [96]u8 = undefined;
         const reserve: f64 = if (mounted) 28 else 0;
         drawEllipsis(cr, deviceLabel(volume, &label_buf), 54, y + (30 - metrics.ascent - metrics.descent) / 2 + metrics.ascent, content_width - 64 - reserve, shell_ui.textSize(), false);

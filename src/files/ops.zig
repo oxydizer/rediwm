@@ -320,17 +320,21 @@ fn copyFileContentsTracked(
             return error.ReadFailed;
         }
         var written: usize = 0;
+        var chunk_written: u64 = 0;
         const total = @as(usize, @intCast(n));
         while (written < total) {
             const wn = c.write(dst_fd, buf[written..].ptr, total - written);
             if (wn < 0 and std.posix.errno(wn) == .INTR) continue;
             if (wn <= 0) {
+                if (runner) |job| job.addTransferredBytes(chunk_written);
                 _ = c.unlink(dst_z);
                 return error.WriteFailed;
             }
-            written += @intCast(wn);
-            if (runner) |job| job.addTransferredBytes(@intCast(wn));
+            const count: usize = @intCast(wn);
+            written += count;
+            chunk_written += count;
         }
+        if (runner) |job| job.addTransferredBytes(chunk_written);
     }
 }
 
