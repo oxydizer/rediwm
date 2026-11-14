@@ -27,6 +27,8 @@ pub const View = struct {
     ratio: i32 = 1,
     limit: i32 = 1048576,
     focus: usize = 0,
+    last_click_row: ?usize = null,
+    last_click_time: i64 = 0,
     pub fn id(self: *const View) []const u8 {
         return std.mem.sliceTo(&self.selected, 0);
     }
@@ -258,6 +260,33 @@ fn activate(self: *App, id: usize) void {
             self.transfer_view.selected[0] = 0;
             self.closeDialog();
         },
+        25 => if (selectedTransferRow(self)) |row| {
+            const entries = self.torrents.items();
+            if (row < entries.len) {
+                self.toggleTorrent(entries[row]);
+            } else if (self.job_runner) |runner| {
+                const progress = fileOperationProgress(self) orelse return;
+                if (progress.state == .paused) {
+                    runner.resumeJob();
+                } else if (progress.state == .running) {
+                    runner.pause();
+                }
+            }
+        },
+        26 => if (selectedTransferRow(self)) |row| {
+            const entries = self.torrents.items();
+            if (row < entries.len) {
+                _ = self.torrents.send(.{ .op = "remove", .id = entries[row].id });
+                self.transfer_view.selected[0] = 0;
+                self.transfer_view.row = null;
+            } else if (self.job_runner) |runner| {
+                runner.cancel();
+                self.transfer_view.row = null;
+            }
+        },
+        27 => if (selectedTransferRow(self)) |row| {
+            if (row < self.torrents.items().len) openTransfer(self, row);
+        },
         12, 13 => {
             const page = &self.transfer_view.file_page;
             const count = if (selected(self)) |t| t.files.len else 0;
@@ -371,22 +400,58 @@ const header = @import("header.zig");
 const field = @import("ui").widgets.field;
 const Icon = @import("ui").layout.IconId;
 const ToolbarControl = struct { rect: Rect, label: []const u8, id: usize, icon: ?Icon = null, enabled: bool = true };
-fn toolbarControls(self: *App) [9]ToolbarControl {
+
+fn selectedTransferRow(self: *App) ?usize {
+    const row = self.transfer_view.row orelse return null;
+    const count = self.torrents.items().len + @as(usize, @intFromBool(fileOperationProgress(self) != null));
+    return if (row < count) row else null;
+}
+
+fn toolbarControls(self: *App) [10]ToolbarControl {
     const width: f32 = @floatFromInt(self.w);
     const y: f32 = if (self.w < 500) 110 else 64;
     const gap: f32 = 8;
-    const scale = @min(1, (width - 40) / 320);
+    const scale = @min(1, @max(0, (width - 64) / 424));
     const add_w = 112 * scale;
     const pause_w = 92 * scale;
     const stop_w = 116 * scale;
+    const details_w = 80 * scale;
+
+    const entries = self.torrents.items();
+    const row = selectedTransferRow(self);
+    const file_op = fileOperationProgress(self);
+    const selected_file_op = row != null and file_op != null and row.? == entries.len;
+    const selected_torrent = if (row) |index| (if (index < entries.len) entries[index] else null) else null;
+
+    const can_pause = if (selected_file_op) blk: {
+        const progress = file_op.?;
+        break :blk (progress.kind == .copy or progress.kind == .move) and
+            (progress.state == .running or progress.state == .paused);
+    } else if (selected_torrent) |t| !t.pending else false;
+    const pause_label = if (selected_file_op)
+        (if (file_op.?.state == .paused) tr("Resume") else tr("Pause"))
+    else if (selected_torrent) |t|
+        (if (t.paused) tr("Resume") else tr("Pause"))
+    else
+        tr("Pause");
+
+    const cancel_label = if (selected_file_op) tr("Cancel") else tr("Remove");
+    const can_cancel = selected_file_op or selected_torrent != null;
+    const can_details = selected_torrent != null;
+
+    const pause_x = 12 + add_w + gap;
+    const cancel_x = pause_x + pause_w + gap;
+    const details_x = cancel_x + stop_w + gap;
+
     return .{
         .{ .rect = .{ .x = 12, .y = 12, .w = 30, .h = 32 }, .label = tr("Back"), .id = 20, .icon = .chevron_left },
         .{ .rect = .{ .x = 44, .y = 12, .w = 30, .h = 32 }, .label = tr("Forward"), .id = 21, .icon = .chevron_right, .enabled = false },
         .{ .rect = .{ .x = 76, .y = 12, .w = 30, .h = 32 }, .label = tr("Up"), .id = 20, .icon = .chevron_up },
         .{ .rect = .{ .x = width - 78, .y = 12, .w = 30, .h = 32 }, .label = tr("Refresh"), .id = 22, .icon = .refresh },
         .{ .rect = .{ .x = 12, .y = y, .w = add_w, .h = 36 }, .label = tr("Add torrent…"), .id = 3 },
-        .{ .rect = .{ .x = 12 + add_w + gap, .y = y, .w = pause_w, .h = 36 }, .label = tr("Pause all"), .id = 4 },
-        .{ .rect = .{ .x = 12 + add_w + pause_w + 2 * gap, .y = y, .w = stop_w, .h = 36 }, .label = tr("Stop seeding"), .id = 5 },
+        .{ .rect = .{ .x = pause_x, .y = y, .w = pause_w, .h = 36 }, .label = pause_label, .id = 25, .enabled = can_pause },
+        .{ .rect = .{ .x = cancel_x, .y = y, .w = stop_w, .h = 36 }, .label = cancel_label, .id = 26, .enabled = can_cancel },
+        .{ .rect = .{ .x = details_x, .y = y, .w = details_w, .h = 36 }, .label = tr("Details"), .id = 27, .enabled = can_details },
         .{ .rect = .{ .x = width - 88, .y = 64, .w = 34, .h = 36 }, .label = tr("Grid"), .id = 23, .icon = .view_grid, .enabled = false },
         .{ .rect = .{ .x = width - 52, .y = 64, .w = 34, .h = 36 }, .label = tr("List"), .id = 24, .icon = .view_list },
     };
@@ -421,7 +486,8 @@ fn transferAt(self: *App, x: f64, y: f64) ?usize {
     if (offset < 0) return null;
     const row: usize = @intFromFloat(@floor(offset / @as(f64, @floatFromInt(self.rowHeight()))));
     if (@mod(offset, @as(f64, @floatFromInt(self.rowHeight()))) >= @as(f64, @floatFromInt(self.cardHeight()))) return null;
-    return if (row < self.torrents.items().len) row else null;
+    const count = self.torrents.items().len + @as(usize, @intFromBool(fileOperationProgress(self) != null));
+    return if (row < count) row else null;
 }
 
 fn fileOperationProgress(self: *App) ?ops_mod.ProgressInfo {
@@ -465,6 +531,15 @@ fn renderFileOperationRow(
         .w = @floatFromInt(@max(0, self.cellWidth() - 20)),
         .h = @floatFromInt(self.cardHeight()),
     };
+    const hover = if (self.dialog == null) transferAt(self, self.mouse_x, self.mouse_y) else null;
+    if (self.transfer_view.row == index or hover == index) {
+        ui.drawItemHighlight(cr, .{
+            .x = row.x,
+            .y = row.y,
+            .w = row.w,
+            .h = row.h,
+        }, self.transfer_view.row == index, 1, 1);
+    }
 
     const operation = switch (progress.kind) {
         .copy => tr("Copy"),
@@ -665,7 +740,28 @@ pub fn transferPaneClick(self: *App, x: f64, y: f64, mouse_button: u32) bool {
     if (x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) return false;
     if (mouse_button == 0x110) {
         self.focus = .file_view;
-        if (transferAt(self, x, y)) |row| openTransfer(self, row);
+        if (transferAt(self, x, y)) |row| {
+            const now = draw.nowMs();
+            const double_click = self.transfer_view.last_click_row == row and
+                now - self.transfer_view.last_click_time < 400;
+
+            self.transfer_view.row = row;
+            if (row < self.torrents.items().len) {
+                activate(self, 100 + row);
+            } else {
+                self.transfer_view.selected[0] = 0;
+            }
+
+            if (double_click and row < self.torrents.items().len) {
+                openTransfer(self, row);
+                self.transfer_view.last_click_row = null;
+                self.transfer_view.last_click_time = 0;
+            } else {
+                self.transfer_view.last_click_row = row;
+                self.transfer_view.last_click_time = now;
+            }
+            self.invalidate();
+        }
     }
     return true;
 }
@@ -694,7 +790,7 @@ pub fn transferPaneKey(self: *App, sym: u32) void {
         }
         self.transfer_view.focus = index;
     } else if (sym == c.XKB_KEY_Up or sym == c.XKB_KEY_Down or sym == c.XKB_KEY_Home or sym == c.XKB_KEY_End or sym == c.XKB_KEY_Page_Up or sym == c.XKB_KEY_Page_Down) {
-        const count = self.torrents.items().len;
+        const count = self.torrents.items().len + @as(usize, @intFromBool(fileOperationProgress(self) != null));
         if (count > 0) {
             const row = @min(self.transfer_view.row orelse 0, count - 1);
             const page: usize = @intCast(@max(1, @divTrunc(self.contentBottom() - self.viewTop(), self.rowHeight())));
@@ -707,7 +803,19 @@ pub fn transferPaneKey(self: *App, sym: u32) void {
                 else => if (self.transfer_view.row == null) 0 else @min(count - 1, row + 1),
             };
             self.transfer_view.focus = 0;
-            self.revealIndex(self.transfer_view.row.?);
+            const selected_row = self.transfer_view.row.?;
+            if (selected_row < self.torrents.items().len) {
+                activate(self, 100 + selected_row);
+            } else {
+                self.transfer_view.selected[0] = 0;
+            }
+            const row_top = @as(i32, @intCast(selected_row)) * self.rowHeight();
+            const visible_height = @max(1, self.contentBottom() - self.viewTop());
+            if (row_top < self.scroll_y) {
+                self.scroll_y = row_top;
+            } else if (row_top + self.rowHeight() > self.scroll_y + visible_height) {
+                self.scroll_y = row_top + self.rowHeight() - visible_height;
+            }
         }
     } else if (sym == c.XKB_KEY_Return or sym == c.XKB_KEY_space) {
         const index = self.transfer_view.focus;
@@ -715,7 +823,11 @@ pub fn transferPaneKey(self: *App, sym: u32) void {
             const control = list[index - 1];
             _ = self.transferPaneClick(control.rect.x + 1, control.rect.y + 1, 0x110);
         } else if (self.transfer_view.row) |row| {
-            if (row < self.torrents.items().len) openTransfer(self, row);
+            if (row < self.torrents.items().len) {
+                openTransfer(self, row);
+            } else {
+                activate(self, 25);
+            }
         }
     }
     self.invalidate();
@@ -729,6 +841,7 @@ pub fn toggleTorrent(self: *App, t: Transfer) void {
     _ = self.torrents.send(.{ .op = if (t.paused) @as([]const u8, "resume") else "pause", .id = t.id });
     self.invalidate();
 }
+
 pub fn openTorrentDetails(self: *App, id: []const u8) void {
     for (self.torrents.items(), 0..) |t, index| if (std.mem.eql(u8, t.id, id)) {
         self.closeDialog();
