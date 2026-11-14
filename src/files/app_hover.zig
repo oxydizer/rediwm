@@ -270,7 +270,7 @@ pub fn updateSidebarSurface(self: *App) void {
         .clip = .{
             .x = 8,
             .y = @floatFromInt(body_top),
-            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 8)),
             .h = @floatFromInt(card.body_height),
         },
         .role = .interactive,
@@ -532,7 +532,7 @@ pub fn damageSidebarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
         const clip: button_widget.Rect = .{
             .x = 8,
             .y = @floatFromInt(card.y + card.header_height),
-            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 8)),
             .h = @floatFromInt(card.body_height),
         };
         const before = button_widget.sampleProximity(rect, @floatCast(old_x), @floatCast(old_y), clip);

@@ -99,7 +99,7 @@ fn drawSidebarRowProximity(
     const clip: shell_ui.Rect = .{
         .x = 8,
         .y = @floatFromInt(source_top),
-        .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
+        .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 8)),
         .h = @floatFromInt(card.body_height),
     };
     shell_ui.drawProximityGlow(
