@@ -606,8 +606,21 @@ pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {
 pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
     if (self.hoverKey() != std.math.maxInt(usize) - 2002) return;
 
+    const title, const running_status = if (self.job_runner) |runner| switch (runner.kind) {
+        .copy => .{ tr("Copying files"), tr("Copying") },
+        .move => .{ tr("Moving files"), tr("Moving") },
+        .extract => .{ tr("Extracting files"), tr("Extracting") },
+        .open_archive_member => .{ tr("Extracting archive member"), tr("Extracting") },
+    } else .{ tr("File transfer"), tr("In progress") };
+    const status = switch (self.job_state) {
+        .running => running_status,
+        .paused => tr("Paused"),
+        .waiting_conflict => tr("Waiting for confirmation"),
+        .finished => tr("Complete"),
+        .idle => tr("Ready"),
+    };
+
     var speed_buf: [96]u8 = undefined;
-    var bytes_buf: [96]u8 = undefined;
     var speed_size_buf: [32]u8 = undefined;
     var bytes_size_buf: [32]u8 = undefined;
     const speed = i18n.fmt(&speed_buf, tr("{rate}/s"), .{
@@ -616,12 +629,14 @@ pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
             &speed_size_buf,
         ),
     }) catch "";
-    const transferred = i18n.fmt(&bytes_buf, tr("{value} transferred"), .{
-        .value = @import("app_draw.zig").formatSize(
-            @intCast(@min(self.job_transferred_bytes, @as(u64, std.math.maxInt(i64)))),
-            &bytes_size_buf,
-        ),
-    }) catch "";
-    const details = [_][]const u8{ speed, transferred };
-    transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, tr("File transfer"), &details);
+    const transferred = @import("app_draw.zig").formatSize(
+        @intCast(@min(self.job_transferred_bytes, @as(u64, std.math.maxInt(i64)))),
+        &bytes_size_buf,
+    );
+    const details = [_]transferTip.Detail{
+        .{ .label = tr("Status"), .value = status },
+        .{ .label = tr("Speed"), .value = speed },
+        .{ .label = tr("Transferred"), .value = transferred },
+    };
+    transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, title, &details);
 }

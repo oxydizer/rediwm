@@ -1,10 +1,16 @@
 //! Shared tooltip frame and layout for transfer details.
 const std = @import("std");
 const ui = @import("ui").cairo;
+const text = @import("ui").text;
 const theme = @import("ui").theme;
 const frame = @import("ui").widgets.dialog;
 const c = @import("c.zig").api;
 const header = @import("header.zig");
+
+pub const Detail = struct {
+    label: []const u8,
+    value: []const u8,
+};
 
 /// Exact window-coordinate bounds shared by tooltip painting and damage.
 pub fn bounds(
@@ -45,7 +51,7 @@ pub fn render(
     mouse_x: f64,
     mouse_y: f64,
     title: []const u8,
-    details: []const []const u8,
+    details: []const Detail,
 ) void {
     const area = bounds(window_w, window_h, mouse_x, mouse_y, details.len) orelse return;
     var layer = ui.Layer.begin(cr, .{
@@ -65,8 +71,21 @@ pub fn render(
         .color = palette.fg,
     });
     for (details, 0..) |detail, i| {
-        layer.renderer.drawText(12, 31 + @as(f32, @floatFromInt(i)) * 22, @as(f32, @floatCast(area.w)) - 24, 22, .{
-            .content = detail,
+        const y = 31 + @as(f32, @floatFromInt(i)) * 22;
+        const value_width = text.measureWidthF(
+            detail.value,
+            .manrope,
+            ui.statusSize(),
+            layer.renderer.scale,
+        ) catch 0;
+        const value_x = @max(12, @as(f32, @floatCast(area.w)) - 12 - value_width);
+        layer.renderer.drawText(12, y, @max(0, value_x - 20), 22, .{
+            .content = detail.label,
+            .font_size = ui.statusSize(),
+            .color = palette.fg,
+        });
+        layer.renderer.drawText(value_x, y, value_width + 1, 22, .{
+            .content = detail.value,
             .font_size = ui.statusSize(),
             .color = palette.fg,
         });

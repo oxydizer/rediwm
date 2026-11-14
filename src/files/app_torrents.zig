@@ -932,16 +932,19 @@ pub fn renderTorrentSidebarTip(self: *App, cr: *c.cairo_t) void {
     if (self.torrents.items().len == 0) return;
     const t = self.torrents.items()[0];
 
-    var download_buf: [96]u8 = undefined;
-    var upload_buf: [96]u8 = undefined;
+    var speed_buf: [160]u8 = undefined;
+    var transferred_buf: [32]u8 = undefined;
     var download_size_buf: [32]u8 = undefined;
     var upload_size_buf: [32]u8 = undefined;
-    const download = i18n.fmt(&download_buf, tr("Download: {rate}/s"), .{
-        .rate = draw.formatSize(t.download_rate, &download_size_buf),
+    const speed = i18n.fmt(&speed_buf, tr("↑ {upload}/s · ↓ {download}/s"), .{
+        .upload = draw.formatSize(t.upload_rate, &upload_size_buf),
+        .download = draw.formatSize(t.download_rate, &download_size_buf),
     }) catch "";
-    const upload = i18n.fmt(&upload_buf, tr("Upload: {rate}/s"), .{
-        .rate = draw.formatSize(t.upload_rate, &upload_size_buf),
-    }) catch "";
-    const details = [_][]const u8{ download, upload };
+    const transferred = draw.formatSize(t.done, &transferred_buf);
+    const details = [_]transferTip.Detail{
+        .{ .label = tr("Status"), .value = t.status() },
+        .{ .label = tr("Speed"), .value = speed },
+        .{ .label = tr("Transferred"), .value = transferred },
+    };
     transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, t.name, &details);
 }
