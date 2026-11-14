@@ -103,6 +103,73 @@ test "sidebar header clicks independently toggle sections" {
     try std.testing.expectEqual(@as(?app_model.SidebarSection, null), app.sidebarHeaderAt(-1, selected_y));
 }
 
+test "sidebar header bounds follow painted width and scrollbar track" {
+    var app = try testApp();
+    defer app.deinit();
+    app.w = 800;
+    app.h = 1000;
+    app.sidebar_px = 180;
+
+    const places = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.places)];
+    const bounds = app.sidebarHeaderBounds(places).?;
+    try std.testing.expectEqual(@as(f64, 8), bounds.x);
+    try std.testing.expectEqual(@as(f64, 172), bounds.w);
+
+    const center_y = bounds.y + bounds.h / 2;
+    try std.testing.expectEqual(
+        app_model.SidebarSection.places,
+        app.sidebarHeaderAt(bounds.x + bounds.w - 0.5, center_y).?,
+    );
+    try std.testing.expectEqual(
+        @as(?app_model.SidebarSection, null),
+        app.sidebarHeaderAt(bounds.x + bounds.w, center_y),
+    );
+    try std.testing.expectEqual(bounds, app.hoverBounds(940).?);
+
+    // A short viewport forces a sidebar scrollbar. Header hit bounds must
+    // stop at the same track edge used by the painter.
+    app.h = 220;
+    app.sidebar_expanded[1] = true;
+    if (app.sidebarScrollbar()) |bar| {
+        const scrolled_places = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.places)];
+        const scrolled_bounds = app.sidebarHeaderBounds(scrolled_places).?;
+        try std.testing.expectApproxEqAbs(
+            @as(f64, @floatCast(bar.track.x - 16)),
+            scrolled_bounds.w,
+            0.001,
+        );
+        try std.testing.expectEqual(
+            @as(?app_model.SidebarSection, null),
+            app.sidebarHeaderAt(@as(f64, @floatCast(bar.track.x)), scrolled_bounds.y + 10),
+        );
+    } else {
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "adjacent collapsed sidebar headers invalidate their shared transition area" {
+    var app = try testApp();
+    defer app.deinit();
+    app.w = 800;
+    app.h = 1000;
+    app.sidebar_expanded[0] = false;
+
+    const first = app.hoverBounds(940).?;
+    const second = app.hoverBounds(941).?;
+    try std.testing.expect(second.y >= first.y + first.h);
+
+    app.dirty = false;
+    app.paint_damage = null;
+    app.invalidateHover(940, 941);
+    const damage = app.paint_damage.?;
+    try std.testing.expect(damage.x <= first.x);
+    try std.testing.expect(damage.x + damage.w >= first.x + first.w);
+    try std.testing.expect(damage.x <= second.x);
+    try std.testing.expect(damage.x + damage.w >= second.x + second.w);
+    try std.testing.expect(damage.y <= first.y);
+    try std.testing.expect(damage.y + damage.h >= second.y + second.h);
+}
+
 test "sidebar body geometry rejects hidden areas and translates legacy section coordinates" {
     var app = try testApp();
     defer app.deinit();

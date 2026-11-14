@@ -10,6 +10,7 @@ const recent = @import("recent.zig");
 const icons = @import("../icon_cache.zig");
 const shell_ui = @import("ui").cairo;
 const ui_theme = @import("ui").theme;
+const header = @import("header.zig");
 const pins_mod = @import("pins.zig");
 const app_model = @import("app_model.zig");
 const places = App.places;
@@ -64,24 +65,23 @@ fn drawSidebarHeader(
 fn drawSidebarHeaderProximity(
     self: *App,
     cr: *c.cairo_t,
-    card: app_model.SidebarCardGeometry,
-    content_width: f64,
+    bounds: header.Rect,
 ) void {
     shell_ui.drawProximityGlow(
         cr,
         .{
             .x = 12,
-            .y = @floatFromInt(card.y + 2),
-        .w = @floatCast(@max(@as(f64, 0), content_width - 24)),
+            .y = @floatCast(bounds.y + 2),
+            .w = @floatCast(@max(@as(f64, 0), bounds.w - 8)),
             .h = 28,
         },
         ui_theme.global.app_sidebar_item_radius,
         .{ .x = self.mouse_x, .y = self.mouse_y },
         .{
             .x = 8,
-            .y = @floatFromInt(card.y),
-            .w = @floatCast(@max(@as(f64, 0), content_width - 16)),
-            .h = @floatFromInt(card.header_height),
+            .y = @floatCast(bounds.y),
+            .w = @floatCast(bounds.w),
+            .h = @floatCast(bounds.h),
         },
     );
 }
@@ -145,20 +145,43 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
     );
 }
 
+/// The content width used by sidebar painting: the scrollbar track when it
+/// exists, otherwise the final target width while the panel is animating.
+fn sidebarContentWidth(self: *App) f64 {
+    return if (self.sidebarScrollbar()) |bar|
+        @as(f64, @floatCast(bar.track.x))
+    else
+        @as(f64, @floatFromInt(self.sidebarTargetWidth()));
+}
+
+/// The visible header bounds after applying the same right edge as painting
+/// and the sidebar's current animated clip width.
+pub fn sidebarHeaderBounds(self: *App, card: app_model.SidebarCardGeometry) ?header.Rect {
+    if (!card.visible or self.sidebarWidth() <= 8) return null;
+    const right = @min(
+        sidebarContentWidth(self) - 8,
+        @as(f64, @floatFromInt(self.sidebarWidth())),
+    );
+    const width = right - 8;
+    if (width <= 0) return null;
+    return .{
+        .x = 8,
+        .y = @floatFromInt(card.y),
+        .w = width,
+        .h = @floatFromInt(card.header_height),
+    };
+}
+
 /// Returns the visible accordion header under the pointer. Card bodies are
 /// deliberately excluded so section selection cannot steal their controls.
 pub fn sidebarHeaderAt(self: *App, x: f64, y: f64) ?app_model.SidebarSection {
-    if (self.sidebarWidth() <= 16 or
-        x < 8 or x >= @as(f64, @floatFromInt(self.sidebarWidth() - 8)) or
-        y < @as(f64, @floatFromInt(self.contentTop())) or
+    if (y < @as(f64, @floatFromInt(self.contentTop())) or
         y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return null;
 
     const layout = self.sidebarLayout();
     for (layout.cards, 0..) |card, i| {
-        if (!card.visible) continue;
-        const top: f64 = @floatFromInt(card.y);
-        const bottom = top + @as(f64, @floatFromInt(card.header_height));
-        if (y >= top and y < bottom) return @enumFromInt(i);
+        const bounds = sidebarHeaderBounds(self, card) orelse continue;
+        if (bounds.contains(x, y)) return @enumFromInt(i);
     }
     return null;
 }
@@ -303,9 +326,8 @@ pub fn drawPackPlaceIcon(self: *App, cr: *c.cairo_t, index: usize, y: f64, alpha
 pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
     const width: f64 = @floatFromInt(self.sidebarWidth());
     if (width == 0) return;
-    const bar = self.sidebarScrollbar();
     // Labels keep their final layout while the panel grows or shrinks.
-    const content_width = if (bar) |b| @as(f64, b.track.x) else @as(f64, @floatFromInt(self.sidebarTargetWidth()));
+    const content_width = sidebarContentWidth(self);
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
     c.cairo_rectangle(cr, 0, @floatFromInt(self.contentTop()), width, @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()));
@@ -333,7 +355,9 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
             @max(0, content_width - 16),
             @floatFromInt(height),
         );
-        drawSidebarHeaderProximity(self, cr, card, content_width);
+        if (sidebarHeaderBounds(self, card)) |bounds| {
+            drawSidebarHeaderProximity(self, cr, bounds);
+        }
         drawSidebarHeader(cr, section_names[i], card.y, content_width, card.expanded);
     }
 

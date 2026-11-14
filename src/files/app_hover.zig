@@ -18,13 +18,7 @@ pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
     if (key >= 920 and key < 926) return @import("app_audio_bar.zig").rect(self);
     if (key >= 940 and key < 944) {
         const card = self.sidebarLayout().cards[key - 940];
-        if (!card.visible) return null;
-        return .{
-            .x = 8,
-            .y = @floatFromInt(card.y),
-            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
-            .h = @floatFromInt(card.header_height),
-        };
+        return self.sidebarHeaderBounds(card);
     }
     if (key >= std.math.maxInt(usize) - 4096) return null;
     if (key >= 900 and key < 904) return .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) };
@@ -600,19 +594,19 @@ pub fn damageSidebarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
 
     // Card headers use the same proximity light as their rows.
     for (layout.cards) |card| {
-        if (!card.visible) continue;
+        const bounds = self.sidebarHeaderBounds(card) orelse continue;
 
         const rect: button_widget.Rect = .{
             .x = 12,
-            .y = @floatFromInt(card.y + 2),
-            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 24)),
+            .y = @floatCast(bounds.y + 2),
+            .w = @floatCast(@max(0, bounds.w - 8)),
             .h = 28,
         };
         const clip: button_widget.Rect = .{
-            .x = 8,
-            .y = @floatFromInt(card.y),
-            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 16)),
-            .h = @floatFromInt(card.header_height),
+            .x = @floatCast(bounds.x),
+            .y = @floatCast(bounds.y),
+            .w = @floatCast(bounds.w),
+            .h = @floatCast(bounds.h),
         };
         const before = button_widget.sampleProximity(rect, @floatCast(old_x), @floatCast(old_y), clip);
         const after = button_widget.sampleProximity(rect, @floatCast(new_x), @floatCast(new_y), clip);
@@ -623,9 +617,9 @@ pub fn damageSidebarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
         // A clip that cuts those arcs rasterizes the card fill a level
         // differently from a complete repaint.
         const header_damage: header.Rect = .{
-            .x = clip.x,
+            .x = bounds.x,
             .y = rect.y,
-            .w = clip.w,
+            .w = bounds.w,
             .h = rect.h,
         };
         damage = if (damage) |current| unionRect(current, header_damage) else header_damage;

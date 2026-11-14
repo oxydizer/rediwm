@@ -61,6 +61,21 @@ test "retained hover repairs match complete Cairo rasters across isolated transi
         const field = header.field(app.w);
         try points.append(std.testing.allocator, .{ field.x + 12, field.y + 18 });
 
+        // Exercise accordion headers at their painted bounds, including the
+        // right edge where the scrollbar gutter and animated clip matter.
+        for (app.sidebarLayout().cards) |card| {
+            const bounds = app.sidebarHeaderBounds(card) orelse continue;
+            const y = bounds.y + bounds.h / 2;
+            try points.append(std.testing.allocator, .{
+                bounds.x + bounds.w / 2,
+                y,
+            });
+            try points.append(std.testing.allocator, .{
+                bounds.x + bounds.w - 0.5,
+                y,
+            });
+        }
+
         // Exercise visible sidebar rows without depending on their hover keys.
         for (0..app.rowCount()) |index| {
             if (!app.placeVisible(index)) continue;
