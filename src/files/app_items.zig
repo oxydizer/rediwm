@@ -28,6 +28,7 @@ const itemType = App.itemType;
 
 pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
     const accent = ui_theme.shellPalette().accent;
+    const job_progress = if (self.job_runner) |runner| runner.pollProgress() else null;
     const cols = self.columns();
     const cell = self.cellWidth();
     const first = @divTrunc(self.scroll_y, self.rowHeight()) * cols;
@@ -69,6 +70,26 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
         if (cut) c.cairo_push_group(cr);
         const icon = self.itemIconRect(index);
         self.drawItemIcon(cr, item, icon.x, icon.y, icon.w);
+        if (job_progress) |progress| {
+            if ((progress.state == .running or progress.state == .paused) and
+                progress.current_file_path_len > 0 and
+                progress.current_file_size > 0 and
+                std.mem.eql(u8, progress.current_file_path[0..progress.current_file_path_len], item.path))
+            {
+                const fraction = @min(
+                    1.0,
+                    @as(f64, @floatFromInt(progress.current_file_bytes)) /
+                        @as(f64, @floatFromInt(progress.current_file_size)),
+                );
+                const ring_size = @min(26.0, icon.w);
+                shell_ui.drawProgressRing(cr, .{
+                    .x = icon.x + (icon.w - ring_size) / 2,
+                    .y = icon.y + (icon.w - ring_size) / 2,
+                    .w = ring_size,
+                    .h = ring_size,
+                }, fraction, accent);
+            }
+        }
         if (item.is_dir and !item.is_symlink) {
             if (self.job_runner) |runner| {
                 if (runner.progressForPath(item.path)) |progress| {

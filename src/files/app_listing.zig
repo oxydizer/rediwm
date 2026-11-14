@@ -134,6 +134,8 @@ fn damageJobProgress(
     self: *App,
     damage_surfaces: bool,
     damage_tooltip: bool,
+    previous_file_path: []const u8,
+    current_file_path: []const u8,
 ) void {
     if (damage_surfaces) {
         if (self.transfer_view.active) {
@@ -158,8 +160,14 @@ fn damageJobProgress(
             var index = first;
             while (index < last) : (index += 1) {
                 const item = self.items.items[@intCast(index)];
-                if (!item.is_dir or item.is_symlink) continue;
-                if (runner.progressForPath(item.path) == null) continue;
+                const parent_folder = item.is_dir and !item.is_symlink and
+                    runner.progressForPath(item.path) != null;
+                const active_file =
+                    (current_file_path.len > 0 and std.mem.eql(u8, item.path, current_file_path)) or
+                    (previous_file_path.len > 0 and
+                    !std.mem.eql(u8, previous_file_path, current_file_path) and
+                    std.mem.eql(u8, item.path, previous_file_path));
+                if (!parent_folder and !active_file) continue;
 
                 const icon = self.itemIconRect(index);
                 const ring_size = @min(26.0, icon.w);
@@ -240,6 +248,12 @@ pub fn sync(self: *App) void {
     }
     if (self.job_runner) |runner| {
         const progress = runner.pollProgress();
+        const current_file_path = if (progress.state == .running or progress.state == .paused)
+            progress.current_file_path[0..progress.current_file_path_len]
+        else
+            "";
+        const previous_file_path = self.job_current_file_path[0..self.job_current_file_path_len];
+        const file_path_changed = !std.mem.eql(u8, previous_file_path, current_file_path);
         const sample_at = nowMs();
         var rate_changed = false;
         if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
@@ -301,10 +315,23 @@ pub fn sync(self: *App) void {
             const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
             if (structure_changed) {
                 self.invalidate();
-            } else if (bytes_changed or
+            } else if (bytes_changed or file_path_changed or
                 (rate_changed and tooltip_hovered))
             {
-                damageJobProgress(self, bytes_changed, tooltip_hovered);
+                damageJobProgress(
+                    self,
+                    bytes_changed or file_path_changed,
+                    tooltip_hovered,
+                    previous_file_path,
+                    current_file_path,
+                );
+            }
+        }
+        if (file_path_changed) {
+            self.job_current_file_path_len = 0;
+            if (current_file_path.len <= self.job_current_file_path.len) {
+                @memcpy(self.job_current_file_path[0..current_file_path.len], current_file_path);
+                self.job_current_file_path_len = current_file_path.len;
             }
         }
         self.job_progress = progress.processed_items;
