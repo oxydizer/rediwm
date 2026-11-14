@@ -103,6 +103,35 @@ test "sidebar header clicks independently toggle sections" {
     try std.testing.expectEqual(@as(?app_model.SidebarSection, null), app.sidebarHeaderAt(-1, selected_y));
 }
 
+test "collapsing sidebar section while scrolled clamps the scroll offset" {
+    var app = try testApp();
+    defer app.deinit();
+    app.w = 800;
+    app.h = 400;
+
+    // Scroll Places just enough to keep its header visible at the viewport
+    // edge while moving the sidebar away from its initial position.
+    const x: f64 = 32;
+    app.handleMotion(x, @floatFromInt(app.contentTop() + 10));
+    app.handleScroll(8);
+    const previous_scroll = app.sidebar_scroll;
+    try std.testing.expect(previous_scroll > 0);
+
+    const places = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.places)];
+    const header_y: f64 = @floatFromInt(places.y + @divTrunc(places.header_height, 2));
+    try std.testing.expectEqual(app_model.SidebarSection.places, app.sidebarHeaderAt(x, header_y).?);
+
+    // Use the actual header click path: it must collapse Places and clamp
+    // the previous scroll offset against the shorter sidebar extent.
+    app.handleMotion(x, header_y);
+    app.handleButton(0x110, true);
+
+    try std.testing.expect(!app.sidebar_expanded[@intFromEnum(app_model.SidebarSection.places)]);
+    const new_max = @max(0, app.sidebarExtent() - (app.h - app.sidebarFooter()));
+    try std.testing.expectEqual(@min(previous_scroll, new_max), app.sidebar_scroll);
+    try std.testing.expect(app.sidebar_scroll < previous_scroll);
+}
+
 test "sidebar header bounds follow painted width and scrollbar track" {
     var app = try testApp();
     defer app.deinit();
