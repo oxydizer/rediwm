@@ -21,6 +21,7 @@ const roundedRect = @import("app_draw.zig").roundedRect;
 const drawEllipsis = @import("app_draw.zig").drawEllipsis;
 const drawText = @import("app_draw.zig").drawText;
 const fontMetrics = @import("app_draw.zig").fontMetrics;
+const sidebar_controls = @import("app_sidebar_controls.zig");
 const deviceLabel = App.deviceLabel;
 
 /// A quiet surface separating the sidebar's four functional sections.
@@ -461,16 +462,15 @@ fn fileOpsBox(self: *App) shell_ui.Rect {
 }
 
 fn fileOpsPauseRect(area: shell_ui.Rect) shell_ui.Rect {
-    return .{ .x = area.x + area.w - 54, .y = area.y + 2, .w = 24, .h = 24 };
+    return sidebar_controls.buttonRect(area, 54, 2);
 }
 
 fn fileOpsCancelRect(area: shell_ui.Rect) shell_ui.Rect {
-    return .{ .x = area.x + area.w - 26, .y = area.y + 2, .w = 24, .h = 24 };
+    return sidebar_controls.buttonRect(area, 26, 2);
 }
 
 fn fileOpsRectContains(rect: shell_ui.Rect, x: f64, y: f64) bool {
-    return x >= rect.x and x < rect.x + rect.w and
-        y >= rect.y and y < rect.y + rect.h;
+    return sidebar_controls.contains(rect, x, y);
 }
 
 pub fn fileOpsSidebarHeight(self: *App) i32 {
@@ -566,34 +566,20 @@ pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
         (progress.state == .running or progress.state == .paused);
     if (can_pause) {
         const rect = fileOpsPauseRect(area);
-        if (fileOpsRectContains(rect, self.mouse_x, self.mouse_y)) {
-            roundedRect(cr, rect.x, rect.y, rect.w, rect.h, 6);
-            setSource(cr, ui_theme.global.app_item_hover);
-            c.cairo_fill(cr);
-        }
-        if (shell_ui.Layer.begin(cr, rect)) |icon_layer| {
-            var layer = icon_layer;
-            layer.renderer.drawIcon(4, 4, 16, 16, .{
-                .id = if (progress.state == .paused) .play else .pause,
-                .color = ui_theme.global.app_icon,
-            });
-            layer.finish();
-        }
+        sidebar_controls.render(
+            cr,
+            rect,
+            if (progress.state == .paused) .play else .pause,
+            fileOpsRectContains(rect, self.mouse_x, self.mouse_y),
+        );
     }
     const cancel_rect = fileOpsCancelRect(area);
-    if (fileOpsRectContains(cancel_rect, self.mouse_x, self.mouse_y)) {
-        roundedRect(cr, cancel_rect.x, cancel_rect.y, cancel_rect.w, cancel_rect.h, 6);
-        setSource(cr, ui_theme.global.app_item_hover);
-        c.cairo_fill(cr);
-    }
-    if (shell_ui.Layer.begin(cr, cancel_rect)) |icon_layer| {
-        var layer = icon_layer;
-        layer.renderer.drawIcon(4, 4, 16, 16, .{
-            .id = .close,
-            .color = ui_theme.global.app_icon,
-        });
-        layer.finish();
-    }
+    sidebar_controls.render(
+        cr,
+        cancel_rect,
+        .close,
+        fileOpsRectContains(cancel_rect, self.mouse_x, self.mouse_y),
+    );
 }
 
 pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {

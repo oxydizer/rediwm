@@ -23,7 +23,10 @@ pub fn hoverKey(self: *App) usize {
         const file_ops_hover = self.fileOpsSidebarHover(self.mouse_x, self.mouse_y);
         if (file_ops_hover != 0) return file_ops_hover;
     }
-    if (self.dialog == null and self.torrentSidebarHit(self.mouse_x, self.mouse_y)) return std.math.maxInt(usize) - 2001;
+    if (self.dialog == null) {
+        const torrent_hover = self.torrentSidebarHover(self.mouse_x, self.mouse_y);
+        if (torrent_hover != 0) return torrent_hover;
+    }
     const x = self.mouse_x;
     const y = self.mouse_y;
     if (self.dialog) |dlg| {
@@ -518,10 +521,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         }
     }
     if (self.fileOpsSidebarClick(x, y)) return;
-    if (self.torrentSidebarHit(x, y)) {
-        self.openTransfers();
-        return;
-    }
+    if (self.torrentSidebarClick(x, y)) return;
     if (self.ejectAt(x, y)) |k| {
         self.ejectDevice(k);
         return;

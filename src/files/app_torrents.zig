@@ -14,6 +14,7 @@ const Transfer = @import("torrents.zig").Transfer;
 const ops_mod = @import("ops.zig");
 const Rect = ui.Rect;
 const draw = @import("app_draw.zig");
+const sidebar_controls = @import("app_sidebar_controls.zig");
 
 pub const View = struct {
     active: bool = false,
@@ -136,6 +137,56 @@ pub fn torrentSidebarHit(self: *App, x: f64, y: f64) bool {
     if (self.chooser != null or self.sidebarWidth() == 0 or y < @as(f64, @floatFromInt(self.contentTop())) or y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return false;
     return contains(sidebarBox(self), @floatCast(x), @floatCast(y));
 }
+pub fn torrentSidebarHover(self: *App, x: f64, y: f64) usize {
+    if (!self.torrentSidebarHit(x, y)) return 0;
+    if (self.torrents.items().len > 0) {
+        const area = sidebarBox(self);
+        const t = self.torrents.items()[0];
+        const remove_rect = sidebar_controls.buttonRect(area, 26, 34);
+        if (sidebar_controls.contains(remove_rect, x, y)) {
+            return std.math.maxInt(usize) - 2011;
+        }
+        if (!t.pending) {
+            const pause_rect = sidebar_controls.buttonRect(area, 54, 34);
+            if (sidebar_controls.contains(pause_rect, x, y)) {
+                return std.math.maxInt(usize) - 2010;
+            }
+        }
+    }
+    return std.math.maxInt(usize) - 2001;
+}
+pub fn torrentSidebarClick(self: *App, x: f64, y: f64) bool {
+    if (!self.torrentSidebarHit(x, y)) return false;
+    if (self.torrents.items().len > 0) {
+        const area = sidebarBox(self);
+        const t = self.torrents.items()[0];
+        const id = t.id;
+        const remove_rect = sidebar_controls.buttonRect(area, 26, 34);
+        if (sidebar_controls.contains(remove_rect, x, y)) {
+            if (!self.torrents.send(.{ .op = "remove", .id = id })) {
+                self.setStatusNotice(self.torrents.message(), true);
+            } else {
+                self.transfer_view.selected[0] = 0;
+                self.transfer_view.row = null;
+            }
+            self.invalidate();
+            return true;
+        }
+        if (!t.pending) {
+            const pause_rect = sidebar_controls.buttonRect(area, 54, 34);
+            if (sidebar_controls.contains(pause_rect, x, y)) {
+                const op: []const u8 = if (t.paused) "resume" else "pause";
+                if (!self.torrents.send(.{ .op = op, .id = id })) {
+                    self.setStatusNotice(self.torrents.message(), true);
+                }
+                self.invalidate();
+                return true;
+            }
+        }
+    }
+    self.openTransfers();
+    return true;
+}
 pub fn renderTorrentSidebar(self: *App, cr: *c.cairo_t) void {
     if (!enabled) return;
     if (self.chooser != null) return;
@@ -155,12 +206,32 @@ pub fn renderTorrentSidebar(self: *App, cr: *c.cairo_t) void {
     const label = if (self.torrents.retry_at != null) tr("Connecting…") else if (self.torrents.message().len > 0) tr("Transfers needs attention") else i18n.fmt(&buf, tr("{value} active · {rate} KiB/s"), .{ .value = active, .rate = @divTrunc(rate, 1024) }) catch tr("Transfers");
     layer.renderer.drawText(12, 20, area.w - 24, 24, .{ .content = label, .font_size = ui.statusSize(), .color = palette.fg });
     var fraction: ?f64 = null;
+    var pause_icon: ?sidebar_controls.Icon = null;
     if (self.torrents.items().len > 0) {
         const t = self.torrents.items()[0];
-        layer.renderer.drawText(12, 46, area.w - 24, 24, .{ .content = t.name, .font_size = ui.statusSize(), .color = palette.fg });
+        layer.renderer.drawText(12, 46, area.w - 88, 24, .{ .content = t.name, .font_size = ui.statusSize(), .color = palette.fg });
         fraction = @as(f64, @floatFromInt(std.math.clamp(t.progress, 0, 1000000))) / 1000000.0;
+        if (!t.pending) pause_icon = if (t.paused) .play else .pause;
     }
     layer.finish();
+    if (pause_icon) |icon| {
+        const pause_rect = sidebar_controls.buttonRect(area, 54, 34);
+        sidebar_controls.render(
+            cr,
+            pause_rect,
+            icon,
+            sidebar_controls.contains(pause_rect, self.mouse_x, self.mouse_y),
+        );
+    }
+    if (self.torrents.items().len > 0) {
+        const remove_rect = sidebar_controls.buttonRect(area, 26, 34);
+        sidebar_controls.render(
+            cr,
+            remove_rect,
+            .close,
+            sidebar_controls.contains(remove_rect, self.mouse_x, self.mouse_y),
+        );
+    }
     if (fraction) |value| {
         draw.drawProgressBar(
             cr,
