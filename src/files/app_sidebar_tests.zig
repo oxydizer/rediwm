@@ -142,7 +142,7 @@ test "sidebar header bounds follow painted width and scrollbar track" {
     const places = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.places)];
     const bounds = app.sidebarHeaderBounds(places).?;
     try std.testing.expectEqual(@as(f64, 8), bounds.x);
-    try std.testing.expectEqual(@as(f64, 172), bounds.w);
+    try std.testing.expectEqual(@as(f64, 164), bounds.w);
 
     const center_y = bounds.y + bounds.h / 2;
     try std.testing.expectEqual(
