@@ -11,6 +11,7 @@ const button = @import("ui").widgets.button;
 const checkbox = @import("ui").widgets.checkbox;
 const frame = @import("ui").widgets.dialog;
 const Transfer = @import("torrents.zig").Transfer;
+const ops_mod = @import("ops.zig");
 const Rect = ui.Rect;
 const draw = @import("app_draw.zig");
 
@@ -423,17 +424,193 @@ fn transferAt(self: *App, x: f64, y: f64) ?usize {
     return if (row < self.torrents.items().len) row else null;
 }
 
+fn fileOperationProgress(self: *App) ?ops_mod.ProgressInfo {
+    const runner = self.job_runner orelse return null;
+    const progress = runner.pollProgress();
+    return if (progress.state == .running or
+        progress.state == .paused or
+        progress.state == .waiting_conflict) progress else null;
+}
+
+fn fileOperationFraction(progress: ops_mod.ProgressInfo) f64 {
+    if (!progress.total_bytes_known) return 0;
+    if (progress.total_bytes > 0) {
+        return @min(
+            1.0,
+            @as(f64, @floatFromInt(progress.transferred_bytes)) /
+                @as(f64, @floatFromInt(progress.total_bytes)),
+        );
+    }
+    if (progress.total_items == 0) return 0;
+    return @min(
+        1.0,
+        @as(f64, @floatFromInt(progress.processed_items)) /
+            @as(f64, @floatFromInt(progress.total_items)),
+    );
+}
+
+fn renderFileOperationRow(
+    self: *App,
+    cr: *c.cairo_t,
+    index: usize,
+    progress: ops_mod.ProgressInfo,
+) void {
+    const y: f64 = @floatFromInt(
+        self.viewTop() + self.itemInset() +
+            @as(i32, @intCast(index)) * self.rowHeight() - self.scroll_y,
+    );
+    const row: header.Rect = .{
+        .x = @floatFromInt(self.sidebarWidth() + 20),
+        .y = y,
+        .w = @floatFromInt(@max(0, self.cellWidth() - 20)),
+        .h = @floatFromInt(self.cardHeight()),
+    };
+
+    const operation = switch (progress.kind) {
+        .copy => tr("Copy"),
+        .move => tr("Move"),
+        .extract => tr("Extract"),
+        .open_archive_member => tr("Open"),
+    };
+    const state = switch (progress.state) {
+        .paused => tr("Paused"),
+        .waiting_conflict => tr("Waiting for decision"),
+        .running => if (progress.measuring) tr("Measuring…") else tr("Working…"),
+        else => tr("Working…"),
+    };
+    const current = if (progress.current_name.len > 0)
+        progress.current_name
+    else
+        tr("Preparing…");
+
+    var transferred_buf: [32]u8 = undefined;
+    var total_buf: [32]u8 = undefined;
+    var bytes_buf: [80]u8 = undefined;
+    const transferred: i64 = @intCast(@min(
+        progress.transferred_bytes,
+        @as(u64, std.math.maxInt(i64)),
+    ));
+    const total: i64 = @intCast(@min(
+        progress.total_bytes,
+        @as(u64, std.math.maxInt(i64)),
+    ));
+    const bytes_label = if (progress.total_bytes_known)
+        std.fmt.bufPrint(
+            &bytes_buf,
+            "{s} / {s}",
+            .{
+                draw.formatSize(transferred, &transferred_buf),
+                draw.formatSize(total, &total_buf),
+            },
+        ) catch ""
+    else
+        tr("Measuring…");
+
+    const fraction = fileOperationFraction(progress);
+    var percent_buf: [16]u8 = undefined;
+    const percent_label = if (progress.total_bytes_known)
+        std.fmt.bufPrint(&percent_buf, "{d}%", .{@as(u32, @intFromFloat(fraction * 100))}) catch ""
+    else
+        "—";
+
+    if (ui.Layer.begin(cr, .{
+        .x = @floatCast(row.x + 12),
+        .y = @floatCast(y + 5),
+        .w = 24,
+        .h = 24,
+    })) |value| {
+        var layer = value;
+        layer.renderer.drawIcon(0, 0, 24, 24, .{
+            .id = .folder,
+            .color = theme.shellPalette().accent,
+        });
+        layer.finish();
+    }
+
+    const name_column = self.listColumn(0);
+    const status_column = self.listColumn(1);
+    const progress_column = self.listColumn(2);
+    const first_baseline = y + 15;
+    const second_baseline = y + 29;
+
+    draw.setSource(cr, theme.global.window_fg);
+    draw.drawEllipsis(
+        cr,
+        operation,
+        name_column.x + 44,
+        first_baseline,
+        @max(0, name_column.w - 50),
+        ui.textSize(),
+        true,
+    );
+    draw.drawEllipsis(
+        cr,
+        current,
+        name_column.x + 44,
+        second_baseline,
+        @max(0, name_column.w - 50),
+        ui.statusSize(),
+        false,
+    );
+    draw.drawEllipsis(
+        cr,
+        state,
+        status_column.x + 4,
+        first_baseline,
+        @max(0, status_column.w - 8),
+        ui.textSize(),
+        false,
+    );
+    draw.drawEllipsis(
+        cr,
+        bytes_label,
+        status_column.x + 4,
+        second_baseline,
+        @max(0, status_column.w - 8),
+        ui.statusSize(),
+        false,
+    );
+    draw.drawEllipsis(
+        cr,
+        percent_label,
+        progress_column.x + 4,
+        first_baseline,
+        @max(0, progress_column.w - 8),
+        ui.statusSize(),
+        false,
+    );
+
+    const bar_x = progress_column.x + 4;
+    const bar_y = y + 24;
+    const bar_width = @max(0, progress_column.w - 8);
+    if (bar_width > 0) {
+        draw.setSource(cr, theme.global.app_divider);
+        c.cairo_rectangle(cr, bar_x, bar_y, bar_width, 4);
+        c.cairo_fill(cr);
+
+        if (fraction > 0) {
+            draw.setSource(cr, theme.shellPalette().accent);
+            c.cairo_rectangle(cr, bar_x, bar_y, bar_width * fraction, 4);
+            c.cairo_fill(cr);
+        }
+    }
+}
+
 pub fn renderTransferList(self: *App, cr: *c.cairo_t) void {
     const entries = self.torrents.items();
-    if (entries.len == 0) {
+    const file_op = fileOperationProgress(self);
+    const row_count = entries.len + @as(usize, @intFromBool(file_op != null));
+    if (row_count == 0) {
         draw.setSource(cr, theme.global.window_fg);
         draw.drawEllipsis(cr, if (self.torrents.retry_at != null) tr("Connecting…") else tr("No transfers yet. Add a .torrent file or magnet link."), @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), @floatFromInt(@max(0, self.w - self.sidebarWidth() - 48)), ui.textSize(), false);
         return;
     }
     const hover = if (self.dialog == null) transferAt(self, self.mouse_x, self.mouse_y) else null;
-    const first = @min(entries.len, @as(usize, @intCast(@divTrunc(self.scroll_y, self.rowHeight()))));
-    const last = @min(entries.len, @as(usize, @intCast(@divTrunc(self.scroll_y + @max(0, self.contentBottom() - self.viewTop()), self.rowHeight()) + 1)));
-    for (entries[first..last], first..) |t, i| {
+    const first = @min(row_count, @as(usize, @intCast(@divTrunc(self.scroll_y, self.rowHeight()))));
+    const last = @min(row_count, @as(usize, @intCast(@divTrunc(self.scroll_y + @max(0, self.contentBottom() - self.viewTop()), self.rowHeight()) + 1)));
+    const torrent_first = @min(first, entries.len);
+    const torrent_last = @min(last, entries.len);
+    for (entries[torrent_first..torrent_last], torrent_first..) |t, i| {
         const y: f64 = @floatFromInt(self.viewTop() + self.itemInset() + @as(i32, @intCast(i)) * self.rowHeight() - self.scroll_y);
         const row: header.Rect = .{ .x = @floatFromInt(self.sidebarWidth() + 20), .y = y, .w = @floatFromInt(@max(0, self.cellWidth() - 20)), .h = @floatFromInt(self.cardHeight()) };
         if (self.transfer_view.row == i or hover == i) ui.drawItemHighlight(cr, .{ .x = row.x, .y = row.y, .w = row.w, .h = row.h }, self.transfer_view.row == i, 1, 1);
@@ -454,6 +631,11 @@ pub fn renderTransferList(self: *App, cr: *c.cairo_t) void {
             const inset: f64 = if (col == 0) 44 else 4;
             draw.setSource(cr, if (col == 1 and t.@"error".len > 0) theme.global.danger else theme.global.window_fg);
             draw.drawEllipsis(cr, label, column.x + inset, y + self.listBaseline(), @max(0, column.w - inset - 4), ui.textSize(), false);
+        }
+    }
+    if (file_op) |progress| {
+        if (first <= entries.len and entries.len < last) {
+            renderFileOperationRow(self, cr, entries.len, progress);
         }
     }
 }
