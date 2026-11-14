@@ -123,44 +123,19 @@ pub fn drawProximityGlow(
     if (sample.distance >= std.math.inf(f32)) return;
     if (!button.proximityGlowLit(box.w, box.h, radius, sample.x, sample.y, t.border_glow_reach)) return;
 
-    // The layer covers only the visible part of the box, starting a whole
-    // number of device pixels into it, so each pixel keeps the position it
-    // would have in a layer over the whole box.
-    const s: f64 = scaleOf(cr);
-    var bx: f64 = box.x;
-    var by: f64 = box.y;
-    c.cairo_user_to_device(cr, &bx, &by);
-    var vx: f64 = visible.x;
-    var vy: f64 = visible.y;
-    c.cairo_user_to_device(cr, &vx, &vy);
-    const full_w = @ceil(box.w * s);
-    const full_h = @ceil(box.h * s);
-    const k0x = std.math.clamp(@floor(vx - @round(bx)), 0, full_w);
-    const k0y = std.math.clamp(@floor(vy - @round(by)), 0, full_h);
-    const k1x = std.math.clamp(@ceil(vx + visible.w * s - @round(bx)), k0x, full_w);
-    const k1y = std.math.clamp(@ceil(vy + visible.h * s - @round(by)), k0y, full_h);
-    if (k1x <= k0x or k1y <= k0y) return;
-    const sub: Rect = .{
-        .x = @floatCast(box.x + k0x / s),
-        .y = @floatCast(box.y + k0y / s),
-        .w = @floatCast((k1x - k0x) / s),
-        .h = @floatCast((k1y - k0y) / s),
-    };
-
-    var layer = Layer.begin(cr_any, sub) orelse return;
-    // Pin the origin to the whole-pixel position computed above.
-    // Avoid f32 sub-rectangle rounding shifting partial glow layers.
-    layer.device_x = @round(bx) + k0x;
-    layer.device_y = @round(by) + k0y;
+    // Keep the original box as the layer's coordinate system for both
+    // complete and partial repaints. Cropping and rebasing the layer changes
+    // the f32 geometry used by the SDF coverage calculation at its edges.
+    var layer = Layer.begin(cr_any, box) orelse return;
     layer.renderer.clip = .{
-        .x = visible.x - sub.x,
-        .y = visible.y - sub.y,
+        .x = visible.x - box.x,
+        .y = visible.y - box.y,
         .w = visible.w,
         .h = visible.h,
     };
     button.paintProximityGlowAt(
         &layer.renderer,
-        .{ .x = box.x - sub.x, .y = box.y - sub.y, .w = box.w, .h = box.h },
+        .{ .x = 0, .y = 0, .w = box.w, .h = box.h },
         radius,
         sample.distance,
         sample.x,
