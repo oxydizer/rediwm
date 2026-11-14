@@ -6,6 +6,8 @@ const archive = @import("archive.zig");
 const c = @import("c.zig").api;
 const Allocator = std.mem.Allocator;
 
+const max_progress_path_bytes = 4096;
+
 pub const ConflictAction = enum {
     ask,
     skip,
@@ -55,6 +57,10 @@ pub const ProgressInfo = struct {
     skipped_count: usize = 0,
     failed_count: usize = 0,
     current_name: []const u8 = "",
+    current_file_path: [max_progress_path_bytes]u8 = undefined,
+    current_file_path_len: usize = 0,
+    current_file_bytes: u64 = 0,
+    current_file_size: u64 = 0,
     conflict_item_name: []const u8 = "",
     status_message: []const u8 = "",
     is_error: bool = false,
@@ -296,11 +302,14 @@ fn copyFileContentsTracked(
 
     var stat: c.struct_stat = undefined;
     if (c.fstat(src_fd, &stat) != 0) return error.StatFailed;
+    if (stat.st_size < 0) return error.InvalidFileSize;
 
     const mode = @as(c_uint, @intCast(stat.st_mode & 0o7777));
     const dst_fd = c.open(dst_z, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC, mode);
     if (dst_fd < 0) return error.OpenDestFailed;
     defer _ = c.close(dst_fd);
+
+    if (runner) |job| job.beginFileProgress(dst_path, @intCast(stat.st_size));
 
     var buf: [65536]u8 = undefined;
     while (true) {
@@ -326,7 +335,7 @@ fn copyFileContentsTracked(
             const wn = c.write(dst_fd, buf[written..].ptr, total - written);
             if (wn < 0 and std.posix.errno(wn) == .INTR) continue;
             if (wn <= 0) {
-                if (runner) |job| job.addTransferredBytes(chunk_written);
+                if (runner) |job| job.addFileTransferredBytes(chunk_written);
                 _ = c.unlink(dst_z);
                 return error.WriteFailed;
             }
@@ -334,7 +343,7 @@ fn copyFileContentsTracked(
             written += count;
             chunk_written += count;
         }
-        if (runner) |job| job.addTransferredBytes(chunk_written);
+        if (runner) |job| job.addFileTransferredBytes(chunk_written);
     }
 }
 
@@ -533,6 +542,10 @@ pub const JobRunner = struct {
     failed_count: usize = 0,
 
     current_item_name: []const u8 = &[_]u8{},
+    current_file_path: [max_progress_path_bytes]u8 = undefined,
+    current_file_path_len: usize = 0,
+    current_file_bytes: u64 = 0,
+    current_file_size: u64 = 0,
     conflict_item_name: []const u8 = &[_]u8{},
     conflict_action: ?ConflictAction = null,
 
@@ -672,6 +685,9 @@ pub const JobRunner = struct {
         self.success_count = 0;
         self.skipped_count = 0;
         self.failed_count = 0;
+        self.current_file_path_len = 0;
+        self.current_file_bytes = 0;
+        self.current_file_size = 0;
         self.conflict_action = null;
         self.is_error = false;
 
@@ -747,7 +763,7 @@ pub const JobRunner = struct {
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
 
-        return .{
+        var progress: ProgressInfo = .{
             .state = self.state,
             .kind = self.kind,
             .total_items = self.total_items,
@@ -760,14 +776,32 @@ pub const JobRunner = struct {
             .skipped_count = self.skipped_count,
             .failed_count = self.failed_count,
             .current_name = self.current_item_name,
+            .current_file_bytes = self.current_file_bytes,
+            .current_file_size = self.current_file_size,
             .conflict_item_name = self.conflict_item_name,
             .status_message = self.status_message,
             .is_error = self.is_error,
             .cancelled = self.cancel_flag.load(.acquire),
         };
+        if (self.current_file_path_len > 0) {
+            progress.current_file_path_len = self.current_file_path_len;
+            @memcpy(
+                progress.current_file_path[0..self.current_file_path_len],
+                self.current_file_path[0..self.current_file_path_len],
+            );
+        }
+        return progress;
     }
 
     fn addTransferredBytes(self: *JobRunner, bytes: u64) void {
+        self.addTransferredBytesImpl(bytes, false);
+    }
+
+    fn addFileTransferredBytes(self: *JobRunner, bytes: u64) void {
+        self.addTransferredBytesImpl(bytes, true);
+    }
+
+    fn addTransferredBytesImpl(self: *JobRunner, bytes: u64, file_progress: bool) void {
         if (bytes == 0) return;
         _ = c.pthread_mutex_lock(&self.mutex);
         if (bytes > std.math.maxInt(u64) - self.transferred_bytes) {
@@ -782,6 +816,26 @@ pub const JobRunner = struct {
             } else {
                 item_bytes.* += bytes;
             }
+        }
+        if (file_progress and self.current_file_path_len > 0) {
+            if (bytes > std.math.maxInt(u64) - self.current_file_bytes) {
+                self.current_file_bytes = std.math.maxInt(u64);
+            } else {
+                self.current_file_bytes += bytes;
+            }
+        }
+        self.notify();
+        _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    fn beginFileProgress(self: *JobRunner, path: []const u8, size: u64) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        self.current_file_path_len = 0;
+        self.current_file_bytes = 0;
+        self.current_file_size = size;
+        if (path.len <= self.current_file_path.len) {
+            @memcpy(self.current_file_path[0..path.len], path);
+            self.current_file_path_len = path.len;
         }
         self.notify();
         _ = c.pthread_mutex_unlock(&self.mutex);
@@ -1008,6 +1062,9 @@ pub const JobRunner = struct {
             }) catch "";
         }
         self.is_error = cancelled or self.failed_count > 0;
+        self.current_file_path_len = 0;
+        self.current_file_bytes = 0;
+        self.current_file_size = 0;
         self.state = .finished;
         self.notify();
     }
