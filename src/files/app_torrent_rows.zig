@@ -133,6 +133,9 @@ pub fn inlineTorrentClick(self: *App, x: f64, y: f64) bool {
     return true;
 }
 pub fn renderTorrentTip(self: *App, cr: *c.cairo_t) void {
+    const hover = self.hoverKey();
+    if (hover == std.math.maxInt(usize) - 2001 or
+        hover == std.math.maxInt(usize) - 2002) return;
     const hit = self.inlineTorrentHit(self.mouse_x, self.mouse_y) orelse return;
     if (hit.toggle) return;
     const t = self.torrentForItem(hit.index) orelse return;
