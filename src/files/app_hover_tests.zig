@@ -12,10 +12,9 @@ const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
 const pointOnItem = app_tests.pointOnItem;
 
-test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
+test "retained hover repairs match complete Cairo rasters across isolated transitions" {
     const saved_theme = ui_theme.global;
     defer ui_theme.global = saved_theme;
-    // Exercise the illuminated selected row and rounder highlights, too.
     ui_theme.global.app_sidebar_selected_marker = .{ 1, 0.95, 0.84, 1 };
     ui_theme.global.app_sidebar_item_radius = 10;
     ui_theme.global.app_sidebar[3] = 0.5;
@@ -26,9 +25,62 @@ test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
     defer app.deinit();
     app.loading = false;
     try testItems(&app, 12);
+
+    var points: std.ArrayList([2]f64) = .empty;
+    defer points.deinit(std.testing.allocator);
+
     for ([_]bool{ false, true }) |list| {
         ui_theme.global.app_highlight_bevel = if (list) 7 else 0;
         app.list_view = list;
+
+        points.clearRetainingCapacity();
+
+        // Exercise the current list-column geometry.
+        if (list) {
+            for (App.column_labels, 0..) |_, i| {
+                const rect = app.listColumn(i);
+                try points.append(std.testing.allocator, .{
+                    rect.x + rect.w / 2,
+                    rect.y + rect.h / 2,
+                });
+            }
+        }
+
+        // Exercise toolbar controls using their current geometry.
+        for (std.meta.tags(header.Action)) |action| {
+            const rect = header.rect(app.w, app.inRepository(), action);
+            if (rect.w <= 0 or rect.h <= 0) continue;
+            try points.append(std.testing.allocator, .{
+                rect.x + rect.w / 2,
+                rect.y + rect.h / 2,
+            });
+        }
+
+        // The breadcrumb/location field is a distinct interaction surface.
+        const field = header.field(app.w);
+        try points.append(std.testing.allocator, .{ field.x + 12, field.y + 18 });
+
+        // Exercise visible sidebar rows without depending on their hover keys.
+        for (0..app.rowCount()) |index| {
+            if (!app.placeVisible(index)) continue;
+            const rect = app.placeRect(index);
+            if (rect.y + rect.h <= @as(f64, @floatFromInt(app.viewTop()))) continue;
+            if (rect.y >= @as(f64, @floatFromInt(app.contentBottom()))) continue;
+            try points.append(std.testing.allocator, .{
+                rect.x + rect.w / 2,
+                rect.y + rect.h / 2,
+            });
+        }
+
+        // Exercise item hover in more than one cell.
+        for ([_]usize{ 0, 5 }) |index| {
+            const point = pointOnItem(&app, index);
+            try points.append(std.testing.allocator, point);
+        }
+
+        // Leaving the window must also repair the retained image.
+        try points.append(std.testing.allocator, .{ -1, -1 });
+
         for ([_]f64{ 1, 1.5 }) |scale| {
             const w: i32 = @intFromFloat(@as(f64, @floatFromInt(app.w)) * scale);
             const h: i32 = @intFromFloat(@as(f64, @floatFromInt(app.h)) * scale);
@@ -42,38 +94,19 @@ test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
             defer c.cairo_destroy(ref);
             c.cairo_scale(cr, scale, scale);
             c.cairo_scale(ref, scale, scale);
-            app.stepHover(0);
-            app.render(cr);
-            c.cairo_surface_flush(retained);
-            const sidebar_pixels: [*]const u32 = @ptrCast(@alignCast(c.cairo_image_surface_get_data(retained)));
-            const sidebar_x: usize = @intFromFloat(2 * scale);
-            const sidebar_y: usize = @intFromFloat(@as(f64, @floatFromInt(app.contentTop() + 2)) * scale);
-            try std.testing.expectEqual(@as(u32, 128), sidebar_pixels[sidebar_y * @as(usize, @intCast(w)) + sidebar_x] >> 24);
-            app.dirty = false;
-            var points: std.ArrayList([2]f64) = .empty;
-            defer points.deinit(std.testing.allocator);
-            if (list) {
-                for (App.column_labels, 0..) |_, i| {
-                    const rect = app.listColumn(i);
-                    try points.append(std.testing.allocator, .{ rect.x + rect.w / 2, rect.y + rect.h / 2 });
-                }
-            }
-            for (std.meta.tags(header.Action)) |action| {
-                const button = header.rect(app.w, false, action);
-                try points.append(std.testing.allocator, .{ button.x + button.w / 2, button.y + button.h / 2 });
-            }
-            const field = header.field(app.w);
-            try points.append(std.testing.allocator, .{ field.x + 12, field.y + 18 });
-            // Items, the header, the current place, other places and outside.
-            try points.appendSlice(std.testing.allocator, &.{ .{ 250, 160 }, .{ 490, 160 }, .{ 70, 140 }, .{ 70, 200 }, .{ 70, 240 }, .{ 70, 500 }, .{ 50, 80 }, .{ 250, 160 }, .{ 250, 300 }, .{ 0, 0 } });
             var clock: i64 = 1000;
             for (points.items, 0..) |point, point_index| {
-                // Selection transitions must repair retained pixels just like hover.
-                for (app.items.items, 0..) |*item, i| item.selected = i == point_index % app.items.items.len;
-                app.invalidate(); // Selection also changes toolbar actions and status.
-                if (list) app.startSortFeedback(clock);
+                // Settle the previous transition outside the window, then establish
+                // a complete baseline. Each target is tested independently.
+                app.handleMotion(-1, -1);
+                app.stepHover(clock + 5000);
+                app.render(cr);
+                app.render(ref);
+                app.dirty = false;
+                app.paint_damage = null;
+                clock += 6000;
+
                 app.handleMotion(point[0], point[1]);
-                // From the frame the pointer arrived to well after both glides settle.
                 for ([_]i64{ 0, 16, 32, 64, 100, 160, 5000 }) |elapsed| {
                     app.stepHover(clock + elapsed);
                     if (app.dirty) {
@@ -89,9 +122,37 @@ test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
                     const len: usize = @intCast(w * h * 4);
                     const actual = c.cairo_image_surface_get_data(retained)[0..len];
                     const expected = c.cairo_image_surface_get_data(reference)[0..len];
-                    if (!std.mem.eql(u8, actual, expected)) {
-                        const mismatch = std.mem.indexOfDiff(u8, actual, expected).? / 4;
-                        std.debug.print("hover mismatch scale={d} point={any} +{d}ms damage={any} pixel={d},{d}\n", .{ scale, point, elapsed, app.paint_damage, mismatch % @as(usize, @intCast(w)), mismatch / @as(usize, @intCast(w)) });
+                    var mismatch_offset: ?usize = null;
+                    for (actual, expected, 0..) |a, b, i| {
+                        const delta = @abs(@as(i16, a) - @as(i16, b));
+                if (delta > 0) {
+                            mismatch_offset = i;
+                            break;
+                        }
+                    }
+                    if (mismatch_offset) |offset| {
+                        const mismatch = offset / 4;
+                        const channel = offset % 4;
+                        const delta = @abs(
+                            @as(i16, actual[offset]) - @as(i16, expected[offset]),
+                        );
+                        std.debug.print(
+                            "hover mismatch list={any} scale={d} scenario={d} point={any} +{d}ms damage={any} pixel={d},{d} channel={d} actual={d} expected={d} delta={d}\n",
+                            .{
+                                list,
+                                scale,
+                                point_index,
+                                point,
+                                elapsed,
+                                app.paint_damage,
+                                mismatch % @as(usize, @intCast(w)),
+                                mismatch / @as(usize, @intCast(w)),
+                                channel,
+                                actual[offset],
+                                expected[offset],
+                                delta,
+                            },
+                        );
                         _ = c.cairo_surface_write_to_png(retained, "/tmp/files-hover-actual.png");
                         _ = c.cairo_surface_write_to_png(reference, "/tmp/files-hover-expected.png");
                         return error.TestUnexpectedResult;

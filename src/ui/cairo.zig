@@ -148,6 +148,10 @@ pub fn drawProximityGlow(
     };
 
     var layer = Layer.begin(cr_any, sub) orelse return;
+    // Pin the origin to the whole-pixel position computed above.
+    // Avoid f32 sub-rectangle rounding shifting partial glow layers.
+    layer.device_x = @round(bx) + k0x;
+    layer.device_y = @round(by) + k0y;
     layer.renderer.clip = .{
         .x = visible.x - sub.x,
         .y = visible.y - sub.y,

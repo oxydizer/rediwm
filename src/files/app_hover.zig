@@ -568,10 +568,14 @@ pub fn damageSidebarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
         const after = button_widget.sampleProximity(rect, @floatCast(new_x), @floatCast(new_y), clip);
         if (@min(before.distance, after.distance) > reach) continue;
 
+        // Span the card's full width, not just the glow's: this rect merges
+        // with the row damage and reaches the card's rounded top corners.
+        // A clip that cuts those arcs rasterizes the card fill a level
+        // differently from a complete repaint.
         const header_damage: header.Rect = .{
-            .x = rect.x,
+            .x = clip.x,
             .y = rect.y,
-            .w = rect.w,
+            .w = clip.w,
             .h = rect.h,
         };
         damage = if (damage) |current| unionRect(current, header_damage) else header_damage;
