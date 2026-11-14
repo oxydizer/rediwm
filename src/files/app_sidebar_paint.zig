@@ -552,18 +552,15 @@ pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
     const track_x = area.x + 12;
     const track_y = area.y + area.h - 9;
     const track_w = area.w - 24;
-    roundedRect(cr, track_x, track_y, track_w, 4, 2);
-    setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), 0.14));
-    c.cairo_fill(cr);
-    const fill_w = if (fraction) |value|
-        track_w * value
-    else
-        @min(track_w, 24);
-    if (fill_w > 0) {
-        roundedRect(cr, track_x, track_y, fill_w, 4, 2);
-        setSource(cr, palette.accent);
-        c.cairo_fill(cr);
-    }
+    @import("app_draw.zig").drawProgressBar(
+        cr,
+        track_x,
+        track_y,
+        track_w,
+        fraction,
+        withAlpha(ui_theme.global.sidebarForeground(), 0.14),
+        palette.accent,
+    );
 
     const can_pause = (progress.kind == .copy or progress.kind == .move) and
         (progress.state == .running or progress.state == .paused);

@@ -52,6 +52,30 @@ pub fn roundedRect(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, r: f64) void 
     c.cairo_close_path(cr);
 }
 
+pub fn drawProgressBar(
+    cr: *c.cairo_t,
+    x: f64,
+    y: f64,
+    width: f64,
+    fraction: ?f64,
+    track_color: [4]f32,
+    fill_color: [4]f32,
+) void {
+    if (width <= 0) return;
+    roundedRect(cr, x, y, width, 4, 2);
+    setSource(cr, track_color);
+    c.cairo_fill(cr);
+
+    const fill_width = if (fraction) |value|
+        width * @min(1.0, @max(0.0, value))
+    else
+        @min(width, 24);
+    if (fill_width <= 0) return;
+    roundedRect(cr, x, y, fill_width, 4, 2);
+    setSource(cr, fill_color);
+    c.cairo_fill(cr);
+}
+
 pub fn drawSpinner(cr: *c.cairo_t, cx: f64, cy: f64, r: f64) void {
     const angle = @as(f64, @floatFromInt(@mod(nowMs(), 1000))) / 1000.0 * 2.0 * std.math.pi;
     c.cairo_save(cr);

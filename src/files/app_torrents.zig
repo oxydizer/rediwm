@@ -141,7 +141,6 @@ pub fn renderTorrentSidebar(self: *App, cr: *c.cairo_t) void {
     if (self.chooser != null) return;
     const area = sidebarBox(self);
     var layer = ui.Layer.begin(cr, .{ .x = area.x, .y = area.y, .w = area.w, .h = area.h }) orelse return;
-    defer layer.finish();
     var palette = theme.shellPalette();
     palette.fg = theme.global.sidebarForeground();
     palette.button_font_size = ui.textSize();
@@ -155,10 +154,23 @@ pub fn renderTorrentSidebar(self: *App, cr: *c.cairo_t) void {
     var buf: [96]u8 = undefined;
     const label = if (self.torrents.retry_at != null) tr("Connecting…") else if (self.torrents.message().len > 0) tr("Transfers needs attention") else i18n.fmt(&buf, tr("{value} active · {rate} KiB/s"), .{ .value = active, .rate = @divTrunc(rate, 1024) }) catch tr("Transfers");
     layer.renderer.drawText(12, 20, area.w - 24, 24, .{ .content = label, .font_size = ui.statusSize(), .color = palette.fg });
+    var fraction: ?f64 = null;
     if (self.torrents.items().len > 0) {
         const t = self.torrents.items()[0];
         layer.renderer.drawText(12, 46, area.w - 24, 24, .{ .content = t.name, .font_size = ui.statusSize(), .color = palette.fg });
-        layer.renderer.fillRect(12, 72, (area.w - 24) * @as(f32, @floatFromInt(std.math.clamp(t.progress, 0, 1000000))) / 1000000, 2, .{ .color = palette.accent });
+        fraction = @as(f64, @floatFromInt(std.math.clamp(t.progress, 0, 1000000))) / 1000000.0;
+    }
+    layer.finish();
+    if (fraction) |value| {
+        draw.drawProgressBar(
+            cr,
+            area.x + 12,
+            area.y + 72,
+            area.w - 24,
+            value,
+            draw.withAlpha(theme.global.sidebarForeground(), 0.14),
+            palette.accent,
+        );
     }
 }
 fn box(self: *App) Rect {
