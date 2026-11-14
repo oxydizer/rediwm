@@ -873,6 +873,55 @@ pub const JobRunner = struct {
         return null;
     }
 
+    /// Resolves a batch of visible paths under one lock and one source-list
+    /// traversal. `matched` distinguishes paths with a cancelled outcome
+    /// from paths that do not belong to this job.
+    pub fn progressForPaths(
+        self: *JobRunner,
+        paths: []const []const u8,
+        results: []?f64,
+        matched: []bool,
+    ) void {
+        std.debug.assert(paths.len == results.len and paths.len == matched.len);
+        @memset(results, null);
+        @memset(matched, false);
+
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        if (self.state == .idle or self.state == .finished or
+            (self.kind != .copy and self.kind != .move)) return;
+
+        for (self.sources.items, 0..) |source, source_idx| {
+            const destination = if (source_idx < self.destination_paths.items.len)
+                self.destination_paths.items[source_idx]
+            else
+                &[_]u8{};
+
+            for (paths, 0..) |path, path_idx| {
+                if (matched[path_idx]) continue;
+                if (!std.mem.eql(u8, source, path) and
+                    (destination.len == 0 or !std.mem.eql(u8, destination, path))) continue;
+
+                matched[path_idx] = true;
+                if (source_idx == self.current_item_index) {
+                    const total = self.item_bytes.items[source_idx];
+                    results[path_idx] = if (total == 0)
+                        0
+                    else
+                        @min(1, @as(f64, @floatFromInt(self.item_transferred_bytes.items[source_idx])) /
+                            @as(f64, @floatFromInt(total)));
+                } else {
+                    results[path_idx] = switch (self.outcomes.items[source_idx]) {
+                        .success => 1,
+                        .skipped, .failed => 0,
+                        .cancelled => null,
+                    };
+                }
+            }
+        }
+    }
+
     fn recordDestinationPath(self: *JobRunner, path: []const u8) !void {
         const owned = try self.allocator.alloc(u8, path.len);
         errdefer self.allocator.free(owned);

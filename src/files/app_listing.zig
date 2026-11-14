@@ -7,6 +7,7 @@ const App = @import("app.zig").App;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const worker_mod = @import("worker.zig");
+const ops_mod = @import("ops.zig");
 const recent = @import("recent.zig");
 const collation = @import("collation.zig");
 const fold = @import("ui").fold;
@@ -130,6 +131,29 @@ pub fn isStaleSnapshot(snapshot_request_id: u64, active_request_id: u64) bool {
 
 /// Damage only the surfaces that display file-operation byte progress.
 /// Structural changes still use invalidate(), because they can change layout.
+fn damageFolderProgressBatch(
+    self: *App,
+    runner: *ops_mod.JobRunner,
+    paths: []const []const u8,
+    indices: []const usize,
+) void {
+    var results: [64]?f64 = undefined;
+    var matched: [64]bool = undefined;
+    runner.progressForPaths(paths, results[0..paths.len], matched[0..paths.len]);
+
+    for (results[0..paths.len], matched[0..paths.len], indices) |result, was_matched, index| {
+        if (!was_matched or result == null) continue;
+        const icon = self.itemIconRect(@intCast(index));
+        const ring_size = @min(26.0, icon.w);
+        self.addDamageRegion(self.clipToViewport(.{
+            .x = icon.x + (icon.w - ring_size) / 2 - 2,
+            .y = icon.y + (icon.w - ring_size) / 2 - 2,
+            .w = ring_size + 4,
+            .h = ring_size + 4,
+        }));
+    }
+}
+
 fn damageJobProgress(
     self: *App,
     damage_surfaces: bool,
@@ -146,7 +170,7 @@ fn damageJobProgress(
             );
             self.addDamageRegion(self.clipToViewport(row));
         } else if (self.job_runner) |runner| {
-        // Parent-folder progress rings are drawn inside visible item icons.
+            // Parent-folder progress rings are drawn inside visible item icons.
             const columns = self.columns();
             const first = @divTrunc(self.scroll_y, self.rowHeight()) * columns;
             const last = @min(
@@ -157,26 +181,39 @@ fn damageJobProgress(
                 ) + 1) * columns,
             );
 
+            var paths: [64][]const u8 = undefined;
+            var indices: [64]usize = undefined;
+            var path_count: usize = 0;
             var index = first;
             while (index < last) : (index += 1) {
                 const item = self.items.items[@intCast(index)];
-                const parent_folder = item.is_dir and !item.is_symlink and
-                    runner.progressForPath(item.path) != null;
+                if (item.is_dir and !item.is_symlink) {
+                    paths[path_count] = item.path;
+                    indices[path_count] = @intCast(index);
+                    path_count += 1;
+                    if (path_count == paths.len) {
+                        damageFolderProgressBatch(self, runner, paths[0..path_count], indices[0..path_count]);
+                        path_count = 0;
+                    }
+                }
                 const active_file =
                     (current_file_path.len > 0 and std.mem.eql(u8, item.path, current_file_path)) or
                     (previous_file_path.len > 0 and
                     !std.mem.eql(u8, previous_file_path, current_file_path) and
                     std.mem.eql(u8, item.path, previous_file_path));
-                if (!parent_folder and !active_file) continue;
-
-                const icon = self.itemIconRect(index);
-                const ring_size = @min(26.0, icon.w);
-                self.addDamageRegion(self.clipToViewport(.{
-                    .x = icon.x + (icon.w - ring_size) / 2 - 2,
-                    .y = icon.y + (icon.w - ring_size) / 2 - 2,
-                    .w = ring_size + 4,
-                    .h = ring_size + 4,
-                }));
+                if (active_file) {
+                    const icon = self.itemIconRect(index);
+                    const ring_size = @min(26.0, icon.w);
+                    self.addDamageRegion(self.clipToViewport(.{
+                        .x = icon.x + (icon.w - ring_size) / 2 - 2,
+                        .y = icon.y + (icon.w - ring_size) / 2 - 2,
+                        .w = ring_size + 4,
+                        .h = ring_size + 4,
+                    }));
+                }
+            }
+            if (path_count > 0) {
+                damageFolderProgressBatch(self, runner, paths[0..path_count], indices[0..path_count]);
             }
         }
 
@@ -309,18 +346,18 @@ pub fn sync(self: *App) void {
             }
         } else if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
             self.job_was_running = true;
-            const structure_changed = self.job_progress != progress.processed_items or
-                self.job_state != progress.state;
+            const state_changed = self.job_state != progress.state;
+            const processed_changed = self.job_progress != progress.processed_items;
             const bytes_changed = self.job_transferred_bytes != progress.transferred_bytes;
             const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
-            if (structure_changed) {
+            if (state_changed) {
                 self.invalidate();
-            } else if (bytes_changed or file_path_changed or
+            } else if (processed_changed or bytes_changed or file_path_changed or
                 (rate_changed and tooltip_hovered))
             {
                 damageJobProgress(
                     self,
-                    bytes_changed or file_path_changed,
+                    processed_changed or bytes_changed or file_path_changed,
                     tooltip_hovered,
                     previous_file_path,
                     current_file_path,
