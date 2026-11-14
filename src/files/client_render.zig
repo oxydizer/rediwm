@@ -3,6 +3,7 @@
 const std = @import("std");
 const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
+const header = @import("header.zig");
 const shell_ui = @import("ui").cairo;
 const ui_theme = @import("ui").theme;
 const a = std.heap.c_allocator;
@@ -31,6 +32,13 @@ pub fn acquireBuffer(self: *Client, w: i32, h: i32) !*Buffer {
 
 /// Device rows [y1, y2) one commit changed.
 pub const RowBand = struct { y1: i32 = 0, y2: i32 = 0 };
+
+const PixelRect = struct {
+    x1: i32 = 0,
+    y1: i32 = 0,
+    x2: i32 = 0,
+    y2: i32 = 0,
+};
 
 /// Brings a recycled `buffer` up to the last published image (`retained`):
 /// only the rows committed since it was last painted, when they are still
@@ -65,7 +73,8 @@ pub fn render(self: *Client) !void {
     if (!self.configured or !self.app.dirty or self.outstanding >= 2) return;
     // Partial repaints (hover, proximity glow, fades) follow the display,
     // not the pointer rate: wait for the last commit's frame callback.
-    if (self.app.paint_damage != null and self.frame_callback != null and !self.ack_uncommitted) return;
+    if ((self.app.paint_damage != null or self.app.progress_damage_count > 0) and
+        self.frame_callback != null and !self.ack_uncommitted) return;
 
     const tbh = self.titlebarHeight();
     const w = self.app.w;
@@ -74,14 +83,50 @@ pub fn render(self: *Client) !void {
     const bh = h * self.scale;
     const buffer = try self.acquireBuffer(bw, bh);
 
-    const partial = self.retained.items.len == buffer.len and self.retained_w == bw and self.applied_scale == self.scale and self.app.paint_damage != null;
+    const retained_valid = self.retained.items.len == buffer.len and
+        self.retained_w == bw and self.applied_scale == self.scale;
+    const multi_partial = retained_valid and self.app.progress_damage_count > 0;
+    const partial = retained_valid and self.app.paint_damage != null and !multi_partial;
+    const max_progress_regions = 128;
+    var progress_pixels: [max_progress_regions]PixelRect = undefined;
+    var progress_pixel_count: usize = 0;
+    var damage_regions: [max_progress_regions]header.Rect = undefined;
+    var damage_region_count: usize = 0;
     // The rows this paint can change: the clip of a partial paint (rounded
     // out to device pixels like `clipDamage`), else everything. Outside
     // them the buffer already equals `retained`, so only these are compared
     // and copied back.
     var band: RowBand = .{ .y1 = 0, .y2 = bh };
     var cols: RowBand = .{ .y1 = 0, .y2 = bw }; // the same, for columns
-    if (partial) {
+    if (multi_partial) {
+        const s: f64 = @floatFromInt(self.scale);
+        band = .{ .y1 = bh, .y2 = 0 };
+
+        for (self.app.progress_damage_regions[0..self.app.progress_damage_count]) |rect| {
+            const top = (rect.y + @as(f64, @floatFromInt(tbh))) * s;
+            const left = rect.x * s;
+            const bottom = top + rect.h * s;
+            const right = left + rect.w * s;
+            const pixel = PixelRect{
+                .x1 = @intFromFloat(std.math.clamp(@floor(left), 0, @as(f64, @floatFromInt(bw)))),
+                .y1 = @intFromFloat(std.math.clamp(@floor(top), 0, @as(f64, @floatFromInt(bh)))),
+                .x2 = @intFromFloat(std.math.clamp(@ceil(right), 0, @as(f64, @floatFromInt(bw)))),
+                .y2 = @intFromFloat(std.math.clamp(@ceil(bottom), 0, @as(f64, @floatFromInt(bh)))),
+            };
+            if (pixel.x2 <= pixel.x1 or pixel.y2 <= pixel.y1) continue;
+
+            progress_pixels[progress_pixel_count] = pixel;
+            damage_regions[damage_region_count] = rect;
+            progress_pixel_count += 1;
+            damage_region_count += 1;
+            band.y1 = @min(band.y1, pixel.y1);
+            band.y2 = @max(band.y2, pixel.y2);
+        }
+
+        if (band.y2 <= band.y1) band = .{ .y1 = 0, .y2 = 0 };
+        refreshBuffer(self, buffer, bw, bh);
+        c.cairo_surface_mark_dirty(buffer.image);
+    } else if (partial) {
         const damage = self.app.paint_damage.?;
         const s: f64 = @floatFromInt(self.scale);
         const top = (damage.y + @as(f64, @floatFromInt(tbh))) * s;
@@ -101,7 +146,14 @@ pub fn render(self: *Client) !void {
     defer c.cairo_destroy(cr);
 
     c.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
-    if (partial) {
+    if (multi_partial) {
+        var clipped: [max_progress_regions]header.Rect = undefined;
+        for (damage_regions[0..damage_region_count], 0..) |rect, i| {
+            clipped[i] = rect;
+            clipped[i].y += @floatFromInt(tbh);
+        }
+        app_mod.clipDamageRegions(cr, clipped[0..damage_region_count]);
+    } else if (partial) {
         var rect = self.app.paint_damage.?;
         rect.y += @floatFromInt(tbh);
         app_mod.clipDamage(cr, rect);
@@ -121,7 +173,53 @@ pub fn render(self: *Client) !void {
     var y1 = bh;
     var x2: i32 = 0;
     var y2: i32 = 0;
-    if (self.retained.items.len != bytes.len or self.retained_w != bw or self.applied_scale != self.scale) {
+    var changed_regions: [max_progress_regions]PixelRect = undefined;
+    var changed_region_count: usize = 0;
+    if (multi_partial) {
+        const stride: usize = @intCast(bw * 4);
+        for (progress_pixels[0..progress_pixel_count]) |region| {
+            const col0: usize = @intCast(region.x1);
+            const col1: usize = @intCast(region.x2);
+            var rx1 = region.x2;
+            var ry1 = region.y2;
+            var rx2: i32 = 0;
+            var ry2: i32 = 0;
+
+            for (@intCast(region.y1)..@intCast(region.y2)) |row| {
+                const offset = row * stride;
+                const now: []const u32 = @alignCast(std.mem.bytesAsSlice(
+                    u32,
+                    bytes[offset + col0 * 4 .. offset + col1 * 4],
+                ));
+                const was: []const u32 = @alignCast(std.mem.bytesAsSlice(
+                    u32,
+                    self.retained.items[offset + col0 * 4 .. offset + col1 * 4],
+                ));
+                if (std.mem.eql(u32, now, was)) continue;
+
+                ry1 = @min(ry1, @as(i32, @intCast(row)));
+                ry2 = @as(i32, @intCast(row + 1));
+                const left = std.mem.indexOfDiff(u32, now, was).?;
+                var right = now.len;
+                while (right > left and now[right - 1] == was[right - 1]) right -= 1;
+                rx1 = @min(rx1, @as(i32, @intCast(col0 + left)));
+                rx2 = @max(rx2, @as(i32, @intCast(col0 + right)));
+            }
+
+            if (rx2 <= rx1 or ry2 <= ry1) continue;
+            changed_regions[changed_region_count] = .{
+                .x1 = rx1,
+                .y1 = ry1,
+                .x2 = rx2,
+                .y2 = ry2,
+            };
+            changed_region_count += 1;
+            x1 = @min(x1, rx1);
+            y1 = @min(y1, ry1);
+            x2 = @max(x2, rx2);
+            y2 = @max(y2, ry2);
+        }
+    } else if (self.retained.items.len != bytes.len or self.retained_w != bw or self.applied_scale != self.scale) {
         x1 = 0;
         y1 = 0;
         x2 = bw;
@@ -145,7 +243,7 @@ pub fn render(self: *Client) !void {
             x2 = @max(x2, @as(i32, @intCast(col0 + right)));
         }
     }
-    if (partial) {
+    if (partial or multi_partial) {
         const stride: usize = @intCast(bw * 4);
         if (y2 > y1) {
             const from = @as(usize, @intCast(y1)) * stride;
@@ -172,7 +270,18 @@ pub fn render(self: *Client) !void {
         }
         self.xdg_surface.setWindowGeometry(0, 0, w, h);
         self.surface.attach(buffer.wl_buffer, 0, 0);
-        self.surface.damageBuffer(x1, y1, x2 - x1, y2 - y1);
+        if (multi_partial) {
+            for (changed_regions[0..changed_region_count]) |region| {
+                self.surface.damageBuffer(
+                    region.x1,
+                    region.y1,
+                    region.x2 - region.x1,
+                    region.y2 - region.y1,
+                );
+            }
+        } else {
+            self.surface.damageBuffer(x1, y1, x2 - x1, y2 - y1);
+        }
         self.surface.commit();
         buffer.busy = true;
         self.outstanding += 1;
@@ -185,6 +294,7 @@ pub fn render(self: *Client) !void {
     buffer.seq = self.commit_seq;
     self.ack_uncommitted = false;
     self.app.dirty = false;
+    self.app.progress_damage_count = 0;
 }
 
 pub fn renderTitlebar(self: *Client, cr: *c.cairo_t, w: i32, h: i32) void {

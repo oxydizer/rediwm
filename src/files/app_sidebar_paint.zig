@@ -454,7 +454,7 @@ pub fn sidebarExtent(self: *App) i32 {
     return bottom + self.sidebar_scroll + app_model.SidebarLayout.gap;
 }
 
-fn fileOpsBox(self: *App) shell_ui.Rect {
+pub fn fileOpsBox(self: *App) shell_ui.Rect {
     const card = self.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.transfers)];
     return .{
         .x = 12,

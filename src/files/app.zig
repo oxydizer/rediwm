@@ -64,6 +64,7 @@ pub const setSource = app_draw.setSource;
 pub const roundedRect = app_draw.roundedRect;
 pub const drawSpinner = app_draw.drawSpinner;
 pub const clipDamage = app_draw.clipDamage;
+pub const clipDamageRegions = app_draw.clipDamageRegions;
 pub const drawEllipsis = app_draw.drawEllipsis;
 pub const drawText = app_draw.drawText;
 pub const FontMetrics = app_draw.FontMetrics;
@@ -105,6 +106,8 @@ pub const App = struct {
     h: i32 = 540,
     dirty: bool = true,
     paint_damage: ?header.Rect = null,
+    progress_damage_regions: [128]header.Rect = undefined,
+    progress_damage_count: usize = 0,
     scale: i32 = 1,
 
     // Items and state
@@ -438,6 +441,7 @@ pub const App = struct {
     pub fn invalidate(self: *App) void {
         self.dirty = true;
         self.paint_damage = null;
+        self.progress_damage_count = 0;
     }
 
     pub const scan_notice_delay_ms: i64 = 500;
@@ -466,6 +470,7 @@ pub const App = struct {
     // app_hover.zig
     pub const hoverBounds = app_hover.hoverBounds;
     pub const addDamage = app_hover.addDamage;
+    pub const addDamageRegion = app_hover.addDamageRegion;
     pub const invalidateHover = app_hover.invalidateHover;
     pub const clipToViewport = app_hover.clipToViewport;
     pub const hoveredPlace = app_hover.hoveredPlace;

@@ -7,6 +7,7 @@ const c = @import("c.zig").api;
 const header = @import("header.zig");
 const ui_theme = @import("ui").theme;
 const clipDamage = @import("app_draw.zig").clipDamage;
+const clipDamageRegions = @import("app_draw.zig").clipDamageRegions;
 const app_tests = @import("app_tests.zig");
 const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
@@ -388,6 +389,85 @@ test "hover damage covers this repaint only" {
     app.invalidate();
     app.addDamage(.{ .x = 10, .y = 10, .w = 5, .h = 5 });
     try std.testing.expect(app.dirty and app.paint_damage == null);
+}
+
+test "progress damage regions stay independent until ordinary damage arrives" {
+    var app = try testApp();
+    defer app.deinit();
+
+    app.dirty = false;
+    app.paint_damage = null;
+    app.progress_damage_count = 0;
+
+    const first: header.Rect = .{ .x = 10, .y = 20, .w = 30, .h = 12 };
+    const second: header.Rect = .{ .x = 300, .y = 240, .w = 40, .h = 14 };
+
+    app.addDamageRegion(first);
+    app.addDamageRegion(second);
+
+    try std.testing.expect(app.dirty);
+    try std.testing.expect(app.paint_damage == null);
+    try std.testing.expectEqual(@as(usize, 2), app.progress_damage_count);
+    try std.testing.expectEqual(first, app.progress_damage_regions[0]);
+    try std.testing.expectEqual(second, app.progress_damage_regions[1]);
+
+    app.addDamage(.{ .x = 500, .y = 400, .w = 10, .h = 10 });
+    try std.testing.expectEqual(@as(usize, 0), app.progress_damage_count);
+    try std.testing.expect(app.paint_damage != null);
+
+    app.invalidate();
+    try std.testing.expectEqual(@as(usize, 0), app.progress_damage_count);
+    try std.testing.expect(app.paint_damage == null);
+}
+
+test "multi-region Cairo clipping matches painting the regions individually" {
+    const width: i32 = 120;
+    const height: i32 = 80;
+    const retained = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, width, height).?;
+    defer c.cairo_surface_destroy(retained);
+    const reference = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, width, height).?;
+    defer c.cairo_surface_destroy(reference);
+
+    const regions = [_]header.Rect{
+        .{ .x = 8, .y = 8, .w = 24, .h = 18 },
+        .{ .x = 82, .y = 54, .w = 26, .h = 16 },
+    };
+
+    const retained_cr = c.cairo_create(retained).?;
+    defer c.cairo_destroy(retained_cr);
+    const reference_cr = c.cairo_create(reference).?;
+    defer c.cairo_destroy(reference_cr);
+
+    for ([_]*c.cairo_t{ retained_cr, reference_cr }) |cr| {
+        c.cairo_set_source_rgb(cr, 1, 1, 1);
+        c.cairo_paint(cr);
+    }
+
+    c.cairo_save(retained_cr);
+    clipDamageRegions(retained_cr, &regions);
+    c.cairo_set_source_rgb(retained_cr, 0, 0, 0);
+    c.cairo_paint(retained_cr);
+    c.cairo_restore(retained_cr);
+
+    c.cairo_set_source_rgb(reference_cr, 0, 0, 0);
+    for (regions) |region| {
+        c.cairo_rectangle(
+            reference_cr,
+            region.x,
+            region.y,
+            region.w,
+            region.h,
+        );
+    }
+    c.cairo_fill(reference_cr);
+
+    c.cairo_surface_flush(retained);
+    c.cairo_surface_flush(reference);
+
+    const len: usize = @intCast(width * height * 4);
+    const actual = c.cairo_image_surface_get_data(retained)[0..len];
+    const expected = c.cairo_image_surface_get_data(reference)[0..len];
+    try std.testing.expectEqualSlices(u8, expected, actual);
 }
 
 test "column surface owns list header hover and clears modal and departed targets" {

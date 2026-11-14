@@ -74,8 +74,58 @@ pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
 /// absorbs it; damage left over from the last paint is not pending, or
 /// every hover would grow the next repaint by all the ones before it.
 pub fn addDamage(self: *App, rect: header.Rect) void {
-    if (self.dirty and self.paint_damage == null) return;
-    self.paint_damage = if (self.dirty) unionRect(self.paint_damage.?, rect) else rect;
+    if (rect.w <= 0 or rect.h <= 0) return;
+    if (self.dirty and self.paint_damage == null and self.progress_damage_count == 0) return;
+
+    if (!self.dirty) {
+        self.paint_damage = rect;
+        self.progress_damage_count = 0;
+        self.dirty = true;
+        return;
+    }
+
+    if (self.paint_damage) |previous| {
+        self.paint_damage = unionRect(previous, rect);
+    } else {
+        var combined = rect;
+        for (self.progress_damage_regions[0..self.progress_damage_count]) |region| {
+            combined = unionRect(combined, region);
+        }
+        self.paint_damage = combined;
+        self.progress_damage_count = 0;
+    }
+    self.dirty = true;
+}
+
+/// Queues an independent region for progress-only repaints. If the bounded
+/// queue fills, safely fall back to the existing single-rectangle path.
+pub fn addDamageRegion(self: *App, rect: header.Rect) void {
+    if (rect.w <= 0 or rect.h <= 0) return;
+    if (self.dirty and self.paint_damage == null and self.progress_damage_count == 0) return;
+
+    if (!self.dirty) {
+        self.paint_damage = null;
+        self.progress_damage_count = 0;
+        self.dirty = true;
+    }
+
+    if (self.paint_damage) |previous| {
+        self.progress_damage_regions[0] = previous;
+        self.progress_damage_count = 1;
+        self.paint_damage = null;
+    }
+
+    if (self.progress_damage_count == self.progress_damage_regions.len) {
+        var combined = self.progress_damage_regions[0];
+        for (self.progress_damage_regions[1..self.progress_damage_count]) |region| {
+            combined = unionRect(combined, region);
+        }
+        self.paint_damage = unionRect(combined, rect);
+        self.progress_damage_count = 0;
+    } else {
+        self.progress_damage_regions[self.progress_damage_count] = rect;
+        self.progress_damage_count += 1;
+    }
     self.dirty = true;
 }
 

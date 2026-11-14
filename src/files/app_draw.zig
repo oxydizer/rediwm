@@ -134,6 +134,39 @@ pub fn clipDamage(cr: *c.cairo_t, rect: header.Rect) void {
     c.cairo_set_matrix(cr, &matrix);
 }
 
+/// Clips to independent damage rectangles without expanding them into one
+/// large bounding box. Edges are rounded to whole device pixels.
+pub fn clipDamageRegions(cr: *c.cairo_t, rects: []const header.Rect) void {
+    c.cairo_new_path(cr);
+
+    var matrix: c.cairo_matrix_t = undefined;
+    c.cairo_get_matrix(cr, &matrix);
+
+    for (rects) |rect| {
+        if (rect.w <= 0 or rect.h <= 0) continue;
+
+        var x1 = rect.x;
+        var y1 = rect.y;
+        var x2 = rect.x + rect.w;
+        var y2 = rect.y + rect.h;
+        c.cairo_user_to_device(cr, &x1, &y1);
+        c.cairo_user_to_device(cr, &x2, &y2);
+
+        c.cairo_identity_matrix(cr);
+        c.cairo_rectangle(
+            cr,
+            @floor(x1),
+            @floor(y1),
+            @ceil(x2) - @floor(x1),
+            @ceil(y2) - @floor(y1),
+        );
+        c.cairo_set_matrix(cr, &matrix);
+    }
+
+    // An empty path intentionally produces an empty clip.
+    c.cairo_clip(cr);
+}
+
 /// Like `drawEllipsis`, but keeps the end of `text`: "…/dir/file.zig".
 pub fn drawHeadEllipsis(cr: *c.cairo_t, text: []const u8, x: f64, y: f64, width: f64, size: f64, bold: bool) void {
     if (width <= 0) return;

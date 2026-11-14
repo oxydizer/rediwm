@@ -128,103 +128,79 @@ pub fn isStaleSnapshot(snapshot_request_id: u64, active_request_id: u64) bool {
     return snapshot_request_id < active_request_id;
 }
 
-fn includeProgressDamage(damage: *?header.Rect, rect: header.Rect) void {
-    damage.* = if (damage.*) |previous| App.unionRect(previous, rect) else rect;
-}
-
 /// Damage only the surfaces that display file-operation byte progress.
 /// Structural changes still use invalidate(), because they can change layout.
-fn damageJobProgress(self: *App) void {
-    var damage: ?header.Rect = null;
-
-    if (self.transfer_view.active) {
-        // The file operation is the final row in the Transfers hub.
-        const row_index = self.torrents.items().len;
-        const y = self.viewTop() + self.itemInset() +
-            @as(i32, @intCast(row_index)) * self.rowHeight() - self.scroll_y;
-        const row: header.Rect = .{
-            .x = @floatFromInt(self.sidebarWidth() + 20),
-            .y = @floatFromInt(y),
-            .w = @floatFromInt(@max(0, self.cellWidth() - 20)),
-            .h = @floatFromInt(self.cardHeight()),
-        };
-        if (row.y + row.h > @as(f64, @floatFromInt(self.viewTop())) and
-            row.y < @as(f64, @floatFromInt(self.contentBottom())))
-        {
-            includeProgressDamage(&damage, self.clipToViewport(row));
-        }
-    } else if (self.job_runner) |runner| {
+fn damageJobProgress(
+    self: *App,
+    damage_surfaces: bool,
+    damage_tooltip: bool,
+) void {
+    if (damage_surfaces) {
+        if (self.transfer_view.active) {
+            // The file operation is the final row in the Transfers hub.
+            const row = @import("app_torrents.zig").fileOperationRowRect(
+                self,
+                self.torrents.items().len,
+            );
+            self.addDamageRegion(self.clipToViewport(row));
+        } else if (self.job_runner) |runner| {
         // Parent-folder progress rings are drawn inside visible item icons.
-        const columns = self.columns();
-        const first = @divTrunc(self.scroll_y, self.rowHeight()) * columns;
-        const last = @min(
-            @as(i32, @intCast(self.items.items.len)),
-            (@divTrunc(self.scroll_y + @max(0, self.contentBottom() - self.viewTop()), self.rowHeight()) + 1) * columns,
-        );
+            const columns = self.columns();
+            const first = @divTrunc(self.scroll_y, self.rowHeight()) * columns;
+            const last = @min(
+                @as(i32, @intCast(self.items.items.len)),
+                (@divTrunc(
+                    self.scroll_y + @max(0, self.contentBottom() - self.viewTop()),
+                    self.rowHeight(),
+                ) + 1) * columns,
+            );
 
-        var index = first;
-        while (index < last) : (index += 1) {
-            const item = self.items.items[@intCast(index)];
-            if (!item.is_dir or item.is_symlink) continue;
-            if (runner.progressForPath(item.path) == null) continue;
+            var index = first;
+            while (index < last) : (index += 1) {
+                const item = self.items.items[@intCast(index)];
+                if (!item.is_dir or item.is_symlink) continue;
+                if (runner.progressForPath(item.path) == null) continue;
 
-            const icon = self.itemIconRect(index);
-            const ring_size = @min(26.0, icon.w);
-            const ring: header.Rect = .{
-                .x = icon.x + (icon.w - ring_size) / 2 - 2,
-                .y = icon.y + (icon.h - ring_size) / 2 - 2,
-                .w = ring_size + 4,
-                .h = ring_size + 4,
-            };
-            includeProgressDamage(&damage, self.clipToViewport(ring));
+                const icon = self.itemIconRect(index);
+                const ring_size = @min(26.0, icon.w);
+                self.addDamageRegion(self.clipToViewport(.{
+                    .x = icon.x + (icon.w - ring_size) / 2 - 2,
+                    .y = icon.y + (icon.w - ring_size) / 2 - 2,
+                    .w = ring_size + 4,
+                    .h = ring_size + 4,
+                }));
+            }
         }
-    }
 
-    // The sidebar progress row remains visible alongside either main view.
-    const transfers = self.sidebarLayout().cards[
-        @intFromEnum(@import("app_model.zig").SidebarSection.transfers)
-    ];
-    if (transfers.visible and transfers.expanded and self.sidebarWidth() > 0) {
-        const row: header.Rect = .{
-            .x = 12,
-            .y = @floatFromInt(
-                transfers.y + transfers.header_height +
-                    self.torrentSidebarHeight() + @import("app_model.zig").SidebarLayout.gap,
-            ),
-            .w = @floatFromInt(@max(0, self.sidebarWidth() - 24 - self.scrollbarGutter())),
-            .h = 52,
-        };
-        if (row.w >= 120) includeProgressDamage(&damage, row);
+        // The sidebar progress row remains visible alongside either main view.
+        const transfers = self.sidebarLayout().cards[
+            @intFromEnum(@import("app_model.zig").SidebarSection.transfers)
+        ];
+        if (transfers.visible and transfers.expanded and self.sidebarWidth() > 0) {
+            const area = @import("app_sidebar_paint.zig").fileOpsBox(self);
+            if (area.w >= 120) {
+                self.addDamageRegion(.{
+                    .x = @floatCast(area.x),
+                    .y = @floatCast(area.y),
+                    .w = @floatCast(area.w),
+                    .h = @floatCast(area.h),
+                });
+            }
+        }
     }
 
     // The tooltip is the only other consumer of the live byte/rate counters.
-    // Include it only while it is actually visible.
-    if (self.hoverKey() == std.math.maxInt(usize) - 2002) {
-        const width = @min(320.0, @as(f64, @floatFromInt(self.w)) - 16);
-        const height: f64 = 84;
-        if (width > 0 and @as(f64, @floatFromInt(self.h)) >= height + 16) {
-            const max_x = @max(8.0, @as(f64, @floatFromInt(self.w)) - width - 8);
-            const x = std.math.clamp(self.mouse_x + 14, 8, max_x);
-            const below = self.mouse_y + 14;
-            const window_h: f64 = @floatFromInt(self.h);
-            const y = std.math.clamp(
-                if (below + height <= window_h - 8)
-                    below
-                else
-                    self.mouse_y - height - 14,
-                8,
-                window_h - height - 8,
-            );
-            includeProgressDamage(&damage, .{
-                .x = x,
-                .y = y,
-                .w = width,
-                .h = height,
-            });
+    if (damage_tooltip) {
+        if (@import("app_transfer_tip.zig").bounds(
+            self.w,
+            self.h,
+            self.mouse_x,
+            self.mouse_y,
+            2,
+        )) |rect| {
+            self.addDamageRegion(rect);
         }
     }
-
-    if (damage) |rect| self.addDamage(rect);
 }
 
 pub fn sync(self: *App) void {
@@ -322,12 +298,13 @@ pub fn sync(self: *App) void {
             const structure_changed = self.job_progress != progress.processed_items or
                 self.job_state != progress.state;
             const bytes_changed = self.job_transferred_bytes != progress.transferred_bytes;
+            const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
             if (structure_changed) {
                 self.invalidate();
             } else if (bytes_changed or
-                (rate_changed and self.hoverKey() == std.math.maxInt(usize) - 2002))
+                (rate_changed and tooltip_hovered))
             {
-                damageJobProgress(self);
+                damageJobProgress(self, bytes_changed, tooltip_hovered);
             }
         }
         self.job_progress = progress.processed_items;

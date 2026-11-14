@@ -587,22 +587,27 @@ fn fileOperationFraction(progress: ops_mod.ProgressInfo) f64 {
     );
 }
 
+pub fn fileOperationRowRect(self: *App, index: usize) header.Rect {
+    const y: f64 = @floatFromInt(
+        self.viewTop() + self.itemInset() +
+            @as(i32, @intCast(index)) * self.rowHeight() - self.scroll_y,
+    );
+    return .{
+        .x = @floatFromInt(self.sidebarWidth() + 20),
+        .y = y,
+        .w = @floatFromInt(@max(0, self.cellWidth() - 20)),
+        .h = @floatFromInt(self.cardHeight()),
+    };
+}
+
 fn renderFileOperationRow(
     self: *App,
     cr: *c.cairo_t,
     index: usize,
     progress: ops_mod.ProgressInfo,
 ) void {
-    const y: f64 = @floatFromInt(
-        self.viewTop() + self.itemInset() +
-            @as(i32, @intCast(index)) * self.rowHeight() - self.scroll_y,
-    );
-    const row: header.Rect = .{
-        .x = @floatFromInt(self.sidebarWidth() + 20),
-        .y = y,
-        .w = @floatFromInt(@max(0, self.cellWidth() - 20)),
-        .h = @floatFromInt(self.cardHeight()),
-    };
+    const row = fileOperationRowRect(self, index);
+    const y = row.y;
     const hover = if (self.dialog == null) transferAt(self, self.mouse_x, self.mouse_y) else null;
     if (self.transfer_view.row == index or hover == index) {
         ui.drawItemHighlight(cr, .{
