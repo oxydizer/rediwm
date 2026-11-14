@@ -305,6 +305,54 @@ test "JobRunner reports byte totals for recursive copies and moves" {
     try std.testing.expect(!testFileExists(move_source));
 }
 
+test "JobRunner reports per-path progress and retains completed outcomes" {
+    const a = std.testing.allocator;
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+
+    const sources = [_][]const u8{
+        "/source/active",
+        "/source-a/shared",
+        "/source-b/shared",
+        "/source/failed",
+    };
+    for (sources) |source| {
+        try runner.sources.append(a, try a.dupe(u8, source));
+    }
+
+    try runner.outcomes.appendNTimes(a, .cancelled, sources.len);
+    runner.outcomes.items[1] = .success;
+    runner.outcomes.items[2] = .skipped;
+    runner.outcomes.items[3] = .failed;
+
+    try runner.destination_paths.appendNTimes(a, &.{}, sources.len);
+    runner.destination_paths.items[1] = try a.dupe(u8, "/destination/shared");
+
+    try runner.item_bytes.appendNTimes(a, 100, sources.len);
+    try runner.item_transferred_bytes.appendNTimes(a, 50, sources.len);
+
+    runner.state = .running;
+    runner.kind = .copy;
+    runner.current_item_index = 0;
+
+    // Active item reports its byte-based fraction.
+    try std.testing.expectEqual(@as(?f64, 0.5), runner.progressForPath(sources[0]));
+
+    // Completed outcomes remain visible while the overall operation runs.
+    try std.testing.expectEqual(@as(?f64, 1.0), runner.progressForPath(sources[1]));
+    try std.testing.expectEqual(@as(?f64, 0.0), runner.progressForPath(sources[2]));
+    try std.testing.expectEqual(@as(?f64, 0.0), runner.progressForPath(sources[3]));
+
+    // Destination paths and full paths are matched exactly, not by basename.
+    try std.testing.expectEqual(@as(?f64, 1.0), runner.progressForPath("/destination/shared"));
+    try std.testing.expect(runner.progressForPath("/somewhere-else/shared") == null);
+
+    // Finished jobs no longer expose progress rings.
+    runner.state = .finished;
+    try std.testing.expect(runner.progressForPath(sources[0]) == null);
+    try std.testing.expect(runner.progressForPath("/destination/shared") == null);
+}
+
 test "deletion dialog owns targets and shares responsive hit geometry" {
     const deletion = @import("../delete_dialog.zig");
     var state: deletion.State = .{};
