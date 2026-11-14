@@ -6,7 +6,6 @@ const tr = i18n.tr;
 const App = @import("app.zig").App;
 const c = @import("c.zig").api;
 const recent = @import("recent.zig");
-const ops_mod = @import("ops.zig");
 const deletion = @import("../delete_dialog.zig");
 const header = @import("header.zig");
 const shell_ui = @import("ui").cairo;
@@ -210,6 +209,10 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
 
     if (!self.audio_bar.playlist_open and !self.transfer_view.active and self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
     if (self.menu != null) self.renderMenu(cr);
+    if (self.menu == null and self.dialog == null) {
+        self.renderFileOpsTip(cr);
+        self.renderTorrentSidebarTip(cr);
+    }
     if (!self.audio_bar.playlist_open and self.menu == null and self.dialog == null) self.renderTorrentTip(cr);
 
     @import("app_audio_playlist.zig").paint(self, cr);
@@ -454,22 +457,10 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
     var status_buf: [256]u8 = undefined;
     var status_text: []const u8 = "";
 
-    var prog: ?ops_mod.ProgressInfo = null;
-    if (self.job_runner) |runner| {
-        const p = runner.pollProgress();
-        if (p.state == .running or p.state == .waiting_conflict) {
-            prog = p;
-        }
-    }
-
     if (self.transfer_view.active) {
         setSource(cr, if (self.torrents.message().len > 0) ui_theme.global.danger else ui_theme.global.window_fg);
         const count = self.torrents.items().len;
         status_text = if (self.torrents.message().len > 0) self.torrents.message() else if (self.torrents.retry_at != null) tr("Connecting…") else i18n.fmt(&status_buf, i18n.trn("{count} transfer · Downloads continue after closing Files.", "{count} transfers · Downloads continue after closing Files.", count), .{ .count = count }) catch tr("Transfers");
-    } else if (prog) |p| {
-        setSource(cr, accent);
-        const pattern = if (self.job_runner.?.kind == .extract or self.job_runner.?.kind == .open_archive_member) tr("Extracting {current}/{total}: {name}... (Esc to cancel)") else tr("Transferring {current}/{total}: {name}... (Esc to cancel)");
-        status_text = i18n.fmt(&status_buf, pattern, .{ .current = p.processed_items + 1, .total = p.total_items, .name = p.current_name }) catch tr("Transferring...");
     } else if (self.status_notice != null and nowMs() < self.status_notice_until) {
         if (self.status_is_error) {
             setSource(cr, ui_theme.global.danger);

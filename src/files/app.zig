@@ -124,6 +124,7 @@ pub const App = struct {
     non_git_list_view: ?bool = null,
     /// Each sidebar section expands independently. Places is open by default.
     sidebar_expanded: [4]bool = .{ true, false, false, false },
+    transfers_were_active: bool = false,
     git_expanded: bool = true,
     /// The "Git View" checkbox: off shows a repository like any other folder.
     git_view: bool = true,
@@ -275,6 +276,9 @@ pub const App = struct {
     job_cut_revision: ?usize = null,
     job_progress: usize = std.math.maxInt(usize),
     job_transferred_bytes: u64 = 0,
+    job_rate_sample_bytes: u64 = 0,
+    job_rate_sample_at: i64 = 0,
+    job_bytes_per_second: u64 = 0,
     job_state: ops_mod.JobState = .idle,
     status_notice: ?[]u8 = null,
     status_notice_until: i64 = 0,
@@ -801,6 +805,7 @@ pub const App = struct {
     pub const fileOpsSidebarHover = app_sidebar_paint.fileOpsSidebarHover;
     pub const fileOpsSidebarClick = app_sidebar_paint.fileOpsSidebarClick;
     pub const renderFileOpsSidebar = app_sidebar_paint.renderFileOpsSidebar;
+pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
 
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
@@ -815,6 +820,7 @@ pub const App = struct {
     pub const inlineTorrentHit = app_torrent_rows.inlineTorrentHit;
     pub const inlineTorrentClick = app_torrent_rows.inlineTorrentClick;
     pub const renderTorrentTip = app_torrent_rows.renderTorrentTip;
+pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const toggleTorrent = app_torrents.toggleTorrent;
     pub const openTorrentDetails = app_torrents.openTorrentDetails;
     pub const openTransfers = app_torrents.openTransfers;

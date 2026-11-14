@@ -23,6 +23,7 @@ const drawText = @import("app_draw.zig").drawText;
 const fontMetrics = @import("app_draw.zig").fontMetrics;
 const sidebar_controls = @import("app_sidebar_controls.zig");
 const deviceLabel = App.deviceLabel;
+const transferTip = @import("app_transfer_tip.zig");
 
 /// A quiet surface separating the sidebar's four functional sections.
 fn drawSidebarCard(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64) void {
@@ -137,7 +138,7 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
     return app_model.SidebarLayout.init(
         top,
         .{ places_body, disks_body, git_body, transfers_body },
-        .{ true, true, self.repository() != null, self.torrentSidebarHeight() > 0 },
+        .{ true, true, self.repository() != null, self.torrentSidebarHeight() > 0 or self.fileOpsSidebarHeight() > 0 },
         self.sidebar_expanded,
     );
 }
@@ -540,26 +541,14 @@ pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
     else
         null;
 
-    var percent_buf: [32]u8 = undefined;
-    const percent_text = if (fraction) |value|
-        std.fmt.bufPrint(&percent_buf, "{d}%", .{@as(u64, @intFromFloat(value * 100))}) catch ""
-    else
-        "—";
-    drawEllipsis(cr, if (progress.current_name.len > 0) progress.current_name else tr("Preparing…"),
-        area.x + 12, area.y + 19, area.w - 112, shell_ui.statusSize(), false);
-    drawText(cr, percent_text, area.x + area.w - 88, area.y + 19, shell_ui.statusSize(), true);
-
-    const track_x = area.x + 12;
-    const track_y = area.y + area.h - 9;
-    const track_w = area.w - 24;
-    @import("app_draw.zig").drawProgressBar(
+    @import("app_draw.zig").drawTransferProgressRow(
         cr,
-        track_x,
-        track_y,
-        track_w,
+        area,
+        if (progress.current_name.len > 0) progress.current_name else tr("Preparing…"),
         fraction,
-        withAlpha(ui_theme.global.sidebarForeground(), 0.14),
+        ui_theme.global.sidebarForeground(),
         palette.accent,
+        shell_ui.statusSize(),
     );
 
     const can_pause = (progress.kind == .copy or progress.kind == .move) and
@@ -585,4 +574,18 @@ pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
 pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {
     const bar = self.sidebarScrollbar() orelse return;
     shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.sidebar_scroll_appearance, self.scrollbar_width, ui_theme.shellPalette()));
+}
+pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
+    if (self.hoverKey() != std.math.maxInt(usize) - 2002) return;
+
+    var speed_buf: [96]u8 = undefined;
+    var bytes_buf: [96]u8 = undefined;
+    const speed = i18n.fmt(&speed_buf, tr("{rate} KiB/s"), .{
+        .rate = @divTrunc(self.job_bytes_per_second, 1024),
+    }) catch "";
+    const transferred = i18n.fmt(&bytes_buf, tr("{value} transferred"), .{
+        .value = @divTrunc(self.job_transferred_bytes, 1024),
+    }) catch "";
+    const details = [_][]const u8{ speed, transferred };
+    transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, tr("File transfer"), &details);
 }

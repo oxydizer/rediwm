@@ -165,6 +165,28 @@ pub fn sync(self: *App) void {
     }
     if (self.job_runner) |runner| {
         const progress = runner.pollProgress();
+        const sample_at = nowMs();
+        if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
+            if (self.job_rate_sample_at == 0) {
+                self.job_rate_sample_at = sample_at;
+                self.job_rate_sample_bytes = progress.transferred_bytes;
+                self.job_bytes_per_second = 0;
+            } else if (sample_at - self.job_rate_sample_at >= 500) {
+                const elapsed = @max(1, sample_at - self.job_rate_sample_at);
+                const transferred = progress.transferred_bytes -| self.job_rate_sample_bytes;
+                self.job_bytes_per_second = if (progress.state == .running)
+                    @intFromFloat(@as(f64, @floatFromInt(transferred)) * 1000.0 / @as(f64, @floatFromInt(elapsed)))
+                else
+                    0;
+                self.job_rate_sample_at = sample_at;
+                self.job_rate_sample_bytes = progress.transferred_bytes;
+                self.invalidate();
+            }
+        } else {
+            self.job_rate_sample_at = 0;
+            self.job_rate_sample_bytes = 0;
+            self.job_bytes_per_second = 0;
+        }
         if (progress.state == .waiting_conflict) {
             if (self.dialog == null or self.dialog.?.kind != .conflict) {
                 self.openConflictDialog(progress.conflict_item_name);
@@ -205,6 +227,25 @@ pub fn sync(self: *App) void {
         self.job_state = progress.state;
         self.job_transferred_bytes = progress.transferred_bytes;
     }
+
+    const file_ops_active = self.job_state == .running or
+        self.job_state == .paused or
+        self.job_state == .waiting_conflict;
+    const torrent_active = for (self.torrents.items()) |transfer| {
+        if (transfer.@"error".len == 0 and
+            !transfer.finished and
+            !(transfer.pending and transfer.metadata))
+        {
+            break true;
+        }
+    } else false;
+    const transfers_active = file_ops_active or torrent_active;
+    if (transfers_active and !self.transfers_were_active) {
+        self.sidebar_expanded[@intFromEnum(@import("app_model.zig").SidebarSection.transfers)] = true;
+        self.invalidate();
+    }
+    self.transfers_were_active = transfers_active;
+
     if (self.status_notice != null and nowMs() >= self.status_notice_until) {
         self.allocator.free(self.status_notice.?);
         self.status_notice = null;
