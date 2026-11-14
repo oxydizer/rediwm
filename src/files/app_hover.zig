@@ -555,7 +555,7 @@ pub fn damageSidebarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
         const rect: button_widget.Rect = .{
             .x = 12,
             .y = @floatFromInt(card.y + 2),
-            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 40)),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 24)),
             .h = 28,
         };
         const clip: button_widget.Rect = .{

@@ -202,7 +202,9 @@ pub fn deviceBlock(self: *App) i32 {
 /// The eject button at a mounted device row's right edge.
 pub fn ejectRect(self: *App, index: usize) header.Rect {
     const row = self.placeRect(index);
-    return .{ .x = row.x + row.w - 30, .y = row.y + (row.h - 26) / 2, .w = 26, .h = 26 };
+    // Leave room for the proximity glow between the button and the
+    // sidebar's right-side scrollbar gutter.
+    return .{ .x = row.x + row.w - 38, .y = row.y + (row.h - 26) / 2, .w = 26, .h = 26 };
 }
 
 /// The device whose eject button is at (`x`, `y`).
