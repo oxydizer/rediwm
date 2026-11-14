@@ -592,8 +592,7 @@ pub const Worker = struct {
             list.append(mem, item) catch continue;
         }
 
-        // Temporarily disable Git integration, including discovery, watches and
-        // all repository UI, regardless of the saved Git View preference.
+        // Temporarily disable Git integration while file operations are being completed.
         const git_enabled = false;
         snap.repository = if (git_enabled) git.scan(mem, self.io, self.environ, dir_path) catch null else null;
         if (snap.repository) |repo| {
