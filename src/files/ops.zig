@@ -14,16 +14,21 @@ const max_copy_buffer_size = 1024 * 1024;
 pub const CopyStrategy = enum {
     buffered,
     copy_file_range,
+    reflink,
 
     pub fn name(self: CopyStrategy) []const u8 {
         return switch (self) {
             .buffered => "buffered",
             .copy_file_range => "copy_file_range",
+            .reflink => "reflink",
         };
     }
 };
 
 pub const CopyMetrics = struct {
+    reflink_calls: u64 = 0,
+    reflink_bytes: u64 = 0,
+    reflink_fallback_files: u64 = 0,
     copy_file_range_calls: u64 = 0,
     copy_file_range_bytes: u64 = 0,
     buffered_fallback_files: u64 = 0,
@@ -667,7 +672,47 @@ fn copyFileContentsTracked(
     var use_buffered_copy = true;
     if (comptime builtin.os.tag == .linux) {
         if (runner) |job| {
-            if (job.copy_strategy == .copy_file_range) {
+            if (job.copy_strategy == .reflink) {
+                if (!job.waitIfResumed(cancel) or
+                    (cancel != null and cancel.?.load(.acquire)))
+                {
+                    _ = c.unlink(dst_z);
+                    return error.Cancelled;
+                }
+
+                job.recordReflinkCall();
+                // Linux FICLONE: _IOW(0x94, 9, int).
+                const clone_result = c.ioctl(
+                    dst_fd,
+                    @as(c_ulong, 0x40049409),
+                    src_fd,
+                );
+                if (clone_result == 0) {
+                    const file_size: u64 = @intCast(stat.st_size);
+                    job.recordReflinkBytes(file_size);
+                    job.addFileTransferredBytes(file_size);
+                    return;
+                }
+
+                const clone_errno = std.c._errno().*;
+                // Unsupported filesystems and cross-filesystem clones can
+                // still use the normal kernel or buffered copy paths.
+                if (clone_errno == c.EXDEV or
+                    clone_errno == c.EINVAL or
+                    clone_errno == c.ENOSYS or
+                    clone_errno == c.ENOTTY or
+                    clone_errno == c.EOPNOTSUPP)
+                {
+                    job.recordReflinkFallback();
+                } else {
+                    _ = c.unlink(dst_z);
+                    return error.CopyFailed;
+                }
+            }
+
+            if (job.copy_strategy == .copy_file_range or
+                job.copy_strategy == .reflink)
+            {
                 use_buffered_copy = false;
                 while (true) {
                     if (!job.waitIfResumed(cancel)) {
@@ -1400,6 +1445,27 @@ pub const JobRunner = struct {
         self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         self.copy_metrics.copy_file_range_calls +|= 1;
+        _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    fn recordReflinkCall(self: *JobRunner) void {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
+        _ = c.pthread_mutex_lock(&self.mutex);
+        self.copy_metrics.reflink_calls +|= 1;
+        _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    fn recordReflinkBytes(self: *JobRunner, bytes: u64) void {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
+        _ = c.pthread_mutex_lock(&self.mutex);
+        self.copy_metrics.reflink_bytes +|= bytes;
+        _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    fn recordReflinkFallback(self: *JobRunner) void {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
+        _ = c.pthread_mutex_lock(&self.mutex);
+        self.copy_metrics.reflink_fallback_files +|= 1;
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
 

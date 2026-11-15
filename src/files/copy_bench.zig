@@ -371,7 +371,7 @@ fn emitRow(
         @as(f64, @floatFromInt(median_ns));
 
     std.debug.print(
-        "BENCH,A,job_copy_e2e_{s},{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
+        "BENCH,A,job_copy_e2e_{s},{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
         .{
             strategy.name(),
             profile.name,
@@ -385,6 +385,9 @@ fn emitRow(
             samples[samples.len - 1],
             mib_per_second,
             files_per_second,
+            metrics.reflink_calls,
+            metrics.reflink_bytes,
+            metrics.reflink_fallback_files,
             metrics.copy_file_range_calls,
             metrics.copy_file_range_bytes,
             metrics.buffered_fallback_files,
@@ -440,13 +443,22 @@ fn benchmarkProfile(
     defer runner.deinit();
     runner.profile_enabled = true;
 
-    const strategy_count = if (builtin.os.tag == .linux) 2 else 1;
+    const strategy_count = if (builtin.os.tag == .linux) 3 else 1;
     for (0..strategy_count) |strategy_index| {
         const strategy: ops.CopyStrategy =
-            if (strategy_index == 0) .buffered else .copy_file_range;
+            switch (strategy_index) {
+                0 => .buffered,
+                1 => .copy_file_range,
+                else => .reflink,
+            };
         runner.copy_strategy = strategy;
 
         for (buffer_sizes) |buffer_size| {
+            // Reflink does not use the copy buffer. Compare it at the
+            // production 64 KiB baseline without repeating identical runs.
+            if (strategy == .reflink and buffer_size != write_buffer_size) {
+                continue;
+            }
             runner.copy_buffer_bytes = buffer_size;
 
             // Warm source data and filesystem metadata for this combination.
@@ -509,7 +521,7 @@ pub fn run(allocator: Allocator) !void {
     defer ops.deleteRecursive(allocator, benchmark_root) catch {};
 
     std.debug.print(
-        "BENCH,phase,operation,profile,cache_mode,files,directories,total_bytes,buffer_bytes,iterations,median_ns,min_ns,max_ns,median_mib_per_second,median_files_per_second,copy_file_range_calls,copy_file_range_bytes,buffered_fallback_files,manifest_scan_ns,destination_resolution_ns,recursive_copy_ns,data_transfer_ns,lstat_calls,fstat_calls,opendir_calls,directory_entries,file_open_calls,directory_create_calls,path_allocations,path_allocation_bytes,manifest_lookup_comparisons,mutex_lock_calls\n",
+        "BENCH,phase,operation,profile,cache_mode,files,directories,total_bytes,buffer_bytes,iterations,median_ns,min_ns,max_ns,median_mib_per_second,median_files_per_second,reflink_calls,reflink_bytes,reflink_fallback_files,copy_file_range_calls,copy_file_range_bytes,buffered_fallback_files,manifest_scan_ns,destination_resolution_ns,recursive_copy_ns,data_transfer_ns,lstat_calls,fstat_calls,opendir_calls,directory_entries,file_open_calls,directory_create_calls,path_allocations,path_allocation_bytes,manifest_lookup_comparisons,mutex_lock_calls\n",
         .{},
     );
 
