@@ -260,6 +260,12 @@ panel painting. The key rules:
   Reset on focus loss or Ctrl/Alt, no repeat for a consumed key
   (`willConsume`/`consumed`), `compose.preload` before a sandbox closes the
   filesystem (PDF). `tests/dead_keys.py`.
+* **text-input-v3 (IMEs):** an app-side text-input client must send
+  `disable` + `commit` in its `leave` handler. The `enable` belongs to the
+  surface from `enter`; left enabled, the compositor sees no change when the
+  surface is entered again, no enable event reaches `input/text_input.zig`,
+  and the input method is never activated again — composition silently stops
+  after a window switch. `tests/editor.py`.
 
 ## Build and platform
 
