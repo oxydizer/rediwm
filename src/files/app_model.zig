@@ -199,6 +199,8 @@ pub const ViewItem = struct {
     git_status: git.Status = .clean,
     git_lines: ?git.LineCounts = null,
     transfer_stub: bool = false,
+    transfer_ghost: bool = false,
+    transfer_state: ?@import("ops.zig").TransferEntryState = null,
     missing: bool = false,
     name: []const u8,
     /// Path from the listed folder, shown instead of `name` in the Git view's

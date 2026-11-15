@@ -351,6 +351,7 @@ pub fn sync(self: *App) void {
             const bytes_changed = self.job_transferred_bytes != progress.transferred_bytes;
             const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
             if (state_changed) {
+                self.transfer_rows_dirty = true;
                 self.invalidate();
             } else if (processed_changed or bytes_changed or file_path_changed or
                 (rate_changed and tooltip_hovered))
@@ -407,7 +408,10 @@ pub fn sync(self: *App) void {
     // the first loop after release applies it.
     if (self.selection_band != null or self.drag_origin != null) return;
     const snap = self.worker.takeSnapshot() orelse {
-        if (self.torrents.rows_changed) self.rebuildView();
+        if (self.torrents.rows_changed or self.transfer_rows_dirty) {
+            self.transfer_rows_dirty = false;
+            self.rebuildView();
+        }
         return;
     };
     if (isStaleSnapshot(snap.request_id, self.active_request_id)) {
@@ -421,6 +425,7 @@ pub fn sync(self: *App) void {
     self.clampSidebarScroll();
     self.loading = false;
     self.rebuildView();
+    self.transfer_rows_dirty = false;
     if (self.restore_view) self.restoreView();
     if (self.initial_selection) |path| {
         self.initial_selection = null;
@@ -571,6 +576,7 @@ pub fn rebuildView(self: *App) void {
             }) catch continue;
         }
         self.appendTorrentRows(mem, &selected_paths);
+        self.appendTransferRows(mem, &selected_paths);
         // Transfer placeholders and synthetic snapshots have no worker key.
         // Give those rows keys from the same locale before sorting so every
         // comparison uses one collation, including mixed real/stub folders.
