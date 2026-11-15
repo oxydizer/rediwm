@@ -29,6 +29,33 @@ pub const CopyMetrics = struct {
     buffered_fallback_files: u64 = 0,
 };
 
+/// Worker-side profiling counters for one JobRunner job.
+/// Timings and counters are collected only when profile_enabled is true.
+pub const CopyProfile = struct {
+    manifest_scan_ns: u64 = 0,
+    destination_resolution_ns: u64 = 0,
+    recursive_copy_ns: u64 = 0,
+    data_transfer_ns: u64 = 0,
+    lstat_calls: u64 = 0,
+    fstat_calls: u64 = 0,
+    opendir_calls: u64 = 0,
+    directory_entries: u64 = 0,
+    file_open_calls: u64 = 0,
+    directory_create_calls: u64 = 0,
+    path_allocations: u64 = 0,
+    path_allocation_bytes: u64 = 0,
+    manifest_lookup_comparisons: u64 = 0,
+    mutex_lock_calls: u64 = 0,
+};
+
+fn monotonicNowNs() u64 {
+    var ts: std.c.timespec = undefined;
+    const result = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+    std.debug.assert(result == 0);
+    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s +
+        @as(u64, @intCast(ts.nsec));
+}
+
 pub const ConflictAction = enum {
     ask,
     skip,
@@ -480,8 +507,10 @@ fn measureBytes(
 
     const path_z = try allocator.dupeSentinel(u8, path, 0);
     defer allocator.free(path_z);
+    if (runner) |job| job.profilePathAllocation(path.len);
 
     var st: c.struct_stat = undefined;
+    if (runner) |job| job.profileCount(&job.profile_metrics.lstat_calls, 1);
     if (c.lstat(path_z, &st) != 0) return error.StatFailed;
 
     const fmt = st.st_mode & c.S_IFMT;
@@ -500,13 +529,17 @@ fn measureBytes(
     } else 0;
 
     if (runner) |job| {
+        job.profileCount(&job.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&job.mutex);
         defer _ = c.pthread_mutex_unlock(&job.mutex);
+        job.profilePathAllocation(path.len);
+        job.profilePathAllocation(relative_path.len);
         try job.manifest.append(path, relative_path, null, size, kind, root_index);
     }
 
     if (kind == .symlink or kind == .file) return size;
 
+    if (runner) |job| job.profileCount(&job.profile_metrics.opendir_calls, 1);
     const dir = c.opendir(path_z) orelse return error.OpenDirectoryFailed;
     defer _ = c.closedir(dir);
 
@@ -522,14 +555,17 @@ fn measureBytes(
         };
         const name = std.mem.span(@as([*:0]const u8, @ptrCast(&entry.*.d_name)));
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+        if (runner) |job| job.profileCount(&job.profile_metrics.directory_entries, 1);
 
         const child = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ path, name });
         defer allocator.free(child);
+        if (runner) |job| job.profilePathAllocation(child.len);
         const child_relative = if (relative_path.len == 0)
             try allocator.dupe(u8, name)
         else
             try std.fmt.allocPrint(allocator, "{s}/{s}", .{ relative_path, name });
         defer allocator.free(child_relative);
+        if (runner) |job| job.profilePathAllocation(child_relative.len);
         const child_bytes = try measureBytes(allocator, child, cancel, runner, root_index, child_relative);
         if (child_bytes > std.math.maxInt(u64) - total) return error.SizeOverflow;
         total += child_bytes;
@@ -552,16 +588,23 @@ fn copyFileContentsTracked(
     defer allocator.free(src_z);
     const dst_z = try allocator.dupeSentinel(u8, dst_path, 0);
     defer allocator.free(dst_z);
+    if (runner) |job| {
+        job.profilePathAllocation(src_path.len);
+        job.profilePathAllocation(dst_path.len);
+        job.profileCount(&job.profile_metrics.file_open_calls, 1);
+    }
 
     const src_fd = c.open(src_z, c.O_RDONLY | c.O_CLOEXEC);
     if (src_fd < 0) return error.OpenSourceFailed;
     defer _ = c.close(src_fd);
 
     var stat: c.struct_stat = undefined;
+    if (runner) |job| job.profileCount(&job.profile_metrics.fstat_calls, 1);
     if (c.fstat(src_fd, &stat) != 0) return error.StatFailed;
     if (stat.st_size < 0) return error.InvalidFileSize;
 
     const mode = @as(c_uint, @intCast(stat.st_mode & 0o7777));
+    if (runner) |job| job.profileCount(&job.profile_metrics.file_open_calls, 1);
     const dst_fd = c.open(dst_z, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC, mode);
     if (dst_fd < 0) return error.OpenDestFailed;
     defer _ = c.close(dst_fd);
@@ -571,6 +614,12 @@ fn copyFileContentsTracked(
     var buf: [max_copy_buffer_size]u8 = undefined;
     const buffer_len = if (runner) |job| job.copy_buffer_bytes else copy_buffer_size;
     std.debug.assert(buffer_len > 0 and buffer_len <= buf.len);
+
+    const transfer_started = if (runner) |job| job.profileStart() else 0;
+    defer if (runner) |job| job.profileAddDuration(
+        transfer_started,
+        &job.profile_metrics.data_transfer_ns,
+    );
 
     var use_buffered_copy = true;
     if (comptime builtin.os.tag == .linux) {
@@ -728,6 +777,10 @@ fn copyRecursiveTrackedImpl(
 
     const src_z = try allocator.dupeSentinel(u8, src, 0);
     defer allocator.free(src_z);
+    if (runner) |job| {
+        job.profilePathAllocation(src.len);
+        job.profileCount(&job.profile_metrics.lstat_calls, 1);
+    }
 
     var st: c.struct_stat = undefined;
     if (c.lstat(src_z, &st) != 0) return error.StatFailed;
@@ -738,11 +791,16 @@ fn copyRecursiveTrackedImpl(
     } else if (fmt == c.S_IFDIR) {
         const dst_z = try allocator.dupeSentinel(u8, dst, 0);
         defer allocator.free(dst_z);
+        if (runner) |job| {
+            job.profilePathAllocation(dst.len);
+            job.profileCount(&job.profile_metrics.directory_create_calls, 1);
+        }
 
         if (c.mkdir(dst_z, @intCast(st.st_mode & 0o7777)) != 0) return error.CreateDirectoryFailed;
         // Only remove a destination created by this operation on failure.
         errdefer deleteRecursive(allocator, dst) catch {};
 
+        if (runner) |job| job.profileCount(&job.profile_metrics.opendir_calls, 1);
         const dir_handle = c.opendir(src_z) orelse return error.OpenDirectoryFailed;
         defer _ = c.closedir(dir_handle);
 
@@ -755,11 +813,14 @@ fn copyRecursiveTrackedImpl(
             if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
             const name = std.mem.span(@as([*:0]const u8, @ptrCast(&entry.*.d_name)));
             if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+            if (runner) |job| job.profileCount(&job.profile_metrics.directory_entries, 1);
 
             const child_src = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ src, name });
             defer allocator.free(child_src);
+            if (runner) |job| job.profilePathAllocation(child_src.len);
             const child_dst = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ dst, name });
             defer allocator.free(child_dst);
+            if (runner) |job| job.profilePathAllocation(child_dst.len);
 
             try copyRecursiveTracked(allocator, child_src, child_dst, cancel, runner);
         }
@@ -863,6 +924,10 @@ fn moveItemTracked(
 
 pub const JobRunner = struct {
     allocator: Allocator,
+    /// Profiling is disabled by default. Configure before starting a job.
+    profile_enabled: bool = false,
+    /// Worker-owned while a job is running; read through profilingSnapshot().
+    profile_metrics: CopyProfile = .{},
     /// Per-job copy buffer size. Production defaults to 64 KiB.
     copy_buffer_bytes: usize = copy_buffer_size,
     /// The production default remains buffered until benchmarks justify a change.
@@ -937,6 +1002,35 @@ pub const JobRunner = struct {
     fn notify(self: *JobRunner) void {
         const one: u64 = 1;
         _ = c.write(self.wake_fd, &one, @sizeOf(u64));
+    }
+
+    fn profileStart(self: *JobRunner) u64 {
+        if (!self.profile_enabled) return 0;
+        return monotonicNowNs();
+    }
+
+    fn profileAddDuration(self: *JobRunner, started: u64, field: *u64) void {
+        if (!self.profile_enabled) return;
+        field.* +|= monotonicNowNs() - started;
+    }
+
+    fn profileCount(self: *JobRunner, field: *u64, amount: u64) void {
+        if (!self.profile_enabled) return;
+        field.* +|= amount;
+    }
+
+    fn profilePathAllocation(self: *JobRunner, bytes: usize) void {
+        if (!self.profile_enabled) return;
+        self.profile_metrics.path_allocations +|= 1;
+        self.profile_metrics.path_allocation_bytes +|= @intCast(bytes);
+    }
+
+    /// Returns a stable snapshot only after the worker has completed.
+    pub fn profilingSnapshot(self: *JobRunner) ?CopyProfile {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+        if (!self.profile_enabled or self.state != .finished) return null;
+        return self.profile_metrics;
     }
 
     pub fn drain(self: *JobRunner) void {
@@ -1044,6 +1138,7 @@ pub const JobRunner = struct {
         self.total_bytes = 0;
         self.transferred_bytes = 0;
         self.copy_metrics = .{};
+        self.profile_metrics = .{};
         self.total_bytes_known = false;
         self.measuring = kind == .copy or kind == .move;
         self.success_count = 0;
@@ -1100,6 +1195,7 @@ pub const JobRunner = struct {
     /// Called only by the worker. A paused state means the worker has reached
     /// a safe point and is no longer doing filesystem work.
     fn waitIfResumed(self: *JobRunner, cancel_flag: ?*std.atomic.Value(bool)) bool {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         while (self.pause_requested and (cancel_flag == null or !cancel_flag.?.load(.acquire))) {
             if (self.state != .paused) {
@@ -1186,6 +1282,7 @@ pub const JobRunner = struct {
 
     fn addTransferredBytesImpl(self: *JobRunner, bytes: u64, file_progress: bool) void {
         if (bytes == 0) return;
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         if (bytes > std.math.maxInt(u64) - self.transferred_bytes) {
             self.transferred_bytes = std.math.maxInt(u64);
@@ -1219,24 +1316,28 @@ pub const JobRunner = struct {
     }
 
     fn recordCopyFileRangeCall(self: *JobRunner) void {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         self.copy_metrics.copy_file_range_calls +|= 1;
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
 
     fn recordCopyFileRangeBytes(self: *JobRunner, bytes: u64) void {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         self.copy_metrics.copy_file_range_bytes +|= bytes;
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
 
     fn recordBufferedFallback(self: *JobRunner) void {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         self.copy_metrics.buffered_fallback_files +|= 1;
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
 
     fn beginFileProgress(self: *JobRunner, path: []const u8, size: u64) void {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         self.current_file_path_len = 0;
         self.current_file_bytes = 0;
@@ -1474,6 +1575,9 @@ pub const JobRunner = struct {
     /// Resolves every manifest entry beneath one selected source root.
     /// The update is committed only after all destination paths are allocated.
     fn resolveManifestDestinations(self: *JobRunner, root_index: usize, root_destination: []const u8) !void {
+        const started = self.profileStart();
+        defer self.profileAddDuration(started, &self.profile_metrics.destination_resolution_ns);
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
 
@@ -1496,6 +1600,10 @@ pub const JobRunner = struct {
                     root_destination,
                     entry.relative_path,
                 });
+            self.profilePathAllocation(if (entry.relative_path.len == 0)
+                root_destination.len
+            else
+                root_destination.len + 1 + entry.relative_path.len);
         }
 
         for (self.manifest.entries.items, 0..) |*entry, idx| {
@@ -1513,10 +1621,12 @@ pub const JobRunner = struct {
         source_path: []const u8,
         state: TransferEntryState,
     ) void {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
 
         for (self.manifest.entries.items) |*entry| {
+            self.profileCount(&self.profile_metrics.manifest_lookup_comparisons, 1);
             if (entry.root_index == root_index and
                 std.mem.eql(u8, entry.source_path, source_path))
             {
@@ -1606,6 +1716,7 @@ pub const JobRunner = struct {
         const name = std.fs.path.basename(src);
         var target = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.dest_dir, name });
         defer self.allocator.free(target);
+        self.profilePathAllocation(target.len);
         var buf: [4096]u8 = undefined;
         const target_z = try std.fmt.bufPrintSentinel(&buf, "{s}", .{target}, 0);
         var st: c.struct_stat = undefined;
@@ -1645,6 +1756,8 @@ pub const JobRunner = struct {
         try self.resolveManifestDestinations(self.current_item_index, target);
         try self.recordDestinationPath(target);
         if (self.kind == .copy) {
+            const recursive_started = self.profileStart();
+            defer self.profileAddDuration(recursive_started, &self.profile_metrics.recursive_copy_ns);
             try copyRecursiveTracked(self.allocator, src, target, &self.cancel_flag, self);
         } else {
             try moveItemTracked(self.allocator, src, target, &self.cancel_flag, self, source_bytes);
@@ -1695,6 +1808,8 @@ pub const JobRunner = struct {
 
     fn workerThread(self: *JobRunner) void {
         if (self.kind == .copy or self.kind == .move) {
+            const manifest_started = self.profileStart();
+            defer self.profileAddDuration(manifest_started, &self.profile_metrics.manifest_scan_ns);
             var total: u64 = 0;
             var known = true;
             for (self.sources.items, 0..) |src, idx| {

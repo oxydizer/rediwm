@@ -280,6 +280,11 @@ fn createWorkload(
     return stats;
 }
 
+const SampleResult = struct {
+    elapsed_ns: u64,
+    profile: ops.CopyProfile,
+};
+
 fn runCopySample(
     allocator: Allocator,
     runner: *ops.JobRunner,
@@ -289,7 +294,7 @@ fn runCopySample(
     iteration: usize,
     expected_bytes: u64,
     buffer_size: usize,
-) !u64 {
+) !SampleResult {
     const destination = try std.fmt.allocPrint(
         allocator,
         "{s}/destination-{s}-{d}-{d}",
@@ -317,7 +322,10 @@ fn runCopySample(
             {
                 return error.CopyJobFailed;
             }
-            return monotonicNowNs() - start;
+            return .{
+                .elapsed_ns = monotonicNowNs() - start,
+                .profile = runner.profilingSnapshot() orelse return error.MissingCopyProfile,
+            };
         }
 
         if (monotonicNowNs() - start > job_timeout_ns) {
@@ -349,6 +357,7 @@ fn emitRow(
     buffer_size: usize,
     strategy: ops.CopyStrategy,
     metrics: ops.CopyMetrics,
+    profile_totals: ops.CopyProfile,
 ) void {
     const median_ns = samples[samples.len / 2];
     const mib_per_second =
@@ -362,7 +371,7 @@ fn emitRow(
         @as(f64, @floatFromInt(median_ns));
 
     std.debug.print(
-        "BENCH,A,job_copy_e2e_{s},{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2},{d},{d},{d}\n",
+        "BENCH,A,job_copy_e2e_{s},{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
         .{
             strategy.name(),
             profile.name,
@@ -379,8 +388,39 @@ fn emitRow(
             metrics.copy_file_range_calls,
             metrics.copy_file_range_bytes,
             metrics.buffered_fallback_files,
+            profile_totals.manifest_scan_ns,
+            profile_totals.destination_resolution_ns,
+            profile_totals.recursive_copy_ns,
+            profile_totals.data_transfer_ns,
+            profile_totals.lstat_calls,
+            profile_totals.fstat_calls,
+            profile_totals.opendir_calls,
+            profile_totals.directory_entries,
+            profile_totals.file_open_calls,
+            profile_totals.directory_create_calls,
+            profile_totals.path_allocations,
+            profile_totals.path_allocation_bytes,
+            profile_totals.manifest_lookup_comparisons,
+            profile_totals.mutex_lock_calls,
         },
     );
+}
+
+fn addProfileTotals(total: *ops.CopyProfile, sample: ops.CopyProfile) void {
+    total.manifest_scan_ns +|= sample.manifest_scan_ns;
+    total.destination_resolution_ns +|= sample.destination_resolution_ns;
+    total.recursive_copy_ns +|= sample.recursive_copy_ns;
+    total.data_transfer_ns +|= sample.data_transfer_ns;
+    total.lstat_calls +|= sample.lstat_calls;
+    total.fstat_calls +|= sample.fstat_calls;
+    total.opendir_calls +|= sample.opendir_calls;
+    total.directory_entries +|= sample.directory_entries;
+    total.file_open_calls +|= sample.file_open_calls;
+    total.directory_create_calls +|= sample.directory_create_calls;
+    total.path_allocations +|= sample.path_allocations;
+    total.path_allocation_bytes +|= sample.path_allocation_bytes;
+    total.manifest_lookup_comparisons +|= sample.manifest_lookup_comparisons;
+    total.mutex_lock_calls +|= sample.mutex_lock_calls;
 }
 
 fn benchmarkProfile(
@@ -398,6 +438,7 @@ fn benchmarkProfile(
     const stats = try createWorkload(allocator, source_root, profile.kind);
     var runner = try ops.JobRunner.init(allocator);
     defer runner.deinit();
+    runner.profile_enabled = true;
 
     const strategy_count = if (builtin.os.tag == .linux) 2 else 1;
     for (0..strategy_count) |strategy_index| {
@@ -420,8 +461,9 @@ fn benchmarkProfile(
                 buffer_size,
             );
             var samples: [benchmark_iterations]u64 = undefined;
+            var profile_totals: ops.CopyProfile = .{};
             for (&samples, 0..) |*sample, iteration| {
-                sample.* = try runCopySample(
+                const result = try runCopySample(
                     allocator,
                     runner,
                     source_root,
@@ -431,9 +473,19 @@ fn benchmarkProfile(
                     stats.total_bytes,
                     buffer_size,
                 );
+                sample.* = result.elapsed_ns;
+                addProfileTotals(&profile_totals, result.profile);
             }
             sortSamples(&samples);
-            emitRow(profile, stats, &samples, buffer_size, strategy, runner.copyMetrics());
+            emitRow(
+                profile,
+                stats,
+                &samples,
+                buffer_size,
+                strategy,
+                runner.copyMetrics(),
+                profile_totals,
+            );
         }
     }
 }
@@ -457,7 +509,7 @@ pub fn run(allocator: Allocator) !void {
     defer ops.deleteRecursive(allocator, benchmark_root) catch {};
 
     std.debug.print(
-        "BENCH,phase,operation,profile,cache_mode,files,directories,total_bytes,buffer_bytes,iterations,median_ns,min_ns,max_ns,median_mib_per_second,median_files_per_second,copy_file_range_calls,copy_file_range_bytes,buffered_fallback_files\n",
+        "BENCH,phase,operation,profile,cache_mode,files,directories,total_bytes,buffer_bytes,iterations,median_ns,min_ns,max_ns,median_mib_per_second,median_files_per_second,copy_file_range_calls,copy_file_range_bytes,buffered_fallback_files,manifest_scan_ns,destination_resolution_ns,recursive_copy_ns,data_transfer_ns,lstat_calls,fstat_calls,opendir_calls,directory_entries,file_open_calls,directory_create_calls,path_allocations,path_allocation_bytes,manifest_lookup_comparisons,mutex_lock_calls\n",
         .{},
     );
 
