@@ -1235,10 +1235,26 @@ pub const JobRunner = struct {
         paths: []const []const u8,
         results: []?f64,
         matched: []bool,
-    ) void {
+    ) !void {
         std.debug.assert(paths.len == results.len and paths.len == matched.len);
         @memset(results, null);
         @memset(matched, false);
+
+        // Index requested directories so each manifest file can update all
+        // requested ancestors by walking its destination path only once.
+        var path_indices = std.StringHashMap(usize).init(self.allocator);
+        defer path_indices.deinit();
+        try path_indices.ensureTotalCapacity(@intCast(paths.len));
+        for (paths, 0..) |path, index| {
+            if (path.len > 0) try path_indices.put(path, index);
+        }
+
+        const totals = try self.allocator.alloc(u64, paths.len);
+        defer self.allocator.free(totals);
+        const completed = try self.allocator.alloc(u64, paths.len);
+        defer self.allocator.free(completed);
+        @memset(totals, 0);
+        @memset(completed, 0);
 
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
@@ -1275,11 +1291,56 @@ pub const JobRunner = struct {
             }
         }
 
-        for (paths, 0..) |path, path_idx| {
-            if (matched[path_idx]) continue;
-            results[path_idx] = self.manifestSubtreeProgressLocked(
-                path,
-                &matched[path_idx],
+        const direct_matched = try self.allocator.dupe(bool, matched);
+        defer self.allocator.free(direct_matched);
+
+        // One manifest traversal serves every requested directory. Walking
+        // destination ancestors makes this O(manifest entries × path depth),
+        // rather than rescanning the manifest once per visible directory.
+        for (self.manifest.entries.items) |entry| {
+            if (entry.kind != .file) continue;
+            const destination = entry.destination_path orelse continue;
+            var ancestor = std.fs.path.dirname(destination) orelse continue;
+
+            while (true) {
+                if (path_indices.get(ancestor)) |path_idx| {
+                    if (!direct_matched[path_idx]) {
+                        matched[path_idx] = true;
+                        totals[path_idx] +|= entry.size;
+
+                        switch (entry.state) {
+                            .completed => completed[path_idx] +|= entry.size,
+                            .copying => {
+                                if (self.current_file_path_len > 0 and
+                                    std.mem.eql(
+                                        u8,
+                                        self.current_file_path[0..self.current_file_path_len],
+                                        destination,
+                                    ))
+                                {
+                                    completed[path_idx] +|= @min(
+                                        self.current_file_bytes,
+                                        entry.size,
+                                    );
+                                }
+                            },
+                            .pending, .skipped, .failed, .cancelled => {},
+                        }
+                    }
+                }
+
+                const parent = std.fs.path.dirname(ancestor) orelse break;
+                if (parent.len == ancestor.len) break;
+                ancestor = parent;
+            }
+        }
+
+        for (paths, 0..) |_, path_idx| {
+            if (results[path_idx] != null or totals[path_idx] == 0) continue;
+            results[path_idx] = @min(
+                1.0,
+                @as(f64, @floatFromInt(completed[path_idx])) /
+                    @as(f64, @floatFromInt(totals[path_idx])),
             );
         }
     }

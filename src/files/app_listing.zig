@@ -139,7 +139,7 @@ fn damageFolderProgressBatch(
 ) void {
     var results: [64]?f64 = undefined;
     var matched: [64]bool = undefined;
-    runner.progressForPaths(paths, results[0..paths.len], matched[0..paths.len]);
+    runner.progressForPaths(paths, results[0..paths.len], matched[0..paths.len]) catch return;
 
     for (results[0..paths.len], matched[0..paths.len], indices) |result, was_matched, index| {
         if (!was_matched or result == null) continue;

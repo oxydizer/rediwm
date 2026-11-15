@@ -163,6 +163,12 @@ pub fn render(self: *Client) !void {
 
     c.cairo_save(cr);
     c.cairo_translate(cr, 0, @floatFromInt(tbh));
+    // FIXME(progress-only rendering): Cairo clipping limits pixel writes, but
+    // App.render() still traverses the full UI (including layout, visible-item
+    // iteration, text measurement and sidebar rendering) for a tiny progress
+    // update. Add a dedicated progress-only render path or cached static
+    // layers, while preserving independent damage regions, retained-buffer
+    // comparisons and the existing Wayland damage/commit behavior.
     self.app.render(cr);
     c.cairo_restore(cr);
 

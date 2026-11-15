@@ -712,6 +712,13 @@ pub fn renderTransferTree(self: *App, cr: *c.cairo_t) void {
     const active_size = if (progress) |value| value.current_file_size else 0;
     const palette = ui_theme.shellPalette();
 
+    self.transfer_tree_state.recomputeAggregates(
+        tree,
+        active_source,
+        active_bytes,
+        active_size,
+    ) catch return;
+
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
     c.cairo_rectangle(cr, area.x, area.y, area.w, area.h);
@@ -730,13 +737,7 @@ pub fn renderTransferTree(self: *App, cr: *c.cairo_t) void {
             parent = tree.nodes.items[parent_index].parent_index;
         }
         const indent = @as(f64, @floatFromInt(@min(depth, 8))) * 12;
-        const aggregate = self.transfer_tree_state.aggregateProgress(
-            tree,
-            index,
-            active_source,
-            active_bytes,
-            active_size,
-        );
+        const aggregate = self.transfer_tree_state.aggregateProgress(index);
         const active = aggregate.active;
         const glyph: []const u8 = if (node.kind == .directory)
             (if (self.transfer_tree_state.isExpanded(node.path)) "▾" else "▸")

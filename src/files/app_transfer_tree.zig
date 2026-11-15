@@ -9,6 +9,9 @@ pub const State = struct {
     allocator: Allocator,
     tree: ?projection.Tree = null,
     expanded_paths: std.StringHashMap(void),
+    aggregate_cache: std.ArrayList(AggregateProgress) = .empty,
+    child_counts: std.ArrayList(usize) = .empty,
+    aggregate_queue: std.ArrayList(usize) = .empty,
     dirty: bool = true,
 
     pub fn init(allocator: Allocator) State {
@@ -20,6 +23,10 @@ pub const State = struct {
 
     pub fn deinit(self: *State) void {
         if (self.tree) |*tree| tree.deinit();
+
+        self.aggregate_cache.deinit(self.allocator);
+        self.child_counts.deinit(self.allocator);
+        self.aggregate_queue.deinit(self.allocator);
 
         var paths = self.expanded_paths.keyIterator();
         while (paths.next()) |path| self.allocator.free(path.*);
@@ -37,6 +44,10 @@ pub const State = struct {
 
         var next = try projection.build(self.allocator, snapshot.entries.items);
         errdefer next.deinit();
+
+        try self.aggregate_cache.ensureTotalCapacity(self.allocator, next.nodes.items.len);
+        try self.child_counts.ensureTotalCapacity(self.allocator, next.nodes.items.len);
+        try self.aggregate_queue.ensureTotalCapacity(self.allocator, next.nodes.items.len);
 
         if (self.tree) |*old| old.deinit();
         self.tree = next;
@@ -85,46 +96,84 @@ pub const State = struct {
         return count;
     }
 
-    fn isWithinNode(tree: *const projection.Tree, candidate: usize, ancestor: usize) bool {
-        var parent = tree.nodes.items[candidate].parent_index;
-        while (parent) |parent_index| {
-            if (parent_index == ancestor) return true;
-            parent = tree.nodes.items[parent_index].parent_index;
-        }
-        return candidate == ancestor;
-    }
-
-    /// Computes file-byte progress for a node and all descendant files.
-    /// The active path is the manifest source path.
-    pub fn aggregateProgress(
-        _: *const State,
+    /// Computes every node's subtree progress in one bottom-up pass.
+    /// The active path is the manifest source path. The queue processes
+    /// leaves before parents, independent of manifest/node ordering.
+    pub fn recomputeAggregates(
+        self: *State,
         tree: *const projection.Tree,
-        index: usize,
         active_source_path: []const u8,
         active_bytes: u64,
         active_size: u64,
-    ) AggregateProgress {
-        var result: AggregateProgress = .{};
-        for (tree.nodes.items, 0..) |node, candidate| {
-            if (!isWithinNode(tree, candidate, index) or
-                node.kind == .directory or hiddenState(node.state)) continue;
+    ) !void {
+        const count = tree.nodes.items.len;
+        try self.aggregate_cache.ensureTotalCapacity(self.allocator, count);
+        try self.child_counts.ensureTotalCapacity(self.allocator, count);
+        try self.aggregate_queue.ensureTotalCapacity(self.allocator, count);
 
-            result.total_bytes +|= node.size;
-            if (node.state == .failed) result.failed = true;
-            if (node.state == .completed) {
-                result.completed_bytes +|= node.size;
-            } else if (active_source_path.len > 0 and
-                std.mem.eql(u8, node.source_path, active_source_path))
-            {
-                result.active = true;
-                result.completed_bytes +|= @min(
-                    active_bytes,
-                    if (node.size > 0) node.size else active_size,
-                );
+        self.aggregate_cache.clearRetainingCapacity();
+        self.child_counts.clearRetainingCapacity();
+        self.aggregate_queue.clearRetainingCapacity();
+
+        for (tree.nodes.items, 0..) |node, index| {
+            self.aggregate_cache.appendAssumeCapacity(.{});
+            self.child_counts.appendAssumeCapacity(0);
+
+            if (node.kind != .directory and !hiddenState(node.state)) {
+                var aggregate = &self.aggregate_cache.items[index];
+                aggregate.total_bytes = node.size;
+                if (node.state == .failed) {
+                    aggregate.failed = true;
+                } else if (node.state == .completed) {
+                    aggregate.completed_bytes = node.size;
+                } else if (active_source_path.len > 0 and
+                    std.mem.eql(u8, node.source_path, active_source_path))
+                {
+                    aggregate.active = true;
+                    aggregate.completed_bytes = @min(
+                        active_bytes,
+                        if (node.size > 0) node.size else active_size,
+                    );
+                }
+            }
+
+            if (node.parent_index) |parent| {
+                self.child_counts.items[parent] += 1;
             }
         }
-        result.completed_bytes = @min(result.completed_bytes, result.total_bytes);
-        return result;
+
+        for (self.child_counts.items, 0..) |children, index| {
+            if (children == 0) self.aggregate_queue.appendAssumeCapacity(index);
+        }
+
+        var head: usize = 0;
+        while (head < self.aggregate_queue.items.len) : (head += 1) {
+            const child_index = self.aggregate_queue.items[head];
+            const parent_index = tree.nodes.items[child_index].parent_index orelse continue;
+            const child = self.aggregate_cache.items[child_index];
+            const parent = &self.aggregate_cache.items[parent_index];
+
+            parent.total_bytes +|= child.total_bytes;
+            parent.completed_bytes +|= child.completed_bytes;
+            parent.active = parent.active or child.active;
+            parent.failed = parent.failed or child.failed;
+
+            self.child_counts.items[parent_index] -= 1;
+            if (self.child_counts.items[parent_index] == 0) {
+                self.aggregate_queue.appendAssumeCapacity(parent_index);
+            }
+        }
+
+        for (self.aggregate_cache.items) |*aggregate| {
+            aggregate.completed_bytes = @min(
+                aggregate.completed_bytes,
+                aggregate.total_bytes,
+            );
+        }
+    }
+
+    pub fn aggregateProgress(self: *const State, index: usize) AggregateProgress {
+        return self.aggregate_cache.items[index];
     }
 
     pub fn toggleExpanded(self: *State, path: []const u8) !void {
@@ -181,7 +230,8 @@ test "transfer tree aggregates descendant file progress" {
 
     var state = State.init(allocator);
     defer state.deinit();
-    const aggregate = state.aggregateProgress(&tree, 0, "/source/active.bin", 4, 10);
+    try state.recomputeAggregates(&tree, "/source/active.bin", 4, 10);
+    const aggregate = state.aggregateProgress(0);
     try std.testing.expectEqual(@as(u64, 30), aggregate.total_bytes);
     try std.testing.expectEqual(@as(u64, 24), aggregate.completed_bytes);
     try std.testing.expect(aggregate.active);
@@ -221,7 +271,8 @@ test "transfer tree aggregates deeply nested progress without mixing roots or ou
 
     // Root includes every visible descendant, but excludes skipped/cancelled
     // payloads. Failed payload remains in the denominator.
-    const root = state.aggregateProgress(&tree, 0, "/source-a/one/two/active.bin", 4, 10);
+    try state.recomputeAggregates(&tree, "/source-a/one/two/active.bin", 4, 10);
+    const root = state.aggregateProgress(0);
     try std.testing.expectEqual(@as(u64, 100), root.total_bytes);
     try std.testing.expectEqual(@as(u64, 24), root.completed_bytes);
     try std.testing.expect(root.active);
@@ -229,7 +280,7 @@ test "transfer tree aggregates deeply nested progress without mixing roots or ou
     try std.testing.expectApproxEqAbs(@as(f64, 0.24), root.fraction(), 0.0001);
 
     // The middle directory aggregates only its own subtree.
-    const middle = state.aggregateProgress(&tree, 1, "/source-a/one/two/active.bin", 4, 10);
+    const middle = state.aggregateProgress(1);
     try std.testing.expectEqual(@as(u64, 30), middle.total_bytes);
     try std.testing.expectEqual(@as(u64, 24), middle.completed_bytes);
     try std.testing.expect(middle.active);
@@ -237,14 +288,14 @@ test "transfer tree aggregates deeply nested progress without mixing roots or ou
     try std.testing.expectApproxEqAbs(@as(f64, 0.8), middle.fraction(), 0.0001);
 
     // The deepest directory sees only the active file.
-    const deepest = state.aggregateProgress(&tree, 2, "/source-a/one/two/active.bin", 4, 10);
+    const deepest = state.aggregateProgress(2);
     try std.testing.expectEqual(@as(u64, 10), deepest.total_bytes);
     try std.testing.expectEqual(@as(u64, 4), deepest.completed_bytes);
     try std.testing.expect(deepest.active);
     try std.testing.expectApproxEqAbs(@as(f64, 0.4), deepest.fraction(), 0.0001);
 
     // A second selected root never inherits the first root's active progress.
-    const other_root = state.aggregateProgress(&tree, 9, "/source-a/one/two/active.bin", 4, 10);
+    const other_root = state.aggregateProgress(9);
     try std.testing.expectEqual(@as(u64, 70), other_root.total_bytes);
     try std.testing.expectEqual(@as(u64, 70), other_root.completed_bytes);
     try std.testing.expect(!other_root.active);

@@ -74,6 +74,25 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
     const cell = self.cellWidth();
     const first = @divTrunc(self.scroll_y, self.rowHeight()) * cols;
     const last = @min(@as(i32, @intCast(self.items.items.len)), (@divTrunc(self.scroll_y + viewport_h, self.rowHeight()) + 1) * cols);
+    var progress_arena = std.heap.ArenaAllocator.init(self.allocator);
+    defer progress_arena.deinit();
+    var directory_progress: []?f64 = &.{};
+    if (self.job_runner) |runner| {
+        const count: usize = @intCast(last - first);
+        const scratch = progress_arena.allocator();
+        if (scratch.alloc([]const u8, count)) |paths| {
+            for (paths, 0..) |*path, offset| {
+                const item = self.items.items[@as(usize, @intCast(first)) + offset];
+                path.* = if (item.is_dir and !item.is_symlink) item.path else "";
+            }
+            if (scratch.alloc(?f64, count)) |results| {
+                if (scratch.alloc(bool, count)) |matched| {
+                    runner.progressForPaths(paths, results, matched) catch {};
+                    directory_progress = results;
+                } else |_| {}
+            } else |_| {}
+        } else |_| {}
+    }
     // The hover glide sits under every item, since mid-glide it straddles two.
     const glide = self.item_hover.frame;
     if (glide.alpha > 0) {
@@ -163,8 +182,9 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             }
         }
         if (item.is_dir and !item.is_symlink) {
-            if (self.job_runner) |runner| {
-                if (runner.progressForPath(item.path)) |progress| {
+            const progress_index: usize = @intCast(index - first);
+            if (progress_index < directory_progress.len) {
+                if (directory_progress[progress_index]) |progress| {
                     const ring_size = @min(26.0, icon.w);
                     shell_ui.drawProgressRing(cr, .{
                         .x = icon.x + (icon.w - ring_size) / 2,
