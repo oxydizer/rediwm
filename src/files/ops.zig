@@ -203,6 +203,19 @@ pub const TransferEntry = struct {
     root_index: usize,
 };
 
+const ManifestLookupEntry = struct {
+    root_index: usize,
+    source_path: []const u8,
+    entry_index: usize,
+
+    fn lessThan(_: void, lhs: ManifestLookupEntry, rhs: ManifestLookupEntry) bool {
+        if (lhs.root_index != rhs.root_index) return lhs.root_index < rhs.root_index;
+        const order = std.mem.order(u8, lhs.source_path, rhs.source_path);
+        if (order != .eq) return order == .lt;
+        return lhs.entry_index < rhs.entry_index;
+    }
+};
+
 /// Owns the paths and entries describing one logical transfer.
 /// Synchronization is provided by the owning JobRunner.
 pub const TransferManifest = struct {
@@ -258,6 +271,36 @@ pub const TransferManifest = struct {
         self.entries.deinit(self.allocator);
     }
 };
+
+test "manifest lookup isolates roots and preserves first duplicate entry" {
+    const a = std.testing.allocator;
+    const runner = try JobRunner.init(a);
+    defer runner.deinit();
+
+    try runner.manifest.append("/same", "", null, 0, .file, 0);
+    try runner.manifest.append("/same", "", null, 0, .file, 0);
+    try runner.manifest.append("/same", "", null, 0, .file, 1);
+    try runner.manifest.append("/same/child", "child", null, 0, .file, 0);
+
+    _ = c.pthread_mutex_lock(&runner.mutex);
+    const built = runner.rebuildManifestLookup();
+    _ = c.pthread_mutex_unlock(&runner.mutex);
+    try std.testing.expect(built);
+
+    runner.setManifestEntryState(0, "/same", .copying);
+    try std.testing.expectEqual(TransferEntryState.copying, runner.manifest.entries.items[0].state);
+    try std.testing.expectEqual(TransferEntryState.pending, runner.manifest.entries.items[1].state);
+    try std.testing.expectEqual(TransferEntryState.pending, runner.manifest.entries.items[2].state);
+
+    runner.setManifestEntryState(1, "/same", .completed);
+    try std.testing.expectEqual(TransferEntryState.completed, runner.manifest.entries.items[2].state);
+
+    runner.setManifestEntryState(0, "/same/child", .failed);
+    try std.testing.expectEqual(TransferEntryState.failed, runner.manifest.entries.items[3].state);
+
+    runner.setManifestEntryState(0, "/missing", .failed);
+    try std.testing.expectEqual(TransferEntryState.pending, runner.manifest.entries.items[1].state);
+}
 
 /// An independently owned, consistent view of a JobRunner's transfer manifest.
 /// Its paths remain valid even after the live manifest is cleared or reused.
@@ -947,6 +990,8 @@ pub const JobRunner = struct {
     outcomes: std.ArrayList(ItemOutcome) = .empty,
     destination_paths: std.ArrayList([]u8) = .empty,
     manifest: TransferManifest,
+      manifest_lookup: std.ArrayList(ManifestLookupEntry) = .empty,
+      manifest_lookup_valid: bool = false,
     dest_dir: []u8 = &[_]u8{},
     member: ?[]u8 = null,
     result_path: ?[]u8 = null,
@@ -1019,6 +1064,39 @@ pub const JobRunner = struct {
         field.* +|= amount;
     }
 
+    /// Rebuilds the sorted lookup index. Caller must hold mutex.
+    /// The index borrows source paths owned by the manifest.
+    fn rebuildManifestLookup(self: *JobRunner) bool {
+        self.manifest_lookup_valid = false;
+        self.manifest_lookup.clearRetainingCapacity();
+
+        const entries = self.manifest.entries.items;
+        self.manifest_lookup.ensureTotalCapacity(self.allocator, entries.len) catch return false;
+
+        for (entries, 0..) |entry, index| {
+            self.manifest_lookup.appendAssumeCapacity(.{
+                .root_index = entry.root_index,
+                .source_path = entry.source_path,
+                .entry_index = index,
+            });
+        }
+
+        std.mem.sort(
+            ManifestLookupEntry,
+            self.manifest_lookup.items,
+            {},
+            ManifestLookupEntry.lessThan,
+        );
+        self.manifest_lookup_valid = true;
+        return true;
+    }
+
+    /// Invalidates borrowed path references before the manifest is cleared.
+    fn clearManifestLookup(self: *JobRunner) void {
+        self.manifest_lookup_valid = false;
+        self.manifest_lookup.clearRetainingCapacity();
+    }
+
     fn profilePathAllocation(self: *JobRunner, bytes: usize) void {
         if (!self.profile_enabled) return;
         self.profile_metrics.path_allocations +|= 1;
@@ -1044,7 +1122,9 @@ pub const JobRunner = struct {
         _ = c.close(self.wake_fd);
 
         self.clearStrings();
+        self.clearManifestLookup();
         self.manifest.deinit();
+        self.manifest_lookup.deinit(self.allocator);
         for (self.temporary_dirs.items) |path| {
             deleteRecursive(self.allocator, path) catch {};
             self.allocator.free(path);
@@ -1104,6 +1184,7 @@ pub const JobRunner = struct {
         errdefer _ = c.pthread_mutex_unlock(&self.mutex);
         self.clearStrings();
         self.state = .idle;
+        self.clearManifestLookup();
         self.manifest.clearRetainingCapacity();
         for (self.sources.items) |s| self.allocator.free(s);
         self.sources.clearRetainingCapacity();
@@ -1625,6 +1706,41 @@ pub const JobRunner = struct {
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
 
+        if (self.manifest_lookup_valid) {
+            const lookup = self.manifest_lookup.items;
+            var low: usize = 0;
+            var high: usize = lookup.len;
+
+            // Lower-bound search by (root_index, source_path).
+            while (low < high) {
+                const mid = low + (high - low) / 2;
+                const candidate = lookup[mid];
+                self.profileCount(&self.profile_metrics.manifest_lookup_comparisons, 1);
+
+                if (candidate.root_index < root_index) {
+                    low = mid + 1;
+                } else if (candidate.root_index > root_index) {
+                    high = mid;
+                } else if (std.mem.order(u8, candidate.source_path, source_path) == .lt) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+
+            if (low < lookup.len) {
+                const candidate = lookup[low];
+                self.profileCount(&self.profile_metrics.manifest_lookup_comparisons, 1);
+                if (candidate.root_index == root_index and
+                    std.mem.eql(u8, candidate.source_path, source_path))
+                {
+                    self.manifest.entries.items[candidate.entry_index].state = state;
+                }
+            }
+            return;
+        }
+
+        // Allocation failure while building the index must not affect correctness.
         for (self.manifest.entries.items) |*entry| {
             self.profileCount(&self.profile_metrics.manifest_lookup_comparisons, 1);
             if (entry.root_index == root_index and
@@ -1819,6 +1935,7 @@ pub const JobRunner = struct {
                 }
                 const bytes = measureBytes(self.allocator, src, &self.cancel_flag, self, idx, "") catch {
                     _ = c.pthread_mutex_lock(&self.mutex);
+                    self.clearManifestLookup();
                     self.manifest.clearRetainingCapacity();
                     _ = c.pthread_mutex_unlock(&self.mutex);
                     known = false;
@@ -1833,10 +1950,14 @@ pub const JobRunner = struct {
             }
             if (self.cancel_flag.load(.acquire)) {
                 _ = c.pthread_mutex_lock(&self.mutex);
+                self.clearManifestLookup();
                 self.manifest.clearRetainingCapacity();
                 _ = c.pthread_mutex_unlock(&self.mutex);
             }
             _ = c.pthread_mutex_lock(&self.mutex);
+            if (!self.cancel_flag.load(.acquire)) {
+                _ = self.rebuildManifestLookup();
+            }
             self.total_bytes = total;
             self.total_bytes_known = known;
             self.measuring = false;
