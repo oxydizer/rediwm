@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const App = @import("app.zig").App;
+const ops = @import("ops.zig");
 const c = @import("c.zig").api;
 const thumbs_mod = @import("thumbs.zig");
 const thumb_decode = @import("thumb_decode.zig");
@@ -25,6 +26,46 @@ const drawText = @import("app_draw.zig").drawText;
 const measureText = @import("app_draw.zig").measureText;
 const formatPermissions = @import("app_draw.zig").formatPermissions;
 const itemType = App.itemType;
+
+/// Transfer ghost filenames stay subdued until the manifest confirms completion.
+fn filenameForeground(item: ViewItem) [4]f32 {
+    if (item.transfer_ghost and !item.is_dir) {
+        if (item.transfer_state) |state| {
+            switch (state) {
+                .pending, .copying => return withAlpha(ui_theme.global.window_fg, 0.55),
+                .completed, .skipped, .failed, .cancelled => {},
+            }
+        }
+    }
+    return ui_theme.global.window_fg;
+}
+
+/// Live byte count for the file currently being copied.
+fn currentTransferBytes(item: ViewItem, progress: ?ops.ProgressInfo) ?i64 {
+    if (!item.transfer_ghost or item.is_dir) {
+        return null;
+    }
+
+    if (item.transfer_state == .pending) return 0;
+    if (item.transfer_state != .copying) return null;
+
+    const current = progress orelse return null;
+    if ((current.state != .running and current.state != .paused) or
+        current.current_file_path_len == 0 or
+        !std.mem.eql(
+            u8,
+            current.current_file_path[0..current.current_file_path_len],
+            item.path,
+        ))
+    {
+        return null;
+    }
+
+    return @intCast(@min(
+        current.current_file_bytes,
+        @as(u64, std.math.maxInt(i64)),
+    ));
+}
 
 pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
     const accent = ui_theme.shellPalette().accent;
@@ -135,14 +176,20 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             }
         }
         const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) else GridCard.padding_x);
-        setSource(cr, ui_theme.global.window_fg);
+        setSource(cr, filenameForeground(item));
         const name_width = if (self.list_view) @max(0, self.listColumn(0).w - 46 - self.inlineTorrentWidth(idx) - self.audioButtonWidth(idx)) else width - 2 * GridCard.padding_x;
         // A path that does not fit loses its head, so the file's own name stays readable.
         const name_y = y + (if (self.list_view) baseline else GridCard.name_baseline);
         if (item.label.len > 0) drawHeadEllipsis(cr, item.label, label_x, name_y, name_width, shell_ui.textSize(), false) else drawEllipsis(cr, item.name, label_x, name_y, name_width, shell_ui.textSize(), false);
         var buf: [64]u8 = undefined;
         var size_buf: [64]u8 = undefined;
-        const disp = if (item.transfer_stub) App.ItemSizeDisplay{ .text = formatSize((self.torrentForItem(idx) orelse continue).total, &size_buf), .is_running = false } else self.itemSizeDisplay(item, &size_buf);
+        const transfer_bytes = currentTransferBytes(item, job_progress);
+        const disp = if (item.transfer_stub)
+            App.ItemSizeDisplay{ .text = formatSize((self.torrentForItem(idx) orelse continue).total, &size_buf), .is_running = false }
+        else if (transfer_bytes) |bytes|
+            App.ItemSizeDisplay{ .text = formatSize(bytes, &size_buf), .is_running = false }
+        else
+            self.itemSizeDisplay(item, &size_buf);
         const is_size_hovered = (self.hoverKey() == 2_000_000 + idx);
         if (self.list_view and self.repository() != null) {
             self.renderGitStatus(cr, item, y);
@@ -196,7 +243,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 }
             } else {
                 setSource(cr, ui_theme.global.window_fg);
-                drawText(cr, formatSize(item.bytes, &buf), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
+                drawText(cr, formatSize(transfer_bytes orelse item.bytes, &buf), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
             }
         }
         self.renderInlineTorrent(cr, idx);
@@ -206,6 +253,42 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             c.cairo_paint_with_alpha(cr, 0.45);
         }
     }
+}
+
+test "transfer ghost filenames stay muted until manifest completion" {
+    const normal = ui_theme.global.window_fg;
+    const muted = withAlpha(normal, 0.55);
+    var item: ViewItem = .{
+        .name = "file.txt",
+        .path = "/destination/file.txt",
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 0,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .transfer_ghost = true,
+        .transfer_state = .pending,
+    };
+
+    try std.testing.expectEqual(muted, filenameForeground(item));
+
+    item.transfer_state = .copying;
+    try std.testing.expectEqual(muted, filenameForeground(item));
+
+    // Even at 100% byte progress, only the completed manifest state restores
+    // the normal filename colour.
+    item.transfer_state = .completed;
+    try std.testing.expectEqual(normal, filenameForeground(item));
+
+    item.transfer_state = .pending;
+    item.is_dir = true;
+    try std.testing.expectEqual(normal, filenameForeground(item));
+
+    item.is_dir = false;
+    item.transfer_ghost = false;
+    item.transfer_state = null;
+    try std.testing.expectEqual(normal, filenameForeground(item));
 }
 
 pub fn renderFilenameTip(self: *App, cr: *c.cairo_t) void {
