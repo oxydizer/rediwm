@@ -70,6 +70,10 @@ test "sidebar header clicks independently toggle sections" {
     defer app.deinit();
     app.w = 800;
     app.h = 1000;
+    const volumes = [_]volumes_mod.Volume{
+        .{ .id = "/b/sdb1", .label = "STICK", .mount = null, .size = 1 << 30, .kind = .stick },
+    };
+    app.device_list.items = &volumes;
 
     try std.testing.expect(app.sidebar_expanded[0]);
     try std.testing.expect(!app.sidebar_expanded[1]);
@@ -101,6 +105,26 @@ test "sidebar header clicks independently toggle sections" {
     const body_y: f64 = @floatFromInt(selected_disks.y + selected_disks.header_height + 1);
     try std.testing.expectEqual(@as(?app_model.SidebarSection, null), app.sidebarHeaderAt(x, body_y));
     try std.testing.expectEqual(@as(?app_model.SidebarSection, null), app.sidebarHeaderAt(-1, selected_y));
+}
+
+test "sidebar hides Drives and Transfers cards when they have no content" {
+    var app = try testApp();
+    defer app.deinit();
+    app.w = 800;
+    app.h = 1000;
+
+    var layout = app.sidebarLayout();
+    try std.testing.expect(layout.cards[@intFromEnum(app_model.SidebarSection.places)].visible);
+    try std.testing.expect(!layout.cards[@intFromEnum(app_model.SidebarSection.disks)].visible);
+    try std.testing.expect(!layout.cards[@intFromEnum(app_model.SidebarSection.transfers)].visible);
+
+    const volumes = [_]volumes_mod.Volume{
+        .{ .id = "/b/sdb1", .label = "STICK", .mount = null, .size = 1 << 30, .kind = .stick },
+    };
+    app.device_list.items = &volumes;
+    layout = app.sidebarLayout();
+    try std.testing.expect(layout.cards[@intFromEnum(app_model.SidebarSection.disks)].visible);
+    try std.testing.expect(!layout.cards[@intFromEnum(app_model.SidebarSection.transfers)].visible);
 }
 
 test "collapsing sidebar section while scrolled clamps the scroll offset" {
@@ -181,6 +205,10 @@ test "adjacent collapsed sidebar headers invalidate their shared transition area
     defer app.deinit();
     app.w = 800;
     app.h = 1000;
+    const volumes = [_]volumes_mod.Volume{
+        .{ .id = "/b/sdb1", .label = "STICK", .mount = null, .size = 1 << 30, .kind = .stick },
+    };
+    app.device_list.items = &volumes;
     app.sidebar_expanded[0] = false;
 
     const first = app.hoverBounds(940).?;
@@ -202,6 +230,10 @@ test "adjacent collapsed sidebar headers invalidate their shared transition area
 test "sidebar body geometry rejects hidden areas and translates legacy section coordinates" {
     var app = try testApp();
     defer app.deinit();
+    const volumes = [_]volumes_mod.Volume{
+        .{ .id = "/b/sdb1", .label = "STICK", .mount = null, .size = 1 << 30, .kind = .stick },
+    };
+    app.device_list.items = &volumes;
 
     const places = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.places)];
     const places_y = @as(f64, @floatFromInt(places.y + places.header_height)) + 5;
@@ -461,13 +493,13 @@ test "Sidebar separates Disks from Places; only mounted volumes eject" {
     var app = try testApp();
     defer app.deinit();
     app.h = 1000;
-    const extent = app.sidebarExtent();
-    const last_place_y = app.placeY(App.pin_base - 1);
     const volumes = [_]volumes_mod.Volume{
         .{ .id = "/b/sdb1", .label = "STICK", .mount = "/run/media/user/STICK", .size = 1 << 30, .kind = .stick },
         .{ .id = "/b/sda1", .label = "", .mount = null, .size = 500 << 30, .kind = .drive },
     };
     app.device_list.items = &volumes;
+    const extent = app.sidebarExtent();
+    const last_place_y = app.placeY(App.pin_base - 1);
     const mounted = app.deviceBase();
     const unmounted = mounted + 1;
     const step = app.placeStep();

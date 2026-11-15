@@ -146,11 +146,14 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
     const transfers_body = torrent_height +
         (if (file_ops_height > 0) @as(i32, app_model.SidebarLayout.gap) + file_ops_height else 0) +
         (if (transfer_tree_height > 0) @as(i32, app_model.SidebarLayout.gap) + transfer_tree_height else 0);
+    const transfers_visible = torrent_height > 0 or
+        file_ops_height > 0 or
+        transfer_tree_height > 0;
 
     return app_model.SidebarLayout.init(
         top,
         .{ places_body, disks_body, git_body, transfers_body },
-        .{ true, true, self.repository() != null, torrent_height > 0 or file_ops_height > 0 or transfer_tree_height > 0 },
+        .{ true, self.device_list.items.len > 0, self.repository() != null, transfers_visible },
         self.sidebar_expanded,
     );
 }
@@ -223,10 +226,7 @@ pub fn sidebarBodyY(self: *App, section: app_model.SidebarSection, x: f64, y: f6
 /// DEVICES: a heading and one row per volume, dimmed while unmounted, with
 /// an eject button on the mounted ones.
 pub fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {
-    if (self.device_list.items.len == 0) {
-        drawText(cr, tr("No removable volumes"), 32, @floatFromInt(self.placeY(self.deviceBase()) + 20), shell_ui.statusSize(), false);
-        return;
-    }
+    if (self.device_list.items.len == 0) return;
     const hovered = self.hoverKey();
     const disks_card = self.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)];
     const metrics = fontMetrics(cr, shell_ui.textSize());
@@ -351,7 +351,7 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
     const layout = self.sidebarLayout();
     const section_names = [_][]const u8{
         tr("PLACES"),
-        tr("DISKS"),
+        tr("DRIVES"),
         "GIT",
         tr("TRANSFERS"),
     };
