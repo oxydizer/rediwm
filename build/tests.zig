@@ -374,6 +374,20 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     run_files_tests.addArtifactArg(files_tests);
     test_step.dependOn(&run_files_tests.step);
     b.step("test-files", "Test Files editing, navigation, transfers and layout").dependOn(&run_files_tests.step);
+
+    // Keep performance measurements out of the normal test suite. Reuse the
+    // Files test module and its dependencies, but compile only the benchmark
+    // test selected by its name.
+    const transfer_bench_tests = b.addTest(.{
+        .root_module = files_tests.root_module,
+        .filters = &.{"transfer benchmark"},
+    });
+    const run_transfer_bench = b.addRunArtifact(transfer_bench_tests);
+    b.step(
+        "bench-files-transfers",
+        "Benchmark transfer progress, tree aggregation and concurrent job polling",
+    ).dependOn(&run_transfer_bench.step);
+
     const terminal_integration = b.addSystemCommand(&.{"env"});
     terminal_integration.addPrefixedDirectoryArg("REDIWM_TEST_BIN=", support.installed(.bin, ""));
     terminal_integration.addArg("python3");
