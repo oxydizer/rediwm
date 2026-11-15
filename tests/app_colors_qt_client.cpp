@@ -33,6 +33,7 @@ static QString frame() {
 static void sample(const QPalette &p) {
     QJsonObject out{
         {"bg", p.color(QPalette::Window).name()},
+        {"button", p.color(QPalette::Button).name()},
         {"fg", p.color(QPalette::WindowText).name()},
         {"accent", p.color(QPalette::Highlight).name()},
         {"on_accent", p.color(QPalette::HighlightedText).name()},

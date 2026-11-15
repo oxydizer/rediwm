@@ -12,6 +12,10 @@ pub const Card = struct {
     id: u64,
     target: layout.Rect = .{},
     presented: layout.Rect = .{},
+    /// Hover/wheel magnification of `target` and its top-left offset (layout px).
+    magnify: ui.anim.Anim = .{ .from = 1, .to = 1 },
+    shift_x: ui.anim.Anim = .{},
+    shift_y: ui.anim.Anim = .{},
 };
 
 pub fn find(self: *Self, id: u64) ?*Card {
@@ -59,9 +63,10 @@ pub fn apply(self: *Self, top: *Top, x: i32, y: i32, scale: f64, now: i64) bool 
     const amount = self.amount(now);
     const normal = world.toLayout(@floatFromInt(x), @floatFromInt(y));
     const z = world.camera.zoom();
-    const displayed_scale = scale * z + (card.target.width / @as(f64, @floatFromInt(top.chrome_width)) - scale * z) * amount;
-    const left = normal.x + (card.target.x - normal.x) * amount;
-    const upper = normal.y + (card.target.y - normal.y) * amount;
+    const goal = @import("overview_hover.zig").rect(card, now);
+    const displayed_scale = scale * z + (goal.width / @as(f64, @floatFromInt(top.chrome_width)) - scale * z) * amount;
+    const left = normal.x + (goal.x - normal.x) * amount;
+    const upper = normal.y + (goal.y - normal.y) * amount;
     const p = world.toWorld(left, upper);
     const wx: i32 = @intFromFloat(@round(p.x));
     const wy: i32 = @intFromFloat(@round(p.y));

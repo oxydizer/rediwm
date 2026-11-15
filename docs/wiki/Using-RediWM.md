@@ -48,6 +48,10 @@ centred above three. Previews preserve aspect ratios and fill the screen with
 only narrow gaps between them. Offscreen and minimized windows are included; hidden tabs
 are excluded.
 
+Hovering a preview enlarges it by about 10% and lifts it above its neighbours;
+scrolling up over it zooms it further around the pointer, and scrolling down
+returns it to the hover size.
+
 Click a preview, or select one with the arrow keys and press Enter, to visit it.
 Selecting a minimized window restores it. Escape, Super+A again, or clicking
 empty space returns to the previous view and leaves minimized windows minimized.

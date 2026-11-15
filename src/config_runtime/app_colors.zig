@@ -16,6 +16,8 @@ pub const State = struct {
     result: ?worker.Result = null,
     failure: ?anyerror = null,
     palette: ?app.Palette = null,
+    /// The preference the last follow export chose Chromium's Qt colours for.
+    exported_dark: ?bool = null,
     gtk_slot: ?u1 = null,
     qt_styles: worker.QtStyles = .{},
 
@@ -32,11 +34,14 @@ pub fn gtkTheme(server: *Server) ?[]const u8 {
     return if (server.app_colors.gtk_slot) |slot| app.follow.name(slot) else null;
 }
 
+/// `dark_mode` also picks the Chromium colours exported while following
+/// (`app.browserPalette`), so a change to it exports again.
 pub fn sync(server: *Server) void {
     const state = &server.app_colors;
     if (server.greeter_mode or !server.config.compositor.follow_app_colors) {
         state.pending = false;
         state.palette = null;
+        state.exported_dark = null;
         return;
     }
     if (state.job != null) {
@@ -45,7 +50,8 @@ pub fn sync(server: *Server) void {
     }
     const palette = app.Palette.fromTheme(theme.global);
     if (state.palette) |last| {
-        if (state.failure == null and std.meta.eql(last, palette)) return;
+        const same_dark = state.exported_dark == null or state.exported_dark.? == server.config.compositor.dark_mode;
+        if (state.failure == null and same_dark and std.meta.eql(last, palette)) return;
     }
     start(server, .follow) catch |err| fail(server, err);
 }
@@ -54,7 +60,7 @@ pub fn start(server: *Server, action: worker.Action) !void {
     if (server.greeter_mode) return error.GreeterMode;
     const state = &server.app_colors;
     if (state.job != null) return error.AppColorsBusy;
-    const job = try worker.Job.create(server.io, server.environ, action, app.Palette.fromTheme(theme.global), .{ state.qt_styles.qt5, state.qt_styles.qt6 });
+    const job = try worker.Job.create(server.io, server.environ, action, app.Palette.fromTheme(theme.global), server.config.compositor.dark_mode, .{ state.qt_styles.qt5, state.qt_styles.qt6 });
     errdefer job.deinit();
     const source = try server.wl_server.getEventLoop().addFd(*Server, job.fd, .{ .readable = true }, ready, server);
     errdefer source.remove();
@@ -94,8 +100,12 @@ fn ready(_: c_int, _: wl.EventMask, server: *Server) c_int {
             const changed = state.gtk_slot == null or state.gtk_slot.? != slot;
             state.gtk_slot = slot;
             state.palette = job.palette;
+            state.exported_dark = if (result.qt_error == null and (result.support.qt5 or result.support.qt6)) job.dark else null;
             if (changed) @import("../session/settings_portal.zig").emitGtkTheme(server);
-        } else state.palette = null;
+        } else {
+            state.palette = null;
+            state.exported_dark = null;
+        }
     } else |err| fail(server, err);
     const pending = state.pending;
     state.pending = false;

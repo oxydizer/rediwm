@@ -52,6 +52,23 @@ or edit browser profiles or require any of these browsers to be installed.
 Browsers keep their own layout, and some colors may be derived from the palette.
 An application with a custom theme can override the system colors.
 
+**Dark mode** stays independent of following: apps keep the palette, and web
+pages follow Dark mode. Chromium browsers (Brave, Chrome) in GTK or Qt mode take
+only some colors from the toolkit and draw the rest (print preview, dropdown
+lists, settings pages, menu shortcuts) from their own light or dark scheme, so
+toolkit colors of the other darkness gave white-on-white text. They therefore
+get colors matching Dark mode: the palette itself when its darkness agrees,
+otherwise a muted version of it with the same tint and accent (light grey, L*
+80 window and 88 toolbar, with dark text; or dark grey with light text).
+Chromium's own pages stay its near-white or dark scheme. Its tab strip (its
+frame) is kept 14 L* darker than its toolbar, which is also the active tab
+(Chrome's own themes keep about 10), going no darker than black; beside a
+near-black toolbar it is lighter instead. In GTK mode a switch shows at once:
+each theme's `gtk.css` holds the light colors and `gtk-dark.css` the dark ones,
+and Chromium asks GTK for the dark variant under a dark preference. In Qt mode
+Brave reads Qt colors only when it starts, so restart it after changing Dark
+mode or the theme.
+
 GTK following installs two reusable themes, `RediWM-a` and `RediWM-b`, under
 `$XDG_DATA_HOME/themes` (else `~/.local/share/themes`). Changes select the next
 theme only after its files are ready. RediWM updates `gtk-theme-name` in GTK3/4
@@ -94,9 +111,13 @@ theme package is patched and the dark-mode preference is never flipped.
 
 **Qt:** needs **qt5ct** (Qt 5) or **qt6ct** (Qt 6). The toolkit configs select
 native `colors/rediwm.conf` palettes and the **RediWM** style; other
-preferences are kept. The RediWM style is Fusion except that title bars use the
-window colour: Fusion fills an active title bar with the accent, and Chromium's
-Qt mode (Brave, Chrome) samples that title bar as its whole frame. It is built
+preferences are kept. The RediWM style is Fusion except for title bars, which
+Chromium's Qt mode (Brave, Chrome) samples as its whole frame while its toolbar
+and active tab take the Button colour. Fusion fills an active title bar with the
+accent; the RediWM style uses the window colour moved that 14 L* away from
+Button, in both active and inactive bars. Inside a Chromium browser (which loads
+`libqt5_shim.so` or `libqt6_shim.so`) the style replaces the palette with the
+`[Chromium]` group RediWM writes into the scheme while following. It is built
 per Qt major when that Qt's development files and `moc` are present
 (`-Dqt-style`, default: when found), installed as
 `lib/rediwm/qt<N>/styles/librediwm-style.so`, and found through

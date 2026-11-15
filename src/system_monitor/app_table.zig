@@ -108,7 +108,7 @@ fn paintRows(self: *App, cr: *c.cairo_t) void {
         label(cr, stateName(row.state), state_box);
     }
     if (count == 0) label(cr, if (snap.failed) tr("Process data unavailable") else tr("No matching processes"), .{ .x = list.x + pad, .y = list.y + 12, .w = content_w - 2 * pad, .h = row_h });
-    if (self.barGeometry()) |g| cairo.drawScrollbar(cr, scrollbar.look(g, self.bar, theme.global.scrollbar_width, theme.global));
+    if (self.barGeometry()) |g| cairo.drawScrollbar(cr, scrollbar.look(g, self.bar, theme.global.scrollbar_width, theme.shellPalette()));
 }
 
 fn cell(self: *const App, column: usize, y: f32) Rect {

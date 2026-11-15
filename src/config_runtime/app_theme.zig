@@ -55,16 +55,18 @@ pub const Job = struct {
     env: std.process.Environ,
     action: Action,
     palette: config.Palette,
+    /// The light/dark preference, which picks the Chromium colours.
+    dark: bool,
     styles: [2]bool,
     fd: c_int,
     thread: ?std.Thread = null,
     result: anyerror!Result = error.NotFinished,
 
-    pub fn create(io: std.Io, env: std.process.Environ, action: Action, palette: config.Palette, styles: [2]bool) !*Job {
+    pub fn create(io: std.Io, env: std.process.Environ, action: Action, palette: config.Palette, dark: bool, styles: [2]bool) !*Job {
         const self = try a.create(Job);
         errdefer a.destroy(self);
         const fd = platform.wake.create() orelse return error.EventFdFailed;
-        self.* = .{ .io = io, .env = env, .action = action, .palette = palette, .styles = styles, .fd = fd };
+        self.* = .{ .io = io, .env = env, .action = action, .palette = palette, .dark = dark, .styles = styles, .fd = fd };
         return self;
     }
 
@@ -110,8 +112,12 @@ pub const Job = struct {
         var result = Result{ .support = support, .gtk_slot = slot };
         if (support.qt5 or support.qt6) {
             var buf: [16]u8 = undefined;
-            const revision = std.fmt.bufPrint(&buf, "{x:0>16}", .{std.hash.Wyhash.hash(0, std.mem.asBytes(&self.palette))}) catch unreachable;
-            config.applyRevision(a, self.io, home, .qt, self.palette, support, revision) catch |err| {
+            const browser = config.browserPalette(self.palette, self.dark);
+            var hasher = std.hash.Wyhash.init(0);
+            hasher.update(std.mem.asBytes(&self.palette));
+            hasher.update(std.mem.asBytes(&browser));
+            const revision = std.fmt.bufPrint(&buf, "{x:0>16}", .{hasher.final()}) catch unreachable;
+            config.applyRevision(a, self.io, home, .qt, self.palette, support, revision, browser) catch |err| {
                 result.qt_error = err;
             };
         }

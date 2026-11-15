@@ -28,24 +28,102 @@ pub fn current(a: Allocator, io: Io, home: []const u8) !?u1 {
     return null;
 }
 
-pub fn css(a: Allocator, p: app.Palette, gtk4: bool) ![]u8 {
+/// One slot stylesheet. GTK loads gtk-dark.css instead of gtk.css when an
+/// application prefers a dark theme, which Chromium browsers set from the
+/// light/dark preference: `dark` picks the Chromium colours for that file
+/// (`app.browserPalette`). Everything else follows the palette in both.
+pub fn css(a: Allocator, p: app.Palette, gtk4: bool, dark: bool) ![]u8 {
     const colors = try app.gtkColors(a, p, gtk4);
     defer a.free(colors);
     const private = if (gtk4) try a.dupe(u8, "") else try privateColors(a, colors);
     defer a.free(private);
+    const chromium = try chromiumCss(a, app.browserPalette(p, dark));
+    defer a.free(chromium);
     // The base follows the palette, not dark_mode: a dark palette over light
     // Adwaita leaves every widget the overrides miss light.
-    const dark = app.isDark(p);
     const base = if (gtk4)
-        (if (dark) "Default/Default-dark.css" else "Default/Default-light.css")
+        (if (app.isDark(p)) "Default/Default-dark.css" else "Default/Default-light.css")
     else
-        (if (dark) "Adwaita/gtk-contained-dark.css" else "Adwaita/gtk-contained.css");
-    return std.fmt.allocPrint(a, "@import url(\"resource:///org/gtk/libgtk/theme/{s}\");\n{s}{s}\n" ++
-        // Chromium samples the window as its toolbar and a headerbar as
-        // its frame. Keep the address field separate from that toolbar.
-        "window.background.chromium {{ background-color: @headerbar_bg_color; color: @window_fg_color; }}\n" ++
-        "window.background.chromium label {{ color: @window_fg_color; }}\n" ++
-        "window.background.chromium entry {{ background-color: @view_bg_color; color: @view_fg_color; }}\n", .{ base, colors, private });
+        (if (app.isDark(p)) "Adwaita/gtk-contained-dark.css" else "Adwaita/gtk-contained.css");
+    return std.fmt.allocPrint(a, "@import url(\"resource:///org/gtk/libgtk/theme/{s}\");\n{s}{s}\n{s}", .{ base, colors, private, chromium });
+}
+
+/// Chromium's GTK mode renders these nodes (ui/gtk/gtk_color_mixers.cc), each
+/// under a `window.background` root, with a `chromium` class on every node.
+/// Colours are literal: the browser palette may differ from the named colours
+/// and from the Adwaita base, which would otherwise show through.
+fn chromiumCss(a: Allocator, b: app.Palette) ![]u8 {
+    const w = "window.background.chromium";
+    const toolbar = app.hex(b.toolbar);
+    const fg = app.hex(b.fg);
+    const dim = app.hex(b.dim);
+    const border = app.hex(b.border);
+    const accent = app.hex(b.accent);
+    const on_accent = app.hex(b.on_accent);
+    const view = app.hex(b.bg);
+    return std.fmt.allocPrint(a,
+        // The window is the toolbar and the active tab; a headerbar the frame,
+        // the tab strip. The address field stays apart from that toolbar.
+        w ++ ", " ++ w ++ " window.background {{ background-color: {[toolbar]s}; color: {[fg]s}; }}\n" ++
+        w ++ " headerbar, " ++ w ++ " headerbar:backdrop {{ background-color: {[frame]s}; background-image: none; color: {[fg]s}; border-color: {[border]s}; }}\n" ++
+        w ++ " headerbar label.title, " ++ w ++ " headerbar:backdrop label.title {{ color: {[fg]s}; }}\n" ++
+        // Direct labels only: a menu item's label inherits its disabled colour.
+        w ++ " > label, " ++ w ++ " spinner, " ++ w ++ " button.image-button, " ++ w ++ " button.flat.scale image {{ color: {[fg]s}; }}\n" ++
+        w ++ " label:disabled, " ++ w ++ " spinner:disabled {{ color: {[dim]s}; }}\n" ++
+        w ++ " label.link:link {{ color: {[accent]s}; }}\n" ++
+        w ++ " entry, " ++ w ++ " textview.view, " ++ w ++ " textview.view text, " ++ w ++ " treeview.view {{ background-color: {[view]s}; color: {[fg]s}; border-color: {[border]s}; }}\n" ++
+        w ++ " entry:focus {{ border-color: {[accent]s}; }}\n" ++
+        w ++ " textview.view:disabled text {{ color: {[dim]s}; }}\n" ++
+        w ++ " textview.view text selection, " ++ w ++ " treeview.view:selected, " ++ w ++ " treeview.view:selected label {{ background-color: {[accent]s}; color: {[on_accent]s}; }}\n" ++
+        w ++ " button, " ++ w ++ " button:backdrop {{ background-color: {[item]s}; background-image: none; box-shadow: none; color: {[fg]s}; border-color: {[border]s}; }}\n" ++
+        w ++ " button label {{ color: {[fg]s}; }}\n" ++
+        w ++ " button:disabled label {{ color: {[dim]s}; }}\n" ++
+        w ++ " button.toggle:checked {{ background-color: {[accent]s}; color: {[on_accent]s}; }}\n" ++
+        w ++ " menu {{ background-color: {[toolbar]s}; color: {[fg]s}; border-color: {[border]s}; }}\n" ++
+        w ++ " menu menuitem, " ++ w ++ " menu menuitem label, " ++ w ++ " menu menuitem radio, " ++ w ++ " menu menuitem cellview {{ color: {[fg]s}; }}\n" ++
+        w ++ " menu menuitem:hover {{ background-color: {[accent]s}; color: {[on_accent]s}; }}\n" ++
+        w ++ " menu menuitem:hover label, " ++ w ++ " menu menuitem:hover cellview {{ color: {[on_accent]s}; }}\n" ++
+        w ++ " menu menuitem:disabled label {{ color: {[dim]s}; }}\n" ++
+        // Shortcuts: a little quieter than the item, still readable.
+        w ++ " menu menuitem accelerator {{ color: alpha(currentColor, 0.8); }}\n" ++
+        w ++ " separator {{ background-color: {[border]s}; color: {[border]s}; }}\n" ++
+        w ++ " frame border, " ++ w ++ " box.frame {{ border-color: {[border]s}; }}\n" ++
+        w ++ " scrollbar trough, " ++ w ++ " statusbar {{ background-color: {[view]s}; }}\n" ++
+        w ++ " scrollbar slider {{ background-color: {[dim]s}; }}\n" ++
+        w ++ " scale trough {{ background-color: {[border]s}; }}\n" ++
+        w ++ " scale highlight {{ background-color: {[accent]s}; }}\n" ++
+        w ++ " notebook tab:checked {{ background-color: {[toolbar]s}; }}\n", .{
+        .toolbar = &toolbar,
+        .frame = &app.hex(app.frame(b.bg, b.toolbar)),
+        .fg = &fg,
+        .dim = &dim,
+        .border = &border,
+        .accent = &accent,
+        .on_accent = &on_accent,
+        .view = &view,
+        .item = &app.hex(b.item),
+    });
+}
+
+test "Chromium's GTK colours follow the requested darkness, the frame stands apart, and menu labels keep their state" {
+    const a = std.testing.allocator;
+    const p = app.Palette.fromTheme(.{});
+    for ([_]bool{ false, true }) |gtk4| for ([_]bool{ false, true }) |dark| {
+        const style = try css(a, p, gtk4, dark);
+        defer a.free(style);
+        const b = app.browserPalette(p, dark);
+        const frame = app.hex(app.frame(b.bg, b.toolbar));
+        try std.testing.expect(!std.mem.eql(u8, &frame, &app.hex(b.toolbar)));
+        var buf: [96]u8 = undefined;
+        const rule = try std.fmt.bufPrint(&buf, "headerbar:backdrop {{ background-color: {s};", .{&frame});
+        try std.testing.expect(std.mem.indexOf(u8, style, rule) != null);
+        const window = try std.fmt.bufPrint(&buf, "window.background.chromium window.background {{ background-color: {s}; color: {s}; }}", .{ &app.hex(b.toolbar), &app.hex(b.fg) });
+        try std.testing.expect(std.mem.indexOf(u8, style, window) != null);
+        try std.testing.expect(std.mem.indexOf(u8, style, "window.background.chromium label {") == null);
+        try std.testing.expect(std.mem.indexOf(u8, style, "window.background.chromium > label") != null);
+        // The rest of the slot follows the palette in both files.
+        try std.testing.expect(std.mem.indexOf(u8, style, "gtk-contained-dark.css") != null or std.mem.indexOf(u8, style, "Default-dark.css") != null);
+    };
 }
 
 const define = "@define-color ";
@@ -94,26 +172,31 @@ pub fn apply(a: Allocator, io: Io, home: []const u8, data: []const u8, p: app.Pa
     var arena: std.heap.ArenaAllocator = .init(a);
     defer arena.deinit();
     const mem = arena.allocator();
-    const styles = [_][]const u8{ try css(mem, p, false), try css(mem, p, true) };
+    // Per GTK version: gtk.css, then gtk-dark.css.
+    const styles = [_][2][]const u8{
+        .{ try css(mem, p, false, false), try css(mem, p, false, true) },
+        .{ try css(mem, p, true, false), try css(mem, p, true, true) },
+    };
     const aliases = try userAliases(mem, p);
     const previous = try current(mem, io, home);
     var slot: u1 = if (previous) |old| old ^ 1 else 0;
     if (previous) |old| {
         var same = true;
-        for ([_][]const u8{ "gtk-3.0", "gtk-4.0" }, styles) |version, style| {
-            const path = try std.fs.path.join(mem, &.{ data, "themes", name(old), version, "gtk.css" });
-            const saved = try app.readOptional(mem, io, path) orelse "";
-            same = same and std.mem.eql(u8, saved, style);
+        for ([_][]const u8{ "gtk-3.0", "gtk-4.0" }, styles) |version, pair| {
+            for ([_][]const u8{ "gtk.css", "gtk-dark.css" }, pair) |file, style| {
+                const path = try std.fs.path.join(mem, &.{ data, "themes", name(old), version, file });
+                const saved = try app.readOptional(mem, io, path) orelse "";
+                same = same and std.mem.eql(u8, saved, style);
+            }
         }
         if (same) slot = old;
     }
     var tx = app.Transaction{ .a = mem, .io = io };
-    for ([_][]const u8{ "gtk-3.0", "gtk-4.0" }, styles) |version, style| {
-        const path = try std.fs.path.join(mem, &.{ data, "themes", name(slot), version, "gtk.css" });
-        try tx.add(path, style, false);
-        // Supply either requested variant from the same resolved palette.
-        const dark_path = try std.fs.path.join(mem, &.{ data, "themes", name(slot), version, "gtk-dark.css" });
-        try tx.add(dark_path, style, false);
+    for ([_][]const u8{ "gtk-3.0", "gtk-4.0" }, styles) |version, pair| {
+        for ([_][]const u8{ "gtk.css", "gtk-dark.css" }, pair) |file, style| {
+            const path = try std.fs.path.join(mem, &.{ data, "themes", name(slot), version, file });
+            try tx.add(path, style, false);
+        }
         const settings_path = try std.fs.path.join(mem, &.{ home, version, "settings.ini" });
         const settings = try app.readOptional(mem, io, settings_path) orelse "";
         try tx.add(settings_path, try app.patchIni(mem, settings, "Settings", "gtk-theme-name", name(slot)), true);

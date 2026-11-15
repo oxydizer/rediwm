@@ -11,6 +11,7 @@ import sys
 import shutil
 
 from ipc_client import IPCClient, spawn_compositor, stop_process
+from settings_portal import SettingChangedWatcher
 from ui_driver import UIDriver
 from desktop_zoom import wait_for
 
@@ -22,13 +23,77 @@ def qt_style_built(major):
     return (QT_STYLE_DIR / f"qt{major}/styles/librediwm-style.so").exists()
 
 
+def lightness(color):
+    """CIE L* of a #rrggbb colour."""
+    linear = [(v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4)
+              for v in (int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))]
+    y = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+    return 116 * y ** (1 / 3) - 16 if y > 216 / 24389 else y * 24389 / 27
+
+
+def near(a, b, tolerance=2):
+    return all(abs(int(a[i:i + 2], 16) - int(b[i:i + 2], 16)) <= tolerance for i in (1, 3, 5))
+
+
+def chromium_bg(bg, dark):
+    """Window colour of browserPalette (src/config/app_theme.zig): the palette's
+    own when its darkness matches, else its tint at L* 80 (light) or 16."""
+    if (lightness(bg) < 50) == dark:  # isDark's contrast split is near L* 50
+        return bg
+    goal = 16 if dark else 80
+    target = 0 if lightness(bg) > goal else 255
+    rgb = [int(bg[i:i + 2], 16) for i in (1, 3, 5)]
+    low, high = 0.0, 1.0
+    for _ in range(16):
+        mid = (low + high) / 2
+        mixed = '#' + ''.join(f'{round(target * mid + v * (1 - mid)):02x}' for v in rgb)
+        if (lightness(mixed) >= goal) if target == 255 else (lightness(mixed) <= goal):
+            high = mid
+        else:
+            low = mid
+    return '#' + ''.join(f'{round(target * high + v * (1 - high)):02x}' for v in rgb)
+
+
+def check_chromium_files(config, slot, bg, dark):
+    """gtk.css carries Chromium's colours for a light preference and
+    gtk-dark.css for a dark one; the qt5ct/qt6ct scheme carries the ones for
+    dark_mode in its [Chromium] group."""
+    rule = 'window.background.chromium, window.background.chromium window.background { background-color: '
+    for version in ('gtk-3.0', 'gtk-4.0'):
+        for name, variant in (('gtk.css', False), ('gtk-dark.css', True)):
+            css = (slot / version / name).read_text()
+            assert f'@define-color window_bg_color {bg};' in css, (version, name)
+            toolbar = css.split(rule, 1)[1][:7]
+            if (lightness(bg) < 50) != variant:
+                # The palette's own darkness differs: a muted variant of it.
+                assert (lightness(toolbar) < 50) == variant, (version, name, toolbar)
+    for tool in ('qt5ct', 'qt6ct'):
+        scheme = config / tool / 'colors/rediwm.conf'
+        if not scheme.exists():
+            continue
+        groups = {}
+        current = None
+        for line in scheme.read_text().splitlines():
+            if line.startswith('['):
+                current = line.strip('[]')
+            elif line.startswith('active_colors='):
+                groups[current] = line.split('=', 1)[1].split(', ')
+        assert groups['ColorScheme'][10] == bg, groups
+        assert near(groups['Chromium'][10], chromium_bg(bg, dark)), (groups, chromium_bg(bg, dark))
+
+
 def check_qt_frame(package, colors):
-    """Chromium's Qt frame is the style's active title bar: never the accent."""
+    """Chromium's Qt frame (its tab strip) is the style's active title bar:
+    never the accent, and 14 L* away from Button, its toolbar and active tab
+    (or black when Button is too dark for that). Fusion's bar is a gradient,
+    so its average lands up to a couple of L* short."""
     if not qt_style_built(package[2]):
         return
     assert colors["style"] != "QFusionStyle", (package, colors)
     near = lambda a, b: all(abs(int(a[i:i + 2], 16) - int(b[i:i + 2], 16)) <= 12 for i in (1, 3, 5))
-    assert near(colors["frame"], colors["bg"]) and not near(colors["frame"], colors["accent"]), (package, colors)
+    assert not near(colors["frame"], colors["accent"]), (package, colors)
+    assert (abs(lightness(colors["button"]) - lightness(colors["frame"])) >= 12
+            or colors["frame"] == "#000000"), (package, colors)
 
 
 def test_app_colors():
@@ -191,7 +256,8 @@ def test_follow_private(tmp):
     """Real settings bus and toolkit clients, all using a scratch HOME/XDG tree."""
     config = Path(os.environ['XDG_CONFIG_HOME'])
     data = Path(os.environ['XDG_DATA_HOME'])
-    colors = ('#123456', '#234567', '#345678')
+    # The second palette is light: Chromium keeps it under a light preference.
+    colors = ('#123456', '#e8ecf0', '#345678')
     def content(bg, on=True, taskbar='#ff0000'):
         return (f'[compositor]\nxwayland = false\nfollow_app_colors = {str(on).lower()}\n'
                 f'[theme]\napp_bg = "{bg}"\nwindow_fg = "#e1e2e3"\n'
@@ -204,9 +270,20 @@ def test_follow_private(tmp):
                                     env_extra={'REDIWM_FORCE_DBUS': '1'})
     clients = []
     streams = []
+    watcher = None
     try:
         with IPCClient(tmp, timeout=20) as ipc:
             assert not (config / 'gtk-3.0').exists()
+            def portal_read(namespace, key):
+                r = subprocess.run(['busctl', '--user', '--timeout=3', 'call',
+                    'org.freedesktop.impl.portal.desktop.rediwm', '/org/freedesktop/portal/desktop',
+                    'org.freedesktop.impl.portal.Settings', 'Read', 'ss', namespace, key],
+                    capture_output=True, text=True)
+                return r.stdout.strip()
+            def scheme():
+                return portal_read('org.freedesktop.appearance', 'color-scheme')
+            wait_for(lambda: scheme() == 'v u 2', 'dark_mode (off) answers light')
+            watcher = SettingChangedWatcher('org.freedesktop.impl.portal.Settings')
             # Generators (matugen/DMS, KDE colors.css) define the standard
             # names in user CSS, which outranks any theme: following must win.
             competing = '/* BEGIN DMS OVERRIDE */\n@define-color window_bg_color #242730;\n/* END DMS OVERRIDE */\n'
@@ -232,12 +309,14 @@ def test_follow_private(tmp):
             # Following replaces the manual snapshot buttons.
             wait_for(lambda: not manual_buttons(), 'manual buttons hidden while following')
             def portal_theme():
-                r = subprocess.run(['busctl', '--user', '--timeout=3', 'call',
-                    'org.freedesktop.impl.portal.desktop.rediwm', '/org/freedesktop/portal/desktop',
-                    'org.freedesktop.impl.portal.Settings', 'Read', 'ss',
-                    'org.gnome.desktop.interface', 'gtk-theme'], capture_output=True, text=True)
-                return r.stdout.strip()
+                return portal_read('org.gnome.desktop.interface', 'gtk-theme')
             wait_for(lambda: portal_theme() == f'v s "{selected()}"', 'GTK theme published')
+            # dark_mode stays the preference and stays changeable; Chromium
+            # browsers get colours of its darkness instead (see chromium_bg).
+            assert scheme() == 'v u 2', scheme()
+            dark_toggle = next(w for w in ui.widgets() if w.get('name') == 'dark_mode')
+            assert dark_toggle['on'] is False and not dark_toggle.get('is_disabled'), dark_toggle
+            check_chromium_files(config, data / 'themes' / selected(), colors[0], dark=False)
             assert (config / 'rediwm/gtk-theme.gsettings-backup').exists()
             user_css = (config / 'gtk-3.0/gtk.css').read_text()
             assert user_css.startswith(competing), user_css
@@ -279,19 +358,28 @@ def test_follow_private(tmp):
                 binary = tmp / package
                 flags = subprocess.check_output(['pkg-config', '--cflags', '--libs', package], text=True).split()
                 subprocess.run([compiler, str(root / source), '-o', str(binary), *extra, *flags], check=True, capture_output=True)
-                errors = (tmp / (package + '.log')).open('w')
-                streams.append(errors)
-                proc = subprocess.Popen([str(binary), '--watch'], env=child_env,
-                                        stdout=subprocess.PIPE, stderr=errors, text=True)
-                samples = []
-                def collect(proc=proc, samples=samples):
-                    for line in proc.stdout:
-                        samples.append(json.loads(line))
-                threading.Thread(target=collect, daemon=True).start()
-                clients.append((package, proc, samples))
-                wait_for(lambda: samples and samples[-1]['bg'] == colors[0], f'{package} initial palette', timeout=15)
-                if 'frame' in samples[-1]:
-                    check_qt_frame(package, samples[-1])
+                variants = [(package, child_env)]
+                if package.startswith('Qt') and qt_style_built(package[2]):
+                    # RediWM's style recognises Chromium by its Qt shim library.
+                    shim = tmp / f'libqt{package[2]}_shim.so'
+                    subprocess.run(['cc', '-shared', '-fPIC', '-x', 'c', '-', '-o', str(shim)],
+                                   input='void rediwm_test_shim(void) {}', text=True, check=True)
+                    variants.append((package + ' chromium', dict(child_env, LD_PRELOAD=str(shim))))
+                for name, env in variants:
+                    errors = (tmp / (name.replace(' ', '-') + '.log')).open('w')
+                    streams.append(errors)
+                    proc = subprocess.Popen([str(binary), '--watch'], env=env,
+                                            stdout=subprocess.PIPE, stderr=errors, text=True)
+                    samples = []
+                    def collect(proc=proc, samples=samples):
+                        for line in proc.stdout:
+                            samples.append(json.loads(line))
+                    threading.Thread(target=collect, daemon=True).start()
+                    clients.append((name, proc, samples))
+                    expected = chromium_bg(colors[0], dark=False) if name.endswith('chromium') else colors[0]
+                    wait_for(lambda: samples and near(samples[-1]['bg'], expected), f'{name} initial palette', timeout=15)
+                    if 'frame' in samples[-1]:
+                        check_qt_frame(name, samples[-1])
 
             # Same palette and taskbar-only changes leave the named theme and
             # watched toolkit files untouched.
@@ -308,6 +396,11 @@ def test_follow_private(tmp):
                 wait_for(lambda: selected() != old, 'new named GTK palette')
                 wait_for(lambda: portal_theme() == f'v s "{selected()}"', 'new theme published')
                 for package, proc, samples in clients:
+                    if package.endswith('chromium'):
+                        expected = chromium_bg(bg, dark=False)
+                        wait_for(lambda: samples and near(samples[-1]['bg'], expected),
+                                 f'{package} live Chromium palette {bg}', timeout=15)
+                        continue
                     wait_for(lambda: samples and samples[-1]['bg'] == bg,
                              f'{package} live palette {bg}', timeout=15)
                     assert samples[-1]['fg'] == '#e1e2e3', (package, samples)
@@ -319,9 +412,37 @@ def test_follow_private(tmp):
                      (data / 'themes' / selected() / 'gtk-3.0/gtk.css').read_text(),
                      'latest palette wins')
             for package, proc, samples in clients:
-                wait_for(lambda: samples and samples[-1]['bg'] == colors[-1],
+                expected = chromium_bg(colors[-1], dark=False) if package.endswith('chromium') else colors[-1]
+                wait_for(lambda: samples and near(samples[-1]['bg'], expected),
                          f'{package} final palette', timeout=15)
             assert len(list((data / 'themes').glob('RediWM-*'))) == 2
+
+            # Dark mode on: the preference is announced, the GTK slot is
+            # unchanged (Chromium picks gtk-dark.css itself) and Chromium's Qt
+            # colours become the dark palette's own.
+            ipc.action('open_appearance')
+            ui.wait_settled('control_center')
+            slot_bytes = (data / 'themes' / selected() / 'gtk-3.0/gtk-dark.css').read_bytes()
+            ui.click(ui.scroll_into_view('dark_mode'))
+            wait_for(lambda: scheme() == 'v u 1', 'Dark mode on announced')
+            assert watcher.values[-1] == 1, watcher.values
+            assert tomllib.loads(path.read_text())['compositor']['dark_mode']
+            def exported():
+                try:
+                    check_chromium_files(config, data / 'themes' / selected(), colors[-1], dark=True)
+                    return True
+                except AssertionError:
+                    return False
+            wait_for(exported, 'Chromium colours for Dark mode exported')
+            assert (data / 'themes' / selected() / 'gtk-3.0/gtk-dark.css').read_bytes() == slot_bytes
+            for package, proc, samples in clients:
+                if package.endswith('chromium'):
+                    wait_for(lambda: samples and samples[-1]['bg'] == colors[-1],
+                             f'{package} Chromium palette under Dark mode', timeout=15)
+                    check_qt_frame(package, samples[-1])
+            ui.click(ui.scroll_into_view('dark_mode'))
+            wait_for(lambda: scheme() == 'v u 2', 'Dark mode off announced')
+            ipc.action('close_window')
 
             # Disabling following keeps the current colors and stops future
             # exports, both immediately and after a compositor restart.
@@ -332,6 +453,8 @@ def test_follow_private(tmp):
             ipc.reload_config()
             assert selected() == last and last_file.read_bytes() == last_bytes
             assert not portal_theme()
+            assert scheme() == 'v u 2', scheme()
+            wait_for(lambda: watcher.values == [1, 2], 'SettingChanged per preference change')
         for _, proc, _ in clients:
             stop_process(proc)
         clients.clear()
@@ -346,8 +469,10 @@ def test_follow_private(tmp):
         process, log = spawn_compositor(tmp, config_content=content('#778899'))
         with IPCClient(tmp):
             wait_for(lambda: selected() != last, 'startup palette export')
-        print('PASS: opt-in persistence, live GTK3/GTK4/Qt palettes, portal, closed Settings, bounded themes, off and restart')
+        print('PASS: opt-in persistence, live GTK3/GTK4/Qt palettes, Chromium colours per light/dark preference, portal, closed Settings, bounded themes, off and restart')
     finally:
+        if watcher is not None:
+            watcher.close()
         for _, proc, _ in clients:
             stop_process(proc)
         for stream in streams:

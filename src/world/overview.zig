@@ -10,12 +10,15 @@ const anim = @import("ui").anim;
 const sn = @import("../node.zig");
 const Self = @This();
 const cards_mod = @import("overview_cards.zig");
+const hover_mod = @import("overview_hover.zig");
 const gpa = @import("../main.zig").gpa;
 
 saved: ?camera.Camera = null,
 destination: camera.Camera = .{},
 returning: bool = false,
 selected: ?u64 = null,
+/// Preview under the pointer, magnified by `overview_hover.zig`.
+hovered: ?u64 = null,
 activate: ?u64 = null,
 boosted: ?u64 = null,
 output: ?*Output = null,
@@ -24,9 +27,11 @@ edges: [4]*sn.Buffer = undefined,
 pointer_x: f64 = 0,
 pointer_y: f64 = 0,
 cards: std.ArrayList(cards_mod.Card) = .empty,
+lifts: std.ArrayList(hover_mod.Lift) = .empty,
 spread: anim.Anim = .{},
 
 pub const apply = cards_mod.apply;
+pub const zoom = hover_mod.zoom;
 
 pub fn amount(self: *const Self, now: i64) f64 {
     return if (self.active()) std.math.clamp(self.spread.value(now), 0, 1) else 0;
@@ -186,6 +191,7 @@ pub fn cancel(self: *Self, world: *World) void {
 fn finish(self: *Self, world: *World, accepted: bool) void {
     const chosen = if (accepted) self.activate else null;
     const boosted = self.boosted;
+    hover_mod.restack(self, world);
     self.clear();
     world.snapCamera();
     if (find(world, chosen)) |top| {
@@ -205,6 +211,7 @@ fn finish(self: *Self, world: *World, accepted: bool) void {
 fn clear(self: *Self) void {
     if (self.tree) |tree| tree.node.destroy();
     self.cards.deinit(gpa);
+    self.lifts.deinit(gpa);
     self.* = .{};
 }
 
@@ -228,18 +235,24 @@ pub fn update(self: *Self, world: *World, now: i64) bool {
         cards_mod.prepare(self, world) catch self.dismiss(world);
         if (self.cards.items.len == 0) self.dismiss(world);
         if (find(world, self.selected) == null) self.selected = if (self.cards.items.len > 0) self.cards.items[0].id else null;
+        if (self.hovered) |id| if (cards_mod.find(self, id) == null) {
+            self.hovered = null;
+        };
     }
+    if (!self.active()) return false;
+    const magnifying = hover_mod.moving(self, now);
     for (self.cards.items) |card| if (find(world, card.id)) |top| top.applyVisualTransform(now);
     cards_mod.paint(self, now);
-    return moving or (self.active() and !self.spread.settled(now));
+    return moving or magnifying or !self.spread.settled(now);
 }
 
 pub fn motion(self: *Self, world: *World, x: f64, y: f64) void {
     if (self.returning or (x == self.pointer_x and y == self.pointer_y)) return;
     self.pointer_x = x;
     self.pointer_y = y;
-    if (cards_mod.picked(self, world, x, y)) |id| {
-        if (self.selected == id) return;
+    const id = cards_mod.picked(self, world, x, y);
+    hover_mod.hover(self, world, id);
+    if (id != null and self.selected != id) {
         self.selected = id;
         world.server.scheduleFrames();
     }
