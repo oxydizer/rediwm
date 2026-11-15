@@ -15,6 +15,12 @@ const Allocator = std.mem.Allocator;
 
 const benchmark_iterations = 5;
 const write_buffer_size = 64 * 1024;
+const buffer_sizes = [_]usize{
+    16 * 1024,
+    64 * 1024,
+    256 * 1024,
+    1024 * 1024,
+};
 const job_timeout_ns: u64 = 10 * 60 * std.time.ns_per_s;
 
 fn sleepOneMs() void {
@@ -281,11 +287,12 @@ fn runCopySample(
     profile_name: []const u8,
     iteration: usize,
     expected_bytes: u64,
+    buffer_size: usize,
 ) !u64 {
     const destination = try std.fmt.allocPrint(
         allocator,
-        "{s}/destination-{s}-{d}",
-        .{ benchmark_root, profile_name, iteration },
+        "{s}/destination-{s}-{d}-{d}",
+        .{ benchmark_root, profile_name, buffer_size, iteration },
     );
     defer allocator.free(destination);
 
@@ -334,7 +341,12 @@ fn sortSamples(samples: []u64) void {
     }
 }
 
-fn emitRow(profile: Profile, stats: WorkloadStats, samples: []const u64) void {
+fn emitRow(
+    profile: Profile,
+    stats: WorkloadStats,
+    samples: []const u64,
+    buffer_size: usize,
+) void {
     const median_ns = samples[samples.len / 2];
     const mib_per_second =
         @as(f64, @floatFromInt(stats.total_bytes)) *
@@ -353,7 +365,7 @@ fn emitRow(profile: Profile, stats: WorkloadStats, samples: []const u64) void {
             stats.files,
             stats.directories,
             stats.total_bytes,
-            ops.copy_buffer_size,
+            buffer_size,
             benchmark_iterations,
             median_ns,
             samples[0],
@@ -380,31 +392,37 @@ fn benchmarkProfile(
     var runner = try ops.JobRunner.init(allocator);
     defer runner.deinit();
 
-    // Warm source data and filesystem metadata outside measured samples.
-    _ = try runCopySample(
-        allocator,
-        runner,
-        source_root,
-        benchmark_root,
-        profile.name,
-        0,
-        stats.total_bytes,
-    );
+    for (buffer_sizes) |buffer_size| {
+        runner.copy_buffer_bytes = buffer_size;
 
-    var samples: [benchmark_iterations]u64 = undefined;
-    for (&samples, 0..) |*sample, iteration| {
-        sample.* = try runCopySample(
+        // Warm source data and filesystem metadata for this buffer size.
+        _ = try runCopySample(
             allocator,
             runner,
             source_root,
             benchmark_root,
             profile.name,
-            iteration,
+            0,
             stats.total_bytes,
+            buffer_size,
         );
+
+        var samples: [benchmark_iterations]u64 = undefined;
+        for (&samples, 0..) |*sample, iteration| {
+            sample.* = try runCopySample(
+                allocator,
+                runner,
+                source_root,
+                benchmark_root,
+                profile.name,
+                iteration + 1,
+                stats.total_bytes,
+                buffer_size,
+            );
+        }
+        sortSamples(&samples);
+        emitRow(profile, stats, &samples, buffer_size);
     }
-    sortSamples(&samples);
-    emitRow(profile, stats, &samples);
 }
 
 pub fn run(allocator: Allocator) !void {

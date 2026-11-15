@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 
 const max_progress_path_bytes = 4096;
 pub const copy_buffer_size = 64 * 1024;
+const max_copy_buffer_size = 1024 * 1024;
 
 pub const ConflictAction = enum {
     ask,
@@ -548,7 +549,9 @@ fn copyFileContentsTracked(
 
     if (runner) |job| job.beginFileProgress(dst_path, @intCast(stat.st_size));
 
-    var buf: [copy_buffer_size]u8 = undefined;
+    var buf: [max_copy_buffer_size]u8 = undefined;
+    const buffer_len = if (runner) |job| job.copy_buffer_bytes else copy_buffer_size;
+    std.debug.assert(buffer_len > 0 and buffer_len <= buf.len);
     while (true) {
         if (runner) |job| if (!job.waitIfResumed(cancel)) {
             _ = c.unlink(dst_z);
@@ -558,7 +561,7 @@ fn copyFileContentsTracked(
             _ = c.unlink(dst_z);
             return error.Cancelled;
         }
-        const n = c.read(src_fd, &buf, buf.len);
+        const n = c.read(src_fd, buf[0..buffer_len].ptr, buffer_len);
         if (n == 0) break;
         if (n < 0 and std.posix.errno(n) == .INTR) continue;
         if (n < 0) {
@@ -783,6 +786,8 @@ fn moveItemTracked(
 
 pub const JobRunner = struct {
     allocator: Allocator,
+    /// Per-job copy buffer size. Production defaults to 64 KiB.
+    copy_buffer_bytes: usize = copy_buffer_size,
     mutex: c.pthread_mutex_t = undefined,
     cond: c.pthread_cond_t = undefined,
     thread: ?std.Thread = null,
