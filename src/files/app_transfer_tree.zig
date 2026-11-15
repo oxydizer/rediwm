@@ -179,7 +179,9 @@ test "transfer tree aggregates descendant file progress" {
     var tree = try projection.build(allocator, manifest.entries.items);
     defer tree.deinit();
 
-    const aggregate = State.aggregateProgress(&tree, 0, "/source/active.bin", 4, 10);
+    var state = State.init(allocator);
+    defer state.deinit();
+    const aggregate = state.aggregateProgress(&tree, 0, "/source/active.bin", 4, 10);
     try std.testing.expectEqual(@as(u64, 30), aggregate.total_bytes);
     try std.testing.expectEqual(@as(u64, 24), aggregate.completed_bytes);
     try std.testing.expect(aggregate.active);

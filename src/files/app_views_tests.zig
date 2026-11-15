@@ -99,6 +99,7 @@ test "Transfers uses list geometry and isolates file actions while preserving th
         .history = .{ .allocator = std.testing.allocator, .current = "/" },
         .home_dir = "/",
         .items_arena = undefined,
+        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator),
     };
     // These records are only counted. File actions must never read them
     // while the transfer pane is active.
@@ -171,6 +172,7 @@ test "folder transfer rows match full paths, avoid duplicates and exclude stagin
         .history = .{ .allocator = allocator, .current = "/Downloads" },
         .home_dir = "/",
         .items_arena = undefined,
+        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(allocator),
     };
     defer app.items.deinit(allocator);
     var transfers = [_]@import("torrents.zig").Transfer{inlineTransferFixture()};
