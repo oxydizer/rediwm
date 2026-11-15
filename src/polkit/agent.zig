@@ -90,7 +90,7 @@ pub const Agent = struct {
         };
         self.pump_timer = try loop.addTimer(*Agent, pump, self);
         errdefer self.pump_timer.?.remove();
-        if (nonempty(environ.getPosix(if (activation.isTruthy(environ.getPosix("REDIWM_FORCE_POLKIT"))) "XDG_SESSION_ID" else "REDIWM_LOGIN_SESSION"))) |id| self.session_id = try allocator.dupe(u8, id);
+        if (nonempty(environ.getPosix(if (activation.isTruthy(environ.getPosix("REDIWM_FORCE_POLKIT"))) "XDG_SESSION_ID" else "REDIWM_LOGIN_SESSION"))) |id| self.session_id = try allocator.dupe(u8, login.polkitSessionId(id));
         errdefer if (self.session_id) |id| allocator.free(id);
         inline for (.{ "BeginAuthentication", "CancelAuthentication" }) |member| try conn.register(.{
             .path = agent_path,
@@ -220,7 +220,7 @@ pub const Agent = struct {
         const msg = result catch |err| return self.unavailable(err);
         const id = login.readSessionId(msg) catch |err| return self.unavailable(err);
         if (id.len == 0) return self.unavailable(error.NoSession);
-        self.session_id = self.allocator.dupe(u8, id) catch |err| return self.unavailable(err);
+        self.session_id = self.allocator.dupe(u8, login.polkitSessionId(id)) catch |err| return self.unavailable(err);
         self.queryOwner();
     }
 
@@ -296,6 +296,10 @@ pub const Agent = struct {
             return;
         }
         const msg = result catch |err| return self.unavailable(err);
+        if (msg.kind == .error_reply) {
+            var text = msg.body;
+            log.warn("registration refused: {s}: {s}", .{ msg.headers.error_name orelse "?", text.string() catch "" });
+        }
         // A bus-generated refusal must not cause an unbounded retry loop.
         _ = returned(msg, "") catch |err| return self.unavailable(err);
         // A reply from an unrelated sender cannot validate this owner.

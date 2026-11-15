@@ -1,5 +1,5 @@
 //! ConsoleKit2 2.x. Protocol checked against upstream's Manager/Session XML.
-//! Session identities are object paths (also what polkit's unix-session uses).
+//! Session identities are object paths; polkit's unix-session takes the short id.
 const std = @import("std");
 const dbus = @import("dbus");
 const wire = dbus.wire;
@@ -10,6 +10,7 @@ const manager = name ++ ".Manager";
 const session = name ++ ".Session";
 const bus = "org.freedesktop.DBus";
 const bus_path = "/org/freedesktop/DBus";
+const session_prefix = "/org/freedesktop/ConsoleKit/";
 pub const owns_session = true;
 pub const login = @import("consolekit_login.zig").login;
 pub const conflict = @import("consolekit_login.zig").conflict;
@@ -28,7 +29,7 @@ pub fn encode(request: types.Request, body: *wire.Writer) !types.Target {
             target.member = "GetSession";
             target.signature = "s";
             // GetId returns a path, but Manager.GetSession takes the short id.
-            const prefix = "/org/freedesktop/ConsoleKit/";
+            const prefix = session_prefix;
             if (!std.mem.startsWith(u8, id, prefix) or id.len == prefix.len or std.mem.indexOfScalar(u8, id[prefix.len..], '/') != null) return error.InvalidSession;
             try body.string(id[prefix.len..]);
         },
@@ -154,6 +155,13 @@ pub fn readSessionPath(msg: wire.Message) ![]const u8 {
     return body.objectPath();
 }
 pub const readSessionId = readSessionPath;
+
+/// polkitd's ConsoleKit monitor reads CK2's database, which names sessions
+/// "Session3"; registering an agent for the object path is refused as "the
+/// session the caller is in differs" (polkit 128, FreeBSD 15.1).
+pub fn polkitSessionId(id: []const u8) []const u8 {
+    return if (std.mem.startsWith(u8, id, session_prefix)) id[session_prefix.len..] else id;
+}
 
 pub fn readApi(msg: wire.Message) types.Api {
     if (msg.kind != .method_return) return .{};
