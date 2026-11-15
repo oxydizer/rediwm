@@ -84,6 +84,104 @@ test "transfer manifest owns entry paths and clears safely" {
     try std.testing.expectEqual(ops_mod.TransferEntryKind.symlink, manifest.entries.items[0].kind);
 }
 
+test "JobRunner discovers recursive transfer manifest entries" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+
+    const source = try std.fmt.allocPrint(a, "{s}/source", .{tmp});
+    defer a.free(source);
+    try ops_mod.createFolder(a, tmp, "source");
+
+    const nested = try std.fmt.allocPrint(a, "{s}/nested", .{source});
+    defer a.free(nested);
+    try ops_mod.createFolder(a, source, "nested");
+
+    const first = try std.fmt.allocPrint(a, "{s}/first.txt", .{source});
+    defer a.free(first);
+    try writeTestFile(first, "hello");
+
+    const second = try std.fmt.allocPrint(a, "{s}/second.txt", .{nested});
+    defer a.free(second);
+    try writeTestFile(second, "world!");
+
+    const link = try std.fmt.allocPrint(a, "{s}/link", .{nested});
+    defer a.free(link);
+    const link_z = try a.dupeSentinel(u8, link, 0);
+    defer a.free(link_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.symlink("../first.txt", link_z));
+
+    const second_root = try std.fmt.allocPrint(a, "{s}/standalone.txt", .{tmp});
+    defer a.free(second_root);
+    try writeTestFile(second_root, "another");
+
+    const destination = try std.fmt.allocPrint(a, "{s}/destination", .{tmp});
+    defer a.free(destination);
+    try ops_mod.createFolder(a, tmp, "destination");
+
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+
+    try runner.start(.copy, &.{ source, second_root }, destination, .ask);
+    runner.thread.?.join();
+    runner.thread = null;
+
+    try std.testing.expectEqual(@as(usize, 6), runner.manifest.entries.items.len);
+
+    var found_root = false;
+    var found_first = false;
+    var found_nested = false;
+    var found_second = false;
+    var found_link = false;
+    var found_second_root = false;
+
+    for (runner.manifest.entries.items) |entry| {
+        if (std.mem.eql(u8, entry.source_path, source)) {
+            found_root = true;
+            try std.testing.expectEqualStrings("", entry.relative_path);
+            try std.testing.expectEqual(ops_mod.TransferEntryKind.directory, entry.kind);
+            try std.testing.expectEqual(@as(usize, 0), entry.root_index);
+        } else if (std.mem.eql(u8, entry.source_path, first)) {
+            found_first = true;
+            try std.testing.expectEqualStrings("first.txt", entry.relative_path);
+            try std.testing.expectEqual(ops_mod.TransferEntryKind.file, entry.kind);
+            try std.testing.expectEqual(@as(u64, 5), entry.size);
+            try std.testing.expectEqual(@as(usize, 0), entry.root_index);
+        } else if (std.mem.eql(u8, entry.source_path, nested)) {
+            found_nested = true;
+            try std.testing.expectEqualStrings("nested", entry.relative_path);
+            try std.testing.expectEqual(ops_mod.TransferEntryKind.directory, entry.kind);
+            try std.testing.expectEqual(@as(usize, 0), entry.root_index);
+        } else if (std.mem.eql(u8, entry.source_path, second)) {
+            found_second = true;
+            try std.testing.expectEqualStrings("nested/second.txt", entry.relative_path);
+            try std.testing.expectEqual(ops_mod.TransferEntryKind.file, entry.kind);
+            try std.testing.expectEqual(@as(u64, 6), entry.size);
+            try std.testing.expectEqual(@as(usize, 0), entry.root_index);
+        } else if (std.mem.eql(u8, entry.source_path, link)) {
+            found_link = true;
+            try std.testing.expectEqualStrings("nested/link", entry.relative_path);
+            try std.testing.expectEqual(ops_mod.TransferEntryKind.symlink, entry.kind);
+            try std.testing.expectEqual(@as(u64, 0), entry.size);
+            try std.testing.expectEqual(@as(usize, 0), entry.root_index);
+        } else if (std.mem.eql(u8, entry.source_path, second_root)) {
+            found_second_root = true;
+            try std.testing.expectEqualStrings("", entry.relative_path);
+            try std.testing.expectEqual(ops_mod.TransferEntryKind.file, entry.kind);
+            try std.testing.expectEqual(@as(u64, 7), entry.size);
+            try std.testing.expectEqual(@as(usize, 1), entry.root_index);
+        }
+    }
+
+    try std.testing.expect(found_root);
+    try std.testing.expect(found_first);
+    try std.testing.expect(found_nested);
+    try std.testing.expect(found_second);
+    try std.testing.expect(found_link);
+    try std.testing.expect(found_second_root);
+}
+
 test "copyRecursive and copySymlink" {
     const allocator = std.testing.allocator;
     var tmp_path_buf: [256]u8 = undefined;

@@ -318,6 +318,8 @@ fn measureBytes(
     path: []const u8,
     cancel: ?*std.atomic.Value(bool),
     runner: ?*JobRunner,
+    root_index: usize,
+    relative_path: []const u8,
 ) !u64 {
     if (runner) |job| if (!job.waitIfResumed(cancel)) return error.Cancelled;
     if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
@@ -329,12 +331,27 @@ fn measureBytes(
     if (c.lstat(path_z, &st) != 0) return error.StatFailed;
 
     const fmt = st.st_mode & c.S_IFMT;
-    if (fmt == c.S_IFLNK) return 0;
-    if (fmt == c.S_IFREG) {
+    const kind: TransferEntryKind = if (fmt == c.S_IFLNK)
+        .symlink
+    else if (fmt == c.S_IFREG)
+        .file
+    else if (fmt == c.S_IFDIR)
+        .directory
+    else
+        return error.UnsupportedFileType;
+
+    const size: u64 = if (kind == .file) blk: {
         if (st.st_size < 0) return error.InvalidFileSize;
-        return @intCast(st.st_size);
+        break :blk @intCast(st.st_size);
+    } else 0;
+
+    if (runner) |job| {
+        _ = c.pthread_mutex_lock(&job.mutex);
+        defer _ = c.pthread_mutex_unlock(&job.mutex);
+        try job.manifest.append(path, relative_path, null, size, kind, root_index);
     }
-    if (fmt != c.S_IFDIR) return error.UnsupportedFileType;
+
+    if (kind == .symlink or kind == .file) return size;
 
     const dir = c.opendir(path_z) orelse return error.OpenDirectoryFailed;
     defer _ = c.closedir(dir);
@@ -354,7 +371,12 @@ fn measureBytes(
 
         const child = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ path, name });
         defer allocator.free(child);
-        const child_bytes = try measureBytes(allocator, child, cancel, runner);
+        const child_relative = if (relative_path.len == 0)
+            try allocator.dupe(u8, name)
+        else
+            try std.fmt.allocPrint(allocator, "{s}/{s}", .{ relative_path, name });
+        defer allocator.free(child_relative);
+        const child_bytes = try measureBytes(allocator, child, cancel, runner, root_index, child_relative);
         if (child_bytes > std.math.maxInt(u64) - total) return error.SizeOverflow;
         total += child_bytes;
     }
@@ -1132,7 +1154,10 @@ pub const JobRunner = struct {
                     known = false;
                     break;
                 }
-                const bytes = measureBytes(self.allocator, src, &self.cancel_flag, self) catch {
+                const bytes = measureBytes(self.allocator, src, &self.cancel_flag, self, idx, "") catch {
+                    _ = c.pthread_mutex_lock(&self.mutex);
+                    self.manifest.clearRetainingCapacity();
+                    _ = c.pthread_mutex_unlock(&self.mutex);
                     known = false;
                     break;
                 };
@@ -1142,6 +1167,11 @@ pub const JobRunner = struct {
                     break;
                 }
                 total += bytes;
+            }
+            if (self.cancel_flag.load(.acquire)) {
+                _ = c.pthread_mutex_lock(&self.mutex);
+                self.manifest.clearRetainingCapacity();
+                _ = c.pthread_mutex_unlock(&self.mutex);
             }
             _ = c.pthread_mutex_lock(&self.mutex);
             self.total_bytes = total;
