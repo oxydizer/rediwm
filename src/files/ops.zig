@@ -37,6 +37,87 @@ pub const ItemOutcome = enum {
     cancelled,
 };
 
+pub const TransferEntryKind = enum {
+    file,
+    directory,
+    symlink,
+};
+
+pub const TransferEntryState = enum {
+    pending,
+    copying,
+    completed,
+    skipped,
+    failed,
+    cancelled,
+};
+
+pub const TransferEntry = struct {
+    source_path: []u8,
+    relative_path: []u8,
+    destination_path: ?[]u8 = null,
+    size: u64 = 0,
+    kind: TransferEntryKind,
+    state: TransferEntryState = .pending,
+    root_index: usize,
+};
+
+/// Owns the paths and entries describing one logical transfer.
+/// Synchronization is provided by the owning JobRunner.
+pub const TransferManifest = struct {
+    allocator: Allocator,
+    entries: std.ArrayList(TransferEntry) = .empty,
+
+    pub fn init(allocator: Allocator) TransferManifest {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn append(
+        self: *TransferManifest,
+        source_path: []const u8,
+        relative_path: []const u8,
+        destination_path: ?[]const u8,
+        size: u64,
+        kind: TransferEntryKind,
+        root_index: usize,
+    ) !void {
+        const owned_source = try self.allocator.dupe(u8, source_path);
+        errdefer self.allocator.free(owned_source);
+
+        const owned_relative = try self.allocator.dupe(u8, relative_path);
+        errdefer self.allocator.free(owned_relative);
+
+        const owned_destination = if (destination_path) |path|
+            try self.allocator.dupe(u8, path)
+        else
+            null;
+        errdefer if (owned_destination) |path| self.allocator.free(path);
+
+        try self.entries.append(self.allocator, .{
+            .source_path = owned_source,
+            .relative_path = owned_relative,
+            .destination_path = owned_destination,
+            .size = size,
+            .kind = kind,
+            .root_index = root_index,
+        });
+    }
+
+    pub fn clearRetainingCapacity(self: *TransferManifest) void {
+        for (self.entries.items) |entry| {
+            self.allocator.free(entry.source_path);
+            self.allocator.free(entry.relative_path);
+            if (entry.destination_path) |path| self.allocator.free(path);
+        }
+        self.entries.clearRetainingCapacity();
+    }
+
+    pub fn deinit(self: *TransferManifest) void {
+        self.clearRetainingCapacity();
+        self.entries.deinit(self.allocator);
+    }
+};
+
 pub const ItemResult = struct {
     src: []const u8,
     dst: ?[]const u8 = null,
@@ -522,6 +603,7 @@ pub const JobRunner = struct {
     sources: std.ArrayList([]const u8) = .empty,
     outcomes: std.ArrayList(ItemOutcome) = .empty,
     destination_paths: std.ArrayList([]u8) = .empty,
+    manifest: TransferManifest,
     dest_dir: []u8 = &[_]u8{},
     member: ?[]u8 = null,
     result_path: ?[]u8 = null,
@@ -558,6 +640,7 @@ pub const JobRunner = struct {
         self.* = .{
             .allocator = allocator,
             .sources = .empty,
+            .manifest = TransferManifest.init(allocator),
         };
         if (c.pthread_mutex_init(&self.mutex, null) != 0) return error.MutexInitFailed;
         if (c.pthread_cond_init(&self.cond, null) != 0) {
@@ -589,6 +672,7 @@ pub const JobRunner = struct {
         _ = c.close(self.wake_fd);
 
         self.clearStrings();
+        self.manifest.deinit();
         for (self.temporary_dirs.items) |path| {
             deleteRecursive(self.allocator, path) catch {};
             self.allocator.free(path);
@@ -648,6 +732,7 @@ pub const JobRunner = struct {
         errdefer _ = c.pthread_mutex_unlock(&self.mutex);
         self.clearStrings();
         self.state = .idle;
+        self.manifest.clearRetainingCapacity();
         for (self.sources.items) |s| self.allocator.free(s);
         self.sources.clearRetainingCapacity();
         for (self.destination_paths.items) |path| {
