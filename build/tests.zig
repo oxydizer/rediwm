@@ -388,17 +388,38 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
         "Benchmark transfer progress, tree aggregation and concurrent job polling",
     ).dependOn(&run_transfer_bench.step);
 
-    // Benchmark the real JobRunner filesystem copy path independently from
-    // progress-model measurements and normal unit tests.
-    const copy_bench_tests = b.addTest(.{
-        .root_module = files_tests.root_module,
-        .filters = &.{"production copy benchmark"},
+    // Standalone executable for end-to-end measurements of the production
+    // JobRunner filesystem copy path.
+    const copy_bench_module = b.createModule(.{
+        .root_source_file = b.path("src/files/copy_bench.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
     });
-    const run_copy_bench = b.addRunArtifact(copy_bench_tests);
+    copy_bench_module.addImport("platform", ctx.platform_mod);
+    copy_bench_module.addImport("i18n", ctx.i18n_mod);
+    copy_bench_module.addImport("c", ctx.c.libc);
+    copy_bench_module.addImport("c_gfx", ctx.c.gfx);
+    copy_bench_module.addImport("c_archive", ctx.c.archive);
+    copy_bench_module.linkSystemLibrary("libarchive", .{});
+
+    const copy_bench_exe = b.addExecutable(.{
+        .name = "rediwm-copy-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/files/copy_bench_main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
+    });
+    copy_bench_exe.root_module.addImport("copy_bench", copy_bench_module);
+    const run_copy_bench = b.addRunArtifact(copy_bench_exe);
     run_copy_bench.has_side_effects = true;
     b.step(
         "bench-files-copy",
-        "Benchmark production JobRunner filesystem copy throughput",
+        "Run the standalone production filesystem copy benchmark",
     ).dependOn(&run_copy_bench.step);
 
     const terminal_integration = b.addSystemCommand(&.{"env"});

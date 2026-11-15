@@ -407,8 +407,7 @@ fn benchmarkProfile(
     emitRow(profile, stats, &samples);
 }
 
-test "production copy benchmark emits measurements" {
-    const allocator = std.testing.allocator;
+pub fn run(allocator: Allocator) !void {
     const configured_root = c.getenv("REDIWM_COPY_BENCH_DIR");
     const base_path = if (configured_root) |path|
         std.mem.span(path)

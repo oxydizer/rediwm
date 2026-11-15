@@ -6,13 +6,11 @@ const ops_mod = @import("files/ops.zig");
 const clipboard_mod = @import("files/clipboard.zig");
 const dirsize_mod = @import("files/dirsize.zig");
 const transfer_bench_mod = @import("files/transfer_bench.zig");
-const copy_bench_mod = @import("files/copy_bench.zig");
 const c = @import("files/c.zig").api;
 const linux = std.os.linux;
 
 test {
     _ = transfer_bench_mod;
-    _ = copy_bench_mod;
 }
 
 test "History navigation stack" {
