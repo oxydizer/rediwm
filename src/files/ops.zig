@@ -1043,6 +1043,42 @@ pub const JobRunner = struct {
         slot.* = owned;
     }
 
+    /// Resolves every manifest entry beneath one selected source root.
+    /// The update is committed only after all destination paths are allocated.
+    fn resolveManifestDestinations(self: *JobRunner, root_index: usize, root_destination: []const u8) !void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        const entries = self.manifest.entries.items;
+        const resolved = try self.allocator.alloc(?[]u8, entries.len);
+        defer self.allocator.free(resolved);
+        @memset(resolved, null);
+        errdefer {
+            for (resolved) |path| {
+                if (path) |owned| self.allocator.free(owned);
+            }
+        }
+
+        for (entries, 0..) |entry, idx| {
+            if (entry.root_index != root_index) continue;
+            resolved[idx] = if (entry.relative_path.len == 0)
+                try self.allocator.dupe(u8, root_destination)
+            else
+                try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{
+                    root_destination,
+                    entry.relative_path,
+                });
+        }
+
+        for (self.manifest.entries.items, 0..) |*entry, idx| {
+            if (resolved[idx]) |path| {
+                if (entry.destination_path) |old| self.allocator.free(old);
+                entry.destination_path = path;
+                resolved[idx] = null;
+            }
+        }
+    }
+
     /// Only finished jobs expose results, so their source strings remain stable.
     pub fn movedSuccessfully(self: *JobRunner, path: []const u8) bool {
         _ = c.pthread_mutex_lock(&self.mutex);
@@ -1058,7 +1094,6 @@ pub const JobRunner = struct {
         const name = std.fs.path.basename(src);
         var target = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.dest_dir, name });
         defer self.allocator.free(target);
-        try self.recordDestinationPath(target);
         var buf: [4096]u8 = undefined;
         const target_z = try std.fmt.bufPrintSentinel(&buf, "{s}", .{target}, 0);
         var st: c.struct_stat = undefined;
@@ -1090,12 +1125,13 @@ pub const JobRunner = struct {
                     const replacement = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.dest_dir, unique });
                     self.allocator.free(target);
                     target = replacement;
-                    try self.recordDestinationPath(target);
                 },
             }
         }
         if (self.cancel_flag.load(.acquire)) return .cancelled;
         if (isDescendantOrSame(src, target)) return error.CannotCopyIntoDescendant;
+        try self.resolveManifestDestinations(self.current_item_index, target);
+        try self.recordDestinationPath(target);
         if (self.kind == .copy) {
             try copyRecursiveTracked(self.allocator, src, target, &self.cancel_flag, self);
         } else {

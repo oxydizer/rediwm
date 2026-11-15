@@ -376,6 +376,22 @@ test "JobRunner copy with conflict resolution (Skip and Rename)" {
     const read_content = try readTestFile(dst_item1, &orig_buf);
     try std.testing.expectEqualStrings("original in dst", read_content);
 
+    const dst_item2 = try std.fmt.allocPrint(allocator, "{s}/item2.txt", .{dst_dir});
+    defer allocator.free(dst_item2);
+    var found_skipped = false;
+    var found_successful = false;
+    for (runner.manifest.entries.items) |entry| {
+        if (std.mem.eql(u8, entry.source_path, f1_path)) {
+            found_skipped = true;
+            try std.testing.expect(entry.destination_path == null);
+        } else if (std.mem.eql(u8, entry.source_path, f2_path)) {
+            found_successful = true;
+            try std.testing.expectEqualStrings(dst_item2, entry.destination_path.?);
+        }
+    }
+    try std.testing.expect(found_skipped);
+    try std.testing.expect(found_successful);
+
     // Test 2: Conflict action = .rename
     try runner.start(.copy, sources[0..1], dst_dir, .rename);
 
@@ -393,6 +409,74 @@ test "JobRunner copy with conflict resolution (Skip and Rename)" {
     const renamed_dst = try std.fmt.allocPrint(allocator, "{s}/item1 (1).txt", .{dst_dir});
     defer allocator.free(renamed_dst);
     try std.testing.expect(testFileExists(renamed_dst));
+    try std.testing.expectEqual(@as(usize, 1), runner.manifest.entries.items.len);
+    try std.testing.expectEqualStrings(
+        renamed_dst,
+        runner.manifest.entries.items[0].destination_path.?,
+    );
+}
+
+test "JobRunner resolves renamed directory destinations for descendants" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+
+    const source = try std.fmt.allocPrint(a, "{s}/source", .{tmp});
+    defer a.free(source);
+    try ops_mod.createFolder(a, tmp, "source");
+
+    const nested = try std.fmt.allocPrint(a, "{s}/nested", .{source});
+    defer a.free(nested);
+    try ops_mod.createFolder(a, source, "nested");
+
+    const file = try std.fmt.allocPrint(a, "{s}/nested/data.txt", .{source});
+    defer a.free(file);
+    try writeTestFile(file, "payload");
+
+    const destination = try std.fmt.allocPrint(a, "{s}/destination", .{tmp});
+    defer a.free(destination);
+    try ops_mod.createFolder(a, tmp, "destination");
+
+    const conflict = try std.fmt.allocPrint(a, "{s}/source", .{destination});
+    defer a.free(conflict);
+    try ops_mod.createFolder(a, destination, "source");
+
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+
+    try runner.start(.copy, &.{source}, destination, .rename);
+    runner.thread.?.join();
+    runner.thread = null;
+
+    const renamed_root = try std.fmt.allocPrint(a, "{s}/source (1)", .{destination});
+    defer a.free(renamed_root);
+    const renamed_nested = try std.fmt.allocPrint(a, "{s}/nested", .{renamed_root});
+    defer a.free(renamed_nested);
+    const renamed_file = try std.fmt.allocPrint(a, "{s}/data.txt", .{renamed_nested});
+    defer a.free(renamed_file);
+
+    try std.testing.expect(testFileExists(renamed_file));
+    try std.testing.expectEqual(@as(usize, 3), runner.manifest.entries.items.len);
+
+    var found_root = false;
+    var found_nested = false;
+    var found_file = false;
+    for (runner.manifest.entries.items) |entry| {
+        if (std.mem.eql(u8, entry.source_path, source)) {
+            found_root = true;
+            try std.testing.expectEqualStrings(renamed_root, entry.destination_path.?);
+        } else if (std.mem.eql(u8, entry.source_path, nested)) {
+            found_nested = true;
+            try std.testing.expectEqualStrings(renamed_nested, entry.destination_path.?);
+        } else if (std.mem.eql(u8, entry.source_path, file)) {
+            found_file = true;
+            try std.testing.expectEqualStrings(renamed_file, entry.destination_path.?);
+        }
+    }
+    try std.testing.expect(found_root);
+    try std.testing.expect(found_nested);
+    try std.testing.expect(found_file);
 }
 
 test "JobRunner reports byte totals for recursive copies and moves" {
