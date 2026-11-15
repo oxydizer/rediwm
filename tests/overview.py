@@ -126,9 +126,9 @@ def run():
                     assert [len(row) for row in boxes] == counts, boxes
                     for row in boxes:
                         for left, right in zip(row, row[1:]):
-                            assert right[0] - left[2] >= 20, row
+                            assert right[0] - left[2] >= 8, row
                     for upper, lower in zip(boxes, boxes[1:]):
-                        assert lower[0][1] - upper[0][3] >= 20, boxes
+                        assert lower[0][1] - upper[0][3] >= 8, boxes
                     rgb = image.tobytes()
                     assert any(r > 240 and g < 15 and b > 240 for r, g, b in zip(rgb[::3], rgb[1::3], rgb[2::3])), "no selection outline"
                     return [box for row in boxes for box in row]

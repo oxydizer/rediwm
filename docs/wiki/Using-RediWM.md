@@ -44,8 +44,8 @@ The volume/brightness OSD also shows the desktop zoom percentage.
 
 Press **Super+A** to spread the canvas windows into separate live previews on
 the monitor under the pointer. Four windows form a 2×2 grid; five form two
-centred above three. Previews preserve aspect ratios, with gaps and readable
-titles beneath them. Offscreen and minimized windows are included; hidden tabs
+centred above three. Previews preserve aspect ratios and fill the screen with
+only narrow gaps between them. Offscreen and minimized windows are included; hidden tabs
 are excluded.
 
 Click a preview, or select one with the arrow keys and press Enter, to visit it.
