@@ -384,9 +384,11 @@ test "JobRunner copy with conflict resolution (Skip and Rename)" {
         if (std.mem.eql(u8, entry.source_path, f1_path)) {
             found_skipped = true;
             try std.testing.expect(entry.destination_path == null);
+            try std.testing.expectEqual(ops_mod.TransferEntryState.skipped, entry.state);
         } else if (std.mem.eql(u8, entry.source_path, f2_path)) {
             found_successful = true;
             try std.testing.expectEqualStrings(dst_item2, entry.destination_path.?);
+            try std.testing.expectEqual(ops_mod.TransferEntryState.completed, entry.state);
         }
     }
     try std.testing.expect(found_skipped);
@@ -413,6 +415,10 @@ test "JobRunner copy with conflict resolution (Skip and Rename)" {
     try std.testing.expectEqualStrings(
         renamed_dst,
         runner.manifest.entries.items[0].destination_path.?,
+    );
+    try std.testing.expectEqual(
+        ops_mod.TransferEntryState.completed,
+        runner.manifest.entries.items[0].state,
     );
 }
 
@@ -466,12 +472,15 @@ test "JobRunner resolves renamed directory destinations for descendants" {
         if (std.mem.eql(u8, entry.source_path, source)) {
             found_root = true;
             try std.testing.expectEqualStrings(renamed_root, entry.destination_path.?);
+            try std.testing.expectEqual(ops_mod.TransferEntryState.completed, entry.state);
         } else if (std.mem.eql(u8, entry.source_path, nested)) {
             found_nested = true;
             try std.testing.expectEqualStrings(renamed_nested, entry.destination_path.?);
+            try std.testing.expectEqual(ops_mod.TransferEntryState.completed, entry.state);
         } else if (std.mem.eql(u8, entry.source_path, file)) {
             found_file = true;
             try std.testing.expectEqualStrings(renamed_file, entry.destination_path.?);
+            try std.testing.expectEqual(ops_mod.TransferEntryState.completed, entry.state);
         }
     }
     try std.testing.expect(found_root);
@@ -745,6 +754,11 @@ test "cancelling an active copy removes partial output and preserves source" {
     const progress = runner.pollProgress();
     try std.testing.expect(progress.cancelled);
     try std.testing.expectEqual(@as(usize, 0), progress.success_count);
+    try std.testing.expectEqual(@as(usize, 1), runner.manifest.entries.items.len);
+    try std.testing.expectEqual(
+        ops_mod.TransferEntryState.cancelled,
+        runner.manifest.entries.items[0].state,
+    );
     try std.testing.expect(testFileExists(src));
     try std.testing.expect(!testFileExists(dst));
 }

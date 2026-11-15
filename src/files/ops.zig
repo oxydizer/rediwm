@@ -475,6 +475,18 @@ fn copyRecursiveTracked(
     cancel: ?*std.atomic.Value(bool),
     runner: ?*JobRunner,
 ) !void {
+    if (runner) |job| job.setManifestEntryState(job.current_item_index, src, .copying);
+    try copyRecursiveTrackedImpl(allocator, src, dst, cancel, runner);
+    if (runner) |job| job.setManifestEntryState(job.current_item_index, src, .completed);
+}
+
+fn copyRecursiveTrackedImpl(
+    allocator: Allocator,
+    src: []const u8,
+    dst: []const u8,
+    cancel: ?*std.atomic.Value(bool),
+    runner: ?*JobRunner,
+) anyerror!void {
     if (runner) |job| if (!job.waitIfResumed(cancel)) return error.Cancelled;
     if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
 
@@ -608,6 +620,7 @@ fn moveItemTracked(
         else => return error.RenameFailed,
     };
     if (runner) |job| job.addTransferredBytes(source_bytes);
+    if (runner) |job| job.setManifestRootState(job.current_item_index, .completed);
 }
 
 pub const JobRunner = struct {
@@ -1079,6 +1092,69 @@ pub const JobRunner = struct {
         }
     }
 
+    fn setManifestEntryState(
+        self: *JobRunner,
+        root_index: usize,
+        source_path: []const u8,
+        state: TransferEntryState,
+    ) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        for (self.manifest.entries.items) |*entry| {
+            if (entry.root_index == root_index and
+                std.mem.eql(u8, entry.source_path, source_path))
+            {
+                entry.state = state;
+                return;
+            }
+        }
+    }
+
+    fn setManifestRootState(
+        self: *JobRunner,
+        root_index: usize,
+        state: TransferEntryState,
+    ) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        for (self.manifest.entries.items) |*entry| {
+            if (entry.root_index == root_index) entry.state = state;
+        }
+    }
+
+    fn finishManifestRoot(self: *JobRunner, root_index: usize, outcome: ItemOutcome) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        const final_state: TransferEntryState = switch (outcome) {
+            .success => .completed,
+            .skipped => .skipped,
+            .failed => .failed,
+            .cancelled => .cancelled,
+        };
+
+        for (self.manifest.entries.items) |*entry| {
+            if (entry.root_index != root_index) continue;
+            if (outcome == .failed or outcome == .cancelled) {
+                if (entry.state == .completed) continue;
+            }
+            entry.state = final_state;
+        }
+    }
+
+    fn finishCancelledManifestEntries(self: *JobRunner) void {
+        if (!self.cancel_flag.load(.acquire)) return;
+
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        for (self.manifest.entries.items) |*entry| {
+            if (entry.state == .pending) entry.state = .cancelled;
+        }
+    }
+
     /// Only finished jobs expose results, so their source strings remain stable.
     pub fn movedSuccessfully(self: *JobRunner, path: []const u8) bool {
         _ = c.pthread_mutex_lock(&self.mutex);
@@ -1232,6 +1308,9 @@ pub const JobRunner = struct {
                 }
                 break :blk if (err == error.Cancelled) ItemOutcome.cancelled else ItemOutcome.failed;
             };
+            if (self.kind == .copy or self.kind == .move) {
+                self.finishManifestRoot(idx, outcome);
+            }
             _ = c.pthread_mutex_lock(&self.mutex);
             self.outcomes.items[idx] = outcome;
             switch (outcome) {
@@ -1245,6 +1324,7 @@ pub const JobRunner = struct {
             _ = c.pthread_mutex_unlock(&self.mutex);
             if (outcome == .cancelled) break;
         }
+        self.finishCancelledManifestEntries();
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
         const cancelled = self.cancel_flag.load(.acquire);
