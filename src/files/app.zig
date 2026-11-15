@@ -37,6 +37,7 @@ const app_scroll = @import("app_scroll.zig");
 const app_torrents = @import("app_torrents.zig");
 const app_torrent_rows = @import("app_torrent_rows.zig");
 const app_transfer_rows = @import("app_transfer_rows.zig");
+const app_transfer_tree = @import("app_transfer_tree.zig");
 const app_git_sidebar = @import("app_git_sidebar.zig");
 const app_opening = @import("app_opening.zig");
 const app_audio = @import("app_audio.zig");
@@ -287,6 +288,7 @@ pub const App = struct {
     job_bytes_per_second: u64 = 0,
     job_state: ops_mod.JobState = .idle,
     transfer_rows_dirty: bool = false,
+    transfer_tree_state: app_transfer_tree.State,
     status_notice: ?[]u8 = null,
     status_notice_until: i64 = 0,
     status_is_error: bool = false,
@@ -336,6 +338,7 @@ pub const App = struct {
             .home_dir = home_dir,
             .items_arena = std.heap.ArenaAllocator.init(allocator),
             .job_runner = ops_mod.JobRunner.init(allocator) catch null,
+            .transfer_tree_state = app_transfer_tree.State.init(allocator),
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
             .single_click_open = @import("settings.zig").singleClickOpen(),
@@ -389,6 +392,7 @@ pub const App = struct {
         if (self.preview_return_fd) |fd| _ = c.close(fd);
         if (self.editor_path) |path| self.allocator.free(path);
         if (self.job_runner) |runner| runner.deinit();
+        self.transfer_tree_state.deinit();
         self.clearFolderSizes();
         self.folder_sizes.deinit();
         if (self.dirsize_pool) |p| p.deinit();
@@ -820,6 +824,9 @@ pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
 
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
+    pub const transferTreeBox = app_sidebar_paint.transferTreeBox;
+    pub const transferTreeClick = app_sidebar_paint.transferTreeClick;
+    pub const renderTransferTree = app_sidebar_paint.renderTransferTree;
 
     pub const startTorrents = app_torrents.startTorrents;
     pub const stepTorrents = app_torrents.stepTorrents;

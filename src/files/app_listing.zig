@@ -325,6 +325,7 @@ pub fn sync(self: *App) void {
         if (progress.state == .finished) {
             if (self.job_was_running) {
                 self.job_was_running = false;
+                self.transfer_tree_state.markDirty();
                 self.setStatusNotice(progress.status_message, progress.is_error);
                 if (self.clipboard_cut and !self.clipboard_is_text and self.job_cut_revision == self.clipboard_revision) {
                     var i: usize = 0;
@@ -355,6 +356,11 @@ pub fn sync(self: *App) void {
                     (processed_changed or file_path_changed)))
             {
                 self.transfer_rows_dirty = true;
+            }
+            if (state_changed or
+                ((runner.kind == .copy or runner.kind == .move) and processed_changed))
+            {
+                self.transfer_tree_state.markDirty();
             }
             if (state_changed) {
                 self.invalidate();

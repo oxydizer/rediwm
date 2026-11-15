@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 
 pub const Node = struct {
     path: []u8,
+    source_path: []u8,
     name: []u8,
     parent_index: ?usize,
     entry_index: usize,
@@ -22,6 +23,7 @@ pub const Tree = struct {
     pub fn deinit(self: *Tree) void {
         for (self.nodes.items) |node| {
             self.allocator.free(node.path);
+            self.allocator.free(node.source_path);
             self.allocator.free(node.name);
         }
         self.nodes.deinit(self.allocator);
@@ -77,12 +79,15 @@ pub fn build(allocator: Allocator, entries: []const ops.TransferEntry) !Tree {
         const name = std.fs.path.basename(destination);
         const owned_path = try allocator.dupe(u8, destination);
         errdefer allocator.free(owned_path);
+        const owned_source_path = try allocator.dupe(u8, entry.source_path);
+        errdefer allocator.free(owned_source_path);
         const owned_name = try allocator.dupe(u8, if (name.len == 0) destination else name);
         errdefer allocator.free(owned_name);
 
         const node_index = tree.nodes.items.len;
         try tree.nodes.append(allocator, .{
             .path = owned_path,
+            .source_path = owned_source_path,
             .name = owned_name,
             .parent_index = null,
             .entry_index = entry_index,
@@ -144,6 +149,7 @@ test "transfer tree projects renamed roots, nested entries and independent roots
 
     const file = tree.nodes.items[1];
     try std.testing.expectEqualStrings("file.txt", file.name);
+    try std.testing.expectEqualStrings("/source-a/nested/file.txt", file.source_path);
     try std.testing.expectEqual(ops.TransferEntryKind.file, file.kind);
     try std.testing.expectEqual(@as(u64, 42), file.size);
     try std.testing.expectEqual(ops.TransferEntryState.copying, file.state);
