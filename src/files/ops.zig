@@ -118,6 +118,46 @@ pub const TransferManifest = struct {
     }
 };
 
+/// An independently owned, consistent view of a JobRunner's transfer manifest.
+/// Its paths remain valid even after the live manifest is cleared or reused.
+pub const TransferManifestSnapshot = struct {
+    allocator: Allocator,
+    entries: std.ArrayList(TransferEntry) = .empty,
+
+    pub fn deinit(self: *TransferManifestSnapshot) void {
+        for (self.entries.items) |entry| {
+            self.allocator.free(entry.source_path);
+            self.allocator.free(entry.relative_path);
+            if (entry.destination_path) |path| self.allocator.free(path);
+        }
+        self.entries.deinit(self.allocator);
+    }
+};
+
+fn cloneTransferEntry(allocator: Allocator, entry: TransferEntry) !TransferEntry {
+    const source_path = try allocator.dupe(u8, entry.source_path);
+    errdefer allocator.free(source_path);
+
+    const relative_path = try allocator.dupe(u8, entry.relative_path);
+    errdefer allocator.free(relative_path);
+
+    const destination_path = if (entry.destination_path) |path|
+        try allocator.dupe(u8, path)
+    else
+        null;
+    errdefer if (destination_path) |path| allocator.free(path);
+
+    return .{
+        .source_path = source_path,
+        .relative_path = relative_path,
+        .destination_path = destination_path,
+        .size = entry.size,
+        .kind = entry.kind,
+        .state = entry.state,
+        .root_index = entry.root_index,
+    };
+}
+
 pub const ItemResult = struct {
     src: []const u8,
     dst: ?[]const u8 = null,
@@ -911,6 +951,25 @@ pub const JobRunner = struct {
             );
         }
         return progress;
+    }
+
+    /// Returns a consistent, independently owned copy of the transfer manifest.
+    /// The caller owns the snapshot and must call deinit().
+    pub fn snapshotTransferManifest(
+        self: *JobRunner,
+        allocator: Allocator,
+    ) !TransferManifestSnapshot {
+        var snapshot: TransferManifestSnapshot = .{ .allocator = allocator };
+        errdefer snapshot.deinit();
+
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        try snapshot.entries.ensureTotalCapacity(allocator, self.manifest.entries.items.len);
+        for (self.manifest.entries.items) |entry| {
+            snapshot.entries.appendAssumeCapacity(try cloneTransferEntry(allocator, entry));
+        }
+        return snapshot;
     }
 
     fn addTransferredBytes(self: *JobRunner, bytes: u64) void {

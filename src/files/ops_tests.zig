@@ -84,6 +84,44 @@ test "transfer manifest owns entry paths and clears safely" {
     try std.testing.expectEqual(ops_mod.TransferEntryKind.symlink, manifest.entries.items[0].kind);
 }
 
+test "JobRunner snapshots manifest entries with independent path ownership" {
+    const a = std.testing.allocator;
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+
+    try runner.manifest.append(
+        "/source/folder",
+        "folder",
+        "/destination/folder",
+        128,
+        .directory,
+        2,
+    );
+    runner.manifest.entries.items[0].state = .copying;
+
+    var snapshot = try runner.snapshotTransferManifest(a);
+    defer snapshot.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), snapshot.entries.items.len);
+    const entry = snapshot.entries.items[0];
+    try std.testing.expectEqualStrings("/source/folder", entry.source_path);
+    try std.testing.expectEqualStrings("folder", entry.relative_path);
+    try std.testing.expectEqualStrings("/destination/folder", entry.destination_path.?);
+    try std.testing.expectEqual(@as(u64, 128), entry.size);
+    try std.testing.expectEqual(ops_mod.TransferEntryKind.directory, entry.kind);
+    try std.testing.expectEqual(ops_mod.TransferEntryState.copying, entry.state);
+    try std.testing.expectEqual(@as(usize, 2), entry.root_index);
+
+    // Reusing the live manifest must not invalidate the snapshot's owned paths.
+    runner.manifest.clearRetainingCapacity();
+    try runner.manifest.append("/another", "", null, 0, .file, 0);
+
+    try std.testing.expectEqual(@as(usize, 1), snapshot.entries.items.len);
+    try std.testing.expectEqualStrings("/source/folder", snapshot.entries.items[0].source_path);
+    try std.testing.expectEqualStrings("/destination/folder", snapshot.entries.items[0].destination_path.?);
+    try std.testing.expectEqual(ops_mod.TransferEntryState.copying, snapshot.entries.items[0].state);
+}
+
 test "JobRunner discovers recursive transfer manifest entries" {
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
