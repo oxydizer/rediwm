@@ -2,10 +2,15 @@
 
 const std = @import("std");
 const ops_mod = @import("ops.zig");
+const transfer_tree_mod = @import("transfer_tree.zig");
 const clipboard_mod = @import("clipboard.zig");
 const c = @import("c.zig").api;
 const files_tests = @import("../files_tests.zig");
 const makeTestDir = files_tests.makeTestDir;
+
+test {
+    _ = transfer_tree_mod;
+}
 
 pub fn writeTestFile(path: []const u8, content: []const u8) !void {
     var path_buf: [4096]u8 = undefined;
