@@ -769,6 +769,48 @@ test "JobRunner reports per-path progress and retains completed outcomes" {
     try std.testing.expect(runner.progressForPath("/destination/shared") == null);
 }
 
+test "JobRunner batch progress aggregates every manifest file in a directory" {
+    const a = std.testing.allocator;
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+
+    try runner.manifest.append(
+        "/source/folder/first.txt",
+        "first.txt",
+        "/destination/folder/first.txt",
+        10,
+        .file,
+        0,
+    );
+    try runner.manifest.append(
+        "/source/folder/second.txt",
+        "second.txt",
+        "/destination/folder/second.txt",
+        30,
+        .file,
+        0,
+    );
+
+    runner.manifest.entries.items[0].state = .completed;
+    runner.manifest.entries.items[1].state = .pending;
+    runner.state = .running;
+    runner.kind = .copy;
+
+    const paths = [_][]const u8{"/destination/folder"};
+    var results: [1]?f64 = undefined;
+    var matched: [1]bool = undefined;
+
+    try runner.progressForPaths(&paths, &results, &matched);
+
+    try std.testing.expect(matched[0]);
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0.25),
+        results[0].?,
+        0.0001,
+    );
+}
+
 test "deletion dialog owns targets and shares responsive hit geometry" {
     const deletion = @import("../delete_dialog.zig");
     var state: deletion.State = .{};
