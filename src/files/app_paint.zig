@@ -386,10 +386,27 @@ pub fn placeCaret(self: *App, x: f64, extend: bool) void {
     edit.move(p, extend);
 }
 
+/// The focused field's caret in app coordinates. text-input-v3 anchors the
+/// input method's candidate window on this rectangle.
+pub fn editorCaretRect(self: *App) ?header.Rect {
+    const edit = self.activeEditor() orelse return null;
+    const area = self.editorTextArea();
+    const surf = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, 1, 1) orelse return null;
+    defer c.cairo_surface_destroy(surf);
+    const cr = c.cairo_create(surf) orelse return null;
+    defer c.cairo_destroy(cr);
+    // Measure at the buffer scale, as renderEditor and placeCaret do.
+    c.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
+    const metrics = fontMetrics(cr, fieldFontSize());
+    const ink_h = metrics.ascent + metrics.descent;
+    const pen = measureText(cr, edit.text.items[0..@min(edit.cursor, edit.text.items.len)], fieldFontSize(), false);
+    return .{ .x = area.x - edit.scroll + pen, .y = area.y + (area.h - ink_h) / 2, .w = 2, .h = ink_h };
+}
+
 /// A whole text field: the shared frame (ui/widgets/field.zig), then the
-/// editor's text, selection and caret in the theme's colours.
+/// editor's text, selection, any input-method preedit and the caret in the
+/// theme's colours.
 pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect, focused: bool, search: bool) void {
-    _ = self;
     if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = @floatCast(rect.w), .h = @floatCast(rect.h) })) |begun| {
         var layer = begun;
         _ = ui_field.paintFrame(&layer.renderer, layer.local(), fieldOptions(search), .{ .focused = focused });
@@ -403,11 +420,15 @@ pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect
     const ink_h = metrics.ascent + metrics.descent;
     const top = area.y + (area.h - ink_h) / 2;
     const view_w = area.w;
-    const text_w = measureText(cr, text, fieldFontSize(), false);
-    const pen = measureText(cr, text[0..@min(edit.cursor, text.len)], fieldFontSize(), false);
+    const preedit: []const u8 = if (focused and self.preedit_editor == edit) self.preedit.items else "";
+    const caret = @min(edit.cursor, text.len);
+    const pen = measureText(cr, text[0..caret], fieldFontSize(), false);
+    const preedit_w = if (preedit.len > 0) measureText(cr, preedit, fieldFontSize(), false) else 0;
+    const text_w = measureText(cr, text, fieldFontSize(), false) + preedit_w;
     if (focused) {
         const margin = @min(view_w / 4, 12);
-        if (pen - edit.scroll > view_w - margin) edit.scroll = pen - view_w + margin;
+        const end = pen + preedit_w;
+        if (end - edit.scroll > view_w - margin) edit.scroll = end - view_w + margin;
         if (pen - edit.scroll < margin) edit.scroll = pen - margin;
         edit.scroll = @round(std.math.clamp(edit.scroll, 0, @max(0, text_w - view_w + margin)));
     }
@@ -423,10 +444,22 @@ pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect
         c.cairo_rectangle(cr, x + left, top, right - left, ink_h);
         c.cairo_fill(cr);
     }
-    const placeholder = search and text.len == 0;
+    const placeholder = search and text.len == 0 and preedit.len == 0;
     // Half-strength white, not the shell's blue-grey `faint`.
     setSource(cr, if (placeholder) withAlpha(t.fg, 0.5) else t.fg);
-    drawText(cr, if (placeholder) tr("Search this folder") else text, x, top + metrics.ascent, fieldFontSize(), false);
+    if (preedit.len == 0) {
+        drawText(cr, if (placeholder) tr("Search this folder") else text, x, top + metrics.ascent, fieldFontSize(), false);
+    } else {
+        // Compose at the caret: the preedit is not part of the text yet, so
+        // the suffix is drawn after it and the composition is underlined.
+        drawText(cr, text[0..caret], x, top + metrics.ascent, fieldFontSize(), false);
+        setSource(cr, t.accent);
+        drawText(cr, preedit, x + pen, top + metrics.ascent, fieldFontSize(), false);
+        c.cairo_rectangle(cr, x + pen, top + ink_h - 1, preedit_w, 1);
+        c.cairo_fill(cr);
+        setSource(cr, t.fg);
+        drawText(cr, text[caret..], x + pen + preedit_w, top + metrics.ascent, fieldFontSize(), false);
+    }
     if (focused) {
         setSource(cr, t.caretColor());
         c.cairo_rectangle(cr, x + pen, top, t.caret_width, ink_h);

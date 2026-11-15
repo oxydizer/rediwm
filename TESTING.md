@@ -29,8 +29,9 @@ Compare failures with a clean HEAD worktree before calling them regressions.
 Integration dependencies: Python 3 + Pillow, C compiler, `wayland-scanner`,
 wayland-protocols and GLES2; D-Bus suites also need PyGObject,
 `dbus-run-session` and `busctl`. Check each suite for extra dependencies.
-App checks include [calculator](tests/calculator.py), [editor](tests/editor.py)
-and [editor visuals](tests/editor_visuals.py).
+App checks include [calculator](tests/calculator.py), [editor](tests/editor.py),
+[editor visuals](tests/editor_visuals.py) and
+[Files input methods](tests/files_ime.py).
 
 Application colors: `python3 tests/app_colors.py` checks snapshot exports and
 opt-in following with a private bus, scratch HOME/XDG directories, and real
