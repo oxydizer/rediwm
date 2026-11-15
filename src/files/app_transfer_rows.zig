@@ -101,7 +101,9 @@ test "transfer rows merge direct children, prefer real entries and retain select
         .history = .{ .allocator = allocator, .current = "/destination/root" },
         .home_dir = "/",
         .items_arena = undefined,
+        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(allocator),
     };
+    defer app.transfer_tree_state.deinit();
     defer app.items.deinit(allocator);
 
     try app.items.append(allocator, .{

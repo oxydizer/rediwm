@@ -67,7 +67,8 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 }
             }
         }
-        if (cut) c.cairo_push_group(cr);
+        const fade_item = cut or item.transfer_ghost;
+        if (fade_item) c.cairo_push_group(cr);
         const icon = self.itemIconRect(index);
         self.drawItemIcon(cr, item, icon.x, icon.y, icon.w);
         if (job_progress) |progress| {
@@ -170,9 +171,9 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
         }
         self.renderInlineTorrent(cr, idx);
         self.renderAudioButton(cr, idx);
-        if (cut) {
+        if (fade_item) {
             c.cairo_pop_group_to_source(cr);
-            c.cairo_paint_with_alpha(cr, 0.45);
+            c.cairo_paint_with_alpha(cr, if (cut) 0.45 else 0.48);
         }
     }
 }
