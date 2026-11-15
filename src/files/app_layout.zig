@@ -362,7 +362,7 @@ pub fn sizeButtonRect(self: *App, idx: usize) ?header.Rect {
     if (self.repository() != null) return null;
     if (idx >= self.items.items.len) return null;
     const item = self.items.items[idx];
-    if (!item.is_dir or item.is_symlink or item.transfer_stub) return null;
+    if (!item.is_dir or item.is_symlink or item.transfer_stub or item.transfer_ghost) return null;
     const cols = self.columns();
     const cell = self.cellWidth();
     const i: i32 = @intCast(idx);

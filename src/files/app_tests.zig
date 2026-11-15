@@ -206,6 +206,54 @@ test "Delete shortcuts set permanent deletion mode only for Shift+Delete" {
     try std.testing.expect(app.dialog.?.deletion.permanent);
 }
 
+test "transfer ghosts have no file actions or folder-size affordance" {
+    var app = try testApp();
+    defer app.deinit();
+
+    const mem = app.items_arena.allocator();
+    try app.items.append(app.allocator, .{
+        .name = try mem.dupe(u8, "pending-folder"),
+        .path = try mem.dupe(u8, "/tmp/pending-folder"),
+        .is_dir = true,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 0,
+        .mtime = 0,
+        .icon_name = "folder",
+        .selected = true,
+        .transfer_ghost = true,
+        .transfer_state = .pending,
+        .missing = true,
+    });
+    app.focused_index = 0;
+
+    try std.testing.expectEqual(@as(usize, 0), app.fileActions().len);
+    app.openMenu(.file, 20, 20);
+    try std.testing.expect(app.menu == null);
+    try std.testing.expect(app.sizeButtonRect(0) == null);
+
+    app.toggleFolderSize(0);
+    try std.testing.expectEqual(@as(usize, 0), app.folder_sizes.count());
+    try std.testing.expect(app.dirsize_pool == null);
+
+    // A completed manifest entry is no longer a ghost and remains actionable.
+    try app.items.append(app.allocator, .{
+        .name = try mem.dupe(u8, "completed.txt"),
+        .path = try mem.dupe(u8, "/tmp/completed.txt"),
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 12,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .selected = true,
+        .transfer_state = .completed,
+    });
+    try std.testing.expect(app.fileActions().len > 0);
+    app.openMenu(.file, 20, 20);
+    try std.testing.expectEqual(@as(?MenuKind, .file), app.menu);
+}
+
 test "terminal drawer shares viewport geometry and preserves its preferred height" {
     var app = try testApp();
     defer app.deinit();

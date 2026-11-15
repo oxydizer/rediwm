@@ -350,8 +350,13 @@ pub fn sync(self: *App) void {
             const processed_changed = self.job_progress != progress.processed_items;
             const bytes_changed = self.job_transferred_bytes != progress.transferred_bytes;
             const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
-            if (state_changed) {
+            if (state_changed or
+                ((runner.kind == .copy or runner.kind == .move) and
+                    (processed_changed or file_path_changed)))
+            {
                 self.transfer_rows_dirty = true;
+            }
+            if (state_changed) {
                 self.invalidate();
             } else if (processed_changed or bytes_changed or file_path_changed or
                 (rate_changed and tooltip_hovered))

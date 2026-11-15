@@ -190,7 +190,7 @@ pub fn menuHint(self: *App, row: usize) ?[]const u8 {
 
 pub fn hasSizeSelection(self: *App) bool {
     for (self.items.items) |item| {
-        if (item.selected and item.is_dir and !item.is_symlink and !item.transfer_stub) return true;
+        if (item.selected and !item.transfer_ghost and item.is_dir and !item.is_symlink and !item.transfer_stub) return true;
     }
     return false;
 }
@@ -199,7 +199,7 @@ pub fn selectedArchive(self: *App) ?[]const u8 {
     if (self.chooser != null or self.history.archive_len > 0) return null;
     var selected: ?[]const u8 = null;
     for (self.items.items) |item| {
-        if (!item.selected) continue;
+        if (!item.selected or item.transfer_ghost) continue;
         if (selected != null or item.is_dir or item.is_broken or item.missing or !archive.candidate(item.name)) return null;
         selected = item.path;
     }
@@ -210,7 +210,7 @@ pub fn selectedAppImage(self: *App) ?[]const u8 {
     if (self.chooser != null or self.history.archive_len > 0 or self.transfer_view.active) return null;
     var selected: ?[]const u8 = null;
     for (self.items.items) |item| {
-        if (!item.selected) continue;
+        if (!item.selected or item.transfer_ghost) continue;
         if (selected != null or item.is_dir or item.is_broken or item.missing or item.transfer_stub or !@import("appimage.zig").candidate(item.name)) return null;
         selected = item.path;
     }
@@ -218,15 +218,14 @@ pub fn selectedAppImage(self: *App) ?[]const u8 {
 }
 
 pub fn fileActions(self: *App) []const FileAction {
-    var only_transfers = false;
+    var has_actionable_selection = false;
+    var only_transfers = true;
     for (self.items.items) |item| {
-        if (!item.selected) continue;
-        if (!item.transfer_stub) {
-            only_transfers = false;
-            break;
-        }
-        only_transfers = true;
+        if (!item.selected or item.transfer_ghost) continue;
+        has_actionable_selection = true;
+        if (!item.transfer_stub) only_transfers = false;
     }
+    if (!has_actionable_selection) return &.{};
     if (only_transfers) return &.{.open};
     if (self.history.archive_len > 0) return &.{.open};
     // Entries here are already deleted: put back or remove for good, but never
@@ -302,6 +301,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
 }
 
 pub fn openMenu(self: *App, kind: MenuKind, x: f64, y: f64) void {
+    if (kind == .file and self.fileActions().len == 0) return;
     self.menu = kind;
     if (kind == .file) self.refreshTrashRestorable();
     const height = self.menuHeight();
