@@ -61,7 +61,11 @@ selection and the caret rectangle, applies delete + commit to the active
 `renderEditor` to draw. Re-enable and drop preedit when the target field
 changes; a `done` applies only when its serial and the advertised field
 (cursor, anchor, text revision) still match. Terminal commits go to the PTY
-through `ft_key`, never through paste.
+through `ft_key`, never through paste. The `enable` belongs to the surface
+from `enter`: `leave` sends `disable` + `commit` before clearing the local
+state, or the compositor keeps the input enabled, sees no change when the
+surface is entered again, and the input method is never re-activated — IME
+composition silently stops after a window switch.
 
 ## File types and associations
 

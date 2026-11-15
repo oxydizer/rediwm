@@ -24,6 +24,7 @@ def run():
         docs = home / "Documents" / "文档"
         docs.mkdir(parents=True)
         (docs / "中文.txt").write_text("中文内容")
+        (home / "另一个").mkdir()
         (home / "alpha.txt").write_text("alpha")
 
         from input_protocols import compile_client
@@ -135,6 +136,44 @@ def run():
                 wait_for(lambda: (docs / "中文文件.txt").exists(), "IME rename did not apply")
                 assert not (docs / "中文.txt").exists()
                 print("PASS: text-input-v3 composition in the location bar, search box and rename dialog")
+
+                # Losing keyboard focus must disable the text input. Left
+                # enabled, the compositor sees no state change when the surface
+                # is entered again and never re-activates the input method:
+                # composition silently stops for every window switch.
+                def ime_events(name):
+                    return sum(1 for line in ime_text().splitlines() if line == name or line.startswith(name + " "))
+
+                advertised = ime_text().count("surround " + str(docs))
+                key(38, ctrl=True)  # Ctrl+L: the location bar takes composition again
+                wait_for(lambda: ime_text().count("surround " + str(docs)) > advertised,
+                         "location bar was not advertised to the IME again")
+                activations = ime_events("activate")
+                deactivations = ime_events("deactivate")
+                dones = ime_events("im-done")
+                calculator_log = (tmp / "rediwm-calculator.log").open("w")
+                calculator = subprocess.Popen([str(ROOT / "zig-out/bin/rediwm-calculator")], env=env,
+                                              stdout=calculator_log, stderr=calculator_log)
+                calculator_log.close()
+                clients.append(calculator)
+                calculator_window = wait_for(
+                    lambda: next((w for w in ipc.get_windows() if w["app_id"] == "rediwm-calculator"), None),
+                    "calculator did not map")
+                ipc.focus_window(calculator_window["id"])
+                wait_for(lambda: ime_events("deactivate") > deactivations,
+                         "IME was not deactivated when Files lost focus")
+                # The deactivation's done must not be mistaken for the state
+                # the re-activated input receives.
+                wait_for(lambda: ime_events("im-done") > dones, "IME deactivation did not complete")
+                dones = ime_events("im-done")
+                ipc.focus_window(win["id"])
+                wait_for(lambda: ime_events("activate") > activations,
+                         "Files did not re-activate the IME after focus returned")
+                wait_for(lambda: ime_events("im-done") > dones, "IME state did not arrive after focus returned")
+                ime_send("commit-text " + str(home / "另一个"))
+                key(28)
+                title("另一个")
+                print("PASS: the input method is re-activated after focus returns")
 
                 # The terminal drawer keeps its own composition path: the
                 # commit is typed into the PTY, not pasted or shell syntax.

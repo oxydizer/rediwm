@@ -87,10 +87,21 @@ pub const Ime = struct {
         if (app.focus == .terminal) return if (app.terminal.visible and app.terminal.session != null) .terminal else .none;
         return if (app.activeEditor() != null) .editor else .none;
     }
-    fn event(_: *zwp.TextInputV3, ev: zwp.TextInputV3.Event, self: *Ime) void {
+    fn event(input: *zwp.TextInputV3, ev: zwp.TextInputV3.Event, self: *Ime) void {
         switch (ev) {
             .enter => self.entered = true,
             .leave => {
+                // enable belongs to the surface from enter: disable it before
+                // dropping that surface, or the compositor still believes the
+                // input is enabled and a later enable/commit after re-entering
+                // changes nothing. No enable event then reaches the relay, so
+                // the input method is never activated again (window switching
+                // silently stops composition).
+                if (self.enabled) {
+                    input.disable();
+                    input.commit();
+                    self.serial +%= 1;
+                }
                 self.entered = false;
                 self.enabled = false;
                 self.clear();
