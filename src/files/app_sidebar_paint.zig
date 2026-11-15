@@ -140,7 +140,10 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
         }
     }
     const transfer_tree_height: i32 = if (self.transfer_tree_state.tree) |*tree|
-        @intCast(self.transfer_tree_state.visibleCount(tree) * 25 + 8)
+        (if (tree.nodes.items.len > 0)
+            @as(i32, @intCast(self.transfer_tree_state.visibleCount(tree) * 25 + 8))
+        else
+            0)
     else
         0;
     const transfers_body = torrent_height +
