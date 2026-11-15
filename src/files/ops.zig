@@ -714,7 +714,8 @@ fn copyFileContentsTracked(
                 job.copy_strategy == .reflink)
             {
                 use_buffered_copy = false;
-                while (true) {
+                var remaining: u64 = @intCast(stat.st_size);
+                while (remaining > 0) {
                     if (!job.waitIfResumed(cancel)) {
                         _ = c.unlink(dst_z);
                         return error.Cancelled;
@@ -724,19 +725,30 @@ fn copyFileContentsTracked(
                         return error.Cancelled;
                     }
 
+                    const request_len: usize = @intCast(@min(
+                        remaining,
+                        @as(u64, @intCast(buffer_len)),
+                    ));
                     const copied = c.copy_file_range(
                         src_fd,
                         null,
                         dst_fd,
                         null,
-                        buffer_len,
+                        request_len,
                         0,
                     );
                     job.recordCopyFileRangeCall();
-                    if (copied == 0) break;
+                    if (copied == 0) {
+                        // The source was shorter than its fstat() size.
+                        // Do not silently report an incomplete copy as success.
+                        _ = c.unlink(dst_z);
+                        return error.CopyFailed;
+                    }
                     if (copied > 0) {
-                        job.recordCopyFileRangeBytes(@intCast(copied));
-                        job.addFileTransferredBytes(@intCast(copied));
+                        const copied_bytes: u64 = @intCast(copied);
+                        remaining -= copied_bytes;
+                        job.recordCopyFileRangeBytes(copied_bytes);
+                        job.addFileTransferredBytes(copied_bytes);
                         continue;
                     }
 
