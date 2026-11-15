@@ -261,6 +261,102 @@ test "JobRunner discovers recursive transfer manifest entries" {
     try std.testing.expect(found_second_root);
 }
 
+test "JobRunner records empty directories and does not traverse directory symlinks" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+
+    const source = try std.fmt.allocPrint(a, "{s}/source", .{tmp});
+    defer a.free(source);
+    try ops_mod.createFolder(a, tmp, "source");
+    const empty = try std.fmt.allocPrint(a, "{s}/empty", .{source});
+    defer a.free(empty);
+    try ops_mod.createFolder(a, source, "empty");
+    try ops_mod.createFolder(a, source, "target");
+
+    const target_file = try std.fmt.allocPrint(a, "{s}/target/inside.txt", .{source});
+    defer a.free(target_file);
+    try writeTestFile(target_file, "inside");
+
+    const link = try std.fmt.allocPrint(a, "{s}/directory-link", .{source});
+    defer a.free(link);
+    const link_z = try a.dupeSentinel(u8, link, 0);
+    defer a.free(link_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.symlink("target", link_z));
+
+    const destination = try std.fmt.allocPrint(a, "{s}/destination", .{tmp});
+    defer a.free(destination);
+    try ops_mod.createFolder(a, tmp, "destination");
+
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+    try runner.start(.copy, &.{source}, destination, .ask);
+    runner.thread.?.join();
+    runner.thread = null;
+
+    try std.testing.expectEqual(@as(usize, 5), runner.manifest.entries.items.len);
+    var found_empty = false;
+    var found_link = false;
+    var found_target_file = false;
+    for (runner.manifest.entries.items) |entry| {
+        if (std.mem.eql(u8, entry.source_path, empty)) {
+            found_empty = true;
+            try std.testing.expectEqual(ops_mod.TransferEntryKind.directory, entry.kind);
+            try std.testing.expectEqualStrings("empty", entry.relative_path);
+        } else if (std.mem.eql(u8, entry.source_path, link)) {
+            found_link = true;
+            try std.testing.expectEqual(ops_mod.TransferEntryKind.symlink, entry.kind);
+            try std.testing.expectEqualStrings("directory-link", entry.relative_path);
+        } else if (std.mem.eql(u8, entry.source_path, target_file)) {
+            found_target_file = true;
+            try std.testing.expectEqualStrings("target/inside.txt", entry.relative_path);
+        }
+        try std.testing.expect(!std.mem.startsWith(u8, entry.relative_path, "directory-link/"));
+    }
+    try std.testing.expect(found_empty);
+    try std.testing.expect(found_link);
+    try std.testing.expect(found_target_file);
+}
+
+test "JobRunner discards a partial manifest after unsupported entry discovery" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+
+    const source = try std.fmt.allocPrint(a, "{s}/source", .{tmp});
+    defer a.free(source);
+    try ops_mod.createFolder(a, tmp, "source");
+
+    const regular = try std.fmt.allocPrint(a, "{s}/regular.txt", .{source});
+    defer a.free(regular);
+    try writeTestFile(regular, "payload");
+
+    const fifo = try std.fmt.allocPrintSentinel(a, "{s}/unsupported-fifo", .{source}, 0);
+    defer a.free(fifo);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkfifo(fifo, 0o600));
+
+    const destination = try std.fmt.allocPrint(a, "{s}/destination", .{tmp});
+    defer a.free(destination);
+    try ops_mod.createFolder(a, tmp, "destination");
+
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+    try runner.start(.copy, &.{source}, destination, .ask);
+    runner.thread.?.join();
+    runner.thread = null;
+
+    const progress = runner.pollProgress();
+    try std.testing.expectEqual(ops_mod.JobState.finished, progress.state);
+    try std.testing.expectEqual(@as(usize, 1), progress.failed_count);
+    try std.testing.expectEqual(@as(usize, 0), runner.manifest.entries.items.len);
+    try std.testing.expect(testFileExists(regular));
+    const copied_root = try std.fmt.allocPrint(a, "{s}/source", .{destination});
+    defer a.free(copied_root);
+    try std.testing.expect(!testFileExists(copied_root));
+}
+
 test "copyRecursive and copySymlink" {
     const allocator = std.testing.allocator;
     var tmp_path_buf: [256]u8 = undefined;

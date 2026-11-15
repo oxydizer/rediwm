@@ -15,6 +15,39 @@ pub const ConflictAction = enum {
     cancel,
 };
 
+test "transfer manifest subtree and root outcome states remain isolated" {
+    const a = std.testing.allocator;
+    const runner = try JobRunner.init(a);
+    defer runner.deinit();
+
+    try runner.manifest.append("/tree", "", null, 0, .directory, 0);
+    try runner.manifest.append("/tree/child", "child", null, 1, .file, 0);
+    try runner.manifest.append("/treehouse/child", "child", null, 1, .file, 0);
+    try runner.manifest.append("/tree/child", "child", null, 1, .file, 1);
+
+    runner.setManifestSubtreeState(0, "/tree", .failed);
+    try std.testing.expectEqual(TransferEntryState.failed, runner.manifest.entries.items[0].state);
+    try std.testing.expectEqual(TransferEntryState.failed, runner.manifest.entries.items[1].state);
+    try std.testing.expectEqual(TransferEntryState.pending, runner.manifest.entries.items[2].state);
+    try std.testing.expectEqual(TransferEntryState.pending, runner.manifest.entries.items[3].state);
+
+    runner.manifest.entries.items[0].state = .completed;
+    runner.manifest.entries.items[1].state = .copying;
+    runner.finishManifestRoot(0, .cancelled);
+    try std.testing.expectEqual(TransferEntryState.completed, runner.manifest.entries.items[0].state);
+    try std.testing.expectEqual(TransferEntryState.cancelled, runner.manifest.entries.items[1].state);
+    try std.testing.expectEqual(TransferEntryState.cancelled, runner.manifest.entries.items[2].state);
+    try std.testing.expectEqual(TransferEntryState.pending, runner.manifest.entries.items[3].state);
+
+    runner.finishManifestRoot(1, .skipped);
+    try std.testing.expectEqual(TransferEntryState.skipped, runner.manifest.entries.items[3].state);
+
+    runner.finishManifestRoot(0, .success);
+    try std.testing.expectEqual(TransferEntryState.completed, runner.manifest.entries.items[0].state);
+    try std.testing.expectEqual(TransferEntryState.completed, runner.manifest.entries.items[1].state);
+    try std.testing.expectEqual(TransferEntryState.completed, runner.manifest.entries.items[2].state);
+}
+
 pub const JobState = enum {
     idle,
     running,
