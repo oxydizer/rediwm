@@ -189,6 +189,69 @@ test "transfer tree aggregates descendant file progress" {
     try std.testing.expectApproxEqAbs(@as(f64, 0.8), aggregate.fraction(), 0.0001);
 }
 
+test "transfer tree aggregates deeply nested progress without mixing roots or outcomes" {
+    const allocator = std.testing.allocator;
+    var manifest = ops.TransferManifest.init(allocator);
+    defer manifest.deinit();
+
+    try manifest.append("/source-a", "", "/destination/a", 0, .directory, 0);
+    try manifest.append("/source-a/one", "one", "/destination/a/one", 0, .directory, 0);
+    try manifest.append("/source-a/one/two", "one/two", "/destination/a/one/two", 0, .directory, 0);
+    try manifest.append("/source-a/one/two/active.bin", "one/two/active.bin", "/destination/a/one/two/active.bin", 10, .file, 0);
+    try manifest.append("/source-a/one/done.bin", "one/done.bin", "/destination/a/one/done.bin", 20, .file, 0);
+    try manifest.append("/source-a/pending.bin", "pending.bin", "/destination/a/pending.bin", 30, .file, 0);
+    try manifest.append("/source-a/failed.bin", "failed.bin", "/destination/a/failed.bin", 40, .file, 0);
+    try manifest.append("/source-a/skipped.bin", "skipped.bin", "/destination/a/skipped.bin", 50, .file, 0);
+    try manifest.append("/source-a/cancelled.bin", "cancelled.bin", "/destination/a/cancelled.bin", 60, .file, 0);
+    try manifest.append("/source-b", "", "/destination/b", 0, .directory, 1);
+    try manifest.append("/source-b/other.bin", "other.bin", "/destination/b/other.bin", 70, .file, 1);
+
+    manifest.entries.items[3].state = .copying;
+    manifest.entries.items[4].state = .completed;
+    manifest.entries.items[6].state = .failed;
+    manifest.entries.items[7].state = .skipped;
+    manifest.entries.items[8].state = .cancelled;
+    manifest.entries.items[10].state = .completed;
+
+    var tree = try projection.build(allocator, manifest.entries.items);
+    defer tree.deinit();
+
+    var state = State.init(allocator);
+    defer state.deinit();
+
+    // Root includes every visible descendant, but excludes skipped/cancelled
+    // payloads. Failed payload remains in the denominator.
+    const root = state.aggregateProgress(&tree, 0, "/source-a/one/two/active.bin", 4, 10);
+    try std.testing.expectEqual(@as(u64, 100), root.total_bytes);
+    try std.testing.expectEqual(@as(u64, 24), root.completed_bytes);
+    try std.testing.expect(root.active);
+    try std.testing.expect(root.failed);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.24), root.fraction(), 0.0001);
+
+    // The middle directory aggregates only its own subtree.
+    const middle = state.aggregateProgress(&tree, 1, "/source-a/one/two/active.bin", 4, 10);
+    try std.testing.expectEqual(@as(u64, 30), middle.total_bytes);
+    try std.testing.expectEqual(@as(u64, 24), middle.completed_bytes);
+    try std.testing.expect(middle.active);
+    try std.testing.expect(!middle.failed);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.8), middle.fraction(), 0.0001);
+
+    // The deepest directory sees only the active file.
+    const deepest = state.aggregateProgress(&tree, 2, "/source-a/one/two/active.bin", 4, 10);
+    try std.testing.expectEqual(@as(u64, 10), deepest.total_bytes);
+    try std.testing.expectEqual(@as(u64, 4), deepest.completed_bytes);
+    try std.testing.expect(deepest.active);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.4), deepest.fraction(), 0.0001);
+
+    // A second selected root never inherits the first root's active progress.
+    const other_root = state.aggregateProgress(&tree, 9, "/source-a/one/two/active.bin", 4, 10);
+    try std.testing.expectEqual(@as(u64, 70), other_root.total_bytes);
+    try std.testing.expectEqual(@as(u64, 70), other_root.completed_bytes);
+    try std.testing.expect(!other_root.active);
+    try std.testing.expect(!other_root.failed);
+    try std.testing.expectEqual(@as(f64, 1.0), other_root.fraction());
+}
+
 test "transfer tree hides skipped and cancelled entries" {
     const allocator = std.testing.allocator;
     var manifest = ops.TransferManifest.init(allocator);

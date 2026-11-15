@@ -48,6 +48,66 @@ test "transfer manifest subtree and root outcome states remain isolated" {
     try std.testing.expectEqual(TransferEntryState.completed, runner.manifest.entries.items[2].state);
 }
 
+test "JobRunner tracks current file bytes independently and resets on file changes" {
+    const a = std.testing.allocator;
+    const runner = try JobRunner.init(a);
+    defer runner.deinit();
+
+    runner.state = .running;
+    runner.kind = .copy;
+    runner.beginFileProgress("/destination/first.bin", 1024);
+
+    var progress = runner.pollProgress();
+    try std.testing.expectEqualStrings(
+        "/destination/first.bin",
+        progress.current_file_path[0..progress.current_file_path_len],
+    );
+    try std.testing.expectEqual(@as(u64, 0), progress.current_file_bytes);
+    try std.testing.expectEqual(@as(u64, 1024), progress.current_file_size);
+
+    runner.addFileTransferredBytes(256);
+    progress = runner.pollProgress();
+    try std.testing.expectEqual(@as(u64, 256), progress.current_file_bytes);
+    try std.testing.expectEqual(@as(u64, 256), progress.transferred_bytes);
+
+    runner.addFileTransferredBytes(128);
+    progress = runner.pollProgress();
+    try std.testing.expectEqual(@as(u64, 384), progress.current_file_bytes);
+    try std.testing.expectEqual(@as(u64, 384), progress.transferred_bytes);
+
+    // Starting the next file resets only its per-file counter.
+    runner.beginFileProgress("/destination/second.bin", 64);
+    progress = runner.pollProgress();
+    try std.testing.expectEqualStrings(
+        "/destination/second.bin",
+        progress.current_file_path[0..progress.current_file_path_len],
+    );
+    try std.testing.expectEqual(@as(u64, 0), progress.current_file_bytes);
+    try std.testing.expectEqual(@as(u64, 64), progress.current_file_size);
+    try std.testing.expectEqual(@as(u64, 384), progress.transferred_bytes);
+
+    runner.addFileTransferredBytes(64);
+    progress = runner.pollProgress();
+    try std.testing.expectEqual(@as(u64, 64), progress.current_file_bytes);
+    try std.testing.expectEqual(@as(u64, 448), progress.transferred_bytes);
+}
+
+test "JobRunner saturates current file byte counters instead of overflowing" {
+    const a = std.testing.allocator;
+    const runner = try JobRunner.init(a);
+    defer runner.deinit();
+
+    runner.state = .running;
+    runner.beginFileProgress("/destination/large.bin", std.math.maxInt(u64));
+
+    runner.addFileTransferredBytes(std.math.maxInt(u64) - 10);
+    runner.addFileTransferredBytes(20);
+
+    const progress = runner.pollProgress();
+    try std.testing.expectEqual(std.math.maxInt(u64), progress.current_file_bytes);
+    try std.testing.expectEqual(std.math.maxInt(u64), progress.transferred_bytes);
+}
+
 pub const JobState = enum {
     idle,
     running,

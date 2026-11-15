@@ -291,6 +291,69 @@ test "transfer ghost filenames stay muted until manifest completion" {
     try std.testing.expectEqual(normal, filenameForeground(item));
 }
 
+test "transfer ghost byte display follows pending and matching live file progress" {
+    const path = "/destination/file.txt";
+    var item: ViewItem = .{
+        .name = "file.txt",
+        .path = path,
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 4096,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .transfer_ghost = true,
+        .transfer_state = .pending,
+    };
+
+    // A pending ghost must not advertise bytes that have not arrived.
+    try std.testing.expectEqual(@as(?i64, 0), currentTransferBytes(item, null));
+
+    var progress: ops.ProgressInfo = .{ .state = .running };
+    @memcpy(progress.current_file_path[0..path.len], path);
+    progress.current_file_path_len = path.len;
+    progress.current_file_bytes = 384;
+    progress.current_file_size = 4096;
+
+    item.transfer_state = .copying;
+    try std.testing.expectEqual(@as(?i64, 384), currentTransferBytes(item, progress));
+
+    // A different active path must never leak its byte count into this ghost.
+    const other_path = "/destination/other.txt";
+    @memcpy(progress.current_file_path[0..other_path.len], other_path);
+    progress.current_file_path_len = other_path.len;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
+
+    // Pausing preserves the current file's visible byte count.
+    @memcpy(progress.current_file_path[0..path.len], path);
+    progress.current_file_path_len = path.len;
+    progress.state = .paused;
+    progress.current_file_bytes = 512;
+    try std.testing.expectEqual(@as(?i64, 512), currentTransferBytes(item, progress));
+
+    // Counters larger than the ViewItem's signed size representation clamp.
+    progress.current_file_bytes = std.math.maxInt(u64);
+    try std.testing.expectEqual(
+        @as(?i64, std.math.maxInt(i64)),
+        currentTransferBytes(item, progress),
+    );
+
+    // Finished jobs and completed entries use the normal filesystem size.
+    progress.state = .finished;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
+    item.transfer_state = .completed;
+    progress.state = .running;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
+
+    // Directories and ordinary files never consume per-file ghost progress.
+    item.transfer_state = .copying;
+    item.is_dir = true;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
+    item.is_dir = false;
+    item.transfer_ghost = false;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
+}
+
 pub fn renderFilenameTip(self: *App, cr: *c.cairo_t) void {
     if (self.inlineTorrentHit(self.mouse_x, self.mouse_y) != null or self.audioButtonHit(self.mouse_x, self.mouse_y) != null) return;
     const index = self.itemAt(self.mouse_x, self.mouse_y) orelse return;
