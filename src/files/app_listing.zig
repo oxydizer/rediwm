@@ -202,14 +202,25 @@ fn damageJobProgress(
                     !std.mem.eql(u8, previous_file_path, current_file_path) and
                     std.mem.eql(u8, item.path, previous_file_path));
                 if (active_file) {
-                    const icon = self.itemIconRect(index);
-                    const ring_size = @min(26.0, icon.w);
-                    self.addDamageRegion(self.clipToViewport(.{
-                        .x = icon.x + (icon.w - ring_size) / 2 - 2,
-                        .y = icon.y + (icon.w - ring_size) / 2 - 2,
-                        .w = ring_size + 4,
-                        .h = ring_size + 4,
-                    }));
+                    if (item.transfer_ghost) {
+                        const row_y = self.viewTop() + self.itemInset() +
+                            @divTrunc(index, columns) * self.rowHeight() - self.scroll_y;
+                        self.addDamageRegion(self.clipToViewport(.{
+                            .x = @floatFromInt(self.sidebarWidth()),
+                            .y = @floatFromInt(row_y),
+                            .w = @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter()),
+                            .h = @floatFromInt(self.cardHeight()),
+                        }));
+                    } else {
+                        const icon = self.itemIconRect(@intCast(index));
+                        const ring_size = @min(26.0, icon.w);
+                        self.addDamageRegion(self.clipToViewport(.{
+                            .x = icon.x + (icon.w - ring_size) / 2 - 2,
+                            .y = icon.y + (icon.w - ring_size) / 2 - 2,
+                            .w = ring_size + 4,
+                            .h = ring_size + 4,
+                        }));
+                    }
                 }
             }
             if (path_count > 0) {

@@ -171,9 +171,37 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
         }
         self.renderInlineTorrent(cr, idx);
         self.renderAudioButton(cr, idx);
+        var ghost_alpha: f64 = 0.20;
+        if (item.transfer_ghost and !item.is_dir) {
+            if (job_progress) |progress| {
+                if ((progress.state == .running or progress.state == .paused) and
+                    progress.current_file_path_len > 0 and
+                    progress.current_file_size > 0 and
+                    std.mem.eql(
+                        u8,
+                        progress.current_file_path[0..progress.current_file_path_len],
+                        item.path,
+                    ))
+                {
+                    const fraction = @min(
+                        1.0,
+                        @as(f64, @floatFromInt(progress.current_file_bytes)) /
+                            @as(f64, @floatFromInt(progress.current_file_size)),
+                    );
+                    const step = @min(
+                        @as(usize, 5),
+                        @as(usize, @intFromFloat(fraction * 5.0)),
+                    );
+                    const opacity_steps = [_]f64{
+                        0.20, 0.36, 0.52, 0.68, 0.84, 1.0,
+                    };
+                    ghost_alpha = opacity_steps[step];
+                }
+            }
+        }
         if (fade_item) {
             c.cairo_pop_group_to_source(cr);
-            c.cairo_paint_with_alpha(cr, if (cut) 0.45 else 0.48);
+            c.cairo_paint_with_alpha(cr, if (cut) 0.45 else ghost_alpha);
         }
     }
 }
