@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const platform = @import("platform");
 const i18n = @import("i18n");
 const tr = i18n.tr;
@@ -9,6 +10,24 @@ const Allocator = std.mem.Allocator;
 const max_progress_path_bytes = 4096;
 pub const copy_buffer_size = 64 * 1024;
 const max_copy_buffer_size = 1024 * 1024;
+
+pub const CopyStrategy = enum {
+    buffered,
+    copy_file_range,
+
+    pub fn name(self: CopyStrategy) []const u8 {
+        return switch (self) {
+            .buffered => "buffered",
+            .copy_file_range => "copy_file_range",
+        };
+    }
+};
+
+pub const CopyMetrics = struct {
+    copy_file_range_calls: u64 = 0,
+    copy_file_range_bytes: u64 = 0,
+    buffered_fallback_files: u64 = 0,
+};
 
 pub const ConflictAction = enum {
     ask,
@@ -552,6 +571,64 @@ fn copyFileContentsTracked(
     var buf: [max_copy_buffer_size]u8 = undefined;
     const buffer_len = if (runner) |job| job.copy_buffer_bytes else copy_buffer_size;
     std.debug.assert(buffer_len > 0 and buffer_len <= buf.len);
+
+    var use_buffered_copy = true;
+    if (comptime builtin.os.tag == .linux) {
+        if (runner) |job| {
+            if (job.copy_strategy == .copy_file_range) {
+                use_buffered_copy = false;
+                while (true) {
+                    if (!job.waitIfResumed(cancel)) {
+                        _ = c.unlink(dst_z);
+                        return error.Cancelled;
+                    }
+                    if (cancel != null and cancel.?.load(.acquire)) {
+                        _ = c.unlink(dst_z);
+                        return error.Cancelled;
+                    }
+
+                    const copied = c.copy_file_range(
+                        src_fd,
+                        null,
+                        dst_fd,
+                        null,
+                        buffer_len,
+                        0,
+                    );
+                    job.recordCopyFileRangeCall();
+                    if (copied == 0) break;
+                    if (copied > 0) {
+                        job.recordCopyFileRangeBytes(@intCast(copied));
+                        job.addFileTransferredBytes(@intCast(copied));
+                        continue;
+                    }
+
+                    const copy_errno = std.c._errno().*;
+                    if (copy_errno == c.EINTR) continue;
+
+                    // Unsupported filesystems, cross-device copies, and
+                    // unsupported kernel paths fall back at the current
+                    // file offsets. Any bytes already copied remain valid.
+                    if (copy_errno == c.EXDEV or
+                        copy_errno == c.EINVAL or
+                        copy_errno == c.ENOSYS or
+                        copy_errno == c.EOPNOTSUPP or
+                        copy_errno == c.EPERM)
+                    {
+                        job.recordBufferedFallback();
+                        use_buffered_copy = true;
+                        break;
+                    }
+
+                    _ = c.unlink(dst_z);
+                    return error.CopyFailed;
+                }
+            }
+        }
+    }
+
+    if (!use_buffered_copy) return;
+
     while (true) {
         if (runner) |job| if (!job.waitIfResumed(cancel)) {
             _ = c.unlink(dst_z);
@@ -788,6 +865,9 @@ pub const JobRunner = struct {
     allocator: Allocator,
     /// Per-job copy buffer size. Production defaults to 64 KiB.
     copy_buffer_bytes: usize = copy_buffer_size,
+    /// The production default remains buffered until benchmarks justify a change.
+    copy_strategy: CopyStrategy = .buffered,
+    copy_metrics: CopyMetrics = .{},
     mutex: c.pthread_mutex_t = undefined,
     cond: c.pthread_cond_t = undefined,
     thread: ?std.Thread = null,
@@ -963,6 +1043,7 @@ pub const JobRunner = struct {
         self.processed_items = 0;
         self.total_bytes = 0;
         self.transferred_bytes = 0;
+        self.copy_metrics = .{};
         self.total_bytes_known = false;
         self.measuring = kind == .copy or kind == .move;
         self.success_count = 0;
@@ -1127,6 +1208,31 @@ pub const JobRunner = struct {
             }
         }
         self.notify();
+        _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    /// Returns copy_file_range activity accumulated by the current job.
+    pub fn copyMetrics(self: *JobRunner) CopyMetrics {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+        return self.copy_metrics;
+    }
+
+    fn recordCopyFileRangeCall(self: *JobRunner) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        self.copy_metrics.copy_file_range_calls +|= 1;
+        _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    fn recordCopyFileRangeBytes(self: *JobRunner, bytes: u64) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        self.copy_metrics.copy_file_range_bytes +|= bytes;
+        _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    fn recordBufferedFallback(self: *JobRunner) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        self.copy_metrics.buffered_fallback_files +|= 1;
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
 

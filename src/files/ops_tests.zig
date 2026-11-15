@@ -938,6 +938,54 @@ test "view preferences survive restart and reject malformed state" {
     try std.testing.expectEqual(Preferences{}, Preferences.load(a, std.testing.io, path));
 }
 
+test "JobRunner copy_file_range strategy copies contents and tracks progress" {
+    const allocator = std.testing.allocator;
+    var tmp_path_buf: [256]u8 = undefined;
+    const tmp_path = try makeTestDir(&tmp_path_buf);
+    defer ops_mod.deleteRecursive(allocator, tmp_path) catch {};
+
+    try ops_mod.createFolder(allocator, tmp_path, "src");
+    try ops_mod.createFolder(allocator, tmp_path, "dst");
+
+    const src_dir = try std.fmt.allocPrint(allocator, "{s}/src", .{tmp_path});
+    defer allocator.free(src_dir);
+    const dst_dir = try std.fmt.allocPrint(allocator, "{s}/dst", .{tmp_path});
+    defer allocator.free(dst_dir);
+    const src_path = try std.fmt.allocPrint(allocator, "{s}/payload.bin", .{src_dir});
+    defer allocator.free(src_path);
+    const dst_path = try std.fmt.allocPrint(allocator, "{s}/payload.bin", .{dst_dir});
+    defer allocator.free(dst_path);
+
+    const payload = "copy_file_range progress and fallback test payload";
+    try writeTestFile(src_path, payload);
+
+    const runner = try ops_mod.JobRunner.init(allocator);
+    defer runner.deinit();
+    runner.copy_strategy = .copy_file_range;
+    runner.copy_buffer_bytes = 16;
+    try runner.start(.copy, &.{src_path}, dst_dir, .skip);
+
+    while (true) {
+        const progress = runner.pollProgress();
+        if (progress.state == .finished) {
+            try std.testing.expectEqual(@as(usize, 1), progress.success_count);
+            try std.testing.expectEqual(@as(usize, 0), progress.failed_count);
+            try std.testing.expectEqual(@as(u64, payload.len), progress.transferred_bytes);
+            const metrics = runner.copyMetrics();
+            try std.testing.expect(metrics.copy_file_range_calls > 0);
+            try std.testing.expect(
+                metrics.copy_file_range_bytes > 0 or
+                    metrics.buffered_fallback_files > 0,
+            );
+            break;
+        }
+        _ = c.usleep(1000);
+    }
+
+    var actual: [128]u8 = undefined;
+    try std.testing.expectEqualStrings(payload, try readTestFile(dst_path, &actual));
+}
+
 test "cancelling an active copy removes partial output and preserves source" {
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
@@ -957,6 +1005,7 @@ test "cancelling an active copy removes partial output and preserves source" {
     try std.testing.expect(c.ftruncate(fd, 512 * 1024 * 1024) == 0);
     const runner = try ops_mod.JobRunner.init(a);
     defer runner.deinit();
+    runner.copy_strategy = .copy_file_range;
     try runner.start(.copy, &.{src}, dest, .ask);
     var started = false;
     for (0..1000) |_| {
@@ -1002,6 +1051,7 @@ test "paused copy stops at a safe point and resumes" {
 
     const runner = try ops_mod.JobRunner.init(a);
     defer runner.deinit();
+    runner.copy_strategy = .copy_file_range;
     try runner.start(.copy, &.{src}, dest, .ask);
 
     var started = false;

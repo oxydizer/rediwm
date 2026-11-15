@@ -9,6 +9,7 @@
 //! A warm-up run precedes five measured runs for each profile.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const ops = @import("ops.zig");
 const c = @import("c.zig").api;
 const Allocator = std.mem.Allocator;
@@ -346,6 +347,8 @@ fn emitRow(
     stats: WorkloadStats,
     samples: []const u64,
     buffer_size: usize,
+    strategy: ops.CopyStrategy,
+    metrics: ops.CopyMetrics,
 ) void {
     const median_ns = samples[samples.len / 2];
     const mib_per_second =
@@ -359,8 +362,9 @@ fn emitRow(
         @as(f64, @floatFromInt(median_ns));
 
     std.debug.print(
-        "BENCH,A,job_copy_e2e,{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2}\n",
+        "BENCH,A,job_copy_e2e_{s},{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2},{d},{d},{d}\n",
         .{
+            strategy.name(),
             profile.name,
             stats.files,
             stats.directories,
@@ -372,6 +376,9 @@ fn emitRow(
             samples[samples.len - 1],
             mib_per_second,
             files_per_second,
+            metrics.copy_file_range_calls,
+            metrics.copy_file_range_bytes,
+            metrics.buffered_fallback_files,
         },
     );
 }
@@ -392,36 +399,42 @@ fn benchmarkProfile(
     var runner = try ops.JobRunner.init(allocator);
     defer runner.deinit();
 
-    for (buffer_sizes) |buffer_size| {
-        runner.copy_buffer_bytes = buffer_size;
+    const strategy_count = if (builtin.os.tag == .linux) 2 else 1;
+    for (0..strategy_count) |strategy_index| {
+        const strategy: ops.CopyStrategy =
+            if (strategy_index == 0) .buffered else .copy_file_range;
+        runner.copy_strategy = strategy;
 
-        // Warm source data and filesystem metadata for this buffer size.
-        _ = try runCopySample(
-            allocator,
-            runner,
-            source_root,
-            benchmark_root,
-            profile.name,
-            0,
-            stats.total_bytes,
-            buffer_size,
-        );
+        for (buffer_sizes) |buffer_size| {
+            runner.copy_buffer_bytes = buffer_size;
 
-        var samples: [benchmark_iterations]u64 = undefined;
-        for (&samples, 0..) |*sample, iteration| {
-            sample.* = try runCopySample(
+            // Warm source data and filesystem metadata for this combination.
+            _ = try runCopySample(
                 allocator,
                 runner,
                 source_root,
                 benchmark_root,
                 profile.name,
-                iteration + 1,
+                0,
                 stats.total_bytes,
                 buffer_size,
             );
+            var samples: [benchmark_iterations]u64 = undefined;
+            for (&samples, 0..) |*sample, iteration| {
+                sample.* = try runCopySample(
+                    allocator,
+                    runner,
+                    source_root,
+                    benchmark_root,
+                    profile.name,
+                    iteration + 1,
+                    stats.total_bytes,
+                    buffer_size,
+                );
+            }
+            sortSamples(&samples);
+            emitRow(profile, stats, &samples, buffer_size, strategy, runner.copyMetrics());
         }
-        sortSamples(&samples);
-        emitRow(profile, stats, &samples, buffer_size);
     }
 }
 
@@ -444,7 +457,7 @@ pub fn run(allocator: Allocator) !void {
     defer ops.deleteRecursive(allocator, benchmark_root) catch {};
 
     std.debug.print(
-        "BENCH,phase,operation,profile,cache_mode,files,directories,total_bytes,buffer_bytes,iterations,median_ns,min_ns,max_ns,median_mib_per_second,median_files_per_second\n",
+        "BENCH,phase,operation,profile,cache_mode,files,directories,total_bytes,buffer_bytes,iterations,median_ns,min_ns,max_ns,median_mib_per_second,median_files_per_second,copy_file_range_calls,copy_file_range_bytes,buffered_fallback_files\n",
         .{},
     );
 
