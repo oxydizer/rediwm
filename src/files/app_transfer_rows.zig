@@ -26,7 +26,8 @@ pub fn appendTransferRows(
 }
 
 /// Appends only direct children of the displayed folder. Existing filesystem
-/// entries take precedence; completed entries are published and usable.
+/// entries take precedence, except that an actively copied entry remains a
+/// protected transfer ghost until the manifest marks it completed.
 pub fn appendTreeRows(
     self: *App,
     mem: std.mem.Allocator,
@@ -45,8 +46,13 @@ pub fn appendTreeRows(
         if (!fold.contains(node.name, self.search.text.items, .{ .turkish = @import("i18n").isTurkish() })) continue;
 
         var represented = false;
-        for (self.items.items) |item| {
+        for (self.items.items) |*item| {
             if (std.mem.eql(u8, item.path, node.path)) {
+                if (node.state == .copying) {
+                    item.transfer_ghost = true;
+                    item.transfer_state = .copying;
+                    item.missing = !item.is_dir;
+                }
                 represented = true;
                 break;
             }
@@ -116,6 +122,16 @@ test "transfer rows merge direct children, prefer real entries and retain select
         .mtime = 1,
         .icon_name = "text-x-generic",
     });
+    try app.items.append(allocator, .{
+        .name = "copying-real.txt",
+        .path = "/destination/root/copying-real.txt",
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 3,
+        .mtime = 2,
+        .icon_name = "text-x-generic",
+    });
 
     var manifest = @import("ops.zig").TransferManifest.init(allocator);
     defer manifest.deinit();
@@ -126,12 +142,14 @@ test "transfer rows merge direct children, prefer real entries and retain select
     try manifest.append("/source/sub/nested.txt", "sub/nested.txt", "/destination/root/sub/nested.txt", 4, .file, 0);
     try manifest.append("/source/done.txt", "done.txt", "/destination/root/done.txt", 20, .file, 0);
     try manifest.append("/source/skipped.txt", "skipped.txt", "/destination/root/skipped.txt", 2, .file, 0);
+    try manifest.append("/source/copying-real.txt", "copying-real.txt", "/destination/root/copying-real.txt", 8, .file, 0);
     manifest.entries.items[1].state = .pending;
     manifest.entries.items[2].state = .pending;
     manifest.entries.items[3].state = .copying;
     manifest.entries.items[4].state = .pending;
     manifest.entries.items[5].state = .completed;
     manifest.entries.items[6].state = .skipped;
+    manifest.entries.items[7].state = .copying;
 
     var tree = try transfer_tree.build(allocator, manifest.entries.items);
     defer tree.deinit();
@@ -152,22 +170,30 @@ test "transfer rows merge direct children, prefer real entries and retain select
 
     appendTreeRows(&app, mem, &tree, &old);
 
-    // Existing real entry + pending file + copying directory + completed file.
-    try std.testing.expectEqual(@as(usize, 4), app.items.items.len);
+    // Pending conflicts stay real; actively copied files remain protected ghosts.
+    try std.testing.expectEqual(@as(usize, 5), app.items.items.len);
     try std.testing.expectEqualStrings("already-real.txt", app.items.items[0].name);
     try std.testing.expect(app.items.items[0].transfer_state == null);
+    try std.testing.expect(!app.items.items[0].transfer_ghost);
 
-    const pending = app.items.items[1];
+    const copying = app.items.items[1];
+    try std.testing.expectEqualStrings("copying-real.txt", copying.name);
+    try std.testing.expect(copying.transfer_ghost and copying.missing);
+    try std.testing.expectEqual(@import("ops.zig").TransferEntryState.copying, copying.transfer_state.?);
+    try std.testing.expectEqual(@as(i64, 3), copying.bytes);
+    try std.testing.expectEqual(@as(i64, 2), copying.mtime);
+
+    const pending = app.items.items[2];
     try std.testing.expectEqualStrings("pending.txt", pending.name);
     try std.testing.expect(pending.transfer_ghost and pending.missing);
     try std.testing.expect(pending.selected);
     try std.testing.expectEqual(@as(i64, 12), pending.bytes);
 
-    const sub = app.items.items[2];
+    const sub = app.items.items[3];
     try std.testing.expectEqualStrings("sub", sub.name);
     try std.testing.expect(sub.is_dir and sub.transfer_ghost and sub.missing);
 
-    const done = app.items.items[3];
+    const done = app.items.items[4];
     try std.testing.expectEqualStrings("done.txt", done.name);
     try std.testing.expect(!done.transfer_ghost and !done.missing);
     try std.testing.expectEqual(@import("ops.zig").TransferEntryState.completed, done.transfer_state.?);
