@@ -122,6 +122,47 @@ test "JobRunner snapshots manifest entries with independent path ownership" {
     try std.testing.expectEqual(ops_mod.TransferEntryState.copying, snapshot.entries.items[0].state);
 }
 
+test "JobRunner retires the live manifest on reuse without invalidating snapshots" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+
+    const destination = try std.fmt.allocPrint(a, "{s}/destination", .{tmp});
+    defer a.free(destination);
+    try ops_mod.createFolder(a, tmp, "destination");
+
+    const first = try std.fmt.allocPrint(a, "{s}/first.txt", .{tmp});
+    defer a.free(first);
+    try writeTestFile(first, "first");
+    const second = try std.fmt.allocPrint(a, "{s}/second.txt", .{tmp});
+    defer a.free(second);
+    try writeTestFile(second, "second");
+
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+
+    try runner.start(.copy, &.{first}, destination, .ask);
+    runner.thread.?.join();
+    runner.thread = null;
+    var snapshot = try runner.snapshotTransferManifest(a);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 1), snapshot.entries.items.len);
+    try std.testing.expectEqualStrings(first, snapshot.entries.items[0].source_path);
+    try std.testing.expectEqual(ops_mod.TransferEntryState.completed, snapshot.entries.items[0].state);
+
+    try runner.start(.copy, &.{second}, destination, .ask);
+    runner.thread.?.join();
+    runner.thread = null;
+
+    try std.testing.expectEqual(@as(usize, 1), runner.manifest.entries.items.len);
+    try std.testing.expectEqualStrings(second, runner.manifest.entries.items[0].source_path);
+    try std.testing.expectEqual(ops_mod.TransferEntryState.completed, runner.manifest.entries.items[0].state);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.entries.items.len);
+    try std.testing.expectEqualStrings(first, snapshot.entries.items[0].source_path);
+    try std.testing.expectEqual(ops_mod.TransferEntryState.completed, snapshot.entries.items[0].state);
+}
+
 test "JobRunner discovers recursive transfer manifest entries" {
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;

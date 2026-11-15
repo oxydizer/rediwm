@@ -516,8 +516,30 @@ fn copyRecursiveTracked(
     runner: ?*JobRunner,
 ) !void {
     if (runner) |job| job.setManifestEntryState(job.current_item_index, src, .copying);
-    try copyRecursiveTrackedImpl(allocator, src, dst, cancel, runner);
+    copyRecursiveTrackedImpl(allocator, src, dst, cancel, runner) catch |err| {
+        // Recursive directory cleanup runs before this catch. If the destination
+        // is gone, the whole copied subtree was rolled back; if it remains,
+        // cleanup failed and completed descendants may still exist.
+        if (runner) |job| {
+            if (!pathExists(allocator, dst)) {
+                job.setManifestSubtreeState(
+                    job.current_item_index,
+                    src,
+                    if (err == error.Cancelled) .cancelled else .failed,
+                );
+            }
+        }
+        return err;
+    };
     if (runner) |job| job.setManifestEntryState(job.current_item_index, src, .completed);
+}
+
+fn pathExists(allocator: Allocator, path: []const u8) bool {
+    const path_z = allocator.dupeSentinel(u8, path, 0) catch return true;
+    defer allocator.free(path_z);
+    var st: c.struct_stat = undefined;
+    if (c.lstat(path_z, &st) == 0) return true;
+    return std.c._errno().* != c.ENOENT;
 }
 
 fn copyRecursiveTrackedImpl(
@@ -621,11 +643,13 @@ fn crossDeviceMoveTracked(
     // Copy cleans up only destinations it created; a raced existing target is preserved.
     try copyRecursiveTracked(allocator, src, dst, cancel, runner);
     if (runner) |job| if (!job.waitIfResumed(cancel)) {
-        deleteRecursive(allocator, dst) catch {};
+        deleteRecursive(allocator, dst) catch return error.Cancelled;
+        job.setManifestRootState(job.current_item_index, .cancelled);
         return error.Cancelled;
     };
     if (cancel != null and cancel.?.load(.acquire)) {
-        deleteRecursive(allocator, dst) catch {};
+        deleteRecursive(allocator, dst) catch return error.Cancelled;
+        if (runner) |job| job.setManifestRootState(job.current_item_index, .cancelled);
         return error.Cancelled;
     }
 
@@ -1180,6 +1204,27 @@ pub const JobRunner = struct {
 
         for (self.manifest.entries.items) |*entry| {
             if (entry.root_index == root_index) entry.state = state;
+        }
+    }
+
+    fn setManifestSubtreeState(
+        self: *JobRunner,
+        root_index: usize,
+        source_root: []const u8,
+        state: TransferEntryState,
+    ) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        for (self.manifest.entries.items) |*entry| {
+            if (entry.root_index != root_index) continue;
+            if (std.mem.eql(u8, entry.source_path, source_root) or
+                (std.mem.startsWith(u8, entry.source_path, source_root) and
+                entry.source_path.len > source_root.len and
+                entry.source_path[source_root.len] == '/'))
+            {
+                entry.state = state;
+            }
         }
     }
 
