@@ -1106,7 +1106,65 @@ pub const JobRunner = struct {
                 .cancelled => null,
             };
         }
-        return null;
+        return self.manifestSubtreeProgressLocked(path, null);
+    }
+
+    fn manifestSubtreeProgressLocked(
+        self: *JobRunner,
+        path: []const u8,
+        matched: ?*bool,
+    ) ?f64 {
+        var total_bytes: u64 = 0;
+        var completed_bytes: u64 = 0;
+
+        for (self.manifest.entries.items) |entry| {
+            if (entry.kind != .file) continue;
+            const destination = entry.destination_path orelse continue;
+            if (!isStrictPathDescendant(path, destination)) continue;
+
+            if (matched) |was_matched| was_matched.* = true;
+            total_bytes +|= entry.size;
+
+            switch (entry.state) {
+                .completed => completed_bytes +|= entry.size,
+                .copying => {
+                    if (self.current_file_path_len > 0 and
+                        std.mem.eql(
+                            u8,
+                            self.current_file_path[0..self.current_file_path_len],
+                            destination,
+                        ))
+                    {
+                        completed_bytes +|= @min(self.current_file_bytes, entry.size);
+                    }
+                },
+                .pending, .skipped, .failed, .cancelled => {},
+            }
+        }
+
+        if (total_bytes == 0) return null;
+        return @min(
+            1.0,
+            @as(f64, @floatFromInt(completed_bytes)) /
+                @as(f64, @floatFromInt(total_bytes)),
+        );
+    }
+
+    fn isStrictPathDescendant(parent: []const u8, candidate: []const u8) bool {
+        if (parent.len == 0 or candidate.len <= parent.len) return false;
+
+        var prefix_len = parent.len;
+        while (prefix_len > 1 and parent[prefix_len - 1] == '/') {
+            prefix_len -= 1;
+        }
+
+        if (prefix_len == 1 and parent[0] == '/') {
+            return candidate.len > 1 and candidate[0] == '/';
+        }
+
+        return candidate.len > prefix_len and
+            std.mem.startsWith(u8, candidate, parent[0..prefix_len]) and
+            candidate[prefix_len] == '/';
     }
 
     /// Resolves a batch of visible paths under one lock and one source-list
@@ -1155,6 +1213,14 @@ pub const JobRunner = struct {
                     };
                 }
             }
+        }
+
+        for (paths, 0..) |path, path_idx| {
+            if (matched[path_idx]) continue;
+            results[path_idx] = self.manifestSubtreeProgressLocked(
+                path,
+                &matched[path_idx],
+            );
         }
     }
 
