@@ -315,6 +315,33 @@ def run():
                 im_send("commit-only")
                 key(31, ctrl=True)
                 wait_for(lambda: second.read_text() == "hcomposedfinalo", "IME replaces preedit")
+
+                # Losing keyboard focus must disable the text input. Left
+                # enabled, the compositor sees no state change when the surface
+                # is entered again and never re-activates the input method:
+                # composition silently stops for every window switch.
+                def ime_events(name):
+                    return sum(1 for line in im_log.read_text().splitlines() if line == name or line.startswith(name + " "))
+
+                key(107, ctrl=True)  # end of document, before composition
+                before_switch = second.read_text()
+                activations = ime_events("activate")
+                deactivations = ime_events("deactivate")
+                dones = ime_events("im-done")
+                ipc.focus_window(files["id"])
+                wait_for(lambda: ime_events("deactivate") > deactivations, "IME was not deactivated by focus loss")
+                # The deactivation's done must not be mistaken for the state
+                # the re-activated input receives.
+                wait_for(lambda: ime_events("im-done") > dones, "IME deactivation did not complete")
+                dones = ime_events("im-done")
+                ipc.focus_window(editor()["id"])
+                wait_for(lambda: ime_events("activate") > activations, "editor did not re-activate the IME after focus returned")
+                wait_for(lambda: ime_events("im-done") > dones, "IME state did not arrive after focus returned")
+                im_send("commit-only")
+                key(31, ctrl=True)
+                wait_for(lambda: second.read_text() == before_switch + "final", "IME commit after focus returned")
+                print("text-input-v3 re-activates after a window switch", flush=True)
+
                 im.terminate()
                 im.wait(timeout=5)
                 print("text-input-v3 composition", flush=True)
