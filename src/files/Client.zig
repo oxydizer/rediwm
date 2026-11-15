@@ -109,7 +109,7 @@ xkb_context: ?*c.xkb_context = null,
 xkb_state: ?*c.xkb_state = null,
 key_repeat: key_repeat_mod.KeyRepeat = .{},
 compose: @import("ui").compose.Compose = .{},
-ime: @import("terminal/ime.zig").Ime = undefined,
+ime: @import("ime.zig").Ime = undefined,
 /// LC_CTYPE of the session; picks the Compose table (´+c is ç in pt_BR).
 locale: []const u8 = "",
 app: app_mod.App,

@@ -258,6 +258,10 @@ pub const App = struct {
     location: Editor = .{},
     text_dragging: bool = false,
     edit_revision: usize = 0,
+    /// Local composition text from the text-input-v3 client, drawn at the
+    /// caret of `preedit_editor` until the input method commits it.
+    preedit: std.ArrayList(u8) = .empty,
+    preedit_editor: ?*Editor = null,
     text_paste_requested: bool = false,
     clipboard_text: std.ArrayList(u8) = .empty,
     clipboard_is_text: bool = false,
@@ -390,6 +394,7 @@ pub const App = struct {
         if (self.status_notice) |sn| self.allocator.free(sn);
 
         if (self.snapshot) |snap| snap.destroy();
+        self.preedit.deinit(self.allocator);
         self.search.deinit(self.allocator);
         self.clipboard_text.deinit(self.allocator);
         self.history.deinit();
@@ -969,6 +974,7 @@ pub const App = struct {
     pub const fieldOptions = app_paint.fieldOptions;
     pub const textArea = app_paint.textArea;
     pub const editorTextArea = app_paint.editorTextArea;
+    pub const editorCaretRect = app_paint.editorCaretRect;
     pub const pointerCursor = app_paint.pointerCursor;
     pub const singleClickIconAt = app_paint.singleClickIconAt;
     pub const renameCard = app_paint.renameCard;

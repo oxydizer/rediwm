@@ -191,6 +191,12 @@ static void command(char *line) {
   } else if(!strcmp(line,"commit-only")) {
     zwp_input_method_v2_commit_string(method,"final");
     zwp_input_method_v2_commit(method,done_serial);
+  } else if(!strncmp(line,"preedit-text ",13)) {
+    zwp_input_method_v2_set_preedit_string(method,line+13,0,(uint32_t)strlen(line+13));
+    zwp_input_method_v2_commit(method,done_serial);
+  } else if(!strncmp(line,"commit-text ",12)) {
+    zwp_input_method_v2_commit_string(method,line+12);
+    zwp_input_method_v2_commit(method,done_serial);
   } else if(!strcmp(line,"grab")) {
     virtual_keyboard=zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(virtual_manager,seat);
     grab=zwp_input_method_v2_grab_keyboard(method);
