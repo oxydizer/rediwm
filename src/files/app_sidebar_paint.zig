@@ -673,7 +673,8 @@ pub fn transferTreeBox(self: *App) shell_ui.Rect {
 
 pub fn transferTreeClick(self: *App, x: f64, y: f64) bool {
     const area = transferTreeBox(self);
-    if (area.h <= 0 or x < area.x or x >= area.x + area.w or y < area.y or y >= area.y + area.h) return false;
+    if (area.h <= 0 or x < area.x or x >= area.x + area.w or
+        y < area.y + 4 or y >= area.y + area.h) return false;
 
     const tree = if (self.transfer_tree_state.tree) |*value| value else return true;
     const row = @as(usize, @intFromFloat((y - area.y - 4) / 25));
