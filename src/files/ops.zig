@@ -7,6 +7,7 @@ const c = @import("c.zig").api;
 const Allocator = std.mem.Allocator;
 
 const max_progress_path_bytes = 4096;
+pub const copy_buffer_size = 64 * 1024;
 
 pub const ConflictAction = enum {
     ask,
@@ -547,7 +548,7 @@ fn copyFileContentsTracked(
 
     if (runner) |job| job.beginFileProgress(dst_path, @intCast(stat.st_size));
 
-    var buf: [65536]u8 = undefined;
+    var buf: [copy_buffer_size]u8 = undefined;
     while (true) {
         if (runner) |job| if (!job.waitIfResumed(cancel)) {
             _ = c.unlink(dst_z);

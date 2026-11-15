@@ -388,6 +388,19 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
         "Benchmark transfer progress, tree aggregation and concurrent job polling",
     ).dependOn(&run_transfer_bench.step);
 
+    // Benchmark the real JobRunner filesystem copy path independently from
+    // progress-model measurements and normal unit tests.
+    const copy_bench_tests = b.addTest(.{
+        .root_module = files_tests.root_module,
+        .filters = &.{"production copy benchmark"},
+    });
+    const run_copy_bench = b.addRunArtifact(copy_bench_tests);
+    run_copy_bench.has_side_effects = true;
+    b.step(
+        "bench-files-copy",
+        "Benchmark production JobRunner filesystem copy throughput",
+    ).dependOn(&run_copy_bench.step);
+
     const terminal_integration = b.addSystemCommand(&.{"env"});
     terminal_integration.addPrefixedDirectoryArg("REDIWM_TEST_BIN=", support.installed(.bin, ""));
     terminal_integration.addArg("python3");
