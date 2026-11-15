@@ -1,8 +1,7 @@
 //! Automatic counterpart to the manual `save_layout`/`restore_layout`
 //! actions (config/actions.zig, which this module reuses unchanged): a
 //! periodic autosave of window positions/sizes/zoom to a fixed path in
-//! `$XDG_STATE_HOME/rediwm/`, and a best-effort restore attempt a few times
-//! after startup.
+//! `$XDG_STATE_HOME/rediwm/`, and a best-effort startup restore.
 //!
 //! This has nothing to do with detecting whether the previous shutdown was
 //! clean or a crash — matching is by app_id against whatever toplevels
@@ -11,16 +10,20 @@
 //! `data/rediwm-session`'s crash-restart loop useful instead of just
 //! reopening every app in the top-left corner.
 //!
-//! Restoring is retried on a few delays rather than once, because a slow
-//! launching app (a browser, say) may not have mapped its first window yet
-//! at the first attempt. The attempts share one snapshot of the file taken at
-//! startup (`FlatRestore`): each saved row is claimed by one window and each
-//! window is placed once. Re-reading the file at every attempt was wrong, since
-//! the periodic save below rewrites it with the current layout, so a later
-//! attempt moved windows back to where they were up to 10 s before. For the
-//! same reason the periodic save waits while rows are still unclaimed: it
-//! would overwrite the previous session's layout with a partial one before
-//! slow apps have mapped, and a crash then would lose their positions.
+//! A matching window is restored from the startup snapshot in `mapped`, on
+//! its first commit: it is never drawn at the default spot and then moved
+//! seconds after login. The timed attempts only set up the workspace
+//! restore and retire the snapshot once slow-launching apps (a browser, say)
+//! have had their chance to map; only the workspace restore is prepared
+//! there, the flat snapshot is applied per window. The attempts share one
+//! snapshot of the file taken at startup (`FlatRestore`): each saved row is
+//! claimed by one window and each window is placed once. Re-reading the file
+//! at every attempt was wrong, since the periodic save below rewrites it with
+//! the current layout, so a later attempt moved windows back to where they
+//! were up to 10 s before. For the same reason the periodic save waits while
+//! rows are still unclaimed: it would overwrite the previous session's layout
+//! with a partial one before slow apps have mapped, and a crash then would
+//! lose their positions.
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 
@@ -109,6 +112,13 @@ pub const Autosave = struct {
     pub fn mapped(self: *Autosave, top: *@import("../Toplevel.zig")) void {
         if (self.restore_attempt >= restore_delays_ms.len) return;
         if (self.workspace_restore) |*restore| restore.apply(self.server, top);
+        // The flat snapshot is placed here, on the window's first commit,
+        // not by the timer: this keeps a restored window from jumping to its
+        // old position seconds after login, and it applies before the first
+        // frame because the commit that maps a window comes with its buffer.
+        if (self.flat_restore) |*restore| {
+            if (!self.server.world.workspaces.active) restore.apply(self.server);
+        }
     }
     pub fn finishMapped(self: *Autosave, top: *@import("../Toplevel.zig")) void {
         if (self.restore_attempt >= restore_delays_ms.len or !self.server.world.workspaces.active) return;
@@ -143,7 +153,8 @@ pub const Autosave = struct {
 
     fn onRestoreTimer(self: *Autosave) c_int {
         if (self.workspace_restore) |*restore| restore.prepare(self.server);
-        if (!self.server.world.workspaces.active) if (self.flat_restore) |*restore| restore.apply(self.server);
+        // The flat snapshot is applied per window in `mapped`; applying it
+        // here as well is what moved already-drawn windows seconds after login.
         self.restore_attempt += 1;
         if (self.restore_attempt < restore_delays_ms.len) {
             self.restore_timer.?.timerUpdate(restore_delays_ms[self.restore_attempt]) catch {};

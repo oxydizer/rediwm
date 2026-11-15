@@ -252,7 +252,13 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     }
     toplevel.server.window_tabs.mapped(toplevel);
     toplevel.server.window_tabs.mappedToken(toplevel);
-    if (toplevel.server.layout_autosave) |autosave| autosave.finishMapped(toplevel);
+    // A window that associates already mapped (an X11 surface, say) gets no
+    // later commit to place its saved row, so the map hook is the guarantee;
+    // the per-window claims make the commit-time call idempotent.
+    if (toplevel.server.layout_autosave) |autosave| {
+        autosave.mapped(toplevel);
+        autosave.finishMapped(toplevel);
+    }
     toplevel.syncChrome(false, nowMs()) catch {};
     toplevel.frame_tree.node.setEnabled(@import("../window_tabs.zig").visible(toplevel));
     // A newly focused app must not open behind the camera's current depth.

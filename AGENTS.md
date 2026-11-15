@@ -159,6 +159,15 @@ panel painting. The key rules:
   what is drawn and `chrome_box` sizes are animated: tests
   `wait_for("window_geometry_settled")` before pointer input or geometry
   snapshots.
+* **Layout autosave restores on the map, not on a timer:** a saved window is
+  placed from the startup snapshot in `Autosave.mapped` on its first commit,
+  before its first frame (and from `handleMapped` for a backend that
+  associates already mapped). Placeholders and shell windows never claim a
+  row, and the legacy position+zoom restore uses `setZoomOrigin`, not
+  `setZoom` (which re-anchors the frame at the cursor). The timed attempts
+  must not apply the flat snapshot: doing that moved already-drawn windows
+  seconds after login, which is why the feature was once disabled.
+  `tests/layout_autosave.py`.
 * **`Backend.shell` windows** (Settings) paint into `scene_tree` and present
   with `presentOwned`. No wl_surface: focused = first in `world.toplevels`,
   activated, no seat focus (`hasKeyboardFocus`). Never close one from a

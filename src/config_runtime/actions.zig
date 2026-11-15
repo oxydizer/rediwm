@@ -522,7 +522,10 @@ pub const FlatRestore = struct {
         defer server.undo.applying = applying;
         var it = server.world.toplevels.iterator(.reverse);
         while (it.next()) |top| {
-            if (top.tab_hidden or self.placed.contains(top.id)) continue;
+            // Placeholders and compositor-owned shell windows are not the
+            // clients a saved row describes: a launch placeholder for a slow
+            // app must not claim its row before the real window maps.
+            if (top.tab_hidden or top.backend == .placeholder or top.backend == .shell or self.placed.contains(top.id)) continue;
             const row = self.layout.claim(top.appId()) orelse continue;
             self.placed.put(self.arena.allocator(), top.id, {}) catch continue;
             // Claimed even when skipped, so a later attempt cannot move it. A
@@ -533,7 +536,9 @@ pub const FlatRestore = struct {
                 top.setZoomOrigin(@min(row.zoom_index, camera_mod.zoom_levels.len - 1));
             } else {
                 top.setPosition(row.x, row.y);
-                top.setZoom(@min(row.zoom_index, camera_mod.zoom_levels.len - 1), server.input.cursor.x, server.input.cursor.y);
+                // Not setZoom: that re-anchors the frame under the current
+                // cursor and would overwrite the position just restored.
+                top.setZoomOrigin(@min(row.zoom_index, camera_mod.zoom_levels.len - 1));
             }
         }
     }

@@ -23,6 +23,9 @@ SAVED_X = 321
 SAVED_Y = 87
 MOVED_X = 500
 MOVED_Y = 260
+# One step below 100%: restoring the index must not re-anchor the frame at
+# the startup cursor (setZoom would, setZoomOrigin does not).
+SAVED_ZOOM_PERCENT = 85
 
 
 def wait_for(check, message, timeout=15):
@@ -81,10 +84,12 @@ def run():
                 client, client_log = launch_client(run1, client_bin)
                 win = wait_for(lambda: fixture_window(ipc), "fixture did not map")
                 assert (win["x"], win["y"]) != (SAVED_X, SAVED_Y), "fixture spawned at the position under test"
+                ipc.action('set_window_zoom', {"id": win["id"], "percent": SAVED_ZOOM_PERCENT})
                 ipc.action('move_window_to', {"id": win["id"], "x": SAVED_X, "y": SAVED_Y})
                 wait_for(lambda: autosave_path.exists(), "periodic autosave did not run", timeout=15)
                 content = autosave_path.read_text()
                 assert f'x = {SAVED_X}' in content and f'y = {SAVED_Y}' in content and APP_ID in content, content
+                assert 'zoom_index = 1' in content, content
         finally:
             stop_client(client, client_log)
             stop_process(process)
@@ -100,22 +105,25 @@ def run():
                 ipc.wait_for("wallpaper_presented", timeout_ms=10000)
                 client, client_log = launch_client(run2, client_bin)
                 win = wait_for(lambda: fixture_window(ipc), "fixture did not map (phase 2)")
-                assert (win["x"], win["y"]) != (SAVED_X, SAVED_Y), "fixture started already at the saved position"
+                # A matching window is placed on its first commit, not by a
+                # timed attempt: if that path regresses nothing restores it.
                 wait_for(
-                    lambda: (lambda w: w is not None and (w["x"], w["y"]) == (SAVED_X, SAVED_Y))(fixture_window(ipc)),
-                    "startup restore did not reposition the fixture",
-                    timeout=25,
+                    lambda: (lambda w: w is not None and (w["x"], w["y"]) == (SAVED_X, SAVED_Y) and
+                             w["zoom_percent"] == SAVED_ZOOM_PERCENT)(fixture_window(ipc)),
+                    "startup restore did not place the fixture at its saved position and zoom",
+                    timeout=15,
                 )
-                print("layout autosave: startup restore repositions a matching window from the autosave")
-                # The restore is retried at about 2, 7, 17 and 37 s. The periodic save rewrites the
-                # file every 10 s, so a retry that re-read it moved the window back to where it
-                # was up to 10 s earlier. Move it after the 10 s save and before the 17 s retry:
-                # it has to stay where it was put.
+                print("layout autosave: startup restore places a matching window at its saved position and zoom")
+                # A window moved after the restore has to stay where the user
+                # put it. The periodic save rewrites the file every 10 s and
+                # the timed attempts run at about 2, 7, 17 and 37 s; moving it
+                # between them used to let a retry put it back.
                 time.sleep(max(0.0, started + 13.5 - time.monotonic()))
                 ipc.action('move_window_to', {"id": win["id"], "x": MOVED_X, "y": MOVED_Y})
                 time.sleep(max(0.0, started + 23.0 - time.monotonic()))
                 win = fixture_window(ipc)
-                assert (win["x"], win["y"]) == (MOVED_X, MOVED_Y), ("later restore attempt moved the window back", win["x"], win["y"])
+                assert (win["x"], win["y"]) == (MOVED_X, MOVED_Y), ("a later restore attempt moved the window back", win["x"], win["y"])
+                assert win["zoom_percent"] == SAVED_ZOOM_PERCENT, win
         finally:
             stop_client(client, client_log)
             stop_process(process)

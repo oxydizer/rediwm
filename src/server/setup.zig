@@ -19,6 +19,7 @@ const config_loader = @import("config").loader;
 const watcher_mod = @import("../config_runtime/watcher.zig");
 const ui_theme = @import("ui").theme;
 const idle_mod = @import("../session/idle.zig");
+const layout_autosave_mod = @import("../session/layout_autosave.zig");
 const power_mod = @import("../session/power.zig");
 const services_mod = @import("../session/services.zig");
 const VirtualInput = @import("../input/virtual.zig").VirtualInput;
@@ -285,13 +286,14 @@ fn initServices(server: *Server) CompositorError!void {
         break :blk null;
     };
 
-    // Layout autosave (periodic save and the startup restore) is off for now:
-    // the restore moves windows seconds after login. Every user checks for
-    // null, so re-enabling is uncommenting this.
-    // if (!greeter) server.layout_autosave = layout_autosave_mod.Autosave.create(server) catch |err| blk: {
-    //     log.warn("init: could not create layout autosave: {}", .{err});
-    //     break :blk null;
-    // };
+    // Layout autosave and startup restore (session/layout_autosave.zig): a
+    // matching window is placed on its first commit, before its first frame,
+    // so nothing moves seconds after login; the timed attempts there only
+    // finish the workspace restore and retire the snapshot.
+    if (!greeter) server.layout_autosave = layout_autosave_mod.Autosave.create(server) catch |err| blk: {
+        log.warn("init: could not create layout autosave: {}", .{err});
+        break :blk null;
+    };
 
     server.power_policy.init(server);
     errdefer server.power_policy.deinit();
