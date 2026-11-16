@@ -5,6 +5,7 @@ const i18n = @import("i18n");
 const tr = i18n.tr;
 const archive = @import("archive.zig");
 const c = @import("c.zig").api;
+const ui_profile = @import("ui_profile.zig");
 const Allocator = std.mem.Allocator;
 
 const max_progress_path_bytes = 4096;
@@ -1785,7 +1786,9 @@ pub const JobRunner = struct {
         @memset(totals, 0);
         @memset(completed, 0);
 
+        const mutex_wait_started = ui_profile.start();
         _ = c.pthread_mutex_lock(&self.mutex);
+        ui_profile.finish(mutex_wait_started, "progress_mutex_wait", paths.len);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
 
         if (self.state == .idle or self.state == .finished or
@@ -1826,6 +1829,7 @@ pub const JobRunner = struct {
         // One manifest traversal serves every requested directory. Walking
         // destination ancestors makes this O(manifest entries × path depth),
         // rather than rescanning the manifest once per visible directory.
+        const manifest_scan_started = ui_profile.start();
         for (self.manifest.entries.items) |entry| {
             if (entry.kind != .file) continue;
             const destination = entry.destination_path orelse continue;
@@ -1863,6 +1867,11 @@ pub const JobRunner = struct {
                 ancestor = parent;
             }
         }
+        ui_profile.finish(
+            manifest_scan_started,
+            "progress_manifest_scan",
+            self.manifest.entries.items.len,
+        );
 
         for (paths, 0..) |_, path_idx| {
             if (results[path_idx] != null or totals[path_idx] == 0) continue;
