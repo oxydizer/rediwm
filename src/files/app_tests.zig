@@ -37,6 +37,7 @@ test "grid hit testing respects gutters, scrolling and responsive columns" {
         .history = .{ .allocator = std.testing.allocator, .current = "/" },
         .home_dir = "/",
         .items_arena = undefined,
+        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator),
     };
     app.w = 960;
     app.h = 640;
@@ -81,6 +82,7 @@ test "search and sorting preserve visible selection across snapshot rebuilds" {
         .items_arena = std.heap.ArenaAllocator.init(allocator),
         .snapshot = &snap,
         .folder_sizes = std.StringHashMap(SizeState).init(allocator),
+        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(allocator),
     };
     defer app.folder_sizes.deinit();
     defer app.items_arena.deinit();
@@ -111,7 +113,7 @@ test "search and sorting preserve visible selection across snapshot rebuilds" {
 
 test "Unicode folder filtering and sorting retain folder size and date rules" {
     const listing = @import("app_listing.zig");
-    var app: App = .{ .allocator = std.testing.allocator, .io = undefined, .environ = undefined, .theme_cfg = undefined, .worker = undefined, .history = .{ .allocator = std.testing.allocator, .current = "/" }, .home_dir = "/", .items_arena = undefined };
+    var app: App = .{ .allocator = std.testing.allocator, .io = undefined, .environ = undefined, .theme_cfg = undefined, .worker = undefined, .history = .{ .allocator = std.testing.allocator, .current = "/" }, .home_dir = "/", .items_arena = undefined, .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator) };
     defer app.search.text.deinit(app.allocator);
     const source: worker_mod.Item = .{ .name = "CÁMARA — Терминал", .path = "/name", .is_dir = false, .is_symlink = false, .is_broken = false, .bytes = 10, .mtime = 20, .icon_name = "" };
     for ([_][]const u8{ "camara", "Cámara", "терм", "ТЕРМ" }) |query| {
@@ -143,6 +145,7 @@ test "context menu stays inside the client and keyboard activation closes it" {
         .history = .{ .allocator = std.testing.allocator, .current = "/" },
         .home_dir = "/",
         .items_arena = undefined,
+        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator),
     };
     app.w = 360;
     for ([_]i32{ 240, 600 }) |height| {
@@ -179,6 +182,7 @@ pub fn testApp() !App {
         .home_dir = "/tmp",
         .items_arena = std.heap.ArenaAllocator.init(std.testing.allocator),
         .folder_sizes = std.StringHashMap(SizeState).init(std.testing.allocator),
+        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator),
     };
 }
 
@@ -204,6 +208,54 @@ test "Delete shortcuts set permanent deletion mode only for Shift+Delete" {
     app.handleKey(c.XKB_KEY_Delete, "");
     try std.testing.expect(app.dialog != null);
     try std.testing.expect(app.dialog.?.deletion.permanent);
+}
+
+test "transfer ghosts have no file actions or folder-size affordance" {
+    var app = try testApp();
+    defer app.deinit();
+
+    const mem = app.items_arena.allocator();
+    try app.items.append(app.allocator, .{
+        .name = try mem.dupe(u8, "pending-folder"),
+        .path = try mem.dupe(u8, "/tmp/pending-folder"),
+        .is_dir = true,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 0,
+        .mtime = 0,
+        .icon_name = "folder",
+        .selected = true,
+        .transfer_ghost = true,
+        .transfer_state = .pending,
+        .missing = true,
+    });
+    app.focused_index = 0;
+
+    try std.testing.expectEqual(@as(usize, 0), app.fileActions().len);
+    app.openMenu(.file, 20, 20);
+    try std.testing.expect(app.menu == null);
+    try std.testing.expect(app.sizeButtonRect(0) == null);
+
+    app.toggleFolderSize(0);
+    try std.testing.expectEqual(@as(usize, 0), app.folder_sizes.count());
+    try std.testing.expect(app.dirsize_pool == null);
+
+    // A completed manifest entry is no longer a ghost and remains actionable.
+    try app.items.append(app.allocator, .{
+        .name = try mem.dupe(u8, "completed.txt"),
+        .path = try mem.dupe(u8, "/tmp/completed.txt"),
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 12,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .selected = true,
+        .transfer_state = .completed,
+    });
+    try std.testing.expect(app.fileActions().len > 0);
+    app.openMenu(.file, 20, 20);
+    try std.testing.expectEqual(@as(?MenuKind, .file), app.menu);
 }
 
 test "terminal drawer shares viewport geometry and preserves its preferred height" {

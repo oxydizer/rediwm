@@ -154,10 +154,19 @@ pub fn placeAt(self: *App, x: f64, y: f64) ?usize {
     if (self.sidebarScrollbar()) |bar| {
         if (bar.overTrack(@floatCast(x), @floatCast(y))) return null;
     }
-    for (0..self.rowCount()) |i| {
-        if (!self.placeVisible(i)) continue;
-        const row = self.placeRect(i);
-        if (y >= row.y and y < row.y + row.h) return i;
+    if (self.sidebarBodyY(.places, x, y)) |body_y| {
+        for (0..self.deviceBase()) |i| {
+            if (!self.placeVisible(i)) continue;
+            const row = self.placeRect(i);
+            if (body_y >= row.y and body_y < row.y + row.h) return i;
+        }
+    }
+    if (self.sidebarBodyY(.disks, x, y)) |body_y| {
+        for (self.deviceBase()..self.rowCount()) |i| {
+            if (!self.placeVisible(i)) continue;
+            const row = self.placeRect(i);
+            if (body_y >= row.y and body_y < row.y + row.h) return i;
+        }
     }
     return null;
 }
@@ -182,23 +191,28 @@ pub fn deviceAt(self: *App, index: usize) ?*const volumes_mod.Volume {
     };
 }
 
-/// Height DEVICES adds below Places, heading included.
+/// Height DISKS adds below Places, heading included. Keep an empty card
+/// visible so the sidebar's section structure does not jump when devices
+/// are connected or removed.
 pub fn deviceBlock(self: *App) i32 {
     const count: i32 = @intCast(self.device_list.items.len);
-    return if (count == 0) 0 else 44 + count * self.placeStep();
+    return if (count == 0) 64 else 44 + count * self.placeStep();
 }
 
 /// The eject button at a mounted device row's right edge.
 pub fn ejectRect(self: *App, index: usize) header.Rect {
     const row = self.placeRect(index);
-    return .{ .x = row.x + row.w - 30, .y = row.y + (row.h - 26) / 2, .w = 26, .h = 26 };
+    // Leave room for the proximity glow between the button and the
+    // sidebar's right-side scrollbar gutter.
+    return .{ .x = row.x + row.w - 38, .y = row.y + (row.h - 26) / 2, .w = 26, .h = 26 };
 }
 
 /// The device whose eject button is at (`x`, `y`).
 pub fn ejectAt(self: *App, x: f64, y: f64) ?usize {
     const index = self.placeAt(x, y) orelse return null;
     const volume = self.deviceAt(index) orelse return null;
-    if (volume.mount == null or !self.ejectRect(index).contains(x, y)) return null;
+    const body_y = self.sidebarBodyY(.disks, x, y) orelse return null;
+    if (volume.mount == null or !self.ejectRect(index).contains(x, body_y)) return null;
     return index - self.deviceBase();
 }
 
@@ -217,11 +231,12 @@ pub fn pinSlotAt(self: *App, x: f64, y: f64) ?usize {
     if (self.sidebarScrollbar()) |bar| {
         if (x >= @as(f64, bar.track.x)) return null;
     }
+    const body_y = self.sidebarBodyY(.places, x, y) orelse return null;
     const step: f64 = @floatFromInt(self.placeStep());
     const count = self.pins.items.items.len;
     const top: f64 = @floatFromInt(self.placeY(places_start) - 30);
-    if (y < top or y >= self.pinBoundary(count) + 16) return null;
-    const nearest = @round((y - self.pinBoundary(0)) / step);
+    if (body_y < top or body_y >= self.pinBoundary(count) + 16) return null;
+    const nearest = @round((body_y - self.pinBoundary(0)) / step);
     return @intFromFloat(std.math.clamp(nearest, 0, @as(f64, @floatFromInt(count))));
 }
 

@@ -93,6 +93,63 @@ pub const FileAction = enum {
 };
 pub const Sort = enum { name, name_desc, size, modified, type, size_asc, modified_asc, type_desc };
 
+/// The four first-class sections in the Files sidebar, in display order.
+pub const SidebarSection = enum(u2) {
+    places,
+    disks,
+    git,
+    transfers,
+};
+
+/// Shared geometry for one sidebar accordion card.
+pub const SidebarCardGeometry = struct {
+    y: i32,
+    header_height: i32,
+    body_height: i32,
+    visible: bool,
+    expanded: bool,
+
+    pub fn height(self: SidebarCardGeometry) i32 {
+        if (!self.visible) return 0;
+        return self.header_height + (if (self.expanded) self.body_height else 0);
+    }
+};
+
+/// Vertical layout contract shared by all sidebar cards.
+pub const SidebarLayout = struct {
+    pub const header_height: i32 = 32;
+    pub const gap: i32 = 8;
+
+    cards: [4]SidebarCardGeometry,
+
+    /// Positions visible cards in section order. Every expanded card
+    /// receives its body height independently.
+    pub fn init(
+        top: i32,
+        body_heights: [4]i32,
+        visible: [4]bool,
+        expanded_sections: [4]bool,
+    ) SidebarLayout {
+        var result: SidebarLayout = .{ .cards = undefined };
+        var y = top;
+
+        for (0..4) |i| {
+            const expanded = visible[i] and expanded_sections[i];
+            const card: SidebarCardGeometry = .{
+                .y = y,
+                .header_height = header_height,
+                .body_height = body_heights[i],
+                .visible = visible[i],
+                .expanded = expanded,
+            };
+            result.cards[i] = card;
+            if (visible[i]) y += card.height() + gap;
+        }
+
+        return result;
+    }
+};
+
 pub const SizeState = union(enum) {
     running: *dirsize.Job,
     done: struct {
@@ -142,6 +199,8 @@ pub const ViewItem = struct {
     git_status: git.Status = .clean,
     git_lines: ?git.LineCounts = null,
     transfer_stub: bool = false,
+    transfer_ghost: bool = false,
+    transfer_state: ?@import("ops.zig").TransferEntryState = null,
     missing: bool = false,
     name: []const u8,
     /// Path from the listed folder, shown instead of `name` in the Git view's

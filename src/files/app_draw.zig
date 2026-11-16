@@ -52,6 +52,71 @@ pub fn roundedRect(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, r: f64) void 
     c.cairo_close_path(cr);
 }
 
+pub fn drawProgressBar(
+    cr: *c.cairo_t,
+    x: f64,
+    y: f64,
+    width: f64,
+    fraction: ?f64,
+    track_color: [4]f32,
+    fill_color: [4]f32,
+) void {
+    if (width <= 0) return;
+    roundedRect(cr, x, y, width, 4, 2);
+    setSource(cr, track_color);
+    c.cairo_fill(cr);
+
+    const fill_width = if (fraction) |value|
+        width * @min(1.0, @max(0.0, value))
+    else
+        @min(width, 24);
+    if (fill_width <= 0) return;
+    roundedRect(cr, x, y, fill_width, 4, 2);
+    setSource(cr, fill_color);
+    c.cairo_fill(cr);
+}
+
+/// A subtle individual surface for compact transfer entries in the sidebar.
+pub fn drawSidebarTransferSurface(cr: *c.cairo_t, area: anytype) void {
+    if (area.w <= 0 or area.h <= 0) return;
+    roundedRect(cr, area.x, area.y, area.w, area.h, 7);
+    setSource(cr, withAlpha(ui_theme.global.app_item_hover, 0.12));
+    c.cairo_fill_preserve(cr);
+    setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), 0.12));
+    c.cairo_set_line_width(cr, 1);
+    c.cairo_stroke(cr);
+}
+
+/// Shared compact row for file and torrent transfers.
+pub fn drawTransferProgressRow(
+    cr: *c.cairo_t,
+    area: anytype,
+    label: []const u8,
+    fraction: ?f64,
+    foreground: [4]f32,
+    accent: [4]f32,
+    size: f64,
+) void {
+    var percent_buf: [32]u8 = undefined;
+    const percent_text = if (fraction) |value|
+        std.fmt.bufPrint(&percent_buf, "{d}%", .{@as(u64, @intFromFloat(@min(1.0, @max(0.0, value)) * 100))}) catch ""
+    else
+        "—";
+
+    setSource(cr, foreground);
+    drawEllipsis(cr, label, area.x + 12, area.y + 19, area.w - 112, size, false);
+    drawText(cr, percent_text, area.x + area.w - 88, area.y + 19, size, true);
+    drawProgressBar(
+        cr,
+        area.x + 12,
+        area.y + area.h - 9,
+        area.w - 24,
+        fraction,
+        withAlpha(foreground, 0.14),
+        accent,
+    );
+}
+
 pub fn drawSpinner(cr: *c.cairo_t, cx: f64, cy: f64, r: f64) void {
     const angle = @as(f64, @floatFromInt(@mod(nowMs(), 1000))) / 1000.0 * 2.0 * std.math.pi;
     c.cairo_save(cr);
@@ -78,6 +143,39 @@ pub fn clipDamage(cr: *c.cairo_t, rect: header.Rect) void {
     c.cairo_rectangle(cr, @floor(x1), @floor(y1), @ceil(x2) - @floor(x1), @ceil(y2) - @floor(y1));
     c.cairo_clip(cr);
     c.cairo_set_matrix(cr, &matrix);
+}
+
+/// Clips to independent damage rectangles without expanding them into one
+/// large bounding box. Edges are rounded to whole device pixels.
+pub fn clipDamageRegions(cr: *c.cairo_t, rects: []const header.Rect) void {
+    c.cairo_new_path(cr);
+
+    var matrix: c.cairo_matrix_t = undefined;
+    c.cairo_get_matrix(cr, &matrix);
+
+    for (rects) |rect| {
+        if (rect.w <= 0 or rect.h <= 0) continue;
+
+        var x1 = rect.x;
+        var y1 = rect.y;
+        var x2 = rect.x + rect.w;
+        var y2 = rect.y + rect.h;
+        c.cairo_user_to_device(cr, &x1, &y1);
+        c.cairo_user_to_device(cr, &x2, &y2);
+
+        c.cairo_identity_matrix(cr);
+        c.cairo_rectangle(
+            cr,
+            @floor(x1),
+            @floor(y1),
+            @ceil(x2) - @floor(x1),
+            @ceil(y2) - @floor(y1),
+        );
+        c.cairo_set_matrix(cr, &matrix);
+    }
+
+    // An empty path intentionally produces an empty clip.
+    c.cairo_clip(cr);
 }
 
 /// Like `drawEllipsis`, but keeps the end of `text`: "…/dir/file.zig".

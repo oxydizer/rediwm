@@ -2,6 +2,8 @@
 
 const std = @import("std");
 const App = @import("app.zig").App;
+const ops = @import("ops.zig");
+const ui_profile = @import("ui_profile.zig");
 const c = @import("c.zig").api;
 const thumbs_mod = @import("thumbs.zig");
 const thumb_decode = @import("thumb_decode.zig");
@@ -26,12 +28,74 @@ const measureText = @import("app_draw.zig").measureText;
 const formatPermissions = @import("app_draw.zig").formatPermissions;
 const itemType = App.itemType;
 
+/// Transfer ghost filenames stay subdued until the manifest confirms completion.
+fn filenameForeground(item: ViewItem) [4]f32 {
+    if (item.transfer_ghost and !item.is_dir) {
+        if (item.transfer_state) |state| {
+            switch (state) {
+                .pending, .copying => return withAlpha(ui_theme.global.window_fg, 0.55),
+                .completed, .skipped, .failed, .cancelled => {},
+            }
+        }
+    }
+    return ui_theme.global.window_fg;
+}
+
+/// Live byte count for the file currently being copied.
+fn currentTransferBytes(item: ViewItem, progress: ?ops.ProgressInfo) ?i64 {
+    if (!item.transfer_ghost or item.is_dir) {
+        return null;
+    }
+
+    if (item.transfer_state == .pending) return 0;
+    if (item.transfer_state != .copying) return null;
+
+    const current = progress orelse return null;
+    if ((current.state != .running and current.state != .paused) or
+        current.current_file_path_len == 0 or
+        !std.mem.eql(
+            u8,
+            current.current_file_path[0..current.current_file_path_len],
+            item.path,
+        ))
+    {
+        return null;
+    }
+
+    return @intCast(@min(
+        current.current_file_bytes,
+        @as(u64, std.math.maxInt(i64)),
+    ));
+}
+
 pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
     const accent = ui_theme.shellPalette().accent;
+    const job_progress = if (self.job_runner) |runner| runner.pollProgress() else null;
     const cols = self.columns();
     const cell = self.cellWidth();
     const first = @divTrunc(self.scroll_y, self.rowHeight()) * cols;
     const last = @min(@as(i32, @intCast(self.items.items.len)), (@divTrunc(self.scroll_y + viewport_h, self.rowHeight()) + 1) * cols);
+    var progress_arena = std.heap.ArenaAllocator.init(self.allocator);
+    defer progress_arena.deinit();
+    var directory_progress: []?f64 = &.{};
+    if (self.job_runner) |runner| {
+        const count: usize = @intCast(last - first);
+        const scratch = progress_arena.allocator();
+        if (scratch.alloc([]const u8, count)) |paths| {
+            for (paths, 0..) |*path, offset| {
+                const item = self.items.items[@as(usize, @intCast(first)) + offset];
+                path.* = if (item.is_dir and !item.is_symlink) item.path else "";
+            }
+            if (scratch.alloc(?f64, count)) |results| {
+                if (scratch.alloc(bool, count)) |matched| {
+                    const lookup_started = ui_profile.start();
+                    runner.progressForPaths(paths, results, matched) catch {};
+                    ui_profile.finish(lookup_started, "progress_render_lookup", count);
+                    directory_progress = results;
+                } else |_| {}
+            } else |_| {}
+        } else |_| {}
+    }
     // The hover glide sits under every item, since mid-glide it straddles two.
     const glide = self.item_hover.frame;
     if (glide.alpha > 0) {
@@ -66,18 +130,89 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 }
             }
         }
+        var ghost_alpha: f64 = 0.20;
+        if (item.transfer_ghost and !item.is_dir) {
+            if (job_progress) |progress| {
+                if ((progress.state == .running or progress.state == .paused) and
+                    progress.current_file_path_len > 0 and
+                    progress.current_file_size > 0 and
+                    std.mem.eql(
+                        u8,
+                        progress.current_file_path[0..progress.current_file_path_len],
+                        item.path,
+                    ))
+                {
+                    const fraction = @min(
+                        1.0,
+                        @as(f64, @floatFromInt(progress.current_file_bytes)) /
+                            @as(f64, @floatFromInt(progress.current_file_size)),
+                    );
+                    const step = @min(
+                        @as(usize, 10),
+                        @as(usize, @intFromFloat(fraction * 10.0)),
+                    );
+                    ghost_alpha = 0.20 + @as(f64, @floatFromInt(step)) * 0.08;
+                }
+            }
+        }
         if (cut) c.cairo_push_group(cr);
         const icon = self.itemIconRect(index);
+        const fade_icon = item.transfer_ghost and !cut;
+        if (fade_icon) c.cairo_push_group(cr);
         self.drawItemIcon(cr, item, icon.x, icon.y, icon.w);
+        if (fade_icon) {
+            c.cairo_pop_group_to_source(cr);
+            c.cairo_paint_with_alpha(cr, ghost_alpha);
+        }
+        if (job_progress) |progress| {
+            if ((progress.state == .running or progress.state == .paused) and
+                progress.current_file_path_len > 0 and
+                progress.current_file_size > 0 and
+                std.mem.eql(u8, progress.current_file_path[0..progress.current_file_path_len], item.path))
+            {
+                const fraction = @min(
+                    1.0,
+                    @as(f64, @floatFromInt(progress.current_file_bytes)) /
+                        @as(f64, @floatFromInt(progress.current_file_size)),
+                );
+                const ring_size = @min(26.0, icon.w);
+                shell_ui.drawProgressRing(cr, .{
+                    .x = icon.x + (icon.w - ring_size) / 2,
+                    .y = icon.y + (icon.w - ring_size) / 2,
+                    .w = ring_size,
+                    .h = ring_size,
+                }, fraction, accent);
+            }
+        }
+        if (item.is_dir and !item.is_symlink) {
+            const progress_index: usize = @intCast(index - first);
+            if (progress_index < directory_progress.len) {
+                if (directory_progress[progress_index]) |progress| {
+                    const ring_size = @min(26.0, icon.w);
+                    shell_ui.drawProgressRing(cr, .{
+                        .x = icon.x + (icon.w - ring_size) / 2,
+                        .y = icon.y + (icon.w - ring_size) / 2,
+                        .w = ring_size,
+                        .h = ring_size,
+                    }, progress, accent);
+                }
+            }
+        }
         const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) else GridCard.padding_x);
-        setSource(cr, ui_theme.global.window_fg);
+        setSource(cr, filenameForeground(item));
         const name_width = if (self.list_view) @max(0, self.listColumn(0).w - 46 - self.inlineTorrentWidth(idx) - self.audioButtonWidth(idx)) else width - 2 * GridCard.padding_x;
         // A path that does not fit loses its head, so the file's own name stays readable.
         const name_y = y + (if (self.list_view) baseline else GridCard.name_baseline);
         if (item.label.len > 0) drawHeadEllipsis(cr, item.label, label_x, name_y, name_width, shell_ui.textSize(), false) else drawEllipsis(cr, item.name, label_x, name_y, name_width, shell_ui.textSize(), false);
         var buf: [64]u8 = undefined;
         var size_buf: [64]u8 = undefined;
-        const disp = if (item.transfer_stub) App.ItemSizeDisplay{ .text = formatSize((self.torrentForItem(idx) orelse continue).total, &size_buf), .is_running = false } else self.itemSizeDisplay(item, &size_buf);
+        const transfer_bytes = currentTransferBytes(item, job_progress);
+        const disp = if (item.transfer_stub)
+            App.ItemSizeDisplay{ .text = formatSize((self.torrentForItem(idx) orelse continue).total, &size_buf), .is_running = false }
+        else if (transfer_bytes) |bytes|
+            App.ItemSizeDisplay{ .text = formatSize(bytes, &size_buf), .is_running = false }
+        else
+            self.itemSizeDisplay(item, &size_buf);
         const is_size_hovered = (self.hoverKey() == 2_000_000 + idx);
         if (self.list_view and self.repository() != null) {
             self.renderGitStatus(cr, item, y);
@@ -131,7 +266,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 }
             } else {
                 setSource(cr, ui_theme.global.window_fg);
-                drawText(cr, formatSize(item.bytes, &buf), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
+                drawText(cr, formatSize(transfer_bytes orelse item.bytes, &buf), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
             }
         }
         self.renderInlineTorrent(cr, idx);
@@ -141,6 +276,105 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             c.cairo_paint_with_alpha(cr, 0.45);
         }
     }
+}
+
+test "transfer ghost filenames stay muted until manifest completion" {
+    const normal = ui_theme.global.window_fg;
+    const muted = withAlpha(normal, 0.55);
+    var item: ViewItem = .{
+        .name = "file.txt",
+        .path = "/destination/file.txt",
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 0,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .transfer_ghost = true,
+        .transfer_state = .pending,
+    };
+
+    try std.testing.expectEqual(muted, filenameForeground(item));
+
+    item.transfer_state = .copying;
+    try std.testing.expectEqual(muted, filenameForeground(item));
+
+    // Even at 100% byte progress, only the completed manifest state restores
+    // the normal filename colour.
+    item.transfer_state = .completed;
+    try std.testing.expectEqual(normal, filenameForeground(item));
+
+    item.transfer_state = .pending;
+    item.is_dir = true;
+    try std.testing.expectEqual(normal, filenameForeground(item));
+
+    item.is_dir = false;
+    item.transfer_ghost = false;
+    item.transfer_state = null;
+    try std.testing.expectEqual(normal, filenameForeground(item));
+}
+
+test "transfer ghost byte display follows pending and matching live file progress" {
+    const path = "/destination/file.txt";
+    var item: ViewItem = .{
+        .name = "file.txt",
+        .path = path,
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 4096,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .transfer_ghost = true,
+        .transfer_state = .pending,
+    };
+
+    // A pending ghost must not advertise bytes that have not arrived.
+    try std.testing.expectEqual(@as(?i64, 0), currentTransferBytes(item, null));
+
+    var progress: ops.ProgressInfo = .{ .state = .running };
+    @memcpy(progress.current_file_path[0..path.len], path);
+    progress.current_file_path_len = path.len;
+    progress.current_file_bytes = 384;
+    progress.current_file_size = 4096;
+
+    item.transfer_state = .copying;
+    try std.testing.expectEqual(@as(?i64, 384), currentTransferBytes(item, progress));
+
+    // A different active path must never leak its byte count into this ghost.
+    const other_path = "/destination/other.txt";
+    @memcpy(progress.current_file_path[0..other_path.len], other_path);
+    progress.current_file_path_len = other_path.len;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
+
+    // Pausing preserves the current file's visible byte count.
+    @memcpy(progress.current_file_path[0..path.len], path);
+    progress.current_file_path_len = path.len;
+    progress.state = .paused;
+    progress.current_file_bytes = 512;
+    try std.testing.expectEqual(@as(?i64, 512), currentTransferBytes(item, progress));
+
+    // Counters larger than the ViewItem's signed size representation clamp.
+    progress.current_file_bytes = std.math.maxInt(u64);
+    try std.testing.expectEqual(
+        @as(?i64, std.math.maxInt(i64)),
+        currentTransferBytes(item, progress),
+    );
+
+    // Finished jobs and completed entries use the normal filesystem size.
+    progress.state = .finished;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
+    item.transfer_state = .completed;
+    progress.state = .running;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
+
+    // Directories and ordinary files never consume per-file ghost progress.
+    item.transfer_state = .copying;
+    item.is_dir = true;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
+    item.is_dir = false;
+    item.transfer_ghost = false;
+    try std.testing.expect(currentTransferBytes(item, progress) == null);
 }
 
 pub fn renderFilenameTip(self: *App, cr: *c.cairo_t) void {

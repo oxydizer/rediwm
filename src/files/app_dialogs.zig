@@ -112,7 +112,7 @@ pub fn canOpenWith(self: *const App) bool {
     if (self.chooser != null) return false;
     var found = false;
     for (self.items.items) |item| {
-        if (!item.selected) continue;
+        if (!item.selected or item.transfer_ghost) continue;
         if (item.is_dir or item.missing or item.is_broken) return false;
         found = true;
     }
@@ -124,7 +124,7 @@ pub fn openWithDialog(self: *App) void {
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(self.allocator);
     for (self.items.items) |item| {
-        if (item.selected) paths.append(self.allocator, item.path) catch return;
+        if (item.selected and !item.transfer_ghost) paths.append(self.allocator, item.path) catch return;
     }
     const state = open_with.State.init(self.allocator, paths.items) catch {
         self.setStatusNotice(tr("Could not load applications"), true);

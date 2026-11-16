@@ -1,12 +1,14 @@
 //! Files listing: navigation, history moves, snapshot sync and the filtered, sorted view.
 
 const std = @import("std");
+const ui_profile = @import("ui_profile.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const worker_mod = @import("worker.zig");
+const ops_mod = @import("ops.zig");
 const recent = @import("recent.zig");
 const collation = @import("collation.zig");
 const fold = @import("ui").fold;
@@ -128,7 +130,143 @@ pub fn isStaleSnapshot(snapshot_request_id: u64, active_request_id: u64) bool {
     return snapshot_request_id < active_request_id;
 }
 
+/// Damage only the surfaces that display file-operation byte progress.
+/// Structural changes still use invalidate(), because they can change layout.
+fn damageFolderProgressBatch(
+    self: *App,
+    runner: *ops_mod.JobRunner,
+    paths: []const []const u8,
+    indices: []const usize,
+) void {
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "progress_damage_lookup", paths.len);
+
+    var results: [64]?f64 = undefined;
+    var matched: [64]bool = undefined;
+    runner.progressForPaths(paths, results[0..paths.len], matched[0..paths.len]) catch return;
+
+    for (results[0..paths.len], matched[0..paths.len], indices) |result, was_matched, index| {
+        if (!was_matched or result == null) continue;
+        const icon = self.itemIconRect(@intCast(index));
+        const ring_size = @min(26.0, icon.w);
+        self.addDamageRegion(self.clipToViewport(.{
+            .x = icon.x + (icon.w - ring_size) / 2 - 2,
+            .y = icon.y + (icon.w - ring_size) / 2 - 2,
+            .w = ring_size + 4,
+            .h = ring_size + 4,
+        }));
+    }
+}
+
+fn damageJobProgress(
+    self: *App,
+    damage_surfaces: bool,
+    damage_tooltip: bool,
+    previous_file_path: []const u8,
+    current_file_path: []const u8,
+) void {
+    if (damage_surfaces) {
+        if (self.transfer_view.active) {
+            // The file operation is the final row in the Transfers hub.
+            const row = @import("app_torrents.zig").fileOperationRowRect(
+                self,
+                self.torrents.items().len,
+            );
+            self.addDamageRegion(self.clipToViewport(row));
+        } else if (self.job_runner) |runner| {
+            // Parent-folder progress rings are drawn inside visible item icons.
+            const columns = self.columns();
+            const first = @divTrunc(self.scroll_y, self.rowHeight()) * columns;
+            const last = @min(
+                @as(i32, @intCast(self.items.items.len)),
+                (@divTrunc(
+                    self.scroll_y + @max(0, self.contentBottom() - self.viewTop()),
+                    self.rowHeight(),
+                ) + 1) * columns,
+            );
+
+            var paths: [64][]const u8 = undefined;
+            var indices: [64]usize = undefined;
+            var path_count: usize = 0;
+            var index = first;
+            while (index < last) : (index += 1) {
+                const item = self.items.items[@intCast(index)];
+                if (item.is_dir and !item.is_symlink) {
+                    paths[path_count] = item.path;
+                    indices[path_count] = @intCast(index);
+                    path_count += 1;
+                    if (path_count == paths.len) {
+                        damageFolderProgressBatch(self, runner, paths[0..path_count], indices[0..path_count]);
+                        path_count = 0;
+                    }
+                }
+                const active_file =
+                    (current_file_path.len > 0 and std.mem.eql(u8, item.path, current_file_path)) or
+                    (previous_file_path.len > 0 and
+                    !std.mem.eql(u8, previous_file_path, current_file_path) and
+                    std.mem.eql(u8, item.path, previous_file_path));
+                if (active_file) {
+                    if (item.transfer_ghost) {
+                        const row_y = self.viewTop() + self.itemInset() +
+                            @divTrunc(index, columns) * self.rowHeight() - self.scroll_y;
+                        self.addDamageRegion(self.clipToViewport(.{
+                            .x = @floatFromInt(self.sidebarWidth()),
+                            .y = @floatFromInt(row_y),
+                            .w = @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter()),
+                            .h = @floatFromInt(self.cardHeight()),
+                        }));
+                    } else {
+                        const icon = self.itemIconRect(@intCast(index));
+                        const ring_size = @min(26.0, icon.w);
+                        self.addDamageRegion(self.clipToViewport(.{
+                            .x = icon.x + (icon.w - ring_size) / 2 - 2,
+                            .y = icon.y + (icon.w - ring_size) / 2 - 2,
+                            .w = ring_size + 4,
+                            .h = ring_size + 4,
+                        }));
+                    }
+                }
+            }
+            if (path_count > 0) {
+                damageFolderProgressBatch(self, runner, paths[0..path_count], indices[0..path_count]);
+            }
+        }
+
+        // The sidebar progress row remains visible alongside either main view.
+        const transfers = self.sidebarLayout().cards[
+            @intFromEnum(@import("app_model.zig").SidebarSection.transfers)
+        ];
+        if (transfers.visible and transfers.expanded and self.sidebarWidth() > 0) {
+            const area = @import("app_sidebar_paint.zig").fileOpsBox(self);
+            if (area.w >= 120) {
+                self.addDamageRegion(.{
+                    .x = @floatCast(area.x),
+                    .y = @floatCast(area.y),
+                    .w = @floatCast(area.w),
+                    .h = @floatCast(area.h),
+                });
+            }
+        }
+    }
+
+    // The tooltip is the only other consumer of the live byte/rate counters.
+    if (damage_tooltip) {
+        if (@import("app_transfer_tip.zig").bounds(
+            self.w,
+            self.h,
+            self.mouse_x,
+            self.mouse_y,
+            2,
+        )) |rect| {
+            self.addDamageRegion(rect);
+        }
+    }
+}
+
 pub fn sync(self: *App) void {
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "sync", self.items.items.len);
+
     if (self.worker.takeApplicationNotice()) |notice| self.setStatusNotice(notice.message, notice.failed);
     if (self.worker.takeThemeNotice()) |notice| {
         defer self.worker.allocator.free(notice);
@@ -165,6 +303,35 @@ pub fn sync(self: *App) void {
     }
     if (self.job_runner) |runner| {
         const progress = runner.pollProgress();
+        const current_file_path = if (progress.state == .running or progress.state == .paused)
+            progress.current_file_path[0..progress.current_file_path_len]
+        else
+            "";
+        const previous_file_path = self.job_current_file_path[0..self.job_current_file_path_len];
+        const file_path_changed = !std.mem.eql(u8, previous_file_path, current_file_path);
+        const sample_at = nowMs();
+        var rate_changed = false;
+        if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
+            if (self.job_rate_sample_at == 0) {
+                self.job_rate_sample_at = sample_at;
+                self.job_rate_sample_bytes = progress.transferred_bytes;
+                self.job_bytes_per_second = 0;
+            } else if (sample_at - self.job_rate_sample_at >= 500) {
+                const elapsed = @max(1, sample_at - self.job_rate_sample_at);
+                const transferred = progress.transferred_bytes -| self.job_rate_sample_bytes;
+                self.job_bytes_per_second = if (progress.state == .running)
+                    @intFromFloat(@as(f64, @floatFromInt(transferred)) * 1000.0 / @as(f64, @floatFromInt(elapsed)))
+                else
+                    0;
+                self.job_rate_sample_at = sample_at;
+                self.job_rate_sample_bytes = progress.transferred_bytes;
+                rate_changed = true;
+            }
+        } else {
+            self.job_rate_sample_at = 0;
+            self.job_rate_sample_bytes = 0;
+            self.job_bytes_per_second = 0;
+        }
         if (progress.state == .waiting_conflict) {
             if (self.dialog == null or self.dialog.?.kind != .conflict) {
                 self.openConflictDialog(progress.conflict_item_name);
@@ -176,6 +343,7 @@ pub fn sync(self: *App) void {
         if (progress.state == .finished) {
             if (self.job_was_running) {
                 self.job_was_running = false;
+                self.transfer_tree_state.markDirty();
                 self.setStatusNotice(progress.status_message, progress.is_error);
                 if (self.clipboard_cut and !self.clipboard_is_text and self.job_cut_revision == self.clipboard_revision) {
                     var i: usize = 0;
@@ -195,13 +363,69 @@ pub fn sync(self: *App) void {
                     }
                 } else self.refresh();
             }
-        } else if (progress.state == .running or progress.state == .waiting_conflict) {
+        } else if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
             self.job_was_running = true;
-            if (self.job_progress != progress.processed_items or self.job_state != progress.state) self.invalidate();
+            const state_changed = self.job_state != progress.state;
+            const processed_changed = self.job_progress != progress.processed_items;
+            const bytes_changed = self.job_transferred_bytes != progress.transferred_bytes;
+            const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
+            // Active-file transitions only change progress presentation.
+            // They do not change the direct-child transfer rows for a
+            // directory transfer, so do not rebuild the entire listing.
+            if (state_changed or
+                ((runner.kind == .copy or runner.kind == .move) and processed_changed))
+            {
+                self.transfer_rows_dirty = true;
+            }
+            if (state_changed or
+                ((runner.kind == .copy or runner.kind == .move) and processed_changed))
+            {
+                self.transfer_tree_state.markDirty();
+            }
+            if (state_changed) {
+                self.invalidate();
+            } else if (processed_changed or bytes_changed or file_path_changed or
+                (rate_changed and tooltip_hovered))
+            {
+                damageJobProgress(
+                    self,
+                    processed_changed or bytes_changed or file_path_changed,
+                    tooltip_hovered,
+                    previous_file_path,
+                    current_file_path,
+                );
+            }
+        }
+        if (file_path_changed) {
+            self.job_current_file_path_len = 0;
+            if (current_file_path.len <= self.job_current_file_path.len) {
+                @memcpy(self.job_current_file_path[0..current_file_path.len], current_file_path);
+                self.job_current_file_path_len = current_file_path.len;
+            }
         }
         self.job_progress = progress.processed_items;
         self.job_state = progress.state;
+        self.job_transferred_bytes = progress.transferred_bytes;
     }
+
+    const file_ops_active = self.job_state == .running or
+        self.job_state == .paused or
+        self.job_state == .waiting_conflict;
+    const torrent_active = for (self.torrents.items()) |transfer| {
+        if (transfer.@"error".len == 0 and
+            !transfer.finished and
+            !(transfer.pending and transfer.metadata))
+        {
+            break true;
+        }
+    } else false;
+    const transfers_active = file_ops_active or torrent_active;
+    if (transfers_active and !self.transfers_were_active) {
+        self.sidebar_expanded[@intFromEnum(@import("app_model.zig").SidebarSection.transfers)] = true;
+        self.invalidate();
+    }
+    self.transfers_were_active = transfers_active;
+
     if (self.status_notice != null and nowMs() >= self.status_notice_until) {
         self.allocator.free(self.status_notice.?);
         self.status_notice = null;
@@ -215,7 +439,10 @@ pub fn sync(self: *App) void {
     // the first loop after release applies it.
     if (self.selection_band != null or self.drag_origin != null) return;
     const snap = self.worker.takeSnapshot() orelse {
-        if (self.torrents.rows_changed) self.rebuildView();
+        if (self.torrents.rows_changed or self.transfer_rows_dirty) {
+            self.transfer_rows_dirty = false;
+            self.rebuildView();
+        }
         return;
     };
     if (isStaleSnapshot(snap.request_id, self.active_request_id)) {
@@ -229,6 +456,7 @@ pub fn sync(self: *App) void {
     self.clampSidebarScroll();
     self.loading = false;
     self.rebuildView();
+    self.transfer_rows_dirty = false;
     if (self.restore_view) self.restoreView();
     if (self.initial_selection) |path| {
         self.initial_selection = null;
@@ -315,6 +543,9 @@ pub fn lessThan(mode: Sort, a: ViewItem, b: ViewItem) bool {
 
 pub fn rebuildView(self: *App) void {
     const snap = self.snapshot orelse return;
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "listing_rebuild", self.items.items.len);
+
     self.torrents.rows_changed = false;
     // Keep old storage alive until names, selection and focus have been copied.
     // Both a worker refresh and a local filter can rebuild this view.
@@ -379,6 +610,7 @@ pub fn rebuildView(self: *App) void {
             }) catch continue;
         }
         self.appendTorrentRows(mem, &selected_paths);
+        self.appendTransferRows(mem, &selected_paths);
         // Transfer placeholders and synthetic snapshots have no worker key.
         // Give those rows keys from the same locale before sorting so every
         // comparison uses one collation, including mixed real/stub folders.

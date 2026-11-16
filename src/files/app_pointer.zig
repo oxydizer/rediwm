@@ -19,7 +19,14 @@ const gitBranchRow = App.gitBranchRow;
 // Input handlers
 pub fn hoverKey(self: *App) usize {
     if (self.dialog) |dlg| if (dlg.kind == .transfers) return self.transfersHover();
-    if (self.dialog == null and self.torrentSidebarHit(self.mouse_x, self.mouse_y)) return std.math.maxInt(usize) - 2001;
+    if (self.dialog == null) {
+        const file_ops_hover = self.fileOpsSidebarHover(self.mouse_x, self.mouse_y);
+        if (file_ops_hover != 0) return file_ops_hover;
+    }
+    if (self.dialog == null) {
+        const torrent_hover = self.torrentSidebarHover(self.mouse_x, self.mouse_y);
+        if (torrent_hover != 0) return torrent_hover;
+    }
     const x = self.mouse_x;
     const y = self.mouse_y;
     if (self.dialog) |dlg| {
@@ -35,6 +42,7 @@ pub fn hoverKey(self: *App) usize {
         (x >= @as(f64, @floatFromInt(self.sidebarWidth())) and y < @as(f64, @floatFromInt(self.contentBottom()))))) return self.transferPaneHover();
     if (self.terminalHit(x, y)) |index| return 900 + index;
     if (self.sidebar_resize != null or self.overSidebarDivider(x, y)) return 0;
+    if (self.sidebarHeaderAt(x, y)) |section| return 940 + @as(usize, @intFromEnum(section));
     if (self.chooser) |opts| {
         if (y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) {
             for (0..4 + opts.choices.len) |i| {
@@ -134,6 +142,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     self.updateDialogSurface();
     self.updateItemSurface();
     self.damageToolbarProximity(old_x, old_y, x, y);
+    self.damageSidebarProximity(old_x, old_y, x, y);
     if (self.selection_band != null) self.updateSelectionBand();
     if (self.text_dragging) {
         self.placeCaret(x, true);
@@ -143,7 +152,17 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     if (self.menu != null) {
         if (self.menuHit(x, y)) |row| self.menu_selected = row;
     }
-    if (old_hover != self.hoverKey()) self.invalidateHover(old_hover, self.hoverKey());
+    const new_hover = self.hoverKey();
+    if (old_hover != new_hover) {
+        self.invalidateHover(old_hover, new_hover);
+    } else if (new_hover == std.math.maxInt(usize) - 2001 or
+        new_hover == std.math.maxInt(usize) - 2002)
+    {
+        // Sidebar transfer tooltips follow the pointer even while their
+        // owning hover key remains unchanged. Repaint to clear the old
+        // tooltip position before drawing it at the new one.
+        self.invalidate();
+    }
 
     if (self.sidebar_scroll_drag.active) {
         if (self.sidebarScrollbar()) |bar| {
@@ -502,10 +521,18 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             return;
         }
     }
-    if (self.torrentSidebarHit(x, y)) {
-        self.openTransfers();
-        return;
+    if (button == 0x110) {
+        if (self.sidebarHeaderAt(x, y)) |section| {
+            const index = @intFromEnum(section);
+            self.sidebar_expanded[index] = !self.sidebar_expanded[index];
+            self.clampSidebarScroll();
+            self.invalidate();
+            return;
+        }
     }
+    if (self.fileOpsSidebarClick(x, y)) return;
+    if (self.transferTreeClick(x, y)) return;
+    if (self.torrentSidebarClick(x, y)) return;
     if (self.ejectAt(x, y)) |k| {
         self.ejectDevice(k);
         return;

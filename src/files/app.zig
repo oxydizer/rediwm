@@ -36,6 +36,8 @@ const app_sidebar_paint = @import("app_sidebar_paint.zig");
 const app_scroll = @import("app_scroll.zig");
 const app_torrents = @import("app_torrents.zig");
 const app_torrent_rows = @import("app_torrent_rows.zig");
+const app_transfer_rows = @import("app_transfer_rows.zig");
+const app_transfer_tree = @import("app_transfer_tree.zig");
 const app_git_sidebar = @import("app_git_sidebar.zig");
 const app_opening = @import("app_opening.zig");
 const app_audio = @import("app_audio.zig");
@@ -64,6 +66,7 @@ pub const setSource = app_draw.setSource;
 pub const roundedRect = app_draw.roundedRect;
 pub const drawSpinner = app_draw.drawSpinner;
 pub const clipDamage = app_draw.clipDamage;
+pub const clipDamageRegions = app_draw.clipDamageRegions;
 pub const drawEllipsis = app_draw.drawEllipsis;
 pub const drawText = app_draw.drawText;
 pub const FontMetrics = app_draw.FontMetrics;
@@ -105,6 +108,8 @@ pub const App = struct {
     h: i32 = 540,
     dirty: bool = true,
     paint_damage: ?header.Rect = null,
+    progress_damage_regions: [128]header.Rect = undefined,
+    progress_damage_count: usize = 0,
     scale: i32 = 1,
 
     // Items and state
@@ -122,6 +127,9 @@ pub const App = struct {
     show_hidden: bool = false,
     list_view: bool = false,
     non_git_list_view: ?bool = null,
+    /// Each sidebar section expands independently. Places is open by default.
+    sidebar_expanded: [4]bool = .{ true, false, false, false },
+    transfers_were_active: bool = false,
     git_expanded: bool = true,
     /// The "Git View" checkbox: off shows a repository like any other folder.
     git_view: bool = true,
@@ -276,7 +284,15 @@ pub const App = struct {
     extract_picker_bytes: std.ArrayList(u8) = .empty,
     job_cut_revision: ?usize = null,
     job_progress: usize = std.math.maxInt(usize),
+    job_transferred_bytes: u64 = 0,
+    job_current_file_path: [4096]u8 = undefined,
+    job_current_file_path_len: usize = 0,
+    job_rate_sample_bytes: u64 = 0,
+    job_rate_sample_at: i64 = 0,
+    job_bytes_per_second: u64 = 0,
     job_state: ops_mod.JobState = .idle,
+    transfer_rows_dirty: bool = false,
+    transfer_tree_state: app_transfer_tree.State,
     status_notice: ?[]u8 = null,
     status_notice_until: i64 = 0,
     status_is_error: bool = false,
@@ -326,6 +342,7 @@ pub const App = struct {
             .home_dir = home_dir,
             .items_arena = std.heap.ArenaAllocator.init(allocator),
             .job_runner = ops_mod.JobRunner.init(allocator) catch null,
+            .transfer_tree_state = app_transfer_tree.State.init(allocator),
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
             .single_click_open = @import("settings.zig").singleClickOpen(),
@@ -379,6 +396,7 @@ pub const App = struct {
         if (self.preview_return_fd) |fd| _ = c.close(fd);
         if (self.editor_path) |path| self.allocator.free(path);
         if (self.job_runner) |runner| runner.deinit();
+        self.transfer_tree_state.deinit();
         self.clearFolderSizes();
         self.folder_sizes.deinit();
         if (self.dirsize_pool) |p| p.deinit();
@@ -436,6 +454,7 @@ pub const App = struct {
     pub fn invalidate(self: *App) void {
         self.dirty = true;
         self.paint_damage = null;
+        self.progress_damage_count = 0;
     }
 
     pub const scan_notice_delay_ms: i64 = 500;
@@ -464,6 +483,7 @@ pub const App = struct {
     // app_hover.zig
     pub const hoverBounds = app_hover.hoverBounds;
     pub const addDamage = app_hover.addDamage;
+    pub const addDamageRegion = app_hover.addDamageRegion;
     pub const invalidateHover = app_hover.invalidateHover;
     pub const clipToViewport = app_hover.clipToViewport;
     pub const hoveredPlace = app_hover.hoveredPlace;
@@ -480,6 +500,7 @@ pub const App = struct {
     pub const hoveredToolbarButton = app_hover.hoveredToolbarButton;
     pub const toolbarButtonProximity = app_hover.toolbarButtonProximity;
     pub const damageToolbarProximity = app_hover.damageToolbarProximity;
+    pub const damageSidebarProximity = app_hover.damageSidebarProximity;
     pub const stepHover = app_hover.stepHover;
     pub const damageHighlight = app_hover.damageHighlight;
     pub const unionRect = app_hover.unionRect;
@@ -793,21 +814,37 @@ pub const App = struct {
     pub const placePath = app_sidebar_paint.placePath;
     pub const drawPackPlaceIcon = app_sidebar_paint.drawPackPlaceIcon;
     pub const renderSidebar = app_sidebar_paint.renderSidebar;
+    pub const sidebarLayout = app_sidebar_paint.sidebarLayout;
+    pub const sidebarContentWidth = app_sidebar_paint.sidebarContentWidth;
+    pub const sidebarHeaderAt = app_sidebar_paint.sidebarHeaderAt;
+    pub const sidebarHeaderBounds = app_sidebar_paint.sidebarHeaderBounds;
+    pub const sidebarBodyY = app_sidebar_paint.sidebarBodyY;
     pub const renderPinDrop = app_sidebar_paint.renderPinDrop;
+    pub const fileOpsSidebarHeight = app_sidebar_paint.fileOpsSidebarHeight;
+    pub const fileOpsSidebarHit = app_sidebar_paint.fileOpsSidebarHit;
+    pub const fileOpsSidebarHover = app_sidebar_paint.fileOpsSidebarHover;
+    pub const fileOpsSidebarClick = app_sidebar_paint.fileOpsSidebarClick;
+    pub const renderFileOpsSidebar = app_sidebar_paint.renderFileOpsSidebar;
+pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
 
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
+    pub const transferTreeBox = app_sidebar_paint.transferTreeBox;
+    pub const transferTreeClick = app_sidebar_paint.transferTreeClick;
+    pub const renderTransferTree = app_sidebar_paint.renderTransferTree;
 
     pub const startTorrents = app_torrents.startTorrents;
     pub const stepTorrents = app_torrents.stepTorrents;
     pub const torrentForItem = app_torrent_rows.torrentForItem;
     pub const hasFolderTransfers = app_torrent_rows.hasFolderTransfers;
     pub const appendTorrentRows = app_torrent_rows.appendTorrentRows;
+    pub const appendTransferRows = app_transfer_rows.appendTransferRows;
     pub const inlineTorrentWidth = app_torrent_rows.inlineTorrentWidth;
     pub const renderInlineTorrent = app_torrent_rows.renderInlineTorrent;
     pub const inlineTorrentHit = app_torrent_rows.inlineTorrentHit;
     pub const inlineTorrentClick = app_torrent_rows.inlineTorrentClick;
     pub const renderTorrentTip = app_torrent_rows.renderTorrentTip;
+pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const toggleTorrent = app_torrents.toggleTorrent;
     pub const openTorrentDetails = app_torrents.openTorrentDetails;
     pub const openTransfers = app_torrents.openTransfers;
@@ -821,6 +858,8 @@ pub const App = struct {
     pub const confirmTorrent = app_torrents.confirmTorrent;
     pub const torrentSidebarHeight = app_torrents.torrentSidebarHeight;
     pub const torrentSidebarHit = app_torrents.torrentSidebarHit;
+    pub const torrentSidebarHover = app_torrents.torrentSidebarHover;
+    pub const torrentSidebarClick = app_torrents.torrentSidebarClick;
     pub const renderTorrentSidebar = app_torrents.renderTorrentSidebar;
     pub const transfersHover = app_torrents.transfersHover;
     pub const transfersClick = app_torrents.transfersClick;

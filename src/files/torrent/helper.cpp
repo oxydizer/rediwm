@@ -27,7 +27,11 @@ void create_engine() {
   lt::settings_pack settings;
   settings.set_int(lt::settings_pack::alert_mask,
                    lt::alert_category::error | lt::alert_category::storage |
-                       lt::alert_category::status);
+                       lt::alert_category::status |
+                       lt::alert_category::tracker |
+                       lt::alert_category::connect |
+                       lt::alert_category::peer |
+                       lt::alert_category::port_mapping);
   settings.set_int(lt::settings_pack::connections_limit, 100);
   settings.set_int(lt::settings_pack::upload_rate_limit, 1024 * 1024);
   settings.set_bool(lt::settings_pack::enable_dht, false);
@@ -41,6 +45,39 @@ void create_engine() {
     (void)written; // EAGAIN means an alert wake is already pending.
   });
 }
+
+static void diagnose_alert(lt::alert const *alert) {
+  const char *kind = nullptr;
+  if (lt::alert_cast<lt::tracker_announce_alert>(alert))
+    kind = "tracker announce";
+  else if (lt::alert_cast<lt::tracker_reply_alert>(alert))
+    kind = "tracker reply";
+  else if (lt::alert_cast<lt::tracker_error_alert>(alert))
+    kind = "tracker error";
+  else if (lt::alert_cast<lt::tracker_warning_alert>(alert))
+    kind = "tracker warning";
+  else if (lt::alert_cast<lt::peer_connect_alert>(alert))
+    kind = "peer connected";
+  else if (lt::alert_cast<lt::peer_disconnected_alert>(alert))
+    kind = "peer disconnected";
+  else if (lt::alert_cast<lt::peer_error_alert>(alert))
+    kind = "peer error";
+  else if (lt::alert_cast<lt::peer_blocked_alert>(alert))
+    kind = "peer blocked";
+  else if (lt::alert_cast<lt::portmap_alert>(alert))
+    kind = "port mapping";
+  else if (lt::alert_cast<lt::portmap_error_alert>(alert))
+    kind = "port mapping error";
+  else if (lt::alert_cast<lt::listen_failed_alert>(alert))
+    kind = "listen failed";
+  else if (lt::alert_cast<lt::udp_error_alert>(alert))
+    kind = "UDP error";
+
+  if (kind)
+    std::cerr << "Transfers: [" << kind << "] "
+              << alert->message() << '\n';
+}
+
 void wake_engine() {
   if (!session) {
     create_engine();
@@ -139,6 +176,7 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
   std::vector<lt::alert *> events;
   session->pop_alerts(&events);
   for (auto alert : events) {
+    diagnose_alert(alert);
     auto ta = dynamic_cast<lt::torrent_alert *>(alert);
     if (!ta)
       continue;

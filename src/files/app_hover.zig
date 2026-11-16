@@ -16,6 +16,10 @@ const pin_base = App.pin_base;
 
 pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
     if (key >= 920 and key < 926) return @import("app_audio_bar.zig").rect(self);
+    if (key >= 940 and key < 944) {
+        const card = self.sidebarLayout().cards[key - 940];
+        return self.sidebarHeaderBounds(card);
+    }
     if (key >= std.math.maxInt(usize) - 4096) return null;
     if (key >= 900 and key < 904) return .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) };
     if (key == 0) return .{ .x = 0, .y = 0, .w = 0, .h = 0 };
@@ -64,8 +68,58 @@ pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
 /// absorbs it; damage left over from the last paint is not pending, or
 /// every hover would grow the next repaint by all the ones before it.
 pub fn addDamage(self: *App, rect: header.Rect) void {
-    if (self.dirty and self.paint_damage == null) return;
-    self.paint_damage = if (self.dirty) unionRect(self.paint_damage.?, rect) else rect;
+    if (rect.w <= 0 or rect.h <= 0) return;
+    if (self.dirty and self.paint_damage == null and self.progress_damage_count == 0) return;
+
+    if (!self.dirty) {
+        self.paint_damage = rect;
+        self.progress_damage_count = 0;
+        self.dirty = true;
+        return;
+    }
+
+    if (self.paint_damage) |previous| {
+        self.paint_damage = unionRect(previous, rect);
+    } else {
+        var combined = rect;
+        for (self.progress_damage_regions[0..self.progress_damage_count]) |region| {
+            combined = unionRect(combined, region);
+        }
+        self.paint_damage = combined;
+        self.progress_damage_count = 0;
+    }
+    self.dirty = true;
+}
+
+/// Queues an independent region for progress-only repaints. If the bounded
+/// queue fills, safely fall back to the existing single-rectangle path.
+pub fn addDamageRegion(self: *App, rect: header.Rect) void {
+    if (rect.w <= 0 or rect.h <= 0) return;
+    if (self.dirty and self.paint_damage == null and self.progress_damage_count == 0) return;
+
+    if (!self.dirty) {
+        self.paint_damage = null;
+        self.progress_damage_count = 0;
+        self.dirty = true;
+    }
+
+    if (self.paint_damage) |previous| {
+        self.progress_damage_regions[0] = previous;
+        self.progress_damage_count = 1;
+        self.paint_damage = null;
+    }
+
+    if (self.progress_damage_count == self.progress_damage_regions.len) {
+        var combined = self.progress_damage_regions[0];
+        for (self.progress_damage_regions[1..self.progress_damage_count]) |region| {
+            combined = unionRect(combined, region);
+        }
+        self.paint_damage = unionRect(combined, rect);
+        self.progress_damage_count = 0;
+    } else {
+        self.progress_damage_regions[self.progress_damage_count] = rect;
+        self.progress_damage_count += 1;
+    }
     self.dirty = true;
 }
 
@@ -228,13 +282,26 @@ pub fn updateSidebarSurface(self: *App) void {
         _ = self.sidebar_surface.pointerMotion(null);
         return;
     };
+    const is_places = index < self.deviceBase();
+    const body_y = self.sidebarBodyY(
+        if (is_places) .places else .disks,
+        self.mouse_x,
+        self.mouse_y,
+    ) orelse {
+        _ = self.sidebar_surface.pointerMotion(null);
+        return;
+    };
     const eject = self.ejectAt(self.mouse_x, self.mouse_y);
     const key: usize = if (eject) |k| 700 + k else switch (self.rowKind(index)) {
         .builtin => |b| 300 + b,
         .pin => |j| 800 + j,
         .device => |k| 600 + k,
     };
-    const bounds = if (eject != null) self.ejectRect(index) else self.placeRect(index);
+    var bounds = if (eject != null) self.ejectRect(index) else self.placeRect(index);
+    bounds.y += self.mouse_y - body_y;
+    const layout = self.sidebarLayout();
+    const card = layout.cards[if (is_places) 0 else 1];
+    const body_top = card.y + card.header_height;
 
     _ = self.sidebar_surface.pointerMotion(.{
         .id = @intCast(key),
@@ -245,10 +312,10 @@ pub fn updateSidebarSurface(self: *App) void {
             .h = @floatCast(bounds.h),
         },
         .clip = .{
-            .x = 0,
-            .y = @floatFromInt(self.contentTop()),
-            .w = @floatFromInt(self.sidebarWidth()),
-            .h = @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()),
+            .x = 8,
+            .y = @floatFromInt(body_top),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 8)),
+            .h = @floatFromInt(card.body_height),
         },
         .role = .interactive,
     });
@@ -475,6 +542,87 @@ pub fn damageToolbarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, ne
 
         const rect = header.rect(self.w, self.inRepository(), action);
         damage = if (damage) |current| unionRect(current, rect) else rect;
+    }
+    if (damage) |rect| self.addDamage(rect);
+}
+
+/// Repaint sidebar rows whose pointer-proximity light may have changed.
+pub fn damageSidebarProximity(self: *App, old_x: f64, old_y: f64, new_x: f64, new_y: f64) void {
+    const reach = ui_theme.global.border_glow_reach;
+    if (!button_widget.proximityGlowVisible(ui_theme.global)) return;
+
+    var damage: ?header.Rect = null;
+    const layout = self.sidebarLayout();
+    for (0..self.rowCount()) |index| {
+        if (!self.placeVisible(index)) continue;
+
+        const card_index: usize = if (index < self.deviceBase()) 0 else 1;
+        const card = layout.cards[card_index];
+        if (!card.expanded) continue;
+
+        const source_top = if (card_index == 0)
+            self.contentTop() - self.sidebar_scroll
+        else
+            self.pinRowY(self.pins.items.items.len) + 24;
+        var row = self.placeRect(index);
+        row.y += @floatFromInt(card.y + card.header_height - source_top);
+
+        const rect: button_widget.Rect = .{
+            .x = @floatCast(row.x),
+            .y = @floatCast(row.y),
+            .w = @floatCast(row.w),
+            .h = @floatCast(row.h),
+        };
+        const clip: button_widget.Rect = .{
+            .x = 8,
+            .y = @floatFromInt(card.y + card.header_height),
+            .w = @floatFromInt(@max(0, self.sidebarWidth() - self.scrollbarGutter() - 8)),
+            .h = @floatFromInt(card.body_height),
+        };
+        const before = button_widget.sampleProximity(rect, @floatCast(old_x), @floatCast(old_y), clip);
+        const after = button_widget.sampleProximity(rect, @floatCast(new_x), @floatCast(new_y), clip);
+        if (@min(before.distance, after.distance) > reach) continue;
+
+        const row_damage: header.Rect = .{
+            .x = row.x,
+            .y = row.y,
+            .w = row.w,
+            .h = row.h,
+        };
+        damage = if (damage) |current| unionRect(current, row_damage) else row_damage;
+    }
+
+    // Card headers use the same proximity light as their rows.
+    for (layout.cards) |card| {
+        const bounds = self.sidebarHeaderBounds(card) orelse continue;
+
+        const rect: button_widget.Rect = .{
+            .x = 12,
+            .y = @floatCast(bounds.y + 2),
+            .w = @floatCast(@max(0, bounds.w - 8)),
+            .h = 28,
+        };
+        const clip: button_widget.Rect = .{
+            .x = @floatCast(bounds.x),
+            .y = @floatCast(bounds.y),
+            .w = @floatCast(bounds.w),
+            .h = @floatCast(bounds.h),
+        };
+        const before = button_widget.sampleProximity(rect, @floatCast(old_x), @floatCast(old_y), clip);
+        const after = button_widget.sampleProximity(rect, @floatCast(new_x), @floatCast(new_y), clip);
+        if (@min(before.distance, after.distance) > reach) continue;
+
+        // Span the card's full width, not just the glow's: this rect merges
+        // with the row damage and reaches the card's rounded top corners.
+        // A clip that cuts those arcs rasterizes the card fill a level
+        // differently from a complete repaint.
+        const header_damage: header.Rect = .{
+            .x = bounds.x,
+            .y = rect.y,
+            .w = bounds.w,
+            .h = rect.h,
+        };
+        damage = if (damage) |current| unionRect(current, header_damage) else header_damage;
     }
     if (damage) |rect| self.addDamage(rect);
 }

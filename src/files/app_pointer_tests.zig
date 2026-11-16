@@ -5,6 +5,7 @@ const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const nowMs = @import("app_draw.zig").nowMs;
 const app_tests = @import("app_tests.zig");
+const ops_mod = @import("ops.zig");
 const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
 
@@ -381,6 +382,57 @@ test "sidebar scrollbar pages, drags outside and resets on resize" {
     try std.testing.expect(app.sidebar_scroll_appearance.deadline == null);
     app.resize(360, 240);
     try std.testing.expect(app.sidebarScrollbar() == null);
+}
+
+test "Transfers scroll extent includes an active file-operation row" {
+    var app = try testApp();
+    defer app.deinit();
+
+    app.job_runner = try ops_mod.JobRunner.init(app.allocator);
+    app.transfer_view.active = true;
+    const idle_height = app.contentHeight();
+    const runner = app.job_runner.?;
+
+    runner.state = .running;
+    try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
+
+    runner.state = .paused;
+    try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
+
+    runner.state = .waiting_conflict;
+    try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
+
+    runner.state = .finished;
+    try std.testing.expectEqual(idle_height, app.contentHeight());
+}
+
+test "Transfers toolbar pauses, resumes and cancels a selected file operation" {
+    var app = try testApp();
+    defer app.deinit();
+
+    app.job_runner = try ops_mod.JobRunner.init(app.allocator);
+    app.transfer_view.active = true;
+    app.transfer_view.row = 0;
+
+    const runner = app.job_runner.?;
+    runner.kind = .copy;
+    runner.state = .running;
+
+    const scale = @min(1.0, @max(0.0, (@as(f32, @floatFromInt(app.w)) - 64) / 424));
+    const add_width = 112 * scale;
+    const pause_x: f64 = 12 + add_width + 8 + 1;
+    const cancel_x: f64 = 12 + add_width + 8 + 92 * scale + 8 + 1;
+
+    try std.testing.expect(app.transferPaneClick(pause_x, 65, 0x110));
+    try std.testing.expect(runner.pause_requested);
+
+    runner.state = .paused;
+    try std.testing.expect(app.transferPaneClick(pause_x, 65, 0x110));
+    try std.testing.expectEqual(ops_mod.JobState.running, runner.state);
+    try std.testing.expect(!runner.pause_requested);
+
+    try std.testing.expect(app.transferPaneClick(cancel_x, 65, 0x110));
+    try std.testing.expect(runner.cancel_flag.load(.acquire));
 }
 
 test "file selection fades in and out while logical selection is immediate" {
