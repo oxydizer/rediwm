@@ -143,7 +143,13 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
             self.transfer_tree_state.rebuild(runner) catch {};
         }
     }
-    const transfer_tree_height: i32 = if (self.transfer_tree_state.tree) |*tree|
+    const transfer_cancelled = if (self.job_runner) |runner| blk: {
+        const progress = runner.pollProgress();
+        break :blk progress.state == .finished and progress.cancelled;
+    } else false;
+    const transfer_tree_height: i32 = if (transfer_cancelled)
+        0
+    else if (self.transfer_tree_state.tree) |*tree|
         (if (tree.nodes.items.len > 0)
             @as(i32, @intCast(self.transfer_tree_state.visibleCount(tree) * 25 + 8))
         else

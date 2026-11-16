@@ -127,6 +127,33 @@ test "sidebar hides Drives and Transfers cards when they have no content" {
     try std.testing.expect(!layout.cards[@intFromEnum(app_model.SidebarSection.transfers)].visible);
 }
 
+test "cancelled transfer does not keep Transfers visible through its completed root" {
+    var app = try testApp();
+    defer app.deinit();
+
+    if (app.job_runner == null) {
+        app.job_runner = try @import("ops.zig").JobRunner.init(app.allocator);
+    }
+    const runner = app.job_runner.?;
+    try runner.manifest.append(
+        "/tmp/source",
+        "",
+        "/tmp/destination",
+        0,
+        .directory,
+        0,
+    );
+    runner.manifest.entries.items[0].state = .completed;
+    runner.state = .finished;
+    runner.cancel_flag.store(true, .release);
+    app.transfer_tree_state.markDirty();
+
+    const layout = app.sidebarLayout();
+    try std.testing.expect(
+        !layout.cards[@intFromEnum(app_model.SidebarSection.transfers)].visible,
+    );
+}
+
 test "collapsing sidebar section while scrolled clamps the scroll offset" {
     var app = try testApp();
     defer app.deinit();
