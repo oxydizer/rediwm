@@ -44,13 +44,24 @@ pub const Ime = struct {
         self.commit.clearRetainingCapacity();
         self.preedit.clearRetainingCapacity();
     }
-    fn event(_: *zwp.TextInputV3, ev: zwp.TextInputV3.Event, self: *Ime) void {
+    fn event(input: *zwp.TextInputV3, ev: zwp.TextInputV3.Event, self: *Ime) void {
         switch (ev) {
             .enter => {
                 self.entered = true;
                 self.revision = std.math.maxInt(usize);
             },
             .leave => {
+                // enable belongs to the surface from enter: disable it before
+                // dropping that surface, or the compositor still believes the
+                // input is enabled and a later enable/commit after re-entering
+                // changes nothing. No enable event then reaches the relay, so
+                // the input method is never activated again (window switching
+                // silently stops composition).
+                if (self.enabled) {
+                    input.disable();
+                    input.commit();
+                    self.serial +%= 1;
+                }
                 self.waiting_for_done = false;
                 self.entered = false;
                 self.enabled = false;

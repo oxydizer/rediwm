@@ -14,6 +14,9 @@ pub const qt_platform = "qt5ct"; // qt6ct also advertises this plugin key.
 /// Fusion with neutral title bars (src/qt_style/); Fusion where it is missing.
 pub const qt_style = "RediWM";
 pub const follow = @import("app_theme_follow.zig");
+test {
+    _ = follow;
+}
 
 pub fn configHome(a: Allocator, env: std.process.Environ) ![]u8 {
     if (env.getPosix("XDG_CONFIG_HOME")) |path| if (std.fs.path.isAbsolute(path)) return a.dupe(u8, path);
@@ -100,16 +103,96 @@ pub fn isDark(p: Palette) bool {
     return contrast(p.bg)[0] == 255;
 }
 
-fn contrast(c: Color) Color {
-    var luminance: f32 = 0;
+fn luminance(c: Color) f32 {
+    var y: f32 = 0;
     for (c, [_]f32{ 0.2126, 0.7152, 0.0722 }) |byte, weight| {
         const v = @as(f32, @floatFromInt(byte)) / 255;
-        luminance += weight * (if (v <= 0.04045) v / 12.92 else std.math.pow(f32, (v + 0.055) / 1.055, 2.4));
+        y += weight * (if (v <= 0.04045) v / 12.92 else std.math.pow(f32, (v + 0.055) / 1.055, 2.4));
     }
-    return if (luminance > 0.179) .{ 0, 0, 0 } else .{ 255, 255, 255 };
+    return y;
 }
 
-fn hex(c: Color) [7]u8 {
+fn contrast(c: Color) Color {
+    return if (luminance(c) > 0.179) .{ 0, 0, 0 } else .{ 255, 255, 255 };
+}
+
+/// CIE L*: 0 is black, 100 white.
+fn lightness(c: Color) f32 {
+    const y = luminance(c);
+    return if (y > 216.0 / 24389.0) 116 * std.math.cbrt(y) - 16 else y * 24389.0 / 27.0;
+}
+
+/// L* between a browser's tab strip and its toolbar, which is also the active
+/// tab. Chrome's own themes keep 10, but in RediWM's darker palettes that left
+/// the active tab hard to find, and Chromium's Qt mode lifts a dark frame.
+pub const frame_distance: f32 = 14;
+
+/// Chromium's frame (its tab strip) beside `toolbar`: `bg`, darkened until the
+/// toolbar stands `frame_distance` above it (at most to black), or lightened
+/// when the toolbar is too dark for even half of that. src/qt_style/ derives
+/// the Qt frame the same way.
+pub fn frame(bg: Color, toolbar: Color) Color {
+    const goal = lightness(toolbar);
+    if (lightness(bg) <= goal - frame_distance) return bg;
+    const darken = goal >= frame_distance / 2;
+    const target: Color = if (darken) .{ 0, 0, 0 } else .{ 255, 255, 255 };
+    var low: f32 = 0;
+    var high: f32 = 1;
+    for (0..16) |_| {
+        const mid = (low + high) / 2;
+        const l = lightness(blend(target, bg, mid));
+        if (if (darken) l <= goal - frame_distance else l >= goal + frame_distance) high = mid else low = mid;
+    }
+    return blend(target, bg, high);
+}
+
+/// `c` moved toward white or black until its L* reaches `goal`.
+fn toLightness(c: Color, goal: f32) Color {
+    const lighten = lightness(c) < goal;
+    const target: Color = if (lighten) .{ 255, 255, 255 } else .{ 0, 0, 0 };
+    var low: f32 = 0;
+    var high: f32 = 1;
+    for (0..16) |_| {
+        const mid = (low + high) / 2;
+        const l = lightness(blend(target, c, mid));
+        if (if (lighten) l >= goal else l <= goal) high = mid else low = mid;
+    }
+    return blend(target, c, high);
+}
+
+/// The colours Chromium browsers get for a light or dark preference. Chromium
+/// takes only some colours from the toolkit and draws the rest (print preview,
+/// dropdown lists, settings pages, menu shortcuts) from its own scheme for the
+/// preference, so toolkit colours of the other darkness gave white text on
+/// white. The variant keeps the palette's tint and accent at muted levels,
+/// neither white nor black; a palette that already matches is kept as it is.
+pub fn browserPalette(p: Palette, dark: bool) Palette {
+    if (isDark(p) == dark) return p;
+    const Levels = struct { bg: f32, toolbar: f32, hover: f32, border: f32, fg: f32 };
+    const l: Levels = if (dark)
+        .{ .bg = 16, .toolbar = 24, .hover = 30, .border = 38, .fg = 90 }
+    else
+        .{ .bg = 80, .toolbar = 88, .hover = 82, .border = 64, .fg = 14 };
+    const bg = toLightness(p.bg, l.bg);
+    const fg = toLightness(p.bg, l.fg);
+    const toolbar = toLightness(p.bg, l.toolbar);
+    return .{
+        .bg = bg,
+        .fg = fg,
+        .toolbar = toolbar,
+        .sidebar = bg,
+        .sidebar_fg = fg,
+        .item = toolbar,
+        .hover = toLightness(p.bg, l.hover),
+        .border = toLightness(p.bg, l.border),
+        .accent = p.accent,
+        .on_accent = p.on_accent,
+        .danger = p.danger,
+        .dim = blend(fg, bg, 0.5),
+    };
+}
+
+pub fn hex(c: Color) [7]u8 {
     const digits = "0123456789abcdef";
     var result: [7]u8 = undefined;
     result[0] = '#';
@@ -181,9 +264,24 @@ pub fn gtkColors(a: Allocator, p: Palette, gtk4: bool) ![]u8 {
 }
 
 pub fn qtColors(a: Allocator, p: Palette) ![]u8 {
+    return qtSection(a, "ColorScheme", p);
+}
+
+/// The scheme qt5ct/qt6ct read, plus a `[Chromium]` group that only RediWM's
+/// Qt style reads: inside Chromium browsers it replaces the palette, because
+/// their colours have to match the light/dark preference (`browserPalette`).
+pub fn qtColorsWithBrowser(a: Allocator, p: Palette, browser: Palette) ![]u8 {
+    const scheme = try qtSection(a, "ColorScheme", p);
+    defer a.free(scheme);
+    const chromium = try qtSection(a, "Chromium", browser);
+    defer a.free(chromium);
+    return std.mem.concat(a, u8, &.{ scheme, "\n", chromium });
+}
+
+fn qtSection(a: Allocator, section: []const u8, p: Palette) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(a);
-    try out.appendSlice(a, "[ColorScheme]\n");
+    try appendFmt(&out, a, "[{s}]\n", .{section});
     // QPalette::ColorRole order, including NoRole, PlaceholderText and Qt6's
     // Accent. Extra roles are ignored by Qt5 and older Qt6.
     // QPalette has no separate foreground for AlternateBase. A contrasting
@@ -414,12 +512,13 @@ pub const Transaction = struct {
 };
 
 pub fn apply(a: Allocator, io: Io, home: []const u8, toolkit: Toolkit, p: Palette, support: QtSupport) !void {
-    return applyRevision(a, io, home, toolkit, p, support, null);
+    return applyRevision(a, io, home, toolkit, p, support, null, null);
 }
 
 /// A palette revision in the watched config directory wakes qt5ct/qt6ct even
-/// when only the palette in its colors/ subdirectory changed.
-pub fn applyRevision(a: Allocator, io: Io, home: []const u8, toolkit: Toolkit, p: Palette, support: QtSupport, revision: ?[]const u8) !void {
+/// when only the palette in its colors/ subdirectory changed. `browser` adds
+/// the Chromium colours (`qtColorsWithBrowser`) while following.
+pub fn applyRevision(a: Allocator, io: Io, home: []const u8, toolkit: Toolkit, p: Palette, support: QtSupport, revision: ?[]const u8, browser: ?Palette) !void {
     var arena: std.heap.ArenaAllocator = .init(a);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -433,7 +532,7 @@ pub fn applyRevision(a: Allocator, io: Io, home: []const u8, toolkit: Toolkit, p
         },
         .qt => {
             if (!support.qt5 and !support.qt6) return error.QtToolsMissing;
-            const colors = try qtColors(alloc, p);
+            const colors = if (browser) |b| try qtColorsWithBrowser(alloc, p, b) else try qtColors(alloc, p);
             for ([_][]const u8{ "qt5ct", "qt6ct" }, [_]bool{ support.qt5, support.qt6 }, [_]bool{ support.style5, support.style6 }) |version, installed, styled| {
                 if (!installed) continue;
                 const scheme = try std.fs.path.join(alloc, &.{ home, version, "colors/rediwm.conf" });
@@ -488,6 +587,44 @@ test "app palettes composite straight alpha and choose readable accent text" {
     try std.testing.expectEqual(Color{ 255, 255, 255 }, p.sidebar_fg);
     try std.testing.expectEqual(t.app_fg.?, t.forApp().window_fg);
     try std.testing.expectEqual((theme.Theme{}).window_fg, t.window_fg);
+}
+
+test "browser frames stand frame_distance below the toolbar" {
+    // A frame already far enough below is kept.
+    try std.testing.expectEqual(Color{ 0x10, 0x11, 0x12 }, frame(.{ 0x10, 0x11, 0x12 }, .{ 0x35, 0x36, 0x3a }));
+    try std.testing.expectEqual(Color{ 0xc0, 0xc0, 0xc0 }, frame(.{ 0xc0, 0xc0, 0xc0 }, .{ 255, 255, 255 }));
+    // RediWM's default window colour sits too close to the toolbar.
+    const dark = frame(.{ 0x18, 0x1c, 0x22 }, .{ 0x22, 0x28, 0x2e });
+    try std.testing.expect(lightness(.{ 0x22, 0x28, 0x2e }) - lightness(dark) >= frame_distance);
+    try std.testing.expect(lightness(.{ 0x22, 0x28, 0x2e }) - lightness(dark) < frame_distance + 1);
+    const light = frame(.{ 0xf5, 0xf5, 0xf5 }, .{ 0xf0, 0xf0, 0xf0 });
+    try std.testing.expect(lightness(.{ 0xf0, 0xf0, 0xf0 }) - lightness(light) >= frame_distance);
+    // Too dark a toolbar for the whole distance: black.
+    try std.testing.expectEqual(Color{ 0, 0, 0 }, frame(.{ 0x18, 0x1c, 0x22 }, .{ 0x1d, 0x22, 0x29 }));
+    // Beside a black toolbar the frame turns lighter instead.
+    try std.testing.expect(lightness(frame(.{ 0, 0, 0 }, .{ 0, 0, 0 })) >= frame_distance);
+}
+
+test "browser colours match the preference with muted levels, keeping the accent" {
+    const dark = Palette.fromTheme(.{});
+    try std.testing.expect(isDark(dark));
+    try std.testing.expectEqual(dark, browserPalette(dark, true));
+    const light = browserPalette(dark, false);
+    try std.testing.expect(!isDark(light));
+    try std.testing.expectEqual(dark.accent, light.accent);
+    // Grey rather than white, with dark text.
+    try std.testing.expect(@abs(lightness(light.bg) - 80) < 1 and @abs(lightness(light.toolbar) - 88) < 1);
+    try std.testing.expect(lightness(light.fg) < 15);
+    // The tab strip still stands below the active tab.
+    try std.testing.expect(lightness(light.toolbar) - lightness(frame(light.bg, light.toolbar)) >= frame_distance);
+    // And the other way round for a light theme under a dark preference.
+    const back = browserPalette(light, true);
+    try std.testing.expect(isDark(back) and lightness(back.fg) > 85);
+    try std.testing.expectEqual(light, browserPalette(light, false));
+    const qt = try qtColorsWithBrowser(std.testing.allocator, dark, light);
+    defer std.testing.allocator.free(qt);
+    try std.testing.expectEqualStrings(&hex(light.fg), iniValue(qt, "Chromium", "active_colors").?[0..7]);
+    try std.testing.expectEqualStrings(&hex(dark.fg), iniValue(qt, "ColorScheme", "active_colors").?[0..7]);
 }
 
 test "app colors edits are idempotent and scoped to their INI section" {

@@ -29,16 +29,23 @@ Compare failures with a clean HEAD worktree before calling them regressions.
 Integration dependencies: Python 3 + Pillow, C compiler, `wayland-scanner`,
 wayland-protocols and GLES2; D-Bus suites also need PyGObject,
 `dbus-run-session` and `busctl`. Check each suite for extra dependencies.
-App checks include [calculator](tests/calculator.py), [editor](tests/editor.py)
-and [editor visuals](tests/editor_visuals.py).
+App checks include [calculator](tests/calculator.py), [editor](tests/editor.py),
+[editor visuals](tests/editor_visuals.py) and
+[Files input methods](tests/files_ime.py).
 
 Application colors: `python3 tests/app_colors.py` checks snapshot exports and
 opt-in following with a private bus, scratch HOME/XDG directories, and real
 GTK3/GTK4/Qt5/Qt6 palette probes when installed. It keeps clients open across
 theme changes, closes Settings, checks portal publication and compositor restart,
-and verifies that disabling following stops exports. Repeat with
+and verifies that disabling following stops exports. Qt probes that preload a
+stand-in `libqt<N>_shim.so` check the Chromium colours, also after Dark mode is
+switched in Settings. Repeat with
 `REDIWM_TEST_SCALE=1.5`. Browser chrome still needs a visual check with isolated
-profiles in GTK/System/Linux theme mode; never use the host browser profile.
+profiles in GTK/Qt/System/Linux theme mode; never use the host browser profile.
+For Brave, check the tab strip against the active tab, a context menu's
+shortcuts and disabled items, and the print preview (Ctrl+P) with a dropdown
+open, with Dark mode both off and on, under a real xdg-desktop-portal with the
+rediwm and gtk backends. Brave's Qt mode reads Qt colours only at startup.
 
 SSH keys: `zig build test-keys` and
 `dbus-run-session -- python3 tests/keys_settings.py` (repeat with
@@ -155,6 +162,7 @@ readback. Keep real power actions out of automated tests.
 
 Canvas overview: `python3 tests/overview.py` checks the rendered 2×2 and
 2+3 grids, live minimized previews, restoration, pointer and keyboard selection,
+hover and wheel magnification of a preview,
 consumed input, client teardown, config reload and reduced motion in a private headless session. Repeat with
 `REDIWM_TEST_SCALE=1.5 REDIWM_TEST_OUTPUTS=2`. Also run `focus_zoom.py`,
 `desktop_zoom.py`, `keyboard_shortcuts.py`, `shortcuts_inhibit.py`,

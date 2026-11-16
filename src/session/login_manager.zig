@@ -39,6 +39,7 @@ pub fn Service(comptime implementation: type) type {
         pub const changedOwner = implementation.changedOwner;
         pub const readSessionPath = implementation.readSessionPath;
         pub const readSessionId = implementation.readSessionId;
+        pub const polkitSessionId = implementation.polkitSessionId;
         pub const readApi = implementation.readApi;
         pub const actionError = implementation.actionError;
         pub const owns_session = implementation.owns_session;
@@ -57,6 +58,7 @@ pub const owner_match = Native.owner_match;
 pub const changedOwner = Native.changedOwner;
 pub const readSessionPath = Native.readSessionPath;
 pub const readSessionId = Native.readSessionId;
+pub const polkitSessionId = Native.polkitSessionId;
 pub const readApi = Native.readApi;
 pub const actionError = Native.actionError;
 pub const owns_session = Native.owns_session;

@@ -41,4 +41,6 @@ test "ConsoleKit identity stays an object path for polkit, manager receives shor
     try reply.objectPath(path);
     const msg: dbus.wire.Message = .{ .kind = .method_return, .serial = 1, .headers = .{ .signature = "o" }, .body = .{ .bytes = reply.bytes.items } };
     try t.expectEqualStrings(path, try login.readSessionId(msg));
+    try t.expectEqualStrings("Session9", login.polkitSessionId(path));
+    try t.expectEqualStrings("Session9", login.polkitSessionId("Session9"));
 }

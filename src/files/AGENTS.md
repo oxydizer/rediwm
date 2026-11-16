@@ -27,9 +27,12 @@ The window is `Client.zig` (Wayland globals, seat, buffers), re-exported by
 ## Terminal drawer
 
 `app_terminal.zig` owns the per-window controller; `terminal/` owns libvterm,
-the PTY, shell integration, cells and text-input-v3. Support and limits are in
-`docs/files-terminal.md`; `zig build test-files-terminal` runs isolated PTY
-and headless fixtures. The pinned library is compiled only into Files/tests.
+the PTY, shell integration and cells. `ime.zig` is the text-input-v3 client for
+both the drawer and the app's single-line fields (search, location bar, dialog
+fields, chooser name); `app_terminal.zig` only owns the drawer's preedit.
+Support and limits are in `docs/files-terminal.md`;
+`zig build test-files-terminal` runs isolated PTY and headless fixtures. The
+pinned library is compiled only into Files/tests.
 
 * Poll slots 19–21 are PTY, integration socket and pidfd. Parsing/writes have a
   64 KiB budget per loop; POLLOUT is enabled only with queued work. Hidden
@@ -47,6 +50,22 @@ and headless fixtures. The pinned library is compiled only into Files/tests.
 * Cell metrics use the exact shared mono advance. Paint non-ASCII/wide cells
   separately so fallback shaping cannot move later cells. Preserve the
   caller's Cairo damage clip. The test encoder drain exists only with FT_TEST.
+
+## Text input
+
+`ime.zig` is the text-input-v3 client for the terminal drawer and every
+single-line field (`activeEditor`: search, location bar, dialog fields, chooser
+name). It enables only while one is focused, advertises the text around the
+selection and the caret rectangle, applies delete + commit to the active
+`Editor`, and leaves preedit in `App.preedit`/`preedit_editor` for
+`renderEditor` to draw. Re-enable and drop preedit when the target field
+changes; a `done` applies only when its serial and the advertised field
+(cursor, anchor, text revision) still match. Terminal commits go to the PTY
+through `ft_key`, never through paste. The `enable` belongs to the surface
+from `enter`: `leave` sends `disable` + `commit` before clearing the local
+state, or the compositor keeps the input enabled, sees no change when the
+surface is entered again, and the input method is never re-activated — IME
+composition silently stops after a window switch.
 
 ## File types and associations
 

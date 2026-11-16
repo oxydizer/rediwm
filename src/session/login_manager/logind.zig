@@ -156,6 +156,11 @@ pub fn readSessionId(msg: wire.Message) ![]const u8 {
     return body.string();
 }
 
+/// logind session ids are already what polkit's unix-session takes.
+pub fn polkitSessionId(id: []const u8) []const u8 {
+    return id;
+}
+
 pub fn readApi(msg: wire.Message) types.Api {
     if (msg.kind != .method_return) return .{};
     var body = msg.body;

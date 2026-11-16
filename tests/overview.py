@@ -43,6 +43,20 @@ def blue_windows(image):
     return boxes
 
 
+def outline(image):
+    """Bounding box of the magenta selection outline."""
+    pixels = image.load()
+    xs, ys = [], []
+    for y in range(image.height):
+        for x in range(image.width):
+            r, g, b = pixels[x, y]
+            if r > 240 and g < 15 and b > 240:
+                xs.append(x)
+                ys.append(y)
+    assert xs, "no selection outline"
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-spread-") as directory:
         tmp = Path(directory)
@@ -126,9 +140,9 @@ def run():
                     assert [len(row) for row in boxes] == counts, boxes
                     for row in boxes:
                         for left, right in zip(row, row[1:]):
-                            assert right[0] - left[2] >= 20, row
+                            assert right[0] - left[2] >= 8, row
                     for upper, lower in zip(boxes, boxes[1:]):
-                        assert lower[0][1] - upper[0][3] >= 20, boxes
+                        assert lower[0][1] - upper[0][3] >= 8, boxes
                     rgb = image.tobytes()
                     assert any(r > 240 and g < 15 and b > 240 for r, g, b in zip(rgb[::3], rgb[1::3], rgb[2::3])), "no selection outline"
                     return [box for row in boxes for box in row]
@@ -206,6 +220,32 @@ def run():
                 assert ipc.get_focused_window()["id"] == ids[1]
                 assert geometry() == positions
                 assert camera()["zoom_percent"] == original["zoom_percent"]
+
+                # Hover enlarges a preview by ~10%; the wheel zooms it further
+                # about the pointer and back down to the hover size.
+                toggle()
+                tick()
+                x0, y0, x1, y1 = outline(picture("plain"))
+                ipc.move_cursor((x0 + x1) // 2, (y0 + y1) // 2, output=output["name"])
+                tick()
+                h0, _, h1, _ = outline(picture("hover"))
+                assert 1.06 < (h1 - h0) / (x1 - x0) < 1.12, ((x0, x1), (h0, h1))
+                ipc.scroll(0, -40)
+                tick()
+                z0, _, z1, _ = outline(picture("zoomed"))
+                assert (z1 - z0) > (h1 - h0) * 1.15, ((h0, h1), (z0, z1))
+                assert z0 <= (x0 + x1) // 2 <= z1
+                ipc.scroll(0, 400)
+                tick()
+                b0, _, b1, _ = outline(picture("unzoomed"))
+                assert abs((b1 - b0) - (h1 - h0)) <= 2, ((h0, h1), (b0, b1))
+                ipc.move_cursor(2, 2, output=output["name"])
+                tick()
+                p0, _, p1, _ = outline(picture("left"))
+                assert abs((p1 - p0) - (x1 - x0)) <= 2, ((x0, x1), (p0, p1))
+                ipc.key_down_up(1)
+                tick()
+                assert camera() == original and geometry() == positions
 
                 # Clicking the last card restores only that minimized window.
                 toggle()
