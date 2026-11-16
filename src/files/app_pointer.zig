@@ -531,7 +531,6 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         }
     }
     if (self.fileOpsSidebarClick(x, y)) return;
-    if (self.transferTreeClick(x, y)) return;
     if (self.torrentSidebarClick(x, y)) return;
     if (self.ejectAt(x, y)) |k| {
         self.ejectDevice(k);
