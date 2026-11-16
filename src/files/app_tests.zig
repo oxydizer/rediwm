@@ -109,6 +109,14 @@ test "search and sorting preserve visible selection across snapshot rebuilds" {
     app.search.text.clearRetainingCapacity();
     app.rebuildView();
     try std.testing.expectEqualStrings("Documents", app.items.items[0].name);
+
+    // A virtual transfer directory must not leak entries from the retained
+    // filesystem snapshot into its manifest-backed listing.
+    const browse_root = try allocator.dupe(u8, "/destination/root/sub");
+    defer allocator.free(browse_root);
+    app.transfer_browse_root = browse_root;
+    app.rebuildView();
+    try std.testing.expectEqual(@as(usize, 0), app.items.items.len);
 }
 
 test "Unicode folder filtering and sorting retain folder size and date rules" {

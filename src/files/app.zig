@@ -144,6 +144,9 @@ pub const App = struct {
     // In the flat list of changed files: show each path from the folder.
     full_paths: bool = true,
     snapshot: ?*worker_mod.Snapshot = null,
+    /// Root of the virtual transfer-directory subtree currently being browsed.
+    /// Null means the listing is backed by a real filesystem snapshot.
+    transfer_browse_root: ?[]u8 = null,
     search: Editor = .{},
     search_visible: bool = false,
     menu: ?MenuKind = null,
@@ -386,6 +389,7 @@ pub const App = struct {
         self.closeExtractPicker();
         self.extract_picker_bytes.deinit(self.allocator);
         if (self.trash_dir) |path| self.allocator.free(path);
+        if (self.transfer_browse_root) |path| self.allocator.free(path);
         self.filename.deinit(self.allocator);
         for (self.chooser_paths.items) |path| self.allocator.free(path);
         self.chooser_paths.deinit(self.allocator);

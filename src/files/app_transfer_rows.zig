@@ -205,4 +205,13 @@ test "transfer rows merge direct children, prefer real entries and retain select
     try std.testing.expectEqualStrings("done.txt", done.name);
     try std.testing.expect(!done.transfer_ghost and !done.missing);
     try std.testing.expectEqual(@import("ops.zig").TransferEntryState.completed, done.transfer_state.?);
+
+    // Browsing a ghost directory projects only its immediate manifest children.
+    app.items.clearRetainingCapacity();
+    app.history.current = "/destination/root/sub";
+    appendTreeRows(&app, mem, &tree, &old);
+    try std.testing.expectEqual(@as(usize, 1), app.items.items.len);
+    try std.testing.expectEqualStrings("nested.txt", app.items.items[0].name);
+    try std.testing.expect(app.items.items[0].transfer_ghost);
+    try std.testing.expect(app.items.items[0].missing);
 }
