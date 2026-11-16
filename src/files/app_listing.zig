@@ -369,9 +369,11 @@ pub fn sync(self: *App) void {
             const processed_changed = self.job_progress != progress.processed_items;
             const bytes_changed = self.job_transferred_bytes != progress.transferred_bytes;
             const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
+            // Active-file transitions only change progress presentation.
+            // They do not change the direct-child transfer rows for a
+            // directory transfer, so do not rebuild the entire listing.
             if (state_changed or
-                ((runner.kind == .copy or runner.kind == .move) and
-                    (processed_changed or file_path_changed)))
+                ((runner.kind == .copy or runner.kind == .move) and processed_changed))
             {
                 self.transfer_rows_dirty = true;
             }
