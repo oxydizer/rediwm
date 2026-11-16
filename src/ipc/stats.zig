@@ -37,6 +37,9 @@ pub const PerformanceStats = struct {
     output_failed_commits: u64 = 0,
     /// Frames whose output commit was skipped because nothing on screen changed.
     output_skipped_commits: u64 = 0,
+    /// Buffers flipped asynchronously (tearing), and async flips the driver refused.
+    tearing_async_flips: u64 = 0,
+    tearing_refused_flips: u64 = 0,
     titlebar_paints: u64 = 0,
     // Always 0 since the window shapes (no footer raster, no edge sample); kept
     // so the PerformanceStats wire format and its readers stay unchanged.
@@ -109,6 +112,8 @@ pub const PerformanceStats = struct {
         self.output_commits = 0;
         self.output_failed_commits = 0;
         self.output_skipped_commits = 0;
+        self.tearing_async_flips = 0;
+        self.tearing_refused_flips = 0;
         self.titlebar_paints = 0;
         self.footer_paints = 0;
         self.edge_samples_attempted = 0;

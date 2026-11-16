@@ -71,6 +71,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .displays, .title = i18n.msg("Refresh rate"), .target = "refresh_rate", .keywords = i18n.msg("screen frequency hz") },
     .{ .page = .displays, .title = i18n.msg("Display scale"), .target = "scale", .keywords = i18n.msg("screen scaling dpi zoom") },
     .{ .page = .displays, .title = i18n.msg("Xwayland scale"), .target = "xwayland_scale", .keywords = i18n.msg("x11 legacy apps scaling") },
+    .{ .page = .displays, .title = i18n.msg("Allow tearing in games"), .target = "allow_tearing", .keywords = i18n.msg("vsync latency fullscreen game immediate") },
     .{ .page = .displays, .title = i18n.msg("Rotation"), .target = "transform", .keywords = i18n.msg("orientation portrait landscape screen") },
     .{ .page = .displays, .title = i18n.msg("Night light"), .target = "night_light", .keywords = i18n.msg("blue light warm screen") },
     .{ .page = .displays, .title = i18n.msg("Night light temperature"), .target = "night_light_temperature", .keywords = i18n.msg("warmth colour color") },

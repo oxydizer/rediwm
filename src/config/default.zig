@@ -127,7 +127,8 @@ pub const source =
     \\# Workspace shortcuts are overridden separately in [keybinds.workspace].
     \\desktop_mode = "canvas"
     \\floating_apps = []          # app ID glob patterns that float in workspaces
-    \\# Allow fullscreen clients to request asynchronous presentation (may tear).
+    \\# Let a fullscreen or borderless game that asks for it (VSync off) show
+    \\# frames at once instead of at the next refresh. The picture may tear.
     \\allow_tearing = false
     \\# Render as late as the display allows, so input made just before a refresh
     \\# still reaches it. Only displays that report presentation times qualify

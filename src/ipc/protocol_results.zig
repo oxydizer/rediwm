@@ -158,6 +158,9 @@ pub const PerformanceStatsResult = struct {
     output_skipped_commits: ?u64 = null,
     /// Glass blurs re-taken by the output pass (stage 5c), all outputs.
     glass_reblurs: ?u64 = null,
+    /// Asynchronous (tearing) flips, and those the driver refused, all outputs.
+    tearing_async_flips: ?u64 = null,
+    tearing_refused_flips: ?u64 = null,
 };
 
 /// The compositor-drawn desktop's repaint work since the last reset.

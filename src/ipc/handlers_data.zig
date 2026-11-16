@@ -5,6 +5,8 @@ const wlr = @import("wlroots");
 const Server = @import("../Server.zig");
 const Output = @import("../Output.zig");
 const Toplevel = @import("../Toplevel.zig");
+const output_tearing = @import("../output/tearing.zig");
+const stats = @import("stats.zig");
 const protocol = @import("protocol.zig");
 const ui = @import("ui");
 const controlCenterState = @import("handlers_panels.zig").controlCenterState;
@@ -194,6 +196,10 @@ pub fn makeOutputData(server: *Server, output: *Output) protocol.OutputData {
         .scale = output.wlr_output.scale,
         .refresh_hz = refresh_hz,
         .is_focused = is_focused,
+        .tearing_allowed = output_tearing.wanted(output),
+        .tearing_active = output.tearing.active,
+        .tearing_paused = output.tearing.backoff.paused_until_ns != 0 and output.tearing.backoff.paused(stats.nowNs()),
+        .direct_scanout = if (server.scene_outputs.get(output.wlr_output)) |scene_output| scene_output.directScanout() else false,
     };
 }
 

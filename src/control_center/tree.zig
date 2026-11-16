@@ -218,6 +218,12 @@ pub fn buildTree(cc: *ControlCenter) void {
                 var nl_card = card(&cc.display.nl_group_children);
                 nl_card.name = "displays";
                 cc.append(nl_card);
+                var tearing_card = card(&cc.display.tearing_group_children);
+                tearing_card.name = "displays";
+                tearing_card.direction = .row;
+                tearing_card.justify = .space_between;
+                tearing_card.@"align" = .center;
+                cc.append(tearing_card);
                 cc.append(.{ .name = "power_settings_link", .kind = .{ .button = .{ .label = i18n.tr("Power and lid settings"), .owner = cc, .id = @backingInt(Page.power), .on_click = pageClicked } }, .height = .{ .fixed = 36 } });
             },
             .audio => {

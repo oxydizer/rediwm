@@ -83,6 +83,10 @@ bool rediwm_scene_output_has_pending_damage(const struct rediwm_scene_output *ou
   return !pixman_region32_empty((pixman_region32_t *)&out->pending_commit_damage);
 }
 
+bool rediwm_scene_output_direct_scanout(const struct rediwm_scene_output *out) {
+  return out->prev_scanout;
+}
+
 static void output_commit(struct wl_listener *listener, void *data) {
   struct rediwm_scene_output *out = wl_container_of(listener, out, output_commit);
   struct wlr_output_event_commit *event = data;
