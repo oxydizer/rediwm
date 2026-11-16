@@ -27,6 +27,7 @@ const drawEllipsis = @import("app_draw.zig").drawEllipsis;
 const drawText = @import("app_draw.zig").drawText;
 const fontMetrics = @import("app_draw.zig").fontMetrics;
 const measureText = @import("app_draw.zig").measureText;
+const roundedRect = @import("app_draw.zig").roundedRect;
 
 pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
     const width: f64 = @floatFromInt(self.w);
@@ -212,6 +213,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     self.renderTerminal(cr);
 
     if (!self.audio_bar.playlist_open and !self.transfer_view.active and self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
+    self.renderPermissionTip(cr);
     if (self.menu != null) self.renderMenu(cr);
     if (self.menu == null and self.dialog == null) {
         self.renderFileOpsTip(cr);
@@ -225,6 +227,32 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     if (self.dialog != null) {
         self.renderDialog(cr);
     }
+}
+
+pub fn renderPermissionTip(self: *App, cr: *c.cairo_t) void {
+    const hit = self.permissionHit(self.mouse_x, self.mouse_y) orelse return;
+    const item = self.items.items[hit.index];
+    const groups = [_][]const u8{ tr("Owner"), tr("Group"), tr("Others") };
+    const actions = [_][]const u8{ tr("Read"), tr("Write"), tr("Execute") };
+    const state = if (item.mode & properties.permissionBit(hit.bit) != 0)
+        tr("Enabled")
+    else
+        tr("Disabled");
+
+    var buf: [128]u8 = undefined;
+    const label = std.fmt.bufPrint(&buf, "{s} · {s}: {s}", .{
+        groups[hit.bit / 3],
+        actions[hit.bit % 3],
+        state,
+    }) catch return;
+    const width = measureText(cr, label, shell_ui.textSize(), false) + 16;
+    const x = std.math.clamp(self.mouse_x + 12, 8, @max(8, @as(f64, @floatFromInt(self.w)) - width - 8));
+    const y = std.math.clamp(self.mouse_y - 34, 8, @max(8, @as(f64, @floatFromInt(self.h - self.footerHeight())) - 30));
+    roundedRect(cr, x, y, width, 26, 5);
+    setSource(cr, ui_theme.global.app_divider);
+    c.cairo_fill(cr);
+    setSource(cr, ui_theme.global.window_fg);
+    drawText(cr, label, x + 8, y + 18, shell_ui.textSize(), false);
 }
 
 pub fn renderButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, label_text: []const u8, enabled: bool, target_id: usize) void {
@@ -288,6 +316,7 @@ pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
     if (self.overSidebarDivider(x, y)) return "col-resize";
     if (self.chooser != null and self.chooserRect(0).contains(x, y)) return "text";
     if (self.focus != .location_bar and !self.search_visible and header.field(self.w).contains(x, y)) return "pointer";
+    if (self.permissionHit(x, y) != null) return "pointer";
     if (@import("app_audio_bar.zig").hit(self, x, y) != null or self.inlineTorrentHit(x, y) != null or self.audioButtonHit(x, y) != null) return "pointer";
     if (self.singleClickIconAt(x, y) != null) return "pointer";
     return if (header.field(self.w).contains(x, y)) "text" else "default";

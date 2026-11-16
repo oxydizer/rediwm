@@ -215,6 +215,7 @@ pub const ViewItem = struct {
     mtime: i64,
     opened: i64 = 0,
     mode: c.mode_t = 0,
+    owner_uid: c.uid_t = 0,
     permissions_text: []const u8 = "",
     icon_name: []const u8,
     icon_candidates: []const []const u8 = &.{},

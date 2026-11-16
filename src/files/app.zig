@@ -908,6 +908,10 @@ pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const activateSelected = app_opening.activateSelected;
 
     // app_pointer.zig
+    pub const permissionHoverBase = app_pointer.permissionHoverBase;
+    pub const canTogglePermission = app_pointer.canTogglePermission;
+    pub const permissionHit = app_pointer.permissionHit;
+    pub const toggleInlinePermission = app_pointer.toggleInlinePermission;
     pub const hoverKey = app_pointer.hoverKey;
     pub const handleMotion = app_pointer.handleMotion;
     pub const cancelDrag = app_pointer.cancelDrag;
@@ -1005,6 +1009,7 @@ pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const renderToolbarHover = app_paint.renderToolbarHover;
     pub const renderGitViewToggle = app_paint.renderGitViewToggle;
     pub const render = app_paint.render;
+    pub const renderPermissionTip = app_paint.renderPermissionTip;
     pub const renderButton = app_paint.renderButton;
     pub const fieldFontSize = app_paint.fieldFontSize;
     pub const renderLocationBar = app_paint.renderLocationBar;

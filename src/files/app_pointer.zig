@@ -16,6 +16,88 @@ const setSource = @import("app_draw.zig").setSource;
 const gitBranchRowCount = App.gitBranchRowCount;
 const gitBranchRow = App.gitBranchRow;
 
+/// Reserved for per-character permission hover keys: base + item * 9 + bit.
+/// Kept separate from the size-button range and transient transfer keys.
+pub const permissionHoverBase: usize = 3_000_000;
+
+pub const PermissionHit = struct {
+    index: usize,
+    bit: usize,
+};
+
+fn permissionsAvailable(self: *App) bool {
+    return self.list_view and
+        !self.transfer_view.active and
+        self.repository() == null and
+        self.chooser == null and
+        self.dialog == null and
+        self.menu == null and
+        self.history.archive_len == 0 and
+        !@import("app_trash.zig").inTrash(self) and
+        self.columnLabels().len > 4;
+}
+
+/// Whether this user can change the item's permissions, using cached ownership.
+pub fn canTogglePermission(self: *App, index: usize) bool {
+    if (!permissionsAvailable(self) or index >= self.items.items.len) return false;
+    const item = self.items.items[index];
+    if (item.transfer_stub or item.transfer_ghost or item.missing or item.is_symlink or item.is_broken) return false;
+    const euid = c.geteuid();
+    return euid == 0 or euid == item.owner_uid;
+}
+
+pub fn permissionRect(self: *App, index: usize, bit: usize) ?header.Rect {
+    if (bit >= 9 or !self.canTogglePermission(index)) return null;
+
+    const column = self.listColumn(4);
+    const row: i32 = @intCast(index);
+    const row_y: f64 = @floatFromInt(
+        self.viewTop() + self.itemInset() +
+            @divTrunc(row, self.columns()) * self.rowHeight() - self.scroll_y,
+    );
+    const start_x = column.x + 18;
+    const offset: f64 = @floatFromInt(bit * 10 + (bit / 3) * 4);
+    return .{
+        .x = start_x + offset,
+        .y = row_y + self.listBaseline() - 17,
+        .w = 10,
+        .h = 22,
+    };
+}
+
+pub fn permissionHit(self: *App, x: f64, y: f64) ?PermissionHit {
+    if (!permissionsAvailable(self)) return null;
+    const index = self.itemAt(x, y) orelse return null;
+    for (0..9) |bit| {
+        if (permissionRect(self, index, bit)) |rect| {
+            if (rect.contains(x, y)) return .{ .index = index, .bit = bit };
+        }
+    }
+    return null;
+}
+
+pub fn toggleInlinePermission(self: *App, hit: PermissionHit) void {
+    if (hit.index >= self.items.items.len or hit.bit >= 9) return;
+    const path = self.items.items[hit.index].path;
+    const mode = properties.togglePathPermission(path, hit.bit) catch |err| {
+        const tr = @import("i18n").tr;
+        const message = switch (err) {
+            error.NotOwner => tr("Only the owner can change permissions"),
+            error.Symlink => tr("Symbolic link permissions cannot be changed"),
+            error.OpenFailed => tr("Could not open file to change permissions"),
+            error.StatFailed => tr("Could not read file permissions"),
+            error.ChmodFailed => tr("Could not apply permission changes"),
+            else => tr("Could not change permissions"),
+        };
+        self.setStatusNotice(message, true);
+        return;
+    };
+
+    // Update the visible snapshot in place. Selection and scroll stay intact.
+    self.items.items[hit.index].mode = mode;
+    self.invalidate();
+}
+
 // Input handlers
 pub fn hoverKey(self: *App) usize {
     if (self.dialog) |dlg| if (dlg.kind == .transfers) return self.transfersHover();
@@ -57,6 +139,7 @@ pub fn hoverKey(self: *App) usize {
         if (self.column_surface.hovered) |target| return @intCast(target.id);
     }
     if (self.sidebar_surface.hovered) |target| return @intCast(target.id);
+    if (self.permissionHit(x, y)) |hit| return permissionHoverBase + hit.index * 9 + hit.bit;
     if (self.inlineTorrentHit(x, y)) |hit| return std.math.maxInt(usize) - 3000 - hit.index * 2 - @intFromBool(hit.toggle);
     if (self.audioButtonHit(x, y)) |index| return @import("app_audio.zig").audioHoverKey(index);
     if (self.item_surface.hovered) |target| {
@@ -604,6 +687,12 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
     // File view area
     if (y >= @as(f64, @floatFromInt(self.contentTop())) and y < @as(f64, @floatFromInt(self.contentBottom())) and x < @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) {
         self.focus = .file_view;
+        if (button == 0x110) {
+            if (self.permissionHit(x, y)) |hit| {
+                self.toggleInlinePermission(hit);
+                return;
+            }
+        }
         if (self.itemAt(x, y)) |idx| {
             if (button == 0x110) {
                 if (self.sizeButtonRect(idx)) |rect| {
