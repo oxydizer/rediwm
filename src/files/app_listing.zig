@@ -603,6 +603,7 @@ pub fn rebuildView(self: *App) void {
                 .mtime = it.mtime,
                 .opened = it.opened,
                 .mode = it.mode,
+                .owner_uid = it.owner_uid,
                 .permissions_text = std.fmt.allocPrint(mem, "{s} ({s})", .{ formatPermissions(it.mode), it.owner }) catch continue,
                 .icon_name = mem.dupe(u8, it.icon_name) catch continue,
                 .icon_candidates = @import("associations.zig").dupeCandidates(mem, it.icon_candidates) catch continue,

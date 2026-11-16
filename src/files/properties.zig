@@ -255,7 +255,7 @@ pub const State = struct {
     }
 };
 
-fn permissionBit(index: usize) c.mode_t {
+pub fn permissionBit(index: usize) c.mode_t {
     return @as(c.mode_t, 1) << @as(std.math.Log2Int(c.mode_t), @intCast(8 - index));
 }
 

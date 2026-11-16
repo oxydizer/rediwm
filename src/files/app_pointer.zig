@@ -16,6 +16,8 @@ const setSource = @import("app_draw.zig").setSource;
 const gitBranchRowCount = App.gitBranchRowCount;
 const gitBranchRow = App.gitBranchRow;
 
+/// Reserved for per-character permission hover keys: base + item * 9 + bit.
+/// Kept separate from the size-button range and transient transfer keys.
 pub const permissionHoverBase: usize = 3_000_000;
 
 pub const PermissionHit = struct {
@@ -35,10 +37,17 @@ fn permissionsAvailable(self: *App) bool {
         self.columnLabels().len > 4;
 }
 
-pub fn permissionRect(self: *App, index: usize, bit: usize) ?header.Rect {
-    if (!permissionsAvailable(self) or bit >= 9 or index >= self.items.items.len) return null;
+/// Whether this user can change the item's permissions, using cached ownership.
+pub fn canTogglePermission(self: *App, index: usize) bool {
+    if (!permissionsAvailable(self) or index >= self.items.items.len) return false;
     const item = self.items.items[index];
-    if (item.transfer_stub or item.transfer_ghost or item.missing or item.is_symlink or item.is_broken) return null;
+    if (item.transfer_stub or item.transfer_ghost or item.missing or item.is_symlink or item.is_broken) return false;
+    const euid = c.geteuid();
+    return euid == 0 or euid == item.owner_uid;
+}
+
+pub fn permissionRect(self: *App, index: usize, bit: usize) ?header.Rect {
+    if (bit >= 9 or !self.canTogglePermission(index)) return null;
 
     const column = self.listColumn(4);
     const row: i32 = @intCast(index);
@@ -71,10 +80,15 @@ pub fn toggleInlinePermission(self: *App, hit: PermissionHit) void {
     if (hit.index >= self.items.items.len or hit.bit >= 9) return;
     const path = self.items.items[hit.index].path;
     const mode = properties.togglePathPermission(path, hit.bit) catch |err| {
-        const message = if (err == error.NotOwner)
-            @import("i18n").tr("Only the owner can change permissions")
-        else
-            @import("i18n").tr("Could not change permissions");
+        const tr = @import("i18n").tr;
+        const message = switch (err) {
+            error.NotOwner => tr("Only the owner can change permissions"),
+            error.Symlink => tr("Symbolic link permissions cannot be changed"),
+            error.OpenFailed => tr("Could not open file to change permissions"),
+            error.StatFailed => tr("Could not read file permissions"),
+            error.ChmodFailed => tr("Could not apply permission changes"),
+            else => tr("Could not change permissions"),
+        };
         self.setStatusNotice(message, true);
         return;
     };

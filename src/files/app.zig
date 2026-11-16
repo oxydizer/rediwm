@@ -909,6 +909,7 @@ pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
 
     // app_pointer.zig
     pub const permissionHoverBase = app_pointer.permissionHoverBase;
+    pub const canTogglePermission = app_pointer.canTogglePermission;
     pub const permissionHit = app_pointer.permissionHit;
     pub const toggleInlinePermission = app_pointer.toggleInlinePermission;
     pub const hoverKey = app_pointer.hoverKey;

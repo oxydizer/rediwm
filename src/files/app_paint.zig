@@ -234,7 +234,7 @@ pub fn renderPermissionTip(self: *App, cr: *c.cairo_t) void {
     const item = self.items.items[hit.index];
     const groups = [_][]const u8{ tr("Owner"), tr("Group"), tr("Others") };
     const actions = [_][]const u8{ tr("Read"), tr("Write"), tr("Execute") };
-    const state = if (item.mode & (@as(@TypeOf(item.mode), 1) << @as(std.math.Log2Int(@TypeOf(item.mode)), @intCast(8 - (hit.bit % 3) * 3 - hit.bit / 3))) != 0)
+    const state = if (item.mode & properties.permissionBit(hit.bit) != 0)
         tr("Enabled")
     else
         tr("Disabled");

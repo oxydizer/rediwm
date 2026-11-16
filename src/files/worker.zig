@@ -28,6 +28,7 @@ pub const Item = struct {
     mtime: i64,
     opened: i64 = 0,
     mode: c.mode_t = 0,
+    owner_uid: c.uid_t = 0,
     owner: []const u8 = "",
     icon_name: []const u8,
     icon_candidates: []const []const u8 = &.{},
@@ -682,6 +683,7 @@ fn statItem(
         .bytes = size,
         .mtime = @as(i64, @intCast(lstat_buf.st_mtim.tv_sec)),
         .mode = lstat_buf.st_mode,
+        .owner_uid = lstat_buf.st_uid,
         .owner = owners.get(lstat_buf.st_uid) orelse blk: {
             const owner = ownerName(mem, lstat_buf.st_uid) catch return null;
             owners.put(mem, lstat_buf.st_uid, owner) catch {};

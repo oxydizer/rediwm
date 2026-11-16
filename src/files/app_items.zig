@@ -245,6 +245,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             } else {
                 const mode = formatPermissions(item.mode);
                 const text_size = shell_ui.textSize();
+                const can_toggle_permissions = self.canTogglePermission(idx);
                 setSource(cr, ui_theme.global.window_fg);
                 drawText(cr, mode[0..1], permissions.x + 4, y + baseline, text_size, false);
 
@@ -257,7 +258,13 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                     const glyph = mode[bit + 1 .. bit + 2];
                     const glyph_width = measureText(cr, glyph, text_size, false);
                     const hovered = self.hoverKey() == App.permissionHoverBase + idx * 9 + bit;
-                    setSource(cr, if (hovered) accent else ui_theme.global.window_fg);
+                    const color = if (!can_toggle_permissions)
+                        withAlpha(ui_theme.global.window_fg, 0.45)
+                    else if (hovered)
+                        accent
+                    else
+                        ui_theme.global.window_fg;
+                    setSource(cr, color);
                     drawText(cr, glyph, glyph_x + (10 - glyph_width) / 2, y + baseline, text_size, false);
                 }
 
