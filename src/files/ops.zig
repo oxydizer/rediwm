@@ -70,6 +70,13 @@ pub const CopyProfile = struct {
     destination_resolution_ns: u64 = 0,
     recursive_copy_ns: u64 = 0,
     data_transfer_ns: u64 = 0,
+    buffered_read_ns: u64 = 0,
+    buffered_write_ns: u64 = 0,
+    progress_publish_ns: u64 = 0,
+    buffered_read_calls: u64 = 0,
+    buffered_write_calls: u64 = 0,
+    progress_publish_calls: u64 = 0,
+    progress_publish_bytes: u64 = 0,
     lstat_calls: u64 = 0,
     fstat_calls: u64 = 0,
     opendir_calls: u64 = 0,
@@ -849,7 +856,15 @@ fn copyFileContentsTracked(
             _ = c.unlink(dst_z);
             return error.Cancelled;
         }
+        const read_started = if (runner) |job| job.profileStart() else 0;
         const n = c.read(src_fd, buf.ptr, buf.len);
+        if (runner) |job| {
+            job.profileCount(&job.profile_metrics.buffered_read_calls, 1);
+            job.profileAddDuration(
+                read_started,
+                &job.profile_metrics.buffered_read_ns,
+            );
+        }
         if (n == 0) break;
         if (n < 0 and std.posix.errno(n) == .INTR) continue;
         if (n < 0) {
@@ -860,7 +875,15 @@ fn copyFileContentsTracked(
         var chunk_written: u64 = 0;
         const total = @as(usize, @intCast(n));
         while (written < total) {
+            const write_started = if (runner) |job| job.profileStart() else 0;
             const wn = c.write(dst_fd, buf[written..].ptr, total - written);
+            if (runner) |job| {
+                job.profileCount(&job.profile_metrics.buffered_write_calls, 1);
+                job.profileAddDuration(
+                    write_started,
+                    &job.profile_metrics.buffered_write_ns,
+                );
+            }
             if (wn < 0 and std.posix.errno(wn) == .INTR) continue;
             if (wn <= 0) {
                 if (runner) |job| job.addFileTransferredBytes(chunk_written);
@@ -1508,6 +1531,15 @@ pub const JobRunner = struct {
 
     fn addTransferredBytesImpl(self: *JobRunner, bytes: u64, file_progress: bool) void {
         if (bytes == 0) return;
+        const publish_started = if (file_progress) self.profileStart() else 0;
+        defer if (file_progress) self.profileAddDuration(
+            publish_started,
+            &self.profile_metrics.progress_publish_ns,
+        );
+        if (file_progress) {
+            self.profileCount(&self.profile_metrics.progress_publish_calls, 1);
+            self.profileCount(&self.profile_metrics.progress_publish_bytes, bytes);
+        }
         self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         if (bytes > std.math.maxInt(u64) - self.transferred_bytes) {

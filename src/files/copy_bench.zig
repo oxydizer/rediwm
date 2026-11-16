@@ -371,7 +371,7 @@ fn emitRow(
         @as(f64, @floatFromInt(median_ns));
 
     std.debug.print(
-        "BENCH,A,job_copy_e2e_{s},{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
+        "BENCH,A,job_copy_e2e_{s},{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
         .{
             strategy.name(),
             profile.name,
@@ -403,8 +403,20 @@ fn emitRow(
             profile_totals.directory_create_calls,
             profile_totals.path_allocations,
             profile_totals.path_allocation_bytes,
+        },
+    );
+    std.debug.print(
+        "{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
+        .{
             profile_totals.manifest_lookup_comparisons,
             profile_totals.mutex_lock_calls,
+            profile_totals.buffered_read_ns,
+            profile_totals.buffered_write_ns,
+            profile_totals.progress_publish_ns,
+            profile_totals.buffered_read_calls,
+            profile_totals.buffered_write_calls,
+            profile_totals.progress_publish_calls,
+            profile_totals.progress_publish_bytes,
         },
     );
 }
@@ -414,6 +426,13 @@ fn addProfileTotals(total: *ops.CopyProfile, sample: ops.CopyProfile) void {
     total.destination_resolution_ns +|= sample.destination_resolution_ns;
     total.recursive_copy_ns +|= sample.recursive_copy_ns;
     total.data_transfer_ns +|= sample.data_transfer_ns;
+    total.buffered_read_ns +|= sample.buffered_read_ns;
+    total.buffered_write_ns +|= sample.buffered_write_ns;
+    total.progress_publish_ns +|= sample.progress_publish_ns;
+    total.buffered_read_calls +|= sample.buffered_read_calls;
+    total.buffered_write_calls +|= sample.buffered_write_calls;
+    total.progress_publish_calls +|= sample.progress_publish_calls;
+    total.progress_publish_bytes +|= sample.progress_publish_bytes;
     total.lstat_calls +|= sample.lstat_calls;
     total.fstat_calls +|= sample.fstat_calls;
     total.opendir_calls +|= sample.opendir_calls;
@@ -521,7 +540,7 @@ pub fn run(allocator: Allocator) !void {
     defer ops.deleteRecursive(allocator, benchmark_root) catch {};
 
     std.debug.print(
-        "BENCH,phase,operation,profile,cache_mode,files,directories,total_bytes,buffer_bytes,iterations,median_ns,min_ns,max_ns,median_mib_per_second,median_files_per_second,reflink_calls,reflink_bytes,reflink_fallback_files,copy_file_range_calls,copy_file_range_bytes,buffered_fallback_files,manifest_scan_ns,destination_resolution_ns,recursive_copy_ns,data_transfer_ns,lstat_calls,fstat_calls,opendir_calls,directory_entries,file_open_calls,directory_create_calls,path_allocations,path_allocation_bytes,manifest_lookup_comparisons,mutex_lock_calls\n",
+        "BENCH,phase,operation,profile,cache_mode,files,directories,total_bytes,buffer_bytes,iterations,median_ns,min_ns,max_ns,median_mib_per_second,median_files_per_second,reflink_calls,reflink_bytes,reflink_fallback_files,copy_file_range_calls,copy_file_range_bytes,buffered_fallback_files,manifest_scan_ns,destination_resolution_ns,recursive_copy_ns,data_transfer_ns,lstat_calls,fstat_calls,opendir_calls,directory_entries,file_open_calls,directory_create_calls,path_allocations,path_allocation_bytes,manifest_lookup_comparisons,mutex_lock_calls,buffered_read_ns,buffered_write_ns,progress_publish_ns,buffered_read_calls,buffered_write_calls,progress_publish_calls,progress_publish_bytes\n",
         .{},
     );
 
