@@ -579,13 +579,18 @@ pub const Worker = struct {
         };
         defer dir.close(self.io);
 
+        const hidden_entries = if (show_hidden)
+            ""
+        else
+            dir.readFileAlloc(self.io, ".hidden", mem, .limited(1 << 20)) catch "";
+
         var it = dir.iterate();
         var list: std.ArrayList(Item) = .empty;
         var owners: std.AutoHashMapUnmanaged(c.uid_t, []const u8) = .empty;
         var associations: @import("associations.zig").Resolver = .{ .allocator = mem };
 
         while (it.next(self.io) catch null) |entry| {
-            if (!show_hidden and std.mem.startsWith(u8, entry.name, ".")) continue;
+            if (!show_hidden and (std.mem.startsWith(u8, entry.name, ".") or isHiddenEntry(hidden_entries, entry.name))) continue;
             const full_path = std.fmt.allocPrintSentinel(mem, "{s}/{s}", .{ dir_path, entry.name }, 0) catch continue;
             var item = statItem(mem, &owners, &associations, entry.name, full_path) orelse continue;
             if (item.is_dir) item.icon_name = theme.folderName(mem, self.io, self.environ, item.path);
@@ -625,6 +630,15 @@ pub const Worker = struct {
 
         snap.items = list.toOwnedSlice(mem) catch &.{};
         return snap;
+    }
+
+    fn isHiddenEntry(contents: []const u8, name: []const u8) bool {
+        var lines = std.mem.splitScalar(u8, contents, '\n');
+        while (lines.next()) |line| {
+            const entry = std.mem.trimEnd(u8, line, "\r");
+            if (entry.len > 0 and std.mem.eql(u8, entry, name)) return true;
+        }
+        return false;
     }
 
     fn prepareCollation(self: *Worker, snap: *Snapshot) !void {
@@ -809,4 +823,30 @@ fn ownerName(mem: Allocator, uid: c.uid_t) ![]const u8 {
         break;
     }
     return std.fmt.allocPrint(mem, "{d}", .{uid});
+}
+
+test "Files .hidden entries match exact names" {
+    const contents = "secret.txt\nprivate folder\nnotes.txt\n";
+
+    try std.testing.expect(Worker.isHiddenEntry(contents, "secret.txt"));
+    try std.testing.expect(Worker.isHiddenEntry(contents, "private folder"));
+    try std.testing.expect(Worker.isHiddenEntry(contents, "notes.txt"));
+
+    try std.testing.expect(!Worker.isHiddenEntry(contents, "secret"));
+    try std.testing.expect(!Worker.isHiddenEntry(contents, "secret.txt.bak"));
+    try std.testing.expect(!Worker.isHiddenEntry(contents, "other.txt"));
+}
+
+test "Files .hidden entries support CRLF and ignore empty lines" {
+    const contents = "\r\nsecret.txt\r\n\r\nnotes.txt\r\n";
+
+    try std.testing.expect(Worker.isHiddenEntry(contents, "secret.txt"));
+    try std.testing.expect(Worker.isHiddenEntry(contents, "notes.txt"));
+    try std.testing.expect(!Worker.isHiddenEntry(contents, ""));
+    try std.testing.expect(!Worker.isHiddenEntry(contents, "other.txt"));
+}
+
+test "Files empty or missing .hidden content hides nothing" {
+    try std.testing.expect(!Worker.isHiddenEntry("", "file.txt"));
+    try std.testing.expect(!Worker.isHiddenEntry("\n\r\n", "file.txt"));
 }
