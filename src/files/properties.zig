@@ -256,7 +256,81 @@ pub const State = struct {
 };
 
 fn permissionBit(index: usize) c.mode_t {
-    return @as(c.mode_t, 1) << @as(std.math.Log2Int(c.mode_t), @intCast(8 - (index % 3) * 3 - index / 3));
+    return @as(c.mode_t, 1) << @as(std.math.Log2Int(c.mode_t), @intCast(8 - index));
+}
+
+fn toggledPermissions(mode: c.mode_t, index: usize) !c.mode_t {
+    if (index >= 9) return error.InvalidPermission;
+    return (mode & 0o7777) ^ permissionBit(index);
+}
+
+test "permission characters map to their corresponding Unix mode bits" {
+    const expected = [_]c.mode_t{
+        0o400, 0o200, 0o100,
+        0o040, 0o020, 0o010,
+        0o004, 0o002, 0o001,
+    };
+
+    for (expected, 0..) |bit, index| {
+        try std.testing.expectEqual(bit, permissionBit(index));
+    }
+}
+
+test "permission toggles enable and disable only the selected bit" {
+    const initial: c.mode_t = 0o644;
+
+    for (0..9) |index| {
+        const bit = permissionBit(index);
+        const enabled = try toggledPermissions(initial, index);
+        try std.testing.expectEqual(initial ^ bit, enabled);
+
+        const disabled = try toggledPermissions(enabled, index);
+        try std.testing.expectEqual(initial, disabled);
+    }
+}
+
+test "permission toggles preserve special mode bits" {
+    const initial: c.mode_t = 0o7644;
+
+    for (0..9) |index| {
+        const result = try toggledPermissions(initial, index);
+        try std.testing.expectEqual(@as(c.mode_t, 0o7000), result & 0o7000);
+        try std.testing.expectEqual(initial ^ permissionBit(index), result);
+    }
+}
+
+test "permission toggles reject invalid indices" {
+    try std.testing.expectError(
+        error.InvalidPermission,
+        toggledPermissions(0o644, 9),
+    );
+}
+
+/// Toggle one permission bit on the inode currently named by `path`.
+/// O_PATH pins the inode, and the proc-fd path keeps chmod from following a
+/// replacement symlink if the directory entry changes after it is opened.
+pub fn togglePathPermission(path: []const u8, index: usize) !c.mode_t {
+    const allocator = std.heap.page_allocator;
+    const owned = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(owned);
+
+    const fd = c.open(owned, c.O_PATH | c.O_NOFOLLOW | c.O_CLOEXEC);
+    if (fd < 0) return error.OpenFailed;
+    defer _ = c.close(fd);
+
+    var st: c.struct_stat = undefined;
+    if (c.fstat(fd, &st) != 0) return error.StatFailed;
+    if (st.st_mode & c.S_IFMT == c.S_IFLNK) return error.Symlink;
+    if (c.geteuid() != 0 and c.geteuid() != st.st_uid) return error.NotOwner;
+
+    var buf: [64]u8 = undefined;
+    const pinned = std.fmt.bufPrintSentinel(&buf, "/proc/self/fd/{d}", .{fd}, 0) catch unreachable;
+    const new_mode = try toggledPermissions(st.st_mode, index);
+    if (c.chmod(pinned, new_mode) != 0) {
+        return error.ChmodFailed;
+    }
+    if (c.fstat(fd, &st) != 0) return error.StatFailed;
+    return st.st_mode;
 }
 
 fn date(timestamp: ?i64, buf: []u8) []const u8 {

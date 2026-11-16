@@ -240,8 +240,36 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             const timestamp = if (item.transfer_stub) "—" else @import("settings.zig").dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
             drawEllipsis(cr, timestamp, mt.x + 4, y + baseline, mt.w - 8, shell_ui.textSize(), false);
             const permissions = self.listColumn(4);
-            const mode = formatPermissions(item.mode);
-            drawEllipsis(cr, if (item.transfer_stub) "—" else if (item.permissions_text.len > 0) item.permissions_text else &mode, permissions.x + 4, y + baseline, permissions.w - 8, shell_ui.textSize(), false);
+            if (item.transfer_stub or item.transfer_ghost) {
+                drawEllipsis(cr, "—", permissions.x + 4, y + baseline, permissions.w - 8, shell_ui.textSize(), false);
+            } else {
+                const mode = formatPermissions(item.mode);
+                const text_size = shell_ui.textSize();
+                setSource(cr, ui_theme.global.window_fg);
+                drawText(cr, mode[0..1], permissions.x + 4, y + baseline, text_size, false);
+
+                // Each permission has its own fixed hit cell. The gaps between
+                // triplets visually separate Owner, Group and Others.
+                const permission_start = permissions.x + 18;
+                for (0..9) |bit| {
+                    const offset: f64 = @floatFromInt(bit * 10 + (bit / 3) * 4);
+                    const glyph_x = permission_start + offset;
+                    const glyph = mode[bit + 1 .. bit + 2];
+                    const glyph_width = measureText(cr, glyph, text_size, false);
+                    const hovered = self.hoverKey() == App.permissionHoverBase + idx * 9 + bit;
+                    setSource(cr, if (hovered) accent else ui_theme.global.window_fg);
+                    drawText(cr, glyph, glyph_x + (10 - glyph_width) / 2, y + baseline, text_size, false);
+                }
+
+                if (item.permissions_text.len > 10) {
+                    const owner_x = permission_start + 106;
+                    const owner_width = permissions.x + permissions.w - owner_x - 4;
+                    if (owner_width > 0) {
+                        setSource(cr, ui_theme.global.window_fg);
+                        drawEllipsis(cr, item.permissions_text[10..], owner_x, y + baseline, owner_width, text_size, false);
+                    }
+                }
+            }
         } else if (self.torrentForItem(idx) != null) {
             // The transfer accessory occupies the grid card's detail line.
         } else {

@@ -20,6 +20,7 @@ pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
         const card = self.sidebarLayout().cards[key - 940];
         return self.sidebarHeaderBounds(card);
     }
+    if (key >= App.permissionHoverBase and key < App.permissionHoverBase + self.items.items.len * 9) return null;
     if (key >= std.math.maxInt(usize) - 4096) return null;
     if (key >= 900 and key < 904) return .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) };
     if (key == 0) return .{ .x = 0, .y = 0, .w = 0, .h = 0 };
