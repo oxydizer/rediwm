@@ -138,30 +138,9 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
         0;
     const torrent_height = self.torrentSidebarHeight();
     const file_ops_height = self.fileOpsSidebarHeight();
-    if (self.transfer_tree_state.dirty) {
-        if (self.job_runner) |runner| {
-            self.transfer_tree_state.rebuild(runner) catch {};
-        }
-    }
-    const transfer_cancelled = if (self.job_runner) |runner| blk: {
-        const progress = runner.pollProgress();
-        break :blk progress.state == .finished and progress.cancelled;
-    } else false;
-    const transfer_tree_height: i32 = if (transfer_cancelled)
-        0
-    else if (self.transfer_tree_state.tree) |*tree|
-        (if (tree.nodes.items.len > 0)
-            @as(i32, @intCast(self.transfer_tree_state.visibleCount(tree) * 25 + 8))
-        else
-            0)
-    else
-        0;
     const transfers_body = torrent_height +
-        (if (file_ops_height > 0) @as(i32, app_model.SidebarLayout.gap) + file_ops_height else 0) +
-        (if (transfer_tree_height > 0) @as(i32, app_model.SidebarLayout.gap) + transfer_tree_height else 0);
-    const transfers_visible = torrent_height > 0 or
-        file_ops_height > 0 or
-        transfer_tree_height > 0;
+        (if (file_ops_height > 0) @as(i32, app_model.SidebarLayout.gap) + file_ops_height else 0);
+    const transfers_visible = torrent_height > 0 or file_ops_height > 0;
 
     return app_model.SidebarLayout.init(
         top,
@@ -476,7 +455,6 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
     if (transfers_card.expanded) {
         self.renderTorrentSidebar(cr);
         self.renderFileOpsSidebar(cr);
-        self.renderTransferTree(cr);
     }
 }
 
@@ -664,122 +642,4 @@ pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
         .{ .label = tr("Transferred"), .value = transferred },
     };
     transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, title, &details);
-}
-
-pub fn transferTreeBox(self: *App) shell_ui.Rect {
-    const card = self.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.transfers)];
-    const file_ops_height = self.fileOpsSidebarHeight();
-    const top = card.y + card.header_height + self.torrentSidebarHeight() +
-        (if (file_ops_height > 0) app_model.SidebarLayout.gap + file_ops_height else 0) +
-        app_model.SidebarLayout.gap;
-    const height: i32 = if (self.transfer_tree_state.tree) |*tree|
-        (if (tree.nodes.items.len > 0) @intCast(self.transfer_tree_state.visibleCount(tree) * 25 + 8) else 0)
-    else
-        0;
-    return .{
-        .x = 12,
-        .y = @floatFromInt(top),
-        .w = @floatCast(@max(0, self.sidebarContentWidth() - 24)),
-        .h = @floatFromInt(height),
-    };
-}
-
-pub fn transferTreeClick(self: *App, x: f64, y: f64) bool {
-    const area = transferTreeBox(self);
-    if (area.h <= 0 or x < area.x or x >= area.x + area.w or
-        y < area.y + 4 or y >= area.y + area.h) return false;
-
-    const tree = if (self.transfer_tree_state.tree) |*value| value else return true;
-    const row = @as(usize, @intFromFloat((y - area.y - 4) / 25));
-    var visible_index: usize = 0;
-    for (tree.nodes.items, 0..) |node, index| {
-        if (!self.transfer_tree_state.nodeVisible(tree, index)) continue;
-        if (visible_index == row) {
-            if (node.kind == .directory) {
-                self.transfer_tree_state.toggleExpanded(node.path) catch {};
-                self.clampSidebarScroll();
-                self.invalidate();
-            }
-            return true;
-        }
-        visible_index += 1;
-    }
-    return true;
-}
-
-pub fn renderTransferTree(self: *App, cr: *c.cairo_t) void {
-    const tree = if (self.transfer_tree_state.tree) |*value| value else return;
-    if (tree.nodes.items.len == 0) return;
-
-    const area = transferTreeBox(self);
-    if (area.w < 100 or area.h <= 0) return;
-    const profile_started = ui_profile.start();
-    defer ui_profile.finish(
-        profile_started,
-        "sidebar_tree_paint",
-        tree.nodes.items.len,
-    );
-
-    const progress = if (self.job_runner) |runner| runner.pollProgress() else null;
-    const active_source = if (progress) |value|
-        (if (value.current_file_path_len > 0) value.current_file_path[0..value.current_file_path_len] else "")
-    else
-        "";
-    const active_bytes = if (progress) |value| value.current_file_bytes else 0;
-    const active_size = if (progress) |value| value.current_file_size else 0;
-    const palette = ui_theme.shellPalette();
-
-    self.transfer_tree_state.recomputeAggregates(
-        tree,
-        active_source,
-        active_bytes,
-        active_size,
-    ) catch return;
-
-    c.cairo_save(cr);
-    defer c.cairo_restore(cr);
-    c.cairo_rectangle(cr, area.x, area.y, area.w, area.h);
-    c.cairo_clip(cr);
-
-    var row: usize = 0;
-    for (tree.nodes.items, 0..) |node, index| {
-        if (!self.transfer_tree_state.nodeVisible(tree, index)) continue;
-        const y = area.y + 4 + @as(f64, @floatFromInt(row * 25));
-        row += 1;
-
-        var depth: usize = 0;
-        var parent = node.parent_index;
-        while (parent) |parent_index| {
-            depth += 1;
-            parent = tree.nodes.items[parent_index].parent_index;
-        }
-        const indent = @as(f64, @floatFromInt(@min(depth, 8))) * 12;
-        const aggregate = self.transfer_tree_state.aggregateProgress(index);
-        const active = aggregate.active;
-        const glyph: []const u8 = if (node.kind == .directory)
-            (if (self.transfer_tree_state.isExpanded(node.path)) "▾" else "▸")
-        else switch (node.state) {
-            .completed => "✓",
-            .failed => "!",
-            .copying => "◌",
-            else => "·",
-        };
-
-        setSource(cr, if (active) palette.accent else withAlpha(ui_theme.global.sidebarForeground(), 0.82));
-        drawText(cr, glyph, area.x + 5 + indent, y + 17, shell_ui.statusSize(), false);
-        setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), if (node.state == .pending) 0.62 else 0.9));
-        drawEllipsis(cr, node.name, area.x + 22 + indent, y + 17, area.w - 30 - indent, shell_ui.statusSize(), false);
-
-        if (aggregate.total_bytes > 0) {
-            const bar_width = @max(0, area.w - 32 - indent);
-            roundedRect(cr, area.x + 22 + indent, y + 21, bar_width, 2, 1);
-            setSource(cr, withAlpha(palette.accent, 0.22));
-            c.cairo_fill(cr);
-            if (aggregate.completed_bytes > 0) {
-                roundedRect(cr, area.x + 22 + indent, y + 21, bar_width * aggregate.fraction(), 2, 1);
-                setSource(cr, if (active) palette.accent else withAlpha(palette.accent, 0.8));
-                c.cairo_fill(cr);
-            }
-        }
-    }
 }

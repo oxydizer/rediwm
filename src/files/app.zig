@@ -285,6 +285,7 @@ pub const App = struct {
     job_cut_revision: ?usize = null,
     job_progress: usize = std.math.maxInt(usize),
     job_transferred_bytes: u64 = 0,
+    job_measuring: bool = false,
     job_current_file_path: [4096]u8 = undefined,
     job_current_file_path_len: usize = 0,
     job_rate_sample_bytes: u64 = 0,
@@ -829,9 +830,6 @@ pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
 
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
-    pub const transferTreeBox = app_sidebar_paint.transferTreeBox;
-    pub const transferTreeClick = app_sidebar_paint.transferTreeClick;
-    pub const renderTransferTree = app_sidebar_paint.renderTransferTree;
 
     pub const startTorrents = app_torrents.startTorrents;
     pub const stepTorrents = app_torrents.stepTorrents;

@@ -367,22 +367,23 @@ pub fn sync(self: *App) void {
             self.job_was_running = true;
             const state_changed = self.job_state != progress.state;
             const processed_changed = self.job_progress != progress.processed_items;
+            const measuring_changed = self.job_measuring != progress.measuring;
             const bytes_changed = self.job_transferred_bytes != progress.transferred_bytes;
             const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
             // Active-file transitions only change progress presentation.
             // They do not change the direct-child transfer rows for a
             // directory transfer, so do not rebuild the entire listing.
-            if (state_changed or
+            if (state_changed or measuring_changed or
                 ((runner.kind == .copy or runner.kind == .move) and processed_changed))
             {
                 self.transfer_rows_dirty = true;
             }
-            if (state_changed or
+            if (state_changed or measuring_changed or
                 ((runner.kind == .copy or runner.kind == .move) and processed_changed))
             {
                 self.transfer_tree_state.markDirty();
             }
-            if (state_changed) {
+            if (state_changed or measuring_changed) {
                 self.invalidate();
             } else if (processed_changed or bytes_changed or file_path_changed or
                 (rate_changed and tooltip_hovered))
@@ -406,6 +407,7 @@ pub fn sync(self: *App) void {
         self.job_progress = progress.processed_items;
         self.job_state = progress.state;
         self.job_transferred_bytes = progress.transferred_bytes;
+        self.job_measuring = progress.measuring;
     }
 
     const file_ops_active = self.job_state == .running or
