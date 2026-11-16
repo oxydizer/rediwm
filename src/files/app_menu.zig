@@ -15,8 +15,20 @@ const places_start = App.places_start;
 const MenuKind = @import("app_model.zig").MenuKind;
 const PlaceAction = @import("app_model.zig").PlaceAction;
 const FileAction = @import("app_model.zig").FileAction;
+const Sort = @import("app_model.zig").Sort;
 const nowMs = @import("app_draw.zig").nowMs;
 const placePinnable = App.placePinnable;
+
+const sort_options = [_]Sort{
+    .name,
+    .name_desc,
+    .size,
+    .size_asc,
+    .modified,
+    .modified_asc,
+    .type,
+    .type_desc,
+};
 
 pub fn runHeader(self: *App, action: header.Action) void {
     if (!self.toolbarButtonEnabled(action)) return;
@@ -103,6 +115,7 @@ pub fn menuSeparatorBefore(self: *App, row: usize) bool {
         },
         .background => row == 2,
         .sidebar => self.placeActions()[row] == .properties,
+        .sort => row == 2 or row == 4 or row == 6,
         else => false,
     };
 }
@@ -274,7 +287,7 @@ pub fn placeActions(self: *App) []const PlaceAction {
 pub fn menuLabels(self: *App) []const []const u8 {
     const messages: []const i18n.Message = switch (self.menu orelse return &.{}) {
         .new => &.{ i18n.msg("New Folder"), i18n.msg("New File") },
-        .sort => &.{ i18n.msg("Name: A to Z"), i18n.msg("Name: Z to A"), i18n.msg("Largest first"), i18n.msg("Newest first"), i18n.msg("Type: A to Z"), i18n.msg("Smallest first"), i18n.msg("Oldest first"), i18n.msg("Type: Z to A") },
+        .sort => &.{ i18n.msg("Name: A to Z"), i18n.msg("Name: Z to A"), i18n.msg("Largest first"), i18n.msg("Smallest first"), i18n.msg("Newest first"), i18n.msg("Oldest first"), i18n.msg("Type: A to Z"), i18n.msg("Type: Z to A") },
         .filter => if (self.repository() != null)
             &.{ i18n.msg("Folders only"), i18n.msg("Show hidden files"), i18n.msg("Show changed files"), i18n.msg("Show full paths") }
         else
@@ -364,7 +377,7 @@ pub fn runMenu(self: *App, row: usize) void {
             else => {},
         },
         .sort => {
-            if (row < 8) self.setSort(@enumFromInt(row));
+            if (row < sort_options.len) self.setSort(sort_options[row]);
             self.rebuildView();
             self.savePreferences();
             self.scroll_y = 0;
@@ -430,7 +443,7 @@ pub fn renderMenu(self: *App, cr: *c.cairo_t) void {
     context_menu.frame(cr, .{ .x = self.menu_x, .y = self.menu_y, .w = width, .h = height }, context);
     for (labels, 0..) |label, i| {
         const row = self.menuRowRect(i);
-        const checked = (self.menu == .sort and i == @intFromEnum(self.effectiveSort())) or
+        const checked = (self.menu == .sort and sort_options[i] == self.effectiveSort()) or
             (self.menu == .filter and ((i == 0 and self.folders_only) or (i == 1 and self.show_hidden) or (i == 2 and self.changed_only) or (i == 3 and self.full_paths)));
         context_menu.row(cr, .{ .x = row.x, .y = row.y, .w = row.w, .h = row.h }, .{
             .label = label,
