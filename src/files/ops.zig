@@ -10,6 +10,35 @@ const Allocator = std.mem.Allocator;
 const max_progress_path_bytes = 4096;
 pub const copy_buffer_size = 64 * 1024;
 const max_copy_buffer_size = 1024 * 1024;
+const small_copy_buffer_size = 16 * 1024;
+const large_copy_buffer_size = 256 * 1024;
+
+/// Selects a bounded buffered-copy capacity based on the file's size.
+/// The result never exceeds the file size or the global buffer limit.
+fn copyBufferSizeForFile(file_size: u64) usize {
+    if (file_size == 0) return 0;
+
+    const target: usize = if (file_size <= 64 * 1024)
+        small_copy_buffer_size
+    else if (file_size <= 1024 * 1024)
+        copy_buffer_size
+    else if (file_size <= 64 * 1024 * 1024)
+        large_copy_buffer_size
+    else
+        max_copy_buffer_size;
+
+    return @intCast(@min(file_size, target));
+}
+
+test "adaptive copy buffer sizing follows file size and stays bounded" {
+    try std.testing.expectEqual(@as(usize, 0), copyBufferSizeForFile(0));
+    try std.testing.expectEqual(@as(usize, 1), copyBufferSizeForFile(1));
+    try std.testing.expectEqual(@as(usize, 16 * 1024), copyBufferSizeForFile(16 * 1024));
+    try std.testing.expectEqual(@as(usize, 16 * 1024), copyBufferSizeForFile(64 * 1024));
+    try std.testing.expectEqual(@as(usize, 64 * 1024), copyBufferSizeForFile(1024 * 1024));
+    try std.testing.expectEqual(@as(usize, 256 * 1024), copyBufferSizeForFile(16 * 1024 * 1024));
+    try std.testing.expectEqual(@as(usize, 1024 * 1024), copyBufferSizeForFile(128 * 1024 * 1024));
+}
 
 pub const CopyStrategy = enum {
     buffered,
@@ -667,9 +696,21 @@ fn copyFileContentsTracked(
 
     if (runner) |job| job.beginFileProgress(dst_path, @intCast(stat.st_size));
 
-    var buf: [max_copy_buffer_size]u8 = undefined;
-    const buffer_len = if (runner) |job| job.copy_buffer_bytes else copy_buffer_size;
-    std.debug.assert(buffer_len > 0 and buffer_len <= buf.len);
+    const source_file_size: u64 = @intCast(stat.st_size);
+    const buffer_len = if (runner) |job|
+        if (job.copy_buffer_bytes == 0)
+            copyBufferSizeForFile(source_file_size)
+        else
+            job.copy_buffer_bytes
+    else
+        copy_buffer_size;
+    std.debug.assert(buffer_len <= max_copy_buffer_size);
+    const copy_file_range_buffer_len = if (runner) |job|
+        if (job.copy_buffer_bytes == 0) copy_buffer_size else job.copy_buffer_bytes
+    else
+        copy_buffer_size;
+    std.debug.assert(copy_file_range_buffer_len > 0 and
+        copy_file_range_buffer_len <= max_copy_buffer_size);
 
     const transfer_started = if (runner) |job| job.profileStart() else 0;
     defer if (runner) |job| job.profileAddDuration(
@@ -734,7 +775,7 @@ fn copyFileContentsTracked(
 
                     const request_len: usize = @intCast(@min(
                         remaining,
-                        @as(u64, @intCast(buffer_len)),
+                        @as(u64, @intCast(copy_file_range_buffer_len)),
                     ));
                     const copied = c.copy_file_range(
                         src_fd,
@@ -787,6 +828,17 @@ fn copyFileContentsTracked(
     }
 
     if (!use_buffered_copy) return;
+    if (buffer_len == 0) return;
+
+    var standalone_buffer: ?[]u8 = null;
+    const buf = if (runner) |job|
+        try job.ensureCopyBuffer(buffer_len)
+    else blk: {
+        const allocated = try allocator.alloc(u8, buffer_len);
+        standalone_buffer = allocated;
+        break :blk allocated;
+    };
+    defer if (standalone_buffer) |allocated| allocator.free(allocated);
 
     while (true) {
         if (runner) |job| if (!job.waitIfResumed(cancel)) {
@@ -797,7 +849,7 @@ fn copyFileContentsTracked(
             _ = c.unlink(dst_z);
             return error.Cancelled;
         }
-        const n = c.read(src_fd, buf[0..buffer_len].ptr, buffer_len);
+        const n = c.read(src_fd, buf.ptr, buf.len);
         if (n == 0) break;
         if (n < 0 and std.posix.errno(n) == .INTR) continue;
         if (n < 0) {
@@ -1048,8 +1100,10 @@ pub const JobRunner = struct {
     profile_enabled: bool = false,
     /// Worker-owned while a job is running; read through profilingSnapshot().
     profile_metrics: CopyProfile = .{},
-    /// Per-job copy buffer size. Production defaults to 64 KiB.
-    copy_buffer_bytes: usize = copy_buffer_size,
+    /// Zero selects adaptive sizing; nonzero values force a fixed benchmark size.
+    copy_buffer_bytes: usize = 0,
+    /// Reused by the sequential worker; not accessed by the UI thread.
+    copy_buffer: []u8 = &[_]u8{},
     /// The production default remains buffered until benchmarks justify a change.
     copy_strategy: CopyStrategy = .buffered,
     copy_metrics: CopyMetrics = .{},
@@ -1180,6 +1234,19 @@ pub const JobRunner = struct {
         self.profile_metrics.path_allocation_bytes +|= @intCast(bytes);
     }
 
+    /// Grows the worker-owned buffer when a larger file requires it.
+    /// Retains capacity for reuse by subsequent files in the same job.
+    fn ensureCopyBuffer(self: *JobRunner, capacity: usize) ![]u8 {
+        if (capacity == 0) return self.copy_buffer[0..0];
+        if (self.copy_buffer.len < capacity) {
+            self.copy_buffer = if (self.copy_buffer.len == 0)
+                try self.allocator.alloc(u8, capacity)
+            else
+                try self.allocator.realloc(self.copy_buffer, capacity);
+        }
+        return self.copy_buffer[0..capacity];
+    }
+
     /// Returns a stable snapshot only after the worker has completed.
     pub fn profilingSnapshot(self: *JobRunner) ?CopyProfile {
         _ = c.pthread_mutex_lock(&self.mutex);
@@ -1202,6 +1269,7 @@ pub const JobRunner = struct {
         self.clearManifestLookup();
         self.manifest.deinit();
         self.manifest_lookup.deinit(self.allocator);
+        if (self.copy_buffer.len > 0) self.allocator.free(self.copy_buffer);
         for (self.temporary_dirs.items) |path| {
             deleteRecursive(self.allocator, path) catch {};
             self.allocator.free(path);
@@ -2159,3 +2227,20 @@ pub const JobRunner = struct {
         self.notify();
     }
 };
+test "JobRunner reuses and grows its buffered-copy allocation" {
+    const runner = try JobRunner.init(std.testing.allocator);
+    defer runner.deinit();
+
+    const first = try runner.ensureCopyBuffer(16 * 1024);
+    try std.testing.expectEqual(@as(usize, 16 * 1024), first.len);
+    @memset(first, 0x5a);
+
+    const reused = try runner.ensureCopyBuffer(8 * 1024);
+    try std.testing.expectEqual(first.ptr, reused.ptr);
+    try std.testing.expectEqual(@as(usize, 8 * 1024), reused.len);
+
+    const grown = try runner.ensureCopyBuffer(256 * 1024);
+    try std.testing.expectEqual(@as(usize, 256 * 1024), grown.len);
+    try std.testing.expectEqual(@as(u8, 0x5a), grown[0]);
+    try std.testing.expectEqual(@as(u8, 0x5a), grown[16 * 1024 - 1]);
+}
