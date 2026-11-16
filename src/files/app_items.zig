@@ -3,6 +3,7 @@
 const std = @import("std");
 const App = @import("app.zig").App;
 const ops = @import("ops.zig");
+const ui_profile = @import("ui_profile.zig");
 const c = @import("c.zig").api;
 const thumbs_mod = @import("thumbs.zig");
 const thumb_decode = @import("thumb_decode.zig");
@@ -87,7 +88,9 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             }
             if (scratch.alloc(?f64, count)) |results| {
                 if (scratch.alloc(bool, count)) |matched| {
+                    const lookup_started = ui_profile.start();
                     runner.progressForPaths(paths, results, matched) catch {};
+                    ui_profile.finish(lookup_started, "progress_render_lookup", count);
                     directory_progress = results;
                 } else |_| {}
             } else |_| {}
