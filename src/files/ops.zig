@@ -745,23 +745,25 @@ fn copyFileContentsTracked(
                         request_len,
                         0,
                     );
-                    job.recordCopyFileRangeCall();
+                    if (copied > 0) {
+                        const copied_bytes: u64 = @intCast(copied);
+                        job.recordCopyFileRangeResult(copied_bytes, false);
+                        remaining -= copied_bytes;
+                        continue;
+                    }
                     if (copied == 0) {
+                        job.recordCopyFileRangeResult(0, false);
                         // The source was shorter than its fstat() size.
                         // Do not silently report an incomplete copy as success.
                         _ = c.unlink(dst_z);
                         return error.CopyFailed;
                     }
-                    if (copied > 0) {
-                        const copied_bytes: u64 = @intCast(copied);
-                        remaining -= copied_bytes;
-                        job.recordCopyFileRangeBytes(copied_bytes);
-                        job.addFileTransferredBytes(copied_bytes);
-                        continue;
-                    }
 
                     const copy_errno = std.c._errno().*;
-                    if (copy_errno == c.EINTR) continue;
+                    if (copy_errno == c.EINTR) {
+                        job.recordCopyFileRangeResult(0, false);
+                        continue;
+                    }
 
                     // Unsupported filesystems, cross-device copies, and
                     // unsupported kernel paths fall back at the current
@@ -772,11 +774,12 @@ fn copyFileContentsTracked(
                         copy_errno == c.EOPNOTSUPP or
                         copy_errno == c.EPERM)
                     {
-                        job.recordBufferedFallback();
+                        job.recordCopyFileRangeResult(0, true);
                         use_buffered_copy = true;
                         break;
                     }
 
+                    job.recordCopyFileRangeResult(0, false);
                     _ = c.unlink(dst_z);
                     return error.CopyFailed;
                 }
@@ -1471,13 +1474,6 @@ pub const JobRunner = struct {
         return self.copy_metrics;
     }
 
-    fn recordCopyFileRangeCall(self: *JobRunner) void {
-        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
-        _ = c.pthread_mutex_lock(&self.mutex);
-        self.copy_metrics.copy_file_range_calls +|= 1;
-        _ = c.pthread_mutex_unlock(&self.mutex);
-    }
-
     fn recordReflinkCall(self: *JobRunner) void {
         self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
@@ -1499,17 +1495,43 @@ pub const JobRunner = struct {
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
 
-    fn recordCopyFileRangeBytes(self: *JobRunner, bytes: u64) void {
+    /// Publishes one copy_file_range attempt and its resulting progress
+    /// together, avoiding separate locks for metrics and byte accounting.
+    fn recordCopyFileRangeResult(
+        self: *JobRunner,
+        bytes: u64,
+        buffered_fallback: bool,
+    ) void {
         self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
+        self.copy_metrics.copy_file_range_calls +|= 1;
         self.copy_metrics.copy_file_range_bytes +|= bytes;
-        _ = c.pthread_mutex_unlock(&self.mutex);
-    }
-
-    fn recordBufferedFallback(self: *JobRunner) void {
-        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
-        _ = c.pthread_mutex_lock(&self.mutex);
-        self.copy_metrics.buffered_fallback_files +|= 1;
+        if (buffered_fallback) {
+            self.copy_metrics.buffered_fallback_files +|= 1;
+        }
+        if (bytes > 0) {
+            if (bytes > std.math.maxInt(u64) - self.transferred_bytes) {
+                self.transferred_bytes = std.math.maxInt(u64);
+            } else {
+                self.transferred_bytes += bytes;
+            }
+            if (self.current_item_index < self.item_transferred_bytes.items.len) {
+                const item_bytes = &self.item_transferred_bytes.items[self.current_item_index];
+                if (bytes > std.math.maxInt(u64) - item_bytes.*) {
+                    item_bytes.* = std.math.maxInt(u64);
+                } else {
+                    item_bytes.* += bytes;
+                }
+            }
+            if (self.current_file_path_len > 0) {
+                if (bytes > std.math.maxInt(u64) - self.current_file_bytes) {
+                    self.current_file_bytes = std.math.maxInt(u64);
+                } else {
+                    self.current_file_bytes += bytes;
+                }
+            }
+            self.notify();
+        }
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
 
