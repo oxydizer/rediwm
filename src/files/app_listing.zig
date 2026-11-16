@@ -515,8 +515,8 @@ pub fn matches(self: *App, item: worker_mod.Item) bool {
 }
 
 pub fn lessThan(mode: Sort, a: ViewItem, b: ViewItem) bool {
-    // Sorting by date mixes folders and files; every other order groups folders first.
-    if (mode != .modified and mode != .modified_asc and a.is_dir != b.is_dir) return a.is_dir;
+    // Keep directories ahead of files for every sort mode.
+    if (a.is_dir != b.is_dir) return a.is_dir;
     if (mode == .size or mode == .size_asc) {
         if (a.is_dir and b.is_dir) {
             const a_calc = a.bytes >= 0;

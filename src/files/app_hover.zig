@@ -503,7 +503,10 @@ pub fn toolbarButtonProximity(
         .x = 0,
         .y = 0,
     };
-    if (self.transfer_view.active or self.dialog != null or self.menu != null or
+    if (x < 0 or y < 0 or
+        x >= @as(f64, @floatFromInt(self.w)) or
+        y >= @as(f64, @floatFromInt(self.h)) or
+        self.transfer_view.active or self.dialog != null or self.menu != null or
         !self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action))
         return absent;
 

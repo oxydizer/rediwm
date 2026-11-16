@@ -121,13 +121,17 @@ test "Unicode folder filtering and sorting retain folder size and date rules" {
         try app.search.text.appendSlice(app.allocator, query);
         try std.testing.expect(app.matches(source));
     }
-    var a: ViewItem = .{ .name = "z", .path = "/z", .sort_key = "a", .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 10, .mtime = 20, .icon_name = "" };
+    var a: ViewItem = .{ .name = "z", .path = "/z", .sort_key = "a", .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 10, .mtime = 40, .icon_name = "" };
     var b: ViewItem = .{ .name = "a", .path = "/a", .sort_key = "z", .is_dir = false, .is_symlink = false, .is_broken = false, .bytes = 100, .mtime = 30, .icon_name = "" };
     try std.testing.expect(listing.lessThan(.name, a, b));
     try std.testing.expect(listing.lessThan(.size, a, b));
-    try std.testing.expect(listing.lessThan(.modified, b, a));
+    try std.testing.expect(listing.lessThan(.modified, a, b));
+    try std.testing.expect(!listing.lessThan(.modified, b, a));
     try std.testing.expect(listing.lessThan(.modified_asc, a, b));
+    try std.testing.expect(!listing.lessThan(.modified_asc, b, a));
     a.is_dir = false;
+    try std.testing.expect(listing.lessThan(.modified, a, b));
+    try std.testing.expect(listing.lessThan(.modified_asc, b, a));
     try std.testing.expect(listing.lessThan(.name, a, b));
     try std.testing.expect(listing.lessThan(.name_desc, b, a));
     try std.testing.expect(listing.lessThan(.size, b, a));
