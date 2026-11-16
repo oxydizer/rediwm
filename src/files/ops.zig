@@ -292,18 +292,18 @@ test "manifest lookup isolates roots and preserves first duplicate entry" {
     _ = c.pthread_mutex_unlock(&runner.mutex);
     try std.testing.expect(built);
 
-    runner.setManifestEntryState(0, "/same", .copying);
+    _ = runner.setManifestEntryState(0, "/same", .copying);
     try std.testing.expectEqual(TransferEntryState.copying, runner.manifest.entries.items[0].state);
     try std.testing.expectEqual(TransferEntryState.pending, runner.manifest.entries.items[1].state);
     try std.testing.expectEqual(TransferEntryState.pending, runner.manifest.entries.items[2].state);
 
-    runner.setManifestEntryState(1, "/same", .completed);
+    _ = runner.setManifestEntryState(1, "/same", .completed);
     try std.testing.expectEqual(TransferEntryState.completed, runner.manifest.entries.items[2].state);
 
-    runner.setManifestEntryState(0, "/same/child", .failed);
+    _ = runner.setManifestEntryState(0, "/same/child", .failed);
     try std.testing.expectEqual(TransferEntryState.failed, runner.manifest.entries.items[3].state);
 
-    runner.setManifestEntryState(0, "/missing", .failed);
+    _ = runner.setManifestEntryState(0, "/missing", .failed);
     try std.testing.expectEqual(TransferEntryState.pending, runner.manifest.entries.items[1].state);
 }
 
@@ -642,13 +642,14 @@ fn copyFileContentsTracked(
         job.profileCount(&job.profile_metrics.file_open_calls, 1);
     }
 
-    const src_fd = c.open(src_z, c.O_RDONLY | c.O_CLOEXEC);
+    const src_fd = c.open(src_z, c.O_RDONLY | c.O_CLOEXEC | c.O_NOFOLLOW);
     if (src_fd < 0) return error.OpenSourceFailed;
     defer _ = c.close(src_fd);
 
     var stat: c.struct_stat = undefined;
     if (runner) |job| job.profileCount(&job.profile_metrics.fstat_calls, 1);
     if (c.fstat(src_fd, &stat) != 0) return error.StatFailed;
+    if ((stat.st_mode & c.S_IFMT) != c.S_IFREG) return error.UnsupportedFileType;
     if (stat.st_size < 0) return error.InvalidFileSize;
 
     const mode = @as(c_uint, @intCast(stat.st_mode & 0o7777));
@@ -838,8 +839,11 @@ fn copyRecursiveTracked(
     cancel: ?*std.atomic.Value(bool),
     runner: ?*JobRunner,
 ) !void {
-    if (runner) |job| job.setManifestEntryState(job.current_item_index, src, .copying);
-    copyRecursiveTrackedImpl(allocator, src, dst, cancel, runner) catch |err| {
+    const manifest_kind = if (runner) |job|
+        job.setManifestEntryState(job.current_item_index, src, .copying)
+    else
+        null;
+    copyRecursiveTrackedImpl(allocator, src, dst, cancel, runner, manifest_kind) catch |err| {
         // Recursive directory cleanup runs before this catch. If the destination
         // is gone, the whole copied subtree was rolled back; if it remains,
         // cleanup failed and completed descendants may still exist.
@@ -854,7 +858,7 @@ fn copyRecursiveTracked(
         }
         return err;
     };
-    if (runner) |job| job.setManifestEntryState(job.current_item_index, src, .completed);
+    if (runner) |job| _ = job.setManifestEntryState(job.current_item_index, src, .completed);
 }
 
 fn pathExists(allocator: Allocator, path: []const u8) bool {
@@ -871,9 +875,16 @@ fn copyRecursiveTrackedImpl(
     dst: []const u8,
     cancel: ?*std.atomic.Value(bool),
     runner: ?*JobRunner,
+    manifest_kind: ?TransferEntryKind,
 ) anyerror!void {
     if (runner) |job| if (!job.waitIfResumed(cancel)) return error.Cancelled;
     if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
+
+    // The manifest lets regular files bypass a redundant path-based lstat.
+    // The opened descriptor is still validated with fstat.
+    if (manifest_kind == .file) {
+        return copyFileContentsTracked(allocator, src, dst, cancel, runner);
+    }
 
     const src_z = try allocator.dupeSentinel(u8, src, 0);
     defer allocator.free(src_z);
@@ -1779,7 +1790,7 @@ pub const JobRunner = struct {
         root_index: usize,
         source_path: []const u8,
         state: TransferEntryState,
-    ) void {
+    ) ?TransferEntryKind {
         self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
@@ -1812,10 +1823,12 @@ pub const JobRunner = struct {
                 if (candidate.root_index == root_index and
                     std.mem.eql(u8, candidate.source_path, source_path))
                 {
-                    self.manifest.entries.items[candidate.entry_index].state = state;
+                    const entry = &self.manifest.entries.items[candidate.entry_index];
+                    entry.state = state;
+                    return entry.kind;
                 }
             }
-            return;
+            return null;
         }
 
         // Allocation failure while building the index must not affect correctness.
@@ -1825,9 +1838,10 @@ pub const JobRunner = struct {
                 std.mem.eql(u8, entry.source_path, source_path))
             {
                 entry.state = state;
-                return;
+                return entry.kind;
             }
         }
+        return null;
     }
 
     fn setManifestRootState(
