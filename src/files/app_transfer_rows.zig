@@ -21,22 +21,13 @@ pub fn appendTransferRows(
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "append_transfer_rows", self.items.items.len);
 
-    const snapshot_started = ui_profile.start();
-    var manifest = runner.snapshotTransferManifest(self.allocator) catch {
-        ui_profile.finish(snapshot_started, "rows_manifest_snapshot", 0);
-        return;
-    };
-    ui_profile.finish(snapshot_started, "rows_manifest_snapshot", manifest.entries.items.len);
-    defer manifest.deinit();
-
-    const build_started = ui_profile.start();
-    var tree = transfer_tree.build(mem, manifest.entries.items) catch {
-        ui_profile.finish(build_started, "rows_tree_build", manifest.entries.items.len);
-        return;
-    };
-    ui_profile.finish(build_started, "rows_tree_build", tree.nodes.items.len);
-    defer tree.deinit();
-    appendTreeRows(self, mem, &tree, old);
+    // The sidebar and file listing share one projection of the transfer
+    // manifest. Rebuild it only when transfer state has invalidated the cache.
+    if (self.transfer_tree_state.dirty) {
+        self.transfer_tree_state.rebuild(runner) catch return;
+    }
+    const tree = if (self.transfer_tree_state.tree) |*value| value else return;
+    appendTreeRows(self, mem, tree, old);
 }
 
 /// Appends only direct children of the displayed folder. Existing filesystem
