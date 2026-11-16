@@ -1118,6 +1118,12 @@ fn moveItemTracked(
     if (runner) |job| job.setManifestRootState(job.current_item_index, .completed);
 }
 
+const DirectoryProgress = struct {
+    total_bytes: u64 = 0,
+    completed_bytes: u64 = 0,
+    file_count: usize = 0,
+};
+
 pub const JobRunner = struct {
     allocator: Allocator,
     /// Profiling is disabled by default. Configure before starting a job.
@@ -1147,6 +1153,8 @@ pub const JobRunner = struct {
     manifest: TransferManifest,
       manifest_lookup: std.ArrayList(ManifestLookupEntry) = .empty,
       manifest_lookup_valid: bool = false,
+    directory_progress: std.StringHashMap(DirectoryProgress),
+    directory_progress_valid: bool = false,
     dest_dir: []u8 = &[_]u8{},
     member: ?[]u8 = null,
     result_path: ?[]u8 = null,
@@ -1184,6 +1192,7 @@ pub const JobRunner = struct {
             .allocator = allocator,
             .sources = .empty,
             .manifest = TransferManifest.init(allocator),
+            .directory_progress = std.StringHashMap(DirectoryProgress).init(allocator),
         };
         if (c.pthread_mutex_init(&self.mutex, null) != 0) return error.MutexInitFailed;
         if (c.pthread_cond_init(&self.cond, null) != 0) {
@@ -1252,6 +1261,96 @@ pub const JobRunner = struct {
         self.manifest_lookup.clearRetainingCapacity();
     }
 
+    fn clearDirectoryProgress(self: *JobRunner) void {
+        self.directory_progress_valid = false;
+        self.directory_progress.clearRetainingCapacity();
+    }
+
+    fn invalidateDirectoryProgress(self: *JobRunner) void {
+        self.clearDirectoryProgress();
+    }
+
+    /// Caller must hold mutex. Keys borrow manifest-owned destination paths.
+    fn indexDirectoryProgressEntry(
+        self: *JobRunner,
+        entry: TransferEntry,
+    ) bool {
+        if (entry.kind != .file) return true;
+        const destination = entry.destination_path orelse return true;
+        var ancestor = std.fs.path.dirname(destination) orelse return true;
+
+        while (true) {
+            if (self.directory_progress.getPtr(ancestor) == null) {
+                self.directory_progress.put(ancestor, .{}) catch return false;
+            }
+            const progress = self.directory_progress.getPtr(ancestor) orelse return false;
+            progress.total_bytes +|= entry.size;
+            progress.file_count +|= 1;
+            if (entry.state == .completed) {
+                progress.completed_bytes +|= entry.size;
+            }
+
+            const parent = std.fs.path.dirname(ancestor) orelse break;
+            if (parent.len == ancestor.len) break;
+            ancestor = parent;
+        }
+        return true;
+    }
+
+    /// Caller must hold mutex.
+    fn updateDirectoryProgressState(
+        self: *JobRunner,
+        entry: *TransferEntry,
+        new_state: TransferEntryState,
+    ) void {
+        if (entry.state == new_state or !self.directory_progress_valid or
+            entry.kind != .file) return;
+
+        const was_completed = entry.state == .completed;
+        const will_be_completed = new_state == .completed;
+        if (was_completed == will_be_completed) return;
+
+        const destination = entry.destination_path orelse return;
+        var ancestor = std.fs.path.dirname(destination) orelse return;
+
+        while (true) {
+            const progress = self.directory_progress.getPtr(ancestor) orelse {
+                self.invalidateDirectoryProgress();
+                return;
+            };
+            if (will_be_completed) {
+                progress.completed_bytes +|= entry.size;
+            } else {
+                progress.completed_bytes -|= entry.size;
+            }
+
+            const parent = std.fs.path.dirname(ancestor) orelse break;
+            if (parent.len == ancestor.len) break;
+            ancestor = parent;
+        }
+    }
+
+    fn setManifestEntryStateLocked(
+        self: *JobRunner,
+        entry: *TransferEntry,
+        state: TransferEntryState,
+    ) void {
+        self.updateDirectoryProgressState(entry, state);
+        if (entry.state == .copying and state != .copying and
+            entry.destination_path != null and self.current_file_path_len > 0 and
+            std.mem.eql(
+                u8,
+                self.current_file_path[0..self.current_file_path_len],
+                entry.destination_path.?,
+            ))
+        {
+            self.current_file_path_len = 0;
+            self.current_file_bytes = 0;
+            self.current_file_size = 0;
+        }
+        entry.state = state;
+    }
+
     fn profilePathAllocation(self: *JobRunner, bytes: usize) void {
         if (!self.profile_enabled) return;
         self.profile_metrics.path_allocations +|= 1;
@@ -1291,8 +1390,10 @@ pub const JobRunner = struct {
 
         self.clearStrings();
         self.clearManifestLookup();
+        self.clearDirectoryProgress();
         self.manifest.deinit();
         self.manifest_lookup.deinit(self.allocator);
+        self.directory_progress.deinit();
         if (self.copy_buffer.len > 0) self.allocator.free(self.copy_buffer);
         for (self.temporary_dirs.items) |path| {
             deleteRecursive(self.allocator, path) catch {};
@@ -1354,6 +1455,8 @@ pub const JobRunner = struct {
         self.clearStrings();
         self.state = .idle;
         self.clearManifestLookup();
+        self.clearDirectoryProgress();
+        self.directory_progress_valid = true;
         self.manifest.clearRetainingCapacity();
         for (self.sources.items) |s| self.allocator.free(s);
         self.sources.clearRetainingCapacity();
@@ -1704,6 +1807,28 @@ pub const JobRunner = struct {
         path: []const u8,
         matched: ?*bool,
     ) ?f64 {
+        if (self.directory_progress_valid) {
+            const progress = self.directory_progress.get(path) orelse return null;
+            if (progress.file_count == 0) return null;
+            if (matched) |was_matched| was_matched.* = true;
+
+            var completed_bytes = progress.completed_bytes;
+            if (self.current_file_path_len > 0 and
+                isStrictPathDescendant(
+                    path,
+                    self.current_file_path[0..self.current_file_path_len],
+                ))
+            {
+                completed_bytes +|= @min(self.current_file_bytes, self.current_file_size);
+            }
+            if (progress.total_bytes == 0) return null;
+            return @min(
+                1.0,
+                @as(f64, @floatFromInt(completed_bytes)) /
+                    @as(f64, @floatFromInt(progress.total_bytes)),
+            );
+        }
+
         var total_bytes: u64 = 0;
         var completed_bytes: u64 = 0;
 
@@ -1823,6 +1948,36 @@ pub const JobRunner = struct {
             }
         }
 
+        if (self.directory_progress_valid) {
+            for (paths, 0..) |path, path_idx| {
+                if (matched[path_idx]) continue;
+                const progress = self.directory_progress.get(path) orelse continue;
+                if (progress.file_count == 0) continue;
+
+                matched[path_idx] = true;
+                if (progress.total_bytes == 0) continue;
+
+                var completed_bytes = progress.completed_bytes;
+                if (self.current_file_path_len > 0 and
+                    isStrictPathDescendant(
+                        path,
+                        self.current_file_path[0..self.current_file_path_len],
+                    ))
+                {
+                    completed_bytes +|= @min(
+                        self.current_file_bytes,
+                        self.current_file_size,
+                    );
+                }
+                results[path_idx] = @min(
+                    1.0,
+                    @as(f64, @floatFromInt(completed_bytes)) /
+                        @as(f64, @floatFromInt(progress.total_bytes)),
+                );
+            }
+            return;
+        }
+
         const direct_matched = try self.allocator.dupe(bool, matched);
         defer self.allocator.free(direct_matched);
 
@@ -1939,6 +2094,16 @@ pub const JobRunner = struct {
                 resolved[idx] = null;
             }
         }
+
+        if (self.directory_progress_valid) {
+            for (self.manifest.entries.items) |entry| {
+                if (entry.root_index != root_index) continue;
+                if (!self.indexDirectoryProgressEntry(entry)) {
+                    self.invalidateDirectoryProgress();
+                    break;
+                }
+            }
+        }
     }
 
     fn setManifestEntryState(
@@ -1980,7 +2145,7 @@ pub const JobRunner = struct {
                     std.mem.eql(u8, candidate.source_path, source_path))
                 {
                     const entry = &self.manifest.entries.items[candidate.entry_index];
-                    entry.state = state;
+                    self.setManifestEntryStateLocked(entry, state);
                     return entry.kind;
                 }
             }
@@ -1993,7 +2158,7 @@ pub const JobRunner = struct {
             if (entry.root_index == root_index and
                 std.mem.eql(u8, entry.source_path, source_path))
             {
-                entry.state = state;
+                self.setManifestEntryStateLocked(entry, state);
                 return entry.kind;
             }
         }
@@ -2009,7 +2174,9 @@ pub const JobRunner = struct {
         defer _ = c.pthread_mutex_unlock(&self.mutex);
 
         for (self.manifest.entries.items) |*entry| {
-            if (entry.root_index == root_index) entry.state = state;
+            if (entry.root_index == root_index) {
+                self.setManifestEntryStateLocked(entry, state);
+            }
         }
     }
 
@@ -2029,7 +2196,7 @@ pub const JobRunner = struct {
                 entry.source_path.len > source_root.len and
                 entry.source_path[source_root.len] == '/'))
             {
-                entry.state = state;
+                self.setManifestEntryStateLocked(entry, state);
             }
         }
     }
@@ -2050,7 +2217,7 @@ pub const JobRunner = struct {
             if (outcome == .failed or outcome == .cancelled) {
                 if (entry.state == .completed) continue;
             }
-            entry.state = final_state;
+            self.setManifestEntryStateLocked(entry, final_state);
         }
     }
 
@@ -2061,7 +2228,9 @@ pub const JobRunner = struct {
         defer _ = c.pthread_mutex_unlock(&self.mutex);
 
         for (self.manifest.entries.items) |*entry| {
-            if (entry.state == .pending) entry.state = .cancelled;
+            if (entry.state == .pending) {
+                self.setManifestEntryStateLocked(entry, .cancelled);
+            }
         }
     }
 
