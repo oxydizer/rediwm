@@ -308,7 +308,9 @@ pub fn activateItem(self: *App, idx: usize) void {
             return;
         }
     }
-    if (item.is_broken or item.missing) {
+    if (item.is_broken or
+        (item.missing and !(item.is_dir and item.transfer_ghost)))
+    {
         return;
     }
     if (item.is_dir) {

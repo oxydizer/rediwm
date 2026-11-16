@@ -35,6 +35,18 @@ pub fn navigate(self: *App, new_path: []const u8) void {
 }
 
 pub fn refresh(self: *App) void {
+    // A virtual directory cannot be scanned by the filesystem worker.
+    // Refresh its manifest projection instead while the transfer is active.
+    if (self.transfer_browse_root != null and
+        (self.job_state == .running or self.job_state == .paused or
+            self.job_state == .waiting_conflict))
+    {
+        self.transfer_tree_state.markDirty();
+        self.transfer_rows_dirty = true;
+        self.rebuildView();
+        return;
+    }
+    clearTransferBrowse(self);
     self.clearFolderSizes();
     self.beginLoading();
     self.active_request_id = self.worker.refresh();
@@ -85,7 +97,47 @@ pub fn home(self: *App) void {
     }
 }
 
+fn pathWithinTransferBrowse(path: []const u8, root: []const u8) bool {
+    if (std.mem.eql(u8, path, root)) return true;
+    if (root.len == 1 and root[0] == '/') return std.mem.startsWith(u8, path, "/");
+    return path.len > root.len and
+        std.mem.startsWith(u8, path, root) and
+        path[root.len] == '/';
+}
+
+fn clearTransferBrowse(self: *App) void {
+    if (self.transfer_browse_root) |root| self.allocator.free(root);
+    self.transfer_browse_root = null;
+}
+
+/// A virtual browse starts only from a genuinely missing transfer directory.
+/// A directory that already exists on disk must retain normal navigation.
+fn isMissingTransferDirectory(self: *App, path: []const u8) bool {
+    for (self.items.items) |item| {
+        if (!std.mem.eql(u8, item.path, path)) continue;
+        return item.is_dir and item.transfer_ghost and item.missing;
+    }
+    return false;
+}
+
 pub fn applyHistoryNav(self: *App, path: []const u8) void {
+    // Keep browsing virtually while the target remains inside the original
+    // missing directory. This also makes Back/Forward work for nested ghosts.
+    var transfer_browse = false;
+    if (self.transfer_browse_root) |root| {
+        if (pathWithinTransferBrowse(path, root)) {
+            transfer_browse = true;
+        } else {
+            clearTransferBrowse(self);
+        }
+    }
+    // Entering a missing ghost directory from a real listing establishes a
+    // new virtual root. Existing directories continue through normal scanning.
+    if (!transfer_browse and isMissingTransferDirectory(self, path)) {
+        self.transfer_browse_root = self.allocator.dupe(u8, path) catch null;
+        transfer_browse = self.transfer_browse_root != null;
+    }
+
     self.leaveTransfers();
     self.navigation_count +%= 1;
     self.overwrite_pending = false;
@@ -102,12 +154,19 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
     self.search.cursor = 0;
     self.search_visible = false;
     self.items.clearRetainingCapacity();
-    if (self.snapshot) |snap| snap.destroy();
-    self.snapshot = null;
+    if (!transfer_browse) {
+        if (self.snapshot) |snap| snap.destroy();
+        self.snapshot = null;
+    }
     self.scroll_y = 0;
     self.selection_anchor = null;
     self.focused_index = null;
-    self.beginLoading();
+    if (transfer_browse) {
+        self.loading = false;
+        self.scan_notice_shown = false;
+    } else {
+        self.beginLoading();
+    }
     self.error_message = null;
 
     self.location.text.clearRetainingCapacity();
@@ -117,7 +176,12 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
     self.location.anchor = self.location.cursor;
     self.location.scroll = 0;
 
-    self.active_request_id = self.worker.navigateLocation(path, self.show_hidden, self.history.archive_len);
+    if (transfer_browse) {
+        self.rebuildView();
+        if (self.restore_view) self.restoreView();
+    } else {
+        self.active_request_id = self.worker.navigateLocation(path, self.show_hidden, self.history.archive_len);
+    }
     self.invalidate();
 }
 
@@ -361,7 +425,26 @@ pub fn sync(self: *App) void {
                     if (runner.result_path) |path| {
                         if (self.archive_open_navigation == self.navigation_count) self.openExtracted(path, self.archive_preview);
                     }
-                } else self.refresh();
+                } else {
+                    // The manifest is no longer the source of truth once the
+                    // job finishes. Scan the now-real destination directory.
+                    const was_transfer_browsing = self.transfer_browse_root != null;
+                    clearTransferBrowse(self);
+                    if (was_transfer_browsing) {
+                        // Virtual navigation doesn't update worker.current_dir.
+                        // Explicitly scan the location currently shown.
+                        self.clearFolderSizes();
+                        self.beginLoading();
+                        self.active_request_id = self.worker.navigateLocation(
+                            self.history.current,
+                            self.show_hidden,
+                            self.history.archive_len,
+                        );
+                        self.invalidate();
+                    } else {
+                        self.refresh();
+                    }
+                }
             }
         } else if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
             self.job_was_running = true;
@@ -449,6 +532,16 @@ pub fn sync(self: *App) void {
     };
     if (isStaleSnapshot(snap.request_id, self.active_request_id)) {
         snap.destroy();
+        return;
+    }
+    // A worker result from before virtual navigation must never replace the
+    // manifest-backed listing with a snapshot of another directory.
+    if (self.transfer_browse_root != null) {
+        snap.destroy();
+        if (self.torrents.rows_changed or self.transfer_rows_dirty) {
+            self.transfer_rows_dirty = false;
+            self.rebuildView();
+        }
         return;
     }
     if (self.snapshot) |old| old.destroy();
@@ -568,12 +661,13 @@ pub fn rebuildView(self: *App) void {
     self.items_arena = std.heap.ArenaAllocator.init(self.allocator);
     const mem = self.items_arena.allocator();
     self.items = .empty;
-    self.error_message = snap.err_msg;
+    self.error_message = if (self.transfer_browse_root != null) null else snap.err_msg;
     self.focused_index = null;
     self.selection_anchor = null;
     self.last_click_index = null;
-    if (snap.err_msg == null) {
-        for (if (self.changedOnly()) snap.changed else snap.items) |it| {
+    if (self.error_message == null) {
+        if (self.transfer_browse_root == null) {
+            for (if (self.changedOnly()) snap.changed else snap.items) |it| {
             if (!self.matches(it)) continue;
             const previous = selected_paths.get(it.path);
             const selected = if (previous) |item| item.selected else false;
@@ -611,8 +705,9 @@ pub fn rebuildView(self: *App) void {
                 .selection_fill = if (previous) |item| item.selection_fill else .{},
                 .selection_border = if (previous) |item| item.selection_border else .{},
             }) catch continue;
+            }
+            self.appendTorrentRows(mem, &selected_paths);
         }
-        self.appendTorrentRows(mem, &selected_paths);
         self.appendTransferRows(mem, &selected_paths);
         // Transfer placeholders and synthetic snapshots have no worker key.
         // Give those rows keys from the same locale before sorting so every
