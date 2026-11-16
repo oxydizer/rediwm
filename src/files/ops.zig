@@ -182,6 +182,25 @@ test "JobRunner tracks current file bytes independently and resets on file chang
     try std.testing.expectEqual(@as(u64, 448), progress.transferred_bytes);
 }
 
+test "JobRunner coalesces pending eventfd notifications and rearms after drain" {
+    const runner = try JobRunner.init(std.testing.allocator);
+    defer runner.deinit();
+
+    _ = c.pthread_mutex_lock(&runner.mutex);
+    runner.notify();
+    runner.notify();
+    runner.notify();
+    try std.testing.expect(runner.wake_pending);
+    try std.testing.expectEqual(@as(u64, 1), runner.drainLocked());
+    try std.testing.expect(!runner.wake_pending);
+
+    runner.notify();
+    try std.testing.expect(runner.wake_pending);
+    try std.testing.expectEqual(@as(u64, 1), runner.drainLocked());
+    try std.testing.expect(!runner.wake_pending);
+    _ = c.pthread_mutex_unlock(&runner.mutex);
+}
+
 test "JobRunner saturates current file byte counters instead of overflowing" {
     const a = std.testing.allocator;
     const runner = try JobRunner.init(a);
@@ -1143,6 +1162,8 @@ pub const JobRunner = struct {
     wake_fd: c_int = -1,
     cancel_flag: std.atomic.Value(bool) = .init(false),
     pause_requested: bool = false,
+    /// Protected by mutex; true while an eventfd wakeup is pending.
+    wake_pending: bool = false,
 
     // Protected by mutex
     state: JobState = .idle,
@@ -1209,8 +1230,22 @@ pub const JobRunner = struct {
     }
 
     fn notify(self: *JobRunner) void {
+        if (self.wake_pending) return;
+
         const one: u64 = 1;
-        _ = c.write(self.wake_fd, &one, @sizeOf(u64));
+        while (true) {
+            const written = c.write(self.wake_fd, &one, @sizeOf(u64));
+            if (written == 8) {
+                self.wake_pending = true;
+                return;
+            }
+            if (written < 0 and std.c._errno().* == c.EINTR) continue;
+            // EAGAIN means the eventfd counter is already saturated/readable.
+            if (written < 0 and std.c._errno().* == c.EAGAIN) {
+                self.wake_pending = true;
+            }
+            return;
+        }
     }
 
     fn profileStart(self: *JobRunner) u64 {
@@ -1379,8 +1414,17 @@ pub const JobRunner = struct {
     }
 
     pub fn drain(self: *JobRunner) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+        _ = self.drainLocked();
+    }
+
+    /// Caller must hold mutex.
+    fn drainLocked(self: *JobRunner) u64 {
         var count: u64 = 0;
         _ = c.read(self.wake_fd, &count, @sizeOf(u64));
+        self.wake_pending = false;
+        return count;
     }
 
     pub fn deinit(self: *JobRunner) void {
