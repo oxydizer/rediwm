@@ -622,7 +622,7 @@ fn measureBytes(
 }
 
 pub fn copyFileContents(allocator: Allocator, src_path: []const u8, dst_path: []const u8, cancel: ?*std.atomic.Value(bool)) !void {
-    return copyFileContentsTracked(allocator, src_path, dst_path, cancel, null);
+    return copyFileContentsTracked(allocator, src_path, dst_path, cancel, null, false);
 }
 
 fn copyFileContentsTracked(
@@ -631,6 +631,7 @@ fn copyFileContentsTracked(
     dst_path: []const u8,
     cancel: ?*std.atomic.Value(bool),
     runner: ?*JobRunner,
+    no_follow: bool,
 ) !void {
     const src_z = try allocator.dupeSentinel(u8, src_path, 0);
     defer allocator.free(src_z);
@@ -642,14 +643,20 @@ fn copyFileContentsTracked(
         job.profileCount(&job.profile_metrics.file_open_calls, 1);
     }
 
-    const src_fd = c.open(src_z, c.O_RDONLY | c.O_CLOEXEC | c.O_NOFOLLOW);
+    const src_flags = if (no_follow)
+        c.O_RDONLY | c.O_CLOEXEC | c.O_NOFOLLOW | c.O_NONBLOCK
+    else
+        c.O_RDONLY | c.O_CLOEXEC;
+    const src_fd = c.open(src_z, src_flags);
     if (src_fd < 0) return error.OpenSourceFailed;
     defer _ = c.close(src_fd);
 
     var stat: c.struct_stat = undefined;
     if (runner) |job| job.profileCount(&job.profile_metrics.fstat_calls, 1);
     if (c.fstat(src_fd, &stat) != 0) return error.StatFailed;
-    if ((stat.st_mode & c.S_IFMT) != c.S_IFREG) return error.UnsupportedFileType;
+    if (no_follow and (stat.st_mode & c.S_IFMT) != c.S_IFREG) {
+        return error.UnsupportedFileType;
+    }
     if (stat.st_size < 0) return error.InvalidFileSize;
 
     const mode = @as(c_uint, @intCast(stat.st_mode & 0o7777));
@@ -883,7 +890,7 @@ fn copyRecursiveTrackedImpl(
     // The manifest lets regular files bypass a redundant path-based lstat.
     // The opened descriptor is still validated with fstat.
     if (manifest_kind == .file) {
-        return copyFileContentsTracked(allocator, src, dst, cancel, runner);
+        return copyFileContentsTracked(allocator, src, dst, cancel, runner, true);
     }
 
     const src_z = try allocator.dupeSentinel(u8, src, 0);
@@ -936,7 +943,7 @@ fn copyRecursiveTrackedImpl(
             try copyRecursiveTracked(allocator, child_src, child_dst, cancel, runner);
         }
     } else if (fmt == c.S_IFREG) {
-        return copyFileContentsTracked(allocator, src, dst, cancel, runner);
+        return copyFileContentsTracked(allocator, src, dst, cancel, runner, true);
     } else return error.UnsupportedFileType;
 }
 
