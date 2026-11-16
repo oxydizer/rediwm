@@ -428,8 +428,22 @@ pub fn sync(self: *App) void {
                 } else {
                     // The manifest is no longer the source of truth once the
                     // job finishes. Scan the now-real destination directory.
+                    const was_transfer_browsing = self.transfer_browse_root != null;
                     clearTransferBrowse(self);
-                    self.refresh();
+                    if (was_transfer_browsing) {
+                        // Virtual navigation doesn't update worker.current_dir.
+                        // Explicitly scan the location currently shown.
+                        self.clearFolderSizes();
+                        self.beginLoading();
+                        self.active_request_id = self.worker.navigateLocation(
+                            self.history.current,
+                            self.show_hidden,
+                            self.history.archive_len,
+                        );
+                        self.invalidate();
+                    } else {
+                        self.refresh();
+                    }
                 }
             }
         } else if (progress.state == .running or progress.state == .paused or progress.state == .waiting_conflict) {
