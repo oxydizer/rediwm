@@ -688,7 +688,6 @@ fn copyFileContentsTracked(
                     return error.Cancelled;
                 }
 
-                job.recordReflinkCall();
                 // Linux FICLONE: _IOW(0x94, 9, int).
                 const clone_result = c.ioctl(
                     dst_fd,
@@ -697,8 +696,7 @@ fn copyFileContentsTracked(
                 );
                 if (clone_result == 0) {
                     const file_size: u64 = @intCast(stat.st_size);
-                    job.recordReflinkBytes(file_size);
-                    job.addFileTransferredBytes(file_size);
+                    job.recordReflinkResult(file_size, false);
                     return;
                 }
 
@@ -711,8 +709,9 @@ fn copyFileContentsTracked(
                     clone_errno == c.ENOTTY or
                     clone_errno == c.EOPNOTSUPP)
                 {
-                    job.recordReflinkFallback();
+                    job.recordReflinkResult(0, true);
                 } else {
+                    job.recordReflinkResult(0, false);
                     _ = c.unlink(dst_z);
                     return error.CopyFailed;
                 }
@@ -1474,24 +1473,42 @@ pub const JobRunner = struct {
         return self.copy_metrics;
     }
 
-    fn recordReflinkCall(self: *JobRunner) void {
+    /// Publishes one reflink attempt and its resulting progress together.
+    fn recordReflinkResult(
+        self: *JobRunner,
+        bytes: u64,
+        buffered_fallback: bool,
+    ) void {
         self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
         _ = c.pthread_mutex_lock(&self.mutex);
         self.copy_metrics.reflink_calls +|= 1;
-        _ = c.pthread_mutex_unlock(&self.mutex);
-    }
-
-    fn recordReflinkBytes(self: *JobRunner, bytes: u64) void {
-        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
-        _ = c.pthread_mutex_lock(&self.mutex);
         self.copy_metrics.reflink_bytes +|= bytes;
-        _ = c.pthread_mutex_unlock(&self.mutex);
-    }
-
-    fn recordReflinkFallback(self: *JobRunner) void {
-        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
-        _ = c.pthread_mutex_lock(&self.mutex);
-        self.copy_metrics.reflink_fallback_files +|= 1;
+        if (buffered_fallback) {
+            self.copy_metrics.reflink_fallback_files +|= 1;
+        }
+        if (bytes > 0) {
+            if (bytes > std.math.maxInt(u64) - self.transferred_bytes) {
+                self.transferred_bytes = std.math.maxInt(u64);
+            } else {
+                self.transferred_bytes += bytes;
+            }
+            if (self.current_item_index < self.item_transferred_bytes.items.len) {
+                const item_bytes = &self.item_transferred_bytes.items[self.current_item_index];
+                if (bytes > std.math.maxInt(u64) - item_bytes.*) {
+                    item_bytes.* = std.math.maxInt(u64);
+                } else {
+                    item_bytes.* += bytes;
+                }
+            }
+            if (self.current_file_path_len > 0) {
+                if (bytes > std.math.maxInt(u64) - self.current_file_bytes) {
+                    self.current_file_bytes = std.math.maxInt(u64);
+                } else {
+                    self.current_file_bytes += bytes;
+                }
+            }
+            self.notify();
+        }
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
 
