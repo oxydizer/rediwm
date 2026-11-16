@@ -1846,6 +1846,7 @@ pub const JobRunner = struct {
         const owned = try self.allocator.alloc(u8, path.len);
         errdefer self.allocator.free(owned);
         @memcpy(owned, path);
+        self.profilePathAllocation(path.len);
 
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
@@ -2068,6 +2069,7 @@ pub const JobRunner = struct {
                     const unique = try generateUniqueName(self.allocator, self.dest_dir, name);
                     defer self.allocator.free(unique);
                     const replacement = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.dest_dir, unique });
+                    self.profilePathAllocation(replacement.len);
                     self.allocator.free(target);
                     target = replacement;
                 },
