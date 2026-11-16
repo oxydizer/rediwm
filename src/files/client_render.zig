@@ -1,6 +1,7 @@
 //! Rendering: shm buffers, the frame and the client-side titlebar.
 
 const std = @import("std");
+const ui_profile = @import("ui_profile.zig");
 const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
 const header = @import("header.zig");
@@ -71,6 +72,9 @@ fn frameDone(callback: *wl.Callback, _: wl.Callback.Event, self: *Client) void {
 
 pub fn render(self: *Client) !void {
     if (!self.configured or !self.app.dirty or self.outstanding >= 2) return;
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "client_frame", self.app.items.items.len);
+
     // Partial repaints (hover, proximity glow, fades) follow the display,
     // not the pointer rate: wait for the last commit's frame callback.
     if ((self.app.paint_damage != null or self.app.progress_damage_count > 0) and

@@ -1,6 +1,7 @@
 //! Cached UI state for the transfer destination tree.
 
 const std = @import("std");
+const ui_profile = @import("ui_profile.zig");
 const Allocator = std.mem.Allocator;
 const ops = @import("ops.zig");
 const projection = @import("transfer_tree.zig");
@@ -39,10 +40,19 @@ pub const State = struct {
 
     /// Replaces the cached projection from one consistent manifest snapshot.
     pub fn rebuild(self: *State, runner: *ops.JobRunner) !void {
+        var profiled_nodes = self.treeSize();
+        const profile_started = ui_profile.start();
+        defer ui_profile.finish(profile_started, "sidebar_tree_rebuild", profiled_nodes);
+
+        const snapshot_started = ui_profile.start();
         var snapshot = try runner.snapshotTransferManifest(self.allocator);
+        ui_profile.finish(snapshot_started, "sidebar_manifest_snapshot", snapshot.entries.items.len);
         defer snapshot.deinit();
 
+        const build_started = ui_profile.start();
         var next = try projection.build(self.allocator, snapshot.entries.items);
+        profiled_nodes = next.nodes.items.len;
+        ui_profile.finish(build_started, "sidebar_tree_projection", next.nodes.items.len);
         errdefer next.deinit();
 
         try self.aggregate_cache.ensureTotalCapacity(self.allocator, next.nodes.items.len);
@@ -89,6 +99,9 @@ pub const State = struct {
     }
 
     pub fn visibleCount(self: *const State, tree: *const projection.Tree) usize {
+        const profile_started = ui_profile.start();
+        defer ui_profile.finish(profile_started, "tree_visible_count", tree.nodes.items.len);
+
         var count: usize = 0;
         for (tree.nodes.items, 0..) |_, index| {
             if (self.nodeVisible(tree, index)) count += 1;
@@ -106,6 +119,9 @@ pub const State = struct {
         active_bytes: u64,
         active_size: u64,
     ) !void {
+        const profile_started = ui_profile.start();
+        defer ui_profile.finish(profile_started, "tree_aggregate", tree.nodes.items.len);
+
         const count = tree.nodes.items.len;
         try self.aggregate_cache.ensureTotalCapacity(self.allocator, count);
         try self.child_counts.ensureTotalCapacity(self.allocator, count);
@@ -174,6 +190,10 @@ pub const State = struct {
 
     pub fn aggregateProgress(self: *const State, index: usize) AggregateProgress {
         return self.aggregate_cache.items[index];
+    }
+
+    fn treeSize(self: *const State) usize {
+        return if (self.tree) |*tree| tree.nodes.items.len else 0;
     }
 
     pub fn toggleExpanded(self: *State, path: []const u8) !void {

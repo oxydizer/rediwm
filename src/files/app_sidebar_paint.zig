@@ -1,6 +1,7 @@
 //! Files sidebar painting.
 
 const std = @import("std");
+const ui_profile = @import("ui_profile.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -123,6 +124,9 @@ fn drawSidebarRowProximity(
 /// The shared accordion geometry. Every expanded visible card receives
 /// its body, with all cards stacked in section order.
 pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "sidebar_layout", self.items.items.len);
+
     const top = self.contentTop() - self.sidebar_scroll;
     const pin_bottom = self.pinRowY(self.pins.items.items.len);
     const old_places_top = self.contentTop() - self.sidebar_scroll;
@@ -703,6 +707,13 @@ pub fn renderTransferTree(self: *App, cr: *c.cairo_t) void {
 
     const area = transferTreeBox(self);
     if (area.w < 100 or area.h <= 0) return;
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(
+        profile_started,
+        "sidebar_tree_paint",
+        tree.nodes.items.len,
+    );
+
     const progress = if (self.job_runner) |runner| runner.pollProgress() else null;
     const active_source = if (progress) |value|
         (if (value.current_file_path_len > 0) value.current_file_path[0..value.current_file_path_len] else "")

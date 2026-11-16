@@ -1,6 +1,7 @@
 //! Merge active file-operation manifest entries into the current folder view.
 
 const std = @import("std");
+const ui_profile = @import("ui_profile.zig");
 const App = @import("app.zig").App;
 const ViewItem = @import("app_model.zig").ViewItem;
 const transfer_tree = @import("transfer_tree.zig");
@@ -17,10 +18,23 @@ pub fn appendTransferRows(
         self.job_state != .waiting_conflict) return;
 
     const runner = self.job_runner orelse return;
-    var manifest = runner.snapshotTransferManifest(self.allocator) catch return;
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "append_transfer_rows", self.items.items.len);
+
+    const snapshot_started = ui_profile.start();
+    var manifest = runner.snapshotTransferManifest(self.allocator) catch {
+        ui_profile.finish(snapshot_started, "rows_manifest_snapshot", 0);
+        return;
+    };
+    ui_profile.finish(snapshot_started, "rows_manifest_snapshot", manifest.entries.items.len);
     defer manifest.deinit();
 
-    var tree = transfer_tree.build(mem, manifest.entries.items) catch return;
+    const build_started = ui_profile.start();
+    var tree = transfer_tree.build(mem, manifest.entries.items) catch {
+        ui_profile.finish(build_started, "rows_tree_build", manifest.entries.items.len);
+        return;
+    };
+    ui_profile.finish(build_started, "rows_tree_build", tree.nodes.items.len);
     defer tree.deinit();
     appendTreeRows(self, mem, &tree, old);
 }
@@ -34,6 +48,9 @@ pub fn appendTreeRows(
     tree: *const transfer_tree.Tree,
     old: *const std.StringHashMap(ViewItem),
 ) void {
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "append_tree_rows", tree.nodes.items.len);
+
     for (tree.nodes.items) |node| {
         if (!std.mem.eql(u8, std.fs.path.dirname(node.path) orelse "", self.history.current)) continue;
 

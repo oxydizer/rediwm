@@ -1,6 +1,7 @@
 //! Files listing: navigation, history moves, snapshot sync and the filtered, sorted view.
 
 const std = @import("std");
+const ui_profile = @import("ui_profile.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -137,6 +138,9 @@ fn damageFolderProgressBatch(
     paths: []const []const u8,
     indices: []const usize,
 ) void {
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "progress_damage_lookup", paths.len);
+
     var results: [64]?f64 = undefined;
     var matched: [64]bool = undefined;
     runner.progressForPaths(paths, results[0..paths.len], matched[0..paths.len]) catch return;
@@ -260,6 +264,9 @@ fn damageJobProgress(
 }
 
 pub fn sync(self: *App) void {
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "sync", self.items.items.len);
+
     if (self.worker.takeApplicationNotice()) |notice| self.setStatusNotice(notice.message, notice.failed);
     if (self.worker.takeThemeNotice()) |notice| {
         defer self.worker.allocator.free(notice);
@@ -534,6 +541,9 @@ pub fn lessThan(mode: Sort, a: ViewItem, b: ViewItem) bool {
 
 pub fn rebuildView(self: *App) void {
     const snap = self.snapshot orelse return;
+    const profile_started = ui_profile.start();
+    defer ui_profile.finish(profile_started, "listing_rebuild", self.items.items.len);
+
     self.torrents.rows_changed = false;
     // Keep old storage alive until names, selection and focus have been copied.
     // Both a worker refresh and a local filter can rebuild this view.
