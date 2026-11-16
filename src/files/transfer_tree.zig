@@ -19,6 +19,7 @@ pub const Node = struct {
 pub const Tree = struct {
     allocator: Allocator,
     nodes: std.ArrayList(Node) = .empty,
+    roots: std.ArrayList(usize) = .empty,
 
     pub fn deinit(self: *Tree) void {
         for (self.nodes.items) |node| {
@@ -27,6 +28,7 @@ pub const Tree = struct {
             self.allocator.free(node.name);
         }
         self.nodes.deinit(self.allocator);
+        self.roots.deinit(self.allocator);
     }
 };
 
@@ -116,6 +118,14 @@ pub fn build(allocator: Allocator, entries: []const ops.TransferEntry) !Tree {
         if (parent_index == node_index) return error.InvalidParent;
 
         node.parent_index = parent_index;
+    }
+
+    // Keep a compact index of selected top-level entries for sidebar UI.
+    // Descendants remain in nodes for complete subtree aggregation.
+    for (tree.nodes.items, 0..) |node, index| {
+        if (node.parent_index == null) {
+            try tree.roots.append(allocator, index);
+        }
     }
 
     return tree;

@@ -85,25 +85,19 @@ pub const State = struct {
         return state == .skipped or state == .cancelled;
     }
 
-    /// A node is visible only when every directory ancestor is expanded.
+    /// The Transfers sidebar displays selected roots only.
     pub fn nodeVisible(self: *const State, tree: *const projection.Tree, index: usize) bool {
-        if (hiddenState(tree.nodes.items[index].state)) return false;
-        var parent = tree.nodes.items[index].parent_index;
-        while (parent) |parent_index| {
-            const ancestor = tree.nodes.items[parent_index];
-            if (hiddenState(ancestor.state) or ancestor.kind != .directory or
-                !self.isExpanded(ancestor.path)) return false;
-            parent = ancestor.parent_index;
-        }
-        return true;
+        _ = self;
+        const node = tree.nodes.items[index];
+        return node.parent_index == null and !hiddenState(node.state);
     }
 
     pub fn visibleCount(self: *const State, tree: *const projection.Tree) usize {
         const profile_started = ui_profile.start();
-        defer ui_profile.finish(profile_started, "tree_visible_count", tree.nodes.items.len);
+        defer ui_profile.finish(profile_started, "tree_visible_count", tree.roots.items.len);
 
         var count: usize = 0;
-        for (tree.nodes.items, 0..) |_, index| {
+        for (tree.roots.items) |index| {
             if (self.nodeVisible(tree, index)) count += 1;
         }
         return count;
@@ -341,11 +335,11 @@ test "transfer tree hides skipped and cancelled entries" {
 
     var state = State.init(allocator);
     defer state.deinit();
-    try state.toggleExpanded("/destination/source");
 
     try std.testing.expect(state.nodeVisible(&tree, 0));
-    try std.testing.expect(state.nodeVisible(&tree, 1));
+    try std.testing.expect(!state.nodeVisible(&tree, 1));
     try std.testing.expect(!state.nodeVisible(&tree, 2));
     try std.testing.expect(!state.nodeVisible(&tree, 3));
-    try std.testing.expectEqual(@as(usize, 2), state.visibleCount(&tree));
+    try std.testing.expectEqual(@as(usize, 1), state.visibleCount(&tree));
+    try std.testing.expectEqual(@as(usize, 1), tree.roots.items.len);
 }
