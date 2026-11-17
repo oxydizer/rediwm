@@ -154,3 +154,58 @@ test "snapshots own dependency data and planning closes at queue time" {
     try std.testing.expectEqual(first, snapshot.operations[1].dependencies[0]);
     try std.testing.expectError(error.InvalidJobState, manager.addOperation(job, .publish));
 }
+
+test "large dependency chain dispatches in insertion order" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const operation_count = 10_000;
+    const job = try manager.createJob(null);
+    const ids = try std.testing.allocator.alloc(io_manager.OperationId, operation_count);
+    defer std.testing.allocator.free(ids);
+
+    for (ids, 0..) |*id, index| {
+        id.* = try manager.addOperation(job, .copy_file);
+        if (index > 0) {
+            try manager.addDependency(job, id.*, ids[index - 1]);
+        }
+    }
+
+    try manager.queueJob(job);
+
+    for (ids) |expected_id| {
+        const token = manager.dispatchNext() orelse return error.MissingWork;
+        try std.testing.expectEqual(expected_id, token.operation_id);
+        try std.testing.expect(manager.completeWork(token, .completed));
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    try std.testing.expect(manager.dispatchNext() == null);
+}
+
+test "failure propagation handles shared descendants in a diamond graph" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addOperation(job, .copy_file);
+    const left = try manager.addOperation(job, .copy_file);
+    const right = try manager.addOperation(job, .copy_file);
+    const join = try manager.addOperation(job, .publish);
+
+    try manager.addDependency(job, left, root);
+    try manager.addDependency(job, right, root);
+    try manager.addDependency(job, join, left);
+    try manager.addDependency(job, join, right);
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(root, token.operation_id);
+    try std.testing.expect(manager.completeWork(token, .failed));
+
+    try std.testing.expectEqual(io_manager.OperationState.skipped, manager.operationState(job, left).?);
+    try std.testing.expectEqual(io_manager.OperationState.skipped, manager.operationState(job, right).?);
+    try std.testing.expectEqual(io_manager.OperationState.skipped, manager.operationState(job, join).?);
+    try std.testing.expectEqual(io_manager.JobState.failed, manager.jobState(job).?);
+    try std.testing.expect(manager.dispatchNext() == null);
+}
