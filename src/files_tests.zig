@@ -10,6 +10,7 @@ const io_manager_tests = @import("files/io_manager_tests.zig");
 const io_workers_tests = @import("files/io_workers_tests.zig");
 const io_executor_tests = @import("files/io_executor_tests.zig");
 const io_copy_tests = @import("files/io_copy_tests.zig");
+const io_tree_tests = @import("files/io_tree.zig");
 const c = @import("files/c.zig").api;
 const linux = std.os.linux;
 
@@ -19,6 +20,7 @@ test {
     _ = io_workers_tests;
     _ = io_executor_tests;
     _ = io_copy_tests;
+    _ = io_tree_tests;
 }
 
 test "History navigation stack" {
