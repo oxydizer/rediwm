@@ -93,6 +93,7 @@ const Job = struct {
     origin_window_id: ?WindowId,
     state: JobState = .planning,
     operations: std.ArrayList(Operation) = .empty,
+    operation_indices: std.AutoHashMapUnmanaged(OperationId, usize) = .empty,
     ready_queue: std.ArrayList(usize) = .empty,
     ready_head: usize = 0,
     ready_count: usize = 0,
@@ -102,6 +103,7 @@ const Job = struct {
     fn deinit(self: *Job, allocator: Allocator) void {
         for (self.operations.items) |*operation| operation.deinit(allocator);
         self.operations.deinit(allocator);
+        self.operation_indices.deinit(allocator);
         self.ready_queue.deinit(allocator);
         self.dependency_work_queue.deinit(allocator);
     }
@@ -162,7 +164,11 @@ pub const Manager = struct {
         if (self.next_operation_id == std.math.maxInt(OperationId)) return error.IdExhausted;
 
         const id = self.next_operation_id;
-        try job.operations.append(self.allocator, .{ .id = id, .kind = kind });
+        const index = job.operations.items.len;
+        try job.operations.ensureUnusedCapacity(self.allocator, 1);
+        try job.operation_indices.ensureUnusedCapacity(self.allocator, 1);
+        job.operations.appendAssumeCapacity(.{ .id = id, .kind = kind });
+        job.operation_indices.putAssumeCapacity(id, index);
         self.next_operation_id += 1;
         return id;
     }
@@ -183,8 +189,10 @@ pub const Manager = struct {
         for (operation.dependencies.items) |existing| {
             if (existing == dependency_id) return error.DuplicateDependency;
         }
-        try operation.dependencies.append(self.allocator, dependency_id);
-        try operation.dependency_indices.append(self.allocator, dependency_index);
+        try operation.dependencies.ensureUnusedCapacity(self.allocator, 1);
+        try operation.dependency_indices.ensureUnusedCapacity(self.allocator, 1);
+        operation.dependencies.appendAssumeCapacity(dependency_id);
+        operation.dependency_indices.appendAssumeCapacity(dependency_index);
     }
 
     pub fn queueJob(self: *Manager, job_id: JobId) !void {
@@ -421,24 +429,17 @@ fn transitionOperation(job: *Job, operation: *Operation, next_state: OperationSt
 }
 
 fn findOperation(job: *Job, id: OperationId) ?*Operation {
-    for (job.operations.items) |*operation| {
-        if (operation.id == id) return operation;
-    }
-    return null;
+    const index = job.operation_indices.get(id) orelse return null;
+    return &job.operations.items[index];
 }
 
 fn findOperationConst(job: *const Job, id: OperationId) ?*const Operation {
-    for (job.operations.items) |*operation| {
-        if (operation.id == id) return operation;
-    }
-    return null;
+    const index = job.operation_indices.get(id) orelse return null;
+    return &job.operations.items[index];
 }
 
 fn findOperationIndex(job: *const Job, id: OperationId) ?usize {
-    for (job.operations.items, 0..) |operation, index| {
-        if (operation.id == id) return index;
-    }
-    return null;
+    return job.operation_indices.get(id);
 }
 
 fn enqueueReady(job: *Job, operation_index: usize) void {
@@ -559,4 +560,28 @@ fn buildDependencyGraph(allocator: Allocator, job: *Job) !void {
             try job.operations.items[dependency_index].dependents.append(allocator, dependent_index);
         }
     }
+}
+
+test "generation exhaustion does not starve unrelated Operations" {
+    var manager = Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job_id = try manager.createJob(null);
+    const exhausted = try manager.addOperation(job_id, .copy_file);
+    const dependent = try manager.addOperation(job_id, .publish);
+    const independent = try manager.addOperation(job_id, .copy_file);
+    try manager.addDependency(job_id, dependent, exhausted);
+    try manager.queueJob(job_id);
+
+    const job = manager.findJob(job_id).?;
+    job.operations.items[0].generation = std.math.maxInt(u64);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(independent, token.operation_id);
+    try std.testing.expectEqual(OperationState.failed, manager.operationState(job_id, exhausted).?);
+    try std.testing.expectEqual(OperationState.skipped, manager.operationState(job_id, dependent).?);
+    try std.testing.expectEqual(OperationState.running, manager.operationState(job_id, independent).?);
+
+    try std.testing.expect(manager.completeWork(token, .completed));
+    try std.testing.expectEqual(JobState.completed_with_errors, manager.jobState(job_id).?);
 }
