@@ -7,6 +7,8 @@ const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const platform = @import("platform");
 const worker_mod = @import("worker.zig");
+const io_manager_mod = @import("io_manager.zig");
+const io_discovery_executor_mod = @import("io_discovery_executor.zig");
 const history_mod = @import("history.zig");
 const ops_mod = @import("ops.zig");
 const dirsize = @import("dirsize.zig");
@@ -92,6 +94,8 @@ pub const App = struct {
     environ: std.process.Environ,
     theme_cfg: theme.Config,
     worker: *worker_mod.Worker,
+    io_manager: ?io_manager_mod.Manager = null,
+    discovery_executor: ?io_discovery_executor_mod.Executor = null,
     history: history_mod.History,
     home_dir: []const u8,
 
@@ -342,6 +346,7 @@ pub const App = struct {
             .environ = environ,
             .theme_cfg = theme_cfg,
             .worker = worker,
+            .io_manager = io_manager_mod.Manager.init(allocator),
             .history = hist,
             .home_dir = home_dir,
             .items_arena = std.heap.ArenaAllocator.init(allocator),
@@ -382,6 +387,8 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
+        if (self.discovery_executor) |*executor| executor.deinit();
+        if (self.io_manager) |*manager| manager.deinit();
         self.torrents.deinit();
         self.stopAudio();
         self.terminal.deinit(self.allocator);
@@ -628,6 +635,12 @@ pub const App = struct {
     pub const deleteAction = app_fileops.deleteAction;
     pub const executeDeletion = app_fileops.executeDeletion;
     pub const deleteFromTrash = app_fileops.deleteFromTrash;
+
+    // app_io.zig
+    const app_io = @import("app_io.zig");
+    pub const startDiscovery = app_io.startDiscovery;
+    pub const stepDiscovery = app_io.stepDiscovery;
+    pub const discoveryWakeFd = app_io.discoveryWakeFd;
 
     // app_trash.zig
     pub const trashRelation = app_trash.trashRelation;
