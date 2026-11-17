@@ -79,25 +79,32 @@ fn runCopy(
 
     while (true) {
         const done = copy.execute(allocator, item);
+        if (done.outcome == .completed) {
+            copy.complete(null, done.token, done.outcome, done.result);
+            var owned_input = done.input;
+            owned_input.deinit();
+            return;
+        }
+        if (done.outcome != .yielded) {
+            copy.discard(
+                null,
+                done.operation_kind,
+                done.input,
+                done.continuation,
+                done.result,
+            );
+            return error.CopyFailed;
+        }
         item = .{
             .token = .{
                 .job_id = 1,
                 .operation_id = 1,
-                .generation = item.token.generation + 1,
+                .generation = done.token.generation + 1,
             },
-            .operation_kind = .copy_file,
+            .operation_kind = done.operation_kind,
             .input = done.input,
             .continuation = done.continuation,
         };
-        if (done.outcome == .completed) {
-            copy.complete(null, done.token, done.outcome, done.result);
-            item.input.deinit();
-            return;
-        }
-        if (done.outcome != .yielded) {
-            item.input.deinit();
-            return error.CopyFailed;
-        }
     }
 }
 
@@ -192,4 +199,62 @@ test "symlink source is rejected" {
         error.CopyFailed,
         runCopy(allocator, source, destination),
     );
+}
+
+test "stale yielded copy closes descriptors and removes partial destination" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(allocator, temp, &.{"source", "destination"});
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    const contents = try allocator.alloc(u8, copy.chunk_size * 2);
+    defer allocator.free(contents);
+    @memset(contents, 0x5a);
+    try writeFile(source, contents);
+
+    const item = executor.WorkItem{
+        .token = .{ .job_id = 7, .operation_id = 3, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeInput(allocator, source, destination),
+    };
+    const done = copy.execute(allocator, item);
+    try std.testing.expectEqual(executor.WorkResult.yielded, done.outcome);
+    try std.testing.expect(done.continuation != null);
+
+    copy.discard(null, done.operation_kind, done.input, done.continuation, done.result);
+
+    var buffer: [16]u8 = undefined;
+    try std.testing.expectError(error.OpenFailed, readFile(destination, &buffer));
+}
+
+test "stale completed copy removes destination before acceptance" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(allocator, temp, &.{"source", "destination"});
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    try writeFile(source, "completed but stale");
+    const item = executor.WorkItem{
+        .token = .{ .job_id = 8, .operation_id = 4, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeInput(allocator, source, destination),
+    };
+    const done = copy.execute(allocator, item);
+    try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
+    try std.testing.expect(done.result != null);
+
+    copy.discard(null, done.operation_kind, done.input, done.continuation, done.result);
+
+    var buffer: [32]u8 = undefined;
+    try std.testing.expectError(error.OpenFailed, readFile(destination, &buffer));
 }
