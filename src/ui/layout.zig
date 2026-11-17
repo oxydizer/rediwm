@@ -155,6 +155,8 @@ pub const IconId = enum {
     trackball,
     cpu,
     ram,
+    /// Firewall: a shield with a check mark.
+    shield,
 };
 
 pub const ButtonState = enum { idle, hover, press, disabled };

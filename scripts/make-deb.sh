@@ -35,6 +35,7 @@ cp -a "$rel/lib/rediwm" "$L/lib/rediwm"
 # System-wide data: portal backend, polkit action, session entry.
 install -d "$root/usr/share/polkit-1/actions" "$root/usr/share/wayland-sessions" "$root/usr/share/xdg-desktop-portal/portals"
 cp "$rel/share/polkit-1/actions/org.rediwm.accounts.policy" "$root/usr/share/polkit-1/actions/"
+cp "$rel/share/polkit-1/actions/org.rediwm.firewall.policy" "$root/usr/share/polkit-1/actions/"
 cp "$rel/share/wayland-sessions/rediwm-release-safe.desktop" "$root/usr/share/wayland-sessions/"
 install -m644 "$repo/data/rediwm.portal" "$root/usr/share/xdg-desktop-portal/portals/rediwm.portal"
 # Remaining data follows the configured prefix.

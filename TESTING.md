@@ -56,6 +56,16 @@ agent. Requires OpenSSH, OpenSSL and `gio`; `GIO_USE_VFS=local` keeps Trash
 within the fixture. `--helper-only` skips the compositor; `--bin-dir` selects
 the helper and compositor builds together.
 
+Firewall: `zig build test-firewall` (parsers, validation, nftables/pf
+rendering), `python3 tests/firewall_helper.py` (the real helper as namespace
+root in `unshare -rmn`, against real nftables in an empty network namespace;
+config and run directories on tmpfs, nmcli/systemctl/ufw/firewall-cmd
+hidden) and `python3 tests/firewall_settings.py` (Settings with a fake pkexec
+and helper in a private mount namespace; needs a `/etc/subuid` range; repeat
+with `REDIWM_TEST_SCALE=1.5`, `FIREWALL_TEST_SHOTS=<dir>` keeps screenshots).
+Neither touches the host firewall. pf output is checked on FreeBSD with
+`pfctl -nf`.
+
 Keyboard layouts and input methods: `python3 tests/input_sources.py` starts
 its own `dbus-run-session` with a fake Fcitx5 controller; it never reaches the
 host's Fcitx. Layout labels need libxkbregistry.

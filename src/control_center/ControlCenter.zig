@@ -151,6 +151,7 @@ input: input_section.Section = .{},
 input_sources: @import("sections/input_sources.zig").Section = .{},
 users: users_section.Section = .{},
 network: network_section.Section = .{},
+firewall: @import("sections/firewall.zig").Section = .{},
 bluetooth: bluetooth_section.Section = .{},
 services: services_section.Section = .{},
 printers: printers_section.Section = .{},
@@ -256,6 +257,7 @@ pub fn destroy(cc: *ControlCenter) void {
     cc.key_settings.deinit();
     if (cc.server.network) |m| m.cancelUnlock();
     cc.network.deinit();
+    cc.firewall.deinit();
     if (cc.page == .bluetooth) if (cc.server.bluetooth) |m| m.closed();
     cc.bluetooth.deinit();
     users_section.deinit(cc);

@@ -68,6 +68,7 @@ pub fn buildTree(cc: *ControlCenter) void {
             if (cc.page == .services) if (cc.systemd_client) |client| client.hide();
             if (cc.page == .printers) cc.printers.hide();
             if (cc.page == .keys) cc.key_settings.hide();
+            if (cc.page == .network) cc.firewall.hide();
             if (cc.page == .bluetooth) if (cc.server.bluetooth) |manager| manager.closed();
         } else {
             cc.search.restore_scroll = true;

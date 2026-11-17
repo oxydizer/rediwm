@@ -285,6 +285,7 @@ pub fn build(b: *std.Build) void {
 
     const zig_tests = tests.addZig(ctx, session);
     @import("build/keys.zig").add(ctx, zig_tests.test_step, &.{ compositor.root_module, zig_tests.ui_tests_module });
+    @import("build/firewall.zig").add(ctx, zig_tests.test_step, &.{ compositor.root_module, zig_tests.ui_tests_module });
     const ui_tests_module = zig_tests.ui_tests_module;
     const ipc_tests_module = zig_tests.ipc_tests_module;
     const files_tests = zig_tests.files_tests;

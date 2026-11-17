@@ -86,6 +86,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .network, .title = i18n.msg("IP address and DNS"), .target = "ethernet_edit", .keywords = i18n.msg("ipv4 ipv6 static dhcp gateway mtu metered forget saved network") },
     .{ .page = .network, .title = i18n.msg("Proxy"), .target = "proxy_card", .keywords = i18n.msg("http https socks pac proxy server bypass") },
     .{ .page = .network, .title = i18n.msg("VPN"), .target = "vpn_card", .keywords = i18n.msg("wireguard openvpn tunnel private network") },
+    .{ .page = .network, .title = i18n.msg("Firewall"), .target = "firewall_card", .keywords = i18n.msg("firewall ports block allow incoming outgoing ufw firewalld pf nftables ssh listening lockdown") },
     .{ .page = .network, .title = i18n.msg("Airplane mode"), .target = "network_airplane_row", .keywords = i18n.msg("flight radios bluetooth wi-fi rfkill") },
     .{ .page = .appearance, .title = i18n.msg("Wallpaper"), .target = "@Wallpaper", .heading = i18n.msg("Wallpaper"), .keywords = i18n.msg("background desktop image folder") },
     .{ .page = .appearance, .title = i18n.msg("Theme"), .target = "@Theme", .heading = i18n.msg("Theme"), .keywords = i18n.msg("colors colours dark light preset") },

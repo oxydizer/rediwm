@@ -120,7 +120,9 @@ pub fn build(self: *Section, cc: *panel.ControlCenter) void {
     const width = @max(80, @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 80);
     wrap(self.arena.allocator(), &self.root, width) catch {};
 }
-fn wrap(a: A, widget: *W, width: f32) !void {
+/// Turns text wider than `width` into wrapped paragraphs (also used by the
+/// Firewall section).
+pub fn wrap(a: A, widget: *W, width: f32) !void {
     const inner = @max(40, width - widget.padding.left - widget.padding.right);
     if (widget.kind == .text and ui.measure.textNatural(widget.kind.text.content, .sans, widget.kind.text.weight, widget.kind.text.font_size).w > inner) {
         const style = widget.kind.text;

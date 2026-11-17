@@ -30,6 +30,7 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 | `rediwm-session` | `src/session_main.zig` | login supervisor (`session/supervisor.zig`, `publication.zig`) |
 | `rediwm-dm` | `src/dm/main.zig` | display manager, runs as root (`dm/AGENTS.md`) |
 | `rediwm-accounts-helper` | `src/accounts_helper/main.zig` | root account helper (`accounts_helper/AGENTS.md`) |
+| `rediwm-firewall-helper` | `src/firewall_main.zig` | root firewall helper (`firewall_helper/`, `firewall/AGENTS.md`); Settings uses `control_center/sections/firewall_client.zig` |
 | `rediwm-theme` | `src/theme_main.zig` | theme archive helper (`theme_helper/`) |
 | `rediwm-keys` | `src/keys_main.zig` | unprivileged SSH metadata and operations (`keys/`, `keys_helper.zig`); Settings uses `keys/client.zig` |
 
@@ -46,7 +47,9 @@ widgets, layout, text, theme, animation), `config` (`src/config/`: parsing and
 saving `config.toml`), `dbus`, `i18n`, `memory` and `protocol`
 (`src/ipc/protocol.zig`, the IPC wire format shared with `rediwm-msg`). Also
 `keys` (`src/keys/mod.zig`: public identity model, bounded key metadata parsers,
-inventory and operation protocol; parsers run in `rediwm-keys`) and
+inventory and operation protocol; parsers run in `rediwm-keys`), `firewall`
+(`src/firewall/mod.zig`: the firewall model, helper protocol, validation, and
+the parsers and renderers for ufw, firewalld, nftables and pf) and
 `platform` (`src/platform/`, std only): child-process handles, directory
 watching, the program's own path, system helper lookup (`tool.zig`) and
 syscall filters (`seccomp.zig`), the
@@ -96,7 +99,8 @@ and `effects/minimize_mesh.zig` (minimize snapshots and deformation),
 * **Settings** (`control_center/`, `AGENTS.md` there): the window is
   `ControlCenter.zig` (+ `tree`, `keys`, `relayout`, `paint.zig`); `panel.zig`
   has shared helpers; one `sections/*.zig` per page, the big ones split into
-  `appearance_*.zig` and `printers_*.zig`.
+  `appearance_*.zig`, `printers_*.zig` and `network_*.zig` (the Firewall card
+  and sub-view are `firewall*.zig`, shown from the Network page).
 * **Session** (`session/`, `AGENTS.md` there): `lock.zig` (+ `lock_account`,
   `lock_events`, `lock_input`, `lock_view.zig`), `greeter.zig`, `idle.zig`,
   `power.zig` (+ `power_*.zig`), `login_manager.zig` (`login_manager/`: service

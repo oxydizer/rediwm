@@ -22,6 +22,7 @@ const details = @import("network_details.zig");
 const editor = @import("network_editor.zig");
 const proxy_card = @import("network_proxy.zig");
 const vpn_card = @import("network_vpn.zig");
+const firewall = @import("firewall.zig");
 const rfkill = @import("platform").rfkill;
 
 pub const Section = struct {
@@ -93,6 +94,8 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     s.name_field = null;
     s.edit.capture();
     s.proxy.capture();
+    cc.firewall.capture();
+    firewall.start(cc);
     s.list = null;
     _ = s.arena.reset(.retain_capacity);
     // A service/radio change closes the form and wipes any entered secret.
@@ -115,6 +118,7 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     if (s.list) |list| list.kind.scroll_container = saved_scroll;
 }
 fn tree(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
+    if (cc.firewall.managing) return wrapped(cc, a, try firewall.view(cc, a));
     const m = cc.server.network;
     const available = if (m) |n| n.available else false;
     const eth = if (m) |n| details.chosenEthernet(s, n) else null;
@@ -166,10 +170,19 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     if (try airplaneRow(cc, a)) |row| try page.append(a, row);
     if (m) |n| if (try accessRow(cc, a, n)) |row| try page.append(a, row);
     try page.append(a, columns);
+    try page.append(a, try wrapped(cc, a, try firewall.overview(cc, a)));
     if (try editor.build(cc, a)) |edit_card| try page.append(a, edit_card);
     try page.append(a, try vpn_card.build(cc, a));
     try page.append(a, try proxy_card.build(cc, a));
     return group(a, .column, page.items);
+}
+
+/// Wraps the firewall's long lines to the page width.
+fn wrapped(cc: *panel.ControlCenter, a: Allocator, widget: W) !W {
+    var w = widget;
+    const width = @max(80, @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 80);
+    try @import("keys.zig").wrap(a, &w, width);
+    return w;
 }
 
 /// Airplane mode: every radio blocked by software (`/dev/rfkill`), which

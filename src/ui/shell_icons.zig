@@ -107,6 +107,7 @@ pub fn configure(io: std.Io, root: []const u8) void {
         .{ IconId.users, "users" },
         .{ IconId.squares, "squares" },
         .{ IconId.divide, "divide" },
+        .{ IconId.shield, "shield" },
     }) |pair| {
         loadOverride(io, root, pair[0], pair[1]);
     }
@@ -203,6 +204,7 @@ fn builtinSource(id: IconId) ?[]const u8 {
         .users => @embedFile("shell-icon-users"),
         .squares => @embedFile("shell-icon-squares"),
         .divide => @embedFile("shell-icon-divide"),
+        .shield => @embedFile("shell-icon-shield"),
         else => null,
     };
 }

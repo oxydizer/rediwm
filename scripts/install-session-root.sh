@@ -58,6 +58,7 @@ install -Dm644 "$repo_dir/data/rediwm-portals.conf" "${datadir}/xdg-desktop-port
 # xdg-desktop-portal reads backend descriptors only from its own datadir.
 install -Dm644 "$repo_dir/data/rediwm.portal" "${system_data}/xdg-desktop-portal/portals/rediwm.portal"
 install -Dm644 "$release_dir/share/polkit-1/actions/org.rediwm.accounts.policy" "${system_data}/polkit-1/actions/org.rediwm.accounts.policy"
+install -Dm644 "$release_dir/share/polkit-1/actions/org.rediwm.firewall.policy" "${system_data}/polkit-1/actions/org.rediwm.firewall.policy"
 install -Dm644 "$repo_dir/data/xdg-desktop-portal-wlr.ini" "${datadir}/xdg-desktop-portal-wlr/config"
 install -Dm644 "$release_dir/share/wayland-sessions/rediwm-release-safe.desktop" "${system_data}/wayland-sessions/rediwm-release-safe.desktop"
 # The bass boost's LADSPA plugin, and on Debian/Ubuntu builds the private

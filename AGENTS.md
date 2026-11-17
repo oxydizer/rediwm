@@ -5,8 +5,8 @@ Tests: `TESTING.md`. Where code lives: [source map](docs/agent-notes/map.md).
 Area notes are in an `AGENTS.md` beside the code; read
 the one for the directory you work in: `src/files`, `src/editor`,
 `src/desktop`, `src/input`, `src/control_center`, `src/ui`, `src/session`,
-`src/dm`, `src/accounts_helper`, `src/printing`, `src/player`, `scripts`,
-`src/wlr`, `src/platform`.
+`src/dm`, `src/accounts_helper`, `src/firewall`, `src/printing`, `src/player`,
+`scripts`, `src/wlr`, `src/platform`.
 
 ## Working rules
 
@@ -207,8 +207,8 @@ panel painting. The key rules:
   starts. Lock-before-sleep holds a logind delay inhibitor until
   `Lock.covered()`. Only `REDIWM_LOGIN_SESSION`'s logind `Lock` is followed;
   `Unlock` is ignored on purpose. The lock never polls.
-* **Only rediwm-dm and the accounts helper run as root** (see their
-  `AGENTS.md`); never the compositor.
+* **Only rediwm-dm, the accounts helper and the firewall helper run as
+  root** (see their `AGENTS.md`); never the compositor.
 * **No test hooks in production:** `REDIWM_*_PREVIEW` only in `test` blocks,
   `REDIWM_TEST_*` only in noninstalled fixtures; only `polkit_test_service`
   reads `REDIWM_POLKIT_HELPER_SOCKET` (it decides where passwords go).

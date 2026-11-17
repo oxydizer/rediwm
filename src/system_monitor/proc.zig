@@ -46,6 +46,9 @@ pub const cpuCores = backend.cpuCores;
 pub const memoryTotals = backend.memoryTotals;
 pub const systemStats = backend.systemStats;
 pub const ticksPerSecond = backend.ticksPerSecond;
+/// Listening sockets for the firewall helper: Linux only. FreeBSD callers run
+/// `sockstat` instead (`firewall/sockets.zig` parses both).
+pub const sockets = if (builtin.os.tag == .linux) @import("proc_linux_sockets.zig") else struct {};
 
 /// One process's stat, or null if it is gone or unreadable. `name` points into `buf`.
 pub fn readStat(pid: i32, buf: []u8) ?Stat {

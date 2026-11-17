@@ -148,6 +148,7 @@ pub const Lock = struct {
             cc.bluetooth.clearPin();
             cc.key_settings.clearSecrets();
             if (cc.key_settings.client) |client| client.cancel();
+            cc.firewall.hide();
             cc.refresh();
         }
         @import("../extra_protocols.zig").rediwm_protocols_revoke(server.extra_protocols);

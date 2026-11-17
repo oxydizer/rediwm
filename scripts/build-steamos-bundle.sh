@@ -13,7 +13,7 @@ bundle=/work/zig-out/rediwm-steamos
 mkdir -p "$bundle"
 cp -a zig-out/steamos/bin zig-out/steamos/lib zig-out/steamos/share "$bundle/"
 # Portable nested testing has no privileged helpers or system integration.
-rm -f "$bundle/bin/rediwm-dm" "$bundle/bin/rediwm-accounts-helper" \
+rm -f "$bundle/bin/rediwm-dm" "$bundle/bin/rediwm-accounts-helper" "$bundle/bin/rediwm-firewall-helper" \
     "$bundle/bin/rediwm-session" "$bundle/bin/rediwm-restart"
 rm -rf "$bundle/share/wayland-sessions" "$bundle/share/polkit-1" "$bundle/share/xdg-desktop-portal"
 # These entries are visible only inside the nested session through XDG_DATA_DIRS.

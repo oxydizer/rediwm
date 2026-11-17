@@ -108,3 +108,30 @@ helpers (and `panel.ControlCenter`); `sections/` one file per page.
 * **Tests never touch the host:** `tests/nm_fake.py` is a fake NetworkManager
   and polkit on the session bus; the proxy test sets `GSETTINGS_BACKEND=keyfile`
   with a scratch `XDG_CONFIG_HOME`; nothing may write `/dev/rfkill`.
+
+## Firewall (on the Network page)
+
+* **`sections/firewall*.zig`:** `firewall.zig` (state, overview card, the
+  Manage sub-view, actions), `firewall_rules.zig` (rules list and Add rule
+  form), `firewall_cards.zig` (listening programs, networks, advanced, other
+  programs' rules, recent blocks), `firewall_client.zig` (pkexec runs of
+  `rediwm-firewall-helper`; see `src/firewall/AGENTS.md`).
+* **The client lives while the Network page is shown**: `firewall.start` from
+  `network.build`; `hide` on page change, search, close and the screen lock
+  (`lock.zig`), which also forgets the unlock. One request at a time; the
+  only timers are its deadline and one wake at a pending revert's deadline.
+* **No pkexec unless polkit's actions name this build's helper**
+  (`firewall_client.policyInstalled`): otherwise pkexec's generic action asks
+  for a password even to read. Development and test compositors therefore
+  never reach the session's polkit agent; `tests/firewall_settings.py` stages
+  a policy in its namespace.
+* **Unlock is the helper's `authorize`** through the `manage` action (polkit
+  `auth_admin_keep`); reads use `read` (no password for an active session).
+  Where a read is refused (exit 126/127, FreeBSD's polkit today) the card says
+  "Unlock to view" and reads go through `manage` after unlocking; the page
+  never prompts by itself. Child exit values are raw wait statuses.
+* **Reply strings are freed by the next reply**: copy them into the tree's
+  arena (`a.dupe`) before a widget keeps them.
+* Changes that can cut the user off (blocking outgoing, lockdown, removing a
+  rule that allows SSH) send `revert_after = 20`; the overview then offers
+  Keep change.

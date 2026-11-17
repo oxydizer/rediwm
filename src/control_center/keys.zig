@@ -29,6 +29,10 @@ pub fn selectSearchPage(cc: *ControlCenter, page: Page) void {
     if (cc.page == .services and page != .services) if (cc.systemd_client) |client| client.hide();
     if (cc.page == .printers and page != .printers) cc.printers.hide();
     if (cc.page == .keys and page != .keys) cc.key_settings.hide();
+    if (cc.page == .network and page != .network) {
+        cc.firewall.hide();
+        cc.firewall.managing = false;
+    }
     if (cc.page == .network and page != .network) cc.network.clearForm();
     if (cc.page == .bluetooth and page != .bluetooth) {
         if (cc.server.bluetooth) |m| m.closed();
