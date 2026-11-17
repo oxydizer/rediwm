@@ -155,6 +155,30 @@ test "snapshots own dependency data and planning closes at queue time" {
     try std.testing.expectError(error.InvalidJobState, manager.addOperation(job, .publish));
 }
 
+test "Manager owns an independent TreeIndex for each Job" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const first_job = try manager.createJob(null);
+    const second_job = try manager.createJob(null);
+    const root_id = try manager.addTreeRoot(first_job, "source", .directory, .{}, null);
+    const child_id = try manager.addTreeEntry(first_job, root_id, "child", .regular_file, .{ .size = 42 }, null);
+    const second_root = try manager.addTreeRoot(second_job, "other", .directory, .{}, null);
+
+    const first_tree = manager.treeIndex(first_job).?;
+    const second_tree = manager.treeIndex(second_job).?;
+    try std.testing.expectEqual(@as(usize, 2), first_tree.count());
+    try std.testing.expectEqual(@as(usize, 1), second_tree.count());
+    try std.testing.expectEqual(child_id, first_tree.getConst(child_id).?.id);
+    try std.testing.expectEqual(second_root, second_tree.root().?);
+    try std.testing.expectEqualStrings("source", first_tree.getConst(root_id).?.name);
+    try std.testing.expectEqualStrings("other", second_tree.getConst(second_root).?.name);
+
+    _ = try manager.addTreeEntry(first_job, root_id, "another-child", .regular_file, .{}, null);
+    try std.testing.expectEqual(@as(usize, 3), first_tree.count());
+    try std.testing.expectEqual(@as(usize, 1), second_tree.count());
+}
+
 test "large dependency chain dispatches in insertion order" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

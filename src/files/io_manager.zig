@@ -4,6 +4,7 @@
 //! deliberately added in later phases.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const io_tree = @import("io_tree.zig");
 
 pub const JobId = u64;
 pub const OperationId = u64;
@@ -92,6 +93,7 @@ const Job = struct {
     id: JobId,
     origin_window_id: ?WindowId,
     state: JobState = .planning,
+    tree: io_tree.TreeIndex,
     operations: std.ArrayList(Operation) = .empty,
     operation_indices: std.AutoHashMapUnmanaged(OperationId, usize) = .empty,
     ready_queue: std.ArrayList(usize) = .empty,
@@ -101,6 +103,7 @@ const Job = struct {
     operation_state_counts: [7]usize = .{ 0, 0, 0, 0, 0, 0, 0 },
 
     fn deinit(self: *Job, allocator: Allocator) void {
+        self.tree.deinit();
         for (self.operations.items) |*operation| operation.deinit(allocator);
         self.operations.deinit(allocator);
         self.operation_indices.deinit(allocator);
@@ -153,9 +156,46 @@ pub const Manager = struct {
         try self.jobs.append(self.allocator, .{
             .id = id,
             .origin_window_id = origin_window_id,
+            .tree = io_tree.TreeIndex.init(self.allocator),
         });
         self.next_job_id += 1;
         return id;
+    }
+
+    /// Adds the source root to a Job's Manager-owned TreeIndex.
+    pub fn addTreeRoot(
+        self: *Manager,
+        job_id: JobId,
+        name: []const u8,
+        kind: io_tree.EntryKind,
+        metadata: io_tree.Metadata,
+        symlink_target: ?[]const u8,
+    ) !io_tree.EntryId {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        return job.tree.addRoot(name, kind, metadata, symlink_target);
+    }
+
+    /// Adds one discovered child to the Job's Manager-owned TreeIndex.
+    pub fn addTreeEntry(
+        self: *Manager,
+        job_id: JobId,
+        parent_id: io_tree.EntryId,
+        name: []const u8,
+        kind: io_tree.EntryKind,
+        metadata: io_tree.Metadata,
+        symlink_target: ?[]const u8,
+    ) !io_tree.EntryId {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        return job.tree.addEntry(parent_id, name, kind, metadata, symlink_target);
+    }
+
+    /// Read-only access; callers must retain EntryIds, not pointers into the
+    /// backing array, across any subsequent TreeIndex mutation.
+    pub fn treeIndex(self: *const Manager, job_id: JobId) ?*const io_tree.TreeIndex {
+        const job = self.findJobConst(job_id) orelse return null;
+        return &job.tree;
     }
 
     pub fn addOperation(self: *Manager, job_id: JobId, kind: OperationKind) !OperationId {
