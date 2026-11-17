@@ -96,6 +96,7 @@ pub const App = struct {
     worker: *worker_mod.Worker,
     io_manager: ?io_manager_mod.Manager = null,
     discovery_executor: ?io_discovery_executor_mod.Executor = null,
+    discovery_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
     history: history_mod.History,
     home_dir: []const u8,
 
@@ -389,6 +390,7 @@ pub const App = struct {
     pub fn deinit(self: *App) void {
         if (self.discovery_executor) |*executor| executor.deinit();
         if (self.io_manager) |*manager| manager.deinit();
+        self.discovery_jobs.deinit(self.allocator);
         self.torrents.deinit();
         self.stopAudio();
         self.terminal.deinit(self.allocator);
@@ -854,6 +856,7 @@ pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
     pub const hasFolderTransfers = app_torrent_rows.hasFolderTransfers;
     pub const appendTorrentRows = app_torrent_rows.appendTorrentRows;
     pub const appendTransferRows = app_transfer_rows.appendTransferRows;
+    pub const appendDiscoveryRows = app_io.appendDiscoveryRows;
     pub const inlineTorrentWidth = app_torrent_rows.inlineTorrentWidth;
     pub const renderInlineTorrent = app_torrent_rows.renderInlineTorrent;
     pub const inlineTorrentHit = app_torrent_rows.inlineTorrentHit;
