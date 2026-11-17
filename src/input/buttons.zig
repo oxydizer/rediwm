@@ -88,6 +88,10 @@ pub fn processButton(
         input.tray_buttons &= ~screenshot_bit;
         return;
     }
+    if (state == .released and input.taskbar_close_buttons & screenshot_bit != 0) {
+        input.taskbar_close_buttons &= ~screenshot_bit;
+        return;
+    }
     if (state == .released and input.switcher_buttons & screenshot_bit != 0) {
         input.switcher_buttons &= ~screenshot_bit;
         return;
@@ -166,6 +170,26 @@ pub fn processButton(
         input.pointer_constraints.sync();
         return;
     }
+    // Middle-clicking a taskbar chip requests a normal application close.
+    // Intercept before active_buttons is incremented for this press.
+    if (button == btn_middle and state == .pressed and
+        input.cursor_mode == .passthrough and input.active_buttons == 0 and
+        input.seat.drag == null and input.pan_session == null)
+    {
+        const picked = scene_data.hitTest(input.server, input.cursor.x, input.cursor.y);
+        if (picked == .taskbar) {
+            const hit = picked.taskbar;
+            switch (hit.bar.hitTest(hit.sx, hit.sy)) {
+                .chip => |target| {
+                    input.taskbar_close_buttons |= screenshot_bit;
+                    target.sendClose();
+                    return;
+                },
+                else => {},
+            }
+        }
+    }
+
     if (state == .pressed) {
         input.active_buttons += 1;
         input.presses +%= 1;
