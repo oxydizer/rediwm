@@ -36,7 +36,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
         event_fd: std.posix.fd_t,
         threads: []std.Thread,
         execute: *const fn (?*anyopaque, Task) Result,
-        discard_result: *const fn (Result) void,
+        discard_result: *const fn (?*anyopaque, Result) void,
         context: ?*anyopaque,
 
         /// `worker_count` and `capacity` must both be greater than zero.
@@ -48,7 +48,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             capacity: usize,
             context: ?*anyopaque,
             execute: *const fn (?*anyopaque, Task) Result,
-            discard_result: *const fn (Result) void,
+            discard_result: *const fn (?*anyopaque, Result) void,
         ) !*Self {
             if (worker_count == 0) return error.InvalidWorkerCount;
             if (capacity == 0) return error.InvalidCapacity;
@@ -137,12 +137,27 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
 
         /// Drain the eventfd after it becomes readable. The result queue is
         /// authoritative; the eventfd is only a coalesced wake-up signal.
-        pub fn drainWake(self: *Self) void {
+        pub fn drainWake(self: *Self) u64 {
             var count: u64 = 0;
+            var drained: u64 = 0;
             while (true) {
-                const rc = c.read(self.event_fd, &count, @sizeOf(u64));
-                if (rc == @sizeOf(u64)) continue;
-                break;
+                const rc = std.posix.system.read(
+                    self.event_fd,
+                    std.mem.asBytes(&count),
+                    @sizeOf(u64),
+                );
+                switch (std.posix.errno(rc)) {
+                    .SUCCESS => {
+                        std.debug.assert(rc == @sizeOf(u64));
+                        drained +|= count;
+                    },
+                    .INTR => continue,
+                    .AGAIN => return drained,
+                    else => std.debug.panic(
+                        "I/O worker eventfd read failed: {s}",
+                        .{@tagName(std.posix.errno(rc))},
+                    ),
+                }
             }
         }
 
@@ -160,7 +175,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
                 const result = self.results[self.result_head];
                 self.result_head = (self.result_head + 1) % self.results.len;
                 self.result_count -= 1;
-                self.discard_result(result);
+                self.discard_result(self.context, result);
             }
 
             _ = c.close(self.event_fd);
@@ -206,8 +221,31 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
                 self.result_count += 1;
                 self.unlock();
 
-                const one: u64 = 1;
-                _ = c.write(self.event_fd, &one, @sizeOf(u64));
+                self.signalWake();
+            }
+        }
+
+        fn signalWake(self: *Self) void {
+            const one: u64 = 1;
+            while (true) {
+                const rc = std.posix.system.write(
+                    self.event_fd,
+                    std.mem.asBytes(&one),
+                    @sizeOf(u64),
+                );
+                switch (std.posix.errno(rc)) {
+                    .SUCCESS => {
+                        std.debug.assert(rc == @sizeOf(u64));
+                        return;
+                    },
+                    .INTR => continue,
+                    // A saturated eventfd is already readable.
+                    .AGAIN => return,
+                    else => std.debug.panic(
+                        "I/O worker eventfd write failed: {s}",
+                        .{@tagName(std.posix.errno(rc))},
+                    ),
+                }
             }
         }
     };
