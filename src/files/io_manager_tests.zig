@@ -1,5 +1,33 @@
 const std = @import("std");
 const io_manager = @import("io_manager.zig");
+const io_discovery = @import("io_discovery.zig");
+const io_tree = @import("io_tree.zig");
+
+fn makeDiscoveryBatch(
+    allocator: std.mem.Allocator,
+    records: []const struct {
+        name: []const u8,
+        kind: io_tree.EntryKind,
+    },
+    complete: bool,
+) !io_discovery.Batch {
+    var batch: io_discovery.Batch = .{
+        .allocator = allocator,
+        .complete = complete,
+    };
+    errdefer batch.deinit();
+
+    for (records) |record| {
+        const name = try allocator.dupe(u8, record.name);
+        errdefer allocator.free(name);
+        try batch.records.append(allocator, .{
+            .name = name,
+            .kind = record.kind,
+        });
+    }
+
+    return batch;
+}
 
 test "scheduler rotates fairly across Jobs and preserves per-Job FIFO" {
     var manager = io_manager.Manager.init(std.testing.allocator);
@@ -177,6 +205,99 @@ test "Manager owns an independent TreeIndex for each Job" {
     _ = try manager.addTreeEntry(first_job, root_id, "another-child", .regular_file, .{}, null);
     try std.testing.expectEqual(@as(usize, 3), first_tree.count());
     try std.testing.expectEqual(@as(usize, 1), second_tree.count());
+}
+
+test "discovery adopts batches and visits directories breadth first" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, "/tmp/source");
+
+    try std.testing.expectEqualStrings(
+        "/tmp/source",
+        manager.discoveryRootPath(job).?,
+    );
+
+    const root_token = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(root, root_token.entry_id);
+
+    var root_batch = try makeDiscoveryBatch(allocator, &.{
+        .{ .name = "a", .kind = .directory },
+        .{ .name = "root.txt", .kind = .regular_file },
+        .{ .name = "b", .kind = .directory },
+    }, true);
+    try std.testing.expect(try manager.completeDiscovery(root_token, &root_batch));
+
+    const tree = manager.treeIndex(job).?;
+    try std.testing.expectEqual(@as(usize, 4), tree.count());
+    const a_id = tree.getConst(root).?.children.items[0];
+    const b_id = tree.getConst(root).?.children.items[2];
+
+    const a_token = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(a_id, a_token.entry_id);
+    var a_batch = try makeDiscoveryBatch(allocator, &.{
+        .{ .name = "inside-a", .kind = .regular_file },
+    }, true);
+    try std.testing.expect(try manager.completeDiscovery(a_token, &a_batch));
+
+    const b_token = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(b_id, b_token.entry_id);
+    var b_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(b_token, &b_batch));
+
+    try std.testing.expect(manager.discoveryComplete(job).?);
+    try std.testing.expectEqual(@as(usize, 5), tree.count());
+}
+
+test "discovery keeps a partially scanned directory at the queue head" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, "/tmp/source");
+
+    const first_token = manager.dispatchDiscovery().?;
+    var first_batch = try makeDiscoveryBatch(allocator, &.{
+        .{ .name = "child", .kind = .directory },
+    }, false);
+    try std.testing.expect(try manager.completeDiscovery(first_token, &first_batch));
+
+    const resumed_token = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(root, resumed_token.entry_id);
+    try std.testing.expect(resumed_token.generation > first_token.generation);
+
+    var final_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(resumed_token, &final_batch));
+
+    const child_token = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(
+        manager.treeIndex(job).?.getConst(root).?.children.items[0],
+        child_token.entry_id,
+    );
+}
+
+test "discovery rejects stale completion and failure tokens" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    _ = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, "/tmp/source");
+
+    const token = manager.dispatchDiscovery().?;
+    try std.testing.expect(manager.failDiscovery(token));
+    try std.testing.expect(!manager.failDiscovery(token));
+
+    var stale_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    defer stale_batch.deinit();
+    try std.testing.expect(!try manager.completeDiscovery(token, &stale_batch));
+    try std.testing.expect(manager.discoveryComplete(job).?);
 }
 
 test "large dependency chain dispatches in insertion order" {

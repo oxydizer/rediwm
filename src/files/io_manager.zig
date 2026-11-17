@@ -5,10 +5,17 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const io_tree = @import("io_tree.zig");
+const io_discovery = @import("io_discovery.zig");
 
 pub const JobId = u64;
 pub const OperationId = u64;
 pub const WindowId = u64;
+
+pub const DiscoveryToken = struct {
+    job_id: JobId,
+    entry_id: io_tree.EntryId,
+    generation: u64,
+};
 
 pub const JobState = enum {
     planning,
@@ -94,6 +101,11 @@ const Job = struct {
     origin_window_id: ?WindowId,
     state: JobState = .planning,
     tree: io_tree.TreeIndex,
+    discovery_path: ?[]u8 = null,
+    discovery_queue: std.ArrayList(io_tree.EntryId) = .empty,
+    discovery_head: usize = 0,
+    discovery_generation: u64 = 0,
+    discovery_in_flight: ?DiscoveryToken = null,
     operations: std.ArrayList(Operation) = .empty,
     operation_indices: std.AutoHashMapUnmanaged(OperationId, usize) = .empty,
     ready_queue: std.ArrayList(usize) = .empty,
@@ -103,6 +115,8 @@ const Job = struct {
     operation_state_counts: [7]usize = .{ 0, 0, 0, 0, 0, 0, 0 },
 
     fn deinit(self: *Job, allocator: Allocator) void {
+        if (self.discovery_path) |path| allocator.free(path);
+        self.discovery_queue.deinit(allocator);
         self.tree.deinit();
         for (self.operations.items) |*operation| operation.deinit(allocator);
         self.operations.deinit(allocator);
@@ -189,6 +203,180 @@ pub const Manager = struct {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state != .planning) return error.InvalidJobState;
         return job.tree.addEntry(parent_id, name, kind, metadata, symlink_target);
+    }
+
+    /// Starts incremental discovery for an existing directory root.
+    /// The Manager owns a copy of root_path; this method performs no I/O.
+    pub fn startDiscovery(
+        self: *Manager,
+        job_id: JobId,
+        root_path: []const u8,
+    ) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (job.discovery_path != null) return error.DiscoveryAlreadyStarted;
+        if (root_path.len == 0) return error.InvalidRootPath;
+
+        const root_id = job.tree.root() orelse return error.MissingTreeRoot;
+        const root = job.tree.get(root_id).?;
+        if (root.kind != .directory) return error.RootNotDirectory;
+
+        const owned_path = try self.allocator.dupe(u8, root_path);
+        errdefer self.allocator.free(owned_path);
+        try job.discovery_queue.ensureUnusedCapacity(self.allocator, 1);
+
+        job.discovery_path = owned_path;
+        root.discovery = .queued;
+        job.discovery_queue.appendAssumeCapacity(root_id);
+    }
+
+    /// Returns the Job-owned root path. It remains valid until Job teardown.
+    pub fn discoveryRootPath(
+        self: *const Manager,
+        job_id: JobId,
+    ) ?[]const u8 {
+        const job = self.findJobConst(job_id) orelse return null;
+        return job.discovery_path;
+    }
+
+    /// Dispatches one bounded directory batch for a Job.
+    /// The cursor itself is transferred separately by the discovery executor.
+    pub fn dispatchDiscovery(self: *Manager) ?DiscoveryToken {
+        const count = self.jobs.items.len;
+        if (count == 0) return null;
+
+        for (0..count) |index| {
+            const job = &self.jobs.items[index];
+            if (job.discovery_path == null) continue;
+            if (job.discovery_in_flight != null) continue;
+            if (job.state == .paused or job.state.isTerminal()) continue;
+            if (job.discovery_head >= job.discovery_queue.items.len) continue;
+
+            const entry_id = job.discovery_queue.items[job.discovery_head];
+            const entry = job.tree.get(entry_id) orelse {
+                job.discovery_head += 1;
+                continue;
+            };
+
+            if (entry.discovery != .queued) {
+                job.discovery_head += 1;
+                continue;
+            }
+
+            if (job.discovery_generation == std.math.maxInt(u64)) {
+                entry.discovery = .failed;
+                job.discovery_head += 1;
+                continue;
+            }
+
+            job.discovery_generation += 1;
+            const token: DiscoveryToken = .{
+                .job_id = job.id,
+                .entry_id = entry_id,
+                .generation = job.discovery_generation,
+            };
+            entry.discovery = .scanning;
+            job.discovery_in_flight = token;
+            return token;
+        }
+
+        return null;
+    }
+
+    /// Adopts a worker-produced batch when its token is still current.
+    /// On success the batch is consumed and deinitialized.
+    /// On a stale token the caller retains ownership of the batch.
+    pub fn completeDiscovery(
+        self: *Manager,
+        token: DiscoveryToken,
+        batch: *io_discovery.Batch,
+    ) !bool {
+        const job = self.findJob(token.job_id) orelse return false;
+        const active = job.discovery_in_flight orelse return false;
+        if (active.entry_id != token.entry_id or
+            active.generation != token.generation)
+            return false;
+
+        const parent = job.tree.get(token.entry_id) orelse return false;
+        if (parent.discovery != .scanning) return false;
+
+        var new_directories: usize = 0;
+        for (batch.records.items) |record| {
+            if (record.kind == .directory and !record.entry_error)
+                new_directories += 1;
+        }
+        try job.discovery_queue.ensureUnusedCapacity(
+            self.allocator,
+            new_directories,
+        );
+
+        for (batch.records.items) |record| {
+            // A symlink whose target could not be read cannot be represented
+            // as a valid symlink TreeIndex entry. Retain it as an errored
+            // non-directory entry instead.
+            const invalid_symlink =
+                record.kind == .symlink and record.symlink_target == null;
+            const kind: io_tree.EntryKind =
+                if (invalid_symlink) .other else record.kind;
+
+            const child_id = try job.tree.addEntry(
+                token.entry_id,
+                record.name,
+                kind,
+                record.metadata,
+                if (kind == .symlink) record.symlink_target else null,
+            );
+
+            if (record.kind == .directory and !record.entry_error) {
+                const child = job.tree.get(child_id).?;
+                child.discovery = .queued;
+                job.discovery_queue.appendAssumeCapacity(child_id);
+            } else if (record.entry_error or invalid_symlink) {
+                job.tree.get(child_id).?.discovery = .failed;
+            }
+        }
+
+        // Reacquire this pointer after TreeIndex mutations, which may
+        // reallocate its entry array.
+        const updated_parent = job.tree.get(token.entry_id).?;
+        job.discovery_in_flight = null;
+
+        if (batch.complete) {
+            updated_parent.discovery = .complete;
+            job.discovery_head += 1;
+        } else {
+            // Keep this directory at the queue head so its cursor can resume
+            // before another directory is opened for this Job.
+            updated_parent.discovery = .queued;
+        }
+
+        batch.deinit();
+        return true;
+    }
+
+    /// Reconciles a worker-side cursor open/read failure.
+    pub fn failDiscovery(self: *Manager, token: DiscoveryToken) bool {
+        const job = self.findJob(token.job_id) orelse return false;
+        const active = job.discovery_in_flight orelse return false;
+        if (active.entry_id != token.entry_id or
+            active.generation != token.generation)
+            return false;
+
+        if (job.tree.get(token.entry_id)) |entry|
+            entry.discovery = .failed;
+        job.discovery_in_flight = null;
+        job.discovery_head += 1;
+        return true;
+    }
+
+    pub fn discoveryComplete(
+        self: *const Manager,
+        job_id: JobId,
+    ) ?bool {
+        const job = self.findJobConst(job_id) orelse return null;
+        if (job.discovery_path == null) return null;
+        return job.discovery_in_flight == null and
+            job.discovery_head >= job.discovery_queue.items.len;
     }
 
     /// Read-only access; callers must retain EntryIds, not pointers into the
