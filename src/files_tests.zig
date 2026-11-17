@@ -7,12 +7,14 @@ const clipboard_mod = @import("files/clipboard.zig");
 const dirsize_mod = @import("files/dirsize.zig");
 const transfer_bench_mod = @import("files/transfer_bench.zig");
 const io_manager_tests = @import("files/io_manager_tests.zig");
+const io_workers_tests = @import("files/io_workers_tests.zig");
 const c = @import("files/c.zig").api;
 const linux = std.os.linux;
 
 test {
     _ = transfer_bench_mod;
     _ = io_manager_tests;
+    _ = io_workers_tests;
 }
 
 test "History navigation stack" {
