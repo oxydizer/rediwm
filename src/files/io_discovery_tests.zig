@@ -131,3 +131,68 @@ test "child cursor refuses a symlink in place of a directory" {
     try std.testing.expect(batch.complete);
     try std.testing.expectEqual(@as(usize, 0), batch.records.items.len);
 }
+
+test "persistent anchor opens root and nested cursors independently" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const root = try makeTempDir(&temp_buffer);
+    defer cleanup(allocator, root);
+
+    const nested = try join(allocator, root, "nested");
+    defer allocator.free(nested);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(nested, 0o700));
+
+    var index = @import("io_tree.zig").TreeIndex.init(allocator);
+    defer index.deinit();
+    const root_id = try index.addRoot("source", .directory, .{}, null);
+    const nested_id = try index.addEntry(root_id, "nested", .directory, .{}, null);
+
+    var anchor = try discovery.Anchor.open(root);
+    defer anchor.deinit();
+
+    {
+        var root_cursor = try anchor.openCursorForEntry(allocator, &index, root_id);
+        defer root_cursor.deinit();
+        var batch = try root_cursor.nextBatch(allocator, 1);
+        defer batch.deinit();
+        try std.testing.expectEqual(@as(usize, 1), batch.records.items.len);
+        try std.testing.expectEqualStrings("nested", batch.records.items[0].name);
+    }
+
+    // The root cursor is closed; the Anchor still opens a separate child
+    // cursor using the stored EntryId ancestry.
+    var nested_cursor = try anchor.openCursorForEntry(allocator, &index, nested_id);
+    defer nested_cursor.deinit();
+    var nested_batch = try nested_cursor.nextBatch(allocator, 1);
+    defer nested_batch.deinit();
+    try std.testing.expect(nested_batch.complete);
+    try std.testing.expectEqual(@as(usize, 0), nested_batch.records.items.len);
+}
+
+test "anchor refuses a discovered directory replaced by a symlink" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const root = try makeTempDir(&temp_buffer);
+    defer cleanup(allocator, root);
+
+    const swapped = try join(allocator, root, "swapped");
+    defer allocator.free(swapped);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(swapped, 0o700));
+
+    var index = @import("io_tree.zig").TreeIndex.init(allocator);
+    defer index.deinit();
+    const root_id = try index.addRoot("source", .directory, .{}, null);
+    const swapped_id = try index.addEntry(root_id, "swapped", .directory, .{}, null);
+
+    var anchor = try discovery.Anchor.open(root);
+    defer anchor.deinit();
+
+    try std.testing.expectEqual(@as(c_int, 0), c.rmdir(swapped));
+    try std.testing.expectEqual(@as(c_int, 0), c.symlink(".", swapped));
+    defer _ = c.unlink(swapped);
+
+    try std.testing.expectError(
+        error.DirectoryOpenFailed,
+        anchor.openCursorForEntry(allocator, &index, swapped_id),
+    );
+}
