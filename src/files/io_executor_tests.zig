@@ -3,9 +3,16 @@ const io_manager = @import("io_manager.zig");
 const io_executor = @import("io_executor.zig");
 
 const TestContext = struct {
+    const ExecutionMode = enum {
+        staged,
+        immediate,
+    };
+
+    mode: ExecutionMode = .staged,
     prepared: usize = 0,
     completed: usize = 0,
     last_token: ?io_manager.WorkToken = null,
+    executions: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     input_mismatches: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     continuation_mismatches: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 };
@@ -28,6 +35,7 @@ fn executeWork(
     item: io_executor.WorkItem,
 ) io_executor.WorkCompletion {
     const context: *TestContext = @ptrCast(@alignCast(raw_context.?));
+    const execution_index = context.executions.fetchAdd(1, .monotonic);
     const stage = if (item.continuation) |continuation|
         continuation.slice()
     else
@@ -37,27 +45,43 @@ fn executeWork(
         _ = context.input_mismatches.fetchAdd(1, .monotonic);
     }
 
-    const expected_continuation: []const u8 = switch (context.completed) {
-        0 => "",
-        1 => "yielded",
-        else => "waiting",
-    };
-    if (!std.mem.eql(u8, stage, expected_continuation)) {
-        _ = context.continuation_mismatches.fetchAdd(1, .monotonic);
+    if (context.mode == .staged) {
+        const expected_continuation: []const u8 = switch (execution_index) {
+            0 => "",
+            1 => "yielded",
+            else => "waiting",
+        };
+        if (!std.mem.eql(u8, stage, expected_continuation)) {
+            _ = context.continuation_mismatches.fetchAdd(1, .monotonic);
+        }
     }
 
-    const outcome: io_manager.WorkResult = if (stage.len == 0)
-        .yielded
-    else if (std.mem.eql(u8, stage, "yielded"))
-        .waiting
-    else
-        .completed;
+    const outcome: io_manager.WorkResult = switch (context.mode) {
+        .immediate => .completed,
+        .staged => if (execution_index == 0)
+            .yielded
+        else if (execution_index == 1)
+            .waiting
+        else
+            .completed,
+    };
+
+    // The worker owns the previous continuation. Release it after reading
+    // its contents and before returning a replacement.
+    if (item.continuation) |previous| {
+        var owned = previous;
+        owned.deinit();
+    }
 
     const next_continuation: ?io_executor.OwnedPayload = switch (outcome) {
         .yielded => io_executor.OwnedPayload.copy(std.heap.page_allocator, "yielded") catch unreachable,
         .waiting => io_executor.OwnedPayload.copy(std.heap.page_allocator, "waiting") catch unreachable,
         else => null,
     };
+    const result: ?io_executor.OwnedPayload = if (context.mode == .immediate)
+        io_executor.OwnedPayload.copy(std.heap.page_allocator, "result") catch unreachable
+    else
+        null;
 
     return .{
         .token = item.token,
@@ -65,7 +89,7 @@ fn executeWork(
         .operation_kind = item.operation_kind,
         .input = item.input,
         .continuation = next_continuation,
-        .result = null,
+        .result = result,
     };
 }
 
@@ -156,14 +180,15 @@ test "executor retains prepared work when the pool applies backpressure" {
     defer manager.deinit();
 
     const first_job = try manager.createJob(null);
-    _ = try manager.addOperation(first_job, .copy_file);
+    const first_operation = try manager.addOperation(first_job, .copy_file);
     try manager.queueJob(first_job);
 
     const second_job = try manager.createJob(null);
-    _ = try manager.addOperation(second_job, .copy_file);
+    const second_operation = try manager.addOperation(second_job, .copy_file);
     try manager.queueJob(second_job);
 
     var context = TestContext{};
+    context.mode = .immediate;
     var executor = try initExecutor(&context, 1);
     defer executor.deinit();
 
@@ -179,8 +204,11 @@ test "executor retains prepared work when the pool applies backpressure" {
     try waitForOne(&executor);
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
 
+    try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(first_job, first_operation).?);
+    try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(second_job, second_operation).?);
     try std.testing.expectEqual(@as(usize, 2), context.prepared);
     try std.testing.expectEqual(@as(usize, 2), context.completed);
+    try std.testing.expectEqual(@as(usize, 2), context.executions.load(.monotonic));
 }
 
 test "executor disposes stale completions without calling complete callback" {
@@ -192,6 +220,7 @@ test "executor disposes stale completions without calling complete callback" {
     try manager.queueJob(job);
 
     var context = TestContext{};
+    context.mode = .immediate;
     var executor = try initExecutor(&context, 1);
     defer executor.deinit();
 
