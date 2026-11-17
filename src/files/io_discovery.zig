@@ -29,6 +29,88 @@ pub const Batch = struct {
     }
 };
 
+/// Persistent FD-relative anchor for one discovered source tree.
+///
+/// The Anchor outlives individual directory cursors. It lets discovery open
+/// later BFS entries without retaining a descriptor for every queued folder
+/// or reconstructing an absolute path.
+pub const Anchor = struct {
+    fd: c_int,
+
+    /// Opens the root without following a symlink in its final component.
+    pub fn open(path: [:0]const u8) !Anchor {
+        const fd = c.open(
+            path,
+            c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC,
+        );
+        if (fd < 0) return error.DirectoryOpenFailed;
+        return .{ .fd = fd };
+    }
+
+    pub fn deinit(self: *Anchor) void {
+        _ = c.close(self.fd);
+        self.* = undefined;
+    }
+
+    /// Opens a fresh cursor for an entry by resolving its TreeIndex ancestry
+    /// from the persistent root FD. Every component is opened with O_NOFOLLOW.
+    pub fn openCursorForEntry(
+        self: *const Anchor,
+        allocator: Allocator,
+        index: *const tree.TreeIndex,
+        entry_id: tree.EntryId,
+    ) !Cursor {
+        var components: std.ArrayList([]const u8) = .empty;
+        defer components.deinit(allocator);
+
+        var current_id = entry_id;
+        while (true) {
+            const entry = index.getConst(current_id) orelse
+                return error.UnknownEntry;
+            if (entry.kind != .directory) return error.EntryNotDirectory;
+
+            if (entry.parent_id) |parent_id| {
+                try components.append(allocator, entry.name);
+                current_id = parent_id;
+            } else {
+                if (index.root() != current_id)
+                    return error.EntryOutsideRoot;
+                break;
+            }
+        }
+
+        const flags = c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC;
+        var current_fd = c.openat(self.fd, ".", flags);
+        if (current_fd < 0) return error.DirectoryOpenFailed;
+
+        var owns_fd = true;
+        errdefer if (owns_fd) {
+            _ = c.close(current_fd);
+        };
+
+        var remaining = components.items.len;
+        while (remaining > 0) {
+            remaining -= 1;
+            const name = try allocator.dupeSentinel(
+                u8,
+                components.items[remaining],
+                0,
+            );
+            defer allocator.free(name);
+
+            const next_fd = c.openat(current_fd, name, flags);
+            if (next_fd < 0) return error.DirectoryOpenFailed;
+
+            _ = c.close(current_fd);
+            current_fd = next_fd;
+        }
+
+        const cursor = try Cursor.fromOwnedFd(current_fd);
+        owns_fd = false;
+        return cursor;
+    }
+};
+
 pub const Cursor = struct {
     dir: *c.DIR,
     fd: c_int,
