@@ -142,14 +142,19 @@ pub const Executor = struct {
 
         var pending_iter = self.pending.valueIterator();
         while (pending_iter.next()) |item| {
-            item.deinit();
+            discardWorkItem(self.callback_context, item.*);
         }
         self.pending.deinit(self.allocator);
 
         var continuation_iter = self.continuations.valueIterator();
         while (continuation_iter.next()) |payloads| {
-            payloads.input.deinit();
-            deinitOptional(&payloads.continuation);
+            discardPayloads(
+                self.callback_context,
+                payloads.operation_kind,
+                payloads.input,
+                payloads.continuation,
+                null,
+            );
         }
         self.continuations.deinit(self.allocator);
 
@@ -193,15 +198,15 @@ pub const Executor = struct {
                             null,
                         );
                     }
-                    completion.deinit();
+                    discardCompletion(self.callback_context, completion);
                     return err;
                 };
             }
 
             if (!manager.completeWork(completion.token, completion.outcome)) {
-                // Stale or duplicate result: release every payload without
-                // invoking the operation's completion callback.
-                completion.deinit();
+                // Stale or duplicate result: operation-specific cleanup
+                // owns every payload, including external resources.
+                discardCompletion(self.callback_context, completion);
                 continue;
             }
 
@@ -215,10 +220,15 @@ pub const Executor = struct {
                     .continuation = takeOptional(&completion.continuation),
                 });
             } else {
-                // Terminal outcomes no longer need operation input or
-                // continuation state. The result belongs to complete().
-                completion.input.deinit();
-                deinitOptional(&completion.continuation);
+                // Terminal input and continuation are abandoned; the
+                // result alone transfers to complete().
+                discardPayloads(
+                    self.callback_context,
+                    completion.operation_kind,
+                    completion.input.take(),
+                    takeOptional(&completion.continuation),
+                    null,
+                );
             }
 
             // The fields transferred above are now empty in completion.
@@ -250,9 +260,14 @@ pub const Executor = struct {
                 // calling prepare, so insertion below cannot allocate.
                 self.pending.ensureUnusedCapacity(self.allocator, 1) catch |err| {
                     if (self.continuations.fetchRemove(key)) |entry| {
-                        var payloads = entry.value;
-                        payloads.input.deinit();
-                        deinitOptional(&payloads.continuation);
+                        const payloads = entry.value;
+                        discardPayloads(
+                            self.callback_context,
+                            payloads.operation_kind,
+                            payloads.input,
+                            payloads.continuation,
+                            null,
+                        );
                     }
                     if (manager.completeWork(token, .failed)) {
                         self.callback_context.callbacks.complete(
@@ -310,8 +325,7 @@ pub const Executor = struct {
             // Keep ownership in pending until a later dispatch can submit.
             if (!manager.completeWork(token, .yielded)) {
                 if (self.pending.fetchRemove(key)) |entry| {
-                    var item = entry.value;
-                    item.deinit();
+                    discardWorkItem(self.callback_context, entry.value);
                 }
             }
             break;
@@ -329,9 +343,41 @@ fn executeWork(context: ?*anyopaque, item: WorkItem) WorkCompletion {
     );
 }
 
-fn discardCompletion(_: ?*anyopaque, completion: WorkCompletion) void {
-    var owned = completion;
-    owned.deinit();
+fn discardCompletion(raw_context: ?*anyopaque, completion: WorkCompletion) void {
+    const callback_context: *CallbackContext = @ptrCast(@alignCast(raw_context.?));
+    discardPayloads(
+        callback_context,
+        completion.operation_kind,
+        completion.input,
+        completion.continuation,
+        completion.result,
+    );
+}
+
+fn discardWorkItem(callback_context: *CallbackContext, item: WorkItem) void {
+    discardPayloads(
+        callback_context,
+        item.operation_kind,
+        item.input,
+        item.continuation,
+        null,
+    );
+}
+
+fn discardPayloads(
+    callback_context: *CallbackContext,
+    operation_kind: OperationKind,
+    input: OwnedPayload,
+    continuation: ?OwnedPayload,
+    result: ?OwnedPayload,
+) void {
+    callback_context.callbacks.discard(
+        callback_context.user_context,
+        operation_kind,
+        input,
+        continuation,
+        result,
+    );
 }
 
 pub const Config = struct {
@@ -362,6 +408,19 @@ pub const Callbacks = struct {
         outcome: WorkResult,
         result: ?OwnedPayload,
     ) void,
+
+    /// Main-thread cleanup callback for payloads abandoned by the executor.
+    /// It receives ownership of every supplied payload and must release or
+    /// otherwise dispose of any operation-specific resources they describe.
+    /// Called for stale completions, terminal input/continuation state,
+    /// retained work during shutdown, and uncollected pool results.
+    discard: *const fn (
+        context: ?*anyopaque,
+        operation_kind: OperationKind,
+        input: OwnedPayload,
+        continuation: ?OwnedPayload,
+        result: ?OwnedPayload,
+    ) void,
 };
 
 const CallbackContext = struct {
@@ -374,10 +433,6 @@ const OperationPayloads = struct {
     input: OwnedPayload,
     continuation: ?OwnedPayload,
 
-    fn deinit(self: *OperationPayloads) void {
-        self.input.deinit();
-        deinitOptional(&self.continuation);
-    }
 };
 
 fn takeOptional(value: *?OwnedPayload) ?OwnedPayload {
