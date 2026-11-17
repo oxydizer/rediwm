@@ -1,7 +1,10 @@
 //! Runtime integration for the Manager-owned Files discovery service.
+const std = @import("std");
 const App = @import("app.zig").App;
 const io_manager = @import("io_manager.zig");
 const io_discovery_executor = @import("io_discovery_executor.zig");
+const ViewItem = @import("app_model.zig").ViewItem;
+const fold = @import("ui").fold;
 
 /// Starts discovery for a Job whose root entry has already been added.
 /// The executor is created only when discovery is first requested.
@@ -13,6 +16,11 @@ pub fn startDiscovery(
     const manager = if (self.io_manager) |*value| value else
         return error.DiscoveryManagerUnavailable;
 
+    for (self.discovery_jobs.items) |existing| {
+        if (existing == job_id) return error.DiscoveryAlreadyTracked;
+    }
+    try self.discovery_jobs.ensureUnusedCapacity(self.allocator, 1);
+
     if (self.discovery_executor == null) {
         self.discovery_executor = try io_discovery_executor.Executor.init(
             self.allocator,
@@ -23,6 +31,7 @@ pub fn startDiscovery(
     }
 
     try manager.startDiscovery(job_id, root_path);
+    self.discovery_jobs.appendAssumeCapacity(job_id);
 }
 
 /// Reconciles completed batches and submits more bounded discovery work.
@@ -32,13 +41,114 @@ pub fn stepDiscovery(self: *App) void {
     const manager = if (self.io_manager) |*value| value else return;
 
     _ = executor.drainWake();
-    _ = executor.drainCompletions(manager) catch {
+    const drained = executor.drainCompletions(manager) catch {
         self.setStatusNotice("Directory discovery failed", true);
         return;
     };
+    if (drained > 0 and self.snapshot != null and
+        self.transfer_browse_root == null)
+    {
+        self.rebuildView();
+    }
     _ = executor.dispatchReady(manager) catch {
         self.setStatusNotice("Could not schedule directory discovery", true);
     };
+}
+
+/// Builds an owned path for an entry by walking its stable parent IDs.
+/// The root entry itself maps to the original filesystem root path.
+fn entryPath(
+    allocator: std.mem.Allocator,
+    root_path: []const u8,
+    tree: anytype,
+    entry_id: u64,
+) ![]u8 {
+    var components: std.ArrayList([]const u8) = .empty;
+    defer components.deinit(allocator);
+
+    var current_id = entry_id;
+    while (true) {
+        const entry = tree.getConst(current_id) orelse return error.UnknownEntry;
+        const parent_id = entry.parent_id orelse break;
+        try components.append(allocator, entry.name);
+        current_id = parent_id;
+    }
+
+    var result = try allocator.dupe(u8, root_path);
+    errdefer allocator.free(result);
+    var index = components.items.len;
+    while (index > 0) {
+        index -= 1;
+        const next = try std.fs.path.join(allocator, &.{ result, components.items[index] });
+        allocator.free(result);
+        result = next;
+    }
+    return result;
+}
+
+/// Adds newly discovered direct children to the current listing. Existing
+/// snapshot rows win, so this projection never duplicates normal filesystem
+/// entries or changes their richer metadata.
+pub fn appendDiscoveryRows(
+    self: *App,
+    mem: std.mem.Allocator,
+    old: *const std.StringHashMap(ViewItem),
+) void {
+    if (self.chooser != null or self.transfer_view.active or
+        self.history.archive_len > 0 or self.isRecent() or self.changedOnly())
+        return;
+
+    const manager = if (self.io_manager) |*value| value else return;
+
+    for (self.discovery_jobs.items) |job_id| {
+        const root_path = manager.discoveryRootPath(job_id) orelse continue;
+        const tree = manager.treeIndex(job_id) orelse continue;
+        _ = tree.root() orelse continue;
+
+        for (tree.entries.items) |entry| {
+            const parent_id = entry.parent_id orelse continue;
+            const parent_path = entryPath(
+                mem,
+                root_path,
+                tree,
+                parent_id,
+            ) catch continue;
+            defer mem.free(parent_path);
+            if (!std.mem.eql(u8, parent_path, self.history.current)) continue;
+
+            const path = std.fs.path.join(mem, &.{ parent_path, entry.name }) catch continue;
+            var duplicate = false;
+            for (self.items.items) |existing| {
+                if (std.mem.eql(u8, existing.path, path)) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+
+            const is_dir = entry.kind == .directory;
+            if (self.folders_only and !is_dir) continue;
+            if (!fold.contains(entry.name, self.search.text.items, .{
+                .turkish = @import("i18n").isTurkish(),
+            })) continue;
+
+            const previous = old.get(path);
+            self.items.append(self.allocator, .{
+                .name = mem.dupe(u8, entry.name) catch continue,
+                .path = path,
+                .is_dir = is_dir,
+                .is_symlink = entry.kind == .symlink,
+                .is_broken = false,
+                .bytes = @intCast(@min(entry.metadata.size, std.math.maxInt(i64))),
+                .mtime = entry.metadata.mtime_sec,
+                .mode = @intCast(entry.metadata.mode),
+                .icon_name = if (is_dir) "folder" else "text-x-generic",
+                .selected = if (previous) |item| item.selected else false,
+                .selection_fill = if (previous) |item| item.selection_fill else .{},
+                .selection_border = if (previous) |item| item.selection_border else .{},
+            }) catch continue;
+        }
+    }
 }
 
 /// Poll descriptor for worker completions, or -1 before discovery is used.

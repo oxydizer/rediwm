@@ -709,6 +709,7 @@ pub fn rebuildView(self: *App) void {
             self.appendTorrentRows(mem, &selected_paths);
         }
         self.appendTransferRows(mem, &selected_paths);
+        self.appendDiscoveryRows(mem, &selected_paths);
         // Transfer placeholders and synthetic snapshots have no worker key.
         // Give those rows keys from the same locale before sorting so every
         // comparison uses one collation, including mixed real/stub folders.
