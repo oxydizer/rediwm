@@ -1,8 +1,7 @@
 //! Bounded regular-file copy operation for the Files I/O executor.
 //!
-//! The input payload contains two NUL-free paths separated by one NUL byte.
-//! Continuation state is serialized into bytes; no aligned struct casts are
-//! performed on OwnedPayload storage.
+//! The input payload contains two NUL-terminated paths.
+//! Continuation state uses an explicit, fixed-width little-endian encoding.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
@@ -25,6 +24,8 @@ const Continuation = struct {
     destination_created: bool,
 };
 
+const continuation_size = 26;
+
 /// Build the immutable operation input.
 pub fn makeInput(
     allocator: Allocator,
@@ -38,46 +39,89 @@ pub fn makeInput(
         return error.InvalidPath;
     }
 
-    const bytes = try allocator.alloc(u8, source_path.len + 1 + destination_path.len);
+    const bytes = try allocator.alloc(u8, source_path.len + 1 + destination_path.len + 1);
     errdefer allocator.free(bytes);
     @memcpy(bytes[0..source_path.len], source_path);
     bytes[source_path.len] = 0;
-    @memcpy(bytes[source_path.len + 1 ..], destination_path);
+    const destination_start = source_path.len + 1;
+    @memcpy(bytes[destination_start ..][0..destination_path.len], destination_path);
+    bytes[bytes.len - 1] = 0;
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
 fn paths(input: *const executor.OwnedPayload) !struct {
-    source: []const u8,
-    destination: []const u8,
+    source: [*:0]const u8,
+    destination: [*:0]const u8,
 } {
     const bytes = input.slice();
     const separator = std.mem.indexOfScalar(u8, bytes, 0) orelse return error.InvalidInput;
-    if (separator == 0 or separator + 1 >= bytes.len) return error.InvalidInput;
+    if (separator == 0 or bytes.len < separator + 3 or bytes[bytes.len - 1] != 0) {
+        return error.InvalidInput;
+    }
+    const destination_bytes = bytes[separator + 1 ..];
+    if (std.mem.indexOfScalar(u8, destination_bytes[0 .. destination_bytes.len - 1], 0) != null) {
+        return error.InvalidInput;
+    }
     return .{
-        .source = bytes[0..separator],
-        .destination = bytes[separator + 1 ..],
+        .source = @ptrCast(bytes.ptr),
+        .destination = @ptrCast(bytes[separator + 1 ..].ptr),
     };
 }
 
-fn sentinelPath(allocator: Allocator, path: []const u8) ![:0]u8 {
-    return allocator.dupeSentinel(u8, path, 0);
+fn writeUnsigned(comptime T: type, output: []u8, value: T) void {
+    for (0..@sizeOf(T)) |index| {
+        const shift: std.math.Log2Int(T) = @intCast(index * 8);
+        output[index] = @truncate(value >> shift);
+    }
 }
 
-fn encodeContinuation(
-    allocator: Allocator,
-    state: Continuation,
-) !executor.OwnedPayload {
-    const bytes = try allocator.alloc(u8, @sizeOf(Continuation));
-    @memcpy(bytes, std.mem.asBytes(&state));
+fn readUnsigned(comptime T: type, input: []const u8) T {
+    var value: T = 0;
+    for (0..@sizeOf(T)) |index| {
+        const shift: std.math.Log2Int(T) = @intCast(index * 8);
+        value |= @as(T, input[index]) << shift;
+    }
+    return value;
+}
+
+fn encodeContinuation(allocator: Allocator, state: Continuation) !executor.OwnedPayload {
+    const bytes = try allocator.alloc(u8, continuation_size);
+    writeUnsigned(u32, bytes[0..4], @bitCast(state.source_fd));
+    writeUnsigned(u32, bytes[4..8], @bitCast(state.destination_fd));
+    writeUnsigned(u64, bytes[8..16], state.offset);
+    writeUnsigned(u64, bytes[16..24], state.size);
+    bytes[24] = switch (state.strategy) {
+        .copy_file_range => 0,
+        .buffered => 1,
+    };
+    bytes[25] = @intFromBool(state.destination_created);
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
 fn decodeContinuation(payload: *const executor.OwnedPayload) !Continuation {
     const bytes = payload.slice();
-    if (bytes.len != @sizeOf(Continuation)) return error.InvalidContinuation;
-    var state: Continuation = undefined;
-    @memcpy(std.mem.asBytes(&state), bytes);
-    return state;
+    if (bytes.len != continuation_size) return error.InvalidContinuation;
+    const strategy: Strategy = switch (bytes[24]) {
+        0 => .copy_file_range,
+        1 => .buffered,
+        else => return error.InvalidContinuation,
+    };
+    if (bytes[25] > 1) return error.InvalidContinuation;
+    const source_fd: c_int = @bitCast(readUnsigned(u32, bytes[0..4]));
+    const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[4..8]));
+    const offset = readUnsigned(u64, bytes[8..16]);
+    const size = readUnsigned(u64, bytes[16..24]);
+    if (source_fd < 0 or destination_fd < 0 or offset > size or bytes[25] != 1) {
+        return error.InvalidContinuation;
+    }
+    return .{
+        .source_fd = source_fd,
+        .destination_fd = destination_fd,
+        .offset = offset,
+        .size = size,
+        .strategy = strategy,
+        .destination_created = true,
+    };
 }
 
 fn closeDescriptors(state: *const Continuation) void {
@@ -85,10 +129,8 @@ fn closeDescriptors(state: *const Continuation) void {
     _ = c.close(state.destination_fd);
 }
 
-fn unlinkDestination(allocator: Allocator, destination: []const u8) void {
-    const path = sentinelPath(allocator, destination) catch return;
-    defer allocator.free(path);
-    _ = c.unlink(path);
+fn unlinkDestination(destination: [*:0]const u8) void {
+    _ = c.unlink(destination);
 }
 
 fn isFallbackErrno(value: c_int) bool {
@@ -121,14 +163,13 @@ fn completion(
 }
 
 fn failed(
-    allocator: Allocator,
     item: executor.WorkItem,
     state: ?Continuation,
-    destination: []const u8,
+    destination: [*:0]const u8,
 ) executor.WorkCompletion {
     if (state) |current| {
         closeDescriptors(&current);
-        if (current.destination_created) unlinkDestination(allocator, destination);
+        if (current.destination_created) unlinkDestination(destination);
     }
     return completion(item, .failed, null, null);
 }
@@ -161,17 +202,8 @@ pub fn execute(
         item.continuation = null;
         has_state = true;
     } else {
-        const source_z = sentinelPath(allocator, operation_paths.source) catch {
-            return completion(item, .failed, null, null);
-        };
-        defer allocator.free(source_z);
-        const destination_z = sentinelPath(allocator, operation_paths.destination) catch {
-            return completion(item, .failed, null, null);
-        };
-        defer allocator.free(destination_z);
-
         const source_fd = c.open(
-            source_z,
+            operation_paths.source,
             c.O_RDONLY | c.O_CLOEXEC | c.O_NOFOLLOW | c.O_NONBLOCK,
         );
         if (source_fd < 0) return completion(item, .failed, null, null);
@@ -187,7 +219,7 @@ pub fn execute(
 
         const mode: c_uint = @intCast(stat.st_mode & 0o7777);
         const destination_fd = c.open(
-            destination_z,
+            operation_paths.destination,
             c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC,
             mode,
         );
@@ -210,7 +242,7 @@ pub fn execute(
         if (c.ioctl(destination_fd, clone_ioctl, source_fd) == 0) {
             closeDescriptors(&state);
             const marker = allocator.dupe(u8, &.{1}) catch {
-                unlinkDestination(allocator, operation_paths.destination);
+                unlinkDestination(operation_paths.destination);
                 return completion(item, .failed, null, null);
             };
             return completion(
@@ -228,13 +260,13 @@ pub fn execute(
             clone_errno != c.ENOTTY and
             clone_errno != c.EOPNOTSUPP)
         {
-            return failed(allocator, item, state, operation_paths.destination);
+            return failed(item, state, operation_paths.destination);
         }
 
         if (state.size == 0) {
             closeDescriptors(&state);
             const marker = allocator.dupe(u8, &.{1}) catch {
-                unlinkDestination(allocator, operation_paths.destination);
+                unlinkDestination(operation_paths.destination);
                 return completion(item, .failed, null, null);
             };
             return completion(
@@ -252,7 +284,7 @@ pub fn execute(
     if (remaining == 0) {
         closeDescriptors(&state);
         const marker = allocator.dupe(u8, &.{1}) catch {
-            unlinkDestination(allocator, operation_paths.destination);
+            unlinkDestination(operation_paths.destination);
             return completion(item, .failed, null, null);
         };
         return completion(
@@ -276,7 +308,7 @@ pub fn execute(
         if (copied > 0) {
             state.offset += @intCast(copied);
         } else if (copied == 0) {
-            return failed(allocator, item, state, operation_paths.destination);
+            return failed(item, state, operation_paths.destination);
         } else {
             const copy_errno = std.c._errno().*;
             if (copy_errno == c.EINTR) {
@@ -284,7 +316,7 @@ pub fn execute(
             } else if (isFallbackErrno(copy_errno)) {
                 state.strategy = .buffered;
             } else {
-                return failed(allocator, item, state, operation_paths.destination);
+                return failed(item, state, operation_paths.destination);
             }
         }
     }
@@ -296,15 +328,15 @@ pub fn execute(
             @as(u64, chunk_size),
         ));
         const count = c.read(state.source_fd, &buffer, wanted);
-        if (count == 0) return failed(allocator, item, state, operation_paths.destination);
+        if (count == 0) return failed(item, state, operation_paths.destination);
         if (count < 0) {
             if (std.c._errno().* == c.EINTR) {
                 const saved = encodeContinuation(allocator, state) catch {
-                    return failed(allocator, item, state, operation_paths.destination);
+                    return failed(item, state, operation_paths.destination);
                 };
                 return completion(item, .yielded, saved, null);
             }
-            return failed(allocator, item, state, operation_paths.destination);
+            return failed(item, state, operation_paths.destination);
         }
 
         const bytes_read: usize = @intCast(count);
@@ -317,7 +349,7 @@ pub fn execute(
             );
             if (result < 0 and std.c._errno().* == c.EINTR) continue;
             if (result <= 0) {
-                return failed(allocator, item, state, operation_paths.destination);
+                return failed(item, state, operation_paths.destination);
             }
             written += @intCast(result);
         }
@@ -327,7 +359,7 @@ pub fn execute(
     if (state.offset == state.size) {
         closeDescriptors(&state);
         const marker = allocator.dupe(u8, &.{1}) catch {
-            unlinkDestination(allocator, operation_paths.destination);
+            unlinkDestination(operation_paths.destination);
             return completion(item, .failed, null, null);
         };
         return completion(
@@ -339,7 +371,7 @@ pub fn execute(
     }
 
     const saved = encodeContinuation(allocator, state) catch {
-        return failed(allocator, item, state, operation_paths.destination);
+        return failed(item, state, operation_paths.destination);
     };
     return completion(item, .yielded, saved, null);
 }
@@ -372,7 +404,7 @@ pub fn discard(
         if (decodeContinuation(&payload)) |state| {
             closeDescriptors(&state);
             if (state.destination_created) {
-                unlinkDestination(input.allocator, operation_paths.destination);
+                unlinkDestination(operation_paths.destination);
             }
         } else |_| {}
         var owned = payload;
@@ -381,7 +413,7 @@ pub fn discard(
 
     if (result) |payload| {
         if (payload.slice().len == 1 and payload.slice()[0] == 1) {
-            unlinkDestination(input.allocator, operation_paths.destination);
+            unlinkDestination(operation_paths.destination);
         }
         var owned = payload;
         owned.deinit();
