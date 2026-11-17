@@ -283,6 +283,23 @@ pub const Manager = struct {
         return null;
     }
 
+    /// Returns a dispatched discovery entry to the queue when the worker
+    /// pool cannot accept it. The next dispatch receives a fresh generation.
+    pub fn yieldDiscovery(self: *Manager, token: DiscoveryToken) bool {
+        const job = self.findJob(token.job_id) orelse return false;
+        const active = job.discovery_in_flight orelse return false;
+        if (active.entry_id != token.entry_id or
+            active.generation != token.generation)
+            return false;
+
+        const entry = job.tree.get(token.entry_id) orelse return false;
+        if (entry.discovery != .scanning) return false;
+
+        entry.discovery = .queued;
+        job.discovery_in_flight = null;
+        return true;
+    }
+
     /// Adopts a worker-produced batch when its token is still current.
     /// On success the batch is consumed and deinitialized.
     /// On a stale token the caller retains ownership of the batch.

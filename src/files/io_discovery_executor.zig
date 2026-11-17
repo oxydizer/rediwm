@@ -1,0 +1,294 @@
+//! Bounded worker handoff for incremental Files directory discovery.
+//!
+//! The Manager and TreeIndex remain main-thread-owned. A worker receives
+//! exclusive ownership of one directory cursor for one bounded batch, then
+//! returns the cursor and batch for main-thread reconciliation.
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const io_manager = @import("io_manager.zig");
+const io_discovery = @import("io_discovery.zig");
+const io_workers = @import("io_workers.zig");
+
+const JobId = io_manager.JobId;
+const DiscoveryToken = io_manager.DiscoveryToken;
+
+const Task = struct {
+    token: DiscoveryToken,
+    cursor: io_discovery.Cursor,
+};
+
+const Completion = struct {
+    token: DiscoveryToken,
+    cursor: ?io_discovery.Cursor = null,
+    batch: ?io_discovery.Batch = null,
+    failed: bool = false,
+};
+
+const Context = struct {
+    allocator: Allocator,
+    batch_size: usize,
+};
+
+const Pool = io_workers.WorkerPool(Task, Completion);
+
+pub const Executor = struct {
+    allocator: Allocator,
+    context: *Context,
+    pool: *Pool,
+    anchors: std.AutoHashMapUnmanaged(JobId, io_discovery.Anchor) = .empty,
+    cursors: std.AutoHashMapUnmanaged(JobId, io_discovery.Cursor) = .empty,
+
+    pub fn init(
+        allocator: Allocator,
+        worker_count: usize,
+        capacity: usize,
+        batch_size: usize,
+    ) !Executor {
+        if (batch_size == 0) return error.InvalidBatchSize;
+
+        const context = try allocator.create(Context);
+        errdefer allocator.destroy(context);
+        context.* = .{
+            .allocator = allocator,
+            .batch_size = batch_size,
+        };
+
+        const pool = try Pool.init(
+            allocator,
+            worker_count,
+            capacity,
+            context,
+            executeBatch,
+            discardCompletion,
+        );
+
+        return .{
+            .allocator = allocator,
+            .context = context,
+            .pool = pool,
+        };
+    }
+
+    pub fn deinit(self: *Executor) void {
+        // Accepted tasks finish before the pool returns. Its discard callback
+        // releases any results that were not collected by the main thread.
+        self.pool.deinit();
+
+        var cursor_iter = self.cursors.valueIterator();
+        while (cursor_iter.next()) |cursor| cursor.deinit();
+        self.cursors.deinit(self.allocator);
+
+        var anchor_iter = self.anchors.valueIterator();
+        while (anchor_iter.next()) |anchor| anchor.deinit();
+        self.anchors.deinit(self.allocator);
+
+        self.allocator.destroy(self.context);
+        self.* = undefined;
+    }
+
+    pub fn wakeFd(self: *Executor) std.posix.fd_t {
+        return self.pool.wakeFd();
+    }
+
+    pub fn drainWake(self: *Executor) u64 {
+        return self.pool.drainWake();
+    }
+
+    /// Dispatches discovery batches until the Manager has no eligible entry
+    /// or the bounded pool applies backpressure.
+    pub fn dispatchReady(
+        self: *Executor,
+        manager: *io_manager.Manager,
+    ) !usize {
+        var submitted: usize = 0;
+
+        while (manager.dispatchDiscovery()) |token| {
+            var cursor: io_discovery.Cursor = undefined;
+            var owns_cursor = false;
+
+            if (self.cursors.fetchRemove(token.job_id)) |retained| {
+                cursor = retained.value;
+                owns_cursor = true;
+            } else {
+                self.cursors.ensureUnusedCapacity(self.allocator, 1) catch |err| {
+                    _ = manager.failDiscovery(token);
+                    return err;
+                };
+
+                const anchor = try self.getOrOpenAnchor(manager, token) orelse {
+                    _ = manager.failDiscovery(token);
+                    continue;
+                };
+                const tree = manager.treeIndex(token.job_id) orelse {
+                    _ = manager.failDiscovery(token);
+                    continue;
+                };
+
+                cursor = anchor.openCursorForEntry(
+                    self.allocator,
+                    tree,
+                    token.entry_id,
+                ) catch {
+                    _ = manager.failDiscovery(token);
+                    self.closeAnchorIfComplete(manager, token.job_id);
+                    continue;
+                };
+                owns_cursor = true;
+            }
+
+            std.debug.assert(owns_cursor);
+            if (self.pool.trySubmit(.{
+                .token = token,
+                .cursor = cursor,
+            })) {
+                // Cursor ownership transferred to the worker pool.
+                submitted += 1;
+                continue;
+            }
+
+            // Backpressure is nonblocking. Retain the cursor for the next
+            // dispatch and return the entry to the queue with a new token.
+            self.cursors.putAssumeCapacity(token.job_id, cursor);
+            if (!manager.yieldDiscovery(token)) {
+                if (self.cursors.fetchRemove(token.job_id)) |retained| {
+                    var cursor_to_close = retained.value;
+                    cursor_to_close.deinit();
+                }
+            }
+            break;
+        }
+
+        return submitted;
+    }
+
+    /// Reconciles all currently available batches on the Manager thread.
+    pub fn drainCompletions(
+        self: *Executor,
+        manager: *io_manager.Manager,
+    ) !usize {
+        var drained: usize = 0;
+
+        while (self.pool.tryPopResult()) |completion_value| {
+            var completion = completion_value;
+            drained += 1;
+
+            if (completion.failed) {
+                _ = manager.failDiscovery(completion.token);
+                self.closeAnchorIfComplete(manager, completion.token.job_id);
+                continue;
+            }
+
+            if (completion.batch == null) {
+                if (completion.cursor) |*cursor| cursor.deinit();
+                _ = manager.failDiscovery(completion.token);
+                self.closeAnchorIfComplete(manager, completion.token.job_id);
+                continue;
+            }
+
+            if (completion.cursor != null) {
+                self.cursors.ensureUnusedCapacity(self.allocator, 1) catch |err| {
+                    if (completion.batch) |*batch| batch.deinit();
+                    if (completion.cursor) |*cursor| cursor.deinit();
+                    _ = manager.failDiscovery(completion.token);
+                    self.closeAnchorIfComplete(manager, completion.token.job_id);
+                    return err;
+                };
+            }
+
+            const accepted = manager.completeDiscovery(
+                completion.token,
+                &completion.batch.?,
+            ) catch |err| {
+                if (completion.batch) |*batch| batch.deinit();
+                if (completion.cursor) |*cursor| cursor.deinit();
+                _ = manager.failDiscovery(completion.token);
+                self.closeAnchorIfComplete(manager, completion.token.job_id);
+                return err;
+            };
+
+            if (!accepted) {
+                if (completion.batch) |*batch| batch.deinit();
+                if (completion.cursor) |*cursor| cursor.deinit();
+                continue;
+            }
+
+            // completeDiscovery consumes the batch on acceptance.
+            completion.batch = null;
+            if (completion.cursor) |cursor| {
+                self.cursors.putAssumeCapacity(completion.token.job_id, cursor);
+                completion.cursor = null;
+            }
+
+            self.closeAnchorIfComplete(manager, completion.token.job_id);
+        }
+
+        return drained;
+    }
+
+    fn getOrOpenAnchor(
+        self: *Executor,
+        manager: *io_manager.Manager,
+        token: DiscoveryToken,
+    ) !?*io_discovery.Anchor {
+        if (self.anchors.getPtr(token.job_id)) |anchor| return anchor;
+
+        self.anchors.ensureUnusedCapacity(self.allocator, 1) catch return error.OutOfMemory;
+        const path = manager.discoveryRootPath(token.job_id) orelse return null;
+        const path_z = try self.allocator.dupeSentinel(u8, path, 0);
+        defer self.allocator.free(path_z);
+
+        const anchor = try io_discovery.Anchor.open(path_z);
+        self.anchors.putAssumeCapacity(token.job_id, anchor);
+        return self.anchors.getPtr(token.job_id).?;
+    }
+
+    fn closeAnchorIfComplete(
+        self: *Executor,
+        manager: *const io_manager.Manager,
+        job_id: JobId,
+    ) void {
+        if (manager.discoveryComplete(job_id) != true) return;
+
+        if (self.cursors.fetchRemove(job_id)) |entry| {
+            var cursor = entry.value;
+            cursor.deinit();
+        }
+        if (self.anchors.fetchRemove(job_id)) |entry| {
+            var anchor = entry.value;
+            anchor.deinit();
+        }
+    }
+};
+
+fn executeBatch(raw_context: ?*anyopaque, task: Task) Completion {
+    const context: *Context = @ptrCast(@alignCast(raw_context.?));
+    var cursor = task.cursor;
+
+    const batch = cursor.nextBatch(context.allocator, context.batch_size) catch {
+        cursor.deinit();
+        return .{
+            .token = task.token,
+            .failed = true,
+        };
+    };
+
+    if (batch.complete) {
+        cursor.deinit();
+        return .{
+            .token = task.token,
+            .batch = batch,
+        };
+    }
+
+    return .{
+        .token = task.token,
+        .cursor = cursor,
+        .batch = batch,
+    };
+}
+
+fn discardCompletion(_: ?*anyopaque, completion: Completion) void {
+    var discarded = completion;
+    if (discarded.batch) |*batch| batch.deinit();
+    if (discarded.cursor) |*cursor| cursor.deinit();
+}
