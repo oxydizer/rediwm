@@ -77,9 +77,14 @@ const Operation = struct {
     state: OperationState = .pending,
     generation: u64 = 0,
     dependencies: std.ArrayList(OperationId) = .empty,
+    dependency_indices: std.ArrayList(usize) = .empty,
+    dependents: std.ArrayList(usize) = .empty,
+    unresolved_dependencies: usize = 0,
 
     fn deinit(self: *Operation, allocator: Allocator) void {
         self.dependencies.deinit(allocator);
+        self.dependency_indices.deinit(allocator);
+        self.dependents.deinit(allocator);
     }
 };
 
@@ -88,10 +93,17 @@ const Job = struct {
     origin_window_id: ?WindowId,
     state: JobState = .planning,
     operations: std.ArrayList(Operation) = .empty,
+    ready_queue: std.ArrayList(usize) = .empty,
+    ready_head: usize = 0,
+    ready_count: usize = 0,
+    dependency_work_queue: std.ArrayList(usize) = .empty,
+    operation_state_counts: [7]usize = .{ 0, 0, 0, 0, 0, 0, 0 },
 
     fn deinit(self: *Job, allocator: Allocator) void {
         for (self.operations.items) |*operation| operation.deinit(allocator);
         self.operations.deinit(allocator);
+        self.ready_queue.deinit(allocator);
+        self.dependency_work_queue.deinit(allocator);
     }
 };
 
@@ -167,17 +179,39 @@ pub const Manager = struct {
         if (operation_id == dependency_id) return error.DependencyCycle;
 
         const operation = findOperation(job, operation_id) orelse return error.UnknownOperation;
-        _ = findOperation(job, dependency_id) orelse return error.UnknownDependency;
+        const dependency_index = findOperationIndex(job, dependency_id) orelse return error.UnknownDependency;
         for (operation.dependencies.items) |existing| {
             if (existing == dependency_id) return error.DuplicateDependency;
         }
         try operation.dependencies.append(self.allocator, dependency_id);
+        try operation.dependency_indices.append(self.allocator, dependency_index);
     }
 
     pub fn queueJob(self: *Manager, job_id: JobId) !void {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state != .planning) return error.InvalidJobState;
+        try buildDependencyGraph(self.allocator, job);
         try validateAcyclic(self.allocator, job);
+
+        const operation_count = job.operations.items.len;
+        var dependency_count: usize = 0;
+        for (job.operations.items) |operation| {
+            dependency_count += operation.dependency_indices.items.len;
+        }
+        try job.ready_queue.ensureTotalCapacity(self.allocator, operation_count);
+        try job.dependency_work_queue.ensureTotalCapacity(self.allocator, dependency_count);
+        job.ready_queue.clearRetainingCapacity();
+        job.dependency_work_queue.clearRetainingCapacity();
+        job.ready_head = 0;
+        job.ready_count = 0;
+    job.operation_state_counts = .{ 0, 0, 0, 0, 0, 0, 0 };
+
+        for (job.operations.items, 0..) |operation, index| {
+            job.operation_state_counts[@intFromEnum(operation.state)] += 1;
+            if (operation.unresolved_dependencies == 0) {
+                enqueueReady(job, index);
+            }
+        }
         job.state = if (job.operations.items.len == 0) .completed else .queued;
     }
 
@@ -201,7 +235,9 @@ pub const Manager = struct {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         const operation = findOperation(job, operation_id) orelse return error.UnknownOperation;
         if (operation.state != .waiting) return error.InvalidOperationState;
-        operation.state = .pending;
+        const index = findOperationIndex(job, operation_id) orelse return error.UnknownOperation;
+        transitionOperation(job, operation, .pending);
+        enqueueReady(job, index);
         self.recomputeJobState(job);
     }
 
@@ -216,22 +252,21 @@ pub const Manager = struct {
             const job = &self.jobs.items[index];
             if (job.state != .queued and job.state != .running) continue;
 
-            var has_running = false;
-            for (job.operations.items) |operation| {
-                if (operation.state == .running) {
-                    has_running = true;
-                    break;
-                }
-            }
-            if (has_running) continue;
+            if (job.operation_state_counts[@intFromEnum(OperationState.running)] != 0) continue;
 
-            for (job.operations.items) |*operation| {
+            while (dequeueReady(job)) |operation_index| {
+                const operation = &job.operations.items[operation_index];
                 if (operation.state != .pending) continue;
-                if (!dependenciesCompleted(job, operation)) continue;
-                if (operation.generation == std.math.maxInt(u64)) return null;
+
+                if (operation.generation == std.math.maxInt(u64)) {
+                    transitionOperation(job, operation, .failed);
+                    self.propagateUnmetDependencies(job, operation_index);
+                    self.recomputeJobState(job);
+                    continue;
+                }
 
                 operation.generation += 1;
-                operation.state = .running;
+                transitionOperation(job, operation, .running);
                 job.state = .running;
                 self.round_robin_cursor = (index + 1) % count;
                 return .{
@@ -240,6 +275,7 @@ pub const Manager = struct {
                     .generation = operation.generation,
                 };
             }
+            self.recomputeJobState(job);
         }
         return null;
     }
@@ -250,7 +286,8 @@ pub const Manager = struct {
         const operation = findOperation(job, token.operation_id) orelse return false;
         if (operation.state != .running or operation.generation != token.generation) return false;
 
-        operation.state = switch (result) {
+        const operation_index = findOperationIndex(job, token.operation_id) orelse return false;
+        const next_state: OperationState = switch (result) {
             .yielded => .pending,
             .completed => .completed,
             .waiting => .waiting,
@@ -258,7 +295,20 @@ pub const Manager = struct {
             .failed => .failed,
             .cancelled => .cancelled,
         };
-        self.skipOperationsWithUnmetDependencies(job);
+        transitionOperation(job, operation, next_state);
+        if (result == .yielded) {
+            enqueueReadyFront(job, operation_index);
+        } else if (result == .completed) {
+            for (operation.dependents.items) |dependent_index| {
+                const dependent = &job.operations.items[dependent_index];
+                dependent.unresolved_dependencies -= 1;
+                if (dependent.unresolved_dependencies == 0 and dependent.state == .pending) {
+                    enqueueReady(job, dependent_index);
+                }
+            }
+        } else if (result == .failed or result == .skipped or result == .cancelled) {
+            self.propagateUnmetDependencies(job, operation_index);
+        }
         self.recomputeJobState(job);
         return true;
     }
@@ -320,65 +370,55 @@ pub const Manager = struct {
     fn recomputeJobState(self: *Manager, job: *Job) void {
         _ = self;
         if (job.state == .paused) return;
-
-        var has_running = false;
-        var has_waiting = false;
-        var has_pending = false;
-        var has_failed = false;
-        var has_cancelled = false;
-        var has_completed = false;
-        var has_skipped = false;
-        var has_ready = false;
-
-        for (job.operations.items) |*operation| {
-            switch (operation.state) {
-                .running => has_running = true,
-                .waiting => has_waiting = true,
-                .pending => {
-                    has_pending = true;
-                    if (dependenciesCompleted(job, operation)) has_ready = true;
-                },
-                .failed => has_failed = true,
-                .cancelled => has_cancelled = true,
-                .completed => has_completed = true,
-                .skipped => has_skipped = true,
-            }
-        }
-
-        if (has_running) {
+        const counts = job.operation_state_counts;
+        if (counts[@intFromEnum(OperationState.running)] != 0) {
             job.state = .running;
-        } else if (has_ready) {
+        } else if (job.ready_count != 0) {
             job.state = .queued;
-        } else if (has_waiting or has_pending) {
+        } else if (
+            counts[@intFromEnum(OperationState.waiting)] != 0 or
+            counts[@intFromEnum(OperationState.pending)] != 0
+        ) {
             job.state = .waiting;
-        } else if (has_failed) {
-            job.state = if (has_completed) .completed_with_errors else .failed;
-        } else if (has_cancelled) {
+        } else if (counts[@intFromEnum(OperationState.failed)] != 0) {
+            job.state = if (counts[@intFromEnum(OperationState.completed)] != 0)
+                .completed_with_errors
+            else
+                .failed;
+        } else if (counts[@intFromEnum(OperationState.cancelled)] != 0) {
             job.state = .cancelled;
         } else {
             job.state = .completed;
         }
     }
 
-    fn skipOperationsWithUnmetDependencies(self: *Manager, job: *Job) void {
+    fn propagateUnmetDependencies(self: *Manager, job: *Job, failed_index: usize) void {
         _ = self;
-        var changed = true;
-        while (changed) {
-            changed = false;
-            for (job.operations.items) |*operation| {
-                if (operation.state != .pending) continue;
-                for (operation.dependencies.items) |dependency_id| {
-                    const dependency = findOperation(job, dependency_id) orelse continue;
-                    if (dependency.state.isTerminal() and dependency.state != .completed) {
-                        operation.state = .skipped;
-                        changed = true;
-                        break;
-                    }
-                }
+        job.dependency_work_queue.clearRetainingCapacity();
+        for (job.operations.items[failed_index].dependents.items) |dependent_index| {
+            job.dependency_work_queue.appendAssumeCapacity(dependent_index);
+        }
+
+        var head: usize = 0;
+        while (head < job.dependency_work_queue.items.len) : (head += 1) {
+            const index = job.dependency_work_queue.items[head];
+            const operation = &job.operations.items[index];
+            if (operation.state != .pending) continue;
+
+            transitionOperation(job, operation, .skipped);
+            for (operation.dependents.items) |dependent_index| {
+                job.dependency_work_queue.appendAssumeCapacity(dependent_index);
             }
         }
     }
 };
+
+fn transitionOperation(job: *Job, operation: *Operation, next_state: OperationState) void {
+    if (operation.state == next_state) return;
+    job.operation_state_counts[@intFromEnum(operation.state)] -= 1;
+    job.operation_state_counts[@intFromEnum(next_state)] += 1;
+    operation.state = next_state;
+}
 
 fn findOperation(job: *Job, id: OperationId) ?*Operation {
     for (job.operations.items) |*operation| {
@@ -394,6 +434,71 @@ fn findOperationConst(job: *const Job, id: OperationId) ?*const Operation {
     return null;
 }
 
+fn findOperationIndex(job: *const Job, id: OperationId) ?usize {
+    for (job.operations.items, 0..) |operation, index| {
+        if (operation.id == id) return index;
+    }
+    return null;
+}
+
+fn enqueueReady(job: *Job, operation_index: usize) void {
+    if (job.ready_queue.items.len == job.ready_queue.capacity) {
+        const remaining = job.ready_queue.items.len - job.ready_head;
+        std.mem.copyForwards(
+            usize,
+            job.ready_queue.items[0..remaining],
+            job.ready_queue.items[job.ready_head..],
+        );
+        job.ready_queue.items.len = remaining;
+        job.ready_head = 0;
+    }
+    job.ready_queue.appendAssumeCapacity(operation_index);
+    job.ready_count += 1;
+}
+
+fn enqueueReadyFront(job: *Job, operation_index: usize) void {
+    if (job.ready_count == 0) {
+        job.ready_queue.appendAssumeCapacity(operation_index);
+        job.ready_head = 0;
+    } else if (job.ready_head > 0) {
+        job.ready_head -= 1;
+        job.ready_queue.items[job.ready_head] = operation_index;
+    } else {
+        const remaining = job.ready_queue.items.len;
+        std.mem.copyBackwards(
+            usize,
+            job.ready_queue.items[1 .. remaining + 1],
+            job.ready_queue.items[0..remaining],
+        );
+        job.ready_queue.items[0] = operation_index;
+        job.ready_queue.items.len = remaining + 1;
+    }
+    job.ready_count += 1;
+}
+
+fn dequeueReady(job: *Job) ?usize {
+    if (job.ready_count == 0) return null;
+
+    const operation_index = job.ready_queue.items[job.ready_head];
+    job.ready_head += 1;
+    job.ready_count -= 1;
+
+    if (job.ready_count == 0) {
+        job.ready_queue.clearRetainingCapacity();
+        job.ready_head = 0;
+    } else if (job.ready_head >= 64 and job.ready_head * 2 >= job.ready_queue.items.len) {
+        const remaining = job.ready_queue.items.len - job.ready_head;
+        std.mem.copyForwards(
+            usize,
+            job.ready_queue.items[0..remaining],
+            job.ready_queue.items[job.ready_head..],
+        );
+        job.ready_queue.items.len = remaining;
+        job.ready_head = 0;
+    }
+    return operation_index;
+}
+
 fn dependenciesCompleted(job: *const Job, operation: *const Operation) bool {
     for (operation.dependencies.items) |dependency_id| {
         const dependency = findOperationConst(job, dependency_id) orelse return false;
@@ -406,34 +511,52 @@ fn validateAcyclic(allocator: Allocator, job: *const Job) !void {
     const operations = job.operations.items;
     const indegree = try allocator.alloc(usize, operations.len);
     defer allocator.free(indegree);
-    const processed = try allocator.alloc(bool, operations.len);
-    defer allocator.free(processed);
-    @memset(processed, false);
+    const queue = try allocator.alloc(usize, operations.len);
+    defer allocator.free(queue);
 
-    for (operations, 0..) |operation, index| indegree[index] = operation.dependencies.items.len;
+    for (operations, 0..) |operation, index| {
+        indegree[index] = operation.dependencies.items.len;
+    }
+
+    var head: usize = 0;
+    var tail: usize = 0;
+    for (indegree, 0..) |degree, index| {
+        if (degree == 0) {
+            queue[tail] = index;
+            tail += 1;
+        }
+    }
 
     var completed: usize = 0;
-    while (completed < operations.len) {
-        var candidate: ?usize = null;
-        for (operations, 0..) |_, index| {
-            if (!processed[index] and indegree[index] == 0) {
-                candidate = index;
-                break;
-            }
-        }
-        const index = candidate orelse return error.DependencyCycle;
-        processed[index] = true;
+    while (head < tail) {
+        const index = queue[head];
+        head += 1;
         completed += 1;
 
-        const completed_id = operations[index].id;
-        for (operations, 0..) |operation, dependent_index| {
-            if (processed[dependent_index]) continue;
-            for (operation.dependencies.items) |dependency_id| {
-                if (dependency_id == completed_id) {
-                    indegree[dependent_index] -= 1;
-                    break;
-                }
+        for (operations[index].dependents.items) |dependent_index| {
+            indegree[dependent_index] -= 1;
+            if (indegree[dependent_index] == 0) {
+                queue[tail] = dependent_index;
+                tail += 1;
             }
+        }
+    }
+
+    if (completed != operations.len) return error.DependencyCycle;
+}
+
+fn buildDependencyGraph(allocator: Allocator, job: *Job) !void {
+    const operations = job.operations.items;
+
+    for (operations) |*operation| {
+        operation.dependents.clearRetainingCapacity();
+        operation.unresolved_dependencies = operation.dependencies.items.len;
+    }
+
+    for (operations, 0..) |operation, dependent_index| {
+        for (operation.dependency_indices.items) |dependency_index| {
+            if (dependency_index >= operations.len) return error.UnknownDependency;
+            try job.operations.items[dependency_index].dependents.append(allocator, dependent_index);
         }
     }
 }
