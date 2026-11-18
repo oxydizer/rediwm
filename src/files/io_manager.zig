@@ -10,6 +10,47 @@ const io_discovery = @import("io_discovery.zig");
 pub const JobId = u64;
 pub const OperationId = u64;
 pub const WindowId = u64;
+pub const ConflictId = u64;
+
+pub const ConflictView = struct {
+    id: ConflictId,
+    job_id: JobId,
+    operation_id: OperationId,
+    entry_id: io_tree.EntryId,
+    source_path: []const u8,
+    destination_path: []const u8,
+    source_kind: io_tree.EntryKind,
+    destination_kind: io_tree.EntryKind,
+};
+
+const Conflict = struct {
+    id: ConflictId,
+    job_id: JobId,
+    operation_id: OperationId,
+    entry_id: io_tree.EntryId,
+    source_path: []u8,
+    destination_path: []u8,
+    source_kind: io_tree.EntryKind,
+    destination_kind: io_tree.EntryKind,
+
+    fn view(self: *const Conflict) ConflictView {
+        return .{
+            .id = self.id,
+            .job_id = self.job_id,
+            .operation_id = self.operation_id,
+            .entry_id = self.entry_id,
+            .source_path = self.source_path,
+            .destination_path = self.destination_path,
+            .source_kind = self.source_kind,
+            .destination_kind = self.destination_kind,
+        };
+    }
+
+    fn deinit(self: *Conflict, allocator: Allocator) void {
+        allocator.free(self.source_path);
+        allocator.free(self.destination_path);
+    }
+};
 
 pub const DiscoveryToken = struct {
     job_id: JobId,
@@ -210,6 +251,9 @@ pub const Manager = struct {
     round_robin_cursor: usize = 0,
     discovery_queues: [3]DiscoveryQueue = .{ .{}, .{}, .{} },
     discovery_schedule_slot: usize = 0,
+    conflicts: std.ArrayList(Conflict) = .empty,
+    conflict_head: usize = 0,
+    next_conflict_id: ConflictId = 1,
 
     pub fn init(allocator: Allocator) Manager {
         return .{ .allocator = allocator };
@@ -219,6 +263,9 @@ pub const Manager = struct {
         for (self.jobs.items) |*job| job.deinit(self.allocator);
         self.jobs.deinit(self.allocator);
         for (&self.discovery_queues) |*queue| queue.deinit(self.allocator);
+        for (self.conflicts.items[self.conflict_head..]) |*conflict|
+            conflict.deinit(self.allocator);
+        self.conflicts.deinit(self.allocator);
     }
 
     pub fn createJob(self: *Manager, origin_window_id: ?WindowId) !JobId {
@@ -1038,6 +1085,156 @@ pub const Manager = struct {
         transitionOperation(job, operation, .pending);
         enqueueReady(job, index);
         self.recomputeJobState(job);
+    }
+
+    /// Registers a destination conflict for the exact running Operation and
+    /// moves that Operation to waiting. The Manager owns both path copies.
+    pub fn registerConflict(
+        self: *Manager,
+        token: WorkToken,
+        entry_id: io_tree.EntryId,
+        source_path: []const u8,
+        destination_path: []const u8,
+        source_kind: io_tree.EntryKind,
+        destination_kind: io_tree.EntryKind,
+    ) !ConflictId {
+        const job = self.findJob(token.job_id) orelse return error.UnknownJob;
+        const operation = findOperation(job, token.operation_id) orelse
+            return error.UnknownOperation;
+        if (operation.state != .running or operation.generation != token.generation)
+            return error.StaleWorkToken;
+        if (operation.entry_id == null or operation.entry_id.? != entry_id)
+            return error.OperationEntryMismatch;
+        if (self.next_conflict_id == std.math.maxInt(ConflictId))
+            return error.IdExhausted;
+        if (source_path.len == 0 or !std.fs.path.isAbsolute(source_path) or
+            std.mem.indexOfScalar(u8, source_path, 0) != null)
+            return error.InvalidConflictSourcePath;
+        if (destination_path.len == 0 or !std.fs.path.isAbsolute(destination_path) or
+            std.mem.indexOfScalar(u8, destination_path, 0) != null)
+            return error.InvalidConflictDestinationPath;
+
+        for (self.conflicts.items[self.conflict_head..]) |conflict| {
+            if (conflict.job_id == token.job_id and
+                conflict.operation_id == token.operation_id)
+                return error.ConflictAlreadyRegistered;
+        }
+
+        const source_copy = try self.allocator.dupe(u8, source_path);
+        errdefer self.allocator.free(source_copy);
+        const destination_copy = try self.allocator.dupe(u8, destination_path);
+        errdefer self.allocator.free(destination_copy);
+        try self.conflicts.ensureUnusedCapacity(self.allocator, 1);
+
+        const id = self.next_conflict_id;
+        self.conflicts.appendAssumeCapacity(.{
+            .id = id,
+            .job_id = token.job_id,
+            .operation_id = token.operation_id,
+            .entry_id = entry_id,
+            .source_path = source_copy,
+            .destination_path = destination_copy,
+            .source_kind = source_kind,
+            .destination_kind = destination_kind,
+        });
+        self.next_conflict_id += 1;
+
+        // The token was validated above and Manager state is main-thread
+        // owned, so this transition cannot become stale between the checks.
+        std.debug.assert(self.completeWork(token, .waiting));
+        return id;
+    }
+
+    /// Returns the global FIFO head. The view remains valid until the next
+    /// conflict-queue mutation or Manager teardown.
+    pub fn nextConflict(self: *const Manager) ?ConflictView {
+        if (self.conflict_head >= self.conflicts.items.len) return null;
+        return self.conflicts.items[self.conflict_head].view();
+    }
+
+    /// Resolves the FIFO head for retry after the caller has applied the
+    /// selected filesystem action (Replace, Rename, or Merge).
+    pub fn resolveConflict(self: *Manager, conflict_id: ConflictId) !void {
+        const conflict = self.conflictHead(conflict_id) orelse
+            return error.ConflictNotAtQueueHead;
+        const job_id = conflict.job_id;
+        const operation_id = conflict.operation_id;
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        const operation = findOperation(job, operation_id) orelse
+            return error.UnknownOperation;
+        if (operation.state != .waiting) return error.InvalidOperationState;
+
+        self.consumeConflictHead();
+        try self.resolveWaiting(job_id, operation_id);
+    }
+
+    /// Skips the FIFO head and its dependent subtree. Any descendant
+    /// conflicts made obsolete by dependency propagation are also removed.
+    pub fn skipConflict(self: *Manager, conflict_id: ConflictId) !void {
+        const conflict = self.conflictHead(conflict_id) orelse
+            return error.ConflictNotAtQueueHead;
+        const job = self.findJob(conflict.job_id) orelse return error.UnknownJob;
+        const operation_index = findOperationIndex(job, conflict.operation_id) orelse
+            return error.UnknownOperation;
+        const operation = &job.operations.items[operation_index];
+        if (operation.state != .waiting) return error.InvalidOperationState;
+
+        transitionOperation(job, operation, .skipped);
+        self.propagateUnmetDependencies(job, operation_index);
+        self.consumeConflictHead();
+        self.pruneInvalidConflicts();
+        self.recomputeJobState(job);
+    }
+
+    fn conflictHead(self: *Manager, conflict_id: ConflictId) ?*Conflict {
+        if (self.conflict_head >= self.conflicts.items.len) return null;
+        const conflict = &self.conflicts.items[self.conflict_head];
+        if (conflict.id != conflict_id) return null;
+        return conflict;
+    }
+
+    fn consumeConflictHead(self: *Manager) void {
+        self.conflicts.items[self.conflict_head].deinit(self.allocator);
+        self.conflict_head += 1;
+        if (self.conflict_head >= self.conflicts.items.len) {
+            self.conflicts.clearRetainingCapacity();
+            self.conflict_head = 0;
+        } else if (self.conflict_head >= 64 and
+            self.conflict_head * 2 >= self.conflicts.items.len)
+        {
+            const remaining = self.conflicts.items.len - self.conflict_head;
+            std.mem.copyForwards(
+                Conflict,
+                self.conflicts.items[0..remaining],
+                self.conflicts.items[self.conflict_head..],
+            );
+            self.conflicts.items.len = remaining;
+            self.conflict_head = 0;
+        }
+    }
+
+    fn pruneInvalidConflicts(self: *Manager) void {
+        var index = self.conflict_head;
+        while (index < self.conflicts.items.len) {
+            const conflict = &self.conflicts.items[index];
+            var is_waiting = false;
+            if (self.findJobConst(conflict.job_id)) |job| {
+                if (job.operation_indices.get(conflict.operation_id)) |operation_index| {
+                    is_waiting = job.operations.items[operation_index].state == .waiting;
+                }
+            }
+            if (is_waiting) {
+                index += 1;
+                continue;
+            }
+
+            conflict.deinit(self.allocator);
+            _ = self.conflicts.orderedRemove(index);
+        }
+        if (self.conflict_head >= self.conflicts.items.len) {
+            self.conflicts.clearRetainingCapacity();
+            self.conflict_head = 0;
+        }
     }
 
     /// One active Operation per Job preserves its FIFO execution order.
