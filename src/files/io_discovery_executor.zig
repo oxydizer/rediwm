@@ -36,7 +36,10 @@ pub const Executor = struct {
     context: *Context,
     pool: *Pool,
     anchors: std.AutoHashMapUnmanaged(JobId, io_discovery.Anchor) = .empty,
-    cursors: std.AutoHashMapUnmanaged(JobId, io_discovery.Cursor) = .empty,
+    cursors: std.AutoHashMapUnmanaged(
+        JobId,
+        std.AutoHashMapUnmanaged(u64, io_discovery.Cursor),
+    ) = .empty,
 
     pub fn init(
         allocator: Allocator,
@@ -74,8 +77,12 @@ pub const Executor = struct {
         // releases any results that were not collected by the main thread.
         self.pool.deinit();
 
-        var cursor_iter = self.cursors.valueIterator();
-        while (cursor_iter.next()) |cursor| cursor.deinit();
+        var job_cursor_iter = self.cursors.valueIterator();
+        while (job_cursor_iter.next()) |job_cursors| {
+            var cursor_iter = job_cursors.valueIterator();
+            while (cursor_iter.next()) |cursor| cursor.deinit();
+            job_cursors.deinit(self.allocator);
+        }
         self.cursors.deinit(self.allocator);
 
         var anchor_iter = self.anchors.valueIterator();
@@ -106,11 +113,11 @@ pub const Executor = struct {
             var cursor: io_discovery.Cursor = undefined;
             var owns_cursor = false;
 
-            if (self.cursors.fetchRemove(token.job_id)) |retained| {
-                cursor = retained.value;
+            if (self.takeCursor(token.job_id, token.entry_id)) |retained| {
+                cursor = retained;
                 owns_cursor = true;
             } else {
-                self.cursors.ensureUnusedCapacity(self.allocator, 1) catch |err| {
+                self.prepareCursorSlot(token.job_id) catch |err| {
                     _ = manager.failDiscovery(token);
                     return err;
                 };
@@ -147,13 +154,14 @@ pub const Executor = struct {
             }
 
             // Backpressure is nonblocking. Retain the cursor for the next
-            // dispatch and return the entry to the queue with a new token.
-            self.cursors.putAssumeCapacity(token.job_id, cursor);
+            // dispatch and return this entry to its priority queue.
+            self.storeCursorAssumeCapacity(token.job_id, token.entry_id, cursor);
             if (!manager.yieldDiscovery(token)) {
-                if (self.cursors.fetchRemove(token.job_id)) |retained| {
-                    var cursor_to_close = retained.value;
+                if (self.takeCursor(token.job_id, token.entry_id)) |retained| {
+                    var cursor_to_close = retained;
                     cursor_to_close.deinit();
                 }
+                self.closeAnchorIfComplete(manager, token.job_id);
             }
             break;
         }
@@ -186,7 +194,9 @@ pub const Executor = struct {
             }
 
             if (completion.cursor != null) {
-                self.cursors.ensureUnusedCapacity(self.allocator, 1) catch |err| {
+                self.prepareCursorSlot(
+                    completion.token.job_id,
+                ) catch |err| {
                     if (completion.batch) |*batch| batch.deinit();
                     if (completion.cursor) |*cursor| cursor.deinit();
                     _ = manager.failDiscovery(completion.token);
@@ -215,7 +225,11 @@ pub const Executor = struct {
             // completeDiscovery consumes the batch on acceptance.
             completion.batch = null;
             if (completion.cursor) |cursor| {
-                self.cursors.putAssumeCapacity(completion.token.job_id, cursor);
+                self.storeCursorAssumeCapacity(
+                    completion.token.job_id,
+                    completion.token.entry_id,
+                    cursor,
+                );
                 completion.cursor = null;
             }
 
@@ -249,14 +263,51 @@ pub const Executor = struct {
     ) void {
         if (manager.discoveryComplete(job_id) != true) return;
 
-        if (self.cursors.fetchRemove(job_id)) |entry| {
-            var cursor = entry.value;
-            cursor.deinit();
-        }
+        self.closeCursorsForJob(job_id);
         if (self.anchors.fetchRemove(job_id)) |entry| {
             var anchor = entry.value;
             anchor.deinit();
         }
+    }
+
+    fn takeCursor(
+        self: *Executor,
+        job_id: JobId,
+        entry_id: u64,
+    ) ?io_discovery.Cursor {
+        const job_cursors = self.cursors.getPtr(job_id) orelse return null;
+        const retained = job_cursors.fetchRemove(entry_id) orelse return null;
+        return retained.value;
+    }
+
+    fn prepareCursorSlot(self: *Executor, job_id: JobId) !void {
+        if (self.cursors.getPtr(job_id)) |job_cursors| {
+            try job_cursors.ensureUnusedCapacity(self.allocator, 1);
+            return;
+        }
+
+        try self.cursors.ensureUnusedCapacity(self.allocator, 1);
+        var job_cursors: std.AutoHashMapUnmanaged(u64, io_discovery.Cursor) = .empty;
+        errdefer job_cursors.deinit(self.allocator);
+        try job_cursors.ensureUnusedCapacity(self.allocator, 1);
+        self.cursors.putAssumeCapacity(job_id, job_cursors);
+    }
+
+    fn storeCursorAssumeCapacity(
+        self: *Executor,
+        job_id: JobId,
+        entry_id: u64,
+        cursor: io_discovery.Cursor,
+    ) void {
+        self.cursors.getPtr(job_id).?.putAssumeCapacity(entry_id, cursor);
+    }
+
+    fn closeCursorsForJob(self: *Executor, job_id: JobId) void {
+        const removed = self.cursors.fetchRemove(job_id) orelse return;
+        var job_cursors = removed.value;
+        var cursor_iter = job_cursors.valueIterator();
+        while (cursor_iter.next()) |cursor| cursor.deinit();
+        job_cursors.deinit(self.allocator);
     }
 };
 

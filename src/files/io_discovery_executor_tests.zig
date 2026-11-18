@@ -125,3 +125,70 @@ test "discovery executor rejects an invalid batch size" {
         io_discovery_executor.Executor.init(std.testing.allocator, 1, 1, 0),
     );
 }
+
+test "discovery executor resumes deprioritized cursors without rescanning" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const root_path = try makeTempDir(&temp_buffer);
+
+    const first_path = try join(allocator, root_path, "first");
+    defer allocator.free(first_path);
+    const second_path = try join(allocator, root_path, "second");
+    defer allocator.free(second_path);
+    const first_file = try join(allocator, first_path, "first.txt");
+    defer allocator.free(first_file);
+    const second_file = try join(allocator, second_path, "second.txt");
+    defer allocator.free(second_file);
+    defer {
+        _ = c.unlink(first_file);
+        _ = c.unlink(second_file);
+        _ = c.rmdir(first_path);
+        _ = c.rmdir(second_path);
+        _ = c.rmdir(root_path);
+    }
+
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(first_path, 0o700));
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(second_path, 0o700));
+    try createFile(first_file);
+    try createFile(second_file);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    _ = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, root_path);
+
+    var executor = try io_discovery_executor.Executor.init(
+        allocator,
+        1,
+        1,
+        1,
+    );
+    defer executor.deinit();
+
+    _ = try executor.dispatchReady(&manager);
+    try waitForWake(&executor);
+    _ = try executor.drainCompletions(&manager);
+
+    const tree = manager.treeIndex(job).?;
+    const root_id = tree.root().?;
+    try std.testing.expectEqual(@as(usize, 1), tree.getConst(root_id).?.children.items.len);
+    const first_discovered = tree.getConst(root_id).?.children.items[0];
+    try manager.prioritizeDiscovery(job, first_discovered);
+
+    var iterations: usize = 0;
+    while (manager.discoveryComplete(job) != true) : (iterations += 1) {
+        if (iterations == 100) return error.DiscoveryDidNotComplete;
+        _ = try executor.dispatchReady(&manager);
+        try waitForWake(&executor);
+        _ = try executor.drainCompletions(&manager);
+    }
+
+    try std.testing.expectEqual(@as(usize, 5), tree.count());
+    try std.testing.expectEqual(@as(usize, 2), tree.getConst(root_id).?.children.items.len);
+    for (tree.getConst(root_id).?.children.items) |directory_id| {
+        const directory = tree.getConst(directory_id).?;
+        try std.testing.expectEqual(.complete, directory.discovery);
+        try std.testing.expectEqual(@as(usize, 1), directory.children.items.len);
+    }
+}

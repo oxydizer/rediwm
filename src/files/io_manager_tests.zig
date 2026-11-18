@@ -252,7 +252,7 @@ test "discovery adopts batches and visits directories breadth first" {
     try std.testing.expectEqual(@as(usize, 5), tree.count());
 }
 
-test "discovery keeps a partially scanned directory at the queue head" {
+test "discovery resumes a partial directory after promoted work" {
     const allocator = std.testing.allocator;
     var manager = io_manager.Manager.init(allocator);
     defer manager.deinit();
@@ -267,18 +267,21 @@ test "discovery keeps a partially scanned directory at the queue head" {
     }, false);
     try std.testing.expect(try manager.completeDiscovery(first_token, &first_batch));
 
+    const child_token = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(
+        manager.treeIndex(job).?.getConst(root).?.children.items[0],
+        child_token.entry_id,
+    );
+    var child_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(child_token, &child_batch));
+
     const resumed_token = manager.dispatchDiscovery().?;
     try std.testing.expectEqual(root, resumed_token.entry_id);
     try std.testing.expect(resumed_token.generation > first_token.generation);
 
     var final_batch = try makeDiscoveryBatch(allocator, &.{}, true);
     try std.testing.expect(try manager.completeDiscovery(resumed_token, &final_batch));
-
-    const child_token = manager.dispatchDiscovery().?;
-    try std.testing.expectEqual(
-        manager.treeIndex(job).?.getConst(root).?.children.items[0],
-        child_token.entry_id,
-    );
+    try std.testing.expect(manager.discoveryComplete(job).?);
 }
 
 test "discovery rejects stale completion and failure tokens" {
@@ -298,6 +301,178 @@ test "discovery rejects stale completion and failure tokens" {
     defer stale_batch.deinit();
     try std.testing.expect(!try manager.completeDiscovery(token, &stale_batch));
     try std.testing.expect(manager.discoveryComplete(job).?);
+}
+
+test "discovery scheduler follows the foreground promoted background 2:1:1 rotation" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    var jobs: [8]io_manager.JobId = undefined;
+    for (&jobs, 0..) |*job_id, index| {
+        job_id.* = try manager.createJob(null);
+        _ = try manager.addTreeRoot(job_id.*, "source", .directory, .{}, null);
+        try manager.startDiscovery(job_id.*, "/tmp/source");
+        if (index < 4) {
+            const root = manager.treeIndex(job_id.*).?.root().?;
+            try manager.prioritizeDiscovery(job_id.*, root);
+        } else if (index < 6) {
+            const root = manager.treeIndex(job_id.*).?.root().?;
+            try manager.promoteDiscoverySubtree(job_id.*, root);
+        }
+    }
+
+    const expected = [_]io_manager.JobId{
+        jobs[0], jobs[1], jobs[4], jobs[6],
+        jobs[2], jobs[3], jobs[5], jobs[7],
+    };
+    for (expected) |expected_job| {
+        const token = manager.dispatchDiscovery() orelse return error.MissingDiscoveryWork;
+        try std.testing.expectEqual(expected_job, token.job_id);
+        var batch = try makeDiscoveryBatch(allocator, &.{}, true);
+        try std.testing.expect(try manager.completeDiscovery(token, &batch));
+    }
+
+    for (jobs) |job_id|
+        try std.testing.expect(manager.discoveryComplete(job_id).?);
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+}
+
+test "discovery scheduler skips empty priority queues without wasting dispatches" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const promoted_job = try manager.createJob(null);
+    const promoted_root = try manager.addTreeRoot(
+        promoted_job,
+        "promoted",
+        .directory,
+        .{},
+        null,
+    );
+    try manager.startDiscovery(promoted_job, "/tmp/promoted");
+    try manager.promoteDiscoverySubtree(promoted_job, promoted_root);
+
+    const background_job = try manager.createJob(null);
+    _ = try manager.addTreeRoot(background_job, "background", .directory, .{}, null);
+    try manager.startDiscovery(background_job, "/tmp/background");
+
+    const first = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(promoted_job, first.job_id);
+    var first_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(first, &first_batch));
+
+    const second = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(background_job, second.job_id);
+    var second_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(second, &second_batch));
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+}
+
+test "promoting a queued directory changes its priority without duplicating it" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, "/tmp/source");
+
+    const root_token = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(root, root_token.entry_id);
+    var root_batch = try makeDiscoveryBatch(allocator, &.{
+        .{ .name = "a", .kind = .directory },
+        .{ .name = "b", .kind = .directory },
+        .{ .name = "c", .kind = .directory },
+    }, true);
+    try std.testing.expect(try manager.completeDiscovery(root_token, &root_batch));
+
+    const children = manager.treeIndex(job).?.getConst(root).?.children.items;
+    const a_id = children[0];
+    const b_id = children[1];
+    try manager.prioritizeDiscovery(job, b_id);
+
+    const promoted = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(b_id, promoted.entry_id);
+    var promoted_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(promoted, &promoted_batch));
+
+    const background = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(a_id, background.entry_id);
+    var background_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(background, &background_batch));
+
+    const final_child = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(children[2], final_child.entry_id);
+    var final_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(final_child, &final_batch));
+    try std.testing.expect(manager.discoveryComplete(job).?);
+}
+
+test "promoted subtree descendants inherit promoted priority" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const promoted_job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(promoted_job, "source", .directory, .{}, null);
+    try manager.startDiscovery(promoted_job, "/tmp/source");
+    try manager.promoteDiscoverySubtree(promoted_job, root);
+
+    const background_job = try manager.createJob(null);
+    _ = try manager.addTreeRoot(background_job, "other", .directory, .{}, null);
+    try manager.startDiscovery(background_job, "/tmp/other");
+
+    const root_token = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(promoted_job, root_token.job_id);
+    var root_batch = try makeDiscoveryBatch(allocator, &.{
+        .{ .name = "nested", .kind = .directory },
+    }, true);
+    try std.testing.expect(try manager.completeDiscovery(root_token, &root_batch));
+
+    const background = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(background_job, background.job_id);
+    var background_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(background, &background_batch));
+
+    const nested_id = manager.treeIndex(promoted_job).?.getConst(root).?.children.items[0];
+    const nested = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(promoted_job, nested.job_id);
+    try std.testing.expectEqual(nested_id, nested.entry_id);
+    var nested_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(nested, &nested_batch));
+}
+
+test "foreground work can run between batches while a background continuation is retained" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, "/tmp/source");
+
+    const root_token = manager.dispatchDiscovery().?;
+    var first_batch = try makeDiscoveryBatch(allocator, &.{
+        .{ .name = "b", .kind = .directory },
+    }, false);
+    try std.testing.expect(try manager.completeDiscovery(root_token, &first_batch));
+
+    const children = manager.treeIndex(job).?.getConst(root).?.children.items;
+    const foreground_id = children[0];
+    try manager.prioritizeDiscovery(job, foreground_id);
+
+    const foreground = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(foreground_id, foreground.entry_id);
+    var foreground_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(foreground, &foreground_batch));
+
+    const resumed = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(root, resumed.entry_id);
+    try std.testing.expect(resumed.generation > root_token.generation);
+    var final_root_batch = try makeDiscoveryBatch(allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(resumed, &final_root_batch));
 }
 
 test "large dependency chain dispatches in insertion order" {
