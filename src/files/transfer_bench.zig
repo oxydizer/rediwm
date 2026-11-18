@@ -9,6 +9,8 @@ const projection = @import("transfer_tree.zig");
 const tree_state = @import("app_transfer_tree.zig");
 const Allocator = std.mem.Allocator;
 
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+
 const benchmark_iterations = 5;
 const concurrent_iterations = 3;
 const concurrent_polls_per_thread = 10;
@@ -468,6 +470,11 @@ fn benchmarkConcurrentJobs(allocator: Allocator, job_count: usize) !void {
 
 test "transfer benchmark emits workload measurements" {
     const allocator = std.testing.allocator;
+    const enabled = getenv("REDIWM_RUN_BENCHMARKS") orelse
+        return error.SkipZigTest;
+    if (!std.mem.eql(u8, std.mem.span(enabled), "1")) {
+        return error.SkipZigTest;
+    }
 
     std.debug.print(
         "BENCH,phase,operation,profile,files,directories,jobs,polling_threads,worker_count,iterations,median_ns,min_ns,max_ns,operations_per_second\n",
