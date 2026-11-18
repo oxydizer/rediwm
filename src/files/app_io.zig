@@ -34,6 +34,48 @@ pub fn startDiscovery(
     self.discovery_jobs.appendAssumeCapacity(job_id);
 }
 
+/// Promotes the discovered directory corresponding to a newly navigated
+/// filesystem path. Its descendants become promoted-subtree work.
+pub fn promoteDiscoveryPath(self: *App, path: []const u8) void {
+    promoteDiscoveryPathWithPriority(self, path, true);
+}
+
+/// Promotes a hovered directory and its discovered descendants.
+pub fn promoteDiscoverySubtreePath(self: *App, path: []const u8) void {
+    promoteDiscoveryPathWithPriority(self, path, false);
+}
+
+fn promoteDiscoveryPathWithPriority(
+    self: *App,
+    path: []const u8,
+    foreground: bool,
+) void {
+    const manager = if (self.io_manager) |*value| value else return;
+
+    for (self.discovery_jobs.items) |job_id| {
+        const root_path = manager.discoveryRootPath(job_id) orelse continue;
+        const tree = manager.treeIndex(job_id) orelse continue;
+
+        for (tree.entries.items) |entry| {
+            if (entry.kind != .directory) continue;
+            const candidate = entryPath(
+                self.allocator,
+                root_path,
+                tree,
+                entry.id,
+            ) catch continue;
+            defer self.allocator.free(candidate);
+            if (!std.mem.eql(u8, candidate, path)) continue;
+
+            if (foreground) {
+                manager.prioritizeDiscovery(job_id, entry.id) catch {};
+            } else {
+                manager.promoteDiscoverySubtree(job_id, entry.id) catch {};
+            }
+        }
+    }
+}
+
 /// Reconciles completed batches and submits more bounded discovery work.
 /// Called on the Files main thread; workers never access App or Manager.
 pub fn stepDiscovery(self: *App) void {

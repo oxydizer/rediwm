@@ -237,6 +237,14 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     }
     const new_hover = self.hoverKey();
     if (old_hover != new_hover) {
+        if (self.item_surface.hovered) |target| {
+            const index: usize = @intCast(target.id);
+            if (index < self.items.items.len) {
+                const item = self.items.items[index];
+                if (item.is_dir and !item.is_symlink)
+                    self.promoteDiscoverySubtreePath(item.path);
+            }
+        }
         self.invalidateHover(old_hover, new_hover);
     } else if (new_hover == std.math.maxInt(usize) - 2001 or
         new_hover == std.math.maxInt(usize) - 2002)

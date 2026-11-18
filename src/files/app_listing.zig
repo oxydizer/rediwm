@@ -138,6 +138,8 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
         transfer_browse = self.transfer_browse_root != null;
     }
 
+    if (!transfer_browse) self.promoteDiscoveryPath(path);
+
     self.leaveTransfers();
     self.navigation_count +%= 1;
     self.overwrite_pending = false;

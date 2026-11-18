@@ -641,6 +641,8 @@ pub const App = struct {
     // app_io.zig
     const app_io = @import("app_io.zig");
     pub const startDiscovery = app_io.startDiscovery;
+    pub const promoteDiscoveryPath = app_io.promoteDiscoveryPath;
+    pub const promoteDiscoverySubtreePath = app_io.promoteDiscoverySubtreePath;
     pub const stepDiscovery = app_io.stepDiscovery;
     pub const discoveryWakeFd = app_io.discoveryWakeFd;
 

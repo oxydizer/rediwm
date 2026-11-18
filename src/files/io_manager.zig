@@ -17,6 +17,49 @@ pub const DiscoveryToken = struct {
     generation: u64,
 };
 
+pub const DiscoveryPriority = enum {
+    foreground,
+    promoted,
+    background,
+};
+
+const DiscoverySchedule = struct {
+    priority: DiscoveryPriority,
+    version: u64,
+};
+
+const DiscoveryQueueItem = struct {
+    job_id: JobId,
+    entry_id: io_tree.EntryId,
+    version: u64,
+};
+
+const DiscoveryQueue = struct {
+    items: std.ArrayList(DiscoveryQueueItem) = .empty,
+    head: usize = 0,
+
+    fn deinit(self: *DiscoveryQueue, allocator: Allocator) void {
+        self.items.deinit(allocator);
+    }
+
+    fn consumeHead(self: *DiscoveryQueue) void {
+        self.head += 1;
+        if (self.head >= self.items.items.len) {
+            self.items.clearRetainingCapacity();
+            self.head = 0;
+        } else if (self.head >= 64 and self.head * 2 >= self.items.items.len) {
+            const remaining = self.items.items.len - self.head;
+            std.mem.copyForwards(
+                DiscoveryQueueItem,
+                self.items.items[0..remaining],
+                self.items.items[self.head..],
+            );
+            self.items.items.len = remaining;
+            self.head = 0;
+        }
+    }
+};
+
 pub const JobState = enum {
     planning,
     queued,
@@ -102,8 +145,8 @@ const Job = struct {
     state: JobState = .planning,
     tree: io_tree.TreeIndex,
     discovery_path: ?[]u8 = null,
-    discovery_queue: std.ArrayList(io_tree.EntryId) = .empty,
-    discovery_head: usize = 0,
+    discovery_schedule: std.AutoHashMapUnmanaged(io_tree.EntryId, DiscoverySchedule) = .empty,
+    discovery_pending_count: usize = 0,
     discovery_generation: u64 = 0,
     discovery_in_flight: ?DiscoveryToken = null,
     operations: std.ArrayList(Operation) = .empty,
@@ -116,7 +159,7 @@ const Job = struct {
 
     fn deinit(self: *Job, allocator: Allocator) void {
         if (self.discovery_path) |path| allocator.free(path);
-        self.discovery_queue.deinit(allocator);
+        self.discovery_schedule.deinit(allocator);
         self.tree.deinit();
         for (self.operations.items) |*operation| operation.deinit(allocator);
         self.operations.deinit(allocator);
@@ -154,6 +197,8 @@ pub const Manager = struct {
     next_job_id: JobId = 1,
     next_operation_id: OperationId = 1,
     round_robin_cursor: usize = 0,
+    discovery_queues: [3]DiscoveryQueue = .{ .{}, .{}, .{} },
+    discovery_schedule_slot: usize = 0,
 
     pub fn init(allocator: Allocator) Manager {
         return .{ .allocator = allocator };
@@ -162,6 +207,7 @@ pub const Manager = struct {
     pub fn deinit(self: *Manager) void {
         for (self.jobs.items) |*job| job.deinit(self.allocator);
         self.jobs.deinit(self.allocator);
+        for (&self.discovery_queues) |*queue| queue.deinit(self.allocator);
     }
 
     pub fn createJob(self: *Manager, origin_window_id: ?WindowId) !JobId {
@@ -223,11 +269,22 @@ pub const Manager = struct {
 
         const owned_path = try self.allocator.dupe(u8, root_path);
         errdefer self.allocator.free(owned_path);
-        try job.discovery_queue.ensureUnusedCapacity(self.allocator, 1);
+        try job.discovery_schedule.ensureUnusedCapacity(self.allocator, 1);
+        const queue = &self.discovery_queues[@intFromEnum(DiscoveryPriority.background)];
+        try queue.items.ensureUnusedCapacity(self.allocator, 1);
 
         job.discovery_path = owned_path;
         root.discovery = .queued;
-        job.discovery_queue.appendAssumeCapacity(root_id);
+        job.discovery_schedule.putAssumeCapacity(root_id, .{
+            .priority = .background,
+            .version = 1,
+        });
+        queue.items.appendAssumeCapacity(.{
+            .job_id = job_id,
+            .entry_id = root_id,
+            .version = 1,
+        });
+        job.discovery_pending_count = 1;
     }
 
     /// Returns the Job-owned root path. It remains valid until Job teardown.
@@ -239,40 +296,122 @@ pub const Manager = struct {
         return job.discovery_path;
     }
 
-    /// Dispatches one bounded directory batch for a Job.
-    /// The cursor itself is transferred separately by the discovery executor.
+    /// Dispatches one bounded directory batch using the global 2:1:1
+    /// foreground/promoted/background schedule.
     pub fn dispatchDiscovery(self: *Manager) ?DiscoveryToken {
-        const count = self.jobs.items.len;
-        if (count == 0) return null;
+        const schedule = [_]DiscoveryPriority{
+            .foreground,
+            .foreground,
+            .promoted,
+            .background,
+        };
 
-        for (0..count) |index| {
-            const job = &self.jobs.items[index];
-            if (job.discovery_path == null) continue;
-            if (job.discovery_in_flight != null) continue;
-            if (job.state == .paused or job.state.isTerminal()) continue;
-            if (job.discovery_head >= job.discovery_queue.items.len) continue;
+        for (0..schedule.len) |offset| {
+            const slot = (self.discovery_schedule_slot + offset) % schedule.len;
+            if (self.dispatchDiscoveryFrom(schedule[slot])) |token| {
+                self.discovery_schedule_slot = (slot + 1) % schedule.len;
+                return token;
+            }
+        }
+        return null;
+    }
 
-            const entry_id = job.discovery_queue.items[job.discovery_head];
-            const entry = job.tree.get(entry_id) orelse {
-                job.discovery_head += 1;
+    fn dispatchDiscoveryFrom(
+        self: *Manager,
+        priority: DiscoveryPriority,
+    ) ?DiscoveryToken {
+        const queue = &self.discovery_queues[@intFromEnum(priority)];
+        var index = queue.head;
+
+        while (index < queue.items.items.len) {
+            const candidate = queue.items.items[index];
+            const job = self.findJob(candidate.job_id) orelse {
+                if (index == queue.head) {
+                    queue.consumeHead();
+                    index = queue.head;
+                } else {
+                    index += 1;
+                }
                 continue;
             };
-
-            if (entry.discovery != .queued) {
-                job.discovery_head += 1;
+            const scheduled = job.discovery_schedule.get(candidate.entry_id) orelse {
+                if (index == queue.head) {
+                    queue.consumeHead();
+                    index = queue.head;
+                } else {
+                    index += 1;
+                }
+                continue;
+            };
+            if (scheduled.version != candidate.version or scheduled.priority != priority) {
+                if (index == queue.head) {
+                    queue.consumeHead();
+                    index = queue.head;
+                } else {
+                    index += 1;
+                }
                 continue;
             }
-
+            const entry = job.tree.get(candidate.entry_id) orelse {
+                if (index == queue.head) {
+                    queue.consumeHead();
+                    index = queue.head;
+                } else {
+                    index += 1;
+                }
+                continue;
+            };
+            if (entry.discovery != .queued) {
+                if (index == queue.head) {
+                    queue.consumeHead();
+                    index = queue.head;
+                } else {
+                    index += 1;
+                }
+                continue;
+            }
+            if (job.discovery_path == null or job.state == .paused or
+                job.discovery_in_flight != null)
+            {
+                index += 1;
+                continue;
+            }
+            if (job.state.isTerminal()) {
+                entry.discovery = .skipped;
+                job.discovery_pending_count -= 1;
+                if (index == queue.head) {
+                    queue.consumeHead();
+                    index = queue.head;
+                } else {
+                    index += 1;
+                }
+                continue;
+            }
             if (job.discovery_generation == std.math.maxInt(u64)) {
                 entry.discovery = .failed;
-                job.discovery_head += 1;
+                job.discovery_pending_count -= 1;
+                if (index == queue.head) {
+                    queue.consumeHead();
+                    index = queue.head;
+                } else {
+                    index += 1;
+                }
                 continue;
             }
 
+            if (index != queue.head) {
+                std.mem.swap(
+                    DiscoveryQueueItem,
+                    &queue.items.items[queue.head],
+                    &queue.items.items[index],
+                );
+            }
+            queue.consumeHead();
+            job.discovery_pending_count -= 1;
             job.discovery_generation += 1;
             const token: DiscoveryToken = .{
                 .job_id = job.id,
-                .entry_id = entry_id,
+                .entry_id = candidate.entry_id,
                 .generation = job.discovery_generation,
             };
             entry.discovery = .scanning;
@@ -281,6 +420,127 @@ pub const Manager = struct {
         }
 
         return null;
+    }
+
+    /// Adds a new queued directory to its priority queue.
+    fn enqueueDiscovery(
+        self: *Manager,
+        job: *Job,
+        entry_id: io_tree.EntryId,
+        priority: DiscoveryPriority,
+    ) !void {
+        const queue = &self.discovery_queues[@intFromEnum(priority)];
+        try queue.items.ensureUnusedCapacity(self.allocator, 1);
+        try job.discovery_schedule.ensureUnusedCapacity(self.allocator, 1);
+
+        const previous = job.discovery_schedule.get(entry_id);
+        const version = if (previous) |value| blk: {
+            if (value.version == std.math.maxInt(u64))
+                return error.DiscoveryScheduleExhausted;
+            break :blk value.version + 1;
+        } else 1;
+
+        job.discovery_schedule.putAssumeCapacity(entry_id, .{
+            .priority = priority,
+            .version = version,
+        });
+        queue.items.appendAssumeCapacity(.{
+            .job_id = job.id,
+            .entry_id = entry_id,
+            .version = version,
+        });
+        job.discovery_pending_count += 1;
+    }
+
+    /// Makes this directory the foreground scan and promotes its currently
+    /// discovered descendant directories into the promoted-subtree queue.
+    pub fn prioritizeDiscovery(
+        self: *Manager,
+        job_id: JobId,
+        entry_id: io_tree.EntryId,
+    ) !void {
+        try self.setDiscoverySubtreePriority(job_id, entry_id, .foreground);
+    }
+
+    /// Promotes a directory and all currently discovered descendant
+    /// directories without changing their scan positions.
+    pub fn promoteDiscoverySubtree(
+        self: *Manager,
+        job_id: JobId,
+        entry_id: io_tree.EntryId,
+    ) !void {
+        try self.setDiscoverySubtreePriority(job_id, entry_id, .promoted);
+    }
+
+    fn setDiscoverySubtreePriority(
+        self: *Manager,
+        job_id: JobId,
+        root_id: io_tree.EntryId,
+        root_priority: DiscoveryPriority,
+    ) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        const root = job.tree.get(root_id) orelse return error.UnknownEntry;
+        if (root.kind != .directory) return error.EntryNotDirectory;
+
+        var stack: std.ArrayList(io_tree.EntryId) = .empty;
+        defer stack.deinit(self.allocator);
+        var directories: std.ArrayList(io_tree.EntryId) = .empty;
+        defer directories.deinit(self.allocator);
+        try stack.append(self.allocator, root_id);
+
+        while (stack.items.len > 0) {
+            const current_id = stack.pop().?;
+            const current = job.tree.get(current_id) orelse continue;
+            if (current.kind != .directory) continue;
+            try directories.append(self.allocator, current_id);
+            for (current.children.items) |child_id| {
+                const child = job.tree.get(child_id) orelse continue;
+                if (child.kind == .directory)
+                    try stack.append(self.allocator, child_id);
+            }
+        }
+
+        var queue_counts = [_]usize{ 0, 0, 0 };
+        for (directories.items, 0..) |directory_id, index| {
+            const priority = if (index == 0) root_priority else .promoted;
+            const current = job.discovery_schedule.get(directory_id);
+            if (current) |value| {
+                if (value.priority == priority) continue;
+                if (value.version == std.math.maxInt(u64))
+                    return error.DiscoveryScheduleExhausted;
+            }
+            if (job.tree.get(directory_id).?.discovery == .queued)
+                queue_counts[@intFromEnum(priority)] += 1;
+        }
+
+        try job.discovery_schedule.ensureUnusedCapacity(
+            self.allocator,
+            @intCast(directories.items.len),
+        );
+        for (&self.discovery_queues, 0..) |*queue, index| {
+            try queue.items.ensureUnusedCapacity(self.allocator, queue_counts[index]);
+        }
+
+        for (directories.items, 0..) |directory_id, index| {
+            const priority = if (index == 0) root_priority else .promoted;
+            const current = job.discovery_schedule.get(directory_id);
+            if (current) |value| {
+                if (value.priority == priority) continue;
+            }
+            const version = if (current) |value| value.version + 1 else 1;
+            job.discovery_schedule.putAssumeCapacity(directory_id, .{
+                .priority = priority,
+                .version = version,
+            });
+            if (job.tree.get(directory_id).?.discovery == .queued) {
+                self.discovery_queues[@intFromEnum(priority)].items.appendAssumeCapacity(.{
+                    .job_id = job_id,
+                    .entry_id = directory_id,
+                    .version = version,
+                });
+                if (current == null) job.discovery_pending_count += 1;
+            }
+        }
     }
 
     /// Returns a dispatched discovery entry to the queue when the worker
@@ -295,6 +555,12 @@ pub const Manager = struct {
         const entry = job.tree.get(token.entry_id) orelse return false;
         if (entry.discovery != .scanning) return false;
 
+        const priority = job.discovery_schedule.get(token.entry_id) orelse return false;
+        self.enqueueDiscovery(job, token.entry_id, priority.priority) catch {
+            entry.discovery = .failed;
+            job.discovery_in_flight = null;
+            return false;
+        };
         entry.discovery = .queued;
         job.discovery_in_flight = null;
         return true;
@@ -322,10 +588,23 @@ pub const Manager = struct {
             if (record.kind == .directory and !record.entry_error)
                 new_directories += 1;
         }
-        try job.discovery_queue.ensureUnusedCapacity(
+        const parent_priority = job.discovery_schedule.get(token.entry_id) orelse
+            return error.MissingDiscoverySchedule;
+        const child_priority: DiscoveryPriority =
+            if (parent_priority.priority == .background) .background else .promoted;
+        try job.discovery_schedule.ensureUnusedCapacity(self.allocator, @intCast(new_directories));
+        try self.discovery_queues[@intFromEnum(child_priority)].items.ensureUnusedCapacity(
             self.allocator,
             new_directories,
         );
+        if (!batch.complete) {
+            if (parent_priority.version == std.math.maxInt(u64))
+                return error.DiscoveryScheduleExhausted;
+            try self.discovery_queues[@intFromEnum(parent_priority.priority)].items.ensureUnusedCapacity(
+                self.allocator,
+                1,
+            );
+        }
 
         for (batch.records.items) |record| {
             // A symlink whose target could not be read cannot be represented
@@ -347,7 +626,16 @@ pub const Manager = struct {
             if (record.kind == .directory and !record.entry_error) {
                 const child = job.tree.get(child_id).?;
                 child.discovery = .queued;
-                job.discovery_queue.appendAssumeCapacity(child_id);
+                job.discovery_schedule.putAssumeCapacity(child_id, .{
+                    .priority = child_priority,
+                    .version = 1,
+                });
+                self.discovery_queues[@intFromEnum(child_priority)].items.appendAssumeCapacity(.{
+                    .job_id = job.id,
+                    .entry_id = child_id,
+                    .version = 1,
+                });
+                job.discovery_pending_count += 1;
             } else if (record.entry_error or invalid_symlink) {
                 job.tree.get(child_id).?.discovery = .failed;
             }
@@ -360,10 +648,18 @@ pub const Manager = struct {
 
         if (batch.complete) {
             updated_parent.discovery = .complete;
-            job.discovery_head += 1;
         } else {
-            // Keep this directory at the queue head so its cursor can resume
-            // before another directory is opened for this Job.
+            const version = parent_priority.version + 1;
+            job.discovery_schedule.putAssumeCapacity(token.entry_id, .{
+                .priority = parent_priority.priority,
+                .version = version,
+            });
+            self.discovery_queues[@intFromEnum(parent_priority.priority)].items.appendAssumeCapacity(.{
+                .job_id = job.id,
+                .entry_id = token.entry_id,
+                .version = version,
+            });
+            job.discovery_pending_count += 1;
             updated_parent.discovery = .queued;
         }
 
@@ -382,7 +678,6 @@ pub const Manager = struct {
         if (job.tree.get(token.entry_id)) |entry|
             entry.discovery = .failed;
         job.discovery_in_flight = null;
-        job.discovery_head += 1;
         return true;
     }
 
@@ -392,8 +687,7 @@ pub const Manager = struct {
     ) ?bool {
         const job = self.findJobConst(job_id) orelse return null;
         if (job.discovery_path == null) return null;
-        return job.discovery_in_flight == null and
-            job.discovery_head >= job.discovery_queue.items.len;
+        return job.discovery_in_flight == null and job.discovery_pending_count == 0;
     }
 
     /// Read-only access; callers must retain EntryIds, not pointers into the
