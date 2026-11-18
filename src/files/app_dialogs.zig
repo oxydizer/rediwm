@@ -15,6 +15,8 @@ const trash_properties = @import("trash_properties.zig");
 const ViewItem = @import("app_model.zig").ViewItem;
 const Dialog = @import("app_model.zig").Dialog;
 
+pub const ConflictAction = enum { skip, rename, cancel };
+
 pub fn closeDialog(self: *App) void {
     self.text_dragging = false;
     _ = self.dialog_surface.pointerMotion(null);
@@ -302,6 +304,74 @@ pub fn openConflictDialog(self: *App, conflict_name: []const u8) void {
     self.invalidate();
 }
 
+/// Opens the shared conflict UI for the current Manager FIFO head.
+/// Unlike the legacy JobRunner dialog, this never replaces another modal.
+pub fn openManagerConflictDialog(
+    self: *App,
+    conflict_id: u64,
+    conflict_name: []const u8,
+) void {
+    if (self.dialog != null) return;
+    self.dialog = Dialog{
+        .kind = .conflict,
+        .title = tr("File Conflict"),
+        .conflict_name = self.allocator.dupe(u8, conflict_name) catch null,
+        .manager_conflict_id = conflict_id,
+    };
+    self.invalidate();
+}
+
+fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) !void {
+    const manager = if (self.io_manager) |*value| value else
+        return error.OperationManagerUnavailable;
+    const conflict = manager.nextConflict() orelse return error.ConflictNoLongerPending;
+    if (conflict.id != conflict_id) return error.ConflictNoLongerAtHead;
+
+    switch (action) {
+        .skip => try manager.skipConflict(conflict_id),
+        .cancel => try manager.cancelConflict(conflict_id),
+        .rename => {
+            const destination_parent = std.fs.path.dirname(conflict.destination_path) orelse
+                return error.InvalidDestinationPath;
+            const original_name = std.fs.path.basename(conflict.destination_path);
+            const unique_name = try ops_mod.generateUniqueName(
+                self.allocator,
+                destination_parent,
+                original_name,
+            );
+            defer self.allocator.free(unique_name);
+            const renamed_path = try std.fs.path.join(
+                self.allocator,
+                &.{ destination_parent, unique_name },
+            );
+            defer self.allocator.free(renamed_path);
+            try manager.renameConflict(conflict_id, renamed_path);
+        },
+    }
+}
+
+/// Resolves either a Manager-owned conflict or the legacy JobRunner conflict.
+/// A failed Manager action leaves the dialog open for another attempt.
+pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
+    const dlg = self.dialog orelse return;
+    if (dlg.kind != .conflict) return;
+
+    if (dlg.manager_conflict_id) |conflict_id| {
+        resolveManagerConflict(self, conflict_id, action) catch {
+            self.setStatusNotice(tr("Could not resolve file conflict"), true);
+            return;
+        };
+    } else if (self.job_runner) |runner| {
+        runner.resolveConflict(switch (action) {
+            .skip => .skip,
+            .rename => .rename,
+            .cancel => .cancel,
+        });
+    }
+
+    self.closeDialog();
+}
+
 pub fn confirmDialog(self: *App) void {
     const dlg = self.dialog orelse return;
     switch (dlg.kind) {
@@ -378,10 +448,7 @@ pub fn confirmDialog(self: *App) void {
             self.closeDialog();
         },
         .conflict => {
-            if (self.job_runner) |runner| {
-                runner.resolveConflict(.skip);
-            }
-            self.closeDialog();
+            self.resolveConflictDialog(.skip);
         },
     }
 }
@@ -413,16 +480,13 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
     }
     if (dlg.kind == .conflict) {
         if (sym == c.XKB_KEY_s or sym == c.XKB_KEY_S) {
-            if (self.job_runner) |runner| runner.resolveConflict(.skip);
-            self.closeDialog();
+            self.resolveConflictDialog(.skip);
             return;
         } else if (sym == c.XKB_KEY_r or sym == c.XKB_KEY_R) {
-            if (self.job_runner) |runner| runner.resolveConflict(.rename);
-            self.closeDialog();
+            self.resolveConflictDialog(.rename);
             return;
         } else if (sym == c.XKB_KEY_c or sym == c.XKB_KEY_C or sym == c.XKB_KEY_Escape) {
-            if (self.job_runner) |runner| runner.resolveConflict(.cancel);
-            self.closeDialog();
+            self.resolveConflictDialog(.cancel);
             return;
         }
         return;

@@ -167,6 +167,7 @@ const Operation = struct {
     id: OperationId,
     kind: OperationKind,
     entry_id: ?io_tree.EntryId = null,
+    destination_override: ?[]u8 = null,
     state: OperationState = .pending,
     generation: u64 = 0,
     dependencies: std.ArrayList(OperationId) = .empty,
@@ -175,6 +176,7 @@ const Operation = struct {
     unresolved_dependencies: usize = 0,
 
     fn deinit(self: *Operation, allocator: Allocator) void {
+        if (self.destination_override) |path| allocator.free(path);
         self.dependencies.deinit(allocator);
         self.dependency_indices.deinit(allocator);
         self.dependents.deinit(allocator);
@@ -442,6 +444,32 @@ pub const Manager = struct {
         const job = self.findJobConst(job_id) orelse return error.UnknownJob;
         const destination_directory = job.destination_directory orelse
             return error.MissingDestinationDirectory;
+
+        // A renamed directory redirects its destination subtree without
+        // changing TreeIndex names or source paths.
+        var ancestor_id: ?io_tree.EntryId = entry_id;
+        while (ancestor_id) |id| {
+            if (job.entry_operation_indices.get(id)) |operation_index| {
+                if (job.operations.items[operation_index].destination_override) |override| {
+                    const target_relative = try job.tree.relativePath(allocator, entry_id);
+                    defer allocator.free(target_relative);
+                    const ancestor_relative = try job.tree.relativePath(allocator, id);
+                    defer allocator.free(ancestor_relative);
+                    const suffix = if (std.mem.eql(u8, target_relative, ancestor_relative))
+                        ""
+                    else if (std.mem.startsWith(u8, target_relative, ancestor_relative) and
+                        target_relative.len > ancestor_relative.len and
+                        target_relative[ancestor_relative.len] == '/')
+                        target_relative[ancestor_relative.len + 1 ..]
+                    else
+                        return error.InvalidTreePath;
+                    if (suffix.len == 0) return allocator.dupe(u8, override);
+                    return std.fs.path.join(allocator, &.{ override, suffix });
+                }
+            }
+            const entry = job.tree.getConst(id) orelse return error.UnknownEntry;
+            ancestor_id = entry.parent_id;
+        }
 
         const relative_path = try job.tree.relativePath(allocator, entry_id);
         defer allocator.free(relative_path);
@@ -854,12 +882,13 @@ pub const Manager = struct {
         return &job.tree;
     }
 
-    /// Returns the TreeIndex entry associated with a currently dispatched
-    /// operation. Stale generations and non-running operations are rejected.
+    /// Returns the TreeIndex entry associated with a dispatched or waiting
+    /// operation. Stale generations and terminal operations are rejected.
     pub fn operationDetails(self: *const Manager, token: WorkToken) ?OperationDetails {
         const job = self.findJobConst(token.job_id) orelse return null;
         const operation = findOperationConst(job, token.operation_id) orelse return null;
-        if (operation.state != .running or operation.generation != token.generation)
+        if ((operation.state != .running and operation.state != .waiting) or
+            operation.generation != token.generation)
             return null;
         return .{
             .kind = operation.kind,
@@ -1087,8 +1116,24 @@ pub const Manager = struct {
         self.recomputeJobState(job);
     }
 
-    /// Registers a destination conflict for the exact running Operation and
-    /// moves that Operation to waiting. The Manager owns both path copies.
+    /// Fails a waiting operation when its external resolution record could
+    /// not be created. Dependents must not remain blocked indefinitely.
+    pub fn failWaiting(self: *Manager, job_id: JobId, operation_id: OperationId) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        const operation_index = findOperationIndex(job, operation_id) orelse
+            return error.UnknownOperation;
+        const operation = &job.operations.items[operation_index];
+        if (operation.state != .waiting) return error.InvalidOperationState;
+
+        transitionOperation(job, operation, .failed);
+        self.propagateUnmetDependencies(job, operation_index);
+        self.pruneInvalidConflicts();
+        self.recomputeJobState(job);
+    }
+
+    /// Registers a destination conflict for the exact current Operation.
+    /// Executor completions have already transitioned it to waiting; direct
+    /// callers may still register a running token and let this method wait it.
     pub fn registerConflict(
         self: *Manager,
         token: WorkToken,
@@ -1101,7 +1146,8 @@ pub const Manager = struct {
         const job = self.findJob(token.job_id) orelse return error.UnknownJob;
         const operation = findOperation(job, token.operation_id) orelse
             return error.UnknownOperation;
-        if (operation.state != .running or operation.generation != token.generation)
+        if ((operation.state != .running and operation.state != .waiting) or
+            operation.generation != token.generation)
             return error.StaleWorkToken;
         if (operation.entry_id == null or operation.entry_id.? != entry_id)
             return error.OperationEntryMismatch;
@@ -1139,9 +1185,11 @@ pub const Manager = struct {
         });
         self.next_conflict_id += 1;
 
-        // The token was validated above and Manager state is main-thread
-        // owned, so this transition cannot become stale between the checks.
-        std.debug.assert(self.completeWork(token, .waiting));
+        if (operation.state == .running) {
+            // The token was validated above and Manager state is main-thread
+            // owned, so this transition cannot become stale between checks.
+            std.debug.assert(self.completeWork(token, .waiting));
+        }
         return id;
     }
 
@@ -1166,6 +1214,77 @@ pub const Manager = struct {
 
         self.consumeConflictHead();
         try self.resolveWaiting(job_id, operation_id);
+    }
+
+    /// Assigns a conflict's new destination and retries its operation. The
+    /// override also redirects descendants when the conflicted entry is a
+    /// directory.
+    pub fn renameConflict(
+        self: *Manager,
+        conflict_id: ConflictId,
+        destination_path: []const u8,
+    ) !void {
+        const conflict = self.conflictHead(conflict_id) orelse
+            return error.ConflictNotAtQueueHead;
+        if (destination_path.len == 0 or !std.fs.path.isAbsolute(destination_path) or
+            std.mem.indexOfScalar(u8, destination_path, 0) != null)
+            return error.InvalidConflictDestinationPath;
+
+        const job = self.findJob(conflict.job_id) orelse return error.UnknownJob;
+        const operation_index = findOperationIndex(job, conflict.operation_id) orelse
+            return error.UnknownOperation;
+        const operation = &job.operations.items[operation_index];
+        if (operation.state != .waiting) return error.InvalidOperationState;
+
+        const owned_path = try self.allocator.dupe(u8, destination_path);
+        if (operation.destination_override) |previous| self.allocator.free(previous);
+        operation.destination_override = owned_path;
+
+        const job_id = conflict.job_id;
+        const operation_id = conflict.operation_id;
+        self.consumeConflictHead();
+        try self.resolveWaiting(job_id, operation_id);
+    }
+
+    /// Cancels every outstanding operation and discovery cursor in a Job.
+    /// A running operation must first return its token so worker-owned
+    /// resources can be reconciled safely.
+    pub fn cancelJob(self: *Manager, job_id: JobId) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state == .planning or job.state.isTerminal())
+            return error.InvalidJobState;
+        for (job.operations.items) |operation| {
+            if (operation.state == .running) return error.Busy;
+        }
+
+        for (job.operations.items) |*operation| {
+            if (!operation.state.isTerminal())
+                transitionOperation(job, operation, .cancelled);
+        }
+        job.ready_queue.clearRetainingCapacity();
+        job.ready_head = 0;
+        job.ready_count = 0;
+        job.dependency_work_queue.clearRetainingCapacity();
+
+        for (job.tree.entries.items) |*entry| {
+            if (entry.discovery == .queued or entry.discovery == .scanning)
+                entry.discovery = .skipped;
+        }
+        job.discovery_pending_count = 0;
+        job.discovery_in_flight = null;
+        if (job.discovery_generation != std.math.maxInt(u64))
+            job.discovery_generation += 1;
+
+        self.pruneInvalidConflicts();
+        self.recomputeJobState(job);
+        job.state = .cancelled;
+    }
+
+    /// Cancels the entire Job represented by the current FIFO conflict.
+    pub fn cancelConflict(self: *Manager, conflict_id: ConflictId) !void {
+        const conflict = self.conflictHead(conflict_id) orelse
+            return error.ConflictNotAtQueueHead;
+        try self.cancelJob(conflict.job_id);
     }
 
     /// Skips the FIFO head and its dependent subtree. Any descendant

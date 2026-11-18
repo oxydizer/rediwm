@@ -272,6 +272,7 @@ pub const Dialog = struct {
     title: []const u8,
     target_path: ?[]u8 = null,
     conflict_name: ?[]u8 = null,
+    manager_conflict_id: ?u64 = null,
     deletion: deletion.State = .{},
     applications: ?open_with.State = null,
     properties: ?properties.State = null,

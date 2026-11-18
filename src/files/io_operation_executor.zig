@@ -2,6 +2,7 @@
 //! the generic bounded Executor.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_executor = @import("io_executor.zig");
 const io_copy = @import("io_copy.zig");
@@ -154,6 +155,11 @@ fn complete(
     result: ?io_executor.OwnedPayload,
 ) void {
     const context: *Context = @ptrCast(@alignCast(raw_context.?));
+    if (outcome == .waiting and isCollisionResult(result)) {
+        registerCollision(context, token) catch {
+            context.manager.failWaiting(token.job_id, token.operation_id) catch {};
+        };
+    }
     if (tokenOperationKind(context.manager, token)) |kind| {
         switch (kind) {
             .create_directory => io_directory.complete(null, token, outcome, result),
@@ -164,6 +170,63 @@ fn complete(
     } else {
         deinitOptional(result);
     }
+}
+
+fn isCollisionResult(result: ?io_executor.OwnedPayload) bool {
+    const payload = result orelse return false;
+    const bytes = payload.slice();
+    return bytes.len == 1 and bytes[0] == 2;
+}
+
+fn registerCollision(context: *Context, token: io_manager.WorkToken) !void {
+    const manager = context.manager;
+    const details = manager.operationDetails(token) orelse
+        return error.StaleOperation;
+    const tree = manager.treeIndex(token.job_id) orelse return error.UnknownJob;
+    const entry = tree.getConst(details.entry_id) orelse return error.UnknownEntry;
+
+    const source_path = try manager.sourcePath(
+        context.allocator,
+        token.job_id,
+        details.entry_id,
+    );
+    defer context.allocator.free(source_path);
+    const destination_path = try manager.destinationPath(
+        context.allocator,
+        token.job_id,
+        details.entry_id,
+    );
+    defer context.allocator.free(destination_path);
+
+    const destination_z = try context.allocator.dupeSentinel(u8, destination_path, 0);
+    defer context.allocator.free(destination_z);
+    var destination_stat: c.struct_stat = undefined;
+    if (c.lstat(destination_z, &destination_stat) != 0) {
+        if (std.c._errno().* == c.ENOENT) {
+            // The colliding entry disappeared before the main-thread
+            // completion was handled. Retry the original destination.
+            try manager.resolveWaiting(token.job_id, token.operation_id);
+            return;
+        }
+        return error.DestinationStatFailed;
+    }
+
+    const destination_kind: @import("io_tree.zig").EntryKind =
+        switch (destination_stat.st_mode & c.S_IFMT) {
+            c.S_IFDIR => .directory,
+            c.S_IFREG => .regular_file,
+            c.S_IFLNK => .symlink,
+            else => .other,
+        };
+
+    _ = try manager.registerConflict(
+        token,
+        details.entry_id,
+        source_path,
+        destination_path,
+        entry.kind,
+        destination_kind,
+    );
 }
 
 fn tokenOperationKind(

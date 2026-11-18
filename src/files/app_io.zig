@@ -228,6 +228,17 @@ pub fn stepOperations(self: *App) void {
         self.setStatusNotice("Could not schedule file operation", true);
     };
 
+    // Only one conflict dialog is visible globally. Leave other modal
+    // dialogs untouched and present the FIFO head as soon as the UI is free.
+    if (self.dialog == null) {
+        if (manager.nextConflict()) |conflict| {
+            self.openManagerConflictDialog(
+                conflict.id,
+                std.fs.path.basename(conflict.destination_path),
+            );
+        }
+    }
+
     if (self.active_io_copy_job) |job_id| {
         if (manager.jobState(job_id)) |state| {
             if (state.isTerminal()) {
