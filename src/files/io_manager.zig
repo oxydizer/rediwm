@@ -125,6 +125,7 @@ pub const WorkResult = enum {
 const Operation = struct {
     id: OperationId,
     kind: OperationKind,
+    entry_id: ?io_tree.EntryId = null,
     state: OperationState = .pending,
     generation: u64 = 0,
     dependencies: std.ArrayList(OperationId) = .empty,
@@ -151,6 +152,7 @@ const Job = struct {
     discovery_in_flight: ?DiscoveryToken = null,
     operations: std.ArrayList(Operation) = .empty,
     operation_indices: std.AutoHashMapUnmanaged(OperationId, usize) = .empty,
+    entry_operation_indices: std.AutoHashMapUnmanaged(io_tree.EntryId, usize) = .empty,
     ready_queue: std.ArrayList(usize) = .empty,
     ready_head: usize = 0,
     ready_count: usize = 0,
@@ -164,6 +166,7 @@ const Job = struct {
         for (self.operations.items) |*operation| operation.deinit(allocator);
         self.operations.deinit(allocator);
         self.operation_indices.deinit(allocator);
+        self.entry_operation_indices.deinit(allocator);
         self.ready_queue.deinit(allocator);
         self.dependency_work_queue.deinit(allocator);
     }
@@ -664,6 +667,7 @@ pub const Manager = struct {
         }
 
         batch.deinit();
+        self.recomputeJobState(job);
         return true;
     }
 
@@ -678,6 +682,7 @@ pub const Manager = struct {
         if (job.tree.get(token.entry_id)) |entry|
             entry.discovery = .failed;
         job.discovery_in_flight = null;
+        self.recomputeJobState(job);
         return true;
     }
 
@@ -700,16 +705,113 @@ pub const Manager = struct {
     pub fn addOperation(self: *Manager, job_id: JobId, kind: OperationKind) !OperationId {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state != .planning) return error.InvalidJobState;
+        return self.addOperationInternal(job, kind);
+    }
+
+    fn addOperationInternal(self: *Manager, job: *Job, kind: OperationKind) !OperationId {
+        if (job.state.isTerminal()) return error.InvalidJobState;
         if (self.next_operation_id == std.math.maxInt(OperationId)) return error.IdExhausted;
 
         const id = self.next_operation_id;
         const index = job.operations.items.len;
         try job.operations.ensureUnusedCapacity(self.allocator, 1);
         try job.operation_indices.ensureUnusedCapacity(self.allocator, 1);
+        if (job.state != .planning) {
+            try job.ready_queue.ensureUnusedCapacity(self.allocator, 1);
+            try job.dependency_work_queue.ensureUnusedCapacity(self.allocator, 1);
+        }
         job.operations.appendAssumeCapacity(.{ .id = id, .kind = kind });
         job.operation_indices.putAssumeCapacity(id, index);
         self.next_operation_id += 1;
+        if (job.state != .planning) {
+            job.operation_state_counts[@intFromEnum(OperationState.pending)] += 1;
+            enqueueReady(job, index);
+            self.recomputeJobState(job);
+        }
         return id;
+    }
+
+    /// Adds the operation for one discovered TreeIndex entry. A child entry
+    /// automatically waits for its destination parent directory operation.
+    pub fn addEntryOperation(
+        self: *Manager,
+        job_id: JobId,
+        entry_id: io_tree.EntryId,
+        kind: OperationKind,
+    ) !OperationId {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state.isTerminal()) return error.InvalidJobState;
+        const entry = job.tree.get(entry_id) orelse return error.UnknownEntry;
+        if (job.entry_operation_indices.contains(entry_id))
+            return error.EntryOperationAlreadyExists;
+
+        const expected_kind: OperationKind = switch (entry.kind) {
+            .directory => .create_directory,
+            .regular_file => .copy_file,
+            .symlink => .copy_symlink,
+            .other => return error.UnsupportedEntryKind,
+        };
+        if (kind != expected_kind) return error.InvalidEntryOperationKind;
+
+        var parent_operation_index: ?usize = null;
+        if (entry.parent_id) |parent_id| {
+            const parent = job.tree.get(parent_id) orelse return error.UnknownEntry;
+            if (parent.kind == .directory) {
+                parent_operation_index = job.entry_operation_indices.get(parent_id) orelse
+                    return error.MissingParentDirectoryOperation;
+                if (job.operations.items[parent_operation_index.?].kind != .create_directory)
+                    return error.InvalidParentDirectoryOperation;
+            }
+        }
+
+        var dependencies: std.ArrayList(OperationId) = .empty;
+        errdefer dependencies.deinit(self.allocator);
+        var dependency_indices: std.ArrayList(usize) = .empty;
+        errdefer dependency_indices.deinit(self.allocator);
+
+        if (parent_operation_index != null) {
+            try dependencies.ensureUnusedCapacity(self.allocator, 1);
+            try dependency_indices.ensureUnusedCapacity(self.allocator, 1);
+        }
+
+        try job.entry_operation_indices.ensureUnusedCapacity(self.allocator, 1);
+        if (parent_operation_index) |parent_index| {
+            const parent_operation = &job.operations.items[parent_index];
+            try parent_operation.dependents.ensureUnusedCapacity(self.allocator, 1);
+        }
+
+        const operation_id = try self.addOperationInternal(job, kind);
+        const operation_index = job.operations.items.len - 1;
+        const operation = &job.operations.items[operation_index];
+        operation.dependencies = dependencies;
+        dependencies = .empty;
+        operation.dependency_indices = dependency_indices;
+        dependency_indices = .empty;
+        operation.entry_id = entry_id;
+        job.entry_operation_indices.putAssumeCapacity(entry_id, operation_index);
+
+        if (parent_operation_index) |parent_index| {
+            const parent_operation = &job.operations.items[parent_index];
+            operation.dependencies.appendAssumeCapacity(parent_operation.id);
+            operation.dependency_indices.appendAssumeCapacity(parent_index);
+            parent_operation.dependents.appendAssumeCapacity(operation_index);
+
+            if (job.state != .planning) {
+                switch (parent_operation.state) {
+                    .completed => {},
+                    .failed, .skipped, .cancelled => {
+                        _ = dequeueReadyIndex(job, operation_index);
+                        transitionOperation(job, operation, .skipped);
+                        self.recomputeJobState(job);
+                    },
+                    else => {
+                        operation.unresolved_dependencies = 1;
+                        _ = dequeueReadyIndex(job, operation_index);
+                    },
+                }
+            }
+        }
+        return operation_id;
     }
 
     /// Dependencies must refer to Operations in the same Job.
@@ -759,7 +861,10 @@ pub const Manager = struct {
                 enqueueReady(job, index);
             }
         }
-        job.state = if (job.operations.items.len == 0) .completed else .queued;
+        job.state = if (job.operations.items.len == 0 and !hasDiscoveryWork(job))
+            .completed
+        else
+            .queued;
     }
 
     pub fn pauseJob(self: *Manager, job_id: JobId) !void {
@@ -794,36 +899,41 @@ pub const Manager = struct {
         const count = self.jobs.items.len;
         if (count == 0) return null;
 
-        for (0..count) |offset| {
-            const index = (self.round_robin_cursor + offset) % count;
-            const job = &self.jobs.items[index];
-            if (job.state != .queued and job.state != .running) continue;
-
-            if (job.operation_state_counts[@intFromEnum(OperationState.running)] != 0) continue;
-
-            while (dequeueReady(job)) |operation_index| {
-                const operation = &job.operations.items[operation_index];
-                if (operation.state != .pending) continue;
-
-                if (operation.generation == std.math.maxInt(u64)) {
-                    transitionOperation(job, operation, .failed);
-                    self.propagateUnmetDependencies(job, operation_index);
-                    self.recomputeJobState(job);
+        // Directory creation outranks symlink creation, which outranks
+        // regular-file and all remaining operation kinds.
+        for (0..3) |priority| {
+            for (0..count) |offset| {
+                const index = (self.round_robin_cursor + offset) % count;
+                const job = &self.jobs.items[index];
+                if (job.state != .queued and job.state != .running) continue;
+                if (job.operation_state_counts[@intFromEnum(OperationState.running)] != 0)
                     continue;
-                }
 
-                operation.generation += 1;
-                transitionOperation(job, operation, .running);
-                job.state = .running;
-                self.round_robin_cursor = (index + 1) % count;
-                return .{
-                    .job_id = job.id,
-                    .operation_id = operation.id,
-                    .generation = operation.generation,
-                };
+                while (dequeueReadyPriority(job, priority)) |operation_index| {
+                    const operation = &job.operations.items[operation_index];
+                    if (operation.state != .pending or operation.unresolved_dependencies != 0)
+                        continue;
+
+                    if (operation.generation == std.math.maxInt(u64)) {
+                        transitionOperation(job, operation, .failed);
+                        self.propagateUnmetDependencies(job, operation_index);
+                        self.recomputeJobState(job);
+                        continue;
+                    }
+
+                    operation.generation += 1;
+                    transitionOperation(job, operation, .running);
+                    job.state = .running;
+                    self.round_robin_cursor = (index + 1) % count;
+                    return .{
+                        .job_id = job.id,
+                        .operation_id = operation.id,
+                        .generation = operation.generation,
+                    };
+                }
             }
-            self.recomputeJobState(job);
         }
+        for (self.jobs.items) |*job| self.recomputeJobState(job);
         return null;
     }
 
@@ -916,7 +1026,7 @@ pub const Manager = struct {
 
     fn recomputeJobState(self: *Manager, job: *Job) void {
         _ = self;
-        if (job.state == .paused) return;
+        if (job.state == .paused or job.state == .planning) return;
         const counts = job.operation_state_counts;
         if (counts[@intFromEnum(OperationState.running)] != 0) {
             job.state = .running;
@@ -926,7 +1036,9 @@ pub const Manager = struct {
             counts[@intFromEnum(OperationState.waiting)] != 0 or
             counts[@intFromEnum(OperationState.pending)] != 0
         ) {
-            job.state = .waiting;
+            job.state = if (hasDiscoveryWork(job)) .queued else .waiting;
+        } else if (hasDiscoveryWork(job)) {
+            job.state = .queued;
         } else if (counts[@intFromEnum(OperationState.failed)] != 0) {
             job.state = if (counts[@intFromEnum(OperationState.completed)] != 0)
                 .completed_with_errors
@@ -937,6 +1049,11 @@ pub const Manager = struct {
         } else {
             job.state = .completed;
         }
+    }
+
+    fn hasDiscoveryWork(job: *const Job) bool {
+        return job.discovery_path != null and
+            (job.discovery_pending_count != 0 or job.discovery_in_flight != null);
     }
 
     fn propagateUnmetDependencies(self: *Manager, job: *Job, failed_index: usize) void {
@@ -1005,13 +1122,13 @@ fn enqueueReadyFront(job: *Job, operation_index: usize) void {
         job.ready_queue.items[job.ready_head] = operation_index;
     } else {
         const remaining = job.ready_queue.items.len;
+        job.ready_queue.appendAssumeCapacity(operation_index);
         std.mem.copyBackwards(
             usize,
             job.ready_queue.items[1 .. remaining + 1],
             job.ready_queue.items[0..remaining],
         );
         job.ready_queue.items[0] = operation_index;
-        job.ready_queue.items.len = remaining + 1;
     }
     job.ready_count += 1;
 }
@@ -1037,6 +1154,62 @@ fn dequeueReady(job: *Job) ?usize {
         job.ready_head = 0;
     }
     return operation_index;
+}
+
+fn operationPriority(kind: OperationKind) usize {
+    return switch (kind) {
+        .create_directory => 0,
+        .copy_symlink => 1,
+        else => 2,
+    };
+}
+
+fn dequeueReadyPriority(job: *Job, priority: usize) ?usize {
+    if (job.ready_count == 0) return null;
+    var position = job.ready_head;
+    while (position < job.ready_queue.items.len) : (position += 1) {
+        const operation_index = job.ready_queue.items[position];
+        if (operationPriority(job.operations.items[operation_index].kind) != priority)
+            continue;
+
+        const remaining = job.ready_queue.items.len - position - 1;
+        std.mem.copyForwards(
+            usize,
+            job.ready_queue.items[position .. position + remaining],
+            job.ready_queue.items[position + 1 .. position + 1 + remaining],
+        );
+        job.ready_queue.items.len -= 1;
+        job.ready_count -= 1;
+        if (job.ready_count == 0) {
+            job.ready_queue.clearRetainingCapacity();
+            job.ready_head = 0;
+        }
+        return operation_index;
+    }
+    return null;
+}
+
+fn dequeueReadyIndex(job: *Job, target: usize) bool {
+    if (job.ready_count == 0) return false;
+    var position = job.ready_head;
+    while (position < job.ready_queue.items.len) : (position += 1) {
+        if (job.ready_queue.items[position] != target) continue;
+
+        const remaining = job.ready_queue.items.len - position - 1;
+        std.mem.copyForwards(
+            usize,
+            job.ready_queue.items[position .. position + remaining],
+            job.ready_queue.items[position + 1 .. position + 1 + remaining],
+        );
+        job.ready_queue.items.len -= 1;
+        job.ready_count -= 1;
+        if (job.ready_count == 0) {
+            job.ready_queue.clearRetainingCapacity();
+            job.ready_head = 0;
+        }
+        return true;
+    }
+    return false;
 }
 
 fn dependenciesCompleted(job: *const Job, operation: *const Operation) bool {
