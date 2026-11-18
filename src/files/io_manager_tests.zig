@@ -372,33 +372,67 @@ test "renaming a directory conflict redirects descendant destinations" {
     );
 }
 
-test "cancelling a conflict cancels its Job and preserves unrelated FIFO entries" {
+test "cancelling a Job prunes all its conflicts and preserves unrelated FIFO entries" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
 
     const first_job = try manager.createJob(null);
     const first_root = try manager.addTreeRoot(
         first_job,
+        "source",
+        .directory,
+        .{},
+        null,
+    );
+    const first_entry = try manager.addTreeEntry(
+        first_job,
+        first_root,
         "first.txt",
         .regular_file,
         .{},
         null,
     );
-    const first_operation = try manager.addEntryOperation(
+    const third_entry = try manager.addTreeEntry(
         first_job,
         first_root,
+        "third.txt",
+        .regular_file,
+        .{},
+        null,
+    );
+    const fourth_entry = try manager.addTreeEntry(
+        first_job,
+        first_root,
+        "fourth.txt",
+        .regular_file,
+        .{},
+        null,
+    );
+    const root_operation = try manager.addEntryOperation(
+        first_job,
+        first_root,
+        .create_directory,
+    );
+    const first_operation = try manager.addEntryOperation(
+        first_job,
+        first_entry,
+        .copy_file,
+    );
+    const third_operation = try manager.addEntryOperation(
+        first_job,
+        third_entry,
+        .copy_file,
+    );
+    const fourth_operation = try manager.addEntryOperation(
+        first_job,
+        fourth_entry,
         .copy_file,
     );
     try manager.queueJob(first_job);
-    const first_token = manager.dispatchNext().?;
-    const first_conflict = try manager.registerConflict(
-        first_token,
-        first_root,
-        "/source/first.txt",
-        "/destination/first.txt",
-        .regular_file,
-        .regular_file,
-    );
+
+    const root_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(root_operation, root_token.operation_id);
+    try std.testing.expect(manager.completeWork(root_token, .completed));
 
     const second_job = try manager.createJob(null);
     const second_root = try manager.addTreeRoot(
@@ -414,15 +448,41 @@ test "cancelling a conflict cancels its Job and preserves unrelated FIFO entries
         .copy_file,
     );
     try manager.queueJob(second_job);
-    const second_token = manager.dispatchNext().?;
-    const second_conflict = try manager.registerConflict(
-        second_token,
+
+    const first_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(first_operation, first_token.operation_id);
+    const first_conflict = try manager.registerConflict(
+        first_token,
+        first_entry,
+        "/source/first.txt",
+        "/destination/first.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    const unrelated_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(second_operation, unrelated_token.operation_id);
+    const unrelated_conflict = try manager.registerConflict(
+        unrelated_token,
         second_root,
         "/source/second.txt",
         "/destination/second.txt",
         .regular_file,
         .regular_file,
     );
+
+    const third_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(third_operation, third_token.operation_id);
+    const third_conflict = try manager.registerConflict(
+        third_token,
+        third_entry,
+        "/source/third.txt",
+        "/destination/third.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    try std.testing.expectEqual(first_conflict, manager.nextConflict().?.id);
 
     try manager.cancelConflict(first_conflict);
 
@@ -434,9 +494,27 @@ test "cancelling a conflict cancels its Job and preserves unrelated FIFO entries
         io_manager.OperationState.cancelled,
         manager.operationState(first_job, first_operation).?,
     );
-    try std.testing.expectEqual(second_conflict, manager.nextConflict().?.id);
+    try std.testing.expectEqual(
+        io_manager.OperationState.cancelled,
+        manager.operationState(first_job, third_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.cancelled,
+        manager.operationState(first_job, fourth_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(first_job, root_operation).?,
+    );
+    try std.testing.expectEqual(unrelated_conflict, manager.nextConflict().?.id);
     try std.testing.expectEqual(
         io_manager.OperationState.waiting,
+        manager.operationState(second_job, second_operation).?,
+    );
+    try manager.resolveConflict(unrelated_conflict);
+    try std.testing.expect(manager.nextConflict() == null);
+    try std.testing.expectEqual(
+        io_manager.OperationState.pending,
         manager.operationState(second_job, second_operation).?,
     );
 }

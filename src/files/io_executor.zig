@@ -181,9 +181,11 @@ pub const Executor = struct {
             var completion = completion_value;
             drained += 1;
 
-            const retain_payloads =
-                completion.outcome == .yielded or
-                completion.outcome == .waiting;
+            // Yielded work resumes the same execution and retains its
+            // continuation. Waiting work requires an external decision;
+            // discard its prepared input so a retry runs prepare() again
+            // against the Manager's potentially updated destination.
+            const retain_payloads = completion.outcome == .yielded;
 
             // Reserve before changing Manager state. If allocation fails,
             // fail the operation instead of accepting a transition whose

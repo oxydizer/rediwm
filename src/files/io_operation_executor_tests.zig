@@ -372,3 +372,73 @@ test "Manager Runtime registers symlink destination collisions" {
     try std.testing.expectEqualStrings(source, conflict.source_path);
     try std.testing.expectEqualStrings(destination, conflict.destination_path);
 }
+
+test "Manager Runtime rebuilds prepared input after a renamed collision" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const source = try join(allocator, temp, "source.bin");
+    defer allocator.free(source);
+    defer cleanup(source, false);
+    const destination_dir = try join(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    defer cleanup(destination_dir, true);
+    const destination = try join(allocator, destination_dir, "source.bin");
+    defer allocator.free(destination);
+    defer cleanup(destination, false);
+    const renamed_destination = try join(allocator, destination_dir, "source-renamed.bin");
+    defer allocator.free(renamed_destination);
+    defer cleanup(renamed_destination, false);
+
+    try makeDirectory(destination_dir);
+    try writeFile(source, "new source contents");
+    try writeFile(destination, "pre-existing destination");
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source.bin",
+        .regular_file,
+        .{},
+        null,
+    );
+    try manager.setSourceRootPath(job, source);
+    try manager.setDestinationDirectory(job, destination_dir);
+    const operation = try manager.addEntryOperation(job, root, .copy_file);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
+    defer runtime.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, operation).?,
+    );
+
+    const conflict = manager.nextConflict() orelse return error.MissingConflict;
+    try manager.renameConflict(conflict.id, renamed_destination);
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, operation).?,
+    );
+
+    const original_contents = try readFile(allocator, destination);
+    defer allocator.free(original_contents);
+    try std.testing.expectEqualStrings("pre-existing destination", original_contents);
+
+    const renamed_contents = try readFile(allocator, renamed_destination);
+    defer allocator.free(renamed_contents);
+    try std.testing.expectEqualStrings("new source contents", renamed_contents);
+}
