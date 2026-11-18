@@ -1438,6 +1438,14 @@ pub const Manager = struct {
         return job.state;
     }
 
+    pub fn jobHasSkippedOperations(self: *const Manager, job_id: JobId) bool {
+        const job = self.findJobConst(job_id) orelse return false;
+        for (job.operations.items) |operation| {
+            if (operation.state == .skipped) return true;
+        }
+        return false;
+    }
+
     pub fn operationState(self: *const Manager, job_id: JobId, operation_id: OperationId) ?OperationState {
         const job = self.findJobConst(job_id) orelse return null;
         const operation = findOperationConst(job, operation_id) orelse return null;
