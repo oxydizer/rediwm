@@ -395,6 +395,54 @@ test "destination directory requires a root and an absolute path" {
     );
 }
 
+test "standalone file roots have source paths without directory discovery" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "payload.bin",
+        .regular_file,
+        .{ .size = 123 },
+        null,
+    );
+
+    try std.testing.expectError(
+        error.InvalidSourceRootPath,
+        manager.setSourceRootPath(job, "relative/payload.bin"),
+    );
+    try manager.setSourceRootPath(job, "/tmp/source/payload.bin");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+
+    const source = try manager.sourcePath(allocator, job, root);
+    defer allocator.free(source);
+    const destination = try manager.destinationPath(allocator, job, root);
+    defer allocator.free(destination);
+
+    try std.testing.expectEqualStrings("/tmp/source/payload.bin", source);
+    try std.testing.expectEqualStrings("/tmp/destination/payload.bin", destination);
+    try std.testing.expect(manager.discoveryRootPath(job) == null);
+    try std.testing.expect(manager.discoveryComplete(job) == null);
+}
+
+test "discardPlanningJob removes an uncommitted Job without disturbing others" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const discarded = try manager.createJob(null);
+    const retained = try manager.createJob(null);
+    try std.testing.expect(manager.discardPlanningJob(discarded));
+    try std.testing.expect(manager.jobState(discarded) == null);
+
+    const operation = try manager.addOperation(retained, .copy_file);
+    try manager.queueJob(retained);
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(retained, token.job_id);
+    try std.testing.expectEqual(operation, token.operation_id);
+}
+
 test "discovery adopts batches and visits directories breadth first" {
     const allocator = std.testing.allocator;
     var manager = io_manager.Manager.init(allocator);
