@@ -146,6 +146,7 @@ const Job = struct {
     state: JobState = .planning,
     tree: io_tree.TreeIndex,
     discovery_path: ?[]u8 = null,
+    destination_directory: ?[]u8 = null,
     discovery_schedule: std.AutoHashMapUnmanaged(io_tree.EntryId, DiscoverySchedule) = .empty,
     discovery_pending_count: usize = 0,
     discovery_generation: u64 = 0,
@@ -161,6 +162,7 @@ const Job = struct {
 
     fn deinit(self: *Job, allocator: Allocator) void {
         if (self.discovery_path) |path| allocator.free(path);
+        if (self.destination_directory) |path| allocator.free(path);
         self.discovery_schedule.deinit(allocator);
         self.tree.deinit();
         for (self.operations.items) |*operation| operation.deinit(allocator);
@@ -223,6 +225,28 @@ pub const Manager = struct {
         });
         self.next_job_id += 1;
         return id;
+    }
+
+    /// Stores the selected destination directory. The Manager owns a copy;
+    /// entry paths are constructed from this directory and TreeIndex names.
+    pub fn setDestinationDirectory(
+        self: *Manager,
+        job_id: JobId,
+        destination_directory: []const u8,
+    ) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (job.tree.root() == null) return error.MissingTreeRoot;
+        if (job.destination_directory != null)
+            return error.DestinationDirectoryAlreadySet;
+        if (destination_directory.len == 0 or
+            !std.fs.path.isAbsolute(destination_directory) or
+            std.mem.indexOfScalar(u8, destination_directory, 0) != null)
+        {
+            return error.InvalidDestinationDirectory;
+        }
+
+        job.destination_directory = try self.allocator.dupe(u8, destination_directory);
     }
 
     /// Adds the source root to a Job's Manager-owned TreeIndex.
@@ -297,6 +321,27 @@ pub const Manager = struct {
     ) ?[]const u8 {
         const job = self.findJobConst(job_id) orelse return null;
         return job.discovery_path;
+    }
+
+    /// Builds the absolute destination path for one TreeIndex entry.
+    /// The root entry's display name is appended to the selected destination
+    /// directory. The caller owns the returned path.
+    pub fn destinationPath(
+        self: *const Manager,
+        allocator: Allocator,
+        job_id: JobId,
+        entry_id: io_tree.EntryId,
+    ) ![]u8 {
+        const job = self.findJobConst(job_id) orelse return error.UnknownJob;
+        const destination_directory = job.destination_directory orelse
+            return error.MissingDestinationDirectory;
+
+        const relative_path = try job.tree.relativePath(allocator, entry_id);
+        defer allocator.free(relative_path);
+        return std.fs.path.join(allocator, &.{
+            destination_directory,
+            relative_path,
+        });
     }
 
     /// Dispatches one bounded directory batch using the global 2:1:1
