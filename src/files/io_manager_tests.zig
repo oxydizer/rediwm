@@ -123,6 +123,185 @@ test "waiting Operations release the worker and can be resolved" {
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
 }
 
+test "conflicts are Manager-owned and presented in one global FIFO" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const first_job = try manager.createJob(null);
+    const first_root = try manager.addTreeRoot(
+        first_job,
+        "first.txt",
+        .regular_file,
+        .{},
+        null,
+    );
+    const first_operation = try manager.addEntryOperation(
+        first_job,
+        first_root,
+        .copy_file,
+    );
+    try manager.queueJob(first_job);
+    const first_token = manager.dispatchNext().?;
+
+    const second_job = try manager.createJob(null);
+    const second_root = try manager.addTreeRoot(
+        second_job,
+        "second.txt",
+        .regular_file,
+        .{},
+        null,
+    );
+    const second_operation = try manager.addEntryOperation(
+        second_job,
+        second_root,
+        .copy_file,
+    );
+    try manager.queueJob(second_job);
+    const second_token = manager.dispatchNext().?;
+
+    const first_source = try std.testing.allocator.dupe(u8, "/source/first.txt");
+    defer std.testing.allocator.free(first_source);
+    const first_id = try manager.registerConflict(
+        first_token,
+        first_root,
+        first_source,
+        "/destination/first.txt",
+        .regular_file,
+        .regular_file,
+    );
+    const second_id = try manager.registerConflict(
+        second_token,
+        second_root,
+        "/source/second.txt",
+        "/destination/second.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    try std.testing.expectEqual(io_manager.OperationState.waiting, manager.operationState(
+        first_job,
+        first_operation,
+    ).?);
+    try std.testing.expectEqual(io_manager.OperationState.waiting, manager.operationState(
+        second_job,
+        second_operation,
+    ).?);
+
+    const head = manager.nextConflict().?;
+    try std.testing.expectEqual(first_id, head.id);
+    try std.testing.expectEqual(first_job, head.job_id);
+    try std.testing.expectEqualStrings("/source/first.txt", head.source_path);
+    try std.testing.expectError(
+        error.ConflictNotAtQueueHead,
+        manager.resolveConflict(second_id),
+    );
+
+    try manager.resolveConflict(first_id);
+    const next = manager.nextConflict().?;
+    try std.testing.expectEqual(second_id, next.id);
+    try std.testing.expectEqual(second_job, next.job_id);
+    try std.testing.expectEqual(io_manager.OperationState.pending, manager.operationState(
+        first_job,
+        first_operation,
+    ).?);
+}
+
+test "resolving a conflict allows unrelated operations to continue" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "blocked.txt", .regular_file, .{}, null);
+    const blocked = try manager.addEntryOperation(job, root, .copy_file);
+    const independent = try manager.addOperation(job, .publish);
+    try manager.queueJob(job);
+
+    const blocked_token = manager.dispatchNext().?;
+    const conflict_id = try manager.registerConflict(
+        blocked_token,
+        root,
+        "/source/blocked.txt",
+        "/destination/blocked.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    const independent_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(independent, independent_token.operation_id);
+    try std.testing.expect(manager.completeWork(independent_token, .completed));
+
+    try manager.resolveConflict(conflict_id);
+    const retry_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(blocked, retry_token.operation_id);
+    try std.testing.expect(retry_token.generation > blocked_token.generation);
+    try std.testing.expect(manager.completeWork(retry_token, .completed));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "skipping a conflict advances the FIFO and skips its Operation" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const first_job = try manager.createJob(null);
+    const first_root = try manager.addTreeRoot(
+        first_job,
+        "first.txt",
+        .regular_file,
+        .{},
+        null,
+    );
+    const first_operation = try manager.addEntryOperation(
+        first_job,
+        first_root,
+        .copy_file,
+    );
+    try manager.queueJob(first_job);
+    const first_token = manager.dispatchNext().?;
+    const first_conflict = try manager.registerConflict(
+        first_token,
+        first_root,
+        "/source/first.txt",
+        "/destination/first.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    const second_job = try manager.createJob(null);
+    const second_root = try manager.addTreeRoot(
+        second_job,
+        "second.txt",
+        .regular_file,
+        .{},
+        null,
+    );
+    const second_operation = try manager.addEntryOperation(
+        second_job,
+        second_root,
+        .copy_file,
+    );
+    try manager.queueJob(second_job);
+    const second_token = manager.dispatchNext().?;
+    const second_conflict = try manager.registerConflict(
+        second_token,
+        second_root,
+        "/source/second.txt",
+        "/destination/second.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    try manager.skipConflict(first_conflict);
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(first_job, first_operation).?,
+    );
+    try std.testing.expectEqual(second_conflict, manager.nextConflict().?.id);
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(second_job, second_operation).?,
+    );
+}
+
 test "failed dependencies skip descendants" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
