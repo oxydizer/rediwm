@@ -51,7 +51,7 @@ fn executeWork(
         const expected_continuation: []const u8 = switch (execution_index) {
             0 => "",
             1 => "yielded",
-            else => "waiting",
+            else => "",
         };
         if (!std.mem.eql(u8, stage, expected_continuation)) {
             _ = context.continuation_mismatches.fetchAdd(1, .monotonic);
@@ -171,7 +171,7 @@ fn waitForOne(executor: *io_executor.Executor) !void {
     }
 }
 
-test "executor preserves input and continuation across yield and waiting" {
+test "executor preserves continuations across yield but rebuilds after waiting" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
 
@@ -199,7 +199,7 @@ test "executor preserves input and continuation across yield and waiting" {
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
 
     try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(job, operation).?);
-    try std.testing.expectEqual(@as(usize, 1), context.prepared);
+    try std.testing.expectEqual(@as(usize, 2), context.prepared);
     try std.testing.expectEqual(@as(usize, 3), context.completed);
     try std.testing.expectEqual(@as(usize, 0), context.input_mismatches.load(.monotonic));
     try std.testing.expectEqual(@as(usize, 0), context.continuation_mismatches.load(.monotonic));
