@@ -78,9 +78,12 @@ fn splitDestination(
         return error.InvalidDestination;
     }
     const parent = if (separator == 0) "/" else destination[0..separator];
+    const parent_z = try allocZ(allocator, parent);
+    errdefer allocator.free(parent_z);
+    const name_z = try allocZ(allocator, name);
     return .{
-        .parent = try allocZ(allocator, parent),
-        .name = try allocZ(allocator, name),
+        .parent = parent_z,
+        .name = name_z,
     };
 }
 
