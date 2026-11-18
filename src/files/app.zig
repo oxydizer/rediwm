@@ -286,6 +286,8 @@ pub const App = struct {
     // Operations & Jobs
     dialog: ?Dialog = null,
     job_runner: ?*ops_mod.JobRunner = null,
+    active_io_copy_job: ?io_manager_mod.JobId = null,
+    active_io_copy_destination: ?[]u8 = null,
     job_was_running: bool = false,
     archive_preview: bool = false,
     archive_open_navigation: u32 = 0,
@@ -412,6 +414,7 @@ pub const App = struct {
         self.pins.deinit(self.allocator);
         if (self.preview_return_fd) |fd| _ = c.close(fd);
         if (self.editor_path) |path| self.allocator.free(path);
+        if (self.active_io_copy_destination) |path| self.allocator.free(path);
         if (self.job_runner) |runner| runner.deinit();
         self.transfer_tree_state.deinit();
         self.clearFolderSizes();

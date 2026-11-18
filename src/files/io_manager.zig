@@ -145,7 +145,8 @@ const Job = struct {
     origin_window_id: ?WindowId,
     state: JobState = .planning,
     tree: io_tree.TreeIndex,
-    discovery_path: ?[]u8 = null,
+    source_root_path: ?[]u8 = null,
+    discovery_started: bool = false,
     destination_directory: ?[]u8 = null,
     discovery_schedule: std.AutoHashMapUnmanaged(io_tree.EntryId, DiscoverySchedule) = .empty,
     discovery_pending_count: usize = 0,
@@ -161,7 +162,7 @@ const Job = struct {
     operation_state_counts: [7]usize = .{ 0, 0, 0, 0, 0, 0, 0 },
 
     fn deinit(self: *Job, allocator: Allocator) void {
-        if (self.discovery_path) |path| allocator.free(path);
+        if (self.source_root_path) |path| allocator.free(path);
         if (self.destination_directory) |path| allocator.free(path);
         self.discovery_schedule.deinit(allocator);
         self.tree.deinit();
@@ -232,6 +233,31 @@ pub const Manager = struct {
         return id;
     }
 
+    /// Discards a Job whose planning has not been committed to the scheduler.
+    /// Any queued discovery records become harmless stale queue entries.
+    pub fn discardPlanningJob(self: *Manager, job_id: JobId) bool {
+        for (self.jobs.items, 0..) |*job, index| {
+            if (job.id != job_id) continue;
+            if (job.state != .planning or job.discovery_in_flight != null)
+                return false;
+            if (job.discovery_started) return false;
+
+            var removed = self.jobs.orderedRemove(index);
+            removed.deinit(self.allocator);
+
+            if (self.jobs.items.len == 0) {
+                self.round_robin_cursor = 0;
+            } else {
+                if (self.round_robin_cursor > index)
+                    self.round_robin_cursor -= 1;
+                if (self.round_robin_cursor >= self.jobs.items.len)
+                    self.round_robin_cursor = 0;
+            }
+            return true;
+        }
+        return false;
+    }
+
     /// Stores the selected destination directory. The Manager owns a copy;
     /// entry paths are constructed from this directory and TreeIndex names.
     pub fn setDestinationDirectory(
@@ -292,20 +318,27 @@ pub const Manager = struct {
     ) !void {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state != .planning) return error.InvalidJobState;
-        if (job.discovery_path != null) return error.DiscoveryAlreadyStarted;
+        if (job.discovery_started) return error.DiscoveryAlreadyStarted;
         if (root_path.len == 0) return error.InvalidRootPath;
 
         const root_id = job.tree.root() orelse return error.MissingTreeRoot;
         const root = job.tree.get(root_id).?;
         if (root.kind != .directory) return error.RootNotDirectory;
 
-        const owned_path = try self.allocator.dupe(u8, root_path);
-        errdefer self.allocator.free(owned_path);
+        var owned_path: ?[]u8 = null;
+        if (job.source_root_path) |existing| {
+            if (!std.mem.eql(u8, existing, root_path))
+                return error.SourceRootPathMismatch;
+        } else {
+            owned_path = try self.allocator.dupe(u8, root_path);
+        }
+        errdefer if (owned_path) |path| self.allocator.free(path);
         try job.discovery_schedule.ensureUnusedCapacity(self.allocator, 1);
         const queue = &self.discovery_queues[@intFromEnum(DiscoveryPriority.background)];
         try queue.items.ensureUnusedCapacity(self.allocator, 1);
 
-        job.discovery_path = owned_path;
+        if (owned_path) |path| job.source_root_path = path;
+        job.discovery_started = true;
         root.discovery = .queued;
         job.discovery_schedule.putAssumeCapacity(root_id, .{
             .priority = .background,
@@ -325,7 +358,29 @@ pub const Manager = struct {
         job_id: JobId,
     ) ?[]const u8 {
         const job = self.findJobConst(job_id) orelse return null;
-        return job.discovery_path;
+        if (!job.discovery_started) return null;
+        return job.source_root_path;
+    }
+
+    /// Stores the original path for a source root that does not need
+    /// directory discovery, such as a standalone regular file.
+    pub fn setSourceRootPath(
+        self: *Manager,
+        job_id: JobId,
+        source_root_path: []const u8,
+    ) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (job.tree.root() == null) return error.MissingTreeRoot;
+        if (job.source_root_path != null) return error.SourceRootPathAlreadySet;
+        if (source_root_path.len == 0 or
+            !std.fs.path.isAbsolute(source_root_path) or
+            std.mem.indexOfScalar(u8, source_root_path, 0) != null)
+        {
+            return error.InvalidSourceRootPath;
+        }
+
+        job.source_root_path = try self.allocator.dupe(u8, source_root_path);
     }
 
     /// Builds the absolute destination path for one TreeIndex entry.
@@ -423,7 +478,7 @@ pub const Manager = struct {
                 }
                 continue;
             }
-            if (job.discovery_path == null or job.state == .paused or
+            if (!job.discovery_started or job.state == .paused or
                 job.discovery_in_flight != null)
             {
                 index += 1;
@@ -741,7 +796,7 @@ pub const Manager = struct {
         job_id: JobId,
     ) ?bool {
         const job = self.findJobConst(job_id) orelse return null;
-        if (job.discovery_path == null) return null;
+        if (!job.discovery_started) return null;
         return job.discovery_in_flight == null and job.discovery_pending_count == 0;
     }
 
@@ -774,7 +829,7 @@ pub const Manager = struct {
         entry_id: io_tree.EntryId,
     ) ![]u8 {
         const job = self.findJobConst(job_id) orelse return error.UnknownJob;
-        const root_path = job.discovery_path orelse return error.MissingSourceRootPath;
+        const root_path = job.source_root_path orelse return error.MissingSourceRootPath;
         const root_id = job.tree.root() orelse return error.MissingTreeRoot;
         const root = job.tree.getConst(root_id) orelse return error.MissingTreeRoot;
         const relative_path = try job.tree.relativePath(allocator, entry_id);
@@ -1144,7 +1199,7 @@ pub const Manager = struct {
     }
 
     fn hasDiscoveryWork(job: *const Job) bool {
-        return job.discovery_path != null and
+        return job.discovery_started and
             (job.discovery_pending_count != 0 or job.discovery_in_flight != null);
     }
 
