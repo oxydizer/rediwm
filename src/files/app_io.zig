@@ -3,6 +3,7 @@ const std = @import("std");
 const App = @import("app.zig").App;
 const io_manager = @import("io_manager.zig");
 const io_discovery_executor = @import("io_discovery_executor.zig");
+const io_operation_executor = @import("io_operation_executor.zig");
 const ViewItem = @import("app_model.zig").ViewItem;
 const fold = @import("ui").fold;
 
@@ -196,5 +197,40 @@ pub fn appendDiscoveryRows(
 /// Poll descriptor for worker completions, or -1 before discovery is used.
 pub fn discoveryWakeFd(self: *App) i32 {
     const executor = if (self.discovery_executor) |*value| value else return -1;
+    return @intCast(executor.wakeFd());
+}
+
+/// Starts the bounded operation Runtime on first use.
+pub fn startOperations(self: *App) !void {
+    if (self.operation_executor != null) return;
+    const manager = if (self.io_manager) |*value| value else
+        return error.OperationManagerUnavailable;
+
+    self.operation_executor = try io_operation_executor.Runtime.init(
+        self.allocator,
+        manager,
+        2,
+        4,
+    );
+}
+
+/// Drains completed operations and submits newly ready work on the main thread.
+pub fn stepOperations(self: *App) void {
+    const executor = if (self.operation_executor) |*value| value else return;
+    if (self.io_manager == null) return;
+
+    _ = executor.drainWake();
+    _ = executor.drainCompletions() catch {
+        self.setStatusNotice("File operation completion failed", true);
+        return;
+    };
+    _ = executor.dispatchReady() catch {
+        self.setStatusNotice("Could not schedule file operation", true);
+    };
+}
+
+/// Poll descriptor for operation completions, or -1 before first use.
+pub fn operationWakeFd(self: *App) i32 {
+    const executor = if (self.operation_executor) |*value| value else return -1;
     return @intCast(executor.wakeFd());
 }
