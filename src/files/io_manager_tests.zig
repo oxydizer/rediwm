@@ -183,6 +183,125 @@ test "snapshots own dependency data and planning closes at queue time" {
     try std.testing.expectError(error.InvalidJobState, manager.addOperation(job, .publish));
 }
 
+test "queued Jobs accept operations as discovery progresses" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job).?);
+    const root_op = try manager.addEntryOperation(job, root, .create_directory);
+    try std.testing.expectEqual(io_manager.OperationState.pending, manager.operationState(job, root_op).?);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(root_op, token.operation_id);
+    try std.testing.expect(manager.completeWork(token, .completed));
+}
+
+test "entry operations depend on their destination parent directory" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const child = try manager.addTreeEntry(job, root, "child", .directory, .{}, null);
+    const file = try manager.addTreeEntry(job, child, "file", .regular_file, .{}, null);
+
+    const root_op = try manager.addEntryOperation(job, root, .create_directory);
+    const child_op = try manager.addEntryOperation(job, child, .create_directory);
+    const file_op = try manager.addEntryOperation(job, file, .copy_file);
+    try manager.queueJob(job);
+
+    const first = manager.dispatchNext().?;
+    try std.testing.expectEqual(root_op, first.operation_id);
+    try std.testing.expect(manager.completeWork(first, .completed));
+
+    const second = manager.dispatchNext().?;
+    try std.testing.expectEqual(child_op, second.operation_id);
+    try std.testing.expect(manager.completeWork(second, .completed));
+
+    const third = manager.dispatchNext().?;
+    try std.testing.expectEqual(file_op, third.operation_id);
+    try std.testing.expect(manager.completeWork(third, .completed));
+}
+
+test "late entries inherit skipped state from failed destination parents" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const child = try manager.addTreeEntry(job, root, "child", .directory, .{}, null);
+    const file = try manager.addTreeEntry(job, child, "file", .regular_file, .{}, null);
+
+    _ = try manager.startDiscovery(job, "/tmp/source");
+    const root_op = try manager.addEntryOperation(job, root, .create_directory);
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(root_op, token.operation_id);
+    try std.testing.expect(manager.completeWork(token, .failed));
+
+    const child_op = try manager.addEntryOperation(job, child, .create_directory);
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, child_op).?,
+    );
+
+    const file_op = try manager.addEntryOperation(job, file, .copy_file);
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, file_op).?,
+    );
+}
+
+test "directory creation outranks symlinks and regular files" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const file = try manager.addTreeEntry(job, root, "file", .regular_file, .{}, null);
+    const link = try manager.addTreeEntry(job, root, "link", .symlink, .{}, "target");
+    const directory = try manager.addTreeEntry(job, root, "directory", .directory, .{}, null);
+
+    const root_op = try manager.addEntryOperation(job, root, .create_directory);
+    const file_op = try manager.addEntryOperation(job, file, .copy_file);
+    const link_op = try manager.addEntryOperation(job, link, .copy_symlink);
+    const directory_op = try manager.addEntryOperation(job, directory, .create_directory);
+    try manager.queueJob(job);
+
+    const first = manager.dispatchNext().?;
+    try std.testing.expectEqual(root_op, first.operation_id);
+    try std.testing.expect(manager.completeWork(first, .completed));
+    const second = manager.dispatchNext().?;
+    try std.testing.expectEqual(directory_op, second.operation_id);
+    try std.testing.expect(manager.completeWork(second, .completed));
+    const third = manager.dispatchNext().?;
+    try std.testing.expectEqual(link_op, third.operation_id);
+    try std.testing.expect(manager.completeWork(third, .completed));
+    const fourth = manager.dispatchNext().?;
+    try std.testing.expectEqual(file_op, fourth.operation_id);
+    try std.testing.expect(manager.completeWork(fourth, .completed));
+}
+
+test "Job remains active while discovery has pending work and no operations" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    _ = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job).?);
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job).?);
+}
+
 test "Manager owns an independent TreeIndex for each Job" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
