@@ -211,3 +211,54 @@ test "Manager operations execute directory creation before dependent symlink and
     defer allocator.free(copied_contents);
     try std.testing.expectEqualStrings("executor integration", copied_contents);
 }
+
+test "Manager Runtime copies a standalone regular-file root" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source = try join(allocator, temp, "payload.bin");
+    defer allocator.free(source);
+    const destination_dir = try join(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    const destination = try join(allocator, destination_dir, "payload.bin");
+    defer allocator.free(destination);
+    defer {
+        cleanup(destination, false);
+        cleanup(source, false);
+        cleanup(destination_dir, true);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(destination_dir);
+    try writeFile(source, "standalone Manager copy");
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "payload.bin",
+        .regular_file,
+        .{},
+        null,
+    );
+    try manager.setSourceRootPath(job, source);
+    try manager.setDestinationDirectory(job, destination_dir);
+    _ = try manager.addEntryOperation(job, root, .copy_file);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
+    defer runtime.deinit();
+
+    while (!manager.jobState(job).?.isTerminal()) {
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    const copied_contents = try readFile(allocator, destination);
+    defer allocator.free(copied_contents);
+    try std.testing.expectEqualStrings("standalone Manager copy", copied_contents);
+}
