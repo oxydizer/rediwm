@@ -307,6 +307,140 @@ test "skipping a conflict advances the FIFO and skips its Operation" {
     );
 }
 
+test "renaming a directory conflict redirects descendant destinations" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "Photos",
+        .directory,
+        .{},
+        null,
+    );
+    const child = try manager.addTreeEntry(
+        job,
+        root,
+        "2024",
+        .directory,
+        .{},
+        null,
+    );
+    const root_operation = try manager.addEntryOperation(
+        job,
+        root,
+        .create_directory,
+    );
+    _ = try manager.addEntryOperation(job, child, .create_directory);
+
+    try manager.setSourceRootPath(job, "/source/Photos");
+    try manager.setDestinationDirectory(job, "/destination");
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(root_operation, token.operation_id);
+    const conflict_id = try manager.registerConflict(
+        token,
+        root,
+        "/source/Photos",
+        "/destination/Photos",
+        .directory,
+        .directory,
+    );
+
+    try manager.renameConflict(conflict_id, "/destination/Photos (1)");
+
+    const retry = manager.dispatchNext().?;
+    try std.testing.expectEqual(root_operation, retry.operation_id);
+    try std.testing.expect(retry.generation > token.generation);
+    try std.testing.expect(manager.completeWork(retry, .completed));
+
+    const child_source = try manager.sourcePath(allocator, job, child);
+    defer allocator.free(child_source);
+    const child_destination = try manager.destinationPath(allocator, job, child);
+    defer allocator.free(child_destination);
+
+    try std.testing.expectEqualStrings(
+        "/source/Photos/2024",
+        child_source,
+    );
+    try std.testing.expectEqualStrings(
+        "/destination/Photos (1)/2024",
+        child_destination,
+    );
+}
+
+test "cancelling a conflict cancels its Job and preserves unrelated FIFO entries" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const first_job = try manager.createJob(null);
+    const first_root = try manager.addTreeRoot(
+        first_job,
+        "first.txt",
+        .regular_file,
+        .{},
+        null,
+    );
+    const first_operation = try manager.addEntryOperation(
+        first_job,
+        first_root,
+        .copy_file,
+    );
+    try manager.queueJob(first_job);
+    const first_token = manager.dispatchNext().?;
+    const first_conflict = try manager.registerConflict(
+        first_token,
+        first_root,
+        "/source/first.txt",
+        "/destination/first.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    const second_job = try manager.createJob(null);
+    const second_root = try manager.addTreeRoot(
+        second_job,
+        "second.txt",
+        .regular_file,
+        .{},
+        null,
+    );
+    const second_operation = try manager.addEntryOperation(
+        second_job,
+        second_root,
+        .copy_file,
+    );
+    try manager.queueJob(second_job);
+    const second_token = manager.dispatchNext().?;
+    const second_conflict = try manager.registerConflict(
+        second_token,
+        second_root,
+        "/source/second.txt",
+        "/destination/second.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    try manager.cancelConflict(first_conflict);
+
+    try std.testing.expectEqual(
+        io_manager.JobState.cancelled,
+        manager.jobState(first_job).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.cancelled,
+        manager.operationState(first_job, first_operation).?,
+    );
+    try std.testing.expectEqual(second_conflict, manager.nextConflict().?.id);
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(second_job, second_operation).?,
+    );
+}
+
 test "failed dependencies skip descendants" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
