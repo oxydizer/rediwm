@@ -295,6 +295,11 @@ test "skipping a conflict advances the FIFO and skips its Operation" {
         io_manager.OperationState.skipped,
         manager.operationState(first_job, first_operation).?,
     );
+    try std.testing.expectEqual(
+        io_manager.JobState.completed,
+        manager.jobState(first_job).?,
+    );
+    try std.testing.expect(manager.jobHasSkippedOperations(first_job));
     try std.testing.expectEqual(second_conflict, manager.nextConflict().?.id);
     try std.testing.expectEqual(
         io_manager.OperationState.waiting,

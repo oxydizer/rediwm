@@ -175,7 +175,10 @@ fn complete(
 fn isCollisionResult(result: ?io_executor.OwnedPayload) bool {
     const payload = result orelse return false;
     const bytes = payload.slice();
-    return bytes.len == 1 and bytes[0] == 2;
+    // Directory and symlink handlers use tag 1; regular-file copy uses
+    // tag 2 because tag 1 is also its successful-copy cleanup marker.
+    // This function is called only for .waiting outcomes.
+    return bytes.len == 1 and (bytes[0] == 1 or bytes[0] == 2);
 }
 
 fn registerCollision(context: *Context, token: io_manager.WorkToken) !void {

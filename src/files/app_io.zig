@@ -247,7 +247,13 @@ pub fn stepOperations(self: *App) void {
                 self.active_io_copy_job = null;
 
                 switch (state) {
-                    .completed => self.setStatusNotice("File copied", false),
+                    .completed => {
+                        if (manager.jobHasSkippedOperations(job_id)) {
+                            self.setStatusNotice("File copy skipped", false);
+                        } else {
+                            self.setStatusNotice("File copied", false);
+                        }
+                    },
                     .completed_with_errors, .failed =>
                         self.setStatusNotice("File copy failed", true),
                     .cancelled => self.setStatusNotice("File copy cancelled", true),

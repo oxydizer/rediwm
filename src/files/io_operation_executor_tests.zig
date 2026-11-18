@@ -262,3 +262,113 @@ test "Manager Runtime copies a standalone regular-file root" {
     defer allocator.free(copied_contents);
     try std.testing.expectEqualStrings("standalone Manager copy", copied_contents);
 }
+
+test "Manager Runtime registers directory destination collisions" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const source = try join(allocator, temp, "source-dir");
+    defer allocator.free(source);
+    defer cleanup(source, true);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    defer cleanup(destination_base, true);
+    const destination = try join(allocator, destination_base, "source-dir");
+    defer allocator.free(destination);
+    defer cleanup(destination, true);
+
+    try makeDirectory(source);
+    try makeDirectory(destination_base);
+    try makeDirectory(destination);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source-dir",
+        .directory,
+        .{ .mode = 0o755 },
+        null,
+    );
+    try manager.setSourceRootPath(job, source);
+    try manager.setDestinationDirectory(job, destination_base);
+    const operation = try manager.addEntryOperation(job, root, .create_directory);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
+    defer runtime.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, operation).?,
+    );
+    const conflict = manager.nextConflict() orelse return error.MissingConflict;
+    try std.testing.expectEqual(job, conflict.job_id);
+    try std.testing.expectEqual(root, conflict.entry_id);
+    try std.testing.expectEqual(io_tree.EntryKind.directory, conflict.source_kind);
+    try std.testing.expectEqual(io_tree.EntryKind.directory, conflict.destination_kind);
+    try std.testing.expectEqualStrings(source, conflict.source_path);
+    try std.testing.expectEqualStrings(destination, conflict.destination_path);
+}
+
+test "Manager Runtime registers symlink destination collisions" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const source = try join(allocator, temp, "source-link");
+    defer allocator.free(source);
+    defer cleanup(source, false);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    defer cleanup(destination_base, true);
+    const destination = try join(allocator, destination_base, "source-link");
+    defer allocator.free(destination);
+    defer cleanup(destination, false);
+
+    try makeDirectory(destination_base);
+    try makeSymlink("../source-target", source);
+    try makeSymlink("../existing-target", destination);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source-link",
+        .symlink,
+        .{},
+        "../source-target",
+    );
+    try manager.setSourceRootPath(job, source);
+    try manager.setDestinationDirectory(job, destination_base);
+    const operation = try manager.addEntryOperation(job, root, .copy_symlink);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
+    defer runtime.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, operation).?,
+    );
+    const conflict = manager.nextConflict() orelse return error.MissingConflict;
+    try std.testing.expectEqual(job, conflict.job_id);
+    try std.testing.expectEqual(root, conflict.entry_id);
+    try std.testing.expectEqual(io_tree.EntryKind.symlink, conflict.source_kind);
+    try std.testing.expectEqual(io_tree.EntryKind.symlink, conflict.destination_kind);
+    try std.testing.expectEqualStrings(source, conflict.source_path);
+    try std.testing.expectEqualStrings(destination, conflict.destination_path);
+}
