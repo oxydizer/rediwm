@@ -499,20 +499,17 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         if (dlg.kind == .conflict) {
             // Skip [dx + 16 .. dx + 16 + (dw - 48) / 3]
             if (x >= dx + 16 and x <= dx + 16 + (dw - 48) / 3 and y >= dy + 84 and y <= dy + 112) {
-                if (self.job_runner) |runner| runner.resolveConflict(.skip);
-                self.closeDialog();
+                self.resolveConflictDialog(.skip);
                 return;
             }
             // Rename [dx + 24 + (dw - 48) / 3 .. dx + 24 + 2 * (dw - 48) / 3]
             if (x >= dx + 24 + (dw - 48) / 3 and x <= dx + 24 + 2 * (dw - 48) / 3 and y >= dy + 84 and y <= dy + 112) {
-                if (self.job_runner) |runner| runner.resolveConflict(.rename);
-                self.closeDialog();
+                self.resolveConflictDialog(.rename);
                 return;
             }
             // Cancel [dx + 32 + 2 * (dw - 48) / 3 .. dx + dw - 16]
             if (x >= dx + 32 + 2 * (dw - 48) / 3 and x <= dx + dw - 16 and y >= dy + 84 and y <= dy + 112) {
-                if (self.job_runner) |runner| runner.resolveConflict(.cancel);
-                self.closeDialog();
+                self.resolveConflictDialog(.cancel);
                 return;
             }
         } else {
@@ -536,7 +533,8 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         // Click outside dialog box closes
         if (x < dx or x > dx + dw or y < dy or y > dy + dh) {
             if (dlg.kind == .conflict) {
-                if (self.job_runner) |runner| runner.resolveConflict(.cancel);
+                self.resolveConflictDialog(.cancel);
+                return;
             }
             self.closeDialog();
         }

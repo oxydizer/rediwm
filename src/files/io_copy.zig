@@ -224,7 +224,21 @@ pub fn execute(
             mode,
         );
         if (destination_fd < 0) {
+            const failure_errno = std.c._errno().*;
             _ = c.close(source_fd);
+            if (failure_errno == c.EEXIST) {
+                // Distinct from the successful-copy marker: discard must
+                // never unlink a destination that existed before this job.
+                const marker = allocator.dupe(u8, &.{2}) catch {
+                    return completion(item, .failed, null, null);
+                };
+                return completion(
+                    item,
+                    .waiting,
+                    null,
+                    .{ .allocator = allocator, .bytes = marker },
+                );
+            }
             return completion(item, .failed, null, null);
         }
 
