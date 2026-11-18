@@ -321,6 +321,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         self.app.stepTorrents();
         self.app.sync();
         self.app.stepDiscovery();
+        self.app.stepOperations();
         self.app.stepThumbs();
         self.app.stepWheel(app_mod.nowMs());
         self.app.stepSelection(app_mod.nowMs());
@@ -355,7 +356,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             return error.DisplayFailed;
         }
 
-        var fds: [25]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
+        var fds: [26]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         fds[1].fd = self.app.preview_return_fd orelse -1;
         fds[2].fd = if (self.receiving) |receive| receive.fd else -1;
@@ -376,6 +377,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         fds[22].fd = self.app.torrents.fd;
         fds[23].fd = self.app.audioWakeFd();
         fds[24].fd = self.app.discoveryWakeFd();
+        fds[25].fd = self.app.operationWakeFd();
         const send_count = self.sends.items.len;
         for (self.sends.items, 0..) |send, i| fds[i + 6] = .{ .fd = send.fd, .events = c.POLLOUT, .revents = 0 };
 

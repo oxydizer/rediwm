@@ -9,6 +9,7 @@ const platform = @import("platform");
 const worker_mod = @import("worker.zig");
 const io_manager_mod = @import("io_manager.zig");
 const io_discovery_executor_mod = @import("io_discovery_executor.zig");
+const io_operation_executor_mod = @import("io_operation_executor.zig");
 const history_mod = @import("history.zig");
 const ops_mod = @import("ops.zig");
 const dirsize = @import("dirsize.zig");
@@ -96,6 +97,7 @@ pub const App = struct {
     worker: *worker_mod.Worker,
     io_manager: ?io_manager_mod.Manager = null,
     discovery_executor: ?io_discovery_executor_mod.Executor = null,
+    operation_executor: ?io_operation_executor_mod.Runtime = null,
     discovery_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
     history: history_mod.History,
     home_dir: []const u8,
@@ -388,6 +390,7 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
+        if (self.operation_executor) |*executor| executor.deinit();
         if (self.discovery_executor) |*executor| executor.deinit();
         if (self.io_manager) |*manager| manager.deinit();
         self.discovery_jobs.deinit(self.allocator);
@@ -645,6 +648,9 @@ pub const App = struct {
     pub const promoteDiscoverySubtreePath = app_io.promoteDiscoverySubtreePath;
     pub const stepDiscovery = app_io.stepDiscovery;
     pub const discoveryWakeFd = app_io.discoveryWakeFd;
+    pub const startOperations = app_io.startOperations;
+    pub const stepOperations = app_io.stepOperations;
+    pub const operationWakeFd = app_io.operationWakeFd;
 
     // app_trash.zig
     pub const trashRelation = app_trash.trashRelation;
