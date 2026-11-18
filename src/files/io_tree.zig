@@ -89,6 +89,7 @@ pub const TreeIndex = struct {
         symlink_target: ?[]const u8,
     ) !EntryId {
         if (name.len == 0) return error.InvalidName;
+        if (std.mem.indexOfScalar(u8, name, 0) != null) return error.InvalidName;
         if (std.mem.indexOfScalar(u8, name, '/') != null) return error.InvalidName;
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, ".."))
             return error.InvalidName;
@@ -156,6 +157,40 @@ pub const TreeIndex = struct {
     pub fn count(self: *const TreeIndex) usize {
         return self.entries.items.len;
     }
+
+    /// Returns the root-relative path through this entry, including the
+    /// root's display-name component. The caller owns the returned bytes.
+    pub fn relativePath(
+        self: *const TreeIndex,
+        allocator: Allocator,
+        entry_id: EntryId,
+    ) ![]u8 {
+        var components: std.ArrayList([]const u8) = .empty;
+        defer components.deinit(allocator);
+
+        var current_id: ?EntryId = entry_id;
+        while (current_id) |id| {
+            const entry = self.getConst(id) orelse return error.UnknownEntry;
+            try components.append(allocator, entry.name);
+            current_id = entry.parent_id;
+        }
+        if (components.items.len == 0) return error.UnknownEntry;
+
+        var left: usize = 0;
+        var right = components.items.len;
+        while (left < right) {
+            right -= 1;
+            if (left >= right) break;
+            std.mem.swap(
+                []const u8,
+                &components.items[left],
+                &components.items[right],
+            );
+            left += 1;
+        }
+
+        return std.fs.path.join(allocator, components.items);
+    }
 };
 
 test "TreeIndex owns entries and preserves stable parent-child IDs" {
@@ -199,4 +234,28 @@ test "TreeIndex rejects invalid parents, names, and duplicate roots" {
     try std.testing.expectError(error.InvalidSymlinkTarget, tree.addEntry(root_id, "link", .symlink, .{}, null));
     try std.testing.expectError(error.RootAlreadyExists, tree.addRoot("another", .directory, .{}, null));
     try std.testing.expectError(error.UnknownParent, tree.addEntry(999, "orphan", .regular_file, .{}, null));
+    const nul_name = [_]u8{ 'b', 0, 'a' };
+    try std.testing.expectError(error.InvalidName, tree.addEntry(root_id, &nul_name, .regular_file, .{}, null));
+}
+
+test "TreeIndex derives caller-owned relative paths from parent IDs" {
+    const allocator = std.testing.allocator;
+    var tree = TreeIndex.init(allocator);
+    defer tree.deinit();
+
+    const root_id = try tree.addRoot("source", .directory, .{}, null);
+    const directory_id = try tree.addEntry(root_id, "nested", .directory, .{}, null);
+    const file_id = try tree.addEntry(directory_id, "file.bin", .regular_file, .{}, null);
+
+    const root_path = try tree.relativePath(allocator, root_id);
+    defer allocator.free(root_path);
+    const directory_path = try tree.relativePath(allocator, directory_id);
+    defer allocator.free(directory_path);
+    const file_path = try tree.relativePath(allocator, file_id);
+    defer allocator.free(file_path);
+
+    try std.testing.expectEqualStrings("source", root_path);
+    try std.testing.expectEqualStrings("source/nested", directory_path);
+    try std.testing.expectEqualStrings("source/nested/file.bin", file_path);
+    try std.testing.expectError(error.UnknownEntry, tree.relativePath(allocator, 999));
 }

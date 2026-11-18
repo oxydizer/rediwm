@@ -326,6 +326,75 @@ test "Manager owns an independent TreeIndex for each Job" {
     try std.testing.expectEqual(@as(usize, 1), second_tree.count());
 }
 
+test "destination paths are built from Job-owned directories and EntryIds" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const first_job = try manager.createJob(null);
+    const first_root = try manager.addTreeRoot(first_job, "source", .directory, .{}, null);
+    const nested = try manager.addTreeEntry(first_job, first_root, "nested", .directory, .{}, null);
+    const file = try manager.addTreeEntry(first_job, nested, "file.bin", .regular_file, .{}, null);
+
+    const first_destination = try allocator.dupe(u8, "/tmp/first-target");
+    try manager.setDestinationDirectory(first_job, first_destination);
+    allocator.free(first_destination);
+
+    const root_path = try manager.destinationPath(allocator, first_job, first_root);
+    defer allocator.free(root_path);
+    const file_path = try manager.destinationPath(allocator, first_job, file);
+    defer allocator.free(file_path);
+
+    try std.testing.expectEqualStrings("/tmp/first-target/source", root_path);
+    try std.testing.expectEqualStrings("/tmp/first-target/source/nested/file.bin", file_path);
+
+    const second_job = try manager.createJob(null);
+    const second_root = try manager.addTreeRoot(second_job, "other", .directory, .{}, null);
+    try manager.setDestinationDirectory(second_job, "/tmp/second-target");
+
+    const second_path = try manager.destinationPath(allocator, second_job, second_root);
+    defer allocator.free(second_path);
+    try std.testing.expectEqualStrings("/tmp/second-target/other", second_path);
+
+    try std.testing.expectError(
+        error.UnknownEntry,
+        manager.destinationPath(allocator, first_job, 999),
+    );
+}
+
+test "destination directory requires a root and an absolute path" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    try std.testing.expectError(
+        error.MissingTreeRoot,
+        manager.setDestinationDirectory(job, "/tmp/target"),
+    );
+
+    _ = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try std.testing.expectError(
+        error.InvalidDestinationDirectory,
+        manager.setDestinationDirectory(job, "relative-target"),
+    );
+    const nul_path = [_]u8{ '/', 't', 'm', 'p', 0, 'x' };
+    try std.testing.expectError(
+        error.InvalidDestinationDirectory,
+        manager.setDestinationDirectory(job, &nul_path),
+    );
+
+    try std.testing.expectError(
+        error.MissingDestinationDirectory,
+        manager.destinationPath(std.testing.allocator, job, 1),
+    );
+
+    try manager.setDestinationDirectory(job, "/tmp/target");
+    try std.testing.expectError(
+        error.DestinationDirectoryAlreadySet,
+        manager.setDestinationDirectory(job, "/tmp/other"),
+    );
+}
+
 test "discovery adopts batches and visits directories breadth first" {
     const allocator = std.testing.allocator;
     var manager = io_manager.Manager.init(allocator);
