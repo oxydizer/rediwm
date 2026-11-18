@@ -217,7 +217,7 @@ pub fn startOperations(self: *App) !void {
 /// Drains completed operations and submits newly ready work on the main thread.
 pub fn stepOperations(self: *App) void {
     const executor = if (self.operation_executor) |*value| value else return;
-    if (self.io_manager == null) return;
+    const manager = if (self.io_manager) |*value| value else return;
 
     _ = executor.drainWake();
     _ = executor.drainCompletions() catch {
@@ -227,6 +227,31 @@ pub fn stepOperations(self: *App) void {
     _ = executor.dispatchReady() catch {
         self.setStatusNotice("Could not schedule file operation", true);
     };
+
+    if (self.active_io_copy_job) |job_id| {
+        if (manager.jobState(job_id)) |state| {
+            if (state.isTerminal()) {
+                const destination = self.active_io_copy_destination;
+                self.active_io_copy_destination = null;
+                self.active_io_copy_job = null;
+
+                switch (state) {
+                    .completed => self.setStatusNotice("File copied", false),
+                    .completed_with_errors, .failed =>
+                        self.setStatusNotice("File copy failed", true),
+                    .cancelled => self.setStatusNotice("File copy cancelled", true),
+                    else => unreachable,
+                }
+
+                if (destination) |path| {
+                    const refresh_destination =
+                        std.mem.eql(u8, self.history.current, path);
+                    self.allocator.free(path);
+                    if (refresh_destination) self.refresh();
+                }
+            }
+        }
+    }
 }
 
 /// Poll descriptor for operation completions, or -1 before first use.

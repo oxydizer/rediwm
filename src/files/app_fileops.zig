@@ -6,9 +6,11 @@ const tr = i18n.tr;
 const App = @import("app.zig").App;
 const recent = @import("recent.zig");
 const ops_mod = @import("ops.zig");
+const io_tree = @import("io_tree.zig");
 const clipboard_mod = @import("clipboard.zig");
 const deletion = @import("../delete_dialog.zig");
 const trash = @import("trash.zig");
+const c = @import("c.zig").api;
 
 pub fn copySelected(self: *App) void {
     if (self.history.archive_len > 0) return;
@@ -78,6 +80,67 @@ pub fn executePaste(self: *App, kind: ops_mod.OpKind, paths: []const []const u8)
     return self.executeTransfer(kind, paths, self.history.current, true);
 }
 
+/// Starts a standalone regular-file copy through the Manager-owned pipeline.
+/// Other transfer shapes remain on JobRunner until their integration phase.
+fn startManagerSingleFileCopy(
+    self: *App,
+    paths: []const []const u8,
+    directory: []const u8,
+) !bool {
+    if (paths.len != 1 or self.active_io_copy_job != null) return false;
+
+    const source = paths[0];
+    const name = std.fs.path.basename(source);
+    if (name.len == 0) return false;
+
+    const source_z = try self.allocator.dupeSentinel(u8, source, 0);
+    defer self.allocator.free(source_z);
+    var source_stat: c.struct_stat = undefined;
+    if (c.lstat(source_z, &source_stat) != 0) return false;
+    if ((source_stat.st_mode & c.S_IFMT) != c.S_IFREG) return false;
+
+    const destination = try std.fs.path.join(
+        self.allocator,
+        &.{ directory, name },
+    );
+    defer self.allocator.free(destination);
+    const destination_z = try self.allocator.dupeSentinel(u8, destination, 0);
+    defer self.allocator.free(destination_z);
+    var destination_stat: c.struct_stat = undefined;
+    if (c.lstat(destination_z, &destination_stat) == 0) return false;
+    if (std.c._errno().* != c.ENOENT) return false;
+
+    try self.startOperations();
+    const manager = if (self.io_manager) |*value| value else
+        return error.OperationManagerUnavailable;
+    const owned_destination = try self.allocator.dupe(u8, directory);
+    errdefer self.allocator.free(owned_destination);
+
+    const job_id = try manager.createJob(null);
+    errdefer _ = manager.discardPlanningJob(job_id);
+
+    const root_id = try manager.addTreeRoot(
+        job_id,
+        name,
+        .regular_file,
+        .{
+            .size = @intCast(@max(source_stat.st_size, 0)),
+            .mode = @intCast(source_stat.st_mode),
+        },
+        null,
+    );
+    try manager.setSourceRootPath(job_id, source);
+    try manager.setDestinationDirectory(job_id, directory);
+    _ = try manager.addEntryOperation(job_id, root_id, .copy_file);
+    try manager.queueJob(job_id);
+
+    self.active_io_copy_destination = owned_destination;
+    self.active_io_copy_job = job_id;
+    self.setStatusNotice("Copying file", false);
+    self.invalidate();
+    return true;
+}
+
 pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, clipboard: bool) bool {
     if (self.history.archive_len > 0 or recent.isLocation(directory)) return false;
     if (paths.len == 0) return false;
@@ -86,6 +149,10 @@ pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const 
         self.setStatusNotice(tr("Use Move to Trash to put items in Trash"), true);
         return false;
     };
+    if (kind == .copy) {
+        const started = startManagerSingleFileCopy(self, paths, directory) catch false;
+        if (started) return true;
+    }
     const runner = self.job_runner orelse return false;
     runner.start(kind, paths, directory, .ask) catch {
         self.setStatusNotice(tr("Failed to start transfer job"), true);
