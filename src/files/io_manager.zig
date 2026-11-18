@@ -182,6 +182,11 @@ pub const OperationSnapshot = struct {
     dependencies: []OperationId,
 };
 
+pub const OperationDetails = struct {
+    kind: OperationKind,
+    entry_id: io_tree.EntryId,
+};
+
 /// Caller-owned copy; it remains valid independently of the live manager.
 pub const JobSnapshot = struct {
     allocator: Allocator,
@@ -745,6 +750,48 @@ pub const Manager = struct {
     pub fn treeIndex(self: *const Manager, job_id: JobId) ?*const io_tree.TreeIndex {
         const job = self.findJobConst(job_id) orelse return null;
         return &job.tree;
+    }
+
+    /// Returns the TreeIndex entry associated with a currently dispatched
+    /// operation. Stale generations and non-running operations are rejected.
+    pub fn operationDetails(self: *const Manager, token: WorkToken) ?OperationDetails {
+        const job = self.findJobConst(token.job_id) orelse return null;
+        const operation = findOperationConst(job, token.operation_id) orelse return null;
+        if (operation.state != .running or operation.generation != token.generation)
+            return null;
+        return .{
+            .kind = operation.kind,
+            .entry_id = operation.entry_id orelse return null,
+        };
+    }
+
+    /// Builds the source path for one TreeIndex entry from the original
+    /// selected root path. The root's display name is not appended twice.
+    pub fn sourcePath(
+        self: *const Manager,
+        allocator: Allocator,
+        job_id: JobId,
+        entry_id: io_tree.EntryId,
+    ) ![]u8 {
+        const job = self.findJobConst(job_id) orelse return error.UnknownJob;
+        const root_path = job.discovery_path orelse return error.MissingSourceRootPath;
+        const root_id = job.tree.root() orelse return error.MissingTreeRoot;
+        const root = job.tree.getConst(root_id) orelse return error.MissingTreeRoot;
+        const relative_path = try job.tree.relativePath(allocator, entry_id);
+        defer allocator.free(relative_path);
+
+        if (entry_id == root_id) return allocator.dupe(u8, root_path);
+        if (relative_path.len <= root.name.len or
+            !std.mem.eql(u8, relative_path[0..root.name.len], root.name) or
+            relative_path[root.name.len] != '/')
+        {
+            return error.InvalidTreePath;
+        }
+
+        return std.fs.path.join(allocator, &.{
+            root_path,
+            relative_path[root.name.len + 1 ..],
+        });
     }
 
     pub fn addOperation(self: *Manager, job_id: JobId, kind: OperationKind) !OperationId {
