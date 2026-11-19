@@ -71,14 +71,28 @@ fn runCopy(
     source: []const u8,
     destination: []const u8,
 ) !void {
+    return runCopyWithMetrics(allocator, source, destination, null, false);
+}
+
+fn runCopyWithMetrics(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    destination: []const u8,
+    metrics_out: ?*executor.CopyMetrics,
+    profile_enabled: bool,
+) !void {
     var item = executor.WorkItem{
         .token = .{ .job_id = 1, .operation_id = 1, .generation = 1 },
         .operation_kind = .copy_file,
         .input = try copy.makeInput(allocator, source, destination),
+        .profile_enabled = profile_enabled,
     };
 
     while (true) {
         const done = copy.execute(allocator, item);
+        if (metrics_out) |total| {
+            if (done.copy_metrics) |delta| total.add(delta);
+        }
         if (done.outcome == .completed) {
             copy.complete(null, done.token, done.outcome, done.result);
             var owned_input = done.input;
@@ -104,6 +118,7 @@ fn runCopy(
             .operation_kind = done.operation_kind,
             .input = done.input,
             .continuation = done.continuation,
+            .profile_enabled = profile_enabled,
         };
     }
 }
@@ -305,4 +320,38 @@ test "stale completed copy removes destination before acceptance" {
 
     var buffer: [32]u8 = undefined;
     try std.testing.expectError(error.OpenFailed, readFile(destination, &buffer));
+}
+
+test "copy metrics account for strategy bytes and optional timing" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(allocator, temp, &.{"source", "destination"});
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    const contents = try allocator.alloc(u8, 256 * 1024 + 37);
+    defer allocator.free(contents);
+    for (contents, 0..) |*byte, index| byte.* = @truncate(index *% 19);
+    try writeFile(source, contents);
+
+    var metrics: executor.CopyMetrics = .{};
+    try runCopyWithMetrics(allocator, source, destination, &metrics, true);
+
+    try std.testing.expectEqual(@as(u64, 1), metrics.reflink_attempts);
+    try std.testing.expectEqual(
+        metrics.reflink_attempts,
+        metrics.reflink_successes + metrics.reflink_fallbacks,
+    );
+    try std.testing.expectEqual(
+        @as(u64, contents.len),
+        metrics.reflink_bytes +
+            metrics.copy_file_range_bytes +
+            metrics.buffered_read_bytes,
+    );
+    try std.testing.expectEqual(metrics.buffered_read_bytes, metrics.buffered_write_bytes);
+    try std.testing.expect(metrics.elapsed_ns > 0);
 }

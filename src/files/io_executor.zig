@@ -11,6 +11,7 @@ pub const OperationId = io_manager.OperationId;
 pub const OperationKind = io_manager.OperationKind;
 pub const WorkToken = io_manager.WorkToken;
 pub const WorkResult = io_manager.WorkResult;
+pub const CopyMetrics = io_manager.CopyMetrics;
 
 pub const OperationKey = struct {
     job_id: JobId,
@@ -69,6 +70,7 @@ pub const WorkItem = struct {
     operation_kind: OperationKind,
     input: OwnedPayload,
     continuation: ?OwnedPayload = null,
+    profile_enabled: bool = false,
 
     pub fn deinit(self: *WorkItem) void {
         self.input.deinit();
@@ -88,6 +90,7 @@ pub const WorkCompletion = struct {
     continuation: ?OwnedPayload = null,
     result: ?OwnedPayload = null,
     progress: ?WorkProgress = null,
+    copy_metrics: ?CopyMetrics = null,
 
     pub fn deinit(self: *WorkCompletion) void {
         self.input.deinit();
@@ -110,6 +113,7 @@ pub const Executor = struct {
     callback_context: *CallbackContext,
     continuations: std.AutoHashMapUnmanaged(OperationKey, OperationPayloads) = .empty,
     pending: std.AutoHashMapUnmanaged(OperationKey, WorkItem) = .empty,
+    profile_enabled: bool = false,
 
     pub fn init(
         allocator: Allocator,
@@ -256,6 +260,10 @@ pub const Executor = struct {
                 continue;
             }
 
+            if (completion.copy_metrics) |metrics| {
+                _ = manager.recordOperationCopyMetrics(completion.token, metrics);
+            }
+
             const retain_payloads =
                 completion.outcome == .yielded and
                 manager.operationState(
@@ -376,6 +384,7 @@ pub const Executor = struct {
             }
 
             const pending_item = self.pending.getPtr(key).?;
+            pending_item.profile_enabled = self.profile_enabled;
             if (self.pool.trySubmit(pending_item.*)) {
                 // Ownership transfers to the pool. Do not deinit the
                 // removed map value.

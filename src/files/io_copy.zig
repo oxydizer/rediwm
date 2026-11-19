@@ -13,6 +13,24 @@ const large_buffer_size: usize = 256 * 1024;
 const max_buffer_size: usize = 1024 * 1024;
 const clone_ioctl: c_ulong = 0x40049409;
 
+fn monotonicNowNs() u64 {
+    var ts: std.c.timespec = undefined;
+    const result = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+    std.debug.assert(result == 0);
+    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s +
+        @as(u64, @intCast(ts.nsec));
+}
+
+fn recordFallbackReason(metrics: *executor.CopyMetrics, value: c_int) void {
+    if (value == c.EXDEV) {
+        metrics.fallback_exdev +|= 1;
+    } else if (value == c.EPERM) {
+        metrics.fallback_permission +|= 1;
+    } else {
+        metrics.fallback_unsupported +|= 1;
+    }
+}
+
 const Strategy = enum(u8) {
     copy_file_range,
     buffered,
@@ -239,6 +257,20 @@ pub fn execute(
     allocator: Allocator,
     item_arg: executor.WorkItem,
 ) executor.WorkCompletion {
+    var metrics: executor.CopyMetrics = .{};
+    const started = if (item_arg.profile_enabled) monotonicNowNs() else 0;
+    var done = executeUnit(allocator, item_arg, &metrics);
+    if (item_arg.profile_enabled)
+        metrics.elapsed_ns = monotonicNowNs() - started;
+    done.copy_metrics = metrics;
+    return done;
+}
+
+fn executeUnit(
+    allocator: Allocator,
+    item_arg: executor.WorkItem,
+    metrics: *executor.CopyMetrics,
+) executor.WorkCompletion {
     var item = item_arg;
     const operation_paths = paths(&item.input) catch {
         return completion(item, .failed, null, null);
@@ -315,7 +347,14 @@ pub fn execute(
         has_state = true;
 
         // FICLONE is attempted before either streaming strategy.
-        if (c.ioctl(destination_fd, clone_ioctl, source_fd) == 0) {
+        metrics.reflink_attempts +|= 1;
+        const reflink_started = if (item.profile_enabled) monotonicNowNs() else 0;
+        const reflink_result = c.ioctl(destination_fd, clone_ioctl, source_fd);
+        if (item.profile_enabled)
+            metrics.reflink_ns +|= monotonicNowNs() - reflink_started;
+        if (reflink_result == 0) {
+            metrics.reflink_successes +|= 1;
+            metrics.reflink_bytes +|= state.size;
             closeDescriptors(&state);
             const marker = allocator.dupe(u8, &.{1}) catch {
                 unlinkDestination(operation_paths.destination);
@@ -330,6 +369,15 @@ pub fn execute(
         }
 
         const clone_errno = std.c._errno().*;
+        if (clone_errno == c.EXDEV or
+            clone_errno == c.EINVAL or
+            clone_errno == c.ENOSYS or
+            clone_errno == c.ENOTTY or
+            clone_errno == c.EOPNOTSUPP)
+        {
+            metrics.reflink_fallbacks +|= 1;
+            recordFallbackReason(metrics, clone_errno);
+        }
         if (clone_errno != c.EXDEV and
             clone_errno != c.EINVAL and
             clone_errno != c.ENOSYS and
@@ -375,6 +423,8 @@ pub fn execute(
 
     const request_len: usize = @intCast(@min(remaining, chunk_size));
     if (state.strategy == .copy_file_range) {
+        metrics.copy_file_range_calls +|= 1;
+        const range_started = if (item.profile_enabled) monotonicNowNs() else 0;
         const copied = c.copy_file_range(
             state.source_fd,
             null,
@@ -383,7 +433,10 @@ pub fn execute(
             request_len,
             0,
         );
+        if (item.profile_enabled)
+            metrics.copy_file_range_ns +|= monotonicNowNs() - range_started;
         if (copied > 0) {
+            metrics.copy_file_range_bytes +|= @intCast(copied);
             state.offset += @intCast(copied);
         } else if (copied == 0) {
             return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
@@ -392,6 +445,8 @@ pub fn execute(
             if (copy_errno == c.EINTR) {
                 // Yield without changing offsets; retry in the next unit.
             } else if (isFallbackErrno(copy_errno)) {
+                metrics.copy_file_range_fallbacks +|= 1;
+                recordFallbackReason(metrics, copy_errno);
                 state.strategy = .buffered;
             } else {
                 return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
@@ -400,6 +455,11 @@ pub fn execute(
     }
 
     if (state.strategy == .buffered) {
+        const buffered_started = if (item.profile_enabled) monotonicNowNs() else 0;
+        defer if (item.profile_enabled) {
+            metrics.buffered_ns +|= monotonicNowNs() - buffered_started;
+        };
+
         if (scratch_payload == null) {
             scratch_payload = encodeContinuation(
                 allocator,
@@ -414,6 +474,7 @@ pub fn execute(
             state.size - state.offset,
             @as(u64, buffer.len),
         ));
+        metrics.buffered_read_calls +|= 1;
         const count = c.read(state.source_fd, buffer.ptr, wanted);
         if (count == 0) {
             return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
@@ -435,8 +496,10 @@ pub fn execute(
         }
 
         const bytes_read: usize = @intCast(count);
+        metrics.buffered_read_bytes +|= @intCast(bytes_read);
         var written: usize = 0;
         while (written < bytes_read) {
+            metrics.buffered_write_calls +|= 1;
             const result = c.write(
                 state.destination_fd,
                 buffer[written..].ptr,
@@ -446,6 +509,7 @@ pub fn execute(
             if (result <= 0) {
                 return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
             }
+            metrics.buffered_write_bytes +|= @intCast(result);
             written += @intCast(result);
         }
         state.offset += bytes_read;
