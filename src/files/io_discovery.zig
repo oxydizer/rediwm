@@ -73,7 +73,7 @@ pub const Anchor = struct {
                 try components.append(allocator, entry.name);
                 current_id = parent_id;
             } else {
-                if (index.root() != current_id)
+                if (!index.isRoot(current_id))
                     return error.EntryOutsideRoot;
                 break;
             }

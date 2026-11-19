@@ -54,11 +54,15 @@ fn promoteDiscoveryPathWithPriority(
     const manager = if (self.io_manager) |*value| value else return;
 
     for (self.discovery_jobs.items) |job_id| {
-        const root_path = manager.discoveryRootPath(job_id) orelse continue;
         const tree = manager.treeIndex(job_id) orelse continue;
 
         for (tree.entries.items) |entry| {
             if (entry.kind != .directory) continue;
+            const root_id = tree.rootForEntry(entry.id) orelse continue;
+            const root_path = manager.discoveryRootPath(
+                job_id,
+                root_id,
+            ) orelse continue;
             const candidate = entryPath(
                 self.allocator,
                 root_path,
@@ -144,12 +148,16 @@ pub fn appendDiscoveryRows(
     const manager = if (self.io_manager) |*value| value else return;
 
     for (self.discovery_jobs.items) |job_id| {
-        const root_path = manager.discoveryRootPath(job_id) orelse continue;
         const tree = manager.treeIndex(job_id) orelse continue;
         _ = tree.root() orelse continue;
 
         for (tree.entries.items) |entry| {
             const parent_id = entry.parent_id orelse continue;
+            const root_id = tree.rootForEntry(parent_id) orelse continue;
+            const root_path = manager.discoveryRootPath(
+                job_id,
+                root_id,
+            ) orelse continue;
             const parent_path = entryPath(
                 mem,
                 root_path,

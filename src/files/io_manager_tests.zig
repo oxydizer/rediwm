@@ -654,6 +654,91 @@ test "late entries inherit skipped state from failed destination parents" {
     );
 }
 
+test "multi-root Jobs retain independent source and destination paths" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const first_root = try manager.addTreeRoot(
+        job,
+        "first",
+        .directory,
+        .{},
+        null,
+    );
+    const first_child = try manager.addTreeEntry(
+        job,
+        first_root,
+        "nested.txt",
+        .regular_file,
+        .{},
+        null,
+    );
+    const second_root = try manager.addTreeRoot(
+        job,
+        "second",
+        .directory,
+        .{},
+        null,
+    );
+
+    try manager.startRootDiscovery(job, first_root, "/tmp/first-source");
+    try manager.startRootDiscovery(job, second_root, "/tmp/second-source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+
+    const first_source = try manager.sourcePath(
+        allocator,
+        job,
+        first_child,
+    );
+    defer allocator.free(first_source);
+    const second_source = try manager.sourcePath(
+        allocator,
+        job,
+        second_root,
+    );
+    defer allocator.free(second_source);
+    const first_destination = try manager.destinationPath(
+        allocator,
+        job,
+        first_child,
+    );
+    defer allocator.free(first_destination);
+    const second_destination = try manager.destinationPath(
+        allocator,
+        job,
+        second_root,
+    );
+    defer allocator.free(second_destination);
+
+    try std.testing.expectEqualStrings(
+        "/tmp/first-source/nested.txt",
+        first_source,
+    );
+    try std.testing.expectEqualStrings(
+        "/tmp/second-source",
+        second_source,
+    );
+    try std.testing.expectEqualStrings(
+        "/tmp/destination/first/nested.txt",
+        first_destination,
+    );
+    try std.testing.expectEqualStrings(
+        "/tmp/destination/second",
+        second_destination,
+    );
+    try std.testing.expectEqualStrings(
+        "/tmp/first-source",
+        manager.discoveryRootPath(job, first_root).?,
+    );
+    try std.testing.expectEqualStrings(
+        "/tmp/second-source",
+        manager.discoveryRootPath(job, second_root).?,
+    );
+    try std.testing.expectEqual(@as(?bool, false), manager.discoveryComplete(job));
+}
+
 test "directory creation outranks symlinks and regular files" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
@@ -819,7 +904,7 @@ test "standalone file roots have source paths without directory discovery" {
 
     try std.testing.expectEqualStrings("/tmp/source/payload.bin", source);
     try std.testing.expectEqualStrings("/tmp/destination/payload.bin", destination);
-    try std.testing.expect(manager.discoveryRootPath(job) == null);
+    try std.testing.expect(manager.discoveryRootPath(job, root) == null);
     try std.testing.expect(manager.discoveryComplete(job) == null);
 }
 
@@ -850,7 +935,7 @@ test "discovery adopts batches and visits directories breadth first" {
 
     try std.testing.expectEqualStrings(
         "/tmp/source",
-        manager.discoveryRootPath(job).?,
+        manager.discoveryRootPath(job, root).?,
     );
 
     const root_token = manager.dispatchDiscovery().?;

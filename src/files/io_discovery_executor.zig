@@ -12,6 +12,11 @@ const io_workers = @import("io_workers.zig");
 const JobId = io_manager.JobId;
 const DiscoveryToken = io_manager.DiscoveryToken;
 
+const RootKey = struct {
+    job_id: JobId,
+    root_id: u64,
+};
+
 const Task = struct {
     token: DiscoveryToken,
     cursor: io_discovery.Cursor,
@@ -35,7 +40,7 @@ pub const Executor = struct {
     allocator: Allocator,
     context: *Context,
     pool: *Pool,
-    anchors: std.AutoHashMapUnmanaged(JobId, io_discovery.Anchor) = .empty,
+    anchors: std.AutoHashMapUnmanaged(RootKey, io_discovery.Anchor) = .empty,
     cursors: std.AutoHashMapUnmanaged(
         JobId,
         std.AutoHashMapUnmanaged(u64, io_discovery.Cursor),
@@ -244,16 +249,22 @@ pub const Executor = struct {
         manager: *io_manager.Manager,
         token: DiscoveryToken,
     ) !?*io_discovery.Anchor {
-        if (self.anchors.getPtr(token.job_id)) |anchor| return anchor;
+        const tree = manager.treeIndex(token.job_id) orelse return null;
+        const root_id = tree.rootForEntry(token.entry_id) orelse return null;
+        const key: RootKey = .{
+            .job_id = token.job_id,
+            .root_id = root_id,
+        };
+        if (self.anchors.getPtr(key)) |anchor| return anchor;
 
         self.anchors.ensureUnusedCapacity(self.allocator, 1) catch return error.OutOfMemory;
-        const path = manager.discoveryRootPath(token.job_id) orelse return null;
+        const path = manager.discoveryRootPath(token.job_id, root_id) orelse return null;
         const path_z = try self.allocator.dupeSentinel(u8, path, 0);
         defer self.allocator.free(path_z);
 
         const anchor = try io_discovery.Anchor.open(path_z);
-        self.anchors.putAssumeCapacity(token.job_id, anchor);
-        return self.anchors.getPtr(token.job_id).?;
+        self.anchors.putAssumeCapacity(key, anchor);
+        return self.anchors.getPtr(key).?;
     }
 
     fn closeAnchorIfComplete(
@@ -264,9 +275,16 @@ pub const Executor = struct {
         if (manager.discoveryComplete(job_id) != true) return;
 
         self.closeCursorsForJob(job_id);
-        if (self.anchors.fetchRemove(job_id)) |entry| {
-            var anchor = entry.value;
-            anchor.deinit();
+        const tree = manager.treeIndex(job_id) orelse return;
+        for (tree.roots()) |root_id| {
+            const key: RootKey = .{
+                .job_id = job_id,
+                .root_id = root_id,
+            };
+            if (self.anchors.fetchRemove(key)) |entry| {
+                var anchor = entry.value;
+                anchor.deinit();
+            }
         }
     }
 
