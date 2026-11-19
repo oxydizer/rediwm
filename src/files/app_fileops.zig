@@ -182,6 +182,128 @@ fn startManagerFileCopy(
     return true;
 }
 
+/// Starts same-filesystem regular-file/symlink moves through the Manager.
+/// Directory and cross-filesystem selections remain on JobRunner.
+fn startManagerFileMove(
+    self: *App,
+    paths: []const []const u8,
+    directory: []const u8,
+    clipboard: bool,
+) !bool {
+    if (paths.len == 0 or self.active_io_copy_job != null) return false;
+
+    const destination_z = try self.allocator.dupeSentinel(u8, directory, 0);
+    defer self.allocator.free(destination_z);
+    var destination_stat: c.struct_stat = undefined;
+    if (c.stat(destination_z, &destination_stat) != 0 or
+        (destination_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
+    {
+        return false;
+    }
+
+    const RootPlan = struct {
+        source: []const u8,
+        name: []const u8,
+        kind: io_tree.EntryKind,
+        metadata: io_tree.Metadata,
+        symlink_target: ?[]u8 = null,
+    };
+    var roots: std.ArrayList(RootPlan) = .empty;
+    defer {
+        for (roots.items) |root| {
+            if (root.symlink_target) |target| self.allocator.free(target);
+        }
+        roots.deinit(self.allocator);
+    }
+
+    for (paths) |source| {
+        if (!std.fs.path.isAbsolute(source)) return false;
+        const name = std.fs.path.basename(source);
+        if (name.len == 0) return false;
+
+        const source_z = try self.allocator.dupeSentinel(u8, source, 0);
+        defer self.allocator.free(source_z);
+        var source_stat: c.struct_stat = undefined;
+        if (c.lstat(source_z, &source_stat) != 0) return false;
+
+        const mode = source_stat.st_mode & c.S_IFMT;
+        if (mode != c.S_IFREG and mode != c.S_IFLNK) return false;
+
+        // A single cross-filesystem root keeps the entire selection on the
+        // legacy path; do not split one user move across two execution paths.
+        if (source_stat.st_dev != destination_stat.st_dev) return false;
+
+        var symlink_target: ?[]u8 = null;
+        defer if (symlink_target) |target| self.allocator.free(target);
+        if (mode == c.S_IFLNK) {
+            var target_buffer: [4096]u8 = undefined;
+            const target_len = c.readlink(source_z, &target_buffer, target_buffer.len);
+            if (target_len < 0 or target_len == target_buffer.len) return false;
+            symlink_target = try self.allocator.dupe(
+                u8,
+                target_buffer[0..@intCast(target_len)],
+            );
+        }
+
+        const target_path = try std.fs.path.join(
+            self.allocator,
+            &.{ directory, name },
+        );
+        defer self.allocator.free(target_path);
+        if (std.mem.eql(u8, source, target_path)) return false;
+
+        try roots.append(self.allocator, .{
+            .source = source,
+            .name = name,
+            .kind = if (mode == c.S_IFLNK) .symlink else .regular_file,
+            .metadata = .{
+                .size = @intCast(@max(source_stat.st_size, 0)),
+                .mode = @intCast(source_stat.st_mode),
+            },
+            .symlink_target = symlink_target,
+        });
+        symlink_target = null;
+    }
+
+    try self.startOperations();
+    const manager = if (self.io_manager) |*value| value else return error.OperationManagerUnavailable;
+    const owned_destination = try self.allocator.dupe(u8, directory);
+    errdefer self.allocator.free(owned_destination);
+
+    const job_id = try manager.createJob(null);
+    errdefer _ = manager.discardPlanningJob(job_id);
+
+    for (roots.items) |root| {
+        const root_id = try manager.addTreeRoot(
+            job_id,
+            root.name,
+            root.kind,
+            root.metadata,
+            root.symlink_target,
+        );
+        try manager.setRootSourcePath(job_id, root_id, root.source);
+        _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
+    }
+    try manager.setDestinationDirectory(job_id, directory);
+    try manager.queueJob(job_id);
+
+    self.active_io_copy_destination = owned_destination;
+    self.active_io_copy_job = job_id;
+    self.active_io_copy_is_directory = false;
+    self.active_io_copy_is_move = true;
+    self.active_io_copy_item_count = paths.len;
+    self.job_cut_revision = if (clipboard and self.clipboard_cut)
+        self.clipboard_revision
+    else
+        null;
+    self.setStatusNotice(
+        if (paths.len == 1) "Moving file" else "Moving items",
+        false,
+    );
+    self.invalidate();
+    return true;
+}
+
 /// Starts selected directory roots through one incremental Manager Job.
 /// Mixed directory/file selections remain on JobRunner for now.
 fn startManagerDirectoryCopy(
@@ -278,6 +400,10 @@ pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const 
         const directory_started =
             startManagerDirectoryCopy(self, paths, directory) catch false;
         if (directory_started) return true;
+    } else if (kind == .move) {
+        const started =
+            startManagerFileMove(self, paths, directory, clipboard) catch false;
+        if (started) return true;
     }
     const runner = self.job_runner orelse return false;
     runner.start(kind, paths, directory, .ask) catch {

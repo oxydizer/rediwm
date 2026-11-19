@@ -657,6 +657,15 @@ fn transferTestCleanup(path: []const u8, is_directory: bool) void {
     }
 }
 
+fn transferTestSymlink(target: []const u8, path: []const u8) !void {
+    const allocator = std.testing.allocator;
+    const target_z = try allocator.dupeSentinel(u8, target, 0);
+    defer allocator.free(target_z);
+    const path_z = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(path_z);
+    if (c.symlink(target_z, path_z) != 0) return error.SymlinkFailed;
+}
+
 test "multi-file copy requests use one Manager job and the operation Runtime" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
@@ -827,4 +836,95 @@ test "multi-directory copy requests use one Manager job and incremental discover
     defer allocator.free(copied_b);
     try std.testing.expectEqualStrings("first directory payload", copied_a);
     try std.testing.expectEqualStrings("nested directory payload", copied_b);
+}
+
+test "same-filesystem file and symlink moves use one Manager job" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+
+    const source_file = try transferTestJoin(allocator, temp, "move.txt");
+    defer allocator.free(source_file);
+    const source_link = try transferTestJoin(allocator, temp, "move-link");
+    defer allocator.free(source_link);
+    const destination_dir = try transferTestJoin(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    const destination_file = try transferTestJoin(allocator, destination_dir, "move.txt");
+    defer allocator.free(destination_file);
+    const destination_link = try transferTestJoin(allocator, destination_dir, "move-link");
+    defer allocator.free(destination_link);
+    defer {
+        transferTestCleanup(destination_link, false);
+        transferTestCleanup(destination_file, false);
+        transferTestCleanup(source_link, false);
+        transferTestCleanup(source_file, false);
+        transferTestCleanup(destination_dir, true);
+        transferTestCleanup(temp, true);
+    }
+
+    try transferTestMkdir(destination_dir);
+    try transferTestWriteFile(source_file, "native rename payload");
+    try transferTestSymlink("../literal-target", source_link);
+
+    var app = try testApp();
+    defer app.deinit();
+    app.io_manager = io_manager.Manager.init(allocator);
+    try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_file));
+    try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_link));
+    app.clipboard_cut = true;
+    app.clipboard_revision = 7;
+
+    const paths = [_][]const u8{ source_file, source_link };
+    try std.testing.expect(app.executeTransfer(.move, &paths, destination_dir, true));
+    const job_id = app.active_io_copy_job.?;
+    const manager = &app.io_manager.?;
+    const tree = manager.treeIndex(job_id).?;
+    const roots = tree.roots();
+    try std.testing.expectEqual(@as(usize, 2), roots.len);
+    try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job_id).?);
+
+    while (true) {
+        app.stepOperations();
+        if (manager.jobState(job_id).?.isTerminal()) break;
+
+        var descriptors = [_]c.struct_pollfd{.{
+            .fd = app.operationWakeFd(),
+            .events = c.POLLIN,
+            .revents = 0,
+        }};
+        const result = c.poll(&descriptors, 1, 5_000);
+        if (result == 0) return error.TimedOutWaitingForMove;
+        if (result < 0 and std.c._errno().* != c.EINTR)
+            return error.MovePollFailed;
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_id).?);
+    try std.testing.expectEqual(@as(usize, 0), app.clipboard_paths.items.len);
+    try std.testing.expect(!app.clipboard_cut);
+
+    var stat_buffer: c.struct_stat = undefined;
+    const source_file_z = try allocator.dupeSentinel(u8, source_file, 0);
+    defer allocator.free(source_file_z);
+    const source_link_z = try allocator.dupeSentinel(u8, source_link, 0);
+    defer allocator.free(source_link_z);
+    try std.testing.expect(c.lstat(source_file_z, &stat_buffer) != 0);
+    try std.testing.expect(c.lstat(source_link_z, &stat_buffer) != 0);
+
+    const moved_contents = try transferTestReadFile(allocator, destination_file);
+    defer allocator.free(moved_contents);
+    try std.testing.expectEqualStrings("native rename payload", moved_contents);
+
+    const destination_link_z = try allocator.dupeSentinel(u8, destination_link, 0);
+    defer allocator.free(destination_link_z);
+    var target_buffer: [128]u8 = undefined;
+    const target_len = c.readlink(
+        destination_link_z,
+        &target_buffer,
+        target_buffer.len,
+    );
+    try std.testing.expect(target_len >= 0);
+    try std.testing.expectEqualStrings(
+        "../literal-target",
+        target_buffer[0..@intCast(target_len)],
+    );
 }
