@@ -529,21 +529,54 @@ pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
     if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
         return std.math.maxInt(usize) - 2004;
     }
-    if (self.active_io_copy_job == null) if (self.job_runner) |runner| {
+    if (self.active_io_copy_job != null) {
+        if (fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
+            return std.math.maxInt(usize) - 2003;
+        }
+    } else if (self.job_runner) |runner| {
         const progress = runner.pollProgress();
         const can_pause = (progress.kind == .copy or progress.kind == .move) and
             (progress.state == .running or progress.state == .paused);
         if (can_pause and fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
             return std.math.maxInt(usize) - 2003;
         }
-    };
+    }
     return std.math.maxInt(usize) - 2002;
 }
 
 pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
     if (!self.fileOpsSidebarHit(x, y)) return false;
-    if (self.active_io_copy_job != null) {
-        if (self.active_io_copy_destination) |destination| {
+    if (self.active_io_copy_job) |job_id| {
+        const manager = if (self.io_manager) |*value| value else return true;
+        const area = fileOpsBox(self);
+        if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
+            if (self.operation_executor) |*executor| {
+                executor.cancelJob(job_id) catch {
+                    self.setStatusNotice(tr("Could not cancel file transfer"), true);
+                };
+            } else {
+                manager.cancelJob(job_id) catch {
+                    self.setStatusNotice(tr("Could not cancel file transfer"), true);
+                };
+            }
+        } else if (fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
+            const state = manager.jobState(job_id) orelse return true;
+            if (self.operation_executor) |*executor| {
+                if (state == .paused) {
+                    executor.resumeJob(job_id) catch {
+                        self.setStatusNotice(tr("Could not resume file transfer"), true);
+                    };
+                } else {
+                    executor.pauseJob(job_id) catch {
+                        self.setStatusNotice(tr("Could not pause file transfer"), true);
+                    };
+                }
+            } else if (state == .paused) {
+                manager.resumeJob(job_id) catch {};
+            } else {
+                manager.pauseJob(job_id) catch {};
+            }
+        } else if (self.active_io_copy_destination) |destination| {
             self.navigate(destination);
             self.focus = .file_view;
         }
@@ -585,14 +618,41 @@ pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
         const tree = manager.treeIndex(job_id) orelse return;
         const root_id = tree.root() orelse return;
         const root = tree.getConst(root_id) orelse return;
+        if (self.transfer_tree_state.dirty) {
+            self.transfer_tree_state.rebuildManager(manager, job_id) catch return;
+        }
+        const projection = self.transfer_tree_state.tree orelse return;
+        const fraction: ?f64 = if (projection.roots.items.len > 0) blk: {
+            const aggregate = self.transfer_tree_state.aggregateProgress(projection.roots.items[0]);
+            break :blk if (aggregate.total_bytes > 0) aggregate.fraction() else null;
+        } else null;
         @import("app_draw.zig").drawTransferProgressRow(
             cr,
             area,
             root.name,
-            null,
+            fraction,
             ui_theme.global.sidebarForeground(),
             palette.accent,
             shell_ui.statusSize(),
+        );
+        const state_now = manager.jobState(job_id) orelse return;
+        if (state_now == .running or state_now == .queued or
+            state_now == .waiting or state_now == .paused)
+        {
+            const pause_rect = fileOpsPauseRect(area);
+            sidebar_controls.render(
+                cr,
+                pause_rect,
+                if (state_now == .paused) .play else .pause,
+                fileOpsRectContains(pause_rect, self.mouse_x, self.mouse_y),
+            );
+        }
+        const cancel_rect = fileOpsCancelRect(area);
+        sidebar_controls.render(
+            cr,
+            cancel_rect,
+            .close,
+            fileOpsRectContains(cancel_rect, self.mouse_x, self.mouse_y),
         );
         return;
     }

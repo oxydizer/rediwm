@@ -323,7 +323,7 @@ pub const App = struct {
     last_click_time: i64 = 0,
     last_click_index: ?usize = null,
     /// The item a single-click last opened, and when: the second click of a
-    /// double-click on its icon must not open it again.
+    /// double-click must not open it again.
     last_open_index: ?usize = null,
     last_open_time: i64 = 0,
     ctrl: bool = false,
@@ -1052,7 +1052,7 @@ pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const editorTextArea = app_paint.editorTextArea;
     pub const editorCaretRect = app_paint.editorCaretRect;
     pub const pointerCursor = app_paint.pointerCursor;
-    pub const singleClickIconAt = app_paint.singleClickIconAt;
+    pub const singleClickItemAt = app_paint.singleClickItemAt;
     pub const renameCard = app_paint.renameCard;
     pub const renderRenameCard = app_paint.renderRenameCard;
     pub const editorRect = app_paint.editorRect;

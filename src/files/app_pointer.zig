@@ -411,7 +411,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             }
             self.cancelDrag();
             if (open_index) |idx| {
-                if (!self.ctrl and !self.shift and !self.alt and self.singleClickIconAt(self.mouse_x, self.mouse_y) == idx) {
+                if (!self.ctrl and !self.shift and !self.alt and self.singleClickItemAt(self.mouse_x, self.mouse_y) == idx) {
                     self.last_click_index = null;
                     self.last_click_time = 0;
                     self.last_open_index = idx;
@@ -719,9 +719,9 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
                 }
             }
 
-            const single_click = button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.singleClickIconAt(x, y) == idx;
-            // A single click opens on release, so a double-click on an icon
-            // would open it twice: the second click only selects.
+            const single_click = self.single_click_open and button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.singleClickItemAt(x, y) == idx;
+            // A single click opens on release, so a double-click would open
+            // the item twice: the second click only selects.
             const just_opened = single_click and self.last_open_index == idx and now - self.last_open_time < 400;
             // Icon clicks activate on release so they can still start a drag.
             if (!single_click and button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.last_click_index == idx and (now - self.last_click_time < 400)) {

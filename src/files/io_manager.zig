@@ -170,6 +170,8 @@ const Operation = struct {
     destination_override: ?[]u8 = null,
     state: OperationState = .pending,
     generation: u64 = 0,
+    progress_bytes: u64 = 0,
+    progress_total_bytes: u64 = 0,
     dependencies: std.ArrayList(OperationId) = .empty,
     dependency_indices: std.ArrayList(usize) = .empty,
     dependents: std.ArrayList(usize) = .empty,
@@ -191,6 +193,8 @@ const Job = struct {
     source_root_paths: std.AutoHashMapUnmanaged(io_tree.EntryId, []u8) = .empty,
     discovery_started: bool = false,
     auto_plan_discovered_entries: bool = false,
+    pause_requested: bool = false,
+    cancel_requested: bool = false,
     destination_directory: ?[]u8 = null,
     discovery_schedule: std.AutoHashMapUnmanaged(io_tree.EntryId, DiscoverySchedule) = .empty,
     discovery_pending_count: usize = 0,
@@ -237,6 +241,8 @@ pub const OperationDetails = struct {
 pub const EntryOperationView = struct {
     state: OperationState,
     generation: u64,
+    progress_bytes: u64,
+    progress_total_bytes: u64,
 };
 
 /// Caller-owned copy; it remains valid independently of the live manager.
@@ -1188,9 +1194,14 @@ pub const Manager = struct {
 
     pub fn pauseJob(self: *Manager, job_id: JobId) !void {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
-        if (job.state != .queued and job.state != .waiting) return error.InvalidJobState;
-        for (job.operations.items) |operation| {
-            if (operation.state == .running) return error.Busy;
+        if (job.state != .queued and job.state != .waiting and
+            job.state != .running)
+        {
+            return error.InvalidJobState;
+        }
+        if (job.operation_state_counts[@intFromEnum(OperationState.running)] != 0) {
+            job.pause_requested = true;
+            return;
         }
         job.state = .paused;
     }
@@ -1198,6 +1209,7 @@ pub const Manager = struct {
     pub fn resumeJob(self: *Manager, job_id: JobId) !void {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state != .paused) return error.InvalidJobState;
+        job.pause_requested = false;
         job.state = .queued;
         self.recomputeJobState(job);
     }
@@ -1343,17 +1355,27 @@ pub const Manager = struct {
     }
 
     /// Cancels every outstanding operation and discovery cursor in a Job.
-    /// A running operation must first return its token so worker-owned
-    /// resources can be reconciled safely.
+    /// A running operation is allowed to finish its current bounded unit;
+    /// its continuation is discarded when the result returns.
     pub fn cancelJob(self: *Manager, job_id: JobId) !void {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state == .planning or job.state.isTerminal())
             return error.InvalidJobState;
-        for (job.operations.items) |operation| {
-            if (operation.state == .running) return error.Busy;
-        }
+        const has_running =
+            job.operation_state_counts[@intFromEnum(OperationState.running)] != 0;
+        job.cancel_requested = has_running;
+        job.pause_requested = false;
+        self.cancelOutstanding(job, has_running);
+        job.state = if (has_running) .running else .cancelled;
+    }
 
+    fn cancelOutstanding(
+        self: *Manager,
+        job: *Job,
+        keep_running: bool,
+    ) void {
         for (job.operations.items) |*operation| {
+            if (keep_running and operation.state == .running) continue;
             if (!operation.state.isTerminal())
                 transitionOperation(job, operation, .cancelled);
         }
@@ -1372,8 +1394,6 @@ pub const Manager = struct {
             job.discovery_generation += 1;
 
         self.pruneInvalidConflicts();
-        self.recomputeJobState(job);
-        job.state = .cancelled;
     }
 
     /// Cancels the entire Job represented by the current FIFO conflict.
@@ -1480,6 +1500,13 @@ pub const Manager = struct {
                         continue;
                     }
 
+                    if (operation.kind == .copy_file) {
+                        if (operation.entry_id) |entry_id| {
+                            if (job.tree.getConst(entry_id)) |entry| {
+                                operation.progress_total_bytes = entry.metadata.size;
+                            }
+                        }
+                    }
                     operation.generation += 1;
                     transitionOperation(job, operation, .running);
                     job.state = .running;
@@ -1503,6 +1530,19 @@ pub const Manager = struct {
         if (operation.state != .running or operation.generation != token.generation) return false;
 
         const operation_index = findOperationIndex(job, token.operation_id) orelse return false;
+        if (job.cancel_requested) {
+            transitionOperation(
+                job,
+                operation,
+                if (result == .completed) .completed else .cancelled,
+            );
+            job.cancel_requested = false;
+            self.cancelOutstanding(job, false);
+            job.state = .cancelled;
+            return true;
+        }
+
+        const pause_after = job.pause_requested;
         const next_state: OperationState = switch (result) {
             .yielded => .pending,
             .completed => .completed,
@@ -1512,6 +1552,9 @@ pub const Manager = struct {
             .cancelled => .cancelled,
         };
         transitionOperation(job, operation, next_state);
+        if (result == .completed and operation.kind == .copy_file) {
+            operation.progress_bytes = operation.progress_total_bytes;
+        }
         if (result == .yielded) {
             enqueueReadyFront(job, operation_index);
         } else if (result == .completed) {
@@ -1525,7 +1568,32 @@ pub const Manager = struct {
         } else if (result == .failed or result == .skipped or result == .cancelled) {
             self.propagateUnmetDependencies(job, operation_index);
         }
-        self.recomputeJobState(job);
+        if (pause_after) {
+            job.pause_requested = false;
+            job.state = .paused;
+        } else {
+            self.recomputeJobState(job);
+        }
+        return true;
+    }
+
+    /// Records a yielded copy's exact byte offset on the main thread.
+    pub fn recordOperationProgress(
+        self: *Manager,
+        token: WorkToken,
+        bytes: u64,
+        total_bytes: u64,
+    ) bool {
+        const job = self.findJob(token.job_id) orelse return false;
+        const operation = findOperation(job, token.operation_id) orelse return false;
+        if (operation.state != .pending or
+            operation.generation != token.generation or
+            bytes > total_bytes)
+        {
+            return false;
+        }
+        operation.progress_bytes = bytes;
+        operation.progress_total_bytes = total_bytes;
         return true;
     }
 
@@ -1562,6 +1630,8 @@ pub const Manager = struct {
         return .{
             .state = operation.state,
             .generation = operation.generation,
+            .progress_bytes = operation.progress_bytes,
+            .progress_total_bytes = operation.progress_total_bytes,
         };
     }
 

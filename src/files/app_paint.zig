@@ -318,15 +318,14 @@ pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
     if (self.focus != .location_bar and !self.search_visible and header.field(self.w).contains(x, y)) return "pointer";
     if (self.permissionHit(x, y) != null) return "pointer";
     if (@import("app_audio_bar.zig").hit(self, x, y) != null or self.inlineTorrentHit(x, y) != null or self.audioButtonHit(x, y) != null) return "pointer";
-    if (self.singleClickIconAt(x, y) != null) return "pointer";
+    if (self.singleClickItemAt(x, y) != null) return "pointer";
     return if (header.field(self.w).contains(x, y)) "text" else "default";
 }
 
-pub fn singleClickIconAt(self: *App, x: f64, y: f64) ?usize {
+pub fn singleClickItemAt(self: *App, x: f64, y: f64) ?usize {
     if (!self.single_click_open or self.chooser != null or self.dialog != null or self.menu != null) return null;
     if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) return null;
-    const idx = self.itemAt(x, y) orelse return null;
-    return if (self.itemIconRect(@intCast(idx)).contains(x, y)) idx else null;
+    return self.itemAt(x, y);
 }
 
 /// The rename card, anchored to the item being renamed: the same inline

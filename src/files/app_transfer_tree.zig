@@ -75,6 +75,8 @@ pub const State = struct {
         const source_tree = manager.treeIndex(job_id) orelse return error.UnknownJob;
         var manifest = ops.TransferManifest.init(self.allocator);
         defer manifest.deinit();
+        var entry_ids: std.ArrayList(@import("io_tree.zig").EntryId) = .empty;
+        defer entry_ids.deinit(self.allocator);
 
         for (source_tree.entries.items) |entry| {
             const kind: ops.TransferEntryKind = switch (entry.kind) {
@@ -129,16 +131,27 @@ pub const State = struct {
                 break :blk full_relative_path[root.name.len + 1 ..];
             };
 
-            const state: ops.TransferEntryState =
+            var state: ops.TransferEntryState =
                 if (manager.entryOperationView(job_id, entry.id)) |operation| switch (operation.state) {
                     .pending => if (operation.generation > 0) .copying else .pending,
                     .running => .copying,
+                    // A conflict refers to an existing destination entry;
+                    // keep that real entry visible rather than ghosting it.
                     .waiting => .pending,
                     .completed => .completed,
                     .skipped => .skipped,
                     .failed => .failed,
                     .cancelled => .cancelled,
                 } else if (entry.discovery == .failed) .failed else .pending;
+            if (entry.kind == .directory) {
+                if (entry.discovery == .failed) {
+                    state = .failed;
+                } else if (entry.discovery != .complete and state == .completed) {
+                    // Directory creation can finish before its incremental
+                    // discovery cursor has finished enumerating children.
+                    state = .pending;
+                }
+            }
 
             try manifest.append(
                 source_path,
@@ -149,10 +162,19 @@ pub const State = struct {
                 root_index,
             );
             manifest.entries.items[manifest.entries.items.len - 1].state = state;
+            try entry_ids.append(self.allocator, entry.id);
         }
 
         var next = try projection.build(self.allocator, manifest.entries.items);
         errdefer next.deinit();
+        for (next.nodes.items) |*node| {
+            const entry_id = entry_ids.items[node.entry_index];
+            if (manager.entryOperationView(job_id, entry_id)) |operation| {
+                node.progress_bytes = operation.progress_bytes;
+                node.waiting_conflict = operation.state == .waiting;
+            }
+        }
+        try self.recomputeAggregates(&next, "", 0, 0);
 
         try self.aggregate_cache.ensureTotalCapacity(
             self.allocator,
@@ -244,6 +266,9 @@ pub const State = struct {
                     aggregate.failed = true;
                 } else if (node.state == .completed) {
                     aggregate.completed_bytes = node.size;
+                } else if (node.progress_bytes > 0) {
+                    aggregate.active = node.progress_bytes < node.size;
+                    aggregate.completed_bytes = @min(node.progress_bytes, node.size);
                 } else if (active_source_path.len > 0 and
                     std.mem.eql(u8, node.source_path, active_source_path))
                 {

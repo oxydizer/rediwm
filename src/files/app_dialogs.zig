@@ -329,7 +329,11 @@ fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) 
 
     switch (action) {
         .skip => try manager.skipConflict(conflict_id),
-        .cancel => try manager.cancelConflict(conflict_id),
+        .cancel => if (self.operation_executor) |*executor| {
+            try executor.cancelJob(conflict.job_id);
+        } else {
+            try manager.cancelConflict(conflict_id);
+        },
         .rename => {
             const destination_parent = std.fs.path.dirname(conflict.destination_path) orelse
                 return error.InvalidDestinationPath;
@@ -348,6 +352,8 @@ fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) 
             try manager.renameConflict(conflict_id, renamed_path);
         },
     }
+    self.transfer_tree_state.markDirty();
+    self.transfer_rows_dirty = true;
 }
 
 /// Resolves either a Manager-owned conflict or the legacy JobRunner conflict.

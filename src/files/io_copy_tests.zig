@@ -151,6 +151,41 @@ test "regular-file copy yields across multiple bounded units" {
     try std.testing.expectEqualSlices(u8, contents, copied[0..count]);
 }
 
+test "regular-file copy reports exact byte progress with each yielded unit" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(allocator, temp, &.{"source", "destination"});
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    const contents = try allocator.alloc(u8, copy.chunk_size * 2 + 17);
+    defer allocator.free(contents);
+    @memset(contents, 0x5a);
+    try writeFile(source, contents);
+
+    const item = executor.WorkItem{
+        .token = .{ .job_id = 1, .operation_id = 1, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeInput(allocator, source, destination),
+    };
+    const result = copy.execute(allocator, item);
+    try std.testing.expectEqual(executor.WorkResult.yielded, result.outcome);
+    const progress = result.progress orelse return error.MissingCopyProgress;
+    try std.testing.expectEqual(@as(u64, copy.chunk_size), progress.bytes);
+    try std.testing.expectEqual(@as(u64, contents.len), progress.total_bytes);
+    copy.discard(
+        null,
+        result.operation_kind,
+        result.input,
+        result.continuation,
+        result.result,
+    );
+}
+
 test "existing destination is never overwritten" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;

@@ -162,6 +162,21 @@ fn completion(
     };
 }
 
+fn completionWithProgress(
+    item: executor.WorkItem,
+    outcome: executor.WorkResult,
+    continuation: ?executor.OwnedPayload,
+    bytes: u64,
+    total_bytes: u64,
+) executor.WorkCompletion {
+    var result = completion(item, outcome, continuation, null);
+    result.progress = .{
+        .bytes = bytes,
+        .total_bytes = total_bytes,
+    };
+    return result;
+}
+
 fn failed(
     item: executor.WorkItem,
     state: ?Continuation,
@@ -348,7 +363,13 @@ pub fn execute(
                 const saved = encodeContinuation(allocator, state) catch {
                     return failed(item, state, operation_paths.destination);
                 };
-                return completion(item, .yielded, saved, null);
+                return completionWithProgress(
+                    item,
+                    .yielded,
+                    saved,
+                    state.offset,
+                    state.size,
+                );
             }
             return failed(item, state, operation_paths.destination);
         }
@@ -387,7 +408,13 @@ pub fn execute(
     const saved = encodeContinuation(allocator, state) catch {
         return failed(item, state, operation_paths.destination);
     };
-    return completion(item, .yielded, saved, null);
+    return completionWithProgress(
+        item,
+        .yielded,
+        saved,
+        state.offset,
+        state.size,
+    );
 }
 
 /// Executor discard callback. It owns and releases all supplied payloads.
