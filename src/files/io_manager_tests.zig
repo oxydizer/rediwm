@@ -473,7 +473,7 @@ test "cancelling a Job prunes all its conflicts and preserves unrelated FIFO ent
 
     const third_token = manager.dispatchNext().?;
     try std.testing.expectEqual(third_operation, third_token.operation_id);
-    const third_conflict = try manager.registerConflict(
+    _ = try manager.registerConflict(
         third_token,
         third_entry,
         "/source/third.txt",
