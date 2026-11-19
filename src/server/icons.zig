@@ -36,6 +36,10 @@ pub fn iconLookup(server: *Server, name: []const u8, size_px: i32) icon_service_
 /// sub-slice of `app_id`; the caller must keep `snap` retained until done.
 pub fn iconNameForAppId(snap: *applications.Snapshot, app_id: []const u8) []const u8 {
     if (app_id.len == 0) return app_id;
+    // Absolute icon paths (appindicator-style SNI publishers pass a file
+    // path as IconName) are used verbatim: the reverse-DNS heuristic below
+    // would otherwise rewrite "…/4.0x/status_3.png" into "png".
+    if (app_id[0] == '/') return app_id;
     // The built-in settings window has no desktop entry.
     if (std.mem.eql(u8, app_id, @import("../Toplevel.zig").welcome_app_id)) return "builtin:redi-logo";
     if (std.mem.eql(u8, app_id, @import("../Toplevel.zig").settings_app_id)) return @import("ui").shell_icons.settings_icon_name;
@@ -95,6 +99,9 @@ test "app icons use catalog identities before reverse-DNS fallback" {
         .{ "com.unknown.Other", "Other" },
         .{ "com.transmissionbt.transmission_bad_12345", "transmission_bad_12345" },
         .{ "unknown", "unknown" },
+        // appindicator-style publishers pass an absolute path as IconName;
+        // the dotted directory used to trip the reverse-DNS heuristic.
+        .{ "/usr/share/icons/hicolor/4.0x/status_3.png", "/usr/share/icons/hicolor/4.0x/status_3.png" },
         .{ "", "" },
     }) |case| {
         try std.testing.expectEqualStrings(case[1], iconNameForAppId(snap, case[0]));
