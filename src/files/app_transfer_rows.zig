@@ -45,8 +45,8 @@ pub fn appendTransferRows(
 }
 
 /// Appends only direct children of the displayed folder. Existing filesystem
-/// entries take precedence, except that an actively copied entry remains a
-/// protected transfer ghost until the manifest marks it completed.
+/// entries take precedence. Active files remain protected ghosts, and
+/// existing directories remain ghost-treated while their subtree is pending.
 pub fn appendTreeRows(
     self: *App,
     mem: std.mem.Allocator,
@@ -56,10 +56,14 @@ pub fn appendTreeRows(
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "append_tree_rows", tree.nodes.items.len);
 
-    for (tree.nodes.items) |node| {
+    for (tree.nodes.items, 0..) |node, node_index| {
         if (!std.mem.eql(u8, std.fs.path.dirname(node.path) orelse "", self.history.current)) continue;
 
-        const ghost = switch (node.state) {
+        const node_state = if (node.kind == .directory and node.state == .completed)
+            descendantTransferState(tree, node_index) orelse node.state
+        else
+            node.state;
+        const ghost = if (node.waiting_conflict) false else switch (node_state) {
             .pending, .copying => true,
             .completed => false,
             .skipped, .failed, .cancelled => continue,
@@ -70,10 +74,26 @@ pub fn appendTreeRows(
         var represented = false;
         for (self.items.items) |*item| {
             if (std.mem.eql(u8, item.path, node.path)) {
-                if (node.state == .copying) {
+                // A real file in .pending is usually waiting on a conflict.
+                // It becomes a ghost only after a copy unit has started.
+                const represented_ghost =
+                    if (node.kind == .directory) ghost else node_state == .copying;
+                if (represented_ghost) {
                     item.transfer_ghost = true;
-                    item.transfer_state = .copying;
+                    item.transfer_state = node_state;
                     item.missing = !item.is_dir;
+                    if (node.kind == .file) {
+                        item.transfer_bytes = node.progress_bytes;
+                        item.transfer_total_bytes = node.size;
+                    } else if (node.kind == .directory and
+                        node_index < self.transfer_tree_state.aggregate_cache.items.len)
+                    {
+                        const aggregate = self.transfer_tree_state.aggregateProgress(node_index);
+                        item.transfer_progress = if (aggregate.total_bytes > 0)
+                            aggregate.fraction()
+                        else
+                            null;
+                    }
                 }
                 represented = true;
                 break;
@@ -95,7 +115,15 @@ pub fn appendTreeRows(
             .is_symlink = node.kind == .symlink,
             .is_broken = false,
             .transfer_ghost = ghost,
-            .transfer_state = node.state,
+            .transfer_state = node_state,
+            .transfer_bytes = if (node.kind == .file) node.progress_bytes else null,
+            .transfer_total_bytes = if (node.kind == .file) node.size else null,
+            .transfer_progress = if (node.kind == .directory and
+                node_index < self.transfer_tree_state.aggregate_cache.items.len and
+                self.transfer_tree_state.aggregateProgress(node_index).total_bytes > 0)
+                self.transfer_tree_state.aggregateProgress(node_index).fraction()
+            else
+                null,
             .missing = ghost,
             .bytes = bytes,
             .mtime = 0,
@@ -112,6 +140,36 @@ pub fn appendTreeRows(
             mem.free(path);
         };
     }
+}
+
+fn descendantTransferState(
+    tree: *const transfer_tree.Tree,
+    directory_index: usize,
+) ?@import("ops.zig").TransferEntryState {
+    var pending = false;
+    var copying = false;
+    for (tree.nodes.items, 0..) |candidate, candidate_index| {
+        if (candidate_index == directory_index) continue;
+        var parent = candidate.parent_index;
+        var descendant = false;
+        while (parent) |parent_index| {
+            if (parent_index == directory_index) {
+                descendant = true;
+                break;
+            }
+            parent = tree.nodes.items[parent_index].parent_index;
+        }
+        if (!descendant) continue;
+        if (candidate.waiting_conflict) continue;
+        switch (candidate.state) {
+            .copying => copying = true,
+            .pending => pending = true,
+            .completed, .skipped, .failed, .cancelled => {},
+        }
+    }
+    if (copying) return .copying;
+    if (pending) return .pending;
+    return null;
 }
 
 test "transfer rows merge direct children, prefer real entries and retain selection" {
@@ -228,4 +286,67 @@ test "transfer rows merge direct children, prefer real entries and retain select
     try std.testing.expectEqualStrings("nested.txt", app.items.items[0].name);
     try std.testing.expect(app.items.items[0].transfer_ghost);
     try std.testing.expect(app.items.items[0].missing);
+}
+
+test "existing destination directories remain ghosts while descendants are pending" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const mem = arena.allocator();
+
+    var app: App = .{
+        .allocator = allocator,
+        .io = undefined,
+        .environ = undefined,
+        .theme_cfg = undefined,
+        .worker = undefined,
+        .history = .{ .allocator = allocator, .current = "/destination/root" },
+        .home_dir = "/",
+        .items_arena = undefined,
+        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(allocator),
+    };
+    defer app.transfer_tree_state.deinit();
+    defer app.items.deinit(allocator);
+
+    try app.items.append(allocator, .{
+        .name = "sub",
+        .path = "/destination/root/sub",
+        .is_dir = true,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = -1,
+        .mtime = 1,
+        .icon_name = "folder",
+    });
+
+    var manifest = @import("ops.zig").TransferManifest.init(allocator);
+    defer manifest.deinit();
+    try manifest.append("/source", "", "/destination/root", 0, .directory, 0);
+    try manifest.append("/source/sub", "sub", "/destination/root/sub", 0, .directory, 0);
+    try manifest.append("/source/sub/pending.bin", "sub/pending.bin", "/destination/root/sub/pending.bin", 100, .file, 0);
+    manifest.entries.items[0].state = .completed;
+    manifest.entries.items[1].state = .completed;
+    manifest.entries.items[2].state = .pending;
+
+    var tree = try transfer_tree.build(allocator, manifest.entries.items);
+    defer tree.deinit();
+    try app.transfer_tree_state.recomputeAggregates(&tree, "", 0, 0);
+
+    var old = std.StringHashMap(ViewItem).init(allocator);
+    defer old.deinit();
+    appendTreeRows(&app, mem, &tree, &old);
+
+    try std.testing.expectEqual(@as(usize, 1), app.items.items.len);
+    try std.testing.expect(app.items.items[0].transfer_ghost);
+    try std.testing.expect(!app.items.items[0].missing);
+    try std.testing.expectEqual(
+        @import("ops.zig").TransferEntryState.pending,
+        app.items.items[0].transfer_state.?,
+    );
+    try std.testing.expect(app.items.items[0].transfer_progress != null);
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0),
+        app.items.items[0].transfer_progress.?,
+        0.0001,
+    );
 }

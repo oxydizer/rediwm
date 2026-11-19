@@ -9,7 +9,7 @@ const ops_mod = @import("ops.zig");
 const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
 
-test "Files: the second click of a double-click on an icon does not open it again" {
+test "Files: the second click of a double-click does not open the item again" {
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 20);
@@ -64,6 +64,7 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 10);
+    app.single_click_open = false;
     app.items.items[0].selected = true;
     app.items.items[1].selected = true;
     app.handleMotion(310, 158);
@@ -75,6 +76,8 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     try std.testing.expect(app.drag_ready);
     app.handleButton(0x110, false);
     try std.testing.expect(app.items.items[1].selected);
+    app.last_click_index = null;
+    app.last_click_time = 0;
     app.handleMotion(310, 158);
     app.handleButton(0x110, true);
     app.handleButton(0x110, false);
@@ -94,7 +97,7 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     try std.testing.expect(!app.items.items[0].selected);
 }
 
-test "single-click opening targets only visible icons and cancels for selection or dragging" {
+test "single-click opening targets whole rows and cancels for selection or dragging" {
     for ([_]bool{ false, true }) |list| {
         var app = try testApp();
         defer app.deinit();
@@ -104,7 +107,7 @@ test "single-click opening targets only visible icons and cancels for selection 
         const x = rect.x + rect.w / 2;
         const y = rect.y + rect.h / 2;
         try std.testing.expectEqualStrings("pointer", std.mem.span(app.pointerCursor(x, y)));
-        try std.testing.expectEqualStrings("default", std.mem.span(app.pointerCursor(rect.x + rect.w + 8, y)));
+        try std.testing.expectEqualStrings("pointer", std.mem.span(app.pointerCursor(rect.x + rect.w + 8, y)));
         app.handleMotion(x, y);
         app.handleButton(0x110, true);
         try std.testing.expectEqual(@as(?usize, 0), app.open_on_release);
@@ -133,7 +136,7 @@ test "single-click opening targets only visible icons and cancels for selection 
         app.cancelDrag();
         app.single_click_open = true;
         app.scroll_y = @intFromFloat(rect.y + rect.h - app.viewTop());
-        try std.testing.expect(app.singleClickIconAt(x, @floatFromInt(app.viewTop() - 1)) == null);
+        try std.testing.expect(app.singleClickItemAt(x, @floatFromInt(app.viewTop() - 1)) == null);
         if (list) {
             app.scroll_y = 0;
             app.scroll_x = 12;

@@ -164,37 +164,61 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             c.cairo_pop_group_to_source(cr);
             c.cairo_paint_with_alpha(cr, ghost_alpha);
         }
-        if (job_progress) |progress| {
-            if ((progress.state == .running or progress.state == .paused) and
-                progress.current_file_path_len > 0 and
-                progress.current_file_size > 0 and
-                std.mem.eql(u8, progress.current_file_path[0..progress.current_file_path_len], item.path))
-            {
-                const fraction = @min(
+        var file_fraction: ?f64 = null;
+        if (item.transfer_total_bytes) |total| {
+            if (total > 0) {
+                file_fraction = @min(
                     1.0,
-                    @as(f64, @floatFromInt(progress.current_file_bytes)) /
-                        @as(f64, @floatFromInt(progress.current_file_size)),
+                    @as(f64, @floatFromInt(item.transfer_bytes orelse 0)) /
+                        @as(f64, @floatFromInt(total)),
                 );
+            }
+        }
+        if (file_fraction == null) {
+            if (job_progress) |progress| {
+                if ((progress.state == .running or progress.state == .paused) and
+                    progress.current_file_path_len > 0 and
+                    progress.current_file_size > 0 and
+                    std.mem.eql(u8, progress.current_file_path[0..progress.current_file_path_len], item.path))
+                {
+                    file_fraction = @min(
+                        1.0,
+                        @as(f64, @floatFromInt(progress.current_file_bytes)) /
+                            @as(f64, @floatFromInt(progress.current_file_size)),
+                    );
+                }
+            }
+        }
+        if (file_fraction) |fraction| {
+            const ring_size = @min(26.0, icon.w);
+            shell_ui.drawProgressRing(cr, .{
+                .x = icon.x + (icon.w - ring_size) / 2,
+                .y = icon.y + (icon.w - ring_size) / 2,
+                .w = ring_size,
+                .h = ring_size,
+            }, fraction, accent);
+        }
+        if (item.is_dir and !item.is_symlink) {
+            if (item.transfer_progress) |progress| {
                 const ring_size = @min(26.0, icon.w);
                 shell_ui.drawProgressRing(cr, .{
                     .x = icon.x + (icon.w - ring_size) / 2,
                     .y = icon.y + (icon.w - ring_size) / 2,
                     .w = ring_size,
                     .h = ring_size,
-                }, fraction, accent);
-            }
-        }
-        if (item.is_dir and !item.is_symlink) {
-            const progress_index: usize = @intCast(index - first);
-            if (progress_index < directory_progress.len) {
-                if (directory_progress[progress_index]) |progress| {
-                    const ring_size = @min(26.0, icon.w);
-                    shell_ui.drawProgressRing(cr, .{
-                        .x = icon.x + (icon.w - ring_size) / 2,
-                        .y = icon.y + (icon.w - ring_size) / 2,
-                        .w = ring_size,
-                        .h = ring_size,
-                    }, progress, accent);
+                }, progress, accent);
+            } else {
+                const progress_index: usize = @intCast(index - first);
+                if (progress_index < directory_progress.len) {
+                    if (directory_progress[progress_index]) |progress| {
+                        const ring_size = @min(26.0, icon.w);
+                        shell_ui.drawProgressRing(cr, .{
+                            .x = icon.x + (icon.w - ring_size) / 2,
+                            .y = icon.y + (icon.w - ring_size) / 2,
+                            .w = ring_size,
+                            .h = ring_size,
+                        }, progress, accent);
+                    }
                 }
             }
         }

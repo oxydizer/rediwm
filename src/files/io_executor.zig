@@ -87,12 +87,18 @@ pub const WorkCompletion = struct {
     input: OwnedPayload,
     continuation: ?OwnedPayload = null,
     result: ?OwnedPayload = null,
+    progress: ?WorkProgress = null,
 
     pub fn deinit(self: *WorkCompletion) void {
         self.input.deinit();
         deinitOptional(&self.continuation);
         deinitOptional(&self.result);
     }
+};
+
+pub const WorkProgress = struct {
+    bytes: u64,
+    total_bytes: u64,
 };
 
 const WorkerPool = @import("io_workers.zig").WorkerPool;
@@ -172,6 +178,46 @@ pub const Executor = struct {
         return self.pool.drainWake();
     }
 
+    /// Releases retained or backpressured payloads belonging to a cancelled
+    /// Job. Work already owned by a worker is reconciled when it returns.
+    pub fn cancelJob(self: *Executor, job_id: JobId) void {
+        while (true) {
+            var found: ?OperationKey = null;
+            var keys = self.pending.keyIterator();
+            while (keys.next()) |key| {
+                if (key.job_id == job_id) {
+                    found = key.*;
+                    break;
+                }
+            }
+            const key = found orelse break;
+            if (self.pending.fetchRemove(key)) |removed|
+                discardWorkItem(self.callback_context, removed.value);
+        }
+
+        while (true) {
+            var found: ?OperationKey = null;
+            var keys = self.continuations.keyIterator();
+            while (keys.next()) |key| {
+                if (key.job_id == job_id) {
+                    found = key.*;
+                    break;
+                }
+            }
+            const key = found orelse break;
+            if (self.continuations.fetchRemove(key)) |removed| {
+                const payloads = removed.value;
+                discardPayloads(
+                    self.callback_context,
+                    payloads.operation_kind,
+                    payloads.input,
+                    payloads.continuation,
+                    null,
+                );
+            }
+        }
+    }
+
     /// Route all currently available worker completions through Manager.
     /// This must run on the main thread.
     pub fn drainCompletions(self: *Executor, manager: *io_manager.Manager) !usize {
@@ -185,12 +231,10 @@ pub const Executor = struct {
             // continuation. Waiting work requires an external decision;
             // discard its prepared input so a retry runs prepare() again
             // against the Manager's potentially updated destination.
-            const retain_payloads = completion.outcome == .yielded;
-
             // Reserve before changing Manager state. If allocation fails,
             // fail the operation instead of accepting a transition whose
             // continuation we cannot retain.
-            if (retain_payloads) {
+            if (completion.outcome == .yielded) {
                 self.continuations.ensureUnusedCapacity(self.allocator, 1) catch |err| {
                     if (manager.completeWork(completion.token, .failed)) {
                         self.callback_context.callbacks.complete(
@@ -210,6 +254,22 @@ pub const Executor = struct {
                 // owns every payload, including external resources.
                 discardCompletion(self.callback_context, completion);
                 continue;
+            }
+
+            const retain_payloads =
+                completion.outcome == .yielded and
+                manager.operationState(
+                    completion.token.job_id,
+                    completion.token.operation_id,
+                ) == .pending;
+            if (retain_payloads) {
+                if (completion.progress) |progress| {
+                    _ = manager.recordOperationProgress(
+                        completion.token,
+                        progress.bytes,
+                        progress.total_bytes,
+                    );
+                }
             }
 
             const result = takeOptional(&completion.result);

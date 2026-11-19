@@ -14,6 +14,8 @@ pub const Node = struct {
     kind: ops.TransferEntryKind,
     size: u64,
     state: ops.TransferEntryState,
+    progress_bytes: u64 = 0,
+    waiting_conflict: bool = false,
 };
 
 pub const Tree = struct {
@@ -97,6 +99,7 @@ pub fn build(allocator: Allocator, entries: []const ops.TransferEntry) !Tree {
             .kind = entry.kind,
             .size = entry.size,
             .state = entry.state,
+            .progress_bytes = 0,
         });
         try by_path.put(tree.nodes.items[node_index].path, node_index);
     }

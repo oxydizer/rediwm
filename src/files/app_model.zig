@@ -201,6 +201,9 @@ pub const ViewItem = struct {
     transfer_stub: bool = false,
     transfer_ghost: bool = false,
     transfer_state: ?@import("ops.zig").TransferEntryState = null,
+    transfer_bytes: ?u64 = null,
+    transfer_total_bytes: ?u64 = null,
+    transfer_progress: ?f64 = null,
     missing: bool = false,
     name: []const u8,
     /// Path from the listed folder, shown instead of `name` in the Git view's

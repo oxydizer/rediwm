@@ -205,6 +205,32 @@ test "executor preserves continuations across yield but rebuilds after waiting" 
     try std.testing.expectEqual(@as(usize, 0), context.continuation_mismatches.load(.monotonic));
 }
 
+test "executor discards a retained yielded continuation when its Job is cancelled" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const operation = try manager.addOperation(job, .copy_file);
+    try manager.queueJob(job);
+
+    var context = TestContext{};
+    var executor = try initExecutor(&context, 1);
+    defer executor.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try waitForOne(&executor);
+    try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
+    try std.testing.expectEqual(io_manager.OperationState.pending, manager.operationState(job, operation).?);
+
+    try manager.cancelJob(job);
+    executor.cancelJob(job);
+
+    try std.testing.expectEqual(io_manager.JobState.cancelled, manager.jobState(job).?);
+    try std.testing.expectEqual(io_manager.OperationState.cancelled, manager.operationState(job, operation).?);
+    try std.testing.expectEqual(@as(usize, 1), context.discard_calls);
+    try std.testing.expectEqual(@as(usize, 2), context.discarded_payloads);
+}
+
 test "executor retains prepared work when the pool applies backpressure" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

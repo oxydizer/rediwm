@@ -75,6 +75,19 @@ pub const Runtime = struct {
     pub fn drainCompletions(self: *Runtime) !usize {
         return self.executor.drainCompletions(self.context.manager);
     }
+
+    pub fn pauseJob(self: *Runtime, job_id: io_manager.JobId) !void {
+        try self.context.manager.pauseJob(job_id);
+    }
+
+    pub fn resumeJob(self: *Runtime, job_id: io_manager.JobId) !void {
+        try self.context.manager.resumeJob(job_id);
+    }
+
+    pub fn cancelJob(self: *Runtime, job_id: io_manager.JobId) !void {
+        try self.context.manager.cancelJob(job_id);
+        self.executor.cancelJob(job_id);
+    }
 };
 
 fn prepare(

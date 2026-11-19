@@ -560,6 +560,79 @@ test "pause prevents dispatch and resume restores eligible work" {
     try std.testing.expect(manager.dispatchNext() != null);
 }
 
+test "pause requested during work takes effect at the next yielded boundary" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const first = try manager.addOperation(job, .copy_file);
+    const second = try manager.addOperation(job, .copy_file);
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try manager.pauseJob(job);
+    try std.testing.expectEqual(io_manager.JobState.running, manager.jobState(job).?);
+    try std.testing.expect(manager.completeWork(token, .yielded));
+    try std.testing.expectEqual(io_manager.JobState.paused, manager.jobState(job).?);
+    try std.testing.expectEqual(io_manager.OperationState.pending, manager.operationState(job, first).?);
+    try std.testing.expect(manager.dispatchNext() == null);
+
+    try manager.resumeJob(job);
+    const resumed = manager.dispatchNext().?;
+    try std.testing.expectEqual(first, resumed.operation_id);
+    try std.testing.expect(manager.completeWork(resumed, .completed));
+    const next = manager.dispatchNext().?;
+    try std.testing.expectEqual(second, next.operation_id);
+}
+
+test "cancel requested during work cancels remaining operations at the next boundary" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const active = try manager.addOperation(job, .copy_file);
+    const pending = try manager.addOperation(job, .copy_file);
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try manager.cancelJob(job);
+    try std.testing.expectEqual(io_manager.JobState.running, manager.jobState(job).?);
+    try std.testing.expectEqual(io_manager.OperationState.cancelled, manager.operationState(job, pending).?);
+    try std.testing.expect(manager.completeWork(token, .yielded));
+    try std.testing.expectEqual(io_manager.JobState.cancelled, manager.jobState(job).?);
+    try std.testing.expectEqual(io_manager.OperationState.cancelled, manager.operationState(job, active).?);
+    try std.testing.expect(manager.dispatchNext() == null);
+}
+
+test "entry operation progress is accepted only for its current yielded generation" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const entry = try manager.addTreeRoot(
+        job,
+        "large.bin",
+        .regular_file,
+        .{ .size = 100_000 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job, entry, .copy_file);
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expect(manager.completeWork(token, .yielded));
+    try std.testing.expect(manager.recordOperationProgress(token, 65_536, 100_000));
+    const view = manager.entryOperationView(job, entry).?;
+    try std.testing.expectEqual(@as(u64, 65_536), view.progress_bytes);
+    try std.testing.expectEqual(@as(u64, 100_000), view.progress_total_bytes);
+
+    const next = manager.dispatchNext().?;
+    try std.testing.expect(!manager.recordOperationProgress(token, 90_000, 100_000));
+    try std.testing.expect(manager.completeWork(next, .completed));
+    const completed = manager.entryOperationView(job, entry).?;
+    try std.testing.expectEqual(@as(u64, 100_000), completed.progress_bytes);
+}
+
 test "snapshots own dependency data and planning closes at queue time" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
