@@ -153,6 +153,7 @@ pub const source =
     \\dock_pinned_apps = [] # desktop entry IDs pinned by dragging them from the start menu
     \\# Taskbar sections, ordered within each section; prefix with - to hide an item.
     \\taskbar_position = "bottom" # top or bottom
+    \\taskbar_auto_hide = false # show the taskbar only when the pointer reaches its edge; false reserves its space
     \\taskbar_alignment = "center" # left, center or right; visible below 100% length
     \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "~right:input_source", "right:volume", "right:clock", "-right:power"]
     \\# A ~ prefix (~right:wifi, ~right:wired) shows the item only while a wireless adapter

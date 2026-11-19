@@ -180,6 +180,7 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `window_tab_apps` | `[]` | app IDs that get tabs |
 | `default_file_manager`, `default_terminal` | `""` | desktop IDs, empty means Files / auto terminal |
 | `taskbar_position` | `"bottom"` | `top` or `bottom` |
+| `taskbar_auto_hide` | `false` | `true` hides the taskbar until the pointer reaches its edge, and frees its strip for windows; `false` reserves it |
 | `dock_position` | `"bottom"` | `top`, `bottom`, `left` or `right`; inside the usable area beside the taskbar |
 | `dock_auto_hide` | `false` | `true` hides the dock until the pointer reaches its edge, and frees its strip for windows; `false` reserves it |
 | `dock_opacity` | unset | 0.0 to 1.0, the dock background's alpha; unset keeps the theme's |

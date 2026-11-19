@@ -122,6 +122,7 @@ pub const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(Composi
     .dock_pinned_apps = .json_string_list,
     .taskbar_items = .taskbar_items,
     .taskbar_position = .enumeration,
+    .taskbar_auto_hide = .boolean,
     .taskbar_alignment = .enumeration,
     .icon_theme = .string,
     .window_tab_apps = .json_string_list,

@@ -185,7 +185,10 @@ fn draggingFiles(input: *const Input) bool {
 pub fn updateDockReveal(input: *Input) void {
     const engaged = input.cursor_mode == .passthrough and (input.active_buttons == 0 or input.dock_drag.active() or draggingFiles(input));
     var it = input.server.outputs.iterator(.forward);
-    while (it.next()) |output| output.dock.pointerAt(input.cursor.x, input.cursor.y, engaged);
+    while (it.next()) |output| {
+        output.dock.pointerAt(input.cursor.x, input.cursor.y, engaged);
+        if (output.taskbar) |bar| bar.pointerAt(input.cursor.x, input.cursor.y, engaged);
+    }
 }
 
 fn updateWidgetProximity(input: *Input) void {

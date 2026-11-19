@@ -353,8 +353,11 @@ pub fn dockAreaBox(output: *Output) wlr.Box {
         break :blk b;
     };
     if (output.taskbar) |bar| {
-        if (output.server.config.compositor.taskbar_position == .top) box.y += bar.reserved;
-        box.height = @max(1, box.height - bar.reserved);
+        // An auto-hiding bar floats over the strip: windows (and the dock) use the whole edge.
+        if (!output.server.config.compositor.taskbar_auto_hide) {
+            if (output.server.config.compositor.taskbar_position == .top) box.y += bar.reserved;
+            box.height = @max(1, box.height - bar.reserved);
+        }
     }
     return box;
 }
