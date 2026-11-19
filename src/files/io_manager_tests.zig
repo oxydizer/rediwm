@@ -1246,3 +1246,58 @@ test "failure propagation handles shared descendants in a diamond graph" {
     try std.testing.expectEqual(io_manager.JobState.failed, manager.jobState(job).?);
     try std.testing.expect(manager.dispatchNext() == null);
 }
+
+test "completing a directory releases all dynamically discovered children" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{},
+        null,
+    );
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    try manager.enableDiscoveredEntryOperations(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    // Keep the parent operation running while discovery registers several
+    // children that all depend on its destination directory.
+    const parent_work = manager.dispatchNext().?;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(parent_work).?.kind,
+    );
+    const discovery_work = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(root, discovery_work.entry_id);
+
+    var batch = try makeDiscoveryBatch(allocator, &.{
+        .{ .name = "one.txt", .kind = .regular_file },
+        .{ .name = "two.txt", .kind = .regular_file },
+        .{ .name = "three.txt", .kind = .regular_file },
+        .{ .name = "four.txt", .kind = .regular_file },
+    }, true);
+    try std.testing.expect(try manager.completeDiscovery(discovery_work, &batch));
+
+    try std.testing.expect(manager.completeWork(parent_work, .completed));
+
+    var completed_children: usize = 0;
+    while (manager.dispatchNext()) |child_work| {
+        try std.testing.expectEqual(
+            io_manager.OperationKind.copy_file,
+            manager.operationDetails(child_work).?.kind,
+        );
+        try std.testing.expect(manager.completeWork(child_work, .completed));
+        completed_children += 1;
+    }
+
+    try std.testing.expectEqual(@as(usize, 4), completed_children);
+    try std.testing.expectEqual(
+        io_manager.JobState.completed,
+        manager.jobState(job).?,
+    );
+}
