@@ -52,7 +52,7 @@ pub const TreeIndex = struct {
     allocator: Allocator,
     entries: std.ArrayList(Entry) = .empty,
     indices: std.AutoHashMapUnmanaged(EntryId, usize) = .empty,
-    root_id: ?EntryId = null,
+    root_ids: std.ArrayList(EntryId) = .empty,
     next_id: EntryId = 1,
 
     pub fn init(allocator: Allocator) TreeIndex {
@@ -63,10 +63,11 @@ pub const TreeIndex = struct {
         for (self.entries.items) |*entry| entry.deinit(self.allocator);
         self.entries.deinit(self.allocator);
         self.indices.deinit(self.allocator);
+        self.root_ids.deinit(self.allocator);
     }
 
-    /// Adds the single root entry. Its name is the root's display name;
-    /// its parent is null.
+    /// Adds a source root. Its name is the root's display name; its parent
+    /// is null. EntryIds are unique across every root in this TreeIndex.
     pub fn addRoot(
         self: *TreeIndex,
         name: []const u8,
@@ -74,7 +75,6 @@ pub const TreeIndex = struct {
         metadata: Metadata,
         symlink_target: ?[]const u8,
     ) !EntryId {
-        if (self.root_id != null) return error.RootAlreadyExists;
         return self.addEntry(null, name, kind, metadata, symlink_target);
     }
 
@@ -104,8 +104,8 @@ pub const TreeIndex = struct {
                 return error.ParentNotDirectory;
             parent_index = index;
             try self.entries.items[index].children.ensureUnusedCapacity(self.allocator, 1);
-        } else if (self.root_id != null or self.entries.items.len != 0) {
-            return error.RootAlreadyExists;
+        } else {
+            try self.root_ids.ensureUnusedCapacity(self.allocator, 1);
         }
 
         const owned_name = try self.allocator.dupe(u8, name);
@@ -134,7 +134,7 @@ pub const TreeIndex = struct {
         if (parent_index) |index_of_parent| {
             self.entries.items[index_of_parent].children.appendAssumeCapacity(id);
         } else {
-            self.root_id = id;
+            self.root_ids.appendAssumeCapacity(id);
         }
         self.next_id += 1;
         return id;
@@ -151,7 +151,31 @@ pub const TreeIndex = struct {
     }
 
     pub fn root(self: *const TreeIndex) ?EntryId {
-        return self.root_id;
+        if (self.root_ids.items.len == 0) return null;
+        return self.root_ids.items[0];
+    }
+
+    /// Returns all selected source roots in insertion order.
+    pub fn roots(self: *const TreeIndex) []const EntryId {
+        return self.root_ids.items;
+    }
+
+    pub fn isRoot(self: *const TreeIndex, entry_id: EntryId) bool {
+        const entry = self.getConst(entry_id) orelse return false;
+        return entry.parent_id == null;
+    }
+
+    /// Returns the selected root that owns an entry.
+    pub fn rootForEntry(self: *const TreeIndex, entry_id: EntryId) ?EntryId {
+        var current_id = entry_id;
+        while (true) {
+            const entry = self.getConst(current_id) orelse return null;
+            if (entry.parent_id) |parent_id| {
+                current_id = parent_id;
+            } else {
+                return current_id;
+            }
+        }
     }
 
     pub fn count(self: *const TreeIndex) usize {
@@ -221,7 +245,7 @@ test "TreeIndex stores literal symlink targets without interpretation" {
     try std.testing.expectEqualStrings("../outside/target", tree.getConst(link_id).?.symlink_target.?);
 }
 
-test "TreeIndex rejects invalid parents, names, and duplicate roots" {
+test "TreeIndex rejects invalid parents and names while supporting multiple roots" {
     const allocator = std.testing.allocator;
     var tree = TreeIndex.init(allocator);
     defer tree.deinit();
@@ -232,7 +256,13 @@ test "TreeIndex rejects invalid parents, names, and duplicate roots" {
     try std.testing.expectError(error.InvalidName, tree.addEntry(root_id, "../escape", .regular_file, .{}, null));
     try std.testing.expectError(error.InvalidName, tree.addEntry(root_id, "bad/name", .regular_file, .{}, null));
     try std.testing.expectError(error.InvalidSymlinkTarget, tree.addEntry(root_id, "link", .symlink, .{}, null));
-    try std.testing.expectError(error.RootAlreadyExists, tree.addRoot("another", .directory, .{}, null));
+    const second_root = try tree.addRoot("another", .directory, .{}, null);
+    try std.testing.expectEqual(@as(usize, 2), tree.roots().len);
+    try std.testing.expectEqual(root_id, tree.root().?);
+    try std.testing.expectEqual(root_id, tree.rootForEntry(file_id).?);
+    try std.testing.expectEqual(second_root, tree.rootForEntry(second_root).?);
+    try std.testing.expect(tree.isRoot(second_root));
+    try std.testing.expect(!tree.isRoot(file_id));
     try std.testing.expectError(error.UnknownParent, tree.addEntry(999, "orphan", .regular_file, .{}, null));
     const nul_name = [_]u8{ 'b', 0, 'a' };
     try std.testing.expectError(error.InvalidName, tree.addEntry(root_id, &nul_name, .regular_file, .{}, null));

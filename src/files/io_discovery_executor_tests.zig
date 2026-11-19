@@ -192,3 +192,84 @@ test "discovery executor resumes deprioritized cursors without rescanning" {
         try std.testing.expectEqual(@as(usize, 1), directory.children.items.len);
     }
 }
+
+test "discovery executor uses independent anchors for multiple roots in one Job" {
+    const allocator = std.testing.allocator;
+    var first_buffer: [256]u8 = undefined;
+    var second_buffer: [256]u8 = undefined;
+    const first_path = try makeTempDir(&first_buffer);
+    const second_path = try makeTempDir(&second_buffer);
+
+    const first_file = try join(allocator, first_path, "first.txt");
+    defer allocator.free(first_file);
+    const second_file = try join(allocator, second_path, "second.txt");
+    defer allocator.free(second_file);
+    defer {
+        _ = c.unlink(first_file);
+        _ = c.unlink(second_file);
+        _ = c.rmdir(first_path);
+        _ = c.rmdir(second_path);
+    }
+
+    try createFile(first_file);
+    try createFile(second_file);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const first_root = try manager.addTreeRoot(
+        job,
+        "first",
+        .directory,
+        .{},
+        null,
+    );
+    const second_root = try manager.addTreeRoot(
+        job,
+        "second",
+        .directory,
+        .{},
+        null,
+    );
+    try manager.startRootDiscovery(job, first_root, first_path);
+    try manager.startRootDiscovery(job, second_root, second_path);
+
+    var executor = try io_discovery_executor.Executor.init(
+        allocator,
+        1,
+        1,
+        1,
+    );
+    defer executor.deinit();
+
+    var iterations: usize = 0;
+    while (manager.discoveryComplete(job) != true) : (iterations += 1) {
+        if (iterations == 20) return error.DiscoveryDidNotComplete;
+        _ = try executor.dispatchReady(&manager);
+        try waitForWake(&executor);
+        _ = try executor.drainCompletions(&manager);
+    }
+
+    const tree = manager.treeIndex(job).?;
+    try std.testing.expectEqual(@as(usize, 4), tree.count());
+    try std.testing.expectEqual(@as(usize, 1), tree.getConst(first_root).?.children.items.len);
+    try std.testing.expectEqual(@as(usize, 1), tree.getConst(second_root).?.children.items.len);
+
+    const first_child = tree.getConst(first_root).?.children.items[0];
+    const second_child = tree.getConst(second_root).?.children.items[0];
+    try std.testing.expectEqualStrings(
+        "first.txt",
+        tree.getConst(first_child).?.name,
+    );
+    try std.testing.expectEqualStrings(
+        "second.txt",
+        tree.getConst(second_child).?.name,
+    );
+
+    const first_source = try manager.sourcePath(allocator, job, first_child);
+    defer allocator.free(first_source);
+    const second_source = try manager.sourcePath(allocator, job, second_child);
+    defer allocator.free(second_source);
+    try std.testing.expectEqualStrings(first_file, first_source);
+    try std.testing.expectEqualStrings(second_file, second_source);
+}
