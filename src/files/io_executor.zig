@@ -244,6 +244,7 @@ pub const Executor = struct {
                         self.callback_context.callbacks.complete(
                             self.callback_context.user_context,
                             completion.token,
+                        completion.operation_kind,
                             .failed,
                             null,
                         );
@@ -306,6 +307,7 @@ pub const Executor = struct {
             self.callback_context.callbacks.complete(
                 self.callback_context.user_context,
                 completion.token,
+                completion.operation_kind,
                 completion.outcome,
                 result,
             );
@@ -343,6 +345,7 @@ pub const Executor = struct {
                         self.callback_context.callbacks.complete(
                             self.callback_context.user_context,
                             token,
+                            null,
                             .failed,
                             null,
                         );
@@ -367,6 +370,7 @@ pub const Executor = struct {
                             self.callback_context.callbacks.complete(
                                 self.callback_context.user_context,
                                 token,
+                                null,
                                 .failed,
                                 null,
                             );
@@ -476,6 +480,7 @@ pub const Callbacks = struct {
     complete: *const fn (
         context: ?*anyopaque,
         token: WorkToken,
+        operation_kind: ?OperationKind,
         outcome: WorkResult,
         result: ?OwnedPayload,
     ) void,

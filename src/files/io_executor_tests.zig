@@ -14,6 +14,7 @@ const TestContext = struct {
     discard_calls: usize = 0,
     discarded_payloads: usize = 0,
     last_token: ?io_manager.WorkToken = null,
+    last_completed_kind: ?io_manager.OperationKind = null,
     executions: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     input_mismatches: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     continuation_mismatches: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
@@ -98,11 +99,13 @@ fn executeWork(
 fn completeWork(
     raw_context: ?*anyopaque,
     _: io_manager.WorkToken,
+    operation_kind: ?io_manager.OperationKind,
     _: io_manager.WorkResult,
     result: ?io_executor.OwnedPayload,
 ) void {
     const context: *TestContext = @ptrCast(@alignCast(raw_context.?));
     context.completed += 1;
+    context.last_completed_kind = operation_kind;
     if (result) |owned_result| {
         var value = owned_result;
         value.deinit();
@@ -201,6 +204,7 @@ test "executor preserves continuations across yield but rebuilds after waiting" 
     try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(job, operation).?);
     try std.testing.expectEqual(@as(usize, 2), context.prepared);
     try std.testing.expectEqual(@as(usize, 3), context.completed);
+    try std.testing.expectEqual(io_manager.OperationKind.copy_file, context.last_completed_kind.?);
     try std.testing.expectEqual(@as(usize, 0), context.input_mismatches.load(.monotonic));
     try std.testing.expectEqual(@as(usize, 0), context.continuation_mismatches.load(.monotonic));
 }
