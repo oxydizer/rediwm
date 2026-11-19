@@ -8,6 +8,9 @@ const c = @import("c.zig").api;
 const executor = @import("io_executor.zig");
 
 pub const chunk_size: usize = 64 * 1024;
+const small_buffer_size: usize = 16 * 1024;
+const large_buffer_size: usize = 256 * 1024;
+const max_buffer_size: usize = 1024 * 1024;
 const clone_ioctl: c_ulong = 0x40049409;
 
 const Strategy = enum(u8) {
@@ -25,6 +28,19 @@ const Continuation = struct {
 };
 
 const continuation_size = 26;
+
+pub fn bufferedBufferSize(file_size: u64) usize {
+    if (file_size == 0) return 0;
+    const target: usize = if (file_size <= 64 * 1024)
+        small_buffer_size
+    else if (file_size <= 1024 * 1024)
+        chunk_size
+    else if (file_size <= 64 * 1024 * 1024)
+        large_buffer_size
+    else
+        max_buffer_size;
+    return @intCast(@min(file_size, target));
+}
 
 /// Build the immutable operation input.
 pub fn makeInput(
@@ -84,8 +100,7 @@ fn readUnsigned(comptime T: type, input: []const u8) T {
     return value;
 }
 
-fn encodeContinuation(allocator: Allocator, state: Continuation) !executor.OwnedPayload {
-    const bytes = try allocator.alloc(u8, continuation_size);
+fn writeContinuationHeader(bytes: []u8, state: Continuation) void {
     writeUnsigned(u32, bytes[0..4], @bitCast(state.source_fd));
     writeUnsigned(u32, bytes[4..8], @bitCast(state.destination_fd));
     writeUnsigned(u64, bytes[8..16], state.offset);
@@ -95,12 +110,21 @@ fn encodeContinuation(allocator: Allocator, state: Continuation) !executor.Owned
         .buffered => 1,
     };
     bytes[25] = @intFromBool(state.destination_created);
+}
+
+fn encodeContinuation(
+    allocator: Allocator,
+    state: Continuation,
+    buffer_size: usize,
+) !executor.OwnedPayload {
+    const bytes = try allocator.alloc(u8, continuation_size + buffer_size);
+    writeContinuationHeader(bytes, state);
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
 fn decodeContinuation(payload: *const executor.OwnedPayload) !Continuation {
     const bytes = payload.slice();
-    if (bytes.len != continuation_size) return error.InvalidContinuation;
+    if (bytes.len < continuation_size) return error.InvalidContinuation;
     const strategy: Strategy = switch (bytes[24]) {
         0 => .copy_file_range,
         1 => .buffered,
@@ -111,6 +135,13 @@ fn decodeContinuation(payload: *const executor.OwnedPayload) !Continuation {
     const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[4..8]));
     const offset = readUnsigned(u64, bytes[8..16]);
     const size = readUnsigned(u64, bytes[16..24]);
+    const expected_buffer_size: usize = if (strategy == .buffered)
+        bufferedBufferSize(size)
+    else
+        0;
+    if (bytes.len != continuation_size + expected_buffer_size) {
+        return error.InvalidContinuation;
+    }
     if (source_fd < 0 or destination_fd < 0 or offset > size or bytes[25] != 1) {
         return error.InvalidContinuation;
     }
@@ -189,6 +220,17 @@ fn failed(
     return completion(item, .failed, null, null);
 }
 
+fn failedWithScratch(
+    item: executor.WorkItem,
+    state: ?Continuation,
+    destination: [*:0]const u8,
+    scratch: *?executor.OwnedPayload,
+) executor.WorkCompletion {
+    if (scratch.*) |*payload| payload.deinit();
+    scratch.* = null;
+    return failed(item, state, destination);
+}
+
 /// Execute exactly one bounded transfer unit.
 ///
 /// A successful reflink completes in one unit. Otherwise each invocation
@@ -202,6 +244,7 @@ pub fn execute(
         return completion(item, .failed, null, null);
     };
 
+    var scratch_payload: ?executor.OwnedPayload = null;
     var state: Continuation = undefined;
     var has_state = false;
 
@@ -211,9 +254,13 @@ pub fn execute(
             item.continuation = null;
             return completion(item, .failed, null, null);
         };
-        // The decoded descriptor state now owns the resources. The previous
-        // serialized continuation is no longer needed.
-        saved.deinit();
+        // Buffered continuations carry their reusable scratch allocation.
+        // Transfer it with the descriptor state across worker dispatches.
+        if (state.strategy == .buffered) {
+            scratch_payload = saved.take();
+        } else {
+            saved.deinit();
+        }
         item.continuation = null;
         has_state = true;
     } else {
