@@ -1623,7 +1623,7 @@ pub const Manager = struct {
         return true;
     }
 
-    /// Records a yielded copy's exact byte offset on the main thread.
+    /// Records a copy's exact byte offset on the main thread.
     pub fn recordOperationProgress(
         self: *Manager,
         token: WorkToken,
@@ -1632,7 +1632,7 @@ pub const Manager = struct {
     ) bool {
         const job = self.findJob(token.job_id) orelse return false;
         const operation = findOperation(job, token.operation_id) orelse return false;
-        if (operation.state != .pending or
+        if ((operation.state != .pending and operation.state != .completed) or
             operation.generation != token.generation or
             bytes > total_bytes)
         {

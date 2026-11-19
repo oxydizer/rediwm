@@ -271,14 +271,12 @@ pub const Executor = struct {
                     completion.token.job_id,
                     completion.token.operation_id,
                 ) == .pending;
-            if (retain_payloads) {
-                if (completion.progress) |progress| {
-                    _ = manager.recordOperationProgress(
-                        completion.token,
-                        progress.bytes,
-                        progress.total_bytes,
-                    );
-                }
+            if (completion.progress) |progress| {
+                _ = manager.recordOperationProgress(
+                    completion.token,
+                    progress.bytes,
+                    progress.total_bytes,
+                );
             }
 
             const result = takeOptional(&completion.result);
