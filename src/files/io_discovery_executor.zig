@@ -262,7 +262,8 @@ pub const Executor = struct {
         const path_z = try self.allocator.dupeSentinel(u8, path, 0);
         defer self.allocator.free(path_z);
 
-        const anchor = try io_discovery.Anchor.open(path_z);
+        const anchor = io_discovery.Anchor.open(path_z) catch
+            return null;
         self.anchors.putAssumeCapacity(key, anchor);
         return self.anchors.getPtr(key).?;
     }
