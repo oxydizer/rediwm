@@ -250,6 +250,42 @@ pub fn startOperations(self: *App) !void {
     );
 }
 
+/// Removes only successfully moved roots from the matching cut clipboard.
+/// Skipped and failed roots remain available for a later paste.
+fn updateMovedClipboard(
+    self: *App,
+    manager: *io_manager.Manager,
+    job_id: io_manager.JobId,
+) void {
+    if (!self.clipboard_cut or self.clipboard_is_text or
+        self.job_cut_revision != self.clipboard_revision)
+    {
+        return;
+    }
+
+    const tree = manager.treeIndex(job_id) orelse return;
+    var changed = false;
+    for (tree.roots()) |root_id| {
+        const operation = manager.entryOperationView(job_id, root_id) orelse continue;
+        if (operation.state != .completed) continue;
+
+        const source = manager.sourcePath(self.allocator, job_id, root_id) catch continue;
+        defer self.allocator.free(source);
+        var index: usize = 0;
+        while (index < self.clipboard_paths.items.len) {
+            if (std.mem.eql(u8, self.clipboard_paths.items[index], source)) {
+                self.allocator.free(self.clipboard_paths.orderedRemove(index));
+                changed = true;
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    if (self.clipboard_paths.items.len == 0) self.clipboard_cut = false;
+    if (changed) self.clipboard_revision += 1;
+}
+
 /// Drains completed operations and submits newly ready work on the main thread.
 pub fn stepOperations(self: *App) void {
     const executor = if (self.operation_executor) |*value| value else return;
@@ -284,34 +320,42 @@ pub fn stepOperations(self: *App) void {
             if (state.isTerminal()) {
                 const destination = self.active_io_copy_destination;
                 const is_directory = self.active_io_copy_is_directory;
+                const is_move = self.active_io_copy_is_move;
                 const multiple_items = self.active_io_copy_item_count > 1;
+                if (is_move) updateMovedClipboard(self, manager, job_id);
                 self.active_io_copy_destination = null;
                 self.active_io_copy_job = null;
                 self.active_io_copy_is_directory = false;
+                self.active_io_copy_is_move = false;
                 self.active_io_copy_item_count = 0;
+                self.job_cut_revision = null;
 
                 switch (state) {
                     .completed => {
                         if (manager.jobHasSkippedOperations(job_id)) {
                             self.setStatusNotice(
-                                if (multiple_items) "Some items skipped" else if (is_directory) "Folder copy skipped" else "File copy skipped",
+                                if (multiple_items) "Some items skipped" else if (is_move) "File move skipped" else if (is_directory) "Folder copy skipped" else "File copy skipped",
                                 false,
                             );
                         } else {
                             self.setStatusNotice(
-                                if (multiple_items) "Items copied" else if (is_directory) "Folder copied" else "File copied",
+                                if (multiple_items) (if (is_move) "Items moved" else "Items copied") else if (is_move) "File moved" else if (is_directory) "Folder copied" else "File copied",
                                 false,
                             );
                         }
                     },
                     .completed_with_errors, .failed => self.setStatusNotice(if (multiple_items)
-                        "Could not copy all items"
+                        (if (is_move) "Could not move all items" else "Could not copy all items")
+                    else if (is_move)
+                        "File move failed"
                     else if (is_directory)
                         "Folder copy failed"
                     else
                         "File copy failed", true),
                     .cancelled => self.setStatusNotice(if (multiple_items)
-                        "Items copy cancelled"
+                        (if (is_move) "Items move cancelled" else "Items copy cancelled")
+                    else if (is_move)
+                        "File move cancelled"
                     else if (is_directory)
                         "Folder copy cancelled"
                     else
@@ -320,10 +364,32 @@ pub fn stepOperations(self: *App) void {
                 }
 
                 if (destination) |path| {
-                    const refresh_destination =
+                    var refresh_listing =
                         std.mem.eql(u8, self.history.current, path);
+
+                    if (is_move and !refresh_listing) {
+                        if (manager.treeIndex(job_id)) |tree| {
+                            for (tree.roots()) |root_id| {
+                                const source_path = manager.sourcePath(
+                                    self.allocator,
+                                    job_id,
+                                    root_id,
+                                ) catch continue;
+                                const source_parent =
+                                    std.fs.path.dirname(source_path) orelse "";
+                                const source_is_current =
+                                    std.mem.eql(u8, self.history.current, source_parent);
+                                self.allocator.free(source_path);
+                                if (source_is_current) {
+                                    refresh_listing = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     self.allocator.free(path);
-                    if (refresh_destination) self.refresh();
+                    if (refresh_listing) self.refresh();
                 }
             }
         }

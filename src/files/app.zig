@@ -289,6 +289,7 @@ pub const App = struct {
     active_io_copy_job: ?io_manager_mod.JobId = null,
     active_io_copy_destination: ?[]u8 = null,
     active_io_copy_is_directory: bool = false,
+    active_io_copy_is_move: bool = false,
     active_io_copy_item_count: usize = 0,
     job_was_running: bool = false,
     archive_preview: bool = false,
