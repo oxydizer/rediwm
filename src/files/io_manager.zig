@@ -58,6 +58,12 @@ pub const DiscoveryToken = struct {
     generation: u64,
 };
 
+/// One selected directory root to schedule as part of an atomic Job commit.
+pub const DiscoveryRoot = struct {
+    root_id: io_tree.EntryId,
+    path: []const u8,
+};
+
 pub const DiscoveryPriority = enum {
     foreground,
     promoted,
@@ -476,7 +482,7 @@ pub const Manager = struct {
         if (owned_path != null)
             try job.source_root_paths.ensureUnusedCapacity(self.allocator, 1);
         try job.discovery_schedule.ensureUnusedCapacity(self.allocator, 1);
-        const queue = &self.discovery_queues[@intFromEnum(DiscoveryPriority.background)];
+        const queue = &self.discovery_queues[@backingInt(DiscoveryPriority.background)];
         try queue.items.ensureUnusedCapacity(self.allocator, 1);
 
         if (owned_path) |path|
@@ -614,7 +620,7 @@ pub const Manager = struct {
         self: *Manager,
         priority: DiscoveryPriority,
     ) ?DiscoveryToken {
-        const queue = &self.discovery_queues[@intFromEnum(priority)];
+        const queue = &self.discovery_queues[@backingInt(priority)];
         var index = queue.head;
 
         while (index < queue.items.items.len) {
@@ -723,7 +729,7 @@ pub const Manager = struct {
         entry_id: io_tree.EntryId,
         priority: DiscoveryPriority,
     ) !void {
-        const queue = &self.discovery_queues[@intFromEnum(priority)];
+        const queue = &self.discovery_queues[@backingInt(priority)];
         try queue.items.ensureUnusedCapacity(self.allocator, 1);
         try job.discovery_schedule.ensureUnusedCapacity(self.allocator, 1);
 
@@ -804,7 +810,7 @@ pub const Manager = struct {
                     return error.DiscoveryScheduleExhausted;
             }
             if (job.tree.get(directory_id).?.discovery == .queued)
-                queue_counts[@intFromEnum(priority)] += 1;
+                queue_counts[@backingInt(priority)] += 1;
         }
 
         try job.discovery_schedule.ensureUnusedCapacity(
@@ -827,7 +833,7 @@ pub const Manager = struct {
                 .version = version,
             });
             if (job.tree.get(directory_id).?.discovery == .queued) {
-                self.discovery_queues[@intFromEnum(priority)].items.appendAssumeCapacity(.{
+                self.discovery_queues[@backingInt(priority)].items.appendAssumeCapacity(.{
                     .job_id = job_id,
                     .entry_id = directory_id,
                     .version = version,
@@ -887,14 +893,14 @@ pub const Manager = struct {
         const child_priority: DiscoveryPriority =
             if (parent_priority.priority == .background) .background else .promoted;
         try job.discovery_schedule.ensureUnusedCapacity(self.allocator, @intCast(new_directories));
-        try self.discovery_queues[@intFromEnum(child_priority)].items.ensureUnusedCapacity(
+        try self.discovery_queues[@backingInt(child_priority)].items.ensureUnusedCapacity(
             self.allocator,
             new_directories,
         );
         if (!batch.complete) {
             if (parent_priority.version == std.math.maxInt(u64))
                 return error.DiscoveryScheduleExhausted;
-            try self.discovery_queues[@intFromEnum(parent_priority.priority)].items.ensureUnusedCapacity(
+            try self.discovery_queues[@backingInt(parent_priority.priority)].items.ensureUnusedCapacity(
                 self.allocator,
                 1,
             );
@@ -938,7 +944,7 @@ pub const Manager = struct {
                     .priority = child_priority,
                     .version = 1,
                 });
-                self.discovery_queues[@intFromEnum(child_priority)].items.appendAssumeCapacity(.{
+                self.discovery_queues[@backingInt(child_priority)].items.appendAssumeCapacity(.{
                     .job_id = job.id,
                     .entry_id = child_id,
                     .version = 1,
@@ -962,7 +968,7 @@ pub const Manager = struct {
                 .priority = parent_priority.priority,
                 .version = version,
             });
-            self.discovery_queues[@intFromEnum(parent_priority.priority)].items.appendAssumeCapacity(.{
+            self.discovery_queues[@backingInt(parent_priority.priority)].items.appendAssumeCapacity(.{
                 .job_id = job.id,
                 .entry_id = token.entry_id,
                 .version = version,
@@ -1088,7 +1094,7 @@ pub const Manager = struct {
         job.operation_indices.putAssumeCapacity(id, index);
         self.next_operation_id += 1;
         if (job.state != .planning) {
-            job.operation_state_counts[@intFromEnum(OperationState.pending)] += 1;
+            job.operation_state_counts[@backingInt(OperationState.pending)] += 1;
             enqueueReady(job, index);
             self.recomputeJobState(job);
         }
@@ -1210,6 +1216,105 @@ pub const Manager = struct {
     pub fn queueJob(self: *Manager, job_id: JobId) !void {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state != .planning) return error.InvalidJobState;
+        try self.prepareJobQueue(job);
+        self.commitJobQueue(job);
+    }
+
+    /// Atomically schedules all selected directory roots and commits their
+    /// Job to the operation queue. No discovery state is changed until every
+    /// path, root, allocation, and dependency graph has been validated.
+    pub fn queueJobWithDiscoveryRoots(
+        self: *Manager,
+        job_id: JobId,
+        roots: []const DiscoveryRoot,
+    ) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (job.discovery_started) return error.DiscoveryAlreadyStarted;
+        if (roots.len == 0) return error.MissingDiscoveryRoots;
+        if (roots.len > std.math.maxInt(u32))
+            return error.DiscoveryCountExhausted;
+        if (roots.len > std.math.maxInt(usize) - job.discovery_pending_count)
+            return error.DiscoveryCountExhausted;
+
+        // Validate the complete batch before allocating or mutating Manager
+        // state. A duplicate root would otherwise schedule the same cursor
+        // more than once.
+        for (roots, 0..) |root_spec, index| {
+            if (root_spec.path.len == 0 or
+                !std.fs.path.isAbsolute(root_spec.path) or
+                std.mem.indexOfScalar(u8, root_spec.path, 0) != null)
+            {
+                return error.InvalidRootPath;
+            }
+            if (!job.tree.isRoot(root_spec.root_id)) return error.EntryNotRoot;
+            const root = job.tree.get(root_spec.root_id) orelse
+                return error.UnknownEntry;
+            if (root.kind != .directory) return error.RootNotDirectory;
+            if (root.discovery != .unscanned)
+                return error.DiscoveryAlreadyStarted;
+            if (job.source_root_paths.contains(root_spec.root_id))
+                return error.SourceRootPathAlreadySet;
+
+            for (roots[0..index]) |previous| {
+                if (previous.root_id == root_spec.root_id)
+                    return error.DuplicateDiscoveryRoot;
+            }
+        }
+
+        // Stage owned source paths. On any allocation failure, only these
+        // temporary allocations are released; the Job remains uncommitted.
+        const staged_paths = try self.allocator.alloc([]u8, roots.len);
+        var staged_count: usize = 0;
+        errdefer {
+            for (staged_paths[0..staged_count]) |path|
+                self.allocator.free(path);
+            self.allocator.free(staged_paths);
+        }
+        for (roots) |root_spec| {
+            staged_paths[staged_count] = try self.allocator.dupe(u8, root_spec.path);
+            staged_count += 1;
+        }
+
+        // Reserve every container used by the discovery commit.
+        const root_capacity: u32 = @intCast(roots.len);
+        try job.source_root_paths.ensureUnusedCapacity(self.allocator, root_capacity);
+        try job.discovery_schedule.ensureUnusedCapacity(self.allocator, root_capacity);
+        const background_queue =
+            &self.discovery_queues[@backingInt(DiscoveryPriority.background)];
+        try background_queue.items.ensureUnusedCapacity(self.allocator, roots.len);
+
+        // Queue preparation can fail, but it does not change Job state.
+        // Its graph allocations are owned by the still-planning Job and are
+        // released by discardPlanningJob() if the caller abandons the plan.
+        try self.prepareJobQueue(job);
+
+        // Commit: all following operations are allocation-free.
+        for (roots, 0..) |root_spec, index| {
+            job.source_root_paths.putAssumeCapacity(
+                root_spec.root_id,
+                staged_paths[index],
+            );
+            job.discovery_schedule.putAssumeCapacity(root_spec.root_id, .{
+                .priority = .background,
+                .version = 1,
+            });
+            background_queue.items.appendAssumeCapacity(.{
+                .job_id = job_id,
+                .entry_id = root_spec.root_id,
+                .version = 1,
+            });
+            job.tree.get(root_spec.root_id).?.discovery = .queued;
+        }
+        job.discovery_pending_count += roots.len;
+        job.discovery_started = true;
+        self.commitJobQueue(job);
+
+        // Ownership of every staged path moved into source_root_paths.
+        self.allocator.free(staged_paths);
+    }
+
+    fn prepareJobQueue(self: *Manager, job: *Job) !void {
         try buildDependencyGraph(self.allocator, job);
         try validateAcyclic(self.allocator, job);
 
@@ -1219,15 +1324,21 @@ pub const Manager = struct {
             dependency_count += operation.dependency_indices.items.len;
         }
         try job.ready_queue.ensureTotalCapacity(self.allocator, operation_count);
-        try job.dependency_work_queue.ensureTotalCapacity(self.allocator, dependency_count);
+        try job.dependency_work_queue.ensureTotalCapacity(
+            self.allocator,
+            dependency_count,
+        );
+    }
+
+    fn commitJobQueue(_: *Manager, job: *Job) void {
         job.ready_queue.clearRetainingCapacity();
         job.dependency_work_queue.clearRetainingCapacity();
         job.ready_head = 0;
         job.ready_count = 0;
-    job.operation_state_counts = .{ 0, 0, 0, 0, 0, 0, 0 };
+        job.operation_state_counts = .{ 0, 0, 0, 0, 0, 0, 0 };
 
         for (job.operations.items, 0..) |operation, index| {
-            job.operation_state_counts[@intFromEnum(operation.state)] += 1;
+            job.operation_state_counts[@backingInt(operation.state)] += 1;
             if (operation.unresolved_dependencies == 0) {
                 enqueueReady(job, index);
             }
@@ -1245,7 +1356,7 @@ pub const Manager = struct {
         {
             return error.InvalidJobState;
         }
-        if (job.operation_state_counts[@intFromEnum(OperationState.running)] != 0) {
+        if (job.operation_state_counts[@backingInt(OperationState.running)] != 0) {
             job.pause_requested = true;
             return;
         }
@@ -1408,7 +1519,7 @@ pub const Manager = struct {
         if (job.state == .planning or job.state.isTerminal())
             return error.InvalidJobState;
         const has_running =
-            job.operation_state_counts[@intFromEnum(OperationState.running)] != 0;
+            job.operation_state_counts[@backingInt(OperationState.running)] != 0;
         job.cancel_requested = has_running;
         job.pause_requested = false;
         self.cancelOutstanding(job, has_running);
@@ -1531,7 +1642,7 @@ pub const Manager = struct {
                 const index = (self.round_robin_cursor + offset) % count;
                 const job = &self.jobs.items[index];
                 if (job.state != .queued and job.state != .running) continue;
-                if (job.operation_state_counts[@intFromEnum(OperationState.running)] != 0)
+                if (job.operation_state_counts[@backingInt(OperationState.running)] != 0)
                     continue;
 
                 while (dequeueReadyPriority(job, priority)) |operation_index| {
@@ -1752,23 +1863,22 @@ pub const Manager = struct {
         _ = self;
         if (job.state == .paused or job.state == .planning) return;
         const counts = job.operation_state_counts;
-        if (counts[@intFromEnum(OperationState.running)] != 0) {
+        if (counts[@backingInt(OperationState.running)] != 0) {
             job.state = .running;
         } else if (job.ready_count != 0) {
             job.state = .queued;
-        } else if (
-            counts[@intFromEnum(OperationState.waiting)] != 0 or
-            counts[@intFromEnum(OperationState.pending)] != 0
-        ) {
+        } else if (counts[@backingInt(OperationState.waiting)] != 0 or
+            counts[@backingInt(OperationState.pending)] != 0)
+        {
             job.state = if (hasDiscoveryWork(job)) .queued else .waiting;
         } else if (hasDiscoveryWork(job)) {
             job.state = .queued;
-        } else if (counts[@intFromEnum(OperationState.failed)] != 0) {
-            job.state = if (counts[@intFromEnum(OperationState.completed)] != 0)
+        } else if (counts[@backingInt(OperationState.failed)] != 0) {
+            job.state = if (counts[@backingInt(OperationState.completed)] != 0)
                 .completed_with_errors
             else
                 .failed;
-        } else if (counts[@intFromEnum(OperationState.cancelled)] != 0) {
+        } else if (counts[@backingInt(OperationState.cancelled)] != 0) {
             job.state = .cancelled;
         } else {
             job.state = .completed;
@@ -1803,8 +1913,8 @@ pub const Manager = struct {
 
 fn transitionOperation(job: *Job, operation: *Operation, next_state: OperationState) void {
     if (operation.state == next_state) return;
-    job.operation_state_counts[@intFromEnum(operation.state)] -= 1;
-    job.operation_state_counts[@intFromEnum(next_state)] += 1;
+    job.operation_state_counts[@backingInt(operation.state)] -= 1;
+    job.operation_state_counts[@backingInt(next_state)] += 1;
     operation.state = next_state;
 }
 
@@ -2053,4 +2163,51 @@ test "accepted copy metrics accumulate and appear in operation snapshots" {
         metrics.copy_file_range_bytes,
         snapshot.operations[0].copy_metrics.copy_file_range_bytes,
     );
+}
+
+test "multi-root discovery queue commit leaves no partial scheduling on validation failure" {
+    var manager = Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job_id = try manager.createJob(null);
+    const first_root = try manager.addTreeRoot(
+        job_id,
+        "first",
+        .directory,
+        .{},
+        null,
+    );
+    const second_root = try manager.addTreeRoot(
+        job_id,
+        "second",
+        .directory,
+        .{},
+        null,
+    );
+    try manager.setDestinationDirectory(job_id, "/tmp/destination");
+    try manager.enableDiscoveredEntryOperations(job_id);
+    _ = try manager.addEntryOperation(job_id, first_root, .create_directory);
+    _ = try manager.addEntryOperation(job_id, second_root, .create_directory);
+
+    const roots = [_]DiscoveryRoot{
+        .{ .root_id = first_root, .path = "/tmp/first" },
+        .{ .root_id = second_root, .path = "relative/second" },
+    };
+    try std.testing.expectError(
+        error.InvalidRootPath,
+        manager.queueJobWithDiscoveryRoots(job_id, &roots),
+    );
+
+    try std.testing.expectEqual(JobState.planning, manager.jobState(job_id).?);
+    try std.testing.expectEqual(
+        io_tree.DiscoveryState.unscanned,
+        manager.treeIndex(job_id).?.getConst(first_root).?.discovery,
+    );
+    try std.testing.expectEqual(
+        io_tree.DiscoveryState.unscanned,
+        manager.treeIndex(job_id).?.getConst(second_root).?.discovery,
+    );
+    try std.testing.expectEqual(@as(?[]const u8, null), manager.discoveryRootPath(job_id, first_root));
+    try std.testing.expectEqual(@as(?bool, null), manager.discoveryComplete(job_id));
+    try std.testing.expect(manager.discardPlanningJob(job_id));
 }

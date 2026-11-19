@@ -182,28 +182,44 @@ fn startManagerFileCopy(
     return true;
 }
 
-/// Starts one selected directory through incremental Manager discovery and
-/// operation execution. Other transfer shapes remain on JobRunner.
-fn startManagerSingleDirectoryCopy(
+/// Starts selected directory roots through one incremental Manager Job.
+/// Mixed directory/file selections remain on JobRunner for now.
+fn startManagerDirectoryCopy(
     self: *App,
     paths: []const []const u8,
     directory: []const u8,
 ) !bool {
-    if (paths.len != 1 or self.active_io_copy_job != null) return false;
+    if (paths.len == 0 or self.active_io_copy_job != null) return false;
 
-    const source = paths[0];
-    const name = std.fs.path.basename(source);
-    if (name.len == 0) return false;
+    const RootPlan = struct {
+        source: []const u8,
+        name: []const u8,
+        metadata: io_tree.Metadata,
+    };
+    var plans: std.ArrayList(RootPlan) = .empty;
+    defer plans.deinit(self.allocator);
 
-    const source_z = try self.allocator.dupeSentinel(u8, source, 0);
-    defer self.allocator.free(source_z);
-    var source_stat: c.struct_stat = undefined;
-    if (c.lstat(source_z, &source_stat) != 0) return false;
-    if ((source_stat.st_mode & c.S_IFMT) != c.S_IFDIR) return false;
+    for (paths) |source| {
+        if (!std.fs.path.isAbsolute(source)) return false;
+        const name = std.fs.path.basename(source);
+        if (name.len == 0) return false;
 
-    // Copying a directory into itself or one of its descendants would make
-    // discovery chase the destination being created.
-    if (ops_mod.isDescendantOrSame(source, directory)) return false;
+        const source_z = try self.allocator.dupeSentinel(u8, source, 0);
+        defer self.allocator.free(source_z);
+        var source_stat: c.struct_stat = undefined;
+        if (c.lstat(source_z, &source_stat) != 0) return false;
+        if ((source_stat.st_mode & c.S_IFMT) != c.S_IFDIR) return false;
+
+        // Copying a directory into itself or one of its descendants would
+        // make discovery chase the destination being created.
+        if (ops_mod.isDescendantOrSame(source, directory)) return false;
+
+        try plans.append(self.allocator, .{
+            .source = source,
+            .name = name,
+            .metadata = .{ .mode = @intCast(source_stat.st_mode) },
+        });
+    }
 
     try self.startOperations();
     const manager = if (self.io_manager) |*value| value else return error.OperationManagerUnavailable;
@@ -213,26 +229,37 @@ fn startManagerSingleDirectoryCopy(
     const job_id = try manager.createJob(null);
     errdefer _ = manager.discardPlanningJob(job_id);
 
-    const root_id = try manager.addTreeRoot(
-        job_id,
-        name,
-        .directory,
-        .{
-            .mode = @intCast(source_stat.st_mode),
-        },
-        null,
-    );
+    var discovery_roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
+    defer discovery_roots.deinit(self.allocator);
+
+    for (plans.items) |plan| {
+        const root_id = try manager.addTreeRoot(
+            job_id,
+            plan.name,
+            .directory,
+            plan.metadata,
+            null,
+        );
+        try discovery_roots.append(self.allocator, .{
+            .root_id = root_id,
+            .path = plan.source,
+        });
+    }
     try manager.setDestinationDirectory(job_id, directory);
     try manager.enableDiscoveredEntryOperations(job_id);
-    _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
-    try self.startDiscovery(job_id, source);
-    try manager.queueJob(job_id);
+    for (discovery_roots.items) |root| {
+        _ = try manager.addEntryOperation(job_id, root.root_id, .create_directory);
+    }
+    try self.startDiscoveryRoots(job_id, discovery_roots.items);
 
     self.active_io_copy_destination = owned_destination;
     self.active_io_copy_job = job_id;
     self.active_io_copy_is_directory = true;
-    self.active_io_copy_item_count = 1;
-    self.setStatusNotice("Copying folder", false);
+    self.active_io_copy_item_count = paths.len;
+    self.setStatusNotice(
+        if (paths.len == 1) "Copying folder" else "Copying folders",
+        false,
+    );
     self.invalidate();
     return true;
 }
@@ -249,7 +276,7 @@ pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const 
         const started = startManagerFileCopy(self, paths, directory) catch false;
         if (started) return true;
         const directory_started =
-            startManagerSingleDirectoryCopy(self, paths, directory) catch false;
+            startManagerDirectoryCopy(self, paths, directory) catch false;
         if (directory_started) return true;
     }
     const runner = self.job_runner orelse return false;
