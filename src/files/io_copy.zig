@@ -234,7 +234,7 @@ fn failedWithScratch(
 /// Execute exactly one bounded transfer unit.
 ///
 /// A successful reflink completes in one unit. Otherwise each invocation
-/// copies at most chunk_size bytes before yielding.
+/// copies one bounded transfer unit before yielding.
 pub fn execute(
     allocator: Allocator,
     item_arg: executor.WorkItem,
@@ -359,6 +359,8 @@ pub fn execute(
     const remaining = state.size - state.offset;
     if (remaining == 0) {
         closeDescriptors(&state);
+        if (scratch_payload) |*payload| payload.deinit();
+        scratch_payload = null;
         const marker = allocator.dupe(u8, &.{1}) catch {
             unlinkDestination(operation_paths.destination);
             return completion(item, .failed, null, null);
@@ -384,7 +386,7 @@ pub fn execute(
         if (copied > 0) {
             state.offset += @intCast(copied);
         } else if (copied == 0) {
-            return failed(item, state, operation_paths.destination);
+            return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
         } else {
             const copy_errno = std.c._errno().*;
             if (copy_errno == c.EINTR) {
@@ -392,24 +394,35 @@ pub fn execute(
             } else if (isFallbackErrno(copy_errno)) {
                 state.strategy = .buffered;
             } else {
-                return failed(item, state, operation_paths.destination);
+                return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
             }
         }
     }
 
     if (state.strategy == .buffered) {
-        var buffer: [chunk_size]u8 = undefined;
+        if (scratch_payload == null) {
+            scratch_payload = encodeContinuation(
+                allocator,
+                state,
+                bufferedBufferSize(state.size),
+            ) catch {
+                return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
+            };
+        }
+        const buffer = scratch_payload.?.bytes.?[continuation_size..];
         const wanted: usize = @intCast(@min(
             state.size - state.offset,
-            @as(u64, chunk_size),
+            @as(u64, buffer.len),
         ));
-        const count = c.read(state.source_fd, &buffer, wanted);
-        if (count == 0) return failed(item, state, operation_paths.destination);
+        const count = c.read(state.source_fd, buffer.ptr, wanted);
+        if (count == 0) {
+            return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
+        }
         if (count < 0) {
             if (std.c._errno().* == c.EINTR) {
-                const saved = encodeContinuation(allocator, state) catch {
-                    return failed(item, state, operation_paths.destination);
-                };
+                writeContinuationHeader(scratch_payload.?.bytes.?[0..continuation_size], state);
+                const saved = scratch_payload.?.take();
+                scratch_payload = null;
                 return completionWithProgress(
                     item,
                     .yielded,
@@ -418,7 +431,7 @@ pub fn execute(
                     state.size,
                 );
             }
-            return failed(item, state, operation_paths.destination);
+            return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
         }
 
         const bytes_read: usize = @intCast(count);
@@ -431,7 +444,7 @@ pub fn execute(
             );
             if (result < 0 and std.c._errno().* == c.EINTR) continue;
             if (result <= 0) {
-                return failed(item, state, operation_paths.destination);
+                return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
             }
             written += @intCast(result);
         }
@@ -440,6 +453,8 @@ pub fn execute(
 
     if (state.offset == state.size) {
         closeDescriptors(&state);
+        if (scratch_payload) |*payload| payload.deinit();
+        scratch_payload = null;
         const marker = allocator.dupe(u8, &.{1}) catch {
             unlinkDestination(operation_paths.destination);
             return completion(item, .failed, null, null);
@@ -452,9 +467,13 @@ pub fn execute(
         );
     }
 
-    const saved = encodeContinuation(allocator, state) catch {
-        return failed(item, state, operation_paths.destination);
+    const saved = if (scratch_payload) |*payload| blk: {
+        writeContinuationHeader(payload.bytes.?[0..continuation_size], state);
+        break :blk payload.take();
+    } else encodeContinuation(allocator, state, 0) catch {
+        return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
     };
+    scratch_payload = null;
     return completionWithProgress(
         item,
         .yielded,
