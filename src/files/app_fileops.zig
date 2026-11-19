@@ -7,6 +7,7 @@ const App = @import("app.zig").App;
 const recent = @import("recent.zig");
 const ops_mod = @import("ops.zig");
 const io_tree = @import("io_tree.zig");
+const io_manager = @import("io_manager.zig");
 const clipboard_mod = @import("clipboard.zig");
 const deletion = @import("../delete_dialog.zig");
 const trash = @import("trash.zig");
@@ -80,64 +81,103 @@ pub fn executePaste(self: *App, kind: ops_mod.OpKind, paths: []const []const u8)
     return self.executeTransfer(kind, paths, self.history.current, true);
 }
 
-/// Starts a standalone regular-file copy through the Manager-owned pipeline.
-/// Other transfer shapes remain on JobRunner until their integration phase.
-fn startManagerSingleFileCopy(
+/// Starts a multi-root regular-file/symlink copy through the Manager-owned
+/// pipeline. Directory roots use the incremental discovery path below.
+fn startManagerFileCopy(
     self: *App,
     paths: []const []const u8,
     directory: []const u8,
 ) !bool {
-    if (paths.len != 1 or self.active_io_copy_job != null) return false;
+    if (paths.len == 0 or self.active_io_copy_job != null) return false;
 
-    const source = paths[0];
-    const name = std.fs.path.basename(source);
-    if (name.len == 0) return false;
+    const RootPlan = struct {
+        source: []const u8,
+        name: []const u8,
+        kind: io_tree.EntryKind,
+        metadata: io_tree.Metadata,
+        symlink_target: ?[]u8 = null,
+    };
+    var roots: std.ArrayList(RootPlan) = .empty;
+    defer {
+        for (roots.items) |root| {
+            if (root.symlink_target) |target| self.allocator.free(target);
+        }
+        roots.deinit(self.allocator);
+    }
 
-    const source_z = try self.allocator.dupeSentinel(u8, source, 0);
-    defer self.allocator.free(source_z);
-    var source_stat: c.struct_stat = undefined;
-    if (c.lstat(source_z, &source_stat) != 0) return false;
-    if ((source_stat.st_mode & c.S_IFMT) != c.S_IFREG) return false;
+    for (paths) |source| {
+        if (!std.fs.path.isAbsolute(source)) return false;
+        const name = std.fs.path.basename(source);
+        if (name.len == 0) return false;
 
-    const destination = try std.fs.path.join(
-        self.allocator,
-        &.{ directory, name },
-    );
-    defer self.allocator.free(destination);
-    const destination_z = try self.allocator.dupeSentinel(u8, destination, 0);
-    defer self.allocator.free(destination_z);
-    var destination_stat: c.struct_stat = undefined;
-    if (c.lstat(destination_z, &destination_stat) == 0) return false;
-    if (std.c._errno().* != c.ENOENT) return false;
+        const source_z = try self.allocator.dupeSentinel(u8, source, 0);
+        defer self.allocator.free(source_z);
+        var source_stat: c.struct_stat = undefined;
+        if (c.lstat(source_z, &source_stat) != 0) return false;
+
+        const kind: io_tree.EntryKind = switch (source_stat.st_mode & c.S_IFMT) {
+            c.S_IFREG => .regular_file,
+            c.S_IFLNK => .symlink,
+            else => return false,
+        };
+
+        var symlink_target: ?[]u8 = null;
+        defer if (symlink_target) |target| self.allocator.free(target);
+        if (kind == .symlink) {
+            var target_buffer: [4096]u8 = undefined;
+            const target_len = c.readlink(source_z, &target_buffer, target_buffer.len);
+            if (target_len < 0 or target_len == target_buffer.len) return false;
+            symlink_target = try self.allocator.dupe(
+                u8,
+                target_buffer[0..@intCast(target_len)],
+            );
+        }
+
+        try roots.append(self.allocator, .{
+            .source = source,
+            .name = name,
+            .kind = kind,
+            .metadata = .{
+                .size = @intCast(@max(source_stat.st_size, 0)),
+                .mode = @intCast(source_stat.st_mode),
+            },
+            .symlink_target = symlink_target,
+        });
+        symlink_target = null;
+    }
 
     try self.startOperations();
-    const manager = if (self.io_manager) |*value| value else
-        return error.OperationManagerUnavailable;
+    const manager = if (self.io_manager) |*value| value else return error.OperationManagerUnavailable;
     const owned_destination = try self.allocator.dupe(u8, directory);
     errdefer self.allocator.free(owned_destination);
 
     const job_id = try manager.createJob(null);
     errdefer _ = manager.discardPlanningJob(job_id);
 
-    const root_id = try manager.addTreeRoot(
-        job_id,
-        name,
-        .regular_file,
-        .{
-            .size = @intCast(@max(source_stat.st_size, 0)),
-            .mode = @intCast(source_stat.st_mode),
-        },
-        null,
-    );
-    try manager.setSourceRootPath(job_id, source);
+    for (roots.items) |root| {
+        const root_id = try manager.addTreeRoot(
+            job_id,
+            root.name,
+            root.kind,
+            root.metadata,
+            root.symlink_target,
+        );
+        try manager.setRootSourcePath(job_id, root_id, root.source);
+        const operation_kind: io_manager.OperationKind = switch (root.kind) {
+            .regular_file => .copy_file,
+            .symlink => .copy_symlink,
+            else => unreachable,
+        };
+        _ = try manager.addEntryOperation(job_id, root_id, operation_kind);
+    }
     try manager.setDestinationDirectory(job_id, directory);
-    _ = try manager.addEntryOperation(job_id, root_id, .copy_file);
     try manager.queueJob(job_id);
 
     self.active_io_copy_destination = owned_destination;
     self.active_io_copy_job = job_id;
     self.active_io_copy_is_directory = false;
-    self.setStatusNotice("Copying file", false);
+    self.active_io_copy_item_count = paths.len;
+    self.setStatusNotice(if (paths.len == 1) "Copying file" else "Copying items", false);
     self.invalidate();
     return true;
 }
@@ -165,20 +205,8 @@ fn startManagerSingleDirectoryCopy(
     // discovery chase the destination being created.
     if (ops_mod.isDescendantOrSame(source, directory)) return false;
 
-    const destination = try std.fs.path.join(
-        self.allocator,
-        &.{ directory, name },
-    );
-    defer self.allocator.free(destination);
-    const destination_z = try self.allocator.dupeSentinel(u8, destination, 0);
-    defer self.allocator.free(destination_z);
-    var destination_stat: c.struct_stat = undefined;
-    if (c.lstat(destination_z, &destination_stat) == 0) return false;
-    if (std.c._errno().* != c.ENOENT) return false;
-
     try self.startOperations();
-    const manager = if (self.io_manager) |*value| value else
-        return error.OperationManagerUnavailable;
+    const manager = if (self.io_manager) |*value| value else return error.OperationManagerUnavailable;
     const owned_destination = try self.allocator.dupe(u8, directory);
     errdefer self.allocator.free(owned_destination);
 
@@ -203,6 +231,7 @@ fn startManagerSingleDirectoryCopy(
     self.active_io_copy_destination = owned_destination;
     self.active_io_copy_job = job_id;
     self.active_io_copy_is_directory = true;
+    self.active_io_copy_item_count = 1;
     self.setStatusNotice("Copying folder", false);
     self.invalidate();
     return true;
@@ -217,7 +246,7 @@ pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const 
         return false;
     };
     if (kind == .copy) {
-        const started = startManagerSingleFileCopy(self, paths, directory) catch false;
+        const started = startManagerFileCopy(self, paths, directory) catch false;
         if (started) return true;
         const directory_started =
             startManagerSingleDirectoryCopy(self, paths, directory) catch false;

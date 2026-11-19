@@ -260,32 +260,38 @@ pub fn stepOperations(self: *App) void {
             if (state.isTerminal()) {
                 const destination = self.active_io_copy_destination;
                 const is_directory = self.active_io_copy_is_directory;
+                const multiple_items = self.active_io_copy_item_count > 1;
                 self.active_io_copy_destination = null;
                 self.active_io_copy_job = null;
                 self.active_io_copy_is_directory = false;
+                self.active_io_copy_item_count = 0;
 
                 switch (state) {
                     .completed => {
                         if (manager.jobHasSkippedOperations(job_id)) {
                             self.setStatusNotice(
-                                if (is_directory) "Folder copy skipped" else "File copy skipped",
+                                if (multiple_items) "Some items skipped" else if (is_directory) "Folder copy skipped" else "File copy skipped",
                                 false,
                             );
                         } else {
                             self.setStatusNotice(
-                                if (is_directory) "Folder copied" else "File copied",
+                                if (multiple_items) "Items copied" else if (is_directory) "Folder copied" else "File copied",
                                 false,
                             );
                         }
                     },
-                    .completed_with_errors, .failed => self.setStatusNotice(
-                        if (is_directory) "Folder copy failed" else "File copy failed",
-                        true,
-                    ),
-                    .cancelled => self.setStatusNotice(
-                        if (is_directory) "Folder copy cancelled" else "File copy cancelled",
-                        true,
-                    ),
+                    .completed_with_errors, .failed => self.setStatusNotice(if (multiple_items)
+                        "Could not copy all items"
+                    else if (is_directory)
+                        "Folder copy failed"
+                    else
+                        "File copy failed", true),
+                    .cancelled => self.setStatusNotice(if (multiple_items)
+                        "Items copy cancelled"
+                    else if (is_directory)
+                        "Folder copy cancelled"
+                    else
+                        "File copy cancelled", true),
                     else => unreachable,
                 }
 

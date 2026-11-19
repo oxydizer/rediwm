@@ -5,6 +5,7 @@ const App = @import("app.zig").App;
 const scrollbar = @import("ui").widgets.scrollbar;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
+const io_manager = @import("io_manager.zig");
 const worker_mod = @import("worker.zig");
 const history_mod = @import("history.zig");
 const recent = @import("recent.zig");
@@ -594,4 +595,131 @@ test {
 
 test {
     _ = @import("app_trash_tests.zig");
+}
+
+fn makeTransferTestTempDir(buffer: []u8) ![]const u8 {
+    const template = "/tmp/rediwm_app_transfer_XXXXXX\x00";
+    @memcpy(buffer[0..template.len], template);
+    const result = c.mkdtemp(@ptrCast(buffer.ptr)) orelse return error.MkdtempFailed;
+    return std.mem.span(@as([*:0]const u8, @ptrCast(result)));
+}
+
+fn transferTestJoin(
+    allocator: std.mem.Allocator,
+    parent: []const u8,
+    name: []const u8,
+) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent, name });
+}
+
+fn transferTestMkdir(path: []const u8) !void {
+    const allocator = std.testing.allocator;
+    const zpath = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(zpath);
+    if (c.mkdir(zpath, 0o755) != 0) return error.MkdirFailed;
+}
+
+fn transferTestWriteFile(path: []const u8, contents: []const u8) !void {
+    const allocator = std.testing.allocator;
+    const zpath = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(zpath);
+    const fd = c.open(
+        zpath,
+        c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC,
+        @as(c_uint, 0o600),
+    );
+    if (fd < 0) return error.OpenFailed;
+    defer _ = c.close(fd);
+    if (c.write(fd, contents.ptr, contents.len) != contents.len)
+        return error.WriteFailed;
+}
+
+fn transferTestReadFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    const zpath = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(zpath);
+    const fd = c.open(zpath, c.O_RDONLY | c.O_CLOEXEC, @as(c_uint, 0));
+    if (fd < 0) return error.OpenFailed;
+    defer _ = c.close(fd);
+    var buffer: [4096]u8 = undefined;
+    const count = c.read(fd, &buffer, buffer.len);
+    if (count < 0) return error.ReadFailed;
+    return allocator.dupe(u8, buffer[0..@intCast(count)]);
+}
+
+fn transferTestCleanup(path: []const u8, is_directory: bool) void {
+    const allocator = std.heap.page_allocator;
+    const zpath = allocator.dupeSentinel(u8, path, 0) catch return;
+    defer allocator.free(zpath);
+    if (is_directory) {
+        _ = c.rmdir(zpath);
+    } else {
+        _ = c.unlink(zpath);
+    }
+}
+
+test "multi-file copy requests use one Manager job and the operation Runtime" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+
+    const source_a = try transferTestJoin(allocator, temp, "first.txt");
+    defer allocator.free(source_a);
+    const source_b = try transferTestJoin(allocator, temp, "second.txt");
+    defer allocator.free(source_b);
+    const destination_dir = try transferTestJoin(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    const destination_a = try transferTestJoin(allocator, destination_dir, "first.txt");
+    defer allocator.free(destination_a);
+    const destination_b = try transferTestJoin(allocator, destination_dir, "second.txt");
+    defer allocator.free(destination_b);
+    defer {
+        transferTestCleanup(destination_b, false);
+        transferTestCleanup(destination_a, false);
+        transferTestCleanup(source_b, false);
+        transferTestCleanup(source_a, false);
+        transferTestCleanup(destination_dir, true);
+        transferTestCleanup(temp, true);
+    }
+
+    try transferTestMkdir(destination_dir);
+    try transferTestWriteFile(source_a, "first Manager payload");
+    try transferTestWriteFile(source_b, "second Manager payload");
+
+    var app = try testApp();
+    defer app.deinit();
+    app.io_manager = io_manager.Manager.init(allocator);
+
+    const paths = [_][]const u8{ source_a, source_b };
+    try std.testing.expect(app.executeTransfer(.copy, &paths, destination_dir, false));
+    const job_id = app.active_io_copy_job.?;
+    const manager = &app.io_manager.?;
+    const tree = manager.treeIndex(job_id).?;
+    const roots = tree.roots();
+    try std.testing.expectEqual(@as(usize, 2), roots.len);
+    try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job_id).?);
+    try std.testing.expectEqual(io_manager.OperationState.pending, manager.entryOperationView(job_id, roots[0]).?.state);
+    try std.testing.expectEqual(io_manager.OperationState.pending, manager.entryOperationView(job_id, roots[1]).?.state);
+
+    while (true) {
+        app.stepOperations();
+        if (manager.jobState(job_id).?.isTerminal()) break;
+
+        var descriptors = [_]c.struct_pollfd{.{
+            .fd = app.operationWakeFd(),
+            .events = c.POLLIN,
+            .revents = 0,
+        }};
+        const result = c.poll(&descriptors, 1, 5_000);
+        if (result == 0) return error.TimedOutWaitingForCopy;
+        if (result < 0 and std.c._errno().* != c.EINTR)
+            return error.OperationPollFailed;
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_id).?);
+    const copied_a = try transferTestReadFile(allocator, destination_a);
+    defer allocator.free(copied_a);
+    const copied_b = try transferTestReadFile(allocator, destination_b);
+    defer allocator.free(copied_b);
+    try std.testing.expectEqualStrings("first Manager payload", copied_a);
+    try std.testing.expectEqualStrings("second Manager payload", copied_b);
 }
