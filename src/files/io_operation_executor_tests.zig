@@ -265,7 +265,7 @@ test "Manager Runtime copies a standalone regular-file root" {
         .{},
         null,
     );
-    try manager.setSourceRootPath(job, source);
+    try manager.setRootSourcePath(job, root, source);
     try manager.setDestinationDirectory(job, destination_dir);
     const operation_id = try manager.addEntryOperation(job, root, .copy_file);
     try manager.queueJob(job);
@@ -536,6 +536,177 @@ test "Manager Runtime registers symlink destination collisions" {
     try std.testing.expectEqual(io_tree.EntryKind.symlink, conflict.destination_kind);
     try std.testing.expectEqualStrings(source, conflict.source_path);
     try std.testing.expectEqualStrings(destination, conflict.destination_path);
+}
+
+test "Manager Runtime moves regular files and symlinks with native rename" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source_file = try join(allocator, temp, "payload.bin");
+    defer allocator.free(source_file);
+    const source_link = try join(allocator, temp, "shortcut");
+    defer allocator.free(source_link);
+    const destination_dir = try join(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    const destination_file = try join(allocator, destination_dir, "payload.bin");
+    defer allocator.free(destination_file);
+    const destination_link = try join(allocator, destination_dir, "shortcut");
+    defer allocator.free(destination_link);
+    defer {
+        cleanup(destination_link, false);
+        cleanup(destination_file, false);
+        cleanup(destination_dir, true);
+        cleanup(source_link, false);
+        cleanup(source_file, false);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(destination_dir);
+    try writeFile(source_file, "native rename payload");
+    try makeSymlink("../literal-target", source_link);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const file_root = try manager.addTreeRoot(
+        job,
+        "payload.bin",
+        .regular_file,
+        .{},
+        null,
+    );
+    const link_root = try manager.addTreeRoot(
+        job,
+        "shortcut",
+        .symlink,
+        .{},
+        "../literal-target",
+    );
+    try manager.setRootSourcePath(job, file_root, source_file);
+    try manager.setRootSourcePath(job, link_root, source_link);
+    try manager.setDestinationDirectory(job, destination_dir);
+    const file_operation = try manager.addEntryOperation(job, file_root, .move_entry);
+    const link_operation = try manager.addEntryOperation(job, link_root, .move_entry);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+
+    while (!manager.jobState(job).?.isTerminal()) {
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, file_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, link_operation).?,
+    );
+
+    const source_file_z = try allocZ(allocator, source_file);
+    defer allocator.free(source_file_z);
+    var source_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(source_file_z, &source_stat) != 0);
+
+    const source_link_z = try allocZ(allocator, source_link);
+    defer allocator.free(source_link_z);
+    try std.testing.expect(c.lstat(source_link_z, &source_stat) != 0);
+
+    const moved_contents = try readFile(allocator, destination_file);
+    defer allocator.free(moved_contents);
+    try std.testing.expectEqualStrings("native rename payload", moved_contents);
+
+    const moved_target = try readLink(allocator, destination_link);
+    defer allocator.free(moved_target);
+    try std.testing.expectEqualStrings("../literal-target", moved_target);
+}
+
+test "Manager Runtime waits on move destination collisions without changing either entry" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source = try join(allocator, temp, "source.bin");
+    defer allocator.free(source);
+    const destination_dir = try join(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    const destination = try join(allocator, destination_dir, "source.bin");
+    defer allocator.free(destination);
+    defer {
+        cleanup(destination, false);
+        cleanup(destination_dir, true);
+        cleanup(source, false);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(destination_dir);
+    try writeFile(source, "source contents");
+    try writeFile(destination, "existing contents");
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source.bin",
+        .regular_file,
+        .{},
+        null,
+    );
+    try manager.setSourceRootPath(job, source);
+    try manager.setDestinationDirectory(job, destination_dir);
+    const operation = try manager.addEntryOperation(job, root, .move_entry);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, operation).?,
+    );
+    const conflict = manager.nextConflict() orelse return error.MissingConflict;
+    try std.testing.expectEqual(job, conflict.job_id);
+    try std.testing.expectEqual(root, conflict.entry_id);
+    try std.testing.expectEqual(io_tree.EntryKind.regular_file, conflict.source_kind);
+    try std.testing.expectEqual(io_tree.EntryKind.regular_file, conflict.destination_kind);
+    try std.testing.expectEqualStrings(source, conflict.source_path);
+    try std.testing.expectEqualStrings(destination, conflict.destination_path);
+
+    const source_contents = try readFile(allocator, source);
+    defer allocator.free(source_contents);
+    try std.testing.expectEqualStrings("source contents", source_contents);
+
+    const destination_contents = try readFile(allocator, destination);
+    defer allocator.free(destination_contents);
+    try std.testing.expectEqualStrings("existing contents", destination_contents);
+}
+
+test "Manager rejects move operations for directory entries" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "directory",
+        .directory,
+        .{},
+        null,
+    );
+    try std.testing.expectError(
+        error.InvalidEntryOperationKind,
+        manager.addEntryOperation(job, root, .move_entry),
+    );
 }
 
 test "Manager Runtime rebuilds prepared input after a renamed collision" {

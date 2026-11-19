@@ -8,6 +8,7 @@ const io_executor = @import("io_executor.zig");
 const io_copy = @import("io_copy.zig");
 const io_directory = @import("io_directory.zig");
 const io_symlink = @import("io_symlink.zig");
+const io_move = @import("io_move.zig");
 
 const Context = struct {
     allocator: Allocator,
@@ -131,6 +132,19 @@ fn prepare(
             entry.symlink_target orelse return error.MissingSymlinkTarget,
             destination,
         ),
+        .move_entry => blk: {
+            const source = try context.manager.sourcePath(
+                context.allocator,
+                token.job_id,
+                details.entry_id,
+            );
+            defer context.allocator.free(source);
+            break :blk try io_move.makeInput(
+                context.allocator,
+                source,
+                destination,
+            );
+        },
         else => return error.UnsupportedOperation,
     };
 
@@ -149,6 +163,7 @@ fn execute(
         .create_directory => io_directory.execute(context.allocator, item),
         .copy_file => io_copy.execute(context.allocator, item),
         .copy_symlink => io_symlink.execute(context.allocator, item),
+        .move_entry => io_move.execute(context.allocator, item),
         else => failWork(item),
     };
 }
@@ -185,6 +200,7 @@ fn complete(
             .create_directory => io_directory.complete(null, token, outcome, result),
             .copy_file => io_copy.complete(null, token, outcome, result),
             .copy_symlink => io_symlink.complete(null, token, outcome, result),
+            .move_entry => io_move.complete(null, token, outcome, result),
             else => deinitOptional(result),
         }
     } else {
@@ -263,6 +279,7 @@ fn discard(
         .create_directory => io_directory.discard(null, operation_kind, input, continuation, result),
         .copy_file => io_copy.discard(null, operation_kind, input, continuation, result),
         .copy_symlink => io_symlink.discard(null, operation_kind, input, continuation, result),
+        .move_entry => io_move.discard(null, operation_kind, input, continuation, result),
         else => {
             var owned_input = input;
             owned_input.deinit();
