@@ -170,6 +170,7 @@ fn failWork(item_arg: io_executor.WorkItem) io_executor.WorkCompletion {
 fn complete(
     raw_context: ?*anyopaque,
     token: io_manager.WorkToken,
+    operation_kind: ?io_manager.OperationKind,
     outcome: io_manager.WorkResult,
     result: ?io_executor.OwnedPayload,
 ) void {
@@ -179,7 +180,7 @@ fn complete(
             context.manager.failWaiting(token.job_id, token.operation_id) catch {};
         };
     }
-    if (tokenOperationKind(context.manager, token)) |kind| {
+    if (operation_kind) |kind| {
         switch (kind) {
             .create_directory => io_directory.complete(null, token, outcome, result),
             .copy_file => io_copy.complete(null, token, outcome, result),
@@ -249,22 +250,6 @@ fn registerCollision(context: *Context, token: io_manager.WorkToken) !void {
         entry.kind,
         destination_kind,
     );
-}
-
-fn tokenOperationKind(
-    manager: *const io_manager.Manager,
-    token: io_manager.WorkToken,
-) ?io_manager.OperationKind {
-    const snapshot = manager.snapshotJob(std.heap.page_allocator, token.job_id) catch
-        return null;
-    defer {
-        var owned = snapshot;
-        owned.deinit();
-    }
-    for (snapshot.operations) |operation| {
-        if (operation.id == token.operation_id) return operation.kind;
-    }
-    return null;
 }
 
 fn discard(
