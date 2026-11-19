@@ -1076,6 +1076,13 @@ pub const Manager = struct {
         if (parent_operation_index) |parent_index| {
             const parent_operation = &job.operations.items[parent_index];
             try parent_operation.dependents.ensureUnusedCapacity(self.allocator, 1);
+            // When the parent completes, every pending dependent may become
+            // ready in one pass. Reserve for the full dependent set now,
+            // rather than relying on appendAssumeCapacity during completion.
+            try job.ready_queue.ensureUnusedCapacity(
+                self.allocator,
+                parent_operation.dependents.items.len + 1,
+            );
         }
 
         const operation_id = try self.addOperationInternal(job, kind);
