@@ -163,6 +163,50 @@ pub const WorkResult = enum {
     cancelled,
 };
 
+/// Per-operation copy measurements accumulated from accepted worker units.
+/// Counters are always collected; elapsed-time fields are opt-in.
+pub const CopyMetrics = struct {
+    reflink_attempts: u64 = 0,
+    reflink_successes: u64 = 0,
+    reflink_bytes: u64 = 0,
+    reflink_fallbacks: u64 = 0,
+    copy_file_range_calls: u64 = 0,
+    copy_file_range_bytes: u64 = 0,
+    copy_file_range_fallbacks: u64 = 0,
+    buffered_read_calls: u64 = 0,
+    buffered_read_bytes: u64 = 0,
+    buffered_write_calls: u64 = 0,
+    buffered_write_bytes: u64 = 0,
+    fallback_exdev: u64 = 0,
+    fallback_unsupported: u64 = 0,
+    fallback_permission: u64 = 0,
+    reflink_ns: u64 = 0,
+    copy_file_range_ns: u64 = 0,
+    buffered_ns: u64 = 0,
+    elapsed_ns: u64 = 0,
+
+    pub fn add(self: *CopyMetrics, delta: CopyMetrics) void {
+        self.reflink_attempts +|= delta.reflink_attempts;
+        self.reflink_successes +|= delta.reflink_successes;
+        self.reflink_bytes +|= delta.reflink_bytes;
+        self.reflink_fallbacks +|= delta.reflink_fallbacks;
+        self.copy_file_range_calls +|= delta.copy_file_range_calls;
+        self.copy_file_range_bytes +|= delta.copy_file_range_bytes;
+        self.copy_file_range_fallbacks +|= delta.copy_file_range_fallbacks;
+        self.buffered_read_calls +|= delta.buffered_read_calls;
+        self.buffered_read_bytes +|= delta.buffered_read_bytes;
+        self.buffered_write_calls +|= delta.buffered_write_calls;
+        self.buffered_write_bytes +|= delta.buffered_write_bytes;
+        self.fallback_exdev +|= delta.fallback_exdev;
+        self.fallback_unsupported +|= delta.fallback_unsupported;
+        self.fallback_permission +|= delta.fallback_permission;
+        self.reflink_ns +|= delta.reflink_ns;
+        self.copy_file_range_ns +|= delta.copy_file_range_ns;
+        self.buffered_ns +|= delta.buffered_ns;
+        self.elapsed_ns +|= delta.elapsed_ns;
+    }
+};
+
 const Operation = struct {
     id: OperationId,
     kind: OperationKind,
@@ -172,6 +216,7 @@ const Operation = struct {
     generation: u64 = 0,
     progress_bytes: u64 = 0,
     progress_total_bytes: u64 = 0,
+    copy_metrics: CopyMetrics = .{},
     dependencies: std.ArrayList(OperationId) = .empty,
     dependency_indices: std.ArrayList(usize) = .empty,
     dependents: std.ArrayList(usize) = .empty,
@@ -231,6 +276,7 @@ pub const OperationSnapshot = struct {
     state: OperationState,
     generation: u64,
     dependencies: []OperationId,
+    copy_metrics: CopyMetrics,
 };
 
 pub const OperationDetails = struct {
@@ -1597,6 +1643,29 @@ pub const Manager = struct {
         return true;
     }
 
+    /// Adds measurements from one worker unit after its token was accepted.
+    pub fn recordOperationCopyMetrics(
+        self: *Manager,
+        token: WorkToken,
+        delta: CopyMetrics,
+    ) bool {
+        const job = self.findJob(token.job_id) orelse return false;
+        const operation = findOperation(job, token.operation_id) orelse return false;
+        if (operation.generation != token.generation) return false;
+        operation.copy_metrics.add(delta);
+        return true;
+    }
+
+    pub fn operationCopyMetrics(
+        self: *const Manager,
+        job_id: JobId,
+        operation_id: OperationId,
+    ) ?CopyMetrics {
+        const job = self.findJobConst(job_id) orelse return null;
+        const operation = findOperationConst(job, operation_id) orelse return null;
+        return operation.copy_metrics;
+    }
+
     pub fn jobState(self: *const Manager, job_id: JobId) ?JobState {
         const job = self.findJobConst(job_id) orelse return null;
         return job.state;
@@ -1652,6 +1721,7 @@ pub const Manager = struct {
                 .state = operation.state,
                 .generation = operation.generation,
                 .dependencies = dependencies,
+                .copy_metrics = operation.copy_metrics,
             };
             initialized += 1;
         }
@@ -1950,4 +2020,37 @@ test "generation exhaustion does not starve unrelated Operations" {
 
     try std.testing.expect(manager.completeWork(token, .completed));
     try std.testing.expectEqual(JobState.completed_with_errors, manager.jobState(job_id).?);
+}
+
+test "accepted copy metrics accumulate and appear in operation snapshots" {
+    var manager = Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job_id = try manager.createJob(null);
+    const operation_id = try manager.addOperation(job_id, .copy_file);
+    try manager.queueJob(job_id);
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(operation_id, token.operation_id);
+    try std.testing.expect(manager.completeWork(token, .yielded));
+
+    const delta: CopyMetrics = .{
+        .copy_file_range_calls = 2,
+        .copy_file_range_bytes = 128 * 1024,
+        .fallback_exdev = 1,
+        .elapsed_ns = 900,
+    };
+    try std.testing.expect(manager.recordOperationCopyMetrics(token, delta));
+
+    const metrics = manager.operationCopyMetrics(job_id, operation_id).?;
+    try std.testing.expectEqual(@as(u64, 2), metrics.copy_file_range_calls);
+    try std.testing.expectEqual(@as(u64, 128 * 1024), metrics.copy_file_range_bytes);
+    try std.testing.expectEqual(@as(u64, 1), metrics.fallback_exdev);
+    try std.testing.expectEqual(@as(u64, 900), metrics.elapsed_ns);
+
+    var snapshot = try manager.snapshotJob(std.testing.allocator, job_id);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(
+        metrics.copy_file_range_bytes,
+        snapshot.operations[0].copy_metrics.copy_file_range_bytes,
+    );
 }

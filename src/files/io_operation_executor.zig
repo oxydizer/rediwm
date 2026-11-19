@@ -76,6 +76,12 @@ pub const Runtime = struct {
         return self.executor.drainCompletions(self.context.manager);
     }
 
+    /// Enables per-unit timing collection. Strategy and byte counters are
+    /// collected regardless of this setting.
+    pub fn setProfilingEnabled(self: *Runtime, enabled: bool) void {
+        self.executor.profile_enabled = enabled;
+    }
+
     pub fn pauseJob(self: *Runtime, job_id: io_manager.JobId) !void {
         try self.context.manager.pauseJob(job_id);
     }
