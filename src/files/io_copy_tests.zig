@@ -108,6 +108,19 @@ fn runCopy(
     }
 }
 
+test "adaptive buffered copy size follows file size and stays bounded" {
+    try std.testing.expectEqual(@as(usize, 0), copy.bufferedBufferSize(0));
+    try std.testing.expectEqual(@as(usize, 1), copy.bufferedBufferSize(1));
+    try std.testing.expectEqual(@as(usize, 16 * 1024), copy.bufferedBufferSize(16 * 1024));
+    try std.testing.expectEqual(@as(usize, 16 * 1024), copy.bufferedBufferSize(64 * 1024));
+    try std.testing.expectEqual(@as(usize, 64 * 1024), copy.bufferedBufferSize(64 * 1024 + 1));
+    try std.testing.expectEqual(@as(usize, 64 * 1024), copy.bufferedBufferSize(1024 * 1024));
+    try std.testing.expectEqual(@as(usize, 256 * 1024), copy.bufferedBufferSize(1024 * 1024 + 1));
+    try std.testing.expectEqual(@as(usize, 256 * 1024), copy.bufferedBufferSize(64 * 1024 * 1024));
+    try std.testing.expectEqual(@as(usize, 1024 * 1024), copy.bufferedBufferSize(64 * 1024 * 1024 + 1));
+    try std.testing.expectEqual(@as(usize, 1024 * 1024), copy.bufferedBufferSize(128 * 1024 * 1024));
+}
+
 test "regular-file copy handles empty and small files" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
