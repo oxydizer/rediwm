@@ -190,6 +190,7 @@ const Job = struct {
     tree: io_tree.TreeIndex,
     source_root_paths: std.AutoHashMapUnmanaged(io_tree.EntryId, []u8) = .empty,
     discovery_started: bool = false,
+    auto_plan_discovered_entries: bool = false,
     destination_directory: ?[]u8 = null,
     discovery_schedule: std.AutoHashMapUnmanaged(io_tree.EntryId, DiscoverySchedule) = .empty,
     discovery_pending_count: usize = 0,
@@ -369,6 +370,19 @@ pub const Manager = struct {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         const root_id = job.tree.root() orelse return error.MissingTreeRoot;
         try self.startRootDiscovery(job_id, root_id, root_path);
+    }
+
+    /// Enables automatic operation registration for entries adopted from
+    /// subsequent discovery batches. The selected root operation is still
+    /// registered explicitly by the caller before the Job is queued.
+    pub fn enableDiscoveredEntryOperations(
+        self: *Manager,
+        job_id: JobId,
+    ) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (job.tree.root() == null) return error.MissingTreeRoot;
+        job.auto_plan_discovered_entries = true;
     }
 
     /// Starts incremental discovery for one directory root. Each selected
@@ -845,6 +859,20 @@ pub const Manager = struct {
                 record.metadata,
                 if (kind == .symlink) record.symlink_target else null,
             );
+
+            if (job.auto_plan_discovered_entries and
+                !record.entry_error and
+                !invalid_symlink)
+            {
+                const operation_kind: ?OperationKind = switch (kind) {
+                    .directory => .create_directory,
+                    .regular_file => .copy_file,
+                    .symlink => .copy_symlink,
+                    .other => null,
+                };
+                if (operation_kind) |operation|
+                    _ = try self.addEntryOperation(job.id, child_id, operation);
+            }
 
             if (record.kind == .directory and !record.entry_error) {
                 const child = job.tree.get(child_id).?;
