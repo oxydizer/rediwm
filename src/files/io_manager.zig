@@ -130,6 +130,7 @@ pub const OperationKind = enum {
     create_directory,
     copy_file,
     copy_symlink,
+    move_entry,
     publish,
     detach_source,
     purge_source,
@@ -1121,7 +1122,11 @@ pub const Manager = struct {
             .symlink => .copy_symlink,
             .other => return error.UnsupportedEntryKind,
         };
-        if (kind != expected_kind) return error.InvalidEntryOperationKind;
+        if (kind != expected_kind and
+            !(kind == .move_entry and entry.kind != .directory))
+        {
+            return error.InvalidEntryOperationKind;
+        }
 
         var parent_operation_index: ?usize = null;
         if (entry.parent_id) |parent_id| {
