@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_tree = @import("io_tree.zig");
+const io_discovery_executor = @import("io_discovery_executor.zig");
 const operation_executor = @import("io_operation_executor.zig");
 
 fn allocZ(allocator: std.mem.Allocator, value: []const u8) ![:0]u8 {
@@ -101,6 +102,26 @@ fn waitForOne(runtime: *operation_executor.Runtime) !void {
             },
             .INTR => continue,
             else => return error.ExecutorPollFailed,
+        }
+    }
+}
+
+fn waitForDiscovery(executor: *io_discovery_executor.Executor) !void {
+    var descriptors = [_]std.posix.pollfd{.{
+        .fd = executor.wakeFd(),
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    while (true) {
+        const rc = std.posix.system.poll(&descriptors, 1, 5_000);
+        switch (std.posix.errno(rc)) {
+            .SUCCESS => {
+                if (rc == 0) return error.TimedOutWaitingForDiscovery;
+                _ = executor.drainWake();
+                return;
+            },
+            .INTR => continue,
+            else => return error.DiscoveryPollFailed,
         }
     }
 }
@@ -261,6 +282,135 @@ test "Manager Runtime copies a standalone regular-file root" {
     const copied_contents = try readFile(allocator, destination);
     defer allocator.free(copied_contents);
     try std.testing.expectEqualStrings("standalone Manager copy", copied_contents);
+}
+
+test "Manager Runtime copies a discovered folder incrementally" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const source_nested = try join(allocator, source, "nested");
+    defer allocator.free(source_nested);
+    const source_deep = try join(allocator, source_nested, "deep");
+    defer allocator.free(source_deep);
+    const source_top_file = try join(allocator, source, "top.txt");
+    defer allocator.free(source_top_file);
+    const source_nested_file = try join(allocator, source_nested, "nested.txt");
+    defer allocator.free(source_nested_file);
+    const source_deep_file = try join(allocator, source_deep, "deep.txt");
+    defer allocator.free(source_deep_file);
+    const source_link = try join(allocator, source, "shortcut");
+    defer allocator.free(source_link);
+
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    const destination_root = try join(allocator, destination_base, "source");
+    defer allocator.free(destination_root);
+    const destination_nested = try join(allocator, destination_root, "nested");
+    defer allocator.free(destination_nested);
+    const destination_deep = try join(allocator, destination_nested, "deep");
+    defer allocator.free(destination_deep);
+    const destination_top_file = try join(allocator, destination_root, "top.txt");
+    defer allocator.free(destination_top_file);
+    const destination_nested_file = try join(allocator, destination_nested, "nested.txt");
+    defer allocator.free(destination_nested_file);
+    const destination_deep_file = try join(allocator, destination_deep, "deep.txt");
+    defer allocator.free(destination_deep_file);
+    const destination_link = try join(allocator, destination_root, "shortcut");
+    defer allocator.free(destination_link);
+
+    defer {
+        cleanup(destination_link, false);
+        cleanup(destination_deep_file, false);
+        cleanup(destination_nested_file, false);
+        cleanup(destination_top_file, false);
+        cleanup(destination_deep, true);
+        cleanup(destination_nested, true);
+        cleanup(destination_root, true);
+        cleanup(destination_base, true);
+        cleanup(source_link, false);
+        cleanup(source_deep_file, false);
+        cleanup(source_nested_file, false);
+        cleanup(source_top_file, false);
+        cleanup(source_deep, true);
+        cleanup(source_nested, true);
+        cleanup(source, true);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(source);
+    try makeDirectory(source_nested);
+    try makeDirectory(source_deep);
+    try makeDirectory(destination_base);
+    try writeFile(source_top_file, "top-level payload");
+    try writeFile(source_nested_file, "nested payload");
+    try writeFile(source_deep_file, "deep payload");
+    try makeSymlink("nested/deep/deep.txt", source_link);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .mode = 0o755 },
+        null,
+    );
+    try manager.setDestinationDirectory(job, destination_base);
+    try manager.enableDiscoveredEntryOperations(job);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    try manager.startDiscovery(job, source);
+    try manager.queueJob(job);
+
+    var discovery = try io_discovery_executor.Executor.init(
+        allocator,
+        1,
+        1,
+        1,
+    );
+    defer discovery.deinit();
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 1);
+    defer runtime.deinit();
+
+    var iterations: usize = 0;
+    while (!manager.jobState(job).?.isTerminal()) : (iterations += 1) {
+        if (iterations == 100) return error.FolderCopyDidNotComplete;
+
+        const discovery_submitted = try discovery.dispatchReady(&manager);
+        const operations_submitted = try runtime.dispatchReady();
+
+        if (discovery_submitted > 0) {
+            try waitForDiscovery(&discovery);
+            _ = try discovery.drainCompletions(&manager);
+        }
+
+        if (operations_submitted > 0) {
+            try waitForOne(&runtime);
+            _ = try runtime.drainCompletions();
+        }
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
+
+    const copied_top = try readFile(allocator, destination_top_file);
+    defer allocator.free(copied_top);
+    try std.testing.expectEqualStrings("top-level payload", copied_top);
+
+    const copied_nested = try readFile(allocator, destination_nested_file);
+    defer allocator.free(copied_nested);
+    try std.testing.expectEqualStrings("nested payload", copied_nested);
+
+    const copied_deep = try readFile(allocator, destination_deep_file);
+    defer allocator.free(copied_deep);
+    try std.testing.expectEqualStrings("deep payload", copied_deep);
+
+    const copied_target = try readLink(allocator, destination_link);
+    defer allocator.free(copied_target);
+    try std.testing.expectEqualStrings("nested/deep/deep.txt", copied_target);
 }
 
 test "Manager Runtime registers directory destination collisions" {

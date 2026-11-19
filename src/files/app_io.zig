@@ -251,20 +251,33 @@ pub fn stepOperations(self: *App) void {
         if (manager.jobState(job_id)) |state| {
             if (state.isTerminal()) {
                 const destination = self.active_io_copy_destination;
+                const is_directory = self.active_io_copy_is_directory;
                 self.active_io_copy_destination = null;
                 self.active_io_copy_job = null;
+                self.active_io_copy_is_directory = false;
 
                 switch (state) {
                     .completed => {
                         if (manager.jobHasSkippedOperations(job_id)) {
-                            self.setStatusNotice("File copy skipped", false);
+                            self.setStatusNotice(
+                                if (is_directory) "Folder copy skipped" else "File copy skipped",
+                                false,
+                            );
                         } else {
-                            self.setStatusNotice("File copied", false);
+                            self.setStatusNotice(
+                                if (is_directory) "Folder copied" else "File copied",
+                                false,
+                            );
                         }
                     },
-                    .completed_with_errors, .failed =>
-                        self.setStatusNotice("File copy failed", true),
-                    .cancelled => self.setStatusNotice("File copy cancelled", true),
+                    .completed_with_errors, .failed => self.setStatusNotice(
+                        if (is_directory) "Folder copy failed" else "File copy failed",
+                        true,
+                    ),
+                    .cancelled => self.setStatusNotice(
+                        if (is_directory) "Folder copy cancelled" else "File copy cancelled",
+                        true,
+                    ),
                     else => unreachable,
                 }
 

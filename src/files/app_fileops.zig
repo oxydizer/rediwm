@@ -136,7 +136,74 @@ fn startManagerSingleFileCopy(
 
     self.active_io_copy_destination = owned_destination;
     self.active_io_copy_job = job_id;
+    self.active_io_copy_is_directory = false;
     self.setStatusNotice("Copying file", false);
+    self.invalidate();
+    return true;
+}
+
+/// Starts one selected directory through incremental Manager discovery and
+/// operation execution. Other transfer shapes remain on JobRunner.
+fn startManagerSingleDirectoryCopy(
+    self: *App,
+    paths: []const []const u8,
+    directory: []const u8,
+) !bool {
+    if (paths.len != 1 or self.active_io_copy_job != null) return false;
+
+    const source = paths[0];
+    const name = std.fs.path.basename(source);
+    if (name.len == 0) return false;
+
+    const source_z = try self.allocator.dupeSentinel(u8, source, 0);
+    defer self.allocator.free(source_z);
+    var source_stat: c.struct_stat = undefined;
+    if (c.lstat(source_z, &source_stat) != 0) return false;
+    if ((source_stat.st_mode & c.S_IFMT) != c.S_IFDIR) return false;
+
+    // Copying a directory into itself or one of its descendants would make
+    // discovery chase the destination being created.
+    if (ops_mod.isDescendantOrSame(source, directory)) return false;
+
+    const destination = try std.fs.path.join(
+        self.allocator,
+        &.{ directory, name },
+    );
+    defer self.allocator.free(destination);
+    const destination_z = try self.allocator.dupeSentinel(u8, destination, 0);
+    defer self.allocator.free(destination_z);
+    var destination_stat: c.struct_stat = undefined;
+    if (c.lstat(destination_z, &destination_stat) == 0) return false;
+    if (std.c._errno().* != c.ENOENT) return false;
+
+    try self.startOperations();
+    const manager = if (self.io_manager) |*value| value else
+        return error.OperationManagerUnavailable;
+    const owned_destination = try self.allocator.dupe(u8, directory);
+    errdefer self.allocator.free(owned_destination);
+
+    const job_id = try manager.createJob(null);
+    errdefer _ = manager.discardPlanningJob(job_id);
+
+    const root_id = try manager.addTreeRoot(
+        job_id,
+        name,
+        .directory,
+        .{
+            .mode = @intCast(source_stat.st_mode),
+        },
+        null,
+    );
+    try manager.setDestinationDirectory(job_id, directory);
+    try manager.enableDiscoveredEntryOperations(job_id);
+    _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
+    try self.startDiscovery(job_id, source);
+    try manager.queueJob(job_id);
+
+    self.active_io_copy_destination = owned_destination;
+    self.active_io_copy_job = job_id;
+    self.active_io_copy_is_directory = true;
+    self.setStatusNotice("Copying folder", false);
     self.invalidate();
     return true;
 }
@@ -152,6 +219,9 @@ pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const 
     if (kind == .copy) {
         const started = startManagerSingleFileCopy(self, paths, directory) catch false;
         if (started) return true;
+        const directory_started =
+            startManagerSingleDirectoryCopy(self, paths, directory) catch false;
+        if (directory_started) return true;
     }
     const runner = self.job_runner orelse return false;
     runner.start(kind, paths, directory, .ask) catch {
