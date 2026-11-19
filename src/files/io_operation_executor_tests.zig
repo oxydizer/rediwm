@@ -235,6 +235,7 @@ test "Manager operations execute directory creation before dependent symlink and
 
 test "Manager Runtime copies a standalone regular-file root" {
     const allocator = std.testing.allocator;
+    const contents = "standalone Manager copy";
     var temp_buffer: [256]u8 = undefined;
     const temp = try makeTempDir(&temp_buffer);
 
@@ -252,7 +253,7 @@ test "Manager Runtime copies a standalone regular-file root" {
     }
 
     try makeDirectory(destination_dir);
-    try writeFile(source, "standalone Manager copy");
+    try writeFile(source, contents);
 
     var manager = io_manager.Manager.init(allocator);
     defer manager.deinit();
@@ -266,11 +267,12 @@ test "Manager Runtime copies a standalone regular-file root" {
     );
     try manager.setSourceRootPath(job, source);
     try manager.setDestinationDirectory(job, destination_dir);
-    _ = try manager.addEntryOperation(job, root, .copy_file);
+    const operation_id = try manager.addEntryOperation(job, root, .copy_file);
     try manager.queueJob(job);
 
     var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
     defer runtime.deinit();
+    runtime.setProfilingEnabled(true);
 
     while (!manager.jobState(job).?.isTerminal()) {
         try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
@@ -279,9 +281,22 @@ test "Manager Runtime copies a standalone regular-file root" {
     }
 
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    const progress = manager.entryOperationView(job, root).?;
+    const expected_bytes: u64 = contents.len;
+    try std.testing.expectEqual(expected_bytes, progress.progress_bytes);
+    try std.testing.expectEqual(expected_bytes, progress.progress_total_bytes);
+
+    const metrics = manager.operationCopyMetrics(job, operation_id).?;
+    const transferred_bytes =
+        metrics.reflink_bytes +
+        metrics.copy_file_range_bytes +
+        metrics.buffered_write_bytes;
+    try std.testing.expectEqual(expected_bytes, transferred_bytes);
+    try std.testing.expect(metrics.elapsed_ns > 0);
+
     const copied_contents = try readFile(allocator, destination);
     defer allocator.free(copied_contents);
-    try std.testing.expectEqualStrings("standalone Manager copy", copied_contents);
+    try std.testing.expectEqualStrings(contents, copied_contents);
 }
 
 test "Manager Runtime copies a discovered folder incrementally" {

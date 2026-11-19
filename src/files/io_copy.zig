@@ -226,6 +226,20 @@ fn completionWithProgress(
     return result;
 }
 
+fn completionWithResultAndProgress(
+    item: executor.WorkItem,
+    result_payload: executor.OwnedPayload,
+    bytes: u64,
+    total_bytes: u64,
+) executor.WorkCompletion {
+    var result = completion(item, .completed, null, result_payload);
+    result.progress = .{
+        .bytes = bytes,
+        .total_bytes = total_bytes,
+    };
+    return result;
+}
+
 fn failed(
     item: executor.WorkItem,
     state: ?Continuation,
@@ -360,11 +374,11 @@ fn executeUnit(
                 unlinkDestination(operation_paths.destination);
                 return completion(item, .failed, null, null);
             };
-            return completion(
+            return completionWithResultAndProgress(
                 item,
-                .completed,
-                null,
                 .{ .allocator = allocator, .bytes = marker },
+                state.size,
+                state.size,
             );
         }
 
@@ -393,11 +407,11 @@ fn executeUnit(
                 unlinkDestination(operation_paths.destination);
                 return completion(item, .failed, null, null);
             };
-            return completion(
+            return completionWithResultAndProgress(
                 item,
-                .completed,
-                null,
                 .{ .allocator = allocator, .bytes = marker },
+                state.size,
+                state.size,
             );
         }
     }
@@ -413,11 +427,11 @@ fn executeUnit(
             unlinkDestination(operation_paths.destination);
             return completion(item, .failed, null, null);
         };
-        return completion(
+        return completionWithResultAndProgress(
             item,
-            .completed,
-            null,
             .{ .allocator = allocator, .bytes = marker },
+            state.size,
+            state.size,
         );
     }
 
@@ -523,11 +537,11 @@ fn executeUnit(
             unlinkDestination(operation_paths.destination);
             return completion(item, .failed, null, null);
         };
-        return completion(
+        return completionWithResultAndProgress(
             item,
-            .completed,
-            null,
             .{ .allocator = allocator, .bytes = marker },
+            state.size,
+            state.size,
         );
     }
 
