@@ -495,6 +495,29 @@ pub fn sync(self: *App) void {
         self.job_measuring = progress.measuring;
     }
 
+    // Manager-backed copies use the existing transfer sidebar/listing state.
+    // Their detailed progress is supplied separately by the I/O Manager.
+    if (self.active_io_copy_job) |job_id| {
+        if (self.io_manager) |*manager| {
+            if (manager.jobState(job_id)) |manager_state| {
+                const mapped_state: ops_mod.JobState = switch (manager_state) {
+                    .planning, .queued, .running => .running,
+                    .paused => .paused,
+                    .waiting => .waiting_conflict,
+                    .completed, .completed_with_errors, .failed, .cancelled => .finished,
+                };
+                const state_changed = self.job_state != mapped_state;
+                self.job_was_running = !manager_state.isTerminal();
+                self.job_state = mapped_state;
+                if (state_changed) {
+                    self.transfer_rows_dirty = true;
+                    self.transfer_tree_state.markDirty();
+                    self.invalidate();
+                }
+            }
+        }
+    }
+
     const file_ops_active = self.job_state == .running or
         self.job_state == .paused or
         self.job_state == .waiting_conflict;

@@ -92,10 +92,14 @@ pub fn stepDiscovery(self: *App) void {
         self.setStatusNotice("Directory discovery failed", true);
         return;
     };
-    if (drained > 0 and self.snapshot != null and
-        self.transfer_browse_root == null)
-    {
-        self.rebuildView();
+    if (drained > 0) {
+        if (self.active_io_copy_job != null) {
+            self.transfer_tree_state.markDirty();
+            self.transfer_rows_dirty = true;
+        }
+        if (self.snapshot != null and self.transfer_browse_root == null) {
+            self.rebuildView();
+        }
     }
     _ = executor.dispatchReady(manager) catch {
         self.setStatusNotice("Could not schedule directory discovery", true);
@@ -228,10 +232,14 @@ pub fn stepOperations(self: *App) void {
     const manager = if (self.io_manager) |*value| value else return;
 
     _ = executor.drainWake();
-    _ = executor.drainCompletions() catch {
+    const drained = executor.drainCompletions() catch {
         self.setStatusNotice("File operation completion failed", true);
         return;
     };
+    if (drained > 0 and self.active_io_copy_job != null) {
+        self.transfer_tree_state.markDirty();
+        self.transfer_rows_dirty = true;
+    }
     _ = executor.dispatchReady() catch {
         self.setStatusNotice("Could not schedule file operation", true);
     };

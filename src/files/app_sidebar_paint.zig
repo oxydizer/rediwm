@@ -503,6 +503,13 @@ fn fileOpsRectContains(rect: shell_ui.Rect, x: f64, y: f64) bool {
 }
 
 pub fn fileOpsSidebarHeight(self: *App) i32 {
+    if (self.active_io_copy_job) |job_id| {
+        if (self.io_manager) |*manager| {
+            if (manager.jobState(job_id)) |state| {
+                if (!state.isTerminal()) return 60;
+            }
+        }
+    }
     const runner = self.job_runner orelse return 0;
     const state = runner.pollProgress().state;
     return if (state == .running or state == .paused or state == .waiting_conflict) 60 else 0;
@@ -522,19 +529,27 @@ pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
     if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
         return std.math.maxInt(usize) - 2004;
     }
-    if (self.job_runner) |runner| {
+    if (self.active_io_copy_job == null) if (self.job_runner) |runner| {
         const progress = runner.pollProgress();
         const can_pause = (progress.kind == .copy or progress.kind == .move) and
             (progress.state == .running or progress.state == .paused);
         if (can_pause and fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
             return std.math.maxInt(usize) - 2003;
         }
-    }
+    };
     return std.math.maxInt(usize) - 2002;
 }
 
 pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
     if (!self.fileOpsSidebarHit(x, y)) return false;
+    if (self.active_io_copy_job != null) {
+        if (self.active_io_copy_destination) |destination| {
+            self.navigate(destination);
+            self.focus = .file_view;
+        }
+        self.invalidate();
+        return true;
+    }
     const runner = self.job_runner orelse return true;
     const progress = runner.pollProgress();
     const area = fileOpsBox(self);
@@ -558,6 +573,29 @@ pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
 }
 
 pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
+    if (self.active_io_copy_job) |job_id| {
+        const manager = if (self.io_manager) |*value| value else return;
+        const state = manager.jobState(job_id) orelse return;
+        if (state.isTerminal()) return;
+        const area = fileOpsBox(self);
+        if (area.w < 120) return;
+
+        @import("app_draw.zig").drawSidebarTransferSurface(cr, area);
+        const palette = ui_theme.shellPalette();
+        const tree = manager.treeIndex(job_id) orelse return;
+        const root_id = tree.root() orelse return;
+        const root = tree.getConst(root_id) orelse return;
+        @import("app_draw.zig").drawTransferProgressRow(
+            cr,
+            area,
+            root.name,
+            null,
+            ui_theme.global.sidebarForeground(),
+            palette.accent,
+            shell_ui.statusSize(),
+        );
+        return;
+    }
     const runner = self.job_runner orelse return;
     const progress = runner.pollProgress();
     if (progress.state != .running and progress.state != .paused and progress.state != .waiting_conflict) return;

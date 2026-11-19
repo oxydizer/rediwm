@@ -234,6 +234,11 @@ pub const OperationDetails = struct {
     entry_id: io_tree.EntryId,
 };
 
+pub const EntryOperationView = struct {
+    state: OperationState,
+    generation: u64,
+};
+
 /// Caller-owned copy; it remains valid independently of the live manager.
 pub const JobSnapshot = struct {
     allocator: Allocator,
@@ -1541,6 +1546,23 @@ pub const Manager = struct {
         const job = self.findJobConst(job_id) orelse return null;
         const operation = findOperationConst(job, operation_id) orelse return null;
         return operation.state;
+    }
+
+    /// Read-only execution state for the operation associated with one entry.
+    /// A nonzero generation means the operation has been dispatched at least
+    /// once, even when a yielded operation is briefly pending again.
+    pub fn entryOperationView(
+        self: *const Manager,
+        job_id: JobId,
+        entry_id: io_tree.EntryId,
+    ) ?EntryOperationView {
+        const job = self.findJobConst(job_id) orelse return null;
+        const index = job.entry_operation_indices.get(entry_id) orelse return null;
+        const operation = job.operations.items[index];
+        return .{
+            .state = operation.state,
+            .generation = operation.generation,
+        };
     }
 
     pub fn snapshotJob(self: *const Manager, allocator: Allocator, job_id: JobId) !JobSnapshot {

@@ -14,6 +14,20 @@ pub fn appendTransferRows(
 ) void {
     if (self.chooser != null or self.transfer_view.active or
         self.history.archive_len > 0 or self.isRecent() or self.changedOnly()) return;
+
+    if (self.active_io_copy_job) |job_id| {
+        const manager = if (self.io_manager) |*value| value else return;
+        const state = manager.jobState(job_id) orelse return;
+        if (state.isTerminal()) return;
+
+        if (self.transfer_tree_state.dirty) {
+            self.transfer_tree_state.rebuildManager(manager, job_id) catch return;
+        }
+        const tree = if (self.transfer_tree_state.tree) |*value| value else return;
+        appendTreeRows(self, mem, tree, old);
+        return;
+    }
+
     if (self.job_state != .running and self.job_state != .paused and
         self.job_state != .waiting_conflict) return;
 

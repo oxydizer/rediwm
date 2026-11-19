@@ -5,6 +5,7 @@ const ui_profile = @import("ui_profile.zig");
 const Allocator = std.mem.Allocator;
 const ops = @import("ops.zig");
 const projection = @import("transfer_tree.zig");
+const io_manager = @import("io_manager.zig");
 
 pub const State = struct {
     allocator: Allocator,
@@ -58,6 +59,113 @@ pub const State = struct {
         try self.aggregate_cache.ensureTotalCapacity(self.allocator, next.nodes.items.len);
         try self.child_counts.ensureTotalCapacity(self.allocator, next.nodes.items.len);
         try self.aggregate_queue.ensureTotalCapacity(self.allocator, next.nodes.items.len);
+
+        if (self.tree) |*old| old.deinit();
+        self.tree = next;
+        self.dirty = false;
+    }
+
+    /// Projects the Manager-owned incremental tree into the existing
+    /// destination hierarchy used by the Files listing and transfer UI.
+    pub fn rebuildManager(
+        self: *State,
+        manager: *const io_manager.Manager,
+        job_id: io_manager.JobId,
+    ) !void {
+        const source_tree = manager.treeIndex(job_id) orelse return error.UnknownJob;
+        var manifest = ops.TransferManifest.init(self.allocator);
+        defer manifest.deinit();
+
+        for (source_tree.entries.items) |entry| {
+            const kind: ops.TransferEntryKind = switch (entry.kind) {
+                .directory => .directory,
+                .regular_file => .file,
+                .symlink => .symlink,
+                .other => continue,
+            };
+
+            const root_id = source_tree.rootForEntry(entry.id) orelse
+                return error.UnknownEntry;
+            var root_index: usize = 0;
+            var found_root = false;
+            for (source_tree.roots(), 0..) |candidate, index| {
+                if (candidate != root_id) continue;
+                root_index = index;
+                found_root = true;
+                break;
+            }
+            if (!found_root) return error.UnknownRoot;
+
+            const source_path = try manager.sourcePath(
+                self.allocator,
+                job_id,
+                entry.id,
+            );
+            defer self.allocator.free(source_path);
+            const destination_path = try manager.destinationPath(
+                self.allocator,
+                job_id,
+                entry.id,
+            );
+            defer self.allocator.free(destination_path);
+
+            const full_relative_path = try source_tree.relativePath(
+                self.allocator,
+                entry.id,
+            );
+            defer self.allocator.free(full_relative_path);
+
+            const relative_path: []const u8 = if (entry.parent_id == null)
+                ""
+            else blk: {
+                const root = source_tree.getConst(root_id) orelse
+                    return error.UnknownRoot;
+                if (full_relative_path.len <= root.name.len or
+                    !std.mem.startsWith(u8, full_relative_path, root.name) or
+                    full_relative_path[root.name.len] != '/')
+                {
+                    return error.InvalidTreePath;
+                }
+                break :blk full_relative_path[root.name.len + 1 ..];
+            };
+
+            const state: ops.TransferEntryState =
+                if (manager.entryOperationView(job_id, entry.id)) |operation| switch (operation.state) {
+                    .pending => if (operation.generation > 0) .copying else .pending,
+                    .running => .copying,
+                    .waiting => .pending,
+                    .completed => .completed,
+                    .skipped => .skipped,
+                    .failed => .failed,
+                    .cancelled => .cancelled,
+                } else if (entry.discovery == .failed) .failed else .pending;
+
+            try manifest.append(
+                source_path,
+                relative_path,
+                destination_path,
+                entry.metadata.size,
+                kind,
+                root_index,
+            );
+            manifest.entries.items[manifest.entries.items.len - 1].state = state;
+        }
+
+        var next = try projection.build(self.allocator, manifest.entries.items);
+        errdefer next.deinit();
+
+        try self.aggregate_cache.ensureTotalCapacity(
+            self.allocator,
+            next.nodes.items.len,
+        );
+        try self.child_counts.ensureTotalCapacity(
+            self.allocator,
+            next.nodes.items.len,
+        );
+        try self.aggregate_queue.ensureTotalCapacity(
+            self.allocator,
+            next.nodes.items.len,
+        );
 
         if (self.tree) |*old| old.deinit();
         self.tree = next;
