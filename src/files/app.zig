@@ -384,7 +384,7 @@ pub const App = struct {
             self.unpinned_places = prefs.unpinned_places;
             self.git_view = prefs.git_view;
             self.terminal.requested_height = @intCast(prefs.terminal_height);
-            self.sort_mode = @enumFromInt(prefs.sort);
+            self.sort_mode = @fromBackingInt(@intCast(prefs.sort));
         }
         self.pins_path = pins_mod.statePath(allocator, environ) catch null;
         if (self.pins_path) |path| self.pins = pins_mod.List.load(allocator, io, path);
@@ -546,7 +546,7 @@ pub const App = struct {
 
     pub fn savePreferences(self: *App) void {
         const path = self.preferences_path orelse return;
-        (Preferences{ .list = self.non_git_list_view orelse self.list_view, .sort = @intFromEnum(self.sort_mode), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height) }).save(self.allocator, self.io, path) catch {
+        (Preferences{ .list = self.non_git_list_view orelse self.list_view, .sort = @backingInt(self.sort_mode), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height) }).save(self.allocator, self.io, path) catch {
             self.setStatusNotice(tr("Could not save view preferences"), true);
         };
     }
@@ -651,6 +651,7 @@ pub const App = struct {
     // app_io.zig
     const app_io = @import("app_io.zig");
     pub const startDiscovery = app_io.startDiscovery;
+    pub const startDiscoveryRoots = app_io.startDiscoveryRoots;
     pub const promoteDiscoveryPath = app_io.promoteDiscoveryPath;
     pub const promoteDiscoverySubtreePath = app_io.promoteDiscoverySubtreePath;
     pub const stepDiscovery = app_io.stepDiscovery;
@@ -860,7 +861,7 @@ pub const App = struct {
     pub const fileOpsSidebarHover = app_sidebar_paint.fileOpsSidebarHover;
     pub const fileOpsSidebarClick = app_sidebar_paint.fileOpsSidebarClick;
     pub const renderFileOpsSidebar = app_sidebar_paint.renderFileOpsSidebar;
-pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
+    pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
 
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
@@ -877,7 +878,7 @@ pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
     pub const inlineTorrentHit = app_torrent_rows.inlineTorrentHit;
     pub const inlineTorrentClick = app_torrent_rows.inlineTorrentClick;
     pub const renderTorrentTip = app_torrent_rows.renderTorrentTip;
-pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
+    pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const toggleTorrent = app_torrents.toggleTorrent;
     pub const openTorrentDetails = app_torrents.openTorrentDetails;
     pub const openTransfers = app_torrents.openTransfers;

@@ -723,3 +723,108 @@ test "multi-file copy requests use one Manager job and the operation Runtime" {
     try std.testing.expectEqualStrings("first Manager payload", copied_a);
     try std.testing.expectEqualStrings("second Manager payload", copied_b);
 }
+
+test "multi-directory copy requests use one Manager job and incremental discovery" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+
+    const source_a = try transferTestJoin(allocator, temp, "alpha");
+    defer allocator.free(source_a);
+    const source_b = try transferTestJoin(allocator, temp, "beta");
+    defer allocator.free(source_b);
+    const source_a_file = try transferTestJoin(allocator, source_a, "first.txt");
+    defer allocator.free(source_a_file);
+    const source_b_nested = try transferTestJoin(allocator, source_b, "nested");
+    defer allocator.free(source_b_nested);
+    const source_b_file = try transferTestJoin(allocator, source_b_nested, "second.txt");
+    defer allocator.free(source_b_file);
+
+    const destination_dir = try transferTestJoin(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    const destination_a = try transferTestJoin(allocator, destination_dir, "alpha");
+    defer allocator.free(destination_a);
+    const destination_a_file = try transferTestJoin(allocator, destination_a, "first.txt");
+    defer allocator.free(destination_a_file);
+    const destination_b = try transferTestJoin(allocator, destination_dir, "beta");
+    defer allocator.free(destination_b);
+    const destination_b_nested = try transferTestJoin(allocator, destination_b, "nested");
+    defer allocator.free(destination_b_nested);
+    const destination_b_file = try transferTestJoin(allocator, destination_b_nested, "second.txt");
+    defer allocator.free(destination_b_file);
+
+    defer {
+        transferTestCleanup(destination_b_file, false);
+        transferTestCleanup(destination_b_nested, true);
+        transferTestCleanup(destination_a_file, false);
+        transferTestCleanup(destination_b, true);
+        transferTestCleanup(destination_a, true);
+        transferTestCleanup(source_b_file, false);
+        transferTestCleanup(source_b_nested, true);
+        transferTestCleanup(source_a_file, false);
+        transferTestCleanup(source_b, true);
+        transferTestCleanup(source_a, true);
+        transferTestCleanup(destination_dir, true);
+        transferTestCleanup(temp, true);
+    }
+
+    try transferTestMkdir(source_a);
+    try transferTestMkdir(source_b);
+    try transferTestMkdir(source_b_nested);
+    try transferTestMkdir(destination_dir);
+    try transferTestWriteFile(source_a_file, "first directory payload");
+    try transferTestWriteFile(source_b_file, "nested directory payload");
+
+    var app = try testApp();
+    defer app.deinit();
+    app.io_manager = io_manager.Manager.init(allocator);
+
+    const paths = [_][]const u8{ source_a, source_b };
+    try std.testing.expect(app.executeTransfer(.copy, &paths, destination_dir, false));
+
+    const job_id = app.active_io_copy_job.?;
+    const manager = &app.io_manager.?;
+    const tree = manager.treeIndex(job_id).?;
+    const roots = tree.roots();
+    try std.testing.expectEqual(@as(usize, 2), roots.len);
+    try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job_id).?);
+    try std.testing.expectEqualStrings(
+        source_a,
+        manager.discoveryRootPath(job_id, roots[0]).?,
+    );
+    try std.testing.expectEqualStrings(
+        source_b,
+        manager.discoveryRootPath(job_id, roots[1]).?,
+    );
+
+    while (true) {
+        app.stepDiscovery();
+        app.stepOperations();
+        if (manager.jobState(job_id).?.isTerminal()) break;
+
+        var descriptors = [_]c.struct_pollfd{
+            .{
+                .fd = app.discoveryWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
+            .{
+                .fd = app.operationWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
+        };
+        const result = c.poll(&descriptors, @intCast(descriptors.len), 5_000);
+        if (result == 0) return error.TimedOutWaitingForDirectoryCopy;
+        if (result < 0 and std.c._errno().* != c.EINTR)
+            return error.DirectoryCopyPollFailed;
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_id).?);
+    const copied_a = try transferTestReadFile(allocator, destination_a_file);
+    defer allocator.free(copied_a);
+    const copied_b = try transferTestReadFile(allocator, destination_b_file);
+    defer allocator.free(copied_b);
+    try std.testing.expectEqualStrings("first directory payload", copied_a);
+    try std.testing.expectEqualStrings("nested directory payload", copied_b);
+}

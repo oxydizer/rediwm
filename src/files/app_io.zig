@@ -14,8 +14,7 @@ pub fn startDiscovery(
     job_id: io_manager.JobId,
     root_path: []const u8,
 ) !void {
-    const manager = if (self.io_manager) |*value| value else
-        return error.DiscoveryManagerUnavailable;
+    const manager = if (self.io_manager) |*value| value else return error.DiscoveryManagerUnavailable;
 
     for (self.discovery_jobs.items) |existing| {
         if (existing == job_id) return error.DiscoveryAlreadyTracked;
@@ -32,6 +31,32 @@ pub fn startDiscovery(
     }
 
     try manager.startDiscovery(job_id, root_path);
+    self.discovery_jobs.appendAssumeCapacity(job_id);
+}
+
+/// Atomically queues a multi-root directory Job and tracks it for discovery.
+pub fn startDiscoveryRoots(
+    self: *App,
+    job_id: io_manager.JobId,
+    roots: []const io_manager.DiscoveryRoot,
+) !void {
+    const manager = if (self.io_manager) |*value| value else return error.DiscoveryManagerUnavailable;
+
+    for (self.discovery_jobs.items) |existing| {
+        if (existing == job_id) return error.DiscoveryAlreadyTracked;
+    }
+    try self.discovery_jobs.ensureUnusedCapacity(self.allocator, 1);
+
+    if (self.discovery_executor == null) {
+        self.discovery_executor = try io_discovery_executor.Executor.init(
+            self.allocator,
+            2,
+            4,
+            64,
+        );
+    }
+
+    try manager.queueJobWithDiscoveryRoots(job_id, roots);
     self.discovery_jobs.appendAssumeCapacity(job_id);
 }
 
@@ -215,8 +240,7 @@ pub fn discoveryWakeFd(self: *App) i32 {
 /// Starts the bounded operation Runtime on first use.
 pub fn startOperations(self: *App) !void {
     if (self.operation_executor != null) return;
-    const manager = if (self.io_manager) |*value| value else
-        return error.OperationManagerUnavailable;
+    const manager = if (self.io_manager) |*value| value else return error.OperationManagerUnavailable;
 
     self.operation_executor = try io_operation_executor.Runtime.init(
         self.allocator,
