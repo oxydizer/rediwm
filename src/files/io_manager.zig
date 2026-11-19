@@ -1015,8 +1015,17 @@ pub const Manager = struct {
         try job.operations.ensureUnusedCapacity(self.allocator, 1);
         try job.operation_indices.ensureUnusedCapacity(self.allocator, 1);
         if (job.state != .planning) {
-            try job.ready_queue.ensureUnusedCapacity(self.allocator, 1);
-            try job.dependency_work_queue.ensureUnusedCapacity(self.allocator, 1);
+            // Dynamic discovery can add operations after queueJob(). Keep
+            // enough room for every operation to become ready, including
+            // dependents released together by a completed parent.
+            try job.ready_queue.ensureTotalCapacity(
+                self.allocator,
+                index + 1,
+            );
+            try job.dependency_work_queue.ensureTotalCapacity(
+                self.allocator,
+                index + 1,
+            );
         }
         job.operations.appendAssumeCapacity(.{ .id = id, .kind = kind });
         job.operation_indices.putAssumeCapacity(id, index);
