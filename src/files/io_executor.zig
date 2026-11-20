@@ -12,6 +12,7 @@ pub const OperationKind = io_manager.OperationKind;
 pub const WorkToken = io_manager.WorkToken;
 pub const WorkResult = io_manager.WorkResult;
 pub const CopyMetrics = io_manager.CopyMetrics;
+pub const CopyPhase = io_manager.CopyPhase;
 
 pub const OperationKey = struct {
     job_id: JobId,
@@ -102,6 +103,7 @@ pub const WorkCompletion = struct {
 pub const WorkProgress = struct {
     bytes: u64,
     total_bytes: u64,
+    phase: CopyPhase,
 };
 
 const WorkerPool = @import("io_workers.zig").WorkerPool;
@@ -276,6 +278,7 @@ pub const Executor = struct {
                     completion.token,
                     progress.bytes,
                     progress.total_bytes,
+                    progress.phase,
                 );
             }
 

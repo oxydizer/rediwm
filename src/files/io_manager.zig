@@ -170,6 +170,11 @@ pub const WorkResult = enum {
     cancelled,
 };
 
+pub const CopyPhase = enum {
+    transferring,
+    flushing,
+};
+
 /// Per-operation copy measurements accumulated from accepted worker units.
 /// Counters are always collected; elapsed-time fields are opt-in.
 pub const CopyMetrics = struct {
@@ -224,6 +229,7 @@ const Operation = struct {
     generation: u64 = 0,
     progress_bytes: u64 = 0,
     progress_total_bytes: u64 = 0,
+    copy_phase: CopyPhase = .transferring,
     copy_metrics: CopyMetrics = .{},
     dependencies: std.ArrayList(OperationId) = .empty,
     dependency_indices: std.ArrayList(usize) = .empty,
@@ -301,6 +307,7 @@ pub const EntryOperationView = struct {
     generation: u64,
     progress_bytes: u64,
     progress_total_bytes: u64,
+    copy_phase: CopyPhase,
 };
 
 /// Caller-owned copy; it remains valid independently of the live manager.
@@ -1942,6 +1949,7 @@ pub const Manager = struct {
         token: WorkToken,
         bytes: u64,
         total_bytes: u64,
+        phase: CopyPhase,
     ) bool {
         const job = self.findJob(token.job_id) orelse return false;
         const operation = findOperation(job, token.operation_id) orelse return false;
@@ -1953,6 +1961,7 @@ pub const Manager = struct {
         }
         operation.progress_bytes = bytes;
         operation.progress_total_bytes = total_bytes;
+        operation.copy_phase = phase;
         return true;
     }
 
@@ -2014,6 +2023,7 @@ pub const Manager = struct {
             .generation = operation.generation,
             .progress_bytes = operation.progress_bytes,
             .progress_total_bytes = operation.progress_total_bytes,
+            .copy_phase = operation.copy_phase,
         };
     }
 
