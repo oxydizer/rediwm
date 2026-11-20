@@ -25,6 +25,7 @@ pub const DiscoveryState = enum {
 pub const Metadata = struct {
     size: u64 = 0,
     mode: u32 = 0,
+    device_id: ?u64 = null,
     mtime_sec: i64 = 0,
     mtime_nsec: i64 = 0,
 };

@@ -108,6 +108,31 @@ test "discovery records literal symlink targets without following directory link
     try std.testing.expect(saw_folder_link);
 }
 
+test "discovery records the filesystem device for each entry" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const root = try makeTempDir(&temp_buffer);
+    defer cleanup(allocator, root);
+
+    const file = try join(allocator, root, "file");
+    defer allocator.free(file);
+    try createFile(file);
+
+    var root_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.stat(root, &root_stat));
+
+    var cursor = try discovery.Cursor.open(root);
+    defer cursor.deinit();
+    var batch = try cursor.nextBatch(allocator, 4);
+    defer batch.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), batch.records.items.len);
+    try std.testing.expectEqual(
+        @as(?u64, @intCast(root_stat.st_dev)),
+        batch.records.items[0].metadata.device_id,
+    );
+}
+
 test "child cursor refuses a symlink in place of a directory" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;

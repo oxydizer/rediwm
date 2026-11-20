@@ -3,6 +3,43 @@ const io_manager = @import("io_manager.zig");
 const io_discovery = @import("io_discovery.zig");
 const io_tree = @import("io_tree.zig");
 
+test "discovery metadata retains device identity and Jobs retain destination device" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.setDestinationDirectory(job, "/destination");
+    try manager.setDestinationDeviceId(job, 73);
+    try std.testing.expectEqual(@as(?u64, 73), manager.destinationDeviceId(job));
+
+    try manager.startDiscovery(job, "/source");
+    const token = manager.dispatchDiscovery().?;
+
+    var batch: io_discovery.Batch = .{
+        .allocator = allocator,
+        .complete = true,
+    };
+    errdefer batch.deinit();
+
+    const name = try allocator.dupe(u8, "payload.bin");
+    try batch.records.append(allocator, .{
+        .name = name,
+        .kind = .regular_file,
+        .metadata = .{ .size = 19, .device_id = 91 },
+    });
+
+    try std.testing.expect(try manager.completeDiscovery(token, &batch));
+
+    const tree = manager.treeIndex(job).?;
+    const child_id = tree.getConst(root).?.children.items[0];
+    try std.testing.expectEqual(
+        @as(?u64, 91),
+        tree.getConst(child_id).?.metadata.device_id,
+    );
+}
+
 fn makeDiscoveryBatch(
     allocator: std.mem.Allocator,
     records: []const struct {
