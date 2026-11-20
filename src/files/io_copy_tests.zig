@@ -74,6 +74,27 @@ fn runCopy(
     return runCopyWithMetrics(allocator, source, destination, null, false);
 }
 
+fn executeToTerminal(
+    allocator: std.mem.Allocator,
+    item_arg: executor.WorkItem,
+) executor.WorkCompletion {
+    var item = item_arg;
+    while (true) {
+        const done = copy.execute(allocator, item);
+        if (done.outcome != .yielded) return done;
+        item = .{
+            .token = .{
+                .job_id = done.token.job_id,
+                .operation_id = done.token.operation_id,
+                .generation = done.token.generation + 1,
+            },
+            .operation_kind = done.operation_kind,
+            .input = done.input,
+            .continuation = done.continuation,
+        };
+    }
+}
+
 fn runCopyWithMetrics(
     allocator: std.mem.Allocator,
     source: []const u8,
@@ -205,6 +226,7 @@ test "regular-file copy reports exact byte progress with each yielded unit" {
     const progress = result.progress orelse return error.MissingCopyProgress;
     try std.testing.expectEqual(@as(u64, copy.chunk_size), progress.bytes);
     try std.testing.expectEqual(@as(u64, contents.len), progress.total_bytes);
+    try std.testing.expectEqual(executor.CopyPhase.transferring, progress.phase);
     copy.discard(
         null,
         result.operation_kind,
@@ -212,6 +234,45 @@ test "regular-file copy reports exact byte progress with each yielded unit" {
         result.continuation,
         result.result,
     );
+}
+
+test "regular-file copy yields a flushing phase before completion" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(allocator, temp, &.{"source", "destination"});
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    try writeFile(source, "flush before reporting completion");
+    const item = executor.WorkItem{
+        .token = .{ .job_id = 9, .operation_id = 5, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeInput(allocator, source, destination),
+    };
+    const flushing = copy.execute(allocator, item);
+    try std.testing.expectEqual(executor.WorkResult.yielded, flushing.outcome);
+    const progress = flushing.progress orelse return error.MissingCopyProgress;
+    try std.testing.expectEqual(executor.CopyPhase.flushing, progress.phase);
+    try std.testing.expectEqual(progress.total_bytes, progress.bytes);
+
+    const completed = copy.execute(allocator, .{
+        .token = .{
+            .job_id = flushing.token.job_id,
+            .operation_id = flushing.token.operation_id,
+            .generation = flushing.token.generation + 1,
+        },
+        .operation_kind = flushing.operation_kind,
+        .input = flushing.input,
+        .continuation = flushing.continuation,
+    });
+    try std.testing.expectEqual(executor.WorkResult.completed, completed.outcome);
+    copy.complete(null, completed.token, completed.outcome, completed.result);
+    var owned_input = completed.input;
+    owned_input.deinit();
 }
 
 test "existing destination is never overwritten" {
@@ -312,7 +373,7 @@ test "stale completed copy removes destination before acceptance" {
         .operation_kind = .copy_file,
         .input = try copy.makeInput(allocator, source, destination),
     };
-    const done = copy.execute(allocator, item);
+    const done = executeToTerminal(allocator, item);
     try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
     try std.testing.expect(done.result != null);
 
@@ -320,6 +381,38 @@ test "stale completed copy removes destination before acceptance" {
 
     var buffer: [32]u8 = undefined;
     try std.testing.expectError(error.OpenFailed, readFile(destination, &buffer));
+}
+
+test "stale completed copy does not remove a replacement destination" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(allocator, temp, &.{"source", "destination"});
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    try writeFile(source, "operation-owned file");
+    const item = executor.WorkItem{
+        .token = .{ .job_id = 10, .operation_id = 6, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeInput(allocator, source, destination),
+    };
+    const done = executeToTerminal(allocator, item);
+    try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
+
+    const destination_z = try allocator.dupeSentinel(u8, destination, 0);
+    defer allocator.free(destination_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.unlink(destination_z));
+    try writeFile(destination, "replacement must survive");
+
+    copy.discard(null, done.operation_kind, done.input, done.continuation, done.result);
+
+    var buffer: [64]u8 = undefined;
+    const count = try readFile(destination, &buffer);
+    try std.testing.expectEqualStrings("replacement must survive", buffer[0..count]);
 }
 
 test "copy metrics account for strategy bytes and optional timing" {

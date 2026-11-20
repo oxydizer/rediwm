@@ -137,6 +137,64 @@ test "stale and duplicate worker results are rejected" {
     try std.testing.expect(!manager.completeWork(new_token, .completed));
 }
 
+test "copy progress exposes the storage-flush phase" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "payload.bin",
+        .regular_file,
+        .{ .size = 128 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job, root, .copy_file);
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expect(manager.completeWork(token, .yielded));
+    try std.testing.expect(manager.recordOperationProgress(
+        token,
+        128,
+        128,
+        .flushing,
+    ));
+
+    const view = manager.entryOperationView(job, root).?;
+    try std.testing.expectEqual(io_manager.CopyPhase.flushing, view.copy_phase);
+    try std.testing.expectEqual(@as(u64, 128), view.progress_bytes);
+    try std.testing.expectEqual(@as(u64, 128), view.progress_total_bytes);
+}
+
+test "source detach stays blocked until the copy flush completes" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const copy_operation = try manager.addOperation(job, .copy_file);
+    const detach_operation = try manager.addOperation(job, .detach_source);
+    try manager.addDependency(job, detach_operation, copy_operation);
+    try manager.queueJob(job);
+
+    const transfer_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(copy_operation, transfer_token.operation_id);
+    try std.testing.expect(manager.completeWork(transfer_token, .yielded));
+    try std.testing.expect(manager.recordOperationProgress(
+        transfer_token,
+        4096,
+        4096,
+        .flushing,
+    ));
+
+    const flush_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(copy_operation, flush_token.operation_id);
+    try std.testing.expect(manager.completeWork(flush_token, .completed));
+
+    const detach_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(detach_operation, detach_token.operation_id);
+}
+
 test "waiting Operations release the worker and can be resolved" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
@@ -658,13 +716,23 @@ test "entry operation progress is accepted only for its current yielded generati
 
     const token = manager.dispatchNext().?;
     try std.testing.expect(manager.completeWork(token, .yielded));
-    try std.testing.expect(manager.recordOperationProgress(token, 65_536, 100_000));
+    try std.testing.expect(manager.recordOperationProgress(
+        token,
+        65_536,
+        100_000,
+        .transferring,
+    ));
     const view = manager.entryOperationView(job, entry).?;
     try std.testing.expectEqual(@as(u64, 65_536), view.progress_bytes);
     try std.testing.expectEqual(@as(u64, 100_000), view.progress_total_bytes);
 
     const next = manager.dispatchNext().?;
-    try std.testing.expect(!manager.recordOperationProgress(token, 90_000, 100_000));
+    try std.testing.expect(!manager.recordOperationProgress(
+        token,
+        90_000,
+        100_000,
+        .transferring,
+    ));
     try std.testing.expect(manager.completeWork(next, .completed));
     const completed = manager.entryOperationView(job, entry).?;
     try std.testing.expectEqual(@as(u64, 100_000), completed.progress_bytes);

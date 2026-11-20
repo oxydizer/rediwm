@@ -39,13 +39,15 @@ const Strategy = enum(u8) {
 const Continuation = struct {
     source_fd: c_int,
     destination_fd: c_int,
+    parent_fd: c_int,
     offset: u64,
     size: u64,
     strategy: Strategy,
     destination_created: bool,
+    flushing: bool,
 };
 
-const continuation_size = 26;
+const continuation_size = 31;
 
 pub fn bufferedBufferSize(file_size: u64) usize {
     if (file_size == 0) return 0;
@@ -86,6 +88,7 @@ pub fn makeInput(
 fn paths(input: *const executor.OwnedPayload) !struct {
     source: [*:0]const u8,
     destination: [*:0]const u8,
+    destination_name: [*:0]const u8,
 } {
     const bytes = input.slice();
     const separator = std.mem.indexOfScalar(u8, bytes, 0) orelse return error.InvalidInput;
@@ -96,9 +99,21 @@ fn paths(input: *const executor.OwnedPayload) !struct {
     if (std.mem.indexOfScalar(u8, destination_bytes[0 .. destination_bytes.len - 1], 0) != null) {
         return error.InvalidInput;
     }
+    const destination_path = destination_bytes[0 .. destination_bytes.len - 1];
+    const destination_separator = std.mem.lastIndexOfScalar(u8, destination_path, '/');
+    const name = if (destination_separator) |index|
+        destination_path[index + 1 ..]
+    else
+        destination_path;
+    if (name.len == 0 or std.mem.eql(u8, name, ".") or
+        std.mem.eql(u8, name, ".."))
+    {
+        return error.InvalidInput;
+    }
     return .{
         .source = @ptrCast(bytes.ptr),
         .destination = @ptrCast(bytes[separator + 1 ..].ptr),
+        .destination_name = @ptrCast(name.ptr),
     };
 }
 
@@ -121,13 +136,15 @@ fn readUnsigned(comptime T: type, input: []const u8) T {
 fn writeContinuationHeader(bytes: []u8, state: Continuation) void {
     writeUnsigned(u32, bytes[0..4], @bitCast(state.source_fd));
     writeUnsigned(u32, bytes[4..8], @bitCast(state.destination_fd));
-    writeUnsigned(u64, bytes[8..16], state.offset);
-    writeUnsigned(u64, bytes[16..24], state.size);
-    bytes[24] = switch (state.strategy) {
+    writeUnsigned(u32, bytes[8..12], @bitCast(state.parent_fd));
+    writeUnsigned(u64, bytes[12..20], state.offset);
+    writeUnsigned(u64, bytes[20..28], state.size);
+    bytes[28] = switch (state.strategy) {
         .copy_file_range => 0,
         .buffered => 1,
     };
-    bytes[25] = @intFromBool(state.destination_created);
+    bytes[29] = @intFromBool(state.destination_created);
+    bytes[30] = @intFromBool(state.flushing);
 }
 
 fn encodeContinuation(
@@ -143,16 +160,17 @@ fn encodeContinuation(
 fn decodeContinuation(payload: *const executor.OwnedPayload) !Continuation {
     const bytes = payload.slice();
     if (bytes.len < continuation_size) return error.InvalidContinuation;
-    const strategy: Strategy = switch (bytes[24]) {
+    const strategy: Strategy = switch (bytes[28]) {
         0 => .copy_file_range,
         1 => .buffered,
         else => return error.InvalidContinuation,
     };
-    if (bytes[25] > 1) return error.InvalidContinuation;
+    if (bytes[29] > 1 or bytes[30] > 1) return error.InvalidContinuation;
     const source_fd: c_int = @bitCast(readUnsigned(u32, bytes[0..4]));
     const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[4..8]));
-    const offset = readUnsigned(u64, bytes[8..16]);
-    const size = readUnsigned(u64, bytes[16..24]);
+    const parent_fd: c_int = @bitCast(readUnsigned(u32, bytes[8..12]));
+    const offset = readUnsigned(u64, bytes[12..20]);
+    const size = readUnsigned(u64, bytes[20..28]);
     const expected_buffer_size: usize = if (strategy == .buffered)
         bufferedBufferSize(size)
     else
@@ -160,26 +178,72 @@ fn decodeContinuation(payload: *const executor.OwnedPayload) !Continuation {
     if (bytes.len != continuation_size + expected_buffer_size) {
         return error.InvalidContinuation;
     }
-    if (source_fd < 0 or destination_fd < 0 or offset > size or bytes[25] != 1) {
+    if (source_fd < 0 or destination_fd < 0 or parent_fd < 0 or
+        offset > size or bytes[29] != 1)
+    {
         return error.InvalidContinuation;
     }
     return .{
         .source_fd = source_fd,
         .destination_fd = destination_fd,
+        .parent_fd = parent_fd,
         .offset = offset,
         .size = size,
         .strategy = strategy,
         .destination_created = true,
+        .flushing = bytes[30] == 1,
     };
 }
 
 fn closeDescriptors(state: *const Continuation) void {
     _ = c.close(state.source_fd);
     _ = c.close(state.destination_fd);
+    _ = c.close(state.parent_fd);
 }
 
-fn unlinkDestination(destination: [*:0]const u8) void {
-    _ = c.unlink(destination);
+fn closeSourceDescriptor(state: *const Continuation) void {
+    _ = c.close(state.source_fd);
+}
+
+fn syncDescriptor(fd: c_int) bool {
+    while (true) {
+        if (c.fsync(fd) == 0) return true;
+        if (std.c._errno().* != c.EINTR) return false;
+    }
+}
+
+fn unlinkOwnedDestination(
+    destination_fd: c_int,
+    parent_fd: c_int,
+    name: [*:0]const u8,
+) void {
+    var owned_stat: c.struct_stat = undefined;
+    var current_stat: c.struct_stat = undefined;
+    if (c.fstat(destination_fd, &owned_stat) != 0 or
+        c.fstatat(parent_fd, name, &current_stat, c.AT_SYMLINK_NOFOLLOW) != 0)
+    {
+        return;
+    }
+    if (owned_stat.st_dev != current_stat.st_dev or
+        owned_stat.st_ino != current_stat.st_ino)
+    {
+        return;
+    }
+    _ = c.unlinkat(parent_fd, name, 0);
+}
+
+fn cleanupDestination(state: *const Continuation, name: [*:0]const u8) void {
+    if (!state.destination_created) return;
+    unlinkOwnedDestination(state.destination_fd, state.parent_fd, name);
+    _ = syncDescriptor(state.parent_fd);
+}
+
+fn cleanupAndClose(
+    state: *const Continuation,
+    name: [*:0]const u8,
+) void {
+    cleanupDestination(state, name);
+    closeDescriptors(state);
 }
 
 fn isFallbackErrno(value: c_int) bool {
@@ -217,11 +281,13 @@ fn completionWithProgress(
     continuation: ?executor.OwnedPayload,
     bytes: u64,
     total_bytes: u64,
+    phase: executor.CopyPhase,
 ) executor.WorkCompletion {
     var result = completion(item, outcome, continuation, null);
     result.progress = .{
         .bytes = bytes,
         .total_bytes = total_bytes,
+        .phase = phase,
     };
     return result;
 }
@@ -231,11 +297,13 @@ fn completionWithResultAndProgress(
     result_payload: executor.OwnedPayload,
     bytes: u64,
     total_bytes: u64,
+    phase: executor.CopyPhase,
 ) executor.WorkCompletion {
     var result = completion(item, .completed, null, result_payload);
     result.progress = .{
         .bytes = bytes,
         .total_bytes = total_bytes,
+        .phase = phase,
     };
     return result;
 }
@@ -243,11 +311,10 @@ fn completionWithResultAndProgress(
 fn failed(
     item: executor.WorkItem,
     state: ?Continuation,
-    destination: [*:0]const u8,
+    destination_name: [*:0]const u8,
 ) executor.WorkCompletion {
     if (state) |current| {
-        closeDescriptors(&current);
-        if (current.destination_created) unlinkDestination(destination);
+        cleanupAndClose(&current, destination_name);
     }
     return completion(item, .failed, null, null);
 }
@@ -255,18 +322,85 @@ fn failed(
 fn failedWithScratch(
     item: executor.WorkItem,
     state: ?Continuation,
-    destination: [*:0]const u8,
+    destination_name: [*:0]const u8,
     scratch: *?executor.OwnedPayload,
 ) executor.WorkCompletion {
     if (scratch.*) |*payload| payload.deinit();
     scratch.* = null;
-    return failed(item, state, destination);
+    return failed(item, state, destination_name);
+}
+
+fn yieldForFlush(
+    allocator: Allocator,
+    item: executor.WorkItem,
+    state_arg: Continuation,
+    destination_name: [*:0]const u8,
+    scratch: *?executor.OwnedPayload,
+) executor.WorkCompletion {
+    var state = state_arg;
+    state.flushing = true;
+    const saved = if (scratch.*) |*payload| blk: {
+        writeContinuationHeader(payload.bytes.?[0..continuation_size], state);
+        break :blk payload.take();
+    } else encodeContinuation(allocator, state, 0) catch {
+        return failed(item, state, destination_name);
+    };
+    scratch.* = null;
+    return completionWithProgress(
+        item,
+        .yielded,
+        saved,
+        state.size,
+        state.size,
+        .flushing,
+    );
+}
+
+fn finishFlushing(
+    allocator: Allocator,
+    item: executor.WorkItem,
+    state_arg: Continuation,
+    destination_name: [*:0]const u8,
+    scratch: *?executor.OwnedPayload,
+) executor.WorkCompletion {
+    var state = state_arg;
+    if (!syncDescriptor(state.destination_fd) or
+        !syncDescriptor(state.parent_fd))
+    {
+        return failedWithScratch(
+            item,
+            state,
+            destination_name,
+            scratch,
+        );
+    }
+
+    closeSourceDescriptor(&state);
+    if (scratch.*) |*payload| payload.deinit();
+    scratch.* = null;
+
+    const marker = allocator.alloc(u8, 9) catch {
+        cleanupDestination(&state, destination_name);
+        _ = c.close(state.destination_fd);
+        _ = c.close(state.parent_fd);
+        return completion(item, .failed, null, null);
+    };
+    marker[0] = 1;
+    writeUnsigned(u32, marker[1..5], @bitCast(state.parent_fd));
+    writeUnsigned(u32, marker[5..9], @bitCast(state.destination_fd));
+    return completionWithResultAndProgress(
+        item,
+        .{ .allocator = allocator, .bytes = marker },
+        state.size,
+        state.size,
+        .flushing,
+    );
 }
 
 /// Execute exactly one bounded transfer unit.
 ///
-/// A successful reflink completes in one unit. Otherwise each invocation
-/// copies one bounded transfer unit before yielding.
+/// A successful reflink proceeds to a separate flush unit. Otherwise each
+/// invocation copies one bounded transfer unit before yielding.
 pub fn execute(
     allocator: Allocator,
     item_arg: executor.WorkItem,
@@ -326,14 +460,38 @@ fn executeUnit(
         }
 
         const mode: c_uint = @intCast(stat.st_mode & 0o7777);
-        const destination_fd = c.open(
-            operation_paths.destination,
+        const destination_path = std.mem.span(operation_paths.destination);
+        const destination_separator =
+            std.mem.lastIndexOfScalar(u8, destination_path, '/');
+        const parent_path = if (destination_separator) |index|
+            (if (index == 0) "/" else destination_path[0..index])
+        else
+            ".";
+        const parent_z = allocator.dupeSentinel(u8, parent_path, 0) catch {
+            _ = c.close(source_fd);
+            return completion(item, .failed, null, null);
+        };
+        defer allocator.free(parent_z);
+
+        const parent_fd = c.open(
+            parent_z,
+            c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC,
+        );
+        if (parent_fd < 0) {
+            _ = c.close(source_fd);
+            return completion(item, .failed, null, null);
+        }
+
+        const destination_fd = c.openat(
+            parent_fd,
+            operation_paths.destination_name,
             c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC,
             mode,
         );
         if (destination_fd < 0) {
             const failure_errno = std.c._errno().*;
             _ = c.close(source_fd);
+            _ = c.close(parent_fd);
             if (failure_errno == c.EEXIST) {
                 // Distinct from the successful-copy marker: discard must
                 // never unlink a destination that existed before this job.
@@ -353,10 +511,12 @@ fn executeUnit(
         state = .{
             .source_fd = source_fd,
             .destination_fd = destination_fd,
+            .parent_fd = parent_fd,
             .offset = 0,
             .size = @intCast(stat.st_size),
             .strategy = .copy_file_range,
             .destination_created = true,
+            .flushing = false,
         };
         has_state = true;
 
@@ -369,16 +529,12 @@ fn executeUnit(
         if (reflink_result == 0) {
             metrics.reflink_successes +|= 1;
             metrics.reflink_bytes +|= state.size;
-            closeDescriptors(&state);
-            const marker = allocator.dupe(u8, &.{1}) catch {
-                unlinkDestination(operation_paths.destination);
-                return completion(item, .failed, null, null);
-            };
-            return completionWithResultAndProgress(
+            return yieldForFlush(
+                allocator,
                 item,
-                .{ .allocator = allocator, .bytes = marker },
-                state.size,
-                state.size,
+                state,
+                operation_paths.destination_name,
+                &scratch_payload,
             );
         }
 
@@ -398,40 +554,40 @@ fn executeUnit(
             clone_errno != c.ENOTTY and
             clone_errno != c.EOPNOTSUPP)
         {
-            return failed(item, state, operation_paths.destination);
+            return failed(item, state, operation_paths.destination_name);
         }
 
         if (state.size == 0) {
-            closeDescriptors(&state);
-            const marker = allocator.dupe(u8, &.{1}) catch {
-                unlinkDestination(operation_paths.destination);
-                return completion(item, .failed, null, null);
-            };
-            return completionWithResultAndProgress(
+            return yieldForFlush(
+                allocator,
                 item,
-                .{ .allocator = allocator, .bytes = marker },
-                state.size,
-                state.size,
+                state,
+                operation_paths.destination_name,
+                &scratch_payload,
             );
         }
     }
 
     if (!has_state) return completion(item, .failed, null, null);
 
+    if (state.flushing) {
+        return finishFlushing(
+            allocator,
+            item,
+            state,
+            operation_paths.destination_name,
+            &scratch_payload,
+        );
+    }
+
     const remaining = state.size - state.offset;
     if (remaining == 0) {
-        closeDescriptors(&state);
-        if (scratch_payload) |*payload| payload.deinit();
-        scratch_payload = null;
-        const marker = allocator.dupe(u8, &.{1}) catch {
-            unlinkDestination(operation_paths.destination);
-            return completion(item, .failed, null, null);
-        };
-        return completionWithResultAndProgress(
+        return yieldForFlush(
+            allocator,
             item,
-            .{ .allocator = allocator, .bytes = marker },
-            state.size,
-            state.size,
+            state,
+            operation_paths.destination_name,
+            &scratch_payload,
         );
     }
 
@@ -453,7 +609,12 @@ fn executeUnit(
             metrics.copy_file_range_bytes +|= @intCast(copied);
             state.offset += @intCast(copied);
         } else if (copied == 0) {
-            return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
+            return failedWithScratch(
+                item,
+                state,
+                operation_paths.destination_name,
+                &scratch_payload,
+            );
         } else {
             const copy_errno = std.c._errno().*;
             if (copy_errno == c.EINTR) {
@@ -463,7 +624,12 @@ fn executeUnit(
                 recordFallbackReason(metrics, copy_errno);
                 state.strategy = .buffered;
             } else {
-                return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
+                return failedWithScratch(
+                    item,
+                    state,
+                    operation_paths.destination_name,
+                    &scratch_payload,
+                );
             }
         }
     }
@@ -480,7 +646,12 @@ fn executeUnit(
                 state,
                 bufferedBufferSize(state.size),
             ) catch {
-                return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
+                return failedWithScratch(
+                    item,
+                    state,
+                    operation_paths.destination_name,
+                    &scratch_payload,
+                );
             };
         }
         const buffer = scratch_payload.?.bytes.?[continuation_size..];
@@ -491,7 +662,12 @@ fn executeUnit(
         metrics.buffered_read_calls +|= 1;
         const count = c.read(state.source_fd, buffer.ptr, wanted);
         if (count == 0) {
-            return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
+            return failedWithScratch(
+                item,
+                state,
+                operation_paths.destination_name,
+                &scratch_payload,
+            );
         }
         if (count < 0) {
             if (std.c._errno().* == c.EINTR) {
@@ -504,9 +680,15 @@ fn executeUnit(
                     saved,
                     state.offset,
                     state.size,
+                    .transferring,
                 );
             }
-            return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
+            return failedWithScratch(
+                item,
+                state,
+                operation_paths.destination_name,
+                &scratch_payload,
+            );
         }
 
         const bytes_read: usize = @intCast(count);
@@ -521,7 +703,12 @@ fn executeUnit(
             );
             if (result < 0 and std.c._errno().* == c.EINTR) continue;
             if (result <= 0) {
-                return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
+                return failedWithScratch(
+                    item,
+                    state,
+                    operation_paths.destination_name,
+                    &scratch_payload,
+                );
             }
             metrics.buffered_write_bytes +|= @intCast(result);
             written += @intCast(result);
@@ -530,18 +717,12 @@ fn executeUnit(
     }
 
     if (state.offset == state.size) {
-        closeDescriptors(&state);
-        if (scratch_payload) |*payload| payload.deinit();
-        scratch_payload = null;
-        const marker = allocator.dupe(u8, &.{1}) catch {
-            unlinkDestination(operation_paths.destination);
-            return completion(item, .failed, null, null);
-        };
-        return completionWithResultAndProgress(
+        return yieldForFlush(
+            allocator,
             item,
-            .{ .allocator = allocator, .bytes = marker },
-            state.size,
-            state.size,
+            state,
+            operation_paths.destination_name,
+            &scratch_payload,
         );
     }
 
@@ -549,7 +730,12 @@ fn executeUnit(
         writeContinuationHeader(payload.bytes.?[0..continuation_size], state);
         break :blk payload.take();
     } else encodeContinuation(allocator, state, 0) catch {
-        return failedWithScratch(item, state, operation_paths.destination, &scratch_payload);
+        return failedWithScratch(
+            item,
+            state,
+            operation_paths.destination_name,
+            &scratch_payload,
+        );
     };
     scratch_payload = null;
     return completionWithProgress(
@@ -558,6 +744,7 @@ fn executeUnit(
         saved,
         state.offset,
         state.size,
+        .transferring,
     );
 }
 
@@ -575,10 +762,20 @@ pub fn discard(
         var owned_input = input;
         owned_input.deinit();
         if (continuation) |payload| {
+            if (decodeContinuation(&payload)) |state| {
+                closeDescriptors(&state);
+            } else |_| {}
             var owned = payload;
             owned.deinit();
         }
         if (result) |payload| {
+            const bytes = payload.slice();
+            if (bytes.len == 9 and bytes[0] == 1) {
+                const parent_fd: c_int = @bitCast(readUnsigned(u32, bytes[1..5]));
+                const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[5..9]));
+                _ = c.close(destination_fd);
+                _ = c.close(parent_fd);
+            }
             var owned = payload;
             owned.deinit();
         }
@@ -587,18 +784,25 @@ pub fn discard(
 
     if (continuation) |payload| {
         if (decodeContinuation(&payload)) |state| {
-            closeDescriptors(&state);
-            if (state.destination_created) {
-                unlinkDestination(operation_paths.destination);
-            }
+            cleanupAndClose(&state, operation_paths.destination_name);
         } else |_| {}
         var owned = payload;
         owned.deinit();
     }
 
     if (result) |payload| {
-        if (payload.slice().len == 1 and payload.slice()[0] == 1) {
-            unlinkDestination(operation_paths.destination);
+        const bytes = payload.slice();
+        if (bytes.len == 9 and bytes[0] == 1) {
+            const parent_fd: c_int = @bitCast(readUnsigned(u32, bytes[1..5]));
+            const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[5..9]));
+            unlinkOwnedDestination(
+                destination_fd,
+                parent_fd,
+                operation_paths.destination_name,
+            );
+            _ = syncDescriptor(parent_fd);
+            _ = c.close(destination_fd);
+            _ = c.close(parent_fd);
         }
         var owned = payload;
         owned.deinit();
@@ -616,6 +820,13 @@ pub fn complete(
     result: ?executor.OwnedPayload,
 ) void {
     if (result) |payload| {
+        const bytes = payload.slice();
+        if (bytes.len == 9 and bytes[0] == 1) {
+            const parent_fd: c_int = @bitCast(readUnsigned(u32, bytes[1..5]));
+            const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[5..9]));
+            _ = c.close(destination_fd);
+            _ = c.close(parent_fd);
+        }
         var owned = payload;
         owned.deinit();
     }

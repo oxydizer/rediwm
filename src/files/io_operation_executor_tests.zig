@@ -220,6 +220,10 @@ test "Manager operations execute directory creation before dependent symlink and
     try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
     try waitForOne(&runtime);
     try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    // The data-transfer unit yields for the durability flush.
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
     try std.testing.expectEqual(
         io_manager.OperationState.completed,
         manager.operationState(job, file_operation).?,
@@ -762,6 +766,10 @@ test "Manager Runtime rebuilds prepared input after a renamed collision" {
     const conflict = manager.nextConflict() orelse return error.MissingConflict;
     try manager.renameConflict(conflict.id, renamed_destination);
 
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    // Renaming resolves the conflict; copying then requires its flush unit.
     try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
     try waitForOne(&runtime);
     try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
