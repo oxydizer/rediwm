@@ -139,7 +139,15 @@ fn prepare(
                     details.merge_existing_directory,
                 )
             else
-                try io_copy.makeInput(context.allocator, source, destination);
+                if (details.replace_existing_file)
+                    try io_copy.makeReplacementInput(
+                        context.allocator,
+                        source,
+                        destination,
+                        token,
+                    )
+                else
+                    try io_copy.makeInput(context.allocator, source, destination);
         },
         .copy_symlink => blk: {
             const destination = try context.manager.destinationPath(
