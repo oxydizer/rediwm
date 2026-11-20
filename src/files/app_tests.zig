@@ -1038,6 +1038,37 @@ test "cross-filesystem file and symlink moves copy before detaching sources" {
     );
 }
 
+test "directory move refuses a selected mountpoint instead of using JobRunner" {
+    const allocator = std.testing.allocator;
+    const source = "/dev/shm";
+    const destination = "/tmp";
+
+    const source_z = try allocator.dupeSentinel(u8, source, 0);
+    defer allocator.free(source_z);
+    const parent_z = try allocator.dupeSentinel(u8, "/dev", 0);
+    defer allocator.free(parent_z);
+    var source_stat: c.struct_stat = undefined;
+    var parent_stat: c.struct_stat = undefined;
+    if (c.lstat(source_z, &source_stat) != 0 or
+        c.stat(parent_z, &parent_stat) != 0 or
+        source_stat.st_dev == parent_stat.st_dev)
+    {
+        return error.SkipZigTest;
+    }
+
+    var app = try testApp();
+    defer app.deinit();
+    app.io_manager = io_manager.Manager.init(allocator);
+
+    const paths = [_][]const u8{source};
+    try std.testing.expect(app.executeTransfer(.move, &paths, destination, false));
+    try std.testing.expect(app.active_io_copy_job == null);
+    try std.testing.expectEqualStrings(
+        "Cannot move a mounted directory",
+        app.status_notice.?,
+    );
+}
+
 test "same-filesystem nested directory moves use one Manager job and detach sources" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
