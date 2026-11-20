@@ -1004,3 +1004,84 @@ test "Manager Runtime copies and detaches file and symlink roots" {
     defer allocator.free(copied_target);
     try std.testing.expectEqualStrings("../literal-target", copied_target);
 }
+
+test "Manager Runtime preserves a source whose type changes before detach" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source = try join(allocator, temp, "payload.bin");
+    defer allocator.free(source);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    const destination = try join(allocator, destination_base, "payload.bin");
+    defer allocator.free(destination);
+    defer {
+        cleanup(destination, false);
+        cleanup(destination_base, true);
+        cleanup(source, false);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(destination_base);
+    try writeFile(source, "published destination contents");
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "payload.bin",
+        .regular_file,
+        .{},
+        null,
+    );
+    try manager.setRootSourcePath(job, root, source);
+    try manager.setDestinationDirectory(job, destination_base);
+    const copy_operation = try manager.addEntryOperation(job, root, .copy_file);
+    const detach_operation = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+
+    while (manager.operationState(job, copy_operation).? != .completed) {
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    // Replace the copied regular file with a symlink before source detach.
+    const source_z = try allocZ(allocator, source);
+    defer allocator.free(source_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.unlink(source_z));
+    try makeSymlink("../replacement-target", source);
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, copy_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, detach_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
+
+    var source_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(source_z, &source_stat));
+    try std.testing.expect((source_stat.st_mode & c.S_IFMT) == c.S_IFLNK);
+    const replacement_target = try readLink(allocator, source);
+    defer allocator.free(replacement_target);
+    try std.testing.expectEqualStrings("../replacement-target", replacement_target);
+
+    const copied_contents = try readFile(allocator, destination);
+    defer allocator.free(copied_contents);
+    try std.testing.expectEqualStrings("published destination contents", copied_contents);
+}
