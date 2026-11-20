@@ -355,8 +355,23 @@ fn startManagerDirectoryTransfer(
         if (c.lstat(source_z, &source_stat) != 0) return false;
         if ((source_stat.st_mode & c.S_IFMT) != c.S_IFDIR) return false;
 
-        if (is_move and source_stat.st_dev != destination_stat.st_dev)
-            return false;
+        if (is_move) {
+            const parent_path = std.fs.path.dirname(source) orelse "/";
+            const parent_z = try self.allocator.dupeSentinel(u8, parent_path, 0);
+            defer self.allocator.free(parent_z);
+            var parent_stat: c.struct_stat = undefined;
+            if (c.stat(parent_z, &parent_stat) != 0) {
+                self.setStatusNotice(tr("Cannot verify source filesystem boundary"), true);
+                return true;
+            }
+
+            if (source_stat.st_dev != parent_stat.st_dev) {
+                self.setStatusNotice(tr("Cannot move a mounted directory"), true);
+                return true;
+            }
+
+            if (source_stat.st_dev != destination_stat.st_dev) return false;
+        }
 
         // Moving overlapping roots as independent discovery roots could
         // detach a parent before the separately selected child is moved.
