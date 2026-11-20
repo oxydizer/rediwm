@@ -317,7 +317,7 @@ fn startManagerFileMove(
 }
 
 /// Starts selected directory roots through one incremental Manager Job.
-/// Mixed selections and cross-filesystem moves remain on JobRunner.
+/// Mixed selections remain on JobRunner.
 fn startManagerDirectoryTransfer(
     self: *App,
     paths: []const []const u8,
@@ -370,7 +370,6 @@ fn startManagerDirectoryTransfer(
                 return true;
             }
 
-            if (source_stat.st_dev != destination_stat.st_dev) return false;
         }
 
         // Moving overlapping roots as independent discovery roots could
