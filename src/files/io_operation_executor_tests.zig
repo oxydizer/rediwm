@@ -907,3 +907,92 @@ test "Manager Runtime refuses to remove a non-empty source directory" {
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("must remain", contents);
 }
+
+test "Manager Runtime copies and detaches cross-filesystem file and symlink roots" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source_file = try join(allocator, temp, "payload.bin");
+    defer allocator.free(source_file);
+    const source_link = try join(allocator, temp, "shortcut");
+    defer allocator.free(source_link);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    const destination_file = try join(allocator, destination_base, "payload.bin");
+    defer allocator.free(destination_file);
+    const destination_link = try join(allocator, destination_base, "shortcut");
+    defer allocator.free(destination_link);
+    defer {
+        cleanup(destination_link, false);
+        cleanup(destination_file, false);
+        cleanup(destination_base, true);
+        cleanup(source_link, false);
+        cleanup(source_file, false);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(destination_base);
+    try writeFile(source_file, "copy then detach payload");
+    try makeSymlink("../literal-target", source_link);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const file_root = try manager.addTreeRoot(
+        job,
+        "payload.bin",
+        .regular_file,
+        .{},
+        null,
+    );
+    const link_root = try manager.addTreeRoot(
+        job,
+        "shortcut",
+        .symlink,
+        .{},
+        "../literal-target",
+    );
+    try manager.setRootSourcePath(job, file_root, source_file);
+    try manager.setRootSourcePath(job, link_root, source_link);
+    try manager.setDestinationDirectory(job, destination_base);
+
+    const file_copy = try manager.addEntryOperation(job, file_root, .copy_file);
+    const file_detach = try manager.addEntryOperation(job, file_root, .detach_source);
+    const link_copy = try manager.addEntryOperation(job, link_root, .copy_symlink);
+    const link_detach = try manager.addEntryOperation(job, link_root, .detach_source);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
+    defer runtime.deinit();
+
+    while (!manager.jobState(job).?.isTerminal()) {
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    for ([_]io_manager.OperationId{ file_copy, file_detach, link_copy, link_detach }) |operation| {
+        try std.testing.expectEqual(
+            io_manager.OperationState.completed,
+            manager.operationState(job, operation).?,
+        );
+    }
+
+    const source_file_z = try allocZ(allocator, source_file);
+    defer allocator.free(source_file_z);
+    const source_link_z = try allocZ(allocator, source_link);
+    defer allocator.free(source_link_z);
+    var source_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(source_file_z, &source_stat) != 0);
+    try std.testing.expect(c.lstat(source_link_z, &source_stat) != 0);
+
+    const copied_contents = try readFile(allocator, destination_file);
+    defer allocator.free(copied_contents);
+    try std.testing.expectEqualStrings("copy then detach payload", copied_contents);
+
+    const copied_target = try readLink(allocator, destination_link);
+    defer allocator.free(copied_target);
+    try std.testing.expectEqualStrings("../literal-target", copied_target);
+}

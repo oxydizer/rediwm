@@ -266,10 +266,7 @@ fn updateMovedClipboard(
     const tree = manager.treeIndex(job_id) orelse return;
     var changed = false;
     for (tree.roots()) |root_id| {
-        const entry = tree.getConst(root_id) orelse continue;
-        const operation_state = if (entry.kind == .directory)
-            manager.sourceDetachOperationState(job_id, root_id) orelse continue
-        else
+        const operation_state = manager.sourceDetachOperationState(job_id, root_id) orelse
             (manager.entryOperationView(job_id, root_id) orelse continue).state;
         if (operation_state != .completed) continue;
 

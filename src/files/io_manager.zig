@@ -1194,7 +1194,8 @@ pub const Manager = struct {
         };
         const valid_kind = switch (entry.kind) {
             .directory => kind == .create_directory or kind == .detach_source,
-            .regular_file, .symlink => kind == expected_kind or kind == .move_entry,
+            .regular_file, .symlink => kind == expected_kind or
+                kind == .move_entry or kind == .detach_source,
             .other => false,
         };
         if (!valid_kind) {
@@ -1204,9 +1205,9 @@ pub const Manager = struct {
         var dependency_operation_index: ?usize = null;
         if (is_source_detach) {
             dependency_operation_index = job.entry_operation_indices.get(entry_id) orelse
-                return error.MissingDirectoryDestinationOperation;
-            if (job.operations.items[dependency_operation_index.?].kind != .create_directory)
-                return error.InvalidDirectoryDestinationOperation;
+                return error.MissingSourceOperation;
+            if (job.operations.items[dependency_operation_index.?].kind != expected_kind)
+                return error.InvalidSourceOperation;
         } else if (entry.parent_id) |parent_id| {
             const parent = job.tree.get(parent_id) orelse return error.UnknownEntry;
             if (parent.kind == .directory) {
@@ -1252,10 +1253,10 @@ pub const Manager = struct {
         operation.dependency_indices = dependency_indices;
         dependency_indices = .empty;
         operation.entry_id = entry_id;
-        operation.discovery_gate = is_source_detach;
+        operation.discovery_gate = is_source_detach and entry.kind == .directory;
         if (is_source_detach) {
             job.source_detach_indices.putAssumeCapacity(entry_id, operation_index);
-            if (job.state != .planning) {
+            if (operation.discovery_gate and job.state != .planning) {
                 operation.unresolved_dependencies += 1;
                 _ = dequeueReadyIndex(job, operation_index);
             }
@@ -1994,7 +1995,7 @@ pub const Manager = struct {
         };
     }
 
-    /// Returns the source-detach state for a directory entry, if registered.
+    /// Returns the source-detach state for an entry, if registered.
     pub fn sourceDetachOperationState(
         self: *const Manager,
         job_id: JobId,
