@@ -952,6 +952,8 @@ test "cross-filesystem file and symlink moves copy before detaching sources" {
 
     const source_file = try transferTestJoin(allocator, source_temp, "payload.bin");
     defer allocator.free(source_file);
+    const source_file_z = try allocator.dupeSentinel(u8, source_file, 0);
+    defer allocator.free(source_file_z);
     const source_link = try transferTestJoin(allocator, source_temp, "shortcut");
     defer allocator.free(source_link);
     const destination_file = try transferTestJoin(allocator, destination_temp, "payload.bin");
@@ -965,10 +967,10 @@ test "cross-filesystem file and symlink moves copy before detaching sources" {
         transferTestCleanup(source_file, false);
     }
 
-    const source_file_z = try allocator.dupeSentinel(u8, source_file, 0);
-    defer allocator.free(source_file_z);
+    const source_temp_z = try allocator.dupeSentinel(u8, source_temp, 0);
+    defer allocator.free(source_temp_z);
     var source_stat: c.struct_stat = undefined;
-    if (c.stat(source_file_z, &source_stat) == 0 and
+    if (c.stat(source_temp_z, &source_stat) != 0 or
         source_stat.st_dev == destination_stat.st_dev)
     {
         return error.SkipZigTest;

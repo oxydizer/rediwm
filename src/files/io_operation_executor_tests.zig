@@ -908,7 +908,7 @@ test "Manager Runtime refuses to remove a non-empty source directory" {
     try std.testing.expectEqualStrings("must remain", contents);
 }
 
-test "Manager Runtime copies and detaches cross-filesystem file and symlink roots" {
+test "Manager Runtime copies and detaches file and symlink roots" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
     const temp = try makeTempDir(&temp_buffer);
