@@ -852,6 +852,90 @@ test "cancelling during cross-filesystem source detach finishes only that bounde
     try std.testing.expect(manager.dispatchNext() == null);
 }
 
+test "failed cross-filesystem source detach preserves the parent directory" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 10 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 30);
+
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{.{ .name = "payload.bin", .kind = .regular_file, .device_id = 10 }},
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    const child = manager.treeIndex(job).?.getConst(root).?.children.items[0];
+    const child_detach = manager.sourceDetachOperationState(job, child) orelse
+        return error.MissingChildDetachOperation;
+
+    try std.testing.expectEqual(io_manager.OperationState.pending, child_detach);
+
+    const create_token = manager.dispatchNext() orelse
+        return error.MissingRootCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+
+    const copy_token = manager.dispatchNext() orelse
+        return error.MissingChildCopyOperation;
+    try std.testing.expectEqual(child, manager.operationDetails(copy_token).?.entry_id);
+    try std.testing.expectEqual(
+        io_manager.OperationKind.copy_file,
+        manager.operationDetails(copy_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(copy_token, .completed));
+
+    const detach_token = manager.dispatchNext() orelse
+        return error.MissingChildDetachOperation;
+    try std.testing.expectEqual(child, manager.operationDetails(detach_token).?.entry_id);
+    try std.testing.expectEqual(
+        io_manager.OperationKind.detach_source,
+        manager.operationDetails(detach_token).?.kind,
+    );
+
+    // The destination copy is published, but removing the source fails.
+    try std.testing.expect(manager.completeWork(detach_token, .failed));
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.entryOperationView(job, child).?.state,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.sourceDetachOperationState(job, child).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+}
+
 test "entry operation progress is accepted only for its current yielded generation" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
