@@ -128,11 +128,10 @@ fn makeInputWithStagingName(
     const destination_start = source_path.len + 1;
     @memcpy(bytes[destination_start ..][0..destination_path.len], destination_path);
     const staging_start = destination_start + destination_path.len + 1;
+    bytes[staging_start - 1] = 0;
     if (staging_name) |name| {
         @memcpy(bytes[staging_start..][0..name.len], name);
         bytes[bytes.len - 1] = 0;
-    } else {
-        bytes[staging_start - 1] = 0;
     }
     return .{ .allocator = allocator, .bytes = bytes };
 }
@@ -532,6 +531,31 @@ fn finishFlushing(
         {
             allocator.free(marker);
             cleanupAndClose(&state, destination_name);
+            return completion(item, .failed, null, null);
+        }
+        if (!syncDescriptor(state.parent_fd)) {
+            const rolled_back =
+                descriptorMatchesName(
+                    state.destination_fd,
+                    state.parent_fd,
+                    original_destination_name,
+                ) and
+                descriptorMatchesName(
+                    state.original_fd,
+                    state.parent_fd,
+                    destination_name,
+                ) and
+                exchangeNames(
+                    state.parent_fd,
+                    destination_name,
+                    original_destination_name,
+                );
+            allocator.free(marker);
+            if (rolled_back) {
+                cleanupAndClose(&state, destination_name);
+            } else {
+                closeDescriptors(&state);
+            }
             return completion(item, .failed, null, null);
         }
         closeSourceDescriptor(&state);
