@@ -3,6 +3,7 @@
 //! The input payload contains two NUL-terminated paths.
 //! Continuation state uses an explicit, fixed-width little-endian encoding.
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const executor = @import("io_executor.zig");
@@ -40,14 +41,16 @@ const Continuation = struct {
     source_fd: c_int,
     destination_fd: c_int,
     parent_fd: c_int,
+    original_fd: c_int,
     offset: u64,
     size: u64,
     strategy: Strategy,
     destination_created: bool,
     flushing: bool,
+    replacement: bool,
 };
 
-const continuation_size = 31;
+const continuation_size = 36;
 
 pub fn bufferedBufferSize(file_size: u64) usize {
     if (file_size == 0) return 0;
@@ -210,6 +213,8 @@ fn writeContinuationHeader(bytes: []u8, state: Continuation) void {
     };
     bytes[29] = @intFromBool(state.destination_created);
     bytes[30] = @intFromBool(state.flushing);
+    writeUnsigned(u32, bytes[31..35], @bitCast(state.original_fd));
+    bytes[35] = @intFromBool(state.replacement);
 }
 
 fn encodeContinuation(
@@ -230,10 +235,13 @@ fn decodeContinuation(payload: *const executor.OwnedPayload) !Continuation {
         1 => .buffered,
         else => return error.InvalidContinuation,
     };
-    if (bytes[29] > 1 or bytes[30] > 1) return error.InvalidContinuation;
+    if (bytes[29] > 1 or bytes[30] > 1 or bytes[35] > 1) {
+        return error.InvalidContinuation;
+    }
     const source_fd: c_int = @bitCast(readUnsigned(u32, bytes[0..4]));
     const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[4..8]));
     const parent_fd: c_int = @bitCast(readUnsigned(u32, bytes[8..12]));
+    const original_fd: c_int = @bitCast(readUnsigned(u32, bytes[31..35]));
     const offset = readUnsigned(u64, bytes[12..20]);
     const size = readUnsigned(u64, bytes[20..28]);
     const expected_buffer_size: usize = if (strategy == .buffered)
@@ -243,7 +251,10 @@ fn decodeContinuation(payload: *const executor.OwnedPayload) !Continuation {
     if (bytes.len != continuation_size + expected_buffer_size) {
         return error.InvalidContinuation;
     }
+    const replacement = bytes[35] == 1;
     if (source_fd < 0 or destination_fd < 0 or parent_fd < 0 or
+        (replacement and original_fd < 0) or
+        (!replacement and original_fd != -1) or
         offset > size or bytes[29] != 1)
     {
         return error.InvalidContinuation;
@@ -252,17 +263,20 @@ fn decodeContinuation(payload: *const executor.OwnedPayload) !Continuation {
         .source_fd = source_fd,
         .destination_fd = destination_fd,
         .parent_fd = parent_fd,
+        .original_fd = original_fd,
         .offset = offset,
         .size = size,
         .strategy = strategy,
         .destination_created = true,
         .flushing = bytes[30] == 1,
+        .replacement = replacement,
     };
 }
 
 fn closeDescriptors(state: *const Continuation) void {
     _ = c.close(state.source_fd);
     _ = c.close(state.destination_fd);
+    if (state.original_fd >= 0) _ = c.close(state.original_fd);
     _ = c.close(state.parent_fd);
 }
 
@@ -275,6 +289,17 @@ fn syncDescriptor(fd: c_int) bool {
         if (c.fsync(fd) == 0) return true;
         if (std.c._errno().* != c.EINTR) return false;
     }
+}
+
+/// Atomically exchange two names in one directory. Replacement deliberately
+/// has no weaker fallback on platforms without this primitive.
+fn exchangeNames(
+    parent_fd: c_int,
+    first: [*:0]const u8,
+    second: [*:0]const u8,
+) bool {
+    if (builtin.os.tag != .linux) return false;
+    return c.renameat2(parent_fd, first, parent_fd, second, 2) == 0;
 }
 
 fn unlinkOwnedDestination(
@@ -577,11 +602,13 @@ fn executeUnit(
             .source_fd = source_fd,
             .destination_fd = destination_fd,
             .parent_fd = parent_fd,
+            .original_fd = -1,
             .offset = 0,
             .size = @intCast(stat.st_size),
             .strategy = .copy_file_range,
             .destination_created = true,
             .flushing = false,
+            .replacement = false,
         };
         has_state = true;
 
