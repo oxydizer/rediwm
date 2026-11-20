@@ -513,6 +513,8 @@ fn executeUnit(
     const operation_paths = paths(&item.input) catch {
         return completion(item, .failed, null, null);
     };
+    const owned_destination_name =
+        operation_paths.staging_name orelse operation_paths.destination_name;
 
     var scratch_payload: ?executor.OwnedPayload = null;
     var state: Continuation = undefined;
@@ -572,17 +574,55 @@ fn executeUnit(
             return completion(item, .failed, null, null);
         }
 
+        var original_fd: c_int = -1;
+        if (operation_paths.staging_name != null) {
+            original_fd = c.openat(
+                parent_fd,
+                operation_paths.destination_name,
+                c.O_RDONLY | c.O_CLOEXEC | c.O_NOFOLLOW | c.O_NONBLOCK,
+            );
+            if (original_fd < 0) {
+                _ = c.close(source_fd);
+                _ = c.close(parent_fd);
+                return completion(item, .failed, null, null);
+            }
+
+            var original_stat: c.struct_stat = undefined;
+            var current_stat: c.struct_stat = undefined;
+            const valid_original =
+                c.fstat(original_fd, &original_stat) == 0 and
+                (original_stat.st_mode & c.S_IFMT) == c.S_IFREG;
+            const same_name = valid_original and
+                c.fstatat(
+                    parent_fd,
+                    operation_paths.destination_name,
+                    &current_stat,
+                    c.AT_SYMLINK_NOFOLLOW,
+                ) == 0 and
+                original_stat.st_dev == current_stat.st_dev and
+                original_stat.st_ino == current_stat.st_ino;
+            if (!same_name) {
+                _ = c.close(original_fd);
+                _ = c.close(source_fd);
+                _ = c.close(parent_fd);
+                return completion(item, .failed, null, null);
+            }
+        }
+
         const destination_fd = c.openat(
             parent_fd,
-            operation_paths.destination_name,
+            owned_destination_name,
             c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC,
             mode,
         );
         if (destination_fd < 0) {
             const failure_errno = std.c._errno().*;
+            if (original_fd >= 0) _ = c.close(original_fd);
             _ = c.close(source_fd);
             _ = c.close(parent_fd);
-            if (failure_errno == c.EEXIST) {
+            if (failure_errno == c.EEXIST and
+                operation_paths.staging_name == null)
+            {
                 // Distinct from the successful-copy marker: discard must
                 // never unlink a destination that existed before this job.
                 const marker = allocator.dupe(u8, &.{2}) catch {
@@ -602,13 +642,13 @@ fn executeUnit(
             .source_fd = source_fd,
             .destination_fd = destination_fd,
             .parent_fd = parent_fd,
-            .original_fd = -1,
+            .original_fd = original_fd,
             .offset = 0,
             .size = @intCast(stat.st_size),
             .strategy = .copy_file_range,
             .destination_created = true,
             .flushing = false,
-            .replacement = false,
+            .replacement = original_fd >= 0,
         };
         has_state = true;
 
@@ -625,7 +665,7 @@ fn executeUnit(
                 allocator,
                 item,
                 state,
-                operation_paths.destination_name,
+                owned_destination_name,
                 &scratch_payload,
             );
         }
@@ -646,7 +686,7 @@ fn executeUnit(
             clone_errno != c.ENOTTY and
             clone_errno != c.EOPNOTSUPP)
         {
-            return failed(item, state, operation_paths.destination_name);
+            return failed(item, state, owned_destination_name);
         }
 
         if (state.size == 0) {
@@ -654,7 +694,7 @@ fn executeUnit(
                 allocator,
                 item,
                 state,
-                operation_paths.destination_name,
+                owned_destination_name,
                 &scratch_payload,
             );
         }
@@ -667,7 +707,7 @@ fn executeUnit(
             allocator,
             item,
             state,
-            operation_paths.destination_name,
+            owned_destination_name,
             &scratch_payload,
         );
     }
@@ -678,7 +718,7 @@ fn executeUnit(
             allocator,
             item,
             state,
-            operation_paths.destination_name,
+            owned_destination_name,
             &scratch_payload,
         );
     }
@@ -704,7 +744,7 @@ fn executeUnit(
             return failedWithScratch(
                 item,
                 state,
-                operation_paths.destination_name,
+                owned_destination_name,
                 &scratch_payload,
             );
         } else {
@@ -719,7 +759,7 @@ fn executeUnit(
                 return failedWithScratch(
                     item,
                     state,
-                    operation_paths.destination_name,
+                    owned_destination_name,
                     &scratch_payload,
                 );
             }
@@ -741,7 +781,7 @@ fn executeUnit(
                 return failedWithScratch(
                     item,
                     state,
-                    operation_paths.destination_name,
+                    owned_destination_name,
                     &scratch_payload,
                 );
             };
@@ -757,7 +797,7 @@ fn executeUnit(
             return failedWithScratch(
                 item,
                 state,
-                operation_paths.destination_name,
+                owned_destination_name,
                 &scratch_payload,
             );
         }
@@ -778,7 +818,7 @@ fn executeUnit(
             return failedWithScratch(
                 item,
                 state,
-                operation_paths.destination_name,
+                owned_destination_name,
                 &scratch_payload,
             );
         }
@@ -798,7 +838,7 @@ fn executeUnit(
                 return failedWithScratch(
                     item,
                     state,
-                    operation_paths.destination_name,
+                    owned_destination_name,
                     &scratch_payload,
                 );
             }
@@ -813,7 +853,7 @@ fn executeUnit(
             allocator,
             item,
             state,
-            operation_paths.destination_name,
+            owned_destination_name,
             &scratch_payload,
         );
     }
@@ -825,7 +865,7 @@ fn executeUnit(
         return failedWithScratch(
             item,
             state,
-            operation_paths.destination_name,
+            owned_destination_name,
             &scratch_payload,
         );
     };
@@ -876,7 +916,10 @@ pub fn discard(
 
     if (continuation) |payload| {
         if (decodeContinuation(&payload)) |state| {
-            cleanupAndClose(&state, operation_paths.destination_name);
+            cleanupAndClose(
+                &state,
+                operation_paths.staging_name orelse operation_paths.destination_name,
+            );
         } else |_| {}
         var owned = payload;
         owned.deinit();
