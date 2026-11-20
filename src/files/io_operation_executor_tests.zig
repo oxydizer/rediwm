@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_tree = @import("io_tree.zig");
+const io_discovery = @import("io_discovery.zig");
 const io_discovery_executor = @import("io_discovery_executor.zig");
 const operation_executor = @import("io_operation_executor.zig");
 
@@ -777,4 +778,132 @@ test "Manager Runtime rebuilds prepared input after a renamed collision" {
     const renamed_contents = try readFile(allocator, renamed_destination);
     defer allocator.free(renamed_contents);
     try std.testing.expectEqualStrings("new source contents", renamed_contents);
+}
+
+test "Manager Runtime removes an emptied source directory" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    const destination = try join(allocator, destination_base, "source");
+    defer allocator.free(destination);
+    defer {
+        cleanup(destination, true);
+        cleanup(destination_base, true);
+        cleanup(source, true);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(source);
+    try makeDirectory(destination_base);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.setRootSourcePath(job, root, source);
+    try manager.setDestinationDirectory(job, destination_base);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const detach_operation = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, source);
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch: io_discovery.Batch = .{
+        .allocator = allocator,
+        .complete = true,
+    };
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+    while (!manager.jobState(job).?.isTerminal()) {
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, detach_operation).?,
+    );
+    const source_z = try allocZ(allocator, source);
+    defer allocator.free(source_z);
+    var source_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(source_z, &source_stat) != 0);
+}
+
+test "Manager Runtime refuses to remove a non-empty source directory" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const source_file = try join(allocator, source, "unexpected.txt");
+    defer allocator.free(source_file);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    const destination = try join(allocator, destination_base, "source");
+    defer allocator.free(destination);
+    defer {
+        cleanup(destination, true);
+        cleanup(destination_base, true);
+        cleanup(source_file, false);
+        cleanup(source, true);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(source);
+    try writeFile(source_file, "must remain");
+    try makeDirectory(destination_base);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.setRootSourcePath(job, root, source);
+    try manager.setDestinationDirectory(job, destination_base);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const detach_operation = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, source);
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch: io_discovery.Batch = .{
+        .allocator = allocator,
+        .complete = true,
+    };
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+    while (!manager.jobState(job).?.isTerminal()) {
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, detach_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
+    const source_z = try allocZ(allocator, source);
+    defer allocator.free(source_z);
+    var source_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(source_z, &source_stat));
+    const contents = try readFile(allocator, source_file);
+    defer allocator.free(contents);
+    try std.testing.expectEqualStrings("must remain", contents);
 }

@@ -9,6 +9,7 @@ const io_copy = @import("io_copy.zig");
 const io_directory = @import("io_directory.zig");
 const io_symlink = @import("io_symlink.zig");
 const io_move = @import("io_move.zig");
+const io_detach = @import("io_detach.zig");
 
 const Context = struct {
     allocator: Allocator,
@@ -107,15 +108,23 @@ fn prepare(
     const tree = context.manager.treeIndex(token.job_id) orelse
         return error.UnknownJob;
     const entry = tree.getConst(details.entry_id) orelse return error.UnknownEntry;
-    const destination = try context.manager.destinationPath(
-        context.allocator,
-        token.job_id,
-        details.entry_id,
-    );
-    defer context.allocator.free(destination);
-
     const input = switch (details.kind) {
+        .detach_source => blk: {
+            const source = try context.manager.sourcePath(
+                context.allocator,
+                token.job_id,
+                details.entry_id,
+            );
+            defer context.allocator.free(source);
+            break :blk try io_detach.makeInput(context.allocator, source);
+        },
         .create_directory, .copy_file => blk: {
+            const destination = try context.manager.destinationPath(
+                context.allocator,
+                token.job_id,
+                details.entry_id,
+            );
+            defer context.allocator.free(destination);
             const source = try context.manager.sourcePath(
                 context.allocator,
                 token.job_id,
@@ -127,12 +136,26 @@ fn prepare(
             else
                 try io_copy.makeInput(context.allocator, source, destination);
         },
-        .copy_symlink => try io_symlink.makeInput(
-            context.allocator,
-            entry.symlink_target orelse return error.MissingSymlinkTarget,
-            destination,
-        ),
+        .copy_symlink => blk: {
+            const destination = try context.manager.destinationPath(
+                context.allocator,
+                token.job_id,
+                details.entry_id,
+            );
+            defer context.allocator.free(destination);
+            break :blk try io_symlink.makeInput(
+                context.allocator,
+                entry.symlink_target orelse return error.MissingSymlinkTarget,
+                destination,
+            );
+        },
         .move_entry => blk: {
+            const destination = try context.manager.destinationPath(
+                context.allocator,
+                token.job_id,
+                details.entry_id,
+            );
+            defer context.allocator.free(destination);
             const source = try context.manager.sourcePath(
                 context.allocator,
                 token.job_id,
@@ -164,6 +187,7 @@ fn execute(
         .copy_file => io_copy.execute(context.allocator, item),
         .copy_symlink => io_symlink.execute(context.allocator, item),
         .move_entry => io_move.execute(context.allocator, item),
+        .detach_source => io_detach.execute(context.allocator, item),
         else => failWork(item),
     };
 }
@@ -201,6 +225,7 @@ fn complete(
             .copy_file => io_copy.complete(null, token, outcome, result),
             .copy_symlink => io_symlink.complete(null, token, outcome, result),
             .move_entry => io_move.complete(null, token, outcome, result),
+            .detach_source => io_detach.complete(null, token, outcome, result),
             else => deinitOptional(result),
         }
     } else {
@@ -280,6 +305,7 @@ fn discard(
         .copy_file => io_copy.discard(null, operation_kind, input, continuation, result),
         .copy_symlink => io_symlink.discard(null, operation_kind, input, continuation, result),
         .move_entry => io_move.discard(null, operation_kind, input, continuation, result),
+        .detach_source => io_detach.discard(null, operation_kind, input, continuation, result),
         else => {
             var owned_input = input;
             owned_input.deinit();
