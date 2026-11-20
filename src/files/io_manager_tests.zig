@@ -785,6 +785,7 @@ test "directory move detach waits for discovery and every descendant move" {
     const root = try manager.addTreeRoot(job, "source", .directory, .{ .device_id = 1 }, null);
     try manager.setSourceRootPath(job, "/tmp/source");
     try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 1);
     const root_create = try manager.addEntryOperation(job, root, .create_directory);
     const root_detach = try manager.addEntryOperation(job, root, .detach_source);
     try manager.enableDiscoveredEntryMoves(job);
@@ -795,8 +796,8 @@ test "directory move detach waits for discovery and every descendant move" {
     var root_batch = try makeDiscoveryBatch(
         std.testing.allocator,
         &.{
-            .{ .name = "top.txt", .kind = .regular_file },
-            .{ .name = "nested", .kind = .directory },
+            .{ .name = "top.txt", .kind = .regular_file, .device_id = 1 },
+            .{ .name = "nested", .kind = .directory, .device_id = 1 },
         },
         true,
     );
@@ -814,7 +815,7 @@ test "directory move detach waits for discovery and every descendant move" {
 
     var nested_batch = try makeDiscoveryBatch(
         std.testing.allocator,
-        &.{.{ .name = "deep.txt", .kind = .regular_file }},
+        &.{.{ .name = "deep.txt", .kind = .regular_file, .device_id = 1 }},
         true,
     );
     try std.testing.expect(try manager.completeDiscovery(nested_scan, &nested_batch));
@@ -878,6 +879,7 @@ test "failed descendant move prevents source directory detach" {
     const root = try manager.addTreeRoot(job, "source", .directory, .{ .device_id = 1 }, null);
     try manager.setSourceRootPath(job, "/tmp/source");
     try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 1);
     _ = try manager.addEntryOperation(job, root, .create_directory);
     const root_detach = try manager.addEntryOperation(job, root, .detach_source);
     try manager.enableDiscoveredEntryMoves(job);
@@ -887,7 +889,7 @@ test "failed descendant move prevents source directory detach" {
     const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
     var batch = try makeDiscoveryBatch(
         std.testing.allocator,
-        &.{.{ .name = "blocked.txt", .kind = .regular_file }},
+        &.{.{ .name = "blocked.txt", .kind = .regular_file, .device_id = 1 }},
         true,
     );
     try std.testing.expect(try manager.completeDiscovery(scan, &batch));
@@ -922,6 +924,7 @@ test "failed directory discovery prevents source directory detach" {
     const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
     try manager.setRootSourcePath(job, root, "/tmp/source");
     try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 1);
     _ = try manager.addEntryOperation(job, root, .create_directory);
     const root_detach = try manager.addEntryOperation(job, root, .detach_source);
     try manager.enableDiscoveredEntryMoves(job);
@@ -987,6 +990,7 @@ test "partial discovery batch keeps source directory detach gated" {
     const root = try manager.addTreeRoot(job, "source", .directory, .{ .device_id = 1 }, null);
     try manager.setRootSourcePath(job, root, "/tmp/source");
     try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 1);
     _ = try manager.addEntryOperation(job, root, .create_directory);
     const root_detach = try manager.addEntryOperation(job, root, .detach_source);
     try manager.enableDiscoveredEntryMoves(job);
@@ -996,7 +1000,7 @@ test "partial discovery batch keeps source directory detach gated" {
     const first_scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
     var first_batch = try makeDiscoveryBatch(
         std.testing.allocator,
-        &.{.{ .name = "early.txt", .kind = .regular_file }},
+        &.{.{ .name = "early.txt", .kind = .regular_file, .device_id = 1 }},
         false,
     );
     try std.testing.expect(try manager.completeDiscovery(first_scan, &first_batch));
@@ -1036,6 +1040,132 @@ test "partial discovery batch keeps source directory detach gated" {
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
 }
 
+test "directory move routes regular files by destination filesystem" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 10 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 20);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{
+            .{ .name = "same-device.txt", .kind = .regular_file, .device_id = 20 },
+            .{ .name = "cross-device.txt", .kind = .regular_file, .device_id = 10 },
+        },
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    const create_token = manager.dispatchNext() orelse return error.MissingCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+
+    var same_move_seen = false;
+    var cross_copy_seen = false;
+    var cross_detach_seen = false;
+    while (manager.dispatchNext()) |token| {
+        const details = manager.operationDetails(token).?;
+        if (details.entry_id == root) {
+            try std.testing.expectEqual(io_manager.OperationKind.detach_source, details.kind);
+            try std.testing.expect(cross_detach_seen);
+            try std.testing.expect(manager.completeWork(token, .completed));
+            break;
+        }
+
+        const entry = manager.treeIndex(job).?.getConst(details.entry_id).?;
+        if (std.mem.eql(u8, entry.name, "same-device.txt")) {
+            try std.testing.expectEqual(io_manager.OperationKind.move_entry, details.kind);
+            same_move_seen = true;
+        } else if (std.mem.eql(u8, entry.name, "cross-device.txt")) {
+            switch (details.kind) {
+                .copy_file => cross_copy_seen = true,
+                .detach_source => {
+                    try std.testing.expect(cross_copy_seen);
+                    cross_detach_seen = true;
+                },
+                else => return error.UnexpectedCrossDeviceOperation,
+            }
+        } else {
+            return error.UnexpectedOperation;
+        }
+        try std.testing.expect(manager.completeWork(token, .completed));
+    }
+
+    try std.testing.expect(same_move_seen);
+    try std.testing.expect(cross_copy_seen);
+    try std.testing.expect(cross_detach_seen);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "directory move fails closed when regular-file device identity is missing" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 10 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 20);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{.{ .name = "unknown-device.txt", .kind = .regular_file, .device_id = null }},
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, root_detach).?,
+    );
+
+    const create_token = manager.dispatchNext() orelse return error.MissingCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
+}
+
 test "directory move preserves nested filesystem boundaries and continues siblings" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
@@ -1050,6 +1180,7 @@ test "directory move preserves nested filesystem boundaries and continues siblin
     );
     try manager.setRootSourcePath(job, root, "/tmp/source");
     try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 10);
     _ = try manager.addEntryOperation(job, root, .create_directory);
     const root_detach = try manager.addEntryOperation(job, root, .detach_source);
     try manager.enableDiscoveredEntryMoves(job);
@@ -1061,7 +1192,7 @@ test "directory move preserves nested filesystem boundaries and continues siblin
         std.testing.allocator,
         &.{
             .{ .name = "mounted", .kind = .directory, .device_id = 20 },
-            .{ .name = "sibling.txt", .kind = .regular_file },
+            .{ .name = "sibling.txt", .kind = .regular_file, .device_id = 10 },
         },
         true,
     );
