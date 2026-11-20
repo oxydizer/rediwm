@@ -928,3 +928,107 @@ test "same-filesystem file and symlink moves use one Manager job" {
         target_buffer[0..@intCast(target_len)],
     );
 }
+
+test "same-filesystem nested directory moves use one Manager job and detach sources" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+
+    const source = try transferTestJoin(allocator, temp, "alpha");
+    defer allocator.free(source);
+    const source_nested = try transferTestJoin(allocator, source, "nested");
+    defer allocator.free(source_nested);
+    const source_file = try transferTestJoin(allocator, source_nested, "payload.txt");
+    defer allocator.free(source_file);
+
+    const destination_dir = try transferTestJoin(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    const destination = try transferTestJoin(allocator, destination_dir, "alpha");
+    defer allocator.free(destination);
+    const destination_nested = try transferTestJoin(allocator, destination, "nested");
+    defer allocator.free(destination_nested);
+    const destination_file = try transferTestJoin(
+        allocator,
+        destination_nested,
+        "payload.txt",
+    );
+    defer allocator.free(destination_file);
+
+    defer {
+        transferTestCleanup(destination_file, false);
+        transferTestCleanup(destination_nested, true);
+        transferTestCleanup(destination, true);
+        transferTestCleanup(source_file, false);
+        transferTestCleanup(source_nested, true);
+        transferTestCleanup(source, true);
+        transferTestCleanup(destination_dir, true);
+        transferTestCleanup(temp, true);
+    }
+
+    try transferTestMkdir(source);
+    try transferTestMkdir(source_nested);
+    try transferTestMkdir(destination_dir);
+    try transferTestWriteFile(source_file, "nested directory move payload");
+
+    var app = try testApp();
+    defer app.deinit();
+    app.io_manager = io_manager.Manager.init(allocator);
+    try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source));
+    app.clipboard_cut = true;
+    app.clipboard_revision = 11;
+
+    const paths = [_][]const u8{source};
+    try std.testing.expect(app.executeTransfer(.move, &paths, destination_dir, true));
+    const job_id = app.active_io_copy_job.?;
+    const manager = &app.io_manager.?;
+    const tree = manager.treeIndex(job_id).?;
+    const roots = tree.roots();
+    try std.testing.expectEqual(@as(usize, 1), roots.len);
+    const root_id = roots[0];
+    try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job_id).?);
+    try std.testing.expectEqual(
+        io_manager.OperationState.pending,
+        manager.sourceDetachOperationState(job_id, root_id).?,
+    );
+
+    while (true) {
+        app.stepDiscovery();
+        app.stepOperations();
+        if (manager.jobState(job_id).?.isTerminal()) break;
+
+        var descriptors = [_]c.struct_pollfd{
+            .{
+                .fd = app.discoveryWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
+            .{
+                .fd = app.operationWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
+        };
+        const result = c.poll(&descriptors, @intCast(descriptors.len), 5_000);
+        if (result == 0) return error.TimedOutWaitingForDirectoryMove;
+        if (result < 0 and std.c._errno().* != c.EINTR)
+            return error.DirectoryMovePollFailed;
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_id).?);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.sourceDetachOperationState(job_id, root_id).?,
+    );
+    try std.testing.expectEqual(@as(usize, 0), app.clipboard_paths.items.len);
+    try std.testing.expect(!app.clipboard_cut);
+    try std.testing.expectEqualStrings("Folder moved", app.status_notice.?);
+
+    const source_z = try allocator.dupeSentinel(u8, source, 0);
+    defer allocator.free(source_z);
+    var source_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(source_z, &source_stat) != 0);
+
+    const moved_contents = try transferTestReadFile(allocator, destination_file);
+    defer allocator.free(moved_contents);
+    try std.testing.expectEqualStrings("nested directory move payload", moved_contents);
+}
