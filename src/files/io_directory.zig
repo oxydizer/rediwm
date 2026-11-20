@@ -17,6 +17,13 @@ fn allocZ(allocator: Allocator, value: []const u8) ![:0]u8 {
     return result;
 }
 
+fn syncDescriptor(fd: c_int) bool {
+    while (true) {
+        if (c.fsync(fd) == 0) return true;
+        if (std.c._errno().* != c.EINTR) return false;
+    }
+}
+
 const Paths = struct {
     source: [*:0]const u8,
     destination: []const u8,
@@ -174,6 +181,12 @@ pub fn execute(
         _ = c.close(parent_fd);
         return completion(item, .failed, null);
     };
+    if (!syncDescriptor(parent_fd)) {
+        removeCreatedDirectory(&result);
+        var owned_result = result;
+        owned_result.deinit();
+        return completion(item, .failed, null);
+    }
     return completion(item, .completed, result);
 }
 
