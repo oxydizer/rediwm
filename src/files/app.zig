@@ -633,6 +633,7 @@ pub const App = struct {
     pub const openTrashConfirmDialogWithMode = app_dialogs.openTrashConfirmDialogWithMode;
     pub const openConflictDialog = app_dialogs.openConflictDialog;
     pub const openManagerConflictDialog = app_dialogs.openManagerConflictDialog;
+    pub const managerConflictCanMerge = app_dialogs.managerConflictCanMerge;
     pub const resolveConflictDialog = app_dialogs.resolveConflictDialog;
     pub const confirmDialog = app_dialogs.confirmDialog;
     pub const handleDialogKey = app_dialogs.handleDialogKey;

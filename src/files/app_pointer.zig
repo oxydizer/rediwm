@@ -497,20 +497,40 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         const dy = (@as(f64, @floatFromInt(self.h)) - dh) / 2.0;
 
         if (dlg.kind == .conflict) {
-            // Skip [dx + 16 .. dx + 16 + (dw - 48) / 3]
-            if (x >= dx + 16 and x <= dx + 16 + (dw - 48) / 3 and y >= dy + 84 and y <= dy + 112) {
-                self.resolveConflictDialog(.skip);
-                return;
-            }
-            // Rename [dx + 24 + (dw - 48) / 3 .. dx + 24 + 2 * (dw - 48) / 3]
-            if (x >= dx + 24 + (dw - 48) / 3 and x <= dx + 24 + 2 * (dw - 48) / 3 and y >= dy + 84 and y <= dy + 112) {
-                self.resolveConflictDialog(.rename);
-                return;
-            }
-            // Cancel [dx + 32 + 2 * (dw - 48) / 3 .. dx + dw - 16]
-            if (x >= dx + 32 + 2 * (dw - 48) / 3 and x <= dx + dw - 16 and y >= dy + 84 and y <= dy + 112) {
-                self.resolveConflictDialog(.cancel);
-                return;
+            if (self.managerConflictCanMerge()) {
+                const button_width = (dw - 56) / 4;
+                if (x >= dx + 16 and x <= dx + 16 + button_width and y >= dy + 84 and y <= dy + 112) {
+                    self.resolveConflictDialog(.skip);
+                    return;
+                }
+                if (x >= dx + 24 + button_width and x <= dx + 24 + 2 * button_width and y >= dy + 84 and y <= dy + 112) {
+                    self.resolveConflictDialog(.merge);
+                    return;
+                }
+                if (x >= dx + 32 + 2 * button_width and x <= dx + 32 + 3 * button_width and y >= dy + 84 and y <= dy + 112) {
+                    self.resolveConflictDialog(.rename);
+                    return;
+                }
+                if (x >= dx + 40 + 3 * button_width and x <= dx + dw - 16 and y >= dy + 84 and y <= dy + 112) {
+                    self.resolveConflictDialog(.cancel);
+                    return;
+                }
+            } else {
+                // Skip [dx + 16 .. dx + 16 + (dw - 48) / 3]
+                if (x >= dx + 16 and x <= dx + 16 + (dw - 48) / 3 and y >= dy + 84 and y <= dy + 112) {
+                    self.resolveConflictDialog(.skip);
+                    return;
+                }
+                // Rename [dx + 24 + (dw - 48) / 3 .. dx + 24 + 2 * (dw - 48) / 3]
+                if (x >= dx + 24 + (dw - 48) / 3 and x <= dx + 24 + 2 * (dw - 48) / 3 and y >= dy + 84 and y <= dy + 112) {
+                    self.resolveConflictDialog(.rename);
+                    return;
+                }
+                // Cancel [dx + 32 + 2 * (dw - 48) / 3 .. dx + dw - 16]
+                if (x >= dx + 32 + 2 * (dw - 48) / 3 and x <= dx + dw - 16 and y >= dy + 84 and y <= dy + 112) {
+                    self.resolveConflictDialog(.cancel);
+                    return;
+                }
             }
         } else {
             // OK [dx + dw - 184 .. dx + dw - 104]

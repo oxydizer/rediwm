@@ -342,6 +342,97 @@ test "resolving a conflict allows unrelated operations to continue" {
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
 }
 
+test "merging a directory conflict authorizes only its retried directory operation" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "Photos", .directory, .{}, null);
+    const operation = try manager.addEntryOperation(job, root, .create_directory);
+    try manager.queueJob(job);
+    const first_token = manager.dispatchNext().?;
+    const conflict_id = try manager.registerConflict(
+        first_token,
+        root,
+        "/source/Photos",
+        "/destination/Photos",
+        .directory,
+        .directory,
+    );
+
+    try manager.mergeConflict(conflict_id);
+    try std.testing.expect(manager.nextConflict() == null);
+    const retry_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(operation, retry_token.operation_id);
+    try std.testing.expect(retry_token.generation > first_token.generation);
+    const details = manager.operationDetails(retry_token).?;
+    try std.testing.expectEqual(io_manager.OperationKind.create_directory, details.kind);
+    try std.testing.expect(details.merge_existing_directory);
+    try std.testing.expect(manager.completeWork(retry_token, .completed));
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, operation).?,
+    );
+}
+
+test "directory merge rejects non-directory conflicts without consuming the FIFO" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "Photos", .directory, .{}, null);
+    const operation = try manager.addEntryOperation(job, root, .create_directory);
+    try manager.queueJob(job);
+    const token = manager.dispatchNext().?;
+    const conflict_id = try manager.registerConflict(
+        token,
+        root,
+        "/source/Photos",
+        "/destination/Photos",
+        .directory,
+        .regular_file,
+    );
+
+    try std.testing.expectError(
+        error.MergeRequiresDirectoryConflict,
+        manager.mergeConflict(conflict_id),
+    );
+    try std.testing.expectEqual(conflict_id, manager.nextConflict().?.id);
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, operation).?,
+    );
+}
+
+test "directory merge rejects a conflict not backed by directory creation" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "payload.txt", .regular_file, .{}, null);
+    const operation = try manager.addEntryOperation(job, root, .move_entry);
+    try manager.queueJob(job);
+    const token = manager.dispatchNext().?;
+    const conflict_id = try manager.registerConflict(
+        token,
+        root,
+        "/source/payload.txt",
+        "/destination/payload.txt",
+        .directory,
+        .directory,
+    );
+
+    try std.testing.expectError(
+        error.MergeRequiresDirectoryOperation,
+        manager.mergeConflict(conflict_id),
+    );
+    try std.testing.expectEqual(conflict_id, manager.nextConflict().?.id);
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, operation).?,
+    );
+}
+
 test "skipping a conflict advances the FIFO and skips its Operation" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

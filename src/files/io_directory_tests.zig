@@ -41,10 +41,24 @@ fn runDirectory(
     source: []const u8,
     destination: []const u8,
 ) !executor.WorkCompletion {
+    return runDirectoryWithMerge(allocator, source, destination, false);
+}
+
+fn runDirectoryWithMerge(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    destination: []const u8,
+    merge_existing_directory: bool,
+) !executor.WorkCompletion {
     return directory.execute(allocator, .{
         .token = .{ .job_id = 1, .operation_id = 1, .generation = 1 },
         .operation_kind = .create_directory,
-        .input = try directory.makeInput(allocator, source, destination),
+        .input = try directory.makeInput(
+            allocator,
+            source,
+            destination,
+            merge_existing_directory,
+        ),
     });
 }
 
@@ -108,6 +122,81 @@ test "directory collision waits and preserves the existing destination" {
     const fd = c.open(destination_z, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC | c.O_NOFOLLOW);
     try std.testing.expect(fd >= 0);
     _ = c.close(fd);
+}
+
+test "explicit directory merge accepts and preserves an existing directory" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupDirectory(temp);
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    defer cleanupDirectory(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+    defer cleanupDirectory(destination);
+    const marker = try join(allocator, destination, "keep.txt");
+    defer allocator.free(marker);
+    defer cleanupFile(marker);
+    const source_z = try allocZ(allocator, source);
+    defer allocator.free(source_z);
+    const destination_z = try allocZ(allocator, destination);
+    defer allocator.free(destination_z);
+    const marker_z = try allocZ(allocator, marker);
+    defer allocator.free(marker_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(source_z, 0o700));
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(destination_z, 0o700));
+    const marker_fd = c.open(marker_z, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC, @as(c_uint, 0o600));
+    try std.testing.expect(marker_fd >= 0);
+    _ = c.close(marker_fd);
+
+    var completion = try runDirectoryWithMerge(allocator, source, destination, true);
+    defer {
+        directory.complete(null, completion.token, completion.outcome, completion.result);
+        completion.input.deinit();
+    }
+    try std.testing.expectEqual(executor.WorkResult.completed, completion.outcome);
+    try std.testing.expect(completion.result == null);
+    const preserved_fd = c.open(marker_z, c.O_RDONLY | c.O_CLOEXEC);
+    try std.testing.expect(preserved_fd >= 0);
+    _ = c.close(preserved_fd);
+}
+
+test "explicit directory merge refuses an existing symlink" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupDirectory(temp);
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    defer cleanupDirectory(source);
+    const target = try join(allocator, temp, "target");
+    defer allocator.free(target);
+    defer cleanupDirectory(target);
+    const destination = try join(allocator, temp, "destination-link");
+    defer allocator.free(destination);
+    defer cleanupFile(destination);
+    const source_z = try allocZ(allocator, source);
+    defer allocator.free(source_z);
+    const target_z = try allocZ(allocator, target);
+    defer allocator.free(target_z);
+    const destination_z = try allocZ(allocator, destination);
+    defer allocator.free(destination_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(source_z, 0o700));
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(target_z, 0o700));
+    try std.testing.expectEqual(@as(c_int, 0), c.symlink(target_z, destination_z));
+
+    const completion = try runDirectoryWithMerge(allocator, source, destination, true);
+    defer directory.discard(
+        null,
+        completion.operation_kind,
+        completion.input,
+        completion.continuation,
+        completion.result,
+    );
+    try std.testing.expectEqual(executor.WorkResult.failed, completion.outcome);
 }
 
 test "directory creation rejects a symlink source" {

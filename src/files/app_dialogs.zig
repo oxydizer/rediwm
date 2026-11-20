@@ -15,7 +15,7 @@ const trash_properties = @import("trash_properties.zig");
 const ViewItem = @import("app_model.zig").ViewItem;
 const Dialog = @import("app_model.zig").Dialog;
 
-pub const ConflictAction = enum { skip, rename, cancel };
+pub const ConflictAction = enum { skip, merge, rename, cancel };
 
 pub fn closeDialog(self: *App) void {
     self.text_dragging = false;
@@ -321,6 +321,18 @@ pub fn openManagerConflictDialog(
     self.invalidate();
 }
 
+/// Merge is available only for the current Manager FIFO directory conflict.
+/// The legacy JobRunner dialog deliberately retains its original actions.
+pub fn managerConflictCanMerge(self: *const App) bool {
+    const dlg = self.dialog orelse return false;
+    const conflict_id = dlg.manager_conflict_id orelse return false;
+    const manager = if (self.io_manager) |*value| value else return false;
+    const conflict = manager.nextConflict() orelse return false;
+    return conflict.id == conflict_id and
+        conflict.source_kind == .directory and
+        conflict.destination_kind == .directory;
+}
+
 fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) !void {
     const manager = if (self.io_manager) |*value| value else
         return error.OperationManagerUnavailable;
@@ -329,6 +341,7 @@ fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) 
 
     switch (action) {
         .skip => try manager.skipConflict(conflict_id),
+        .merge => try manager.mergeConflict(conflict_id),
         .cancel => if (self.operation_executor) |*executor| {
             try executor.cancelJob(conflict.job_id);
         } else {
@@ -370,6 +383,7 @@ pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
     } else if (self.job_runner) |runner| {
         runner.resolveConflict(switch (action) {
             .skip => .skip,
+            .merge => return,
             .rename => .rename,
             .cancel => .cancel,
         });
@@ -485,7 +499,10 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
         return;
     }
     if (dlg.kind == .conflict) {
-        if (sym == c.XKB_KEY_s or sym == c.XKB_KEY_S) {
+        if ((sym == c.XKB_KEY_m or sym == c.XKB_KEY_M) and self.managerConflictCanMerge()) {
+            self.resolveConflictDialog(.merge);
+            return;
+        } else if (sym == c.XKB_KEY_s or sym == c.XKB_KEY_S) {
             self.resolveConflictDialog(.skip);
             return;
         } else if (sym == c.XKB_KEY_r or sym == c.XKB_KEY_R) {

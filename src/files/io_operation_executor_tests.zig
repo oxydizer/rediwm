@@ -488,6 +488,114 @@ test "Manager Runtime registers directory destination collisions" {
     try std.testing.expectEqualStrings(destination, conflict.destination_path);
 }
 
+test "Manager Runtime merges an existing directory before detaching its source" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const source = try join(allocator, temp, "source-dir");
+    defer allocator.free(source);
+    defer cleanup(source, true);
+    const source_file = try join(allocator, source, "new.txt");
+    defer allocator.free(source_file);
+    defer cleanup(source_file, false);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    defer cleanup(destination_base, true);
+    const destination = try join(allocator, destination_base, "source-dir");
+    defer allocator.free(destination);
+    defer cleanup(destination, true);
+    const preserved_file = try join(allocator, destination, "keep.txt");
+    defer allocator.free(preserved_file);
+    defer cleanup(preserved_file, false);
+    const copied_file = try join(allocator, destination, "new.txt");
+    defer allocator.free(copied_file);
+    defer cleanup(copied_file, false);
+
+    try makeDirectory(source);
+    try makeDirectory(destination_base);
+    try makeDirectory(destination);
+    try writeFile(source_file, "new source payload");
+    try writeFile(preserved_file, "existing destination payload");
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source-dir", .directory, .{}, null);
+    const child = try manager.addTreeEntry(
+        job,
+        root,
+        "new.txt",
+        .regular_file,
+        .{ .size = "new source payload".len },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, source);
+    try manager.setDestinationDirectory(job, destination_base);
+    const root_create = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    const child_copy = try manager.addEntryOperation(job, child, .copy_file);
+    const child_detach = try manager.addEntryOperation(job, child, .detach_source);
+    try manager.addDependency(job, root_detach, child_detach);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, source);
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch: io_discovery.Batch = .{
+        .allocator = allocator,
+        .complete = true,
+    };
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
+    defer runtime.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, root_create).?,
+    );
+    const conflict = manager.nextConflict() orelse return error.MissingConflict;
+    try std.testing.expectEqual(io_tree.EntryKind.directory, conflict.source_kind);
+    try std.testing.expectEqual(io_tree.EntryKind.directory, conflict.destination_kind);
+    try manager.mergeConflict(conflict.id);
+
+    var iterations: usize = 0;
+    while (!manager.jobState(job).?.isTerminal()) : (iterations += 1) {
+        if (iterations == 100) return error.DirectoryMergeDidNotComplete;
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+        if (manager.operationState(job, child_copy).? != .completed)
+            try std.testing.expect(manager.operationState(job, root_detach).? != .running);
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, child_detach).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, root_detach).?,
+    );
+    const preserved = try readFile(allocator, preserved_file);
+    defer allocator.free(preserved);
+    try std.testing.expectEqualStrings("existing destination payload", preserved);
+    const copied = try readFile(allocator, copied_file);
+    defer allocator.free(copied);
+    try std.testing.expectEqualStrings("new source payload", copied);
+
+    const source_z = try allocZ(allocator, source);
+    defer allocator.free(source_z);
+    var source_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(source_z, &source_stat) != 0);
+}
+
 test "Manager Runtime registers symlink destination collisions" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
