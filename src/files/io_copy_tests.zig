@@ -415,6 +415,85 @@ test "stale completed copy does not remove a replacement destination" {
     try std.testing.expectEqualStrings("replacement must survive", buffer[0..count]);
 }
 
+test "replacement copy atomically replaces an existing regular file" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(
+        allocator,
+        temp,
+        &.{"source", "destination", ".rediwm-21-7-1.tmp"},
+    );
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    try writeFile(source, "new replacement contents");
+    try writeFile(destination, "original contents");
+    const item = executor.WorkItem{
+        .token = .{ .job_id = 21, .operation_id = 7, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeReplacementInput(
+            allocator,
+            source,
+            destination,
+            .{ .job_id = 21, .operation_id = 7, .generation = 1 },
+        ),
+    };
+    const done = executeToTerminal(allocator, item);
+    try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
+    try std.testing.expect(done.result != null);
+    copy.complete(null, done.token, done.outcome, done.result);
+
+    var buffer: [64]u8 = undefined;
+    const count = try readFile(destination, &buffer);
+    try std.testing.expectEqualStrings("new replacement contents", buffer[0..count]);
+    const staging = try join(allocator, temp, ".rediwm-21-7-1.tmp");
+    defer allocator.free(staging);
+    try std.testing.expectError(error.OpenFailed, readFile(staging, &buffer));
+    var owned_input = done.input;
+    owned_input.deinit();
+}
+
+test "discarded replacement restores the original destination" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(
+        allocator,
+        temp,
+        &.{"source", "destination", ".rediwm-22-8-1.tmp"},
+    );
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    try writeFile(source, "new replacement contents");
+    try writeFile(destination, "original contents");
+    const item = executor.WorkItem{
+        .token = .{ .job_id = 22, .operation_id = 8, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeReplacementInput(
+            allocator,
+            source,
+            destination,
+            .{ .job_id = 22, .operation_id = 8, .generation = 1 },
+        ),
+    };
+    const done = executeToTerminal(allocator, item);
+    try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
+    copy.discard(null, done.operation_kind, done.input, done.continuation, done.result);
+
+    var buffer: [64]u8 = undefined;
+    const count = try readFile(destination, &buffer);
+    try std.testing.expectEqualStrings("original contents", buffer[0..count]);
+    const staging = try join(allocator, temp, ".rediwm-22-8-1.tmp");
+    defer allocator.free(staging);
+    try std.testing.expectError(error.OpenFailed, readFile(staging, &buffer));
+}
+
 test "copy metrics account for strategy bytes and optional timing" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
