@@ -250,6 +250,7 @@ const Job = struct {
     pause_requested: bool = false,
     cancel_requested: bool = false,
     destination_directory: ?[]u8 = null,
+    destination_device_id: ?u64 = null,
     discovery_schedule: std.AutoHashMapUnmanaged(io_tree.EntryId, DiscoverySchedule) = .empty,
     discovery_pending_count: usize = 0,
     discovery_generation: u64 = 0,
@@ -398,6 +399,27 @@ pub const Manager = struct {
         }
 
         job.destination_directory = try self.allocator.dupe(u8, destination_directory);
+    }
+
+    /// Stores the destination filesystem identity captured by the App.
+    /// The Manager does not perform filesystem queries.
+    pub fn setDestinationDeviceId(
+        self: *Manager,
+        job_id: JobId,
+        device_id: u64,
+    ) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (job.destination_directory == null)
+            return error.DestinationDirectoryNotSet;
+        if (job.destination_device_id != null)
+            return error.DestinationDeviceAlreadySet;
+        job.destination_device_id = device_id;
+    }
+
+    pub fn destinationDeviceId(self: *Manager, job_id: JobId) ?u64 {
+        const job = self.findJob(job_id) orelse return null;
+        return job.destination_device_id;
     }
 
     /// Adds the source root to a Job's Manager-owned TreeIndex.

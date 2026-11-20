@@ -140,6 +140,7 @@ fn startManagerFileCopy(
             .metadata = .{
                 .size = @intCast(@max(source_stat.st_size, 0)),
                 .mode = @intCast(source_stat.st_mode),
+                .device_id = @intCast(source_stat.st_dev),
             },
             .symlink_target = symlink_target,
         });
@@ -257,6 +258,7 @@ fn startManagerFileMove(
             .metadata = .{
                 .size = @intCast(@max(source_stat.st_size, 0)),
                 .mode = @intCast(source_stat.st_mode),
+                .device_id = @intCast(source_stat.st_dev),
             },
             .same_filesystem = source_stat.st_dev == destination_stat.st_dev,
             .symlink_target = symlink_target,
@@ -294,6 +296,7 @@ fn startManagerFileMove(
         }
     }
     try manager.setDestinationDirectory(job_id, directory);
+    try manager.setDestinationDeviceId(job_id, @intCast(destination_stat.st_dev));
     try manager.queueJob(job_id);
 
     self.active_io_copy_destination = owned_destination;
@@ -374,7 +377,10 @@ fn startManagerDirectoryTransfer(
         try plans.append(self.allocator, .{
             .source = source,
             .name = name,
-            .metadata = .{ .mode = @intCast(source_stat.st_mode) },
+            .metadata = .{
+                .mode = @intCast(source_stat.st_mode),
+                .device_id = @intCast(source_stat.st_dev),
+            },
         });
     }
 
@@ -405,6 +411,7 @@ fn startManagerDirectoryTransfer(
     try manager.setDestinationDirectory(job_id, directory);
 
     if (is_move) {
+        try manager.setDestinationDeviceId(job_id, @intCast(destination_stat.st_dev));
         for (discovery_roots.items) |root| {
             _ = try manager.addEntryOperation(job_id, root.root_id, .create_directory);
             _ = try manager.addEntryOperation(job_id, root.root_id, .detach_source);
