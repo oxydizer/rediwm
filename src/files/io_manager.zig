@@ -1994,6 +1994,17 @@ pub const Manager = struct {
         };
     }
 
+    /// Returns the source-detach state for a directory entry, if registered.
+    pub fn sourceDetachOperationState(
+        self: *const Manager,
+        job_id: JobId,
+        entry_id: io_tree.EntryId,
+    ) ?OperationState {
+        const job = self.findJobConst(job_id) orelse return null;
+        const index = job.source_detach_indices.get(entry_id) orelse return null;
+        return job.operations.items[index].state;
+    }
+
     pub fn snapshotJob(self: *const Manager, allocator: Allocator, job_id: JobId) !JobSnapshot {
         const job = self.findJobConst(job_id) orelse return error.UnknownJob;
         const operations = try allocator.alloc(OperationSnapshot, job.operations.items.len);

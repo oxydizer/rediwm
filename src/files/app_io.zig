@@ -266,8 +266,12 @@ fn updateMovedClipboard(
     const tree = manager.treeIndex(job_id) orelse return;
     var changed = false;
     for (tree.roots()) |root_id| {
-        const operation = manager.entryOperationView(job_id, root_id) orelse continue;
-        if (operation.state != .completed) continue;
+        const entry = tree.getConst(root_id) orelse continue;
+        const operation_state = if (entry.kind == .directory)
+            manager.sourceDetachOperationState(job_id, root_id) orelse continue
+        else
+            (manager.entryOperationView(job_id, root_id) orelse continue).state;
+        if (operation_state != .completed) continue;
 
         const source = manager.sourcePath(self.allocator, job_id, root_id) catch continue;
         defer self.allocator.free(source);
@@ -334,18 +338,20 @@ pub fn stepOperations(self: *App) void {
                     .completed => {
                         if (manager.jobHasSkippedOperations(job_id)) {
                             self.setStatusNotice(
-                                if (multiple_items) "Some items skipped" else if (is_move) "File move skipped" else if (is_directory) "Folder copy skipped" else "File copy skipped",
+                                if (multiple_items) "Some items skipped" else if (is_move and is_directory) "Folder move skipped" else if (is_move) "File move skipped" else if (is_directory) "Folder copy skipped" else "File copy skipped",
                                 false,
                             );
                         } else {
                             self.setStatusNotice(
-                                if (multiple_items) (if (is_move) "Items moved" else "Items copied") else if (is_move) "File moved" else if (is_directory) "Folder copied" else "File copied",
+                                if (multiple_items) (if (is_move) "Items moved" else "Items copied") else if (is_move and is_directory) "Folder moved" else if (is_move) "File moved" else if (is_directory) "Folder copied" else "File copied",
                                 false,
                             );
                         }
                     },
                     .completed_with_errors, .failed => self.setStatusNotice(if (multiple_items)
                         (if (is_move) "Could not move all items" else "Could not copy all items")
+                    else if (is_move and is_directory)
+                        "Folder move failed"
                     else if (is_move)
                         "File move failed"
                     else if (is_directory)
@@ -354,6 +360,8 @@ pub fn stepOperations(self: *App) void {
                         "File copy failed", true),
                     .cancelled => self.setStatusNotice(if (multiple_items)
                         (if (is_move) "Items move cancelled" else "Items copy cancelled")
+                    else if (is_move and is_directory)
+                        "Folder move cancelled"
                     else if (is_move)
                         "File move cancelled"
                     else if (is_directory)

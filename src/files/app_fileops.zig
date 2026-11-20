@@ -305,13 +305,24 @@ fn startManagerFileMove(
 }
 
 /// Starts selected directory roots through one incremental Manager Job.
-/// Mixed directory/file selections remain on JobRunner for now.
-fn startManagerDirectoryCopy(
+/// Mixed selections and cross-filesystem moves remain on JobRunner.
+fn startManagerDirectoryTransfer(
     self: *App,
     paths: []const []const u8,
     directory: []const u8,
+    is_move: bool,
+    clipboard: bool,
 ) !bool {
     if (paths.len == 0 or self.active_io_copy_job != null) return false;
+
+    const destination_z = try self.allocator.dupeSentinel(u8, directory, 0);
+    defer self.allocator.free(destination_z);
+    var destination_stat: c.struct_stat = undefined;
+    if (c.stat(destination_z, &destination_stat) != 0 or
+        (destination_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
+    {
+        return false;
+    }
 
     const RootPlan = struct {
         source: []const u8,
@@ -332,8 +343,23 @@ fn startManagerDirectoryCopy(
         if (c.lstat(source_z, &source_stat) != 0) return false;
         if ((source_stat.st_mode & c.S_IFMT) != c.S_IFDIR) return false;
 
-        // Copying a directory into itself or one of its descendants would
-        // make discovery chase the destination being created.
+        if (is_move and source_stat.st_dev != destination_stat.st_dev)
+            return false;
+
+        // Moving overlapping roots as independent discovery roots could
+        // detach a parent before the separately selected child is moved.
+        if (is_move) {
+            for (plans.items) |previous| {
+                if (ops_mod.isDescendantOrSame(source, previous.source) or
+                    ops_mod.isDescendantOrSame(previous.source, source))
+                {
+                    return false;
+                }
+            }
+        }
+
+        // Copying or moving a directory into itself or one of its descendants
+        // would make discovery chase the destination being created.
         if (ops_mod.isDescendantOrSame(source, directory)) return false;
 
         try plans.append(self.allocator, .{
@@ -368,18 +394,35 @@ fn startManagerDirectoryCopy(
         });
     }
     try manager.setDestinationDirectory(job_id, directory);
-    try manager.enableDiscoveredEntryOperations(job_id);
-    for (discovery_roots.items) |root| {
-        _ = try manager.addEntryOperation(job_id, root.root_id, .create_directory);
+
+    if (is_move) {
+        for (discovery_roots.items) |root| {
+            _ = try manager.addEntryOperation(job_id, root.root_id, .create_directory);
+            _ = try manager.addEntryOperation(job_id, root.root_id, .detach_source);
+        }
+        try manager.enableDiscoveredEntryMoves(job_id);
+    } else {
+        try manager.enableDiscoveredEntryOperations(job_id);
+        for (discovery_roots.items) |root| {
+            _ = try manager.addEntryOperation(job_id, root.root_id, .create_directory);
+        }
     }
     try self.startDiscoveryRoots(job_id, discovery_roots.items);
 
     self.active_io_copy_destination = owned_destination;
     self.active_io_copy_job = job_id;
     self.active_io_copy_is_directory = true;
+    self.active_io_copy_is_move = is_move;
     self.active_io_copy_item_count = paths.len;
+    self.job_cut_revision = if (is_move and clipboard and self.clipboard_cut)
+        self.clipboard_revision
+    else
+        null;
     self.setStatusNotice(
-        if (paths.len == 1) "Copying folder" else "Copying folders",
+        if (is_move)
+            (if (paths.len == 1) "Moving folder" else "Moving folders")
+        else
+            (if (paths.len == 1) "Copying folder" else "Copying folders"),
         false,
     );
     self.invalidate();
@@ -398,12 +441,15 @@ pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const 
         const started = startManagerFileCopy(self, paths, directory) catch false;
         if (started) return true;
         const directory_started =
-            startManagerDirectoryCopy(self, paths, directory) catch false;
+            startManagerDirectoryTransfer(self, paths, directory, false, false) catch false;
         if (directory_started) return true;
     } else if (kind == .move) {
         const started =
             startManagerFileMove(self, paths, directory, clipboard) catch false;
         if (started) return true;
+        const directory_started =
+            startManagerDirectoryTransfer(self, paths, directory, true, clipboard) catch false;
+        if (directory_started) return true;
     }
     const runner = self.job_runner orelse return false;
     runner.start(kind, paths, directory, .ask) catch {
