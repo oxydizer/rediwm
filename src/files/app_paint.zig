@@ -624,9 +624,17 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
         setSource(cr, t.fg);
         drawEllipsis(cr, conflict_msg, dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
 
-        self.renderButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip (S)"), true, 1);
-        self.renderButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename (R)"), true, 2);
-        self.renderButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel (C)"), true, 3);
+        if (self.managerConflictCanMerge()) {
+            const button_width = (dw - 56) / 4;
+            self.renderButton(cr, dx + 16, dy + 84, button_width, 28, tr("Skip (S)"), true, 1);
+            self.renderButton(cr, dx + 24 + button_width, dy + 84, button_width, 28, tr("Merge (M)"), true, 2);
+            self.renderButton(cr, dx + 32 + 2 * button_width, dy + 84, button_width, 28, tr("Rename (R)"), true, 3);
+            self.renderButton(cr, dx + 40 + 3 * button_width, dy + 84, button_width, 28, tr("Cancel (C)"), true, 4);
+        } else {
+            self.renderButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip (S)"), true, 1);
+            self.renderButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename (R)"), true, 2);
+            self.renderButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel (C)"), true, 3);
+        }
     } else {
         self.renderEditor(cr, &self.dialog.?.edit, self.editorRect(), true, false);
 

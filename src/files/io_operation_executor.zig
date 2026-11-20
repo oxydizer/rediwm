@@ -132,7 +132,12 @@ fn prepare(
             );
             defer context.allocator.free(source);
             break :blk if (details.kind == .create_directory)
-                try io_directory.makeInput(context.allocator, source, destination)
+                try io_directory.makeInput(
+                    context.allocator,
+                    source,
+                    destination,
+                    details.merge_existing_directory,
+                )
             else
                 try io_copy.makeInput(context.allocator, source, destination);
         },

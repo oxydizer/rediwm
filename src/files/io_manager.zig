@@ -225,6 +225,7 @@ const Operation = struct {
     entry_id: ?io_tree.EntryId = null,
     discovery_gate: bool = false,
     destination_override: ?[]u8 = null,
+    merge_existing_directory: bool = false,
     state: OperationState = .pending,
     generation: u64 = 0,
     progress_bytes: u64 = 0,
@@ -300,6 +301,7 @@ pub const OperationSnapshot = struct {
 pub const OperationDetails = struct {
     kind: OperationKind,
     entry_id: io_tree.EntryId,
+    merge_existing_directory: bool,
 };
 
 pub const EntryOperationView = struct {
@@ -1195,6 +1197,7 @@ pub const Manager = struct {
         return .{
             .kind = operation.kind,
             .entry_id = operation.entry_id orelse return null,
+            .merge_existing_directory = operation.merge_existing_directory,
         };
     }
 
@@ -1769,6 +1772,36 @@ pub const Manager = struct {
             return error.UnknownOperation;
         if (operation.state != .waiting) return error.InvalidOperationState;
 
+        self.consumeConflictHead();
+        try self.resolveWaiting(job_id, operation_id);
+    }
+
+    /// Explicitly accepts an existing destination directory for a
+    /// directory-to-directory conflict. The authorization is retained on the
+    /// Operation and passed to its next prepared work unit.
+    pub fn mergeConflict(self: *Manager, conflict_id: ConflictId) !void {
+        const conflict = self.conflictHead(conflict_id) orelse
+            return error.ConflictNotAtQueueHead;
+        if (conflict.source_kind != .directory or
+            conflict.destination_kind != .directory)
+            return error.MergeRequiresDirectoryConflict;
+
+        const job = self.findJob(conflict.job_id) orelse return error.UnknownJob;
+        const operation = findOperation(job, conflict.operation_id) orelse
+            return error.UnknownOperation;
+        if (operation.state != .waiting) return error.InvalidOperationState;
+        if (operation.kind != .create_directory or
+            operation.entry_id == null or
+            operation.entry_id.? != conflict.entry_id)
+            return error.MergeRequiresDirectoryOperation;
+        const entry = job.tree.getConst(conflict.entry_id) orelse
+            return error.UnknownEntry;
+        if (entry.kind != .directory)
+            return error.MergeRequiresDirectoryOperation;
+
+        operation.merge_existing_directory = true;
+        const job_id = conflict.job_id;
+        const operation_id = conflict.operation_id;
         self.consumeConflictHead();
         try self.resolveWaiting(job_id, operation_id);
     }

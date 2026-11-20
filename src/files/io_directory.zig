@@ -27,6 +27,7 @@ fn syncDescriptor(fd: c_int) bool {
 const Paths = struct {
     source: [*:0]const u8,
     destination: []const u8,
+    merge_existing_directory: bool,
 };
 
 /// Build immutable operation input.
@@ -34,6 +35,7 @@ pub fn makeInput(
     allocator: Allocator,
     source_path: []const u8,
     destination_path: []const u8,
+    merge_existing_directory: bool,
 ) !executor.OwnedPayload {
     if (source_path.len == 0 or destination_path.len == 0) return error.InvalidPath;
     if (std.mem.indexOfScalar(u8, source_path, 0) != null or
@@ -45,24 +47,27 @@ pub fn makeInput(
 
     const bytes = try allocator.alloc(
         u8,
-        source_path.len + 1 + destination_path.len + 1,
+        source_path.len + 1 + destination_path.len + 2,
     );
     errdefer allocator.free(bytes);
     @memcpy(bytes[0..source_path.len], source_path);
     bytes[source_path.len] = 0;
     const destination_start = source_path.len + 1;
     @memcpy(bytes[destination_start..][0..destination_path.len], destination_path);
-    bytes[bytes.len - 1] = 0;
+    bytes[bytes.len - 2] = 0;
+    bytes[bytes.len - 1] = @intFromBool(merge_existing_directory);
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
 fn parsePaths(input: *const executor.OwnedPayload) !Paths {
     const bytes = input.slice();
     const separator = std.mem.indexOfScalar(u8, bytes, 0) orelse return error.InvalidInput;
-    if (separator == 0 or bytes.len <= separator + 2 or bytes[bytes.len - 1] != 0) {
+    if (separator == 0 or bytes.len < separator + 4 or
+        bytes[bytes.len - 2] != 0 or bytes[bytes.len - 1] > 1)
+    {
         return error.InvalidInput;
     }
-    const destination = bytes[separator + 1 .. bytes.len - 1];
+    const destination = bytes[separator + 1 .. bytes.len - 2];
     if (destination.len == 0 or destination[0] != '/' or
         std.mem.indexOfScalar(u8, destination, 0) != null)
     {
@@ -71,6 +76,7 @@ fn parsePaths(input: *const executor.OwnedPayload) !Paths {
     return .{
         .source = @ptrCast(bytes.ptr),
         .destination = destination,
+        .merge_existing_directory = bytes[bytes.len - 1] == 1,
     };
 }
 
@@ -167,12 +173,28 @@ pub fn execute(
 
     if (c.mkdirat(parent_fd, split.name, 0o755) != 0) {
         const failure_errno = std.c._errno().*;
-        _ = c.close(parent_fd);
         if (failure_errno == c.EEXIST) {
+            if (operation_paths.merge_existing_directory) {
+                // Merge is an explicit Manager authorization. Accept only a
+                // real directory entry; O_NOFOLLOW rejects symlinks and
+                // O_DIRECTORY rejects every other entry type.
+                const existing_fd = c.openat(
+                    parent_fd,
+                    split.name,
+                    c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC | c.O_NOFOLLOW,
+                );
+                _ = c.close(parent_fd);
+                if (existing_fd < 0)
+                    return completion(item, .failed, null);
+                _ = c.close(existing_fd);
+                return completion(item, .completed, null);
+            }
+            _ = c.close(parent_fd);
             const result = makeCollisionResult(allocator) orelse
                 return completion(item, .failed, null);
             return completion(item, .waiting, result);
         }
+        _ = c.close(parent_fd);
         return completion(item, .failed, null);
     }
 
