@@ -433,6 +433,96 @@ test "directory merge rejects a conflict not backed by directory creation" {
     );
 }
 
+test "replacing a regular-file conflict authorizes only its retried copy operation" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "payload.txt", .regular_file, .{}, null);
+    const operation = try manager.addEntryOperation(job, root, .copy_file);
+    try manager.queueJob(job);
+    const first_token = manager.dispatchNext().?;
+    const conflict_id = try manager.registerConflict(
+        first_token,
+        root,
+        "/source/payload.txt",
+        "/destination/payload.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    try manager.replaceConflict(conflict_id);
+    try std.testing.expect(manager.nextConflict() == null);
+    const retry_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(operation, retry_token.operation_id);
+    try std.testing.expect(retry_token.generation > first_token.generation);
+    const details = manager.operationDetails(retry_token).?;
+    try std.testing.expectEqual(io_manager.OperationKind.copy_file, details.kind);
+    try std.testing.expect(details.replace_existing_file);
+    try std.testing.expect(!details.merge_existing_directory);
+    try std.testing.expect(manager.completeWork(retry_token, .completed));
+}
+
+test "file replacement rejects directory and symlink destination conflicts" {
+    for ([_]io_tree.EntryKind{ .directory, .symlink }) |destination_kind| {
+        var manager = io_manager.Manager.init(std.testing.allocator);
+        defer manager.deinit();
+
+        const job = try manager.createJob(null);
+        const root = try manager.addTreeRoot(job, "payload.txt", .regular_file, .{}, null);
+        const operation = try manager.addEntryOperation(job, root, .copy_file);
+        try manager.queueJob(job);
+        const token = manager.dispatchNext().?;
+        const conflict_id = try manager.registerConflict(
+            token,
+            root,
+            "/source/payload.txt",
+            "/destination/payload.txt",
+            .regular_file,
+            destination_kind,
+        );
+
+        try std.testing.expectError(
+            error.ReplaceRequiresRegularFileConflict,
+            manager.replaceConflict(conflict_id),
+        );
+        try std.testing.expectEqual(conflict_id, manager.nextConflict().?.id);
+        try std.testing.expectEqual(
+            io_manager.OperationState.waiting,
+            manager.operationState(job, operation).?,
+        );
+    }
+}
+
+test "file replacement rejects conflicts not backed by a regular-file copy" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "payload.txt", .regular_file, .{}, null);
+    const operation = try manager.addEntryOperation(job, root, .move_entry);
+    try manager.queueJob(job);
+    const token = manager.dispatchNext().?;
+    const conflict_id = try manager.registerConflict(
+        token,
+        root,
+        "/source/payload.txt",
+        "/destination/payload.txt",
+        .regular_file,
+        .regular_file,
+    );
+
+    try std.testing.expectError(
+        error.ReplaceRequiresFileCopyOperation,
+        manager.replaceConflict(conflict_id),
+    );
+    try std.testing.expectEqual(conflict_id, manager.nextConflict().?.id);
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, operation).?,
+    );
+}
+
 test "skipping a conflict advances the FIFO and skips its Operation" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

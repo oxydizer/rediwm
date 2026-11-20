@@ -226,6 +226,7 @@ const Operation = struct {
     discovery_gate: bool = false,
     destination_override: ?[]u8 = null,
     merge_existing_directory: bool = false,
+    replace_existing_file: bool = false,
     state: OperationState = .pending,
     generation: u64 = 0,
     progress_bytes: u64 = 0,
@@ -304,6 +305,7 @@ pub const OperationDetails = struct {
     kind: OperationKind,
     entry_id: io_tree.EntryId,
     merge_existing_directory: bool,
+    replace_existing_file: bool,
 };
 
 pub const EntryOperationView = struct {
@@ -1223,6 +1225,7 @@ pub const Manager = struct {
             .kind = operation.kind,
             .entry_id = operation.entry_id orelse return null,
             .merge_existing_directory = operation.merge_existing_directory,
+            .replace_existing_file = operation.replace_existing_file,
         };
     }
 
@@ -1825,6 +1828,37 @@ pub const Manager = struct {
             return error.MergeRequiresDirectoryOperation;
 
         operation.merge_existing_directory = true;
+        const job_id = conflict.job_id;
+        const operation_id = conflict.operation_id;
+        self.consumeConflictHead();
+        try self.resolveWaiting(job_id, operation_id);
+    }
+
+    /// Explicitly authorizes replacement for a regular-file copy conflict.
+    /// The authorization is retained on the Operation and passed to its
+    /// next prepared work unit. Other source/destination type pairs are
+    /// deliberately rejected here, independently of the UI.
+    pub fn replaceConflict(self: *Manager, conflict_id: ConflictId) !void {
+        const conflict = self.conflictHead(conflict_id) orelse
+            return error.ConflictNotAtQueueHead;
+        if (conflict.source_kind != .regular_file or
+            conflict.destination_kind != .regular_file)
+            return error.ReplaceRequiresRegularFileConflict;
+
+        const job = self.findJob(conflict.job_id) orelse return error.UnknownJob;
+        const operation = findOperation(job, conflict.operation_id) orelse
+            return error.UnknownOperation;
+        if (operation.state != .waiting) return error.InvalidOperationState;
+        if (operation.kind != .copy_file or
+            operation.entry_id == null or
+            operation.entry_id.? != conflict.entry_id)
+            return error.ReplaceRequiresFileCopyOperation;
+        const entry = job.tree.getConst(conflict.entry_id) orelse
+            return error.UnknownEntry;
+        if (entry.kind != .regular_file)
+            return error.ReplaceRequiresFileCopyOperation;
+
+        operation.replace_existing_file = true;
         const job_id = conflict.job_id;
         const operation_id = conflict.operation_id;
         self.consumeConflictHead();
