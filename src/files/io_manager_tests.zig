@@ -45,6 +45,7 @@ fn makeDiscoveryBatch(
     records: []const struct {
         name: []const u8,
         kind: io_tree.EntryKind,
+        device_id: ?u64 = 1,
     },
     complete: bool,
 ) !io_discovery.Batch {
@@ -60,6 +61,7 @@ fn makeDiscoveryBatch(
         try batch.records.append(allocator, .{
             .name = name,
             .kind = record.kind,
+            .metadata = .{ .device_id = record.device_id },
         });
     }
 
@@ -780,7 +782,7 @@ test "directory move detach waits for discovery and every descendant move" {
     defer manager.deinit();
 
     const job = try manager.createJob(null);
-    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{ .device_id = 1 }, null);
     try manager.setSourceRootPath(job, "/tmp/source");
     try manager.setDestinationDirectory(job, "/tmp/destination");
     const root_create = try manager.addEntryOperation(job, root, .create_directory);
@@ -873,7 +875,7 @@ test "failed descendant move prevents source directory detach" {
     defer manager.deinit();
 
     const job = try manager.createJob(null);
-    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{ .device_id = 1 }, null);
     try manager.setSourceRootPath(job, "/tmp/source");
     try manager.setDestinationDirectory(job, "/tmp/destination");
     _ = try manager.addEntryOperation(job, root, .create_directory);
@@ -947,7 +949,7 @@ test "empty source directory releases its detach discovery gate" {
     defer manager.deinit();
 
     const job = try manager.createJob(null);
-    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{ .device_id = 1 }, null);
     try manager.setRootSourcePath(job, root, "/tmp/source");
     try manager.setDestinationDirectory(job, "/tmp/destination");
     _ = try manager.addEntryOperation(job, root, .create_directory);
@@ -982,7 +984,7 @@ test "partial discovery batch keeps source directory detach gated" {
     defer manager.deinit();
 
     const job = try manager.createJob(null);
-    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{ .device_id = 1 }, null);
     try manager.setRootSourcePath(job, root, "/tmp/source");
     try manager.setDestinationDirectory(job, "/tmp/destination");
     _ = try manager.addEntryOperation(job, root, .create_directory);
@@ -1032,6 +1034,114 @@ test "partial discovery batch keeps source directory detach gated" {
     );
     try std.testing.expect(manager.completeWork(detach_token, .completed));
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "directory move preserves nested filesystem boundaries and continues siblings" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 10 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{
+            .{ .name = "mounted", .kind = .directory, .device_id = 20 },
+            .{ .name = "sibling.txt", .kind = .regular_file },
+        },
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    const tree = manager.treeIndex(job).?;
+    const children = tree.getConst(root).?.children.items;
+    try std.testing.expectEqual(@as(usize, 2), children.len);
+    try std.testing.expectEqual(
+        io_tree.DiscoveryState.skipped,
+        tree.getConst(children[0]).?.discovery,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+
+    const create_token = manager.dispatchNext() orelse return error.MissingCreateOperation;
+    try std.testing.expectEqual(root, manager.operationDetails(create_token).?.entry_id);
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+
+    const sibling_token = manager.dispatchNext() orelse return error.MissingSiblingMove;
+    try std.testing.expectEqual(children[1], manager.operationDetails(sibling_token).?.entry_id);
+    try std.testing.expectEqual(
+        io_manager.OperationKind.move_entry,
+        manager.operationDetails(sibling_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(sibling_token, .completed));
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expectEqual(io_manager.JobState.completed_with_errors, manager.jobState(job).?);
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, root_detach).?,
+    );
+}
+
+test "directory move fails closed when child device identity is missing" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 10 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{.{ .name = "unknown-device", .kind = .directory, .device_id = null }},
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    const tree = manager.treeIndex(job).?;
+    const child = tree.getConst(root).?.children.items[0];
+    try std.testing.expectEqual(
+        io_tree.DiscoveryState.skipped,
+        tree.getConst(child).?.discovery,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expect(manager.dispatchDiscovery() == null);
 }
 
 test "file and symlink source detach waits for successful copy publication" {

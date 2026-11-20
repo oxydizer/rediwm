@@ -945,11 +945,17 @@ pub const Manager = struct {
 
         const parent = job.tree.get(token.entry_id) orelse return false;
         if (parent.discovery != .scanning) return false;
+        const parent_device_id = parent.metadata.device_id;
 
         var new_directories: usize = 0;
         for (batch.records.items) |record| {
-            if (record.kind == .directory and !record.entry_error)
+            if (record.kind == .directory and
+                !record.entry_error and
+                (!job.auto_move_discovered_entries or
+                    !directoryCrossesDeviceBoundary(parent_device_id, record.metadata.device_id)))
+            {
                 new_directories += 1;
+            }
         }
         const parent_priority = job.discovery_schedule.get(token.entry_id) orelse
             return error.MissingDiscoverySchedule;
@@ -977,6 +983,11 @@ pub const Manager = struct {
                 record.kind == .symlink and record.symlink_target == null;
             const kind: io_tree.EntryKind =
                 if (invalid_symlink) .other else record.kind;
+            const crosses_directory_boundary =
+                job.auto_move_discovered_entries and
+                kind == .directory and
+                !record.entry_error and
+                directoryCrossesDeviceBoundary(parent_device_id, record.metadata.device_id);
 
             const child_id = try job.tree.addEntry(
                 token.entry_id,
@@ -988,6 +999,10 @@ pub const Manager = struct {
 
             if (job.auto_move_discovered_entries) {
                 if (record.entry_error or invalid_symlink or kind == .other) {
+                    self.failSourceDetach(job, token.entry_id);
+                } else if (crosses_directory_boundary) {
+                    // Never traverse or detach a directory mounted from a
+                    // different filesystem. Preserve it and its contents.
                     self.failSourceDetach(job, token.entry_id);
                 } else {
                     const completion_operation_id = switch (kind) {
@@ -1030,7 +1045,10 @@ pub const Manager = struct {
                     _ = try self.addEntryOperation(job.id, child_id, operation);
             }
 
-            if (record.kind == .directory and !record.entry_error) {
+            if (record.kind == .directory and
+                !record.entry_error and
+                !crosses_directory_boundary)
+            {
                 const child = job.tree.get(child_id).?;
                 child.discovery = .queued;
                 job.discovery_schedule.putAssumeCapacity(child_id, .{
@@ -1043,6 +1061,8 @@ pub const Manager = struct {
                     .version = 1,
                 });
                 job.discovery_pending_count += 1;
+            } else if (crosses_directory_boundary) {
+                job.tree.get(child_id).?.discovery = .skipped;
             } else if (record.entry_error or invalid_symlink) {
                 job.tree.get(child_id).?.discovery = .failed;
             }
@@ -1398,6 +1418,18 @@ pub const Manager = struct {
         _ = dequeueReadyIndex(job, operation_index);
         transitionOperation(job, operation, .failed);
         self.propagateUnmetDependencies(job, operation_index);
+    }
+
+    /// Missing device identity is treated as a boundary: directory moves
+    /// must not descend when the parent/child filesystem relationship is
+    /// unknown.
+    fn directoryCrossesDeviceBoundary(
+        parent_device_id: ?u64,
+        child_device_id: ?u64,
+    ) bool {
+        const parent_device = parent_device_id orelse return true;
+        const child_device = child_device_id orelse return true;
+        return parent_device != child_device;
     }
 
     /// Dependencies must refer to Operations in the same Job.
