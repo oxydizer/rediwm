@@ -670,6 +670,265 @@ test "queued Jobs accept operations as discovery progresses" {
     try std.testing.expect(manager.completeWork(token, .completed));
 }
 
+test "directory move detach waits for discovery and every descendant move" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.setSourceRootPath(job, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    const root_create = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const root_scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var root_batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{
+            .{ .name = "top.txt", .kind = .regular_file },
+            .{ .name = "nested", .kind = .directory },
+        },
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(root_scan, &root_batch));
+
+    const nested_scan = manager.dispatchDiscovery() orelse return error.MissingNestedScan;
+    const tree = manager.treeIndex(job).?;
+    var nested_id: ?io_tree.EntryId = null;
+    for (tree.getConst(root).?.children.items) |child_id| {
+        if (std.mem.eql(u8, tree.getConst(child_id).?.name, "nested"))
+            nested_id = child_id;
+    }
+    const nested = nested_id orelse return error.MissingNestedEntry;
+    try std.testing.expectEqual(nested, nested_scan.entry_id);
+
+    var nested_batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{.{ .name = "deep.txt", .kind = .regular_file }},
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(nested_scan, &nested_batch));
+    try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
+
+    var dispatched: [6]io_manager.OperationDetails = undefined;
+    var dispatched_count: usize = 0;
+    while (manager.dispatchNext()) |token| {
+        dispatched[dispatched_count] = manager.operationDetails(token).?;
+        dispatched_count += 1;
+        try std.testing.expect(manager.completeWork(token, .completed));
+    }
+
+    try std.testing.expectEqual(@as(usize, 6), dispatched_count);
+    try std.testing.expectEqual(io_manager.OperationKind.create_directory, dispatched[0].kind);
+    try std.testing.expectEqual(root, dispatched[0].entry_id);
+
+    var top_move_position: ?usize = null;
+    var nested_move_position: ?usize = null;
+    var nested_detach_position: ?usize = null;
+    var root_detach_position: ?usize = null;
+    for (dispatched[0..dispatched_count], 0..) |details, index| {
+        switch (details.kind) {
+            .move_entry => {
+                const entry = tree.getConst(details.entry_id).?;
+                if (std.mem.eql(u8, entry.name, "top.txt"))
+                    top_move_position = index;
+                if (std.mem.eql(u8, entry.name, "deep.txt"))
+                    nested_move_position = index;
+            },
+            .detach_source => {
+                if (details.entry_id == nested)
+                    nested_detach_position = index;
+                if (details.entry_id == root)
+                    root_detach_position = index;
+            },
+            else => {},
+        }
+    }
+
+    try std.testing.expect(top_move_position != null);
+    try std.testing.expect(nested_move_position != null);
+    try std.testing.expect(nested_detach_position != null);
+    try std.testing.expect(root_detach_position != null);
+    try std.testing.expect(nested_detach_position.? > nested_move_position.?);
+    try std.testing.expect(root_detach_position.? > top_move_position.?);
+    try std.testing.expect(root_detach_position.? > nested_detach_position.?);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    try std.testing.expect(root_create != root_detach);
+}
+
+test "failed descendant move prevents source directory detach" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.setSourceRootPath(job, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{.{ .name = "blocked.txt", .kind = .regular_file }},
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    const create_token = manager.dispatchNext() orelse return error.MissingCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+
+    const move_token = manager.dispatchNext() orelse return error.MissingMoveOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.move_entry,
+        manager.operationDetails(move_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(move_token, .failed));
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expectEqual(io_manager.JobState.completed_with_errors, manager.jobState(job).?);
+    try std.testing.expect(manager.dispatchNext() == null);
+}
+
+test "failed directory discovery prevents source directory detach" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    try std.testing.expect(manager.failDiscovery(scan));
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, root_detach).?,
+    );
+    const create_token = manager.dispatchNext() orelse return error.MissingCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+    try std.testing.expectEqual(io_manager.JobState.completed_with_errors, manager.jobState(job).?);
+    try std.testing.expect(manager.dispatchNext() == null);
+}
+
+test "empty source directory releases its detach discovery gate" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch = try makeDiscoveryBatch(std.testing.allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    const create_token = manager.dispatchNext() orelse return error.MissingCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+
+    const detach_token = manager.dispatchNext() orelse return error.MissingDetachOperation;
+    try std.testing.expectEqual(root_detach, detach_token.operation_id);
+    try std.testing.expectEqual(
+        io_manager.OperationKind.detach_source,
+        manager.operationDetails(detach_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(detach_token, .completed));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "partial discovery batch keeps source directory detach gated" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const first_scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var first_batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{.{ .name = "early.txt", .kind = .regular_file }},
+        false,
+    );
+    try std.testing.expect(try manager.completeDiscovery(first_scan, &first_batch));
+
+    const create_token = manager.dispatchNext() orelse return error.MissingCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+
+    const move_token = manager.dispatchNext() orelse return error.MissingMoveOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.move_entry,
+        manager.operationDetails(move_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(move_token, .completed));
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.pending,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expect(manager.dispatchNext() == null);
+
+    const final_scan = manager.dispatchDiscovery() orelse return error.MissingFinalScan;
+    try std.testing.expectEqual(root, final_scan.entry_id);
+    var final_batch = try makeDiscoveryBatch(std.testing.allocator, &.{}, true);
+    try std.testing.expect(try manager.completeDiscovery(final_scan, &final_batch));
+
+    const detach_token = manager.dispatchNext() orelse return error.MissingDetachOperation;
+    try std.testing.expectEqual(root_detach, detach_token.operation_id);
+    try std.testing.expectEqual(
+        io_manager.OperationKind.detach_source,
+        manager.operationDetails(detach_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(detach_token, .completed));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
 test "entry operations depend on their destination parent directory" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
