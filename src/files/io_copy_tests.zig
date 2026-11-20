@@ -456,6 +456,94 @@ test "replacement copy atomically replaces an existing regular file" {
     owned_input.deinit();
 }
 
+test "replacement copy atomically replaces an empty directory" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(
+        allocator,
+        temp,
+        &.{"source", "destination", ".rediwm-23-9-1.tmp"},
+    );
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    try writeFile(source, "replacement file");
+    const destination_z = try allocator.dupeSentinel(u8, destination, 0);
+    defer allocator.free(destination_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(destination_z, 0o700));
+
+    const item = executor.WorkItem{
+        .token = .{ .job_id = 23, .operation_id = 9, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeReplacementInput(
+            allocator,
+            source,
+            destination,
+            .{ .job_id = 23, .operation_id = 9, .generation = 1 },
+        ),
+    };
+    const done = executeToTerminal(allocator, item);
+    try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
+    try std.testing.expect(done.result != null);
+    copy.complete(null, done.token, done.outcome, done.result);
+
+    var buffer: [64]u8 = undefined;
+    const count = try readFile(destination, &buffer);
+    try std.testing.expectEqualStrings("replacement file", buffer[0..count]);
+    var owned_input = done.input;
+    owned_input.deinit();
+}
+
+test "replacement copy rejects a non-empty destination directory" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(
+        allocator,
+        temp,
+        &.{"source", "destination", ".rediwm-24-10-1.tmp"},
+    );
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+    const child = try join(allocator, destination, "keep");
+    defer allocator.free(child);
+
+    try writeFile(source, "replacement file");
+    const destination_z = try allocator.dupeSentinel(u8, destination, 0);
+    defer allocator.free(destination_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(destination_z, 0o700));
+    try writeFile(child, "must survive");
+    defer {
+        const child_z = allocator.dupeSentinel(u8, child, 0) catch unreachable;
+        defer allocator.free(child_z);
+        _ = c.unlink(child_z);
+        _ = c.rmdir(destination_z);
+    }
+
+    const item = executor.WorkItem{
+        .token = .{ .job_id = 24, .operation_id = 10, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeReplacementInput(
+            allocator,
+            source,
+            destination,
+            .{ .job_id = 24, .operation_id = 10, .generation = 1 },
+        ),
+    };
+    const done = executeToTerminal(allocator, item);
+    try std.testing.expectEqual(executor.WorkResult.failed, done.outcome);
+    var buffer: [64]u8 = undefined;
+    const count = try readFile(child, &buffer);
+    try std.testing.expectEqualStrings("must survive", buffer[0..count]);
+    var owned_input = done.input;
+    owned_input.deinit();
+}
+
 test "discarded replacement restores the original destination" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;

@@ -463,7 +463,7 @@ test "replacing a regular-file conflict authorizes only its retried copy operati
     try std.testing.expect(manager.completeWork(retry_token, .completed));
 }
 
-test "file replacement rejects directory and symlink destination conflicts" {
+test "file replacement accepts directory and rejects symlink destinations" {
     for ([_]io_tree.EntryKind{ .directory, .symlink }) |destination_kind| {
         var manager = io_manager.Manager.init(std.testing.allocator);
         defer manager.deinit();
@@ -482,15 +482,24 @@ test "file replacement rejects directory and symlink destination conflicts" {
             destination_kind,
         );
 
-        try std.testing.expectError(
-            error.ReplaceRequiresRegularFileConflict,
-            manager.replaceConflict(conflict_id),
-        );
-        try std.testing.expectEqual(conflict_id, manager.nextConflict().?.id);
-        try std.testing.expectEqual(
-            io_manager.OperationState.waiting,
-            manager.operationState(job, operation).?,
-        );
+        if (destination_kind == .directory) {
+            try manager.replaceConflict(conflict_id);
+            try std.testing.expect(manager.nextConflict() == null);
+            const retry_token = manager.dispatchNext().?;
+            try std.testing.expectEqual(operation, retry_token.operation_id);
+            try std.testing.expect(manager.operationDetails(retry_token).?.replace_existing_file);
+            try std.testing.expect(manager.completeWork(retry_token, .completed));
+        } else {
+            try std.testing.expectError(
+                error.ReplaceRequiresRegularFileConflict,
+                manager.replaceConflict(conflict_id),
+            );
+            try std.testing.expectEqual(conflict_id, manager.nextConflict().?.id);
+            try std.testing.expectEqual(
+                io_manager.OperationState.waiting,
+                manager.operationState(job, operation).?,
+            );
+        }
     }
 }
 
