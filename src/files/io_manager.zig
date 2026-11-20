@@ -1005,7 +1005,7 @@ pub const Manager = struct {
                     // different filesystem. Preserve it and its contents.
                     self.failSourceDetach(job, token.entry_id);
                 } else {
-                    const completion_operation_id = switch (kind) {
+                    const completion_operation_id: ?OperationId = switch (kind) {
                         .directory => blk: {
                             _ = try self.addEntryOperation(
                                 job.id,
@@ -1018,18 +1018,47 @@ pub const Manager = struct {
                                 .detach_source,
                             );
                         },
-                        .regular_file, .symlink => try self.addEntryOperation(
+                        .regular_file => blk: {
+                            const source_device_id = record.metadata.device_id orelse {
+                                self.failSourceDetach(job, token.entry_id);
+                                break :blk null;
+                            };
+                            const destination_device_id = job.destination_device_id orelse {
+                                self.failSourceDetach(job, token.entry_id);
+                                break :blk null;
+                            };
+                            if (source_device_id == destination_device_id) {
+                                break :blk try self.addEntryOperation(
+                                    job.id,
+                                    child_id,
+                                    .move_entry,
+                                );
+                            }
+                            _ = try self.addEntryOperation(
+                                job.id,
+                                child_id,
+                                .copy_file,
+                            );
+                            break :blk try self.addEntryOperation(
+                                job.id,
+                                child_id,
+                                .detach_source,
+                            );
+                        },
+                        .symlink => try self.addEntryOperation(
                             job.id,
                             child_id,
                             .move_entry,
                         ),
                         .other => unreachable,
                     };
-                    try self.addSourceDetachDependency(
-                        job,
-                        token.entry_id,
-                        completion_operation_id,
-                    );
+                    if (completion_operation_id) |operation_id| {
+                        try self.addSourceDetachDependency(
+                            job,
+                            token.entry_id,
+                            operation_id,
+                        );
+                    }
                 }
             } else if (job.auto_plan_discovered_entries and
                 !record.entry_error and
