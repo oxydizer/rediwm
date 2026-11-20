@@ -68,20 +68,68 @@ pub fn makeInput(
     source_path: []const u8,
     destination_path: []const u8,
 ) !executor.OwnedPayload {
+    return makeInputWithStagingName(allocator, source_path, destination_path, null);
+}
+
+/// Build replacement input with a unique staging basename in the destination
+/// directory. The work generation prevents a stale attempt from sharing it.
+pub fn makeReplacementInput(
+    allocator: Allocator,
+    source_path: []const u8,
+    destination_path: []const u8,
+    token: executor.WorkToken,
+) !executor.OwnedPayload {
+    const staging_name = try std.fmt.allocPrint(
+        allocator,
+        ".rediwm-{d}-{d}-{d}.tmp",
+        .{ token.job_id, token.operation_id, token.generation },
+    );
+    defer allocator.free(staging_name);
+    return makeInputWithStagingName(
+        allocator,
+        source_path,
+        destination_path,
+        staging_name,
+    );
+}
+
+fn makeInputWithStagingName(
+    allocator: Allocator,
+    source_path: []const u8,
+    destination_path: []const u8,
+    staging_name: ?[]const u8,
+) !executor.OwnedPayload {
     if (source_path.len == 0 or destination_path.len == 0) return error.InvalidPath;
     if (std.mem.indexOfScalar(u8, source_path, 0) != null or
         std.mem.indexOfScalar(u8, destination_path, 0) != null)
     {
         return error.InvalidPath;
     }
+    if (staging_name) |name| {
+        if (name.len == 0 or std.mem.indexOfScalar(u8, name, 0) != null or
+            std.mem.indexOfScalar(u8, name, '/') != null)
+        {
+            return error.InvalidPath;
+        }
+    }
 
-    const bytes = try allocator.alloc(u8, source_path.len + 1 + destination_path.len + 1);
+    const staging_length = if (staging_name) |name| name.len + 1 else 0;
+    const bytes = try allocator.alloc(
+        u8,
+        source_path.len + 1 + destination_path.len + 1 + staging_length,
+    );
     errdefer allocator.free(bytes);
     @memcpy(bytes[0..source_path.len], source_path);
     bytes[source_path.len] = 0;
     const destination_start = source_path.len + 1;
     @memcpy(bytes[destination_start ..][0..destination_path.len], destination_path);
-    bytes[bytes.len - 1] = 0;
+    const staging_start = destination_start + destination_path.len + 1;
+    if (staging_name) |name| {
+        @memcpy(bytes[staging_start..][0..name.len], name);
+        bytes[bytes.len - 1] = 0;
+    } else {
+        bytes[staging_start - 1] = 0;
+    }
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
@@ -89,6 +137,7 @@ fn paths(input: *const executor.OwnedPayload) !struct {
     source: [*:0]const u8,
     destination: [*:0]const u8,
     destination_name: [*:0]const u8,
+    staging_name: ?[*:0]const u8,
 } {
     const bytes = input.slice();
     const separator = std.mem.indexOfScalar(u8, bytes, 0) orelse return error.InvalidInput;
@@ -96,10 +145,25 @@ fn paths(input: *const executor.OwnedPayload) !struct {
         return error.InvalidInput;
     }
     const destination_bytes = bytes[separator + 1 ..];
-    if (std.mem.indexOfScalar(u8, destination_bytes[0 .. destination_bytes.len - 1], 0) != null) {
+    const destination_end = std.mem.indexOfScalar(u8, destination_bytes, 0) orelse
         return error.InvalidInput;
-    }
-    const destination_path = destination_bytes[0 .. destination_bytes.len - 1];
+    if (destination_end == 0) return error.InvalidInput;
+    const destination_path = destination_bytes[0..destination_end];
+    const staging_bytes = destination_bytes[destination_end + 1 ..];
+    const staging_name: ?[*:0]const u8 = if (staging_bytes.len == 0)
+        null
+    else blk: {
+        if (staging_bytes[staging_bytes.len - 1] != 0 or
+            std.mem.indexOfScalar(u8, staging_bytes[0 .. staging_bytes.len - 1], 0) != null)
+        {
+            return error.InvalidInput;
+        }
+        const name = staging_bytes[0 .. staging_bytes.len - 1];
+        if (name.len == 0 or std.mem.indexOfScalar(u8, name, '/') != null) {
+            return error.InvalidInput;
+        }
+        break :blk @ptrCast(name.ptr);
+    };
     const destination_separator = std.mem.lastIndexOfScalar(u8, destination_path, '/');
     const name = if (destination_separator) |index|
         destination_path[index + 1 ..]
@@ -114,6 +178,7 @@ fn paths(input: *const executor.OwnedPayload) !struct {
         .source = @ptrCast(bytes.ptr),
         .destination = @ptrCast(bytes[separator + 1 ..].ptr),
         .destination_name = @ptrCast(name.ptr),
+        .staging_name = staging_name,
     };
 }
 
