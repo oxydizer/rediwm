@@ -51,6 +51,7 @@ const Continuation = struct {
 };
 
 const continuation_size = 36;
+const replacement_marker_header_size = 13;
 
 pub fn bufferedBufferSize(file_size: u64) usize {
     if (file_size == 0) return 0;
@@ -201,6 +202,25 @@ fn readUnsigned(comptime T: type, input: []const u8) T {
     return value;
 }
 
+fn makeReplacementMarker(
+    allocator: Allocator,
+    state: *const Continuation,
+    staging_name: [*:0]const u8,
+) ![]u8 {
+    const name = std.mem.span(staging_name);
+    const marker = try allocator.alloc(
+        u8,
+        replacement_marker_header_size + name.len + 1,
+    );
+    marker[0] = 3;
+    writeUnsigned(u32, marker[1..5], @bitCast(state.parent_fd));
+    writeUnsigned(u32, marker[5..9], @bitCast(state.destination_fd));
+    writeUnsigned(u32, marker[9..13], @bitCast(state.original_fd));
+    @memcpy(marker[replacement_marker_header_size ..][0..name.len], name);
+    marker[replacement_marker_header_size + name.len] = 0;
+    return marker;
+}
+
 fn writeContinuationHeader(bytes: []u8, state: Continuation) void {
     writeUnsigned(u32, bytes[0..4], @bitCast(state.source_fd));
     writeUnsigned(u32, bytes[4..8], @bitCast(state.destination_fd));
@@ -289,6 +309,22 @@ fn syncDescriptor(fd: c_int) bool {
         if (c.fsync(fd) == 0) return true;
         if (std.c._errno().* != c.EINTR) return false;
     }
+}
+
+fn descriptorMatchesName(
+    fd: c_int,
+    parent_fd: c_int,
+    name: [*:0]const u8,
+) bool {
+    var descriptor_stat: c.struct_stat = undefined;
+    var name_stat: c.struct_stat = undefined;
+    if (c.fstat(fd, &descriptor_stat) != 0 or
+        c.fstatat(parent_fd, name, &name_stat, c.AT_SYMLINK_NOFOLLOW) != 0)
+    {
+        return false;
+    }
+    return descriptor_stat.st_dev == name_stat.st_dev and
+        descriptor_stat.st_ino == name_stat.st_ino;
 }
 
 /// Atomically exchange two names in one directory. Replacement deliberately
@@ -451,6 +487,7 @@ fn finishFlushing(
     item: executor.WorkItem,
     state_arg: Continuation,
     destination_name: [*:0]const u8,
+    original_destination_name: [*:0]const u8,
     scratch: *?executor.OwnedPayload,
 ) executor.WorkCompletion {
     var state = state_arg;
@@ -465,10 +502,49 @@ fn finishFlushing(
         );
     }
 
-    closeSourceDescriptor(&state);
     if (scratch.*) |*payload| payload.deinit();
     scratch.* = null;
 
+    if (state.replacement) {
+        const marker = makeReplacementMarker(
+            allocator,
+            &state,
+            destination_name,
+        ) catch {
+            cleanupAndClose(&state, destination_name);
+            return completion(item, .failed, null, null);
+        };
+        if (!descriptorMatchesName(
+                state.original_fd,
+                state.parent_fd,
+                original_destination_name,
+            ) or
+            !descriptorMatchesName(
+                state.destination_fd,
+                state.parent_fd,
+                destination_name,
+            ) or
+            !exchangeNames(
+                state.parent_fd,
+                destination_name,
+                original_destination_name,
+            ))
+        {
+            allocator.free(marker);
+            cleanupAndClose(&state, destination_name);
+            return completion(item, .failed, null, null);
+        }
+        closeSourceDescriptor(&state);
+        return completionWithResultAndProgress(
+            item,
+            .{ .allocator = allocator, .bytes = marker },
+            state.size,
+            state.size,
+            .flushing,
+        );
+    }
+
+    closeSourceDescriptor(&state);
     const marker = allocator.alloc(u8, 9) catch {
         cleanupDestination(&state, destination_name);
         _ = c.close(state.destination_fd);
@@ -708,6 +784,7 @@ fn executeUnit(
             item,
             state,
             owned_destination_name,
+            operation_paths.destination_name,
             &scratch_payload,
         );
     }
@@ -880,6 +957,37 @@ fn executeUnit(
     );
 }
 
+const ReplacementMarker = struct {
+    parent_fd: c_int,
+    destination_fd: c_int,
+    original_fd: c_int,
+    staging_name: [*:0]const u8,
+};
+
+fn decodeReplacementMarker(bytes: []const u8) ?ReplacementMarker {
+    if (bytes.len <= replacement_marker_header_size + 1 or bytes[0] != 3 or
+        bytes[bytes.len - 1] != 0)
+    {
+        return null;
+    }
+    const name = bytes[replacement_marker_header_size .. bytes.len - 1];
+    if (name.len == 0 or std.mem.indexOfScalar(u8, name, 0) != null or
+        std.mem.indexOfScalar(u8, name, '/') != null)
+    {
+        return null;
+    }
+    const parent_fd: c_int = @bitCast(readUnsigned(u32, bytes[1..5]));
+    const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[5..9]));
+    const original_fd: c_int = @bitCast(readUnsigned(u32, bytes[9..13]));
+    if (parent_fd < 0 or destination_fd < 0 or original_fd < 0) return null;
+    return .{
+        .parent_fd = parent_fd,
+        .destination_fd = destination_fd,
+        .original_fd = original_fd,
+        .staging_name = @ptrCast(bytes[replacement_marker_header_size..].ptr),
+    };
+}
+
 /// Executor discard callback. It owns and releases all supplied payloads.
 /// A continuation means the destination is still partial and operation-owned.
 /// A result marker means a completed destination was not accepted by Manager.
@@ -907,6 +1015,10 @@ pub fn discard(
                 const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[5..9]));
                 _ = c.close(destination_fd);
                 _ = c.close(parent_fd);
+            } else if (decodeReplacementMarker(bytes)) |marker| {
+                _ = c.close(marker.destination_fd);
+                _ = c.close(marker.original_fd);
+                _ = c.close(marker.parent_fd);
             }
             var owned = payload;
             owned.deinit();
@@ -938,6 +1050,33 @@ pub fn discard(
             _ = syncDescriptor(parent_fd);
             _ = c.close(destination_fd);
             _ = c.close(parent_fd);
+        } else if (decodeReplacementMarker(bytes)) |marker| {
+            if (descriptorMatchesName(
+                    marker.original_fd,
+                    marker.parent_fd,
+                    marker.staging_name,
+                ) and
+                descriptorMatchesName(
+                    marker.destination_fd,
+                    marker.parent_fd,
+                    operation_paths.destination_name,
+                ) and
+                exchangeNames(
+                    marker.parent_fd,
+                    marker.staging_name,
+                    operation_paths.destination_name,
+                ))
+            {
+                unlinkOwnedDestination(
+                    marker.destination_fd,
+                    marker.parent_fd,
+                    marker.staging_name,
+                );
+                _ = syncDescriptor(marker.parent_fd);
+            }
+            _ = c.close(marker.destination_fd);
+            _ = c.close(marker.original_fd);
+            _ = c.close(marker.parent_fd);
         }
         var owned = payload;
         owned.deinit();
@@ -961,6 +1100,16 @@ pub fn complete(
             const destination_fd: c_int = @bitCast(readUnsigned(u32, bytes[5..9]));
             _ = c.close(destination_fd);
             _ = c.close(parent_fd);
+        } else if (decodeReplacementMarker(bytes)) |marker| {
+            unlinkOwnedDestination(
+                marker.original_fd,
+                marker.parent_fd,
+                marker.staging_name,
+            );
+            _ = syncDescriptor(marker.parent_fd);
+            _ = c.close(marker.destination_fd);
+            _ = c.close(marker.original_fd);
+            _ = c.close(marker.parent_fd);
         }
         var owned = payload;
         owned.deinit();
