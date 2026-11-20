@@ -1394,6 +1394,174 @@ test "directory move preserves nested filesystem boundaries and continues siblin
     );
 }
 
+test "cross-filesystem directory move propagates nested mount boundary failures" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 10 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 30);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    _ = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const root_scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var root_batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{
+            .{ .name = "nested", .kind = .directory, .device_id = 10 },
+            .{ .name = "root-sibling.txt", .kind = .regular_file, .device_id = 10 },
+        },
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(root_scan, &root_batch));
+
+    const tree = manager.treeIndex(job).?;
+    const root_children = tree.getConst(root).?.children.items;
+    try std.testing.expectEqual(@as(usize, 2), root_children.len);
+    const nested = root_children[0];
+    const root_sibling = root_children[1];
+    const nested_create = manager.entryOperationView(job, nested) orelse
+        return error.MissingNestedDirectoryOperation;
+    try std.testing.expectEqual(io_manager.OperationState.pending, nested_create.state);
+
+    const root_create_token = manager.dispatchNext() orelse
+        return error.MissingRootCreateOperation;
+    try std.testing.expectEqual(root, manager.operationDetails(root_create_token).?.entry_id);
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(root_create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(root_create_token, .completed));
+
+    const nested_create_token = manager.dispatchNext() orelse
+        return error.MissingNestedCreateOperation;
+    try std.testing.expectEqual(
+        nested,
+        manager.operationDetails(nested_create_token).?.entry_id,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(nested_create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(nested_create_token, .completed));
+
+    const root_copy_token = manager.dispatchNext() orelse
+        return error.MissingRootSiblingCopy;
+    try std.testing.expectEqual(
+        root_sibling,
+        manager.operationDetails(root_copy_token).?.entry_id,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationKind.copy_file,
+        manager.operationDetails(root_copy_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(root_copy_token, .completed));
+
+    const root_sibling_detach = manager.sourceDetachOperationState(job, root_sibling) orelse
+        return error.MissingRootSiblingDetach;
+    try std.testing.expectEqual(io_manager.OperationState.pending, root_sibling_detach);
+    const root_detach_token = manager.dispatchNext() orelse
+        return error.MissingRootSiblingDetachOperation;
+    try std.testing.expectEqual(
+        root_sibling,
+        manager.operationDetails(root_detach_token).?.entry_id,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationKind.detach_source,
+        manager.operationDetails(root_detach_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(root_detach_token, .completed));
+    try std.testing.expect(manager.dispatchNext() == null);
+
+    const nested_scan = manager.dispatchDiscovery() orelse
+        return error.MissingNestedScan;
+    try std.testing.expectEqual(nested, nested_scan.entry_id);
+    var nested_batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{
+            .{ .name = "mounted", .kind = .directory, .device_id = 20 },
+            .{ .name = "nested-sibling.txt", .kind = .regular_file, .device_id = 10 },
+        },
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(nested_scan, &nested_batch));
+
+    const nested_children = tree.getConst(nested).?.children.items;
+    try std.testing.expectEqual(@as(usize, 2), nested_children.len);
+    const mounted = nested_children[0];
+    const nested_sibling = nested_children[1];
+    try std.testing.expectEqual(
+        io_tree.DiscoveryState.skipped,
+        tree.getConst(mounted).?.discovery,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.sourceDetachOperationState(job, nested).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.sourceDetachOperationState(job, root).?,
+    );
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+
+    const nested_copy_token = manager.dispatchNext() orelse
+        return error.MissingNestedSiblingCopy;
+    try std.testing.expectEqual(
+        nested_sibling,
+        manager.operationDetails(nested_copy_token).?.entry_id,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationKind.copy_file,
+        manager.operationDetails(nested_copy_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(nested_copy_token, .completed));
+
+    const nested_detach_token = manager.dispatchNext() orelse
+        return error.MissingNestedSiblingDetach;
+    try std.testing.expectEqual(
+        nested_sibling,
+        manager.operationDetails(nested_detach_token).?.entry_id,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationKind.detach_source,
+        manager.operationDetails(nested_detach_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(nested_detach_token, .completed));
+
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.sourceDetachOperationState(job, root_sibling).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.sourceDetachOperationState(job, nested_sibling).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.sourceDetachOperationState(job, nested).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.sourceDetachOperationState(job, root).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
+}
+
 test "directory move fails closed when child device identity is missing" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
