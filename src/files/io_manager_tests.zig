@@ -929,6 +929,107 @@ test "partial discovery batch keeps source directory detach gated" {
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
 }
 
+test "file and symlink source detach waits for successful copy publication" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const file = try manager.addTreeRoot(job, "file", .regular_file, .{}, null);
+    const link = try manager.addTreeRoot(job, "link", .symlink, .{}, "../target");
+    try manager.setRootSourcePath(job, file, "/tmp/source/file");
+    try manager.setRootSourcePath(job, link, "/tmp/source/link");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+
+    const file_copy = try manager.addEntryOperation(job, file, .copy_file);
+    const file_detach = try manager.addEntryOperation(job, file, .detach_source);
+    const link_copy = try manager.addEntryOperation(job, link, .copy_symlink);
+    const link_detach = try manager.addEntryOperation(job, link, .detach_source);
+    try manager.queueJob(job);
+
+    var positions = [_]?usize{ null, null, null, null };
+    var dispatch_index: usize = 0;
+    while (manager.dispatchNext()) |token| {
+        const details = manager.operationDetails(token).?;
+        var position: usize = undefined;
+        if (token.operation_id == file_copy) {
+            position = 0;
+        } else if (token.operation_id == file_detach) {
+            position = 1;
+        } else if (token.operation_id == link_copy) {
+            position = 2;
+        } else if (token.operation_id == link_detach) {
+            position = 3;
+        } else {
+            return error.UnexpectedOperation;
+        }
+
+        positions[position] = dispatch_index;
+        dispatch_index += 1;
+        try std.testing.expectEqual(
+            if (position < 2) file else link,
+            details.entry_id,
+        );
+        try std.testing.expect(manager.completeWork(token, .completed));
+    }
+
+    try std.testing.expectEqual(@as(usize, 4), dispatch_index);
+    try std.testing.expect(positions[0].? < positions[1].?);
+    try std.testing.expect(positions[2].? < positions[3].?);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, file_detach).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, link_detach).?,
+    );
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "failed or skipped cross-filesystem copies prevent source detach" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const file = try manager.addTreeRoot(job, "file", .regular_file, .{}, null);
+    const link = try manager.addTreeRoot(job, "link", .symlink, .{}, "../target");
+    try manager.setRootSourcePath(job, file, "/tmp/source/file");
+    try manager.setRootSourcePath(job, link, "/tmp/source/link");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+
+    const file_copy = try manager.addEntryOperation(job, file, .copy_file);
+    const file_detach = try manager.addEntryOperation(job, file, .detach_source);
+    const link_copy = try manager.addEntryOperation(job, link, .copy_symlink);
+    const link_detach = try manager.addEntryOperation(job, link, .detach_source);
+    try manager.queueJob(job);
+
+    var file_seen = false;
+    var link_seen = false;
+    while (manager.dispatchNext()) |token| {
+        if (token.operation_id == file_copy) {
+            file_seen = true;
+            try std.testing.expect(manager.completeWork(token, .failed));
+        } else if (token.operation_id == link_copy) {
+            link_seen = true;
+            try std.testing.expect(manager.completeWork(token, .skipped));
+        } else {
+            return error.UnexpectedOperation;
+        }
+    }
+    try std.testing.expect(file_seen);
+    try std.testing.expect(link_seen);
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, file_detach).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, link_detach).?,
+    );
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expectEqual(io_manager.JobState.failed, manager.jobState(job).?);
+}
+
 test "entry operations depend on their destination parent directory" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
