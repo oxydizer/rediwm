@@ -502,6 +502,183 @@ test "skipping a conflict advances the FIFO and skips its Operation" {
     );
 }
 
+test "skipping a directory conflict retires queued descendant discovery" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 1 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/source");
+    try manager.setDestinationDirectory(job, "/destination");
+    try manager.setDestinationDeviceId(job, 1);
+    const root_create = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/source");
+    try manager.queueJob(job);
+
+    const root_scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var root_batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{.{ .name = "nested", .kind = .directory, .device_id = 1 }},
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(root_scan, &root_batch));
+
+    const tree = manager.treeIndex(job).?;
+    const nested = tree.getConst(root).?.children.items[0];
+    const nested_create = manager.entryOperationView(job, nested) orelse
+        return error.MissingNestedCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationState.pending,
+        nested_create.state,
+    );
+
+    const root_token = manager.dispatchNext() orelse return error.MissingRootOperation;
+    try std.testing.expectEqual(root_create, root_token.operation_id);
+    const conflict_id = try manager.registerConflict(
+        root_token,
+        root,
+        "/source",
+        "/destination/source",
+        .directory,
+        .directory,
+    );
+
+    try manager.skipConflict(conflict_id);
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, root_create).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.entryOperationView(job, nested).?.state,
+    );
+    try std.testing.expectEqual(
+        io_tree.DiscoveryState.skipped,
+        tree.getConst(nested).?.discovery,
+    );
+    try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+}
+
+test "skipping a directory conflict discards its in-flight discovery batch" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 1 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/source");
+    try manager.setDestinationDirectory(job, "/destination");
+    try manager.setDestinationDeviceId(job, 1);
+    const root_create = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/source");
+    try manager.queueJob(job);
+
+    const root_scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    const root_token = manager.dispatchNext() orelse return error.MissingRootOperation;
+    try std.testing.expectEqual(root_create, root_token.operation_id);
+    const conflict_id = try manager.registerConflict(
+        root_token,
+        root,
+        "/source",
+        "/destination/source",
+        .directory,
+        .directory,
+    );
+
+    try manager.skipConflict(conflict_id);
+
+    var late_batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{
+            .{ .name = "late.txt", .kind = .regular_file, .device_id = 1 },
+            .{ .name = "nested", .kind = .directory, .device_id = 1 },
+        },
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(root_scan, &late_batch));
+
+    try std.testing.expectEqual(@as(usize, 1), manager.treeIndex(job).?.count());
+    try std.testing.expectEqual(
+        io_tree.DiscoveryState.skipped,
+        manager.treeIndex(job).?.getConst(root).?.discovery,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+}
+
+test "skipping a directory conflict absorbs an in-flight discovery failure" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 1 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/source");
+    try manager.setDestinationDirectory(job, "/destination");
+    try manager.setDestinationDeviceId(job, 1);
+    const root_create = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/source");
+    try manager.queueJob(job);
+
+    const root_scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    const root_token = manager.dispatchNext() orelse return error.MissingRootOperation;
+    try std.testing.expectEqual(root_create, root_token.operation_id);
+    const conflict_id = try manager.registerConflict(
+        root_token,
+        root,
+        "/source",
+        "/destination/source",
+        .directory,
+        .directory,
+    );
+
+    try manager.skipConflict(conflict_id);
+
+    try std.testing.expect(manager.failDiscovery(root_scan));
+    try std.testing.expectEqual(
+        io_tree.DiscoveryState.skipped,
+        manager.treeIndex(job).?.getConst(root).?.discovery,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+}
+
 test "renaming a directory conflict redirects descendant destinations" {
     const allocator = std.testing.allocator;
     var manager = io_manager.Manager.init(allocator);

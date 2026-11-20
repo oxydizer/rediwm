@@ -259,6 +259,7 @@ const Job = struct {
     destination_directory: ?[]u8 = null,
     destination_device_id: ?u64 = null,
     discovery_schedule: std.AutoHashMapUnmanaged(io_tree.EntryId, DiscoverySchedule) = .empty,
+    skipped_subtrees: std.AutoHashMapUnmanaged(io_tree.EntryId, void) = .empty,
     discovery_pending_count: usize = 0,
     discovery_generation: u64 = 0,
     discovery_in_flight: ?DiscoveryToken = null,
@@ -278,6 +279,7 @@ const Job = struct {
         self.source_root_paths.deinit(allocator);
         if (self.destination_directory) |path| allocator.free(path);
         self.discovery_schedule.deinit(allocator);
+        self.skipped_subtrees.deinit(allocator);
         self.tree.deinit();
         for (self.operations.items) |*operation| operation.deinit(allocator);
         self.operations.deinit(allocator);
@@ -920,6 +922,13 @@ pub const Manager = struct {
         const entry = job.tree.get(token.entry_id) orelse return false;
         if (entry.discovery != .scanning) return false;
 
+        if (isWithinSkippedSubtree(job, token.entry_id)) {
+            entry.discovery = .skipped;
+            job.discovery_in_flight = null;
+            self.recomputeJobState(job);
+            return false;
+        }
+
         const priority = job.discovery_schedule.get(token.entry_id) orelse return false;
         self.enqueueDiscovery(job, token.entry_id, priority.priority) catch {
             entry.discovery = .failed;
@@ -947,6 +956,14 @@ pub const Manager = struct {
 
         const parent = job.tree.get(token.entry_id) orelse return false;
         if (parent.discovery != .scanning) return false;
+        if (isWithinSkippedSubtree(job, token.entry_id)) {
+            parent.discovery = .skipped;
+            job.discovery_in_flight = null;
+            batch.deinit();
+            self.recomputeJobState(job);
+            return true;
+        }
+
         const parent_device_id = parent.metadata.device_id;
 
         var new_directories: usize = 0;
@@ -1156,6 +1173,14 @@ pub const Manager = struct {
         if (active.entry_id != token.entry_id or
             active.generation != token.generation)
             return false;
+
+        if (isWithinSkippedSubtree(job, token.entry_id)) {
+            if (job.tree.get(token.entry_id)) |entry|
+                entry.discovery = .skipped;
+            job.discovery_in_flight = null;
+            self.recomputeJobState(job);
+            return true;
+        }
 
         if (job.tree.get(token.entry_id)) |entry|
             entry.discovery = .failed;
@@ -1896,11 +1921,69 @@ pub const Manager = struct {
         const operation = &job.operations.items[operation_index];
         if (operation.state != .waiting) return error.InvalidOperationState;
 
+        var skipped_directory: ?io_tree.EntryId = null;
+        if (operation.kind == .create_directory) {
+            if (operation.entry_id) |entry_id| {
+                if (job.tree.get(entry_id)) |entry| {
+                    if (entry.kind == .directory) skipped_directory = entry_id;
+                }
+            }
+        }
+
+        if (skipped_directory) |entry_id| {
+            try job.skipped_subtrees.ensureUnusedCapacity(self.allocator, 1);
+            job.skipped_subtrees.putAssumeCapacity(entry_id, {});
+
+            // Retire every queued/unstarted directory scan in the subtree.
+            // An active scan keeps its token until its bounded result arrives;
+            // yieldDiscovery/completeDiscovery then discard it safely.
+            for (job.tree.entries.items) |*entry| {
+                if (entry.kind != .directory or
+                    !isWithinSkippedSubtree(job, entry.id))
+                    continue;
+
+                switch (entry.discovery) {
+                    .queued => {
+                        std.debug.assert(job.discovery_pending_count != 0);
+                        job.discovery_pending_count -= 1;
+                        entry.discovery = .skipped;
+                    },
+                    .unscanned => entry.discovery = .skipped,
+                    else => {},
+                }
+            }
+        }
+
         transitionOperation(job, operation, .skipped);
         self.propagateUnmetDependencies(job, operation_index);
+
+        // A selected root's source-detach operation is gated by discovery,
+        // not by its own destination-creation operation. Skip it explicitly
+        // so a skipped directory can never be detached from the source.
+        if (skipped_directory) |entry_id| {
+            if (job.source_detach_indices.get(entry_id)) |detach_index| {
+                const detach = &job.operations.items[detach_index];
+                if (detach.state == .pending) {
+                    _ = dequeueReadyIndex(job, detach_index);
+                    transitionOperation(job, detach, .skipped);
+                    self.propagateUnmetDependencies(job, detach_index);
+                }
+            }
+        }
+
         self.consumeConflictHead();
         self.pruneInvalidConflicts();
         self.recomputeJobState(job);
+    }
+
+    fn isWithinSkippedSubtree(job: *const Job, entry_id: io_tree.EntryId) bool {
+        var current_id: ?io_tree.EntryId = entry_id;
+        while (current_id) |id| {
+            if (job.skipped_subtrees.contains(id)) return true;
+            const entry = job.tree.getConst(id) orelse return false;
+            current_id = entry.parent_id;
+        }
+        return false;
     }
 
     fn conflictHead(self: *Manager, conflict_id: ConflictId) ?*Conflict {
