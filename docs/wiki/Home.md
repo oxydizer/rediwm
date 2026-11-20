@@ -33,6 +33,7 @@ no waybar/greeter/launcher/notification daemon to wire up.
 | `rediwm-share-picker` | screen sharing picker |
 | `rediwm-accounts-helper` | root helper for account management, runs under `pkexec` |
 | `rediwm-keys` | unprivileged helper that reads `~/.ssh` for Settings → Keys & Certificates |
+| `rediwm-cups` | unprivileged helper for printer administration through libcups (only when cups-pk-helper is not installed); keeps libcups and gnutls out of the compositor |
 
 ## Other docs in the repo
 

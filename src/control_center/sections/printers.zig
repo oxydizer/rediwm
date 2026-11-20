@@ -312,7 +312,7 @@ fn tree(self: *Section, cc: *panel.ControlCenter, a: A) !W {
     var content: std.ArrayList(W) = .empty;
     const state = client.current;
     if (state) |snapshot| if (snapshot.admin_local) {
-        if (self.administration == null) self.administration = admin.Manager.create(cc.server.wl_server.getEventLoop(), cc.server.environ, cc, adminChanged) catch null;
+        if (self.administration == null) self.administration = admin.Manager.create(cc.server.io, cc.server.wl_server.getEventLoop(), cc.server.environ, cc, adminChanged) catch null;
         if (!self.listener_attempted) {
             self.listener_attempted = true;
             self.listener = notifier.Listener.create(gpa, cc.server.io, cc.server.environ, cc.server.wl_server.getEventLoop(), cc, cupsChanged) catch null;

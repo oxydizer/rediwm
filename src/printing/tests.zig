@@ -13,4 +13,5 @@ test {
     _ = @import("daemon_watch.zig");
     _ = @import("notifier.zig");
     _ = @import("admin.zig");
+    _ = @import("direct_protocol.zig");
 }

@@ -62,8 +62,6 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     ui_tests_module.addImport("wlroots", wlroots);
     ui_tests_module.addImport("pixman", pixman);
     ui_tests_module.linkSystemLibrary("wayland-server", .{});
-    ui_tests_module.linkSystemLibrary("cups", .{});
-    ui_tests_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
     ui_tests_module.linkSystemLibrary("xkbcommon", .{});
     ui_tests_module.linkSystemLibrary("pixman-1", .{});
     ui_tests_module.linkSystemLibrary("freetype2", .{});
@@ -140,8 +138,6 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     printing_tests.root_module.addImport("install_paths", ctx.layout.options);
     printing_tests.root_module.addImport("wayland", wayland);
     printing_tests.root_module.linkSystemLibrary("wayland-server", .{});
-    printing_tests.root_module.linkSystemLibrary("cups", .{});
-    printing_tests.root_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
     const run_printing_tests = b.addRunArtifact(printing_tests);
     test_step.dependOn(&run_printing_tests.step);
     // NetworkManager parsing that needs no compositor: addresses, profile read/write.

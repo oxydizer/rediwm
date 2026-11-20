@@ -1,6 +1,6 @@
 //! Page-owned asynchronous printer administration. Use the installed helper
-//! for polkit authorization, or a local libcups worker for CUPS authentication.
-//! RediWM never becomes root or runs a shell. Destruction closes outstanding requests before releasing their owner.
+//! for polkit authorization, or `rediwm-cups` (libcups in a process of its own)
+//! for CUPS authentication. RediWM never becomes root or runs a shell. Destruction closes outstanding requests before releasing their owner.
 const std = @import("std");
 const dbus = @import("dbus");
 const wl = @import("wayland").server.wl;
@@ -56,6 +56,7 @@ pub const Action = union(enum) {
 const Stage = enum { idle, discovery, mutation, add, rename, device, enable_added, accept_added, ppd_option, clear_ppd_override, clear_ppd_alias, start_service };
 
 pub const Manager = struct {
+    io: std.Io,
     owner: *anyopaque,
     changed: *const fn (*anyopaque) void,
     bus: ?*dbus.Connection = null,
@@ -83,10 +84,10 @@ pub const Manager = struct {
     /// finishes. At most 64 bounded values; never borrowed from page widgets.
     option_body: wire.Writer = .{ .allocator = a },
 
-    pub fn create(loop: *wl.EventLoop, env: std.process.Environ, owner: *anyopaque, changed: *const fn (*anyopaque) void) !*Manager {
+    pub fn create(io: std.Io, loop: *wl.EventLoop, env: std.process.Environ, owner: *anyopaque, changed: *const fn (*anyopaque) void) !*Manager {
         const self = try a.create(Manager);
         errdefer a.destroy(self);
-        self.* = .{ .owner = owner, .changed = changed, .loop = loop, .status = @import("i18n").tr("Checking printer administration…") };
+        self.* = .{ .io = io, .owner = owner, .changed = changed, .loop = loop, .status = @import("i18n").tr("Checking printer administration…") };
         self.bus = dbus.Connection.openSystem(a, loop, env) catch {
             self.useDirect();
             return self;
@@ -209,7 +210,7 @@ pub const Manager = struct {
                 self.unavailable(@import("i18n").tr("Could not start CUPS administration."));
                 return;
             };
-            self.worker = direct.Worker.create(loop, self, directReady) catch {
+            self.worker = direct.Worker.create(self.io, loop, self, directReady) catch {
                 self.unavailable(@import("i18n").tr("Could not start CUPS administration."));
                 return;
             };
@@ -804,7 +805,7 @@ test "discovery owns complete identities and rejects unsafe backend addresses" {
     try writer.string("device-id:0");
     try writer.string(long_id);
     try writer.endArray(dict);
-    var self: Manager = .{ .owner = undefined, .changed = undefined };
+    var self: Manager = .{ .io = std.testing.io, .owner = undefined, .changed = undefined };
     defer self.arena.deinit();
     var reader: wire.Reader = .{ .bytes = writer.bytes.items };
     try self.readDevices(&reader);
@@ -825,7 +826,7 @@ test "failed PPD setter after legacy cleanup reports partial changes and refresh
         }
     };
     var recorder: Recorder = .{};
-    var manager: Manager = .{ .owner = &recorder, .changed = Recorder.changed, .stage = .ppd_option, .busy = true };
+    var manager: Manager = .{ .io = std.testing.io, .owner = &recorder, .changed = Recorder.changed, .stage = .ppd_option, .busy = true };
     defer manager.arena.deinit();
     manager.fail("Fixture denied setter");
     try std.testing.expectEqual(@as(u64, 1), manager.generation);
@@ -868,7 +869,7 @@ test "native PPD cleanup aliases are explicit and retain the original setter key
 }
 
 test "a discovered add must use the complete URI in this manager's discovery catalog" {
-    var manager: Manager = .{ .owner = undefined, .changed = undefined, .busy = false, .availability = .available };
+    var manager: Manager = .{ .io = std.testing.io, .owner = undefined, .changed = undefined, .busy = false, .availability = .available };
     defer manager.arena.deinit();
     manager.devices = &.{.{ .uri = "usb://Acme/Label?serial=complete" }};
     try std.testing.expectError(error.UntrustedDevice, manager.request(.{ .add = .{ .name = "Label", .uri = "usb://Acme/Label?serial=different", .ppd = "raw", .discovered = true } }));

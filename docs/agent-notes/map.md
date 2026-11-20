@@ -33,6 +33,7 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 | `rediwm-firewall-helper` | `src/firewall_main.zig` | root firewall helper (`firewall_helper/`, `firewall/AGENTS.md`); Settings uses `control_center/sections/firewall_client.zig` |
 | `rediwm-theme` | `src/theme_main.zig` | theme archive helper (`theme_helper/`) |
 | `rediwm-keys` | `src/keys_main.zig` | unprivileged SSH metadata and operations (`keys/`, `keys_helper.zig`); Settings uses `keys/client.zig` |
+| `rediwm-cups` | `src/cups_main.zig` | the only libcups user: unprivileged CUPS administration when cups-pk-helper is absent (`printing/direct.c`, protocol in `printing/direct_protocol.zig`, client `printing/direct.zig`; `build/printing.zig`) |
 
 `build.zig` holds the options, the shared modules, the compositor and
 `rediwm-msg`; `build/` the rest: `apps.zig` (the programs above), `data.zig`

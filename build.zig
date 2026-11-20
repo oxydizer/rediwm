@@ -184,8 +184,6 @@ pub fn build(b: *std.Build) void {
     compositor.root_module.addImport("c_libinput", c_headers.libinput);
     compositor.root_module.addImport("c_png", c_headers.png);
     compositor.root_module.linkSystemLibrary("wayland-server", .{});
-    compositor.root_module.linkSystemLibrary("cups", .{});
-    compositor.root_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
     compositor.root_module.linkSystemLibrary("xkbcommon", .{});
     compositor.root_module.linkSystemLibrary("pixman-1", .{});
     compositor.root_module.linkSystemLibrary("freetype2", .{});
@@ -286,6 +284,7 @@ pub fn build(b: *std.Build) void {
     const zig_tests = tests.addZig(ctx, session);
     @import("build/keys.zig").add(ctx, zig_tests.test_step, &.{ compositor.root_module, zig_tests.ui_tests_module });
     @import("build/firewall.zig").add(ctx, zig_tests.test_step, &.{ compositor.root_module, zig_tests.ui_tests_module });
+    @import("build/printing.zig").add(ctx);
     const ui_tests_module = zig_tests.ui_tests_module;
     const ipc_tests_module = zig_tests.ipc_tests_module;
     const files_tests = zig_tests.files_tests;

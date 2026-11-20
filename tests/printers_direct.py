@@ -2,7 +2,9 @@
 """Direct libcups against private scripted schedulers, never the host CUPS.
 
 The native API checks exercise actual libcups HTTP/IPP and authentication. The
-UI check runs the real Settings page with no helper on its private system bus.
+UI check runs the real Settings page with no cups-pk-helper on its private
+system bus: administration then goes through the rediwm-cups helper process,
+which must be the only process that maps libcups.
 """
 import base64
 import ctypes
@@ -267,6 +269,31 @@ def native_tests():
     print('Direct libcups operations, authentication retry and cancellation passed', flush=True)
 
 
+def helper_pids(compositor, zombies=False):
+    """rediwm-cups children of the compositor; a zombie counts only if asked."""
+    found = []
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = entry.joinpath('stat').read_text()
+        except OSError:
+            continue
+        comm = stat[stat.index('(') + 1:stat.rindex(')')]
+        fields = stat[stat.rindex(')') + 2:].split()
+        if comm == 'rediwm-cups' and int(fields[1]) == compositor and (zombies or fields[0] != 'Z'):
+            found.append(int(entry.name))
+    return found
+
+
+def mapped(pid, library):
+    return library in Path(f'/proc/{pid}/maps').read_text()
+
+
+def linked(program, library):
+    return library in subprocess.run(['ldd', str(program)], capture_output=True, text=True, check=True).stdout
+
+
 def ui_test(scale):
     with tempfile.TemporaryDirectory(prefix='rediwm-direct-ui-') as directory:
         tmp = Path(directory)
@@ -293,9 +320,16 @@ def ui_test(scale):
                 ui.wait_settled('control_center')
                 click('printers')
                 wait_for(lambda: cups_ready(ui), 'direct page loaded', timeout=15)
+                assert not helper_pids(process.pid), 'a read-only page must not start the administration helper'
                 click('printers_resume')
                 wait_for(lambda: scheduler.state()['queues']['Label_Test']['enabled'], 'helper-absent resume')
                 wait_for(lambda: cups_ready(ui), 'refresh after resume')
+                helpers = helper_pids(process.pid)
+                assert len(helpers) == 1, helpers
+                # The helper is non-dumpable, so its maps are not readable: check the link.
+                assert linked('zig-out/bin/rediwm-cups', 'libcups') and not linked('zig-out/bin/rediwm', 'libcups')
+                for library in ('libcups', 'libgnutls', 'libnettle', 'libp11-kit'):
+                    assert not mapped(process.pid, library), f'the compositor must not map {library}'
                 scheduler.auth = True
                 click('printers_manage')
                 click('printers_accepting')
@@ -313,12 +347,23 @@ def ui_test(scale):
                 wait_for(lambda: any(w.get('name') == 'printers_auth_password' for w in ui.widgets()), 'new operation must request fresh credentials')
                 click('printers_auth_cancel')
                 wait_for(lambda: not any(w.get('name') == 'printers_auth_password' for w in ui.widgets()), 'cancel clears prompt')
-                # Hide while a second prompt is outstanding; worker joins promptly.
+                # The helper dying while a password prompt is outstanding fails that
+                # request and leaves the page usable: the next one starts a new helper.
+                click('printers_accepting')
+                wait_for(lambda: any(w.get('name') == 'printers_auth_password' for w in ui.widgets()), 'prompt before the helper dies')
+                helpers = helper_pids(process.pid)
+                assert len(helpers) == 1, helpers
+                os.kill(helpers[0], 9)
+                wait_for(lambda: not any(w.get('name') == 'printers_auth_password' for w in ui.widgets()), 'helper death ends the prompt')
+                wait_for(lambda: not helper_pids(process.pid, zombies=True), 'dead helper is reaped', timeout=5)
+                # Hide while a second prompt is outstanding; the new helper's request
+                # ends promptly with the page.
                 click('printers_accepting')
                 wait_for(lambda: any(w.get('name') == 'printers_auth_password' for w in ui.widgets()), 'hide challenge')
                 start = time.monotonic()
                 click('general')
                 assert time.monotonic() - start < 3
+                wait_for(lambda: not helper_pids(process.pid, zombies=True), 'hiding the page ends the helper', timeout=5)
                 assert scheduler.state()['queues']['Label_Test']['accepting']
                 scheduler.auth = False
                 click('printers')
@@ -327,6 +372,11 @@ def ui_test(scale):
                 click('printers_discover')
                 wait_for(lambda: any(w.get('name') == 'printers_device_0' for w in ui.widgets()), 'direct discovery')
                 assert not any(w.get('name') == 'printers_device_1' for w in ui.widgets()), 'unsafe backend URI must be filtered'
+                # The helper dying between requests is invisible: the next one starts a new helper.
+                helpers = helper_pids(process.pid)
+                assert len(helpers) == 1, helpers
+                os.kill(helpers[0], 9)
+                wait_for(lambda: not helper_pids(process.pid, zombies=True), 'killed helper is reaped', timeout=5)
                 click('printers_device_0')
                 click('printers_name')
                 ipc.key(29, True); ipc.key_press('a'); ipc.key(29, False)
@@ -337,10 +387,13 @@ def ui_test(scale):
                 assert created['enabled'] and created['uri'] == 'usb://Fixture/Label?serial=direct'
                 assert not scheduler.printed, 'administration must not print a document'
                 wait_for(lambda: cups_ready(ui), 'direct add refreshed')
-                # Both native threads must sleep without timed wakes at idle.
+                # The helper's three threads (poll loop, CUPS worker, I/O watchdog) must
+                # sleep without timed wakes at idle.
+                helpers = helper_pids(process.pid)
+                assert len(helpers) == 1, helpers
                 def counters():
                     result = {}
-                    for task in Path(f'/proc/{process.pid}/task').iterdir():
+                    for task in Path(f'/proc/{helpers[0]}/task').iterdir():
                         try:
                             if task.joinpath('comm').read_text().strip() not in ('rediwm-cups', 'rediwm-cups-io'): continue
                             fields = dict(line.split(':', 1) for line in task.joinpath('status').read_text().splitlines())
@@ -350,7 +403,7 @@ def ui_test(scale):
                 time.sleep(.3)
                 before = counters()
                 time.sleep(.6)
-                assert len(before) == 2 and counters() == before, 'native administration must not poll at idle'
+                assert len(before) == 3 and counters() == before, 'native administration must not poll at idle'
         finally:
             if process: stop_process(process)
             if log: log.close()
