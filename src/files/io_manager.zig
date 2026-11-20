@@ -218,6 +218,7 @@ const Operation = struct {
     id: OperationId,
     kind: OperationKind,
     entry_id: ?io_tree.EntryId = null,
+    discovery_gate: bool = false,
     destination_override: ?[]u8 = null,
     state: OperationState = .pending,
     generation: u64 = 0,
@@ -245,6 +246,7 @@ const Job = struct {
     source_root_paths: std.AutoHashMapUnmanaged(io_tree.EntryId, []u8) = .empty,
     discovery_started: bool = false,
     auto_plan_discovered_entries: bool = false,
+    auto_move_discovered_entries: bool = false,
     pause_requested: bool = false,
     cancel_requested: bool = false,
     destination_directory: ?[]u8 = null,
@@ -255,6 +257,7 @@ const Job = struct {
     operations: std.ArrayList(Operation) = .empty,
     operation_indices: std.AutoHashMapUnmanaged(OperationId, usize) = .empty,
     entry_operation_indices: std.AutoHashMapUnmanaged(io_tree.EntryId, usize) = .empty,
+    source_detach_indices: std.AutoHashMapUnmanaged(io_tree.EntryId, usize) = .empty,
     ready_queue: std.ArrayList(usize) = .empty,
     ready_head: usize = 0,
     ready_count: usize = 0,
@@ -272,6 +275,7 @@ const Job = struct {
         self.operations.deinit(allocator);
         self.operation_indices.deinit(allocator);
         self.entry_operation_indices.deinit(allocator);
+        self.source_detach_indices.deinit(allocator);
         self.ready_queue.deinit(allocator);
         self.dependency_work_queue.deinit(allocator);
     }
@@ -446,7 +450,36 @@ pub const Manager = struct {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state != .planning) return error.InvalidJobState;
         if (job.tree.root() == null) return error.MissingTreeRoot;
+        if (job.auto_move_discovered_entries)
+            return error.DiscoveryOperationModeAlreadySet;
         job.auto_plan_discovered_entries = true;
+    }
+
+    /// Enables incremental move planning. Every selected directory root
+    /// must already have both its destination-creation and source-detach
+    /// operations registered. Discovered descendants receive the matching
+    /// operation pair automatically.
+    pub fn enableDiscoveredEntryMoves(
+        self: *Manager,
+        job_id: JobId,
+    ) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (job.tree.root() == null) return error.MissingTreeRoot;
+        if (job.auto_plan_discovered_entries)
+            return error.DiscoveryOperationModeAlreadySet;
+
+        for (job.tree.roots()) |root_id| {
+            const root = job.tree.get(root_id) orelse return error.UnknownEntry;
+            if (root.kind != .directory) return error.RootNotDirectory;
+            const destination_index = job.entry_operation_indices.get(root_id) orelse
+                return error.MissingRootDirectoryOperation;
+            if (job.operations.items[destination_index].kind != .create_directory)
+                return error.InvalidRootDirectoryOperation;
+            if (!job.source_detach_indices.contains(root_id))
+                return error.MissingRootSourceDetachOperation;
+        }
+        job.auto_move_discovered_entries = true;
     }
 
     /// Starts incremental discovery for one directory root. Each selected
@@ -924,7 +957,37 @@ pub const Manager = struct {
                 if (kind == .symlink) record.symlink_target else null,
             );
 
-            if (job.auto_plan_discovered_entries and
+            if (job.auto_move_discovered_entries) {
+                if (record.entry_error or invalid_symlink or kind == .other) {
+                    self.failSourceDetach(job, token.entry_id);
+                } else {
+                    const completion_operation_id = switch (kind) {
+                        .directory => blk: {
+                            _ = try self.addEntryOperation(
+                                job.id,
+                                child_id,
+                                .create_directory,
+                            );
+                            break :blk try self.addEntryOperation(
+                                job.id,
+                                child_id,
+                                .detach_source,
+                            );
+                        },
+                        .regular_file, .symlink => try self.addEntryOperation(
+                            job.id,
+                            child_id,
+                            .move_entry,
+                        ),
+                        .other => unreachable,
+                    };
+                    try self.addSourceDetachDependency(
+                        job,
+                        token.entry_id,
+                        completion_operation_id,
+                    );
+                }
+            } else if (job.auto_plan_discovered_entries and
                 !record.entry_error and
                 !invalid_symlink)
             {
@@ -963,6 +1026,7 @@ pub const Manager = struct {
 
         if (batch.complete) {
             updated_parent.discovery = .complete;
+            self.releaseSourceDetachDiscoveryGate(job, token.entry_id);
         } else {
             const version = parent_priority.version + 1;
             job.discovery_schedule.putAssumeCapacity(token.entry_id, .{
@@ -993,6 +1057,7 @@ pub const Manager = struct {
 
         if (job.tree.get(token.entry_id)) |entry|
             entry.discovery = .failed;
+        self.failSourceDetach(job, token.entry_id);
         job.discovery_in_flight = null;
         self.recomputeJobState(job);
         return true;
@@ -1113,8 +1178,13 @@ pub const Manager = struct {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state.isTerminal()) return error.InvalidJobState;
         const entry = job.tree.get(entry_id) orelse return error.UnknownEntry;
-        if (job.entry_operation_indices.contains(entry_id))
+        const is_source_detach = kind == .detach_source;
+        if (is_source_detach) {
+            if (job.source_detach_indices.contains(entry_id))
+                return error.EntryOperationAlreadyExists;
+        } else if (job.entry_operation_indices.contains(entry_id)) {
             return error.EntryOperationAlreadyExists;
+        }
 
         const expected_kind: OperationKind = switch (entry.kind) {
             .directory => .create_directory,
@@ -1122,19 +1192,27 @@ pub const Manager = struct {
             .symlink => .copy_symlink,
             .other => return error.UnsupportedEntryKind,
         };
-        if (kind != expected_kind and
-            !(kind == .move_entry and entry.kind != .directory))
-        {
+        const valid_kind = switch (entry.kind) {
+            .directory => kind == .create_directory or kind == .detach_source,
+            .regular_file, .symlink => kind == expected_kind or kind == .move_entry,
+            .other => false,
+        };
+        if (!valid_kind) {
             return error.InvalidEntryOperationKind;
         }
 
-        var parent_operation_index: ?usize = null;
-        if (entry.parent_id) |parent_id| {
+        var dependency_operation_index: ?usize = null;
+        if (is_source_detach) {
+            dependency_operation_index = job.entry_operation_indices.get(entry_id) orelse
+                return error.MissingDirectoryDestinationOperation;
+            if (job.operations.items[dependency_operation_index.?].kind != .create_directory)
+                return error.InvalidDirectoryDestinationOperation;
+        } else if (entry.parent_id) |parent_id| {
             const parent = job.tree.get(parent_id) orelse return error.UnknownEntry;
             if (parent.kind == .directory) {
-                parent_operation_index = job.entry_operation_indices.get(parent_id) orelse
+                dependency_operation_index = job.entry_operation_indices.get(parent_id) orelse
                     return error.MissingParentDirectoryOperation;
-                if (job.operations.items[parent_operation_index.?].kind != .create_directory)
+                if (job.operations.items[dependency_operation_index.?].kind != .create_directory)
                     return error.InvalidParentDirectoryOperation;
             }
         }
@@ -1144,21 +1222,25 @@ pub const Manager = struct {
         var dependency_indices: std.ArrayList(usize) = .empty;
         errdefer dependency_indices.deinit(self.allocator);
 
-        if (parent_operation_index != null) {
+        if (dependency_operation_index != null) {
             try dependencies.ensureUnusedCapacity(self.allocator, 1);
             try dependency_indices.ensureUnusedCapacity(self.allocator, 1);
         }
 
-        try job.entry_operation_indices.ensureUnusedCapacity(self.allocator, 1);
-        if (parent_operation_index) |parent_index| {
-            const parent_operation = &job.operations.items[parent_index];
-            try parent_operation.dependents.ensureUnusedCapacity(self.allocator, 1);
+        if (is_source_detach) {
+            try job.source_detach_indices.ensureUnusedCapacity(self.allocator, 1);
+        } else {
+            try job.entry_operation_indices.ensureUnusedCapacity(self.allocator, 1);
+        }
+        if (dependency_operation_index) |dependency_index| {
+            const dependency_operation = &job.operations.items[dependency_index];
+            try dependency_operation.dependents.ensureUnusedCapacity(self.allocator, 1);
             // When the parent completes, every pending dependent may become
             // ready in one pass. Reserve for the full dependent set now,
             // rather than relying on appendAssumeCapacity during completion.
             try job.ready_queue.ensureUnusedCapacity(
                 self.allocator,
-                parent_operation.dependents.items.len + 1,
+                dependency_operation.dependents.items.len + 1,
             );
         }
 
@@ -1170,30 +1252,122 @@ pub const Manager = struct {
         operation.dependency_indices = dependency_indices;
         dependency_indices = .empty;
         operation.entry_id = entry_id;
-        job.entry_operation_indices.putAssumeCapacity(entry_id, operation_index);
+        operation.discovery_gate = is_source_detach;
+        if (is_source_detach) {
+            job.source_detach_indices.putAssumeCapacity(entry_id, operation_index);
+            if (job.state != .planning) {
+                operation.unresolved_dependencies += 1;
+                _ = dequeueReadyIndex(job, operation_index);
+            }
+        } else {
+            job.entry_operation_indices.putAssumeCapacity(entry_id, operation_index);
+        }
 
-        if (parent_operation_index) |parent_index| {
-            const parent_operation = &job.operations.items[parent_index];
-            operation.dependencies.appendAssumeCapacity(parent_operation.id);
-            operation.dependency_indices.appendAssumeCapacity(parent_index);
-            parent_operation.dependents.appendAssumeCapacity(operation_index);
+        if (dependency_operation_index) |dependency_index| {
+            const dependency_operation = &job.operations.items[dependency_index];
+            operation.dependencies.appendAssumeCapacity(dependency_operation.id);
+            operation.dependency_indices.appendAssumeCapacity(dependency_index);
+            dependency_operation.dependents.appendAssumeCapacity(operation_index);
 
             if (job.state != .planning) {
-                switch (parent_operation.state) {
+                switch (dependency_operation.state) {
                     .completed => {},
                     .failed, .skipped, .cancelled => {
                         _ = dequeueReadyIndex(job, operation_index);
                         transitionOperation(job, operation, .skipped);
+                        self.propagateUnmetDependencies(job, operation_index);
                         self.recomputeJobState(job);
                     },
                     else => {
-                        operation.unresolved_dependencies = 1;
+                        operation.unresolved_dependencies += 1;
                         _ = dequeueReadyIndex(job, operation_index);
                     },
                 }
             }
         }
         return operation_id;
+    }
+
+    fn addSourceDetachDependency(
+        self: *Manager,
+        job: *Job,
+        parent_entry_id: io_tree.EntryId,
+        child_operation_id: OperationId,
+    ) !void {
+        const parent_index = job.source_detach_indices.get(parent_entry_id) orelse
+            return error.MissingParentSourceDetachOperation;
+        if (job.operations.items[parent_index].state != .pending) return;
+        const child_index = findOperationIndex(job, child_operation_id) orelse
+            return error.UnknownOperation;
+        try self.addDynamicDependency(job, parent_index, child_index);
+    }
+
+    /// Adds a dependency discovered after queueJob(). The dependent directory
+    /// detach is held behind its discovery gate until its complete child set
+    /// has been registered.
+    fn addDynamicDependency(
+        self: *Manager,
+        job: *Job,
+        operation_index: usize,
+        dependency_index: usize,
+    ) !void {
+        const operation = &job.operations.items[operation_index];
+        const dependency = &job.operations.items[dependency_index];
+        for (operation.dependencies.items) |existing| {
+            if (existing == dependency.id) return error.DuplicateDependency;
+        }
+
+        try operation.dependencies.ensureUnusedCapacity(self.allocator, 1);
+        try operation.dependency_indices.ensureUnusedCapacity(self.allocator, 1);
+        try dependency.dependents.ensureUnusedCapacity(self.allocator, 1);
+        operation.dependencies.appendAssumeCapacity(dependency.id);
+        operation.dependency_indices.appendAssumeCapacity(dependency_index);
+        dependency.dependents.appendAssumeCapacity(operation_index);
+
+        if (job.state == .planning or operation.state != .pending) return;
+        switch (dependency.state) {
+            .completed => {},
+            .failed, .skipped, .cancelled => {
+                _ = dequeueReadyIndex(job, operation_index);
+                transitionOperation(job, operation, .skipped);
+                self.propagateUnmetDependencies(job, operation_index);
+                self.recomputeJobState(job);
+            },
+            else => {
+                operation.unresolved_dependencies += 1;
+                _ = dequeueReadyIndex(job, operation_index);
+            },
+        }
+    }
+
+    fn releaseSourceDetachDiscoveryGate(
+        self: *Manager,
+        job: *Job,
+        entry_id: io_tree.EntryId,
+    ) void {
+        _ = self;
+        const operation_index = job.source_detach_indices.get(entry_id) orelse return;
+        const operation = &job.operations.items[operation_index];
+        if (!operation.discovery_gate) return;
+        operation.discovery_gate = false;
+        if (job.state == .planning or operation.state != .pending) return;
+        std.debug.assert(operation.unresolved_dependencies != 0);
+        operation.unresolved_dependencies -= 1;
+        if (operation.unresolved_dependencies == 0)
+            enqueueReady(job, operation_index);
+    }
+
+    fn failSourceDetach(
+        self: *Manager,
+        job: *Job,
+        entry_id: io_tree.EntryId,
+    ) void {
+        const operation_index = job.source_detach_indices.get(entry_id) orelse return;
+        const operation = &job.operations.items[operation_index];
+        if (operation.state != .pending) return;
+        _ = dequeueReadyIndex(job, operation_index);
+        transitionOperation(job, operation, .failed);
+        self.propagateUnmetDependencies(job, operation_index);
     }
 
     /// Dependencies must refer to Operations in the same Job.
@@ -2102,7 +2276,8 @@ fn buildDependencyGraph(allocator: Allocator, job: *Job) !void {
 
     for (operations) |*operation| {
         operation.dependents.clearRetainingCapacity();
-        operation.unresolved_dependencies = operation.dependencies.items.len;
+        operation.unresolved_dependencies = operation.dependencies.items.len +
+            @as(usize, @intFromBool(operation.discovery_gate));
     }
 
     for (operations, 0..) |operation, dependent_index| {
