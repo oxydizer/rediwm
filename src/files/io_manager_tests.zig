@@ -46,6 +46,7 @@ fn makeDiscoveryBatch(
         name: []const u8,
         kind: io_tree.EntryKind,
         device_id: ?u64 = 1,
+        symlink_target: ?[]const u8 = null,
     },
     complete: bool,
 ) !io_discovery.Batch {
@@ -58,10 +59,16 @@ fn makeDiscoveryBatch(
     for (records) |record| {
         const name = try allocator.dupe(u8, record.name);
         errdefer allocator.free(name);
+        const symlink_target = if (record.symlink_target) |target|
+            try allocator.dupe(u8, target)
+        else
+            null;
+        errdefer if (symlink_target) |target| allocator.free(target);
         try batch.records.append(allocator, .{
             .name = name,
             .kind = record.kind,
             .metadata = .{ .device_id = record.device_id },
+            .symlink_target = symlink_target,
         });
     }
 
@@ -1118,6 +1125,159 @@ test "directory move routes regular files by destination filesystem" {
         manager.operationState(job, root_detach).?,
     );
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "directory move routes symlinks by destination filesystem" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 10 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 20);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{
+            .{
+                .name = "same-device-link",
+                .kind = .symlink,
+                .device_id = 20,
+                .symlink_target = "../same-target",
+            },
+            .{
+                .name = "cross-device-link",
+                .kind = .symlink,
+                .device_id = 10,
+                .symlink_target = "../cross-target",
+            },
+        },
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+
+    const tree = manager.treeIndex(job).?;
+    const children = tree.getConst(root).?.children.items;
+    try std.testing.expectEqual(@as(usize, 2), children.len);
+    try std.testing.expectEqualStrings(
+        "../same-target",
+        tree.getConst(children[0]).?.symlink_target.?,
+    );
+    try std.testing.expectEqualStrings(
+        "../cross-target",
+        tree.getConst(children[1]).?.symlink_target.?,
+    );
+
+    const create_token = manager.dispatchNext() orelse return error.MissingCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+
+    var same_move_seen = false;
+    var cross_copy_seen = false;
+    var cross_detach_seen = false;
+    while (manager.dispatchNext()) |token| {
+        const details = manager.operationDetails(token).?;
+        if (details.entry_id == root) {
+            try std.testing.expectEqual(io_manager.OperationKind.detach_source, details.kind);
+            try std.testing.expect(cross_detach_seen);
+            try std.testing.expect(manager.completeWork(token, .completed));
+            break;
+        }
+
+        const entry = tree.getConst(details.entry_id).?;
+        if (std.mem.eql(u8, entry.name, "same-device-link")) {
+            try std.testing.expectEqual(io_manager.OperationKind.move_entry, details.kind);
+            same_move_seen = true;
+        } else if (std.mem.eql(u8, entry.name, "cross-device-link")) {
+            switch (details.kind) {
+                .copy_symlink => cross_copy_seen = true,
+                .detach_source => {
+                    try std.testing.expect(cross_copy_seen);
+                    cross_detach_seen = true;
+                },
+                else => return error.UnexpectedCrossDeviceOperation,
+            }
+        } else {
+            return error.UnexpectedOperation;
+        }
+        try std.testing.expect(manager.completeWork(token, .completed));
+    }
+
+    try std.testing.expect(same_move_seen);
+    try std.testing.expect(cross_copy_seen);
+    try std.testing.expect(cross_detach_seen);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, root_detach).?,
+    );
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "directory move fails closed when symlink device identity is missing" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 10 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 20);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const root_detach = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+    try manager.startDiscovery(job, "/tmp/source");
+    try manager.queueJob(job);
+
+    const scan = manager.dispatchDiscovery() orelse return error.MissingRootScan;
+    var batch = try makeDiscoveryBatch(
+        std.testing.allocator,
+        &.{.{
+            .name = "unknown-device-link",
+            .kind = .symlink,
+            .device_id = null,
+            .symlink_target = "literal-target",
+        }},
+        true,
+    );
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, root_detach).?,
+    );
+
+    const create_token = manager.dispatchNext() orelse return error.MissingCreateOperation;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(create_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
 }
 
 test "directory move fails closed when regular-file device identity is missing" {

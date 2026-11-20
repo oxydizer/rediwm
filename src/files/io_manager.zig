@@ -1045,11 +1045,33 @@ pub const Manager = struct {
                                 .detach_source,
                             );
                         },
-                        .symlink => try self.addEntryOperation(
-                            job.id,
-                            child_id,
-                            .move_entry,
-                        ),
+                        .symlink => blk: {
+                            const source_device_id = record.metadata.device_id orelse {
+                                self.failSourceDetach(job, token.entry_id);
+                                break :blk null;
+                            };
+                            const destination_device_id = job.destination_device_id orelse {
+                                self.failSourceDetach(job, token.entry_id);
+                                break :blk null;
+                            };
+                            if (source_device_id == destination_device_id) {
+                                break :blk try self.addEntryOperation(
+                                    job.id,
+                                    child_id,
+                                    .move_entry,
+                                );
+                            }
+                            _ = try self.addEntryOperation(
+                                job.id,
+                                child_id,
+                                .copy_symlink,
+                            );
+                            break :blk try self.addEntryOperation(
+                                job.id,
+                                child_id,
+                                .detach_source,
+                            );
+                        },
                         .other => unreachable,
                     };
                     if (completion_operation_id) |operation_id| {
