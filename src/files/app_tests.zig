@@ -929,6 +929,113 @@ test "same-filesystem file and symlink moves use one Manager job" {
     );
 }
 
+test "cross-filesystem file and symlink moves copy before detaching sources" {
+    const allocator = std.testing.allocator;
+    var source_temp_buffer: [256]u8 = undefined;
+    const source_temp = try makeTransferTestTempDir(&source_temp_buffer);
+    defer transferTestCleanup(source_temp, true);
+
+    const destination_template = "/dev/shm/rediwm_app_transfer_XXXXXX\x00";
+    var destination_temp_buffer: [256]u8 = undefined;
+    @memcpy(destination_temp_buffer[0..destination_template.len], destination_template);
+    const destination_temp_ptr = c.mkdtemp(@ptrCast(destination_temp_buffer[0..].ptr)) orelse
+        return error.SkipZigTest;
+    const destination_temp =
+        std.mem.span(@as([*:0]const u8, @ptrCast(destination_temp_ptr)));
+    defer transferTestCleanup(destination_temp, true);
+
+    const destination_temp_z = try allocator.dupeSentinel(u8, destination_temp, 0);
+    defer allocator.free(destination_temp_z);
+    var destination_stat: c.struct_stat = undefined;
+    if (c.stat(destination_temp_z, &destination_stat) != 0)
+        return error.SkipZigTest;
+
+    const source_file = try transferTestJoin(allocator, source_temp, "payload.bin");
+    defer allocator.free(source_file);
+    const source_link = try transferTestJoin(allocator, source_temp, "shortcut");
+    defer allocator.free(source_link);
+    const destination_file = try transferTestJoin(allocator, destination_temp, "payload.bin");
+    defer allocator.free(destination_file);
+    const destination_link = try transferTestJoin(allocator, destination_temp, "shortcut");
+    defer allocator.free(destination_link);
+    defer {
+        transferTestCleanup(destination_link, false);
+        transferTestCleanup(destination_file, false);
+        transferTestCleanup(source_link, false);
+        transferTestCleanup(source_file, false);
+    }
+
+    const source_file_z = try allocator.dupeSentinel(u8, source_file, 0);
+    defer allocator.free(source_file_z);
+    var source_stat: c.struct_stat = undefined;
+    if (c.stat(source_file_z, &source_stat) == 0 and
+        source_stat.st_dev == destination_stat.st_dev)
+    {
+        return error.SkipZigTest;
+    }
+
+    try transferTestWriteFile(source_file, "cross-filesystem payload");
+    try transferTestSymlink("../literal-target", source_link);
+
+    var app = try testApp();
+    defer app.deinit();
+    app.io_manager = io_manager.Manager.init(allocator);
+    try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_file));
+    try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_link));
+    app.clipboard_cut = true;
+    app.clipboard_revision = 19;
+
+    const paths = [_][]const u8{ source_file, source_link };
+    try std.testing.expect(app.executeTransfer(.move, &paths, destination_temp, true));
+    const job_id = app.active_io_copy_job.?;
+    const manager = &app.io_manager.?;
+    var snapshot = try manager.snapshotJob(allocator, job_id);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 4), snapshot.operations.len);
+    try std.testing.expectEqual(io_manager.OperationKind.copy_file, snapshot.operations[0].kind);
+    try std.testing.expectEqual(io_manager.OperationKind.detach_source, snapshot.operations[1].kind);
+    try std.testing.expectEqual(io_manager.OperationKind.copy_symlink, snapshot.operations[2].kind);
+    try std.testing.expectEqual(io_manager.OperationKind.detach_source, snapshot.operations[3].kind);
+
+    while (true) {
+        app.stepOperations();
+        if (manager.jobState(job_id).?.isTerminal()) break;
+
+        var descriptors = [_]c.struct_pollfd{.{
+            .fd = app.operationWakeFd(),
+            .events = c.POLLIN,
+            .revents = 0,
+        }};
+        const result = c.poll(&descriptors, 1, 5_000);
+        if (result == 0) return error.TimedOutWaitingForCrossFilesystemMove;
+        if (result < 0 and std.c._errno().* != c.EINTR)
+            return error.CrossFilesystemMovePollFailed;
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_id).?);
+    try std.testing.expectEqual(@as(usize, 0), app.clipboard_paths.items.len);
+    try std.testing.expect(!app.clipboard_cut);
+
+    try std.testing.expect(c.lstat(source_file_z, &source_stat) != 0);
+    const source_link_z = try allocator.dupeSentinel(u8, source_link, 0);
+    defer allocator.free(source_link_z);
+    try std.testing.expect(c.lstat(source_link_z, &source_stat) != 0);
+
+    const moved_contents = try transferTestReadFile(allocator, destination_file);
+    defer allocator.free(moved_contents);
+    try std.testing.expectEqualStrings("cross-filesystem payload", moved_contents);
+
+    const destination_link_z = try allocator.dupeSentinel(u8, destination_link, 0);
+    defer allocator.free(destination_link_z);
+    var target_buffer: [128]u8 = undefined;
+    const target_len = c.readlink(destination_link_z, &target_buffer, target_buffer.len);
+    try std.testing.expect(target_len >= 0);
+    try std.testing.expectEqualStrings(
+        "../literal-target",
+        target_buffer[0..@intCast(target_len)],
+    );
+}
+
 test "same-filesystem nested directory moves use one Manager job and detach sources" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;

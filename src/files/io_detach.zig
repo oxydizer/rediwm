@@ -1,12 +1,13 @@
-//! Removes an emptied source directory for the Files I/O executor.
+//! Removes a successfully transferred source entry for the Files I/O executor.
 //!
-//! The input payload contains one NUL-terminated absolute source path.
-//! Removal is non-recursive: unlinkat with AT_REMOVEDIR succeeds only
-//! when the directory is empty.
+//! The input payload contains an entry-kind tag followed by one
+//! NUL-terminated absolute source path. Directories are removed non-recursively;
+//! regular files and symlinks use unlinkat without following the final entry.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const executor = @import("io_executor.zig");
+const io_tree = @import("io_tree.zig");
 
 fn allocZ(allocator: Allocator, value: []const u8) ![:0]u8 {
     const result = try allocator.allocSentinel(u8, value.len, 0);
@@ -18,37 +19,57 @@ fn allocZ(allocator: Allocator, value: []const u8) ![:0]u8 {
 pub fn makeInput(
     allocator: Allocator,
     source_path: []const u8,
+    kind: io_tree.EntryKind,
 ) !executor.OwnedPayload {
     if (source_path.len == 0 or source_path[0] != '/')
         return error.InvalidPath;
     if (std.mem.indexOfScalar(u8, source_path, 0) != null)
         return error.InvalidPath;
 
-    const bytes = try allocator.alloc(u8, source_path.len + 1);
-    @memcpy(bytes[0..source_path.len], source_path);
+    const kind_tag: u8 = switch (kind) {
+        .directory => 1,
+        .regular_file => 2,
+        .symlink => 3,
+        .other => return error.UnsupportedEntryKind,
+    };
+    const bytes = try allocator.alloc(u8, source_path.len + 2);
+    bytes[0] = kind_tag;
+    @memcpy(bytes[1 .. source_path.len + 1], source_path);
     bytes[bytes.len - 1] = 0;
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
-fn parsePath(input: *const executor.OwnedPayload) ![]const u8 {
+const ParsedInput = struct {
+    path: []const u8,
+    kind: io_tree.EntryKind,
+};
+
+fn parseInput(input: *const executor.OwnedPayload) !ParsedInput {
     const bytes = input.slice();
-    if (bytes.len < 2 or bytes[bytes.len - 1] != 0)
+    if (bytes.len < 3 or bytes[bytes.len - 1] != 0)
         return error.InvalidInput;
-    const path = bytes[0 .. bytes.len - 1];
+    const kind: io_tree.EntryKind = switch (bytes[0]) {
+        1 => .directory,
+        2 => .regular_file,
+        3 => .symlink,
+        else => return error.InvalidInput,
+    };
+    const path = bytes[1 .. bytes.len - 1];
     if (path[0] != '/' or std.mem.indexOfScalar(u8, path, 0) != null)
         return error.InvalidInput;
-    return path;
+    return .{ .path = path, .kind = kind };
 }
 
-/// Remove one source directory without following its final path component.
+/// Remove one source entry without following its final path component.
 pub fn execute(
     allocator: Allocator,
     item_arg: executor.WorkItem,
 ) executor.WorkCompletion {
     var item = item_arg;
-    const source_path = parsePath(&item.input) catch {
+    const parsed = parseInput(&item.input) catch {
         return completion(item, .failed);
     };
+    const source_path = parsed.path;
 
     const separator = std.mem.lastIndexOfScalar(u8, source_path, '/') orelse
         return completion(item, .failed);
@@ -74,7 +95,20 @@ pub fn execute(
 
     // The basename remains NUL-terminated in the owned input payload.
     const name_z: [*:0]const u8 = @ptrCast(name.ptr);
-    if (c.unlinkat(parent_fd, name_z, c.AT_REMOVEDIR) != 0)
+    var source_stat: c.struct_stat = undefined;
+    if (c.fstatat(parent_fd, name_z, &source_stat, c.AT_SYMLINK_NOFOLLOW) != 0)
+        return completion(item, .failed);
+
+    const actual_kind: io_tree.EntryKind = switch (source_stat.st_mode & c.S_IFMT) {
+        c.S_IFDIR => .directory,
+        c.S_IFREG => .regular_file,
+        c.S_IFLNK => .symlink,
+        else => .other,
+    };
+    if (actual_kind != parsed.kind) return completion(item, .failed);
+
+    const flags: c_int = if (parsed.kind == .directory) c.AT_REMOVEDIR else 0;
+    if (c.unlinkat(parent_fd, name_z, flags) != 0)
         return completion(item, .failed);
 
     return completion(item, .completed);

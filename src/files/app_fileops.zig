@@ -182,8 +182,9 @@ fn startManagerFileCopy(
     return true;
 }
 
-/// Starts same-filesystem regular-file/symlink moves through the Manager.
-/// Directory and cross-filesystem selections remain on JobRunner.
+/// Starts regular-file/symlink moves through the Manager. Same-filesystem
+/// entries retain native rename semantics; cross-filesystem entries use
+/// copy followed by a dependent source detach.
 fn startManagerFileMove(
     self: *App,
     paths: []const []const u8,
@@ -206,6 +207,7 @@ fn startManagerFileMove(
         name: []const u8,
         kind: io_tree.EntryKind,
         metadata: io_tree.Metadata,
+        same_filesystem: bool,
         symlink_target: ?[]u8 = null,
     };
     var roots: std.ArrayList(RootPlan) = .empty;
@@ -228,10 +230,6 @@ fn startManagerFileMove(
 
         const mode = source_stat.st_mode & c.S_IFMT;
         if (mode != c.S_IFREG and mode != c.S_IFLNK) return false;
-
-        // A single cross-filesystem root keeps the entire selection on the
-        // legacy path; do not split one user move across two execution paths.
-        if (source_stat.st_dev != destination_stat.st_dev) return false;
 
         var symlink_target: ?[]u8 = null;
         defer if (symlink_target) |target| self.allocator.free(target);
@@ -260,6 +258,7 @@ fn startManagerFileMove(
                 .size = @intCast(@max(source_stat.st_size, 0)),
                 .mode = @intCast(source_stat.st_mode),
             },
+            .same_filesystem = source_stat.st_dev == destination_stat.st_dev,
             .symlink_target = symlink_target,
         });
         symlink_target = null;
@@ -282,7 +281,17 @@ fn startManagerFileMove(
             root.symlink_target,
         );
         try manager.setRootSourcePath(job_id, root_id, root.source);
-        _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
+        if (root.same_filesystem) {
+            _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
+        } else {
+            const copy_kind: io_manager.OperationKind = switch (root.kind) {
+                .regular_file => .copy_file,
+                .symlink => .copy_symlink,
+                else => unreachable,
+            };
+            _ = try manager.addEntryOperation(job_id, root_id, copy_kind);
+            _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
+        }
     }
     try manager.setDestinationDirectory(job_id, directory);
     try manager.queueJob(job_id);
