@@ -1835,14 +1835,14 @@ pub const Manager = struct {
     }
 
     /// Explicitly authorizes replacement for a regular-file copy conflict.
-    /// The authorization is retained on the Operation and passed to its
-    /// next prepared work unit. Other source/destination type pairs are
-    /// deliberately rejected here, independently of the UI.
+    /// An existing regular file or empty directory may be replaced. The
+    /// executor verifies directory emptiness before exchanging names.
     pub fn replaceConflict(self: *Manager, conflict_id: ConflictId) !void {
         const conflict = self.conflictHead(conflict_id) orelse
             return error.ConflictNotAtQueueHead;
         if (conflict.source_kind != .regular_file or
-            conflict.destination_kind != .regular_file)
+            (conflict.destination_kind != .regular_file and
+                conflict.destination_kind != .directory))
             return error.ReplaceRequiresRegularFileConflict;
 
         const job = self.findJob(conflict.job_id) orelse return error.UnknownJob;

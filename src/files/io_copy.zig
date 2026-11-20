@@ -206,12 +206,20 @@ fn makeReplacementMarker(
     state: *const Continuation,
     staging_name: [*:0]const u8,
 ) ![]u8 {
+    var original_stat: c.struct_stat = undefined;
+    if (c.fstat(state.original_fd, &original_stat) != 0)
+        return error.ReplacementStatFailed;
+    const marker_kind: u8 = switch (original_stat.st_mode & c.S_IFMT) {
+        c.S_IFREG => 3,
+        c.S_IFDIR => 4,
+        else => return error.UnsupportedReplacementType,
+    };
     const name = std.mem.span(staging_name);
     const marker = try allocator.alloc(
         u8,
         replacement_marker_header_size + name.len + 1,
     );
-    marker[0] = 3;
+    marker[0] = marker_kind;
     writeUnsigned(u32, marker[1..5], @bitCast(state.parent_fd));
     writeUnsigned(u32, marker[5..9], @bitCast(state.destination_fd));
     writeUnsigned(u32, marker[9..13], @bitCast(state.original_fd));
@@ -355,6 +363,48 @@ fn unlinkOwnedDestination(
         return;
     }
     _ = c.unlinkat(parent_fd, name, 0);
+}
+
+fn directoryIsEmpty(fd: c_int) bool {
+    const scan_fd = c.dup(fd);
+    if (scan_fd < 0) return false;
+    const directory = c.fdopendir(scan_fd) orelse {
+        _ = c.close(scan_fd);
+        return false;
+    };
+    defer _ = c.closedir(directory);
+
+    while (true) {
+        std.c._errno().* = 0;
+        const entry = c.readdir(directory) orelse
+            return std.c._errno().* == 0;
+        const name: [*:0]const u8 = @ptrCast(&entry.*.d_name);
+        const text = std.mem.span(name);
+        if (std.mem.eql(u8, text, ".") or std.mem.eql(u8, text, ".."))
+            continue;
+        return false;
+    }
+}
+
+fn unlinkOwnedDirectory(
+    directory_fd: c_int,
+    parent_fd: c_int,
+    name: [*:0]const u8,
+) void {
+    var owned_stat: c.struct_stat = undefined;
+    var current_stat: c.struct_stat = undefined;
+    if (c.fstat(directory_fd, &owned_stat) != 0 or
+        c.fstatat(parent_fd, name, &current_stat, c.AT_SYMLINK_NOFOLLOW) != 0)
+    {
+        return;
+    }
+    if ((owned_stat.st_mode & c.S_IFMT) != c.S_IFDIR or
+        owned_stat.st_dev != current_stat.st_dev or
+        owned_stat.st_ino != current_stat.st_ino)
+    {
+        return;
+    }
+    _ = c.unlinkat(parent_fd, name, c.AT_REMOVEDIR);
 }
 
 fn cleanupDestination(state: *const Continuation, name: [*:0]const u8) void {
@@ -689,9 +739,14 @@ fn executeUnit(
 
             var original_stat: c.struct_stat = undefined;
             var current_stat: c.struct_stat = undefined;
-            const valid_original =
-                c.fstat(original_fd, &original_stat) == 0 and
-                (original_stat.st_mode & c.S_IFMT) == c.S_IFREG;
+            const stat_ok = c.fstat(original_fd, &original_stat) == 0;
+            const original_kind = if (stat_ok)
+                original_stat.st_mode & c.S_IFMT
+            else
+                0;
+            const valid_original = stat_ok and
+                (original_kind == c.S_IFREG or
+                    (original_kind == c.S_IFDIR and directoryIsEmpty(original_fd)));
             const same_name = valid_original and
                 c.fstatat(
                     parent_fd,
@@ -986,10 +1041,12 @@ const ReplacementMarker = struct {
     destination_fd: c_int,
     original_fd: c_int,
     staging_name: [*:0]const u8,
+    original_is_directory: bool,
 };
 
 fn decodeReplacementMarker(bytes: []const u8) ?ReplacementMarker {
-    if (bytes.len <= replacement_marker_header_size + 1 or bytes[0] != 3 or
+    if (bytes.len <= replacement_marker_header_size + 1 or
+        (bytes[0] != 3 and bytes[0] != 4) or
         bytes[bytes.len - 1] != 0)
     {
         return null;
@@ -1009,6 +1066,7 @@ fn decodeReplacementMarker(bytes: []const u8) ?ReplacementMarker {
         .destination_fd = destination_fd,
         .original_fd = original_fd,
         .staging_name = @ptrCast(bytes[replacement_marker_header_size..].ptr),
+        .original_is_directory = bytes[0] == 4,
     };
 }
 
@@ -1125,11 +1183,19 @@ pub fn complete(
             _ = c.close(destination_fd);
             _ = c.close(parent_fd);
         } else if (decodeReplacementMarker(bytes)) |marker| {
-            unlinkOwnedDestination(
-                marker.original_fd,
-                marker.parent_fd,
-                marker.staging_name,
-            );
+            if (marker.original_is_directory) {
+                unlinkOwnedDirectory(
+                    marker.original_fd,
+                    marker.parent_fd,
+                    marker.staging_name,
+                );
+            } else {
+                unlinkOwnedDestination(
+                    marker.original_fd,
+                    marker.parent_fd,
+                    marker.staging_name,
+                );
+            }
             _ = syncDescriptor(marker.parent_fd);
             _ = c.close(marker.destination_fd);
             _ = c.close(marker.original_fd);
