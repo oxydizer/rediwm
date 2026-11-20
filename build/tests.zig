@@ -71,6 +71,7 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     ui_tests_module.linkSystemLibrary("libinput", .{});
     ui_tests_module.linkSystemLibrary("libudev", .{});
     ui_tests_module.linkSystemLibrary("png16", .{});
+    support.addWallpaperCodec(b, ui_tests_module);
     ui_tests_module.linkSystemLibrary("libpulse", .{});
     inline for (.{ .{ "c_pulse", ctx.c.pulse }, .{ "c_libinput", ctx.c.libinput }, .{ "c_png", ctx.c.png } }) |entry| ui_tests_module.addImport(entry[0], entry[1]);
     ui_tests_module.linkSystemLibrary("xcb", .{});
@@ -160,6 +161,10 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     printers_direct.addFileArg(b.path("tests/printers_direct.py"));
     printers_direct.step.dependOn(&printers_integration.step);
     printers_step.dependOn(&printers_direct.step);
+    const wallpaper_codec_check = b.addSystemCommand(&.{"python3"});
+    wallpaper_codec_check.addFileArg(b.path("tests/wallpaper_codec.py"));
+    wallpaper_codec_check.step.dependOn(b.getInstallStep());
+    b.step("test-wallpaper-codec", "Test the native wallpaper decoder against Pillow and hand-written PNGs").dependOn(&wallpaper_codec_check.step);
     // Dependency-module tests are not collected by the executable's test root.
     const shared_ui_tests = b.addTest(.{ .root_module = ui_mod });
     const shared_config_tests = b.addTest(.{ .root_module = config_mod });

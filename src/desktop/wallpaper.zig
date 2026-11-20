@@ -1,40 +1,18 @@
-//! GdkPixbuf is already in librsvg's link closure. Keep GLib headers out of translate-c.
+//! The desktop's own wallpaper, decoded by the shared native codec (never
+//! GdkPixbuf, which starts a sandboxed loader process per image) and drawn
+//! with Cairo.
 const std = @import("std");
 const c = @import("c.zig").api;
-const Pixbuf = opaque {};
-const GError = opaque {};
-extern fn gdk_pixbuf_new_from_file([*:0]const u8, ?*?*GError) ?*Pixbuf;
-extern fn gdk_pixbuf_get_width(*Pixbuf) c_int;
-extern fn gdk_pixbuf_get_height(*Pixbuf) c_int;
-extern fn gdk_pixbuf_get_rowstride(*Pixbuf) c_int;
-extern fn gdk_pixbuf_get_n_channels(*Pixbuf) c_int;
-extern fn gdk_pixbuf_get_pixels(*Pixbuf) [*]const u8;
-extern fn g_object_unref(*anyopaque) void;
-extern fn g_error_free(*GError) void;
+const codec = @import("../wallpaper_codec.zig");
 pub const Mode = enum { fill, fit, stretch, center, tile };
 pub const Image = struct { pixels: []u32, w: i32, h: i32, mode: Mode };
-pub fn load(a: std.mem.Allocator, path: []const u8, mode: Mode) !Image {
-    const z = try a.dupeSentinel(u8, path, 0);
-    defer a.free(z);
-    var err: ?*GError = null;
-    const pixbuf = gdk_pixbuf_new_from_file(z, &err) orelse {
-        if (err) |e| g_error_free(e);
-        return error.DecodeFailed;
-    };
-    defer g_object_unref(pixbuf);
-    const w = gdk_pixbuf_get_width(pixbuf);
-    const h = gdk_pixbuf_get_height(pixbuf);
-    const stride = gdk_pixbuf_get_rowstride(pixbuf);
-    const channels = gdk_pixbuf_get_n_channels(pixbuf);
-    if (w <= 0 or h <= 0 or w > 16384 or h > 16384 or (channels != 3 and channels != 4)) return error.InvalidImage;
-    const pixels = try a.alloc(u32, @intCast(w * h));
-    const data = gdk_pixbuf_get_pixels(pixbuf);
-    for (pixels, 0..) |*p, i| {
-        const offset = @divTrunc(i, @as(usize, @intCast(w))) * @as(usize, @intCast(stride)) + i % @as(usize, @intCast(w)) * @as(usize, @intCast(channels));
-        const alpha: u32 = if (channels == 4) data[offset + 3] else 255;
-        p.* = alpha << 24 | (@as(u32, data[offset]) * alpha / 255) << 16 | (@as(u32, data[offset + 1]) * alpha / 255) << 8 | (@as(u32, data[offset + 2]) * alpha / 255);
-    }
-    return .{ .pixels = pixels, .w = w, .h = h, .mode = mode };
+/// Larger files are not wallpapers; this also bounds the read.
+const max_file_bytes = 256 << 20;
+pub fn load(a: std.mem.Allocator, io: std.Io, path: []const u8, mode: Mode) !Image {
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(max_file_bytes));
+    defer a.free(bytes);
+    const image = try codec.decode(a, bytes);
+    return .{ .pixels = image.pixels, .w = image.width, .h = image.height, .mode = mode };
 }
 pub fn render(image: Image, cr: *c.cairo_t, w: i32, h: i32) void {
     const surface = c.cairo_image_surface_create_for_data(@ptrCast(image.pixels.ptr), c.CAIRO_FORMAT_ARGB32, image.w, image.h, image.w * 4);

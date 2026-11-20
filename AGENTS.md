@@ -302,6 +302,16 @@ panel painting. The key rules:
   hand-declare the ABI. No runtime `parseColor()` in comptime defaults.
 * `std.os.linux.*` return `-errno` in `usize` (`std.os.linux.errno`);
   `std.posix.system.*` are libc (`std.posix.errno`).
+* **The compositor never calls GdkPixbuf.** Current gdk-pixbuf starts a
+  sandboxed glycin loader process per decode. Wallpapers (the loader, the
+  Appearance strip, the desktop's own) decode in-process through
+  `wallpaper_codec.c` (libjpeg, libpng, libwebp; `png.zig` stays the fast path
+  for plain PNGs): PNG, JPEG and still WebP only, chosen by content, EXIF
+  orientation ignored, at most 16384 px per edge and 100 Mpx. `nm -D
+  --undefined-only` on `rediwm` must show no `gdk_pixbuf_*`;
+  `python3 tests/wallpaper_codec.py` checks that and every variant against
+  Pillow (`--sanitize` adds ASan/UBSan). The Files and Images apps still fall
+  back to GdkPixbuf for formats their codecs lack (`files/AGENTS.md`).
 * **wlroots bindings** live in `src/wlr/`, backed by one translation of
   the installed headers (`src/wlr/c.h`, module `wlr_c`); read `src/wlr/AGENTS.md` before extending them.
   `ext.*`/`wp.*` Wayland types need their protocol in `build/protocols.zig`.

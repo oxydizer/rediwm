@@ -9,7 +9,7 @@ const posix = std.posix;
 const c = std.posix.system;
 
 const png = @import("png.zig");
-const pixbuf = @import("desktop/wallpaper.zig");
+const codec = @import("wallpaper_codec.zig");
 const startup = @import("startup.zig");
 const stats = @import("ipc/stats.zig");
 const wallpapers = @import("wallpapers.zig");
@@ -166,25 +166,18 @@ pub fn freeResult(allocator: Allocator, result: Result) void {
     if (result.thumb) |thumb| thumb.deinit(allocator);
 }
 
-/// png.zig's decoder for the PNGs it supports (the bundled one included),
-/// GdkPixbuf for everything else.
+/// png.zig's decoder for the PNGs it supports (the bundled one included), the
+/// native codec (libjpeg, libpng, libwebp: never GdkPixbuf, which starts a
+/// sandboxed loader process per decode) for everything else.
 pub fn decodeFile(allocator: Allocator, io: std.Io, path: []const u8) !png.Image {
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(max_file_bytes));
+    defer allocator.free(bytes);
     if (std.ascii.endsWithIgnoreCase(path, ".png")) {
-        const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(max_file_bytes));
-        defer allocator.free(bytes);
         if (png.decode(allocator, bytes)) |image| return image else |err| switch (err) {
-            // GdkPixbuf sniffs content, so misnamed files still load.
+            // The codec sniffs content, so misnamed files still load.
             error.UnsupportedPng, error.InvalidPng => {},
             else => return err,
         }
     }
-    const image = try pixbuf.load(allocator, path, .fill);
-    var opaque_pixels = true;
-    for (image.pixels) |p| {
-        if (p >> 24 != 0xff) {
-            opaque_pixels = false;
-            break;
-        }
-    }
-    return .{ .width = image.w, .height = image.h, .pixels = image.pixels, .has_alpha = !opaque_pixels };
+    return codec.decode(allocator, bytes);
 }

@@ -110,6 +110,14 @@ pub fn addThumbCodec(b: *std.Build, module: *std.Build.Module) void {
     inline for (.{ "libjpeg", "libpng16" }) |lib| module.linkSystemLibrary(lib, .{});
 }
 
+// Wallpapers decode in-process too (src/wallpaper_codec.c): the compositor never
+// calls GdkPixbuf, which would start a sandboxed glycin loader per image.
+pub fn addWallpaperCodec(b: *std.Build, module: *std.Build.Module) void {
+    module.addCSourceFile(.{ .file = b.path("src/wallpaper_codec.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addImport("c_wallpaper_codec", cHeader(b, module.resolved_target.?, module.optimize.?, b.path("src/wallpaper_codec.h"), &.{}));
+    inline for (.{ "libjpeg", "libpng16", "libwebp" }) |lib| module.linkSystemLibrary(lib, .{});
+}
+
 // Pinned, Files-only emulator. No dependency on the compositor or distro ABI.
 pub fn addFilesTerminal(b: *std.Build, module: *std.Build.Module, for_tests: bool) void {
     const vterm = b.dependency("vterm", .{});

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Appearance > Wallpaper: lists the bundled wallpaper plus images in
-$XDG_DATA_HOME/rediwm/wallpapers, switches live (PNG and GdkPixbuf-decoded
-JPEG), persists `[compositor] wallpaper`, follows hand edits to a path, and
-falls back to the bundled image when the chosen file is missing. A scrolling
-strip of thumbnails with a tick box on the current image selects too, shows
-the folder a path wallpaper lives in, and "Choose folder" picks another."""
+$XDG_DATA_HOME/rediwm/wallpapers, switches live (PNG; JPEG, WebP and palette
+PNG through the native codec, never GdkPixbuf), persists `[compositor]
+wallpaper`, follows hand edits to a path, and falls back to the bundled image
+when the chosen file is missing. A scrolling strip of thumbnails with a tick
+box on the current image selects too, shows the folder a path wallpaper lives
+in, and "Choose folder" picks another."""
 from pathlib import Path
 import tempfile
 import time
@@ -21,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 AQUA = (20, 200, 190)
 STRIPES = (200, 60, 30)
 OUTSIDE = (90, 40, 160)
+WEBP = (230, 120, 20)
+INDEXED = (40, 160, 90)
 
 
 def run():
@@ -33,6 +36,13 @@ def run():
         (user_dir / "notes.txt").write_text("not an image\n")
         outside = tmp / "elsewhere.png"
         Image.new("RGB", (64, 36), OUTSIDE).save(outside)
+        # Formats png.zig cannot read: they reach the native codec.
+        webp = tmp / "elsewhere.webp"
+        Image.new("RGB", (64, 36), WEBP).save(webp, lossless=True)
+        indexed = tmp / "elsewhere_indexed.png"
+        palette_image = Image.new("P", (64, 36), 1)
+        palette_image.putpalette([0, 0, 0, *INDEXED])
+        palette_image.save(indexed)
         pictures = tmp / "pictures"
         pictures.mkdir()
         colors = [(10 + 20 * i, 240 - 15 * i, 60 + 10 * i) for i in range(12)]
@@ -193,6 +203,10 @@ def run():
                 # missing file, which falls back to the bundled image.
                 config_path.write_text(f'[compositor]\nxwayland = false\nwallpaper = "{outside}"\n')
                 wait_color(OUTSIDE, "configured path")
+                config_path.write_text(f'[compositor]\nxwayland = false\nwallpaper = "{webp}"\n')
+                wait_color(WEBP, "WebP wallpaper")
+                config_path.write_text(f'[compositor]\nxwayland = false\nwallpaper = "{indexed}"\n')
+                wait_color(INDEXED, "palette PNG wallpaper")
                 # A path wallpaper shows its own folder: a scrolling row, the
                 # current image ticked and scrolled into view.
                 config_path.write_text(f'[compositor]\nxwayland = false\nwallpaper = "{pictures}/img07.png"\n')

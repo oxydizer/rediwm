@@ -199,6 +199,7 @@ pub fn build(b: *std.Build) void {
     compositor.root_module.linkSystemLibrary("libinput", .{});
     compositor.root_module.linkSystemLibrary("libudev", .{});
     compositor.root_module.linkSystemLibrary("png16", .{});
+    support.addWallpaperCodec(b, compositor.root_module);
     // PipeWire's PulseAudio-compat client library — see src/audio/pipewire.zig.
     compositor.root_module.linkSystemLibrary("libpulse", .{});
     addBass(b, compositor.root_module);

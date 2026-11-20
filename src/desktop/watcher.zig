@@ -328,7 +328,7 @@ pub const Worker = struct {
                 wallpaper_path = parsed.value;
             } else if (std.mem.eql(u8, key, "wallpaper_mode")) wallpaper_mode = std.meta.stringToEnum(@import("wallpaper.zig").Mode, std.mem.trim(u8, value, "\"")) orelse .fill else if (std.mem.eql(u8, key, "bottom_exclusion")) snap.bottom = std.math.clamp(std.fmt.parseInt(i32, value, 10) catch 64, 0, 4096) else if (std.mem.eql(u8, key, "icon_only_input")) snap.icon_only = std.mem.eql(u8, value, "true");
         }
-        if (wallpaper_path.len > 0) snap.wallpaper = @import("wallpaper.zig").load(mem, wallpaper_path, wallpaper_mode) catch null;
+        if (wallpaper_path.len > 0) snap.wallpaper = @import("wallpaper.zig").load(mem, self.io, wallpaper_path, wallpaper_mode) catch null;
 
         const saved = std.Io.Dir.cwd().readFileAlloc(self.io, self.layout, mem, .limited(4 * 1024 * 1024)) catch "";
         try self.appendBuiltins(mem, &list, saved);

@@ -9,7 +9,7 @@ const std = @import("std");
 
 pub const default_name = "default.png";
 
-/// Decoded by png.zig when it can, otherwise GdkPixbuf (wallpaper_load.zig).
+/// Decoded by png.zig when it can, otherwise wallpaper_codec.c (wallpaper_load.zig).
 const extensions = [_][]const u8{ ".png", ".jpg", ".jpeg", ".webp" };
 
 pub const Entry = struct {
