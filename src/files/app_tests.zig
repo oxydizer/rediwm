@@ -1384,20 +1384,12 @@ test "archive publication scans roots, discovers descendants and drains the barr
     app.io_manager = io_manager.Manager.init(allocator);
 
     const manager = &app.io_manager.?;
-    const job = try manager.createJob(null);
-    const operation = try manager.addArchiveOperation(
-        job,
-        .archive_extract,
-        .{
-            .source_path = source,
-            .staging_parent = destination,
-        },
-    );
-    try manager.setDestinationDirectory(job, destination);
-    try manager.queueJob(job);
-
-    try app.startOperations();
-    try app.trackArchivePublication(job, operation);
+    app.startExtraction(source, destination);
+    const job = app.active_io_copy_job orelse
+        return error.ArchiveExtractionDidNotStart;
+    try std.testing.expect(app.active_io_copy_is_archive);
+    try std.testing.expect(!app.job_was_running);
+    try std.testing.expectEqualStrings("Extracting archive", app.status_notice.?);
 
     while (true) {
         app.stepDiscovery();
@@ -1426,6 +1418,8 @@ test "archive publication scans roots, discovers descendants and drains the barr
         io_manager.JobState.completed,
         manager.jobState(job).?,
     );
+    try std.testing.expect(app.active_io_copy_job == null);
+    try std.testing.expectEqualStrings("Archive extracted", app.status_notice.?);
     try std.testing.expectEqual(@as(usize, 0), app.archive_publications.items.len);
 
     const contents = try transferTestReadFile(allocator, payload);

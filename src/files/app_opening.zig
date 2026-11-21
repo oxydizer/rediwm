@@ -175,15 +175,70 @@ pub fn browseArchive(self: *App, path: []const u8) void {
     self.applyHistoryNav(self.history.current);
 }
 
-pub fn startExtraction(self: *App, path: []const u8, destination: []const u8) void {
-    const runner = self.job_runner orelse return;
-    runner.startArchive(path, destination, null) catch |err| {
-        self.setStatusNotice(if (err == error.Busy) tr("A file operation is already running") else tr("Could not start extraction"), true);
-        return;
-    };
-    self.job_was_running = true;
+fn startArchiveExtraction(
+    self: *App,
+    path: []const u8,
+    destination: []const u8,
+) !void {
+    if (self.active_io_copy_job != null) {
+        return error.Busy;
+    }
+
+    if (self.job_runner) |runner| {
+        const state = runner.pollProgress().state;
+        if (state == .running or state == .paused or state == .waiting_conflict) {
+            return error.Busy;
+        }
+    }
+
+    try self.startOperations();
+    const manager = if (self.io_manager) |*value| value else
+        return error.OperationManagerUnavailable;
+
+    try self.archive_publications.ensureUnusedCapacity(self.allocator, 1);
+
+    const owned_destination = try self.allocator.dupe(u8, destination);
+    errdefer self.allocator.free(owned_destination);
+
+    const job_id = try manager.createJob(null);
+    errdefer _ = manager.discardPlanningJob(job_id);
+
+    const operation_id = try manager.addArchiveOperation(
+        job_id,
+        .archive_extract,
+        .{
+            .source_path = path,
+            .staging_parent = destination,
+        },
+    );
+    try manager.setDestinationDirectory(job_id, destination);
+    try manager.queueJob(job_id);
+
+    self.archive_publications.appendAssumeCapacity(.{
+        .job_id = job_id,
+        .operation_id = operation_id,
+    });
+    self.active_io_copy_destination = owned_destination;
+    self.active_io_copy_job = job_id;
+    self.active_io_copy_is_directory = false;
+    self.active_io_copy_is_move = false;
+    self.active_io_copy_is_archive = true;
+    self.active_io_copy_item_count = 1;
     self.job_cut_revision = null;
+    self.setStatusNotice("Extracting archive", false);
     self.invalidate();
+}
+
+pub fn startExtraction(self: *App, path: []const u8, destination: []const u8) void {
+    startArchiveExtraction(self, path, destination) catch |err| {
+        self.setStatusNotice(
+            if (err == error.Busy)
+                tr("A file operation is already running")
+            else
+                tr("Could not start extraction"),
+            true,
+        );
+    };
 }
 
 pub fn openArchiveMember(self: *App, path: []const u8, preview: bool) void {
