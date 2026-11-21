@@ -111,6 +111,13 @@ pub const Catalog = struct {
     watcher: ?platform.watch.Watcher = null,
     watch_source: ?*wl.EventSource = null,
     watched_paths: std.StringHashMapUnmanaged(void) = .empty,
+    /// Nearest existing ancestors of application directories that do not
+    /// exist yet (a fresh home has no ~/.local/share/applications until
+    /// something such as arch-run's launcher sync makes it). Watched only for
+    /// new directories, so a later `mkdir -p` is noticed without rescanning on
+    /// every unrelated file written next to it.
+    parent_paths: std.StringHashMapUnmanaged(platform.watch.Watch) = .empty,
+    parent_watches: std.AutoHashMapUnmanaged(platform.watch.Watch, void) = .empty,
 
     /// `scan` false leaves the catalog empty and never touches the cache
     /// (the greeter has no start menu).
@@ -167,7 +174,7 @@ pub const Catalog = struct {
             return;
         };
         self.watcher = watcher;
-        self.syncWatches();
+        _ = self.syncWatches();
     }
 
     pub fn deinit(self: *Catalog) void {
@@ -182,6 +189,10 @@ pub const Catalog = struct {
         var it = self.watched_paths.keyIterator();
         while (it.next()) |k| self.allocator.free(k.*);
         self.watched_paths.deinit(self.allocator);
+        var parents = self.parent_paths.keyIterator();
+        while (parents.next()) |k| self.allocator.free(k.*);
+        self.parent_paths.deinit(self.allocator);
+        self.parent_watches.deinit(self.allocator);
 
         if (self.eventfd >= 0) _ = c.close(self.eventfd);
         if (self.pending) |snap| snap.release();
@@ -245,7 +256,7 @@ pub const Catalog = struct {
         const published = incoming orelse return false;
         if (old) |prev| prev.release();
         startup.markCatalogPublished(published.scan_ns, @intCast(published.entries.len), published.provisional, published.generation);
-        self.syncWatches();
+        _ = self.syncWatches();
         return true;
     }
 
@@ -391,28 +402,66 @@ pub const Catalog = struct {
         _ = c.pthread_cond_broadcast(&self.cond);
     }
 
-    fn syncWatches(self: *Catalog) void {
-        const watcher = self.watcher orelse return;
+    /// Returns true when a directory gained a real watch it lacked before.
+    fn syncWatches(self: *Catalog) bool {
+        const watcher = self.watcher orelse return false;
         var tmp = std.heap.ArenaAllocator.init(self.allocator);
         defer tmp.deinit();
         const a = tmp.allocator();
+        var added = false;
 
         if (resolveApplicationDirs(a, self.environ)) |dirs| {
-            for (dirs) |dir| self.addWatch(watcher, dir);
+            for (dirs) |dir| {
+                if (self.addWatch(watcher, dir)) {
+                    added = true;
+                } else if (!self.watched_paths.contains(dir)) {
+                    self.watchParentOf(watcher, dir);
+                }
+            }
         } else |_| {}
 
         // Directories already visited by the scan, without walking the tree again
         // on the compositor thread.
         for (self.current.sources) |src| {
-            if (std.fs.path.dirname(src.path)) |dir| self.addWatch(watcher, dir);
+            if (std.fs.path.dirname(src.path)) |dir| {
+                if (self.addWatch(watcher, dir)) added = true;
+            }
         }
+        return added;
     }
 
-    fn addWatch(self: *Catalog, watcher: platform.watch.Watcher, dir: []const u8) void {
-        if (self.watched_paths.contains(dir)) return;
-        _ = watcher.add(dir, .{ .created = true, .deleted = true, .modified = true, .moved_from = true, .moved_to = true, .attrib = true, .written = true }) orelse return;
-        const owned = self.allocator.dupe(u8, dir) catch return;
+    /// Returns true only when `dir` was not watched before and now is.
+    fn addWatch(self: *Catalog, watcher: platform.watch.Watcher, dir: []const u8) bool {
+        if (self.watched_paths.contains(dir)) return false;
+        _ = watcher.add(dir, .{ .created = true, .deleted = true, .modified = true, .moved_from = true, .moved_to = true, .attrib = true, .written = true }) orelse return false;
+        // inotify keeps one watch per directory, so a former parent watch on
+        // this path has just taken the full interest: stop filtering it.
+        if (self.parent_paths.fetchRemove(dir)) |kv| {
+            _ = self.parent_watches.remove(kv.value);
+            self.allocator.free(kv.key);
+        }
+        const owned = self.allocator.dupe(u8, dir) catch return true;
         self.watched_paths.put(self.allocator, owned, {}) catch self.allocator.free(owned);
+        return true;
+    }
+
+    /// Watches the nearest existing ancestor of the missing `dir` for new
+    /// directories; `syncWatches` moves down once each level appears.
+    fn watchParentOf(self: *Catalog, watcher: platform.watch.Watcher, dir: []const u8) void {
+        var at = dir;
+        while (std.fs.path.dirname(at)) |parent| {
+            at = parent;
+            // A real watch already resyncs on directory creation.
+            if (self.watched_paths.contains(at) or self.parent_paths.contains(at)) return;
+            const wd = watcher.add(at, .{ .created = true, .moved_to = true }) orelse continue;
+            const owned = self.allocator.dupe(u8, at) catch return;
+            self.parent_paths.put(self.allocator, owned, wd) catch {
+                self.allocator.free(owned);
+                return;
+            };
+            self.parent_watches.put(self.allocator, wd, {}) catch {};
+            return;
+        }
     }
 };
 
@@ -422,9 +471,18 @@ const Changes = struct {
 
     fn event(self: *Changes, ev: platform.watch.Event) void {
         if (!ev.flags.isChange()) return;
+        if (self.catalog.parent_watches.contains(ev.watch)) {
+            // Only waiting for a missing application directory to appear. Its
+            // first files may land before the new watch exists, so rescan when
+            // one does.
+            if (ev.flags.is_dir and (ev.flags.created or ev.flags.moved_to)) {
+                if (self.catalog.syncWatches()) self.saw = true;
+            }
+            return;
+        }
         self.saw = true;
         // A new directory may hold applications of its own.
-        if (ev.flags.created and ev.flags.is_dir) self.catalog.syncWatches();
+        if (ev.flags.created and ev.flags.is_dir) _ = self.catalog.syncWatches();
     }
 };
 

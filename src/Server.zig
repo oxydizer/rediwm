@@ -501,6 +501,7 @@ pub const iconRelease = server_icons.iconRelease;
 pub const iconPrefetch = server_icons.iconPrefetch;
 pub const iconCancelSpeculative = server_icons.iconCancelSpeculative;
 pub const iconInvalidateAll = server_icons.iconInvalidateAll;
+pub const iconRefreshInstalled = server_icons.iconRefreshInstalled;
 
 /// Small direct-mapped memo for resolved icon names, keyed by app_id and
 /// invalidated wholesale whenever the catalog publishes a new generation.

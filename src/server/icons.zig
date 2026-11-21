@@ -129,3 +129,9 @@ pub fn iconCancelSpeculative(server: *Server) void {
 pub fn iconInvalidateAll(server: *Server) void {
     if (server.icon_service) |svc| svc.invalidateAll();
 }
+
+/// Applications changed at runtime and may have brought icons: forgets
+/// cached misses; see `IconService.refreshInstalled`.
+pub fn iconRefreshInstalled(server: *Server) void {
+    if (server.icon_service) |svc| svc.refreshInstalled();
+}

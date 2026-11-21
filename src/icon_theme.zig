@@ -15,6 +15,13 @@ const Io = std.Io;
 const pthread = std.posix.system;
 var index_mutex: pthread.pthread_mutex_t = pthread.PTHREAD_MUTEX_INITIALIZER;
 
+/// Bumped by `invalidateInstalled` when icons may have been installed or
+/// removed at runtime. `find` compares it, under `index_mutex`, with the
+/// generation its indexes were built for and drops them lazily, so the caller
+/// (the compositor thread) neither waits for the lock nor re-indexes.
+var installed_generation = std.atomic.Value(u64).init(0);
+var indexed_generation: u64 = 0; // guarded by index_mutex
+
 pub const Config = struct {
     theme_name: []const u8,
     override_root: []const u8 = "",
@@ -126,6 +133,11 @@ pub fn find(allocator: Allocator, io: Io, cfg: Config, icon_name: []const u8, ta
     if (try findPack(allocator, io, cfg, icon_name)) |found| return found;
     _ = pthread.pthread_mutex_lock(&index_mutex);
     defer _ = pthread.pthread_mutex_unlock(&index_mutex);
+    const wanted = installed_generation.load(.acquire);
+    if (wanted != indexed_generation) {
+        dropIndexesLocked(allocator);
+        indexed_generation = wanted;
+    }
     // Every theme-name string this call ever allocates (Inherits= entries),
     // freed once at the end. `pending`/`visited` below only ever hold slices
     // borrowed from here or from `cfg.theme_name`, so nothing can dangle.
@@ -192,8 +204,9 @@ pub fn find(allocator: Allocator, io: Io, cfg: Config, icon_name: []const u8, ta
 // dir. Adwaita's index.theme is tens of KB of subdir sections and `find`
 // walks the whole Inherits chain plus hicolor, so parsing per lookup cost
 // ~40ms of *render-path* time on every icon-cache miss — that was the start
-// menu's stutter as new rows scrolled in. `Config` is resolved once in
-// Server.init and never changes, so one parse is good for the process.
+// menu's stutter as new rows scrolled in. One parse lasts until the theme
+// configuration changes (`forgetParsedThemes`) or icons are installed at
+// runtime (`invalidateInstalled`).
 var parsed_themes: std.StringHashMapUnmanaged(?Theme) = .empty;
 
 /// Borrowed from `parsed_themes`; the caller must not deinit the result.
@@ -210,11 +223,24 @@ fn themeIndex(allocator: Allocator, io: Io, cfg: Config, theme_name: []const u8)
     return parsed;
 }
 
-/// Drop every parsed index. Only needed if the icon theme configuration ever
-/// becomes changeable at runtime; nothing calls it today.
+/// Drop every parsed index and file index, after the icon theme
+/// configuration changed. Blocks while a lookup holds the index lock.
 pub fn forgetParsedThemes(allocator: Allocator) void {
     _ = pthread.pthread_mutex_lock(&index_mutex);
     defer _ = pthread.pthread_mutex_unlock(&index_mutex);
+    dropIndexesLocked(allocator);
+}
+
+/// Icons may have been installed or removed (an application was added at
+/// runtime, with its icons linked into a theme directory): the next `find`
+/// re-reads the theme directories. Never blocks; any thread may call it.
+pub fn invalidateInstalled() void {
+    _ = installed_generation.fetchAdd(1, .release);
+}
+
+/// The file indexes hold positions into the parsed indexes' directory lists,
+/// so the two are always dropped together. Caller holds `index_mutex`.
+fn dropIndexesLocked(allocator: Allocator) void {
     var it = parsed_themes.iterator();
     while (it.next()) |entry| {
         allocator.free(entry.key_ptr.*);
@@ -222,6 +248,15 @@ pub fn forgetParsedThemes(allocator: Allocator) void {
     }
     parsed_themes.deinit(allocator);
     parsed_themes = .empty;
+
+    var files_it = theme_files.iterator();
+    while (files_it.next()) |entry| {
+        allocator.free(entry.key_ptr.*);
+        var files = entry.value_ptr.*;
+        freeThemeFiles(allocator, &files);
+    }
+    theme_files.deinit(allocator);
+    theme_files = .empty;
 }
 
 fn loadThemeIndex(allocator: Allocator, io: Io, cfg: Config, theme_name: []const u8) !?Theme {
@@ -440,8 +475,8 @@ const Candidate = struct {
 /// hit or miss, into a single one. That was the last of the start menu's
 /// scroll stutter: every newly revealed row is a fresh icon name.
 ///
-/// Same lifetime caveat as `parsed_themes`: valid because the icon config is
-/// resolved once at startup and never changes.
+/// Same lifetime as `parsed_themes`, and dropped with it: icons installed
+/// while the compositor runs appear only after `invalidateInstalled`.
 const ThemeFiles = std.StringHashMapUnmanaged(std.ArrayListUnmanaged(Candidate));
 var theme_files: std.StringHashMapUnmanaged(ThemeFiles) = .empty;
 
@@ -494,18 +529,6 @@ fn freeThemeFiles(allocator: Allocator, files: *ThemeFiles) void {
         entry.value_ptr.deinit(allocator);
     }
     files.deinit(allocator);
-}
-
-/// Counterpart to `forgetParsedThemes`; same caveat, nothing calls it today.
-pub fn forgetThemeFiles(allocator: Allocator) void {
-    var it = theme_files.iterator();
-    while (it.next()) |entry| {
-        allocator.free(entry.key_ptr.*);
-        var files = entry.value_ptr.*;
-        freeThemeFiles(allocator, &files);
-    }
-    theme_files.deinit(allocator);
-    theme_files = .empty;
 }
 
 fn findInTheme(allocator: Allocator, io: Io, cfg: Config, theme: Theme, icon_name: []const u8, target_px: i32) !?Found {

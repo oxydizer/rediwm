@@ -47,6 +47,10 @@ pub fn handleCatalogWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
     _ = fd;
     _ = mask;
     if (!server.start_menu_catalog.drainCompletions()) return 0;
+    // New entries usually come with icons (a package install, or a launcher
+    // sync such as arch-run's linking them into ~/.local/share/icons before
+    // moving the entries in), which the cached theme index has not seen.
+    server.iconRefreshInstalled();
     if (server.input.open_control_center) |cc| cc.refresh();
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {

@@ -4,6 +4,7 @@
 //! shell.
 const std = @import("std");
 const c = @import("c");
+const platform = @import("platform");
 const Allocator = std.mem.Allocator;
 
 pub const Ctx = struct {
@@ -14,8 +15,14 @@ pub const Ctx = struct {
 
 const dirs = [_][]const u8{ "/usr/sbin", "/sbin", "/usr/bin", "/bin", "/usr/local/sbin", "/usr/local/bin" };
 
-/// `name` in the system directories, or null.
+/// `name` in the system directories, or null. Init-aware programs (`systemctl`,
+/// `journalctl`) look in `/usr/local/bin` first, where a system without systemd
+/// as PID 1 installs its wrappers; see platform/tool.zig.
 pub fn tool(ctx: Ctx, comptime name: []const u8) ?[]const u8 {
+    if (comptime platform.tool.isInitAware(name)) {
+        const path = "/usr/local/bin/" ++ name;
+        if (std.Io.Dir.accessAbsolute(ctx.io, path, .{ .execute = true })) |_| return path else |_| {}
+    }
     inline for (dirs) |dir| {
         const path = dir ++ "/" ++ name;
         if (std.Io.Dir.accessAbsolute(ctx.io, path, .{ .execute = true })) |_| return path else |_| {}

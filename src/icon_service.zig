@@ -68,6 +68,7 @@ const Published = struct {
 
 const Job = struct {
     key: []const u8, // owned by `in_flight` until published; see `enqueue`/`publish`
+    epoch: u64 = 0, // `installed_epoch` when queued; see `refreshInstalled`
 };
 
 /// Outcome of one worker-thread decode. `missing` is a resolved, permanent
@@ -86,6 +87,7 @@ const Result = struct {
     key: []const u8,
     decoded: Decoded,
     decode_ns: u64, // worker-thread wall time for this job (theme lookup + decode combined)
+    epoch: u64 = 0, // copied from the `Job`
 };
 
 pub const IconService = struct {
@@ -118,6 +120,7 @@ pub const IconService = struct {
     owns_config: bool = false,
     unpinned_bytes: usize = 0, // sum of .bytes over published entries with refcount == 0
     touch_clock: u64 = 0,
+    installed_epoch: u64 = 0, // bumped by `refreshInstalled`
 
     pub fn create(allocator: Allocator, cfg: icon_theme.Config, io: Io) !*IconService {
         const self = try allocator.create(IconService);
@@ -340,6 +343,22 @@ pub const IconService = struct {
         self.freeAllPublished();
     }
 
+    /// Compositor-thread only. Icons may have been installed or removed
+    /// (an application appeared at runtime): forget every cached miss and
+    /// have the worker re-read the theme directories on its next lookup.
+    /// Found icons, pinned or not, stay published. Never blocks.
+    pub fn refreshInstalled(self: *IconService) void {
+        icon_theme.invalidateInstalled();
+        self.installed_epoch += 1;
+        var misses: std.ArrayList([]const u8) = .empty;
+        defer misses.deinit(self.allocator);
+        var it = self.published.iterator();
+        while (it.next()) |e| {
+            if (e.value_ptr.entry == null) misses.append(self.allocator, e.key_ptr.*) catch break;
+        }
+        for (misses.items) |key| self.evictKey(key);
+    }
+
     /// Compositor-thread only. Bumps the refcount of a still-published
     /// entry (a no-op if it's already gone — evicted, or a stale id from
     /// `invalidateAll`); moves its bytes out of the evictable pool while
@@ -400,7 +419,10 @@ pub const IconService = struct {
                 if (res.decoded == .ready) icon_cache.gpa.free(res.decoded.ready.pixels);
                 continue;
             };
-            self.publish(removed_entry.key, res.decoded, res.decode_ns);
+            // A miss from before `refreshInstalled` may be the very icon that
+            // just arrived: don't remember it; the re-request decodes again.
+            const decoded: Decoded = if (res.decoded == .missing and res.epoch != self.installed_epoch) .failed else res.decoded;
+            self.publish(removed_entry.key, decoded, res.decode_ns);
         }
     }
 
@@ -419,7 +441,7 @@ pub const IconService = struct {
             .essential => &self.job_queue_essential,
             .speculative => &self.job_queue_speculative,
         };
-        queue.append(self.allocator, .{ .key = owned }) catch {
+        queue.append(self.allocator, .{ .key = owned, .epoch = self.installed_epoch }) catch {
             // `owned` stays parked in `in_flight` forever (freed at
             // `deinit`); allocation failure here is already an exceptional,
             // low-memory condition, not something to special-case further.
@@ -543,7 +565,7 @@ pub const IconService = struct {
             const decode_ns = stats.nowNs() -% t0;
 
             self.lock();
-            self.result_queue.append(self.allocator, .{ .key = job.key, .decoded = decoded, .decode_ns = decode_ns }) catch |err| {
+            self.result_queue.append(self.allocator, .{ .key = job.key, .decoded = decoded, .decode_ns = decode_ns, .epoch = job.epoch }) catch |err| {
                 log.err("run: could not queue icon result: {}", .{err});
             };
             self.unlock();
