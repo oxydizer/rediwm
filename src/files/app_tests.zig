@@ -646,6 +646,39 @@ fn transferTestReadFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return allocator.dupe(u8, buffer[0..@intCast(count)]);
 }
 
+fn writeArchivePublicationFixture(path: []const u8) !void {
+    const api = @import("c_archive");
+    const writer = api.archive_write_new() orelse return error.OutOfMemory;
+    defer _ = api.archive_write_free(writer);
+
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        api.archive_write_set_format_zip(writer),
+    );
+    const zpath = try std.testing.allocator.dupeSentinel(u8, path, 0);
+    defer std.testing.allocator.free(zpath);
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        api.archive_write_open_filename(writer, zpath),
+    );
+
+    const entry = api.archive_entry_new() orelse return error.OutOfMemory;
+    defer api.archive_entry_free(entry);
+    api.archive_entry_set_pathname(entry, "nested/payload.txt");
+    api.archive_entry_set_filetype(entry, c.S_IFREG);
+    api.archive_entry_set_perm(entry, 0o644);
+    api.archive_entry_set_size(entry, 7);
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        api.archive_write_header(writer, entry),
+    );
+    try std.testing.expectEqual(
+        @as(isize, 7),
+        api.archive_write_data(writer, "payload", 7),
+    );
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_close(writer));
+}
+
 fn transferTestCleanup(path: []const u8, is_directory: bool) void {
     const allocator = std.heap.page_allocator;
     const zpath = allocator.dupeSentinel(u8, path, 0) catch return;
@@ -1319,4 +1352,83 @@ test "cross-filesystem nested directory moves use one Manager job and detach sou
         "../literal-target",
         target_buffer[0..@intCast(target_len)],
     );
+}
+
+test "archive publication scans roots, discovers descendants and drains the barrier" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+
+    const source = try transferTestJoin(allocator, temp, "sample.zip");
+    defer allocator.free(source);
+    const destination = try transferTestJoin(allocator, temp, "destination");
+    defer allocator.free(destination);
+    const nested = try transferTestJoin(allocator, destination, "nested");
+    defer allocator.free(nested);
+    const payload = try transferTestJoin(allocator, nested, "payload.txt");
+    defer allocator.free(payload);
+
+    defer {
+        transferTestCleanup(payload, false);
+        transferTestCleanup(nested, true);
+        transferTestCleanup(destination, true);
+        transferTestCleanup(source, false);
+        transferTestCleanup(temp, true);
+    }
+
+    try writeArchivePublicationFixture(source);
+    try transferTestMkdir(destination);
+
+    var app = try testApp();
+    defer app.deinit();
+    app.io_manager = io_manager.Manager.init(allocator);
+
+    const manager = &app.io_manager.?;
+    const job = try manager.createJob(null);
+    const operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = source,
+            .staging_parent = destination,
+        },
+    );
+    try manager.setDestinationDirectory(job, destination);
+    try manager.queueJob(job);
+
+    try app.startOperations();
+    try app.trackArchivePublication(job, operation);
+
+    while (true) {
+        app.stepDiscovery();
+        app.stepOperations();
+        if (manager.jobState(job).?.isTerminal()) break;
+
+        var descriptors = [_]c.struct_pollfd{
+            .{
+                .fd = app.discoveryWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
+            .{
+                .fd = app.operationWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
+        };
+        const result = c.poll(&descriptors, @intCast(descriptors.len), 5_000);
+        if (result == 0) return error.TimedOutWaitingForArchivePublication;
+        if (result < 0 and std.c._errno().* != c.EINTR)
+            return error.ArchivePublicationPollFailed;
+    }
+
+    try std.testing.expectEqual(
+        io_manager.JobState.completed,
+        manager.jobState(job).?,
+    );
+    try std.testing.expectEqual(@as(usize, 0), app.archive_publications.items.len);
+
+    const contents = try transferTestReadFile(allocator, payload);
+    defer allocator.free(contents);
+    try std.testing.expectEqualStrings("payload", contents);
 }
