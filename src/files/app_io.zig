@@ -2,6 +2,7 @@
 const std = @import("std");
 const App = @import("app.zig").App;
 const io_manager = @import("io_manager.zig");
+const io_discovery = @import("io_discovery.zig");
 const io_discovery_executor = @import("io_discovery_executor.zig");
 const io_operation_executor = @import("io_operation_executor.zig");
 const ViewItem = @import("app_model.zig").ViewItem;
@@ -250,6 +251,191 @@ pub fn startOperations(self: *App) !void {
     );
 }
 
+/// Tracks an archive operation whose worker result will hand off a staging
+/// lease to the main-thread publication scanner.
+pub fn trackArchivePublication(
+    self: *App,
+    job_id: io_manager.JobId,
+    operation_id: io_manager.OperationId,
+) !void {
+    for (self.archive_publications.items) |publication| {
+        if (publication.job_id == job_id and
+            publication.operation_id == operation_id)
+            return error.ArchivePublicationAlreadyTracked;
+    }
+    try self.archive_publications.append(self.allocator, .{
+        .job_id = job_id,
+        .operation_id = operation_id,
+    });
+}
+
+fn closeArchivePublicationCursor(publication: *App.ArchivePublication) void {
+    if (publication.cursor) |*cursor| cursor.deinit();
+    publication.cursor = null;
+}
+
+fn failArchivePublication(
+    self: *App,
+    manager: *io_manager.Manager,
+    publication: *App.ArchivePublication,
+) void {
+    closeArchivePublicationCursor(publication);
+    if (publication.registration_closed) return;
+    const token = publication.token orelse return;
+    manager.failArchivePublication(token) catch {
+        self.setStatusNotice("Could not close archive publication after an error", true);
+        return;
+    };
+    publication.registration_closed = true;
+}
+
+/// Scans at most 64 top-level staging entries per main-loop pass, then drains
+/// the Manager barrier before releasing the staging lease.
+fn stepArchivePublications(
+    self: *App,
+    manager: *io_manager.Manager,
+    executor: *io_operation_executor.Runtime,
+) void {
+    var index: usize = 0;
+    while (index < self.archive_publications.items.len) {
+        const publication = &self.archive_publications.items[index];
+        if (publication.token == null) {
+            publication.token = executor.archiveStagingToken(
+                publication.job_id,
+                publication.operation_id,
+            );
+            if (publication.token == null) {
+                if (manager.jobState(publication.job_id)) |state| {
+                    if (state.isTerminal()) {
+                        _ = self.archive_publications.orderedRemove(index);
+                        continue;
+                    }
+                }
+                index += 1;
+                continue;
+            }
+        }
+
+        const token = publication.token.?;
+        if (!publication.registration_closed) {
+            if (publication.cursor == null) {
+                const staging_path = executor.archiveStagingPath(token) orelse {
+                    failArchivePublication(self, manager, publication);
+                    index += 1;
+                    continue;
+                };
+                const zpath = self.allocator.dupeSentinel(u8, staging_path, 0) catch {
+                    failArchivePublication(self, manager, publication);
+                    index += 1;
+                    continue;
+                };
+                defer self.allocator.free(zpath);
+                publication.cursor = io_discovery.Cursor.open(zpath) catch {
+                    failArchivePublication(self, manager, publication);
+                    index += 1;
+                    continue;
+                };
+            }
+
+            var batch = publication.cursor.?.nextBatch(self.allocator, 64) catch {
+                failArchivePublication(self, manager, publication);
+                index += 1;
+                continue;
+            };
+            defer batch.deinit();
+
+            var registration_failed = false;
+            for (batch.records.items) |record| {
+                if (record.entry_error or record.kind == .other) {
+                    registration_failed = true;
+                    break;
+                }
+
+                // Directory roots schedule discovery as part of registration.
+                // Ensure the App has an executor ready to drain that work.
+                if (record.kind == .directory and self.discovery_executor == null) {
+                    self.discovery_executor = io_discovery_executor.Executor.init(
+                        self.allocator,
+                        2,
+                        4,
+                        64,
+                    ) catch {
+                        registration_failed = true;
+                        break;
+                    };
+                }
+
+                const staging_path = executor.archiveStagingPath(token) orelse {
+                    registration_failed = true;
+                    break;
+                };
+                const source_path = std.fs.path.join(
+                    self.allocator,
+                    &.{ staging_path, record.name },
+                ) catch {
+                    registration_failed = true;
+                    break;
+                };
+                defer self.allocator.free(source_path);
+
+                _ = manager.addArchivePublicationRoot(token, .{
+                    .name = record.name,
+                    .source_path = source_path,
+                    .kind = record.kind,
+                    .metadata = record.metadata,
+                    .symlink_target = record.symlink_target,
+                }) catch {
+                    registration_failed = true;
+                    break;
+                };
+            }
+
+            if (registration_failed) {
+                failArchivePublication(self, manager, publication);
+            } else if (batch.complete) {
+                closeArchivePublicationCursor(publication);
+                manager.closeArchivePublication(token) catch {
+                    failArchivePublication(self, manager, publication);
+                    index += 1;
+                    continue;
+                };
+                publication.registration_closed = true;
+            }
+        }
+
+        if (publication.registration_closed and
+            manager.archivePublicationReady(token) == true)
+        {
+            const released = executor.releaseArchiveStaging(token) catch {
+                self.setStatusNotice("Could not remove archive staging data", true);
+                index += 1;
+                continue;
+            };
+            if (!released) {
+                index += 1;
+                continue;
+            }
+            if (!manager.completeArchivePublication(token)) {
+                self.setStatusNotice("Could not complete archive publication", true);
+                index += 1;
+                continue;
+            }
+            _ = self.archive_publications.orderedRemove(index);
+            continue;
+        }
+        index += 1;
+    }
+
+    // Root registration above can enqueue discovery after stepDiscovery()
+    // has already run for this main-loop pass. Dispatch it now, before the
+    // main thread can enter its wake-FD poll.
+    if (self.discovery_executor) |*discovery| {
+        _ = discovery.dispatchReady(manager) catch {
+            self.setStatusNotice("Could not schedule archive directory discovery", true);
+        };
+    }
+}
+
 /// Removes only successfully moved roots from the matching cut clipboard.
 /// Skipped and failed roots remain available for a later paste.
 fn updateMovedClipboard(
@@ -301,6 +487,7 @@ pub fn stepOperations(self: *App) void {
         self.transfer_tree_state.markDirty();
         self.transfer_rows_dirty = true;
     }
+    stepArchivePublications(self, manager, executor);
     _ = executor.dispatchReady() catch {
         self.setStatusNotice("Could not schedule file operation", true);
     };

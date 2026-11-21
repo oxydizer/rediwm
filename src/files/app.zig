@@ -8,6 +8,7 @@ const c = @import("c.zig").api;
 const platform = @import("platform");
 const worker_mod = @import("worker.zig");
 const io_manager_mod = @import("io_manager.zig");
+const io_discovery_mod = @import("io_discovery.zig");
 const io_discovery_executor_mod = @import("io_discovery_executor.zig");
 const io_operation_executor_mod = @import("io_operation_executor.zig");
 const history_mod = @import("history.zig");
@@ -76,6 +77,14 @@ pub const FontMetrics = app_draw.FontMetrics;
 pub const fontMetrics = app_draw.fontMetrics;
 pub const measureText = app_draw.measureText;
 pub const App = struct {
+    pub const ArchivePublication = struct {
+        job_id: io_manager_mod.JobId,
+        operation_id: io_manager_mod.OperationId,
+        token: ?io_manager_mod.WorkToken = null,
+        cursor: ?io_discovery_mod.Cursor = null,
+        registration_closed: bool = false,
+    };
+
     terminal: app_terminal.Drawer = .{},
     closed: bool = false,
     torrents: @import("torrents.zig").Client = .{},
@@ -99,6 +108,7 @@ pub const App = struct {
     discovery_executor: ?io_discovery_executor_mod.Executor = null,
     operation_executor: ?io_operation_executor_mod.Runtime = null,
     discovery_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
+    archive_publications: std.ArrayList(ArchivePublication) = .empty,
     history: history_mod.History,
     home_dir: []const u8,
 
@@ -395,8 +405,13 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
-        if (self.operation_executor) |*executor| executor.deinit();
+        // Cursors must be closed before Runtime deinit removes staging.
+        for (self.archive_publications.items) |*publication| {
+            if (publication.cursor) |*cursor| cursor.deinit();
+        }
+        self.archive_publications.deinit(self.allocator);
         if (self.discovery_executor) |*executor| executor.deinit();
+        if (self.operation_executor) |*executor| executor.deinit();
         if (self.io_manager) |*manager| manager.deinit();
         self.discovery_jobs.deinit(self.allocator);
         self.torrents.deinit();
@@ -659,6 +674,7 @@ pub const App = struct {
     pub const stepDiscovery = app_io.stepDiscovery;
     pub const discoveryWakeFd = app_io.discoveryWakeFd;
     pub const startOperations = app_io.startOperations;
+    pub const trackArchivePublication = app_io.trackArchivePublication;
     pub const stepOperations = app_io.stepOperations;
     pub const operationWakeFd = app_io.operationWakeFd;
 
