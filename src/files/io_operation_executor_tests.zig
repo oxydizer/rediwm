@@ -391,18 +391,18 @@ test "Manager Runtime extracts archives into owned staging leases" {
     try waitForOne(&runtime);
     try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
 
-    const token: io_manager.WorkToken = .{
-        .job_id = job,
-        .operation_id = operation,
-        .generation = 1,
-    };
     try std.testing.expectEqual(
         io_manager.OperationState.waiting,
         manager.operationState(job, operation).?,
     );
+    const staging_token = runtime.archiveStagingToken(job, operation) orelse
+        return error.MissingArchiveStagingToken;
+    try std.testing.expectEqual(job, staging_token.job_id);
+    try std.testing.expectEqual(operation, staging_token.operation_id);
+    try std.testing.expectEqual(@as(u64, 1), staging_token.generation);
     const staging_path = try allocator.dupe(
         u8,
-        runtime.archiveStagingPath(token) orelse return error.MissingArchiveStaging,
+        runtime.archiveStagingPath(staging_token) orelse return error.MissingArchiveStaging,
     );
     defer allocator.free(staging_path);
 
@@ -412,16 +412,16 @@ test "Manager Runtime extracts archives into owned staging leases" {
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("payload", contents);
 
-    try std.testing.expect(!try runtime.releaseArchiveStaging(token));
-    try manager.closeArchivePublication(token);
-    try std.testing.expectEqual(@as(?bool, true), manager.archivePublicationReady(token));
-    try std.testing.expect(try runtime.releaseArchiveStaging(token));
+    try std.testing.expect(!try runtime.releaseArchiveStaging(staging_token));
+    try manager.closeArchivePublication(staging_token);
+    try std.testing.expectEqual(@as(?bool, true), manager.archivePublicationReady(staging_token));
+    try std.testing.expect(try runtime.releaseArchiveStaging(staging_token));
 
     const staging_z = try allocZ(allocator, staging_path);
     defer allocator.free(staging_z);
     var staging_stat: c.struct_stat = undefined;
     try std.testing.expect(c.lstat(staging_z, &staging_stat) != 0);
-    try std.testing.expect(manager.completeArchivePublication(token));
+    try std.testing.expect(manager.completeArchivePublication(staging_token));
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
 }
 

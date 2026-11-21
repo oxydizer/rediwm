@@ -28,6 +28,7 @@ const Context = struct {
 
 const ArchiveStagingLease = struct {
     allocator: Allocator,
+    token: io_manager.WorkToken,
     path: []u8,
 
     fn deinit(self: *ArchiveStagingLease) void {
@@ -141,6 +142,23 @@ pub const Runtime = struct {
             io_executor.OperationKey.fromToken(token),
         ) orelse return null;
         return lease.path;
+    }
+
+    /// Returns the exact waiting token associated with an owned staging
+    /// lease. The generation is captured from the accepted worker completion.
+    pub fn archiveStagingToken(
+        self: *const Runtime,
+        job_id: io_manager.JobId,
+        operation_id: io_manager.OperationId,
+    ) ?io_manager.WorkToken {
+        const key: io_executor.OperationKey = .{
+            .job_id = job_id,
+            .operation_id = operation_id,
+        };
+        const lease = self.context.archive_staging.get(key) orelse return null;
+        if (self.context.manager.archiveOperationDetails(lease.token) == null)
+            return null;
+        return lease.token;
     }
 
     /// Releases staging only after publication registration, discovery and
@@ -503,6 +521,7 @@ fn complete(
                 const key = io_executor.OperationKey.fromToken(token);
                 const lease = ArchiveStagingLease{
                     .allocator = context.allocator,
+                    .token = token,
                     .path = path,
                 };
                 context.archive_staging.put(context.allocator, key, lease) catch {
