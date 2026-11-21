@@ -136,6 +136,47 @@ fn waitForDiscovery(executor: *io_discovery_executor.Executor) !void {
     }
 }
 
+fn writeArchiveFixture(path: []const u8) !void {
+    const api = @import("c_archive");
+    const writer = api.archive_write_new() orelse return error.OutOfMemory;
+    defer _ = api.archive_write_free(writer);
+
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_set_format_zip(writer));
+    const zpath = try allocZ(std.testing.allocator, path);
+    defer std.testing.allocator.free(zpath);
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        api.archive_write_open_filename(writer, zpath),
+    );
+
+    const entry = api.archive_entry_new() orelse return error.OutOfMemory;
+    defer api.archive_entry_free(entry);
+    api.archive_entry_set_pathname(entry, "nested/payload.txt");
+    api.archive_entry_set_filetype(entry, c.S_IFREG);
+    api.archive_entry_set_perm(entry, 0o644);
+    api.archive_entry_set_size(entry, 7);
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_header(writer, entry));
+    try std.testing.expectEqual(
+        @as(isize, 7),
+        api.archive_write_data(writer, "payload", 7),
+    );
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_close(writer));
+}
+
+fn expectDirectoryEmpty(path: []const u8) !void {
+    const zpath = try allocZ(std.testing.allocator, path);
+    defer std.testing.allocator.free(zpath);
+    const directory = c.opendir(zpath) orelse return error.OpenDirectoryFailed;
+    defer _ = c.closedir(directory);
+
+    while (true) {
+        const entry = c.readdir(directory) orelse break;
+        const name = std.mem.span(@as([*:0]const u8, @ptrCast(&entry.*.d_name)));
+        if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+        return error.DirectoryNotEmpty;
+    }
+}
+
 test "Manager operations execute directory creation before dependent symlink and file work" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
@@ -311,6 +352,212 @@ test "Manager Runtime copies a standalone regular-file root" {
     const copied_contents = try readFile(allocator, destination);
     defer allocator.free(copied_contents);
     try std.testing.expectEqualStrings(contents, copied_contents);
+}
+
+test "Manager Runtime extracts archives into owned staging leases" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    const source = try join(allocator, temp, "sample.zip");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+    defer {
+        cleanup(source, false);
+        cleanup(destination, true);
+        cleanup(temp, true);
+    }
+
+    try writeArchiveFixture(source);
+    try makeDirectory(destination);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = source,
+            .staging_parent = destination,
+        },
+    );
+    try manager.setDestinationDirectory(job, destination);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    const token: io_manager.WorkToken = .{
+        .job_id = job,
+        .operation_id = operation,
+        .generation = 1,
+    };
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, operation).?,
+    );
+    const staging_path = try allocator.dupe(
+        u8,
+        runtime.archiveStagingPath(token) orelse return error.MissingArchiveStaging,
+    );
+    defer allocator.free(staging_path);
+
+    const extracted = try join(allocator, staging_path, "nested/payload.txt");
+    defer allocator.free(extracted);
+    const contents = try readFile(allocator, extracted);
+    defer allocator.free(contents);
+    try std.testing.expectEqualStrings("payload", contents);
+
+    try std.testing.expect(!try runtime.releaseArchiveStaging(token));
+    try manager.closeArchivePublication(token);
+    try std.testing.expectEqual(@as(?bool, true), manager.archivePublicationReady(token));
+    try std.testing.expect(try runtime.releaseArchiveStaging(token));
+
+    const staging_z = try allocZ(allocator, staging_path);
+    defer allocator.free(staging_z);
+    var staging_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(staging_z, &staging_stat) != 0);
+    try std.testing.expect(manager.completeArchivePublication(token));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "Manager Runtime removes failed archive extraction staging" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    const source = try join(allocator, temp, "broken.zip");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+    defer {
+        cleanup(source, false);
+        cleanup(destination, true);
+        cleanup(temp, true);
+    }
+
+    try writeFile(source, "not an archive");
+    try makeDirectory(destination);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = source,
+            .staging_parent = destination,
+        },
+    );
+    try manager.setDestinationDirectory(job, destination);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, operation).?,
+    );
+    try expectDirectoryEmpty(destination);
+}
+
+test "Manager Runtime cancels outstanding archive extraction and cleans staging" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    const source = try join(allocator, temp, "sample.zip");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+    defer {
+        cleanup(source, false);
+        cleanup(destination, true);
+        cleanup(temp, true);
+    }
+
+    try writeArchiveFixture(source);
+    try makeDirectory(destination);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = source,
+            .staging_parent = destination,
+        },
+    );
+    try manager.setDestinationDirectory(job, destination);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+
+    try runtime.cancelJob(job);
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.cancelled,
+        manager.operationState(job, operation).?,
+    );
+    try expectDirectoryEmpty(destination);
+}
+
+test "Manager Runtime discards undrained archive results during shutdown" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    const source = try join(allocator, temp, "sample.zip");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+    defer {
+        cleanup(source, false);
+        cleanup(destination, true);
+        cleanup(temp, true);
+    }
+
+    try writeArchiveFixture(source);
+    try makeDirectory(destination);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    _ = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = source,
+            .staging_parent = destination,
+        },
+    );
+    try manager.setDestinationDirectory(job, destination);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    var runtime_alive = true;
+    defer if (runtime_alive) runtime.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+
+    // The worker has published its result, but the main thread has not
+    // collected it. Pool shutdown must route it through the discard callback.
+    runtime.deinit();
+    runtime_alive = false;
+    try expectDirectoryEmpty(destination);
 }
 
 test "Manager Runtime copies a discovered folder incrementally" {
