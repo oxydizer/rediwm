@@ -1704,6 +1704,49 @@ pub const Manager = struct {
         self.recomputeJobState(job);
     }
 
+    /// Converts a waiting regular-file or symlink move into copy-and-detach
+    /// after the worker reports that rename failed with EXDEV.
+    ///
+    /// The original operation ID is retained. Source detachment is registered
+    /// as a dependent, so it cannot run until the replacement copy completes.
+    pub fn fallbackMoveToCopy(self: *Manager, token: WorkToken) !OperationId {
+        const job = self.findJob(token.job_id) orelse return error.UnknownJob;
+        const operation_index = findOperationIndex(job, token.operation_id) orelse
+            return error.UnknownOperation;
+        const operation = &job.operations.items[operation_index];
+        if (operation.state != .waiting) return error.InvalidOperationState;
+        if (operation.generation != token.generation) return error.StaleWorkToken;
+        if (operation.kind != .move_entry) return error.InvalidOperationKind;
+
+        const entry_id = operation.entry_id orelse return error.OperationEntryMismatch;
+        const entry = job.tree.get(entry_id) orelse return error.UnknownEntry;
+        const copy_kind: OperationKind = switch (entry.kind) {
+            .regular_file => .copy_file,
+            .symlink => .copy_symlink,
+            else => return error.UnsupportedEntryKind,
+        };
+
+        // addEntryOperation() validates and reserves all required storage
+        // before mutating the graph. Restore the original kind if it fails.
+        job.operations.items[operation_index].kind = copy_kind;
+        const detach_operation_id = self.addEntryOperation(
+            token.job_id,
+            entry_id,
+            .detach_source,
+        ) catch |err| {
+            job.operations.items[operation_index].kind = .move_entry;
+            return err;
+        };
+
+        // addEntryOperation() may reallocate job.operations; reacquire by
+        // index rather than retaining the earlier pointer.
+        const copy_operation = &job.operations.items[operation_index];
+        transitionOperation(job, copy_operation, .pending);
+        enqueueReady(job, operation_index);
+        self.recomputeJobState(job);
+        return detach_operation_id;
+    }
+
     /// Fails a waiting operation when its external resolution record could
     /// not be created. Dependents must not remain blocked indefinitely.
     pub fn failWaiting(self: *Manager, job_id: JobId, operation_id: OperationId) !void {

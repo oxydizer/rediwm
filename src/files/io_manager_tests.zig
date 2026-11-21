@@ -204,6 +204,74 @@ test "source detach stays blocked until the copy flush completes" {
     try std.testing.expectEqual(detach_operation, detach_token.operation_id);
 }
 
+fn expectMoveFallback(
+    entry_kind: io_tree.EntryKind,
+    symlink_target: ?[]const u8,
+    expected_copy_kind: io_manager.OperationKind,
+) !void {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "payload",
+        entry_kind,
+        .{},
+        symlink_target,
+    );
+    try manager.setRootSourcePath(job, root, "/source/payload");
+    try manager.setDestinationDirectory(job, "/destination");
+    const move_operation = try manager.addEntryOperation(job, root, .move_entry);
+    try manager.queueJob(job);
+
+    const move_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(move_operation, move_token.operation_id);
+    try std.testing.expect(manager.completeWork(move_token, .waiting));
+
+    var stale_token = move_token;
+    stale_token.generation += 1;
+    try std.testing.expectError(
+        error.StaleWorkToken,
+        manager.fallbackMoveToCopy(stale_token),
+    );
+
+    const detach_operation = try manager.fallbackMoveToCopy(move_token);
+    const copy_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(move_operation, copy_token.operation_id);
+    try std.testing.expectEqual(
+        expected_copy_kind,
+        manager.operationDetails(copy_token).?.kind,
+    );
+
+    // Park the copy. With no active worker, detach must still remain blocked.
+    try std.testing.expect(manager.completeWork(copy_token, .waiting));
+    try std.testing.expect(manager.dispatchNext() == null);
+
+    try manager.resolveWaiting(job, move_operation);
+    const copy_retry = manager.dispatchNext().?;
+    try std.testing.expectEqual(move_operation, copy_retry.operation_id);
+    try std.testing.expect(copy_retry.generation > copy_token.generation);
+    try std.testing.expect(manager.completeWork(copy_retry, .completed));
+
+    const detach_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(detach_operation, detach_token.operation_id);
+    try std.testing.expectEqual(
+        io_manager.OperationKind.detach_source,
+        manager.operationDetails(detach_token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(detach_token, .completed));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "EXDEV fallback converts regular-file moves into copy-and-detach" {
+    try expectMoveFallback(.regular_file, null, .copy_file);
+}
+
+test "EXDEV fallback converts symlink moves into copy-and-detach" {
+    try expectMoveFallback(.symlink, "../literal-target", .copy_symlink);
+}
+
 test "waiting Operations release the worker and can be resolved" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
