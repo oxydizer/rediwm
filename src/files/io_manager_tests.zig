@@ -586,6 +586,61 @@ test "archive publication barrier waits for dynamically registered operations" {
     try std.testing.expect(!manager.completeArchivePublication(archive_token));
 }
 
+test "failed archive publication waits for registered operations before failing" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const archive_operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = "/tmp/source.zip",
+            .staging_parent = "/tmp/staging",
+        },
+    );
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.queueJob(job);
+
+    const archive_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(archive_operation, archive_token.operation_id);
+    try std.testing.expect(manager.completeWork(archive_token, .waiting));
+
+    const root = try manager.addArchivePublicationRoot(
+        archive_token,
+        .{
+            .name = "payload.bin",
+            .source_path = "/tmp/staging/payload.bin",
+            .kind = .regular_file,
+        },
+    );
+    const publication_operation = manager.entryOperationView(job, root).?;
+    try std.testing.expectEqual(io_manager.OperationState.pending, publication_operation.state);
+
+    try manager.failArchivePublication(archive_token);
+    try std.testing.expectEqual(
+        @as(?bool, false),
+        manager.archivePublicationReady(archive_token),
+    );
+
+    const publication_token = manager.dispatchNext().?;
+    try std.testing.expect(manager.completeWork(publication_token, .completed));
+    try std.testing.expectEqual(
+        @as(?bool, true),
+        manager.archivePublicationReady(archive_token),
+    );
+
+    try std.testing.expect(manager.completeArchivePublication(archive_token));
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, archive_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
+}
+
 test "copy progress exposes the storage-flush phase" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

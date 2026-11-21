@@ -298,6 +298,7 @@ const Job = struct {
     auto_plan_discovered_entries: bool = false,
     auto_move_discovered_entries: bool = false,
     archive_publication_closed: bool = false,
+    archive_publication_failed: bool = false,
     pause_requested: bool = false,
     cancel_requested: bool = false,
     destination_directory: ?[]u8 = null,
@@ -1323,6 +1324,25 @@ pub const Manager = struct {
         job.archive_publication_closed = true;
     }
 
+    /// Closes archive root registration after a main-thread publication
+    /// error. Already registered operations still drain before the barrier
+    /// becomes terminal, so their staging sources remain valid.
+    pub fn failArchivePublication(self: *Manager, token: WorkToken) !void {
+        const job = self.findJob(token.job_id) orelse return error.UnknownJob;
+        const operation = findOperation(job, token.operation_id) orelse
+            return error.UnknownOperation;
+        if (operation.state != .waiting) return error.InvalidOperationState;
+        if (operation.generation != token.generation) return error.StaleWorkToken;
+        if (operation.kind != .archive_extract and
+            operation.kind != .archive_member_extract)
+            return error.InvalidOperationKind;
+        if (job.archive_publication_closed)
+            return error.ArchivePublicationAlreadyClosed;
+
+        job.archive_publication_failed = true;
+        job.archive_publication_closed = true;
+    }
+
     /// Reports whether every publication operation and directory scan has
     /// reached a terminal state after root registration was closed.
     pub fn archivePublicationReady(
@@ -1353,7 +1373,11 @@ pub const Manager = struct {
         if (self.archivePublicationReady(token) != true) return false;
         const job = self.findJob(token.job_id) orelse return false;
         const operation = findOperation(job, token.operation_id) orelse return false;
-        transitionOperation(job, operation, .completed);
+        transitionOperation(
+            job,
+            operation,
+            if (job.archive_publication_failed) .failed else .completed,
+        );
         self.recomputeJobState(job);
         return true;
     }
