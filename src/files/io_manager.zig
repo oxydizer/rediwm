@@ -287,6 +287,7 @@ const Job = struct {
     discovery_started: bool = false,
     auto_plan_discovered_entries: bool = false,
     auto_move_discovered_entries: bool = false,
+    archive_publication_closed: bool = false,
     pause_requested: bool = false,
     cancel_requested: bool = false,
     destination_directory: ?[]u8 = null,
@@ -1284,6 +1285,58 @@ pub const Manager = struct {
         };
     }
 
+    /// Closes registration of archive publication roots. Already-scheduled
+    /// directory discovery may still register its descendants.
+    pub fn closeArchivePublication(self: *Manager, token: WorkToken) !void {
+        const job = self.findJob(token.job_id) orelse return error.UnknownJob;
+        const operation = findOperation(job, token.operation_id) orelse
+            return error.UnknownOperation;
+        if (operation.state != .waiting) return error.InvalidOperationState;
+        if (operation.generation != token.generation) return error.StaleWorkToken;
+        if (operation.kind != .archive_extract and
+            operation.kind != .archive_member_extract)
+            return error.InvalidOperationKind;
+        if (job.archive_publication_closed)
+            return error.ArchivePublicationAlreadyClosed;
+
+        job.archive_publication_closed = true;
+    }
+
+    /// Reports whether every publication operation and directory scan has
+    /// reached a terminal state after root registration was closed.
+    pub fn archivePublicationReady(
+        self: *const Manager,
+        token: WorkToken,
+    ) ?bool {
+        const job = self.findJobConst(token.job_id) orelse return null;
+        const barrier = findOperationConst(job, token.operation_id) orelse return null;
+        if (barrier.state != .waiting or barrier.generation != token.generation)
+            return null;
+        if (barrier.kind != .archive_extract and
+            barrier.kind != .archive_member_extract)
+            return null;
+        if (!job.archive_publication_closed) return false;
+        if (job.discovery_pending_count != 0 or job.discovery_in_flight != null)
+            return false;
+
+        for (job.operations.items) |operation| {
+            if (operation.id == token.operation_id) continue;
+            if (!operation.state.isTerminal()) return false;
+        }
+        return true;
+    }
+
+    /// Completes the archive barrier only after publication registration,
+    /// directory discovery, and every other operation have drained.
+    pub fn completeArchivePublication(self: *Manager, token: WorkToken) bool {
+        if (self.archivePublicationReady(token) != true) return false;
+        const job = self.findJob(token.job_id) orelse return false;
+        const operation = findOperation(job, token.operation_id) orelse return false;
+        transitionOperation(job, operation, .completed);
+        self.recomputeJobState(job);
+        return true;
+    }
+
     /// Builds the source path for one TreeIndex entry from the original
     /// selected root path. The root's display name is not appended twice.
     pub fn sourcePath(
@@ -1335,6 +1388,11 @@ pub const Manager = struct {
         if (job.state != .planning) return error.InvalidJobState;
         if (kind != .archive_extract and kind != .archive_member_extract)
             return error.InvalidOperationKind;
+        for (job.operations.items) |existing| {
+            if (existing.kind == .archive_extract or
+                existing.kind == .archive_member_extract)
+                return error.ArchiveOperationAlreadyRegistered;
+        }
 
         if (!std.fs.path.isAbsolute(request.source_path) or
             request.source_path.len == 0 or

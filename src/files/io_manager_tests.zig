@@ -263,6 +263,96 @@ test "archive operation registration validates kind and member selection" {
     );
 }
 
+test "a job accepts at most one archive operation" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const request = io_manager.ArchiveOperationRequest{
+        .source_path = "/tmp/source.zip",
+        .staging_parent = "/tmp/staging",
+    };
+
+    _ = try manager.addArchiveOperation(job, .archive_extract, request);
+
+    try std.testing.expectError(
+        error.ArchiveOperationAlreadyRegistered,
+        manager.addArchiveOperation(job, .archive_extract, request),
+    );
+    try std.testing.expectError(
+        error.ArchiveOperationAlreadyRegistered,
+        manager.addArchiveOperation(job, .archive_member_extract, .{
+            .source_path = "/tmp/other.zip",
+            .staging_parent = "/tmp/staging",
+            .member_path = "item.txt",
+        }),
+    );
+}
+
+test "archive publication barrier waits for dynamically registered operations" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "payload.bin",
+        .regular_file,
+        .{ .size = 64 },
+        null,
+    );
+    const archive_operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = "/tmp/source.zip",
+            .staging_parent = "/tmp/staging",
+        },
+    );
+    try manager.queueJob(job);
+
+    const archive_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(archive_operation, archive_token.operation_id);
+    try std.testing.expect(manager.completeWork(archive_token, .waiting));
+    try std.testing.expectEqual(
+        io_manager.JobState.waiting,
+        manager.jobState(job).?,
+    );
+
+    const publication_operation = try manager.addEntryOperation(
+        job,
+        root,
+        .copy_file,
+    );
+    try manager.closeArchivePublication(archive_token);
+    try std.testing.expectEqual(
+        @as(?bool, false),
+        manager.archivePublicationReady(archive_token),
+    );
+
+    const publication_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(
+        publication_operation,
+        publication_token.operation_id,
+    );
+    try std.testing.expect(manager.completeWork(publication_token, .completed));
+    try std.testing.expectEqual(
+        @as(?bool, true),
+        manager.archivePublicationReady(archive_token),
+    );
+
+    try std.testing.expect(manager.completeArchivePublication(archive_token));
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, archive_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.JobState.completed,
+        manager.jobState(job).?,
+    );
+    try std.testing.expect(!manager.completeArchivePublication(archive_token));
+}
+
 test "copy progress exposes the storage-flush phase" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
