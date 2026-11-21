@@ -358,12 +358,9 @@ fn initProtocols(server: *Server) CompositorError!void {
     _ = wlr.Viewporter.create(server.wl_server) catch return error.ViewporterCreateFailed;
     _ = wlr.FractionalScaleManagerV1.create(server.wl_server, 1) catch return error.FractionalScaleManagerCreateFailed;
     _ = wlr.SinglePixelBufferManagerV1.create(server.wl_server) catch return error.SinglePixelBufferManagerCreateFailed;
-    // Soft-fail, not a CompositorError: a software renderer (pixman, used by
-    // most headless tests) may not support dmabuf import at all, in which
-    // case this simply advertises zero formats rather than blocking startup.
-    _ = wlr.LinuxDmabufV1.createWithRenderer(server.wl_server, 4, server.renderer) catch |err| {
-        log.warn("init: could not create linux-dmabuf manager, dmabuf clients disabled: {}", .{err});
-    };
+    // linux-dmabuf v4 comes from `initServer` above (wlr_renderer_init_wl_display),
+    // only when the renderer imports dmabufs (not pixman). Creating it here too
+    // advertised a second global, and Mesa's WSI bound both and leaked one.
     // Explicit sync: the proprietary NVIDIA driver has no implicit sync, so
     // without it Xwayland and Vulkan clients flicker or show torn frames.
     // wlr_scene waits on acquire points and signals release points; the

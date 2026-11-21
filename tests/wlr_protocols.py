@@ -2,6 +2,7 @@
 """wlr-output-management, wlr-foreign-toplevel, wlr-screencopy, virtual-pointer
 and ext-session-lock with real clients (wlr-randr, wlrctl, swaylock) where they
 are installed, and tests/wlr_protocols_client.c for the rest."""
+from collections import Counter
 import os
 import select
 from pathlib import Path
@@ -256,6 +257,14 @@ def extra_protocols(tmp):
                           "xdg_activation_v1"):
             assert interface in registry, interface
         assert "wp_drm_lease_device_v1" not in registry, "headless backend must not offer DRM leases"
+        # Every global is advertised once. linux-dmabuf used to be created both
+        # by wlr_renderer_init_wl_display and by setup.zig, and Mesa's WSI bound
+        # both and leaked one. Only per-device globals repeat: one wl_output
+        # per output (two here), and a seat per seat.
+        counts = Counter(line for line in registry.splitlines() if line and line != "done")
+        repeated = {name: n for name, n in counts.items() if n > 1 and name not in ("wl_output", "wl_seat")}
+        assert not repeated, f"globals advertised more than once: {repeated}"
+        assert counts["wl_output"] == 2, counts
         with open(tmp / "extras-client.log", "w") as client_log:
             child = s.spawn(fixture, "extras", stdin=subprocess.PIPE, stderr=client_log)
         try:
