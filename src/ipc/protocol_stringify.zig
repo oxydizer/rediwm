@@ -541,6 +541,12 @@ pub fn stringifyPerformanceStats(res: PerformanceStatsResult, writer: anytype) !
     if (res.glass_reblurs) |reblurs| {
         try writer.print("\"glass_reblurs\":{d},", .{reblurs});
     }
+    if (res.tearing_async_flips) |flips| {
+        try writer.print("\"tearing_async_flips\":{d},", .{flips});
+    }
+    if (res.tearing_refused_flips) |flips| {
+        try writer.print("\"tearing_refused_flips\":{d},", .{flips});
+    }
     try writer.print("\"output_commits\":{d},\"output_failed_commits\":{d},\"fps\":{d:.1},\"frame_time_ms\":{d:.1},\"missed_frames\":{d},\"refresh_hz\":{d:.1},\"titlebar_paints\":{d},\"footer_paints\":{d},\"edge_samples_attempted\":{d},\"edge_samples_succeeded\":{d},\"edge_samples_skipped\":{d},\"edge_sample_ns\":{d},\"panel_paints\":{d},\"panel_allocated_bytes\":{d},\"panel_reused_bytes\":{d},\"icon_cache_hits\":{d},\"icon_cache_misses\":{d},\"icon_decode_ns\":{d},\"icon_decode_count\":{d},\"icon_decoded_bytes\":{d},\"icon_queue_depth_max\":{d},", .{
         res.output_commits,
         res.output_failed_commits,
@@ -869,6 +875,7 @@ pub fn stringifyOutput(out: OutputData, writer: anytype) !void {
     try writer.print(",\"bottom_exclusion\":{d}", .{out.bottom_exclusion});
     try writer.print(",\"scale\":{d},\"refresh_hz\":{d},\"is_focused\":", .{ out.scale, out.refresh_hz });
     try writer.writeAll(if (out.is_focused) "true" else "false");
+    try writer.print(",\"tearing_allowed\":{},\"tearing_active\":{},\"tearing_paused\":{},\"direct_scanout\":{}", .{ out.tearing_allowed, out.tearing_active, out.tearing_paused, out.direct_scanout });
     try writer.writeByte('}');
 }
 

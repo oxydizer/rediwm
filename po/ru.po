@@ -284,6 +284,11 @@ msgstr "Разрешить подключения с этого устройст
 msgid "Allow pairing with this device?"
 msgstr "Разрешить сопряжение с этим устройством?"
 
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+msgid "Allow tearing in games"
+msgstr "Разрешить разрывы изображения в играх"
+
 #: src/files/app_places.zig
 msgid "Already in Places"
 msgstr "Уже есть в «Местах»"
@@ -2729,6 +2734,10 @@ msgstr "Полная ёмкость"
 #: src/control_center/sections/users.zig
 msgid "Full name"
 msgstr "Полное имя"
+
+#: src/control_center/sections/display.zig
+msgid "Fullscreen games with VSync off show new frames at once; the picture may tear"
+msgstr "Полноэкранные игры без VSync показывают кадры сразу; изображение может разрываться"
 
 #: src/taskbar/battery.zig
 msgid "Fully Charged"
@@ -7228,6 +7237,10 @@ msgstr "затемнение неактивных окон"
 #: src/control_center/search_index.zig
 msgid "users login password administrator groups"
 msgstr "пользователи вход пароль администратор группы"
+
+#: src/control_center/search_index.zig
+msgid "vsync latency fullscreen game immediate"
+msgstr "vsync задержка полноэкранный игра немедленно"
 
 #: src/control_center/search_index.zig
 msgid "warmth colour color"

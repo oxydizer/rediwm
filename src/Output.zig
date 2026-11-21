@@ -20,6 +20,7 @@ const output_panels = @import("output/panels.zig");
 const output_wallpaper = @import("output/wallpaper.zig");
 const output_frame = @import("output/frame.zig");
 const output_late = @import("output/late.zig");
+const output_tearing = @import("output/tearing.zig");
 
 pub const wlr_color_transform_init_lut_3x1d = wlr.color.transformInitLut3x1d;
 pub const wlr_color_transform_unref = wlr.color.transformUnref;
@@ -112,8 +113,8 @@ late_animating: bool = false,
 /// callbacks need a frame (`frameCallbacksWanted`).
 callback_idle: ?*wl.EventSource = null,
 callback_frame_seq: u64 = 0,
-tearing_idle: ?*wl.EventSource = null,
-tearing_rejected: bool = false,
+/// Asynchronous page flips for a game window (`output/tearing.zig`).
+tearing: output_tearing.State = .{},
 /// An ext-session-lock client waits for this output to commit a locked frame.
 lock_commit_pending: bool = false,
 /// Hardware cursor state as of the last commit. Atomic DRM applies cursor
@@ -480,9 +481,6 @@ pub const deferFrameDone = output_frame.deferFrameDone;
 pub const handleVblank = output_frame.handleVblank;
 pub const frameCallbacksWanted = output_frame.frameCallbacksWanted;
 pub const sendFrameDone = output_frame.sendFrameDone;
-pub const tearingAllowed = output_frame.tearingAllowed;
-pub const queueTearing = output_frame.queueTearing;
-pub const tearingIdle = output_frame.tearingIdle;
 pub const handleFrame = output_frame.handleFrame;
 pub const runFrame = output_frame.runFrame;
 pub const setDisplayMode = output_frame.setDisplayMode;
@@ -492,6 +490,10 @@ pub const startupVisible = output_frame.startupVisible;
 
 // output/late.zig
 pub const lateFire = output_late.fire;
+
+// output/tearing.zig
+pub const tearingAllowed = output_tearing.allowed;
+pub const queueTearing = output_tearing.queue;
 
 pub const CursorState = struct {
     cursor: ?*wlr.OutputCursor = null,
@@ -521,8 +523,7 @@ pub const CursorState = struct {
 pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     const output: *Output = @fieldParentPtr("destroy", listener);
     output.server.world.overview.cancel(&output.server.world);
-    if (output.tearing_idle) |source| source.remove();
-    output.tearing_idle = null;
+    output_tearing.deinit(output);
     if (output.server.screenshot_selector.output == output) output.server.screenshot_selector.cancel();
     if (output.server.screenshot_mgr) |mgr| mgr.cancelForOutput(output);
     const server = output.server;

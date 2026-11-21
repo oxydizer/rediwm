@@ -284,6 +284,11 @@ msgstr "Autoriser les connexions de cet appareil sans confirmation."
 msgid "Allow pairing with this device?"
 msgstr "Autoriser l'association avec cet appareil ?"
 
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+msgid "Allow tearing in games"
+msgstr "Autoriser le tearing dans les jeux"
+
 #: src/files/app_places.zig
 msgid "Already in Places"
 msgstr "Déjà dans les emplacements"
@@ -2727,6 +2732,10 @@ msgstr "Capacité totale"
 #: src/control_center/sections/users.zig
 msgid "Full name"
 msgstr "Nom complet"
+
+#: src/control_center/sections/display.zig
+msgid "Fullscreen games with VSync off show new frames at once; the picture may tear"
+msgstr "Les jeux en plein écran sans VSync affichent chaque image aussitôt ; l’image peut se déchirer"
 
 #: src/taskbar/battery.zig
 msgid "Fully Charged"
@@ -7225,6 +7234,10 @@ msgstr "inactif assombrissement"
 #: src/control_center/search_index.zig
 msgid "users login password administrator groups"
 msgstr "utilisateurs connexion mot de passe administrateur groupes"
+
+#: src/control_center/search_index.zig
+msgid "vsync latency fullscreen game immediate"
+msgstr "vsync latence plein écran jeu immédiat"
 
 #: src/control_center/search_index.zig
 msgid "warmth colour color"

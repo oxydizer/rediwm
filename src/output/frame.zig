@@ -1,4 +1,4 @@
-//! Output frames: committing, frame scheduling, tearing and presentation.
+//! Output frames: committing, frame scheduling and presentation.
 
 const std = @import("std");
 const Output = @import("../Output.zig");
@@ -11,6 +11,7 @@ const glass = @import("../glass.zig");
 const stats = @import("../ipc/stats.zig");
 const trace = @import("frame_trace.zig");
 const late = @import("late.zig");
+const tearing = @import("tearing.zig");
 const wlr_color_transform_unref = Output.wlr_color_transform_unref;
 const log = std.log.scoped(.output);
 const CursorState = Output.CursorState;
@@ -39,17 +40,18 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
     }
 
     const had_transform = state.committed.color_transform;
-    state.tearing_page_flip = state.committed.buffer and output.tearingAllowed();
+    state.tearing_page_flip = state.committed.buffer and output.tearingAllowed() and tearing.frameCanTear(output, state);
     if (state.tearing_page_flip and !output.wlr_output.testState(state)) {
         state.tearing_page_flip = false;
-        output.tearing_rejected = true;
+        tearing.refused(output);
     }
     var success = output.wlr_output.commitState(state);
     if (!success and state.tearing_page_flip) {
         state.tearing_page_flip = false;
-        output.tearing_rejected = true;
+        tearing.refused(output);
         success = output.wlr_output.commitState(state);
     }
+    if (success) tearing.committed(output, state);
     if (had_transform) {
         if (success) {
             output.color.status = if (output.color.transform != null) .applied else .neutral;
@@ -162,30 +164,6 @@ pub fn sendFrameDone(output: *Output) void {
     }
     var preview_time = timestamp();
     output.server.switcher.frameDone(output, &preview_time);
-}
-
-// A client commit can render before the next vblank when the previous flip is
-// complete. Coalesce commits at idle, after wlroots has updated scene damage.
-pub fn tearingAllowed(output: *Output) bool {
-    const server = output.server;
-    if (!server.config.compositor.allow_tearing or output.tearing_rejected or
-        server.locker != null or server.polkit_dialog != null or server.greeter_mode or
-        output.power_off or !output.wlr_output.enabled) return false;
-    const focused = server.input.seat.keyboard_state.focused_surface orelse return false;
-    const top = @import("../Toplevel.zig").fromSurface(server, focused) orelse return false;
-    if (!top.in_world or top.minimized or top.tab_hidden or !top.isFullscreen() or top.currentOutput() != output) return false;
-    return @import("../extra_protocols.zig").rediwm_protocols_tearing(server.extra_protocols, top.surface());
-}
-
-pub fn queueTearing(output: *Output) void {
-    if (output.tearing_idle != null or !output.tearingAllowed()) return;
-    output.tearing_idle = output.server.wl_server.getEventLoop().addIdle(*Output, tearingIdle, output) catch null;
-}
-
-pub fn tearingIdle(output: *Output) void {
-    output.tearing_idle = null;
-    if (!output.tearingAllowed() or output.wlr_output.frame_pending or output.vblank_armed) return;
-    runFrame(output);
 }
 
 pub fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {

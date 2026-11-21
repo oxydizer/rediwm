@@ -171,6 +171,14 @@ pub const OutputData = struct {
     scale: f32,
     refresh_hz: f32,
     is_focused: bool,
+    /// A game window here asks to tear and `allow_tearing` permits it.
+    tearing_allowed: bool = false,
+    /// The last committed buffer was flipped asynchronously.
+    tearing_active: bool = false,
+    /// Asynchronous flips are paused after a run of driver refusals.
+    tearing_paused: bool = false,
+    /// The last frame scanned a client buffer out directly.
+    direct_scanout: bool = false,
 };
 
 pub const WorkspaceData = struct {

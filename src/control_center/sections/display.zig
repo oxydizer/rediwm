@@ -78,6 +78,8 @@ pub const Section = struct {
     nl_temp_value_buf: [16]u8 = undefined,
     nl_temp_slider: Widget = undefined,
     nl_group_children: [3]Widget = undefined,
+    tearing_label_children: [2]Widget = undefined,
+    tearing_group_children: [2]Widget = undefined,
     /// Shown only on machines with a lid switch.
     has_lid: bool = false,
     initial_lid: ?usize = null,
@@ -188,6 +190,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter, wlr_output: *wlr.Output) v
     };
     out.root = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.top_children };
     buildNightLight(out);
+    buildTearing(out);
     buildLid(out);
     buildArrangement(out, name);
 }
@@ -508,6 +511,31 @@ fn buildNightLight(out: *Section) void {
         temp_header,
         out.nl_temp_slider,
     };
+}
+
+fn buildTearing(out: *Section) void {
+    const t = panel.palette();
+    out.tearing_label_children = .{
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Allow tearing in games"), .font_size = 13, .weight = 600, .color = t.fg } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Fullscreen games with VSync off show new frames at once; the picture may tear"), .font_size = 12, .color = t.dim } } },
+    };
+    out.tearing_group_children = .{
+        .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.tearing_label_children },
+        .{ .name = "allow_tearing", .kind = .{ .toggle = .{ .style = .settings, .on = out.cc.server.config.compositor.allow_tearing, .owner = out, .on_change = &onTearingToggled } } },
+    };
+}
+
+fn onTearingToggled(owner: ?*anyopaque, _: usize, on: bool) void {
+    const out = section(owner);
+    const server = out.cc.server;
+    if (server.config.compositor.allow_tearing == on) return;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "allow_tearing", on) catch |err| {
+        std.log.warn("could not save allow_tearing: {}", .{err});
+        out.tearing_group_children[1].kind.toggle.on = server.config.compositor.allow_tearing;
+        out.tearing_group_children[1].markDirty();
+        return;
+    };
+    server.config.compositor.allow_tearing = on;
 }
 
 fn onNightLightToggled(owner: ?*anyopaque, _: usize, on: bool) void {

@@ -269,6 +269,11 @@ def extra_protocols(tmp):
         assert window["content_type"] == "video" and window["workspace_id"] == 1, window
         rules = s.ipc.request(query="get_window_rules", params={"id": window["id"]})
         assert rules["live"]["opacity"] == 0.75, rules
+        # The focused fullscreen window asks for async presentation: its output
+        # (and only that one) may tear. Headless never flips asynchronously.
+        tearing = lambda: [o["name"] for o in s.ipc.get_outputs() if o["tearing_allowed"]]
+        wait_for(lambda: len(tearing()) == 1, "fullscreen async window did not allow tearing")
+        assert not any(o["tearing_active"] or o["tearing_paused"] for o in s.ipc.get_outputs())
         workspaces = s.ipc.request(query="workspaces")
         assert workspaces == [{"id": 1, "name": "Canvas", "is_focused": True,
                                "is_visible": True, "output": None, "automatic": False,
@@ -277,6 +282,7 @@ def extra_protocols(tmp):
         expect_line(child, "extras-updated")
         wait_for(lambda: s.window("rediwm.protocol-extras")["content_type"] == "game", "content hint did not update")
         assert s.window("rediwm.protocol-extras")["tag"] == "main"
+        wait_for(lambda: not tearing(), "a vsync hint still allowed tearing")
         rules = s.ipc.request(query="get_window_rules", params={"id": window["id"]})
         assert rules["live"]["opacity"] is None, rules
         child.stdin.write("exit\n"); child.stdin.flush()

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
+import tomllib
 
 from PIL import Image, ImageChops
 from hardware_keys import private_audio, wait
@@ -341,6 +342,13 @@ print(f'fixture,backlight,{value},{value}%,100')
                     page("Displays")
                     assert any(w["label"] == "Resolution" for w in widgets())
                     assert not any(w["label"] == "Duplicate" for w in widgets())
+                    # Tearing is off by default; the switch saves and applies it.
+                    assert ui.scroll_into_view("allow_tearing")["on"] is False
+                    click(ui.scroll_into_view("allow_tearing"))
+                    config = tmp / "rediwm-config.toml"
+                    wait(lambda: tomllib.loads(config.read_text()).get("compositor", {}).get("allow_tearing") is True, "allow_tearing saved")
+                    click(ui.scroll_into_view("allow_tearing"))
+                    wait(lambda: tomllib.loads(config.read_text())["compositor"]["allow_tearing"] is False, "allow_tearing cleared")
                     capture("displays")
                     page("Appearance")
                     assert not any(w["role"] == "swatch" or w.get("label") == "Accent colour" for w in widgets())

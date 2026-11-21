@@ -9,6 +9,9 @@ pub const SceneOutput = opaque {
     pub const needsFrame = rediwm_scene_output_needs_frame;
     extern fn rediwm_scene_output_has_pending_damage(output: *const SceneOutput) bool;
     pub const hasPendingDamage = rediwm_scene_output_has_pending_damage;
+    extern fn rediwm_scene_output_direct_scanout(output: *const SceneOutput) bool;
+    /// Whether the last built frame scanned a client buffer out directly.
+    pub const directScanout = rediwm_scene_output_direct_scanout;
     extern fn rediwm_scene_output_damage_whole(output: *SceneOutput) void;
     /// Repaints all of the output and asks for a frame.
     pub const damageWhole = rediwm_scene_output_damage_whole;

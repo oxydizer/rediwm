@@ -88,6 +88,8 @@ void rediwm_scene_output_damage_whole(struct rediwm_scene_output *);
 // Whether anything asks for a frame: the output itself, or damage not yet committed.
 bool rediwm_scene_output_needs_frame(const struct rediwm_scene_output *);
 bool rediwm_scene_output_has_pending_damage(const struct rediwm_scene_output *);
+// Whether the last built frame scanned a client buffer out directly.
+bool rediwm_scene_output_direct_scanout(const struct rediwm_scene_output *);
 
 // Frame timing trace (-Dframe-trace, src/output/frame_trace.zig): when content last asked
 // this output for a frame. A no-op in every other build.

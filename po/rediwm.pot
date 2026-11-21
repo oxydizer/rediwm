@@ -323,6 +323,11 @@ msgstr ""
 msgid "Allow pairing with this device?"
 msgstr ""
 
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+msgid "Allow tearing in games"
+msgstr ""
+
 #: src/files/app_places.zig
 msgid "Already in Places"
 msgstr ""
@@ -3226,6 +3231,10 @@ msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Full name"
+msgstr ""
+
+#: src/control_center/sections/display.zig
+msgid "Fullscreen games with VSync off show new frames at once; the picture may tear"
 msgstr ""
 
 #: src/taskbar/battery.zig
@@ -8549,6 +8558,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "users login password administrator groups"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "vsync latency fullscreen game immediate"
 msgstr ""
 
 #: src/control_center/search_index.zig
