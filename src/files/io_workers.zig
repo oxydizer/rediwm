@@ -250,3 +250,70 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
         }
     };
 }
+
+test "worker pool joins active work and discards accepted results on shutdown" {
+    const TestPool = WorkerPool(u8, u8);
+    const TestContext = struct {
+        pool: ?*TestPool = null,
+        started: std.atomic.Value(bool) = .init(false),
+        executed: usize = 0,
+        discarded: usize = 0,
+    };
+    const callbacks = struct {
+        fn execute(raw_context: ?*anyopaque, task: u8) u8 {
+            const context: *TestContext = @ptrCast(@alignCast(raw_context.?));
+            context.executed += 1;
+
+            if (task == 1) {
+                context.started.store(true, .release);
+                const pool = context.pool.?;
+                pool.lock();
+                _ = c.pthread_cond_broadcast(&pool.condition);
+                pool.unlock();
+                while (true) {
+                    pool.lock();
+                    const stopping = pool.stopping;
+                    pool.unlock();
+                    if (stopping) break;
+                }
+            }
+
+            return task;
+        }
+
+        fn discard(raw_context: ?*anyopaque, _: u8) void {
+            const context: *TestContext = @ptrCast(@alignCast(raw_context.?));
+            context.discarded += 1;
+        }
+    };
+
+    var context: TestContext = .{};
+    const pool = try TestPool.init(
+        std.testing.allocator,
+        1,
+        2,
+        @ptrCast(&context),
+        callbacks.execute,
+        callbacks.discard,
+    );
+    var pool_owned = true;
+    defer if (pool_owned) pool.deinit();
+    context.pool = pool;
+
+    try std.testing.expect(pool.trySubmit(1));
+
+    pool.lock();
+    while (!context.started.load(.acquire)) {
+        _ = c.pthread_cond_wait(&pool.condition, &pool.mutex);
+    }
+    pool.unlock();
+    try std.testing.expect(pool.trySubmit(2));
+
+    // The first task waits for shutdown to begin. The second remains queued.
+    // deinit must join both tasks before discarding their uncollected results.
+    pool.deinit();
+    pool_owned = false;
+
+    try std.testing.expectEqual(@as(usize, 2), context.executed);
+    try std.testing.expectEqual(@as(usize, 2), context.discarded);
+}
