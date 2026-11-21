@@ -310,7 +310,7 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     bool ok = scanout;
     struct wlr_buffer *buffer = NULL;
     if (scanout) goto done;
-    if (!wlr_output_configure_primary_swapchain(output, state, &output->swapchain)) goto done;
+    if (!scene_output_configure_swapchain(out, state)) goto done;
     buffer = wlr_swapchain_acquire(output->swapchain);
     if (!buffer) goto done;
     struct wlr_render_pass *pass = rediwm_scene_pass_begin(r->pass, buffer,

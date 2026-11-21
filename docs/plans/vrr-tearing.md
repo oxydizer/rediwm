@@ -283,3 +283,36 @@ with a HEAD worktree.
   focused fullscreen window.
 * Not verified on DRM yet: that needs P0's run on the VT (does i915 take the
   composited buffer asynchronously, how often the cursor check fires).
+
+## P0 findings (2026-11-21, eDP-1 on i915, kernel 7.2)
+
+* A fullscreen `vkcube --present_mode 0 --gpu_number 0` (Mesa) is recognised
+  and sends the async hint, but every asynchronous flip was refused (90
+  refused, 0 taken). Cause: the primary plane's `IN_FORMATS_ASYNC` allows
+  XR24/AR24 only as LINEAR, X_TILED, Y_TILED and Y_TILED_GEN12_RC_CCS, while
+  GBM picked Y_TILED_GEN12_RC_CCS_CC from `IN_FORMATS` for our swapchain.
+  wlroots 0.20 does not read `IN_FORMATS_ASYNC`.
+* Fix (`scene_output_async.c`): while `tearing.wanted`, the output swapchain
+  is rebuilt from its own modifiers intersected with the plane's
+  `IN_FORMATS_ASYNC` (read with libdrm on wlroots' non-master fd), and
+  rebuilt with the defaults when no game wants to tear. The session log says
+  "tearing buffers use N of M modifiers (asynchronous flip test passed)".
+* Windowed vkcube on NVIDIA (PRIME) was never a game window: fullscreen it to
+  test. Whether NVIDIA's Vulkan WSI sends the async hint is still unknown.
+* Retest with the async swapchain (buffers now Y_TILED_GEN12_RC_CCS): still
+  every flip refused. Kernel debug (`drm.debug=0x14`) names the remaining
+  cause: `intel_atomic_check: [PLANE:cursor A] async flip not supported`.
+  i915 refuses an atomic async commit that contains any non-primary plane,
+  and wlroots 0.20.2 (`backend/drm/atomic.c`, `atomic_connector_add`) writes
+  the cursor plane's properties into every commit, visible or disabled
+  (`plane_disable` still sets FB_ID/CRTC_ID). A software cursor (KWin's
+  workaround) therefore does not help here. The `No prop can be changed
+  during async flip` lines for FB_ID, FB_DAMAGE_CLIPS and IN_FENCE_FD are
+  informational: the core allows those three on the primary plane.
+  Upstream: i915 issue 13834; a 2025 i915 patch would allow no-op planes.
+* Decision (2026-11-21): keep the async swapchain, and stop tearing on an
+  output whose driver refuses the first whole run of 30 flips without ever
+  taking one (`Backoff.gaveUp`): attempts stop for the session, the tearing
+  buffers are released and IPC reports `tearing_paused`. No driver list, so a
+  fixed kernel needs no change here. Revisit with a DRM run once the i915 fix
+  lands (or wlroots stops writing an unchanged cursor plane in async commits).

@@ -37,6 +37,11 @@ struct rediwm_scene_output {
   // What was damaged and not yet committed with a buffer.
   pixman_region32_t pending_commit_damage;
   bool prev_scanout;
+  // Tearing (scene_output_async.c): a game wants asynchronous flips, so the
+  // swapchain should use only modifiers the primary plane flips asynchronously.
+  bool tearing_buffers;
+  bool async_swapchain; // output->swapchain is that restricted swapchain
+  bool async_unavailable; // tried while wanted and failed; retried once unwanted
   // Explicit sync: the pass signals `in` when it has drawn, the scanout signals `out`.
   struct wlr_drm_syncobj_timeline *in_timeline, *out_timeline;
   uint64_t in_point, out_point;
@@ -90,6 +95,11 @@ bool rediwm_scene_output_needs_frame(const struct rediwm_scene_output *);
 bool rediwm_scene_output_has_pending_damage(const struct rediwm_scene_output *);
 // Whether the last built frame scanned a client buffer out directly.
 bool rediwm_scene_output_direct_scanout(const struct rediwm_scene_output *);
+// Whether the next frames should be drawn into buffers the display can flip
+// asynchronously (a game on this output asks to tear).
+void rediwm_scene_output_set_tearing_buffers(struct rediwm_scene_output *, bool);
+// Whether the current swapchain was made for asynchronous flips.
+bool rediwm_scene_output_async_swapchain(const struct rediwm_scene_output *);
 
 // Frame timing trace (-Dframe-trace, src/output/frame_trace.zig): when content last asked
 // this output for a frame. A no-op in every other build.

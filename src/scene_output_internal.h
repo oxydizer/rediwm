@@ -131,6 +131,9 @@ bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *tr
 void scene_output_clear_entries(struct rediwm_output_renderer *r);
 bool scene_output_decide_effects(struct rediwm_output_renderer *r, struct output_state *os,
         struct rediwm_scene_output *out, const struct output_view *v, pixman_region32_t *changed);
+// The primary swapchain, limited to asynchronous-flip modifiers while a game
+// tears (scene_output_async.c).
+bool scene_output_configure_swapchain(struct rediwm_scene_output *out, const struct wlr_output_state *state);
 bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e, struct rediwm_scene_output *out,
     struct wlr_render_pass *pass, const struct output_view *v, pixman_region32_t *damage, bool backdrop);
 

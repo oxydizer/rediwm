@@ -34,9 +34,22 @@ pub fn wanted(output: *Output) bool {
 /// Whether this output tries asynchronous flips now: wanted, and not paused
 /// after a run of refusals.
 pub fn allowed(output: *Output) bool {
-    if (!wanted(output)) return false;
     const backoff = &output.tearing.backoff;
+    if (backoff.gaveUp() or !wanted(output)) return false;
     return backoff.paused_until_ns == 0 or !backoff.paused(stats.nowNs());
+}
+
+/// Whether the output should draw into buffers it can flip asynchronously
+/// (`scene_output_async.c`): a game wants to tear and the driver has not
+/// shown that it cannot.
+pub fn buffersWanted(output: *Output) bool {
+    return !output.tearing.backoff.gaveUp() and wanted(output);
+}
+
+/// Whether tearing is paused now, or given up for the session.
+pub fn paused(output: *Output) bool {
+    const backoff = &output.tearing.backoff;
+    return backoff.gaveUp() or (backoff.paused_until_ns != 0 and backoff.paused(stats.nowNs()));
 }
 
 /// Whether this frame may flip asynchronously at all. Atomic async flips may
@@ -54,6 +67,12 @@ pub fn frameCanTear(output: *Output, state: *const wlr.Output.State) bool {
 pub fn refused(output: *Output) void {
     stats.global_stats.tearing_refused_flips +%= 1;
     const pause = output.tearing.backoff.failed(stats.nowNs()) orelse return;
+    if (output.tearing.backoff.gaveUp()) {
+        log.info("output '{s}': {d} asynchronous page flips refused and none ever taken; tearing disabled on this output until restart", .{
+            output.wlr_output.name, tearing_policy.tuning.failures_before_pause,
+        });
+        return;
+    }
     // Once per run: later pauses of the same run are only debug noise.
     if (pause == tearing_policy.tuning.first_pause_ns) {
         log.info("output '{s}': {d} asynchronous page flips refused in a row; tearing paused, retrying with backoff", .{

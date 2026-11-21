@@ -311,6 +311,7 @@ pub fn runFrame(output: *Output) void {
         var committed = true;
         if (should_commit) {
             if (output.server.capture_mgr) |cm| cm.guardScreencopy(output.wlr_output);
+            scene_output.setTearingBuffers(tearing.buffersWanted(output));
             const built_ok = output.server.buildOutputState(scene_output, &state);
             timing.markBuilt();
             if (built_ok) {

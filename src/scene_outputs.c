@@ -87,6 +87,16 @@ bool rediwm_scene_output_direct_scanout(const struct rediwm_scene_output *out) {
   return out->prev_scanout;
 }
 
+void rediwm_scene_output_set_tearing_buffers(struct rediwm_scene_output *out, bool wanted) {
+  if (out->tearing_buffers == wanted) return;
+  out->tearing_buffers = wanted;
+  if (!wanted) out->async_unavailable = false;
+}
+
+bool rediwm_scene_output_async_swapchain(const struct rediwm_scene_output *out) {
+  return out->async_swapchain;
+}
+
 static void output_commit(struct wl_listener *listener, void *data) {
   struct rediwm_scene_output *out = wl_container_of(listener, out, output_commit);
   struct wlr_output_event_commit *event = data;

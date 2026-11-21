@@ -10,6 +10,11 @@
 //! stop for a while, since each one costs an extra test commit, and resume
 //! by themselves with a growing pause. No timer: the next client commit after
 //! the pause tries again.
+//!
+//! A driver that refuses the first whole run without ever taking one flip
+//! cannot tear here at all (i915 refuses any atomic async commit that carries
+//! the cursor plane, which wlroots 0.20 always writes): attempts stop for the
+//! session (`gaveUp`). A fixed kernel takes the first run and never gives up.
 
 const std = @import("std");
 
@@ -27,6 +32,10 @@ pub const Backoff = struct {
     /// Zero when not paused.
     paused_until_ns: u64 = 0,
     next_pause_ns: u64 = tuning.first_pause_ns,
+    /// An asynchronous flip went through at least once this session.
+    ever_succeeded: bool = false,
+    /// A run of refusals paused attempts at least once.
+    ever_paused: bool = false,
 
     /// Whether attempts are paused at `now`. Ending a pause clears it, so
     /// callers can skip the clock read while `paused_until_ns` is zero.
@@ -39,6 +48,7 @@ pub const Backoff = struct {
 
     /// An asynchronous flip went through: start over.
     pub fn succeeded(self: *Backoff) void {
+        self.ever_succeeded = true;
         self.failures = 0;
         self.next_pause_ns = tuning.first_pause_ns;
     }
@@ -49,10 +59,16 @@ pub const Backoff = struct {
         self.failures += 1;
         if (self.failures < tuning.failures_before_pause) return null;
         self.failures = 0;
+        self.ever_paused = true;
         const pause = self.next_pause_ns;
         self.paused_until_ns = now_ns + pause;
         self.next_pause_ns = @min(pause * 2, tuning.max_pause_ns);
         return pause;
+    }
+
+    /// The driver refused a whole run before taking any flip: it cannot tear.
+    pub fn gaveUp(self: *const Backoff) bool {
+        return self.ever_paused and !self.ever_succeeded;
     }
 };
 
@@ -65,8 +81,23 @@ test "isolated refusals never pause" {
     }
 }
 
+test "a driver that never takes a flip gives up after the first run" {
+    var b: Backoff = .{};
+    for (0..tuning.failures_before_pause - 1) |_| _ = b.failed(0);
+    try std.testing.expect(!b.gaveUp());
+    _ = b.failed(0);
+    try std.testing.expect(b.gaveUp());
+
+    // One success before the first pause: later runs only back off.
+    var ok: Backoff = .{};
+    ok.succeeded();
+    for (0..tuning.failures_before_pause * 3) |_| _ = ok.failed(0);
+    try std.testing.expect(!ok.gaveUp());
+}
+
 test "a run of refusals pauses, resumes and backs off" {
     var b: Backoff = .{};
+    b.succeeded();
     var now: u64 = 1000;
     for (0..tuning.failures_before_pause - 1) |_| try std.testing.expectEqual(null, b.failed(now));
     try std.testing.expectEqual(@as(?u64, tuning.first_pause_ns), b.failed(now));

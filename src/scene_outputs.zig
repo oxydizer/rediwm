@@ -12,6 +12,12 @@ pub const SceneOutput = opaque {
     extern fn rediwm_scene_output_direct_scanout(output: *const SceneOutput) bool;
     /// Whether the last built frame scanned a client buffer out directly.
     pub const directScanout = rediwm_scene_output_direct_scanout;
+    extern fn rediwm_scene_output_set_tearing_buffers(output: *SceneOutput, wanted: bool) void;
+    /// Draw the next frames into buffers the display can flip asynchronously.
+    pub const setTearingBuffers = rediwm_scene_output_set_tearing_buffers;
+    extern fn rediwm_scene_output_async_swapchain(output: *const SceneOutput) bool;
+    /// Whether the current swapchain was made for asynchronous flips.
+    pub const asyncSwapchain = rediwm_scene_output_async_swapchain;
     extern fn rediwm_scene_output_damage_whole(output: *SceneOutput) void;
     /// Repaints all of the output and asks for a frame.
     pub const damageWhole = rediwm_scene_output_damage_whole;

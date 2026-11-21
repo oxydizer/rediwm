@@ -198,7 +198,7 @@ pub fn makeOutputData(server: *Server, output: *Output) protocol.OutputData {
         .is_focused = is_focused,
         .tearing_allowed = output_tearing.wanted(output),
         .tearing_active = output.tearing.active,
-        .tearing_paused = output.tearing.backoff.paused_until_ns != 0 and output.tearing.backoff.paused(stats.nowNs()),
+        .tearing_paused = output_tearing.paused(output),
         .direct_scanout = if (server.scene_outputs.get(output.wlr_output)) |scene_output| scene_output.directScanout() else false,
     };
 }
