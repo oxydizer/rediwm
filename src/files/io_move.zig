@@ -10,6 +10,7 @@ const executor = @import("io_executor.zig");
 const platform_fs = @import("platform").fs;
 
 const collision_tag: u8 = 1;
+const cross_device_tag: u8 = 3;
 
 fn allocZ(allocator: Allocator, value: []const u8) ![:0]u8 {
     const result = try allocator.allocSentinel(u8, value.len, 0);
@@ -79,8 +80,13 @@ fn makeCollisionResult(allocator: Allocator) ?executor.OwnedPayload {
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
+fn makeCrossDeviceResult(allocator: Allocator) ?executor.OwnedPayload {
+    const bytes = allocator.dupe(u8, &.{cross_device_tag}) catch return null;
+    return .{ .allocator = allocator, .bytes = bytes };
+}
+
 /// Rename one regular file or symlink without replacing an existing entry.
-/// Cross-device moves are deliberately left to the legacy transfer path.
+/// Cross-device moves are handed back to the Manager for copy-and-detach.
 pub fn execute(
     allocator: Allocator,
     item_arg: executor.WorkItem,
@@ -103,6 +109,11 @@ pub fn execute(
     platform_fs.renameNoReplace(paths.source, paths.destination) catch |err| {
         if (err == error.PathAlreadyExists) {
             const result = makeCollisionResult(allocator) orelse
+                return completion(item, .failed, null);
+            return completion(item, .waiting, result);
+        }
+        if (err == error.CrossDevice) {
+            const result = makeCrossDeviceResult(allocator) orelse
                 return completion(item, .failed, null);
             return completion(item, .waiting, result);
         }

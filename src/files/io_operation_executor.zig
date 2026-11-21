@@ -227,10 +227,16 @@ fn complete(
     result: ?io_executor.OwnedPayload,
 ) void {
     const context: *Context = @ptrCast(@alignCast(raw_context.?));
-    if (outcome == .waiting and isCollisionResult(result)) {
-        registerCollision(context, token) catch {
-            context.manager.failWaiting(token.job_id, token.operation_id) catch {};
-        };
+    if (outcome == .waiting) {
+        if (operation_kind == .move_entry and isMoveFallbackResult(result)) {
+            _ = context.manager.fallbackMoveToCopy(token) catch {
+                context.manager.failWaiting(token.job_id, token.operation_id) catch {};
+            };
+        } else if (isCollisionResult(result)) {
+            registerCollision(context, token) catch {
+                context.manager.failWaiting(token.job_id, token.operation_id) catch {};
+            };
+        }
     }
     if (operation_kind) |kind| {
         switch (kind) {
@@ -244,6 +250,12 @@ fn complete(
     } else {
         deinitOptional(result);
     }
+}
+
+fn isMoveFallbackResult(result: ?io_executor.OwnedPayload) bool {
+    const payload = result orelse return false;
+    const bytes = payload.slice();
+    return bytes.len == 1 and bytes[0] == 3;
 }
 
 fn isCollisionResult(result: ?io_executor.OwnedPayload) bool {
