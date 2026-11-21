@@ -1,10 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_tree = @import("io_tree.zig");
 const io_discovery = @import("io_discovery.zig");
 const io_discovery_executor = @import("io_discovery_executor.zig");
 const operation_executor = @import("io_operation_executor.zig");
+const platform_fs = @import("platform").fs;
 
 fn allocZ(allocator: std.mem.Allocator, value: []const u8) ![:0]u8 {
     const result = try allocator.allocSentinel(u8, value.len, 0);
@@ -13,8 +15,15 @@ fn allocZ(allocator: std.mem.Allocator, value: []const u8) ![:0]u8 {
 }
 
 fn makeTempDir(buffer: []u8) ![]const u8 {
-    const template = "/tmp/rediwm_io_runtime_XXXXXX\x00";
-    @memcpy(buffer[0..template.len], template);
+    return makeTempDirAt(buffer, "/tmp");
+}
+
+fn makeTempDirAt(buffer: []u8, parent: []const u8) ![]const u8 {
+    _ = try std.fmt.bufPrint(
+        buffer,
+        "{s}/rediwm_io_runtime_XXXXXX\x00",
+        .{parent},
+    );
     const result = c.mkdtemp(@ptrCast(buffer.ptr)) orelse return error.MkdtempFailed;
     return std.mem.span(@as([*:0]const u8, @ptrCast(result)));
 }
@@ -738,6 +747,108 @@ test "Manager Runtime moves regular files and symlinks with native rename" {
     const moved_target = try readLink(allocator, destination_link);
     defer allocator.free(moved_target);
     try std.testing.expectEqualStrings("../literal-target", moved_target);
+}
+
+test "Manager Runtime falls back to copy-and-detach after a real EXDEV rename" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var source_buffer: [256]u8 = undefined;
+    const source_dir = try makeTempDir(&source_buffer);
+    defer cleanup(source_dir, true);
+
+    if (platform_fs.stat("/dev/shm") == null) return error.SkipZigTest;
+    var destination_buffer: [256]u8 = undefined;
+    const destination_dir = try makeTempDirAt(&destination_buffer, "/dev/shm");
+    defer cleanup(destination_dir, true);
+
+    const source_dir_z = try allocZ(allocator, source_dir);
+    defer allocator.free(source_dir_z);
+    const destination_dir_z = try allocZ(allocator, destination_dir);
+    defer allocator.free(destination_dir_z);
+
+    const source_info = platform_fs.stat(source_dir_z.ptr) orelse
+        return error.SourceDirectoryStatFailed;
+    const destination_info = platform_fs.stat(destination_dir_z.ptr) orelse
+        return error.DestinationDirectoryStatFailed;
+    if (source_info.dev == destination_info.dev) return error.SkipZigTest;
+
+    const source_file = try join(allocator, source_dir, "payload.bin");
+    defer allocator.free(source_file);
+    const source_link = try join(allocator, source_dir, "shortcut");
+    defer allocator.free(source_link);
+    const destination_file = try join(allocator, destination_dir, "payload.bin");
+    defer allocator.free(destination_file);
+    const destination_link = try join(allocator, destination_dir, "shortcut");
+    defer allocator.free(destination_link);
+    defer {
+        cleanup(destination_link, false);
+        cleanup(destination_file, false);
+        cleanup(source_link, false);
+        cleanup(source_file, false);
+    }
+
+    try writeFile(source_file, "real EXDEV fallback payload");
+    try makeSymlink("../literal-target", source_link);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const file_root = try manager.addTreeRoot(
+        job,
+        "payload.bin",
+        .regular_file,
+        .{},
+        null,
+    );
+    const link_root = try manager.addTreeRoot(
+        job,
+        "shortcut",
+        .symlink,
+        .{},
+        "../literal-target",
+    );
+    try manager.setRootSourcePath(job, file_root, source_file);
+    try manager.setRootSourcePath(job, link_root, source_link);
+    try manager.setDestinationDirectory(job, destination_dir);
+    const file_operation = try manager.addEntryOperation(job, file_root, .move_entry);
+    const link_operation = try manager.addEntryOperation(job, link_root, .move_entry);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+
+    while (!manager.jobState(job).?.isTerminal()) {
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, file_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, link_operation).?,
+    );
+
+    const source_file_z = try allocZ(allocator, source_file);
+    defer allocator.free(source_file_z);
+    const source_link_z = try allocZ(allocator, source_link);
+    defer allocator.free(source_link_z);
+    var source_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(source_file_z, &source_stat) != 0);
+    try std.testing.expect(c.lstat(source_link_z, &source_stat) != 0);
+
+    const copied_contents = try readFile(allocator, destination_file);
+    defer allocator.free(copied_contents);
+    try std.testing.expectEqualStrings("real EXDEV fallback payload", copied_contents);
+
+    const copied_target = try readLink(allocator, destination_link);
+    defer allocator.free(copied_target);
+    try std.testing.expectEqualStrings("../literal-target", copied_target);
 }
 
 test "Manager Runtime waits on move destination collisions without changing either entry" {
