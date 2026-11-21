@@ -289,6 +289,239 @@ test "a job accepts at most one archive operation" {
     );
 }
 
+test "archive operations reject jobs already configured for incremental moves" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        .{ .device_id = 1 },
+        null,
+    );
+    try manager.setRootSourcePath(job, root, "/tmp/source");
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.setDestinationDeviceId(job, 1);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    _ = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.enableDiscoveredEntryMoves(job);
+
+    try std.testing.expectError(
+        error.DiscoveryOperationModeAlreadySet,
+        manager.addArchiveOperation(
+            job,
+            .archive_extract,
+            .{
+                .source_path = "/tmp/source.zip",
+                .staging_parent = "/tmp/staging",
+            },
+        ),
+    );
+}
+
+test "archive publication roots register multiple owned roots and schedule discovery" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const archive_operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = "/tmp/source.zip",
+            .staging_parent = "/tmp/staging",
+        },
+    );
+
+    // Archive jobs can establish their destination before extraction
+    // reveals the publication roots.
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.queueJob(job);
+
+    const archive_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(archive_operation, archive_token.operation_id);
+    try std.testing.expect(manager.completeWork(archive_token, .waiting));
+
+    const directory_source = try allocator.dupe(u8, "/tmp/staging/folder");
+    defer allocator.free(directory_source);
+    const directory_root = try manager.addArchivePublicationRoot(
+        archive_token,
+        .{
+            .name = "folder",
+            .source_path = directory_source,
+            .kind = .directory,
+        },
+    );
+    @memset(directory_source, 'x');
+
+    const file_source = try allocator.dupe(u8, "/tmp/staging/readme.txt");
+    defer allocator.free(file_source);
+    const file_root = try manager.addArchivePublicationRoot(
+        archive_token,
+        .{
+            .name = "readme.txt",
+            .source_path = file_source,
+            .kind = .regular_file,
+            .metadata = .{ .size = 42 },
+        },
+    );
+    @memset(file_source, 'y');
+
+    const tree = manager.treeIndex(job).?;
+    try std.testing.expectEqual(@as(usize, 2), tree.roots().len);
+    try std.testing.expectEqualStrings(
+        "folder",
+        tree.getConst(directory_root).?.name,
+    );
+    try std.testing.expectEqual(
+        io_tree.DiscoveryState.queued,
+        tree.getConst(directory_root).?.discovery,
+    );
+    try std.testing.expectEqualStrings(
+        "readme.txt",
+        tree.getConst(file_root).?.name,
+    );
+
+    try std.testing.expectEqualStrings(
+        "/tmp/staging/folder",
+        manager.discoveryRootPath(job, directory_root).?,
+    );
+    const file_path = try manager.sourcePath(allocator, job, file_root);
+    defer allocator.free(file_path);
+    try std.testing.expectEqualStrings("/tmp/staging/readme.txt", file_path);
+
+    const directory_operation = manager.dispatchNext().?;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(directory_operation).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(directory_operation, .completed));
+
+    const file_operation = manager.dispatchNext().?;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.copy_file,
+        manager.operationDetails(file_operation).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(file_operation, .completed));
+
+    const discovery = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(directory_root, discovery.entry_id);
+
+    var batch = try makeDiscoveryBatch(
+        allocator,
+        &.{
+            .{
+                .name = "nested.txt",
+                .kind = .regular_file,
+                .device_id = 7,
+            },
+        },
+        true,
+    );
+    var batch_owned = true;
+    defer if (batch_owned) batch.deinit();
+
+    const discovery_completed = try manager.completeDiscovery(discovery, &batch);
+    if (discovery_completed) batch_owned = false;
+    try std.testing.expect(discovery_completed);
+    const discovered_tree = manager.treeIndex(job).?;
+    const child_id = discovered_tree.getConst(directory_root).?.children.items[0];
+    try std.testing.expectEqualStrings(
+        "nested.txt",
+        discovered_tree.getConst(child_id).?.name,
+    );
+
+    const child_operation = manager.dispatchNext().?;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.copy_file,
+        manager.operationDetails(child_operation).?.kind,
+    );
+    try std.testing.expectEqual(child_id, manager.operationDetails(child_operation).?.entry_id);
+    try std.testing.expect(manager.completeWork(child_operation, .completed));
+}
+
+test "archive publication roots reject stale and closed barriers" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const archive_operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = "/tmp/source.zip",
+            .staging_parent = "/tmp/staging",
+        },
+    );
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(archive_operation, token.operation_id);
+    try std.testing.expect(manager.completeWork(token, .waiting));
+
+    var stale_token = token;
+    stale_token.generation += 1;
+    try std.testing.expectError(
+        error.StaleWorkToken,
+        manager.addArchivePublicationRoot(stale_token, .{
+            .name = "payload.bin",
+            .source_path = "/tmp/staging/payload.bin",
+            .kind = .regular_file,
+        }),
+    );
+
+    try manager.closeArchivePublication(token);
+    try std.testing.expectError(
+        error.ArchivePublicationAlreadyClosed,
+        manager.addArchivePublicationRoot(token, .{
+            .name = "payload.bin",
+            .source_path = "/tmp/staging/payload.bin",
+            .kind = .regular_file,
+        }),
+    );
+}
+
+test "archive publication roots validate source paths and entry kinds" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    _ = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = "/tmp/source.zip",
+            .staging_parent = "/tmp/staging",
+        },
+    );
+    try manager.setDestinationDirectory(job, "/tmp/destination");
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expect(manager.completeWork(token, .waiting));
+
+    try std.testing.expectError(
+        error.InvalidSourceRootPath,
+        manager.addArchivePublicationRoot(token, .{
+            .name = "payload.bin",
+            .source_path = "relative/payload.bin",
+            .kind = .regular_file,
+        }),
+    );
+    try std.testing.expectError(
+        error.UnsupportedEntryKind,
+        manager.addArchivePublicationRoot(token, .{
+            .name = "special",
+            .source_path = "/tmp/staging/special",
+            .kind = .other,
+        }),
+    );
+}
+
 test "archive publication barrier waits for dynamically registered operations" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
