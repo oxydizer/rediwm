@@ -245,6 +245,18 @@ fn resolveLink(mem: Allocator, links: *const Links, path: []const u8, resolved: 
 /// Destination must be a private, newly created staging directory. Publication
 /// into the user's folder is handled by JobRunner's no-overwrite transfer path.
 pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member: ?[]const u8, cancel: *const Cancel) !void {
+    return extractSelected(mem, path, destination, null, member, cancel);
+}
+
+/// Extract selected regular-file members into a private staging directory.
+/// Member paths remain relative to the archive root. Explicit directory
+/// selections and links are rejected; parent directories are created as needed.
+pub fn extractMembers(mem: Allocator, path: []const u8, destination: []const u8, members: []const []const u8, cancel: *const Cancel) !void {
+    if (members.len == 0) return error.MemberNotFound;
+    return extractSelected(mem, path, destination, members, null, cancel);
+}
+
+fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, members: ?[]const []const u8, member: ?[]const u8, cancel: *const Cancel) !void {
     const reader = try Reader.open(mem, path, cancel);
     defer reader.close();
     const zdest = try mem.dupeSentinel(u8, destination, 0);
@@ -255,6 +267,22 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
     var arena = std.heap.ArenaAllocator.init(mem);
     defer arena.deinit();
     const alloc = arena.allocator();
+    const normalized_members = if (members) |selected| blk: {
+        const normalized = try alloc.alloc([]const u8, selected.len);
+        for (selected, 0..) |raw, i| {
+            normalized[i] = try normalize(alloc, raw);
+            if (normalized[i].len == 0) return error.UnsafeArchivePath;
+            for (normalized[0..i]) |previous| {
+                if (std.mem.eql(u8, normalized[i], previous)) return error.InvalidArchive;
+            }
+        }
+        break :blk normalized;
+    } else null;
+    const selected_found = if (members != null) blk: {
+        const found = try alloc.alloc(bool, normalized_members.?.len);
+        @memset(found, false);
+        break :blk found;
+    } else null;
     var links: Links = .empty;
     var link_bytes: usize = 0;
     var found = false;
@@ -267,7 +295,19 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
             continue;
         }
         if (member) |wanted| if (!std.mem.eql(u8, name, wanted)) continue;
+        const selected_index = if (normalized_members) |selected| blk: {
+            var match: ?usize = null;
+            for (selected, 0..) |wanted, i| {
+                if (std.mem.eql(u8, name, wanted)) {
+                    match = i;
+                    break;
+                }
+            }
+            break :blk match;
+        } else null;
+        if (members != null and selected_index == null) continue;
         const kind = a.archive_entry_filetype(entry);
+        if (members != null and kind != c.S_IFREG) return error.UnsupportedArchiveEntry;
         if (kind == c.S_IFLNK and a.archive_entry_hardlink(entry) == null and member == null) {
             const target = std.mem.span(a.archive_entry_symlink(entry) orelse return error.InvalidArchive);
             link_bytes += name.len + target.len;
@@ -305,9 +345,15 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
         // Keep ordinary executable bits, never set-id or archive ownership.
         if (member == null) _ = c.fchmod(fd, @intCast(@as(c_uint, @intCast(a.archive_entry_perm(entry) & 0o777)) | 0o600));
         found = true;
+        if (selected_index) |i| selected_found.?[i] = true;
         if (member != null) break;
     }
     if (member != null and !found) return error.MemberNotFound;
+    if (selected_found) |selected| {
+        for (selected) |was_found| {
+            if (!was_found) return error.MemberNotFound;
+        }
+    }
     // Finish all file writes before installing links. Never traverse a link to
     // create archive content, and validate the complete graph before publication.
     var resolved: std.ArrayList(u8) = .empty;

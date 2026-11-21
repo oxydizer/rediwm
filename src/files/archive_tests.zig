@@ -222,3 +222,68 @@ test "archive index, staged extraction and member reads preserve destination bou
         try std.testing.expectEqualStrings("payload", try readTestFile(renamed, &content));
     }
 }
+
+test "selected archive members extract with relative paths and reject invalid selections" {
+    const archive = @import("archive.zig");
+    const mem = std.testing.allocator;
+    for ([_][]const u8{ ".zip", ".tar.gz" }) |extension| {
+        var buf: [256]u8 = undefined;
+        const root = try makeTestDir(&buf);
+        defer ops_mod.deleteRecursive(mem, root) catch {};
+        const source = try std.fmt.allocPrint(mem, "{s}/selected{s}", .{ root, extension });
+        defer mem.free(source);
+        try writeArchiveFixture(source, &.{ "nested/", "nested/one.txt", "two.txt" });
+
+        var cancel: archive.Cancel = .init(false);
+        const stage = try archive.temporary(mem, root);
+        defer mem.free(stage);
+        try archive.extractMembers(mem, source, stage, &.{ "nested/one.txt", "two.txt" }, &cancel);
+
+        var content: [32]u8 = undefined;
+        const one = try std.fmt.allocPrint(mem, "{s}/nested/one.txt", .{stage});
+        defer mem.free(one);
+        try std.testing.expectEqualStrings("payload", try readTestFile(one, &content));
+        const two = try std.fmt.allocPrint(mem, "{s}/two.txt", .{stage});
+        defer mem.free(two);
+        try std.testing.expectEqualStrings("payload", try readTestFile(two, &content));
+
+        const duplicate_stage = try archive.temporary(mem, root);
+        defer mem.free(duplicate_stage);
+        try std.testing.expectError(
+            error.InvalidArchive,
+            archive.extractMembers(mem, source, duplicate_stage, &.{ "two.txt", "./two.txt" }, &cancel),
+        );
+
+        const directory_stage = try archive.temporary(mem, root);
+        defer mem.free(directory_stage);
+        try std.testing.expectError(
+            error.UnsupportedArchiveEntry,
+            archive.extractMembers(mem, source, directory_stage, &.{"nested"}, &cancel),
+        );
+
+        const missing_stage = try archive.temporary(mem, root);
+        defer mem.free(missing_stage);
+        try std.testing.expectError(
+            error.MemberNotFound,
+            archive.extractMembers(mem, source, missing_stage, &.{"missing.txt"}, &cancel),
+        );
+
+        const empty_stage = try archive.temporary(mem, root);
+        defer mem.free(empty_stage);
+        try std.testing.expectError(
+            error.MemberNotFound,
+            archive.extractMembers(mem, source, empty_stage, &.{}, &cancel),
+        );
+
+        try writeArchiveFixtureLinks(source, &.{"regular.txt"}, &.{.{
+            .name = "link.txt",
+            .target = "regular.txt",
+        }});
+        const link_stage = try archive.temporary(mem, root);
+        defer mem.free(link_stage);
+        try std.testing.expectError(
+            error.UnsupportedArchiveEntry,
+            archive.extractMembers(mem, source, link_stage, &.{"link.txt"}, &cancel),
+        );
+    }
+}
