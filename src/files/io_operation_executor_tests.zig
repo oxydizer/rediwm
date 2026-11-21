@@ -160,6 +160,22 @@ fn writeArchiveFixture(path: []const u8) !void {
         @as(isize, 7),
         api.archive_write_data(writer, "payload", 7),
     );
+    const second_entry = api.archive_entry_new() orelse return error.OutOfMemory;
+    defer api.archive_entry_free(second_entry);
+    api.archive_entry_set_pathname(second_entry, "other.txt");
+    api.archive_entry_set_filetype(second_entry, c.S_IFREG);
+    api.archive_entry_set_perm(second_entry, 0o644);
+    api.archive_entry_set_size(second_entry, 6);
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_header(writer, second_entry));
+    try std.testing.expectEqual(@as(isize, 6), api.archive_write_data(writer, "second", 6));
+    const omitted_entry = api.archive_entry_new() orelse return error.OutOfMemory;
+    defer api.archive_entry_free(omitted_entry);
+    api.archive_entry_set_pathname(omitted_entry, "unselected.txt");
+    api.archive_entry_set_filetype(omitted_entry, c.S_IFREG);
+    api.archive_entry_set_perm(omitted_entry, 0o644);
+    api.archive_entry_set_size(omitted_entry, 4);
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_header(writer, omitted_entry));
+    try std.testing.expectEqual(@as(isize, 4), api.archive_write_data(writer, "omit", 4));
     try std.testing.expectEqual(@as(c_int, 0), api.archive_write_close(writer));
 }
 
@@ -423,6 +439,72 @@ test "Manager Runtime extracts archives into owned staging leases" {
     try std.testing.expect(c.lstat(staging_z, &staging_stat) != 0);
     try std.testing.expect(manager.completeArchivePublication(staging_token));
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
+test "Manager Runtime extracts only selected archive members into staging" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    const source = try join(allocator, temp, "selected.zip");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+    defer {
+        cleanup(source, false);
+        cleanup(destination, true);
+        cleanup(temp, true);
+    }
+
+    try writeArchiveFixture(source);
+    try makeDirectory(destination);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const selected = [_][]const u8{ "nested/payload.txt", "other.txt" };
+    const operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = source,
+            .staging_parent = destination,
+            .member_paths = &selected,
+        },
+    );
+    try manager.setDestinationDirectory(job, destination);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.waiting,
+        manager.operationState(job, operation).?,
+    );
+    const token = runtime.archiveStagingToken(job, operation) orelse
+        return error.MissingArchiveStagingToken;
+    const staging = runtime.archiveStagingPath(token) orelse
+        return error.MissingArchiveStaging;
+    const first_path = try join(allocator, staging, "nested/payload.txt");
+    defer allocator.free(first_path);
+    const second_path = try join(allocator, staging, "other.txt");
+    defer allocator.free(second_path);
+    const omitted_path = try join(allocator, staging, "unselected.txt");
+    defer allocator.free(omitted_path);
+
+    const first_contents = try readFile(allocator, first_path);
+    defer allocator.free(first_contents);
+    try std.testing.expectEqualStrings("payload", first_contents);
+    const second_contents = try readFile(allocator, second_path);
+    defer allocator.free(second_contents);
+    try std.testing.expectEqualStrings("second", second_contents);
+    const omitted_z = try allocZ(allocator, omitted_path);
+    defer allocator.free(omitted_z);
+    var omitted_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(omitted_z, &omitted_stat) != 0);
 }
 
 test "Manager Runtime removes failed archive extraction staging" {

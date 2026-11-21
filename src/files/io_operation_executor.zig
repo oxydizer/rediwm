@@ -298,6 +298,8 @@ const ArchiveInput = struct {
     source_path: []const u8,
     staging_parent: []const u8,
     member_path: ?[]const u8,
+    member_count: usize,
+    member_paths_bytes: []const u8,
 };
 
 fn writeArchiveUnsigned(comptime T: type, output: []u8, value: T) void {
@@ -323,6 +325,7 @@ fn makeArchiveInput(
     source_path: []const u8,
     staging_parent: []const u8,
     member_path: ?[]const u8,
+    member_paths: []const []const u8,
 ) !io_executor.OwnedPayload {
     if (source_path.len == 0 or staging_parent.len == 0 or
         std.mem.indexOfScalar(u8, source_path, 0) != null or
@@ -334,6 +337,12 @@ fn makeArchiveInput(
         if (member.len == 0 or std.mem.indexOfScalar(u8, member, 0) != null)
             return error.InvalidArchiveInput;
     }
+    if (member_path != null and member_paths.len != 0)
+        return error.InvalidArchiveInput;
+    for (member_paths) |member| {
+        if (member.len == 0 or std.mem.indexOfScalar(u8, member, 0) != null)
+            return error.InvalidArchiveInput;
+    }
 
     const header_size = @sizeOf(io_manager.JobId) + @sizeOf(usize);
     const source_end = try std.math.add(usize, header_size, source_path.len);
@@ -342,7 +351,13 @@ fn makeArchiveInput(
     const member_start = try std.math.add(usize, parent_end, 1);
     const member = member_path orelse "";
     const member_end = try std.math.add(usize, member_start, member.len);
-    const total_size = try std.math.add(usize, member_end, 1);
+    const count_start = try std.math.add(usize, member_end, 1);
+    const members_start = try std.math.add(usize, count_start, @sizeOf(usize));
+    var total_size = members_start;
+    for (member_paths) |path| {
+        total_size = try std.math.add(usize, total_size, path.len);
+        total_size = try std.math.add(usize, total_size, 1);
+    }
     const bytes = try allocator.alloc(u8, total_size);
     errdefer allocator.free(bytes);
 
@@ -358,6 +373,14 @@ fn makeArchiveInput(
     bytes[parent_end] = 0;
     @memcpy(bytes[member_start..member_end], member);
     bytes[member_end] = 0;
+    writeArchiveUnsigned(usize, bytes[count_start..members_start], member_paths.len);
+    var cursor = members_start;
+    for (member_paths) |path| {
+        const path_end = cursor + path.len;
+        @memcpy(bytes[cursor..path_end], path);
+        bytes[path_end] = 0;
+        cursor = path_end + 1;
+    }
 
     return .{ .allocator = allocator, .bytes = bytes };
 }
@@ -386,8 +409,21 @@ fn parseArchiveInput(input: *const io_executor.OwnedPayload) !ArchiveInput {
     const member_bytes = parent_bytes[parent_end + 1 ..];
     const member_end = std.mem.indexOfScalar(u8, member_bytes, 0) orelse
         return error.InvalidArchiveInput;
-    if (source_end == 0 or parent_end == 0 or member_end + 1 != member_bytes.len)
+    if (source_end == 0 or parent_end == 0)
         return error.InvalidArchiveInput;
+    const count_start = member_end + 1;
+    const count_end = try std.math.add(usize, count_start, @sizeOf(usize));
+    if (count_end > member_bytes.len) return error.InvalidArchiveInput;
+    const member_count = readArchiveUnsigned(usize, member_bytes[count_start..count_end]);
+    const member_paths_bytes = member_bytes[count_end..];
+    var remaining = member_paths_bytes;
+    for (0..member_count) |_| {
+        const path_end = std.mem.indexOfScalar(u8, remaining, 0) orelse
+            return error.InvalidArchiveInput;
+        if (path_end == 0) return error.InvalidArchiveInput;
+        remaining = remaining[path_end + 1 ..];
+    }
+    if (remaining.len != 0) return error.InvalidArchiveInput;
 
     return .{
         .job_id = job_id,
@@ -395,6 +431,8 @@ fn parseArchiveInput(input: *const io_executor.OwnedPayload) !ArchiveInput {
         .source_path = source_bytes[0..source_end],
         .staging_parent = parent_bytes[0..parent_end],
         .member_path = if (member_end == 0) null else member_bytes[0..member_end],
+        .member_count = member_count,
+        .member_paths_bytes = member_paths_bytes,
     };
 }
 
@@ -417,6 +455,7 @@ fn prepareArchive(
         details.source_path,
         details.staging_parent,
         details.member_path,
+        details.member_paths,
     );
     errdefer {
         var owned_input = input;
@@ -460,13 +499,42 @@ fn executeArchive(
     const stage = archive.temporary(allocator, input.staging_parent) catch
         return failWork(item);
 
-    archive.extract(
-        allocator,
-        input.source_path,
-        stage,
-        input.member_path,
-        input.cancel,
-    ) catch |err| {
+    var selected_members: std.ArrayList([]const u8) = .empty;
+    defer selected_members.deinit(allocator);
+    var remaining = input.member_paths_bytes;
+    for (0..input.member_count) |_| {
+        const path_end = std.mem.indexOfScalar(u8, remaining, 0) orelse
+            return archiveCompletion(
+                item,
+                .failed,
+                .{ .allocator = allocator, .bytes = stage },
+            );
+        selected_members.append(allocator, remaining[0..path_end]) catch
+            return archiveCompletion(
+                item,
+                .failed,
+                .{ .allocator = allocator, .bytes = stage },
+            );
+        remaining = remaining[path_end + 1 ..];
+    }
+
+    const extraction = if (input.member_count != 0)
+        archive.extractMembers(
+            allocator,
+            input.source_path,
+            stage,
+            selected_members.items,
+            input.cancel,
+        )
+    else
+        archive.extract(
+            allocator,
+            input.source_path,
+            stage,
+            input.member_path,
+            input.cancel,
+        );
+    extraction catch |err| {
         const outcome: io_manager.WorkResult =
             if (err == error.Cancelled) .cancelled else .failed;
         return archiveCompletion(
