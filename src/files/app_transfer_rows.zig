@@ -16,7 +16,7 @@ pub fn appendTransferRows(
         self.history.archive_len > 0 or self.isRecent() or self.changedOnly()) return;
 
     if (self.active_io_copy_job) |job_id| {
-        const manager = if (self.io_manager) |*value| value else return;
+        const manager = if (self.io_manager) |value| value else return;
         const state = manager.jobState(job_id) orelse return;
         if (state.isTerminal()) return;
 

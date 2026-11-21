@@ -148,7 +148,7 @@ fn startManagerFileCopy(
     }
 
     try self.startOperations();
-    const manager = if (self.io_manager) |*value| value else return error.OperationManagerUnavailable;
+    const manager = if (self.io_manager) |value| value else return error.OperationManagerUnavailable;
     const owned_destination = try self.allocator.dupe(u8, directory);
     errdefer self.allocator.free(owned_destination);
 
@@ -267,7 +267,7 @@ fn startManagerFileMove(
     }
 
     try self.startOperations();
-    const manager = if (self.io_manager) |*value| value else return error.OperationManagerUnavailable;
+    const manager = if (self.io_manager) |value| value else return error.OperationManagerUnavailable;
     const owned_destination = try self.allocator.dupe(u8, directory);
     errdefer self.allocator.free(owned_destination);
 
@@ -399,7 +399,7 @@ fn startManagerDirectoryTransfer(
     }
 
     try self.startOperations();
-    const manager = if (self.io_manager) |*value| value else return error.OperationManagerUnavailable;
+    const manager = if (self.io_manager) |value| value else return error.OperationManagerUnavailable;
     const owned_destination = try self.allocator.dupe(u8, directory);
     errdefer self.allocator.free(owned_destination);
 

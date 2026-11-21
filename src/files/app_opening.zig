@@ -197,7 +197,7 @@ fn startArchiveExtraction(
     }
 
     try self.startOperations();
-    const manager = if (self.io_manager) |*value| value else
+    const manager = if (self.io_manager) |value| value else
         return error.OperationManagerUnavailable;
 
     try self.archive_publications.ensureUnusedCapacity(self.allocator, 1);
@@ -265,7 +265,7 @@ pub fn openArchiveMember(self: *App, path: []const u8, preview: bool) void {
         self.setStatusNotice(tr("Could not open archive member"), true);
         return;
     };
-    const manager = if (self.io_manager) |*value| value else {
+    const manager = if (self.io_manager) |value| value else {
         self.setStatusNotice(tr("Could not open archive member"), true);
         return;
     };

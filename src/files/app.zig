@@ -11,6 +11,7 @@ const io_manager_mod = @import("io_manager.zig");
 const io_discovery_mod = @import("io_discovery.zig");
 const io_discovery_executor_mod = @import("io_discovery_executor.zig");
 const io_operation_executor_mod = @import("io_operation_executor.zig");
+const io_runtime_mod = @import("io_runtime.zig");
 const history_mod = @import("history.zig");
 const ops_mod = @import("ops.zig");
 const dirsize = @import("dirsize.zig");
@@ -77,6 +78,7 @@ pub const FontMetrics = app_draw.FontMetrics;
 pub const fontMetrics = app_draw.fontMetrics;
 pub const measureText = app_draw.measureText;
 pub const App = struct {
+    pub const IoRuntime = io_runtime_mod.Runtime;
     pub const ArchivePublication = struct {
         job_id: io_manager_mod.JobId,
         operation_id: io_manager_mod.OperationId,
@@ -113,9 +115,10 @@ pub const App = struct {
     environ: std.process.Environ,
     theme_cfg: theme.Config,
     worker: *worker_mod.Worker,
-    io_manager: ?io_manager_mod.Manager = null,
-    discovery_executor: ?io_discovery_executor_mod.Executor = null,
-    operation_executor: ?io_operation_executor_mod.Runtime = null,
+    io_runtime: ?*io_runtime_mod.Runtime = null,
+    io_manager: ?*io_manager_mod.Manager = null,
+    discovery_executor: ?*io_discovery_executor_mod.Executor = null,
+    operation_executor: ?*io_operation_executor_mod.Runtime = null,
     discovery_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
     archive_publications: std.ArrayList(ArchivePublication) = .empty,
     archive_member_extractions: std.ArrayList(ArchiveMemberExtraction) = .empty,
@@ -365,6 +368,7 @@ pub const App = struct {
         environ: std.process.Environ,
         theme_cfg: theme.Config,
         worker: *worker_mod.Worker,
+        io_runtime: *io_runtime_mod.Runtime,
         initial_dir: []const u8,
         home_dir: []const u8,
     ) !App {
@@ -377,7 +381,8 @@ pub const App = struct {
             .environ = environ,
             .theme_cfg = theme_cfg,
             .worker = worker,
-            .io_manager = io_manager_mod.Manager.init(allocator),
+            .io_runtime = io_runtime,
+            .io_manager = &io_runtime.manager,
             .history = hist,
             .home_dir = home_dir,
             .items_arena = std.heap.ArenaAllocator.init(allocator),
@@ -424,9 +429,6 @@ pub const App = struct {
         }
         self.archive_publications.deinit(self.allocator);
         self.archive_member_extractions.deinit(self.allocator);
-        if (self.discovery_executor) |*executor| executor.deinit();
-        if (self.operation_executor) |*executor| executor.deinit();
-        if (self.io_manager) |*manager| manager.deinit();
         self.discovery_jobs.deinit(self.allocator);
         self.torrents.deinit();
         self.stopAudio();

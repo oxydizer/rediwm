@@ -3,7 +3,6 @@ const std = @import("std");
 const App = @import("app.zig").App;
 const io_manager = @import("io_manager.zig");
 const io_discovery = @import("io_discovery.zig");
-const io_discovery_executor = @import("io_discovery_executor.zig");
 const io_operation_executor = @import("io_operation_executor.zig");
 const ViewItem = @import("app_model.zig").ViewItem;
 const fold = @import("ui").fold;
@@ -15,21 +14,15 @@ pub fn startDiscovery(
     job_id: io_manager.JobId,
     root_path: []const u8,
 ) !void {
-    const manager = if (self.io_manager) |*value| value else return error.DiscoveryManagerUnavailable;
+    const manager = if (self.io_manager) |value| value else return error.DiscoveryManagerUnavailable;
 
     for (self.discovery_jobs.items) |existing| {
         if (existing == job_id) return error.DiscoveryAlreadyTracked;
     }
     try self.discovery_jobs.ensureUnusedCapacity(self.allocator, 1);
 
-    if (self.discovery_executor == null) {
-        self.discovery_executor = try io_discovery_executor.Executor.init(
-            self.allocator,
-            2,
-            4,
-            64,
-        );
-    }
+    const runtime = self.io_runtime orelse return error.DiscoveryManagerUnavailable;
+    self.discovery_executor = try runtime.ensureDiscoveryExecutor();
 
     try manager.startDiscovery(job_id, root_path);
     self.discovery_jobs.appendAssumeCapacity(job_id);
@@ -41,21 +34,15 @@ pub fn startDiscoveryRoots(
     job_id: io_manager.JobId,
     roots: []const io_manager.DiscoveryRoot,
 ) !void {
-    const manager = if (self.io_manager) |*value| value else return error.DiscoveryManagerUnavailable;
+    const manager = if (self.io_manager) |value| value else return error.DiscoveryManagerUnavailable;
 
     for (self.discovery_jobs.items) |existing| {
         if (existing == job_id) return error.DiscoveryAlreadyTracked;
     }
     try self.discovery_jobs.ensureUnusedCapacity(self.allocator, 1);
 
-    if (self.discovery_executor == null) {
-        self.discovery_executor = try io_discovery_executor.Executor.init(
-            self.allocator,
-            2,
-            4,
-            64,
-        );
-    }
+    const runtime = self.io_runtime orelse return error.DiscoveryManagerUnavailable;
+    self.discovery_executor = try runtime.ensureDiscoveryExecutor();
 
     try manager.queueJobWithDiscoveryRoots(job_id, roots);
     self.discovery_jobs.appendAssumeCapacity(job_id);
@@ -77,7 +64,7 @@ fn promoteDiscoveryPathWithPriority(
     path: []const u8,
     foreground: bool,
 ) void {
-    const manager = if (self.io_manager) |*value| value else return;
+    const manager = if (self.io_manager) |value| value else return;
 
     for (self.discovery_jobs.items) |job_id| {
         const tree = manager.treeIndex(job_id) orelse continue;
@@ -110,8 +97,8 @@ fn promoteDiscoveryPathWithPriority(
 /// Reconciles completed batches and submits more bounded discovery work.
 /// Called on the Files main thread; workers never access App or Manager.
 pub fn stepDiscovery(self: *App) void {
-    const executor = if (self.discovery_executor) |*value| value else return;
-    const manager = if (self.io_manager) |*value| value else return;
+    const executor = if (self.discovery_executor) |value| value else return;
+    const manager = if (self.io_manager) |value| value else return;
 
     _ = executor.drainWake();
     const drained = executor.drainCompletions(manager) catch {
@@ -175,7 +162,7 @@ pub fn appendDiscoveryRows(
         self.history.archive_len > 0 or self.isRecent() or self.changedOnly())
         return;
 
-    const manager = if (self.io_manager) |*value| value else return;
+    const manager = if (self.io_manager) |value| value else return;
 
     for (self.discovery_jobs.items) |job_id| {
         const tree = manager.treeIndex(job_id) orelse continue;
@@ -234,21 +221,15 @@ pub fn appendDiscoveryRows(
 
 /// Poll descriptor for worker completions, or -1 before discovery is used.
 pub fn discoveryWakeFd(self: *App) i32 {
-    const executor = if (self.discovery_executor) |*value| value else return -1;
+    const executor = if (self.discovery_executor) |value| value else return -1;
     return @intCast(executor.wakeFd());
 }
 
 /// Starts the bounded operation Runtime on first use.
 pub fn startOperations(self: *App) !void {
     if (self.operation_executor != null) return;
-    const manager = if (self.io_manager) |*value| value else return error.OperationManagerUnavailable;
-
-    self.operation_executor = try io_operation_executor.Runtime.init(
-        self.allocator,
-        manager,
-        2,
-        4,
-    );
+    const runtime = self.io_runtime orelse return error.OperationManagerUnavailable;
+    self.operation_executor = try runtime.ensureOperationExecutor();
 }
 
 /// Tracks an archive operation whose worker result will hand off a staging
@@ -481,12 +462,11 @@ fn stepArchivePublications(
                 // Directory roots schedule discovery as part of registration.
                 // Ensure the App has an executor ready to drain that work.
                 if (record.kind == .directory and self.discovery_executor == null) {
-                    self.discovery_executor = io_discovery_executor.Executor.init(
-                        self.allocator,
-                        2,
-                        4,
-                        64,
-                    ) catch {
+                    const runtime = self.io_runtime orelse {
+                        registration_failed = true;
+                        break;
+                    };
+                    self.discovery_executor = runtime.ensureDiscoveryExecutor() catch {
                         registration_failed = true;
                         break;
                     };
@@ -556,7 +536,7 @@ fn stepArchivePublications(
     // Root registration above can enqueue discovery after stepDiscovery()
     // has already run for this main-loop pass. Dispatch it now, before the
     // main thread can enter its wake-FD poll.
-    if (self.discovery_executor) |*discovery| {
+    if (self.discovery_executor) |discovery| {
         _ = discovery.dispatchReady(manager) catch {
             self.setStatusNotice("Could not schedule archive directory discovery", true);
         };
@@ -602,8 +582,8 @@ fn updateMovedClipboard(
 
 /// Drains completed operations and submits newly ready work on the main thread.
 pub fn stepOperations(self: *App) void {
-    const executor = if (self.operation_executor) |*value| value else return;
-    const manager = if (self.io_manager) |*value| value else return;
+    const executor = if (self.operation_executor) |value| value else return;
+    const manager = if (self.io_manager) |value| value else return;
 
     _ = executor.drainWake();
     const drained = executor.drainCompletions() catch {
@@ -780,6 +760,6 @@ pub fn stepOperations(self: *App) void {
 
 /// Poll descriptor for operation completions, or -1 before first use.
 pub fn operationWakeFd(self: *App) i32 {
-    const executor = if (self.operation_executor) |*value| value else return -1;
+    const executor = if (self.operation_executor) |value| value else return -1;
     return @intCast(executor.wakeFd());
 }

@@ -500,7 +500,7 @@ pub fn sync(self: *App) void {
     // Manager-backed copies use the existing transfer sidebar/listing state.
     // Their detailed progress is supplied separately by the I/O Manager.
     if (self.active_io_copy_job) |job_id| {
-        if (self.io_manager) |*manager| {
+        if (self.io_manager) |manager| {
             if (manager.jobState(job_id)) |manager_state| {
                 const mapped_state: ops_mod.JobState = switch (manager_state) {
                     .planning, .queued, .running => .running,

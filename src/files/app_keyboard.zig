@@ -252,10 +252,10 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
             }
         }
         if (self.active_io_copy_job) |job_id| {
-            if (self.io_manager) |*manager| {
+            if (self.io_manager) |manager| {
                 if (manager.jobState(job_id)) |state| {
                     if (!state.isTerminal()) {
-                        if (self.operation_executor) |*executor| {
+                        if (self.operation_executor) |executor| {
                             executor.cancelJob(job_id) catch {
                                 self.setStatusNotice("Could not cancel operation", true);
                                 self.invalidate();

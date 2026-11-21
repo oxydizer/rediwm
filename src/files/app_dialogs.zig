@@ -326,7 +326,7 @@ pub fn openManagerConflictDialog(
 pub fn managerConflictCanMerge(self: *const App) bool {
     const dlg = self.dialog orelse return false;
     const conflict_id = dlg.manager_conflict_id orelse return false;
-    const manager = if (self.io_manager) |*value| value else return false;
+    const manager = if (self.io_manager) |value| value else return false;
     const conflict = manager.nextConflict() orelse return false;
     return conflict.id == conflict_id and
         conflict.source_kind == .directory and
@@ -334,7 +334,7 @@ pub fn managerConflictCanMerge(self: *const App) bool {
 }
 
 fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) !void {
-    const manager = if (self.io_manager) |*value| value else
+    const manager = if (self.io_manager) |value| value else
         return error.OperationManagerUnavailable;
     const conflict = manager.nextConflict() orelse return error.ConflictNoLongerPending;
     if (conflict.id != conflict_id) return error.ConflictNoLongerAtHead;
@@ -342,7 +342,7 @@ fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) 
     switch (action) {
         .skip => try manager.skipConflict(conflict_id),
         .merge => try manager.mergeConflict(conflict_id),
-        .cancel => if (self.operation_executor) |*executor| {
+        .cancel => if (self.operation_executor) |executor| {
             try executor.cancelJob(conflict.job_id);
         } else {
             try manager.cancelConflict(conflict_id);

@@ -6,6 +6,7 @@ const scrollbar = @import("ui").widgets.scrollbar;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
+const io_runtime = @import("io_runtime.zig");
 const worker_mod = @import("worker.zig");
 const history_mod = @import("history.zig");
 const recent = @import("recent.zig");
@@ -680,7 +681,7 @@ fn writeArchivePublicationFixture(path: []const u8) !void {
 }
 
 fn waitForAppManagerJob(app: *App, job_id: io_manager.JobId) !void {
-    const manager = &app.io_manager.?;
+    const manager = app.io_manager.?;
     while (true) {
         app.stepOperations();
         if (manager.jobState(job_id).?.isTerminal()) return;
@@ -717,9 +718,12 @@ test "archive member extraction opens the selected file and retains its staging 
     }
     try writeArchivePublicationFixture(source);
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
     try app.history.navigateLocation(source, source.len);
 
     app.openArchiveMember(virtual_path, true);
@@ -760,9 +764,12 @@ test "Escape cancels Manager-backed archive member extraction" {
     }
     try writeArchivePublicationFixture(source);
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
     try app.history.navigateLocation(source, source.len);
 
     app.openArchiveMember(virtual_path, true);
@@ -830,14 +837,17 @@ test "multi-file copy requests use one Manager job and the operation Runtime" {
     try transferTestWriteFile(source_a, "first Manager payload");
     try transferTestWriteFile(source_b, "second Manager payload");
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
 
     const paths = [_][]const u8{ source_a, source_b };
     try std.testing.expect(app.executeTransfer(.copy, &paths, destination_dir, false));
     const job_id = app.active_io_copy_job.?;
-    const manager = &app.io_manager.?;
+    const manager = app.io_manager.?;
     const tree = manager.treeIndex(job_id).?;
     const roots = tree.roots();
     try std.testing.expectEqual(@as(usize, 2), roots.len);
@@ -920,15 +930,18 @@ test "multi-directory copy requests use one Manager job and incremental discover
     try transferTestWriteFile(source_a_file, "first directory payload");
     try transferTestWriteFile(source_b_file, "nested directory payload");
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
 
     const paths = [_][]const u8{ source_a, source_b };
     try std.testing.expect(app.executeTransfer(.copy, &paths, destination_dir, false));
 
     const job_id = app.active_io_copy_job.?;
-    const manager = &app.io_manager.?;
+    const manager = app.io_manager.?;
     const tree = manager.treeIndex(job_id).?;
     const roots = tree.roots();
     try std.testing.expectEqual(@as(usize, 2), roots.len);
@@ -1002,9 +1015,12 @@ test "same-filesystem file and symlink moves use one Manager job" {
     try transferTestWriteFile(source_file, "native rename payload");
     try transferTestSymlink("../literal-target", source_link);
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
     try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_file));
     try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_link));
     app.clipboard_cut = true;
@@ -1013,7 +1029,7 @@ test "same-filesystem file and symlink moves use one Manager job" {
     const paths = [_][]const u8{ source_file, source_link };
     try std.testing.expect(app.executeTransfer(.move, &paths, destination_dir, true));
     const job_id = app.active_io_copy_job.?;
-    const manager = &app.io_manager.?;
+    const manager = app.io_manager.?;
     const tree = manager.treeIndex(job_id).?;
     const roots = tree.roots();
     try std.testing.expectEqual(@as(usize, 2), roots.len);
@@ -1115,9 +1131,12 @@ test "cross-filesystem file and symlink moves copy before detaching sources" {
     try transferTestWriteFile(source_file, "cross-filesystem payload");
     try transferTestSymlink("../literal-target", source_link);
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
     try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_file));
     try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source_link));
     app.clipboard_cut = true;
@@ -1126,7 +1145,7 @@ test "cross-filesystem file and symlink moves copy before detaching sources" {
     const paths = [_][]const u8{ source_file, source_link };
     try std.testing.expect(app.executeTransfer(.move, &paths, destination_temp, true));
     const job_id = app.active_io_copy_job.?;
-    const manager = &app.io_manager.?;
+    const manager = app.io_manager.?;
     var snapshot = try manager.snapshotJob(allocator, job_id);
     defer snapshot.deinit();
     try std.testing.expectEqual(@as(usize, 4), snapshot.operations.len);
@@ -1192,9 +1211,12 @@ test "directory move refuses a selected mountpoint instead of using JobRunner" {
         return error.SkipZigTest;
     }
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
 
     const paths = [_][]const u8{source};
     try std.testing.expect(app.executeTransfer(.move, &paths, destination, false));
@@ -1246,9 +1268,12 @@ test "same-filesystem nested directory moves use one Manager job and detach sour
     try transferTestMkdir(destination_dir);
     try transferTestWriteFile(source_file, "nested directory move payload");
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
     try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source));
     app.clipboard_cut = true;
     app.clipboard_revision = 11;
@@ -1256,7 +1281,7 @@ test "same-filesystem nested directory moves use one Manager job and detach sour
     const paths = [_][]const u8{source};
     try std.testing.expect(app.executeTransfer(.move, &paths, destination_dir, true));
     const job_id = app.active_io_copy_job.?;
-    const manager = &app.io_manager.?;
+    const manager = app.io_manager.?;
     const tree = manager.treeIndex(job_id).?;
     const roots = tree.roots();
     try std.testing.expectEqual(@as(usize, 1), roots.len);
@@ -1375,9 +1400,12 @@ test "cross-filesystem nested directory moves use one Manager job and detach sou
     try transferTestWriteFile(source_file, "cross-filesystem directory payload");
     try transferTestSymlink("../literal-target", source_link);
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
     try app.clipboard_paths.append(allocator, try allocator.dupe(u8, source));
     app.clipboard_cut = true;
     app.clipboard_revision = 23;
@@ -1385,7 +1413,7 @@ test "cross-filesystem nested directory moves use one Manager job and detach sou
     const paths = [_][]const u8{source};
     try std.testing.expect(app.executeTransfer(.move, &paths, destination_temp, true));
     const job_id = app.active_io_copy_job.?;
-    const manager = &app.io_manager.?;
+    const manager = app.io_manager.?;
     const tree = manager.treeIndex(job_id).?;
     const roots = tree.roots();
     try std.testing.expectEqual(@as(usize, 1), roots.len);
@@ -1482,11 +1510,14 @@ test "archive publication scans roots, discovers descendants and drains the barr
     try writeArchivePublicationFixture(source);
     try transferTestMkdir(destination);
 
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
     var app = try testApp();
     defer app.deinit();
-    app.io_manager = io_manager.Manager.init(allocator);
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
 
-    const manager = &app.io_manager.?;
+    const manager = app.io_manager.?;
     app.startExtraction(source, destination);
     const job = app.active_io_copy_job orelse
         return error.ArchiveExtractionDidNotStart;

@@ -504,7 +504,7 @@ fn fileOpsRectContains(rect: shell_ui.Rect, x: f64, y: f64) bool {
 
 pub fn fileOpsSidebarHeight(self: *App) i32 {
     if (self.active_io_copy_job) |job_id| {
-        if (self.io_manager) |*manager| {
+        if (self.io_manager) |manager| {
             if (manager.jobState(job_id)) |state| {
                 if (!state.isTerminal()) return 60;
             }
@@ -547,10 +547,10 @@ pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
 pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
     if (!self.fileOpsSidebarHit(x, y)) return false;
     if (self.active_io_copy_job) |job_id| {
-        const manager = if (self.io_manager) |*value| value else return true;
+        const manager = if (self.io_manager) |value| value else return true;
         const area = fileOpsBox(self);
         if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
-            if (self.operation_executor) |*executor| {
+            if (self.operation_executor) |executor| {
                 executor.cancelJob(job_id) catch {
                     self.setStatusNotice(tr("Could not cancel file transfer"), true);
                 };
@@ -561,7 +561,7 @@ pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
             }
         } else if (fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
             const state = manager.jobState(job_id) orelse return true;
-            if (self.operation_executor) |*executor| {
+            if (self.operation_executor) |executor| {
                 if (state == .paused) {
                     executor.resumeJob(job_id) catch {
                         self.setStatusNotice(tr("Could not resume file transfer"), true);
@@ -607,7 +607,7 @@ pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
 
 pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
     if (self.active_io_copy_job) |job_id| {
-        const manager = if (self.io_manager) |*value| value else return;
+        const manager = if (self.io_manager) |value| value else return;
         const state = manager.jobState(job_id) orelse return;
         if (state.isTerminal()) return;
         const area = fileOpsBox(self);

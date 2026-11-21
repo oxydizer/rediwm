@@ -6,6 +6,7 @@ const xdg = @import("wayland").client.xdg;
 const zxdg = @import("wayland").client.zxdg;
 const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
+const io_runtime_mod = @import("io_runtime.zig");
 const key_repeat = @import("ui").key_repeat;
 const shell_ui = @import("ui").cairo;
 const ui_theme = @import("ui").theme;
@@ -217,12 +218,16 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     const worker = try worker_mod.Worker.init(a, init.io, init.minimal.environ, target_dir);
     defer worker.deinit();
 
+    var io_runtime = io_runtime_mod.Runtime.init(a);
+    defer io_runtime.deinit();
+
     const app = try app_mod.App.init(
         a,
         init.io,
         init.minimal.environ,
         worker.theme_cfg,
         worker,
+        &io_runtime,
         target_dir,
         home_dir,
     );
