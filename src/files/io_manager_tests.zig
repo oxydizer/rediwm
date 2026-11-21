@@ -199,6 +199,50 @@ test "archive operations own request paths and expose current job-level details"
     try std.testing.expect(manager.archiveOperationDetails(token) == null);
 }
 
+test "archive operations own and normalize selected member paths" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const source = try allocator.dupe(u8, "/tmp/source.zip");
+    defer allocator.free(source);
+    const staging_parent = try allocator.dupe(u8, "/tmp/destination");
+    defer allocator.free(staging_parent);
+    const first = try allocator.dupe(u8, "nested/./one.txt");
+    defer allocator.free(first);
+    const second = try allocator.dupe(u8, "two.txt");
+    defer allocator.free(second);
+    const members = [_][]const u8{ first, second };
+
+    const operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = source,
+            .staging_parent = staging_parent,
+            .member_paths = &members,
+        },
+    );
+
+    @memset(source, 'x');
+    @memset(staging_parent, 'y');
+    @memset(first, 'z');
+    @memset(second, 'w');
+
+    try manager.queueJob(job);
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(operation, token.operation_id);
+
+    const details = manager.archiveOperationDetails(token).?;
+    try std.testing.expectEqualStrings("/tmp/source.zip", details.source_path);
+    try std.testing.expectEqualStrings("/tmp/destination", details.staging_parent);
+    try std.testing.expect(details.member_path == null);
+    try std.testing.expectEqual(@as(usize, 2), details.member_paths.len);
+    try std.testing.expectEqualStrings("nested/one.txt", details.member_paths[0]);
+    try std.testing.expectEqualStrings("two.txt", details.member_paths[1]);
+}
+
 test "archive operation registration validates kind and member selection" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
@@ -247,6 +291,30 @@ test "archive operation registration validates kind and member selection" {
                 .source_path = "/tmp/source.zip",
                 .staging_parent = "/tmp/destination",
                 .member_path = "../outside.txt",
+            },
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidArchiveMemberPath,
+        manager.addArchiveOperation(
+            job,
+            .archive_extract,
+            .{
+                .source_path = "/tmp/source.zip",
+                .staging_parent = "/tmp/destination",
+                .member_paths = &.{ "nested/item.txt", "nested/./item.txt" },
+            },
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsafeArchivePath,
+        manager.addArchiveOperation(
+            job,
+            .archive_extract,
+            .{
+                .source_path = "/tmp/source.zip",
+                .staging_parent = "/tmp/destination",
+                .member_paths = &.{"../outside.txt"},
             },
         ),
     );

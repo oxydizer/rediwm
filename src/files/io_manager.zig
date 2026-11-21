@@ -145,6 +145,7 @@ pub const ArchiveOperationRequest = struct {
     source_path: []const u8,
     staging_parent: []const u8,
     member_path: ?[]const u8 = null,
+    member_paths: []const []const u8 = &.{},
 };
 
 /// One top-level entry produced by archive extraction. The Manager copies
@@ -164,17 +165,21 @@ pub const ArchiveOperationDetails = struct {
     source_path: []const u8,
     staging_parent: []const u8,
     member_path: ?[]const u8,
+    member_paths: []const []const u8,
 };
 
 const OwnedArchiveOperationRequest = struct {
     source_path: []const u8,
     staging_parent: []const u8,
     member_path: ?[]const u8,
+    member_paths: []const []const u8,
 
     fn deinit(self: *OwnedArchiveOperationRequest, allocator: Allocator) void {
         allocator.free(self.source_path);
         allocator.free(self.staging_parent);
         if (self.member_path) |path| allocator.free(path);
+        for (self.member_paths) |path| allocator.free(path);
+        allocator.free(self.member_paths);
     }
 };
 
@@ -1304,6 +1309,7 @@ pub const Manager = struct {
             .source_path = request.source_path,
             .staging_parent = request.staging_parent,
             .member_path = request.member_path,
+            .member_paths = request.member_paths,
         };
     }
 
@@ -1450,6 +1456,13 @@ pub const Manager = struct {
             std.mem.indexOfScalar(u8, request.staging_parent, 0) != null)
             return error.InvalidArchiveStagingParent;
 
+        if (kind == .archive_member_extract) {
+            if (request.member_path == null or request.member_paths.len != 0)
+                return error.InvalidArchiveMemberPath;
+        } else if (request.member_path != null) {
+            return error.InvalidArchiveMemberPath;
+        }
+
         var owned_member: ?[]const u8 = null;
         errdefer if (owned_member) |path| self.allocator.free(path);
         if (request.member_path) |member_path| {
@@ -1457,8 +1470,27 @@ pub const Manager = struct {
             owned_member = normalized;
             if (normalized.len == 0) return error.InvalidArchiveMemberPath;
         }
-        if ((kind == .archive_member_extract) != (owned_member != null)) {
-            return error.InvalidArchiveMemberPath;
+
+        var normalized_members: std.ArrayList([]const u8) = .empty;
+        defer normalized_members.deinit(self.allocator);
+        errdefer {
+            for (normalized_members.items) |path| self.allocator.free(path);
+        }
+        for (request.member_paths) |member_path| {
+            const normalized = try archive.normalize(self.allocator, member_path);
+            errdefer self.allocator.free(normalized);
+            if (normalized.len == 0) return error.InvalidArchiveMemberPath;
+            for (normalized_members.items) |previous| {
+                if (std.mem.eql(u8, normalized, previous))
+                    return error.InvalidArchiveMemberPath;
+            }
+            try normalized_members.append(self.allocator, normalized);
+        }
+
+        const owned_members = try normalized_members.toOwnedSlice(self.allocator);
+        errdefer {
+            for (owned_members) |path| self.allocator.free(path);
+            self.allocator.free(owned_members);
         }
 
         const source_copy = try self.allocator.dupe(u8, request.source_path);
@@ -1472,6 +1504,7 @@ pub const Manager = struct {
             .source_path = source_copy,
             .staging_parent = staging_copy,
             .member_path = owned_member,
+            .member_paths = owned_members,
         };
         owned_member = null;
         job.auto_plan_discovered_entries = true;
