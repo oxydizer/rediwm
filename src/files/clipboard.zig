@@ -1,5 +1,19 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const ops = @import("ops.zig");
+
+/// Owns a temporary directory whose real paths are advertised by a clipboard
+/// or drag source. The source keeps this lease until its Wayland lifetime ends.
+pub const StagingLease = struct {
+    allocator: Allocator,
+    path: []u8,
+
+    pub fn deinit(self: *StagingLease) void {
+        ops.deleteRecursive(self.allocator, self.path) catch {};
+        self.allocator.free(self.path);
+        self.* = undefined;
+    }
+};
 
 pub const ClipboardMode = enum {
     copy,

@@ -240,6 +240,7 @@ pub const startFileDrag = client_dnd.startFileDrag;
 const client_clipboard = @import("client_clipboard.zig");
 pub const clipboardEvent = client_clipboard.clipboardEvent;
 pub const destroyClipboardSource = client_clipboard.destroyClipboardSource;
+pub const destroyDragSource = client_clipboard.destroyDragSource;
 pub const publishClipboard = client_clipboard.publishClipboard;
 pub const cancelReceive = client_clipboard.cancelReceive;
 pub const receiveClipboard = client_clipboard.receiveClipboard;

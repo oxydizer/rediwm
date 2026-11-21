@@ -188,6 +188,32 @@ test "validateFilename edge cases" {
     try ops_mod.validateFilename(".gitignore");
 }
 
+test "clipboard staging lease removes its owned directory tree" {
+    const allocator = std.testing.allocator;
+    var root_buf: [256]u8 = undefined;
+    const root = try makeTestDir(&root_buf);
+    defer ops_mod.deleteRecursive(allocator, root) catch {};
+
+    const stage_path = try std.fmt.allocPrint(allocator, "{s}/clipboard-stage", .{root});
+    defer allocator.free(stage_path);
+    const nested_path = try std.fmt.allocPrint(allocator, "{s}/nested", .{stage_path});
+    defer allocator.free(nested_path);
+    try ops_mod.createFolder(allocator, root, "clipboard-stage");
+    try ops_mod.createFolder(allocator, stage_path, "nested");
+    try ops_mod.createFile(allocator, nested_path, "member.txt");
+
+    var lease = clipboard_mod.StagingLease{
+        .allocator = allocator,
+        .path = try allocator.dupe(u8, stage_path),
+    };
+    lease.deinit();
+
+    const stage_z = try allocator.dupeSentinel(u8, stage_path, 0);
+    defer allocator.free(stage_z);
+    var stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(stage_z, &stat) != 0);
+}
+
 pub fn makeTestDir(buf: []u8) ![]const u8 {
     const tmpl = "/tmp/rediwm_test_XXXXXX\x00";
     @memcpy(buf[0..tmpl.len], tmpl);

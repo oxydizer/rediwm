@@ -49,6 +49,7 @@ pub const ClipboardSource = struct {
     uris: []const u8,
     gnome: []const u8,
     text: bool = false,
+    staging_lease: ?clipboard_mod.StagingLease = null,
 };
 
 pub const Client = @import("Client.zig");
@@ -448,18 +449,8 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     }
     self.outputs.deinit(a);
     self.entered_outputs.deinit(a);
-    if (self.clipboard_source) |clip| {
-        clip.proxy.destroy();
-        a.free(clip.uris);
-        a.free(clip.gnome);
-        a.destroy(clip);
-    }
-    if (self.drag_source) |clip| {
-        clip.proxy.destroy();
-        a.free(clip.uris);
-        a.free(clip.gnome);
-        a.destroy(clip);
-    }
+    self.destroyClipboardSource();
+    self.destroyDragSource();
     if (self.data_device) |device| device.release();
 
     if (self.xkb_state) |state| c.xkb_state_unref(state);

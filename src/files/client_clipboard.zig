@@ -11,6 +11,13 @@ const main = @import("main.zig");
 const ClipboardSource = main.ClipboardSource;
 const Client = @import("Client.zig");
 
+fn releaseSource(clip: *ClipboardSource) void {
+    if (clip.staging_lease) |*lease| lease.deinit();
+    a.free(clip.uris);
+    a.free(clip.gnome);
+    a.destroy(clip);
+}
+
 pub fn clipboardEvent(source: *wl.DataSource, event: wl.DataSource.Event, clip: *ClipboardSource) void {
     switch (event) {
         .action => |ev| {
@@ -46,9 +53,7 @@ pub fn clipboardEvent(source: *wl.DataSource, event: wl.DataSource.Event, clip: 
                 clip.client.app.invalidate();
             }
             source.destroy();
-            a.free(clip.uris);
-            a.free(clip.gnome);
-            a.destroy(clip);
+            releaseSource(clip);
         },
         else => {},
     }
@@ -56,11 +61,17 @@ pub fn clipboardEvent(source: *wl.DataSource, event: wl.DataSource.Event, clip: 
 
 pub fn destroyClipboardSource(self: *Client) void {
     if (self.clipboard_source) |clip| {
-        clip.proxy.destroy();
-        a.free(clip.uris);
-        a.free(clip.gnome);
-        a.destroy(clip);
         self.clipboard_source = null;
+        clip.proxy.destroy();
+        releaseSource(clip);
+    }
+}
+
+pub fn destroyDragSource(self: *Client) void {
+    if (self.drag_source) |clip| {
+        self.drag_source = null;
+        clip.proxy.destroy();
+        releaseSource(clip);
     }
 }
 
