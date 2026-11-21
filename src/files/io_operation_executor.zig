@@ -10,10 +10,31 @@ const io_directory = @import("io_directory.zig");
 const io_symlink = @import("io_symlink.zig");
 const io_move = @import("io_move.zig");
 const io_detach = @import("io_detach.zig");
+const archive = @import("archive.zig");
+const ops = @import("ops.zig");
 
 const Context = struct {
     allocator: Allocator,
     manager: *io_manager.Manager,
+    archive_staging: std.AutoHashMapUnmanaged(
+        io_executor.OperationKey,
+        ArchiveStagingLease,
+    ) = .empty,
+    archive_cancellations: std.AutoHashMapUnmanaged(
+        io_manager.JobId,
+        *archive.Cancel,
+    ) = .empty,
+};
+
+const ArchiveStagingLease = struct {
+    allocator: Allocator,
+    path: []u8,
+
+    fn deinit(self: *ArchiveStagingLease) void {
+        ops.deleteRecursive(self.allocator, self.path) catch {};
+        self.allocator.free(self.path);
+        self.* = undefined;
+    }
 };
 
 pub const Runtime = struct {
@@ -58,6 +79,15 @@ pub const Runtime = struct {
 
     pub fn deinit(self: *Runtime) void {
         self.executor.deinit();
+
+        var staging = self.context.archive_staging.valueIterator();
+        while (staging.next()) |lease| lease.deinit();
+        self.context.archive_staging.deinit(self.allocator);
+
+        var cancellations = self.context.archive_cancellations.valueIterator();
+        while (cancellations.next()) |cancel| self.allocator.destroy(cancel.*);
+        self.context.archive_cancellations.deinit(self.allocator);
+
         self.allocator.destroy(self.context);
         self.* = undefined;
     }
@@ -93,8 +123,39 @@ pub const Runtime = struct {
     }
 
     pub fn cancelJob(self: *Runtime, job_id: io_manager.JobId) !void {
+        if (self.context.archive_cancellations.get(job_id)) |cancel| {
+            cancel.store(true, .release);
+        }
         try self.context.manager.cancelJob(job_id);
         self.executor.cancelJob(job_id);
+    }
+
+    /// Borrows the private extraction directory while its archive operation
+    /// waits at the publication barrier.
+    pub fn archiveStagingPath(
+        self: *const Runtime,
+        token: io_manager.WorkToken,
+    ) ?[]const u8 {
+        if (self.context.manager.archiveOperationDetails(token) == null) return null;
+        const lease = self.context.archive_staging.get(
+            io_executor.OperationKey.fromToken(token),
+        ) orelse return null;
+        return lease.path;
+    }
+
+    /// Releases staging only after publication registration, discovery and
+    /// every publication operation have drained.
+    pub fn releaseArchiveStaging(
+        self: *Runtime,
+        token: io_manager.WorkToken,
+    ) !bool {
+        if (self.context.manager.archivePublicationReady(token) != true) return false;
+        const key = io_executor.OperationKey.fromToken(token);
+        const lease = self.context.archive_staging.getPtr(key) orelse return false;
+        try ops.deleteRecursive(self.allocator, lease.path);
+        self.allocator.free(lease.path);
+        _ = self.context.archive_staging.remove(key);
+        return true;
     }
 };
 
@@ -103,6 +164,9 @@ fn prepare(
     token: io_manager.WorkToken,
 ) anyerror!io_executor.PreparedWork {
     const context: *Context = @ptrCast(@alignCast(raw_context.?));
+    if (context.manager.archiveOperationDetails(token)) |archive_details| {
+        return prepareArchive(context, token, archive_details);
+    }
     const details = context.manager.operationDetails(token) orelse
         return error.StaleOperation;
     const tree = context.manager.treeIndex(token.job_id) orelse
@@ -190,6 +254,149 @@ fn prepare(
     };
 }
 
+const ArchiveInput = struct {
+    job_id: io_manager.JobId,
+    cancel: *archive.Cancel,
+    source_path: []const u8,
+    staging_parent: []const u8,
+    member_path: ?[]const u8,
+};
+
+fn writeArchiveUnsigned(comptime T: type, output: []u8, value: T) void {
+    for (0..@sizeOf(T)) |index| {
+        const shift: std.math.Log2Int(T) = @intCast(index * 8);
+        output[index] = @truncate(value >> shift);
+    }
+}
+
+fn readArchiveUnsigned(comptime T: type, input: []const u8) T {
+    var value: T = 0;
+    for (0..@sizeOf(T)) |index| {
+        const shift: std.math.Log2Int(T) = @intCast(index * 8);
+        value |= @as(T, input[index]) << shift;
+    }
+    return value;
+}
+
+fn makeArchiveInput(
+    allocator: Allocator,
+    job_id: io_manager.JobId,
+    cancel: *archive.Cancel,
+    source_path: []const u8,
+    staging_parent: []const u8,
+    member_path: ?[]const u8,
+) !io_executor.OwnedPayload {
+    if (source_path.len == 0 or staging_parent.len == 0 or
+        std.mem.indexOfScalar(u8, source_path, 0) != null or
+        std.mem.indexOfScalar(u8, staging_parent, 0) != null)
+    {
+        return error.InvalidArchiveInput;
+    }
+    if (member_path) |member| {
+        if (member.len == 0 or std.mem.indexOfScalar(u8, member, 0) != null)
+            return error.InvalidArchiveInput;
+    }
+
+    const header_size = @sizeOf(io_manager.JobId) + @sizeOf(usize);
+    const source_end = try std.math.add(usize, header_size, source_path.len);
+    const parent_start = try std.math.add(usize, source_end, 1);
+    const parent_end = try std.math.add(usize, parent_start, staging_parent.len);
+    const member_start = try std.math.add(usize, parent_end, 1);
+    const member = member_path orelse "";
+    const member_end = try std.math.add(usize, member_start, member.len);
+    const total_size = try std.math.add(usize, member_end, 1);
+    const bytes = try allocator.alloc(u8, total_size);
+    errdefer allocator.free(bytes);
+
+    writeArchiveUnsigned(io_manager.JobId, bytes[0..@sizeOf(io_manager.JobId)], job_id);
+    writeArchiveUnsigned(
+        usize,
+        bytes[@sizeOf(io_manager.JobId)..header_size],
+        @intFromPtr(cancel),
+    );
+    @memcpy(bytes[header_size..source_end], source_path);
+    bytes[source_end] = 0;
+    @memcpy(bytes[parent_start..parent_end], staging_parent);
+    bytes[parent_end] = 0;
+    @memcpy(bytes[member_start..member_end], member);
+    bytes[member_end] = 0;
+
+    return .{ .allocator = allocator, .bytes = bytes };
+}
+
+fn parseArchiveInput(input: *const io_executor.OwnedPayload) !ArchiveInput {
+    const bytes = input.slice();
+    const header_size = @sizeOf(io_manager.JobId) + @sizeOf(usize);
+    if (bytes.len < header_size + 3) return error.InvalidArchiveInput;
+
+    const job_id = readArchiveUnsigned(
+        io_manager.JobId,
+        bytes[0..@sizeOf(io_manager.JobId)],
+    );
+    const cancel_address = readArchiveUnsigned(
+        usize,
+        bytes[@sizeOf(io_manager.JobId)..header_size],
+    );
+    if (cancel_address == 0) return error.InvalidArchiveInput;
+
+    const source_bytes = bytes[header_size..];
+    const source_end = std.mem.indexOfScalar(u8, source_bytes, 0) orelse
+        return error.InvalidArchiveInput;
+    const parent_bytes = source_bytes[source_end + 1 ..];
+    const parent_end = std.mem.indexOfScalar(u8, parent_bytes, 0) orelse
+        return error.InvalidArchiveInput;
+    const member_bytes = parent_bytes[parent_end + 1 ..];
+    const member_end = std.mem.indexOfScalar(u8, member_bytes, 0) orelse
+        return error.InvalidArchiveInput;
+    if (source_end == 0 or parent_end == 0 or member_end + 1 != member_bytes.len)
+        return error.InvalidArchiveInput;
+
+    return .{
+        .job_id = job_id,
+        .cancel = @ptrFromInt(cancel_address),
+        .source_path = source_bytes[0..source_end],
+        .staging_parent = parent_bytes[0..parent_end],
+        .member_path = if (member_end == 0) null else member_bytes[0..member_end],
+    };
+}
+
+fn prepareArchive(
+    context: *Context,
+    token: io_manager.WorkToken,
+    details: io_manager.ArchiveOperationDetails,
+) !io_executor.PreparedWork {
+    if (context.archive_cancellations.contains(token.job_id))
+        return error.ArchiveCancellationAlreadyActive;
+
+    const cancel = try context.allocator.create(archive.Cancel);
+    errdefer context.allocator.destroy(cancel);
+    cancel.* = .init(false);
+
+    const input = try makeArchiveInput(
+        context.allocator,
+        token.job_id,
+        cancel,
+        details.source_path,
+        details.staging_parent,
+        details.member_path,
+    );
+    errdefer {
+        var owned_input = input;
+        owned_input.deinit();
+    }
+
+    try context.archive_cancellations.put(
+        context.allocator,
+        token.job_id,
+        cancel,
+    );
+
+    return .{
+        .operation_kind = details.kind,
+        .input = input,
+    };
+}
+
 fn execute(
     raw_context: ?*anyopaque,
     item: io_executor.WorkItem,
@@ -201,7 +408,59 @@ fn execute(
         .copy_symlink => io_symlink.execute(context.allocator, item),
         .move_entry => io_move.execute(context.allocator, item),
         .detach_source => io_detach.execute(context.allocator, item),
+        .archive_extract, .archive_member_extract => executeArchive(context.allocator, item),
         else => failWork(item),
+    };
+}
+
+fn executeArchive(
+    allocator: Allocator,
+    item_arg: io_executor.WorkItem,
+) io_executor.WorkCompletion {
+    var item = item_arg;
+    const input = parseArchiveInput(&item.input) catch return failWork(item);
+    const stage = archive.temporary(allocator, input.staging_parent) catch
+        return failWork(item);
+
+    archive.extract(
+        allocator,
+        input.source_path,
+        stage,
+        input.member_path,
+        input.cancel,
+    ) catch |err| {
+        const outcome: io_manager.WorkResult =
+            if (err == error.Cancelled) .cancelled else .failed;
+        return archiveCompletion(
+            item,
+            outcome,
+            .{ .allocator = allocator, .bytes = stage },
+        );
+    };
+
+    return archiveCompletion(
+        item,
+        .waiting,
+        .{ .allocator = allocator, .bytes = stage },
+    );
+}
+
+fn archiveCompletion(
+    item_arg: io_executor.WorkItem,
+    outcome: io_manager.WorkResult,
+    result: io_executor.OwnedPayload,
+) io_executor.WorkCompletion {
+    var item = item_arg;
+    if (item.continuation) |*continuation| {
+        continuation.deinit();
+        item.continuation = null;
+    }
+    return .{
+        .token = item.token,
+        .outcome = outcome,
+        .operation_kind = item.operation_kind,
+        .input = item.input,
+        .result = result,
     };
 }
 
@@ -227,6 +486,36 @@ fn complete(
     result: ?io_executor.OwnedPayload,
 ) void {
     const context: *Context = @ptrCast(@alignCast(raw_context.?));
+    if (operation_kind) |kind| {
+        if (kind == .archive_extract or kind == .archive_member_extract) {
+            if (outcome == .waiting) {
+                const payload = result orelse {
+                    context.manager.failWaiting(token.job_id, token.operation_id) catch {};
+                    return;
+                };
+                var owned = payload;
+                const path = owned.bytes orelse {
+                    owned.deinit();
+                    context.manager.failWaiting(token.job_id, token.operation_id) catch {};
+                    return;
+                };
+                owned.bytes = null;
+                const key = io_executor.OperationKey.fromToken(token);
+                const lease = ArchiveStagingLease{
+                    .allocator = context.allocator,
+                    .path = path,
+                };
+                context.archive_staging.put(context.allocator, key, lease) catch {
+                    var failed_lease = lease;
+                    failed_lease.deinit();
+                    context.manager.failWaiting(token.job_id, token.operation_id) catch {};
+                };
+            } else {
+                discardArchiveResult(context.allocator, result);
+            }
+            return;
+        }
+    }
     if (outcome == .waiting) {
         if (operation_kind == .move_entry and isMoveFallbackResult(result)) {
             _ = context.manager.fallbackMoveToCopy(token) catch {
@@ -319,24 +608,62 @@ fn registerCollision(context: *Context, token: io_manager.WorkToken) !void {
 }
 
 fn discard(
-    _: ?*anyopaque,
+    raw_context: ?*anyopaque,
     operation_kind: io_manager.OperationKind,
     input: io_executor.OwnedPayload,
     continuation: ?io_executor.OwnedPayload,
     result: ?io_executor.OwnedPayload,
 ) void {
+    const context: *Context = @ptrCast(@alignCast(raw_context.?));
     switch (operation_kind) {
         .create_directory => io_directory.discard(null, operation_kind, input, continuation, result),
         .copy_file => io_copy.discard(null, operation_kind, input, continuation, result),
         .copy_symlink => io_symlink.discard(null, operation_kind, input, continuation, result),
         .move_entry => io_move.discard(null, operation_kind, input, continuation, result),
         .detach_source => io_detach.discard(null, operation_kind, input, continuation, result),
+        .archive_extract, .archive_member_extract => {
+            if (input.bytes) |bytes| {
+                const header_size = @sizeOf(io_manager.JobId) + @sizeOf(usize);
+                if (bytes.len >= header_size) {
+                    const job_id = readArchiveUnsigned(
+                        io_manager.JobId,
+                        bytes[0..@sizeOf(io_manager.JobId)],
+                    );
+                    const cancel_address = readArchiveUnsigned(
+                        usize,
+                        bytes[@sizeOf(io_manager.JobId)..header_size],
+                    );
+                    if (context.archive_cancellations.fetchRemove(job_id)) |entry| {
+                        if (@intFromPtr(entry.value) == cancel_address)
+                            context.allocator.destroy(entry.value)
+                        else
+                            context.archive_cancellations.put(
+                                context.allocator,
+                                job_id,
+                                entry.value,
+                            ) catch context.allocator.destroy(entry.value);
+                    }
+                }
+            }
+            var owned_input = input;
+            owned_input.deinit();
+            deinitOptional(continuation);
+            discardArchiveResult(context.allocator, result);
+        },
         else => {
             var owned_input = input;
             owned_input.deinit();
             deinitOptional(continuation);
             deinitOptional(result);
         },
+    }
+}
+
+fn discardArchiveResult(allocator: Allocator, result: ?io_executor.OwnedPayload) void {
+    if (result) |payload| {
+        var owned = payload;
+        if (owned.bytes) |path| ops.deleteRecursive(allocator, path) catch {};
+        owned.deinit();
     }
 }
 
