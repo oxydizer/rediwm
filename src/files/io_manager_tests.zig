@@ -146,6 +146,123 @@ test "stale and duplicate worker results are rejected" {
     try std.testing.expect(!manager.completeWork(new_token, .completed));
 }
 
+test "archive operations own request paths and expose current job-level details" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    try std.testing.expectError(
+        error.ArchiveRequestRequired,
+        manager.addOperation(job, .archive_extract),
+    );
+
+    const source = try allocator.dupe(u8, "/tmp/source.zip");
+    defer allocator.free(source);
+    const staging_parent = try allocator.dupe(u8, "/tmp/destination");
+    defer allocator.free(staging_parent);
+    const member = try allocator.dupe(u8, "nested/./item.txt");
+    defer allocator.free(member);
+
+    const operation = try manager.addArchiveOperation(
+        job,
+        .archive_member_extract,
+        .{
+            .source_path = source,
+            .staging_parent = staging_parent,
+            .member_path = member,
+        },
+    );
+
+    @memset(source, 'x');
+    @memset(staging_parent, 'y');
+    @memset(member, 'z');
+
+    try manager.queueJob(job);
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(operation, token.operation_id);
+    try std.testing.expect(manager.operationDetails(token) == null);
+
+    const details = manager.archiveOperationDetails(token).?;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.archive_member_extract,
+        details.kind,
+    );
+    try std.testing.expectEqualStrings("/tmp/source.zip", details.source_path);
+    try std.testing.expectEqualStrings("/tmp/destination", details.staging_parent);
+    try std.testing.expectEqualStrings("nested/item.txt", details.member_path.?);
+
+    var stale = token;
+    stale.generation += 1;
+    try std.testing.expect(manager.archiveOperationDetails(stale) == null);
+    try std.testing.expect(manager.completeWork(token, .completed));
+    try std.testing.expect(manager.archiveOperationDetails(token) == null);
+}
+
+test "archive operation registration validates kind and member selection" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    try std.testing.expectError(
+        error.InvalidOperationKind,
+        manager.addArchiveOperation(
+            job,
+            .copy_file,
+            .{
+                .source_path = "/tmp/source.zip",
+                .staging_parent = "/tmp/destination",
+            },
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidArchiveMemberPath,
+        manager.addArchiveOperation(
+            job,
+            .archive_member_extract,
+            .{
+                .source_path = "/tmp/source.zip",
+                .staging_parent = "/tmp/destination",
+            },
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidArchiveMemberPath,
+        manager.addArchiveOperation(
+            job,
+            .archive_extract,
+            .{
+                .source_path = "/tmp/source.zip",
+                .staging_parent = "/tmp/destination",
+                .member_path = "item.txt",
+            },
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsafeArchivePath,
+        manager.addArchiveOperation(
+            job,
+            .archive_member_extract,
+            .{
+                .source_path = "/tmp/source.zip",
+                .staging_parent = "/tmp/destination",
+                .member_path = "../outside.txt",
+            },
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidArchiveSourcePath,
+        manager.addArchiveOperation(
+            job,
+            .archive_extract,
+            .{
+                .source_path = "relative.zip",
+                .staging_parent = "/tmp/destination",
+            },
+        ),
+    );
+}
+
 test "copy progress exposes the storage-flush phase" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

@@ -6,6 +6,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const io_tree = @import("io_tree.zig");
 const io_discovery = @import("io_discovery.zig");
+const archive = @import("archive.zig");
 
 pub const JobId = u64;
 pub const OperationId = u64;
@@ -138,6 +139,35 @@ pub const OperationKind = enum {
     archive_member_extract,
 };
 
+/// Borrowed input for registering a job-level archive extraction operation.
+/// The Manager copies every supplied path before returning.
+pub const ArchiveOperationRequest = struct {
+    source_path: []const u8,
+    staging_parent: []const u8,
+    member_path: ?[]const u8 = null,
+};
+
+/// Immutable archive request details for a current dispatched operation.
+/// The returned slices remain Manager-owned.
+pub const ArchiveOperationDetails = struct {
+    kind: OperationKind,
+    source_path: []const u8,
+    staging_parent: []const u8,
+    member_path: ?[]const u8,
+};
+
+const OwnedArchiveOperationRequest = struct {
+    source_path: []const u8,
+    staging_parent: []const u8,
+    member_path: ?[]const u8,
+
+    fn deinit(self: *OwnedArchiveOperationRequest, allocator: Allocator) void {
+        allocator.free(self.source_path);
+        allocator.free(self.staging_parent);
+        if (self.member_path) |path| allocator.free(path);
+    }
+};
+
 pub const OperationState = enum {
     pending,
     running,
@@ -225,6 +255,7 @@ const Operation = struct {
     entry_id: ?io_tree.EntryId = null,
     discovery_gate: bool = false,
     destination_override: ?[]u8 = null,
+    archive_request: ?OwnedArchiveOperationRequest = null,
     merge_existing_directory: bool = false,
     replace_existing_file: bool = false,
     state: OperationState = .pending,
@@ -240,6 +271,7 @@ const Operation = struct {
 
     fn deinit(self: *Operation, allocator: Allocator) void {
         if (self.destination_override) |path| allocator.free(path);
+        if (self.archive_request) |*request| request.deinit(allocator);
         self.dependencies.deinit(allocator);
         self.dependency_indices.deinit(allocator);
         self.dependents.deinit(allocator);
@@ -1229,6 +1261,29 @@ pub const Manager = struct {
         };
     }
 
+    /// Returns the Manager-owned request for a current archive operation.
+    /// Job-level archive work deliberately has no TreeIndex entry.
+    pub fn archiveOperationDetails(
+        self: *const Manager,
+        token: WorkToken,
+    ) ?ArchiveOperationDetails {
+        const job = self.findJobConst(token.job_id) orelse return null;
+        const operation = findOperationConst(job, token.operation_id) orelse return null;
+        if ((operation.state != .running and operation.state != .waiting) or
+            operation.generation != token.generation)
+            return null;
+        if (operation.kind != .archive_extract and
+            operation.kind != .archive_member_extract)
+            return null;
+        const request = operation.archive_request orelse return null;
+        return .{
+            .kind = operation.kind,
+            .source_path = request.source_path,
+            .staging_parent = request.staging_parent,
+            .member_path = request.member_path,
+        };
+    }
+
     /// Builds the source path for one TreeIndex entry from the original
     /// selected root path. The root's display name is not appended twice.
     pub fn sourcePath(
@@ -1263,7 +1318,58 @@ pub const Manager = struct {
     pub fn addOperation(self: *Manager, job_id: JobId, kind: OperationKind) !OperationId {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state != .planning) return error.InvalidJobState;
+        if (kind == .archive_extract or kind == .archive_member_extract)
+            return error.ArchiveRequestRequired;
         return self.addOperationInternal(job, kind);
+    }
+
+    /// Registers a job-level archive extraction operation. Archive paths are
+    /// owned by the Manager; workers receive them through archiveOperationDetails().
+    pub fn addArchiveOperation(
+        self: *Manager,
+        job_id: JobId,
+        kind: OperationKind,
+        request: ArchiveOperationRequest,
+    ) !OperationId {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (kind != .archive_extract and kind != .archive_member_extract)
+            return error.InvalidOperationKind;
+
+        if (!std.fs.path.isAbsolute(request.source_path) or
+            request.source_path.len == 0 or
+            std.mem.indexOfScalar(u8, request.source_path, 0) != null)
+            return error.InvalidArchiveSourcePath;
+        if (!std.fs.path.isAbsolute(request.staging_parent) or
+            request.staging_parent.len == 0 or
+            std.mem.indexOfScalar(u8, request.staging_parent, 0) != null)
+            return error.InvalidArchiveStagingParent;
+
+        var owned_member: ?[]const u8 = null;
+        errdefer if (owned_member) |path| self.allocator.free(path);
+        if (request.member_path) |member_path| {
+            const normalized = try archive.normalize(self.allocator, member_path);
+            owned_member = normalized;
+            if (normalized.len == 0) return error.InvalidArchiveMemberPath;
+        }
+        if ((kind == .archive_member_extract) != (owned_member != null)) {
+            return error.InvalidArchiveMemberPath;
+        }
+
+        const source_copy = try self.allocator.dupe(u8, request.source_path);
+        errdefer self.allocator.free(source_copy);
+        const staging_copy = try self.allocator.dupe(u8, request.staging_parent);
+        errdefer self.allocator.free(staging_copy);
+
+        const operation_id = try self.addOperationInternal(job, kind);
+        const operation = &job.operations.items[job.operations.items.len - 1];
+        operation.archive_request = .{
+            .source_path = source_copy,
+            .staging_parent = staging_copy,
+            .member_path = owned_member,
+        };
+        owned_member = null;
+        return operation_id;
     }
 
     fn addOperationInternal(self: *Manager, job: *Job, kind: OperationKind) !OperationId {
