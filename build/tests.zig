@@ -30,6 +30,12 @@ pub const ZigTests = struct {
 /// (tests/*.py) with their `test-*` steps.
 pub fn addZig(ctx: Context, session: Session) ZigTests {
     const b = ctx.b;
+    const run_files_benchmarks = if (b.graph.environ_map.get(
+        "REDIWM_RUN_BENCHMARKS",
+    )) |value|
+        std.mem.eql(u8, value, "1")
+    else
+        false;
     const target = ctx.target;
     const optimize = ctx.optimize;
     const use_llvm = ctx.use_llvm;
@@ -422,6 +428,10 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
         "bench-files-copy",
         "Run the standalone production filesystem copy benchmark",
     ).dependOn(&run_copy_bench.step);
+
+    if (run_files_benchmarks) {
+        test_step.dependOn(&run_copy_bench.step);
+    }
 
     const terminal_integration = b.addSystemCommand(&.{"env"});
     terminal_integration.addPrefixedDirectoryArg("REDIWM_TEST_BIN=", support.installed(.bin, ""));
