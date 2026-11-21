@@ -532,16 +532,31 @@ pub fn stepOperations(self: *App) void {
                 const destination = self.active_io_copy_destination;
                 const is_directory = self.active_io_copy_is_directory;
                 const is_move = self.active_io_copy_is_move;
+                const is_archive = self.active_io_copy_is_archive;
                 const multiple_items = self.active_io_copy_item_count > 1;
                 if (is_move) updateMovedClipboard(self, manager, job_id);
                 self.active_io_copy_destination = null;
                 self.active_io_copy_job = null;
                 self.active_io_copy_is_directory = false;
                 self.active_io_copy_is_move = false;
+                self.active_io_copy_is_archive = false;
                 self.active_io_copy_item_count = 0;
                 self.job_cut_revision = null;
 
-                switch (state) {
+                if (is_archive) {
+                    switch (state) {
+                        .completed => self.setStatusNotice("Archive extracted", false),
+                        .completed_with_errors, .failed => self.setStatusNotice(
+                            "Could not extract archive",
+                            true,
+                        ),
+                        .cancelled => self.setStatusNotice(
+                            "Archive extraction cancelled",
+                            true,
+                        ),
+                        else => unreachable,
+                    }
+                } else switch (state) {
                     .completed => {
                         if (manager.jobHasSkippedOperations(job_id)) {
                             self.setStatusNotice(
