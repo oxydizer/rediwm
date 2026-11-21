@@ -12,3 +12,7 @@ bool rediwm_bass_set_treble(struct rediwm_bass *bass, float treble);
 /* Fades the filter's output out (true) or back in. Safe from any thread and
  * under any lock. Returns whether the filter is live, i.e. a fade will play. */
 bool rediwm_bass_set_mute(struct rediwm_bass *bass, bool muted);
+/* PipeWire is evidently up again (the PulseAudio connection came back):
+ * retry a lost connection that backed off or gave up. Same thread and lock
+ * rules as rediwm_bass_set_mute. */
+void rediwm_bass_reconnect(struct rediwm_bass *bass);

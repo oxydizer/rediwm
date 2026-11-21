@@ -21,6 +21,13 @@
 // needing to read `sinks`/`sources`/`sink_inputs` must hold `lock()` for the
 // duration of the read and copy out anything needed before `unlock()` —
 // those lists are mutated in place, under the same lock, by PA's own thread.
+//
+// libpulse never revives a failed context, and the server goes away whenever
+// pipewire-pulse restarts. A lost connection drops the device lists (the UI
+// then shows no audio rather than stale levels) and connects a new context
+// (`connectionLostLocked`, `reconnectCallback`); it waits for the server with
+// `PA_CONTEXT_NOFAIL`, which watches org.pulseaudio.Server on D-Bus, so a
+// missing server costs no wakeups.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -34,12 +41,21 @@ extern fn rediwm_bass_get(bass: ?*Bass, gain: *f32, treble: *f32) c_int;
 extern fn rediwm_bass_set(bass: ?*Bass, gain: f32) bool;
 extern fn rediwm_bass_set_treble(bass: ?*Bass, treble: f32) bool;
 extern fn rediwm_bass_set_mute(bass: ?*Bass, muted: bool) bool;
+extern fn rediwm_bass_reconnect(bass: ?*Bass) void;
 
 /// How long a mute waits for the bass filter's fade before muting the sink:
 /// the fade (bass_dsp.c MUTE_FADE_OUT, 200 ms) plus time for its last samples
 /// to reach the speakers (up to a 2048-frame quantum to process, then the
 /// device buffer). The sink reads as muted throughout.
 const mute_fade_delay_us: pa.pa_usec_t = 350_000;
+
+/// Reconnect delays after a failure double from this up to `<< 7` (32 s),
+/// so a server that crashes as it starts is not hammered.
+const reconnect_base_us: pa.pa_usec_t = 250_000;
+/// Consecutive failures without ever reaching READY before giving up. Only a
+/// server that keeps failing counts: one that is absent leaves a NOFAIL
+/// context connecting, not failed (unless there is no D-Bus to watch it on).
+const reconnect_max_failures = 12;
 
 /// `gain` is the bass boost (0..12 dB), `treble` a cut or boost (-6..6 dB).
 pub const BassState = struct { gain: f32, treble: f32, available: bool, save_failed: bool };
@@ -111,6 +127,11 @@ pub const AudioManager = struct {
     /// this fires (`muteTimerCallback`), and reads as muted until then.
     mute_timer: ?*pa.pa_time_event = null,
     pending_mute_sink: u32 = 0,
+    /// Pending replacement of a failed context (`reconnectCallback`).
+    reconnect_timer: ?*pa.pa_time_event = null,
+    reconnect_failures: u8 = 0,
+    /// Set by `deinit`: the context terminating then is not a lost server.
+    shutting_down: bool = false,
 
     sinks: std.ArrayList(SinkInfo) = .empty,
     sources: std.ArrayList(SourceInfo) = .empty,
@@ -132,22 +153,13 @@ pub const AudioManager = struct {
         return self.default_source_name[0..self.default_source_name_len];
     }
 
-    /// Connects to PipeWire's PulseAudio-compat socket and does an initial
-    /// synchronous population of `sinks`/`sources`/`sink_inputs`. Returns an
-    /// error (never crashes) if no socket is reachable — callers should log
-    /// a warning and leave audio support disabled, matching every other
-    /// optional subsystem in this compositor.
-    pub fn create(allocator: Allocator) !*AudioManager {
-        return createWithMode(allocator, true);
-    }
-
     /// Connect and populate on PA's existing thread. A slow or unresponsive
-    /// sound server must not delay the first frame or the compositor event loop.
+    /// sound server must not delay the first frame or the compositor event
+    /// loop; one that is not running yet is waited for. Returns an error
+    /// (never crashes) only if libpulse itself cannot start — callers log a
+    /// warning and leave audio support disabled, matching every other
+    /// optional subsystem in this compositor.
     pub fn createAsync(allocator: Allocator) !*AudioManager {
-        return createWithMode(allocator, false);
-    }
-
-    fn createWithMode(allocator: Allocator, wait: bool) !*AudioManager {
         const mainloop = pa.pa_threaded_mainloop_new() orelse return error.MainloopCreateFailed;
         errdefer pa.pa_threaded_mainloop_free(mainloop);
 
@@ -161,44 +173,23 @@ pub const AudioManager = struct {
             .allocator = allocator,
             .mainloop = mainloop,
             .context = context,
-            .initial_population_pending = !wait,
+            .initial_population_pending = true,
             .wake_fd = -1,
         };
 
         pa.pa_context_set_state_callback(context, stateCallback, self);
 
-        if (pa.pa_context_connect(context, null, pa.PA_CONTEXT_NOFLAGS, null) < 0) {
-            return error.ConnectFailed;
-        }
+        // A server that refuses now (NOFAIL cannot wait on D-Bus with
+        // PULSE_SERVER set, or without a bus) is retried like a lost one.
+        // PA's thread is not running yet, so no lock is needed.
+        if (pa.pa_context_connect(context, null, pa.PA_CONTEXT_NOFAIL, null) < 0) self.connectionLostLocked();
         if (pa.pa_threaded_mainloop_start(mainloop) < 0) return error.MainloopStartFailed;
-        errdefer pa.pa_threaded_mainloop_stop(mainloop);
-
-        if (!wait) {
-            self.bass = rediwm_bass_create(bassChanged, self);
-            return self;
-        }
-
-        pa.pa_threaded_mainloop_lock(mainloop);
-        errdefer pa.pa_threaded_mainloop_unlock(mainloop);
-
-        while (true) {
-            const state = pa.pa_context_get_state(context);
-            if (state == pa.PA_CONTEXT_READY) break;
-            if (state == pa.PA_CONTEXT_FAILED or state == pa.PA_CONTEXT_TERMINATED) {
-                return error.ConnectFailed;
-            }
-            pa.pa_threaded_mainloop_wait(mainloop);
-        }
-
-        self.populateLocked(true);
-
-        log.info("connected to PipeWire/PulseAudio; default sink '{s}'", .{self.defaultSinkNameSlice()});
-        pa.pa_threaded_mainloop_unlock(mainloop);
         self.bass = rediwm_bass_create(bassChanged, self);
         return self;
     }
 
-    fn populateLocked(self: *AudioManager, wait: bool) void {
+    /// Runs on PA's thread for every connection that becomes ready.
+    fn populateLocked(self: *AudioManager) void {
         pa.pa_context_set_subscribe_callback(self.context, subscribeCallback, self);
         const mask: pa.pa_subscription_mask_t = pa.PA_SUBSCRIPTION_MASK_SINK |
             pa.PA_SUBSCRIPTION_MASK_SOURCE | pa.PA_SUBSCRIPTION_MASK_SINK_INPUT |
@@ -206,10 +197,10 @@ pub const AudioManager = struct {
         // Fire-and-forget: see the module doc comment on why this must not wait.
         if (pa.pa_context_subscribe(self.context, mask, null, null)) |op| pa.pa_operation_unref(op);
 
-        self.refreshServerInfoLocked(wait);
-        self.refreshSinksLocked(wait);
-        self.refreshSourcesLocked(wait);
-        self.refreshSinkInputsLocked(wait);
+        self.refreshServerInfoLocked(false);
+        self.refreshSinksLocked(false);
+        self.refreshSourcesLocked(false);
+        self.refreshSinkInputsLocked(false);
         // Bumped once so `generation` starts at 1: every fresh consumer
         // (a Taskbar's `audio_generation_seen` defaults to 0) then sees a
         // mismatch on its very first check and reads the real initial state,
@@ -220,6 +211,9 @@ pub const AudioManager = struct {
 
     pub fn deinit(self: *AudioManager) void {
         pa.pa_threaded_mainloop_lock(self.mainloop);
+        // Before the lock is next released: a failure from now on must not
+        // schedule (or run) a reconnect.
+        self.shutting_down = true;
         // A mute still fading out happens now: the fade dies with the filter.
         if (self.mute_timer != null) {
             self.cancelSinkMute();
@@ -236,24 +230,24 @@ pub const AudioManager = struct {
         rediwm_bass_destroy(bass);
         pa.pa_threaded_mainloop_lock(self.mainloop);
         self.initial_population_pending = false;
+        if (self.reconnect_timer) |timer| {
+            const api = pa.pa_threaded_mainloop_get_api(self.mainloop);
+            if (api.*.time_free) |free_fn| free_fn(timer);
+            self.reconnect_timer = null;
+        }
         pa.pa_context_disconnect(self.context);
         pa.pa_threaded_mainloop_unlock(self.mainloop);
         pa.pa_threaded_mainloop_stop(self.mainloop);
         pa.pa_context_unref(self.context);
         pa.pa_threaded_mainloop_free(self.mainloop);
 
-        freeSinks(self.allocator, self.sinks.items);
+        // Shutdown can interrupt asynchronous list responses (scratch lists).
+        self.clearDevicesLocked();
         self.sinks.deinit(self.allocator);
-        freeSources(self.allocator, self.sources.items);
         self.sources.deinit(self.allocator);
-        freeSinkInputs(self.allocator, self.sink_inputs.items);
         self.sink_inputs.deinit(self.allocator);
-        // Shutdown can interrupt the initial asynchronous list responses.
-        freeSinks(self.allocator, self.sinks_scratch.items);
         self.sinks_scratch.deinit(self.allocator);
-        freeSources(self.allocator, self.sources_scratch.items);
         self.sources_scratch.deinit(self.allocator);
-        freeSinkInputs(self.allocator, self.sink_inputs_scratch.items);
         self.sink_inputs_scratch.deinit(self.allocator);
 
         if (self.wake_fd >= 0) _ = std.posix.system.close(self.wake_fd);
@@ -301,6 +295,54 @@ pub const AudioManager = struct {
         // fails with EINVAL and leaves the compositor asleep.
         const increment: u64 = 1;
         _ = std.posix.system.write(self.wake_fd, @ptrCast(&increment), @sizeOf(u64));
+    }
+
+    /// Frees every device list, partial (scratch) ones included.
+    fn clearDevicesLocked(self: *AudioManager) void {
+        freeSinks(self.allocator, self.sinks.items);
+        self.sinks.clearRetainingCapacity();
+        freeSinks(self.allocator, self.sinks_scratch.items);
+        self.sinks_scratch.clearRetainingCapacity();
+        freeSources(self.allocator, self.sources.items);
+        self.sources.clearRetainingCapacity();
+        freeSources(self.allocator, self.sources_scratch.items);
+        self.sources_scratch.clearRetainingCapacity();
+        freeSinkInputs(self.allocator, self.sink_inputs.items);
+        self.sink_inputs.clearRetainingCapacity();
+        freeSinkInputs(self.allocator, self.sink_inputs_scratch.items);
+        self.sink_inputs_scratch.clearRetainingCapacity();
+        self.default_sink_name_len = 0;
+        self.default_source_name_len = 0;
+    }
+
+    /// The context failed (on PA's thread): forget the old server's state and
+    /// schedule a new context. Its pending operations were cancelled without
+    /// callbacks, so the action in flight is dropped here.
+    fn connectionLostLocked(self: *AudioManager) void {
+        if (self.shutting_down or self.reconnect_timer != null) return;
+        // Presses queued now would land long after they were made.
+        self.initial_population_pending = false;
+        self.action_current = null;
+        self.action_len = 0;
+        // The sink a fade-out was for is gone, never muted; the filter
+        // follows the reconnected server's mute state from its first list.
+        if (self.mute_timer != null) {
+            self.cancelSinkMute();
+            _ = rediwm_bass_set_mute(self.bass, false);
+        }
+        self.clearDevicesLocked();
+        _ = self.generation.fetchAdd(1, .monotonic);
+        self.wake();
+
+        const reason = std.mem.span(pa.pa_strerror(pa.pa_context_errno(self.context)));
+        if (self.reconnect_failures >= reconnect_max_failures) {
+            log.warn("PipeWire/PulseAudio connection failed ({s}); giving up after {d} attempts", .{ reason, self.reconnect_failures });
+            return;
+        }
+        const delay = reconnect_base_us << @intCast(@min(self.reconnect_failures, 7));
+        self.reconnect_failures += 1;
+        self.reconnect_timer = pa.pa_context_rttime_new(self.context, pa.pa_rtclock_now() + delay, reconnectCallback, self);
+        log.warn("PipeWire/PulseAudio connection lost ({s}); reconnecting in {d} ms", .{ reason, delay / 1000 });
     }
 
     // ---- Refresh (query) operations. `wait`: block until the initial list
@@ -698,22 +740,51 @@ fn volumeToPa(volume: f32) pa.pa_volume_t {
 
 fn stateCallback(context: ?*pa.pa_context, userdata: ?*anyopaque) callconv(.c) void {
     const self: *AudioManager = @ptrCast(@alignCast(userdata.?));
-    if (self.initial_population_pending) {
-        switch (pa.pa_context_get_state(context)) {
-            pa.PA_CONTEXT_READY => {
-                self.initial_population_pending = false;
-                self.populateLocked(false);
-                self.nextActionLocked();
-                log.info("connected to PipeWire/PulseAudio; loading devices asynchronously", .{});
-            },
-            pa.PA_CONTEXT_FAILED, pa.PA_CONTEXT_TERMINATED => {
-                self.initial_population_pending = false;
-                log.warn("PipeWire/PulseAudio connection failed during startup", .{});
-            },
-            else => {},
-        }
+    switch (pa.pa_context_get_state(context)) {
+        pa.PA_CONTEXT_READY => {
+            const first = self.initial_population_pending;
+            self.initial_population_pending = false;
+            self.reconnect_failures = 0;
+            self.populateLocked();
+            self.nextActionLocked();
+            if (first)
+                log.info("connected to PipeWire/PulseAudio; loading devices asynchronously", .{})
+            else {
+                log.info("reconnected to PipeWire/PulseAudio", .{});
+                // pipewire-pulse runs on PipeWire: if the filter lost the
+                // daemon too, it is worth retrying now (lock-free call).
+                rediwm_bass_reconnect(self.bass);
+            }
+        },
+        pa.PA_CONTEXT_FAILED, pa.PA_CONTEXT_TERMINATED => self.connectionLostLocked(),
+        else => {},
     }
     pa.pa_threaded_mainloop_signal(self.mainloop, 0);
+}
+
+/// Replaces the failed context with a new one (on PA's thread). The old
+/// one's callbacks are detached first: it must never report into `self`.
+fn reconnectCallback(api: ?*pa.pa_mainloop_api, e: ?*pa.pa_time_event, tv: ?*const pa.struct_timeval, userdata: ?*anyopaque) callconv(.c) void {
+    _ = tv;
+    const self: *AudioManager = @ptrCast(@alignCast(userdata.?));
+    if (e) |timer| {
+        if (api) |a| if (a.time_free) |free_fn| free_fn(timer);
+    }
+    self.reconnect_timer = null;
+    if (self.shutting_down) return;
+    const context = pa.pa_context_new(pa.pa_threaded_mainloop_get_api(self.mainloop), "rediwm") orelse {
+        self.connectionLostLocked();
+        return;
+    };
+    const old = self.context;
+    pa.pa_context_set_state_callback(old, null, null);
+    pa.pa_context_set_subscribe_callback(old, null, null);
+    self.context = context;
+    pa.pa_context_unref(old);
+    pa.pa_context_set_state_callback(context, stateCallback, self);
+    // A synchronous failure has already reported FAILED; the timer guard in
+    // `connectionLostLocked` keeps this from scheduling twice.
+    if (pa.pa_context_connect(context, null, pa.PA_CONTEXT_NOFAIL, null) < 0) self.connectionLostLocked();
 }
 
 /// Fires on any subscribed state change, running on the PA thread — must

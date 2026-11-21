@@ -65,16 +65,21 @@ def run(tmp):
     def device_muted():
         return "yes" in command("pactl", "get-sink-mute", "fade_test")
 
-    try:
-        for args in (["pipewire", "-c", "/usr/share/pipewire/pipewire.conf"], ["pipewire-pulse"]):
-            procs.append(subprocess.Popen(args, env=env, stdout=audio_log, stderr=audio_log))
+    def start_audio():
+        """PipeWire, pipewire-pulse and WirePlumber with the test sink."""
+        started = [subprocess.Popen(args, env=env, stdout=audio_log, stderr=audio_log)
+                   for args in (["pipewire", "-c", "/usr/share/pipewire/pipewire.conf"], ["pipewire-pulse"])]
         wait(lambda: subprocess.run(["pactl", "info"], env=env, capture_output=True).returncode == 0, "private audio")
         # The policy-only profile has no ALSA, Bluetooth or camera monitors.
-        procs.append(subprocess.Popen(["dbus-run-session", "--", "wireplumber", "--profile=policy"],
-                                      env=env, stdout=audio_log, stderr=audio_log))
+        started.append(subprocess.Popen(["dbus-run-session", "--", "wireplumber", "--profile=policy"],
+                                        env=env, stdout=audio_log, stderr=audio_log))
         command("pactl", "load-module", "module-null-sink", "sink_name=fade_test")
         wait(lambda: "filters" in command("pw-metadata", "-l"), "smart-filter policy")
         command("pactl", "set-default-sink", "fade_test")
+        return started
+
+    try:
+        procs.extend(start_audio())
         extra = {key: env[key] for key in ("PIPEWIRE_RUNTIME_DIR", "PULSE_SERVER", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "DBUS_SESSION_BUS_ADDRESS")}
         config = '[compositor]\nxwayland = false\n[keybinds]\n"F12" = "quit"\n'
         process, log = spawn_compositor(tmp, env_extra=extra, config_content=config)
@@ -168,6 +173,23 @@ def run(tmp):
                 print(f"fade out {fade_out} ms, device mute after {device_delay} ms, fade in {fade_in} ms, "
                       f"cancelled mute dipped to {min(flick):.0%}, external unmute fade {external} ms")
 
+                # The daemon dying (a crash, `systemctl restart pipewire`)
+                # takes the filter, pipewire-pulse and WirePlumber with it.
+                for proc in procs[:3]:
+                    stop_process(proc)
+                procs[:3] = start_audio()
+                wait(bass_node, "bass filter after a PipeWire restart", timeout=20)
+                wait(lambda: ipc.action('get_audio_state')["default_sink"], "audio state after a PipeWire restart", timeout=10)
+                time.sleep(.5)  # The node is listed before the compositor binds it.
+                # Only a live filter fades: the device mutes after it.
+                ipc.key_press("XF86AudioMute")
+                wait(muted, "muted after a PipeWire restart")
+                assert not device_muted(), "no fade after a PipeWire restart"
+                wait(device_muted, "device muted after the restarted filter's fade")
+                ipc.key_press("XF86AudioMute")
+                wait(lambda: not muted(), "unmuted after a PipeWire restart")
+                print("PASS: filter and audio state return after a PipeWire restart")
+
                 # Quitting mid-fade still leaves the device muted.
                 ipc.key_press("XF86AudioMute")
                 wait(muted, "muted before quit")
@@ -177,6 +199,8 @@ def run(tmp):
                     pass  # It quit before replying.
             process.wait(timeout=10)
             assert device_muted(), "quitting during the fade left the device unmuted"
+            contents = (tmp / "compositor.log").read_text()
+            assert "bass boost: reconnected to PipeWire" in contents, "no filter reconnect logged"
             print("PASS: mute fades out before the device mutes, unmute fades in, cancel and quit are clean")
         except Exception:
             log.flush()

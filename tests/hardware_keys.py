@@ -38,9 +38,9 @@ def private_audio(tmp):
     with (runtime / 'log').open('w') as log:
         def pactl(*args):
             return subprocess.check_output(['pactl', *args], env=env, text=True).strip()
-        try:
-            for args in (['pipewire', '-c', str(config)], ['pipewire-pulse']):
-                procs.append(subprocess.Popen(args, env=env, stdout=log, stderr=log))
+
+        def start_pulse():
+            procs.append(subprocess.Popen(['pipewire-pulse'], env=env, stdout=log, stderr=log))
             wait(lambda: subprocess.run(['pactl', 'info'], env=env, capture_output=True).returncode == 0, 'private audio startup')
             pactl('load-module', 'module-null-sink', 'sink_name=osd_test')
             pactl('load-module', 'module-remap-source', 'source_name=osd_mic', 'master=osd_test.monitor')
@@ -50,6 +50,15 @@ def private_audio(tmp):
             pactl('set-sink-volume', 'osd_test', '50%')
             pactl('set-sink-mute', 'osd_test', '0')
             pactl('set-source-mute', 'osd_mic', '0')
+
+        def restart_pulse():
+            """Like systemd restarting pipewire-pulse: its devices go with it."""
+            stop_process(procs.pop())
+            start_pulse()
+        pactl.restart_pulse = restart_pulse
+        try:
+            procs.append(subprocess.Popen(['pipewire', '-c', str(config)], env=env, stdout=log, stderr=log))
+            start_pulse()
             yield env, pactl
         finally:
             for p in reversed(procs):
@@ -198,6 +207,13 @@ print('fixture,backlight,700,70%,1000')
                     pactl('set-sink-volume', 'osd_test', '25%')
                     wait(lambda: abs(audio()['master_volume'] - .25) < .002, 'external adjustment')
                     assert red_count(capture('external-volume')) < red_count(volume) * .6
+                    # A restarted sound server is reconnected to: keys must not
+                    # keep showing (and failing to change) the old server's level.
+                    pactl.restart_pulse()
+                    wait(lambda: abs(audio()['master_volume'] - .5) < .002, 'state after pulse restart', timeout=10)
+                    client.key_press('XF86AudioRaiseVolume')
+                    wait(lambda: abs(audio()['master_volume'] - .55) < .002, 'volume key after pulse restart')
+                    assert pactl('get-sink-volume', 'osd_test').count('55%') == 2, 'server volume after pulse restart'
                     # Failed helpers never invent a level, and hung helpers do
                     # not block IPC or keep queueing indefinitely.
                     time.sleep(1.5)
@@ -229,7 +245,8 @@ print('fixture,backlight,700,70%,1000')
                 log.close()
             contents = (tmp / 'compositor.log').read_text()
             assert 'panic:' not in contents, contents
-    print('PASS: hardware keys, confirmed OSD pixels, repeats, menu routing, helper failures; scale=' + scale)
+            assert 'reconnected to PipeWire/PulseAudio' in contents, 'no audio reconnect logged'
+    print('PASS: hardware keys, confirmed OSD pixels, repeats, menu routing, helper failures, pulse restart; scale=' + scale)
 
 
 if __name__ == '__main__':

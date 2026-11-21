@@ -2,7 +2,13 @@
  * default output without rewriting the user's default device or stream targets.
  * All graph changes and debounced state writes run on the PipeWire loop. The
  * DSP is bass_dsp.c, a LADSPA plugin installed in lib/rediwm/ladspa next to
- * the binaries. */
+ * the binaries.
+ *
+ * A PipeWire daemon that goes away (restart, crash) kills the core: the
+ * filter is rebuilt on a new one once the daemon and its policy manager are
+ * back. Reconnects back off from 250 ms to 32 s and stop after
+ * RECONNECT_MAX_FAILURES, so a daemon that stays gone costs no wakeups;
+ * rediwm_bass_reconnect (the PulseAudio side reconnecting) retries then. */
 #define _POSIX_C_SOURCE 200809L
 #include "bass.h"
 #include "../platform/self_exe.h"
@@ -20,6 +26,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#define RECONNECT_BASE_MS 250u
+#define RECONNECT_MAX_SHIFT 7 /* 32 s */
+#define RECONNECT_MAX_FAILURES 12
+
 struct rediwm_bass {
     struct pw_thread_loop *loop;
     struct pw_context *context;
@@ -29,12 +39,16 @@ struct rediwm_bass {
     struct pw_node *node;
     struct pw_metadata *filters;
     struct spa_hook registry_listener, core_listener, module_listener, node_listener;
-    struct spa_source *save_timer, *mute_event;
+    struct spa_source *save_timer, *mute_event, *reconnect_timer, *retry_event;
     uint32_t node_id, metadata_id;
     enum pw_node_state node_state;
     char name[80], state_path[4096], plugin[4096];
     float gain, treble;
     bool started, failed, dirty, save_failed;
+    /* The core died (`core_lost`) and a new one is scheduled
+     * (`reconnecting`); failures count attempts that never saw a global. */
+    bool core_lost, reconnecting;
+    unsigned reconnect_failures;
     /* Written from any thread by rediwm_bass_set_mute; `live` mirrors
      * node && filters && !failed for it. */
     atomic_bool muted, live;
@@ -157,6 +171,8 @@ static void global(void *data, uint32_t id, uint32_t permissions,
                    const char *type, uint32_t version, const struct spa_dict *props) {
     (void)permissions; (void)version;
     struct rediwm_bass *b = data;
+    /* The daemon answers: a later loss starts backing off afresh. */
+    b->reconnect_failures = 0;
     if (!props) return;
     const char *name;
     if (strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0 && !b->filters &&
@@ -196,6 +212,20 @@ static const struct pw_registry_events registry_events = {
     PW_VERSION_REGISTRY_EVENTS, .global = global, .global_remove = global_remove,
 };
 
+static void schedule_reconnect(struct rediwm_bass *b) {
+    if (b->reconnecting) return;
+    if (b->reconnect_failures >= RECONNECT_MAX_FAILURES) {
+        fprintf(stderr, "bass boost: PipeWire still unreachable; giving up after %u attempts\n", b->reconnect_failures);
+        return;
+    }
+    unsigned shift = b->reconnect_failures < RECONNECT_MAX_SHIFT ? b->reconnect_failures : RECONNECT_MAX_SHIFT;
+    uint64_t ms = (uint64_t)RECONNECT_BASE_MS << shift;
+    struct timespec delay = { .tv_sec = (time_t)(ms / 1000), .tv_nsec = (long)(ms % 1000) * 1000000 };
+    b->reconnect_failures++;
+    b->reconnecting = true;
+    pw_loop_update_timer(pw_thread_loop_get_loop(b->loop), b->reconnect_timer, &delay, NULL, false);
+}
+
 static void core_error(void *data, uint32_t id, int seq, int res, const char *message) {
     (void)seq;
     struct rediwm_bass *b = data;
@@ -203,10 +233,87 @@ static void core_error(void *data, uint32_t id, int seq, int res, const char *me
     if (id == PW_ID_CORE || (b->node && id == pw_proxy_get_id((struct pw_proxy *)b->node))) {
         b->failed = true;
         if (b->module) pw_impl_module_destroy(b->module);
+        /* Usually the daemon is gone (-EPIPE, -ECONNRESET); after any core
+         * error only a new core can carry the filter again. The dead one is
+         * torn down in reconnect(), not from inside its own event. */
+        if (id == PW_ID_CORE && !b->core_lost) {
+            b->core_lost = true;
+            schedule_reconnect(b);
+        }
         changed(b);
     }
 }
 static const struct pw_core_events core_events = { PW_VERSION_CORE_EVENTS, .error = core_error };
+
+/* Drops the filter and every proxy on the core, then the core. */
+static void disconnect_core(struct rediwm_bass *b) {
+    if (b->module) pw_impl_module_destroy(b->module);
+    if (b->node) {
+        spa_hook_remove(&b->node_listener);
+        pw_proxy_destroy((struct pw_proxy *)b->node);
+        b->node = NULL;
+    }
+    if (b->filters) {
+        pw_proxy_destroy((struct pw_proxy *)b->filters);
+        b->filters = NULL;
+    }
+    if (b->registry) {
+        spa_hook_remove(&b->registry_listener);
+        pw_proxy_destroy((struct pw_proxy *)b->registry);
+        b->registry = NULL;
+    }
+    if (b->core) {
+        spa_hook_remove(&b->core_listener);
+        pw_core_disconnect(b->core);
+        b->core = NULL;
+    }
+}
+
+/* The filter, its node and the "filters" metadata arrive through the
+ * registry once the policy manager is up (global()). */
+static int connect_core(struct rediwm_bass *b) {
+    b->core = pw_context_connect(b->context, NULL, 0);
+    if (!b->core) return -errno;
+    /* Let filter-chain open its own core connection. Controlling an exported
+     * node through its owning connection deadlocks the server's set-param
+     * busy/ping handshake (the acknowledgement queues behind the command). */
+    pw_core_add_listener(b->core, &b->core_listener, &core_events, b);
+    b->registry = pw_core_get_registry(b->core, PW_VERSION_REGISTRY, 0);
+    if (!b->registry) {
+        disconnect_core(b);
+        return -ENOMEM;
+    }
+    pw_registry_add_listener(b->registry, &b->registry_listener, &registry_events, b);
+    return 0;
+}
+
+static void reconnect(void *data, uint64_t expirations) {
+    (void)expirations;
+    struct rediwm_bass *b = data;
+    b->reconnecting = false;
+    disconnect_core(b);
+    int res = connect_core(b);
+    if (res < 0) {
+        fprintf(stderr, "bass boost: PipeWire reconnect failed: %s\n", strerror(-res));
+        schedule_reconnect(b);
+        return;
+    }
+    fprintf(stderr, "bass boost: reconnected to PipeWire\n");
+    b->core_lost = false;
+    /* A plugin that is missing fails again in load_filter. */
+    b->failed = false;
+    changed(b);
+}
+
+static void retry_event(void *data, uint64_t count) {
+    (void)count;
+    struct rediwm_bass *b = data;
+    if (!b->core_lost) return;
+    /* Re-arms a long backoff, or a given-up connection, at the base delay. */
+    b->reconnect_failures = 0;
+    b->reconnecting = false;
+    schedule_reconnect(b);
+}
 
 /* The DSP plugin is installed in lib/rediwm/ladspa beside bin/. */
 static void find_plugin(struct rediwm_bass *b) {
@@ -246,18 +353,19 @@ struct rediwm_bass *rediwm_bass_create(void (*notify)(void *), void *data) {
     if (!b->loop) goto fail;
     b->context = pw_context_new(pw_thread_loop_get_loop(b->loop), NULL, 0);
     if (!b->context) goto fail;
-    b->core = pw_context_connect(b->context, NULL, 0);
-    if (!b->core) goto fail;
-    /* Let filter-chain open its own core connection. Controlling an exported
-     * node through its owning connection deadlocks the server's set-param
-     * busy/ping handshake (the acknowledgement queues behind the command). */
-    pw_core_add_listener(b->core, &b->core_listener, &core_events, b);
-    b->registry = pw_core_get_registry(b->core, PW_VERSION_REGISTRY, 0);
-    if (!b->registry) goto fail;
-    pw_registry_add_listener(b->registry, &b->registry_listener, &registry_events, b);
-    b->save_timer = pw_loop_add_timer(pw_thread_loop_get_loop(b->loop), save_timer, b);
-    b->mute_event = pw_loop_add_event(pw_thread_loop_get_loop(b->loop), mute_event, b);
-    if (!b->save_timer || !b->mute_event || pw_thread_loop_start(b->loop) < 0) goto fail;
+    struct pw_loop *loop = pw_thread_loop_get_loop(b->loop);
+    b->save_timer = pw_loop_add_timer(loop, save_timer, b);
+    b->mute_event = pw_loop_add_event(loop, mute_event, b);
+    b->reconnect_timer = pw_loop_add_timer(loop, reconnect, b);
+    b->retry_event = pw_loop_add_event(loop, retry_event, b);
+    if (!b->save_timer || !b->mute_event || !b->reconnect_timer || !b->retry_event) goto fail;
+    /* A daemon that is not up yet is retried like a lost one. */
+    if (connect_core(b) < 0) {
+        b->core_lost = true;
+        b->failed = true;
+        schedule_reconnect(b);
+    }
+    if (pw_thread_loop_start(b->loop) < 0) goto fail;
     b->started = true;
     return b;
 fail:
@@ -270,13 +378,12 @@ void rediwm_bass_destroy(struct rediwm_bass *b) {
     if (b->started) pw_thread_loop_stop(b->loop);
     b->notify = NULL;
     save_state(b);
-    if (b->save_timer) pw_loop_destroy_source(pw_thread_loop_get_loop(b->loop), b->save_timer);
-    if (b->mute_event) pw_loop_destroy_source(pw_thread_loop_get_loop(b->loop), b->mute_event);
-    if (b->module) pw_impl_module_destroy(b->module);
-    if (b->node) pw_proxy_destroy((struct pw_proxy *)b->node);
-    if (b->filters) pw_proxy_destroy((struct pw_proxy *)b->filters);
-    if (b->registry) pw_proxy_destroy((struct pw_proxy *)b->registry);
-    if (b->core) pw_core_disconnect(b->core);
+    struct pw_loop *loop = b->loop ? pw_thread_loop_get_loop(b->loop) : NULL;
+    if (b->save_timer) pw_loop_destroy_source(loop, b->save_timer);
+    if (b->mute_event) pw_loop_destroy_source(loop, b->mute_event);
+    if (b->reconnect_timer) pw_loop_destroy_source(loop, b->reconnect_timer);
+    if (b->retry_event) pw_loop_destroy_source(loop, b->retry_event);
+    disconnect_core(b);
     if (b->context) pw_context_destroy(b->context);
     if (b->loop) pw_thread_loop_destroy(b->loop);
     free(b);
@@ -328,4 +435,9 @@ bool rediwm_bass_set_mute(struct rediwm_bass *b, bool muted) {
     if (!b) return false;
     if (atomic_exchange(&b->muted, muted) != muted) pw_loop_signal_event(pw_thread_loop_get_loop(b->loop), b->mute_event);
     return atomic_load(&b->live);
+}
+
+/* Same locking rule as rediwm_bass_set_mute. */
+void rediwm_bass_reconnect(struct rediwm_bass *b) {
+    if (b) pw_loop_signal_event(pw_thread_loop_get_loop(b->loop), b->retry_event);
 }
