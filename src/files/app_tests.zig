@@ -783,6 +783,14 @@ test "copying selected archive members publishes real staged paths and retains t
     const temp = try makeTransferTestTempDir(&temp_buffer);
     const source = try transferTestJoin(allocator, temp, "sample.zip");
     defer allocator.free(source);
+    const destination = try transferTestJoin(allocator, temp, "destination");
+    defer allocator.free(destination);
+    const destination_file = try transferTestJoin(
+        allocator,
+        destination,
+        "payload.txt",
+    );
+    defer allocator.free(destination_file);
     const virtual_path = try std.fmt.allocPrint(
         allocator,
         "{s}/nested/payload.txt",
@@ -790,10 +798,13 @@ test "copying selected archive members publishes real staged paths and retains t
     );
     defer allocator.free(virtual_path);
     defer {
+        transferTestCleanup(destination_file, false);
+        transferTestCleanup(destination, true);
         transferTestCleanup(source, false);
         transferTestCleanup(temp, true);
     }
     try writeArchivePublicationFixture(source);
+    try transferTestMkdir(destination);
 
     const item_name = try allocator.dupe(u8, "payload.txt");
     defer allocator.free(item_name);
@@ -802,8 +813,16 @@ test "copying selected archive members publishes real staged paths and retains t
 
     var runtime = io_runtime.Runtime.init(allocator);
     defer runtime.deinit();
+    const worker = try worker_mod.Worker.init(
+        allocator,
+        std.testing.io,
+        std.process.Environ.empty,
+        destination,
+    );
+    defer worker.deinit();
     var app = try testApp();
     defer app.deinit();
+    app.worker = worker;
     app.io_runtime = &runtime;
     app.io_manager = &runtime.manager;
     try app.history.navigateLocation(source, source.len);
@@ -837,6 +856,31 @@ test "copying selected archive members publishes real staged paths and retains t
     const contents = try transferTestReadFile(allocator, app.clipboard_paths.items[0]);
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("payload", contents);
+
+    try app.history.navigateLocation(destination, 0);
+    app.executePasteLocal();
+    const paste_job_id = app.active_io_copy_job orelse
+        return error.ArchiveClipboardPasteDidNotStart;
+    try waitForAppManagerJob(&app, paste_job_id);
+
+    try std.testing.expectEqual(
+        io_manager.JobState.completed,
+        app.io_manager.?.jobState(paste_job_id).?,
+    );
+    try std.testing.expect(app.active_io_copy_job == null);
+    try std.testing.expectEqual(@as(usize, 1), app.clipboard_paths.items.len);
+    try std.testing.expect(app.clipboard_staging_lease != null);
+
+    const pasted_contents = try transferTestReadFile(allocator, destination_file);
+    defer allocator.free(pasted_contents);
+    try std.testing.expectEqualStrings("payload", pasted_contents);
+
+    const staged_contents = try transferTestReadFile(
+        allocator,
+        app.clipboard_paths.items[0],
+    );
+    defer allocator.free(staged_contents);
+    try std.testing.expectEqualStrings("payload", staged_contents);
 
     const staging_path = try allocator.dupe(u8, app.clipboard_staging_lease.?.path);
     defer allocator.free(staging_path);
