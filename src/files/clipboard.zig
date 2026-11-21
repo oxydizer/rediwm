@@ -15,6 +15,29 @@ pub const StagingLease = struct {
     }
 };
 
+/// Transfers a staging lease to a new owner, clearing the previous owner.
+pub fn takeStagingLease(owner: *?StagingLease) ?StagingLease {
+    const lease = owner.* orelse return null;
+    owner.* = null;
+    return lease;
+}
+
+test "taking a staging lease clears the previous owner" {
+    const allocator = std.testing.allocator;
+    const path = try allocator.dupe(u8, "/tmp/clipboard-staging-test");
+    defer allocator.free(path);
+
+    var app_lease: ?StagingLease = .{
+        .allocator = allocator,
+        .path = path,
+    };
+    const source_lease = takeStagingLease(&app_lease);
+
+    try std.testing.expect(app_lease == null);
+    try std.testing.expect(source_lease != null);
+    try std.testing.expectEqualStrings(path, source_lease.?.path);
+}
+
 pub const ClipboardMode = enum {
     copy,
     cut,

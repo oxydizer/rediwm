@@ -100,6 +100,7 @@ pub fn publishClipboard(self: *Client) !void {
         source.offer("text/uri-list");
         source.offer("x-special/gnome-copied-files");
     }
+    clip.staging_lease = clipboard_mod.takeStagingLease(&self.app.clipboard_staging_lease);
     device.setSelection(source, self.input_serial);
     self.destroyClipboardSource();
     self.clipboard_source = clip;

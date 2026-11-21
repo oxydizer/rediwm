@@ -382,6 +382,160 @@ fn stepArchiveMemberExtractions(
     }
 }
 
+/// Materializes selected archive members as real paths for the clipboard.
+/// The staging lease remains App-owned until the Wayland source takes it.
+fn stepArchiveClipboardExtractions(
+    self: *App,
+    manager: *io_manager.Manager,
+    executor: *io_operation_executor.Runtime,
+) void {
+    var index: usize = 0;
+    while (index < self.archive_clipboard_extractions.items.len) {
+        const extraction = &self.archive_clipboard_extractions.items[index];
+        const state = manager.jobState(extraction.job_id);
+        if (state == null or state.?.isTerminal()) {
+            if (extraction.staging_lease) |*lease| {
+                lease.deinit();
+                extraction.staging_lease = null;
+            }
+            _ = executor.discardArchiveStaging(
+                extraction.job_id,
+                extraction.operation_id,
+            ) catch {
+                self.setStatusNotice("Could not remove archive staging data", true);
+                index += 1;
+                continue;
+            };
+            for (extraction.member_paths.items) |path| self.allocator.free(path);
+            extraction.member_paths.deinit(self.allocator);
+            _ = self.archive_clipboard_extractions.orderedRemove(index);
+            continue;
+        }
+
+        if (extraction.token == null) {
+            extraction.token = executor.archiveStagingToken(
+                extraction.job_id,
+                extraction.operation_id,
+            );
+            if (extraction.token == null) {
+                index += 1;
+                continue;
+            }
+        }
+
+        const token = extraction.token.?;
+        if (!extraction.registration_closed) {
+            manager.closeArchivePublication(token) catch {
+                manager.failArchivePublication(token) catch {
+                    self.setStatusNotice(
+                        "Could not close archive clipboard publication",
+                        true,
+                    );
+                    index += 1;
+                    continue;
+                };
+            };
+            extraction.registration_closed = true;
+        }
+
+        if (manager.archivePublicationReady(token) != true) {
+            index += 1;
+            continue;
+        }
+
+        if (extraction.staging_lease == null) {
+            extraction.staging_lease = executor.takeArchiveStaging(token);
+            if (extraction.staging_lease == null) {
+                self.setStatusNotice("Could not retain archive staging data", true);
+                index += 1;
+                continue;
+            }
+        }
+
+        var staged_paths: std.ArrayList([]const u8) = .empty;
+        var paths_failed = false;
+        for (extraction.member_paths.items) |member| {
+            const path = std.fs.path.join(
+                self.allocator,
+                &.{ extraction.staging_lease.?.path, member },
+            ) catch {
+                paths_failed = true;
+                break;
+            };
+            staged_paths.append(self.allocator, path) catch {
+                self.allocator.free(path);
+                paths_failed = true;
+                break;
+            };
+        }
+
+        if (!paths_failed and
+            staged_paths.items.len == extraction.member_paths.items.len)
+        {
+            self.clipboard_paths.ensureUnusedCapacity(
+                self.allocator,
+                staged_paths.items.len,
+            ) catch {
+                paths_failed = true;
+            };
+        } else {
+            paths_failed = true;
+        }
+
+        if (paths_failed) {
+            for (staged_paths.items) |path| self.allocator.free(path);
+            staged_paths.deinit(self.allocator);
+            if (!manager.completeArchivePublication(token)) {
+                index += 1;
+                continue;
+            }
+            if (extraction.staging_lease) |*lease| lease.deinit();
+            extraction.staging_lease = null;
+            self.setStatusNotice("Could not prepare archive clipboard paths", true);
+            for (extraction.member_paths.items) |path| self.allocator.free(path);
+            extraction.member_paths.deinit(self.allocator);
+            _ = self.archive_clipboard_extractions.orderedRemove(index);
+            continue;
+        }
+
+        if (!manager.completeArchivePublication(token)) {
+            for (staged_paths.items) |path| self.allocator.free(path);
+            staged_paths.deinit(self.allocator);
+            self.setStatusNotice("Could not complete archive clipboard extraction", true);
+            index += 1;
+            continue;
+        }
+
+        const completed_state = manager.jobState(extraction.job_id);
+        if (completed_state != .completed) {
+            for (staged_paths.items) |path| self.allocator.free(path);
+            staged_paths.deinit(self.allocator);
+            if (extraction.staging_lease) |*lease| lease.deinit();
+            extraction.staging_lease = null;
+            self.setStatusNotice("Archive clipboard extraction failed", true);
+            for (extraction.member_paths.items) |path| self.allocator.free(path);
+            extraction.member_paths.deinit(self.allocator);
+            _ = self.archive_clipboard_extractions.orderedRemove(index);
+            continue;
+        }
+
+        const lease = extraction.staging_lease.?;
+        extraction.staging_lease = null;
+        self.clearClipboard();
+        for (staged_paths.items) |path|
+            self.clipboard_paths.appendAssumeCapacity(path);
+        staged_paths.deinit(self.allocator);
+        self.clipboard_staging_lease = lease;
+        self.clipboard_is_text = false;
+        self.clipboard_cut = false;
+        self.clipboard_revision += 1;
+
+        for (extraction.member_paths.items) |path| self.allocator.free(path);
+        extraction.member_paths.deinit(self.allocator);
+        _ = self.archive_clipboard_extractions.orderedRemove(index);
+    }
+}
+
 /// Scans at most 64 top-level staging entries per main-loop pass, then drains
 /// the Manager barrier before releasing the staging lease.
 fn stepArchivePublications(
@@ -594,6 +748,7 @@ pub fn stepOperations(self: *App) void {
         self.transfer_tree_state.markDirty();
         self.transfer_rows_dirty = true;
     }
+    stepArchiveClipboardExtractions(self, manager, executor);
     stepArchiveMemberExtractions(self, manager, executor);
     stepArchivePublications(self, manager, executor);
     _ = executor.dispatchReady() catch {
@@ -642,6 +797,7 @@ pub fn stepOperations(self: *App) void {
                 const is_move = self.active_io_copy_is_move;
                 const is_archive = self.active_io_copy_is_archive;
                 const is_archive_member = self.active_io_copy_is_archive_member;
+                const is_archive_clipboard = self.active_io_copy_is_archive_clipboard;
                 const archive_member_opened =
                     self.active_io_copy_archive_member_opened;
                 const multiple_items = self.active_io_copy_item_count > 1;
@@ -652,6 +808,7 @@ pub fn stepOperations(self: *App) void {
                 self.active_io_copy_is_move = false;
                 self.active_io_copy_is_archive = false;
                 self.active_io_copy_is_archive_member = false;
+                self.active_io_copy_is_archive_clipboard = false;
                 self.active_io_copy_archive_member_opened = false;
                 self.active_io_copy_item_count = 0;
                 self.job_cut_revision = null;
@@ -665,6 +822,19 @@ pub fn stepOperations(self: *App) void {
                         ),
                         .cancelled => self.setStatusNotice(
                             "Archive extraction cancelled",
+                            true,
+                        ),
+                        else => unreachable,
+                    }
+                } else if (is_archive_clipboard) {
+                    switch (state) {
+                        .completed => self.setStatusNotice("Archive members copied to clipboard", false),
+                        .completed_with_errors, .failed => self.setStatusNotice(
+                            "Could not copy archive members",
+                            true,
+                        ),
+                        .cancelled => self.setStatusNotice(
+                            "Archive clipboard copy cancelled",
                             true,
                         ),
                         else => unreachable,

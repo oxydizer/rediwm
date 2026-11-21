@@ -261,7 +261,7 @@ pub fn fileActions(self: *App) []const FileAction {
     if (!has_actionable_selection) return &.{};
     if (only_transfers) return &.{.open};
     if (self.history.archive_len > 0)
-        return if (self.hasSelectedArchiveMembers()) &.{ .open, .extract_to } else &.{.open};
+        return if (self.hasSelectedArchiveMembers()) &.{ .open, .copy, .extract_to } else &.{.open};
     // Entries here are already deleted: put back or remove for good, but never
     // cut, rename, paste or trash again. Folders inside a trashed folder have
     // no metadata, so they only open, copy and show properties.

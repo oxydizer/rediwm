@@ -13,8 +13,86 @@ const deletion = @import("../delete_dialog.zig");
 const trash = @import("trash.zig");
 const c = @import("c.zig").api;
 
+fn startArchiveClipboardCopy(self: *App) !void {
+    if (!self.hasSelectedArchiveMembers()) return error.NoSelectedArchiveMembers;
+    if (self.active_io_copy_job != null) return error.Busy;
+    if (self.job_runner) |runner| {
+        const state = runner.pollProgress().state;
+        if (state == .running or state == .paused or state == .waiting_conflict)
+            return error.Busy;
+    }
+
+    const archive_len = self.history.archive_len;
+    const archive_path = self.history.current[0..archive_len];
+    var members: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (members.items) |member| self.allocator.free(member);
+        members.deinit(self.allocator);
+    }
+
+    for (self.items.items) |item| {
+        if (!item.selected or item.transfer_ghost) continue;
+        const member = try self.allocator.dupe(
+            u8,
+            item.path[archive_len + 1 ..],
+        );
+        members.append(self.allocator, member) catch |err| {
+            self.allocator.free(member);
+            return err;
+        };
+    }
+
+    try self.startOperations();
+    const manager = self.io_manager orelse return error.OperationManagerUnavailable;
+    try self.archive_clipboard_extractions.ensureUnusedCapacity(self.allocator, 1);
+
+    const job_id = try manager.createJob(null);
+    errdefer _ = manager.discardPlanningJob(job_id);
+    const operation_id = try manager.addArchiveOperation(
+        job_id,
+        .archive_extract,
+        .{
+            .source_path = archive_path,
+            .staging_parent = "/tmp",
+            .member_paths = members.items,
+        },
+    );
+    try manager.setDestinationDirectory(job_id, "/tmp");
+    try manager.queueJob(job_id);
+
+    self.archive_clipboard_extractions.appendAssumeCapacity(.{
+        .job_id = job_id,
+        .operation_id = operation_id,
+        .member_paths = members,
+    });
+    members = .empty;
+
+    self.active_io_copy_job = job_id;
+    self.active_io_copy_is_directory = false;
+    self.active_io_copy_is_move = false;
+    self.active_io_copy_is_archive = false;
+    self.active_io_copy_is_archive_member = false;
+    self.active_io_copy_is_archive_clipboard = true;
+    self.active_io_copy_item_count = self.archive_clipboard_extractions.items[
+        self.archive_clipboard_extractions.items.len - 1
+    ].member_paths.items.len;
+    self.setStatusNotice("Preparing archive members for clipboard", false);
+    self.invalidate();
+}
+
 pub fn copySelected(self: *App) void {
-    if (self.history.archive_len > 0) return;
+    if (self.history.archive_len > 0) {
+        startArchiveClipboardCopy(self) catch |err| {
+            self.setStatusNotice(
+                if (err == error.Busy)
+                    tr("A file operation is already running")
+                else
+                    tr("Could not copy archive members"),
+                true,
+            );
+        };
+        return;
+    }
     if (!self.hasSelection()) return;
     self.clipboard_is_text = false;
     self.clearClipboard();

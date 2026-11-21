@@ -272,7 +272,7 @@ test "transfer ghosts have no file actions or folder-size affordance" {
     try std.testing.expectEqual(@as(?MenuKind, .file), app.menu);
 }
 
-test "archive member context menu offers extraction only for regular selected files" {
+test "archive member context menu offers copy and extraction only for regular selected files" {
     var app = try testApp();
     defer app.deinit();
     try app.history.navigateLocation("/tmp/package.zip/nested", "/tmp/package.zip".len);
@@ -291,7 +291,7 @@ test "archive member context menu offers extraction only for regular selected fi
     });
 
     try std.testing.expect(app.hasSelectedArchiveMembers());
-    try std.testing.expectEqualSlices(FileAction, &.{ .open, .extract_to }, app.fileActions());
+    try std.testing.expectEqualSlices(FileAction, &.{ .open, .copy, .extract_to }, app.fileActions());
 
     app.items.items[0].is_symlink = true;
     try std.testing.expect(!app.hasSelectedArchiveMembers());
@@ -775,6 +775,76 @@ test "archive member extraction opens the selected file and retains its staging 
     const contents = try transferTestReadFile(allocator, editor_path);
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("payload", contents);
+}
+
+test "copying selected archive members publishes real staged paths and retains their lease" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+    const source = try transferTestJoin(allocator, temp, "sample.zip");
+    defer allocator.free(source);
+    const virtual_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/nested/payload.txt",
+        .{source},
+    );
+    defer allocator.free(virtual_path);
+    defer {
+        transferTestCleanup(source, false);
+        transferTestCleanup(temp, true);
+    }
+    try writeArchivePublicationFixture(source);
+
+    const item_name = try allocator.dupe(u8, "payload.txt");
+    defer allocator.free(item_name);
+    const item_path = try allocator.dupe(u8, virtual_path);
+    defer allocator.free(item_path);
+
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
+    var app = try testApp();
+    defer app.deinit();
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
+    try app.history.navigateLocation(source, source.len);
+    try app.items.append(allocator, .{
+        .name = item_name,
+        .path = item_path,
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 7,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .selected = true,
+    });
+
+    app.copySelected();
+    const job_id = app.active_io_copy_job orelse
+        return error.ArchiveClipboardExtractionDidNotStart;
+    try std.testing.expect(app.active_io_copy_is_archive_clipboard);
+    try waitForAppManagerJob(&app, job_id);
+
+    try std.testing.expectEqual(
+        io_manager.JobState.completed,
+        app.io_manager.?.jobState(job_id).?,
+    );
+    try std.testing.expect(app.active_io_copy_job == null);
+    try std.testing.expectEqual(@as(usize, 1), app.clipboard_paths.items.len);
+    try std.testing.expect(app.clipboard_staging_lease != null);
+    try std.testing.expect(!std.mem.eql(u8, virtual_path, app.clipboard_paths.items[0]));
+
+    const contents = try transferTestReadFile(allocator, app.clipboard_paths.items[0]);
+    defer allocator.free(contents);
+    try std.testing.expectEqualStrings("payload", contents);
+
+    const staging_path = try allocator.dupe(u8, app.clipboard_staging_lease.?.path);
+    defer allocator.free(staging_path);
+    app.clearClipboard();
+    const staging_z = try allocator.dupeSentinel(u8, staging_path, 0);
+    defer allocator.free(staging_z);
+    var staging_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(staging_z, &staging_stat) != 0);
 }
 
 test "Escape cancels Manager-backed archive member extraction" {

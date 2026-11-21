@@ -12,6 +12,7 @@ const io_discovery_mod = @import("io_discovery.zig");
 const io_discovery_executor_mod = @import("io_discovery_executor.zig");
 const io_operation_executor_mod = @import("io_operation_executor.zig");
 const io_runtime_mod = @import("io_runtime.zig");
+const clipboard_mod = @import("clipboard.zig");
 const history_mod = @import("history.zig");
 const ops_mod = @import("ops.zig");
 const dirsize = @import("dirsize.zig");
@@ -95,6 +96,14 @@ pub const App = struct {
         registration_closed: bool = false,
         opened: bool = false,
     };
+    pub const ArchiveClipboardExtraction = struct {
+        job_id: io_manager_mod.JobId,
+        operation_id: io_manager_mod.OperationId,
+        token: ?io_manager_mod.WorkToken = null,
+        member_paths: std.ArrayList([]const u8) = .empty,
+        staging_lease: ?clipboard_mod.StagingLease = null,
+        registration_closed: bool = false,
+    };
 
     terminal: app_terminal.Drawer = .{},
     closed: bool = false,
@@ -122,6 +131,7 @@ pub const App = struct {
     discovery_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
     archive_publications: std.ArrayList(ArchivePublication) = .empty,
     archive_member_extractions: std.ArrayList(ArchiveMemberExtraction) = .empty,
+    archive_clipboard_extractions: std.ArrayList(ArchiveClipboardExtraction) = .empty,
     history: history_mod.History,
     home_dir: []const u8,
 
@@ -315,6 +325,7 @@ pub const App = struct {
     active_io_copy_is_move: bool = false,
     active_io_copy_is_archive: bool = false,
     active_io_copy_is_archive_member: bool = false,
+    active_io_copy_is_archive_clipboard: bool = false,
     active_io_copy_archive_member_opened: bool = false,
     active_io_copy_item_count: usize = 0,
     job_was_running: bool = false,
@@ -342,6 +353,7 @@ pub const App = struct {
 
     // Clipboard
     clipboard_paths: std.ArrayList([]const u8) = .empty,
+    clipboard_staging_lease: ?clipboard_mod.StagingLease = null,
     clipboard_cut: bool = false,
     clipboard_revision: usize = 0,
     paste_requested: bool = false,
@@ -430,6 +442,12 @@ pub const App = struct {
         }
         self.archive_publications.deinit(self.allocator);
         self.archive_member_extractions.deinit(self.allocator);
+        for (self.archive_clipboard_extractions.items) |*extraction| {
+            if (extraction.staging_lease) |*lease| lease.deinit();
+            for (extraction.member_paths.items) |path| self.allocator.free(path);
+            extraction.member_paths.deinit(self.allocator);
+        }
+        self.archive_clipboard_extractions.deinit(self.allocator);
         self.discovery_jobs.deinit(self.allocator);
         self.torrents.deinit();
         self.stopAudio();
@@ -480,6 +498,8 @@ pub const App = struct {
     pub fn clearClipboard(self: *App) void {
         for (self.clipboard_paths.items) |p| self.allocator.free(p);
         self.clipboard_paths.clearRetainingCapacity();
+        if (self.clipboard_staging_lease) |*lease| lease.deinit();
+        self.clipboard_staging_lease = null;
     }
 
     pub fn getTitle(self: *App) [*:0]const u8 {
