@@ -272,6 +272,37 @@ test "transfer ghosts have no file actions or folder-size affordance" {
     try std.testing.expectEqual(@as(?MenuKind, .file), app.menu);
 }
 
+test "archive member context menu offers extraction only for regular selected files" {
+    var app = try testApp();
+    defer app.deinit();
+    try app.history.navigateLocation("/tmp/package.zip/nested", "/tmp/package.zip".len);
+
+    const mem = app.items_arena.allocator();
+    try app.items.append(app.allocator, .{
+        .name = try mem.dupe(u8, "payload.txt"),
+        .path = try mem.dupe(u8, "/tmp/package.zip/nested/payload.txt"),
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 7,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .selected = true,
+    });
+
+    try std.testing.expect(app.hasSelectedArchiveMembers());
+    try std.testing.expectEqualSlices(FileAction, &.{ .open, .extract_to }, app.fileActions());
+
+    app.items.items[0].is_symlink = true;
+    try std.testing.expect(!app.hasSelectedArchiveMembers());
+    try std.testing.expectEqualSlices(FileAction, &.{.open}, app.fileActions());
+
+    app.items.items[0].is_symlink = false;
+    app.items.items[0].is_dir = true;
+    try std.testing.expect(!app.hasSelectedArchiveMembers());
+    try std.testing.expectEqualSlices(FileAction, &.{.open}, app.fileActions());
+}
+
 test "terminal drawer shares viewport geometry and preserves its preferred height" {
     var app = try testApp();
     defer app.deinit();

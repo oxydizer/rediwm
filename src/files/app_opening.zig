@@ -184,6 +184,7 @@ fn startArchiveExtraction(
     self: *App,
     path: []const u8,
     destination: []const u8,
+    member_paths: []const []const u8,
 ) !void {
     if (self.active_io_copy_job != null) {
         return error.Busy;
@@ -214,6 +215,7 @@ fn startArchiveExtraction(
         .{
             .source_path = path,
             .staging_parent = destination,
+            .member_paths = member_paths,
         },
     );
     try manager.setDestinationDirectory(job_id, destination);
@@ -235,7 +237,7 @@ fn startArchiveExtraction(
 }
 
 pub fn startExtraction(self: *App, path: []const u8, destination: []const u8) void {
-    startArchiveExtraction(self, path, destination) catch |err| {
+    startArchiveExtraction(self, path, destination, &.{}) catch |err| {
         self.setStatusNotice(
             if (err == error.Busy)
                 tr("A file operation is already running")
@@ -347,6 +349,8 @@ pub fn previewExtracted(self: *App, path: []const u8) !void {
 pub fn closeExtractPicker(self: *App) void {
     if (self.extract_picker_fd) |fd| _ = c.close(fd);
     if (self.extract_picker_source) |path| self.allocator.free(path);
+    for (self.extract_picker_members.items) |path| self.allocator.free(path);
+    self.extract_picker_members.clearRetainingCapacity();
     self.extract_picker_fd = null;
     self.extract_picker_source = null;
     self.extract_picker_bytes.clearRetainingCapacity();
@@ -354,7 +358,37 @@ pub fn closeExtractPicker(self: *App) void {
 
 pub fn chooseExtractionFolder(self: *App) void {
     if (self.extract_picker_fd != null) return;
-    const path = self.selectedArchive() orelse return;
+    const archive_members = self.history.archive_len > 0;
+    const path = if (archive_members) blk: {
+        if (!self.hasSelectedArchiveMembers()) return;
+        break :blk self.history.current[0..self.history.archive_len];
+    } else self.selectedArchive() orelse return;
+
+    var members: std.ArrayList([]const u8) = .empty;
+    var members_transferred = false;
+    defer if (!members_transferred) {
+        for (members.items) |member| self.allocator.free(member);
+        members.deinit(self.allocator);
+    };
+
+    if (archive_members) {
+        for (self.items.items) |item| {
+            if (!item.selected or item.transfer_ghost) continue;
+            const member = self.allocator.dupe(
+                u8,
+                item.path[self.history.archive_len + 1 ..],
+            ) catch {
+                self.setStatusNotice(tr("Could not prepare archive members"), true);
+                return;
+            };
+            members.append(self.allocator, member) catch {
+                self.allocator.free(member);
+                self.setStatusNotice(tr("Could not prepare archive members"), true);
+                return;
+            };
+        }
+    }
+
     const source = self.allocator.dupe(u8, path) catch return;
     var exe: [platform.exe.max_path]u8 = undefined;
     const executable: []const u8 = platform.exe.path(&exe) orelse "rediwm-files";
@@ -383,6 +417,9 @@ pub fn chooseExtractionFolder(self: *App) void {
         return;
     };
     self.extract_picker_source = source;
+    self.extract_picker_members.deinit(self.allocator);
+    self.extract_picker_members = members;
+    members_transferred = true;
     self.extract_picker_fd = fd;
 }
 
@@ -419,7 +456,24 @@ pub fn extractionFolderReady(self: *App) void {
     };
     defer parsed.deinit();
     if (parsed.value.paths.len == 1 and std.fs.path.isAbsolute(parsed.value.paths[0])) {
-        self.startExtraction(self.extract_picker_source.?, parsed.value.paths[0]);
+        if (self.extract_picker_members.items.len > 0) {
+            startArchiveExtraction(
+                self,
+                self.extract_picker_source.?,
+                parsed.value.paths[0],
+                self.extract_picker_members.items,
+            ) catch |err| {
+                self.setStatusNotice(
+                    if (err == error.Busy)
+                        tr("A file operation is already running")
+                    else
+                        tr("Could not start extraction"),
+                    true,
+                );
+            };
+        } else {
+            self.startExtraction(self.extract_picker_source.?, parsed.value.paths[0]);
+        }
     }
 }
 

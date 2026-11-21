@@ -110,7 +110,7 @@ pub fn menuPadding(_: *App) usize {
 pub fn menuSeparatorBefore(self: *App, row: usize) bool {
     return switch (self.menu orelse return false) {
         .file => switch (self.fileActions()[row]) {
-            .cut, .extract, .restore, .properties => true,
+            .cut, .extract, .extract_to, .restore, .properties => true,
             else => false,
         },
         .background => row == 2,
@@ -219,6 +219,26 @@ pub fn selectedArchive(self: *App) ?[]const u8 {
     return selected;
 }
 
+/// Archive members use virtual paths, so only regular files can be exported
+/// through the selected-member extraction operation.
+pub fn hasSelectedArchiveMembers(self: *App) bool {
+    const archive_len = self.history.archive_len;
+    if (self.chooser != null or archive_len == 0 or self.history.current.len < archive_len)
+        return false;
+
+    var count: usize = 0;
+    for (self.items.items) |item| {
+        if (!item.selected or item.transfer_ghost) continue;
+        if (item.transfer_stub or item.is_dir or item.is_symlink or item.is_broken or item.missing)
+            return false;
+        if (item.path.len <= archive_len + 1 or item.path[archive_len] != '/' or
+            !std.mem.eql(u8, item.path[0..archive_len], self.history.current[0..archive_len]))
+            return false;
+        count += 1;
+    }
+    return count != 0;
+}
+
 pub fn selectedAppImage(self: *App) ?[]const u8 {
     if (self.chooser != null or self.history.archive_len > 0 or self.transfer_view.active) return null;
     var selected: ?[]const u8 = null;
@@ -240,7 +260,8 @@ pub fn fileActions(self: *App) []const FileAction {
     }
     if (!has_actionable_selection) return &.{};
     if (only_transfers) return &.{.open};
-    if (self.history.archive_len > 0) return &.{.open};
+    if (self.history.archive_len > 0)
+        return if (self.hasSelectedArchiveMembers()) &.{ .open, .extract_to } else &.{.open};
     // Entries here are already deleted: put back or remove for good, but never
     // cut, rename, paste or trash again. Folders inside a trashed folder have
     // no metadata, so they only open, copy and show properties.

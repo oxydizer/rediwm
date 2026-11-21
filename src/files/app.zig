@@ -322,6 +322,7 @@ pub const App = struct {
     archive_open_navigation: u32 = 0,
     extract_picker_fd: ?c_int = null,
     extract_picker_source: ?[]u8 = null,
+    extract_picker_members: std.ArrayList([]const u8) = .empty,
     extract_picker_bytes: std.ArrayList(u8) = .empty,
     job_cut_revision: ?usize = null,
     job_progress: usize = std.math.maxInt(usize),
@@ -435,6 +436,7 @@ pub const App = struct {
         self.terminal.deinit(self.allocator);
         self.children.deinit(self.allocator);
         self.closeExtractPicker();
+        self.extract_picker_members.deinit(self.allocator);
         self.extract_picker_bytes.deinit(self.allocator);
         if (self.trash_dir) |path| self.allocator.free(path);
         if (self.transfer_browse_root) |path| self.allocator.free(path);
@@ -1062,6 +1064,7 @@ pub const App = struct {
     pub const menuHint = app_menu.menuHint;
     pub const hasSizeSelection = app_menu.hasSizeSelection;
     pub const selectedArchive = app_menu.selectedArchive;
+    pub const hasSelectedArchiveMembers = app_menu.hasSelectedArchiveMembers;
     pub const selectedAppImage = app_menu.selectedAppImage;
     pub const fileActions = app_menu.fileActions;
     pub const placeActions = app_menu.placeActions;
