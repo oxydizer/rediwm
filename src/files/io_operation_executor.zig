@@ -12,6 +12,7 @@ const io_move = @import("io_move.zig");
 const io_detach = @import("io_detach.zig");
 const archive = @import("archive.zig");
 const ops = @import("ops.zig");
+const clipboard = @import("clipboard.zig");
 
 const Context = struct {
     allocator: Allocator,
@@ -174,6 +175,26 @@ pub const Runtime = struct {
         self.allocator.free(lease.path);
         _ = self.context.archive_staging.remove(key);
         return true;
+    }
+
+    /// Transfers a completed extraction directory to an external owner.
+    /// The publication barrier must be closed and all publication work drained.
+    pub fn takeArchiveStaging(
+        self: *Runtime,
+        token: io_manager.WorkToken,
+    ) ?clipboard.StagingLease {
+        if (self.context.manager.archivePublicationReady(token) != true)
+            return null;
+        const key = io_executor.OperationKey.fromToken(token);
+        const lease = self.context.archive_staging.get(key) orelse return null;
+        if (!std.meta.eql(lease.token, token)) return null;
+
+        const removed = self.context.archive_staging.fetchRemove(key) orelse
+            return null;
+        return .{
+            .allocator = removed.value.allocator,
+            .path = removed.value.path,
+        };
     }
 
     /// Removes a retained staging lease after its Manager job has become

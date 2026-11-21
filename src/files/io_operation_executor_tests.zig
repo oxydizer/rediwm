@@ -507,6 +507,73 @@ test "Manager Runtime extracts only selected archive members into staging" {
     try std.testing.expect(c.lstat(omitted_z, &omitted_stat) != 0);
 }
 
+test "Manager Runtime transfers archive staging ownership after publication barrier" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    const source = try join(allocator, temp, "clipboard.zip");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+    defer {
+        cleanup(source, false);
+        cleanup(destination, true);
+        cleanup(temp, true);
+    }
+
+    try writeArchiveFixture(source);
+    try makeDirectory(destination);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const selected = [_][]const u8{"nested/payload.txt"};
+    const operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = source,
+            .staging_parent = destination,
+            .member_paths = &selected,
+        },
+    );
+    try manager.setDestinationDirectory(job, destination);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    const token = runtime.archiveStagingToken(job, operation) orelse
+        return error.MissingArchiveStagingToken;
+    try std.testing.expect(runtime.takeArchiveStaging(token) == null);
+
+    try manager.closeArchivePublication(token);
+    try std.testing.expectEqual(@as(?bool, true), manager.archivePublicationReady(token));
+
+    var lease = runtime.takeArchiveStaging(token) orelse
+        return error.MissingTransferredArchiveStaging;
+    const staging_path = try allocator.dupe(u8, lease.path);
+    defer allocator.free(staging_path);
+    try std.testing.expect(runtime.archiveStagingPath(token) == null);
+
+    const extracted = try join(allocator, staging_path, "nested/payload.txt");
+    defer allocator.free(extracted);
+    const contents = try readFile(allocator, extracted);
+    defer allocator.free(contents);
+    try std.testing.expectEqualStrings("payload", contents);
+
+    lease.deinit();
+    const staging_z = try allocZ(allocator, staging_path);
+    defer allocator.free(staging_z);
+    var staging_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(staging_z, &staging_stat) != 0);
+    try std.testing.expect(manager.completeArchivePublication(token));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
 test "Manager Runtime removes failed archive extraction staging" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
