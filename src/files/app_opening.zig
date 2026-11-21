@@ -38,7 +38,7 @@ pub fn previewSelected(self: *App) void {
     }
     if (item.is_dir) return;
     if (isPdf(item.path)) {
-        self.openFile(item.path);
+        _ = self.openFile(item.path);
         return;
     }
     if (!formats.candidate(item.path)) {
@@ -125,34 +125,34 @@ pub fn isPdf(path: []const u8) bool {
     return std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".pdf");
 }
 
-pub fn openFile(self: *App, path: []const u8) void {
-    if (self.chooser != null) return;
+pub fn openFile(self: *App, path: []const u8) bool {
+    if (self.chooser != null) return false;
     if (@import("app_torrents.zig").enabled and std.ascii.endsWithIgnoreCase(path, ".torrent")) {
         self.torrentSource(path);
-        return;
+        return true;
     }
     if (std.ascii.endsWithIgnoreCase(path, ".rediwm-theme")) {
         self.worker.installTheme(path);
         self.setStatusNotice(tr("Installing theme…"), false);
-        return;
+        return true;
     }
     if (self.playsBuiltin(path)) {
         if (self.playAudio(path)) {
             self.worker.recordOpened(path);
-            return;
+            return true;
         }
         self.setStatusNotice(tr("Could not play the file"), true);
-        return;
+        return false;
     }
     const pdf = isPdf(path) and !@import("associations.zig").hasAlternativeDefault(path, "rediwm-pdf.desktop");
     if (!pdf) {
         @import("associations.zig").launchDefault(path) catch |err| {
             std.log.warn("failed to open '{s}': {}", .{ path, err });
             self.setStatusNotice(tr("Could not open file"), true);
-            return;
+            return false;
         };
         self.worker.recordOpened(path);
-        return;
+        return true;
     }
     var sibling_buf: [platform.exe.max_path]u8 = undefined;
     const executable = platform.exe.siblingOrName(&sibling_buf, "rediwm-pdf");
@@ -161,11 +161,16 @@ pub fn openFile(self: *App, path: []const u8) void {
     }) catch |err| {
         std.log.warn("failed to open '{s}': {}", .{ path, err });
         self.setStatusNotice(tr("Could not open file"), true);
-        return;
+        return false;
     };
 
+    self.children.add(self.allocator, child.id.?) catch {
+        child.kill(self.io);
+        self.setStatusNotice(tr("Could not open file"), true);
+        return false;
+    };
     self.worker.recordOpened(path);
-    self.children.add(self.allocator, child.id.?) catch child.kill(self.io);
+    return true;
 }
 
 pub fn browseArchive(self: *App, path: []const u8) void {
@@ -243,25 +248,89 @@ pub fn startExtraction(self: *App, path: []const u8, destination: []const u8) vo
 
 pub fn openArchiveMember(self: *App, path: []const u8, preview: bool) void {
     const len = self.history.archive_len;
-    if (len == 0 or path.len <= len) return;
-    const runner = self.job_runner orelse return;
-    runner.startArchive(self.history.current[0..len], "/tmp", path[len + 1 ..]) catch |err| {
-        self.setStatusNotice(if (err == error.Busy) tr("A file operation is already running") else tr("Could not open archive member"), true);
+    if (len == 0 or path.len <= len or path[len] != '/') return;
+    if (self.active_io_copy_job != null) {
+        self.setStatusNotice(tr("A file operation is already running"), true);
+        return;
+    }
+    if (self.job_runner) |runner| {
+        const state = runner.pollProgress().state;
+        if (state == .running or state == .paused or state == .waiting_conflict) {
+            self.setStatusNotice(tr("A file operation is already running"), true);
+            return;
+        }
+    }
+
+    self.startOperations() catch {
+        self.setStatusNotice(tr("Could not open archive member"), true);
         return;
     };
+    const manager = if (self.io_manager) |*value| value else {
+        self.setStatusNotice(tr("Could not open archive member"), true);
+        return;
+    };
+    self.archive_member_extractions.ensureUnusedCapacity(self.allocator, 1) catch {
+        self.setStatusNotice(tr("Could not open archive member"), true);
+        return;
+    };
+    const job_id = manager.createJob(null) catch {
+        self.setStatusNotice(tr("Could not open archive member"), true);
+        return;
+    };
+    const operation_id = manager.addArchiveOperation(
+        job_id,
+        .archive_member_extract,
+        .{
+            .source_path = self.history.current[0..len],
+            .staging_parent = "/tmp",
+            .member_path = path[len + 1 ..],
+        },
+    ) catch {
+        _ = manager.discardPlanningJob(job_id);
+        self.setStatusNotice(tr("Could not open archive member"), true);
+        return;
+    };
+    manager.queueJob(job_id) catch {
+        _ = manager.discardPlanningJob(job_id);
+        self.setStatusNotice(tr("Could not open archive member"), true);
+        return;
+    };
+    self.archive_member_extractions.appendAssumeCapacity(.{
+        .job_id = job_id,
+        .operation_id = operation_id,
+        .preview = preview,
+        .navigation_count = self.navigation_count,
+    });
+    self.active_io_copy_job = job_id;
+    self.active_io_copy_is_directory = false;
+    self.active_io_copy_is_move = false;
+    self.active_io_copy_is_archive = false;
+    self.active_io_copy_is_archive_member = true;
+    self.active_io_copy_archive_member_opened = false;
+    self.active_io_copy_item_count = 1;
     self.archive_preview = preview;
     self.archive_open_navigation = self.navigation_count;
-    self.job_was_running = true;
+    self.job_was_running = false;
     self.job_cut_revision = null;
+    self.setStatusNotice("Opening archive member", false);
     self.invalidate();
 }
 
-pub fn openExtracted(self: *App, path: []const u8, preview: bool) void {
+pub fn openExtracted(self: *App, path: []const u8, preview: bool) bool {
     if (preview and image_formats.candidate(path)) {
-        self.previewExtracted(path) catch self.setStatusNotice(tr("Could not open image viewer"), true);
+        self.previewExtracted(path) catch {
+            self.setStatusNotice(tr("Could not open image viewer"), true);
+            return false;
+        };
+        return true;
     } else if (preview and @import("../editor/formats.zig").candidate(path)) {
-        if (self.editor_path == null) self.editor_path = self.allocator.dupeSentinel(u8, path, 0) catch null;
-    } else if (!preview or isPdf(path)) self.openFile(path);
+        if (self.editor_path != null) return false;
+        self.editor_path = self.allocator.dupeSentinel(u8, path, 0) catch return false;
+        return true;
+    } else if (!preview or isPdf(path)) {
+        return self.openFile(path);
+    }
+    return false;
 }
 
 pub fn previewExtracted(self: *App, path: []const u8) !void {
@@ -379,7 +448,7 @@ pub fn activateItem(self: *App, idx: usize) void {
     } else if (archive.candidate(item.name)) {
         self.browseArchive(item.path);
     } else {
-        self.openFile(item.path);
+        _ = self.openFile(item.path);
     }
 }
 

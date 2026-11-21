@@ -425,7 +425,9 @@ pub fn sync(self: *App) void {
                 }
                 if (runner.kind == .open_archive_member) {
                     if (runner.result_path) |path| {
-                        if (self.archive_open_navigation == self.navigation_count) self.openExtracted(path, self.archive_preview);
+                        if (self.archive_open_navigation == self.navigation_count) {
+                            _ = self.openExtracted(path, self.archive_preview);
+                        }
                     }
                 } else {
                     // The manifest is no longer the source of truth once the

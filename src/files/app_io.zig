@@ -289,6 +289,118 @@ fn failArchivePublication(
     publication.registration_closed = true;
 }
 
+/// Extracts one selected archive member, opens it on the main thread, and
+/// completes its publication barrier without publishing it into the folder.
+fn stepArchiveMemberExtractions(
+    self: *App,
+    manager: *io_manager.Manager,
+    executor: *io_operation_executor.Runtime,
+) void {
+    var index: usize = 0;
+    while (index < self.archive_member_extractions.items.len) {
+        const extraction = &self.archive_member_extractions.items[index];
+        const state = manager.jobState(extraction.job_id);
+        if (state == null or state.?.isTerminal()) {
+            _ = executor.discardArchiveStaging(
+                extraction.job_id,
+                extraction.operation_id,
+            ) catch {
+                self.setStatusNotice("Could not remove archive staging data", true);
+                index += 1;
+                continue;
+            };
+            _ = self.archive_member_extractions.orderedRemove(index);
+            continue;
+        }
+
+        if (extraction.token == null) {
+            extraction.token = executor.archiveStagingToken(
+                extraction.job_id,
+                extraction.operation_id,
+            );
+            if (extraction.token == null) {
+                index += 1;
+                continue;
+            }
+        }
+
+        const token = extraction.token.?;
+        if (!extraction.registration_closed) {
+            const details = manager.archiveOperationDetails(token) orelse {
+                index += 1;
+                continue;
+            };
+            const staging_path = executor.archiveStagingPath(token) orelse {
+                manager.failArchivePublication(token) catch {};
+                extraction.registration_closed = true;
+                index += 1;
+                continue;
+            };
+            const member_path = details.member_path orelse {
+                manager.failArchivePublication(token) catch {};
+                extraction.registration_closed = true;
+                index += 1;
+                continue;
+            };
+            const extracted_path = std.fs.path.join(
+                self.allocator,
+                &.{ staging_path, member_path },
+            ) catch {
+                manager.failArchivePublication(token) catch {};
+                extraction.registration_closed = true;
+                index += 1;
+                continue;
+            };
+            defer self.allocator.free(extracted_path);
+
+            if (self.navigation_count == extraction.navigation_count) {
+                if (!self.openExtracted(extracted_path, extraction.preview)) {
+                    manager.failArchivePublication(token) catch {};
+                    extraction.registration_closed = true;
+                    index += 1;
+                    continue;
+                }
+                extraction.opened = true;
+                self.active_io_copy_archive_member_opened = true;
+            }
+
+            manager.closeArchivePublication(token) catch {
+                manager.failArchivePublication(token) catch {};
+                extraction.registration_closed = true;
+                index += 1;
+                continue;
+            };
+            extraction.registration_closed = true;
+        }
+
+        if (extraction.registration_closed and
+            manager.archivePublicationReady(token) == true)
+        {
+            // A successfully opened member keeps its lease for the viewer or
+            // editor. A member skipped because navigation changed is cleaned.
+            if (!extraction.opened) {
+                const released = executor.releaseArchiveStaging(token) catch {
+                    self.setStatusNotice("Could not remove archive staging data", true);
+                    index += 1;
+                    continue;
+                };
+                if (!released) {
+                    index += 1;
+                    continue;
+                }
+            }
+            if (!manager.completeArchivePublication(token)) {
+                self.setStatusNotice("Could not complete archive member extraction", true);
+                index += 1;
+                continue;
+            }
+            _ = self.archive_member_extractions.orderedRemove(index);
+            continue;
+        }
+        index += 1;
+    }
+}
+
 /// Scans at most 64 top-level staging entries per main-loop pass, then drains
 /// the Manager barrier before releasing the staging lease.
 fn stepArchivePublications(
@@ -299,6 +411,21 @@ fn stepArchivePublications(
     var index: usize = 0;
     while (index < self.archive_publications.items.len) {
         const publication = &self.archive_publications.items[index];
+        if (manager.jobState(publication.job_id)) |state| {
+            if (state.isTerminal()) {
+                closeArchivePublicationCursor(publication);
+                _ = executor.discardArchiveStaging(
+                    publication.job_id,
+                    publication.operation_id,
+                ) catch {
+                    self.setStatusNotice("Could not remove archive staging data", true);
+                    index += 1;
+                    continue;
+                };
+                _ = self.archive_publications.orderedRemove(index);
+                continue;
+            }
+        }
         if (publication.token == null) {
             publication.token = executor.archiveStagingToken(
                 publication.job_id,
@@ -487,6 +614,7 @@ pub fn stepOperations(self: *App) void {
         self.transfer_tree_state.markDirty();
         self.transfer_rows_dirty = true;
     }
+    stepArchiveMemberExtractions(self, manager, executor);
     stepArchivePublications(self, manager, executor);
     _ = executor.dispatchReady() catch {
         self.setStatusNotice("Could not schedule file operation", true);
@@ -533,6 +661,9 @@ pub fn stepOperations(self: *App) void {
                 const is_directory = self.active_io_copy_is_directory;
                 const is_move = self.active_io_copy_is_move;
                 const is_archive = self.active_io_copy_is_archive;
+                const is_archive_member = self.active_io_copy_is_archive_member;
+                const archive_member_opened =
+                    self.active_io_copy_archive_member_opened;
                 const multiple_items = self.active_io_copy_item_count > 1;
                 if (is_move) updateMovedClipboard(self, manager, job_id);
                 self.active_io_copy_destination = null;
@@ -540,6 +671,8 @@ pub fn stepOperations(self: *App) void {
                 self.active_io_copy_is_directory = false;
                 self.active_io_copy_is_move = false;
                 self.active_io_copy_is_archive = false;
+                self.active_io_copy_is_archive_member = false;
+                self.active_io_copy_archive_member_opened = false;
                 self.active_io_copy_item_count = 0;
                 self.job_cut_revision = null;
 
@@ -552,6 +685,25 @@ pub fn stepOperations(self: *App) void {
                         ),
                         .cancelled => self.setStatusNotice(
                             "Archive extraction cancelled",
+                            true,
+                        ),
+                        else => unreachable,
+                    }
+                } else if (is_archive_member) {
+                    switch (state) {
+                        .completed => self.setStatusNotice(
+                            if (archive_member_opened)
+                                "Archive member opened"
+                            else
+                                "Archive member is no longer in this view",
+                            false,
+                        ),
+                        .completed_with_errors, .failed => self.setStatusNotice(
+                            "Could not open archive member",
+                            true,
+                        ),
+                        .cancelled => self.setStatusNotice(
+                            "Archive member opening cancelled",
                             true,
                         ),
                         else => unreachable,

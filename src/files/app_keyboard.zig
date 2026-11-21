@@ -251,6 +251,27 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
                 return;
             }
         }
+        if (self.active_io_copy_job) |job_id| {
+            if (self.io_manager) |*manager| {
+                if (manager.jobState(job_id)) |state| {
+                    if (!state.isTerminal()) {
+                        if (self.operation_executor) |*executor| {
+                            executor.cancelJob(job_id) catch {
+                                self.setStatusNotice("Could not cancel operation", true);
+                                self.invalidate();
+                                return;
+                            };
+                            self.setStatusNotice(
+                                @import("i18n").tr("Cancelling operation..."),
+                                false,
+                            );
+                            self.invalidate();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         for (self.items.items) |*it| it.selected = false;
         self.selection_anchor = null;
         self.focused_index = null;

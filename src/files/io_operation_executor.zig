@@ -175,6 +175,26 @@ pub const Runtime = struct {
         _ = self.context.archive_staging.remove(key);
         return true;
     }
+
+    /// Removes a retained staging lease after its Manager job has become
+    /// terminal. This is used for cancelled archive operations.
+    pub fn discardArchiveStaging(
+        self: *Runtime,
+        job_id: io_manager.JobId,
+        operation_id: io_manager.OperationId,
+    ) !bool {
+        const state = self.context.manager.jobState(job_id) orelse return false;
+        if (!state.isTerminal()) return false;
+        const key: io_executor.OperationKey = .{
+            .job_id = job_id,
+            .operation_id = operation_id,
+        };
+        const lease = self.context.archive_staging.getPtr(key) orelse return false;
+        try ops.deleteRecursive(self.allocator, lease.path);
+        self.allocator.free(lease.path);
+        _ = self.context.archive_staging.remove(key);
+        return true;
+    }
 };
 
 fn prepare(

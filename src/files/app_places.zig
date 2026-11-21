@@ -137,9 +137,13 @@ pub fn openPin(self: *App, j: usize) void {
     self.focus = .file_view;
     switch (pin.kind) {
         .dir => self.navigate(pin.path),
-        .file => if (self.chooser != null) {
-            self.navigate(std.fs.path.dirname(pin.path) orelse "/");
-        } else self.openFile(pin.path),
+        .file => {
+            if (self.chooser != null) {
+                self.navigate(std.fs.path.dirname(pin.path) orelse "/");
+            } else {
+                _ = self.openFile(pin.path);
+            }
+        },
         .missing => {
             var buf: [160]u8 = undefined;
             self.setStatusNotice(i18n.fmt(&buf, tr("{name} is no longer there"), .{ .name = pin.name() }) catch tr("Not found"), true);

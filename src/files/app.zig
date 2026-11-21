@@ -84,6 +84,15 @@ pub const App = struct {
         cursor: ?io_discovery_mod.Cursor = null,
         registration_closed: bool = false,
     };
+    pub const ArchiveMemberExtraction = struct {
+        job_id: io_manager_mod.JobId,
+        operation_id: io_manager_mod.OperationId,
+        token: ?io_manager_mod.WorkToken = null,
+        preview: bool,
+        navigation_count: u32,
+        registration_closed: bool = false,
+        opened: bool = false,
+    };
 
     terminal: app_terminal.Drawer = .{},
     closed: bool = false,
@@ -109,6 +118,7 @@ pub const App = struct {
     operation_executor: ?io_operation_executor_mod.Runtime = null,
     discovery_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
     archive_publications: std.ArrayList(ArchivePublication) = .empty,
+    archive_member_extractions: std.ArrayList(ArchiveMemberExtraction) = .empty,
     history: history_mod.History,
     home_dir: []const u8,
 
@@ -301,6 +311,8 @@ pub const App = struct {
     active_io_copy_is_directory: bool = false,
     active_io_copy_is_move: bool = false,
     active_io_copy_is_archive: bool = false,
+    active_io_copy_is_archive_member: bool = false,
+    active_io_copy_archive_member_opened: bool = false,
     active_io_copy_item_count: usize = 0,
     job_was_running: bool = false,
     archive_preview: bool = false,
@@ -411,6 +423,7 @@ pub const App = struct {
             if (publication.cursor) |*cursor| cursor.deinit();
         }
         self.archive_publications.deinit(self.allocator);
+        self.archive_member_extractions.deinit(self.allocator);
         if (self.discovery_executor) |*executor| executor.deinit();
         if (self.operation_executor) |*executor| executor.deinit();
         if (self.io_manager) |*manager| manager.deinit();

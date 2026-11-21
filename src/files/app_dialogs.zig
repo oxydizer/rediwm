@@ -75,7 +75,7 @@ pub fn propertiesAction(self: *App, action: properties.Action) void {
             self.closeDialog();
             if (folder) self.navigate(path) else {
                 if (changed) self.refresh();
-                self.openFile(path);
+                _ = self.openFile(path);
             }
         },
     }

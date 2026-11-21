@@ -679,6 +679,109 @@ fn writeArchivePublicationFixture(path: []const u8) !void {
     try std.testing.expectEqual(@as(c_int, 0), api.archive_write_close(writer));
 }
 
+fn waitForAppManagerJob(app: *App, job_id: io_manager.JobId) !void {
+    const manager = &app.io_manager.?;
+    while (true) {
+        app.stepOperations();
+        if (manager.jobState(job_id).?.isTerminal()) return;
+
+        var descriptor = c.struct_pollfd{
+            .fd = app.operationWakeFd(),
+            .events = c.POLLIN,
+            .revents = 0,
+        };
+        const result = c.poll(&descriptor, 1, 5_000);
+        if (result == 0) return error.TimedOutWaitingForArchiveMember;
+        if (result < 0 and std.c._errno().* != c.EINTR)
+            return error.ArchiveMemberPollFailed;
+    }
+}
+
+test "archive member extraction opens the selected file and retains its staging lease" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+    const source = try transferTestJoin(allocator, temp, "sample.zip");
+    defer allocator.free(source);
+    const member = try allocator.dupe(u8, "nested/payload.txt");
+    defer allocator.free(member);
+    const virtual_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/{s}",
+        .{ source, member },
+    );
+    defer allocator.free(virtual_path);
+    defer {
+        transferTestCleanup(source, false);
+        transferTestCleanup(temp, true);
+    }
+    try writeArchivePublicationFixture(source);
+
+    var app = try testApp();
+    defer app.deinit();
+    app.io_manager = io_manager.Manager.init(allocator);
+    try app.history.navigateLocation(source, source.len);
+
+    app.openArchiveMember(virtual_path, true);
+    const job_id = app.active_io_copy_job orelse
+        return error.ArchiveMemberExtractionDidNotStart;
+    try std.testing.expect(app.active_io_copy_is_archive_member);
+    try waitForAppManagerJob(&app, job_id);
+
+    try std.testing.expectEqual(
+        io_manager.JobState.completed,
+        app.io_manager.?.jobState(job_id).?,
+    );
+    try std.testing.expect(app.active_io_copy_job == null);
+    try std.testing.expectEqual(@as(usize, 0), app.archive_member_extractions.items.len);
+    try std.testing.expectEqualStrings("Archive member opened", app.status_notice.?);
+    const editor_path = app.editor_path orelse
+        return error.ArchiveMemberWasNotOpenedInEditor;
+    const contents = try transferTestReadFile(allocator, editor_path);
+    defer allocator.free(contents);
+    try std.testing.expectEqualStrings("payload", contents);
+}
+
+test "Escape cancels Manager-backed archive member extraction" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+    const source = try transferTestJoin(allocator, temp, "sample.zip");
+    defer allocator.free(source);
+    const virtual_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/nested/payload.txt",
+        .{source},
+    );
+    defer allocator.free(virtual_path);
+    defer {
+        transferTestCleanup(source, false);
+        transferTestCleanup(temp, true);
+    }
+    try writeArchivePublicationFixture(source);
+
+    var app = try testApp();
+    defer app.deinit();
+    app.io_manager = io_manager.Manager.init(allocator);
+    try app.history.navigateLocation(source, source.len);
+
+    app.openArchiveMember(virtual_path, true);
+    const job_id = app.active_io_copy_job orelse
+        return error.ArchiveMemberExtractionDidNotStart;
+    app.stepOperations();
+    app.handleKey(c.XKB_KEY_Escape, "");
+    try std.testing.expectEqualStrings("Cancelling operation...", app.status_notice.?);
+    try waitForAppManagerJob(&app, job_id);
+
+    try std.testing.expectEqual(
+        io_manager.JobState.cancelled,
+        app.io_manager.?.jobState(job_id).?,
+    );
+    try std.testing.expect(app.active_io_copy_job == null);
+    try std.testing.expectEqual(@as(usize, 0), app.archive_member_extractions.items.len);
+    try std.testing.expect(app.editor_path == null);
+}
+
 fn transferTestCleanup(path: []const u8, is_directory: bool) void {
     const allocator = std.heap.page_allocator;
     const zpath = allocator.dupeSentinel(u8, path, 0) catch return;
