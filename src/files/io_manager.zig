@@ -147,6 +147,16 @@ pub const ArchiveOperationRequest = struct {
     member_path: ?[]const u8 = null,
 };
 
+/// One top-level entry produced by archive extraction. The Manager copies
+/// the source path and stores the entry in its owned TreeIndex.
+pub const ArchivePublicationRootRequest = struct {
+    name: []const u8,
+    source_path: []const u8,
+    kind: io_tree.EntryKind,
+    metadata: io_tree.Metadata = .{},
+    symlink_target: ?[]const u8 = null,
+};
+
 /// Immutable archive request details for a current dispatched operation.
 /// The returned slices remain Manager-owned.
 pub const ArchiveOperationDetails = struct {
@@ -434,7 +444,18 @@ pub const Manager = struct {
     ) !void {
         const job = self.findJob(job_id) orelse return error.UnknownJob;
         if (job.state != .planning) return error.InvalidJobState;
-        if (job.tree.root() == null) return error.MissingTreeRoot;
+        if (job.tree.root() == null) {
+            var has_archive_operation = false;
+            for (job.operations.items) |operation| {
+                if (operation.kind == .archive_extract or
+                    operation.kind == .archive_member_extract)
+                {
+                    has_archive_operation = true;
+                    break;
+                }
+            }
+            if (!has_archive_operation) return error.MissingTreeRoot;
+        }
         if (job.destination_directory != null)
             return error.DestinationDirectoryAlreadySet;
         if (destination_directory.len == 0 or
@@ -1388,6 +1409,8 @@ pub const Manager = struct {
         if (job.state != .planning) return error.InvalidJobState;
         if (kind != .archive_extract and kind != .archive_member_extract)
             return error.InvalidOperationKind;
+        if (job.auto_move_discovered_entries)
+            return error.DiscoveryOperationModeAlreadySet;
         for (job.operations.items) |existing| {
             if (existing.kind == .archive_extract or
                 existing.kind == .archive_member_extract)
@@ -1427,7 +1450,100 @@ pub const Manager = struct {
             .member_path = owned_member,
         };
         owned_member = null;
+        job.auto_plan_discovered_entries = true;
         return operation_id;
+    }
+
+    /// Registers one extracted archive root while its archive barrier is
+    /// waiting. Directory descendants are discovered and planned normally.
+    pub fn addArchivePublicationRoot(
+        self: *Manager,
+        token: WorkToken,
+        request: ArchivePublicationRootRequest,
+    ) !io_tree.EntryId {
+        const job = self.findJob(token.job_id) orelse return error.UnknownJob;
+        const barrier = findOperation(job, token.operation_id) orelse
+            return error.UnknownOperation;
+        if (barrier.state != .waiting) return error.InvalidOperationState;
+        if (barrier.generation != token.generation) return error.StaleWorkToken;
+        if (barrier.kind != .archive_extract and
+            barrier.kind != .archive_member_extract)
+            return error.InvalidOperationKind;
+        if (job.archive_publication_closed)
+            return error.ArchivePublicationAlreadyClosed;
+        if (job.state.isTerminal()) return error.InvalidJobState;
+        if (job.destination_directory == null)
+            return error.DestinationDirectoryNotSet;
+        if (request.source_path.len == 0 or
+            !std.fs.path.isAbsolute(request.source_path) or
+            std.mem.indexOfScalar(u8, request.source_path, 0) != null)
+        {
+            return error.InvalidSourceRootPath;
+        }
+        if (request.kind == .other) return error.UnsupportedEntryKind;
+        if (self.next_operation_id == std.math.maxInt(OperationId))
+            return error.IdExhausted;
+
+        const operation_kind: OperationKind = switch (request.kind) {
+            .directory => .create_directory,
+            .regular_file => .copy_file,
+            .symlink => .copy_symlink,
+            .other => unreachable,
+        };
+
+        const operation_index = job.operations.items.len;
+        try job.source_root_paths.ensureUnusedCapacity(self.allocator, 1);
+        try job.operations.ensureUnusedCapacity(self.allocator, 1);
+        try job.operation_indices.ensureUnusedCapacity(self.allocator, 1);
+        try job.entry_operation_indices.ensureUnusedCapacity(self.allocator, 1);
+        try job.ready_queue.ensureTotalCapacity(self.allocator, operation_index + 1);
+        try job.dependency_work_queue.ensureTotalCapacity(
+            self.allocator,
+            operation_index + 1,
+        );
+        if (request.kind == .directory) {
+            try job.discovery_schedule.ensureUnusedCapacity(self.allocator, 1);
+            try self.discovery_queues[@backingInt(DiscoveryPriority.background)]
+                .items.ensureUnusedCapacity(self.allocator, 1);
+        }
+
+        var owned_source_path: ?[]u8 =
+            try self.allocator.dupe(u8, request.source_path);
+        errdefer if (owned_source_path) |path| self.allocator.free(path);
+
+        const root_id = try job.tree.addRoot(
+            request.name,
+            request.kind,
+            request.metadata,
+            request.symlink_target,
+        );
+        job.source_root_paths.putAssumeCapacity(root_id, owned_source_path.?);
+        owned_source_path = null;
+
+        const operation_id = try self.addOperationInternal(job, operation_kind);
+        const registered_operation = &job.operations.items[operation_index];
+        registered_operation.entry_id = root_id;
+        job.entry_operation_indices.putAssumeCapacity(root_id, operation_index);
+
+        if (request.kind == .directory) {
+            const root = job.tree.get(root_id).?;
+            root.discovery = .queued;
+            job.discovery_started = true;
+            job.discovery_schedule.putAssumeCapacity(root_id, .{
+                .priority = .background,
+                .version = 1,
+            });
+            self.discovery_queues[@backingInt(DiscoveryPriority.background)]
+                .items.appendAssumeCapacity(.{
+                    .job_id = job.id,
+                    .entry_id = root_id,
+                    .version = 1,
+                });
+            job.discovery_pending_count += 1;
+        }
+
+        std.debug.assert(registered_operation.id == operation_id);
+        return root_id;
     }
 
     fn addOperationInternal(self: *Manager, job: *Job, kind: OperationKind) !OperationId {
