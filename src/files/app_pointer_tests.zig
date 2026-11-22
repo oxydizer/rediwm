@@ -6,8 +6,128 @@ const c = @import("c.zig").api;
 const nowMs = @import("app_draw.zig").nowMs;
 const app_tests = @import("app_tests.zig");
 const ops_mod = @import("ops.zig");
+const io_manager = @import("io_manager.zig");
 const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
+
+test "copy ghost hover waits for dwell and keeps its boost after pointer leave" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+
+    const job_a = try manager.createJob(null);
+    const current_entry = try manager.addTreeRoot(
+        job_a,
+        "current.bin",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    _ = try manager.addEntryOperation(
+        job_a,
+        current_entry,
+        .copy_file,
+    );
+    const entry_a = try manager.addTreeRoot(
+        job_a,
+        "urgent.docx",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    const operation_a = try manager.addEntryOperation(
+        job_a,
+        entry_a,
+        .copy_file,
+    );
+    const job_b = try manager.createJob(null);
+    _ = try manager.addOperation(job_b, .copy_file);
+    try manager.queueJob(job_a);
+    try manager.queueJob(job_b);
+
+    const first = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_a, first.job_id);
+    app.io_manager = &manager;
+    app.active_io_copy_job = job_a;
+    app.items.items[0].transfer_ghost = true;
+    app.items.items[0].transfer_entry_id = entry_a;
+    app.items.items[0].transfer_state = .pending;
+    app.items.items[0].missing = true;
+
+    const rect = app.itemIconRect(0);
+    app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    const deadline = app.transferHoverPriorityDeadline().?;
+
+    // The dwell has not elapsed yet.
+    app.stepTransferHoverPriority(deadline - 1);
+    try std.testing.expectEqual(deadline, app.transferHoverPriorityDeadline().?);
+
+    // At the deadline the preference is requested exactly once.
+    app.stepTransferHoverPriority(deadline);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+
+    // Leaving after the request does not revoke the Manager preference.
+    app.handleMotion(-10, -10);
+    try std.testing.expect(manager.completeWork(first, .yielded));
+    const boosted = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_a, boosted.job_id);
+    try std.testing.expectEqual(operation_a, boosted.operation_id);
+}
+
+test "leaving a copy ghost before the hover dwell cancels its preference" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+
+    const job_a = try manager.createJob(null);
+    const current_entry = try manager.addTreeRoot(
+        job_a,
+        "current.bin",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job_a, current_entry, .copy_file);
+    const entry_a = try manager.addTreeRoot(
+        job_a,
+        "urgent.docx",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job_a, entry_a, .copy_file);
+    const job_b = try manager.createJob(null);
+    const operation_b = try manager.addOperation(job_b, .copy_file);
+    try manager.queueJob(job_a);
+    try manager.queueJob(job_b);
+
+    const first = manager.dispatchNext().?;
+    app.io_manager = &manager;
+    app.active_io_copy_job = job_a;
+    app.items.items[0].transfer_ghost = true;
+    app.items.items[0].transfer_entry_id = entry_a;
+    app.items.items[0].transfer_state = .pending;
+    app.items.items[0].missing = true;
+
+    const rect = app.itemIconRect(0);
+    app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    const deadline = app.transferHoverPriorityDeadline().?;
+
+    app.handleMotion(-10, -10);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+    app.stepTransferHoverPriority(deadline);
+
+    try std.testing.expect(manager.completeWork(first, .yielded));
+    const normal = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_b, normal.job_id);
+    try std.testing.expectEqual(operation_b, normal.operation_id);
+}
 
 test "Files: the second click of a double-click does not open the item again" {
     var app = try testApp();

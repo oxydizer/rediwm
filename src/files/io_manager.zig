@@ -446,12 +446,18 @@ pub const JobSnapshot = struct {
     }
 };
 
+const PreferredOperation = struct {
+    job_id: JobId,
+    operation_id: OperationId,
+};
+
 pub const Manager = struct {
     allocator: Allocator,
     jobs: std.ArrayList(Job) = .empty,
     next_job_id: JobId = 1,
     next_operation_id: OperationId = 1,
     round_robin_cursor: usize = 0,
+    preferred_operation: ?PreferredOperation = null,
     discovery_queues: [3]DiscoveryQueue = .{ .{}, .{}, .{} },
     discovery_schedule_slot: usize = 0,
     conflicts: std.ArrayList(Conflict) = .empty,
@@ -2524,11 +2530,109 @@ pub const Manager = struct {
         }
     }
 
+    /// Requests a one-shot preference for a visible queued regular-file copy.
+    /// The preference survives pointer leave and waits until the operation
+    /// is eligible for dispatch.
+    pub fn prioritizeEntryOperation(
+        self: *Manager,
+        job_id: JobId,
+        entry_id: io_tree.EntryId,
+    ) bool {
+        const job = self.findJob(job_id) orelse return false;
+        const entry = job.tree.getConst(entry_id) orelse return false;
+        if (entry.kind != .regular_file) return false;
+
+        const operation_index = job.entry_operation_indices.get(entry_id) orelse
+            return false;
+        const operation = &job.operations.items[operation_index];
+        if (operation.kind != .copy_file or
+            operation.entry_id != entry_id or
+            (operation.state != .pending and operation.state != .running))
+        {
+            return false;
+        }
+
+        self.preferred_operation = .{
+            .job_id = job_id,
+            .operation_id = operation.id,
+        };
+        return true;
+    }
+
+    /// Dispatches the preferred operation ahead of normal Job and kind
+    /// priority, without bypassing dependencies or per-Job serialization.
+    fn dispatchPreferred(self: *Manager) ?WorkToken {
+        const preferred = self.preferred_operation orelse return null;
+
+        for (self.jobs.items, 0..) |*job, job_index| {
+            if (job.id != preferred.job_id) continue;
+
+            if (job.state.isTerminal()) {
+                self.preferred_operation = null;
+                return null;
+            }
+
+            const operation_index = job.operation_indices.get(
+                preferred.operation_id,
+            ) orelse {
+                self.preferred_operation = null;
+                return null;
+            };
+            const operation = &job.operations.items[operation_index];
+
+            if (operation.state == .running) return null;
+            if (operation.state != .pending) {
+                self.preferred_operation = null;
+                return null;
+            }
+            if ((job.state != .queued and job.state != .running) or
+                job.operation_state_counts[@backingInt(OperationState.running)] != 0 or
+                operation.unresolved_dependencies != 0 or
+                !dependenciesCompleted(job, operation))
+            {
+                return null;
+            }
+            if (!dequeueReadyIndex(job, operation_index)) return null;
+
+            // Consume the preference only when dispatch actually succeeds.
+            self.preferred_operation = null;
+
+            if (operation.generation == std.math.maxInt(u64)) {
+                transitionOperation(job, operation, .failed);
+                self.propagateUnmetDependencies(job, operation_index);
+                self.recomputeJobState(job);
+                return null;
+            }
+
+            if (operation.kind == .copy_file) {
+                if (operation.entry_id) |entry_id| {
+                    if (job.tree.getConst(entry_id)) |entry| {
+                        operation.progress_total_bytes = entry.metadata.size;
+                    }
+                }
+            }
+            operation.generation += 1;
+            transitionOperation(job, operation, .running);
+            job.state = .running;
+            self.round_robin_cursor = (job_index + 1) % self.jobs.items.len;
+            return .{
+                .job_id = job.id,
+                .operation_id = operation.id,
+                .generation = operation.generation,
+            };
+        }
+
+        self.preferred_operation = null;
+        return null;
+    }
+
     /// One active Operation per Job preserves its FIFO execution order.
     /// The cursor rotates across Jobs after every successful dispatch.
     pub fn dispatchNext(self: *Manager) ?WorkToken {
         const count = self.jobs.items.len;
         if (count == 0) return null;
+
+        if (self.dispatchPreferred()) |token| return token;
 
         // Directory creation outranks symlink creation, which outranks
         // regular-file and all remaining operation kinds.

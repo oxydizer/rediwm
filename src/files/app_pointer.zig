@@ -163,12 +163,77 @@ pub fn hoverKey(self: *App) usize {
     return 0;
 }
 
+const transfer_hover_priority_delay_ms: i64 = 300;
+
+fn hoveredCopyGhostEntry(self: *App) ?@import("io_tree.zig").EntryId {
+    const target = self.item_surface.hovered orelse return null;
+    const index: usize = @intCast(target.id);
+    if (index >= self.items.items.len or self.hoverKey() != 1000 + index)
+        return null;
+
+    const item = self.items.items[index];
+    if (!item.transfer_ghost or item.is_dir or item.is_symlink) return null;
+    const state = item.transfer_state orelse return null;
+    if (state != .pending and state != .copying) return null;
+    return item.transfer_entry_id;
+}
+
+fn updateTransferHoverPriority(self: *App, now: i64) void {
+    const entry_id = hoveredCopyGhostEntry(self) orelse {
+        self.transfer_hover_priority = null;
+        return;
+    };
+
+    if (self.transfer_hover_priority) |pending| {
+        if (pending.entry_id == entry_id) return;
+    }
+
+    self.transfer_hover_priority = .{
+        .entry_id = entry_id,
+        .deadline_ms = now + transfer_hover_priority_delay_ms,
+    };
+}
+
+/// The poll loop sleeps until this deadline rather than polling continuously.
+pub fn transferHoverPriorityDeadline(self: *const App) ?i64 {
+    const pending = self.transfer_hover_priority orelse return null;
+    if (pending.requested) return null;
+    return pending.deadline_ms;
+}
+
+/// Requests priority once the pointer has remained over the same queued
+/// copy ghost for the full dwell interval.
+pub fn stepTransferHoverPriority(self: *App, now: i64) void {
+    var pending = self.transfer_hover_priority orelse return;
+    if (pending.requested or now < pending.deadline_ms) return;
+
+    const entry_id = hoveredCopyGhostEntry(self) orelse {
+        self.transfer_hover_priority = null;
+        return;
+    };
+    if (entry_id != pending.entry_id) {
+        self.transfer_hover_priority = null;
+        return;
+    }
+
+    self.prioritizeTransferEntry(pending.entry_id);
+    pending.requested = true;
+    self.transfer_hover_priority = pending;
+}
+
 pub fn handleMotion(self: *App, x: f64, y: f64) void {
-    if (@import("app_audio_playlist.zig").motion(self, x, y)) return;
-    if (@import("app_audio_bar.zig").motion(self, x, y)) return;
+    if (@import("app_audio_playlist.zig").motion(self, x, y)) {
+        self.transfer_hover_priority = null;
+        return;
+    }
+    if (@import("app_audio_bar.zig").motion(self, x, y)) {
+        self.transfer_hover_priority = null;
+        return;
+    }
     if (self.terminalMotion(x, y)) {
         self.mouse_x = x;
         self.mouse_y = y;
+        self.transfer_hover_priority = null;
         return;
     }
     if (self.overTerminalDivider(self.mouse_x, self.mouse_y) != self.overTerminalDivider(x, y)) self.terminalDamage();
@@ -183,6 +248,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
             self.clampSidebarScroll();
             self.invalidate();
         }
+        self.transfer_hover_priority = null;
         return;
     }
     if (self.overSidebarDivider(self.mouse_x, self.mouse_y) != self.overSidebarDivider(x, y)) self.damageSidebarDivider();
@@ -200,6 +266,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
         self.mouse_x = x;
         self.mouse_y = y;
         self.resizeColumn(x);
+        self.transfer_hover_priority = null;
         return;
     }
     if (self.drag_origin) |origin| {
@@ -237,6 +304,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
         if (self.menuHit(x, y)) |row| self.menu_selected = row;
     }
     const new_hover = self.hoverKey();
+    updateTransferHoverPriority(self, nowMs());
     if (old_hover != new_hover) {
         if (self.item_surface.hovered) |target| {
             const index: usize = @intCast(target.id);

@@ -380,6 +380,11 @@ pub const App = struct {
     // Mouse & input
     mouse_x: f64 = 0,
     mouse_y: f64 = 0,
+    transfer_hover_priority: ?struct {
+        entry_id: @import("io_tree.zig").EntryId,
+        deadline_ms: i64,
+        requested: bool = false,
+    } = null,
     last_click_time: i64 = 0,
     last_click_index: ?usize = null,
     /// The item a single-click last opened, and when: the second click of a
@@ -740,6 +745,7 @@ pub const App = struct {
     pub const startDiscoveryRoots = app_io.startDiscoveryRoots;
     pub const promoteDiscoveryPath = app_io.promoteDiscoveryPath;
     pub const promoteDiscoverySubtreePath = app_io.promoteDiscoverySubtreePath;
+    pub const prioritizeTransferEntry = app_io.prioritizeTransferEntry;
     pub const stepDiscovery = app_io.stepDiscovery;
     pub const discoveryWakeFd = app_io.discoveryWakeFd;
     pub const startOperations = app_io.startOperations;
@@ -1037,6 +1043,8 @@ pub const App = struct {
     pub const toggleInlinePermission = app_pointer.toggleInlinePermission;
     pub const hoverKey = app_pointer.hoverKey;
     pub const handleMotion = app_pointer.handleMotion;
+    pub const transferHoverPriorityDeadline = app_pointer.transferHoverPriorityDeadline;
+    pub const stepTransferHoverPriority = app_pointer.stepTransferHoverPriority;
     pub const cancelDrag = app_pointer.cancelDrag;
     pub const bandRect = app_pointer.bandRect;
     pub const updateSelectionBand = app_pointer.updateSelectionBand;

@@ -2,6 +2,7 @@
 const std = @import("std");
 const App = @import("app.zig").App;
 const io_manager = @import("io_manager.zig");
+const io_tree = @import("io_tree.zig");
 const io_discovery = @import("io_discovery.zig");
 const io_operation_executor = @import("io_operation_executor.zig");
 const ViewItem = @import("app_model.zig").ViewItem;
@@ -46,6 +47,14 @@ pub fn startDiscoveryRoots(
 
     try manager.queueJobWithDiscoveryRoots(job_id, roots);
     self.discovery_jobs.appendAssumeCapacity(job_id);
+}
+
+/// Gives the active copy Job a one-shot preference for a hovered transfer
+/// ghost. The Manager retains the preference after pointer leave.
+pub fn prioritizeTransferEntry(self: *App, entry_id: io_tree.EntryId) void {
+    const job_id = self.active_io_copy_job orelse return;
+    const manager = self.io_manager orelse return;
+    _ = manager.prioritizeEntryOperation(job_id, entry_id);
 }
 
 /// Promotes the discovered directory corresponding to a newly navigated

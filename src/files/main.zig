@@ -338,6 +338,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         self.app.terminalFinishClose(app_mod.nowMs());
         self.ime.sync(self.titlebarHeight());
         self.app.stepHover(app_mod.nowMs());
+        self.app.stepTransferHoverPriority(app_mod.nowMs());
         self.app.stepScrollbar(app_mod.nowMs());
         self.app.stepScanNotice(app_mod.nowMs());
         self.app.stepAudio(app_mod.nowMs());

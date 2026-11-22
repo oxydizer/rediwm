@@ -106,6 +106,80 @@ test "scheduler rotates fairly across Jobs and preserves per-Job FIFO" {
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_a).?);
 }
 
+test "hovered copy operation gets one-shot priority over normal scheduling" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job_a = try manager.createJob(1);
+    const current_entry = try manager.addTreeRoot(
+        job_a,
+        "current.bin",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    const current_operation = try manager.addEntryOperation(
+        job_a,
+        current_entry,
+        .copy_file,
+    );
+    const entry_a = try manager.addTreeRoot(
+        job_a,
+        "urgent.docx",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    const operation_a = try manager.addEntryOperation(
+        job_a,
+        entry_a,
+        .copy_file,
+    );
+
+    try manager.queueJob(job_a);
+
+    const first = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_a, first.job_id);
+    try std.testing.expectEqual(current_operation, first.operation_id);
+
+    // A newly planned Job can introduce higher-kind-priority work while the
+    // current bounded work unit is running.
+    const job_b = try manager.createJob(2);
+    const directory_operation = try manager.addOperation(
+        job_b,
+        .create_directory,
+    );
+    const operation_b = try manager.addOperation(job_b, .copy_file);
+    try manager.queueJob(job_b);
+
+    // The target is still pending and has never had a work unit dispatched.
+    try std.testing.expect(manager.prioritizeEntryOperation(job_a, entry_a));
+    try std.testing.expect(manager.completeWork(first, .yielded));
+
+    // The preference overrides both Job rotation and operation-kind priority.
+    const boosted = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_a, boosted.job_id);
+    try std.testing.expectEqual(operation_a, boosted.operation_id);
+    try std.testing.expect(manager.completeWork(boosted, .completed));
+
+    // Normal operation-kind priority resumes after the one-shot boost.
+    const normal_kind = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_b, normal_kind.job_id);
+    try std.testing.expectEqual(directory_operation, normal_kind.operation_id);
+    try std.testing.expect(manager.completeWork(normal_kind, .completed));
+
+    // The yielded copy resumes after higher-priority directory creation.
+    const resumed = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_a, resumed.job_id);
+    try std.testing.expectEqual(current_operation, resumed.operation_id);
+    try std.testing.expect(manager.completeWork(resumed, .completed));
+
+    const normal_job = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_b, normal_job.job_id);
+    try std.testing.expectEqual(operation_b, normal_job.operation_id);
+    try std.testing.expect(manager.completeWork(normal_job, .completed));
+}
+
 test "dependencies block descendants but not independent operations" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
