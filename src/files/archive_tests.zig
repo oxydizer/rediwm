@@ -232,7 +232,14 @@ test "selected archive members extract with relative paths and reject invalid se
         defer ops_mod.deleteRecursive(mem, root) catch {};
         const source = try std.fmt.allocPrint(mem, "{s}/selected{s}", .{ root, extension });
         defer mem.free(source);
-        try writeArchiveFixture(source, &.{ "nested/", "nested/one.txt", "two.txt" });
+        try writeArchiveFixture(source, &.{
+            "nested/",
+            "nested/deep/",
+            "nested/one.txt",
+            "nested/deep/two.txt",
+            "empty/",
+            "two.txt",
+        });
 
         var cancel: archive.Cancel = .init(false);
         const stage = try archive.temporary(mem, root);
@@ -256,10 +263,52 @@ test "selected archive members extract with relative paths and reject invalid se
 
         const directory_stage = try archive.temporary(mem, root);
         defer mem.free(directory_stage);
-        try std.testing.expectError(
-            error.UnsupportedArchiveEntry,
-            archive.extractMembers(mem, source, directory_stage, &.{"nested"}, &cancel),
+        try archive.extractMembers(
+            mem,
+            source,
+            directory_stage,
+            &.{ "nested", "empty", "two.txt" },
+            &cancel,
         );
+
+        const nested_file = try std.fmt.allocPrint(
+            mem,
+            "{s}/nested/one.txt",
+            .{directory_stage},
+        );
+        defer mem.free(nested_file);
+        try std.testing.expectEqualStrings("payload", try readTestFile(nested_file, &content));
+
+        const deep_file = try std.fmt.allocPrint(
+            mem,
+            "{s}/nested/deep/two.txt",
+            .{directory_stage},
+        );
+        defer mem.free(deep_file);
+        try std.testing.expectEqualStrings("payload", try readTestFile(deep_file, &content));
+
+        const root_file = try std.fmt.allocPrint(
+            mem,
+            "{s}/two.txt",
+            .{directory_stage},
+        );
+        defer mem.free(root_file);
+        try std.testing.expectEqualStrings("payload", try readTestFile(root_file, &content));
+
+        const empty_dir = try std.fmt.allocPrint(
+            mem,
+            "{s}/empty",
+            .{directory_stage},
+        );
+        defer mem.free(empty_dir);
+        const empty_dir_z = try mem.dupeSentinel(u8, empty_dir, 0);
+        defer mem.free(empty_dir_z);
+        const empty_dir_fd = c.open(
+            empty_dir_z,
+            c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC,
+        );
+        try std.testing.expect(empty_dir_fd >= 0);
+        _ = c.close(empty_dir_fd);
 
         const missing_stage = try archive.temporary(mem, root);
         defer mem.free(missing_stage);
@@ -275,15 +324,15 @@ test "selected archive members extract with relative paths and reject invalid se
             archive.extractMembers(mem, source, empty_stage, &.{}, &cancel),
         );
 
-        try writeArchiveFixtureLinks(source, &.{"regular.txt"}, &.{.{
-            .name = "link.txt",
+        try writeArchiveFixtureLinks(source, &.{"nested/regular.txt"}, &.{.{
+            .name = "nested/link.txt",
             .target = "regular.txt",
         }});
         const link_stage = try archive.temporary(mem, root);
         defer mem.free(link_stage);
         try std.testing.expectError(
             error.UnsupportedArchiveEntry,
-            archive.extractMembers(mem, source, link_stage, &.{"link.txt"}, &cancel),
+            archive.extractMembers(mem, source, link_stage, &.{"nested"}, &cancel),
         );
     }
 }

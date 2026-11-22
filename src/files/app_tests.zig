@@ -272,7 +272,7 @@ test "transfer ghosts have no file actions or folder-size affordance" {
     try std.testing.expectEqual(@as(?MenuKind, .file), app.menu);
 }
 
-test "archive member context menu offers copy and extraction only for regular selected files" {
+test "archive member context menu offers export for files and directory subtrees" {
     var app = try testApp();
     defer app.deinit();
     try app.history.navigateLocation("/tmp/package.zip/nested", "/tmp/package.zip".len);
@@ -299,8 +299,31 @@ test "archive member context menu offers copy and extraction only for regular se
 
     app.items.items[0].is_symlink = false;
     app.items.items[0].is_dir = true;
-    try std.testing.expect(!app.hasSelectedArchiveMembers());
-    try std.testing.expectEqualSlices(FileAction, &.{.open}, app.fileActions());
+    try std.testing.expect(app.hasSelectedArchiveMembers());
+    try std.testing.expectEqualSlices(
+        FileAction,
+        &.{ .open, .copy, .extract_to },
+        app.fileActions(),
+    );
+
+    const mem2 = app.items_arena.allocator();
+    try app.items.append(app.allocator, .{
+        .name = try mem2.dupe(u8, "other.txt"),
+        .path = try mem2.dupe(u8, "/tmp/package.zip/other.txt"),
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 5,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .selected = true,
+    });
+    try std.testing.expect(app.hasSelectedArchiveMembers());
+    try std.testing.expectEqualSlices(
+        FileAction,
+        &.{ .open, .copy, .extract_to },
+        app.fileActions(),
+    );
 }
 
 test "terminal drawer shares viewport geometry and preserves its preferred height" {
@@ -714,15 +737,23 @@ fn writeArchivePublicationFixture(path: []const u8) !void {
 fn waitForAppManagerJob(app: *App, job_id: io_manager.JobId) !void {
     const manager = app.io_manager.?;
     while (true) {
+        app.stepDiscovery();
         app.stepOperations();
         if (manager.jobState(job_id).?.isTerminal()) return;
 
-        var descriptor = c.struct_pollfd{
-            .fd = app.operationWakeFd(),
-            .events = c.POLLIN,
-            .revents = 0,
+        var descriptors = [_]c.struct_pollfd{
+            .{
+                .fd = app.discoveryWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
+            .{
+                .fd = app.operationWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
         };
-        const result = c.poll(&descriptor, 1, 5_000);
+        const result = c.poll(&descriptors, @intCast(descriptors.len), 5_000);
         if (result == 0) return error.TimedOutWaitingForArchiveMember;
         if (result < 0 and std.c._errno().* != c.EINTR)
             return error.ArchiveMemberPollFailed;
@@ -777,7 +808,7 @@ test "archive member extraction opens the selected file and retains its staging 
     try std.testing.expectEqualStrings("payload", contents);
 }
 
-test "copying selected archive members publishes real staged paths and retains their lease" {
+test "copying selected archive directories publishes real staged paths and retains their lease" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
     const temp = try makeTransferTestTempDir(&temp_buffer);
@@ -785,20 +816,27 @@ test "copying selected archive members publishes real staged paths and retains t
     defer allocator.free(source);
     const destination = try transferTestJoin(allocator, temp, "destination");
     defer allocator.free(destination);
-    const destination_file = try transferTestJoin(
+    const destination_nested = try transferTestJoin(
         allocator,
         destination,
+        "nested",
+    );
+    defer allocator.free(destination_nested);
+    const destination_file = try transferTestJoin(
+        allocator,
+        destination_nested,
         "payload.txt",
     );
     defer allocator.free(destination_file);
     const virtual_path = try std.fmt.allocPrint(
         allocator,
-        "{s}/nested/payload.txt",
+        "{s}/nested",
         .{source},
     );
     defer allocator.free(virtual_path);
     defer {
         transferTestCleanup(destination_file, false);
+        transferTestCleanup(destination_nested, true);
         transferTestCleanup(destination, true);
         transferTestCleanup(source, false);
         transferTestCleanup(temp, true);
@@ -806,7 +844,7 @@ test "copying selected archive members publishes real staged paths and retains t
     try writeArchivePublicationFixture(source);
     try transferTestMkdir(destination);
 
-    const item_name = try allocator.dupe(u8, "payload.txt");
+    const item_name = try allocator.dupe(u8, "nested");
     defer allocator.free(item_name);
     const item_path = try allocator.dupe(u8, virtual_path);
     defer allocator.free(item_path);
@@ -829,12 +867,12 @@ test "copying selected archive members publishes real staged paths and retains t
     try app.items.append(allocator, .{
         .name = item_name,
         .path = item_path,
-        .is_dir = false,
+        .is_dir = true,
         .is_symlink = false,
         .is_broken = false,
-        .bytes = 7,
+        .bytes = 0,
         .mtime = 0,
-        .icon_name = "text-x-generic",
+        .icon_name = "folder",
         .selected = true,
     });
 
@@ -853,7 +891,13 @@ test "copying selected archive members publishes real staged paths and retains t
     try std.testing.expect(app.clipboard_staging_lease != null);
     try std.testing.expect(!std.mem.eql(u8, virtual_path, app.clipboard_paths.items[0]));
 
-    const contents = try transferTestReadFile(allocator, app.clipboard_paths.items[0]);
+    const staged_file = try transferTestJoin(
+        allocator,
+        app.clipboard_paths.items[0],
+        "payload.txt",
+    );
+    defer allocator.free(staged_file);
+    const contents = try transferTestReadFile(allocator, staged_file);
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("payload", contents);
 
@@ -875,10 +919,7 @@ test "copying selected archive members publishes real staged paths and retains t
     defer allocator.free(pasted_contents);
     try std.testing.expectEqualStrings("payload", pasted_contents);
 
-    const staged_contents = try transferTestReadFile(
-        allocator,
-        app.clipboard_paths.items[0],
-    );
+    const staged_contents = try transferTestReadFile(allocator, staged_file);
     defer allocator.free(staged_contents);
     try std.testing.expectEqualStrings("payload", staged_contents);
 

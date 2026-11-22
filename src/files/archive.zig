@@ -248,9 +248,9 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
     return extractSelected(mem, path, destination, null, member, cancel);
 }
 
-/// Extract selected regular-file members into a private staging directory.
-/// Member paths remain relative to the archive root. Explicit directory
-/// selections and links are rejected; parent directories are created as needed.
+/// Extract selected files and directory subtrees into a private staging
+/// directory. Member paths remain relative to the archive root. Links and
+/// special files inside selected subtrees are rejected.
 pub fn extractMembers(mem: Allocator, path: []const u8, destination: []const u8, members: []const []const u8, cancel: *const Cancel) !void {
     if (members.len == 0) return error.MemberNotFound;
     return extractSelected(mem, path, destination, members, null, cancel);
@@ -295,19 +295,23 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
             continue;
         }
         if (member) |wanted| if (!std.mem.eql(u8, name, wanted)) continue;
-        const selected_index = if (normalized_members) |selected| blk: {
-            var match: ?usize = null;
+        var selected_entry = members == null;
+        if (normalized_members) |selected| {
             for (selected, 0..) |wanted, i| {
-                if (std.mem.eql(u8, name, wanted)) {
-                    match = i;
-                    break;
+                const exact = std.mem.eql(u8, name, wanted);
+                const descendant = name.len > wanted.len and
+                    std.mem.startsWith(u8, name, wanted) and
+                    name[wanted.len] == '/';
+                if (exact or descendant) {
+                    selected_found.?[i] = true;
+                    selected_entry = true;
                 }
             }
-            break :blk match;
-        } else null;
-        if (members != null and selected_index == null) continue;
+        }
+        if (!selected_entry) continue;
         const kind = a.archive_entry_filetype(entry);
-        if (members != null and kind != c.S_IFREG) return error.UnsupportedArchiveEntry;
+        if (members != null and kind != c.S_IFREG and kind != c.S_IFDIR)
+            return error.UnsupportedArchiveEntry;
         if (kind == c.S_IFLNK and a.archive_entry_hardlink(entry) == null and member == null) {
             const target = std.mem.span(a.archive_entry_symlink(entry) orelse return error.InvalidArchive);
             link_bytes += name.len + target.len;
@@ -345,7 +349,6 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
         // Keep ordinary executable bits, never set-id or archive ownership.
         if (member == null) _ = c.fchmod(fd, @intCast(@as(c_uint, @intCast(a.archive_entry_perm(entry) & 0o777)) | 0o600));
         found = true;
-        if (selected_index) |i| selected_found.?[i] = true;
         if (member != null) break;
     }
     if (member != null and !found) return error.MemberNotFound;

@@ -111,7 +111,13 @@ pub fn trashPropertiesAction(self: *App, action: trash_properties.Action) void {
 }
 
 pub fn canOpenWith(self: *const App) bool {
-    if (self.history.archive_len > 0) return self.hasSelectedArchiveMembers();
+    if (self.history.archive_len > 0) {
+        if (!self.hasSelectedArchiveMembers()) return false;
+        for (self.items.items) |item| {
+            if (item.selected and !item.transfer_ghost and item.is_dir) return false;
+        }
+        return true;
+    }
     if (self.chooser != null) return false;
     var found = false;
     for (self.items.items) |item| {

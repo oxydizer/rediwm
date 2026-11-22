@@ -15,6 +15,12 @@ const c = @import("c.zig").api;
 
 fn startArchiveExport(self: *App, purpose: App.ArchiveExportPurpose) !void {
     if (!self.hasSelectedArchiveMembers()) return error.NoSelectedArchiveMembers;
+    if (purpose == .open_with) {
+        for (self.items.items) |item| {
+            if (item.selected and !item.transfer_ghost and item.is_dir)
+                return error.NoSelectedArchiveMembers;
+        }
+    }
     if (self.active_io_copy_job != null) return error.Busy;
     if (self.job_runner) |runner| {
         const state = runner.pollProgress().state;

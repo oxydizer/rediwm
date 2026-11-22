@@ -219,8 +219,8 @@ pub fn selectedArchive(self: *App) ?[]const u8 {
     return selected;
 }
 
-/// Archive members use virtual paths, so only regular files can be exported
-/// through the selected-member extraction operation.
+/// Archive members use virtual paths. Regular files and directories can be
+/// exported after materializing them through the selected-member extractor.
 pub fn hasSelectedArchiveMembers(self: *const App) bool {
     const archive_len = self.history.archive_len;
     if (self.chooser != null or archive_len == 0 or self.history.current.len < archive_len)
@@ -229,7 +229,7 @@ pub fn hasSelectedArchiveMembers(self: *const App) bool {
     var count: usize = 0;
     for (self.items.items) |item| {
         if (!item.selected or item.transfer_ghost) continue;
-        if (item.transfer_stub or item.is_dir or item.is_symlink or item.is_broken or item.missing)
+        if (item.transfer_stub or item.is_symlink or item.is_broken or item.missing)
             return false;
         if (item.path.len <= archive_len + 1 or item.path[archive_len] != '/' or
             !std.mem.eql(u8, item.path[0..archive_len], self.history.current[0..archive_len]))
@@ -260,8 +260,14 @@ pub fn fileActions(self: *App) []const FileAction {
     }
     if (!has_actionable_selection) return &.{};
     if (only_transfers) return &.{.open};
-    if (self.history.archive_len > 0)
-        return if (self.hasSelectedArchiveMembers()) &.{ .open, .open_with, .copy, .extract_to } else &.{.open};
+    if (self.history.archive_len > 0) {
+        if (!self.hasSelectedArchiveMembers()) return &.{.open};
+        for (self.items.items) |item| {
+            if (item.selected and !item.transfer_ghost and item.is_dir)
+                return &.{ .open, .copy, .extract_to };
+        }
+        return &.{ .open, .open_with, .copy, .extract_to };
+    }
     // Entries here are already deleted: put back or remove for good, but never
     // cut, rename, paste or trash again. Folders inside a trashed folder have
     // no metadata, so they only open, copy and show properties.
