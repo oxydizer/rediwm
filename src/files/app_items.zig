@@ -50,22 +50,26 @@ fn currentTransferBytes(item: ViewItem, progress: ?ops.ProgressInfo) ?i64 {
     if (item.transfer_state == .pending) return 0;
     if (item.transfer_state != .copying) return null;
 
-    const current = progress orelse return null;
-    if ((current.state != .running and current.state != .paused) or
-        current.current_file_path_len == 0 or
-        !std.mem.eql(
-            u8,
-            current.current_file_path[0..current.current_file_path_len],
-            item.path,
-        ))
-    {
-        return null;
+    if (progress) |current| {
+        if ((current.state == .running or current.state == .paused) and
+            current.current_file_path_len > 0 and
+            std.mem.eql(
+                u8,
+                current.current_file_path[0..current.current_file_path_len],
+                item.path,
+            ))
+        {
+            return @intCast(@min(
+                current.current_file_bytes,
+                @as(u64, std.math.maxInt(i64)),
+            ));
+        }
     }
 
-    return @intCast(@min(
-        current.current_file_bytes,
-        @as(u64, std.math.maxInt(i64)),
-    ));
+    if (item.transfer_bytes) |bytes| {
+        return @intCast(@min(bytes, @as(u64, std.math.maxInt(i64))));
+    }
+    return null;
 }
 
 pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
@@ -434,6 +438,24 @@ test "transfer ghost byte display follows pending and matching live file progres
     item.is_dir = false;
     item.transfer_ghost = false;
     try std.testing.expect(currentTransferBytes(item, progress) == null);
+}
+
+test "transfer ghost byte display falls back to refreshed Manager progress" {
+    const item: ViewItem = .{
+        .name = "file.txt",
+        .path = "/destination/file.txt",
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 4096,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .transfer_ghost = true,
+        .transfer_state = .copying,
+        .transfer_bytes = 768,
+    };
+
+    try std.testing.expectEqual(@as(?i64, 768), currentTransferBytes(item, null));
 }
 
 pub fn renderFilenameTip(self: *App, cr: *c.cairo_t) void {

@@ -200,6 +200,7 @@ pub const ViewItem = struct {
     git_lines: ?git.LineCounts = null,
     transfer_stub: bool = false,
     transfer_ghost: bool = false,
+    transfer_entry_id: ?@import("io_tree.zig").EntryId = null,
     transfer_state: ?@import("ops.zig").TransferEntryState = null,
     transfer_bytes: ?u64 = null,
     transfer_total_bytes: ?u64 = null,

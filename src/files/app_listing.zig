@@ -26,6 +26,7 @@ const withAlpha = @import("app_draw.zig").withAlpha;
 const drawEllipsis = @import("app_draw.zig").drawEllipsis;
 const measureText = @import("app_draw.zig").measureText;
 const formatPermissions = @import("app_draw.zig").formatPermissions;
+const transfer_rows = @import("app_transfer_rows.zig");
 
 pub fn navigate(self: *App, new_path: []const u8) void {
     if (!self.recentAvailable() and recent.isLocation(new_path)) return;
@@ -516,6 +517,29 @@ pub fn sync(self: *App) void {
                 const progress_changed =
                     self.job_transferred_bytes != transferred_bytes or
                     self.job_bytes_per_second != bytes_per_second;
+                for (self.items.items, 0..) |*item, index| {
+                    if (!transfer_rows.syncManagerProgress(item, manager, job_id)) continue;
+                    const columns = self.columns();
+                    const item_index: i32 = @intCast(index);
+                    const row_y = self.viewTop() + self.itemInset() +
+                        @divTrunc(item_index, columns) * self.rowHeight() -
+                        self.scroll_y;
+                    const row_x: f64 = if (self.list_view)
+                        @floatFromInt(self.sidebarWidth())
+                    else
+                        @floatFromInt(self.sidebarWidth() + self.itemLeftInset() +
+                            @mod(item_index, columns) * self.cellWidth());
+                    const row_width: f64 = if (self.list_view)
+                        @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter())
+                    else
+                        @floatFromInt(self.cellWidth() - 20);
+                    self.addDamageRegion(self.clipToViewport(.{
+                        .x = row_x,
+                        .y = @floatFromInt(row_y),
+                        .w = row_width,
+                        .h = @floatFromInt(self.cardHeight()),
+                    }));
+                }
                 self.job_transferred_bytes = transferred_bytes;
                 self.job_bytes_per_second = bytes_per_second;
                 const mapped_state: ops_mod.JobState = switch (manager_state) {

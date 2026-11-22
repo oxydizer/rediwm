@@ -15,6 +15,7 @@ pub const Node = struct {
     size: u64,
     state: ops.TransferEntryState,
     progress_bytes: u64 = 0,
+    manager_entry_id: ?@import("io_tree.zig").EntryId = null,
     waiting_conflict: bool = false,
 };
 

@@ -169,6 +169,7 @@ pub const State = struct {
         errdefer next.deinit();
         for (next.nodes.items) |*node| {
             const entry_id = entry_ids.items[node.entry_index];
+            node.manager_entry_id = entry_id;
             if (manager.entryOperationView(job_id, entry_id)) |operation| {
                 node.progress_bytes = operation.progress_bytes;
                 node.waiting_conflict = operation.state == .waiting;

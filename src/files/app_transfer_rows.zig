@@ -5,7 +5,26 @@ const ui_profile = @import("ui_profile.zig");
 const App = @import("app.zig").App;
 const ViewItem = @import("app_model.zig").ViewItem;
 const transfer_tree = @import("transfer_tree.zig");
+const io_manager = @import("io_manager.zig");
 const fold = @import("ui").fold;
+
+/// Refreshes a visible Manager-backed transfer file from its stable entry ID.
+/// Returns true only when the displayed byte count changes.
+pub fn syncManagerProgress(
+    item: *ViewItem,
+    manager: *const io_manager.Manager,
+    job_id: io_manager.JobId,
+) bool {
+    if (!item.transfer_ghost or item.is_dir or
+        item.transfer_state != .copying) return false;
+    const entry_id = item.transfer_entry_id orelse return false;
+    const operation = manager.entryOperationView(job_id, entry_id) orelse return false;
+    if (item.transfer_bytes) |current| {
+        if (current == operation.progress_bytes) return false;
+    }
+    item.transfer_bytes = operation.progress_bytes;
+    return true;
+}
 
 pub fn appendTransferRows(
     self: *App,
@@ -81,6 +100,7 @@ pub fn appendTreeRows(
                 if (represented_ghost) {
                     item.transfer_ghost = true;
                     item.transfer_state = node_state;
+                    item.transfer_entry_id = node.manager_entry_id;
                     item.missing = !item.is_dir;
                     if (node.kind == .file) {
                         item.transfer_bytes = node.progress_bytes;
@@ -115,6 +135,7 @@ pub fn appendTreeRows(
             .is_symlink = node.kind == .symlink,
             .is_broken = false,
             .transfer_ghost = ghost,
+            .transfer_entry_id = node.manager_entry_id,
             .transfer_state = node_state,
             .transfer_bytes = if (node.kind == .file) node.progress_bytes else null,
             .transfer_total_bytes = if (node.kind == .file) node.size else null,
@@ -140,6 +161,52 @@ pub fn appendTreeRows(
             mem.free(path);
         };
     }
+}
+
+test "Manager transfer progress updates a visible row through its stable entry ID" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const job_id = try manager.createJob(null);
+    const entry_id = try manager.addTreeRoot(
+        job_id,
+        "file.bin",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    try manager.setDestinationDirectory(job_id, "/destination");
+    _ = try manager.addEntryOperation(job_id, entry_id, .copy_file);
+    try manager.queueJob(job_id);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expect(manager.completeWork(token, .yielded));
+    try std.testing.expect(manager.recordOperationProgress(
+        token,
+        384,
+        4096,
+        .transferring,
+    ));
+
+    var item: ViewItem = .{
+        .name = "file.bin",
+        .path = "/destination/file.bin",
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 0,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .transfer_ghost = true,
+        .transfer_entry_id = entry_id,
+        .transfer_state = .copying,
+        .transfer_bytes = 0,
+    };
+
+    try std.testing.expect(syncManagerProgress(&item, &manager, job_id));
+    try std.testing.expectEqual(@as(?u64, 384), item.transfer_bytes);
+    try std.testing.expect(!syncManagerProgress(&item, &manager, job_id));
 }
 
 fn descendantTransferState(
