@@ -97,6 +97,10 @@ fn metadataForPath(path: []const u8) !io_tree.Metadata {
         .mode = @intCast(stat.st_mode),
         .device_id = @intCast(stat.st_dev),
         .inode_id = @intCast(stat.st_ino),
+        .mtime_sec = @intCast(stat.st_mtim.tv_sec),
+        .mtime_nsec = @intCast(stat.st_mtim.tv_nsec),
+        .ctime_sec = @intCast(stat.st_ctim.tv_sec),
+        .ctime_nsec = @intCast(stat.st_ctim.tv_nsec),
     };
 }
 
@@ -1741,4 +1745,91 @@ test "Manager Runtime preserves a same-type source replacement before detach" {
     const copied_contents = try readFile(allocator, destination);
     defer allocator.free(copied_contents);
     try std.testing.expectEqualStrings("published destination contents", copied_contents);
+}
+
+test "Manager Runtime preserves an in-place modified source before detach" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source = try join(allocator, temp, "payload.bin");
+    defer allocator.free(source);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    const destination = try join(allocator, destination_base, "payload.bin");
+    defer allocator.free(destination);
+    defer {
+        cleanup(destination, false);
+        cleanup(destination_base, true);
+        cleanup(source, false);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(destination_base);
+    try writeFile(source, "original source contents");
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "payload.bin",
+        .regular_file,
+        try metadataForPath(source),
+        null,
+    );
+    try manager.setRootSourcePath(job, root, source);
+    try manager.setDestinationDirectory(job, destination_base);
+    const copy_operation = try manager.addEntryOperation(job, root, .copy_file);
+    const detach_operation = try manager.addEntryOperation(job, root, .detach_source);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+
+    while (manager.operationState(job, copy_operation).? != .completed) {
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    // Change one byte without replacing the inode or changing the file size.
+    const source_z = try allocZ(allocator, source);
+    defer allocator.free(source_z);
+    const source_fd = c.open(source_z, c.O_WRONLY | c.O_CLOEXEC);
+    try std.testing.expect(source_fd >= 0);
+    const replacement = [_]u8{'X'};
+    try std.testing.expectEqual(
+        @as(isize, 1),
+        c.pwrite(source_fd, replacement[0..].ptr, 1, 0),
+    );
+    try std.testing.expectEqual(@as(c_int, 0), c.close(source_fd));
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.completed,
+        manager.operationState(job, copy_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, detach_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
+
+    var source_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(source_z, &source_stat));
+    try std.testing.expectEqual(@as(i64, 24), @as(i64, @intCast(source_stat.st_size)));
+    const source_contents = try readFile(allocator, source);
+    defer allocator.free(source_contents);
+    try std.testing.expectEqualStrings("Xriginal source contents", source_contents);
+
+    const copied_contents = try readFile(allocator, destination);
+    defer allocator.free(copied_contents);
+    try std.testing.expectEqualStrings("original source contents", copied_contents);
 }

@@ -192,6 +192,10 @@ fn inspectEntry(allocator: Allocator, dir_fd: c_int, name_z: [*:0]const u8) !Rec
         .mode = @intCast(stat.st_mode),
         .device_id = @intCast(stat.st_dev),
         .inode_id = @intCast(stat.st_ino),
+        .mtime_sec = @intCast(stat.st_mtim.tv_sec),
+        .mtime_nsec = @intCast(stat.st_mtim.tv_nsec),
+        .ctime_sec = @intCast(stat.st_ctim.tv_sec),
+        .ctime_nsec = @intCast(stat.st_ctim.tv_nsec),
     };
     const file_type = stat.st_mode & c.S_IFMT;
     if (file_type == c.S_IFDIR) {

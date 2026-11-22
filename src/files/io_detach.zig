@@ -1,9 +1,9 @@
 //! Removes a successfully transferred source entry for the Files I/O executor.
 //!
-//! The input payload contains an entry-kind tag, source device/inode identity,
-//! and one NUL-terminated absolute source path. Directories are removed
-//! non-recursively; regular files and symlinks use unlinkat without following
-//! the final entry.
+//! The input payload contains an entry-kind tag, source identity and metadata
+//! snapshot, followed by one NUL-terminated absolute source path. Directories
+//! are removed non-recursively; regular files and symlinks are detached only
+//! when their identity and content-relevant metadata still match the snapshot.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
@@ -36,11 +36,16 @@ pub fn makeInput(
         .symlink => 3,
         .other => return error.UnsupportedEntryKind,
     };
-    const bytes = try allocator.alloc(u8, source_path.len + 18);
+    const bytes = try allocator.alloc(u8, source_path.len + 58);
     bytes[0] = kind_tag;
     std.mem.writeInt(u64, bytes[1..9], device_id, .little);
     std.mem.writeInt(u64, bytes[9..17], inode_id, .little);
-    @memcpy(bytes[17 .. source_path.len + 17], source_path);
+    std.mem.writeInt(u64, bytes[17..25], metadata.size, .little);
+    std.mem.writeInt(u64, bytes[25..33], @bitCast(metadata.mtime_sec), .little);
+    std.mem.writeInt(u64, bytes[33..41], @bitCast(metadata.mtime_nsec), .little);
+    std.mem.writeInt(u64, bytes[41..49], @bitCast(metadata.ctime_sec), .little);
+    std.mem.writeInt(u64, bytes[49..57], @bitCast(metadata.ctime_nsec), .little);
+    @memcpy(bytes[57 .. source_path.len + 57], source_path);
     bytes[bytes.len - 1] = 0;
     return .{ .allocator = allocator, .bytes = bytes };
 }
@@ -50,11 +55,16 @@ const ParsedInput = struct {
     kind: io_tree.EntryKind,
     device_id: u64,
     inode_id: u64,
+    size: u64,
+    mtime_sec: i64,
+    mtime_nsec: i64,
+    ctime_sec: i64,
+    ctime_nsec: i64,
 };
 
 fn parseInput(input: *const executor.OwnedPayload) !ParsedInput {
     const bytes = input.slice();
-    if (bytes.len < 19 or bytes[bytes.len - 1] != 0)
+    if (bytes.len < 59 or bytes[bytes.len - 1] != 0)
         return error.InvalidInput;
     const kind: io_tree.EntryKind = switch (bytes[0]) {
         1 => .directory,
@@ -62,7 +72,7 @@ fn parseInput(input: *const executor.OwnedPayload) !ParsedInput {
         3 => .symlink,
         else => return error.InvalidInput,
     };
-    const path = bytes[17 .. bytes.len - 1];
+    const path = bytes[57 .. bytes.len - 1];
     if (path[0] != '/' or std.mem.indexOfScalar(u8, path, 0) != null)
         return error.InvalidInput;
     return .{
@@ -70,6 +80,11 @@ fn parseInput(input: *const executor.OwnedPayload) !ParsedInput {
         .kind = kind,
         .device_id = std.mem.readInt(u64, bytes[1..9], .little),
         .inode_id = std.mem.readInt(u64, bytes[9..17], .little),
+        .size = std.mem.readInt(u64, bytes[17..25], .little),
+        .mtime_sec = @bitCast(std.mem.readInt(u64, bytes[25..33], .little)),
+        .mtime_nsec = @bitCast(std.mem.readInt(u64, bytes[33..41], .little)),
+        .ctime_sec = @bitCast(std.mem.readInt(u64, bytes[41..49], .little)),
+        .ctime_nsec = @bitCast(std.mem.readInt(u64, bytes[49..57], .little)),
     };
 }
 
@@ -121,6 +136,19 @@ pub fn execute(
     if (actual_kind != parsed.kind) return completion(item, .failed);
     if (@as(u64, @intCast(source_stat.st_dev)) != parsed.device_id or
         @as(u64, @intCast(source_stat.st_ino)) != parsed.inode_id)
+    {
+        return completion(item, .failed);
+    }
+
+    // Directory timestamps naturally change as children are detached. For
+    // files and symlinks, reject in-place modifications since the source
+    // snapshot was taken, even when the inode and size remain unchanged.
+    if (parsed.kind != .directory and
+        (@as(u64, @intCast(@max(source_stat.st_size, 0))) != parsed.size or
+            @as(i64, @intCast(source_stat.st_mtim.tv_sec)) != parsed.mtime_sec or
+            @as(i64, @intCast(source_stat.st_mtim.tv_nsec)) != parsed.mtime_nsec or
+            @as(i64, @intCast(source_stat.st_ctim.tv_sec)) != parsed.ctime_sec or
+            @as(i64, @intCast(source_stat.st_ctim.tv_nsec)) != parsed.ctime_nsec))
     {
         return completion(item, .failed);
     }

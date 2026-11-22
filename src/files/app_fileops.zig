@@ -241,6 +241,10 @@ fn startManagerFileCopy(
                 .mode = @intCast(source_stat.st_mode),
                 .device_id = @intCast(source_stat.st_dev),
                 .inode_id = @intCast(source_stat.st_ino),
+                .mtime_sec = @intCast(source_stat.st_mtim.tv_sec),
+                .mtime_nsec = @intCast(source_stat.st_mtim.tv_nsec),
+                .ctime_sec = @intCast(source_stat.st_ctim.tv_sec),
+                .ctime_nsec = @intCast(source_stat.st_ctim.tv_nsec),
             },
             .symlink_target = symlink_target,
         });
@@ -360,6 +364,10 @@ fn startManagerFileMove(
                 .mode = @intCast(source_stat.st_mode),
                 .device_id = @intCast(source_stat.st_dev),
                 .inode_id = @intCast(source_stat.st_ino),
+                .mtime_sec = @intCast(source_stat.st_mtim.tv_sec),
+                .mtime_nsec = @intCast(source_stat.st_mtim.tv_nsec),
+                .ctime_sec = @intCast(source_stat.st_ctim.tv_sec),
+                .ctime_nsec = @intCast(source_stat.st_ctim.tv_nsec),
             },
             .same_filesystem = source_stat.st_dev == destination_stat.st_dev,
             .symlink_target = symlink_target,
@@ -496,6 +504,10 @@ fn startManagerDirectoryTransfer(
                 .mode = @intCast(source_stat.st_mode),
                 .device_id = @intCast(source_stat.st_dev),
                 .inode_id = @intCast(source_stat.st_ino),
+                .mtime_sec = @intCast(source_stat.st_mtim.tv_sec),
+                .mtime_nsec = @intCast(source_stat.st_mtim.tv_nsec),
+                .ctime_sec = @intCast(source_stat.st_ctim.tv_sec),
+                .ctime_nsec = @intCast(source_stat.st_ctim.tv_nsec),
             },
         });
     }

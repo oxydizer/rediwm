@@ -29,6 +29,8 @@ pub const Metadata = struct {
     inode_id: ?u64 = null,
     mtime_sec: i64 = 0,
     mtime_nsec: i64 = 0,
+    ctime_sec: i64 = 0,
+    ctime_nsec: i64 = 0,
 };
 
 pub const Entry = struct {
