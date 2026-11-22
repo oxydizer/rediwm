@@ -238,7 +238,10 @@ pub fn stepTransferHoverPriority(self: *App, now: i64) void {
         return;
     }
 
-    self.prioritizeTransferEntry(pending.entry_id);
+    if (!self.prioritizeTransferEntry(pending.entry_id)) {
+        self.transfer_hover_priority = null;
+        return;
+    }
     pending.requested = true;
     self.transfer_hover_priority = pending;
 }

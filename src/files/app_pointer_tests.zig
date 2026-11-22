@@ -174,6 +174,53 @@ test "pressing over a copy ghost cancels its pending hover priority" {
     try std.testing.expect(app.transfer_hover_priority == null);
 }
 
+test "rejected copy ghost priority clears its pending hover request" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+
+    const job = try manager.createJob(null);
+    const current_entry = try manager.addTreeRoot(
+        job,
+        "current.bin",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job, current_entry, .copy_file);
+    const target_entry = try manager.addTreeRoot(
+        job,
+        "urgent.docx",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job, target_entry, .copy_file);
+    try manager.queueJob(job);
+    _ = manager.dispatchNext().?;
+
+    app.io_manager = &manager;
+    app.active_io_copy_job = job;
+    app.items.items[0].transfer_ghost = true;
+    app.items.items[0].transfer_entry_id = target_entry;
+    app.items.items[0].transfer_state = .pending;
+    app.items.items[0].missing = true;
+
+    const rect = app.itemIconRect(0);
+    app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    const deadline = app.transferHoverPriorityDeadline().?;
+
+    app.items.items[0].transfer_entry_id =
+        std.math.maxInt(@import("io_tree.zig").EntryId);
+    app.stepTransferHoverPriority(deadline);
+
+    try std.testing.expect(app.transfer_hover_priority == null);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+}
+
 test "file dragging across a copy ghost does not arm hover priority" {
     var app = try testApp();
     defer app.deinit();

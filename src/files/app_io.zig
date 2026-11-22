@@ -51,10 +51,10 @@ pub fn startDiscoveryRoots(
 
 /// Gives the active copy Job a one-shot preference for a hovered transfer
 /// ghost. The Manager retains the preference after pointer leave.
-pub fn prioritizeTransferEntry(self: *App, entry_id: io_tree.EntryId) void {
-    const job_id = self.active_io_copy_job orelse return;
-    const manager = self.io_manager orelse return;
-    _ = manager.prioritizeEntryOperation(job_id, entry_id);
+pub fn prioritizeTransferEntry(self: *App, entry_id: io_tree.EntryId) bool {
+    const job_id = self.active_io_copy_job orelse return false;
+    const manager = self.io_manager orelse return false;
+    return manager.prioritizeEntryOperation(job_id, entry_id);
 }
 
 /// Promotes the discovered directory corresponding to a newly navigated
