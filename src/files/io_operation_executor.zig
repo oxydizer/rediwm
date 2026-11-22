@@ -39,6 +39,13 @@ const ArchiveStagingLease = struct {
     }
 };
 
+fn requestArchiveCancellation(context: *Context) void {
+    var cancellations = context.archive_cancellations.valueIterator();
+    while (cancellations.next()) |cancel| {
+        cancel.*.store(true, .release);
+    }
+}
+
 pub const Runtime = struct {
     allocator: Allocator,
     context: *Context,
@@ -80,6 +87,9 @@ pub const Runtime = struct {
     }
 
     pub fn deinit(self: *Runtime) void {
+        // Archive extraction is a long-running worker unit. Request
+        // cancellation before joining so shutdown does not wait for it.
+        requestArchiveCancellation(self.context);
         self.executor.deinit();
 
         var staging = self.context.archive_staging.valueIterator();
@@ -804,4 +814,26 @@ fn deinitOptional(payload: ?io_executor.OwnedPayload) void {
         var owned = value;
         owned.deinit();
     }
+}
+
+test "archive shutdown requests cancellation for every active extraction" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    var context: Context = .{
+        .allocator = allocator,
+        .manager = &manager,
+    };
+    defer context.archive_cancellations.deinit(allocator);
+
+    var first: archive.Cancel = .init(false);
+    var second: archive.Cancel = .init(false);
+    try context.archive_cancellations.put(allocator, 1, &first);
+    try context.archive_cancellations.put(allocator, 2, &second);
+
+    requestArchiveCancellation(&context);
+
+    try std.testing.expect(first.load(.acquire));
+    try std.testing.expect(second.load(.acquire));
 }

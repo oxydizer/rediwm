@@ -550,7 +550,11 @@ pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
         const manager = if (self.io_manager) |value| value else return true;
         const area = fileOpsBox(self);
         if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
-            if (self.operation_executor) |executor| {
+            if (self.io_runtime) |runtime| {
+                runtime.cancelJob(job_id) catch {
+                    self.setStatusNotice(tr("Could not cancel file transfer"), true);
+                };
+            } else if (self.operation_executor) |executor| {
                 executor.cancelJob(job_id) catch {
                     self.setStatusNotice(tr("Could not cancel file transfer"), true);
                 };

@@ -292,7 +292,9 @@ pub fn startFileDrag(self: *Client) !void {
 
 pub fn cancelPendingArchiveDrag(self: *Client) void {
     const job_id = self.pending_archive_drag_job orelse return;
-    if (self.app.io_manager) |manager| {
+    if (self.app.io_runtime) |runtime| {
+        runtime.cancelJob(job_id) catch {};
+    } else if (self.app.io_manager) |manager| {
         manager.cancelJob(job_id) catch {};
     }
     var pending_export = self.app.takeArchiveDragExport();

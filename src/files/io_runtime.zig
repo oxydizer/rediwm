@@ -22,11 +22,24 @@ pub const Runtime = struct {
     }
 
     pub fn deinit(self: *Runtime) void {
-        // Stop discovery before operations, then release Manager-owned state.
-        if (self.discovery_executor) |*executor| executor.deinit();
+        // Stop long-running archive work before joining either worker pool.
         if (self.operation_executor) |*executor| executor.deinit();
+        if (self.discovery_executor) |*executor| executor.deinit();
         self.manager.deinit();
         self.* = undefined;
+    }
+
+    /// Cancels a Job across the Manager and both executor-owned resource sets.
+    pub fn cancelJob(self: *Runtime, job_id: io_manager.JobId) !void {
+        if (self.operation_executor) |*executor| {
+            try executor.cancelJob(job_id);
+        } else {
+            try self.manager.cancelJob(job_id);
+        }
+
+        if (self.discovery_executor) |*executor| {
+            executor.cancelJob(&self.manager, job_id);
+        }
     }
 
     pub fn ensureDiscoveryExecutor(

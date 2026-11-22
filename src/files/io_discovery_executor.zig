@@ -106,6 +106,29 @@ pub const Executor = struct {
         return self.pool.drainWake();
     }
 
+    /// Releases every resource retained for a cancelled Job. Cursors
+    /// currently owned by workers are closed when their stale completions
+    /// return to the main thread.
+    pub fn cancelJob(
+        self: *Executor,
+        manager: *const io_manager.Manager,
+        job_id: JobId,
+    ) void {
+        self.closeCursorsForJob(job_id);
+
+        const tree = manager.treeIndex(job_id) orelse return;
+        for (tree.roots()) |root_id| {
+            const key: RootKey = .{
+                .job_id = job_id,
+                .root_id = root_id,
+            };
+            if (self.anchors.fetchRemove(key)) |removed| {
+                var anchor = removed.value;
+                anchor.deinit();
+            }
+        }
+    }
+
     /// Dispatches discovery batches until the Manager has no eligible entry
     /// or the bounded pool applies backpressure.
     pub fn dispatchReady(
@@ -124,10 +147,15 @@ pub const Executor = struct {
             } else {
                 self.prepareCursorSlot(token.job_id) catch |err| {
                     _ = manager.failDiscovery(token);
+                    self.closeAnchorIfComplete(manager, token.job_id);
                     return err;
                 };
 
-                const anchor = try self.getOrOpenAnchor(manager, token) orelse {
+                const anchor = self.getOrOpenAnchor(manager, token) catch |err| {
+                    _ = manager.failDiscovery(token);
+                    self.closeAnchorIfComplete(manager, token.job_id);
+                    return err;
+                } orelse {
                     _ = manager.failDiscovery(token);
                     continue;
                 };
@@ -180,6 +208,7 @@ pub const Executor = struct {
         manager: *io_manager.Manager,
     ) !usize {
         var drained: usize = 0;
+        var first_error: ?anyerror = null;
 
         while (self.pool.tryPopResult()) |completion_value| {
             var completion = completion_value;
@@ -206,7 +235,8 @@ pub const Executor = struct {
                     if (completion.cursor) |*cursor| cursor.deinit();
                     _ = manager.failDiscovery(completion.token);
                     self.closeAnchorIfComplete(manager, completion.token.job_id);
-                    return err;
+                    if (first_error == null) first_error = err;
+                    continue;
                 };
             }
 
@@ -218,12 +248,14 @@ pub const Executor = struct {
                 if (completion.cursor) |*cursor| cursor.deinit();
                 _ = manager.failDiscovery(completion.token);
                 self.closeAnchorIfComplete(manager, completion.token.job_id);
-                return err;
+                if (first_error == null) first_error = err;
+                continue;
             };
 
             if (!accepted) {
                 if (completion.batch) |*batch| batch.deinit();
                 if (completion.cursor) |*cursor| cursor.deinit();
+                self.closeAnchorIfComplete(manager, completion.token.job_id);
                 continue;
             }
 
@@ -241,6 +273,7 @@ pub const Executor = struct {
             self.closeAnchorIfComplete(manager, completion.token.job_id);
         }
 
+        if (first_error) |err| return err;
         return drained;
     }
 

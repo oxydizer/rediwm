@@ -481,3 +481,95 @@ test "discovery executor isolates a failed root from another root in the same Jo
     try std.testing.expectEqualStrings(valid_file, resolved_path);
     try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
 }
+
+test "cancelled discovery releases retained cursors and root anchors" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const root_path = try makeTempDir(&temp_buffer);
+
+    const first_file = try join(allocator, root_path, "first.txt");
+    defer allocator.free(first_file);
+    const second_file = try join(allocator, root_path, "second.txt");
+    defer allocator.free(second_file);
+    defer {
+        _ = c.unlink(first_file);
+        _ = c.unlink(second_file);
+        _ = c.rmdir(root_path);
+    }
+    try createFile(first_file);
+    try createFile(second_file);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    _ = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, root_path);
+    try manager.queueJob(job);
+
+    var executor = try io_discovery_executor.Executor.init(
+        allocator,
+        1,
+        1,
+        1,
+    );
+    defer executor.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try waitForWake(&executor);
+    try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
+    try std.testing.expectEqual(@as(usize, 1), executor.anchors.count());
+    try std.testing.expectEqual(@as(usize, 1), executor.cursors.get(job).?.count());
+
+    try manager.cancelJob(job);
+    executor.cancelJob(&manager, job);
+
+    try std.testing.expectEqual(@as(usize, 0), executor.anchors.count());
+    try std.testing.expect(executor.cursors.get(job) == null);
+    try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
+}
+
+test "stale discovery completion releases its cursor and root anchor after cancellation" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const root_path = try makeTempDir(&temp_buffer);
+
+    const first_file = try join(allocator, root_path, "first.txt");
+    defer allocator.free(first_file);
+    const second_file = try join(allocator, root_path, "second.txt");
+    defer allocator.free(second_file);
+    defer {
+        _ = c.unlink(first_file);
+        _ = c.unlink(second_file);
+        _ = c.rmdir(root_path);
+    }
+    try createFile(first_file);
+    try createFile(second_file);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    _ = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, root_path);
+    try manager.queueJob(job);
+
+    var executor = try io_discovery_executor.Executor.init(
+        allocator,
+        1,
+        1,
+        1,
+    );
+    defer executor.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try waitForWake(&executor);
+    try std.testing.expectEqual(@as(usize, 1), executor.anchors.count());
+
+    // Leave the completion in the pool so the executor must reject its stale
+    // token and release the returned cursor while reconciling it.
+    try manager.cancelJob(job);
+    try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
+
+    try std.testing.expectEqual(@as(usize, 0), executor.anchors.count());
+    try std.testing.expect(executor.cursors.get(job) == null);
+    try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
+}

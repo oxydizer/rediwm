@@ -381,7 +381,9 @@ fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) 
     switch (action) {
         .skip => try manager.skipConflict(conflict_id),
         .merge => try manager.mergeConflict(conflict_id),
-        .cancel => if (self.operation_executor) |executor| {
+        .cancel => if (self.io_runtime) |runtime| {
+            try runtime.cancelJob(conflict.job_id);
+        } else if (self.operation_executor) |executor| {
             try executor.cancelJob(conflict.job_id);
         } else {
             try manager.cancelConflict(conflict_id);

@@ -255,7 +255,19 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
             if (self.io_manager) |manager| {
                 if (manager.jobState(job_id)) |state| {
                     if (!state.isTerminal()) {
-                        if (self.operation_executor) |executor| {
+                        if (self.io_runtime) |runtime| {
+                            runtime.cancelJob(job_id) catch {
+                                self.setStatusNotice("Could not cancel operation", true);
+                                self.invalidate();
+                                return;
+                            };
+                            self.setStatusNotice(
+                                @import("i18n").tr("Cancelling operation..."),
+                                false,
+                            );
+                            self.invalidate();
+                            return;
+                        } else if (self.operation_executor) |executor| {
                             executor.cancelJob(job_id) catch {
                                 self.setStatusNotice("Could not cancel operation", true);
                                 self.invalidate();
