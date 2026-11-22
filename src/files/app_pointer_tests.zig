@@ -10,6 +10,39 @@ const io_manager = @import("io_manager.zig");
 const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
 
+fn attachEligibleCopyGhost(
+    app: anytype,
+    manager: *io_manager.Manager,
+    index: usize,
+) !void {
+    const job = try manager.createJob(null);
+    const current_entry = try manager.addTreeRoot(
+        job,
+        "current.bin",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job, current_entry, .copy_file);
+    const target_entry = try manager.addTreeRoot(
+        job,
+        "urgent.docx",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job, target_entry, .copy_file);
+    try manager.queueJob(job);
+    _ = manager.dispatchNext().?;
+
+    app.io_manager = manager;
+    app.active_io_copy_job = job;
+    app.items.items[index].transfer_ghost = true;
+    app.items.items[index].transfer_entry_id = target_entry;
+    app.items.items[index].transfer_state = .pending;
+    app.items.items[index].missing = true;
+}
+
 test "copy ghost hover waits for dwell and keeps its boost after pointer leave" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
@@ -222,16 +255,19 @@ test "rejected copy ghost priority clears its pending hover request" {
 }
 
 test "file dragging across a copy ghost does not arm hover priority" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 2);
-
-    app.items.items[1].transfer_ghost = true;
-    app.items.items[1].transfer_state = .pending;
-    app.items.items[1].missing = true;
+    try attachEligibleCopyGhost(&app, &manager, 1);
 
     const source = app.itemIconRect(0);
     const target = app.itemIconRect(1);
+    app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
+    try std.testing.expect(app.transferHoverPriorityDeadline() != null);
+
     app.handleMotion(source.x + source.w / 2, source.y + source.h / 2);
     app.handleButton(0x110, true);
     app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
@@ -241,16 +277,19 @@ test "file dragging across a copy ghost does not arm hover priority" {
 }
 
 test "rubber-band selection across a copy ghost does not arm hover priority" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 1);
-
-    app.items.items[0].transfer_ghost = true;
-    app.items.items[0].transfer_state = .pending;
-    app.items.items[0].missing = true;
+    try attachEligibleCopyGhost(&app, &manager, 0);
 
     const target = app.itemIconRect(0);
     const top: f64 = @floatFromInt(app.viewTop() + app.itemInset());
+    app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
+    try std.testing.expect(app.transferHoverPriorityDeadline() != null);
+
     app.handleMotion(215, top - 5);
     app.handleButton(0x110, true);
     app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
