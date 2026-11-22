@@ -848,6 +848,11 @@ pub fn stepOperations(self: *App) void {
                 if (is_move) updateMovedClipboard(self, manager, job_id);
                 self.active_io_copy_destination = null;
                 self.active_io_copy_job = null;
+                // Removing the Transfers card can shorten the sidebar while
+                // it is scrolled. Clamp the saved offset against the new
+                // content extent, and retarget an in-flight sidebar glide.
+                self.clampSidebarScroll();
+                if (self.wheel_sidebar) self.cancelWheel();
                 self.active_io_copy_is_directory = false;
                 self.active_io_copy_is_move = false;
                 self.active_io_copy_is_archive = false;

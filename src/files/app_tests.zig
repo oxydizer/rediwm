@@ -7,6 +7,7 @@ const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_runtime = @import("io_runtime.zig");
+const app_model = @import("app_model.zig");
 const worker_mod = @import("worker.zig");
 const history_mod = @import("history.zig");
 const recent = @import("recent.zig");
@@ -1196,10 +1197,19 @@ test "multi-file copy requests use one Manager job and the operation Runtime" {
     defer app.deinit();
     app.io_runtime = &runtime;
     app.io_manager = &runtime.manager;
+    app.w = 800;
+    app.h = 320;
+    app.sidebar_expanded[@intFromEnum(app_model.SidebarSection.transfers)] = true;
 
     const paths = [_][]const u8{ source_a, source_b };
     try std.testing.expect(app.executeTransfer(.copy, &paths, destination_dir, false));
     const job_id = app.active_io_copy_job.?;
+    const previous_sidebar_max = @max(
+        0,
+        app.sidebarExtent() - (app.h - app.sidebarFooter()),
+    );
+    try std.testing.expect(previous_sidebar_max > 0);
+    app.sidebar_scroll = previous_sidebar_max;
     const manager = app.io_manager.?;
     const tree = manager.treeIndex(job_id).?;
     const roots = tree.roots();
@@ -1224,6 +1234,12 @@ test "multi-file copy requests use one Manager job and the operation Runtime" {
     }
 
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_id).?);
+    const new_sidebar_max = @max(
+        0,
+        app.sidebarExtent() - (app.h - app.sidebarFooter()),
+    );
+    try std.testing.expect(new_sidebar_max < previous_sidebar_max);
+    try std.testing.expectEqual(new_sidebar_max, app.sidebar_scroll);
     const copied_a = try transferTestReadFile(allocator, destination_a);
     defer allocator.free(copied_a);
     const copied_b = try transferTestReadFile(allocator, destination_b);
