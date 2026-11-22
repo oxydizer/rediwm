@@ -1,6 +1,7 @@
 //! Bounded regular-file copy operation for the Files I/O executor.
 //!
-//! The input payload contains two NUL-terminated paths.
+//! The input payload contains source and destination paths plus a
+//! same-directory staging basename.
 //! Continuation state uses an explicit, fixed-width little-endian encoding.
 const std = @import("std");
 const builtin = @import("builtin");
@@ -71,8 +72,21 @@ pub fn makeInput(
     allocator: Allocator,
     source_path: []const u8,
     destination_path: []const u8,
+    token: executor.WorkToken,
 ) !executor.OwnedPayload {
-    return makeInputWithStagingName(allocator, source_path, destination_path, null);
+    const staging_name = try std.fmt.allocPrint(
+        allocator,
+        ".rediwm-{d}-{d}-{d}.tmp",
+        .{ token.job_id, token.operation_id, token.generation },
+    );
+    defer allocator.free(staging_name);
+    return makeInputWithStagingName(
+        allocator,
+        source_path,
+        destination_path,
+        staging_name,
+        false,
+    );
 }
 
 /// Build replacement input with a unique staging basename in the destination
@@ -94,6 +108,7 @@ pub fn makeReplacementInput(
         source_path,
         destination_path,
         staging_name,
+        true,
     );
 }
 
@@ -102,6 +117,7 @@ fn makeInputWithStagingName(
     source_path: []const u8,
     destination_path: []const u8,
     staging_name: ?[]const u8,
+    replacement: bool,
 ) !executor.OwnedPayload {
     if (source_path.len == 0 or destination_path.len == 0) return error.InvalidPath;
     if (std.mem.indexOfScalar(u8, source_path, 0) != null or
@@ -117,7 +133,7 @@ fn makeInputWithStagingName(
         }
     }
 
-    const staging_length = if (staging_name) |name| name.len + 1 else 0;
+    const staging_length = if (staging_name) |name| name.len + 2 else 0;
     const bytes = try allocator.alloc(
         u8,
         source_path.len + 1 + destination_path.len + 1 + staging_length,
@@ -131,7 +147,8 @@ fn makeInputWithStagingName(
     bytes[staging_start - 1] = 0;
     if (staging_name) |name| {
         @memcpy(bytes[staging_start..][0..name.len], name);
-        bytes[bytes.len - 1] = 0;
+        bytes[bytes.len - 2] = 0;
+        bytes[bytes.len - 1] = @intFromBool(replacement);
     }
     return .{ .allocator = allocator, .bytes = bytes };
 }
@@ -141,10 +158,11 @@ fn paths(input: *const executor.OwnedPayload) !struct {
     destination: [*:0]const u8,
     destination_name: [*:0]const u8,
     staging_name: ?[*:0]const u8,
+    replacement: bool,
 } {
     const bytes = input.slice();
     const separator = std.mem.indexOfScalar(u8, bytes, 0) orelse return error.InvalidInput;
-    if (separator == 0 or bytes.len < separator + 3 or bytes[bytes.len - 1] != 0) {
+    if (separator == 0 or bytes.len < separator + 3) {
         return error.InvalidInput;
     }
     const destination_bytes = bytes[separator + 1 ..];
@@ -153,20 +171,25 @@ fn paths(input: *const executor.OwnedPayload) !struct {
     if (destination_end == 0) return error.InvalidInput;
     const destination_path = destination_bytes[0..destination_end];
     const staging_bytes = destination_bytes[destination_end + 1 ..];
+    if (staging_bytes.len == 0 and bytes[bytes.len - 1] != 0) {
+        return error.InvalidInput;
+    }
     const staging_name: ?[*:0]const u8 = if (staging_bytes.len == 0)
         null
     else blk: {
-        if (staging_bytes[staging_bytes.len - 1] != 0 or
-            std.mem.indexOfScalar(u8, staging_bytes[0 .. staging_bytes.len - 1], 0) != null)
-        {
+        const name_end = std.mem.indexOfScalar(u8, staging_bytes, 0) orelse
             return error.InvalidInput;
-        }
-        const name = staging_bytes[0 .. staging_bytes.len - 1];
+        if (name_end == 0 or name_end + 2 != staging_bytes.len or
+            staging_bytes[name_end + 1] > 1)
+            return error.InvalidInput;
+        const name = staging_bytes[0..name_end];
         if (name.len == 0 or std.mem.indexOfScalar(u8, name, '/') != null) {
             return error.InvalidInput;
         }
         break :blk @ptrCast(name.ptr);
     };
+    const replacement = staging_bytes.len != 0 and
+        staging_bytes[staging_bytes.len - 1] == 1;
     const destination_separator = std.mem.lastIndexOfScalar(u8, destination_path, '/');
     const name = if (destination_separator) |index|
         destination_path[index + 1 ..]
@@ -182,6 +205,7 @@ fn paths(input: *const executor.OwnedPayload) !struct {
         .destination = @ptrCast(bytes[separator + 1 ..].ptr),
         .destination_name = @ptrCast(name.ptr),
         .staging_name = staging_name,
+        .replacement = replacement,
     };
 }
 
@@ -343,6 +367,17 @@ fn exchangeNames(
 ) bool {
     if (builtin.os.tag != .linux) return false;
     return c.renameat2(parent_fd, first, parent_fd, second, 2) == 0;
+}
+
+/// Publish a completed new file without replacing a name that appeared
+/// during the copy. There is deliberately no non-atomic fallback.
+fn publishNoReplace(
+    parent_fd: c_int,
+    staging_name: [*:0]const u8,
+    destination_name: [*:0]const u8,
+) bool {
+    if (builtin.os.tag != .linux) return false;
+    return c.renameat2(parent_fd, staging_name, parent_fd, destination_name, 1) == 0;
 }
 
 fn unlinkOwnedDestination(
@@ -618,9 +653,37 @@ fn finishFlushing(
         );
     }
 
+    if (!publishNoReplace(
+        state.parent_fd,
+        destination_name,
+        original_destination_name,
+    )) {
+        const publish_errno = std.c._errno().*;
+        if (publish_errno == c.EEXIST) {
+            const marker = allocator.dupe(u8, &.{2}) catch {
+                cleanupAndClose(&state, destination_name);
+                return completion(item, .failed, null, null);
+            };
+            cleanupAndClose(&state, destination_name);
+            return completion(
+                item,
+                .waiting,
+                null,
+                .{ .allocator = allocator, .bytes = marker },
+            );
+        }
+        return failed(item, state, destination_name);
+    }
+
+    if (!syncDescriptor(state.parent_fd)) {
+        cleanupDestination(&state, original_destination_name);
+        closeDescriptors(&state);
+        return completion(item, .failed, null, null);
+    }
+
     closeSourceDescriptor(&state);
     const marker = allocator.alloc(u8, 9) catch {
-        cleanupDestination(&state, destination_name);
+        cleanupDestination(&state, original_destination_name);
         _ = c.close(state.destination_fd);
         _ = c.close(state.parent_fd);
         return completion(item, .failed, null, null);
@@ -725,7 +788,7 @@ fn executeUnit(
         }
 
         var original_fd: c_int = -1;
-        if (operation_paths.staging_name != null) {
+        if (operation_paths.replacement) {
             original_fd = c.openat(
                 parent_fd,
                 operation_paths.destination_name,

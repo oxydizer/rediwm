@@ -289,7 +289,7 @@ fn prepare(
                         token,
                     )
                 else
-                    try io_copy.makeInput(context.allocator, source, destination);
+                    try io_copy.makeInput(context.allocator, source, destination, token);
         },
         .copy_symlink => blk: {
             const destination = try context.manager.destinationPath(

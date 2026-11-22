@@ -105,7 +105,11 @@ fn runCopyWithMetrics(
     var item = executor.WorkItem{
         .token = .{ .job_id = 1, .operation_id = 1, .generation = 1 },
         .operation_kind = .copy_file,
-        .input = try copy.makeInput(allocator, source, destination),
+        .input = try copy.makeInput(allocator, source, destination, .{
+            .job_id = 1,
+            .operation_id = 1,
+            .generation = 1,
+        }),
         .profile_enabled = profile_enabled,
     };
 
@@ -219,7 +223,11 @@ test "regular-file copy reports exact byte progress with each yielded unit" {
     const item = executor.WorkItem{
         .token = .{ .job_id = 1, .operation_id = 1, .generation = 1 },
         .operation_kind = .copy_file,
-        .input = try copy.makeInput(allocator, source, destination),
+        .input = try copy.makeInput(allocator, source, destination, .{
+            .job_id = 1,
+            .operation_id = 1,
+            .generation = 1,
+        }),
     };
     const result = copy.execute(allocator, item);
     try std.testing.expectEqual(executor.WorkResult.yielded, result.outcome);
@@ -227,6 +235,11 @@ test "regular-file copy reports exact byte progress with each yielded unit" {
     try std.testing.expectEqual(@as(u64, copy.chunk_size), progress.bytes);
     try std.testing.expectEqual(@as(u64, contents.len), progress.total_bytes);
     try std.testing.expectEqual(executor.CopyPhase.transferring, progress.phase);
+    var destination_buffer: [16]u8 = undefined;
+    try std.testing.expectError(
+        error.OpenFailed,
+        readFile(destination, &destination_buffer),
+    );
     copy.discard(
         null,
         result.operation_kind,
@@ -251,7 +264,11 @@ test "regular-file copy yields a flushing phase before completion" {
     const item = executor.WorkItem{
         .token = .{ .job_id = 9, .operation_id = 5, .generation = 1 },
         .operation_kind = .copy_file,
-        .input = try copy.makeInput(allocator, source, destination),
+        .input = try copy.makeInput(allocator, source, destination, .{
+            .job_id = 9,
+            .operation_id = 5,
+            .generation = 1,
+        }),
     };
     const flushing = copy.execute(allocator, item);
     try std.testing.expectEqual(executor.WorkResult.yielded, flushing.outcome);
@@ -344,7 +361,11 @@ test "stale yielded copy closes descriptors and removes partial destination" {
     const item = executor.WorkItem{
         .token = .{ .job_id = 7, .operation_id = 3, .generation = 1 },
         .operation_kind = .copy_file,
-        .input = try copy.makeInput(allocator, source, destination),
+        .input = try copy.makeInput(allocator, source, destination, .{
+            .job_id = 7,
+            .operation_id = 3,
+            .generation = 1,
+        }),
     };
     const done = copy.execute(allocator, item);
     try std.testing.expectEqual(executor.WorkResult.yielded, done.outcome);
@@ -371,7 +392,11 @@ test "stale completed copy removes destination before acceptance" {
     const item = executor.WorkItem{
         .token = .{ .job_id = 8, .operation_id = 4, .generation = 1 },
         .operation_kind = .copy_file,
-        .input = try copy.makeInput(allocator, source, destination),
+        .input = try copy.makeInput(allocator, source, destination, .{
+            .job_id = 8,
+            .operation_id = 4,
+            .generation = 1,
+        }),
     };
     const done = executeToTerminal(allocator, item);
     try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
@@ -398,7 +423,11 @@ test "stale completed copy does not remove a replacement destination" {
     const item = executor.WorkItem{
         .token = .{ .job_id = 10, .operation_id = 6, .generation = 1 },
         .operation_kind = .copy_file,
-        .input = try copy.makeInput(allocator, source, destination),
+        .input = try copy.makeInput(allocator, source, destination, .{
+            .job_id = 10,
+            .operation_id = 6,
+            .generation = 1,
+        }),
     };
     const done = executeToTerminal(allocator, item);
     try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
