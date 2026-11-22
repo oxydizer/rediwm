@@ -326,7 +326,7 @@ pub fn destroy(bar: *Taskbar) void {
     gpa.destroy(bar);
 }
 
-/// Takes a fresh `battery.read` snapshot; only a change requests a frame.
+/// Takes the power policy's fresh battery state; only a change requests a frame.
 pub fn applyBattery(bar: *Taskbar, next: battery.State) void {
     bar.server.updateBatteryWarning(next);
     if (std.meta.eql(next, bar.battery_state)) return;

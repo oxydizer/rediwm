@@ -5,6 +5,7 @@ const wl = @import("wayland").server.wl;
 const Server = @import("../Server.zig");
 const Output = @import("../Output.zig");
 const battery = @import("../taskbar/battery.zig");
+const BatteryRate = @import("../taskbar/battery_rate.zig");
 const cfg = @import("config").power;
 const Profile = @import("../power_profiles.zig").Profile;
 const Self = @This();
@@ -12,6 +13,7 @@ const Self = @This();
 server: ?*Server = null,
 timer: ?*wl.EventSource = null,
 state: battery.State = .{},
+rate: BatteryRate = .{},
 source: ?cfg.Source = null,
 effective: cfg.Profile = .{},
 initialized: bool = false,
@@ -69,8 +71,23 @@ pub fn refresh(self: *Self) void {
     if (charge.writable and !self.charge_limit.writable) self.charge_requested = null;
     const changed = !std.meta.eql(self.charge_limit, charge);
     self.charge_limit = charge;
-    self.update(battery.read(server.io, @import("../main.zig").gpa));
+    if (battery.scan(server.io, @import("../main.zig").gpa)) |snapshot| self.update(self.estimate(snapshot));
     if (changed) self.refreshSettings();
+}
+
+/// A snapshot's state with the remaining time measured over recent snapshots
+/// instead of one reading of the firmware's present rate.
+fn estimate(self: *Self, snapshot: battery.Snapshot) battery.State {
+    var state = snapshot.state();
+    if (snapshot.count == 1 and snapshot.driver_time) {
+        self.rate.reset();
+        return state;
+    }
+    var ts: std.posix.timespec = undefined;
+    if (std.posix.errno(std.posix.system.clock_gettime(@import("platform").system.boot_clock, &ts)) != .SUCCESS) return state;
+    const t = @as(f64, @floatFromInt(ts.sec)) + @as(f64, @floatFromInt(ts.nsec)) / std.time.ns_per_s;
+    state.remaining_minutes = self.rate.feed(t, snapshot.level(), BatteryRate.directionOf(state)) orelse state.remaining_minutes;
+    return state;
 }
 
 pub fn update(self: *Self, state: battery.State) void {
