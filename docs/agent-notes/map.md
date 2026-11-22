@@ -69,7 +69,8 @@ seam for other operating systems.
 | `Taskbar.zig` | `taskbar/` | the taskbar; value types in `taskbar/types.zig` |
 | `Dock.zig` | `dock/` | the dock ([dock notes](dock.md)) |
 
-Also in `src/`: `Shell.zig` (xdg-shell and decorations), `Popup.zig`,
+Also in `src/`: `Shell.zig` (xdg-shell and decorations), `TitlebarTabs.zig` (client-published
+titlebar tabs, `protocol/rediwm-titlebar-tabs-v1.xml`), `Popup.zig`,
 `LayerSurface.zig`, `Xwayland.zig` (+ `xwayland_*.zig`), `Switcher.zig`
 (Alt+Tab), `workspaces.zig`, `snap.zig`, `auto_tiling.zig`, `window_tabs.zig`.
 

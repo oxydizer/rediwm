@@ -161,6 +161,8 @@ content_tree: *sn.Tree,
 scene_tree: *sn.Node,
 decoration: ?*Decoration = null,
 kde_decoration: ?*@import("KdeDecoration.zig") = null,
+/// Tabs the client publishes for the titlebar (rediwm_titlebar_tabs_v1).
+titlebar_tabs: ?*@import("TitlebarTabs.zig") = null,
 frame_data: scene_data.SceneData = undefined,
 chrome_data: scene_data.SceneData = undefined,
 
@@ -598,6 +600,7 @@ pub const handleIdentityChanged = toplevel_lifecycle.handleIdentityChanged;
 
 // toplevel/tabs.zig
 pub const tabStrip = toplevel_tabs.tabStrip;
+pub const hasTabStrip = toplevel_tabs.hasTabStrip;
 pub const tabAt = toplevel_tabs.tabAt;
 pub const hoverTab = toplevel_tabs.hoverTab;
 pub const stepTab = toplevel_tabs.stepTab;

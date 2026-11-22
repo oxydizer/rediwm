@@ -23,6 +23,18 @@ pub fn handleChromeClick(toplevel: *Toplevel, sx: f64, sy: f64, button: u32) voi
     const hit = toplevel.tabAt(sx, sy);
     if (hit != .none) {
         if (button != Input.btn_left) return;
+        // Tabs the client published: it owns them, so a click is a request.
+        if (toplevel.titlebar_tabs) |published| if (published.active()) {
+            switch (hit) {
+                .tab => |id| published.sendSelect(id),
+                .close => |id| published.sendClose(id),
+                .plus => published.sendNewTab(),
+                .previous => published.step(false),
+                .next => published.step(true),
+                .none => {},
+            }
+            return;
+        };
         switch (hit) {
             .tab => |id| if (toplevel.server.findToplevelById(id)) |target| toplevel.server.world.focus(target),
             .close => |id| if (toplevel.server.findToplevelById(id)) |target| {

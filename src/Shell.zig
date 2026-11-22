@@ -8,6 +8,7 @@ const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 
 const KdeDecoration = @import("KdeDecoration.zig");
+const TitlebarTabs = @import("TitlebarTabs.zig");
 const Decoration = @import("Decoration.zig");
 const Popup = @import("Popup.zig");
 const Server = @import("Server.zig");
@@ -20,6 +21,7 @@ const log = std.log.scoped(.shell);
 
 server: *Server,
 kde_decorations: KdeDecoration.Manager,
+titlebar_tabs: TitlebarTabs.Manager,
 xdg_shell: *wlr.XdgShell,
 xdg_decoration_manager: *wlr.XdgDecorationManagerV1,
 new_xdg_toplevel: wl.Listener(*wlr.XdgToplevel) = .init(newXdgToplevel),
@@ -34,16 +36,19 @@ pub fn init(shell: *Shell, server: *Server) Server.CompositorError!void {
     shell.* = .{
         .server = server,
         .kde_decorations = undefined,
+        .titlebar_tabs = undefined,
         .xdg_shell = xdg_shell,
         .xdg_decoration_manager = xdg_decoration_manager,
     };
     shell.kde_decorations.init(server) catch return error.KdeDecorationCreateFailed;
+    shell.titlebar_tabs.init(server) catch return error.TitlebarTabsCreateFailed;
     shell.xdg_shell.events.new_toplevel.add(&shell.new_xdg_toplevel);
     shell.xdg_shell.events.new_popup.add(&shell.new_xdg_popup);
     shell.xdg_decoration_manager.events.new_toplevel_decoration.add(&shell.new_xdg_decoration);
 }
 
 pub fn deinit(shell: *Shell) void {
+    shell.titlebar_tabs.deinit();
     shell.kde_decorations.deinit();
     shell.new_xdg_toplevel.link.remove();
     shell.new_xdg_popup.link.remove();

@@ -370,6 +370,10 @@ pub fn destroy(toplevel: *Toplevel) void {
             decoration.toplevel = null;
             toplevel.kde_decoration = null;
         }
+        if (toplevel.titlebar_tabs) |strip| {
+            strip.toplevel = null;
+            toplevel.titlebar_tabs = null;
+        }
         toplevel.backend_gone = true;
     }
     if (toplevel.tryDeferDestroy()) return;
@@ -430,6 +434,10 @@ pub fn destroyNow(toplevel: *Toplevel) void {
         if (toplevel.kde_decoration) |decoration| {
             decoration.toplevel = null;
             toplevel.kde_decoration = null;
+        }
+        if (toplevel.titlebar_tabs) |strip| {
+            strip.toplevel = null;
+            toplevel.titlebar_tabs = null;
         }
         toplevel.backend_gone = true;
     }

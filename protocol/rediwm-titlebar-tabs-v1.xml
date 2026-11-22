@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="rediwm_titlebar_tabs_v1">
+  <description summary="tabs in the compositor's titlebar">
+    An application publishes the tabs of its window and the compositor paints
+    them in the window's titlebar. The compositor draws and hit-tests the strip;
+    the application owns the tabs and the user's actions come back as events.
+    The strip only shows while the compositor draws the window's titlebar
+    (server-side decorations). An application that has to draw its own titlebar
+    draws its own tabs.
+
+    Private to rediwm and its bundled applications.
+  </description>
+
+  <interface name="rediwm_titlebar_tabs_manager_v1" version="1">
+    <description summary="titlebar tabs factory"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the factory">
+        Objects already created from it stay valid.
+      </description>
+    </request>
+
+    <request name="get_titlebar_tabs">
+      <description summary="create the tab strip for a toplevel's surface">
+        The surface is, or will become, the surface of an xdg_toplevel. Like
+        the KDE decoration manager this can be sent before the shell role is
+        assigned. The strip is empty until the first commit.
+      </description>
+      <arg name="id" type="new_id" interface="rediwm_titlebar_tabs_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+
+    <enum name="error">
+      <entry name="already_constructed" value="0"
+             summary="the surface already has a tab strip"/>
+    </enum>
+  </interface>
+
+  <interface name="rediwm_titlebar_tabs_v1" version="1">
+    <description summary="a toplevel's titlebar tab strip">
+      State is double-buffered: add_tab, set_selected and the like build a
+      pending strip that replaces the shown one on commit. The pending state
+      is empty again after every commit, so each commit describes the whole
+      strip.
+    </description>
+
+    <enum name="error">
+      <entry name="duplicate_id" value="0"
+             summary="two tabs in one commit have the same id"/>
+      <entry name="unknown_selected" value="1"
+             summary="the selected id is not among the tabs"/>
+      <entry name="too_many_tabs" value="2"
+             summary="more than 128 tabs in one commit"/>
+      <entry name="invalid_id" value="3"
+             summary="tab ids must not be zero"/>
+    </enum>
+
+    <enum name="flags" bitfield="true">
+      <entry name="modified" value="1"
+             summary="the tab has unsaved changes; shown as a leading bullet"/>
+      <entry name="attention" value="2"
+             summary="the tab asks for attention"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="remove the strip and destroy the object"/>
+    </request>
+
+    <request name="add_tab">
+      <description summary="append a tab to the pending strip">
+        Tabs show in the order they are added. Titles longer than 256 bytes
+        are cut; a title that is not valid UTF-8 is replaced. The icon name
+        is accepted and ignored in this version; every tab shows the
+        application's icon.
+      </description>
+      <arg name="id" type="uint" summary="the application's id for the tab, not zero"/>
+      <arg name="title" type="string"/>
+      <arg name="icon_name" type="string" allow-null="true"/>
+      <arg name="flags" type="uint" summary="a bitfield of flags"/>
+    </request>
+
+    <request name="set_selected">
+      <description summary="select a tab in the pending strip">
+        Required before a commit that adds tabs, and it must name one of them.
+      </description>
+      <arg name="id" type="uint"/>
+    </request>
+
+    <request name="commit">
+      <description summary="show the pending strip">
+        Replaces the shown strip. A commit with no tabs removes the strip and
+        the titlebar goes back to showing the window's title.
+      </description>
+    </request>
+
+    <event name="select">
+      <description summary="the user selected a tab">
+        The compositor does not change the selected tab itself: the
+        application changes its state and commits the result.
+      </description>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="close">
+      <description summary="the user asked to close a tab"/>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="new_tab">
+      <description summary="the user pressed the new tab button"/>
+    </event>
+  </interface>
+</protocol>

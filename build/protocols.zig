@@ -28,6 +28,7 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.addSystemProtocol("unstable/idle-inhibit/idle-inhibit-unstable-v1.xml");
     scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
     scanner.addCustomProtocol(b.path("protocol/server-decoration.xml"));
+    scanner.addCustomProtocol(b.path("protocol/rediwm-titlebar-tabs-v1.xml"));
     scanner.addCustomProtocol(b.path("protocol/virtual-keyboard-unstable-v1.xml"));
     scanner.addSystemProtocol("unstable/pointer-gestures/pointer-gestures-unstable-v1.xml");
     scanner.addSystemProtocol("unstable/xdg-output/xdg-output-unstable-v1.xml");
@@ -56,6 +57,7 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.generate("wp_color_manager_v1", 2);
     scanner.generate("zxdg_decoration_manager_v1", 1);
     scanner.generate("org_kde_kwin_server_decoration_manager", 1);
+    scanner.generate("rediwm_titlebar_tabs_manager_v1", 1);
     scanner.generate("zwp_virtual_keyboard_manager_v1", 1);
     scanner.generate("zwp_pointer_gestures_v1", 3);
     scanner.generate("zxdg_output_manager_v1", 3);

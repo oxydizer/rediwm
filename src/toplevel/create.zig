@@ -130,6 +130,7 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
     finishCreate(toplevel, nodes, scene_tree);
     scene_data.setXdgSceneTree(xdg_surface, hosted);
     server.shell.kde_decorations.attach(toplevel);
+    server.shell.titlebar_tabs.attach(toplevel);
     switch (toplevel.backend) {
         .xdg => |*adapter| adapter.listen(),
         .xwayland, .placeholder, .shell => {},

@@ -72,66 +72,17 @@ branch Files work has landed on by then.
 
 ## Protocol: `rediwm_titlebar_tabs_v1`
 
-New file `protocol/rediwm-titlebar-tabs-v1.xml`, added in `build/protocols.zig`
+The XML is `protocol/rediwm-titlebar-tabs-v1.xml`, added in `build/protocols.zig`
 with `addCustomProtocol` and `generate("rediwm_titlebar_tabs_manager_v1", 1)`.
+The factory request takes a `wl_surface`, not an `xdg_toplevel`, like the KDE
+decoration manager: the compositor resolves the toplevel from the surface and
+`attach` adopts a strip created before the shell role exists.
 
-```xml
-<protocol name="rediwm_titlebar_tabs_v1">
-  <interface name="rediwm_titlebar_tabs_manager_v1" version="1">
-    <request name="destroy" type="destructor"/>
-    <request name="get_titlebar_tabs">
-      <arg name="id" type="new_id" interface="rediwm_titlebar_tabs_v1"/>
-      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
-    </request>
-    <enum name="error">
-      <entry name="already_constructed" value="0"/>
-    </enum>
-  </interface>
-
-  <interface name="rediwm_titlebar_tabs_v1" version="1">
-    <request name="destroy" type="destructor"/>
-
-    <!-- Pending state; nothing shows until commit. add_tab order is tab order. -->
-    <request name="add_tab">
-      <arg name="id" type="uint"/>
-      <arg name="title" type="string"/>
-      <arg name="icon_name" type="string" allow-null="true"/>
-      <arg name="flags" type="uint" enum="flags"/>
-    </request>
-    <request name="set_selected"><arg name="id" type="uint"/></request>
-    <request name="set_leading">
-      <arg name="icon_name" type="string" allow-null="true"/>
-      <arg name="label" type="string"/>
-    </request>
-    <request name="commit"/>
-
-    <enum name="flags" bitfield="true">
-      <entry name="modified" value="1"/>
-      <entry name="attention" value="2"/>
-    </enum>
-    <enum name="error">
-      <entry name="duplicate_id" value="0"/>
-      <entry name="unknown_selected" value="1"/>
-      <entry name="too_many_tabs" value="2"/>
-    </enum>
-
-    <!-- The user asked; the app changes its state and commits the result. -->
-    <event name="select"><arg name="id" type="uint"/></event>
-    <event name="close"><arg name="id" type="uint"/></event>
-    <event name="new_tab"/>
-    <event name="move">
-      <arg name="id" type="uint"/>
-      <arg name="index" type="uint"/>
-    </event>
-    <!-- Button rectangle in the toplevel surface's coordinates (y is negative:
-         the titlebar sits above the surface), so the app can anchor a popup. -->
-    <event name="leading_activated">
-      <arg name="x" type="int"/><arg name="y" type="int"/>
-      <arg name="width" type="int"/><arg name="height" type="int"/>
-    </event>
-  </interface>
-</protocol>
-```
+Landed first (phase 2): `add_tab(id, title, icon_name, flags)`,
+`set_selected`, `commit` and the events `select`, `close`, `new_tab`. Still to
+add with the leading slot and drag (phase 2c): `set_leading`,
+`leading_activated(x, y, width, height)` and `move(id, index)`. The protocol is
+unreleased, so these are added to version 1.
 
 Semantics:
 
@@ -141,17 +92,18 @@ Semantics:
 * Bounds, checked on the compositor: at most `window_tabs.max_tabs` (128) tabs;
   titles and icon names are cut at 256 / 128 bytes and must be valid UTF-8
   (invalid ones are replaced, not fatal); ids unique per commit.
-* `icon_name` is a freedesktop icon name resolved by the compositor's
-  `icon_service` at tab-icon size. Absent, the tab shows the app's own icon, as
-  today.
+* `icon_name` is accepted and ignored for now: every tab shows the app's own
+  icon, as the compositor's strip does today. Per-tab icons resolve through
+  `icon_service` later.
 * The compositor never changes the selected tab on its own. A click sends
   `select`; the strip updates when the app commits. One frame of latency, no
   divergence. Hover and the drag preview are local to the compositor.
 * `move` is sent once, on release, with the final index. During the drag the
   compositor paints the moved tab under the pointer and shifts its neighbours.
-* The resource is bound to one `xdg_toplevel`; destroying either removes the strip.
-* Only `modified` (a dot that never gives way to the close button, like the
-  Editor's today) and `attention` exist in v1.
+* The resource is bound to one `wl_surface`; destroying it or the surface removes the strip.
+* Only `modified` and `attention` exist in v1. The compositor shows `modified`
+  as a bullet in front of the title (`\u2022 name`), so truncation never hides
+  it.
 
 ## Toolkit: `ui/widgets/title_tabs.zig`
 
