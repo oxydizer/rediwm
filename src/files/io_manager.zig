@@ -4,6 +4,7 @@
 //! deliberately added in later phases.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const c = @import("c.zig").api;
 const io_tree = @import("io_tree.zig");
 const io_discovery = @import("io_discovery.zig");
 const archive = @import("archive.zig");
@@ -277,6 +278,11 @@ const Operation = struct {
     generation: u64 = 0,
     progress_bytes: u64 = 0,
     progress_total_bytes: u64 = 0,
+    progress_rate_generation: u64 = 0,
+    progress_rate_sample_bytes: u64 = 0,
+    progress_rate_sample_at_ms: i64 = 0,
+    progress_rate_updated_at_ms: i64 = 0,
+    progress_bytes_per_second: u64 = 0,
     copy_phase: CopyPhase = .transferring,
     copy_metrics: CopyMetrics = .{},
     dependencies: std.ArrayList(OperationId) = .empty,
@@ -292,6 +298,53 @@ const Operation = struct {
         self.dependents.deinit(allocator);
     }
 };
+
+fn monotonicMs() i64 {
+    var ts: c.struct_timespec = undefined;
+    if (c.clock_gettime(c.CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return ts.tv_sec * 1000 + @divTrunc(ts.tv_nsec, 1000000);
+}
+
+fn updateProgressRate(
+    operation: *Operation,
+    generation: u64,
+    bytes: u64,
+    phase: CopyPhase,
+    sample_at: i64,
+) void {
+    if (operation.progress_rate_generation != generation) {
+        operation.progress_rate_generation = generation;
+        operation.progress_rate_sample_bytes = bytes;
+        operation.progress_rate_sample_at_ms = sample_at;
+        operation.progress_rate_updated_at_ms = 0;
+        operation.progress_bytes_per_second = 0;
+    } else if (phase != .transferring) {
+        operation.progress_rate_sample_bytes = bytes;
+        operation.progress_rate_sample_at_ms = sample_at;
+        operation.progress_rate_updated_at_ms = 0;
+        operation.progress_bytes_per_second = 0;
+    } else if (sample_at > operation.progress_rate_sample_at_ms and
+        sample_at - operation.progress_rate_sample_at_ms >= 500)
+    {
+        const elapsed_ms = sample_at - operation.progress_rate_sample_at_ms;
+        const transferred = bytes -| operation.progress_rate_sample_bytes;
+        const rate = (@as(u128, transferred) * 1000) /
+            @as(u128, @intCast(elapsed_ms));
+        const max_rate: u128 = std.math.maxInt(u64);
+        operation.progress_bytes_per_second = @intCast(@min(rate, max_rate));
+        operation.progress_rate_sample_bytes = bytes;
+        operation.progress_rate_sample_at_ms = sample_at;
+        operation.progress_rate_updated_at_ms = sample_at;
+    }
+}
+
+fn currentProgressRate(operation: *const Operation, now: i64) u64 {
+    const updated_at = operation.progress_rate_updated_at_ms;
+    if (updated_at <= 0 or now < updated_at or now - updated_at > 1500) return 0;
+    if (operation.state != .pending and operation.state != .running) return 0;
+    if (operation.copy_phase != .transferring) return 0;
+    return operation.progress_bytes_per_second;
+}
 
 const Job = struct {
     id: JobId,
@@ -362,6 +415,7 @@ pub const EntryOperationView = struct {
     generation: u64,
     progress_bytes: u64,
     progress_total_bytes: u64,
+    progress_bytes_per_second: u64,
     copy_phase: CopyPhase,
 };
 
@@ -2575,6 +2629,7 @@ pub const Manager = struct {
         operation.progress_bytes = bytes;
         operation.progress_total_bytes = total_bytes;
         operation.copy_phase = phase;
+        updateProgressRate(operation, token.generation, bytes, phase, monotonicMs());
         return true;
     }
 
@@ -2630,12 +2685,13 @@ pub const Manager = struct {
     ) ?EntryOperationView {
         const job = self.findJobConst(job_id) orelse return null;
         const index = job.entry_operation_indices.get(entry_id) orelse return null;
-        const operation = job.operations.items[index];
+        const operation = &job.operations.items[index];
         return .{
             .state = operation.state,
             .generation = operation.generation,
             .progress_bytes = operation.progress_bytes,
             .progress_total_bytes = operation.progress_total_bytes,
+            .progress_bytes_per_second = currentProgressRate(operation, monotonicMs()),
             .copy_phase = operation.copy_phase,
         };
     }
@@ -3047,4 +3103,42 @@ test "multi-root discovery queue commit leaves no partial scheduling on validati
     try std.testing.expectEqual(@as(?[]const u8, null), manager.discoveryRootPath(job_id, first_root));
     try std.testing.expectEqual(@as(?bool, null), manager.discoveryComplete(job_id));
     try std.testing.expect(manager.discardPlanningJob(job_id));
+}
+
+test "copy progress rate samples every 500ms and expires stale readings" {
+    var operation: Operation = .{
+        .id = 1,
+        .kind = .copy_file,
+        .state = .running,
+    };
+
+    updateProgressRate(&operation, 1, 0, .transferring, 1000);
+    updateProgressRate(&operation, 1, 100, .transferring, 1499);
+    try std.testing.expectEqual(@as(u64, 0), currentProgressRate(&operation, 1499));
+
+    updateProgressRate(&operation, 1, 200, .transferring, 1500);
+    try std.testing.expectEqual(@as(u64, 400), currentProgressRate(&operation, 2000));
+    try std.testing.expectEqual(@as(u64, 0), currentProgressRate(&operation, 3001));
+}
+
+test "copy progress rate resets on generation changes and flushing" {
+    var operation: Operation = .{
+        .id = 1,
+        .kind = .copy_file,
+        .state = .running,
+    };
+
+    updateProgressRate(&operation, 1, 100, .transferring, 1000);
+    updateProgressRate(&operation, 1, 600, .transferring, 1500);
+    try std.testing.expectEqual(@as(u64, 1000), currentProgressRate(&operation, 1500));
+
+    updateProgressRate(&operation, 2, 0, .transferring, 2000);
+    try std.testing.expectEqual(@as(u64, 0), currentProgressRate(&operation, 2000));
+    updateProgressRate(&operation, 2, 500, .transferring, 2500);
+    try std.testing.expectEqual(@as(u64, 1000), currentProgressRate(&operation, 2500));
+
+    updateProgressRate(&operation, 2, 500, .flushing, 2600);
+    try std.testing.expectEqual(@as(u64, 0), currentProgressRate(&operation, 2600));
+    updateProgressRate(&operation, 2, 1000, .transferring, 3100);
+    try std.testing.expectEqual(@as(u64, 1000), currentProgressRate(&operation, 3100));
 }

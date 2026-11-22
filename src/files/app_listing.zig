@@ -322,7 +322,7 @@ fn damageJobProgress(
             self.h,
             self.mouse_x,
             self.mouse_y,
-            2,
+            3,
         )) |rect| {
             self.addDamageRegion(rect);
         }
@@ -502,6 +502,22 @@ pub fn sync(self: *App) void {
     if (self.active_io_copy_job) |job_id| {
         if (self.io_manager) |manager| {
             if (manager.jobState(job_id)) |manager_state| {
+                var transferred_bytes: u64 = 0;
+                var bytes_per_second: u64 = 0;
+                if (manager.treeIndex(job_id)) |tree| {
+                    for (tree.entries.items) |entry| {
+                        if (entry.kind != .regular_file) continue;
+                        const operation = manager.entryOperationView(job_id, entry.id) orelse continue;
+                        transferred_bytes +|= operation.progress_bytes;
+                        bytes_per_second +|= operation.progress_bytes_per_second;
+                    }
+                }
+                const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
+                const progress_changed =
+                    self.job_transferred_bytes != transferred_bytes or
+                    self.job_bytes_per_second != bytes_per_second;
+                self.job_transferred_bytes = transferred_bytes;
+                self.job_bytes_per_second = bytes_per_second;
                 const mapped_state: ops_mod.JobState = switch (manager_state) {
                     .planning, .queued, .running => .running,
                     .paused => .paused,
@@ -515,6 +531,8 @@ pub fn sync(self: *App) void {
                     self.transfer_rows_dirty = true;
                     self.transfer_tree_state.markDirty();
                     self.invalidate();
+                } else if (progress_changed and tooltip_hovered) {
+                    damageJobProgress(self, false, true, "", "");
                 }
             }
         }

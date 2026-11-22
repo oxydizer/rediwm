@@ -707,18 +707,44 @@ pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {
 pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
     if (self.hoverKey() != std.math.maxInt(usize) - 2002) return;
 
-    const title, const running_status = if (self.job_runner) |runner| switch (runner.kind) {
-        .copy => .{ tr("Copying files"), tr("Copying") },
-        .move => .{ tr("Moving files"), tr("Moving") },
-        .extract => .{ tr("Extracting files"), tr("Extracting") },
-        .open_archive_member => .{ tr("Extracting archive member"), tr("Extracting") },
-    } else .{ tr("File transfer"), tr("In progress") };
-    const status = switch (self.job_state) {
-        .running => running_status,
-        .paused => tr("Paused"),
-        .waiting_conflict => tr("Waiting for confirmation"),
-        .finished => tr("Complete"),
-        .idle => tr("Ready"),
+    const title, const status = if (self.active_io_copy_job) |job_id| blk: {
+        const manager = self.io_manager orelse break :blk .{ tr("File transfer"), tr("In progress") };
+        const state = manager.jobState(job_id) orelse break :blk .{ tr("File transfer"), tr("In progress") };
+        const title_text = if (self.active_io_copy_is_archive_member)
+            tr("Extracting archive member")
+        else if (self.active_io_copy_is_archive)
+            tr("Extracting files")
+        else if (self.active_io_copy_is_move)
+            tr("Moving files")
+        else
+            tr("Copying files");
+        const status_text = switch (state) {
+            .planning => tr("Preparing"),
+            .queued => tr("Queued"),
+            .running => tr("In progress"),
+            .paused => tr("Paused"),
+            .waiting => tr("Waiting for confirmation"),
+            .completed => tr("Complete"),
+            .completed_with_errors => tr("Completed with errors"),
+            .failed => tr("Failed"),
+            .cancelled => tr("Cancelled"),
+        };
+        break :blk .{ title_text, status_text };
+    } else blk: {
+        const title_text, const running_status = if (self.job_runner) |runner| switch (runner.kind) {
+            .copy => .{ tr("Copying files"), tr("Copying") },
+            .move => .{ tr("Moving files"), tr("Moving") },
+            .extract => .{ tr("Extracting files"), tr("Extracting") },
+            .open_archive_member => .{ tr("Extracting archive member"), tr("Extracting") },
+        } else .{ tr("File transfer"), tr("In progress") };
+        const status_text = switch (self.job_state) {
+            .running => running_status,
+            .paused => tr("Paused"),
+            .waiting_conflict => tr("Waiting for confirmation"),
+            .finished => tr("Complete"),
+            .idle => tr("Ready"),
+        };
+        break :blk .{ title_text, status_text };
     };
 
     var speed_buf: [96]u8 = undefined;
