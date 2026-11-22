@@ -96,7 +96,7 @@ pub const App = struct {
         registration_closed: bool = false,
         opened: bool = false,
     };
-    pub const ArchiveExportPurpose = enum { clipboard, drag };
+    pub const ArchiveExportPurpose = enum { clipboard, drag, open_with };
     pub const ArchiveExportExtraction = struct {
         job_id: io_manager_mod.JobId,
         operation_id: io_manager_mod.OperationId,
@@ -146,6 +146,7 @@ pub const App = struct {
     archive_publications: std.ArrayList(ArchivePublication) = .empty,
     archive_member_extractions: std.ArrayList(ArchiveMemberExtraction) = .empty,
     archive_exports: std.ArrayList(ArchiveExportExtraction) = .empty,
+    archive_open_with_leases: std.ArrayList(clipboard_mod.StagingLease) = .empty,
     archive_drag_export: ?ArchiveDragExport = null,
     history: history_mod.History,
     home_dir: []const u8,
@@ -333,6 +334,7 @@ pub const App = struct {
     clipboard_is_text: bool = false,
     // Operations & Jobs
     dialog: ?Dialog = null,
+    open_with_archive_paths: bool = false,
     job_runner: ?*ops_mod.JobRunner = null,
     active_io_copy_job: ?io_manager_mod.JobId = null,
     active_io_copy_destination: ?[]u8 = null,
@@ -342,6 +344,7 @@ pub const App = struct {
     active_io_copy_is_archive_member: bool = false,
     active_io_copy_is_archive_clipboard: bool = false,
     active_io_copy_is_archive_drag: bool = false,
+    active_io_copy_is_archive_open_with: bool = false,
     active_io_copy_archive_member_opened: bool = false,
     active_io_copy_item_count: usize = 0,
     job_was_running: bool = false,
@@ -500,6 +503,8 @@ pub const App = struct {
         self.clearClipboard();
         self.clipboard_paths.deinit(self.allocator);
         self.closeDialog();
+        for (self.archive_open_with_leases.items) |*lease| lease.deinit();
+        self.archive_open_with_leases.deinit(self.allocator);
         if (self.status_notice) |sn| self.allocator.free(sn);
 
         if (self.snapshot) |snap| snap.destroy();
@@ -698,6 +703,7 @@ pub const App = struct {
     pub const trashPropertiesAction = app_dialogs.trashPropertiesAction;
     pub const canOpenWith = app_dialogs.canOpenWith;
     pub const openWithDialog = app_dialogs.openWithDialog;
+    pub const openWithPaths = app_dialogs.openWithPaths;
     pub const openWithAction = app_dialogs.openWithAction;
     pub const openNewFolderDialog = app_dialogs.openNewFolderDialog;
     pub const openNewBranchDialog = app_dialogs.openNewBranchDialog;
@@ -717,6 +723,7 @@ pub const App = struct {
     // app_fileops.zig
     pub const copySelected = app_fileops.copySelected;
     pub const startArchiveDragExport = app_fileops.startArchiveDragExport;
+    pub const startArchiveOpenWith = app_fileops.startArchiveOpenWith;
     pub const cutSelected = app_fileops.cutSelected;
     pub const calculateSizeSelected = app_fileops.calculateSizeSelected;
     pub const executePaste = app_fileops.executePaste;

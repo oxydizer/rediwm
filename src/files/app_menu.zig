@@ -221,7 +221,7 @@ pub fn selectedArchive(self: *App) ?[]const u8 {
 
 /// Archive members use virtual paths, so only regular files can be exported
 /// through the selected-member extraction operation.
-pub fn hasSelectedArchiveMembers(self: *App) bool {
+pub fn hasSelectedArchiveMembers(self: *const App) bool {
     const archive_len = self.history.archive_len;
     if (self.chooser != null or archive_len == 0 or self.history.current.len < archive_len)
         return false;
@@ -261,7 +261,7 @@ pub fn fileActions(self: *App) []const FileAction {
     if (!has_actionable_selection) return &.{};
     if (only_transfers) return &.{.open};
     if (self.history.archive_len > 0)
-        return if (self.hasSelectedArchiveMembers()) &.{ .open, .copy, .extract_to } else &.{.open};
+        return if (self.hasSelectedArchiveMembers()) &.{ .open, .open_with, .copy, .extract_to } else &.{.open};
     // Entries here are already deleted: put back or remove for good, but never
     // cut, rename, paste or trash again. Folders inside a trashed folder have
     // no metadata, so they only open, copy and show properties.

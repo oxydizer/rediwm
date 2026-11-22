@@ -30,6 +30,7 @@ pub fn closeDialog(self: *App) void {
         if (dlg.target_path) |tp| self.allocator.free(tp);
         if (dlg.conflict_name) |cn| self.allocator.free(cn);
         self.dialog = null;
+        self.open_with_archive_paths = false;
         self.invalidate();
     }
 }
@@ -110,7 +111,7 @@ pub fn trashPropertiesAction(self: *App, action: trash_properties.Action) void {
 }
 
 pub fn canOpenWith(self: *const App) bool {
-    if (self.history.archive_len > 0) return false;
+    if (self.history.archive_len > 0) return self.hasSelectedArchiveMembers();
     if (self.chooser != null) return false;
     var found = false;
     for (self.items.items) |item| {
@@ -123,27 +124,46 @@ pub fn canOpenWith(self: *const App) bool {
 
 pub fn openWithDialog(self: *App) void {
     if (!self.canOpenWith()) return;
+    if (self.history.archive_len > 0) {
+        self.startArchiveOpenWith() catch |err| {
+            self.setStatusNotice(
+                if (err == error.Busy)
+                    tr("A file operation is already running")
+                else
+                    tr("Could not load applications"),
+                true,
+            );
+        };
+        return;
+    }
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(self.allocator);
     for (self.items.items) |item| {
         if (item.selected and !item.transfer_ghost) paths.append(self.allocator, item.path) catch return;
     }
-    const state = open_with.State.init(self.allocator, paths.items) catch {
+    _ = self.openWithPaths(paths.items, false);
+}
+
+pub fn openWithPaths(self: *App, paths: []const []const u8, archive_paths: bool) bool {
+    const state = open_with.State.init(self.allocator, paths) catch {
         self.setStatusNotice(tr("Could not load applications"), true);
-        return;
+        return false;
     };
     self.closeDialog();
     self.dialog = .{ .kind = .open_with, .title = tr("Open With"), .applications = state };
+    self.open_with_archive_paths = archive_paths;
     self.invalidate();
+    return true;
 }
 
 pub fn openWithAction(self: *App, action: open_with.Action) void {
     switch (action) {
         .cancel => self.closeDialog(),
         .open => {
+            const archive_paths = self.open_with_archive_paths;
             if (self.dialog.?.applications.?.open()) {
                 const message = self.dialog.?.applications.?.message;
-                if (message.len == 0) {
+                if (message.len == 0 and !archive_paths) {
                     for (self.dialog.?.applications.?.apps.paths) |path| self.worker.recordOpened(path);
                 }
                 self.closeDialog();

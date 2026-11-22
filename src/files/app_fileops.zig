@@ -75,21 +75,24 @@ fn startArchiveExport(self: *App, purpose: App.ArchiveExportPurpose) !void {
     self.active_io_copy_is_archive_member = false;
     self.active_io_copy_is_archive_clipboard = purpose == .clipboard;
     self.active_io_copy_is_archive_drag = purpose == .drag;
+    self.active_io_copy_is_archive_open_with = purpose == .open_with;
     self.active_io_copy_item_count = self.archive_exports.items[
         self.archive_exports.items.len - 1
     ].member_paths.items.len;
-    self.setStatusNotice(
-        if (purpose == .clipboard)
-            "Preparing archive members for clipboard"
-        else
-            "Preparing files for drag…",
-        false,
-    );
+    self.setStatusNotice(switch (purpose) {
+        .clipboard => "Preparing archive members for clipboard",
+        .drag => "Preparing files for drag…",
+        .open_with => "Preparing archive members for Open With…",
+    }, false);
     self.invalidate();
 }
 
 pub fn startArchiveDragExport(self: *App) !void {
     try startArchiveExport(self, .drag);
+}
+
+pub fn startArchiveOpenWith(self: *App) !void {
+    try startArchiveExport(self, .open_with);
 }
 
 pub fn copySelected(self: *App) void {

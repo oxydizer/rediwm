@@ -472,13 +472,20 @@ fn stepArchiveExports(
         if (!paths_failed and
             staged_paths.items.len == extraction.member_paths.items.len)
         {
-            if (extraction.purpose == .clipboard) {
-                self.clipboard_paths.ensureUnusedCapacity(
+            switch (extraction.purpose) {
+                .clipboard => self.clipboard_paths.ensureUnusedCapacity(
                     self.allocator,
                     staged_paths.items.len,
                 ) catch {
                     paths_failed = true;
-                };
+                },
+                .drag => {},
+                .open_with => self.archive_open_with_leases.ensureUnusedCapacity(
+                    self.allocator,
+                    1,
+                ) catch {
+                    paths_failed = true;
+                },
             }
         } else {
             paths_failed = true;
@@ -494,10 +501,11 @@ fn stepArchiveExports(
             if (extraction.staging_lease) |*lease| lease.deinit();
             extraction.staging_lease = null;
             self.setStatusNotice(
-                if (extraction.purpose == .clipboard)
-                    "Could not prepare archive clipboard paths"
-                else
-                    "Could not prepare archive drag",
+                switch (extraction.purpose) {
+                    .clipboard => "Could not prepare archive clipboard paths",
+                    .drag => "Could not prepare archive drag",
+                    .open_with => "Could not prepare archive members for Open With",
+                },
                 true,
             );
             for (extraction.member_paths.items) |path| self.allocator.free(path);
@@ -529,22 +537,35 @@ fn stepArchiveExports(
 
         const lease = extraction.staging_lease.?;
         extraction.staging_lease = null;
-        if (extraction.purpose == .clipboard) {
-            self.clearClipboard();
-            for (staged_paths.items) |path|
-                self.clipboard_paths.appendAssumeCapacity(path);
-            staged_paths.deinit(self.allocator);
-            self.clipboard_staging_lease = lease;
-            self.clipboard_is_text = false;
-            self.clipboard_cut = false;
-            self.clipboard_revision += 1;
-        } else {
-            if (self.archive_drag_export) |*old_export| old_export.deinit();
-            self.archive_drag_export = .{
-                .allocator = self.allocator,
-                .paths = staged_paths,
-                .staging_lease = lease,
-            };
+        switch (extraction.purpose) {
+            .clipboard => {
+                self.clearClipboard();
+                for (staged_paths.items) |path|
+                    self.clipboard_paths.appendAssumeCapacity(path);
+                staged_paths.deinit(self.allocator);
+                self.clipboard_staging_lease = lease;
+                self.clipboard_is_text = false;
+                self.clipboard_cut = false;
+                self.clipboard_revision += 1;
+            },
+            .drag => {
+                if (self.archive_drag_export) |*old_export| old_export.deinit();
+                self.archive_drag_export = .{
+                    .allocator = self.allocator,
+                    .paths = staged_paths,
+                    .staging_lease = lease,
+                };
+            },
+            .open_with => {
+                if (self.openWithPaths(staged_paths.items, true)) {
+                    self.archive_open_with_leases.appendAssumeCapacity(lease);
+                } else {
+                    var failed_lease = lease;
+                    failed_lease.deinit();
+                }
+                for (staged_paths.items) |path| self.allocator.free(path);
+                staged_paths.deinit(self.allocator);
+            },
         }
 
         for (extraction.member_paths.items) |path| self.allocator.free(path);
@@ -816,6 +837,7 @@ pub fn stepOperations(self: *App) void {
                 const is_archive_member = self.active_io_copy_is_archive_member;
                 const is_archive_clipboard = self.active_io_copy_is_archive_clipboard;
                 const is_archive_drag = self.active_io_copy_is_archive_drag;
+                const is_archive_open_with = self.active_io_copy_is_archive_open_with;
                 const archive_member_opened =
                     self.active_io_copy_archive_member_opened;
                 const multiple_items = self.active_io_copy_item_count > 1;
@@ -828,6 +850,7 @@ pub fn stepOperations(self: *App) void {
                 self.active_io_copy_is_archive_member = false;
                 self.active_io_copy_is_archive_clipboard = false;
                 self.active_io_copy_is_archive_drag = false;
+                self.active_io_copy_is_archive_open_with = false;
                 self.active_io_copy_archive_member_opened = false;
                 self.active_io_copy_item_count = 0;
                 self.job_cut_revision = null;
@@ -867,6 +890,19 @@ pub fn stepOperations(self: *App) void {
                         ),
                         .cancelled => self.setStatusNotice(
                             "Archive drag cancelled",
+                            true,
+                        ),
+                        else => unreachable,
+                    }
+                } else if (is_archive_open_with) {
+                    switch (state) {
+                        .completed => {},
+                        .completed_with_errors, .failed => self.setStatusNotice(
+                            "Could not prepare archive members for Open With",
+                            true,
+                        ),
+                        .cancelled => self.setStatusNotice(
+                            "Preparing archive members for Open With cancelled",
                             true,
                         ),
                         else => unreachable,

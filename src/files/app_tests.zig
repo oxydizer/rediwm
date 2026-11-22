@@ -291,7 +291,7 @@ test "archive member context menu offers copy and extraction only for regular se
     });
 
     try std.testing.expect(app.hasSelectedArchiveMembers());
-    try std.testing.expectEqualSlices(FileAction, &.{ .open, .copy, .extract_to }, app.fileActions());
+    try std.testing.expectEqualSlices(FileAction, &.{ .open, .open_with, .copy, .extract_to }, app.fileActions());
 
     app.items.items[0].is_symlink = true;
     try std.testing.expect(!app.hasSelectedArchiveMembers());
@@ -974,6 +974,87 @@ test "dragging selected archive members publishes real staged paths and transfer
     const staging_z = try allocator.dupeSentinel(u8, staging_path, 0);
     defer allocator.free(staging_z);
     var staging_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(staging_z, &staging_stat) != 0);
+}
+
+test "Open With uses staged archive paths and retains them after dialog cancellation" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+    const source = try transferTestJoin(allocator, temp, "sample.zip");
+    defer allocator.free(source);
+    const virtual_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/nested/payload.txt",
+        .{source},
+    );
+    defer allocator.free(virtual_path);
+    defer {
+        transferTestCleanup(source, false);
+        transferTestCleanup(temp, true);
+    }
+    try writeArchivePublicationFixture(source);
+
+    const item_name = try allocator.dupe(u8, "payload.txt");
+    defer allocator.free(item_name);
+    const item_path = try allocator.dupe(u8, virtual_path);
+    defer allocator.free(item_path);
+
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
+    var app = try testApp();
+    var app_live = true;
+    defer if (app_live) app.deinit();
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
+    try app.history.navigateLocation(source, source.len);
+    try app.items.append(allocator, .{
+        .name = item_name,
+        .path = item_path,
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 7,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .selected = true,
+    });
+
+    try std.testing.expect(app.canOpenWith());
+    try app.startArchiveOpenWith();
+    const job_id = app.active_io_copy_job orelse
+        return error.ArchiveOpenWithExtractionDidNotStart;
+    try waitForAppManagerJob(&app, job_id);
+
+    try std.testing.expectEqual(
+        io_manager.JobState.completed,
+        app.io_manager.?.jobState(job_id).?,
+    );
+    try std.testing.expect(app.dialog != null and app.dialog.?.kind == .open_with);
+    try std.testing.expectEqual(@as(usize, 1), app.archive_open_with_leases.items.len);
+    const staged_path = try allocator.dupe(
+        u8,
+        app.dialog.?.applications.?.apps.paths[0],
+    );
+    defer allocator.free(staged_path);
+    try std.testing.expect(!std.mem.eql(u8, virtual_path, staged_path));
+    const contents = try transferTestReadFile(allocator, staged_path);
+    defer allocator.free(contents);
+    try std.testing.expectEqualStrings("payload", contents);
+
+    app.openWithAction(.cancel);
+    try std.testing.expect(app.dialog == null);
+    const staging_z = try allocator.dupeSentinel(
+        u8,
+        app.archive_open_with_leases.items[0].path,
+        0,
+    );
+    defer allocator.free(staging_z);
+    var staging_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(staging_z, &staging_stat));
+
+    app.deinit();
+    app_live = false;
     try std.testing.expect(c.lstat(staging_z, &staging_stat) != 0);
 }
 
