@@ -891,6 +891,92 @@ test "copying selected archive members publishes real staged paths and retains t
     try std.testing.expect(c.lstat(staging_z, &staging_stat) != 0);
 }
 
+test "dragging selected archive members publishes real staged paths and transfers its lease" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+    const source = try transferTestJoin(allocator, temp, "sample.zip");
+    defer allocator.free(source);
+    const virtual_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/nested/payload.txt",
+        .{source},
+    );
+    defer allocator.free(virtual_path);
+    defer {
+        transferTestCleanup(source, false);
+        transferTestCleanup(temp, true);
+    }
+    try writeArchivePublicationFixture(source);
+
+    const item_name = try allocator.dupe(u8, "payload.txt");
+    defer allocator.free(item_name);
+    const item_path = try allocator.dupe(u8, virtual_path);
+    defer allocator.free(item_path);
+
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
+    var app = try testApp();
+    defer app.deinit();
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
+    try app.history.navigateLocation(source, source.len);
+    try app.items.append(allocator, .{
+        .name = item_name,
+        .path = item_path,
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 7,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .selected = true,
+    });
+
+    try app.startArchiveDragExport();
+    const job_id = app.active_io_copy_job orelse
+        return error.ArchiveDragExtractionDidNotStart;
+    try std.testing.expect(app.active_io_copy_is_archive_drag);
+    try waitForAppManagerJob(&app, job_id);
+
+    try std.testing.expectEqual(
+        io_manager.JobState.completed,
+        app.io_manager.?.jobState(job_id).?,
+    );
+    try std.testing.expect(app.active_io_copy_job == null);
+    try std.testing.expectEqual(@as(usize, 0), app.archive_exports.items.len);
+
+    const staging_path = blk: {
+        var drag_export = app.takeArchiveDragExport() orelse
+            return error.ArchiveDragExportWasNotPublished;
+        defer drag_export.deinit();
+
+        try std.testing.expectEqual(@as(usize, 1), drag_export.paths.items.len);
+        try std.testing.expect(drag_export.staging_lease != null);
+        try std.testing.expect(
+            !std.mem.eql(u8, virtual_path, drag_export.paths.items[0]),
+        );
+
+        const contents = try transferTestReadFile(
+            allocator,
+            drag_export.paths.items[0],
+        );
+        defer allocator.free(contents);
+        try std.testing.expectEqualStrings("payload", contents);
+
+        break :blk try allocator.dupe(
+            u8,
+            drag_export.staging_lease.?.path,
+        );
+    };
+    defer allocator.free(staging_path);
+
+    const staging_z = try allocator.dupeSentinel(u8, staging_path, 0);
+    defer allocator.free(staging_z);
+    var staging_stat: c.struct_stat = undefined;
+    try std.testing.expect(c.lstat(staging_z, &staging_stat) != 0);
+}
+
 test "Escape cancels Manager-backed archive member extraction" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;

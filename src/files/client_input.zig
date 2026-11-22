@@ -25,6 +25,8 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
         },
         .leave => {
             self.inside = false;
+            self.left_button_held = false;
+            self.cancelPendingArchiveDrag();
             self.finger_navigation.reset();
             self.app.text_dragging = false;
             self.app.cancelDrag();
@@ -35,7 +37,14 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
         },
         .button => |ev| {
             self.input_serial = ev.serial;
-            if (ev.button == 0x110 and ev.state == .pressed) self.drag_serial = ev.serial;
+            if (ev.button == 0x110) {
+                self.left_button_held = ev.state == .pressed;
+                if (ev.state == .pressed) {
+                    self.drag_serial = ev.serial;
+                } else {
+                    self.cancelPendingArchiveDrag();
+                }
+            }
             self.handlePointerButton(ev.button, ev.state == .pressed);
         },
         .axis => |ev| {

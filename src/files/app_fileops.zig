@@ -13,7 +13,7 @@ const deletion = @import("../delete_dialog.zig");
 const trash = @import("trash.zig");
 const c = @import("c.zig").api;
 
-fn startArchiveClipboardCopy(self: *App) !void {
+fn startArchiveExport(self: *App, purpose: App.ArchiveExportPurpose) !void {
     if (!self.hasSelectedArchiveMembers()) return error.NoSelectedArchiveMembers;
     if (self.active_io_copy_job != null) return error.Busy;
     if (self.job_runner) |runner| {
@@ -44,7 +44,7 @@ fn startArchiveClipboardCopy(self: *App) !void {
 
     try self.startOperations();
     const manager = self.io_manager orelse return error.OperationManagerUnavailable;
-    try self.archive_clipboard_extractions.ensureUnusedCapacity(self.allocator, 1);
+    try self.archive_exports.ensureUnusedCapacity(self.allocator, 1);
 
     const job_id = try manager.createJob(null);
     errdefer _ = manager.discardPlanningJob(job_id);
@@ -60,10 +60,11 @@ fn startArchiveClipboardCopy(self: *App) !void {
     try manager.setDestinationDirectory(job_id, "/tmp");
     try manager.queueJob(job_id);
 
-    self.archive_clipboard_extractions.appendAssumeCapacity(.{
+    self.archive_exports.appendAssumeCapacity(.{
         .job_id = job_id,
         .operation_id = operation_id,
         .member_paths = members,
+        .purpose = purpose,
     });
     members = .empty;
 
@@ -72,17 +73,28 @@ fn startArchiveClipboardCopy(self: *App) !void {
     self.active_io_copy_is_move = false;
     self.active_io_copy_is_archive = false;
     self.active_io_copy_is_archive_member = false;
-    self.active_io_copy_is_archive_clipboard = true;
-    self.active_io_copy_item_count = self.archive_clipboard_extractions.items[
-        self.archive_clipboard_extractions.items.len - 1
+    self.active_io_copy_is_archive_clipboard = purpose == .clipboard;
+    self.active_io_copy_is_archive_drag = purpose == .drag;
+    self.active_io_copy_item_count = self.archive_exports.items[
+        self.archive_exports.items.len - 1
     ].member_paths.items.len;
-    self.setStatusNotice("Preparing archive members for clipboard", false);
+    self.setStatusNotice(
+        if (purpose == .clipboard)
+            "Preparing archive members for clipboard"
+        else
+            "Preparing files for drag…",
+        false,
+    );
     self.invalidate();
+}
+
+pub fn startArchiveDragExport(self: *App) !void {
+    try startArchiveExport(self, .drag);
 }
 
 pub fn copySelected(self: *App) void {
     if (self.history.archive_len > 0) {
-        startArchiveClipboardCopy(self) catch |err| {
+        startArchiveExport(self, .clipboard) catch |err| {
             self.setStatusNotice(
                 if (err == error.Busy)
                     tr("A file operation is already running")

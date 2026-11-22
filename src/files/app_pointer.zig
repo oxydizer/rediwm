@@ -206,7 +206,8 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
         const dx = x - origin.x;
         const dy = y - origin.y;
         if (dx * dx + dy * dy >= 64) {
-            self.drag_ready = self.history.archive_len == 0;
+            self.drag_ready = self.history.archive_len == 0 or
+                self.hasSelectedArchiveMembers();
             self.drag_origin = null;
             self.collapse_on_release = null;
             self.deselect_on_release = null;

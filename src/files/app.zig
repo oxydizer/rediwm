@@ -96,13 +96,27 @@ pub const App = struct {
         registration_closed: bool = false,
         opened: bool = false,
     };
-    pub const ArchiveClipboardExtraction = struct {
+    pub const ArchiveExportPurpose = enum { clipboard, drag };
+    pub const ArchiveExportExtraction = struct {
         job_id: io_manager_mod.JobId,
         operation_id: io_manager_mod.OperationId,
         token: ?io_manager_mod.WorkToken = null,
         member_paths: std.ArrayList([]const u8) = .empty,
         staging_lease: ?clipboard_mod.StagingLease = null,
         registration_closed: bool = false,
+        purpose: ArchiveExportPurpose,
+    };
+    pub const ArchiveDragExport = struct {
+        allocator: Allocator,
+        paths: std.ArrayList([]const u8),
+        staging_lease: ?clipboard_mod.StagingLease,
+
+        pub fn deinit(self: *ArchiveDragExport) void {
+            for (self.paths.items) |path| self.allocator.free(path);
+            self.paths.deinit(self.allocator);
+            if (self.staging_lease) |*lease| lease.deinit();
+            self.staging_lease = null;
+        }
     };
 
     terminal: app_terminal.Drawer = .{},
@@ -131,7 +145,8 @@ pub const App = struct {
     discovery_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
     archive_publications: std.ArrayList(ArchivePublication) = .empty,
     archive_member_extractions: std.ArrayList(ArchiveMemberExtraction) = .empty,
-    archive_clipboard_extractions: std.ArrayList(ArchiveClipboardExtraction) = .empty,
+    archive_exports: std.ArrayList(ArchiveExportExtraction) = .empty,
+    archive_drag_export: ?ArchiveDragExport = null,
     history: history_mod.History,
     home_dir: []const u8,
 
@@ -326,6 +341,7 @@ pub const App = struct {
     active_io_copy_is_archive: bool = false,
     active_io_copy_is_archive_member: bool = false,
     active_io_copy_is_archive_clipboard: bool = false,
+    active_io_copy_is_archive_drag: bool = false,
     active_io_copy_archive_member_opened: bool = false,
     active_io_copy_item_count: usize = 0,
     job_was_running: bool = false,
@@ -442,12 +458,13 @@ pub const App = struct {
         }
         self.archive_publications.deinit(self.allocator);
         self.archive_member_extractions.deinit(self.allocator);
-        for (self.archive_clipboard_extractions.items) |*extraction| {
+        for (self.archive_exports.items) |*extraction| {
             if (extraction.staging_lease) |*lease| lease.deinit();
             for (extraction.member_paths.items) |path| self.allocator.free(path);
             extraction.member_paths.deinit(self.allocator);
         }
-        self.archive_clipboard_extractions.deinit(self.allocator);
+        self.archive_exports.deinit(self.allocator);
+        if (self.archive_drag_export) |*drag_export| drag_export.deinit();
         self.discovery_jobs.deinit(self.allocator);
         self.torrents.deinit();
         self.stopAudio();
@@ -500,6 +517,12 @@ pub const App = struct {
         self.clipboard_paths.clearRetainingCapacity();
         if (self.clipboard_staging_lease) |*lease| lease.deinit();
         self.clipboard_staging_lease = null;
+    }
+
+    pub fn takeArchiveDragExport(self: *App) ?ArchiveDragExport {
+        const drag_export = self.archive_drag_export orelse return null;
+        self.archive_drag_export = null;
+        return drag_export;
     }
 
     pub fn getTitle(self: *App) [*:0]const u8 {
@@ -693,6 +716,7 @@ pub const App = struct {
 
     // app_fileops.zig
     pub const copySelected = app_fileops.copySelected;
+    pub const startArchiveDragExport = app_fileops.startArchiveDragExport;
     pub const cutSelected = app_fileops.cutSelected;
     pub const calculateSizeSelected = app_fileops.calculateSizeSelected;
     pub const executePaste = app_fileops.executePaste;

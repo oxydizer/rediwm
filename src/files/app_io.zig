@@ -382,16 +382,16 @@ fn stepArchiveMemberExtractions(
     }
 }
 
-/// Materializes selected archive members as real paths for the clipboard.
-/// The staging lease remains App-owned until the Wayland source takes it.
-fn stepArchiveClipboardExtractions(
+/// Materializes selected archive members for clipboard or drag export.
+/// The staging lease remains App-owned until the destination owner takes it.
+fn stepArchiveExports(
     self: *App,
     manager: *io_manager.Manager,
     executor: *io_operation_executor.Runtime,
 ) void {
     var index: usize = 0;
-    while (index < self.archive_clipboard_extractions.items.len) {
-        const extraction = &self.archive_clipboard_extractions.items[index];
+    while (index < self.archive_exports.items.len) {
+        const extraction = &self.archive_exports.items[index];
         const state = manager.jobState(extraction.job_id);
         if (state == null or state.?.isTerminal()) {
             if (extraction.staging_lease) |*lease| {
@@ -408,7 +408,7 @@ fn stepArchiveClipboardExtractions(
             };
             for (extraction.member_paths.items) |path| self.allocator.free(path);
             extraction.member_paths.deinit(self.allocator);
-            _ = self.archive_clipboard_extractions.orderedRemove(index);
+            _ = self.archive_exports.orderedRemove(index);
             continue;
         }
 
@@ -472,12 +472,14 @@ fn stepArchiveClipboardExtractions(
         if (!paths_failed and
             staged_paths.items.len == extraction.member_paths.items.len)
         {
-            self.clipboard_paths.ensureUnusedCapacity(
-                self.allocator,
-                staged_paths.items.len,
-            ) catch {
-                paths_failed = true;
-            };
+            if (extraction.purpose == .clipboard) {
+                self.clipboard_paths.ensureUnusedCapacity(
+                    self.allocator,
+                    staged_paths.items.len,
+                ) catch {
+                    paths_failed = true;
+                };
+            }
         } else {
             paths_failed = true;
         }
@@ -491,17 +493,23 @@ fn stepArchiveClipboardExtractions(
             }
             if (extraction.staging_lease) |*lease| lease.deinit();
             extraction.staging_lease = null;
-            self.setStatusNotice("Could not prepare archive clipboard paths", true);
+            self.setStatusNotice(
+                if (extraction.purpose == .clipboard)
+                    "Could not prepare archive clipboard paths"
+                else
+                    "Could not prepare archive drag",
+                true,
+            );
             for (extraction.member_paths.items) |path| self.allocator.free(path);
             extraction.member_paths.deinit(self.allocator);
-            _ = self.archive_clipboard_extractions.orderedRemove(index);
+            _ = self.archive_exports.orderedRemove(index);
             continue;
         }
 
         if (!manager.completeArchivePublication(token)) {
             for (staged_paths.items) |path| self.allocator.free(path);
             staged_paths.deinit(self.allocator);
-            self.setStatusNotice("Could not complete archive clipboard extraction", true);
+            self.setStatusNotice("Could not complete archive export", true);
             index += 1;
             continue;
         }
@@ -512,27 +520,36 @@ fn stepArchiveClipboardExtractions(
             staged_paths.deinit(self.allocator);
             if (extraction.staging_lease) |*lease| lease.deinit();
             extraction.staging_lease = null;
-            self.setStatusNotice("Archive clipboard extraction failed", true);
+            self.setStatusNotice("Archive export failed", true);
             for (extraction.member_paths.items) |path| self.allocator.free(path);
             extraction.member_paths.deinit(self.allocator);
-            _ = self.archive_clipboard_extractions.orderedRemove(index);
+            _ = self.archive_exports.orderedRemove(index);
             continue;
         }
 
         const lease = extraction.staging_lease.?;
         extraction.staging_lease = null;
-        self.clearClipboard();
-        for (staged_paths.items) |path|
-            self.clipboard_paths.appendAssumeCapacity(path);
-        staged_paths.deinit(self.allocator);
-        self.clipboard_staging_lease = lease;
-        self.clipboard_is_text = false;
-        self.clipboard_cut = false;
-        self.clipboard_revision += 1;
+        if (extraction.purpose == .clipboard) {
+            self.clearClipboard();
+            for (staged_paths.items) |path|
+                self.clipboard_paths.appendAssumeCapacity(path);
+            staged_paths.deinit(self.allocator);
+            self.clipboard_staging_lease = lease;
+            self.clipboard_is_text = false;
+            self.clipboard_cut = false;
+            self.clipboard_revision += 1;
+        } else {
+            if (self.archive_drag_export) |*old_export| old_export.deinit();
+            self.archive_drag_export = .{
+                .allocator = self.allocator,
+                .paths = staged_paths,
+                .staging_lease = lease,
+            };
+        }
 
         for (extraction.member_paths.items) |path| self.allocator.free(path);
         extraction.member_paths.deinit(self.allocator);
-        _ = self.archive_clipboard_extractions.orderedRemove(index);
+        _ = self.archive_exports.orderedRemove(index);
     }
 }
 
@@ -748,7 +765,7 @@ pub fn stepOperations(self: *App) void {
         self.transfer_tree_state.markDirty();
         self.transfer_rows_dirty = true;
     }
-    stepArchiveClipboardExtractions(self, manager, executor);
+    stepArchiveExports(self, manager, executor);
     stepArchiveMemberExtractions(self, manager, executor);
     stepArchivePublications(self, manager, executor);
     _ = executor.dispatchReady() catch {
@@ -798,6 +815,7 @@ pub fn stepOperations(self: *App) void {
                 const is_archive = self.active_io_copy_is_archive;
                 const is_archive_member = self.active_io_copy_is_archive_member;
                 const is_archive_clipboard = self.active_io_copy_is_archive_clipboard;
+                const is_archive_drag = self.active_io_copy_is_archive_drag;
                 const archive_member_opened =
                     self.active_io_copy_archive_member_opened;
                 const multiple_items = self.active_io_copy_item_count > 1;
@@ -809,6 +827,7 @@ pub fn stepOperations(self: *App) void {
                 self.active_io_copy_is_archive = false;
                 self.active_io_copy_is_archive_member = false;
                 self.active_io_copy_is_archive_clipboard = false;
+                self.active_io_copy_is_archive_drag = false;
                 self.active_io_copy_archive_member_opened = false;
                 self.active_io_copy_item_count = 0;
                 self.job_cut_revision = null;
@@ -835,6 +854,19 @@ pub fn stepOperations(self: *App) void {
                         ),
                         .cancelled => self.setStatusNotice(
                             "Archive clipboard copy cancelled",
+                            true,
+                        ),
+                        else => unreachable,
+                    }
+                } else if (is_archive_drag) {
+                    switch (state) {
+                        .completed => self.setStatusNotice("Archive members ready for drag", false),
+                        .completed_with_errors, .failed => self.setStatusNotice(
+                            "Could not prepare archive drag",
+                            true,
+                        ),
+                        .cancelled => self.setStatusNotice(
+                            "Archive drag cancelled",
                             true,
                         ),
                         else => unreachable,

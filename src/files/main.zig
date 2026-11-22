@@ -250,6 +250,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     if (transfers) self.app.openTransfers();
     if (torrent_source) |source| self.app.torrentSource(source);
     defer {
+        self.cancelPendingArchiveDrag();
         self.clearDragIcon();
         self.cancelReceive();
         if (self.drop_receiving) |*receive| receive.deinit();
@@ -328,6 +329,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         self.app.sync();
         self.app.stepDiscovery();
         self.app.stepOperations();
+        self.stepArchiveDrag();
         self.app.stepThumbs();
         self.app.stepWheel(app_mod.nowMs());
         self.app.stepSelection(app_mod.nowMs());

@@ -224,24 +224,34 @@ pub fn clearDragIcon(self: *Client) void {
     self.drag_icon = null;
 }
 
-pub fn startFileDrag(self: *Client) !void {
-    const manager = self.data_manager orelse return;
-    const device = self.data_device orelse return;
-    if (self.drag_source != null) return;
-    var paths: std.ArrayList([]const u8) = .empty;
-    defer paths.deinit(a);
-    for (self.app.items.items) |item| {
-        if (item.selected and !item.missing) try paths.append(a, item.path);
-    }
-    if (paths.items.len == 0) return;
+fn startFileDragPaths(
+    self: *Client,
+    paths: []const []const u8,
+    staging_lease: ?clipboard_mod.StagingLease,
+    serial: u32,
+) !void {
+    var owned_lease = staging_lease;
+    errdefer if (owned_lease) |*lease| lease.deinit();
+    const manager = self.data_manager orelse return error.DataDeviceUnavailable;
+    const device = self.data_device orelse return error.DataDeviceUnavailable;
+    if (self.drag_source != null) return error.DragAlreadyActive;
+    if (paths.len == 0) return error.NoDragPaths;
+
     const source = try manager.createDataSource();
     errdefer source.destroy();
     const clip = try a.create(ClipboardSource);
     errdefer a.destroy(clip);
-    const uris = try clipboard_mod.encodeUriList(a, paths.items);
+    const uris = try clipboard_mod.encodeUriList(a, paths);
     errdefer a.free(uris);
     const gnome = try a.dupe(u8, "");
-    clip.* = .{ .client = self, .proxy = source, .uris = uris, .gnome = gnome };
+    clip.* = .{
+        .client = self,
+        .proxy = source,
+        .uris = uris,
+        .gnome = gnome,
+        .staging_lease = owned_lease,
+    };
+    owned_lease = null;
     source.setListener(*ClipboardSource, clipboardEvent, clip);
     source.offer("text/uri-list");
     source.offer("application/x-rediwm-file-transfer");
@@ -253,6 +263,72 @@ pub fn startFileDrag(self: *Client) !void {
     self.app.cancelDrag();
     // The icon is optional: an allocation failure must not lose the drag.
     self.drag_icon = DragIcon.create(self) catch null;
-    device.startDrag(source, self.surface, if (self.drag_icon) |icon| icon.surface else null, self.drag_serial);
+    device.startDrag(source, self.surface, if (self.drag_icon) |icon| icon.surface else null, serial);
     if (self.drag_icon) |icon| icon.surface.commit();
+}
+
+pub fn startFileDrag(self: *Client) !void {
+    if (self.drag_source != null) return;
+    if (self.data_manager == null or self.data_device == null) return;
+
+    if (self.app.history.archive_len > 0) {
+        if (self.pending_archive_drag_job != null) return;
+        try self.app.startArchiveDragExport();
+        self.pending_archive_drag_job = self.app.active_io_copy_job orelse
+            return error.ArchiveExportJobUnavailable;
+        self.pending_archive_drag_serial = self.drag_serial;
+        self.app.cancelDrag();
+        return;
+    }
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer paths.deinit(a);
+    for (self.app.items.items) |item| {
+        if (item.selected and !item.missing) try paths.append(a, item.path);
+    }
+    if (paths.items.len == 0) return;
+    try startFileDragPaths(self, paths.items, null, self.drag_serial);
+}
+
+pub fn cancelPendingArchiveDrag(self: *Client) void {
+    const job_id = self.pending_archive_drag_job orelse return;
+    if (self.app.io_manager) |manager| {
+        manager.cancelJob(job_id) catch {};
+    }
+    var pending_export = self.app.takeArchiveDragExport();
+    if (pending_export) |*drag_export| drag_export.deinit();
+}
+
+pub fn stepArchiveDrag(self: *Client) void {
+    const job_id = self.pending_archive_drag_job orelse return;
+    if (!self.left_button_held or !self.inside) {
+        self.cancelPendingArchiveDrag();
+        for (self.app.archive_exports.items) |extraction| {
+            if (extraction.job_id == job_id) return;
+        }
+        self.pending_archive_drag_job = null;
+        return;
+    }
+
+    var pending_export = self.app.takeArchiveDragExport();
+    if (pending_export) |*drag_export| {
+        self.pending_archive_drag_job = null;
+        const lease = drag_export.staging_lease;
+        drag_export.staging_lease = null;
+        startFileDragPaths(
+            self,
+            drag_export.paths.items,
+            lease,
+            self.pending_archive_drag_serial,
+        ) catch {
+            self.app.setStatusNotice("Could not start archive drag", true);
+        };
+        drag_export.deinit();
+        return;
+    }
+
+    for (self.app.archive_exports.items) |extraction| {
+        if (extraction.job_id == job_id) return;
+    }
+    self.pending_archive_drag_job = null;
 }
