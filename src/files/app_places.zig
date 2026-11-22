@@ -200,7 +200,9 @@ pub fn deviceAt(self: *App, index: usize) ?*const volumes_mod.Volume {
 /// are connected or removed.
 pub fn deviceBlock(self: *App) i32 {
     const count: i32 = @intCast(self.device_list.items.len);
-    return if (count == 0) 64 else 44 + count * self.placeStep();
+    // Keep the final row's full hit target inside the card with breathing
+    // room below it, including the compact 32 px row pitch.
+    return if (count == 0) 64 else 60 + count * self.placeStep();
 }
 
 /// The eject button at a mounted device row's right edge.
