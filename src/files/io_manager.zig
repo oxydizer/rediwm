@@ -305,6 +305,19 @@ fn monotonicMs() i64 {
     return ts.tv_sec * 1000 + @divTrunc(ts.tv_nsec, 1000000);
 }
 
+fn resetProgressRate(
+    operation: *Operation,
+    generation: u64,
+    bytes: u64,
+    sample_at: i64,
+) void {
+    operation.progress_rate_generation = generation;
+    operation.progress_rate_sample_bytes = bytes;
+    operation.progress_rate_sample_at_ms = sample_at;
+    operation.progress_rate_updated_at_ms = 0;
+    operation.progress_bytes_per_second = 0;
+}
+
 fn updateProgressRate(
     operation: *Operation,
     generation: u64,
@@ -312,17 +325,17 @@ fn updateProgressRate(
     phase: CopyPhase,
     sample_at: i64,
 ) void {
-    if (operation.progress_rate_generation != generation) {
-        operation.progress_rate_generation = generation;
-        operation.progress_rate_sample_bytes = bytes;
-        operation.progress_rate_sample_at_ms = sample_at;
-        operation.progress_rate_updated_at_ms = 0;
-        operation.progress_bytes_per_second = 0;
-    } else if (phase != .transferring) {
-        operation.progress_rate_sample_bytes = bytes;
-        operation.progress_rate_sample_at_ms = sample_at;
-        operation.progress_rate_updated_at_ms = 0;
-        operation.progress_bytes_per_second = 0;
+    // Execution generations advance for every yielded worker unit. They
+    // identify stale work, not a new transfer, so preserve the sampling
+    // window across ordinary redispatches.
+    operation.progress_rate_generation = generation;
+
+    if (phase != .transferring or
+        operation.progress_rate_sample_at_ms == 0 or
+        sample_at < operation.progress_rate_sample_at_ms or
+        bytes < operation.progress_rate_sample_bytes)
+    {
+        resetProgressRate(operation, generation, bytes, sample_at);
     } else if (sample_at > operation.progress_rate_sample_at_ms and
         sample_at - operation.progress_rate_sample_at_ms >= 500)
     {
@@ -2090,6 +2103,12 @@ pub const Manager = struct {
         const operation = findOperation(job, operation_id) orelse return error.UnknownOperation;
         if (operation.state != .waiting) return error.InvalidOperationState;
         const index = findOperationIndex(job, operation_id) orelse return error.UnknownOperation;
+        resetProgressRate(
+            operation,
+            operation.generation,
+            operation.progress_bytes,
+            monotonicMs(),
+        );
         transitionOperation(job, operation, .pending);
         enqueueReady(job, index);
         self.recomputeJobState(job);
@@ -3121,7 +3140,7 @@ test "copy progress rate samples every 500ms and expires stale readings" {
     try std.testing.expectEqual(@as(u64, 0), currentProgressRate(&operation, 3001));
 }
 
-test "copy progress rate resets on generation changes and flushing" {
+test "copy progress rate survives yielded generations and resets on regression and flushing" {
     var operation: Operation = .{
         .id = 1,
         .kind = .copy_file,
@@ -3129,16 +3148,16 @@ test "copy progress rate resets on generation changes and flushing" {
     };
 
     updateProgressRate(&operation, 1, 100, .transferring, 1000);
-    updateProgressRate(&operation, 1, 600, .transferring, 1500);
+    updateProgressRate(&operation, 2, 600, .transferring, 1500);
     try std.testing.expectEqual(@as(u64, 1000), currentProgressRate(&operation, 1500));
 
-    updateProgressRate(&operation, 2, 0, .transferring, 2000);
+    updateProgressRate(&operation, 3, 0, .transferring, 2000);
     try std.testing.expectEqual(@as(u64, 0), currentProgressRate(&operation, 2000));
-    updateProgressRate(&operation, 2, 500, .transferring, 2500);
+    updateProgressRate(&operation, 3, 500, .transferring, 2500);
     try std.testing.expectEqual(@as(u64, 1000), currentProgressRate(&operation, 2500));
 
-    updateProgressRate(&operation, 2, 500, .flushing, 2600);
+    updateProgressRate(&operation, 3, 500, .flushing, 2600);
     try std.testing.expectEqual(@as(u64, 0), currentProgressRate(&operation, 2600));
-    updateProgressRate(&operation, 2, 1000, .transferring, 3100);
+    updateProgressRate(&operation, 4, 1000, .transferring, 3100);
     try std.testing.expectEqual(@as(u64, 1000), currentProgressRate(&operation, 3100));
 }
