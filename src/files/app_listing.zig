@@ -567,7 +567,11 @@ pub fn sync(self: *App) void {
     // A background refresh must not reorder items or cancel a gesture
     // while the button is held. The worker retains its latest snapshot;
     // the first loop after release applies it.
-    if (self.selection_band != null or self.drag_origin != null) return;
+    if (self.selection_band != null or self.drag_origin != null or
+        self.wheel_glide.active())
+    {
+        return;
+    }
     const snap = self.worker.takeSnapshot() orelse {
         if (self.torrents.rows_changed or self.transfer_rows_dirty) {
             self.transfer_rows_dirty = false;

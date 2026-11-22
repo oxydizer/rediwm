@@ -110,7 +110,9 @@ pub fn stepDiscovery(self: *App) void {
             self.transfer_tree_state.markDirty();
             self.transfer_rows_dirty = true;
         }
-        if (self.snapshot != null and self.transfer_browse_root == null) {
+        if (self.snapshot != null and self.transfer_browse_root == null and
+            self.active_io_copy_job == null)
+        {
             self.rebuildView();
         }
     }
@@ -778,12 +780,14 @@ pub fn stepOperations(self: *App) void {
     const manager = if (self.io_manager) |value| value else return;
 
     _ = executor.drainWake();
-    const drained = executor.drainCompletions() catch {
+    const drained = executor.drainCompletionsWithStats() catch {
         self.setStatusNotice("File operation completion failed", true);
         return;
     };
-    if (drained > 0 and self.active_io_copy_job != null) {
+    if (drained.drained > 0 and self.active_io_copy_job != null) {
         self.transfer_tree_state.markDirty();
+    }
+    if (drained.state_changes > 0 and self.active_io_copy_job != null) {
         self.transfer_rows_dirty = true;
     }
     stepArchiveExports(self, manager, executor);

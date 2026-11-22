@@ -107,7 +107,11 @@ pub const Runtime = struct {
     }
 
     pub fn drainCompletions(self: *Runtime) !usize {
-        return self.executor.drainCompletions(self.context.manager);
+        return (try self.drainCompletionsWithStats()).drained;
+    }
+
+    pub fn drainCompletionsWithStats(self: *Runtime) !io_executor.DrainStats {
+        return self.executor.drainCompletionsWithStats(self.context.manager);
     }
 
     /// Enables per-unit timing collection. Strategy and byte counters are

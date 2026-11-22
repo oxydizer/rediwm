@@ -106,6 +106,11 @@ pub const WorkProgress = struct {
     phase: CopyPhase,
 };
 
+pub const DrainStats = struct {
+    drained: usize = 0,
+    state_changes: usize = 0,
+};
+
 const WorkerPool = @import("io_workers.zig").WorkerPool;
 const Pool = WorkerPool(WorkItem, WorkCompletion);
 
@@ -227,11 +232,20 @@ pub const Executor = struct {
     /// Route all currently available worker completions through Manager.
     /// This must run on the main thread.
     pub fn drainCompletions(self: *Executor, manager: *io_manager.Manager) !usize {
-        var drained: usize = 0;
+        return (try self.drainCompletionsWithStats(manager)).drained;
+    }
+
+    /// Reconciles completions and distinguishes progress yields from
+    /// accepted outcomes that change an operation's visible state.
+    pub fn drainCompletionsWithStats(
+        self: *Executor,
+        manager: *io_manager.Manager,
+    ) !DrainStats {
+        var stats: DrainStats = .{};
 
         while (self.pool.tryPopResult()) |completion_value| {
             var completion = completion_value;
-            drained += 1;
+            stats.drained += 1;
 
             // Yielded work resumes the same execution and retains its
             // continuation. Waiting work requires an external decision;
@@ -273,6 +287,7 @@ pub const Executor = struct {
                     completion.token.job_id,
                     completion.token.operation_id,
                 ) == .pending;
+            if (!retain_payloads) stats.state_changes += 1;
             if (completion.progress) |progress| {
                 _ = manager.recordOperationProgress(
                     completion.token,
@@ -314,7 +329,7 @@ pub const Executor = struct {
             );
         }
 
-        return drained;
+        return stats;
     }
 
     /// Dispatch ready operations until the scheduler is empty or the
