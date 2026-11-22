@@ -726,6 +726,7 @@ pub fn rebuildView(self: *App) void {
     defer old_items.deinit(self.allocator);
     const old_focus = if (self.focused_index) |i| (if (i < old_items.items.len) old_items.items[i].path else null) else null;
     const old_anchor = if (self.selection_anchor) |i| (if (i < old_items.items.len) old_items.items[i].path else null) else null;
+    const old_click = if (self.last_click_index) |i| (if (i < old_items.items.len) old_items.items[i].path else null) else null;
     var selected_paths = std.StringHashMap(ViewItem).init(self.allocator);
     defer selected_paths.deinit();
     for (old_items.items) |item| {
@@ -807,6 +808,9 @@ pub fn rebuildView(self: *App) void {
             }
             if (old_anchor) |path| {
                 if (std.mem.eql(u8, path, item.path)) self.selection_anchor = i;
+            }
+            if (old_click) |path| {
+                if (std.mem.eql(u8, path, item.path)) self.last_click_index = i;
             }
         }
     }
