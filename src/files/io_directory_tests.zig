@@ -77,6 +77,7 @@ test "directory creation creates a new destination directory" {
     const source_z = try allocZ(allocator, source);
     defer allocator.free(source_z);
     try std.testing.expectEqual(@as(c_int, 0), c.mkdir(source_z, 0o700));
+    try std.testing.expectEqual(@as(c_int, 0), c.chmod(source_z, 0o751));
 
     var completion = try runDirectory(allocator, source, destination);
     defer {
@@ -84,11 +85,16 @@ test "directory creation creates a new destination directory" {
         completion.input.deinit();
     }
     try std.testing.expectEqual(executor.WorkResult.completed, completion.outcome);
+    try std.testing.expect(completion.result != null);
+    try std.testing.expect(directory.finalizeCreatedDirectory(&completion.result.?));
 
     const destination_z = try allocZ(allocator, destination);
     defer allocator.free(destination_z);
     const fd = c.open(destination_z, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC | c.O_NOFOLLOW);
     try std.testing.expect(fd >= 0);
+    var destination_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.fstat(fd, &destination_stat));
+    try std.testing.expectEqual(@as(u32, 0o751), @as(u32, @intCast(destination_stat.st_mode & 0o7777)));
     _ = c.close(fd);
 }
 

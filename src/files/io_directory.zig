@@ -10,6 +10,7 @@ const executor = @import("io_executor.zig");
 
 const collision_tag: u8 = 1;
 const created_tag: u8 = 2;
+const created_result_name_offset: usize = 25;
 
 fn allocZ(allocator: Allocator, value: []const u8) ![:0]u8 {
     const result = try allocator.allocSentinel(u8, value.len, 0);
@@ -109,21 +110,45 @@ fn makeCreatedResult(
     allocator: Allocator,
     parent_fd: c_int,
     name: [:0]const u8,
+    device_id: u64,
+    inode_id: u64,
+    mode: u32,
 ) ?executor.OwnedPayload {
-    const bytes = allocator.alloc(u8, 5 + name.len + 1) catch return null;
+    const bytes = allocator.alloc(
+        u8,
+        created_result_name_offset + name.len + 1,
+    ) catch return null;
     bytes[0] = created_tag;
     const raw_fd: u32 = @bitCast(parent_fd);
     for (0..4) |index| {
         bytes[1 + index] = @truncate(raw_fd >> @as(u5, @intCast(index * 8)));
     }
-    @memcpy(bytes[5 .. 5 + name.len], name);
+    for (0..8) |index| {
+        bytes[5 + index] = @truncate(
+            device_id >> @as(u6, @intCast(index * 8)),
+        );
+        bytes[13 + index] = @truncate(
+            inode_id >> @as(u6, @intCast(index * 8)),
+        );
+    }
+    for (0..4) |index| {
+        bytes[21 + index] = @truncate(
+            mode >> @as(u5, @intCast(index * 8)),
+        );
+    }
+    @memcpy(
+        bytes[created_result_name_offset .. created_result_name_offset + name.len],
+        name,
+    );
     bytes[bytes.len - 1] = 0;
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
 fn removeCreatedDirectory(result: *const executor.OwnedPayload) void {
     const bytes = result.slice();
-    if (bytes.len < 7 or bytes[0] != created_tag or bytes[bytes.len - 1] != 0) return;
+    if (bytes.len < created_result_name_offset + 2 or
+        bytes[0] != created_tag or bytes[bytes.len - 1] != 0)
+        return;
 
     var raw_fd: u32 = 0;
     for (0..4) |index| {
@@ -132,9 +157,65 @@ fn removeCreatedDirectory(result: *const executor.OwnedPayload) void {
     const parent_fd: c_int = @bitCast(raw_fd);
     if (parent_fd < 0) return;
 
-    const name: [*:0]const u8 = @ptrCast(bytes[5..].ptr);
+    const name: [*:0]const u8 =
+        @ptrCast(bytes[created_result_name_offset..].ptr);
     _ = c.unlinkat(parent_fd, name, c.AT_REMOVEDIR);
     _ = c.close(parent_fd);
+}
+
+/// Restores the source permission bits on the directory created by this
+/// operation. The saved device/inode identity prevents chmod from following
+/// a replacement installed at the same destination name.
+pub fn finalizeCreatedDirectory(result: *const executor.OwnedPayload) bool {
+    const bytes = result.slice();
+    if (bytes.len < created_result_name_offset + 2 or
+        bytes[0] != created_tag or bytes[bytes.len - 1] != 0)
+        return false;
+
+    var raw_fd: u32 = 0;
+    for (0..4) |index| {
+        raw_fd |= @as(u32, bytes[1 + index]) << @as(u5, @intCast(index * 8));
+    }
+    const parent_fd: c_int = @bitCast(raw_fd);
+    if (parent_fd < 0) return false;
+
+    var device_id: u64 = 0;
+    var inode_id: u64 = 0;
+    for (0..8) |index| {
+        device_id |= @as(u64, bytes[5 + index]) << @as(u6, @intCast(index * 8));
+        inode_id |= @as(u64, bytes[13 + index]) << @as(u6, @intCast(index * 8));
+    }
+
+    var mode: u32 = 0;
+    for (0..4) |index| {
+        mode |= @as(u32, bytes[21 + index]) << @as(u5, @intCast(index * 8));
+    }
+
+    const name: [*:0]const u8 =
+        @ptrCast(bytes[created_result_name_offset..].ptr);
+    var current_stat: c.struct_stat = undefined;
+    if (c.fstatat(parent_fd, name, &current_stat, c.AT_SYMLINK_NOFOLLOW) != 0)
+        return false;
+    if ((current_stat.st_mode & c.S_IFMT) != c.S_IFDIR or
+        @as(u64, @intCast(current_stat.st_dev)) != device_id or
+        @as(u64, @intCast(current_stat.st_ino)) != inode_id)
+        return false;
+
+    const directory_fd = c.openat(
+        parent_fd,
+        name,
+        c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC | c.O_NOFOLLOW,
+    );
+    if (directory_fd < 0) return false;
+    defer _ = c.close(directory_fd);
+
+    var opened_stat: c.struct_stat = undefined;
+    if (c.fstat(directory_fd, &opened_stat) != 0 or
+        @as(u64, @intCast(opened_stat.st_dev)) != device_id or
+        @as(u64, @intCast(opened_stat.st_ino)) != inode_id)
+        return false;
+
+    return c.fchmod(directory_fd, @intCast(mode)) == 0;
 }
 
 /// Execute one exclusive directory-creation operation.
@@ -162,6 +243,14 @@ pub fn execute(
         c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC | c.O_NOFOLLOW,
     );
     if (source_fd < 0) return completion(item, .failed, null);
+    var source_stat: c.struct_stat = undefined;
+    if (c.fstat(source_fd, &source_stat) != 0 or
+        (source_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
+    {
+        _ = c.close(source_fd);
+        return completion(item, .failed, null);
+    }
+    const source_mode: u32 = @intCast(source_stat.st_mode & 0o7777);
     _ = c.close(source_fd);
 
     // Anchor creation and stale-result cleanup to the opened parent.
@@ -198,7 +287,21 @@ pub fn execute(
         return completion(item, .failed, null);
     }
 
-    const result = makeCreatedResult(allocator, parent_fd, split.name) orelse {
+    var created_stat: c.struct_stat = undefined;
+    if (c.fstatat(parent_fd, split.name, &created_stat, c.AT_SYMLINK_NOFOLLOW) != 0) {
+        _ = c.unlinkat(parent_fd, split.name, c.AT_REMOVEDIR);
+        _ = c.close(parent_fd);
+        return completion(item, .failed, null);
+    }
+
+    const result = makeCreatedResult(
+        allocator,
+        parent_fd,
+        split.name,
+        @intCast(created_stat.st_dev),
+        @intCast(created_stat.st_ino),
+        source_mode,
+    ) orelse {
         _ = c.unlinkat(parent_fd, split.name, c.AT_REMOVEDIR);
         _ = c.close(parent_fd);
         return completion(item, .failed, null);
@@ -262,7 +365,9 @@ pub fn complete(
     var owned_result = result;
     if (owned_result) |*payload| {
         const bytes = payload.slice();
-        if (bytes.len >= 7 and bytes[0] == created_tag) {
+        if (bytes.len >= created_result_name_offset + 2 and
+            bytes[0] == created_tag)
+        {
             var raw_fd: u32 = 0;
             for (0..4) |index| {
                 raw_fd |= @as(u32, bytes[1 + index]) << @as(u5, @intCast(index * 8));
