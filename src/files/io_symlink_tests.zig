@@ -141,6 +141,47 @@ test "stale successful symlink completion removes the created link" {
     try std.testing.expect(c.access(destination_z, c.F_OK) != 0);
 }
 
+test "stale symlink completion preserves a same-path replacement" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupDirectory(temp);
+
+    const destination = try join(allocator, temp, "stale-link");
+    defer allocator.free(destination);
+    const destination_z = try allocZ(allocator, destination);
+    defer allocator.free(destination_z);
+
+    const original = try join(allocator, temp, "original-link");
+    defer allocator.free(original);
+    const original_z = try allocZ(allocator, original);
+    defer allocator.free(original_z);
+    defer cleanupLink(original);
+    defer cleanupLink(destination);
+
+    const completion = try runSymlink(allocator, "original-target", destination);
+    try std.testing.expectEqual(executor.WorkResult.completed, completion.outcome);
+
+    try std.testing.expectEqual(@as(c_int, 0), c.rename(destination_z, original_z));
+    try std.testing.expectEqual(@as(c_int, 0), c.symlink("replacement-target", destination_z));
+
+    symlink.discard(
+        null,
+        completion.operation_kind,
+        completion.input,
+        completion.continuation,
+        completion.result,
+    );
+
+    const replacement_target = try readLink(allocator, destination);
+    defer allocator.free(replacement_target);
+    try std.testing.expectEqualStrings("replacement-target", replacement_target);
+
+    const original_target = try readLink(allocator, original);
+    defer allocator.free(original_target);
+    try std.testing.expectEqualStrings("original-target", original_target);
+}
+
 test "symlink input rejects empty, NUL-containing, and relative destinations" {
     const allocator = std.testing.allocator;
     try std.testing.expectError(error.InvalidPath, symlink.makeInput(allocator, "", "/tmp/link"));

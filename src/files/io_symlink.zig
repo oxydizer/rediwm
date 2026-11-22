@@ -99,21 +99,45 @@ fn makeCreatedResult(
     allocator: Allocator,
     parent_fd: c_int,
     name: [:0]const u8,
+    device_id: u64,
+    inode_id: u64,
 ) ?executor.OwnedPayload {
-    const bytes = allocator.alloc(u8, 5 + name.len + 1) catch return null;
+    const bytes = allocator.alloc(u8, 21 + name.len + 1) catch return null;
     bytes[0] = created_tag;
     const raw_fd: u32 = @bitCast(parent_fd);
     for (0..4) |index| {
         bytes[1 + index] = @truncate(raw_fd >> @as(u5, @intCast(index * 8)));
     }
-    @memcpy(bytes[5 .. 5 + name.len], name);
+    for (0..8) |index| {
+        const shift: u6 = @intCast(index * 8);
+        bytes[5 + index] = @truncate(device_id >> shift);
+        bytes[13 + index] = @truncate(inode_id >> shift);
+    }
+    @memcpy(bytes[21 .. 21 + name.len], name);
     bytes[bytes.len - 1] = 0;
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
+fn unlinkIfOwned(
+    parent_fd: c_int,
+    name: [*:0]const u8,
+    device_id: u64,
+    inode_id: u64,
+) void {
+    var current_stat: c.struct_stat = undefined;
+    if (c.fstatat(parent_fd, name, &current_stat, c.AT_SYMLINK_NOFOLLOW) != 0) return;
+    if ((current_stat.st_mode & c.S_IFMT) != c.S_IFLNK or
+        @as(u64, @intCast(current_stat.st_dev)) != device_id or
+        @as(u64, @intCast(current_stat.st_ino)) != inode_id)
+    {
+        return;
+    }
+    _ = c.unlinkat(parent_fd, name, 0);
+}
+
 fn closeCreatedParent(result: *const executor.OwnedPayload, remove_link: bool) void {
     const bytes = result.slice();
-    if (bytes.len < 7 or bytes[0] != created_tag or bytes[bytes.len - 1] != 0) return;
+    if (bytes.len < 23 or bytes[0] != created_tag or bytes[bytes.len - 1] != 0) return;
 
     var raw_fd: u32 = 0;
     for (0..4) |index| {
@@ -122,9 +146,17 @@ fn closeCreatedParent(result: *const executor.OwnedPayload, remove_link: bool) v
     const parent_fd: c_int = @bitCast(raw_fd);
     if (parent_fd < 0) return;
 
+    var device_id: u64 = 0;
+    var inode_id: u64 = 0;
+    for (0..8) |index| {
+        const shift: u6 = @intCast(index * 8);
+        device_id |= @as(u64, bytes[5 + index]) << shift;
+        inode_id |= @as(u64, bytes[13 + index]) << shift;
+    }
+
     if (remove_link) {
-        const name: [*:0]const u8 = @ptrCast(bytes[5..].ptr);
-        _ = c.unlinkat(parent_fd, name, 0);
+        const name: [*:0]const u8 = @ptrCast(bytes[21..].ptr);
+        unlinkIfOwned(parent_fd, name, device_id, inode_id);
     }
     _ = c.close(parent_fd);
 }
@@ -162,8 +194,25 @@ pub fn execute(
         return completion(item, .failed, null);
     }
 
-    const result = makeCreatedResult(allocator, parent_fd, split.name) orelse {
-        _ = c.unlinkat(parent_fd, split.name, 0);
+    var created_stat: c.struct_stat = undefined;
+    if (c.fstatat(parent_fd, split.name, &created_stat, c.AT_SYMLINK_NOFOLLOW) != 0) {
+        _ = c.close(parent_fd);
+        return completion(item, .failed, null);
+    }
+
+    const result = makeCreatedResult(
+        allocator,
+        parent_fd,
+        split.name,
+        @intCast(created_stat.st_dev),
+        @intCast(created_stat.st_ino),
+    ) orelse {
+        unlinkIfOwned(
+            parent_fd,
+            split.name,
+            @intCast(created_stat.st_dev),
+            @intCast(created_stat.st_ino),
+        );
         _ = c.close(parent_fd);
         return completion(item, .failed, null);
     };
