@@ -165,6 +165,18 @@ pub fn hoverKey(self: *App) usize {
 
 const transfer_hover_priority_delay_ms: i64 = 300;
 
+fn transferHoverPriorityGestureActive(self: *App) bool {
+    return self.drag_origin != null or
+        self.drag_ready or
+        self.selection_band != null or
+        self.text_dragging or
+        self.scroll_drag.active or
+        self.sidebar_scroll_drag.active or
+        self.horizontal_drag.active or
+        self.column_resize != null or
+        self.sidebar_resize != null;
+}
+
 fn hoveredCopyGhostEntry(self: *App) ?@import("io_tree.zig").EntryId {
     const target = self.item_surface.hovered orelse return null;
     const index: usize = @intCast(target.id);
@@ -179,6 +191,11 @@ fn hoveredCopyGhostEntry(self: *App) ?@import("io_tree.zig").EntryId {
 }
 
 fn updateTransferHoverPriority(self: *App, now: i64) void {
+    if (transferHoverPriorityGestureActive(self)) {
+        self.transfer_hover_priority = null;
+        return;
+    }
+
     const entry_id = hoveredCopyGhostEntry(self) orelse {
         self.transfer_hover_priority = null;
         return;
@@ -206,6 +223,11 @@ pub fn transferHoverPriorityDeadline(self: *const App) ?i64 {
 pub fn stepTransferHoverPriority(self: *App, now: i64) void {
     var pending = self.transfer_hover_priority orelse return;
     if (pending.requested or now < pending.deadline_ms) return;
+
+    if (transferHoverPriorityGestureActive(self)) {
+        self.transfer_hover_priority = null;
+        return;
+    }
 
     const entry_id = hoveredCopyGhostEntry(self) orelse {
         self.transfer_hover_priority = null;
@@ -454,6 +476,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
     }
     if (button != 0x110 and button != 0x111) return;
 
+    if (pressed) self.transfer_hover_priority = null;
     self.cancelWheel();
     if (button == 0x110) {
         if (self.dialog) |*dlg| {

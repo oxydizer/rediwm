@@ -129,6 +129,89 @@ test "leaving a copy ghost before the hover dwell cancels its preference" {
     try std.testing.expectEqual(operation_b, normal.operation_id);
 }
 
+test "pressing over a copy ghost cancels its pending hover priority" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+
+    const job = try manager.createJob(null);
+    const current_entry = try manager.addTreeRoot(
+        job,
+        "current.bin",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job, current_entry, .copy_file);
+    const target_entry = try manager.addTreeRoot(
+        job,
+        "urgent.docx",
+        .regular_file,
+        .{ .size = 4096 },
+        null,
+    );
+    _ = try manager.addEntryOperation(job, target_entry, .copy_file);
+    try manager.queueJob(job);
+    _ = manager.dispatchNext().?;
+
+    app.io_manager = &manager;
+    app.active_io_copy_job = job;
+    app.items.items[0].transfer_ghost = true;
+    app.items.items[0].transfer_entry_id = target_entry;
+    app.items.items[0].transfer_state = .pending;
+    app.items.items[0].missing = true;
+
+    const rect = app.itemIconRect(0);
+    app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    const deadline = app.transferHoverPriorityDeadline().?;
+
+    app.handleButton(0x110, true);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+    app.stepTransferHoverPriority(deadline);
+    try std.testing.expect(app.transfer_hover_priority == null);
+}
+
+test "file dragging across a copy ghost does not arm hover priority" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 2);
+
+    app.items.items[1].transfer_ghost = true;
+    app.items.items[1].transfer_state = .pending;
+    app.items.items[1].missing = true;
+
+    const source = app.itemIconRect(0);
+    const target = app.itemIconRect(1);
+    app.handleMotion(source.x + source.w / 2, source.y + source.h / 2);
+    app.handleButton(0x110, true);
+    app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
+
+    try std.testing.expect(app.drag_ready);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+}
+
+test "rubber-band selection across a copy ghost does not arm hover priority" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 1);
+
+    app.items.items[0].transfer_ghost = true;
+    app.items.items[0].transfer_state = .pending;
+    app.items.items[0].missing = true;
+
+    const target = app.itemIconRect(0);
+    const top: f64 = @floatFromInt(app.viewTop() + app.itemInset());
+    app.handleMotion(215, top - 5);
+    app.handleButton(0x110, true);
+    app.handleMotion(target.x + target.w / 2, target.y + target.h / 2);
+
+    try std.testing.expect(app.selection_band != null);
+    try std.testing.expect(app.transferHoverPriorityDeadline() == null);
+}
+
 test "Files: the second click of a double-click does not open the item again" {
     var app = try testApp();
     defer app.deinit();
