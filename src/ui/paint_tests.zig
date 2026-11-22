@@ -82,6 +82,39 @@ test "fillRect paints solid color inside a device-pixel buffer" {
     try std.testing.expectEqual(@as(u32, 0), pixels[0]);
 }
 
+test "shared renderer gates accelerator underlines on Alt state" {
+    const previous_theme = theme.global;
+    defer theme.global = previous_theme;
+    theme.global.accent = .{ 1, 0, 0, 1 };
+
+    var plain_pixels: [140 * 44]u32 = @splat(0);
+    var alt_pixels: [140 * 44]u32 = @splat(0);
+    var plain = Renderer.init(&plain_pixels, 140, 44, 1);
+    var with_alt = Renderer.init(&alt_pixels, 140, 44, 1);
+    with_alt.alt_pressed = true;
+    const style: TextStyle = .{
+        .content = "Merge",
+        .font_size = 16,
+        .color = .{ 1, 1, 1, 1 },
+        .mnemonic_offset = 1,
+    };
+    plain.drawText(4, 0, 110, 44, style);
+    with_alt.drawText(4, 0, 110, 44, style);
+
+    var plain_has_accent = false;
+    var alt_has_accent = false;
+    for (plain_pixels) |pixel| {
+        if (((pixel >> 16) & 255) > 0 and ((pixel >> 8) & 255) == 0 and (pixel & 255) == 0)
+            plain_has_accent = true;
+    }
+    for (alt_pixels) |pixel| {
+        if (((pixel >> 16) & 255) > 0 and ((pixel >> 8) & 255) == 0 and (pixel & 255) == 0)
+            alt_has_accent = true;
+    }
+    try std.testing.expect(!plain_has_accent);
+    try std.testing.expect(alt_has_accent);
+}
+
 test "fillRect respects the active clip rect" {
     var pixels = @as([10 * 10]u32, @splat(0));
     var r = Renderer.init(&pixels, 10, 10, 1);

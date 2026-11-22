@@ -285,8 +285,14 @@ pub fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) v
                 _ = c.xkb_state_update_mask(state, ev.mods_depressed, ev.mods_latched, ev.mods_locked, 0, 0, ev.group);
                 self.app.ctrl = c.xkb_state_mod_name_is_active(state, "Control", c.XKB_STATE_MODS_EFFECTIVE) > 0;
                 self.app.shift = c.xkb_state_mod_name_is_active(state, "Shift", c.XKB_STATE_MODS_EFFECTIVE) > 0;
-                self.app.alt = c.xkb_state_mod_name_is_active(state, "Mod1", c.XKB_STATE_MODS_EFFECTIVE) > 0 or
+                const alt = c.xkb_state_mod_name_is_active(state, "Mod1", c.XKB_STATE_MODS_EFFECTIVE) > 0 or
                     c.xkb_state_mod_name_is_active(state, "Alt", c.XKB_STATE_MODS_EFFECTIVE) > 0;
+                if (self.app.alt != alt) {
+                    self.app.alt = alt;
+                    if (self.app.dialog) |dlg| {
+                        if (dlg.kind == .conflict) self.app.invalidate();
+                    }
+                }
                 if (self.drag_offer != null) {
                     self.dragOver(
                         self.drag_x,

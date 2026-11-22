@@ -1135,6 +1135,7 @@ pub const App = struct {
     pub const render = app_paint.render;
     pub const renderPermissionTip = app_paint.renderPermissionTip;
     pub const renderButton = app_paint.renderButton;
+    pub const renderConflictButton = app_paint.renderConflictButton;
     pub const fieldFontSize = app_paint.fieldFontSize;
     pub const renderLocationBar = app_paint.renderLocationBar;
     pub const fieldOptions = app_paint.fieldOptions;

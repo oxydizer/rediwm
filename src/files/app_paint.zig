@@ -261,8 +261,57 @@ pub fn renderButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, 
     else
         false;
     var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+    layer.renderer.alt_pressed = self.alt;
     ui_button.paint(&layer.renderer, layer.local(), .{ .label = label_text }, .{ .pointer = if (!enabled) .disabled else if (hovered) .hover else .idle });
     layer.finish();
+}
+
+fn addMnemonicMarker(label: []const u8, accelerator: u8, buffer: []u8) []const u8 {
+    var output_index: usize = 0;
+    var marked = false;
+    for (label) |byte| {
+        if (!marked and byte < 0x80 and std.ascii.toUpper(byte) == accelerator) {
+            buffer[output_index] = '_';
+            output_index += 1;
+            marked = true;
+        }
+        if (byte == '_') {
+            buffer[output_index] = '_';
+            buffer[output_index + 1] = '_';
+            output_index += 2;
+        } else {
+            buffer[output_index] = byte;
+            output_index += 1;
+        }
+    }
+    return buffer[0..output_index];
+}
+
+pub fn renderConflictButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, label_text: []const u8, accelerator: u8, target_id: usize) void {
+    const doubled = @mulWithOverflow(label_text.len, 2);
+    if (doubled[1] != 0) {
+        self.renderButton(cr, x, y, w, h, label_text, true, target_id);
+        return;
+    }
+    const capacity = @addWithOverflow(doubled[0], 1);
+    if (capacity[1] != 0) {
+        self.renderButton(cr, x, y, w, h, label_text, true, target_id);
+        return;
+    }
+    var stack_buffer: [512]u8 = undefined;
+    const heap_allocated = capacity[0] > stack_buffer.len;
+    const marked_label: []u8 = if (!heap_allocated)
+        stack_buffer[0..capacity[0]]
+    else
+        std.heap.page_allocator.alloc(u8, capacity[0]) catch {
+            self.renderButton(cr, x, y, w, h, label_text, true, target_id);
+            return;
+        };
+    defer {
+        if (heap_allocated) std.heap.page_allocator.free(marked_label);
+    }
+    const label = addMnemonicMarker(label_text, accelerator, marked_label);
+    self.renderButton(cr, x, y, w, h, label, true, target_id);
 }
 
 // The field's text size. Everything positioned against the text — the
@@ -626,14 +675,14 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
 
         if (self.managerConflictCanMerge()) {
             const button_width = (dw - 56) / 4;
-            self.renderButton(cr, dx + 16, dy + 84, button_width, 28, tr("Skip (S)"), true, 1);
-            self.renderButton(cr, dx + 24 + button_width, dy + 84, button_width, 28, tr("Merge (M)"), true, 2);
-            self.renderButton(cr, dx + 32 + 2 * button_width, dy + 84, button_width, 28, tr("Rename (R)"), true, 3);
-            self.renderButton(cr, dx + 40 + 3 * button_width, dy + 84, button_width, 28, tr("Cancel (C)"), true, 4);
+            self.renderConflictButton(cr, dx + 16, dy + 84, button_width, 28, tr("Skip"), 'S', 1);
+            self.renderConflictButton(cr, dx + 24 + button_width, dy + 84, button_width, 28, tr("Merge"), 'M', 2);
+            self.renderConflictButton(cr, dx + 32 + 2 * button_width, dy + 84, button_width, 28, tr("Rename"), 'R', 3);
+            self.renderConflictButton(cr, dx + 40 + 3 * button_width, dy + 84, button_width, 28, tr("Cancel"), 'C', 4);
         } else {
-            self.renderButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip (S)"), true, 1);
-            self.renderButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename (R)"), true, 2);
-            self.renderButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel (C)"), true, 3);
+            self.renderConflictButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip"), 'S', 1);
+            self.renderConflictButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename"), 'R', 2);
+            self.renderConflictButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel"), 'C', 3);
         }
     } else {
         self.renderEditor(cr, &self.dialog.?.edit, self.editorRect(), true, false);

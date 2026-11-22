@@ -8,6 +8,7 @@ const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_runtime = @import("io_runtime.zig");
 const app_model = @import("app_model.zig");
+const app_dialogs = @import("app_dialogs.zig");
 const worker_mod = @import("worker.zig");
 const history_mod = @import("history.zig");
 const recent = @import("recent.zig");
@@ -29,6 +30,21 @@ const ViewItem = @import("app_model.zig").ViewItem;
 const nowMs = @import("app_draw.zig").nowMs;
 const clipDamage = @import("app_draw.zig").clipDamage;
 const measureText = @import("app_draw.zig").measureText;
+
+test "conflict shortcuts require Alt and respect available actions" {
+    const shortcut = app_dialogs.conflictShortcut;
+
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_s, false, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_m, false, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_r, false, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_c, false, true));
+
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, .skip), shortcut(c.XKB_KEY_s, true, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, .merge), shortcut(c.XKB_KEY_m, true, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, .rename), shortcut(c.XKB_KEY_r, true, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, .cancel), shortcut(c.XKB_KEY_c, true, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_m, true, false));
+}
 
 test "grid hit testing respects gutters, scrolling and responsive columns" {
     var app = App{

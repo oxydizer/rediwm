@@ -17,6 +17,19 @@ const Dialog = @import("app_model.zig").Dialog;
 
 pub const ConflictAction = enum { skip, merge, rename, cancel };
 
+/// Conflict accelerators are deliberately Alt-only: bare letters remain
+/// available for normal typing and cannot resolve a conflict accidentally.
+pub fn conflictShortcut(sym: u32, alt: bool, can_merge: bool) ?ConflictAction {
+    if (!alt) return null;
+    return switch (sym) {
+        c.XKB_KEY_s, c.XKB_KEY_S => .skip,
+        c.XKB_KEY_m, c.XKB_KEY_M => if (can_merge) .merge else null,
+        c.XKB_KEY_r, c.XKB_KEY_R => .rename,
+        c.XKB_KEY_c, c.XKB_KEY_C => .cancel,
+        else => null,
+    };
+}
+
 pub fn closeDialog(self: *App) void {
     self.text_dragging = false;
     _ = self.dialog_surface.pointerMotion(null);
@@ -525,19 +538,11 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
         return;
     }
     if (dlg.kind == .conflict) {
-        if ((sym == c.XKB_KEY_m or sym == c.XKB_KEY_M) and self.managerConflictCanMerge()) {
-            self.resolveConflictDialog(.merge);
-            return;
-        } else if (sym == c.XKB_KEY_s or sym == c.XKB_KEY_S) {
-            self.resolveConflictDialog(.skip);
-            return;
-        } else if (sym == c.XKB_KEY_r or sym == c.XKB_KEY_R) {
-            self.resolveConflictDialog(.rename);
-            return;
-        } else if (sym == c.XKB_KEY_c or sym == c.XKB_KEY_C or sym == c.XKB_KEY_Escape) {
-            self.resolveConflictDialog(.cancel);
+        if (conflictShortcut(sym, self.alt, self.managerConflictCanMerge())) |action| {
+            self.resolveConflictDialog(action);
             return;
         }
+        if (sym == c.XKB_KEY_Escape) self.resolveConflictDialog(.cancel);
         return;
     }
 

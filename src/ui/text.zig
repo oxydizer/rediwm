@@ -393,6 +393,7 @@ pub const verticalMetrics = text_draw.verticalMetrics;
 pub const lineHeight = text_draw.lineHeight;
 pub const draw = text_draw.draw;
 pub const DrawOptions = text_draw.DrawOptions;
+pub const Accelerator = text_draw.Accelerator;
 pub const drawOpts = text_draw.drawOpts;
 pub const inkBaseline = text_draw.inkBaseline;
 

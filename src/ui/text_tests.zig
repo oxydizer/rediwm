@@ -81,6 +81,40 @@ test "text retains grayscale coverage and premultiplied opacity at output scales
     }
 }
 
+test "accelerator underline follows its shaped cluster and uses the supplied color" {
+    setPreferredFamilies("", "");
+    const width: i32 = 120;
+    const height: i32 = 40;
+    const count: usize = @intCast(width * height);
+    const plain = try std.testing.allocator.alloc(u32, count);
+    defer std.testing.allocator.free(plain);
+    const marked = try std.testing.allocator.alloc(u32, count);
+    defer std.testing.allocator.free(marked);
+    @memset(plain, 0);
+    @memset(marked, 0);
+
+    const rect: Rect = .{ .x = 4, .y = 0, .w = 110, .h = 40 };
+    const ink: Color = .{ .r = 1, .g = 1, .b = 1, .a = 1 };
+    const accent: Color = .{ .r = 1, .g = 0, .b = 0, .a = 1 };
+    try drawOpts(plain, width, height, "Merge", ink, 1, .manrope, 16, .{ .rect = rect });
+    try drawOpts(marked, width, height, "Merge", ink, 1, .manrope, 16, .{
+        .rect = rect,
+        .accelerator = .{ .byte_offset = 1, .color = accent },
+    });
+
+    var found_accent_pixel = false;
+    for (marked) |pixel| {
+        const red = (pixel >> 16) & 255;
+        const green = (pixel >> 8) & 255;
+        const blue = pixel & 255;
+        if (red > 0 and green == 0 and blue == 0) {
+            found_accent_pixel = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_accent_pixel);
+}
+
 test "italic glyphs have separate cached rasters and leave upright faces unchanged" {
     setPreferredFamilies("", "");
     const color: Color = .{ .r = 1, .g = 1, .b = 1, .a = 1 };

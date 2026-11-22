@@ -20,6 +20,7 @@ const glyphBitmap = text.glyphBitmap;
 const snap26_6 = text.snap26_6;
 const blendBitmap = text.blendBitmap;
 const blendColorBitmap = text.blendColorBitmap;
+const blendPixel = text.blendPixel;
 const devicePixels = text.devicePixels;
 
 /// Prepare common UI glyphs without drawing. Call on the compositor thread:
@@ -181,6 +182,13 @@ pub const DrawOptions = struct {
     /// `rect`: for callers that place text by baseline (the Cairo clients,
     /// through ui/cairo.zig).
     baseline: ?i32 = null,
+    /// Underline the shaped glyph cluster at this UTF-8 byte offset.
+    accelerator: ?Accelerator = null,
+};
+
+pub const Accelerator = struct {
+    byte_offset: usize,
+    color: Color,
 };
 
 pub fn drawOpts(
@@ -245,7 +253,19 @@ pub fn drawOpts(
     if (options.baseline) |row| baseline = row * 64;
     var pen_x = x0 * 64;
     var pen_y = baseline;
+    var accelerator_left: ?i32 = null;
+    var accelerator_right: i32 = 0;
     for (run.glyphs) |glyph| {
+        if (options.accelerator) |accelerator| {
+            if (accelerator.byte_offset <= std.math.maxInt(u32) and
+                glyph.cluster == @as(u32, @intCast(accelerator.byte_offset)))
+            {
+                const glyph_left = @min(pen_x, pen_x + glyph.x_advance);
+                const glyph_right = @max(pen_x, pen_x + glyph.x_advance);
+                accelerator_left = if (accelerator_left) |left| @min(left, glyph_left) else glyph_left;
+                accelerator_right = @max(accelerator_right, glyph_right);
+            }
+        }
         const face = ensureLoaded(glyph.face) catch {
             pen_x += glyph.x_advance;
             pen_y += glyph.y_advance;
@@ -271,6 +291,25 @@ pub fn drawOpts(
         }
         pen_x += glyph.x_advance;
         pen_y += glyph.y_advance;
+    }
+
+    // Use the shaped cluster's pen advance rather than measuring a prefix:
+    // this stays aligned with kerning, fallback faces and fractional advances.
+    if (options.accelerator) |accelerator| {
+        if (accelerator_left) |left| {
+            const line_left = @max(clip_x0, @max(0, snap26_6(left)));
+            const line_right = @min(clip_x1, @min(width, snap26_6(accelerator_right)));
+            const line_y = snap26_6(baseline + 64);
+            const thickness = @max(1, devicePixels(1, scale));
+            const line_bottom = @min(clip_y1, line_y + thickness);
+            var py = @max(clip_y0, line_y);
+            while (py < line_bottom) : (py += 1) {
+                var px = line_left;
+                while (px < line_right) : (px += 1) {
+                    blendPixel(&pixels[@intCast(py * width + px)], accelerator.color, 1);
+                }
+            }
+        }
     }
 }
 
