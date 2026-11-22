@@ -10,102 +10,18 @@ const chrome = @import("chrome.zig");
 const window_chrome = @import("ui").window_chrome;
 const Rect = button.Rect;
 
-pub const Tab = struct { id: u64, title: []const u8, active: bool, attention: bool };
-pub const Strip = struct {
-    tabs: []const Tab = &.{},
-    first: usize = 0,
-    hover: u64 = 0,
-    notice: @import("window_tabs.zig").Notice = .none,
-};
-pub const Hit = union(enum) { none, tab: u64, close: u64, plus, previous, next };
-pub fn key(target: Hit) u64 {
-    return switch (target) {
-        .none => 0,
-        .tab => |id| id * 4,
-        .close => |id| id * 4 + 1,
-        .plus => 1,
-        .previous => 2,
-        .next => 3,
-    };
-}
-pub const Geometry = struct {
-    x: f32,
-    y: f32,
-    height: f32,
-    width: f32,
-    first: usize,
-    count: usize,
-    plus: Rect,
-    previous: ?Rect,
-    next: ?Rect,
-    pub fn tab(g: Geometry, i: usize) Rect {
-        return .{ .x = g.x + @as(f32, @floatFromInt(i)) * (g.width + 4), .y = g.y, .w = g.width, .h = g.height };
-    }
-    pub fn close(g: Geometry, i: usize) Rect {
-        const r = g.tab(i);
-        const size = @min(22, g.height - 4);
-        return .{ .x = r.x + r.w - size - 3, .y = r.y + (r.h - size) / 2, .w = size, .h = size };
-    }
-};
-
-pub fn geometry(width: i32, density: f32, strip: Strip) Geometry {
-    const height: f32 = @floatFromInt((chrome.Metrics{ .density = density }).titlebarHeight());
-    const h = @max(18, height - 12 * density);
-    const right = @as(f32, @floatFromInt(chrome.controlRectScaled(width, .minimize, density).x)) - 10 * density;
-    var left: f32 = 8 * density;
-    const plus_size = @min(26 * density, h);
-    const available = @max(0, right - left - plus_size - 8);
-    if (available < 50 * density) return .{ .x = left, .y = (height - h) / 2, .height = h, .width = 0, .first = 0, .count = 0, .plus = .{ .x = left, .y = (height - plus_size) / 2, .w = @max(0, @min(plus_size, right - left)), .h = plus_size }, .previous = null, .next = null };
-    const overflow = @as(f32, @floatFromInt(strip.tabs.len)) * (85 * density + 4) > available;
-    const arrow_size = if (overflow) @min(22 * density, h) else 0;
-    const space = @max(1, available - 2 * arrow_size);
-    const count = @min(strip.tabs.len, @max(1, @as(usize, @intFromFloat(@floor(space / @max(1, 85 * density + 4))))));
-    const first = @min(strip.first, strip.tabs.len -| count);
-    const tab_width = @max(1, @min(170 * density, space / @as(f32, @floatFromInt(@max(1, count))) - 4));
-    const y = (height - h) / 2;
-    const previous: ?Rect = if (overflow) .{ .x = left, .y = y, .w = arrow_size, .h = h } else null;
-    left += arrow_size;
-    const end = left + @as(f32, @floatFromInt(count)) * (tab_width + 4);
-    return .{ .x = left, .y = y, .height = h, .width = tab_width, .first = first, .count = count, .previous = previous, .next = if (overflow) .{ .x = end, .y = y, .w = arrow_size, .h = h } else null, .plus = .{ .x = end + arrow_size, .y = (height - plus_size) / 2, .w = plus_size, .h = plus_size } };
-}
-fn contains(r: Rect, x: f64, y: f64) bool {
-    return x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h;
-}
-pub fn hit(width: i32, density: f32, strip: Strip, x: f64, y: f64) Hit {
-    if (strip.tabs.len == 0) return .none;
-    const g = geometry(width, density, strip);
-    if (contains(g.plus, x, y)) return .plus;
-    if (g.previous) |r| if (contains(r, x, y)) return .previous;
-    if (g.next) |r| if (contains(r, x, y)) return .next;
-    for (strip.tabs[g.first..][0..g.count], 0..) |t, i| {
-        if (contains(g.close(i), x, y)) return .{ .close = t.id };
-        if (contains(g.tab(i), x, y)) return .{ .tab = t.id };
-    }
-    return .none;
-}
-
-pub fn hash(strip: Strip) u64 {
-    return hashImpl(strip, true);
-}
-pub fn layoutHash(strip: Strip) u64 {
-    return hashImpl(strip, false);
-}
-fn hashImpl(strip: Strip, include_titles: bool) u64 {
-    if (strip.tabs.len == 0) return 0;
-    var h = std.hash.Wyhash.init(0);
-    h.update(std.mem.asBytes(&strip.first));
-    h.update(std.mem.asBytes(&strip.hover));
-    h.update(std.mem.asBytes(&strip.notice));
-    for (strip.tabs) |t| {
-        h.update(std.mem.asBytes(&t.id));
-        if (include_titles) h.update(t.title);
-        h.update(std.mem.asBytes(&t.active));
-        h.update(std.mem.asBytes(&t.attention));
-    }
-    // The shared painter's palette is independent of the chrome palette.
-    inline for (.{ "taskbar_surface", "taskbar_hover", "taskbar_border", "surface_hover", "danger", "window_fg", "radius", "taskbar_title_size", "chrome_round_buttons" }) |field| h.update(std.mem.asBytes(&@field(theme.global, field)));
-    return h.final();
-}
+const title_tabs = @import("ui").widgets.title_tabs;
+// The model, geometry, hit testing and hashing live in the shared toolkit
+// (`ui/widgets/title_tabs.zig`); this file keeps the compositor's painter.
+pub const Tab = title_tabs.Tab;
+pub const Strip = title_tabs.Strip;
+pub const Hit = title_tabs.Hit;
+pub const key = title_tabs.key;
+pub const Geometry = title_tabs.Geometry;
+pub const geometry = title_tabs.geometry;
+pub const hit = title_tabs.hit;
+pub const hash = title_tabs.hash;
+pub const layoutHash = title_tabs.layoutHash;
 
 pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_width: i32, density: f32, scale: f32, strip: Strip, icon: ?icon_service.Entry, clip: ?chrome.Rect) void {
     if (strip.tabs.len == 0) return;
