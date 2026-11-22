@@ -191,6 +191,7 @@ fn inspectEntry(allocator: Allocator, dir_fd: c_int, name_z: [*:0]const u8) !Rec
         .size = @intCast(@max(stat.st_size, 0)),
         .mode = @intCast(stat.st_mode),
         .device_id = @intCast(stat.st_dev),
+        .inode_id = @intCast(stat.st_ino),
     };
     const file_type = stat.st_mode & c.S_IFMT;
     if (file_type == c.S_IFDIR) {

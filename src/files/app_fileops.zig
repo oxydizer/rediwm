@@ -240,6 +240,7 @@ fn startManagerFileCopy(
                 .size = @intCast(@max(source_stat.st_size, 0)),
                 .mode = @intCast(source_stat.st_mode),
                 .device_id = @intCast(source_stat.st_dev),
+                .inode_id = @intCast(source_stat.st_ino),
             },
             .symlink_target = symlink_target,
         });
@@ -358,6 +359,7 @@ fn startManagerFileMove(
                 .size = @intCast(@max(source_stat.st_size, 0)),
                 .mode = @intCast(source_stat.st_mode),
                 .device_id = @intCast(source_stat.st_dev),
+                .inode_id = @intCast(source_stat.st_ino),
             },
             .same_filesystem = source_stat.st_dev == destination_stat.st_dev,
             .symlink_target = symlink_target,
@@ -493,6 +495,7 @@ fn startManagerDirectoryTransfer(
             .metadata = .{
                 .mode = @intCast(source_stat.st_mode),
                 .device_id = @intCast(source_stat.st_dev),
+                .inode_id = @intCast(source_stat.st_ino),
             },
         });
     }

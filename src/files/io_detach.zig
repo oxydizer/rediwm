@@ -1,8 +1,9 @@
 //! Removes a successfully transferred source entry for the Files I/O executor.
 //!
-//! The input payload contains an entry-kind tag followed by one
-//! NUL-terminated absolute source path. Directories are removed non-recursively;
-//! regular files and symlinks use unlinkat without following the final entry.
+//! The input payload contains an entry-kind tag, source device/inode identity,
+//! and one NUL-terminated absolute source path. Directories are removed
+//! non-recursively; regular files and symlinks use unlinkat without following
+//! the final entry.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
@@ -20,21 +21,26 @@ pub fn makeInput(
     allocator: Allocator,
     source_path: []const u8,
     kind: io_tree.EntryKind,
+    metadata: io_tree.Metadata,
 ) !executor.OwnedPayload {
     if (source_path.len == 0 or source_path[0] != '/')
         return error.InvalidPath;
     if (std.mem.indexOfScalar(u8, source_path, 0) != null)
         return error.InvalidPath;
 
+    const device_id = metadata.device_id orelse return error.MissingSourceIdentity;
+    const inode_id = metadata.inode_id orelse return error.MissingSourceIdentity;
     const kind_tag: u8 = switch (kind) {
         .directory => 1,
         .regular_file => 2,
         .symlink => 3,
         .other => return error.UnsupportedEntryKind,
     };
-    const bytes = try allocator.alloc(u8, source_path.len + 2);
+    const bytes = try allocator.alloc(u8, source_path.len + 18);
     bytes[0] = kind_tag;
-    @memcpy(bytes[1 .. source_path.len + 1], source_path);
+    std.mem.writeInt(u64, bytes[1..9], device_id, .little);
+    std.mem.writeInt(u64, bytes[9..17], inode_id, .little);
+    @memcpy(bytes[17 .. source_path.len + 17], source_path);
     bytes[bytes.len - 1] = 0;
     return .{ .allocator = allocator, .bytes = bytes };
 }
@@ -42,11 +48,13 @@ pub fn makeInput(
 const ParsedInput = struct {
     path: []const u8,
     kind: io_tree.EntryKind,
+    device_id: u64,
+    inode_id: u64,
 };
 
 fn parseInput(input: *const executor.OwnedPayload) !ParsedInput {
     const bytes = input.slice();
-    if (bytes.len < 3 or bytes[bytes.len - 1] != 0)
+    if (bytes.len < 19 or bytes[bytes.len - 1] != 0)
         return error.InvalidInput;
     const kind: io_tree.EntryKind = switch (bytes[0]) {
         1 => .directory,
@@ -54,10 +62,15 @@ fn parseInput(input: *const executor.OwnedPayload) !ParsedInput {
         3 => .symlink,
         else => return error.InvalidInput,
     };
-    const path = bytes[1 .. bytes.len - 1];
+    const path = bytes[17 .. bytes.len - 1];
     if (path[0] != '/' or std.mem.indexOfScalar(u8, path, 0) != null)
         return error.InvalidInput;
-    return .{ .path = path, .kind = kind };
+    return .{
+        .path = path,
+        .kind = kind,
+        .device_id = std.mem.readInt(u64, bytes[1..9], .little),
+        .inode_id = std.mem.readInt(u64, bytes[9..17], .little),
+    };
 }
 
 /// Remove one source entry without following its final path component.
@@ -106,6 +119,11 @@ pub fn execute(
         else => .other,
     };
     if (actual_kind != parsed.kind) return completion(item, .failed);
+    if (@as(u64, @intCast(source_stat.st_dev)) != parsed.device_id or
+        @as(u64, @intCast(source_stat.st_ino)) != parsed.inode_id)
+    {
+        return completion(item, .failed);
+    }
 
     const flags: c_int = if (parsed.kind == .directory) c.AT_REMOVEDIR else 0;
     if (c.unlinkat(parent_fd, name_z, flags) != 0)

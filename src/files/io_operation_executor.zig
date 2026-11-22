@@ -253,7 +253,12 @@ fn prepare(
                 details.entry_id,
             );
             defer context.allocator.free(source);
-            break :blk try io_detach.makeInput(context.allocator, source, entry.kind);
+            break :blk try io_detach.makeInput(
+                context.allocator,
+                source,
+                entry.kind,
+                entry.metadata,
+            );
         },
         .create_directory, .copy_file => blk: {
             const destination = try context.manager.destinationPath(

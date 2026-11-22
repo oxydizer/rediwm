@@ -86,6 +86,20 @@ fn readFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return allocator.dupe(u8, buffer[0..@intCast(count)]);
 }
 
+fn metadataForPath(path: []const u8) !io_tree.Metadata {
+    const allocator = std.testing.allocator;
+    const zpath = try allocZ(allocator, path);
+    defer allocator.free(zpath);
+    var stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(zpath, &stat));
+    return .{
+        .size = @intCast(@max(stat.st_size, 0)),
+        .mode = @intCast(stat.st_mode),
+        .device_id = @intCast(stat.st_dev),
+        .inode_id = @intCast(stat.st_ino),
+    };
+}
+
 fn cleanup(path: []const u8, directory: bool) void {
     const zpath = allocZ(std.heap.page_allocator, path) catch return;
     defer std.heap.page_allocator.free(zpath);
@@ -927,13 +941,19 @@ test "Manager Runtime merges an existing directory before detaching its source" 
     var manager = io_manager.Manager.init(allocator);
     defer manager.deinit();
     const job = try manager.createJob(null);
-    const root = try manager.addTreeRoot(job, "source-dir", .directory, .{}, null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source-dir",
+        .directory,
+        try metadataForPath(source),
+        null,
+    );
     const child = try manager.addTreeEntry(
         job,
         root,
         "new.txt",
         .regular_file,
-        .{ .size = "new source payload".len },
+        try metadataForPath(source_file),
         null,
     );
     try manager.setRootSourcePath(job, root, source);
@@ -1091,14 +1111,14 @@ test "Manager Runtime moves regular files and symlinks with native rename" {
         job,
         "payload.bin",
         .regular_file,
-        .{},
+        try metadataForPath(source_file),
         null,
     );
     const link_root = try manager.addTreeRoot(
         job,
         "shortcut",
         .symlink,
-        .{},
+        try metadataForPath(source_link),
         "../literal-target",
     );
     try manager.setRootSourcePath(job, file_root, source_file);
@@ -1194,14 +1214,14 @@ test "Manager Runtime falls back to copy-and-detach after a real EXDEV rename" {
         job,
         "payload.bin",
         .regular_file,
-        .{},
+        try metadataForPath(source_file),
         null,
     );
     const link_root = try manager.addTreeRoot(
         job,
         "shortcut",
         .symlink,
-        .{},
+        try metadataForPath(source_link),
         "../literal-target",
     );
     try manager.setRootSourcePath(job, file_root, source_file);
@@ -1427,7 +1447,13 @@ test "Manager Runtime removes an emptied source directory" {
     var manager = io_manager.Manager.init(allocator);
     defer manager.deinit();
     const job = try manager.createJob(null);
-    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        try metadataForPath(source),
+        null,
+    );
     try manager.setRootSourcePath(job, root, source);
     try manager.setDestinationDirectory(job, destination_base);
     _ = try manager.addEntryOperation(job, root, .create_directory);
@@ -1490,7 +1516,13 @@ test "Manager Runtime refuses to remove a non-empty source directory" {
     var manager = io_manager.Manager.init(allocator);
     defer manager.deinit();
     const job = try manager.createJob(null);
-    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        try metadataForPath(source),
+        null,
+    );
     try manager.setRootSourcePath(job, root, source);
     try manager.setDestinationDirectory(job, destination_base);
     _ = try manager.addEntryOperation(job, root, .create_directory);
@@ -1566,14 +1598,14 @@ test "Manager Runtime copies and detaches file and symlink roots" {
         job,
         "payload.bin",
         .regular_file,
-        .{},
+        try metadataForPath(source_file),
         null,
     );
     const link_root = try manager.addTreeRoot(
         job,
         "shortcut",
         .symlink,
-        .{},
+        try metadataForPath(source_link),
         "../literal-target",
     );
     try manager.setRootSourcePath(job, file_root, source_file);
@@ -1620,13 +1652,15 @@ test "Manager Runtime copies and detaches file and symlink roots" {
     try std.testing.expectEqualStrings("../literal-target", copied_target);
 }
 
-test "Manager Runtime preserves a source whose type changes before detach" {
+test "Manager Runtime preserves a same-type source replacement before detach" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
     const temp = try makeTempDir(&temp_buffer);
 
     const source = try join(allocator, temp, "payload.bin");
     defer allocator.free(source);
+    const original_source = try join(allocator, temp, "original-payload.bin");
+    defer allocator.free(original_source);
     const destination_base = try join(allocator, temp, "destination");
     defer allocator.free(destination_base);
     const destination = try join(allocator, destination_base, "payload.bin");
@@ -1634,6 +1668,7 @@ test "Manager Runtime preserves a source whose type changes before detach" {
     defer {
         cleanup(destination, false);
         cleanup(destination_base, true);
+        cleanup(original_source, false);
         cleanup(source, false);
         cleanup(temp, true);
     }
@@ -1648,7 +1683,7 @@ test "Manager Runtime preserves a source whose type changes before detach" {
         job,
         "payload.bin",
         .regular_file,
-        .{},
+        try metadataForPath(source),
         null,
     );
     try manager.setRootSourcePath(job, root, source);
@@ -1666,11 +1701,14 @@ test "Manager Runtime preserves a source whose type changes before detach" {
         try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
     }
 
-    // Replace the copied regular file with a symlink before source detach.
+    // Keep the original inode alive while replacing its pathname with a
+    // different regular file.
     const source_z = try allocZ(allocator, source);
     defer allocator.free(source_z);
-    try std.testing.expectEqual(@as(c_int, 0), c.unlink(source_z));
-    try makeSymlink("../replacement-target", source);
+    const original_source_z = try allocZ(allocator, original_source);
+    defer allocator.free(original_source_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.rename(source_z, original_source_z));
+    try writeFile(source, "replacement source contents");
 
     try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
     try waitForOne(&runtime);
@@ -1691,10 +1729,14 @@ test "Manager Runtime preserves a source whose type changes before detach" {
 
     var source_stat: c.struct_stat = undefined;
     try std.testing.expectEqual(@as(c_int, 0), c.lstat(source_z, &source_stat));
-    try std.testing.expect((source_stat.st_mode & c.S_IFMT) == c.S_IFLNK);
-    const replacement_target = try readLink(allocator, source);
-    defer allocator.free(replacement_target);
-    try std.testing.expectEqualStrings("../replacement-target", replacement_target);
+    try std.testing.expect((source_stat.st_mode & c.S_IFMT) == c.S_IFREG);
+    const replacement_contents = try readFile(allocator, source);
+    defer allocator.free(replacement_contents);
+    try std.testing.expectEqualStrings("replacement source contents", replacement_contents);
+
+    const original_contents = try readFile(allocator, original_source);
+    defer allocator.free(original_contents);
+    try std.testing.expectEqualStrings("published destination contents", original_contents);
 
     const copied_contents = try readFile(allocator, destination);
     defer allocator.free(copied_contents);
