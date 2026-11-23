@@ -47,6 +47,13 @@ fn requestArchiveCancellation(context: *Context) void {
     }
 }
 
+/// The archive worker has returned before its completion callback runs, so
+/// its cancellation handle is no longer needed and can be reclaimed.
+fn releaseArchiveCancellation(context: *Context, job_id: io_manager.JobId) void {
+    const entry = context.archive_cancellations.fetchRemove(job_id) orelse return;
+    context.allocator.destroy(entry.value);
+}
+
 pub const Runtime = struct {
     allocator: Allocator,
     context: *Context,
@@ -124,6 +131,19 @@ pub const Runtime = struct {
 
     pub fn drainCompletionsWithStats(self: *Runtime) !io_executor.DrainStats {
         return self.executor.drainCompletionsWithStats(self.context.manager);
+    }
+
+    /// Includes executor work plus Runtime-owned archive resources. A staging
+    /// lease blocks Job retirement until it is discarded or transferred.
+    pub fn isJobQuiescent(self: *const Runtime, job_id: io_manager.JobId) bool {
+        if (!self.executor.isJobQuiescent(job_id)) return false;
+        if (self.context.archive_cancellations.contains(job_id)) return false;
+
+        var staging_iter = self.context.archive_staging.keyIterator();
+        while (staging_iter.next()) |key| {
+            if (key.job_id == job_id) return false;
+        }
+        return true;
     }
 
     /// Enables per-unit timing collection. Strategy and byte counters are
@@ -717,6 +737,7 @@ fn complete(
     const context: *Context = @ptrCast(@alignCast(raw_context.?));
     if (operation_kind) |kind| {
         if (kind == .archive_extract or kind == .archive_member_extract) {
+            releaseArchiveCancellation(context, token.job_id);
             if (outcome == .waiting) {
                 const payload = result orelse {
                     context.manager.failWaiting(token.job_id, token.operation_id) catch {};
@@ -924,4 +945,24 @@ test "archive shutdown requests cancellation for every active extraction" {
 
     try std.testing.expect(first.load(.acquire));
     try std.testing.expect(second.load(.acquire));
+}
+
+test "archive completion releases its cancellation handle" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    var context: Context = .{
+        .allocator = allocator,
+        .manager = &manager,
+    };
+    defer context.archive_cancellations.deinit(allocator);
+
+    const cancel = try allocator.create(archive.Cancel);
+    cancel.* = .init(false);
+    try context.archive_cancellations.put(allocator, 42, cancel);
+
+    releaseArchiveCancellation(&context, 42);
+
+    try std.testing.expect(!context.archive_cancellations.contains(42));
 }

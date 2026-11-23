@@ -13,6 +13,7 @@ pub const Runtime = struct {
     manager: io_manager.Manager,
     discovery_executor: ?io_discovery_executor.Executor = null,
     operation_executor: ?io_operation_executor.Runtime = null,
+    retirement_requests: std.AutoHashMapUnmanaged(io_manager.JobId, void) = .empty,
 
     pub fn init(allocator: Allocator) Runtime {
         return .{
@@ -25,8 +26,41 @@ pub const Runtime = struct {
         // Stop long-running archive work before joining either worker pool.
         if (self.operation_executor) |*executor| executor.deinit();
         if (self.discovery_executor) |*executor| executor.deinit();
+        self.retirement_requests.deinit(self.allocator);
         self.manager.deinit();
         self.* = undefined;
+    }
+
+    /// Records App acknowledgement that a terminal Job has been detached.
+    /// Repeated requests are harmless; reclamation is coordinated separately.
+    pub fn requestJobRetirement(self: *Runtime, job_id: io_manager.JobId) !void {
+        const state = self.manager.jobState(job_id) orelse return error.UnknownJob;
+        if (!state.isTerminal()) return error.JobNotTerminal;
+
+        if (!self.retirement_requests.contains(job_id)) {
+            try self.retirement_requests.ensureUnusedCapacity(self.allocator, 1);
+            self.retirement_requests.putAssumeCapacity(job_id, {});
+        }
+    }
+
+    /// A requested Job is ready only after both executors and all
+    /// Runtime-owned archive resources have released their references.
+    /// Manager-side queues are safe to ignore because the Job is terminal.
+    pub fn isJobRetirementReady(
+        self: *const Runtime,
+        job_id: io_manager.JobId,
+    ) bool {
+        if (!self.retirement_requests.contains(job_id)) return false;
+        const state = self.manager.jobState(job_id) orelse return false;
+        if (!state.isTerminal()) return false;
+
+        if (self.operation_executor) |*executor| {
+            if (!executor.isJobQuiescent(job_id)) return false;
+        }
+        if (self.discovery_executor) |*executor| {
+            if (!executor.isJobQuiescent(job_id)) return false;
+        }
+        return true;
     }
 
     /// Cancels a Job across the Manager and both executor-owned resource sets.
@@ -91,4 +125,29 @@ test "I/O runtime owns and tears down both executors" {
 
     try std.testing.expect(runtime.discovery_executor != null);
     try std.testing.expect(runtime.operation_executor != null);
+}
+
+test "I/O runtime retirement requests require terminal jobs and both executors to quiesce" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+
+    const job_id = try runtime.manager.createJob(null);
+    try std.testing.expectError(
+        error.JobNotTerminal,
+        runtime.requestJobRetirement(job_id),
+    );
+    try std.testing.expect(!runtime.isJobRetirementReady(job_id));
+    try std.testing.expectError(
+        error.UnknownJob,
+        runtime.requestJobRetirement(job_id + 100),
+    );
+
+    try runtime.manager.queueJob(job_id);
+    _ = try runtime.ensureDiscoveryExecutor();
+    _ = try runtime.ensureOperationExecutor();
+
+    try runtime.requestJobRetirement(job_id);
+    try runtime.requestJobRetirement(job_id);
+    try std.testing.expect(runtime.isJobRetirementReady(job_id));
+    try std.testing.expect(!runtime.isJobRetirementReady(job_id + 100));
 }
