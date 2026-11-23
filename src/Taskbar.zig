@@ -178,7 +178,9 @@ hover_target: Target = .none,
 // after a delay (`reveal_timer` armed for `timer_target`). `reveal` runs 0
 // (away) to 1 and drives the fade and slide; `parked` is hidden and settled,
 // so the tree is disabled and no frames are scheduled. See taskbar/reveal.zig.
-reveal: Anim = .{},
+// It starts in place: a bar that never hides must not fade in on its first
+// frame (`relayout` sends an auto-hiding one away).
+reveal: Anim = .{ .from = 1, .to = 1, .property = .opacity },
 shown: bool = false,
 pointer_near: bool = false,
 parked: bool = false,
@@ -327,6 +329,7 @@ pub fn destroy(bar: *Taskbar) void {
     bar.server.input.detachTaskbar(bar);
     bar.timer.remove();
     if (bar.blink_timer) |timer| timer.remove();
+    if (bar.reveal_timer) |timer| timer.remove();
     if (bar.clock_locale) |locale| c_time.freelocale(locale);
     if (bar.start_logo) |e| bar.server.iconRelease(e.id);
     for (bar.chips.items) |chip| {
