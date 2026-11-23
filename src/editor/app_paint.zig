@@ -257,7 +257,7 @@ fn paintStrip(self: *App, cr: *c.cairo_t) void {
 pub fn render(self: *App, cr: *c.cairo_t) void {
     const t = theme.global;
     fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), t.app_bg);
-    if (!self.strip_in_titlebar) self.paintStrip(cr);
+    if (!self.strip_in_titlebar) paintStrip(self, cr);
     if (self.find_open) self.paintSearch(cr);
     self.layouts.beginFrame();
     const pt = self.port();
