@@ -270,6 +270,7 @@ const Operation = struct {
     kind: OperationKind,
     entry_id: ?io_tree.EntryId = null,
     discovery_gate: bool = false,
+    population_accounted: bool = false,
     destination_override: ?[]u8 = null,
     archive_request: ?OwnedArchiveOperationRequest = null,
     merge_existing_directory: bool = false,
@@ -377,6 +378,7 @@ const Job = struct {
     discovery_schedule: std.AutoHashMapUnmanaged(io_tree.EntryId, DiscoverySchedule) = .empty,
     skipped_subtrees: std.AutoHashMapUnmanaged(io_tree.EntryId, void) = .empty,
     discovery_pending_count: usize = 0,
+    outstanding_population_count: usize = 0,
     discovery_generation: u64 = 0,
     discovery_in_flight: ?DiscoveryToken = null,
     operations: std.ArrayList(Operation) = .empty,
@@ -1438,12 +1440,25 @@ pub const Manager = struct {
         if (!job.archive_publication_closed) return false;
         if (job.discovery_pending_count != 0 or job.discovery_in_flight != null)
             return false;
+        if (job.outstanding_population_count != 0) return false;
 
         for (job.operations.items) |operation| {
             if (operation.id == token.operation_id) continue;
             if (!operation.state.isTerminal()) return false;
         }
         return true;
+    }
+
+    /// Reports whether all destination-population operations and directory
+    /// discovery work have drained. Unknown jobs return null.
+    pub fn populationComplete(
+        self: *const Manager,
+        job_id: JobId,
+    ) ?bool {
+        const job = self.findJobConst(job_id) orelse return null;
+        return job.outstanding_population_count == 0 and
+            job.discovery_pending_count == 0 and
+            job.discovery_in_flight == null;
     }
 
     /// Completes the archive barrier only after publication registration,
@@ -1620,6 +1635,8 @@ pub const Manager = struct {
             .symlink => .copy_symlink,
             .other => unreachable,
         };
+        if (job.outstanding_population_count == std.math.maxInt(usize))
+            return error.PopulationCountExhausted;
 
         const operation_index = job.operations.items.len;
         try job.source_root_paths.ensureUnusedCapacity(self.allocator, 1);
@@ -1653,6 +1670,8 @@ pub const Manager = struct {
         const operation_id = try self.addOperationInternal(job, operation_kind);
         const registered_operation = &job.operations.items[operation_index];
         registered_operation.entry_id = root_id;
+        registered_operation.population_accounted = true;
+        job.outstanding_population_count += 1;
         job.entry_operation_indices.putAssumeCapacity(root_id, operation_index);
 
         if (request.kind == .directory) {
@@ -1742,6 +1761,12 @@ pub const Manager = struct {
         if (!valid_kind) {
             return error.InvalidEntryOperationKind;
         }
+        const accounts_population = isPopulationOperation(kind);
+        if (accounts_population and
+            job.outstanding_population_count == std.math.maxInt(usize))
+        {
+            return error.PopulationCountExhausted;
+        }
 
         var dependency_operation_index: ?usize = null;
         if (is_source_detach) {
@@ -1795,6 +1820,10 @@ pub const Manager = struct {
         dependency_indices = .empty;
         operation.entry_id = entry_id;
         operation.discovery_gate = is_source_detach and entry.kind == .directory;
+        if (accounts_population) {
+            operation.population_accounted = true;
+            job.outstanding_population_count += 1;
+        }
         if (is_source_detach) {
             job.source_detach_indices.putAssumeCapacity(entry_id, operation_index);
             if (operation.discovery_gate and job.state != .planning) {
@@ -2928,9 +2957,24 @@ pub const Manager = struct {
 
 fn transitionOperation(job: *Job, operation: *Operation, next_state: OperationState) void {
     if (operation.state == next_state) return;
+    if (operation.population_accounted and
+        !operation.state.isTerminal() and next_state.isTerminal())
+    {
+        std.debug.assert(job.outstanding_population_count != 0);
+        job.outstanding_population_count -= 1;
+        operation.population_accounted = false;
+    }
     job.operation_state_counts[@backingInt(operation.state)] -= 1;
     job.operation_state_counts[@backingInt(next_state)] += 1;
     operation.state = next_state;
+}
+
+fn isPopulationOperation(kind: OperationKind) bool {
+    return switch (kind) {
+        .create_directory, .copy_file, .copy_symlink, .move_entry => true,
+        .publish, .detach_source, .purge_source, .archive_extract,
+        .archive_member_extract => false,
+    };
 }
 
 fn findOperation(job: *Job, id: OperationId) ?*Operation {

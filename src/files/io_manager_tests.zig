@@ -756,6 +756,10 @@ test "failed archive publication waits for registered operations before failing"
             .kind = .regular_file,
         },
     );
+    try std.testing.expectEqual(
+        @as(?bool, false),
+        manager.populationComplete(job),
+    );
     const publication_operation = manager.entryOperationView(job, root).?;
     try std.testing.expectEqual(io_manager.OperationState.pending, publication_operation.state);
 
@@ -767,6 +771,10 @@ test "failed archive publication waits for registered operations before failing"
 
     const publication_token = manager.dispatchNext().?;
     try std.testing.expect(manager.completeWork(publication_token, .completed));
+    try std.testing.expectEqual(
+        @as(?bool, true),
+        manager.populationComplete(job),
+    );
     try std.testing.expectEqual(
         @as(?bool, true),
         manager.archivePublicationReady(archive_token),
@@ -3002,6 +3010,95 @@ test "failed or skipped cross-filesystem copies prevent source detach" {
     );
     try std.testing.expect(manager.dispatchNext() == null);
     try std.testing.expectEqual(io_manager.JobState.failed, manager.jobState(job).?);
+}
+
+test "population accounting survives yields and waiting retries" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "file", .regular_file, .{}, null);
+    const operation = try manager.addEntryOperation(job, root, .copy_file);
+
+    try std.testing.expectEqual(
+        @as(?bool, false),
+        manager.populationComplete(job),
+    );
+    try manager.queueJob(job);
+
+    const first = manager.dispatchNext().?;
+    try std.testing.expectEqual(operation, first.operation_id);
+    try std.testing.expect(manager.completeWork(first, .yielded));
+    try std.testing.expectEqual(
+        @as(?bool, false),
+        manager.populationComplete(job),
+    );
+
+    const second = manager.dispatchNext().?;
+    try std.testing.expectEqual(operation, second.operation_id);
+    try std.testing.expect(manager.completeWork(second, .waiting));
+    try std.testing.expectEqual(
+        @as(?bool, false),
+        manager.populationComplete(job),
+    );
+
+    try manager.resolveWaiting(job, operation);
+    const third = manager.dispatchNext().?;
+    try std.testing.expectEqual(operation, third.operation_id);
+    try std.testing.expect(manager.completeWork(third, .completed));
+    try std.testing.expectEqual(
+        @as(?bool, true),
+        manager.populationComplete(job),
+    );
+}
+
+test "population accounting retires failed and dependency-skipped entries" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    const child = try manager.addTreeEntry(
+        job,
+        root,
+        "child",
+        .regular_file,
+        .{},
+        null,
+    );
+    const root_operation = try manager.addEntryOperation(
+        job,
+        root,
+        .create_directory,
+    );
+    const child_operation = try manager.addEntryOperation(
+        job,
+        child,
+        .copy_file,
+    );
+
+    try std.testing.expectEqual(
+        @as(?bool, false),
+        manager.populationComplete(job),
+    );
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(root_operation, token.operation_id);
+    try std.testing.expect(manager.completeWork(token, .failed));
+
+    try std.testing.expectEqual(
+        io_manager.OperationState.skipped,
+        manager.operationState(job, child_operation).?,
+    );
+    try std.testing.expectEqual(
+        @as(?bool, true),
+        manager.populationComplete(job),
+    );
+    try std.testing.expectEqual(
+        io_manager.JobState.failed,
+        manager.jobState(job).?,
+    );
 }
 
 test "entry operations depend on their destination parent directory" {
