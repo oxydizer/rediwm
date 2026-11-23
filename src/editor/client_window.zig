@@ -17,6 +17,7 @@ pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Cl
         .global => |g| {
             const iface = std.mem.span(g.interface);
             self.cursor_shape.bind(registry, g.name, iface, g.version);
+            self.tabs.bind(registry, g.name, iface, g.version);
             if (std.mem.eql(u8, iface, "zwp_text_input_manager_v3")) self.ime.manager = registry.bind(g.name, @import("wayland").client.zwp.TextInputManagerV3, 1) catch null;
             if (std.mem.eql(u8, iface, "wl_data_device_manager")) self.clipboard.manager = registry.bind(g.name, wl.DataDeviceManager, @min(g.version, 3)) catch null;
             if (std.mem.eql(u8, iface, "wl_compositor")) {

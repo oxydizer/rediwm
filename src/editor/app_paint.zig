@@ -154,11 +154,17 @@ pub fn toggleMenu(self: *App, anchor: f64) void {
     self.dirty = true;
 }
 
+/// Opens the menu with its left edge at `left`, under the leading button of the
+/// compositor's titlebar.
+pub fn openMenuAt(self: *App, left: f64) void {
+    self.toggleMenu(left + menu.width);
+}
+
 pub fn menuBox(self: *const App) menu.Rect {
     const height = labels.len * menu.row_height + 2 * menu.padding + 2 * menu.separator_space;
     return .{
         .x = std.math.clamp(self.menu_anchor - menu.width, 6, @max(6, @as(f64, @floatFromInt(self.w)) - menu.width - 6)),
-        .y = @min(if (self.has_titlebar) @as(f64, 6) else top + 4, @max(6, @as(f64, @floatFromInt(self.h)) - height - 6)),
+        .y = @min(if (self.has_titlebar or self.strip_in_titlebar) @as(f64, 6) else top + 4, @max(6, @as(f64, @floatFromInt(self.h)) - height - 6)),
         .w = menu.width,
         .h = height,
     };
@@ -217,9 +223,9 @@ pub fn paintButton(self: *App, cr: *c.cairo_t, r: field.Rect, label: []const u8,
     });
 }
 
-pub fn render(self: *App, cr: *c.cairo_t) void {
+/// The window's own tab strip, for when the compositor does not draw the tabs.
+fn paintStrip(self: *App, cr: *c.cairo_t) void {
     const t = theme.global;
-    fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), t.app_bg);
     fill(cr, 0, 0, @floatFromInt(self.w), 38, t.app_bar);
     c.cairo_save(cr);
     c.cairo_rectangle(cr, 0, 0, self.tabRight(), 38);
@@ -246,6 +252,12 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     c.cairo_restore(cr);
     self.paintIcon(cr, self.newButtonBox(), .plus, tr("New tab"), false);
     if (!self.has_titlebar) self.paintIcon(cr, self.menuButtonBox(), .more, tr("Menu"), self.menu_open);
+}
+
+pub fn render(self: *App, cr: *c.cairo_t) void {
+    const t = theme.global;
+    fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), t.app_bg);
+    if (!self.strip_in_titlebar) self.paintStrip(cr);
     if (self.find_open) self.paintSearch(cr);
     self.layouts.beginFrame();
     const pt = self.port();

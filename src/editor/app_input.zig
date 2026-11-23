@@ -111,7 +111,7 @@ pub fn handleButton(self: *App, code: u32, pressed: bool) void {
         return;
     }
     if (self.py < 0) return;
-    if (self.py < top) {
+    if (self.py < self.topInset()) {
         if (!self.has_titlebar and self.menuButtonBox().contains(self.px, self.py)) {
             self.toggleMenu(@as(f64, @floatFromInt(self.w)) - 8);
             return;
