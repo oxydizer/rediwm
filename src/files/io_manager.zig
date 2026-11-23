@@ -109,6 +109,12 @@ const DiscoveryQueue = struct {
     }
 };
 
+const ReadyQueue = struct {
+    head: ?usize = null,
+    tail: ?usize = null,
+    count: usize = 0,
+};
+
 pub const JobState = enum {
     planning,
     queued,
@@ -293,6 +299,9 @@ const Operation = struct {
     dependency_indices: std.ArrayList(usize) = .empty,
     dependents: std.ArrayList(usize) = .empty,
     unresolved_dependencies: usize = 0,
+    ready_previous: ?usize = null,
+    ready_next: ?usize = null,
+    ready_queued: bool = false,
 
     fn deinit(self: *Operation, allocator: Allocator) void {
         if (self.destination_override) |path| allocator.free(path);
@@ -389,8 +398,7 @@ const Job = struct {
     operation_indices: std.AutoHashMapUnmanaged(OperationId, usize) = .empty,
     entry_operation_indices: std.AutoHashMapUnmanaged(io_tree.EntryId, usize) = .empty,
     source_detach_indices: std.AutoHashMapUnmanaged(io_tree.EntryId, usize) = .empty,
-    ready_queue: std.ArrayList(usize) = .empty,
-    ready_head: usize = 0,
+    ready_queues: [3]ReadyQueue = .{ .{}, .{}, .{} },
     ready_count: usize = 0,
     dependency_work_queue: std.ArrayList(usize) = .empty,
     operation_state_counts: [7]usize = .{ 0, 0, 0, 0, 0, 0, 0 },
@@ -409,7 +417,6 @@ const Job = struct {
         self.operation_indices.deinit(allocator);
         self.entry_operation_indices.deinit(allocator);
         self.source_detach_indices.deinit(allocator);
-        self.ready_queue.deinit(allocator);
         self.dependency_work_queue.deinit(allocator);
     }
 };
@@ -1422,10 +1429,6 @@ pub const Manager = struct {
             const operation_index = job.operations.items.len;
             try job.operations.ensureUnusedCapacity(self.allocator, 1);
             try job.operation_indices.ensureUnusedCapacity(self.allocator, 1);
-            try job.ready_queue.ensureTotalCapacity(
-                self.allocator,
-                operation_index + 1,
-            );
             try job.dependency_work_queue.ensureTotalCapacity(
                 self.allocator,
                 operation_index + 1,
@@ -1726,7 +1729,6 @@ pub const Manager = struct {
         try job.operations.ensureUnusedCapacity(self.allocator, 1);
         try job.operation_indices.ensureUnusedCapacity(self.allocator, 1);
         try job.entry_operation_indices.ensureUnusedCapacity(self.allocator, 1);
-        try job.ready_queue.ensureTotalCapacity(self.allocator, operation_index + 1);
         try job.dependency_work_queue.ensureTotalCapacity(
             self.allocator,
             operation_index + 1,
@@ -1790,10 +1792,6 @@ pub const Manager = struct {
             // Dynamic discovery can add operations after queueJob(). Keep
             // enough room for every operation to become ready, including
             // dependents released together by a completed parent.
-            try job.ready_queue.ensureTotalCapacity(
-                self.allocator,
-                index + 1,
-            );
             try job.dependency_work_queue.ensureTotalCapacity(
                 self.allocator,
                 index + 1,
@@ -1885,13 +1883,8 @@ pub const Manager = struct {
         if (dependency_operation_index) |dependency_index| {
             const dependency_operation = &job.operations.items[dependency_index];
             try dependency_operation.dependents.ensureUnusedCapacity(self.allocator, 1);
-            // When the parent completes, every pending dependent may become
-            // ready in one pass. Reserve for the full dependent set now,
-            // rather than relying on appendAssumeCapacity during completion.
-            try job.ready_queue.ensureUnusedCapacity(
-                self.allocator,
-                dependency_operation.dependents.items.len + 1,
-            );
+            // Reserve the parent link before inserting this operation, so
+            // dependency registration cannot allocate after insertion.
         }
 
         const operation_id = try self.addOperationInternal(job, kind);
@@ -2163,12 +2156,10 @@ pub const Manager = struct {
         try buildDependencyGraph(self.allocator, job);
         try validateAcyclic(self.allocator, job);
 
-        const operation_count = job.operations.items.len;
         var dependency_count: usize = 0;
         for (job.operations.items) |operation| {
             dependency_count += operation.dependency_indices.items.len;
         }
-        try job.ready_queue.ensureTotalCapacity(self.allocator, operation_count);
         try job.dependency_work_queue.ensureTotalCapacity(
             self.allocator,
             dependency_count,
@@ -2176,13 +2167,15 @@ pub const Manager = struct {
     }
 
     fn commitJobQueue(_: *Manager, job: *Job) void {
-        job.ready_queue.clearRetainingCapacity();
         job.dependency_work_queue.clearRetainingCapacity();
-        job.ready_head = 0;
+        job.ready_queues = .{ .{}, .{}, .{} };
         job.ready_count = 0;
         job.operation_state_counts = .{ 0, 0, 0, 0, 0, 0, 0 };
 
-        for (job.operations.items, 0..) |operation, index| {
+        for (job.operations.items, 0..) |*operation, index| {
+            operation.ready_previous = null;
+            operation.ready_next = null;
+            operation.ready_queued = false;
             job.operation_state_counts[@backingInt(operation.state)] += 1;
             if (operation.unresolved_dependencies == 0) {
                 enqueueReady(job, index);
@@ -2487,12 +2480,16 @@ pub const Manager = struct {
         keep_running: bool,
     ) void {
         for (job.operations.items) |*operation| {
-            if (keep_running and operation.state == .running) continue;
-            if (!operation.state.isTerminal())
+            if (!(keep_running and operation.state == .running) and
+                !operation.state.isTerminal())
+            {
                 transitionOperation(job, operation, .cancelled);
+            }
+            operation.ready_previous = null;
+            operation.ready_next = null;
+            operation.ready_queued = false;
         }
-        job.ready_queue.clearRetainingCapacity();
-        job.ready_head = 0;
+        job.ready_queues = .{ .{}, .{}, .{} };
         job.ready_count = 0;
         job.dependency_work_queue.clearRetainingCapacity();
 
@@ -3134,61 +3131,39 @@ fn findOperationIndex(job: *const Job, id: OperationId) ?usize {
 }
 
 fn enqueueReady(job: *Job, operation_index: usize) void {
-    if (job.ready_queue.items.len == job.ready_queue.capacity) {
-        const remaining = job.ready_queue.items.len - job.ready_head;
-        std.mem.copyForwards(
-            usize,
-            job.ready_queue.items[0..remaining],
-            job.ready_queue.items[job.ready_head..],
-        );
-        job.ready_queue.items.len = remaining;
-        job.ready_head = 0;
+    const operation = &job.operations.items[operation_index];
+    std.debug.assert(!operation.ready_queued);
+    const queue = &job.ready_queues[operationPriority(operation.kind)];
+
+    operation.ready_previous = queue.tail;
+    operation.ready_next = null;
+    if (queue.tail) |tail| {
+        job.operations.items[tail].ready_next = operation_index;
+    } else {
+        queue.head = operation_index;
     }
-    job.ready_queue.appendAssumeCapacity(operation_index);
+    queue.tail = operation_index;
+    queue.count += 1;
+    operation.ready_queued = true;
     job.ready_count += 1;
 }
 
 fn enqueueReadyFront(job: *Job, operation_index: usize) void {
-    if (job.ready_count == 0) {
-        job.ready_queue.appendAssumeCapacity(operation_index);
-        job.ready_head = 0;
-    } else if (job.ready_head > 0) {
-        job.ready_head -= 1;
-        job.ready_queue.items[job.ready_head] = operation_index;
+    const operation = &job.operations.items[operation_index];
+    std.debug.assert(!operation.ready_queued);
+    const queue = &job.ready_queues[operationPriority(operation.kind)];
+
+    operation.ready_previous = null;
+    operation.ready_next = queue.head;
+    if (queue.head) |head| {
+        job.operations.items[head].ready_previous = operation_index;
     } else {
-        const remaining = job.ready_queue.items.len;
-        job.ready_queue.appendAssumeCapacity(operation_index);
-        std.mem.copyBackwards(
-            usize,
-            job.ready_queue.items[1 .. remaining + 1],
-            job.ready_queue.items[0..remaining],
-        );
-        job.ready_queue.items[0] = operation_index;
+        queue.tail = operation_index;
     }
+    queue.head = operation_index;
+    queue.count += 1;
+    operation.ready_queued = true;
     job.ready_count += 1;
-}
-
-fn dequeueReady(job: *Job) ?usize {
-    if (job.ready_count == 0) return null;
-
-    const operation_index = job.ready_queue.items[job.ready_head];
-    job.ready_head += 1;
-    job.ready_count -= 1;
-
-    if (job.ready_count == 0) {
-        job.ready_queue.clearRetainingCapacity();
-        job.ready_head = 0;
-    } else if (job.ready_head >= 64 and job.ready_head * 2 >= job.ready_queue.items.len) {
-        const remaining = job.ready_queue.items.len - job.ready_head;
-        std.mem.copyForwards(
-            usize,
-            job.ready_queue.items[0..remaining],
-            job.ready_queue.items[job.ready_head..],
-        );
-        job.ready_queue.items.len = remaining;
-        job.ready_head = 0;
-    }
-    return operation_index;
 }
 
 fn operationPriority(kind: OperationKind) usize {
@@ -3199,52 +3174,41 @@ fn operationPriority(kind: OperationKind) usize {
     };
 }
 
-fn dequeueReadyPriority(job: *Job, priority: usize) ?usize {
-    if (job.ready_count == 0) return null;
-    var position = job.ready_head;
-    while (position < job.ready_queue.items.len) : (position += 1) {
-        const operation_index = job.ready_queue.items[position];
-        if (operationPriority(job.operations.items[operation_index].kind) != priority)
-            continue;
+fn unlinkReady(job: *Job, operation_index: usize) bool {
+    const operation = &job.operations.items[operation_index];
+    if (!operation.ready_queued) return false;
 
-        const remaining = job.ready_queue.items.len - position - 1;
-        std.mem.copyForwards(
-            usize,
-            job.ready_queue.items[position .. position + remaining],
-            job.ready_queue.items[position + 1 .. position + 1 + remaining],
-        );
-        job.ready_queue.items.len -= 1;
-        job.ready_count -= 1;
-        if (job.ready_count == 0) {
-            job.ready_queue.clearRetainingCapacity();
-            job.ready_head = 0;
-        }
-        return operation_index;
+    const queue = &job.ready_queues[operationPriority(operation.kind)];
+    if (operation.ready_previous) |previous| {
+        job.operations.items[previous].ready_next = operation.ready_next;
+    } else {
+        queue.head = operation.ready_next;
     }
-    return null;
+    if (operation.ready_next) |next| {
+        job.operations.items[next].ready_previous = operation.ready_previous;
+    } else {
+        queue.tail = operation.ready_previous;
+    }
+
+    operation.ready_previous = null;
+    operation.ready_next = null;
+    operation.ready_queued = false;
+    std.debug.assert(queue.count != 0 and job.ready_count != 0);
+    queue.count -= 1;
+    job.ready_count -= 1;
+    std.debug.assert((queue.count == 0) == (queue.head == null));
+    std.debug.assert((queue.count == 0) == (queue.tail == null));
+    return true;
+}
+
+fn dequeueReadyPriority(job: *Job, priority: usize) ?usize {
+    const operation_index = job.ready_queues[priority].head orelse return null;
+    std.debug.assert(unlinkReady(job, operation_index));
+    return operation_index;
 }
 
 fn dequeueReadyIndex(job: *Job, target: usize) bool {
-    if (job.ready_count == 0) return false;
-    var position = job.ready_head;
-    while (position < job.ready_queue.items.len) : (position += 1) {
-        if (job.ready_queue.items[position] != target) continue;
-
-        const remaining = job.ready_queue.items.len - position - 1;
-        std.mem.copyForwards(
-            usize,
-            job.ready_queue.items[position .. position + remaining],
-            job.ready_queue.items[position + 1 .. position + 1 + remaining],
-        );
-        job.ready_queue.items.len -= 1;
-        job.ready_count -= 1;
-        if (job.ready_count == 0) {
-            job.ready_queue.clearRetainingCapacity();
-            job.ready_head = 0;
-        }
-        return true;
-    }
-    return false;
+    return unlinkReady(job, target);
 }
 
 fn dependenciesCompleted(job: *const Job, operation: *const Operation) bool {

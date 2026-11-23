@@ -3986,3 +3986,45 @@ test "completing a directory releases all dynamically discovered children" {
         manager.jobState(job).?,
     );
 }
+
+test "priority queues preserve FIFO and yielded work returns to its priority front" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const first_file = try manager.addOperation(job, .copy_file);
+    const second_file = try manager.addOperation(job, .copy_file);
+    const first_link = try manager.addOperation(job, .copy_symlink);
+    const second_link = try manager.addOperation(job, .copy_symlink);
+    const first_directory = try manager.addOperation(job, .create_directory);
+    const second_directory = try manager.addOperation(job, .create_directory);
+    try manager.queueJob(job);
+
+    const yielded = manager.dispatchNext().?;
+    try std.testing.expectEqual(first_directory, yielded.operation_id);
+    try std.testing.expect(manager.completeWork(yielded, .yielded));
+
+    const retried = manager.dispatchNext().?;
+    try std.testing.expectEqual(first_directory, retried.operation_id);
+    try std.testing.expect(manager.completeWork(retried, .completed));
+
+    const directory = manager.dispatchNext().?;
+    try std.testing.expectEqual(second_directory, directory.operation_id);
+    try std.testing.expect(manager.completeWork(directory, .completed));
+
+    const link_one = manager.dispatchNext().?;
+    try std.testing.expectEqual(first_link, link_one.operation_id);
+    try std.testing.expect(manager.completeWork(link_one, .completed));
+    const link_two = manager.dispatchNext().?;
+    try std.testing.expectEqual(second_link, link_two.operation_id);
+    try std.testing.expect(manager.completeWork(link_two, .completed));
+
+    const file_one = manager.dispatchNext().?;
+    try std.testing.expectEqual(first_file, file_one.operation_id);
+    try std.testing.expect(manager.completeWork(file_one, .completed));
+    const file_two = manager.dispatchNext().?;
+    try std.testing.expectEqual(second_file, file_two.operation_id);
+    try std.testing.expect(manager.completeWork(file_two, .completed));
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
