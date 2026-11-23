@@ -39,6 +39,14 @@ pub const State = struct {
         self.dirty = true;
     }
 
+    /// Drops the copied projection of a Manager-owned Job after App detaches.
+    /// Expanded paths remain useful if a later transfer builds another tree.
+    pub fn detachManagerProjection(self: *State) void {
+        if (self.tree) |*tree| tree.deinit();
+        self.tree = null;
+        self.dirty = true;
+    }
+
     /// Replaces the cached projection from one consistent manifest snapshot.
     pub fn rebuild(self: *State, runner: *ops.JobRunner) !void {
         var profiled_nodes = self.treeSize();

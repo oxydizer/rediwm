@@ -261,6 +261,59 @@ pub fn trackArchivePublication(
     });
 }
 
+fn removeDiscoveryJob(self: *App, job_id: io_manager.JobId) void {
+    var index: usize = 0;
+    while (index < self.discovery_jobs.items.len) {
+        if (self.discovery_jobs.items[index] == job_id) {
+            _ = self.discovery_jobs.orderedRemove(index);
+        } else {
+            index += 1;
+        }
+    }
+}
+
+fn hasArchiveTracking(self: *const App, job_id: io_manager.JobId) bool {
+    for (self.archive_publications.items) |publication| {
+        if (publication.job_id == job_id) return true;
+    }
+    for (self.archive_member_extractions.items) |extraction| {
+        if (extraction.job_id == job_id) return true;
+    }
+    for (self.archive_exports.items) |extraction| {
+        if (extraction.job_id == job_id) return true;
+    }
+    return false;
+}
+
+/// Retries App-acknowledged retirements on later main-loop passes. Archive
+/// trackers remain an App reference until their staging hand-off is complete.
+fn processDetachedIoJobs(self: *App) void {
+    const runtime = self.io_runtime orelse return;
+    var index: usize = 0;
+    while (index < self.detached_io_jobs.items.len) {
+        const job_id = self.detached_io_jobs.items[index];
+        if (hasArchiveTracking(self, job_id)) {
+            index += 1;
+            continue;
+        }
+
+        runtime.requestJobRetirement(job_id) catch |err| {
+            if (err == error.UnknownJob) {
+                _ = self.detached_io_jobs.orderedRemove(index);
+                continue;
+            }
+            self.setStatusNotice("Could not schedule completed operation cleanup", true);
+            index += 1;
+            continue;
+        };
+        if (runtime.retireJobIfReady(job_id)) {
+            _ = self.detached_io_jobs.orderedRemove(index);
+        } else {
+            index += 1;
+        }
+    }
+}
+
 fn closeArchivePublicationCursor(publication: *App.ArchivePublication) void {
     if (publication.cursor) |*cursor| cursor.deinit();
     publication.cursor = null;
@@ -369,8 +422,25 @@ fn stepArchiveMemberExtractions(
             manager.archivePublicationReady(token) == true)
         {
             // A successfully opened member keeps its lease for the viewer or
-            // editor. A member skipped because navigation changed is cleaned.
-            if (!extraction.opened) {
+            // editor. Transfer it out of Runtime so it no longer pins the Job.
+            // A member skipped because navigation changed is cleaned instead.
+            if (extraction.opened and !extraction.staging_transferred) {
+                self.archive_open_with_leases.ensureUnusedCapacity(
+                    self.allocator,
+                    1,
+                ) catch {
+                    self.setStatusNotice("Could not retain opened archive member", true);
+                    index += 1;
+                    continue;
+                };
+                const lease = executor.takeArchiveStaging(token) orelse {
+                    self.setStatusNotice("Could not retain opened archive member", true);
+                    index += 1;
+                    continue;
+                };
+                self.archive_open_with_leases.appendAssumeCapacity(lease);
+                extraction.staging_transferred = true;
+            } else if (!extraction.opened) {
                 const released = executor.releaseArchiveStaging(token) catch {
                     self.setStatusNotice("Could not remove archive staging data", true);
                     index += 1;
@@ -802,6 +872,7 @@ pub fn stepOperations(self: *App) void {
     stepArchiveExports(self, manager, executor);
     stepArchiveMemberExtractions(self, manager, executor);
     stepArchivePublications(self, manager, executor);
+    processDetachedIoJobs(self);
     _ = executor.dispatchReady() catch {
         self.setStatusNotice("Could not schedule file operation", true);
     };
@@ -833,6 +904,13 @@ pub fn stepOperations(self: *App) void {
     if (self.active_io_copy_job) |job_id| {
         if (manager.jobState(job_id)) |state| {
             if (state.isTerminal()) {
+                self.detached_io_jobs.ensureUnusedCapacity(
+                    self.allocator,
+                    1,
+                ) catch {
+                    self.setStatusNotice("Could not retain completed operation for cleanup", true);
+                    return;
+                };
                 const destination = self.active_io_copy_destination;
                 const is_directory = self.active_io_copy_is_directory;
                 const is_move = self.active_io_copy_is_move;
@@ -971,9 +1049,9 @@ pub fn stepOperations(self: *App) void {
                     else => unreachable,
                 }
 
+                var refresh_listing = false;
                 if (destination) |path| {
-                    var refresh_listing =
-                        std.mem.eql(u8, self.history.current, path);
+                    refresh_listing = std.mem.eql(u8, self.history.current, path);
 
                     if (is_move and !refresh_listing) {
                         if (manager.treeIndex(job_id)) |tree| {
@@ -997,8 +1075,12 @@ pub fn stepOperations(self: *App) void {
                     }
 
                     self.allocator.free(path);
-                    if (refresh_listing) self.refresh();
                 }
+
+                removeDiscoveryJob(self, job_id);
+                self.transfer_tree_state.detachManagerProjection();
+                self.detached_io_jobs.appendAssumeCapacity(job_id);
+                if (refresh_listing) self.refresh();
             }
         }
     }

@@ -95,6 +95,7 @@ pub const App = struct {
         navigation_count: u32,
         registration_closed: bool = false,
         opened: bool = false,
+        staging_transferred: bool = false,
     };
     pub const ArchiveExportPurpose = enum { clipboard, drag, open_with };
     pub const ArchiveExportExtraction = struct {
@@ -143,6 +144,7 @@ pub const App = struct {
     discovery_executor: ?*io_discovery_executor_mod.Executor = null,
     operation_executor: ?*io_operation_executor_mod.Runtime = null,
     discovery_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
+    detached_io_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
     archive_publications: std.ArrayList(ArchivePublication) = .empty,
     archive_member_extractions: std.ArrayList(ArchiveMemberExtraction) = .empty,
     archive_exports: std.ArrayList(ArchiveExportExtraction) = .empty,
@@ -474,6 +476,7 @@ pub const App = struct {
         self.archive_exports.deinit(self.allocator);
         if (self.archive_drag_export) |*drag_export| drag_export.deinit();
         self.discovery_jobs.deinit(self.allocator);
+        self.detached_io_jobs.deinit(self.allocator);
         self.torrents.deinit();
         self.stopAudio();
         self.terminal.deinit(self.allocator);

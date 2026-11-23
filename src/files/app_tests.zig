@@ -822,12 +822,20 @@ test "archive member extraction opens the selected file and retains its staging 
     );
     try std.testing.expect(app.active_io_copy_job == null);
     try std.testing.expectEqual(@as(usize, 0), app.archive_member_extractions.items.len);
+    try std.testing.expectEqual(@as(usize, 1), app.archive_open_with_leases.items.len);
     try std.testing.expectEqualStrings("Archive member opened", app.status_notice.?);
     const editor_path = app.editor_path orelse
         return error.ArchiveMemberWasNotOpenedInEditor;
     const contents = try transferTestReadFile(allocator, editor_path);
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("payload", contents);
+
+    app.stepOperations();
+    try std.testing.expectEqual(@as(?io_manager.JobState, null), runtime.manager.jobState(job_id));
+    try std.testing.expectEqual(@as(usize, 1), app.archive_open_with_leases.items.len);
+    const retained_contents = try transferTestReadFile(allocator, editor_path);
+    defer allocator.free(retained_contents);
+    try std.testing.expectEqualStrings("payload", retained_contents);
 }
 
 test "copying selected archive directories publishes real staged paths and retains their lease" {
@@ -1220,7 +1228,7 @@ test "multi-file copy requests use one Manager job and the operation Runtime" {
     app.io_manager = &runtime.manager;
     app.w = 800;
     app.h = 320;
-    app.sidebar_expanded[@intFromEnum(app_model.SidebarSection.transfers)] = true;
+    app.sidebar_expanded[@backingInt(app_model.SidebarSection.transfers)] = true;
 
     const paths = [_][]const u8{ source_a, source_b };
     try std.testing.expect(app.executeTransfer(.copy, &paths, destination_dir, false));
@@ -1236,6 +1244,8 @@ test "multi-file copy requests use one Manager job and the operation Runtime" {
     const roots = tree.roots();
     try std.testing.expectEqual(@as(usize, 2), roots.len);
     try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job_id).?);
+    try app.transfer_tree_state.rebuildManager(manager, job_id);
+    try std.testing.expect(app.transfer_tree_state.tree != null);
     try std.testing.expectEqual(io_manager.OperationState.pending, manager.entryOperationView(job_id, roots[0]).?.state);
     try std.testing.expectEqual(io_manager.OperationState.pending, manager.entryOperationView(job_id, roots[1]).?.state);
 
@@ -1369,6 +1379,16 @@ test "multi-directory copy requests use one Manager job and incremental discover
     }
 
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_id).?);
+    for (app.discovery_jobs.items) |tracked_job| {
+        try std.testing.expect(tracked_job != job_id);
+    }
+    try std.testing.expect(app.transfer_tree_state.tree == null);
+    try std.testing.expectEqual(@as(usize, 1), app.detached_io_jobs.items.len);
+
+    app.stepDiscovery();
+    app.stepOperations();
+    try std.testing.expectEqual(@as(?io_manager.JobState, null), manager.jobState(job_id));
+
     const copied_a = try transferTestReadFile(allocator, destination_a_file);
     defer allocator.free(copied_a);
     const copied_b = try transferTestReadFile(allocator, destination_b_file);
