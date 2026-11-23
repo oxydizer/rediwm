@@ -9,7 +9,10 @@ const TestContext = struct {
     };
 
     mode: ExecutionMode = .staged,
+    fail_accept: bool = false,
     prepared: usize = 0,
+    accepted: usize = 0,
+    accepted_at_last_complete: usize = 0,
     completed: usize = 0,
     discard_calls: usize = 0,
     discarded_payloads: usize = 0,
@@ -105,10 +108,26 @@ fn completeWork(
 ) void {
     const context: *TestContext = @ptrCast(@alignCast(raw_context.?));
     context.completed += 1;
+    context.accepted_at_last_complete = context.accepted;
     context.last_completed_kind = operation_kind;
     if (result) |owned_result| {
         var value = owned_result;
         value.deinit();
+    }
+}
+
+fn acceptWork(
+    raw_context: ?*anyopaque,
+    _: io_manager.WorkToken,
+    _: ?io_manager.OperationKind,
+    _: io_manager.WorkResult,
+    result: ?*const io_executor.OwnedPayload,
+) anyerror!void {
+    const context: *TestContext = @ptrCast(@alignCast(raw_context.?));
+    context.accepted += 1;
+    if (context.fail_accept) return error.TestAcceptanceFailed;
+    if (result) |payload| {
+        std.debug.assert(std.mem.eql(u8, payload.slice(), "result"));
     }
 }
 
@@ -147,6 +166,7 @@ fn initExecutor(context: *TestContext, capacity: usize) !io_executor.Executor {
         .{
             .prepare = prepareWork,
             .execute = executeWork,
+            .accept = acceptWork,
             .complete = completeWork,
             .discard = discardWork,
         },
@@ -204,6 +224,8 @@ test "executor preserves continuations across yield but rebuilds after waiting" 
     try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(job, operation).?);
     try std.testing.expectEqual(@as(usize, 2), context.prepared);
     try std.testing.expectEqual(@as(usize, 3), context.completed);
+    try std.testing.expectEqual(@as(usize, 3), context.accepted);
+    try std.testing.expectEqual(context.accepted, context.accepted_at_last_complete);
     try std.testing.expectEqual(io_manager.OperationKind.copy_file, context.last_completed_kind.?);
     try std.testing.expectEqual(@as(usize, 0), context.input_mismatches.load(.monotonic));
     try std.testing.expectEqual(@as(usize, 0), context.continuation_mismatches.load(.monotonic));
@@ -293,6 +315,35 @@ test "executor disposes stale completions without calling complete callback" {
 
     try std.testing.expectEqual(io_manager.OperationState.cancelled, manager.operationState(job, operation).?);
     try std.testing.expectEqual(@as(usize, 0), context.completed);
+    try std.testing.expectEqual(@as(usize, 0), context.accepted);
+    try std.testing.expectEqual(@as(usize, 1), context.discard_calls);
+    try std.testing.expectEqual(@as(usize, 2), context.discarded_payloads);
+}
+
+test "executor fails and discards a completion when acceptance fails" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const operation = try manager.addOperation(job, .copy_file);
+    try manager.queueJob(job);
+
+    var context = TestContext{};
+    context.mode = .immediate;
+    context.fail_accept = true;
+    var executor = try initExecutor(&context, 1);
+    defer executor.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try waitForOne(&executor);
+    try std.testing.expectError(
+        error.TestAcceptanceFailed,
+        executor.drainCompletions(&manager),
+    );
+
+    try std.testing.expectEqual(io_manager.OperationState.failed, manager.operationState(job, operation).?);
+    try std.testing.expectEqual(@as(usize, 1), context.accepted);
+    try std.testing.expectEqual(@as(usize, 1), context.completed);
     try std.testing.expectEqual(@as(usize, 1), context.discard_calls);
     try std.testing.expectEqual(@as(usize, 2), context.discarded_payloads);
 }

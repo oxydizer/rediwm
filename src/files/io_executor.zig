@@ -270,6 +270,37 @@ pub const Executor = struct {
                 };
             }
 
+            if (!manager.acceptsWorkToken(completion.token)) {
+                // Do not expose stale worker metadata to operation-specific
+                // acceptance logic. The discard path retains payload ownership.
+                discardCompletion(self.callback_context, completion);
+                continue;
+            }
+
+            if (self.callback_context.callbacks.accept) |accept| {
+                accept(
+                    self.callback_context.user_context,
+                    completion.token,
+                    completion.operation_kind,
+                    completion.outcome,
+                    if (completion.result) |*result| result else null,
+                ) catch |err| {
+                    // Acceptance must be atomic: on failure, reconcile the
+                    // operation as failed and discard every worker payload.
+                    if (manager.completeWork(completion.token, .failed)) {
+                        self.callback_context.callbacks.complete(
+                            self.callback_context.user_context,
+                            completion.token,
+                            completion.operation_kind,
+                            .failed,
+                            null,
+                        );
+                    }
+                    discardCompletion(self.callback_context, completion);
+                    return err;
+                };
+            }
+
             if (!manager.completeWork(completion.token, completion.outcome)) {
                 // Stale or duplicate result: operation-specific cleanup
                 // owns every payload, including external resources.
@@ -490,6 +521,17 @@ pub const Callbacks = struct {
         context: ?*anyopaque,
         item: WorkItem,
     ) WorkCompletion,
+
+    /// Main-thread acceptance hook for a current worker result. The result
+    /// is borrowed and remains owned by the executor. Implementations must
+    /// leave no partial registration behind when returning an error.
+    accept: ?*const fn (
+        context: ?*anyopaque,
+        token: WorkToken,
+        operation_kind: ?OperationKind,
+        outcome: WorkResult,
+        result: ?*const OwnedPayload,
+    ) anyerror!void = null,
 
     /// Main-thread callback for accepted completions. Ownership of result
     /// transfers to this callback.

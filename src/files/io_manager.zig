@@ -2827,6 +2827,15 @@ pub const Manager = struct {
         return operation.state;
     }
 
+    /// Reports whether a worker token still identifies the running
+    /// generation of its operation.
+    pub fn acceptsWorkToken(self: *const Manager, token: WorkToken) bool {
+        const job = self.findJobConst(token.job_id) orelse return false;
+        const operation = findOperationConst(job, token.operation_id) orelse return false;
+        return operation.state == .running and
+            operation.generation == token.generation;
+    }
+
     /// Read-only execution state for the operation associated with one entry.
     /// A nonzero generation means the operation has been dispatched at least
     /// once, even when a yielded operation is briefly pending again.
