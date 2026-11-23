@@ -41,7 +41,7 @@ fn nearestButton(self: *App, x: f64, y: f64) f32 {
         }
         return nearest;
     }
-    for (0..self.tabs.items.len) |index| {
+    for (0..if (self.strip_in_titlebar) 0 else self.tabs.items.len) |index| {
         const tab_x = self.tabX(index);
         if (tab_x >= self.tabRight()) break;
         if (tab_x + self.tabWidth() <= 0) continue;
@@ -53,7 +53,8 @@ fn nearestButton(self: *App, x: f64, y: f64) f32 {
         );
         nearest = @min(nearest, sample.distance);
     }
-    for ([_]Rect{ self.newButtonBox() }) |box| {
+    const strip_boxes = [_]Rect{self.newButtonBox()};
+    for (strip_boxes[0..if (self.strip_in_titlebar) 0 else 1]) |box| {
         const sample = button.sampleProximity(
             .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) },
             @floatCast(x), @floatCast(y),
@@ -61,7 +62,7 @@ fn nearestButton(self: *App, x: f64, y: f64) f32 {
         );
         nearest = @min(nearest, sample.distance);
     }
-    if (!self.has_titlebar) {
+    if (!self.strip_in_titlebar) {
         const box = self.menuButtonBox();
         const sample = button.sampleProximity(
             .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) },
@@ -182,8 +183,9 @@ pub fn hoverTarget(self: *App) Hover {
     }
     if (self.menu_open) return .none;
     if (self.find_open) if (self.searchHit(self.px, self.py)) |hit| return .{ .search = hit };
+    if (self.strip_in_titlebar) return .none;
     if (self.newButtonBox().contains(self.px, self.py)) return .new;
-    if (!self.has_titlebar and self.menuButtonBox().contains(self.px, self.py)) return .menu;
+    if (self.menuButtonBox().contains(self.px, self.py)) return .menu;
     if (self.tabAt(self.px)) |i| if (self.tabCloseBox(i).contains(self.px, self.py)) return .{ .close = i };
     return .none;
 }

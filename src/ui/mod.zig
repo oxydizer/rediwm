@@ -31,11 +31,13 @@ pub const widgets = struct {
     pub const swatch = @import("widgets/swatch.zig");
     pub const stepper = @import("widgets/stepper.zig");
     pub const arrangement = @import("widgets/arrangement.zig");
+    pub const title_tabs = @import("widgets/title_tabs.zig");
 };
 pub const anim = @import("anim.zig");
 pub const cairo = @import("cairo.zig");
 pub const repaint = @import("repaint.zig");
 pub const client_cursor = @import("client_cursor.zig");
+pub const client_tabs = @import("client_tabs.zig");
 pub const compose = @import("compose.zig");
 pub const context_menu = @import("context_menu.zig");
 pub const font_fallback = @import("font_fallback.zig");

@@ -13,7 +13,7 @@ loaded: bool = false,
 pending: std.ArrayList(*Pending) = .empty,
 
 pub const max_tabs = 128;
-pub const Notice = enum { none, opening, failed };
+pub const Notice = @import("ui").widgets.title_tabs.Notice;
 const Pending = struct {
     server: *Server,
     group: u64,

@@ -111,8 +111,8 @@ pub fn handleButton(self: *App, code: u32, pressed: bool) void {
         return;
     }
     if (self.py < 0) return;
-    if (self.py < top) {
-        if (!self.has_titlebar and self.menuButtonBox().contains(self.px, self.py)) {
+    if (self.py < self.topInset()) {
+        if (self.menuButtonBox().contains(self.px, self.py)) {
             self.toggleMenu(@as(f64, @floatFromInt(self.w)) - 8);
             return;
         }
@@ -221,7 +221,8 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         return;
     }
     if (sym == c.XKB_KEY_F10 and !self.ctrl and !self.alt) {
-        self.toggleMenu(self.menu_anchor);
+        // Under the compositor's titlebar the menu hangs from the leading button.
+        self.toggleMenu(if (self.strip_in_titlebar) self.menu_anchor else @as(f64, @floatFromInt(self.w)) - 8);
         return;
     }
     if (self.menu_open and self.sub_selected != null) {

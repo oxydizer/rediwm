@@ -215,6 +215,10 @@ hovered_toplevel: ?*Toplevel = null,
 glow_toplevel: ?*Toplevel = null,
 hovered_taskbar: ?*Taskbar = null,
 taskbar_drag: ?TaskbarDragSession = null,
+/// The window whose published tab is pressed (a click, or a reorder once the pointer travels).
+tab_drag: ?*Toplevel = null,
+/// The window whose strip shows the drop marker for that drag.
+tab_drop_target: ?*Toplevel = null,
 tray_buttons: u32 = 0,
 taskbar_close_buttons: u32 = 0,
 hovered_toast: ?*@import("notifications/toast.zig").Toast = null,
@@ -527,6 +531,11 @@ pub fn detachOutput(input: *Input, output: *Output) void {
 
 pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
     if (input.window_menu.references(toplevel)) input.window_menu.close();
+    if (input.tab_drag == toplevel) {
+        @import("input/tab_drop.zig").clear(input);
+        input.tab_drag = null;
+    }
+    if (input.tab_drop_target == toplevel) input.tab_drop_target = null;
     if (input.taskbar_drag) |session| {
         if (session.window_id == toplevel.id) {
             input.taskbar_drag = null;

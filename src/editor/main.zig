@@ -2,6 +2,8 @@
 const std = @import("std");
 const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
+const ClientTabs = @import("ui").client_tabs;
+const client_tabs = @import("client_tabs.zig");
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zxdg = @import("wayland").client.zxdg;
@@ -55,6 +57,7 @@ pub const Client = struct {
     pointer_x: f64 = 0,
     pointer_y: f64 = 0,
     cursor_shape: ClientCursor = .{},
+    tabs: ClientTabs = .{},
     cursor_surface: *wl.Surface = undefined,
     cursor_theme: ?*wl.CursorTheme = null,
     cursor_serial: u32 = 0,
@@ -243,6 +246,11 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     if (self.cursor_shape.manager == null) self.cursor_theme = ClientCursor.loadFallback(self.shm.?);
     defer if (self.cursor_theme) |theme_ptr| theme_ptr.destroy();
 
+    // Before the shell role, like the decoration: the compositor adopts the strip
+    // when the toplevel appears. It stays hidden until `client_tabs.sync` commits.
+    client_tabs.attach(&self);
+    defer self.tabs.deinit();
+
     self.xdg_surface = try self.wm_base.?.getXdgSurface(self.surface);
     defer self.xdg_surface.destroy();
     self.xdg_surface.setListener(*Client, Client.xdgSurfaceEvent, &self);
@@ -278,6 +286,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     defer a.free(pending_token);
     while (self.running) {
         self.app.sync();
+        client_tabs.sync(&self);
         self.app.stepDrafts(key_repeat.nowMs());
         // The session is ending: leave without asking; `deinit` writes the drafts.
         if (self.app.signaled()) self.app.closed = true;

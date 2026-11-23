@@ -168,6 +168,10 @@ const TextInput = struct {
     relay: *Self,
     input: *wlr.TextInputV3,
     link: wl.list.Link = undefined,
+    /// A commit used `set_cursor_rectangle`. `active_features` is a snapshot of
+    /// the enabling commit, and clients such as Chromium send the rectangle in
+    /// a later one.
+    cursor_rectangle_seen: bool = false,
     enable: wl.Listener(void) = .init(enabled),
     disable: wl.Listener(void) = .init(disabled),
     commit: wl.Listener(void) = .init(committed),
@@ -192,6 +196,7 @@ const TextInput = struct {
 
     fn committed(listener: *wl.Listener(void)) void {
         const self: *TextInput = @fieldParentPtr("commit", listener);
+        if (self.input.current.features.cursor_rectangle) self.cursor_rectangle_seen = true;
         if (self.relay.active == self and self.input.current_enabled) self.relay.sendState();
     }
 
@@ -383,7 +388,8 @@ pub fn updatePopups(self: *Self) void {
             if (self.server.locker != null or self.server.polkit_dialog != null or self.server.switcher.active() or self.server.world.overview.active() or
                 shell.open_start_menu != null or shell.open_wifi != null or shell.open_battery != null or shell.open_calendar != null or shell.open_power_menu != null or
                 (if (shell.open_control_center) |cc| cc.hasKeyboardFocus() else false)) break :visible false;
-            const input = (self.active orelse break :visible false).input;
+            const active = self.active orelse break :visible false;
+            const input = active.input;
             const surface = input.focused_surface orelse break :visible false;
             if (!surface.mapped or !popup.popup.surface.mapped) break :visible false;
             const node = surfaceNode(&self.server.nodes.tree, surface) orelse break :visible false;
@@ -415,7 +421,9 @@ pub fn updatePopups(self: *Self) void {
                 y = layout.y;
                 scale *= self.server.world.camera.zoom();
             } else if (wlr.LayerSurfaceV1.tryFromWlrSurface(surface.getRootSurface()) == null) break :visible false;
-            const rect = if (input.active_features.cursor_rectangle) input.current.cursor_rectangle else wlr.Box{ .x = 0, .y = 0, .width = surface.current.width, .height = surface.current.height };
+            // `active_features` is a snapshot of the enabling commit's features,
+            // so a client may have sent the rectangle afterwards (Chromium does).
+            const rect = if (active.cursor_rectangle_seen) input.current.cursor_rectangle else wlr.Box{ .x = 0, .y = 0, .width = surface.current.width, .height = surface.current.height };
             // Rectangle coordinates are client-controlled signed 32-bit values.
             // Zoom and adding the scene origin can exceed that range.
             const rx: i64 = @intFromFloat(@round(x + @as(f64, @floatFromInt(rect.x)) * scale));
