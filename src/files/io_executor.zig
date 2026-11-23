@@ -120,6 +120,7 @@ pub const Executor = struct {
     callback_context: *CallbackContext,
     continuations: std.AutoHashMapUnmanaged(OperationKey, OperationPayloads) = .empty,
     pending: std.AutoHashMapUnmanaged(OperationKey, WorkItem) = .empty,
+    in_flight_by_job: std.AutoHashMapUnmanaged(JobId, usize) = .empty,
     profile_enabled: bool = false,
 
     pub fn init(
@@ -174,9 +175,51 @@ pub const Executor = struct {
             );
         }
         self.continuations.deinit(self.allocator);
+        self.in_flight_by_job.deinit(self.allocator);
 
         self.allocator.destroy(self.callback_context);
         self.* = undefined;
+    }
+
+    /// True only when this executor owns no work or retained payloads for
+    /// the Job. Manager-side ready work is deliberately outside this query.
+    pub fn isJobQuiescent(self: *const Executor, job_id: JobId) bool {
+        if (self.in_flight_by_job.contains(job_id)) return false;
+
+        var pending_iter = self.pending.keyIterator();
+        while (pending_iter.next()) |key| {
+            if (key.job_id == job_id) return false;
+        }
+
+        var continuation_iter = self.continuations.keyIterator();
+        while (continuation_iter.next()) |key| {
+            if (key.job_id == job_id) return false;
+        }
+
+        return true;
+    }
+
+    fn reserveInFlightSlot(self: *Executor, job_id: JobId) !void {
+        if (!self.in_flight_by_job.contains(job_id)) {
+            try self.in_flight_by_job.ensureUnusedCapacity(self.allocator, 1);
+        }
+    }
+
+    fn addInFlightAssumeCapacity(self: *Executor, job_id: JobId) void {
+        if (self.in_flight_by_job.getPtr(job_id)) |count| {
+            count.* += 1;
+        } else {
+            self.in_flight_by_job.putAssumeCapacity(job_id, 1);
+        }
+    }
+
+    fn finishInFlight(self: *Executor, job_id: JobId) void {
+        const count = self.in_flight_by_job.getPtr(job_id) orelse unreachable;
+        if (count.* == 1) {
+            _ = self.in_flight_by_job.remove(job_id);
+        } else {
+            count.* -= 1;
+        }
     }
 
     /// File descriptor to monitor for completed worker results.
@@ -245,6 +288,7 @@ pub const Executor = struct {
 
         while (self.pool.tryPopResult()) |completion_value| {
             var completion = completion_value;
+            defer self.finishInFlight(completion.token.job_id);
             stats.drained += 1;
 
             // Yielded work resumes the same execution and retains its
@@ -436,10 +480,21 @@ pub const Executor = struct {
 
             const pending_item = self.pending.getPtr(key).?;
             pending_item.profile_enabled = self.profile_enabled;
+            self.reserveInFlightSlot(token.job_id) catch |err| {
+                // Keep the prepared item in pending and return the operation
+                // to the scheduler; a later dispatch can retry the reserve.
+                if (!manager.completeWork(token, .yielded)) {
+                    if (self.pending.fetchRemove(key)) |entry| {
+                        discardWorkItem(self.callback_context, entry.value);
+                    }
+                }
+                return err;
+            };
             if (self.pool.trySubmit(pending_item.*)) {
                 // Ownership transfers to the pool. Do not deinit the
                 // removed map value.
                 _ = self.pending.fetchRemove(key).?;
+                self.addInFlightAssumeCapacity(token.job_id);
                 submitted += 1;
                 continue;
             }

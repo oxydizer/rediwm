@@ -206,21 +206,29 @@ test "executor preserves continuations across yield but rebuilds after waiting" 
     var executor = try initExecutor(&context, 1);
     defer executor.deinit();
 
+    try std.testing.expect(executor.isJobQuiescent(job));
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try std.testing.expect(!executor.isJobQuiescent(job));
     try waitForOne(&executor);
+    try std.testing.expect(!executor.isJobQuiescent(job));
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
     try std.testing.expectEqual(io_manager.OperationState.pending, manager.operationState(job, operation).?);
+    try std.testing.expect(!executor.isJobQuiescent(job));
 
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try std.testing.expect(!executor.isJobQuiescent(job));
     try waitForOne(&executor);
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
     try std.testing.expectEqual(io_manager.OperationState.waiting, manager.operationState(job, operation).?);
+    try std.testing.expect(executor.isJobQuiescent(job));
 
     try manager.resolveWaiting(job, operation);
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try std.testing.expect(!executor.isJobQuiescent(job));
     try waitForOne(&executor);
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
 
+    try std.testing.expect(executor.isJobQuiescent(job));
     try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(job, operation).?);
     try std.testing.expectEqual(@as(usize, 2), context.prepared);
     try std.testing.expectEqual(@as(usize, 3), context.completed);
@@ -277,15 +285,22 @@ test "executor retains prepared work when the pool applies backpressure" {
     // First task occupies the only outstanding slot. The second item is
     // prepared once and retained when submission is refused.
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try std.testing.expect(!executor.isJobQuiescent(first_job));
+    try std.testing.expect(!executor.isJobQuiescent(second_job));
     try std.testing.expectEqual(@as(usize, 2), context.prepared);
 
     try waitForOne(&executor);
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
+    try std.testing.expect(executor.isJobQuiescent(first_job));
+    try std.testing.expect(!executor.isJobQuiescent(second_job));
 
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try std.testing.expect(!executor.isJobQuiescent(second_job));
     try waitForOne(&executor);
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
 
+    try std.testing.expect(executor.isJobQuiescent(first_job));
+    try std.testing.expect(executor.isJobQuiescent(second_job));
     try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(first_job, first_operation).?);
     try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(second_job, second_operation).?);
     try std.testing.expectEqual(@as(usize, 2), context.prepared);
@@ -341,6 +356,7 @@ test "executor fails and discards a completion when acceptance fails" {
         executor.drainCompletions(&manager),
     );
 
+    try std.testing.expect(executor.isJobQuiescent(job));
     try std.testing.expectEqual(io_manager.OperationState.failed, manager.operationState(job, operation).?);
     try std.testing.expectEqual(@as(usize, 1), context.accepted);
     try std.testing.expectEqual(@as(usize, 1), context.completed);

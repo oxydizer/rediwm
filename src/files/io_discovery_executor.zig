@@ -45,6 +45,7 @@ pub const Executor = struct {
         JobId,
         std.AutoHashMapUnmanaged(u64, io_discovery.Cursor),
     ) = .empty,
+    in_flight_by_job: std.AutoHashMapUnmanaged(JobId, usize) = .empty,
 
     pub fn init(
         allocator: Allocator,
@@ -93,9 +94,50 @@ pub const Executor = struct {
         var anchor_iter = self.anchors.valueIterator();
         while (anchor_iter.next()) |anchor| anchor.deinit();
         self.anchors.deinit(self.allocator);
+        self.in_flight_by_job.deinit(self.allocator);
 
         self.allocator.destroy(self.context);
         self.* = undefined;
+    }
+
+    /// True only when this executor owns no worker task, retained cursor,
+    /// or root anchor for the Job. Manager-side discovery queues are separate.
+    pub fn isJobQuiescent(self: *const Executor, job_id: JobId) bool {
+        if (self.in_flight_by_job.contains(job_id)) return false;
+
+        if (self.cursors.get(job_id)) |job_cursors| {
+            if (job_cursors.count() != 0) return false;
+        }
+
+        var anchor_iter = self.anchors.keyIterator();
+        while (anchor_iter.next()) |key| {
+            if (key.job_id == job_id) return false;
+        }
+
+        return true;
+    }
+
+    fn reserveInFlightSlot(self: *Executor, job_id: JobId) !void {
+        if (!self.in_flight_by_job.contains(job_id)) {
+            try self.in_flight_by_job.ensureUnusedCapacity(self.allocator, 1);
+        }
+    }
+
+    fn addInFlightAssumeCapacity(self: *Executor, job_id: JobId) void {
+        if (self.in_flight_by_job.getPtr(job_id)) |count| {
+            count.* += 1;
+        } else {
+            self.in_flight_by_job.putAssumeCapacity(job_id, 1);
+        }
+    }
+
+    fn finishInFlight(self: *Executor, job_id: JobId) void {
+        const count = self.in_flight_by_job.getPtr(job_id) orelse unreachable;
+        if (count.* == 1) {
+            _ = self.in_flight_by_job.remove(job_id);
+        } else {
+            count.* -= 1;
+        }
     }
 
     pub fn wakeFd(self: *Executor) std.posix.fd_t {
@@ -177,11 +219,25 @@ pub const Executor = struct {
             }
 
             std.debug.assert(owns_cursor);
+            self.reserveInFlightSlot(token.job_id) catch |err| {
+                // The cursor slot was prepared before opening or taking the
+                // cursor, so ownership can safely return to the retained map.
+                self.storeCursorAssumeCapacity(token.job_id, token.entry_id, cursor);
+                if (!manager.yieldDiscovery(token)) {
+                    if (self.takeCursor(token.job_id, token.entry_id)) |retained| {
+                        var cursor_to_close = retained;
+                        cursor_to_close.deinit();
+                    }
+                    self.closeAnchorIfComplete(manager, token.job_id);
+                }
+                return err;
+            };
             if (self.pool.trySubmit(.{
                 .token = token,
                 .cursor = cursor,
             })) {
                 // Cursor ownership transferred to the worker pool.
+                self.addInFlightAssumeCapacity(token.job_id);
                 submitted += 1;
                 continue;
             }
@@ -212,6 +268,7 @@ pub const Executor = struct {
 
         while (self.pool.tryPopResult()) |completion_value| {
             var completion = completion_value;
+            defer self.finishInFlight(completion.token.job_id);
             drained += 1;
 
             if (completion.failed) {

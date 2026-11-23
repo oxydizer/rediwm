@@ -515,14 +515,18 @@ test "cancelled discovery releases retained cursors and root anchors" {
     defer executor.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try std.testing.expect(!executor.isJobQuiescent(job));
     try waitForWake(&executor);
+    try std.testing.expect(!executor.isJobQuiescent(job));
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
     try std.testing.expectEqual(@as(usize, 1), executor.anchors.count());
     try std.testing.expectEqual(@as(usize, 1), executor.cursors.get(job).?.count());
+    try std.testing.expect(!executor.isJobQuiescent(job));
 
     try manager.cancelJob(job);
     executor.cancelJob(&manager, job);
 
+    try std.testing.expect(executor.isJobQuiescent(job));
     try std.testing.expectEqual(@as(usize, 0), executor.anchors.count());
     try std.testing.expect(executor.cursors.get(job) == null);
     try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
@@ -567,8 +571,10 @@ test "stale discovery completion releases its cursor and root anchor after cance
     // Leave the completion in the pool so the executor must reject its stale
     // token and release the returned cursor while reconciling it.
     try manager.cancelJob(job);
+    try std.testing.expect(!executor.isJobQuiescent(job));
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
 
+    try std.testing.expect(executor.isJobQuiescent(job));
     try std.testing.expectEqual(@as(usize, 0), executor.anchors.count());
     try std.testing.expect(executor.cursors.get(job) == null);
     try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
