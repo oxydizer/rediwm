@@ -240,3 +240,73 @@ test`, and the integration tests for what was touched (root `AGENTS.md`).
   shows).
 * Middle click on a published tab sends `close`.
 * IPC exposure of published tabs is deferred.
+
+## Phase 6 (proposal): tear a tab off, merge it into another window
+
+Goal: pull a tab out of the strip and it becomes a window; drop it on another
+window's strip and it joins that window. Not built; written down so the
+protocol stays compatible.
+
+### What decides the shape
+
+* The compositor does not own tab content. It can only tell the app what the
+  user did; the app moves the content. So both gestures are events, like
+  `move`.
+* **Merge is limited to windows of one client** (one `wl_client`). The app
+  then owns both models and moves the tab in memory. Merging across processes
+  needs a data-offer style handshake (opaque token, app-id match, the target
+  asking the source for the payload); not needed while each app is one process.
+* The editor is one process per display (`editor/instance.zig` forwards open
+  requests to the primary), with one `Client` and one `App`. **A second editor
+  window means the editor must become multi-window**: one `App` + `Client` per
+  toplevel, one shared display connection, drafts keyed by window. This is the
+  large part of the work and is independent of the compositor side.
+
+### Protocol (version 2 of rediwm_titlebar_tabs_v1)
+
+* event `tear_off(id, x, y)`: the button came up outside every strip. `x`, `y`
+  are the pointer in output layout coordinates. The app opens a new toplevel
+  holding the tab and removes the tab from its strip (commits).
+* event `drop_on(id, target, index)`: the button came up over another strip of
+  the same client. `target` is that strip's object (an `object` argument, so
+  the compositor can only name strips of this client); `index` is the slot,
+  counted as in `move`. The app moves the tab to the target and commits both.
+* Placement: the compositor remembers `{client, x, y, expires}` when it sends
+  `tear_off` and applies it to the next new toplevel of that client within
+  about two seconds, so the window opens with its tab under the pointer.
+* Both only ask, like `select`: nothing changes until the app commits. If the
+  app does nothing, the tab snaps back.
+
+### Compositor
+
+* `Drag` gains a state beyond "dragging in the strip": once the pointer leaves
+  the strip's band by more than the titlebar height (and has no neighbour
+  strip below it), the drag is *out*. The strip stops previewing and the
+  cursor becomes `grabbing`.
+* While out, hit-test the toplevel under the pointer. If it is the same client
+  and the pointer is in its titlebar, that strip shows an insertion marker
+  (`Strip.drop_index`, part of the hash) at `Drag.target` computed against its
+  geometry.
+* Release: over a same-client strip, send `drop_on`; anywhere else, send
+  `tear_off`; Escape or losing the press cancels. No ghost tab at first (cursor
+  and drop marker only); a small retained-buffer ghost can follow.
+* Tabs are only draggable out when the app says so (a `set_tab_flags`
+  capability or a per-tab flag), so a one-tab window does not tear itself off
+  into the same window.
+
+### Editor and Files
+
+* Editor: multi-window refactor first (own phase), then `tear_off` creates a
+  window, `drop_on` moves the `Tab` between `App`s. The tab keeps its document,
+  undo history and draft name, so no text is rewritten.
+* Files: a tab is a folder view, cheap to move once per-tab state is split
+  from `App` (the Files phase already needs it).
+
+### Phases
+
+6a. Protocol v2, compositor drag states, drop marker, placement hint, tests on
+    `Drag` geometry and a headless client that receives both events.
+6b. Editor multi-window (no tab gesture yet): open a second window from the
+    menu; drafts and the single-instance socket handle several windows.
+6c. Editor tear_off / drop_on.
+6d. Files.
