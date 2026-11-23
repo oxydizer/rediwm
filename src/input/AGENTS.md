@@ -17,7 +17,9 @@
   the grab already received still reach it, and the IM's virtual keyboard
   never counts as a physical modifier source (it only echoes forwarded
   state). Lock/auth reject virtual input. IPC `GetTextInput` never returns
-  text.
+  text. Candidate popups follow the client's committed cursor rectangle:
+  wlroots' `active_features` only snapshots the enabling commit, so a
+  rectangle sent later (Chromium's order) needs `cursor_rectangle_seen`.
 * **Layouts:** layout-zero fallback is for binding lookup only; text uses the
   active XKB state.
 * **Input sources** (`input_sources.zig`, `input_sources/`): the config's

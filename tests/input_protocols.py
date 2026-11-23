@@ -204,6 +204,28 @@ def run():
             action('move_window_to', {"id": w["id"], "x": w["x"] + 40, "y": w["y"] + 30})
             wait_for(lambda: popup_pixel() == (point[0] + 40, point[1] + 30),
                      "IME popup did not follow its window")
+
+            # Chromium sends set_cursor_rectangle in a commit after the enabling
+            # one, so the candidate must follow the caret rather than the
+            # surface origin the enabling commit left behind.
+            def rectangle():
+                lines = [line for line in ime.text().splitlines() if line.startswith("rectangle ")]
+                return tuple(map(int, lines[-1].split()[1:]))
+
+            popup = ime_state()["popups"][0]
+            start = (popup["x"], popup["y"])
+            relative = rectangle()
+            app.send("caret 140 110")
+
+            def shift():
+                popup = ime_state()["popups"][0]
+                return popup["x"] - start[0], popup["y"] - start[1]
+
+            wait_for(lambda: shift() == (40, 40), lambda: f"candidate did not follow the caret: {shift()}")
+            # The caret keeps the same place inside the popup, so the IME is
+            # not told again: the popup itself has to move.
+            assert rectangle() == relative, (relative, rectangle(), ime.text()[-500:])
+
             placed = ime_state()["popups"][0]
             before_zoom = window("rediwm.protocol-app")
             action('key_press', {"key": "F9"})
