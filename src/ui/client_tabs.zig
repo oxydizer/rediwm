@@ -28,6 +28,12 @@ pub const Handler = struct {
     move: *const fn (ctx: *anyopaque, id: u32, index: u32) void,
     /// The leading button's rectangle in surface coordinates (y is negative).
     leading: *const fn (ctx: *anyopaque, x: i32, y: i32, width: i32, height: i32) void,
+    /// The tab was dragged out and dropped in empty space: open a window for it.
+    /// `x`, `y` are the pointer in layout coordinates. Needs a compositor
+    /// that offers version 2; set together with `drop_on`.
+    tear_off: ?*const fn (ctx: *anyopaque, id: u32, x: i32, y: i32) void = null,
+    /// The tab was dropped on `target`, another strip of this client, at `index`.
+    drop_on: ?*const fn (ctx: *anyopaque, id: u32, target: ?*rediwm.TitlebarTabsV1, index: u32) void = null,
 };
 
 manager: ?*rediwm.TitlebarTabsManagerV1 = null,
@@ -38,7 +44,7 @@ last: ?u64 = null,
 
 pub fn bind(self: *Self, registry: *wl.Registry, name: u32, interface: []const u8, version: u32) void {
     if (std.mem.eql(u8, interface, "rediwm_titlebar_tabs_manager_v1") and self.manager == null) {
-        self.manager = registry.bind(name, rediwm.TitlebarTabsManagerV1, @min(version, 1)) catch null;
+        self.manager = registry.bind(name, rediwm.TitlebarTabsManagerV1, @min(version, 2)) catch null;
     }
 }
 
@@ -56,6 +62,7 @@ pub fn attach(self: *Self, surface: *wl.Surface, handler: Handler) void {
     strip.setListener(*Self, event, self);
     self.strip = strip;
     self.handler = handler;
+    if (strip.getVersion() >= 2 and (handler.tear_off != null or handler.drop_on != null)) strip.setDetachable(1);
     self.last = null;
 }
 
@@ -93,6 +100,8 @@ fn event(_: *rediwm.TitlebarTabsV1, ev: rediwm.TitlebarTabsV1.Event, self: *Self
         .new_tab => h.new_tab(h.ctx),
         .move => |e| h.move(h.ctx, e.id, e.index),
         .leading_activated => |e| h.leading(h.ctx, e.x, e.y, e.width, e.height),
+        .tear_off => |e| if (h.tear_off) |f| f(h.ctx, e.id, e.x, e.y),
+        .drop_on => |e| if (h.drop_on) |f| f(h.ctx, e.id, e.target, e.index),
     }
 }
 

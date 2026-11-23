@@ -11,7 +11,7 @@
     Private to rediwm and its bundled applications.
   </description>
 
-  <interface name="rediwm_titlebar_tabs_manager_v1" version="1">
+  <interface name="rediwm_titlebar_tabs_manager_v1" version="2">
     <description summary="titlebar tabs factory"/>
 
     <request name="destroy" type="destructor">
@@ -36,7 +36,7 @@
     </enum>
   </interface>
 
-  <interface name="rediwm_titlebar_tabs_v1" version="1">
+  <interface name="rediwm_titlebar_tabs_v1" version="2">
     <description summary="a toplevel's titlebar tab strip">
       State is double-buffered: add_tab, set_selected and the like build a
       pending strip that replaces the shown one on commit. The pending state
@@ -96,6 +96,16 @@
       <arg name="enabled" type="uint" summary="0 hides the button, anything else shows it"/>
     </request>
 
+    <request name="set_detachable" since="2">
+      <description summary="allow tabs to be dragged out of the strip">
+        With this on, dragging a tab well away from the strip and releasing
+        sends tear_off or drop_on instead of nothing. Applies at once, not on
+        commit. Off by default: an application that does not handle the two
+        events must not turn it on.
+      </description>
+      <arg name="enabled" type="uint" summary="0 is off, anything else on"/>
+    </request>
+
     <request name="commit">
       <description summary="show the pending strip">
         Replaces the shown strip. A commit with no tabs removes the strip and
@@ -129,6 +139,33 @@
         While the drag lasts the compositor previews the move on its own.
       </description>
       <arg name="id" type="uint"/>
+      <arg name="index" type="uint"/>
+    </event>
+
+    <event name="tear_off" since="2">
+      <description summary="the user dragged a tab out and let go in empty space">
+        Only sent while set_detachable is on, and not for the last tab of a
+        strip. The position is the pointer in layout coordinates. The
+        application opens a new toplevel holding the tab and removes it from
+        this strip; the compositor places the next toplevel of this client near
+        the pointer. Like select, it only asks: if the application does
+        nothing, the tab stays.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </event>
+
+    <event name="drop_on" since="2">
+      <description summary="the user dropped a tab on another strip of this client">
+        Only sent while set_detachable is on. The target is another strip of
+        the same client, never of another application. The index is the place
+        the tab takes among the target's tabs, counted as in move (0 is
+        before the first). The application moves the tab and commits both
+        strips.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="target" type="object" interface="rediwm_titlebar_tabs_v1"/>
       <arg name="index" type="uint"/>
     </event>
 

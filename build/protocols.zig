@@ -57,7 +57,7 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.generate("wp_color_manager_v1", 2);
     scanner.generate("zxdg_decoration_manager_v1", 1);
     scanner.generate("org_kde_kwin_server_decoration_manager", 1);
-    scanner.generate("rediwm_titlebar_tabs_manager_v1", 1);
+    scanner.generate("rediwm_titlebar_tabs_manager_v1", 2);
     scanner.generate("zwp_virtual_keyboard_manager_v1", 1);
     scanner.generate("zwp_pointer_gestures_v1", 3);
     scanner.generate("zxdg_output_manager_v1", 3);

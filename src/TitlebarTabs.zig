@@ -43,19 +43,40 @@ pending_leading: bool = false,
 items: std.ArrayList(Item) = .empty,
 selected: u32 = 0,
 leading: bool = false,
+/// The client handles tear_off and drop_on (set_detachable).
+detachable: bool = false,
+
+/// Where the compositor put the pointer when it asked a client to tear a tab
+/// off, so the window that follows opens there.
+pub const TearOff = struct { client: *wl.Client, x: f64, y: f64, deadline_ms: i64 };
+const tear_off_window_ms = 2000;
 
 pub const Manager = struct {
     global: *wl.Global,
+    tear_off: ?TearOff = null,
     strips: wl.list.Head(TitlebarTabs, .link) = undefined,
 
     pub fn init(self: *Manager, server: *Server) !void {
-        self.* = .{ .global = try wl.Global.create(server.wl_server, ManagerResource, 1, *Manager, self, bind) };
+        self.* = .{ .global = try wl.Global.create(server.wl_server, ManagerResource, 2, *Manager, self, bind) };
         self.strips.init();
     }
 
     pub fn deinit(self: *Manager) void {
         self.global.destroy();
         while (self.strips.first()) |strip| strip.resource.destroy();
+    }
+
+    /// Where to open `toplevel` if it is the window a tear-off asked for (once).
+    pub fn takePlacement(self: *Manager, toplevel: *Toplevel) ?struct { x: f64, y: f64 } {
+        const pending = self.tear_off orelse return null;
+        const surface = toplevel.surface() orelse return null;
+        if (Toplevel.nowMs() > pending.deadline_ms) {
+            self.tear_off = null;
+            return null;
+        }
+        if (surface.resource.getClient() != pending.client) return null;
+        self.tear_off = null;
+        return .{ .x = pending.x, .y = pending.y };
     }
 
     /// Called for each new toplevel: adopts a strip created before the shell role.
@@ -94,7 +115,7 @@ pub const Manager = struct {
                     manager.getClient().postNoMemory();
                     return;
                 };
-                const resource = Resource.create(manager.getClient(), 1, args.id) catch {
+                const resource = Resource.create(manager.getClient(), manager.getVersion(), args.id) catch {
                     gpa.destroy(strip);
                     manager.getClient().postNoMemory();
                     return;
@@ -155,6 +176,23 @@ pub fn sendClose(self: *TitlebarTabs, id: u64) void {
     self.resource.sendClose(@intCast(id));
 }
 
+/// Asks the client to move `id` into a new window. `x`, `y` are layout
+/// coordinates of the pointer. False when the client cannot be asked.
+pub fn sendTearOff(self: *TitlebarTabs, manager: *Manager, id: u64, x: f64, y: f64) bool {
+    if (!self.detachable or self.resource.getVersion() < 2 or self.items.items.len < 2) return false;
+    manager.tear_off = .{ .client = self.resource.getClient(), .x = x, .y = y, .deadline_ms = Toplevel.nowMs() + tear_off_window_ms };
+    self.resource.sendTearOff(@intCast(id), @intFromFloat(@round(x)), @intFromFloat(@round(y)));
+    return true;
+}
+
+/// Asks the client to move `id` into `target`, another strip of the same client.
+pub fn sendDropOn(self: *TitlebarTabs, id: u64, target: *TitlebarTabs, index: usize) bool {
+    if (!self.detachable or self.resource.getVersion() < 2) return false;
+    if (self.resource.getClient() != target.resource.getClient()) return false;
+    self.resource.sendDropOn(@intCast(id), target.resource, @intCast(index));
+    return true;
+}
+
 pub fn sendNewTab(self: *TitlebarTabs) void {
     self.resource.sendNewTab();
 }
@@ -192,6 +230,7 @@ fn handleStripRequest(resource: *Resource, request: Resource.Request, self: *Tit
         .add_tab => |args| self.addTab(args.id, std.mem.span(args.title), args.flags),
         .set_selected => |args| self.pending_selected = args.id,
         .set_leading_button => |args| self.pending_leading = args.enabled != 0,
+        .set_detachable => |args| self.detachable = args.enabled != 0,
         .commit => self.commit(),
     }
 }

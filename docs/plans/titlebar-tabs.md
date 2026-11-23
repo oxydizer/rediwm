@@ -302,6 +302,21 @@ protocol stays compatible.
 * Files: a tab is a folder view, cheap to move once per-tab state is split
   from `App` (the Files phase already needs it).
 
+### As built in 6a
+
+* Version 2 adds `set_detachable(enabled)` (a client opts in; the default is off so
+  an app that ignores the events never starts a drag-out), `tear_off` and
+  `drop_on`. The manager is version 2; strips take the manager's version.
+* `tear_off` is not sent for the last tab of a strip. `drop_on` is only sent
+  between strips of one `wl_client`.
+* `Drag.out` is set when the pointer is more than half a titlebar above or one and a
+  half below the strip; while out, the strip shows no reorder preview. The target
+  strip shows a gap and an accent marker (`Strip.drop_index`).
+* Placement: `Manager.tear_off` remembers the client and pointer for two seconds;
+  `lifecycle.zig` opens the client's next toplevel with its tab area under the pointer.
+* Client helper: `Handler.tear_off` / `Handler.drop_on` are optional; providing
+  either turns `set_detachable` on.
+
 ### Phases
 
 6a. Protocol v2, compositor drag states, drop marker, placement hint, tests on

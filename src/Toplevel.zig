@@ -182,6 +182,8 @@ tab_first: usize = 0,
 tab_hover: u64 = 0,
 /// A press on a published tab: a click until the pointer travels, then a reorder.
 tab_drag: @import("ui").widgets.title_tabs.Drag = .{},
+/// Another window's tab is being dragged over this strip: the slot it would take.
+tab_drop: ?usize = null,
 
 /// Digest of the last window record sent to IPC subscribers; most commits
 /// only change pixels, and `events.onWindowChanged` skips those.
@@ -610,3 +612,7 @@ pub const tabPress = toplevel_tabs.tabPress;
 pub const tabMotion = toplevel_tabs.tabMotion;
 pub const tabRelease = toplevel_tabs.tabRelease;
 pub const activateLeading = toplevel_tabs.activateLeading;
+pub const DropTarget = toplevel_tabs.DropTarget;
+pub const tabDropIndex = toplevel_tabs.tabDropIndex;
+pub const setTabDrop = toplevel_tabs.setTabDrop;
+pub const tabDetach = toplevel_tabs.tabDetach;

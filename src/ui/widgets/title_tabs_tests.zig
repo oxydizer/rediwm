@@ -198,3 +198,61 @@ test "a drag in progress changes the hash and a bare press does not" {
     later.drag = d;
     try std.testing.expect(tt.hash(moving) != tt.hash(later));
 }
+
+test "a drag far above or below the strip is out and moves nothing" {
+    const s = strip();
+    const g = tt.geometry(width, 1, s);
+    const pitch = g.width + 4;
+    const x = g.tab(0).x + g.width / 2;
+    var d: tt.Drag = .{};
+    try std.testing.expect(d.press(s, g, 1, x));
+    // Not a drag yet: the vertical position is ignored.
+    try std.testing.expect(!d.pointerY(-400, 40));
+    try std.testing.expect(d.motion(x + pitch, 1));
+    try std.testing.expect(!d.pointerY(10, 40));
+    try std.testing.expect(d.pointerY(-30, 40));
+    try std.testing.expect(d.out);
+    // Out: no preview, and releasing is not a reorder.
+    try std.testing.expectEqual(g.tab(0).x, d.rect(g, 0).x);
+    try std.testing.expectEqual(g.tab(1).x, d.rect(g, 1).x);
+    try std.testing.expect(d.pointerY(70, 40) == false);
+    try std.testing.expect(d.pointerY(20, 40));
+    try std.testing.expect(!d.out);
+    try std.testing.expect(d.pointerY(61, 40));
+    try std.testing.expectEqual(@as(?tt.Drag.Move, null), d.release(g));
+}
+
+test "dropIndex picks the gap nearest the pointer" {
+    const g = tt.geometry(width, 1, strip());
+    const pitch = g.width + 4;
+    try std.testing.expectEqual(@as(usize, 0), tt.dropIndex(g, g.x - 50));
+    try std.testing.expectEqual(@as(usize, 0), tt.dropIndex(g, g.x + 0.2 * pitch));
+    try std.testing.expectEqual(@as(usize, 1), tt.dropIndex(g, g.x + 0.8 * pitch));
+    try std.testing.expectEqual(@as(usize, 2), tt.dropIndex(g, g.x + 1.6 * pitch));
+    try std.testing.expectEqual(@as(usize, 3), tt.dropIndex(g, g.x + 5000));
+}
+
+test "the drop marker and the out state change the hash" {
+    const s = strip();
+    var marked = s;
+    marked.drop_index = 1;
+    try std.testing.expect(tt.hash(s) != tt.hash(marked));
+    var other = s;
+    other.drop_index = 2;
+    try std.testing.expect(tt.hash(marked) != tt.hash(other));
+    // Index 0 differs from no marker at all.
+    var first = s;
+    first.drop_index = 0;
+    try std.testing.expect(tt.hash(s) != tt.hash(first));
+    const g = tt.geometry(width, 1, s);
+    var d: tt.Drag = .{};
+    const x = g.tab(0).x + g.width / 2;
+    try std.testing.expect(d.press(s, g, 1, x));
+    try std.testing.expect(d.motion(x + 20, 1));
+    var in_strip = s;
+    in_strip.drag = d;
+    try std.testing.expect(d.pointerY(-60, 40));
+    var out = s;
+    out.drag = d;
+    try std.testing.expect(tt.hash(in_strip) != tt.hash(out));
+}

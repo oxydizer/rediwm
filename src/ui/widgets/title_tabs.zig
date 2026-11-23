@@ -22,6 +22,9 @@ pub const Strip = struct {
     leading: bool = false,
     /// A reorder in progress; the painter follows it (`Drag.rect`).
     drag: Drag = .{},
+    /// Another window's tab is being dragged over this strip: the gap opens
+    /// before this tab index (0..tabs.len) and a marker shows it.
+    drop_index: ?usize = null,
 };
 pub const Hit = union(enum) { none, tab: u64, close: u64, plus, previous, next, leading };
 pub fn key(target: Hit) u64 {
@@ -100,6 +103,14 @@ pub fn hit(width: i32, density: f32, strip: Strip, x: f64, y: f64) Hit {
     return .none;
 }
 
+/// Where a tab dropped at `x` would be inserted: an index among all tabs,
+/// 0..tabs.len, within the visible ones.
+pub fn dropIndex(g: Geometry, x: f32) usize {
+    if (g.count == 0) return g.first;
+    const slot = @round((x - g.x) / (g.width + 4));
+    return g.first + @as(usize, @intFromFloat(std.math.clamp(slot, 0, @as(f32, @floatFromInt(g.count)))));
+}
+
 pub fn hash(strip: Strip) u64 {
     return hashImpl(strip, true);
 }
@@ -117,9 +128,12 @@ fn hashImpl(strip: Strip, include_titles: bool) u64 {
     const dragging = strip.drag.dragging();
     h.update(std.mem.asBytes(&dragging));
     if (dragging) {
+        h.update(std.mem.asBytes(&strip.drag.out));
         h.update(std.mem.asBytes(&strip.drag.id));
         h.update(std.mem.asBytes(&strip.drag.x));
     }
+    const drop: usize = if (strip.drop_index) |d| d + 1 else 0;
+    h.update(std.mem.asBytes(&drop));
     for (strip.tabs) |t| {
         h.update(std.mem.asBytes(&t.id));
         if (include_titles) h.update(t.title);
@@ -150,6 +164,9 @@ pub const Drag = struct {
     grab: f32 = 0,
     x: f32 = 0,
     moved: bool = false,
+    /// The pointer is far from the strip: the tab is on its way out of the
+    /// window, so the strip shows no reorder preview.
+    out: bool = false,
 
     pub fn pressed(d: Drag) bool {
         return d.id != 0;
@@ -182,6 +199,16 @@ pub const Drag = struct {
         return true;
     }
 
+    /// Tells the drag where the pointer is vertically (0 is the top of the
+    /// titlebar, `band` its height); true when it went out or came back.
+    pub fn pointerY(d: *Drag, y: f32, band: f32) bool {
+        if (!d.dragging()) return false;
+        const now = y < -band * 0.5 or y > band * 1.5;
+        if (now == d.out) return false;
+        d.out = now;
+        return true;
+    }
+
     /// The index, among all tabs, where the dragged tab would land now.
     pub fn target(d: Drag, g: Geometry) usize {
         if (g.count == 0) return d.from;
@@ -196,7 +223,7 @@ pub const Drag = struct {
     /// dragged tab under the pointer, the tabs it passes one step aside.
     pub fn rect(d: Drag, g: Geometry, i: usize) Rect {
         var r = g.tab(i);
-        if (!d.dragging() or g.count == 0) return r;
+        if (!d.dragging() or d.out or g.count == 0) return r;
         const pitch = g.width + 4;
         const index = g.first + i;
         const to = d.target(g);
@@ -215,7 +242,7 @@ pub const Drag = struct {
     /// ended where it began, or no press at all.
     pub fn release(d: *Drag, g: Geometry) ?Move {
         defer d.* = .{};
-        if (d.id == 0 or !d.moved) return null;
+        if (d.id == 0 or !d.moved or d.out) return null;
         const to = d.target(g);
         if (to == d.from) return null;
         return .{ .id = d.id, .index = to };

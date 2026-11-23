@@ -213,7 +213,7 @@ pub fn processButton(
     if (state == .released and button == btn_left) {
         if (input.tab_drag) |toplevel| {
             input.tab_drag = null;
-            toplevel.tabRelease();
+            @import("tab_drop.zig").finish(input, toplevel);
             input.processCursorMotion(time_msec);
             return;
         }
