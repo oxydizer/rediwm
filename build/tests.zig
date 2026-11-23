@@ -395,6 +395,16 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
         "Benchmark transfer progress, tree aggregation and concurrent job polling",
     ).dependOn(&run_transfer_bench.step);
 
+    const archive_bench_tests = b.addTest(.{
+        .root_module = files_tests.root_module,
+        .filters = &.{"archive directory fd benchmark"},
+    });
+    const run_archive_bench = b.addRunArtifact(archive_bench_tests);
+    b.step(
+        "bench-files-archive",
+        "Benchmark archive extraction directory traversal",
+    ).dependOn(&run_archive_bench.step);
+
     // Standalone executable for end-to-end measurements of the production
     // JobRunner filesystem copy path.
     const copy_bench_module = b.createModule(.{

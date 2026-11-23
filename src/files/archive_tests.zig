@@ -8,6 +8,99 @@ const makeTestDir = files_tests.makeTestDir;
 const writeTestFile = files_tests.writeTestFile;
 const readTestFile = files_tests.readTestFile;
 
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+
+fn writeArchiveBenchmarkFixture(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    directory_count: usize,
+    files_per_directory: usize,
+    interleaved: bool,
+) !void {
+    const api = @import("c_archive");
+    const writer = api.archive_write_new() orelse return error.OutOfMemory;
+    defer _ = api.archive_write_free(writer);
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_set_format_zip(writer));
+    const zpath = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(zpath);
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_open_filename(writer, zpath));
+
+    const total_files = directory_count * files_per_directory;
+    for (0..total_files) |position| {
+        const directory_index = if (interleaved)
+            position % directory_count
+        else
+            position / files_per_directory;
+        const file_index = if (interleaved)
+            position / directory_count
+        else
+            position % files_per_directory;
+        const name = try std.fmt.allocPrintSentinel(
+            allocator,
+            "directory-{d}/file-{d}.bin",
+            .{ directory_index, file_index },
+            0,
+        );
+        defer allocator.free(name);
+
+        const entry = api.archive_entry_new() orelse return error.OutOfMemory;
+        defer api.archive_entry_free(entry);
+        api.archive_entry_set_pathname(entry, name);
+        api.archive_entry_set_filetype(entry, c.S_IFREG);
+        api.archive_entry_set_perm(entry, 0o600);
+        api.archive_entry_set_size(entry, 0);
+        try std.testing.expectEqual(@as(c_int, 0), api.archive_write_header(writer, entry));
+    }
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_close(writer));
+}
+
+fn archiveBenchmarkNowNs() u64 {
+    var ts: std.c.timespec = undefined;
+    const result = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+    std.debug.assert(result == 0);
+    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s +
+        @as(u64, @intCast(ts.nsec));
+}
+
+fn measureArchiveExtraction(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    parent: []const u8,
+) !u64 {
+    const archive = @import("archive.zig");
+    const stage = try archive.temporary(allocator, parent);
+    defer {
+        ops_mod.deleteRecursive(allocator, stage) catch {};
+        allocator.free(stage);
+    }
+    var cancel: archive.Cancel = .init(false);
+    const start = archiveBenchmarkNowNs();
+    try archive.extract(allocator, source, stage, null, &cancel);
+    return archiveBenchmarkNowNs() - start;
+}
+
+fn benchmarkArchiveLayout(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    parent: []const u8,
+    layout: []const u8,
+    file_count: usize,
+) !void {
+    _ = try measureArchiveExtraction(allocator, source, parent);
+    var samples: [3]u64 = undefined;
+    for (&samples) |*sample| {
+        sample.* = try measureArchiveExtraction(allocator, source, parent);
+    }
+    // Three samples: select the median without allocating or sorting.
+    const median = @max(@min(samples[0], samples[1]), @min(@max(samples[0], samples[1]), samples[2]));
+    const files_per_second = @as(f64, @floatFromInt(file_count)) *
+        std.time.ns_per_s / @as(f64, @floatFromInt(median));
+    std.debug.print(
+        "BENCH,archive_extract,{s},{d},{d},{d},{d:.2}\n",
+        .{ layout, file_count, 64, median, files_per_second },
+    );
+}
+
 test "Git porcelain preserves paths, rename pairs, conflicts and directory boundaries" {
     const git = @import("git.zig");
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -92,6 +185,39 @@ pub fn writeArchiveFixtureLinks(path: []const u8, names: []const [:0]const u8, l
         try std.testing.expectEqual(@as(c_int, 0), api.archive_write_header(writer, entry));
     }
     try std.testing.expectEqual(@as(c_int, 0), api.archive_write_close(writer));
+}
+
+test "archive directory fd benchmark" {
+    const enabled = getenv("REDIWM_RUN_BENCHMARKS") orelse return error.SkipZigTest;
+    if (!std.mem.eql(u8, std.mem.span(enabled), "1")) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const directory_count = 64;
+    const files_per_directory = 128;
+    const file_count = directory_count * files_per_directory;
+    var buf: [256]u8 = undefined;
+    const root = try makeTestDir(&buf);
+    defer ops_mod.deleteRecursive(allocator, root) catch {};
+    const source = try std.fmt.allocPrint(allocator, "{s}/archive.zip", .{root});
+    defer allocator.free(source);
+
+    std.debug.print(
+        "BENCH,operation,layout,files,directories,median_ns,files_per_second\n",
+        .{},
+    );
+    for ([_]struct { name: []const u8, interleaved: bool }{
+        .{ .name = "grouped", .interleaved = false },
+        .{ .name = "interleaved", .interleaved = true },
+    }) |layout| {
+        try writeArchiveBenchmarkFixture(
+            allocator,
+            source,
+            directory_count,
+            files_per_directory,
+            layout.interleaved,
+        );
+        try benchmarkArchiveLayout(allocator, source, root, layout.name, file_count);
+    }
 }
 
 test "archive relative symlinks survive publication and cannot escape staging" {
