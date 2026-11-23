@@ -943,6 +943,22 @@ fn copyRecursiveTracked(
     cancel: ?*std.atomic.Value(bool),
     runner: ?*JobRunner,
 ) !void {
+    if (runner) |job| {
+        copyManifestRoot(allocator, dst, cancel, job) catch |err| {
+            // If root cleanup succeeded, the whole destination subtree was
+            // rolled back. Otherwise preserve completed entries.
+            if (!pathExists(allocator, dst)) {
+                job.setManifestSubtreeState(
+                    job.current_item_index,
+                    src,
+                    if (err == error.Cancelled) .cancelled else .failed,
+                );
+            }
+            return err;
+        };
+        return;
+    }
+
     const manifest_kind = if (runner) |job|
         job.setManifestEntryState(job.current_item_index, src, .copying)
     else
@@ -963,6 +979,75 @@ fn copyRecursiveTracked(
         return err;
     };
     if (runner) |job| _ = job.setManifestEntryState(job.current_item_index, src, .completed);
+}
+
+/// Copies one selected root from its already measured manifest snapshot.
+/// Entries are stored parent-first, so every directory exists before its
+/// descendants are processed. No source directory is enumerated here.
+fn copyManifestRoot(
+    allocator: Allocator,
+    root_destination: []const u8,
+    cancel: ?*std.atomic.Value(bool),
+    job: *JobRunner,
+) !void {
+    var root_created = false;
+    errdefer if (root_created) deleteRecursive(allocator, root_destination) catch {};
+
+    for (job.manifest.entries.items, 0..) |entry, entry_index| {
+        if (entry.root_index != job.current_item_index) continue;
+        if (!job.waitIfResumed(cancel)) return error.Cancelled;
+        if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
+
+        const destination = entry.destination_path orelse return error.MissingDestinationPath;
+        job.setManifestEntryStateByIndex(entry_index, .copying);
+
+        switch (entry.kind) {
+            .directory => {
+                const source_z = try allocator.dupeSentinel(u8, entry.source_path, 0);
+                defer allocator.free(source_z);
+                job.profilePathAllocation(entry.source_path.len);
+                job.profileCount(&job.profile_metrics.lstat_calls, 1);
+
+                var st: c.struct_stat = undefined;
+                if (c.lstat(source_z, &st) != 0) return error.StatFailed;
+                if ((st.st_mode & c.S_IFMT) != c.S_IFDIR) return error.UnsupportedFileType;
+
+                const destination_z = try allocator.dupeSentinel(u8, destination, 0);
+                defer allocator.free(destination_z);
+                job.profilePathAllocation(destination.len);
+                job.profileCount(&job.profile_metrics.directory_create_calls, 1);
+
+                if (c.mkdir(destination_z, @intCast(st.st_mode & 0o7777)) != 0) {
+                    return error.CreateDirectoryFailed;
+                }
+                if (entry.relative_path.len == 0) root_created = true;
+            },
+            .file => {
+                try copyFileContentsTracked(
+                    allocator,
+                    entry.source_path,
+                    destination,
+                    cancel,
+                    job,
+                    true,
+                );
+            },
+            .symlink => {
+                const source_z = try allocator.dupeSentinel(u8, entry.source_path, 0);
+                defer allocator.free(source_z);
+                job.profilePathAllocation(entry.source_path.len);
+                job.profileCount(&job.profile_metrics.lstat_calls, 1);
+
+                var st: c.struct_stat = undefined;
+                if (c.lstat(source_z, &st) != 0) return error.StatFailed;
+                if ((st.st_mode & c.S_IFMT) != c.S_IFLNK) return error.UnsupportedFileType;
+
+                try copySymlink(allocator, entry.source_path, destination);
+            },
+        }
+
+        job.setManifestEntryStateByIndex(entry_index, .completed);
+    }
 }
 
 fn pathExists(allocator: Allocator, path: []const u8) bool {
@@ -2207,6 +2292,22 @@ pub const JobRunner = struct {
             }
         }
         return null;
+    }
+
+    /// Updates a manifest entry already located by its stable array index.
+    /// Avoids repeating the source-path lookup for every copied entry.
+    fn setManifestEntryStateByIndex(
+        self: *JobRunner,
+        entry_index: usize,
+        state: TransferEntryState,
+    ) void {
+        self.profileCount(&self.profile_metrics.mutex_lock_calls, 1);
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+
+        if (entry_index >= self.manifest.entries.items.len) return;
+        self.setManifestEntryStateLocked(&self.manifest.entries.items[entry_index], state);
+        self.notify();
     }
 
     fn setManifestRootState(

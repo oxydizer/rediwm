@@ -721,6 +721,84 @@ test "JobRunner reports byte totals for recursive copies and moves" {
     try std.testing.expect(!testFileExists(move_source));
 }
 
+test "JobRunner copies directly from the manifest without a second directory scan" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+
+    const source = try std.fmt.allocPrint(a, "{s}/source", .{tmp});
+    defer a.free(source);
+    try ops_mod.createFolder(a, tmp, "source");
+
+    const nested = try std.fmt.allocPrint(a, "{s}/nested", .{source});
+    defer a.free(nested);
+    try ops_mod.createFolder(a, source, "nested");
+
+    const empty = try std.fmt.allocPrint(a, "{s}/empty", .{source});
+    defer a.free(empty);
+    try ops_mod.createFolder(a, source, "empty");
+
+    const root_file = try std.fmt.allocPrint(a, "{s}/root.txt", .{source});
+    defer a.free(root_file);
+    try writeTestFile(root_file, "root payload");
+
+    const nested_file = try std.fmt.allocPrint(a, "{s}/nested/inside.txt", .{source});
+    defer a.free(nested_file);
+    try writeTestFile(nested_file, "nested payload");
+
+    const source_link = try std.fmt.allocPrint(a, "{s}/root-link", .{source});
+    defer a.free(source_link);
+    const source_link_z = try a.dupeSentinel(u8, source_link, 0);
+    defer a.free(source_link_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.symlink("root.txt", source_link_z));
+
+    const destination_parent = try std.fmt.allocPrint(a, "{s}/destination", .{tmp});
+    defer a.free(destination_parent);
+    try ops_mod.createFolder(a, tmp, "destination");
+
+    const runner = try ops_mod.JobRunner.init(a);
+    defer runner.deinit();
+    runner.profile_enabled = true;
+
+    try runner.start(.copy, &.{source}, destination_parent, .ask);
+    runner.thread.?.join();
+    runner.thread = null;
+
+    const copied_root = try std.fmt.allocPrint(a, "{s}/source", .{destination_parent});
+    defer a.free(copied_root);
+    const copied_root_file = try std.fmt.allocPrint(a, "{s}/root.txt", .{copied_root});
+    defer a.free(copied_root_file);
+    const copied_nested_file = try std.fmt.allocPrint(a, "{s}/nested/inside.txt", .{copied_root});
+    defer a.free(copied_nested_file);
+    const copied_empty = try std.fmt.allocPrint(a, "{s}/empty", .{copied_root});
+    defer a.free(copied_empty);
+    const copied_link = try std.fmt.allocPrintSentinel(a, "{s}/root-link", .{copied_root}, 0);
+    defer a.free(copied_link);
+
+    var root_buffer: [64]u8 = undefined;
+    var nested_buffer: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("root payload", try readTestFile(copied_root_file, &root_buffer));
+    try std.testing.expectEqualStrings("nested payload", try readTestFile(copied_nested_file, &nested_buffer));
+    try std.testing.expect(testFileExists(copied_empty));
+
+    var link_target: [64]u8 = undefined;
+    const link_len = c.readlink(copied_link, &link_target, link_target.len);
+    try std.testing.expect(link_len > 0);
+    try std.testing.expectEqualStrings("root.txt", link_target[0..@intCast(link_len)]);
+
+    try std.testing.expectEqual(@as(usize, 6), runner.manifest.entries.items.len);
+    for (runner.manifest.entries.items) |entry| {
+        try std.testing.expectEqual(ops_mod.TransferEntryState.completed, entry.state);
+    }
+
+    const profile = runner.profilingSnapshot().?;
+    // The source has two directories. The manifest scan enumerates each once;
+    // the copy phase must not open or enumerate either directory again.
+    try std.testing.expectEqual(@as(u64, 2), profile.opendir_calls);
+    try std.testing.expectEqual(@as(u64, 5), profile.directory_entries);
+}
+
 test "JobRunner reports per-path progress and retains completed outcomes" {
     const a = std.testing.allocator;
     const runner = try ops_mod.JobRunner.init(a);
