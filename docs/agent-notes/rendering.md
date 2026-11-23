@@ -156,6 +156,16 @@ chrome, capture, or retained panel painting. General rules remain in
   one swapchain damage history. It reads graph geometry and the buffers,
   textures and wait points of the source nodes
   (`docs/plans/scene-graph-stage3.md`, `scene-graph-stage6.md`).
+* **Latches are not frame callbacks.** `Output.latch_seq` counts latching
+  deadlines: a successful non-tearing buffer commit in `commitFrameState`, and
+  the `vblank_timer` refresh after a skipped commit (`handleVblank`). fifo-v1
+  barriers (`fifo.zig`) clear only on a latch of the surface's frame-pacing
+  output, never on frame callbacks, which late render sends before it
+  renders. A new commit path must go through `commitFrameState` or the
+  barrier waits for its forward-progress fallback (two refreshes; the
+  `rediwm-msg perf` `fifo.late` counter shows it). Releasing a held update
+  applies client state: never from inside the frame or a projection walk
+  (`fifo.zig` defers it to an idle callback).
 * **Shapes in the owned pass** (`scene_pass.h`): a window's rounded clip, ring
   and shadow are `rediwm_scene_pass_add_*_shaped` calls, device pixels, snapped by
   the caller. The programs cost the driver about 430 KiB (a GL program costs

@@ -258,7 +258,7 @@ def extra_protocols(tmp):
         for interface in ("ext_workspace_manager_v1", "wp_color_manager_v1",
                           "wp_color_representation_manager_v1", "xdg_toplevel_tag_manager_v1",
                           "wp_content_type_manager_v1", "wp_tearing_control_manager_v1",
-                          "xdg_activation_v1"):
+                          "xdg_activation_v1", "wp_fifo_manager_v1"):
             assert interface in registry, interface
         assert "wp_drm_lease_device_v1" not in registry, "headless backend must not offer DRM leases"
         # Every global is advertised once. linux-dmabuf used to be created both

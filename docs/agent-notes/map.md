@@ -72,7 +72,8 @@ seam for other operating systems.
 Also in `src/`: `Shell.zig` (xdg-shell and decorations), `TitlebarTabs.zig` (client-published
 titlebar tabs, `protocol/rediwm-titlebar-tabs-v1.xml`), `Popup.zig`,
 `LayerSurface.zig`, `Xwayland.zig` (+ `xwayland_*.zig`), `Switcher.zig`
-(Alt+Tab), `workspaces.zig`, `snap.zig`, `auto_tiling.zig`, `window_tabs.zig`.
+(Alt+Tab), `workspaces.zig`, `snap.zig`, `auto_tiling.zig`, `window_tabs.zig`,
+`fifo.zig` (wp_fifo_v1 barriers, `docs/plans/fifo.md`).
 
 **Rendering** (read [rendering details](rendering.md) first): own scene nodes
 `node.zig`/`node.c`, client surfaces `node_surface.c` (+ `node_subsurface_tree.c`,

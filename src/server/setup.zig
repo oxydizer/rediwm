@@ -226,6 +226,11 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
     errdefer server.input.deinit();
     if (!greeter) server.extra_protocols = @import("../extra_protocols.zig").create(server) orelse return error.ExtraProtocolsCreateFailed;
     errdefer @import("../extra_protocols.zig").rediwm_protocols_destroy(server.extra_protocols);
+    if (!greeter) server.fifo = @import("../fifo.zig").Manager.create(server) catch return error.FifoManagerCreateFailed;
+    errdefer if (server.fifo) |fifo| {
+        server.fifo = null;
+        fifo.destroy();
+    };
     server.activation.init(server) catch return error.ActivationManagerCreateFailed;
     errdefer server.activation.deinit();
     server.launch_feedback.init(server);

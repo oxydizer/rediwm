@@ -76,6 +76,10 @@ pub fn deinit(server: *Server) void {
     server.window_tabs.deinit();
     @import("../extra_protocols.zig").rediwm_protocols_destroy(server.extra_protocols);
     server.extra_protocols = null;
+    if (server.fifo) |fifo| {
+        server.fifo = null;
+        fifo.destroy();
+    }
     server.activation.deinit();
     server.launch_feedback.deinit();
     if (server.text_input) |relay| {

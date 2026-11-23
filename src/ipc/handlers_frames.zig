@@ -186,6 +186,7 @@ pub fn handleFrameAction(
                 .glass_reblurs = @import("../scene_output.zig").reblurs.*,
                 .tearing_async_flips = stats.global_stats.tearing_async_flips,
                 .tearing_refused_flips = stats.global_stats.tearing_refused_flips,
+                .fifo = stats.global_stats.fifo,
             } } };
         },
         .reset_performance_stats => {

@@ -161,6 +161,19 @@ pub const PerformanceStatsResult = struct {
     /// Asynchronous (tearing) flips, and those the driver refused, all outputs.
     tearing_async_flips: ?u64 = null,
     tearing_refused_flips: ?u64 = null,
+    fifo: ?FifoStats = null,
+};
+
+/// wp_fifo_v1 barrier work since the last reset (`fifo.zig`).
+pub const FifoStats = struct {
+    /// Content updates held behind a barrier.
+    held: u64 = 0,
+    /// Barriers cleared by their pacing output's latch (commit or skipped-frame vblank).
+    latched: u64 = 0,
+    /// Barriers cleared by the hidden-surface rate (no output paces the surface).
+    hidden: u64 = 0,
+    /// Barriers cleared early on a shown surface because no latch came in time.
+    late: u64 = 0,
 };
 
 /// The compositor-drawn desktop's repaint work since the last reset.

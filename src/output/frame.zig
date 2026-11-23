@@ -56,6 +56,8 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
     if (success) {
         tearing.committed(output, state);
         vrr.committed(output, state);
+        // A torn flip is not a refresh boundary (fifo-v1 D3).
+        if (state.committed.buffer and !state.tearing_page_flip) latched(output);
     }
     if (had_transform) {
         if (success) {
@@ -151,9 +153,17 @@ fn callbacksIdle(output: *Output) void {
     deferFrameDone(output);
 }
 
+/// The output has latched what it shows for the coming refresh.
+fn latched(output: *Output) void {
+    output.latch_seq +%= 1;
+    if (output.server.fifo) |fifo| fifo.latched(output.wlr_output, output.latch_seq);
+}
+
 pub fn handleVblank(output: *Output) c_int {
     output.vblank_armed = false;
     output.last_vblank_ns = output.vblank_target_ns;
+    // A skipped commit's refresh: the unchanged picture was latched again.
+    latched(output);
     sendFrameDone(output);
     if (output.frame_wanted) {
         output.frame_wanted = false;

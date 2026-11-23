@@ -101,6 +101,10 @@ frame_wanted: bool = false,
 /// Last known vblank: a page-flip frame event or a fired `vblank_timer`.
 last_vblank_ns: u64 = 0,
 flip_pending: bool = false,
+/// Latching deadlines passed: a non-tearing buffer commit, or a `vblank_timer`
+/// refresh after a skipped commit. fifo-v1 barriers clear on these, never on
+/// frame callbacks (late render sends those before it renders).
+latch_seq: u64 = 0,
 /// Late rendering (`output/late.zig`): the decision model, the timer that
 /// starts a deferred frame, whether one is waiting (frame events are ignored
 /// meanwhile), the plan `runFrame` takes when it runs, and whether the last
