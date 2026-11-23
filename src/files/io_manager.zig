@@ -379,6 +379,7 @@ const Job = struct {
     skipped_subtrees: std.AutoHashMapUnmanaged(io_tree.EntryId, void) = .empty,
     discovery_pending_count: usize = 0,
     outstanding_population_count: usize = 0,
+    directory_permission_records: std.ArrayList(DirectoryPermissionRecord) = .empty,
     discovery_generation: u64 = 0,
     discovery_in_flight: ?DiscoveryToken = null,
     operations: std.ArrayList(Operation) = .empty,
@@ -398,6 +399,7 @@ const Job = struct {
         if (self.destination_directory) |path| allocator.free(path);
         self.discovery_schedule.deinit(allocator);
         self.skipped_subtrees.deinit(allocator);
+        self.directory_permission_records.deinit(allocator);
         self.tree.deinit();
         for (self.operations.items) |*operation| operation.deinit(allocator);
         self.operations.deinit(allocator);
@@ -423,6 +425,19 @@ pub const OperationDetails = struct {
     entry_id: io_tree.EntryId,
     merge_existing_directory: bool,
     replace_existing_file: bool,
+};
+
+pub const DirectoryPermissionOrigin = enum {
+    created,
+    merged,
+};
+
+pub const DirectoryPermissionRecord = struct {
+    entry_id: io_tree.EntryId,
+    device_id: u64,
+    inode_id: u64,
+    mode: u32,
+    origin: DirectoryPermissionOrigin,
 };
 
 pub const EntryOperationView = struct {
@@ -1362,6 +1377,40 @@ pub const Manager = struct {
             .merge_existing_directory = operation.merge_existing_directory,
             .replace_existing_file = operation.replace_existing_file,
         };
+    }
+
+    pub fn registerDirectoryPermission(
+        self: *Manager,
+        token: WorkToken,
+        record: DirectoryPermissionRecord,
+    ) !void {
+        const job = self.findJob(token.job_id) orelse return error.StaleWork;
+        const operation = findOperation(job, token.operation_id) orelse
+            return error.StaleWork;
+        if (operation.state != .running or
+            operation.generation != token.generation or
+            operation.kind != .create_directory or
+            operation.entry_id != record.entry_id)
+            return error.StaleWork;
+
+        if (record.mode > 0o777 or
+            (record.origin == .merged) != operation.merge_existing_directory)
+            return error.InvalidDirectoryPermissionRecord;
+
+        for (job.directory_permission_records.items) |existing| {
+            if (existing.entry_id == record.entry_id)
+                return error.DuplicateDirectoryPermissionRecord;
+        }
+
+        try job.directory_permission_records.append(self.allocator, record);
+    }
+
+    pub fn directoryPermissionRecords(
+        self: *const Manager,
+        job_id: JobId,
+    ) ?[]const DirectoryPermissionRecord {
+        const job = self.findJobConst(job_id) orelse return null;
+        return job.directory_permission_records.items;
     }
 
     /// Returns the Manager-owned request for a current archive operation.

@@ -1088,6 +1088,57 @@ test "merging a directory conflict authorizes only its retried directory operati
     );
 }
 
+test "directory permission registration validates ownership and records once" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "Photos", .directory, .{}, null);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    try manager.queueJob(job);
+    const token = manager.dispatchNext().?;
+    const record = io_manager.DirectoryPermissionRecord{
+        .entry_id = root,
+        .device_id = 12,
+        .inode_id = 34,
+        .mode = 0o751,
+        .origin = .created,
+    };
+
+    try manager.registerDirectoryPermission(token, record);
+    try std.testing.expectError(
+        error.DuplicateDirectoryPermissionRecord,
+        manager.registerDirectoryPermission(token, record),
+    );
+    var invalid = record;
+    invalid.origin = .merged;
+    try std.testing.expectError(
+        error.InvalidDirectoryPermissionRecord,
+        manager.registerDirectoryPermission(token, invalid),
+    );
+    invalid = record;
+    invalid.mode = 0o1000;
+    try std.testing.expectError(
+        error.InvalidDirectoryPermissionRecord,
+        manager.registerDirectoryPermission(token, invalid),
+    );
+    var stale_token = token;
+    stale_token.generation += 1;
+    try std.testing.expectError(
+        error.StaleWork,
+        manager.registerDirectoryPermission(stale_token, record),
+    );
+
+    const records = manager.directoryPermissionRecords(job).?;
+    try std.testing.expectEqual(@as(usize, 1), records.len);
+    try std.testing.expectEqual(root, records[0].entry_id);
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationDetails(token).?.kind,
+    );
+    try std.testing.expect(manager.completeWork(token, .completed));
+}
+
 test "directory merge rejects non-directory conflicts without consuming the FIFO" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

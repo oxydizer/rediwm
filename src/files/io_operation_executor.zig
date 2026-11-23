@@ -74,6 +74,7 @@ pub const Runtime = struct {
             .{
                 .prepare = prepare,
                 .execute = execute,
+                .accept = accept,
                 .complete = complete,
                 .discard = discard,
             },
@@ -622,6 +623,32 @@ fn failWork(item_arg: io_executor.WorkItem) io_executor.WorkCompletion {
         .operation_kind = item.operation_kind,
         .input = item.input,
     };
+}
+
+fn accept(
+    raw_context: ?*anyopaque,
+    token: io_manager.WorkToken,
+    operation_kind: ?io_manager.OperationKind,
+    outcome: io_manager.WorkResult,
+    result: ?*const io_executor.OwnedPayload,
+) anyerror!void {
+    if (outcome != .completed or operation_kind != .create_directory)
+        return;
+
+    const context: *Context = @ptrCast(@alignCast(raw_context.?));
+    const payload = result orelse return error.MissingDirectoryPermissionResult;
+    const permission = io_directory.permissionResult(payload) orelse
+        return error.InvalidDirectoryPermissionResult;
+    const details = context.manager.operationDetails(token) orelse
+        return error.StaleOperation;
+
+    try context.manager.registerDirectoryPermission(token, .{
+        .entry_id = details.entry_id,
+        .device_id = permission.device_id,
+        .inode_id = permission.inode_id,
+        .mode = permission.mode,
+        .origin = if (permission.origin == .created) .created else .merged,
+    });
 }
 
 fn complete(

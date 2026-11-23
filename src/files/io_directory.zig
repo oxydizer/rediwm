@@ -10,6 +10,7 @@ const executor = @import("io_executor.zig");
 
 const collision_tag: u8 = 1;
 const created_tag: u8 = 2;
+const merged_tag: u8 = 3;
 const created_result_name_offset: usize = 25;
 
 fn allocZ(allocator: Allocator, value: []const u8) ![:0]u8 {
@@ -106,19 +107,20 @@ fn makeCollisionResult(allocator: Allocator) ?executor.OwnedPayload {
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
-fn makeCreatedResult(
+fn makePermissionResult(
     allocator: Allocator,
     parent_fd: c_int,
     name: [:0]const u8,
     device_id: u64,
     inode_id: u64,
     mode: u32,
+    origin_tag: u8,
 ) ?executor.OwnedPayload {
     const bytes = allocator.alloc(
         u8,
         created_result_name_offset + name.len + 1,
     ) catch return null;
-    bytes[0] = created_tag;
+    bytes[0] = origin_tag;
     const raw_fd: u32 = @bitCast(parent_fd);
     for (0..4) |index| {
         bytes[1 + index] = @truncate(raw_fd >> @as(u5, @intCast(index * 8)));
@@ -147,7 +149,8 @@ fn makeCreatedResult(
 fn removeCreatedDirectory(result: *const executor.OwnedPayload) void {
     const bytes = result.slice();
     if (bytes.len < created_result_name_offset + 2 or
-        bytes[0] != created_tag or bytes[bytes.len - 1] != 0)
+        (bytes[0] != created_tag and bytes[0] != merged_tag) or
+        bytes[bytes.len - 1] != 0)
         return;
 
     var raw_fd: u32 = 0;
@@ -157,27 +160,27 @@ fn removeCreatedDirectory(result: *const executor.OwnedPayload) void {
     const parent_fd: c_int = @bitCast(raw_fd);
     if (parent_fd < 0) return;
 
-    const name: [*:0]const u8 =
-        @ptrCast(bytes[created_result_name_offset..].ptr);
-    _ = c.unlinkat(parent_fd, name, c.AT_REMOVEDIR);
+    if (bytes[0] == created_tag) {
+        const name: [*:0]const u8 =
+            @ptrCast(bytes[created_result_name_offset..].ptr);
+        _ = c.unlinkat(parent_fd, name, c.AT_REMOVEDIR);
+    }
     _ = c.close(parent_fd);
 }
 
-/// Restores the source permission bits on the directory created by this
-/// operation. The saved device/inode identity prevents chmod from following
-/// a replacement installed at the same destination name.
-pub fn finalizeCreatedDirectory(result: *const executor.OwnedPayload) bool {
+pub const PermissionResult = struct {
+    device_id: u64,
+    inode_id: u64,
+    mode: u32,
+    origin: enum { created, merged },
+};
+
+pub fn permissionResult(result: *const executor.OwnedPayload) ?PermissionResult {
     const bytes = result.slice();
     if (bytes.len < created_result_name_offset + 2 or
-        bytes[0] != created_tag or bytes[bytes.len - 1] != 0)
-        return false;
-
-    var raw_fd: u32 = 0;
-    for (0..4) |index| {
-        raw_fd |= @as(u32, bytes[1 + index]) << @as(u5, @intCast(index * 8));
-    }
-    const parent_fd: c_int = @bitCast(raw_fd);
-    if (parent_fd < 0) return false;
+        (bytes[0] != created_tag and bytes[0] != merged_tag) or
+        bytes[bytes.len - 1] != 0)
+        return null;
 
     var device_id: u64 = 0;
     var inode_id: u64 = 0;
@@ -191,37 +194,18 @@ pub fn finalizeCreatedDirectory(result: *const executor.OwnedPayload) bool {
         mode |= @as(u32, bytes[21 + index]) << @as(u5, @intCast(index * 8));
     }
 
-    const name: [*:0]const u8 =
-        @ptrCast(bytes[created_result_name_offset..].ptr);
-    var current_stat: c.struct_stat = undefined;
-    if (c.fstatat(parent_fd, name, &current_stat, c.AT_SYMLINK_NOFOLLOW) != 0)
-        return false;
-    if ((current_stat.st_mode & c.S_IFMT) != c.S_IFDIR or
-        @as(u64, @intCast(current_stat.st_dev)) != device_id or
-        @as(u64, @intCast(current_stat.st_ino)) != inode_id)
-        return false;
-
-    const directory_fd = c.openat(
-        parent_fd,
-        name,
-        c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC | c.O_NOFOLLOW,
-    );
-    if (directory_fd < 0) return false;
-    defer _ = c.close(directory_fd);
-
-    var opened_stat: c.struct_stat = undefined;
-    if (c.fstat(directory_fd, &opened_stat) != 0 or
-        @as(u64, @intCast(opened_stat.st_dev)) != device_id or
-        @as(u64, @intCast(opened_stat.st_ino)) != inode_id)
-        return false;
-
-    return c.fchmod(directory_fd, @intCast(mode)) == 0;
+    return .{
+        .device_id = device_id,
+        .inode_id = inode_id,
+        .mode = mode,
+        .origin = if (bytes[0] == created_tag) .created else .merged,
+    };
 }
 
 /// Execute one exclusive directory-creation operation.
 ///
-/// Existing destinations are not overwritten or merged. They produce
-/// `.waiting`, leaving conflict resolution to the Manager.
+/// Existing destinations produce `.waiting` unless the Manager has
+/// authorized an explicit directory merge.
 pub fn execute(
     allocator: Allocator,
     item_arg: executor.WorkItem,
@@ -250,7 +234,7 @@ pub fn execute(
         _ = c.close(source_fd);
         return completion(item, .failed, null);
     }
-    const source_mode: u32 = @intCast(source_stat.st_mode & 0o7777);
+    const source_mode: u32 = @intCast(source_stat.st_mode & 0o777);
     _ = c.close(source_fd);
 
     // Anchor creation and stale-result cleanup to the opened parent.
@@ -270,13 +254,36 @@ pub fn execute(
                 const existing_fd = c.openat(
                     parent_fd,
                     split.name,
-                    c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC | c.O_NOFOLLOW,
+                    c.O_PATH | c.O_DIRECTORY | c.O_CLOEXEC | c.O_NOFOLLOW,
                 );
-                _ = c.close(parent_fd);
-                if (existing_fd < 0)
+                if (existing_fd < 0) {
+                    _ = c.close(parent_fd);
                     return completion(item, .failed, null);
+                }
+                var existing_stat: c.struct_stat = undefined;
+                if (c.fstat(existing_fd, &existing_stat) != 0 or
+                    (existing_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
+                {
+                    _ = c.close(existing_fd);
+                    _ = c.close(parent_fd);
+                    return completion(item, .failed, null);
+                }
+                const merged_mode = source_mode &
+                    @as(u32, @intCast(existing_stat.st_mode & 0o777));
                 _ = c.close(existing_fd);
-                return completion(item, .completed, null);
+                const result = makePermissionResult(
+                    allocator,
+                    parent_fd,
+                    split.name,
+                    @intCast(existing_stat.st_dev),
+                    @intCast(existing_stat.st_ino),
+                    merged_mode,
+                    merged_tag,
+                ) orelse {
+                    _ = c.close(parent_fd);
+                    return completion(item, .failed, null);
+                };
+                return completion(item, .completed, result);
             }
             _ = c.close(parent_fd);
             const result = makeCollisionResult(allocator) orelse
@@ -294,13 +301,14 @@ pub fn execute(
         return completion(item, .failed, null);
     }
 
-    const result = makeCreatedResult(
+    const result = makePermissionResult(
         allocator,
         parent_fd,
         split.name,
         @intCast(created_stat.st_dev),
         @intCast(created_stat.st_ino),
         source_mode,
+        created_tag,
     ) orelse {
         _ = c.unlinkat(parent_fd, split.name, c.AT_REMOVEDIR);
         _ = c.close(parent_fd);
@@ -354,8 +362,7 @@ pub fn discard(
     owned_input.deinit();
 }
 
-/// Accepted results retain the newly created directory; release its parent
-/// descriptor without removing the directory.
+/// Accepted results retain their directory; release the parent descriptor.
 pub fn complete(
     _: ?*anyopaque,
     _: executor.WorkToken,
@@ -366,7 +373,7 @@ pub fn complete(
     if (owned_result) |*payload| {
         const bytes = payload.slice();
         if (bytes.len >= created_result_name_offset + 2 and
-            bytes[0] == created_tag)
+            (bytes[0] == created_tag or bytes[0] == merged_tag))
         {
             var raw_fd: u32 = 0;
             for (0..4) |index| {

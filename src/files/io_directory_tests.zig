@@ -86,7 +86,10 @@ test "directory creation creates a new destination directory" {
     }
     try std.testing.expectEqual(executor.WorkResult.completed, completion.outcome);
     try std.testing.expect(completion.result != null);
-    try std.testing.expect(directory.finalizeCreatedDirectory(&completion.result.?));
+    const permission = directory.permissionResult(&completion.result.?) orelse
+        return error.MissingDirectoryPermissionResult;
+    try std.testing.expectEqual(@as(u32, 0o751), permission.mode);
+    try std.testing.expect(permission.origin == .created);
 
     const destination_z = try allocZ(allocator, destination);
     defer allocator.free(destination_z);
@@ -94,7 +97,14 @@ test "directory creation creates a new destination directory" {
     try std.testing.expect(fd >= 0);
     var destination_stat: c.struct_stat = undefined;
     try std.testing.expectEqual(@as(c_int, 0), c.fstat(fd, &destination_stat));
-    try std.testing.expectEqual(@as(u32, 0o751), @as(u32, @intCast(destination_stat.st_mode & 0o7777)));
+    try std.testing.expectEqual(
+        @as(u64, @intCast(destination_stat.st_dev)),
+        permission.device_id,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intCast(destination_stat.st_ino)),
+        permission.inode_id,
+    );
     _ = c.close(fd);
 }
 
@@ -153,6 +163,8 @@ test "explicit directory merge accepts and preserves an existing directory" {
     defer allocator.free(marker_z);
     try std.testing.expectEqual(@as(c_int, 0), c.mkdir(source_z, 0o700));
     try std.testing.expectEqual(@as(c_int, 0), c.mkdir(destination_z, 0o700));
+    try std.testing.expectEqual(@as(c_int, 0), c.chmod(source_z, 0o751));
+    try std.testing.expectEqual(@as(c_int, 0), c.chmod(destination_z, 0o770));
     const marker_fd = c.open(marker_z, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC, @as(c_uint, 0o600));
     try std.testing.expect(marker_fd >= 0);
     _ = c.close(marker_fd);
@@ -163,7 +175,17 @@ test "explicit directory merge accepts and preserves an existing directory" {
         completion.input.deinit();
     }
     try std.testing.expectEqual(executor.WorkResult.completed, completion.outcome);
-    try std.testing.expect(completion.result == null);
+    try std.testing.expect(completion.result != null);
+    const permission = directory.permissionResult(&completion.result.?) orelse
+        return error.MissingDirectoryPermissionResult;
+    try std.testing.expectEqual(@as(u32, 0o750), permission.mode);
+    try std.testing.expect(permission.origin == .merged);
+    var destination_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(destination_z, &destination_stat));
+    try std.testing.expectEqual(
+        @as(u32, 0o770),
+        @as(u32, @intCast(destination_stat.st_mode & 0o777)),
+    );
     const preserved_fd = c.open(marker_z, c.O_RDONLY | c.O_CLOEXEC);
     try std.testing.expect(preserved_fd >= 0);
     _ = c.close(preserved_fd);

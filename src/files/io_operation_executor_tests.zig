@@ -1008,6 +1008,25 @@ test "Manager Runtime merges an existing directory before detaching its source" 
         io_manager.OperationState.completed,
         manager.operationState(job, child_detach).?,
     );
+    const permission_records = manager.directoryPermissionRecords(job).?;
+    try std.testing.expectEqual(@as(usize, 1), permission_records.len);
+    try std.testing.expectEqual(root, permission_records[0].entry_id);
+    try std.testing.expectEqual(
+        io_manager.DirectoryPermissionOrigin.merged,
+        permission_records[0].origin,
+    );
+    const destination_z = try allocZ(allocator, destination);
+    defer allocator.free(destination_z);
+    var destination_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(destination_z, &destination_stat));
+    try std.testing.expectEqual(
+        @as(u64, @intCast(destination_stat.st_dev)),
+        permission_records[0].device_id,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intCast(destination_stat.st_ino)),
+        permission_records[0].inode_id,
+    );
     try std.testing.expectEqual(
         io_manager.OperationState.completed,
         manager.operationState(job, root_detach).?,
