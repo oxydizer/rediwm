@@ -68,6 +68,7 @@ pub const parseString = loader_fields.parseString;
 pub const unquoteKey = loader_fields.unquoteKey;
 pub const outputsLayoutEql = loader_compare.outputsLayoutEql;
 pub const outputsColorEql = loader_compare.outputsColorEql;
+pub const outputsAdaptiveSyncEql = loader_compare.outputsAdaptiveSyncEql;
 pub const outputsEql = loader_compare.outputsEql;
 pub const nightLightEql = loader_compare.nightLightEql;
 pub const wheelAccel = loader_compare.wheelAccel;
@@ -306,6 +307,7 @@ pub const OutputConfig = struct {
     /// Preferred fallback output for placement and desktop ownership.
     primary: bool = false,
     transform: output_transform.Transform = .normal,
+    adaptive_sync: @import("output_config.zig").AdaptiveSync = .auto,
     night_light: bool = true,
     gamma: f32 = 1.0,
 };

@@ -83,6 +83,7 @@ test {
     _ = @import("ipc/frame_metrics.zig");
     _ = @import("output/late_render_tests.zig");
     _ = @import("output/tearing_policy.zig");
+    _ = @import("output/vrr_policy.zig");
     _ = @import("config").keybinds;
     _ = @import("osd_paint.zig");
     _ = @import("osd.zig");

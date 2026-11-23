@@ -1,6 +1,10 @@
 const std = @import("std");
 const output_transform = @import("output_transform.zig");
 
+/// Variable refresh rate (FreeSync, G-Sync Compatible, Adaptive-Sync) per
+/// output: on only while a game fills it, never, or always.
+pub const AdaptiveSync = enum { off, auto, always };
+
 /// Omitted fields retain their saved value. Automatic settings explicitly clear overrides.
 pub const Patch = struct {
     output: []const u8 = "",
@@ -15,6 +19,7 @@ pub const Patch = struct {
     enabled: ?bool = null,
     primary: ?bool = null,
     transform: ?output_transform.Transform = null,
+    adaptive_sync: ?AdaptiveSync = null,
 
     pub fn validate(p: Patch) !void {
         inline for (.{ "width", "height", "refresh_mhz" }) |field| {
@@ -30,7 +35,7 @@ pub const Patch = struct {
         }
         if (p.width == null and p.height == null and p.refresh_mhz == null and
             p.x == null and p.y == null and p.scale == null and !p.auto_scale and !p.auto_position and
-            p.enabled == null and p.primary == null and p.transform == null)
+            p.enabled == null and p.primary == null and p.transform == null and p.adaptive_sync == null)
             return error.EmptyOutputConfig;
     }
 };

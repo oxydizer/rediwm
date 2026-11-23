@@ -342,6 +342,11 @@ print(f'fixture,backlight,{value},{value}%,100')
                     page("Displays")
                     assert any(w["label"] == "Resolution" for w in widgets())
                     assert not any(w["label"] == "Duplicate" for w in widgets())
+                    # Headless cannot run variable refresh: the row says so
+                    # instead of offering Off/Automatic/Always.
+                    assert any(w["label"] == "Variable refresh rate" for w in widgets())
+                    assert any(w["label"] == "Not supported by this display" for w in widgets())
+                    assert not any(w.get("name") == "adaptive_sync" for w in widgets())
                     # Tearing is off by default; the switch saves and applies it.
                     assert ui.scroll_into_view("allow_tearing")["on"] is False
                     click(ui.scroll_into_view("allow_tearing"))

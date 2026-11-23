@@ -876,6 +876,9 @@ pub fn stringifyOutput(out: OutputData, writer: anytype) !void {
     try writer.print(",\"scale\":{d},\"refresh_hz\":{d},\"is_focused\":", .{ out.scale, out.refresh_hz });
     try writer.writeAll(if (out.is_focused) "true" else "false");
     try writer.print(",\"tearing_allowed\":{},\"tearing_active\":{},\"tearing_paused\":{},\"direct_scanout\":{}", .{ out.tearing_allowed, out.tearing_active, out.tearing_paused, out.direct_scanout });
+    try writer.writeAll(",\"adaptive_sync\":");
+    try writer.print("{f}", .{std.json.fmt(out.adaptive_sync, .{})});
+    try writer.print(",\"adaptive_sync_supported\":{},\"adaptive_sync_wanted\":{},\"adaptive_sync_active\":{},\"adaptive_sync_needs_modeset\":{}", .{ out.adaptive_sync_supported, out.adaptive_sync_wanted, out.adaptive_sync_active, out.adaptive_sync_needs_modeset });
     try writer.writeByte('}');
 }
 

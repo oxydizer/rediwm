@@ -179,6 +179,17 @@ pub const OutputData = struct {
     tearing_paused: bool = false,
     /// The last frame scanned a client buffer out directly.
     direct_scanout: bool = false,
+    /// `[[outputs]] adaptive_sync`: "off", "auto" or "always".
+    adaptive_sync: []const u8 = "auto",
+    /// The display and driver can run at a variable refresh rate.
+    adaptive_sync_supported: bool = false,
+    /// The setting asks for variable refresh now (a game fills the output in
+    /// "auto"), whether or not the display can.
+    adaptive_sync_wanted: bool = false,
+    /// Variable refresh is on.
+    adaptive_sync_active: bool = false,
+    /// The driver cannot switch it without a modeset, so "auto" leaves it.
+    adaptive_sync_needs_modeset: bool = false,
 };
 
 pub const WorkspaceData = struct {

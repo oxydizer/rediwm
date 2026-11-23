@@ -599,6 +599,10 @@ pub fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.Rou
                 if (value != .string) return error.InvalidRequest;
                 patch.transform = output_transform.parseName(value.string) catch return error.InvalidRequest;
             }
+            if (p.get("adaptive_sync")) |value| {
+                if (value != .string) return error.InvalidRequest;
+                patch.adaptive_sync = std.meta.stringToEnum(@import("config").output_config.AdaptiveSync, value.string) orelse return error.InvalidRequest;
+            }
             patch.validate() catch return error.InvalidRequest;
             return .{ .set_output_config = patch };
         },

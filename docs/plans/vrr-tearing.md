@@ -1,7 +1,8 @@
 # Plan: variable refresh rate and tearing for games
 
-Status: 2026-11-17. D1–D5 decided (as proposed). P1 built (uncommitted);
-P0 and P2–P4 not started.
+Status: 2026-11-24. D1–D5 decided (as proposed). P1 committed; P0 run
+2026-11-21 (tearing only); P2 built 2026-11-24 (see "P2 as built"); P3–P4
+not started.
 
 Scope: adaptive sync (VRR: FreeSync, G-Sync Compatible, VESA Adaptive-Sync)
 per DRM output, making the tearing support we already have reliable, and a
@@ -316,3 +317,44 @@ with a HEAD worktree.
   buffers are released and IPC reports `tearing_paused`. No driver list, so a
   fixed kernel needs no change here. Revisit with a DRM run once the i915 fix
   lands (or wlroots stops writing an unchanged cursor plane in async commits).
+
+## P2 as built (2026-11-24)
+
+* `[[outputs]] adaptive_sync = "off" | "auto" | "always"` (default `auto`,
+  D1), `output_config.AdaptiveSync`; `Patch.adaptive_sync`, saved by
+  `output_save` like `transform`; IPC `set_output_config` and
+  `rediwm-msg output-config --adaptive-sync`.
+* `output/vrr_policy.zig`: `wanted(mode, game, blocked)` and the off
+  debounce (500 ms; on is immediate), with unit tests. `blocked` is the
+  greeter or an output that is off; a locked session has no game window, so
+  `auto` turns off by itself.
+* `output/vrr.zig`. **Deviation from the design:** the wanted state is
+  evaluated in `runFrame` before every frame (`vrr.prepare`) instead of on
+  a list of events (focus, fullscreen, workspace, lock, reload). It costs a
+  `game.window` check per frame and cannot miss a trigger. A change sets
+  `vrr.pending`, which forces that frame's commit (and is registered in
+  `commitIsRedundant`); `commitFrameState` tests it on a copy of the state
+  first (`vrr.apply`). The debounce arms a timer that schedules a frame.
+* Refused toggles: `auto` sets `needs_modeset` and stops switching on this
+  output and mode; `always`/`off` retry the test with a modeset of the
+  current mode; a switch refused even then, or an enable that commits but
+  reads back disabled, sets `refused` for the mode. Both reset when the
+  mode or the setting changes.
+* wlr-output-management: a head's `adaptive_sync_enabled` that differs from
+  the current status becomes `always` or `off`.
+* IPC `outputs`: `adaptive_sync` (mode), `adaptive_sync_supported`,
+  `_wanted` (policy, regardless of support), `_active`, `_needs_modeset`.
+* Settings → Displays: a "Variable refresh rate" row with Off / Automatic /
+  Always when the display supports it, "Not supported by this display"
+  otherwise, and a status line when Automatic needs a modeset. Search entry.
+* Tests: `vrr_policy.zig` unit tests; `tests/wlr_protocols.py` (wanted
+  follows the fullscreen game in `auto`, `off` persists and clears it,
+  headless refuses `wlr-randr --adaptive-sync enabled`);
+  `tests/control_center.py` checks the unsupported row.
+* **Not verified on DRM.** Whether i915 toggles VRR_ENABLED without a
+  modeset (P0's first question) is still open; the code handles both
+  answers. Check on the laptop's VT: a fullscreen `vkcube` with `auto` should
+  report `adaptive_sync_active = true` and the panel's OSD/`modetest -p`
+  should show VRR_ENABLED=1, and it should return to 0 about 0.5 s after
+  leaving the game.
+

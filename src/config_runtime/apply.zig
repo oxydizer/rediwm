@@ -48,6 +48,8 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         while (output_it.next()) |output| output.applyConfig();
         @import("../Output.zig").syncLayout(server);
     }
+    // Adaptive sync is decided per frame (output/vrr.zig); a frame applies it.
+    if (!loader.outputsAdaptiveSyncEql(old.outputs, new.outputs)) server.scheduleFrames();
     if (!outputsColorEql(old.outputs, new.outputs) or !nightLightEql(old.night_light, new.night_light)) {
         server.night_light.reconfigure(new.night_light);
     }

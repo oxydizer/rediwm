@@ -200,6 +200,7 @@ pub const output_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(OutputConfi
     .enabled = .boolean,
     .primary = .boolean,
     .transform = .output_transform,
+    .adaptive_sync = .enumeration,
     .night_light = .boolean,
     .gamma = .{ .float = .{ .min = 0.5, .max = 2.0 } },
 };

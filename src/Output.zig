@@ -21,6 +21,7 @@ const output_wallpaper = @import("output/wallpaper.zig");
 const output_frame = @import("output/frame.zig");
 const output_late = @import("output/late.zig");
 const output_tearing = @import("output/tearing.zig");
+const output_vrr = @import("output/vrr.zig");
 
 pub const wlr_color_transform_init_lut_3x1d = wlr.color.transformInitLut3x1d;
 pub const wlr_color_transform_unref = wlr.color.transformUnref;
@@ -115,6 +116,8 @@ callback_idle: ?*wl.EventSource = null,
 callback_frame_seq: u64 = 0,
 /// Asynchronous page flips for a game window (`output/tearing.zig`).
 tearing: output_tearing.State = .{},
+/// Adaptive sync for the `[[outputs]] adaptive_sync` mode (`output/vrr.zig`).
+vrr: output_vrr.State = .{},
 /// An ext-session-lock client waits for this output to commit a locked frame.
 lock_commit_pending: bool = false,
 /// Hardware cursor state as of the last commit. Atomic DRM applies cursor
@@ -524,6 +527,7 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     const output: *Output = @fieldParentPtr("destroy", listener);
     output.server.world.overview.cancel(&output.server.world);
     output_tearing.deinit(output);
+    output_vrr.deinit(output);
     if (output.server.screenshot_selector.output == output) output.server.screenshot_selector.cancel();
     if (output.server.screenshot_mgr) |mgr| mgr.cancelForOutput(output);
     const server = output.server;

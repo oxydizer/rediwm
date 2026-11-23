@@ -319,6 +319,7 @@ pub const source =
     \\# enabled = true             # set false to keep this monitor disabled
     \\# primary = true             # preferred fallback output
     \\# transform = "normal"       # normal, 90, 180, 270, or flipped variants
+    \\# adaptive_sync = "auto"     # variable refresh: "auto" while a game fills it, "off", "always"
     \\#
     \\# [[outputs]]
     \\# name = "DP-2"

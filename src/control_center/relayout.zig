@@ -97,6 +97,12 @@ pub fn applyPending(cc: *ControlCenter) void {
             cc.relayout();
             cc.requestRepaint();
         }
+        if (display_section.pendingAdaptiveSync(&cc.display)) |mode| {
+            const output = @import("../Output.zig").fromWlr(cc.selectedDisplayOutput() orelse return) orelse return;
+            cc.applyOutputPatch(output, .{ .adaptive_sync = mode });
+            cc.relayout();
+            cc.requestRepaint();
+        }
     }
     if (cc.pending_page) |page| {
         cc.pending_page = null;

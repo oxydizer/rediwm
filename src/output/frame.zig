@@ -12,6 +12,7 @@ const stats = @import("../ipc/stats.zig");
 const trace = @import("frame_trace.zig");
 const late = @import("late.zig");
 const tearing = @import("tearing.zig");
+const vrr = @import("vrr.zig");
 const wlr_color_transform_unref = Output.wlr_color_transform_unref;
 const log = std.log.scoped(.output);
 const CursorState = Output.CursorState;
@@ -39,6 +40,7 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
         }
     }
 
+    vrr.apply(output, state);
     const had_transform = state.committed.color_transform;
     state.tearing_page_flip = state.committed.buffer and output.tearingAllowed() and tearing.frameCanTear(output, state);
     if (state.tearing_page_flip and !output.wlr_output.testState(state)) {
@@ -51,7 +53,10 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
         tearing.refused(output);
         success = output.wlr_output.commitState(state);
     }
-    if (success) tearing.committed(output, state);
+    if (success) {
+        tearing.committed(output, state);
+        vrr.committed(output, state);
+    }
     if (had_transform) {
         if (success) {
             output.color.status = if (output.color.transform != null) .applied else .neutral;
@@ -86,7 +91,7 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
 /// without scene damage is checked here: hardware cursor moves, output
 /// capture (which holds an attach-render lock) and gamma changes.
 pub fn commitIsRedundant(output: *Output, scene_output: *SceneOutput) bool {
-    if (output.vblank_timer == null or output.color.pending) return false;
+    if (output.vblank_timer == null or output.color.pending or output.vrr.pending != null) return false;
     const wlr_output = output.wlr_output;
     if (!wlr_output.enabled or wlr_output.attach_render_locks > 0) return false;
     if (scene_output.hasPendingDamage()) return false;
@@ -299,7 +304,8 @@ pub fn runFrame(output: *Output) void {
         const started = stats.nowNs();
         var state = wlr.Output.State.init();
         defer state.finish();
-        var should_commit = scene_output.needsFrame() or output.color.pending;
+        const vrr_change = vrr.prepare(output);
+        var should_commit = scene_output.needsFrame() or output.color.pending or vrr_change;
         if (should_commit and commitIsRedundant(output, scene_output)) {
             // `needs_frame` is a latch only a commit clears; while set,
             // later cursor moves or capture requests could not schedule.

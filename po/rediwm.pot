@@ -342,6 +342,7 @@ msgid "Alt+Shift"
 msgstr ""
 
 #: src/control_center/sections/input_sources.zig
+#: src/control_center/sections/display.zig
 msgid "Always"
 msgstr ""
 
@@ -610,6 +611,7 @@ msgid "Auto-join this network"
 msgstr ""
 
 #: src/control_center/sections/input_sources.zig
+#: src/control_center/sections/display.zig
 msgid "Automatic"
 msgstr ""
 
@@ -4661,6 +4663,10 @@ msgstr ""
 msgid "Not supported"
 msgstr ""
 
+#: src/control_center/sections/display.zig
+msgid "Not supported by this display"
+msgstr ""
+
 #: src/files/app_places.zig
 msgid "Nothing to add to Places"
 msgstr ""
@@ -4702,6 +4708,7 @@ msgid "OK"
 msgstr ""
 
 #: src/control_center/sections/appearance.zig
+#: src/control_center/sections/display.zig
 msgid "Off"
 msgstr ""
 
@@ -7136,6 +7143,10 @@ msgstr ""
 msgid "This connection has no direct presence check."
 msgstr ""
 
+#: src/control_center/sections/display.zig
+msgid "This display changes variable refresh only with a mode switch: choose Always or Off."
+msgstr ""
+
 #: src/control_center/sections/printers_tools.zig
 msgid "This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."
 msgstr ""
@@ -7633,6 +7644,11 @@ msgid "Uses the main theme. Apply again after changing it; restart apps to see t
 msgstr ""
 
 #: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+msgid "Variable refresh rate"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "VPN"
 msgstr ""
 
@@ -7666,6 +7682,10 @@ msgstr ""
 
 #: src/control_center/panel.zig
 msgid "Volume, microphones and output devices."
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "vrr freesync gsync adaptive sync game"
 msgstr ""
 
 #: src/control_center/sections/network.zig
@@ -8997,4 +9017,3 @@ msgstr ""
 msgctxt "polkit"
 msgid "Authentication is required to manage login accounts"
 msgstr ""
-

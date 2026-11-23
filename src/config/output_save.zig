@@ -43,6 +43,11 @@ pub fn prepare(allocator: std.mem.Allocator, io: Io, path: []const u8, name: []c
         defer allocator.free(line);
         try fields_list.appendSlice(allocator, line);
     }
+    if (patch.adaptive_sync) |value| {
+        const line = try std.fmt.allocPrint(allocator, "adaptive_sync = \"{s}\"\n", .{@tagName(value)});
+        defer allocator.free(line);
+        try fields_list.appendSlice(allocator, line);
+    }
     if (patch.enabled) |value| try fields_list.appendSlice(allocator, if (value) "enabled = true\n" else "enabled = false\n");
     if (patch.primary) |value| try fields_list.appendSlice(allocator, if (value) "primary = true\n" else "primary = false\n");
     if (patch.auto_scale) try fields_list.appendSlice(allocator, "scale = \"auto\"\n");
@@ -142,6 +147,7 @@ fn appendBlock(allocator: std.mem.Allocator, result: *std.ArrayList(u8), block: 
                 if (std.mem.eql(u8, key, field) and @field(patch, field) != null) break :blk true;
             }
             if (patch.transform != null and std.mem.eql(u8, key, "transform")) break :blk true;
+            if (patch.adaptive_sync != null and std.mem.eql(u8, key, "adaptive_sync")) break :blk true;
             if (patch.auto_scale and std.mem.eql(u8, key, "scale")) break :blk true;
             if (patch.auto_position and (std.mem.eql(u8, key, "x") or std.mem.eql(u8, key, "y"))) break :blk true;
             if (patch.enabled != null and std.mem.eql(u8, key, "enabled")) break :blk true;
