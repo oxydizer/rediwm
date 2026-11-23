@@ -543,7 +543,7 @@ pub fn sync(self: *App) void {
                 self.job_transferred_bytes = transferred_bytes;
                 self.job_bytes_per_second = bytes_per_second;
                 const mapped_state: ops_mod.JobState = switch (manager_state) {
-                    .planning, .queued, .running => .running,
+                    .planning, .queued, .running, .finalizing => .running,
                     .paused => .paused,
                     .waiting => .waiting_conflict,
                     .completed, .completed_with_errors, .failed, .cancelled => .finished,

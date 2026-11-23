@@ -10,6 +10,7 @@ const io_directory = @import("io_directory.zig");
 const io_symlink = @import("io_symlink.zig");
 const io_move = @import("io_move.zig");
 const io_detach = @import("io_detach.zig");
+const io_finalize = @import("io_finalize.zig");
 const archive = @import("archive.zig");
 const ops = @import("ops.zig");
 const clipboard = @import("clipboard.zig");
@@ -241,6 +242,14 @@ fn prepare(
     if (context.manager.archiveOperationDetails(token)) |archive_details| {
         return prepareArchive(context, token, archive_details);
     }
+    const operation_kind = context.manager.operationKind(token) orelse
+        return error.StaleOperation;
+    if (operation_kind == .finalize_directories) {
+        return .{
+            .operation_kind = operation_kind,
+            .input = try makeDirectoryFinalizationInput(context, token),
+        };
+    }
     const details = context.manager.operationDetails(token) orelse
         return error.StaleOperation;
     const tree = context.manager.treeIndex(token.job_id) orelse
@@ -331,6 +340,37 @@ fn prepare(
         .operation_kind = details.kind,
         .input = input,
     };
+}
+
+fn makeDirectoryFinalizationInput(
+    context: *Context,
+    token: io_manager.WorkToken,
+) !io_executor.OwnedPayload {
+    const records = context.manager.directoryPermissionRecords(token.job_id) orelse
+        return error.UnknownJob;
+    const owned_records = try context.allocator.alloc(io_finalize.Record, records.len);
+    defer context.allocator.free(owned_records);
+    var initialized: usize = 0;
+    defer {
+        for (owned_records[0..initialized]) |record|
+            context.allocator.free(record.path);
+    }
+
+    for (records) |record| {
+        const path = try context.manager.destinationPath(
+            context.allocator,
+            token.job_id,
+            record.entry_id,
+        );
+        owned_records[initialized] = .{
+            .path = path,
+            .device_id = record.device_id,
+            .inode_id = record.inode_id,
+            .mode = record.mode,
+        };
+        initialized += 1;
+    }
+    return io_finalize.makeInput(context.allocator, owned_records);
 }
 
 const ArchiveInput = struct {
@@ -525,9 +565,25 @@ fn execute(
         .copy_file => io_copy.execute(context.allocator, item),
         .copy_symlink => io_symlink.execute(context.allocator, item),
         .move_entry => io_move.execute(context.allocator, item),
+        .finalize_directories => executeDirectoryFinalization(context.allocator, item),
         .detach_source => io_detach.execute(context.allocator, item),
         .archive_extract, .archive_member_extract => executeArchive(context.allocator, item),
         else => failWork(item),
+    };
+}
+
+fn executeDirectoryFinalization(
+    allocator: Allocator,
+    item_arg: io_executor.WorkItem,
+) io_executor.WorkCompletion {
+    const item = item_arg;
+    const stats = io_finalize.execute(allocator, &item.input) catch
+        return failWork(item);
+    return .{
+        .token = item.token,
+        .outcome = if (stats.failed == 0) .completed else .failed,
+        .operation_kind = item.operation_kind,
+        .input = item.input,
     };
 }
 

@@ -113,6 +113,7 @@ pub const JobState = enum {
     planning,
     queued,
     running,
+    finalizing,
     paused,
     waiting,
     completed,
@@ -133,6 +134,7 @@ pub const OperationKind = enum {
     copy_file,
     copy_symlink,
     move_entry,
+    finalize_directories,
     publish,
     detach_source,
     purge_source,
@@ -273,6 +275,7 @@ const Operation = struct {
     population_accounted: bool = false,
     destination_override: ?[]u8 = null,
     archive_request: ?OwnedArchiveOperationRequest = null,
+    finalization_queued: bool = false,
     merge_existing_directory: bool = false,
     replace_existing_file: bool = false,
     state: OperationState = .pending,
@@ -1379,6 +1382,16 @@ pub const Manager = struct {
         };
     }
 
+    /// Returns the kind of a currently running operation without requiring
+    /// it to have a TreeIndex entry.
+    pub fn operationKind(self: *const Manager, token: WorkToken) ?OperationKind {
+        const job = self.findJobConst(token.job_id) orelse return null;
+        const operation = findOperationConst(job, token.operation_id) orelse return null;
+        if (operation.state != .running or operation.generation != token.generation)
+            return null;
+        return operation.kind;
+    }
+
     pub fn registerDirectoryPermission(
         self: *Manager,
         token: WorkToken,
@@ -1402,7 +1415,27 @@ pub const Manager = struct {
                 return error.DuplicateDirectoryPermissionRecord;
         }
 
-        try job.directory_permission_records.append(self.allocator, record);
+        const needs_finalizer = !hasDirectoryFinalizationOperation(job);
+        if (needs_finalizer) {
+            if (self.next_operation_id == std.math.maxInt(OperationId))
+                return error.IdExhausted;
+            const operation_index = job.operations.items.len;
+            try job.operations.ensureUnusedCapacity(self.allocator, 1);
+            try job.operation_indices.ensureUnusedCapacity(self.allocator, 1);
+            try job.ready_queue.ensureTotalCapacity(
+                self.allocator,
+                operation_index + 1,
+            );
+            try job.dependency_work_queue.ensureTotalCapacity(
+                self.allocator,
+                operation_index + 1,
+            );
+        }
+        try job.directory_permission_records.ensureUnusedCapacity(self.allocator, 1);
+        if (needs_finalizer) {
+            _ = try self.addOperationInternal(job, .finalize_directories);
+        }
+        job.directory_permission_records.appendAssumeCapacity(record);
     }
 
     pub fn directoryPermissionRecords(
@@ -1493,6 +1526,7 @@ pub const Manager = struct {
 
         for (job.operations.items) |operation| {
             if (operation.id == token.operation_id) continue;
+            if (operation.kind == .finalize_directories) continue;
             if (!operation.state.isTerminal()) return false;
         }
         return true;
@@ -1770,7 +1804,7 @@ pub const Manager = struct {
         self.next_operation_id += 1;
         if (job.state != .planning) {
             job.operation_state_counts[@backingInt(OperationState.pending)] += 1;
-            enqueueReady(job, index);
+            if (kind != .finalize_directories) enqueueReady(job, index);
             self.recomputeJobState(job);
         }
         return id;
@@ -2718,7 +2752,9 @@ pub const Manager = struct {
             for (0..count) |offset| {
                 const index = (self.round_robin_cursor + offset) % count;
                 const job = &self.jobs.items[index];
-                if (job.state != .queued and job.state != .running) continue;
+                if (job.state != .queued and job.state != .running and
+                    job.state != .finalizing)
+                    continue;
                 if (job.operation_state_counts[@backingInt(OperationState.running)] != 0)
                     continue;
 
@@ -2743,7 +2779,10 @@ pub const Manager = struct {
                     }
                     operation.generation += 1;
                     transitionOperation(job, operation, .running);
-                    job.state = .running;
+                    job.state = if (operation.kind == .finalize_directories)
+                        .finalizing
+                    else
+                        .running;
                     self.round_robin_cursor = (index + 1) % count;
                     return .{
                         .job_id = job.id,
@@ -2964,7 +3003,30 @@ pub const Manager = struct {
     fn recomputeJobState(self: *Manager, job: *Job) void {
         _ = self;
         if (job.state == .paused or job.state == .planning) return;
-        const counts = job.operation_state_counts;
+        var counts = job.operation_state_counts;
+
+        if (directoryFinalizationIndex(job)) |finalizer_index| {
+            const finalizer = &job.operations.items[finalizer_index];
+            if (finalizer.state == .running) {
+                job.state = .finalizing;
+                return;
+            }
+            if (finalizer.state == .pending) {
+                if (directoryFinalizationReady(job, finalizer_index)) {
+                    if (!finalizer.finalization_queued) {
+                        enqueueReady(job, finalizer_index);
+                        finalizer.finalization_queued = true;
+                    }
+                    job.state = .finalizing;
+                    return;
+                }
+                if (finalizer.finalization_queued) {
+                    _ = dequeueReadyIndex(job, finalizer_index);
+                    finalizer.finalization_queued = false;
+                }
+                counts[@backingInt(OperationState.pending)] -= 1;
+            }
+        }
         if (counts[@backingInt(OperationState.running)] != 0) {
             job.state = .running;
         } else if (job.ready_count != 0) {
@@ -2985,6 +3047,28 @@ pub const Manager = struct {
         } else {
             job.state = .completed;
         }
+    }
+
+    fn directoryFinalizationReady(job: *const Job, finalizer_index: usize) bool {
+        if (job.discovery_pending_count != 0 or job.discovery_in_flight != null or
+            job.outstanding_population_count != 0)
+            return false;
+        for (job.operations.items, 0..) |operation, index| {
+            if (index == finalizer_index) continue;
+            if (!operation.state.isTerminal()) return false;
+        }
+        return true;
+    }
+
+    fn directoryFinalizationIndex(job: *const Job) ?usize {
+        for (job.operations.items, 0..) |operation, index| {
+            if (operation.kind == .finalize_directories) return index;
+        }
+        return null;
+    }
+
+    fn hasDirectoryFinalizationOperation(job: *const Job) bool {
+        return directoryFinalizationIndex(job) != null;
     }
 
     fn hasDiscoveryWork(job: *const Job) bool {
@@ -3030,7 +3114,7 @@ fn transitionOperation(job: *Job, operation: *Operation, next_state: OperationSt
 fn isPopulationOperation(kind: OperationKind) bool {
     return switch (kind) {
         .create_directory, .copy_file, .copy_symlink, .move_entry => true,
-        .publish, .detach_source, .purge_source, .archive_extract,
+        .finalize_directories, .publish, .detach_source, .purge_source, .archive_extract,
         .archive_member_extract => false,
     };
 }

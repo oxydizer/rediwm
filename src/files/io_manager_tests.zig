@@ -728,6 +728,54 @@ test "archive publication barrier waits for dynamically registered operations" {
     try std.testing.expect(!manager.completeArchivePublication(archive_token));
 }
 
+test "archive publication barrier completes before directory finalization" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const archive_operation = try manager.addArchiveOperation(
+        job,
+        .archive_extract,
+        .{
+            .source_path = "/tmp/source.zip",
+            .staging_parent = "/tmp/staging",
+        },
+    );
+    const root = try manager.addTreeRoot(job, "Photos", .directory, .{}, null);
+    try manager.queueJob(job);
+
+    const archive_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(archive_operation, archive_token.operation_id);
+    try std.testing.expect(manager.completeWork(archive_token, .waiting));
+
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const create_token = manager.dispatchNext().?;
+    try manager.registerDirectoryPermission(create_token, .{
+        .entry_id = root,
+        .device_id = 12,
+        .inode_id = 34,
+        .mode = 0o750,
+        .origin = .created,
+    });
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+
+    try manager.closeArchivePublication(archive_token);
+    try std.testing.expectEqual(
+        @as(?bool, true),
+        manager.archivePublicationReady(archive_token),
+    );
+    try std.testing.expect(manager.completeArchivePublication(archive_token));
+
+    try std.testing.expectEqual(io_manager.JobState.finalizing, manager.jobState(job).?);
+    const finalizer_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.finalize_directories,
+        manager.operationKind(finalizer_token).?,
+    );
+    try std.testing.expect(manager.completeWork(finalizer_token, .completed));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
 test "failed archive publication waits for registered operations before failing" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
@@ -1137,6 +1185,88 @@ test "directory permission registration validates ownership and records once" {
         manager.operationDetails(token).?.kind,
     );
     try std.testing.expect(manager.completeWork(token, .completed));
+}
+
+test "directory finalization waits for publication and discovery to drain" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "Photos", .directory, .{}, null);
+    try manager.setRootSourcePath(job, root, "/tmp/Photos");
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    const publication = try manager.addOperation(job, .publish);
+    try manager.startDiscovery(job, "/tmp/Photos");
+    try manager.queueJob(job);
+
+    const create_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.create_directory,
+        manager.operationKind(create_token).?,
+    );
+    try manager.registerDirectoryPermission(create_token, .{
+        .entry_id = root,
+        .device_id = 12,
+        .inode_id = 34,
+        .mode = 0o750,
+        .origin = .created,
+    });
+    try std.testing.expect(manager.completeWork(create_token, .completed));
+
+    const publication_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(publication, publication_token.operation_id);
+    try std.testing.expect(manager.completeWork(publication_token, .completed));
+
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job).?);
+
+    const scan = manager.dispatchDiscovery().?;
+    var batch: io_discovery.Batch = .{
+        .allocator = std.testing.allocator,
+        .complete = true,
+    };
+    try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+    try std.testing.expectEqual(io_manager.JobState.finalizing, manager.jobState(job).?);
+
+    const finalizer_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(
+        io_manager.OperationKind.finalize_directories,
+        manager.operationKind(finalizer_token).?,
+    );
+    try std.testing.expect(manager.completeWork(finalizer_token, .failed));
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
+}
+
+test "cancellation preserves directory permission records and cancels finalization" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(job, "Photos", .directory, .{}, null);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    try manager.queueJob(job);
+
+    const token = manager.dispatchNext().?;
+    try manager.registerDirectoryPermission(token, .{
+        .entry_id = root,
+        .device_id = 12,
+        .inode_id = 34,
+        .mode = 0o700,
+        .origin = .created,
+    });
+    try std.testing.expect(manager.completeWork(token, .completed));
+    try std.testing.expectEqual(io_manager.JobState.finalizing, manager.jobState(job).?);
+
+    try manager.cancelJob(job);
+    try std.testing.expectEqual(io_manager.JobState.cancelled, manager.jobState(job).?);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        manager.directoryPermissionRecords(job).?.len,
+    );
+    try std.testing.expect(manager.dispatchNext() == null);
 }
 
 test "directory merge rejects non-directory conflicts without consuming the FIFO" {

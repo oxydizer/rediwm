@@ -1516,6 +1516,63 @@ test "Manager Runtime removes an emptied source directory" {
     try std.testing.expect(c.lstat(source_z, &source_stat) != 0);
 }
 
+test "Manager Runtime restores directory permissions after population" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    const destination = try join(allocator, destination_base, "source");
+    defer allocator.free(destination);
+    defer {
+        cleanup(destination, true);
+        cleanup(destination_base, true);
+        cleanup(source, true);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(source);
+    const source_z = try allocZ(allocator, source);
+    defer allocator.free(source_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.chmod(source_z, 0o500));
+    try makeDirectory(destination_base);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const root = try manager.addTreeRoot(
+        job,
+        "source",
+        .directory,
+        try metadataForPath(source),
+        null,
+    );
+    try manager.setRootSourcePath(job, root, source);
+    try manager.setDestinationDirectory(job, destination_base);
+    _ = try manager.addEntryOperation(job, root, .create_directory);
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+    var iterations: usize = 0;
+    while (!manager.jobState(job).?.isTerminal()) : (iterations += 1) {
+        if (iterations == 10) return error.DirectoryFinalizationDidNotComplete;
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+    const destination_z = try allocZ(allocator, destination);
+    defer allocator.free(destination_z);
+    var destination_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(destination_z, &destination_stat));
+    try std.testing.expectEqual(@as(c_uint, 0o500), destination_stat.st_mode & 0o777);
+}
+
 test "Manager Runtime refuses to remove a non-empty source directory" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;

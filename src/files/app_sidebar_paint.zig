@@ -726,6 +726,7 @@ pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
             .planning => tr("Preparing"),
             .queued => tr("Queued"),
             .running => tr("In progress"),
+            .finalizing => tr("Restoring permissions"),
             .paused => tr("Paused"),
             .waiting => tr("Waiting for confirmation"),
             .completed => tr("Complete"),
