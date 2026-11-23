@@ -122,6 +122,8 @@ pub fn relayout(bar: *Taskbar, output_box: wlr.Box) void {
     glass.Effect.configure(bar.glass_effect, barRadius(), 1);
     bar.applyClip();
     bar.tree.node.setPosition(bar.box.x, bar.box.y);
+    // An auto-hiding bar starts away; one that is shown (or never hides) is in place.
+    if (bar.server.config.compositor.taskbar_auto_hide and !bar.shown) bar.reveal.cancel(0);
     const now_ms = nowMs();
     bar.pointerLeave();
     _ = bar.reconcile(now_ms);

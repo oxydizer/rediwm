@@ -211,6 +211,21 @@ pub fn onTaskbarPositionChanged(owner: ?*anyopaque, _: usize, index: usize) void
     server.applyTaskbarPosition();
 }
 
+pub fn onTaskbarAutoHideChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "taskbar_auto_hide", on) catch |err| {
+        std.log.warn("could not save taskbar auto-hide: {}", .{err});
+        s.taskbar_auto_hide_children[1].kind.toggle.on = server.config.compositor.taskbar_auto_hide;
+        s.taskbar_auto_hide_children[1].markDirty();
+        return;
+    };
+    server.config.compositor.taskbar_auto_hide = on;
+    // A hidden bar keeps windows out of no strip; a parked one needs a frame to show again.
+    server.applyTaskbarPosition();
+    server.scheduleFrames();
+}
+
 pub fn onTaskbarAlignmentChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     if (index > 2) return;
     const s = section(owner);

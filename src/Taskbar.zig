@@ -38,6 +38,7 @@ const taskbar_layout = @import("taskbar/layout.zig");
 const taskbar_reconcile = @import("taskbar/reconcile.zig");
 const taskbar_tick = @import("taskbar/tick.zig");
 const taskbar_pointer = @import("taskbar/pointer.zig");
+const taskbar_reveal = @import("taskbar/reveal.zig");
 const taskbar_classify = @import("taskbar/classify.zig");
 const taskbar_paint_util = @import("taskbar/paint_util.zig");
 const taskbar_paint = @import("taskbar/paint.zig");
@@ -171,6 +172,18 @@ source_scroll: f32 = 0,
 capture_hover: Anim = .{},
 capture_press: Anim = .{ .to = 1 },
 hover_target: Target = .none,
+
+// Auto-hide. `pointer_near` is where the pointer wants the bar (at the edge,
+// or on it once shown); `shown` is what the reveal heads for, which follows
+// after a delay (`reveal_timer` armed for `timer_target`). `reveal` runs 0
+// (away) to 1 and drives the fade and slide; `parked` is hidden and settled,
+// so the tree is disabled and no frames are scheduled. See taskbar/reveal.zig.
+reveal: Anim = .{},
+shown: bool = false,
+pointer_near: bool = false,
+parked: bool = false,
+reveal_timer: ?*wl.EventSource = null,
+timer_target: ?bool = null,
 
 // Cached master-volume display state, refreshed from `server.audio` only
 // when its `generation` counter has moved since we last looked (see
@@ -548,6 +561,12 @@ pub const ChipSlot = taskbar_pointer.ChipSlot;
 pub const InsertionTarget = taskbar_pointer.InsertionTarget;
 pub const insertionTarget = taskbar_pointer.insertionTarget;
 pub const scrollVolume = taskbar_pointer.scrollVolume;
+
+// taskbar/reveal.zig
+pub const syncReveal = taskbar_reveal.syncReveal;
+pub const applyReveal = taskbar_reveal.applyReveal;
+pub const pointerAt = taskbar_reveal.pointerAt;
+pub const disarmReveal = taskbar_reveal.disarm;
 
 // taskbar/classify.zig
 pub const containsIgnoreCase = taskbar_classify.containsIgnoreCase;

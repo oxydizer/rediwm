@@ -201,6 +201,7 @@ pub const CompositorConfig = struct {
     dock_pinned_apps: []const []const u8 = &.{},
     taskbar_items: TaskbarItems = .{},
     taskbar_position: types.TaskbarPosition = .bottom,
+    taskbar_auto_hide: bool = false,
     taskbar_alignment: types.TaskbarAlignment = .center,
     /// App identities opted into compositor tabs. Only + launches join a group.
     window_tab_apps: []const []const u8 = &.{},
