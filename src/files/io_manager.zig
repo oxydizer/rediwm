@@ -1648,6 +1648,8 @@ pub const Manager = struct {
 
         var normalized_members: std.ArrayList([]const u8) = .empty;
         defer normalized_members.deinit(self.allocator);
+        var selected_members: std.StringHashMapUnmanaged(void) = .empty;
+        defer selected_members.deinit(self.allocator);
         errdefer {
             for (normalized_members.items) |path| self.allocator.free(path);
         }
@@ -1655,10 +1657,9 @@ pub const Manager = struct {
             const normalized = try archive.normalize(self.allocator, member_path);
             errdefer self.allocator.free(normalized);
             if (normalized.len == 0) return error.InvalidArchiveMemberPath;
-            for (normalized_members.items) |previous| {
-                if (std.mem.eql(u8, normalized, previous))
-                    return error.InvalidArchiveMemberPath;
-            }
+            const slot = try selected_members.getOrPut(self.allocator, normalized);
+            if (slot.found_existing) return error.InvalidArchiveMemberPath;
+            slot.value_ptr.* = {};
             try normalized_members.append(self.allocator, normalized);
         }
 

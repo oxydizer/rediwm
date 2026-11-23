@@ -267,19 +267,19 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
     var arena = std.heap.ArenaAllocator.init(mem);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const normalized_members = if (members) |selected| blk: {
-        const normalized = try alloc.alloc([]const u8, selected.len);
+    const selected_indices = if (members) |selected| blk: {
+        var indices: std.StringHashMapUnmanaged(usize) = .empty;
         for (selected, 0..) |raw, i| {
-            normalized[i] = try normalize(alloc, raw);
-            if (normalized[i].len == 0) return error.UnsafeArchivePath;
-            for (normalized[0..i]) |previous| {
-                if (std.mem.eql(u8, normalized[i], previous)) return error.InvalidArchive;
-            }
+            const normalized = try normalize(alloc, raw);
+            if (normalized.len == 0) return error.UnsafeArchivePath;
+            const slot = try indices.getOrPut(alloc, normalized);
+            if (slot.found_existing) return error.InvalidArchive;
+            slot.value_ptr.* = i;
         }
-        break :blk normalized;
+        break :blk indices;
     } else null;
     const selected_found = if (members != null) blk: {
-        const found = try alloc.alloc(bool, normalized_members.?.len);
+        const found = try alloc.alloc(bool, members.?.len);
         @memset(found, false);
         break :blk found;
     } else null;
@@ -296,16 +296,20 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
         }
         if (member) |wanted| if (!std.mem.eql(u8, name, wanted)) continue;
         var selected_entry = members == null;
-        if (normalized_members) |selected| {
-            for (selected, 0..) |wanted, i| {
-                const exact = std.mem.eql(u8, name, wanted);
-                const descendant = name.len > wanted.len and
-                    std.mem.startsWith(u8, name, wanted) and
-                    name[wanted.len] == '/';
-                if (exact or descendant) {
-                    selected_found.?[i] = true;
+        if (selected_indices) |selected| {
+            // Check only slash-delimited ancestors and the complete path.
+            // This preserves component boundaries without scanning every
+            // selected member for every archive entry.
+            for (name, 0..) |byte, index| {
+                if (byte != '/') continue;
+                if (selected.get(name[0..index])) |selected_index| {
+                    selected_found.?[selected_index] = true;
                     selected_entry = true;
                 }
+            }
+            if (selected.get(name)) |selected_index| {
+                selected_found.?[selected_index] = true;
+                selected_entry = true;
             }
         }
         if (!selected_entry) continue;

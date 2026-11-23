@@ -237,6 +237,7 @@ test "selected archive members extract with relative paths and reject invalid se
             "nested/deep/",
             "nested/one.txt",
             "nested/deep/two.txt",
+            "nestedish/other.txt",
             "empty/",
             "two.txt",
         });
@@ -267,7 +268,7 @@ test "selected archive members extract with relative paths and reject invalid se
             mem,
             source,
             directory_stage,
-            &.{ "nested", "empty", "two.txt" },
+            &.{ "nested", "nested/deep/two.txt", "empty", "two.txt" },
             &cancel,
         );
 
@@ -286,6 +287,16 @@ test "selected archive members extract with relative paths and reject invalid se
         );
         defer mem.free(deep_file);
         try std.testing.expectEqualStrings("payload", try readTestFile(deep_file, &content));
+
+        const prefix_collision = try std.fmt.allocPrint(
+            mem,
+            "{s}/nestedish/other.txt",
+            .{directory_stage},
+        );
+        defer mem.free(prefix_collision);
+        const prefix_collision_z = try mem.dupeSentinel(u8, prefix_collision, 0);
+        defer mem.free(prefix_collision_z);
+        try std.testing.expect(c.access(prefix_collision_z, c.F_OK) != 0);
 
         const root_file = try std.fmt.allocPrint(
             mem,
