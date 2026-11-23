@@ -11,6 +11,7 @@ const io_workers_tests = @import("files/io_workers_tests.zig");
 const io_executor_tests = @import("files/io_executor_tests.zig");
 const io_copy_tests = @import("files/io_copy_tests.zig");
 const io_directory_tests = @import("files/io_directory_tests.zig");
+const io_finalize_tests = @import("files/io_finalize_tests.zig");
 const io_symlink_tests = @import("files/io_symlink_tests.zig");
 const io_operation_executor_tests = @import("files/io_operation_executor_tests.zig");
 const io_discovery_tests = @import("files/io_discovery_tests.zig");
@@ -26,6 +27,7 @@ test {
     _ = io_executor_tests;
     _ = io_copy_tests;
     _ = io_directory_tests;
+    _ = io_finalize_tests;
     _ = io_symlink_tests;
     _ = io_operation_executor_tests;
     _ = io_discovery_tests;
