@@ -16,6 +16,7 @@ fn writeArchiveBenchmarkFixture(
     directory_count: usize,
     files_per_directory: usize,
     interleaved: bool,
+    directory_depth: usize,
 ) !void {
     const api = @import("c_archive");
     const writer = api.archive_write_new() orelse return error.OutOfMemory;
@@ -35,12 +36,20 @@ fn writeArchiveBenchmarkFixture(
             position / directory_count
         else
             position % files_per_directory;
-        const name = try std.fmt.allocPrintSentinel(
-            allocator,
-            "directory-{d}/file-{d}.bin",
-            .{ directory_index, file_index },
-            0,
-        );
+        const name = if (directory_depth == 1)
+            try std.fmt.allocPrintSentinel(
+                allocator,
+                "directory-{d}/file-{d}.bin",
+                .{ directory_index, file_index },
+                0,
+            )
+        else
+            try std.fmt.allocPrintSentinel(
+                allocator,
+                "level-0/level-1/level-2/level-3/level-4/level-5/level-6/directory-{d}/file-{d}.bin",
+                .{ directory_index, file_index },
+                0,
+            );
         defer allocator.free(name);
 
         const entry = api.archive_entry_new() orelse return error.OutOfMemory;
@@ -85,6 +94,7 @@ fn benchmarkArchiveLayout(
     parent: []const u8,
     layout: []const u8,
     file_count: usize,
+    directory_count: usize,
 ) !void {
     _ = try measureArchiveExtraction(allocator, source, parent);
     var samples: [3]u64 = undefined;
@@ -97,7 +107,7 @@ fn benchmarkArchiveLayout(
         std.time.ns_per_s / @as(f64, @floatFromInt(median));
     std.debug.print(
         "BENCH,archive_extract,{s},{d},{d},{d},{d:.2}\n",
-        .{ layout, file_count, 64, median, files_per_second },
+        .{ layout, file_count, directory_count, median, files_per_second },
     );
 }
 
@@ -205,9 +215,15 @@ test "archive directory fd benchmark" {
         "BENCH,operation,layout,files,directories,median_ns,files_per_second\n",
         .{},
     );
-    for ([_]struct { name: []const u8, interleaved: bool }{
-        .{ .name = "grouped", .interleaved = false },
-        .{ .name = "interleaved", .interleaved = true },
+    for ([_]struct {
+        name: []const u8,
+        interleaved: bool,
+        directory_depth: usize,
+    }{
+        .{ .name = "grouped", .interleaved = false, .directory_depth = 1 },
+        .{ .name = "interleaved", .interleaved = true, .directory_depth = 1 },
+        .{ .name = "deep_grouped", .interleaved = false, .directory_depth = 8 },
+        .{ .name = "deep_interleaved", .interleaved = true, .directory_depth = 8 },
     }) |layout| {
         try writeArchiveBenchmarkFixture(
             allocator,
@@ -215,8 +231,16 @@ test "archive directory fd benchmark" {
             directory_count,
             files_per_directory,
             layout.interleaved,
+            layout.directory_depth,
         );
-        try benchmarkArchiveLayout(allocator, source, root, layout.name, file_count);
+        try benchmarkArchiveLayout(
+            allocator,
+            source,
+            root,
+            layout.name,
+            file_count,
+            directory_count + layout.directory_depth - 1,
+        );
     }
 }
 
