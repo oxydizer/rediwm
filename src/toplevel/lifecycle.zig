@@ -165,7 +165,11 @@ pub fn handleMapped(toplevel: *Toplevel) void {
         if (target_out) |out| toplevel.setMaximizedOn(out);
         toplevel.placed = true;
     } else if (!toplevel.placed) {
-        if (target_out) |output| {
+        // A tab torn off another window of this client opens under the pointer.
+        if (toplevel.server.shell.titlebar_tabs.takePlacement(toplevel)) |at| {
+            toplevel.setPosition(@intFromFloat(@round(at.x - 100)), @intFromFloat(@round(at.y - @as(f64, @floatFromInt(toplevel.titlebarHeight())) / 2)));
+            toplevel.placed = true;
+        } else if (target_out) |output| {
             const frame_w = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(toplevel.chrome_width)) * toplevel.zoom())));
             const frame_h = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(toplevel.chrome_height)) * toplevel.zoom())));
             const geom = pickInitialPlacement(toplevel.server, output, toplevel.open_rules, toplevel.parentWindow(), frame_w, frame_h);
@@ -370,6 +374,10 @@ pub fn destroy(toplevel: *Toplevel) void {
             decoration.toplevel = null;
             toplevel.kde_decoration = null;
         }
+        if (toplevel.titlebar_tabs) |strip| {
+            strip.toplevel = null;
+            toplevel.titlebar_tabs = null;
+        }
         toplevel.backend_gone = true;
     }
     if (toplevel.tryDeferDestroy()) return;
@@ -430,6 +438,10 @@ pub fn destroyNow(toplevel: *Toplevel) void {
         if (toplevel.kde_decoration) |decoration| {
             decoration.toplevel = null;
             toplevel.kde_decoration = null;
+        }
+        if (toplevel.titlebar_tabs) |strip| {
+            strip.toplevel = null;
+            toplevel.titlebar_tabs = null;
         }
         toplevel.backend_gone = true;
     }

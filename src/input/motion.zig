@@ -274,6 +274,18 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
 }
 
 pub fn passthroughMotion(input: *Input, time_msec: u32) void {
+    if (input.tab_drag) |toplevel| {
+        const local = toplevel.frameLocal(input.cursor.x, input.cursor.y);
+        const dragging = toplevel.tabMotion(local.x, local.y);
+        if (toplevel.tab_drag.pressed()) {
+            @import("tab_drop.zig").update(input, toplevel);
+        } else {
+            @import("tab_drop.zig").clear(input);
+            input.tab_drag = null;
+        }
+        if (dragging) input.setNamedCursor("grabbing");
+        return;
+    }
     if (input.taskbar_drag) |*session| {
         if (!session.dragging and @import("../taskbar/pointer.zig").dragThresholdCrossed(
             session.press_x,

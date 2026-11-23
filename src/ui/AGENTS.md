@@ -102,3 +102,9 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   `stale` region catching up what it missed; never answer a glow change with
   `dirty` (a full, unpaced repaint at pointer rate). Hand-drawn content must
   stay inside the rects a damage helper adds for it.
+* **The titlebar tab strip** (`widgets/title_tabs.zig`): model (`Tab`, `Strip`),
+  `geometry`, `hit`, the damage `hash`/`layoutHash` and `Drag` (press, motion,
+  release and the preview rectangle for a reorder). No painting: the compositor
+  paints it in `chrome_tabs.zig`. Tab ids are non-zero (0 means none in
+  `Strip.hover` and `Drag.id`). `Drag` reorders nothing itself; `release` returns
+  the final index for the owner to apply. Plan: `docs/plans/titlebar-tabs.md`.

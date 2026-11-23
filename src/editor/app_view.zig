@@ -19,8 +19,14 @@ pub fn resize(self: *App, w: i32, h: i32) void {
     self.changed();
 }
 
+/// What the window's own tab strip takes from the top: nothing when the
+/// compositor draws the tabs in its titlebar.
+pub fn topInset(self: *const App) f64 {
+    return if (self.strip_in_titlebar) 0 else top;
+}
+
 pub fn viewTop(self: *App) f64 {
-    return top + if (self.find_open) @as(f64, if (self.replace_open) 80 else 40) else 0;
+    return self.topInset() + if (self.find_open) @as(f64, if (self.replace_open) 80 else 40) else 0;
 }
 
 pub fn viewHeight(self: *App) f64 {
@@ -91,7 +97,7 @@ pub fn barTimeout(self: *const App, now: i64) ?u32 {
 
 pub fn handleScroll(self: *App, amount: f64) void {
     if (self.close_tab != null or self.menu_open) return;
-    if (self.py >= 0 and self.py < top) {
+    if (self.py >= 0 and self.py < self.topInset()) {
         self.scrollTabs(amount * 3);
     } else if (self.shift and !self.wrap) {
         self.current().scroll_x = @max(0, self.current().scroll_x + amount * 3);

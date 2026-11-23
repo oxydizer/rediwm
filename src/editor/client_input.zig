@@ -149,11 +149,6 @@ pub fn toggleMaximized(self: *Client) void {
 }
 
 pub fn handleTitlebarClick(self: *Client) void {
-    if (self.overHeaderButton(.menu)) {
-        const r = self.headerButton(.menu);
-        self.app.toggleMenu(r.x + r.w);
-        return;
-    }
     self.app.dismissMenu();
     if (self.overHeaderButton(.close)) {
         self.app.requestClose();

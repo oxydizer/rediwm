@@ -209,6 +209,16 @@ pub fn processButton(
         }
     }
 
+    // A published tab is selected on release, unless the press became a reorder.
+    if (state == .released and button == btn_left) {
+        if (input.tab_drag) |toplevel| {
+            input.tab_drag = null;
+            @import("tab_drop.zig").finish(input, toplevel);
+            input.processCursorMotion(time_msec);
+            return;
+        }
+    }
+
     if (input.tiling_grab) |session| {
         if (state == .released and button == session.button) {
             input.finishTilingGrab(true);
@@ -450,6 +460,10 @@ pub fn processClientButton(
                 const on_title = !has_control and res.sy < @as(f64, @floatFromInt(res.toplevel.titlebarHeight()));
                 if (on_title and input.titleDoubleClick(res.toplevel, time_msec)) {
                     res.toplevel.toggleMaximize();
+                    return;
+                }
+                if (res.toplevel.tabPress(res.sx, res.sy, local.x)) {
+                    input.tab_drag = res.toplevel;
                     return;
                 }
             }

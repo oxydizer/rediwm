@@ -158,9 +158,9 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     toplevel.updateHeldIcon(icon);
     const hover = toplevel.hover_anim.value(now_ms);
     const chip_alpha = toplevel.chip_alpha.value(now_ms);
-    // Only a grouped window has tabs. Others skip the 4 KiB scratch, which
+    // Only a grouped window or one with published tabs has a strip. Others skip the 4 KiB scratch, which
     // ReleaseSafe would fill on every client commit.
-    const tab_storage = if (toplevel.tab_group != 0) try gpa.create([@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) else null;
+    const tab_storage = if (toplevel.hasTabStrip()) try gpa.create([@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) else null;
     defer if (tab_storage) |storage| gpa.destroy(storage);
     var state: chrome.ChromeState = .{
         .tabs = toplevel.tabStrip(tab_storage),

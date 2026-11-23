@@ -74,6 +74,7 @@ pub const CompositorError = error{
     XdgShellCreateFailed,
     XdgDecorationCreateFailed,
     KdeDecorationCreateFailed,
+    TitlebarTabsCreateFailed,
     CompositorCreateFailed,
     SubcompositorCreateFailed,
     DataDeviceManagerCreateFailed,
