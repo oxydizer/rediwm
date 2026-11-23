@@ -86,6 +86,16 @@
       <arg name="id" type="uint"/>
     </request>
 
+    <request name="set_leading_button">
+      <description summary="show the application's icon as a button before the tabs">
+        The button shows the application's own icon. Pressing it sends
+        leading_activated, typically to open the application's menu. Part of
+        the pending state like the tabs, so it takes effect on commit; it
+        stays off until set.
+      </description>
+      <arg name="enabled" type="uint" summary="0 hides the button, anything else shows it"/>
+    </request>
+
     <request name="commit">
       <description summary="show the pending strip">
         Replaces the shown strip. A commit with no tabs removes the strip and
@@ -108,6 +118,30 @@
 
     <event name="new_tab">
       <description summary="the user pressed the new tab button"/>
+    </event>
+
+    <event name="move">
+      <description summary="the user dragged a tab to a new place">
+        Sent once, when the button is released. The index is the position the
+        tab takes among all the tabs once it is removed from its old place
+        and inserted at the new one (0 is the first). Like select, it only
+        asks: the strip changes when the application commits the new order.
+        While the drag lasts the compositor previews the move on its own.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="index" type="uint"/>
+    </event>
+
+    <event name="leading_activated">
+      <description summary="the user pressed the leading button">
+        The button's rectangle is in the surface's coordinates. The titlebar
+        sits above the surface, so y is negative. The application can anchor
+        a popup menu to it.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
     </event>
   </interface>
 </protocol>

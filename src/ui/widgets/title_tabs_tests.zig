@@ -153,3 +153,48 @@ test "the dragged tab never leaves the strip" {
     try std.testing.expect(d.motion(5000, 1));
     try std.testing.expectApproxEqAbs(g.tab(2).x, d.rect(g, 0).x, 0.01);
 }
+
+test "a leading button takes the first slot and the tabs start after it" {
+    const plain = tt.geometry(width, 1, strip());
+    var s = strip();
+    s.leading = true;
+    const g = tt.geometry(width, 1, s);
+    const lead = g.leading orelse return error.TestExpectedLeading;
+    try std.testing.expect(plain.leading == null);
+    try std.testing.expect(g.tab(0).x >= lead.x + lead.w);
+    try std.testing.expectEqual(tt.Hit.leading, tt.hit(width, 1, s, lead.x + lead.w / 2, lead.y + lead.h / 2));
+    // Without the button the same point is not a hit.
+    try std.testing.expect(tt.hit(width, 1, strip(), lead.x + lead.w / 2, lead.y + lead.h / 2) != .leading);
+    try std.testing.expect(tt.hash(s) != tt.hash(strip()));
+}
+
+test "keys stay distinct with the leading button" {
+    try std.testing.expect(tt.key(.leading) != 0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 6 }) |id| {
+        try std.testing.expect(tt.key(.leading) != tt.key(.{ .tab = id }));
+        try std.testing.expect(tt.key(.leading) != tt.key(.{ .close = id }));
+    }
+    try std.testing.expect(tt.key(.leading) != tt.key(.plus));
+    try std.testing.expect(tt.key(.leading) != tt.key(.previous));
+    try std.testing.expect(tt.key(.leading) != tt.key(.next));
+}
+
+test "a drag in progress changes the hash and a bare press does not" {
+    const s = strip();
+    const g = tt.geometry(width, 1, s);
+    const x = g.tab(0).x + g.width / 2;
+    var d: tt.Drag = .{};
+    try std.testing.expect(d.press(s, g, 1, x));
+    var pressed = s;
+    pressed.drag = d;
+    try std.testing.expectEqual(tt.hash(s), tt.hash(pressed));
+    try std.testing.expect(d.motion(x + 20, 1));
+    var moving = s;
+    moving.drag = d;
+    try std.testing.expect(tt.hash(s) != tt.hash(moving));
+    try std.testing.expect(tt.layoutHash(s) != tt.layoutHash(moving));
+    try std.testing.expect(d.motion(x + 30, 1));
+    var later = s;
+    later.drag = d;
+    try std.testing.expect(tt.hash(moving) != tt.hash(later));
+}

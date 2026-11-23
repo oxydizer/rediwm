@@ -18,8 +18,12 @@ pub const Strip = struct {
     first: usize = 0,
     hover: u64 = 0,
     notice: Notice = .none,
+    /// A button before the first tab: the application's icon, opening its menu.
+    leading: bool = false,
+    /// A reorder in progress; the painter follows it (`Drag.rect`).
+    drag: Drag = .{},
 };
-pub const Hit = union(enum) { none, tab: u64, close: u64, plus, previous, next };
+pub const Hit = union(enum) { none, tab: u64, close: u64, plus, previous, next, leading };
 pub fn key(target: Hit) u64 {
     return switch (target) {
         .none => 0,
@@ -28,6 +32,8 @@ pub fn key(target: Hit) u64 {
         .plus => 1,
         .previous => 2,
         .next => 3,
+        // Tabs are id * 4 and their close buttons id * 4 + 1.
+        .leading => 6,
     };
 }
 pub const Geometry = struct {
@@ -40,6 +46,7 @@ pub const Geometry = struct {
     plus: Rect,
     previous: ?Rect,
     next: ?Rect,
+    leading: ?Rect = null,
     pub fn tab(g: Geometry, i: usize) Rect {
         return .{ .x = g.x + @as(f32, @floatFromInt(i)) * (g.width + 4), .y = g.y, .w = g.width, .h = g.height };
     }
@@ -55,9 +62,11 @@ pub fn geometry(width: i32, density: f32, strip: Strip) Geometry {
     const h = @max(18, height - 12 * density);
     const right = @as(f32, @floatFromInt(window_chrome.controlRectScaled(width, .minimize, density).x)) - 10 * density;
     var left: f32 = 8 * density;
+    const leading: ?Rect = if (strip.leading) .{ .x = left, .y = (height - h) / 2, .w = h, .h = h } else null;
+    if (leading != null) left += h + 4 * density;
     const plus_size = @min(26 * density, h);
     const available = @max(0, right - left - plus_size - 8);
-    if (available < 50 * density) return .{ .x = left, .y = (height - h) / 2, .height = h, .width = 0, .first = 0, .count = 0, .plus = .{ .x = left, .y = (height - plus_size) / 2, .w = @max(0, @min(plus_size, right - left)), .h = plus_size }, .previous = null, .next = null };
+    if (available < 50 * density) return .{ .x = left, .y = (height - h) / 2, .height = h, .width = 0, .first = 0, .count = 0, .plus = .{ .x = left, .y = (height - plus_size) / 2, .w = @max(0, @min(plus_size, right - left)), .h = plus_size }, .previous = null, .next = null, .leading = leading };
     const overflow = @as(f32, @floatFromInt(strip.tabs.len)) * (85 * density + 4) > available;
     const arrow_size = if (overflow) @min(22 * density, h) else 0;
     const space = @max(1, available - 2 * arrow_size);
@@ -68,7 +77,7 @@ pub fn geometry(width: i32, density: f32, strip: Strip) Geometry {
     const previous: ?Rect = if (overflow) .{ .x = left, .y = y, .w = arrow_size, .h = h } else null;
     left += arrow_size;
     const end = left + @as(f32, @floatFromInt(count)) * (tab_width + 4);
-    return .{ .x = left, .y = y, .height = h, .width = tab_width, .first = first, .count = count, .previous = previous, .next = if (overflow) .{ .x = end, .y = y, .w = arrow_size, .h = h } else null, .plus = .{ .x = end + arrow_size, .y = (height - plus_size) / 2, .w = plus_size, .h = plus_size } };
+    return .{ .x = left, .y = y, .height = h, .width = tab_width, .first = first, .count = count, .previous = previous, .next = if (overflow) .{ .x = end, .y = y, .w = arrow_size, .h = h } else null, .plus = .{ .x = end + arrow_size, .y = (height - plus_size) / 2, .w = plus_size, .h = plus_size }, .leading = leading };
 }
 fn contains(r: Rect, x: f64, y: f64) bool {
     return x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h;
@@ -76,6 +85,7 @@ fn contains(r: Rect, x: f64, y: f64) bool {
 pub fn hit(width: i32, density: f32, strip: Strip, x: f64, y: f64) Hit {
     if (strip.tabs.len == 0) return .none;
     const g = geometry(width, density, strip);
+    if (g.leading) |r| if (contains(r, x, y)) return .leading;
     if (contains(g.plus, x, y)) return .plus;
     if (g.previous) |r| if (contains(r, x, y)) return .previous;
     if (g.next) |r| if (contains(r, x, y)) return .next;
@@ -98,6 +108,14 @@ fn hashImpl(strip: Strip, include_titles: bool) u64 {
     h.update(std.mem.asBytes(&strip.first));
     h.update(std.mem.asBytes(&strip.hover));
     h.update(std.mem.asBytes(&strip.notice));
+    h.update(std.mem.asBytes(&strip.leading));
+    // Only a drag that has begun changes what is painted.
+    const dragging = strip.drag.dragging();
+    h.update(std.mem.asBytes(&dragging));
+    if (dragging) {
+        h.update(std.mem.asBytes(&strip.drag.id));
+        h.update(std.mem.asBytes(&strip.drag.x));
+    }
     for (strip.tabs) |t| {
         h.update(std.mem.asBytes(&t.id));
         if (include_titles) h.update(t.title);

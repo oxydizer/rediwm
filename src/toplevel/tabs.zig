@@ -14,7 +14,7 @@ pub fn hasTabStrip(toplevel: *const Toplevel) bool {
 
 /// `storage` may be null for a window without a strip, which has no tabs.
 pub fn tabStrip(toplevel: *Toplevel, storage: ?*[@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) @import("../chrome_tabs.zig").Strip {
-    var strip: @import("../chrome_tabs.zig").Strip = .{ .first = toplevel.tab_first, .hover = toplevel.tab_hover, .notice = toplevel.tab_notice };
+    var strip: @import("../chrome_tabs.zig").Strip = .{ .first = toplevel.tab_first, .hover = toplevel.tab_hover, .notice = toplevel.tab_notice, .drag = toplevel.tab_drag };
     const selected = if (storage) |tabs| fillTabs(toplevel, tabs, &strip) else 0;
     const geom = @import("../chrome_tabs.zig").geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
     if (selected < strip.first) strip.first = selected;
@@ -65,4 +65,69 @@ pub fn stepTab(toplevel: *Toplevel, forward: bool) void {
         toplevel.server.world.focus(members[next]);
         return;
     }
+}
+
+/// A left press on a tab of a published strip. Whether it is a click or a
+/// reorder depends on where the pointer goes, so nothing is sent yet:
+/// `tabRelease` does. `lx` is the pointer's x in the frame's coordinates.
+/// False when the press is not on such a tab, and nothing is tracked.
+pub fn tabPress(toplevel: *Toplevel, sx: f64, sy: f64, lx: f64) bool {
+    const chrome_tabs = @import("../chrome_tabs.zig");
+    const published = toplevel.titlebar_tabs orelse return false;
+    if (!published.active()) return false;
+    const id = switch (toplevel.tabAt(sx, sy)) {
+        .tab => |id| id,
+        else => return false,
+    };
+    var storage: [@import("../window_tabs.zig").max_tabs]chrome_tabs.Tab = undefined;
+    const strip = toplevel.tabStrip(&storage);
+    const g = chrome_tabs.geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+    return toplevel.tab_drag.press(strip, g, id, @floatCast(lx));
+}
+
+/// The pointer moved while a tab is pressed; true once that is a reorder. A
+/// strip that changed under the press (the tab is gone, or the strip) ends it.
+pub fn tabMotion(toplevel: *Toplevel, lx: f64) bool {
+    if (!toplevel.tab_drag.pressed()) return false;
+    const alive = if (toplevel.titlebar_tabs) |published| published.active() and published.has(toplevel.tab_drag.id) else false;
+    if (!alive) {
+        const was_dragging = toplevel.tab_drag.dragging();
+        toplevel.tab_drag.cancel();
+        if (was_dragging) toplevel.syncChrome(false, nowMs()) catch {};
+        return false;
+    }
+    if (toplevel.tab_drag.motion(@floatCast(lx), toplevel.chromeDensity())) toplevel.syncChrome(false, nowMs()) catch {};
+    return toplevel.tab_drag.dragging();
+}
+
+/// The button came up: a press that never travelled selects the tab, a
+/// reorder that ended elsewhere asks the client to move it. The client
+/// commits the result; until then the strip shows the old order.
+pub fn tabRelease(toplevel: *Toplevel) void {
+    if (!toplevel.tab_drag.pressed()) return;
+    const chrome_tabs = @import("../chrome_tabs.zig");
+    const id = toplevel.tab_drag.id;
+    const dragged = toplevel.tab_drag.dragging();
+    if (toplevel.titlebar_tabs) |published| if (published.active() and published.has(id)) {
+        var storage: [@import("../window_tabs.zig").max_tabs]chrome_tabs.Tab = undefined;
+        const strip = toplevel.tabStrip(&storage);
+        const g = chrome_tabs.geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+        if (toplevel.tab_drag.release(g)) |move| {
+            published.sendMove(move.id, move.index);
+        } else if (!dragged) published.sendSelect(id);
+    };
+    toplevel.tab_drag.cancel();
+    if (dragged) toplevel.syncChrome(false, nowMs()) catch {};
+}
+
+/// The leading button was pressed: tell the client where it is, in its
+/// surface's coordinates, so a menu can open under it.
+pub fn activateLeading(toplevel: *Toplevel) void {
+    const chrome_tabs = @import("../chrome_tabs.zig");
+    const published = toplevel.titlebar_tabs orelse return;
+    var storage: [@import("../window_tabs.zig").max_tabs]chrome_tabs.Tab = undefined;
+    const strip = toplevel.tabStrip(&storage);
+    const g = chrome_tabs.geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+    const r = g.leading orelse return;
+    published.sendLeadingActivated(r.x, r.y, r.w, r.h, toplevel.borderWidth(), toplevel.titlebarHeight());
 }

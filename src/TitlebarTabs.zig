@@ -39,8 +39,10 @@ link: wl.list.Link = undefined,
 surface_destroy: wl.Listener(*wlr.Surface) = .init(handleSurfaceDestroy),
 pending: std.ArrayList(Item) = .empty,
 pending_selected: ?u32 = null,
+pending_leading: bool = false,
 items: std.ArrayList(Item) = .empty,
 selected: u32 = 0,
+leading: bool = false,
 
 pub const Manager = struct {
     global: *wl.Global,
@@ -123,6 +125,14 @@ pub fn active(self: *const TitlebarTabs) bool {
     return self.items.items.len > 0;
 }
 
+/// Whether the committed strip has a tab with this id.
+pub fn has(self: *const TitlebarTabs, id: u64) bool {
+    for (self.items.items) |item| {
+        if (item.id == id) return true;
+    }
+    return false;
+}
+
 /// The committed tabs into `storage` and `strip`; returns the index of the
 /// selected tab (0 when none is).
 pub fn fill(self: *const TitlebarTabs, storage: *[window_tabs.max_tabs]chrome_tabs.Tab, strip: *chrome_tabs.Strip) usize {
@@ -133,6 +143,7 @@ pub fn fill(self: *const TitlebarTabs, storage: *[window_tabs.max_tabs]chrome_ta
         if (is_selected) current = i;
     }
     strip.tabs = storage[0..self.items.items.len];
+    strip.leading = self.leading;
     return current;
 }
 
@@ -146,6 +157,21 @@ pub fn sendClose(self: *TitlebarTabs, id: u64) void {
 
 pub fn sendNewTab(self: *TitlebarTabs) void {
     self.resource.sendNewTab();
+}
+
+pub fn sendMove(self: *TitlebarTabs, id: u64, index: usize) void {
+    self.resource.sendMove(@intCast(id), @intCast(index));
+}
+
+/// `rect` is in the frame's coordinates (the titlebar's top left corner is
+/// the origin); the client wants them relative to its surface.
+pub fn sendLeadingActivated(self: *TitlebarTabs, x: f32, y: f32, width: f32, height: f32, surface_x: i32, surface_y: i32) void {
+    self.resource.sendLeadingActivated(
+        @as(i32, @intFromFloat(@round(x))) - surface_x,
+        @as(i32, @intFromFloat(@round(y))) - surface_y,
+        @intFromFloat(@round(width)),
+        @intFromFloat(@round(height)),
+    );
 }
 
 /// Asks the application to select the neighbouring tab, wrapping around.
@@ -165,6 +191,7 @@ fn handleStripRequest(resource: *Resource, request: Resource.Request, self: *Tit
         .destroy => resource.destroy(),
         .add_tab => |args| self.addTab(args.id, std.mem.span(args.title), args.flags),
         .set_selected => |args| self.pending_selected = args.id,
+        .set_leading_button => |args| self.pending_leading = args.enabled != 0,
         .commit => self.commit(),
     }
 }
@@ -226,6 +253,8 @@ fn commit(self: *TitlebarTabs) void {
     self.items = self.pending;
     self.pending = .empty;
     self.pending_selected = null;
+    self.leading = self.pending_leading;
+    self.pending_leading = false;
     if (self.toplevel) |toplevel| toplevel.syncChrome(false, Toplevel.nowMs()) catch {};
 }
 

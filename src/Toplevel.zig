@@ -180,6 +180,8 @@ tab_restore: ?RestoreGeometry = null,
 tab_notice: @import("window_tabs.zig").Notice = .none,
 tab_first: usize = 0,
 tab_hover: u64 = 0,
+/// A press on a published tab: a click until the pointer travels, then a reorder.
+tab_drag: @import("ui").widgets.title_tabs.Drag = .{},
 
 /// Digest of the last window record sent to IPC subscribers; most commits
 /// only change pixels, and `events.onWindowChanged` skips those.
@@ -604,3 +606,7 @@ pub const hasTabStrip = toplevel_tabs.hasTabStrip;
 pub const tabAt = toplevel_tabs.tabAt;
 pub const hoverTab = toplevel_tabs.hoverTab;
 pub const stepTab = toplevel_tabs.stepTab;
+pub const tabPress = toplevel_tabs.tabPress;
+pub const tabMotion = toplevel_tabs.tabMotion;
+pub const tabRelease = toplevel_tabs.tabRelease;
+pub const activateLeading = toplevel_tabs.activateLeading;

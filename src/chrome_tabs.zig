@@ -30,8 +30,10 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
     if (clip) |c| renderer.damage_clip = .{ .x = @floatFromInt(c.x), .y = @floatFromInt(c.y), .w = @floatFromInt(c.w), .h = @floatFromInt(c.h) };
     const clip_left: usize = if (clip) |c| @intFromFloat(@max(0, @round(@as(f32, @floatFromInt(c.x)) * scale))) else 0;
     const clip_right: usize = if (clip) |c| @intFromFloat(@max(0, @round(@as(f32, @floatFromInt(c.x + c.w)) * scale))) else @intCast(width);
-    for (strip.tabs[g.first..][0..g.count], 0..) |t, i| {
-        const rect = g.tab(i);
+    // The tab being dragged is painted last, over its neighbours.
+    for ([_]bool{ false, true }) |dragged_pass| for (strip.tabs[g.first..][0..g.count], 0..) |t, i| {
+        if ((strip.drag.dragging() and t.id == strip.drag.id) != dragged_pass) continue;
+        const rect = strip.drag.rect(g, i);
         const radius = window_chrome.cornerRadius(theme.global.chrome_round_buttons, rect.w, rect.h, theme.global.radius * density * 0.8);
         const look = style.look(C, t.active, t.attention, if (strip.hover == key(.{ .tab = t.id })) 1 else 0, 0);
         const x0: usize = @max(clip_left, @as(usize, @intFromFloat(@max(0, @floor(rect.x * scale)))));
@@ -49,13 +51,21 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
             renderer.drawImageCover(left, rect.y + (rect.h - size) / 2, size, size, 0, .{ .pixels = image.pixels, .width = image.size, .height = image.size });
         } else renderer.drawIcon(left, rect.y + (rect.h - size) / 2, size, size, .{ .id = .generic, .color = theme.global.window_fg });
         left += size + 6 * density;
-        const close = g.close(i);
+        var close = g.close(i);
+        close.x += rect.x - g.tab(i).x;
         renderer.drawText(left, rect.y, @max(0, close.x - left - 3), rect.h, .{
             .content = if (t.active and strip.notice != .none) (if (strip.notice == .opening) "Opening…" else "No new window; retry +") else t.title,
             .font_size = theme.global.taskbar_title_size * density,
             .color = theme.global.window_fg,
         });
         button.paint(&renderer, close, .{ .variant = .chrome, .size = .sm, .icon = .close, .icon_scale = 0.39, .label = i18n.tr("Close tab") }, .{ .pointer = if (strip.hover == key(.{ .close = t.id })) .hover else .idle });
+    };
+    if (g.leading) |r| {
+        button.paint(&renderer, r, .{ .variant = .ghost, .size = .sm, .radius = navigationRadius(r) }, .{ .pointer = if (strip.hover == key(.leading)) .hover else .idle });
+        const side = @min(20 * density, r.h - 6);
+        if (icon) |image| {
+            renderer.drawImageCover(r.x + (r.w - side) / 2, r.y + (r.h - side) / 2, side, side, 0, .{ .pixels = image.pixels, .width = image.size, .height = image.size });
+        } else renderer.drawIcon(r.x + (r.w - side) / 2, r.y + (r.h - side) / 2, side, side, .{ .id = .generic, .color = theme.global.window_fg });
     }
     button.paint(&renderer, g.plus, .{ .variant = .ghost, .size = .sm, .icon = .plus, .label = i18n.tr("New tab"), .radius = navigationRadius(g.plus) }, .{ .pointer = if (strip.notice == .opening) .disabled else if (strip.hover == key(.plus)) .hover else .idle });
     if (g.previous) |r| button.paint(&renderer, r, .{ .variant = .ghost, .size = .sm, .icon = .chevron_left, .radius = navigationRadius(r) }, .{ .pointer = if (strip.hover == key(.previous)) .hover else .idle });

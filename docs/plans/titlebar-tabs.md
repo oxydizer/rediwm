@@ -80,7 +80,7 @@ decoration manager: the compositor resolves the toplevel from the surface and
 
 Landed first (phase 2): `add_tab(id, title, icon_name, flags)`,
 `set_selected`, `commit` and the events `select`, `close`, `new_tab`. Still to
-add with the leading slot and drag (phase 2c): `set_leading`,
+add with the leading slot and drag (phase 2c): `set_leading_button(enabled)` (shows the app icon),
 `leading_activated(x, y, width, height)` and `move(id, index)`. The protocol is
 unreleased, so these are added to version 1.
 
@@ -229,3 +229,14 @@ test`, and the integration tests for what was touched (root `AGENTS.md`).
 * Open: keep the chip look or add a tab look; whether `modified` should also tint
   the tab; whether double-click on empty strip space should still maximize (it
   does today, since only tabs and buttons count as controls).
+
+## Phase 2c notes
+
+* Drag state lives on `Toplevel.tab_drag`; `Input.tab_drag` only records which
+  window is pressed. A press decides nothing: release selects (no travel) or
+  sends `move` (travel past 4 px). A drag never also selects.
+* After release the dragged tab snaps back until the app commits the new
+  order (one frame of flicker; an optimistic preview can come later if latency
+  shows).
+* Middle click on a published tab sends `close`.
+* IPC exposure of published tabs is deferred.
