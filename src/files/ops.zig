@@ -2486,6 +2486,7 @@ pub const JobRunner = struct {
     }
 
     fn workerThread(self: *JobRunner) void {
+        var manifest_scan_failed = false;
         if (self.kind == .copy or self.kind == .move) {
             const manifest_started = self.profileStart();
             defer self.profileAddDuration(manifest_started, &self.profile_metrics.manifest_scan_ns);
@@ -2497,6 +2498,7 @@ pub const JobRunner = struct {
                     break;
                 }
                 const bytes = measureBytes(self.allocator, src, &self.cancel_flag, self, idx, "") catch {
+                    manifest_scan_failed = true;
                     _ = c.pthread_mutex_lock(&self.mutex);
                     self.clearManifestLookup();
                     self.manifest.clearRetainingCapacity();
@@ -2535,7 +2537,10 @@ pub const JobRunner = struct {
             self.current_item_index = idx;
             self.notify();
             _ = c.pthread_mutex_unlock(&self.mutex);
-            const outcome = (if (self.kind == .extract or self.kind == .open_archive_member) self.extractArchive(src) else self.transfer(src, self.item_bytes.items[idx])) catch |err| blk: {
+            const outcome = if (manifest_scan_failed)
+                ItemOutcome.failed
+            else
+                (if (self.kind == .extract or self.kind == .open_archive_member) self.extractArchive(src) else self.transfer(src, self.item_bytes.items[idx])) catch |err| blk: {
                 if (self.kind == .extract or self.kind == .open_archive_member) {
                     _ = c.pthread_mutex_lock(&self.mutex);
                     self.status_message = self.allocator.dupe(u8, archive.message(err)) catch "";

@@ -793,9 +793,9 @@ test "JobRunner copies directly from the manifest without a second directory sca
     }
 
     const profile = runner.profilingSnapshot().?;
-    // The source has two directories. The manifest scan enumerates each once;
-    // the copy phase must not open or enumerate either directory again.
-    try std.testing.expectEqual(@as(u64, 2), profile.opendir_calls);
+    // The source has three directories. The manifest scan enumerates each once;
+    // the copy phase must not open or enumerate any directory again.
+    try std.testing.expectEqual(@as(u64, 3), profile.opendir_calls);
     try std.testing.expectEqual(@as(u64, 5), profile.directory_entries);
 }
 
