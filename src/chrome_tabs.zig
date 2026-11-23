@@ -26,6 +26,7 @@ pub const layoutHash = title_tabs.layoutHash;
 pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_width: i32, density: f32, scale: f32, strip: Strip, icon: ?icon_service.Entry, clip: ?chrome.Rect) void {
     if (strip.tabs.len == 0) return;
     const g = geometry(logical_width, density, strip);
+    const band: f32 = @floatFromInt((window_chrome.Metrics{ .density = density }).titlebarHeight());
     var renderer = ui.Renderer.init(pixels, width, height, scale);
     if (clip) |c| renderer.damage_clip = .{ .x = @floatFromInt(c.x), .y = @floatFromInt(c.y), .w = @floatFromInt(c.w), .h = @floatFromInt(c.h) };
     const clip_left: usize = if (clip) |c| @intFromFloat(@max(0, @round(@as(f32, @floatFromInt(c.x)) * scale))) else 0;
@@ -35,16 +36,35 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
         if ((strip.drag.dragging() and t.id == strip.drag.id) != dragged_pass) continue;
         const rect = strip.drag.rect(g, i);
         const radius = window_chrome.cornerRadius(theme.global.chrome_round_buttons, rect.w, rect.h, theme.global.radius * density * 0.8);
-        const look = style.look(C, t.active, t.attention, if (strip.hover == key(.{ .tab = t.id })) 1 else 0, 0);
+        // The selected tab is the window's content colour, grown down into the
+        // content with an accent line, so it reads as the open page; the others
+        // are bare text that lights up under the pointer.
+        const hovered = strip.hover == key(.{ .tab = t.id });
+        const clear: C = .{ .r = 0, .g = 0, .b = 0, .a = 0 };
+        const fill: C = if (t.active) C.fromRgba(theme.global.app_bg) else if (hovered) C.fromRgba(theme.global.taskbar_hover).scaled(2.0) else clear;
+        const border: C = if (t.attention) C.fromRgba(theme.global.danger).scaled(2.5) else fill;
+        var shape = rect;
+        if (t.active) shape.h = band - rect.y + radius;
         const x0: usize = @max(clip_left, @as(usize, @intFromFloat(@max(0, @floor(rect.x * scale)))));
         const x1: usize = @min(clip_right, @as(usize, @intFromFloat(@min(@as(f32, @floatFromInt(width)), @ceil((rect.x + rect.w) * scale)))));
         const y0: usize = @intFromFloat(@max(0, @floor(rect.y * scale)));
-        const y1: usize = @intFromFloat(@min(@as(f32, @floatFromInt(height)), @ceil((rect.y + rect.h) * scale)));
+        const y1: usize = @intFromFloat(@min(@as(f32, @floatFromInt(height)), @ceil(@min(shape.y + shape.h, band) * scale)));
         if (x1 > x0 and y1 > y0) for (y0..y1) |y| for (x0..x1) |x| {
             const index = y * @as(usize, @intCast(width)) + x;
-            const c = style.pixel(C, (@as(f32, @floatFromInt(x)) + 0.5) / scale, (@as(f32, @floatFromInt(y)) + 0.5) / scale, rect.x, rect.y, rect.w, rect.h, radius, scale, look.fill, look.border);
+            const c = style.pixel(C, (@as(f32, @floatFromInt(x)) + 0.5) / scale, (@as(f32, @floatFromInt(y)) + 0.5) / scale, shape.x, shape.y, shape.w, shape.h, radius, scale, fill, border);
             pixels[index] = c.over(C.fromPremultiplied(pixels[index])).argb();
         };
+        if (t.active) {
+            const accent = C.fromRgba(theme.shellPalette().accent);
+            const ux0: usize = @max(clip_left, @as(usize, @intFromFloat(@max(0, @floor((rect.x + 8 * density) * scale)))));
+            const ux1: usize = @min(clip_right, @as(usize, @intFromFloat(@max(0, @min(@as(f32, @floatFromInt(width)), @ceil((rect.x + rect.w - 8 * density) * scale))))));
+            const uy1: usize = @intFromFloat(@max(0, @min(@as(f32, @floatFromInt(height)), @floor(band * scale))));
+            const uy0: usize = uy1 -| @as(usize, @intFromFloat(@max(1, @round(2 * scale))));
+            if (ux1 > ux0) for (uy0..uy1) |y| for (ux0..ux1) |x| {
+                const index = y * @as(usize, @intCast(width)) + x;
+                pixels[index] = accent.over(C.fromPremultiplied(pixels[index])).argb();
+            };
+        }
         const size = @min(20 * density, rect.h - 6);
         var left = rect.x + 6 * density;
         if (icon) |image| {
@@ -56,7 +76,7 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
         renderer.drawText(left, rect.y, @max(0, close.x - left - 3), rect.h, .{
             .content = if (t.active and strip.notice != .none) (if (strip.notice == .opening) "Opening…" else "No new window; retry +") else t.title,
             .font_size = theme.global.taskbar_title_size * density,
-            .color = theme.global.window_fg,
+            .color = if (t.active) theme.global.window_fg else theme.global.window_dim,
         });
         button.paint(&renderer, close, .{ .variant = .chrome, .size = .sm, .icon = .close, .icon_scale = 0.39, .label = i18n.tr("Close tab") }, .{ .pointer = if (strip.hover == key(.{ .close = t.id })) .hover else .idle });
     };

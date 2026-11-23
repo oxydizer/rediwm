@@ -57,10 +57,14 @@ pub const Geometry = struct {
     }
 };
 
+/// Logical pixels left empty between the strip and the window controls.
+pub const drag_gap: f32 = 48;
+
 pub fn geometry(width: i32, density: f32, strip: Strip) Geometry {
     const height: f32 = @floatFromInt((window_chrome.Metrics{ .density = density }).titlebarHeight());
     const h = @max(18, height - 12 * density);
-    const right = @as(f32, @floatFromInt(window_chrome.controlRectScaled(width, .minimize, density).x)) - 10 * density;
+    // Room is kept before the window controls so the titlebar can always be grabbed.
+    const right = @as(f32, @floatFromInt(window_chrome.controlRectScaled(width, .minimize, density).x)) - (10 + drag_gap) * density;
     var left: f32 = 8 * density;
     const leading: ?Rect = if (strip.leading) .{ .x = left, .y = (height - h) / 2, .w = h, .h = h } else null;
     if (leading != null) left += h + 4 * density;
@@ -123,7 +127,7 @@ fn hashImpl(strip: Strip, include_titles: bool) u64 {
         h.update(std.mem.asBytes(&t.attention));
     }
     // The shared painter's palette is independent of the chrome palette.
-    inline for (.{ "taskbar_surface", "taskbar_hover", "taskbar_border", "surface_hover", "danger", "window_fg", "radius", "taskbar_title_size", "chrome_round_buttons" }) |field| h.update(std.mem.asBytes(&@field(theme.global, field)));
+    inline for (.{ "taskbar_surface", "taskbar_hover", "app_bg", "window_dim", "shell_accent", "start_menu_selected_marker", "taskbar_border", "surface_hover", "danger", "window_fg", "radius", "taskbar_title_size", "chrome_round_buttons" }) |field| h.update(std.mem.asBytes(&@field(theme.global, field)));
     return h.final();
 }
 
