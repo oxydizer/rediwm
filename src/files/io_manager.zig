@@ -491,6 +491,7 @@ pub const Manager = struct {
     discovery_schedule_slot: usize = 0,
     conflicts: std.ArrayList(Conflict) = .empty,
     conflict_head: usize = 0,
+    conflict_operation_ids: std.AutoHashMapUnmanaged(OperationId, void) = .empty,
     next_conflict_id: ConflictId = 1,
 
     pub fn init(allocator: Allocator) Manager {
@@ -504,6 +505,7 @@ pub const Manager = struct {
         for (self.conflicts.items[self.conflict_head..]) |*conflict|
             conflict.deinit(self.allocator);
         self.conflicts.deinit(self.allocator);
+        self.conflict_operation_ids.deinit(self.allocator);
     }
 
     pub fn createJob(self: *Manager, origin_window_id: ?WindowId) !JobId {
@@ -2323,17 +2325,15 @@ pub const Manager = struct {
             std.mem.indexOfScalar(u8, destination_path, 0) != null)
             return error.InvalidConflictDestinationPath;
 
-        for (self.conflicts.items[self.conflict_head..]) |conflict| {
-            if (conflict.job_id == token.job_id and
-                conflict.operation_id == token.operation_id)
-                return error.ConflictAlreadyRegistered;
-        }
+        if (self.conflict_operation_ids.contains(token.operation_id))
+            return error.ConflictAlreadyRegistered;
 
         const source_copy = try self.allocator.dupe(u8, source_path);
         errdefer self.allocator.free(source_copy);
         const destination_copy = try self.allocator.dupe(u8, destination_path);
         errdefer self.allocator.free(destination_copy);
         try self.conflicts.ensureUnusedCapacity(self.allocator, 1);
+        try self.conflict_operation_ids.ensureUnusedCapacity(self.allocator, 1);
 
         const id = self.next_conflict_id;
         self.conflicts.appendAssumeCapacity(.{
@@ -2346,6 +2346,7 @@ pub const Manager = struct {
             .source_kind = source_kind,
             .destination_kind = destination_kind,
         });
+        self.conflict_operation_ids.putAssumeCapacity(token.operation_id, {});
         self.next_conflict_id += 1;
 
         if (operation.state == .running) {
@@ -2544,17 +2545,25 @@ pub const Manager = struct {
         }
 
         if (skipped_directory) |entry_id| {
+            var pending_entries: std.ArrayList(io_tree.EntryId) = .empty;
+            defer pending_entries.deinit(self.allocator);
+            var subtree_directories: std.ArrayList(io_tree.EntryId) = .empty;
+            defer subtree_directories.deinit(self.allocator);
+            try pending_entries.append(self.allocator, entry_id);
+            while (pending_entries.pop()) |current_id| {
+                const entry = job.tree.getConst(current_id) orelse continue;
+                if (entry.kind != .directory) continue;
+                try subtree_directories.append(self.allocator, current_id);
+                try pending_entries.appendSlice(self.allocator, entry.children.items);
+            }
+
             try job.skipped_subtrees.ensureUnusedCapacity(self.allocator, 1);
             job.skipped_subtrees.putAssumeCapacity(entry_id, {});
 
-            // Retire every queued/unstarted directory scan in the subtree.
             // An active scan keeps its token until its bounded result arrives;
             // yieldDiscovery/completeDiscovery then discard it safely.
-            for (job.tree.entries.items) |*entry| {
-                if (entry.kind != .directory or
-                    !isWithinSkippedSubtree(job, entry.id))
-                    continue;
-
+            for (subtree_directories.items) |directory_id| {
+                const entry = job.tree.get(directory_id) orelse continue;
                 switch (entry.discovery) {
                     .queued => {
                         std.debug.assert(job.discovery_pending_count != 0);
@@ -2607,6 +2616,8 @@ pub const Manager = struct {
     }
 
     fn consumeConflictHead(self: *Manager) void {
+        const operation_id = self.conflicts.items[self.conflict_head].operation_id;
+        std.debug.assert(self.conflict_operation_ids.remove(operation_id));
         self.conflicts.items[self.conflict_head].deinit(self.allocator);
         self.conflict_head += 1;
         if (self.conflict_head >= self.conflicts.items.len) {
@@ -2627,9 +2638,10 @@ pub const Manager = struct {
     }
 
     fn pruneInvalidConflicts(self: *Manager) void {
-        var index = self.conflict_head;
-        while (index < self.conflicts.items.len) {
-            const conflict = &self.conflicts.items[index];
+        var read_index = self.conflict_head;
+        var write_index = self.conflict_head;
+        while (read_index < self.conflicts.items.len) : (read_index += 1) {
+            const conflict = &self.conflicts.items[read_index];
             var is_waiting = false;
             if (self.findJobConst(conflict.job_id)) |job| {
                 if (job.operation_indices.get(conflict.operation_id)) |operation_index| {
@@ -2637,13 +2649,16 @@ pub const Manager = struct {
                 }
             }
             if (is_waiting) {
-                index += 1;
+                if (write_index != read_index)
+                    self.conflicts.items[write_index] = conflict.*;
+                write_index += 1;
                 continue;
             }
 
+            std.debug.assert(self.conflict_operation_ids.remove(conflict.operation_id));
             conflict.deinit(self.allocator);
-            _ = self.conflicts.orderedRemove(index);
         }
+        self.conflicts.items.len = write_index;
         if (self.conflict_head >= self.conflicts.items.len) {
             self.conflicts.clearRetainingCapacity();
             self.conflict_head = 0;

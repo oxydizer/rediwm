@@ -1046,6 +1046,17 @@ test "conflicts are Manager-owned and presented in one global FIFO" {
         .regular_file,
         .regular_file,
     );
+    try std.testing.expectError(
+        error.ConflictAlreadyRegistered,
+        manager.registerConflict(
+            first_token,
+            first_root,
+            first_source,
+            "/destination/first.txt",
+            .regular_file,
+            .regular_file,
+        ),
+    );
     const second_id = try manager.registerConflict(
         second_token,
         second_root,
