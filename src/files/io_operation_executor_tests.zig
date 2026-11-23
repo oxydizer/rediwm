@@ -1573,6 +1573,126 @@ test "Manager Runtime restores directory permissions after population" {
     try std.testing.expectEqual(@as(c_uint, 0o500), destination_stat.st_mode & 0o777);
 }
 
+test "Manager Runtime reports partial directory finalization failures" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+
+    const source_good = try join(allocator, temp, "source-good");
+    defer allocator.free(source_good);
+    const source_replaced = try join(allocator, temp, "source-replaced");
+    defer allocator.free(source_replaced);
+    const destination_base = try join(allocator, temp, "destination");
+    defer allocator.free(destination_base);
+    const destination_good = try join(allocator, destination_base, "source-good");
+    defer allocator.free(destination_good);
+    const destination_replaced = try join(allocator, destination_base, "source-replaced");
+    defer allocator.free(destination_replaced);
+    const displaced = try join(allocator, destination_base, "displaced");
+    defer allocator.free(displaced);
+    defer {
+        cleanup(destination_good, true);
+        cleanup(destination_replaced, true);
+        cleanup(displaced, true);
+        cleanup(destination_base, true);
+        cleanup(source_good, true);
+        cleanup(source_replaced, true);
+        cleanup(temp, true);
+    }
+
+    try makeDirectory(source_good);
+    try makeDirectory(source_replaced);
+    const source_good_z = try allocZ(allocator, source_good);
+    defer allocator.free(source_good_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.chmod(source_good_z, 0o500));
+    try makeDirectory(destination_base);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    const good_root = try manager.addTreeRoot(
+        job,
+        "source-good",
+        .directory,
+        try metadataForPath(source_good),
+        null,
+    );
+    const replaced_root = try manager.addTreeRoot(
+        job,
+        "source-replaced",
+        .directory,
+        try metadataForPath(source_replaced),
+        null,
+    );
+    try manager.setRootSourcePath(job, good_root, source_good);
+    try manager.setRootSourcePath(job, replaced_root, source_replaced);
+    try manager.setDestinationDirectory(job, destination_base);
+    const good_operation = try manager.addEntryOperation(
+        job,
+        good_root,
+        .create_directory,
+    );
+    const replaced_operation = try manager.addEntryOperation(
+        job,
+        replaced_root,
+        .create_directory,
+    );
+    try manager.queueJob(job);
+
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    defer runtime.deinit();
+
+    while (manager.operationState(job, good_operation).? != .completed or
+        manager.operationState(job, replaced_operation).? != .completed)
+    {
+        try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+        try waitForOne(&runtime);
+        try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+    }
+
+    const destination_replaced_z = try allocZ(allocator, destination_replaced);
+    defer allocator.free(destination_replaced_z);
+    const displaced_z = try allocZ(allocator, displaced);
+    defer allocator.free(displaced_z);
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        c.rename(destination_replaced_z, displaced_z),
+    );
+    try makeDirectory(destination_replaced);
+
+    var replacement_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        c.lstat(destination_replaced_z, &replacement_stat),
+    );
+    const replacement_mode: c_uint = @intCast(replacement_stat.st_mode & 0o777);
+
+    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
+    try waitForOne(&runtime);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
+
+    try std.testing.expectEqual(
+        io_manager.JobState.completed_with_errors,
+        manager.jobState(job).?,
+    );
+
+    const destination_good_z = try allocZ(allocator, destination_good);
+    defer allocator.free(destination_good_z);
+    var good_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(destination_good_z, &good_stat));
+    try std.testing.expectEqual(@as(c_uint, 0o500), good_stat.st_mode & 0o777);
+
+    var replacement_after_stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        c.lstat(destination_replaced_z, &replacement_after_stat),
+    );
+    try std.testing.expectEqual(
+        replacement_mode,
+        replacement_after_stat.st_mode & 0o777,
+    );
+}
+
 test "Manager Runtime refuses to remove a non-empty source directory" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
