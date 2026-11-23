@@ -355,6 +355,8 @@ pub fn applyNotificationsKey(n: *NotificationsConfig, allocator: Allocator, key:
         n.daemon = try parseString(allocator, value);
     } else if (std.mem.eql(u8, key, "dnd")) {
         n.dnd = try parseBool(value);
+    } else if (std.mem.eql(u8, key, "game_dnd")) {
+        n.game_dnd = try parseBool(value);
     } else if (std.mem.eql(u8, key, "default_timeout_ms")) {
         n.default_timeout_ms = try parseU32Range(value, 0, std.math.maxInt(u32));
     } else {

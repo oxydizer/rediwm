@@ -10,6 +10,8 @@ import tempfile
 import time
 
 from ipc_client import IPCClient, ROOT, spawn_compositor, stop_process
+from desktop_zoom import build_client
+from xwayland_support import wayland_display_name
 
 NAME = "org.freedesktop.Notifications"
 PATH = "/org/freedesktop/Notifications"
@@ -311,6 +313,37 @@ dnd_bypass = true
                 "Toasts stack empty after clear_notifications",
                 timeout=3.0,
             )
+
+            # A focused fullscreen window (a game) holds normal toasts like
+            # DND; critical ones still show, and leaving fullscreen ends it.
+            print("12b. Testing game_dnd with a fullscreen window...")
+            build_client(tmp_dir)
+            client_env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp_dir),
+                              WAYLAND_DISPLAY=wayland_display_name(tmp_dir))
+            client_env.pop("DISPLAY", None)
+            game = subprocess.Popen([str(tmp_dir / "client")], env=client_env,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                window = wait_for(lambda: next(iter(ipc.get_windows()), None), "game window mapped")
+                ipc.focus_window(window["id"])
+                ipc.fullscreen(window["id"])
+                wait_for(lambda: ipc.get_windows()[0]["placement"] == "fullscreen", "window fullscreen")
+                bus_call("Notify", "susssasa{sv}i", "chat_app", 0, "", "Game Chat", "held", 0, 0, 5000)
+                notifs = ipc.get_notifications()
+                assert not notifs["toasts"], notifs["toasts"]
+                assert any(h["summary"] == "Game Chat" for h in notifs["history"]), "held toast not in history"
+                bus_call("Notify", "susssasa{sv}i", "vip_app", 0, "", "Game VIP", "shown", 0, 0, 5000)
+                assert [t["summary"] for t in ipc.get_notifications()["toasts"]] == ["Game VIP"]
+                ipc.fullscreen(window["id"])
+                wait_for(lambda: ipc.get_windows()[0]["placement"] != "fullscreen", "window left fullscreen")
+                bus_call("Notify", "susssasa{sv}i", "chat_app", 0, "", "After Game", "shown", 0, 0, 5000)
+                assert "After Game" in [t["summary"] for t in ipc.get_notifications()["toasts"]]
+            finally:
+                game.terminate()
+                game.wait(timeout=5)
+            ipc.clear_notifications("all")
+            wait_for(lambda: not ipc.get_notifications()["toasts"], "toasts cleared after game_dnd", timeout=3.0)
+            wait_for(lambda: not ipc.get_windows(), "game window closed")
 
             # Exercise the actual card and close hit target, plus expiry on an idle output.
             print("13. Testing card rendering, pointer dismissal and idle expiry...")

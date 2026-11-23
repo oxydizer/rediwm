@@ -340,6 +340,7 @@ pub const source =
     \\
     \\# [notifications]
     \\# daemon = "dunst"            # optional external daemon; restart required
+    \\# game_dnd = true             # no toasts over a fullscreen or borderless game (critical still show)
     \\
     \\# [ipc]
     \\# automation = true           # IPC synthetic input and screen capture; restart required

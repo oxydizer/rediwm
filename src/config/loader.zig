@@ -324,6 +324,9 @@ pub const IdleConfig = struct {
 pub const NotificationsConfig = struct {
     daemon: []const u8 = "", // Empty selects the built-in daemon; changes require restart.
     dnd: bool = false,
+    /// A game filling the output toasts appear on holds non-critical toasts
+    /// like DND (they still reach the history).
+    game_dnd: bool = true,
     default_timeout_ms: u32 = 5000,
 };
 
