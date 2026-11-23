@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_discovery_executor = @import("io_discovery_executor.zig");
+const io_runtime = @import("io_runtime.zig");
 
 fn makeTempDir(buffer: []u8) ![:0]const u8 {
     const template = "/tmp/rediwm_io_discovery_executor_XXXXXX\x00";
@@ -578,4 +579,52 @@ test "stale discovery completion releases its cursor and root anchor after cance
     try std.testing.expectEqual(@as(usize, 0), executor.anchors.count());
     try std.testing.expect(executor.cursors.get(job) == null);
     try std.testing.expectEqual(true, manager.discoveryComplete(job).?);
+}
+
+test "runtime retirement waits for cancelled discovery completion to drain" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const root_path = try makeTempDir(&temp_buffer);
+
+    const first_file = try join(allocator, root_path, "first.txt");
+    defer allocator.free(first_file);
+    const second_file = try join(allocator, root_path, "second.txt");
+    defer allocator.free(second_file);
+    defer {
+        _ = c.unlink(first_file);
+        _ = c.unlink(second_file);
+        _ = c.rmdir(root_path);
+    }
+    try createFile(first_file);
+    try createFile(second_file);
+
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
+
+    const job = try runtime.manager.createJob(null);
+    _ = try runtime.manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try runtime.manager.startDiscovery(job, root_path);
+    try runtime.manager.queueJob(job);
+
+    const executor = try runtime.ensureDiscoveryExecutor();
+    try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&runtime.manager));
+    try std.testing.expect(!executor.isJobQuiescent(job));
+    try waitForWake(executor);
+
+    // The worker has returned, but its completion still owns the Job until
+    // the main thread drains and rejects the now-stale result.
+    try runtime.cancelJob(job);
+    try runtime.requestJobRetirement(job);
+    try std.testing.expect(!runtime.isJobRetirementReady(job));
+    try std.testing.expect(!runtime.retireJobIfReady(job));
+    try std.testing.expect(runtime.manager.jobState(job) != null);
+
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try executor.drainCompletions(&runtime.manager),
+    );
+    try std.testing.expect(executor.isJobQuiescent(job));
+    try std.testing.expect(runtime.isJobRetirementReady(job));
+    try std.testing.expect(runtime.retireJobIfReady(job));
+    try std.testing.expectEqual(@as(?io_manager.JobState, null), runtime.manager.jobState(job));
 }
