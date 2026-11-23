@@ -3884,6 +3884,10 @@ msgid "Locks and sleeps, even with another display connected."
 msgstr ""
 
 #: src/control_center/sections/display.zig
+msgid "Powers off, even with another display connected."
+msgstr ""
+
+#: src/control_center/sections/display.zig
 msgid "Locks, and turns off the built-in screen while another display is connected."
 msgstr ""
 
@@ -8249,7 +8253,7 @@ msgid "keyboard touchpad trackpad"
 msgstr ""
 
 #: src/control_center/search_index.zig
-msgid "laptop suspend sleep"
+msgid "laptop suspend sleep power off shut down"
 msgstr ""
 
 #: src/control_center/search_index.zig

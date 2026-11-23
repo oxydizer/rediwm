@@ -217,7 +217,7 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `dark_mode` | `false` | live, goes through the Settings portal |
 | `placeholder_delay_ms` | `0` | splash only if the app is this slow to show, 0 disables |
 | `wallpaper` | unset | file in `~/.local/share/rediwm/wallpapers`, or a path |
-| `lid_close` | `"display_off"` | `display_off`, `lock`, `suspend`, `ignore` |
+| `lid_close` | `"display_off"` | `display_off`, `lock`, `suspend`, `power_off`, `ignore` |
 | `lock_on_suspend` | `true` | |
 | `sound_theme`, `sound_enabled`, `sound_disabled_events` | `"freedesktop"`, `true`, `[]` | event sounds, used by `play_sound` |
 
@@ -277,7 +277,7 @@ brightness = 0                   # leave unchanged; otherwise 1–100
 keyboard_brightness = -1          # leave unchanged; 0 turns off, 1–100 sets level
 # blank_after_seconds = 900       # 0 = Never
 # suspend_after_seconds = 0
-# lid_close = "display_off"       # display_off, lock, suspend, ignore
+# lid_close = "display_off"       # display_off, lock, suspend, power_off, ignore
 
 [power.on_battery]
 mode = "power_saver"

@@ -7,6 +7,7 @@ const wlr = @import("wlroots");
 const Input = @import("../Input.zig");
 const Output = @import("../Output.zig");
 const gpa = @import("../main.zig").gpa;
+const anim = @import("ui").anim;
 const Self = @This();
 
 const log = std.log.scoped(.lid);
@@ -17,10 +18,17 @@ input: *Input,
 devices: wl.list.Head(Device, .link) = undefined,
 /// Any lid switch reports closed.
 closed: bool = false,
+/// The lid was already closed when a switch appeared (login, VT return), not
+/// closed by the user since: Power off must not act on it. Cleared on open.
+closed_on_arrival: bool = false,
+
+/// A close reported this soon after the device appears is its initial state.
+const arrival_grace_ms = 1000;
 
 const Device = struct {
     owner: *Self,
     device: *wlr.InputDevice,
+    added_ms: i64,
     closed: bool = false,
     link: wl.list.Link = undefined,
     toggle: wl.Listener(*wlr.Switch.event.Toggle) = .init(handleToggle),
@@ -46,7 +54,7 @@ pub fn addDevice(self: *Self, device: *wlr.InputDevice) void {
         log.err("could not track a switch", .{});
         return;
     };
-    tracked.* = .{ .owner = self, .device = device };
+    tracked.* = .{ .owner = self, .device = device, .added_ms = anim.nowMs() };
     device.toSwitch().events.toggle.add(&tracked.toggle);
     device.events.destroy.add(&tracked.destroy);
     self.devices.append(tracked);
@@ -71,6 +79,7 @@ fn handleToggle(listener: *wl.Listener(*wlr.Switch.event.Toggle), event: *wlr.Sw
     // Tablet-mode switches have no policy yet.
     if (event.switch_type != .lid) return;
     tracked.closed = event.switch_state == .on;
+    if (tracked.closed and !tracked.owner.closed and anim.nowMs() - tracked.added_ms < arrival_grace_ms) tracked.owner.closed_on_arrival = true;
     tracked.owner.update(true);
 }
 
@@ -80,6 +89,7 @@ fn update(self: *Self, act: bool) void {
     while (it.next()) |tracked| closed = closed or tracked.closed;
     if (closed == self.closed) return;
     self.closed = closed;
+    if (!closed) self.closed_on_arrival = false;
     const server = self.input.server;
     log.info("lid {s}", .{if (closed) "closed" else "opened"});
     // Opening the lid is user activity: wake blanked displays.
@@ -97,6 +107,11 @@ fn update(self: *Self, act: bool) void {
             // suspend a second time right after resume.
             const owns_lid = if (server.power) |pm| pm.lid_fd != null else false;
             if (docked or owns_lid) if (server.power) |pm| pm.requestSuspendAuto();
+        },
+        .power_off => {
+            // Without the lid inhibitor logind would suspend as well.
+            const owns_lid = if (server.power) |pm| pm.lid_fd != null else false;
+            if (owns_lid and !self.closed_on_arrival) if (server.power) |pm| pm.requestPowerOffAuto();
         },
     }
 }

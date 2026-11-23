@@ -123,7 +123,7 @@ fn profileCard(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     if (p.dim_after_seconds > 0) try rows.append(a, try number(s, cc, a, .dim_brightness, "power_dim_brightness", i18n.tr("Dim brightness"), p.dim_brightness, false));
     try rows.append(a, try number(s, cc, a, .blank, "power_blank", i18n.tr("Turn off screen after"), idle.blank_after_seconds, true));
     try rows.append(a, try number(s, cc, a, .sleep, "power_sleep", i18n.tr("Sleep after"), idle.suspend_after_seconds, true));
-    if (cc.server.input.lid.present()) try rows.append(a, try row(cc, a, i18n.tr("When the lid closes"), select(cc, "lid_close", .lid, panel.translatedLabels(&.{ i18n.msg("Turn off built-in screen"), i18n.msg("Lock"), i18n.msg("Sleep"), i18n.msg("Do nothing") }), @backingInt(p.lid_close orelse cc.server.config.compositor.lid_close))));
+    if (cc.server.input.lid.present()) try rows.append(a, try row(cc, a, i18n.tr("When the lid closes"), select(cc, "lid_close", .lid, panel.translatedLabels(&.{ i18n.msg("Turn off built-in screen"), i18n.msg("Lock"), i18n.msg("Sleep"), i18n.msg("Power off"), i18n.msg("Do nothing") }), @backingInt(p.lid_close orelse cc.server.config.compositor.lid_close))));
     return card(a, rows.items);
 }
 

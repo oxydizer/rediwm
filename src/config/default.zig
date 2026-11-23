@@ -195,7 +195,7 @@ pub const source =
     \\follow_app_colors     = false # keep GTK/Qt application colors in sync with the main theme
     \\placeholder_delay_ms  = 0     # show splash only if app hasn't appeared after N ms (0 disables)
     \\# wallpaper = ""               # empty = RediWM's; a file in ~/.local/share/rediwm/wallpapers, or a path
-    \\lid_close             = "display_off" # closing the laptop lid: display_off (built-in screen off while another display is on), lock, suspend, ignore
+    \\lid_close             = "display_off" # closing the laptop lid: display_off (built-in screen off while another display is on), lock, suspend, power_off, ignore
     \\lock_on_suspend       = true  # lock before the system sleeps (menu, lid, idle or another program)
     \\
     \\# ───────────────────────────────────────────────

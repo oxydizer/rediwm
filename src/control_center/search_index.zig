@@ -76,7 +76,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .displays, .title = i18n.msg("Rotation"), .target = "transform", .keywords = i18n.msg("orientation portrait landscape screen") },
     .{ .page = .displays, .title = i18n.msg("Night light"), .target = "night_light", .keywords = i18n.msg("blue light warm screen") },
     .{ .page = .displays, .title = i18n.msg("Night light temperature"), .target = "night_light_temperature", .keywords = i18n.msg("warmth colour color") },
-    .{ .page = .power, .title = i18n.msg("Lid close action"), .target = "lid_close", .keywords = i18n.msg("laptop suspend sleep") },
+    .{ .page = .power, .title = i18n.msg("Lid close action"), .target = "lid_close", .keywords = i18n.msg("laptop suspend sleep power off shut down") },
     .{ .page = .audio, .title = i18n.msg("Output volume"), .target = "output_volume", .keywords = i18n.msg("sound speakers loudness mute") },
     .{ .page = .audio, .title = i18n.msg("Microphone volume"), .target = "input_volume", .keywords = i18n.msg("sound input recording mute") },
     .{ .page = .audio, .title = i18n.msg("Output balance"), .target = "output_balance", .keywords = i18n.msg("left right speakers") },

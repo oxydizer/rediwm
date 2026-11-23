@@ -3231,6 +3231,10 @@ msgid "Locks and sleeps, even with another display connected."
 msgstr "Bloquea y suspende, incluso con otra pantalla conectada."
 
 #: src/control_center/sections/display.zig
+msgid "Powers off, even with another display connected."
+msgstr "Apaga el equipo, incluso con otra pantalla conectada."
+
+#: src/control_center/sections/display.zig
 msgid "Locks, and turns off the built-in screen while another display is connected."
 msgstr "Bloquea y apaga la pantalla integrada mientras hay otra pantalla conectada."
 
@@ -6986,8 +6990,8 @@ msgid "keep icons in place"
 msgstr "mantener iconos fijos"
 
 #: src/control_center/search_index.zig
-msgid "laptop suspend sleep"
-msgstr "portátil suspender dormir"
+msgid "laptop suspend sleep power off shut down"
+msgstr "portátil suspender dormir apagar"
 
 #: src/control_center/search_index.zig
 msgid "launcher icon image"

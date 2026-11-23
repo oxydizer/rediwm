@@ -18,7 +18,10 @@ pub fn wantsInhibitor(self: *Manager, which: Inhibitor) bool {
     // Let logind (or the new active desktop) own lid events after a VT switch.
     if (which == .lid) if (self.server.session) |session| if (!session.active) return false;
     return switch (which) {
-        .lid => self.server.power_policy.enabled() or self.server.config.compositor.lid_close == .ignore,
+        .lid => self.server.power_policy.enabled() or switch (self.server.config.compositor.lid_close) {
+            .ignore, .power_off => true,
+            else => false,
+        },
         .sleep => self.server.power_policy.lockOnSuspend(self.server),
     };
 }

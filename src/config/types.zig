@@ -107,6 +107,9 @@ pub const LidAction = enum {
     lock,
     /// Suspend through the session power service, honoring lock-before-sleep.
     @"suspend",
+    /// Power off through the session power service. A lid already closed
+    /// when the lid switch appears (login, VT return) never powers off.
+    power_off,
     /// Leave the built-in display on and inhibit logind lid handling.
     ignore,
 };

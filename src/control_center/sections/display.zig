@@ -46,7 +46,7 @@ const xwayland_labels = blk: {
 };
 const LidAction = @import("config").loader.LidAction;
 /// In `LidAction` order.
-const lid_labels = [_]i18n.Message{ i18n.msg("Turn off screen"), i18n.msg("Lock"), i18n.msg("Sleep"), i18n.msg("Do nothing") };
+const lid_labels = [_]i18n.Message{ i18n.msg("Turn off screen"), i18n.msg("Lock"), i18n.msg("Sleep"), i18n.msg("Power off"), i18n.msg("Do nothing") };
 const transform_labels = [_]i18n.Message{ i18n.msg("Normal"), i18n.msg("90°"), i18n.msg("180°"), i18n.msg("270°"), i18n.msg("Flipped"), i18n.msg("Flipped 90°"), i18n.msg("Flipped 180°"), i18n.msg("Flipped 270°") };
 /// In `AdaptiveSync` order: off, auto, always.
 const adaptive_sync_labels = [_]i18n.Message{ i18n.msg("Off"), i18n.msg("Automatic"), i18n.msg("Always") };
@@ -358,6 +358,7 @@ fn buildLid(out: *Section) void {
         .display_off => i18n.tr("The built-in screen turns off while another display is connected."),
         .lock => i18n.tr("Locks, and turns off the built-in screen while another display is connected."),
         .@"suspend" => i18n.tr("Locks and sleeps, even with another display connected."),
+        .power_off => i18n.tr("Powers off, even with another display connected."),
         .ignore => i18n.tr("The built-in screen stays on."),
     });
     hint.kind.text.font_size = 12;

@@ -293,6 +293,17 @@ pub fn reconcileLid(self: *Self) void {
             }
             manager.requestSuspendAuto();
         },
+        .power_off => {
+            const manager = server.power orelse {
+                self.lid_action = null;
+                return;
+            };
+            if (manager.lid_fd == null) {
+                self.lid_action = null;
+                return;
+            }
+            if (!server.input.lid.closed_on_arrival) manager.requestPowerOffAuto();
+        },
     }
 }
 
