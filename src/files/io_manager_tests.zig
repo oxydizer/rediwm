@@ -3620,16 +3620,39 @@ test "discardPlanningJob removes an uncommitted Job without disturbing others" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
 
+    const first = try manager.createJob(null);
     const discarded = try manager.createJob(null);
     const retained = try manager.createJob(null);
+    const last = try manager.createJob(null);
+
     try std.testing.expect(manager.discardPlanningJob(discarded));
     try std.testing.expect(manager.jobState(discarded) == null);
+    try std.testing.expect(manager.jobState(first) != null);
+    try std.testing.expect(manager.jobState(retained) != null);
+    try std.testing.expect(manager.jobState(last) != null);
 
-    const operation = try manager.addOperation(retained, .copy_file);
+    const first_operation = try manager.addOperation(first, .copy_file);
+    const retained_operation = try manager.addOperation(retained, .copy_file);
+    const last_operation = try manager.addOperation(last, .copy_file);
+
+    try manager.queueJob(first);
     try manager.queueJob(retained);
+    try manager.queueJob(last);
+
     const token = manager.dispatchNext().?;
-    try std.testing.expectEqual(retained, token.job_id);
-    try std.testing.expectEqual(operation, token.operation_id);
+    try std.testing.expectEqual(first, token.job_id);
+    try std.testing.expectEqual(first_operation, token.operation_id);
+    try std.testing.expect(manager.completeWork(token, .completed));
+
+    const next = manager.dispatchNext().?;
+    try std.testing.expectEqual(retained, next.job_id);
+    try std.testing.expectEqual(retained_operation, next.operation_id);
+    try std.testing.expect(manager.completeWork(next, .completed));
+
+    const final = manager.dispatchNext().?;
+    try std.testing.expectEqual(last, final.job_id);
+    try std.testing.expectEqual(last_operation, final.operation_id);
+    try std.testing.expect(manager.completeWork(final, .completed));
 }
 
 test "discovery adopts batches and visits directories breadth first" {

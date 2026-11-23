@@ -483,6 +483,7 @@ const PreferredOperation = struct {
 pub const Manager = struct {
     allocator: Allocator,
     jobs: std.ArrayList(Job) = .empty,
+    job_indices: std.AutoHashMapUnmanaged(JobId, usize) = .empty,
     next_job_id: JobId = 1,
     next_operation_id: OperationId = 1,
     round_robin_cursor: usize = 0,
@@ -501,6 +502,7 @@ pub const Manager = struct {
     pub fn deinit(self: *Manager) void {
         for (self.jobs.items) |*job| job.deinit(self.allocator);
         self.jobs.deinit(self.allocator);
+        self.job_indices.deinit(self.allocator);
         for (&self.discovery_queues) |*queue| queue.deinit(self.allocator);
         for (self.conflicts.items[self.conflict_head..]) |*conflict|
             conflict.deinit(self.allocator);
@@ -511,11 +513,14 @@ pub const Manager = struct {
     pub fn createJob(self: *Manager, origin_window_id: ?WindowId) !JobId {
         if (self.next_job_id == std.math.maxInt(JobId)) return error.IdExhausted;
         const id = self.next_job_id;
-        try self.jobs.append(self.allocator, .{
+        try self.jobs.ensureUnusedCapacity(self.allocator, 1);
+        try self.job_indices.ensureUnusedCapacity(self.allocator, 1);
+        self.jobs.appendAssumeCapacity(.{
             .id = id,
             .origin_window_id = origin_window_id,
             .tree = io_tree.TreeIndex.init(self.allocator),
         });
+        self.job_indices.putAssumeCapacity(id, self.jobs.items.len - 1);
         self.next_job_id += 1;
         return id;
     }
@@ -523,26 +528,29 @@ pub const Manager = struct {
     /// Discards a Job whose planning has not been committed to the scheduler.
     /// Any queued discovery records become harmless stale queue entries.
     pub fn discardPlanningJob(self: *Manager, job_id: JobId) bool {
-        for (self.jobs.items, 0..) |*job, index| {
-            if (job.id != job_id) continue;
-            if (job.state != .planning or job.discovery_in_flight != null)
-                return false;
-            if (job.discovery_started) return false;
+        const index = self.job_indices.get(job_id) orelse return false;
+        const job = &self.jobs.items[index];
+        if (job.state != .planning or job.discovery_in_flight != null)
+            return false;
+        if (job.discovery_started) return false;
 
-            var removed = self.jobs.orderedRemove(index);
-            removed.deinit(self.allocator);
+        var removed = self.jobs.orderedRemove(index);
+        removed.deinit(self.allocator);
+        std.debug.assert(self.job_indices.remove(job_id));
 
-            if (self.jobs.items.len == 0) {
-                self.round_robin_cursor = 0;
-            } else {
-                if (self.round_robin_cursor > index)
-                    self.round_robin_cursor -= 1;
-                if (self.round_robin_cursor >= self.jobs.items.len)
-                    self.round_robin_cursor = 0;
-            }
-            return true;
+        for (self.jobs.items[index..], index..) |shifted_job, shifted_index| {
+            self.job_indices.putAssumeCapacity(shifted_job.id, shifted_index);
         }
-        return false;
+
+        if (self.jobs.items.len == 0) {
+            self.round_robin_cursor = 0;
+        } else {
+            if (self.round_robin_cursor > index)
+                self.round_robin_cursor -= 1;
+            if (self.round_robin_cursor >= self.jobs.items.len)
+                self.round_robin_cursor = 0;
+        }
+        return true;
     }
 
     /// Stores the selected destination directory. The Manager owns a copy;
@@ -3017,17 +3025,17 @@ pub const Manager = struct {
     }
 
     fn findJob(self: *Manager, id: JobId) ?*Job {
-        for (self.jobs.items) |*job| {
-            if (job.id == id) return job;
-        }
-        return null;
+        const index = self.job_indices.get(id) orelse return null;
+        const job = &self.jobs.items[index];
+        std.debug.assert(job.id == id);
+        return job;
     }
 
     fn findJobConst(self: *const Manager, id: JobId) ?*const Job {
-        for (self.jobs.items) |*job| {
-            if (job.id == id) return job;
-        }
-        return null;
+        const index = self.job_indices.get(id) orelse return null;
+        const job = &self.jobs.items[index];
+        std.debug.assert(job.id == id);
+        return job;
     }
 
     fn recomputeJobState(self: *Manager, job: *Job) void {
