@@ -100,9 +100,7 @@ pub fn minimize(toplevel: *Toplevel) void {
             adapter.xsurface.setMinimized(true);
             adapter.xsurface.restack(null, .below);
         },
-        .xdg => |*adapter| {
-            _ = adapter.xdg_toplevel.setSuspended(true);
-        },
+        .xdg => |*adapter| setXdgSuspended(adapter, true),
         .placeholder, .shell => {},
     }
 
@@ -141,6 +139,17 @@ pub fn minimize(toplevel: *Toplevel) void {
     }
 }
 
+/// xdg_toplevel's suspended state exists from v6 on. wlroots checks the
+/// global's version, not the client's, so for an older client it still sends
+/// a configure that changes nothing visible. Wine (v2) takes any configure to
+/// a window it minimized itself as the compositor restoring it: a fullscreen
+/// game that minimizes on focus loss would come straight back, windowed and
+/// shown as foreground to nobody, while it still looks minimized here.
+fn setXdgSuspended(adapter: *xdg, suspended: bool) void {
+    if (adapter.xdg_toplevel.resource.getVersion() < 6) return;
+    _ = adapter.xdg_toplevel.setSuspended(suspended);
+}
+
 pub fn restore(toplevel: *Toplevel) void {
     toplevel.server.window_tabs.select(toplevel);
     defer if (toplevel.tab_group != 0) @import("../window_tabs.zig").refreshVisibility(toplevel.server);
@@ -150,9 +159,7 @@ pub fn restore(toplevel: *Toplevel) void {
     toplevel.frame_tree.node.setEnabled(@import("../window_tabs.zig").visible(toplevel));
     switch (toplevel.backend) {
         .xwayland => |*adapter| adapter.xsurface.setMinimized(false),
-        .xdg => |*adapter| {
-            _ = adapter.xdg_toplevel.setSuspended(false);
-        },
+        .xdg => |*adapter| setXdgSuspended(adapter, false),
         .placeholder, .shell => {},
     }
     toplevel.server.world.focus(toplevel);
