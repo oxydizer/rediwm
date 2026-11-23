@@ -324,7 +324,10 @@ fn runCopySample(
             }
             return .{
                 .elapsed_ns = monotonicNowNs() - start,
-                .profile = runner.profilingSnapshot() orelse return error.MissingCopyProfile,
+                .profile = if (runner.profile_enabled)
+                    (runner.profilingSnapshot() orelse return error.MissingCopyProfile)
+                else
+                    .{},
             };
         }
 
@@ -351,13 +354,14 @@ fn sortSamples(samples: []u64) void {
 }
 
 fn emitRow(
+    phase: []const u8,
     profile: Profile,
     stats: WorkloadStats,
     samples: []const u64,
     buffer_size: usize,
     strategy: ops.CopyStrategy,
     metrics: ops.CopyMetrics,
-    profile_totals: ops.CopyProfile,
+    profiling: ops.CopyProfile,
 ) void {
     const median_ns = samples[samples.len / 2];
     const mib_per_second =
@@ -371,15 +375,16 @@ fn emitRow(
         @as(f64, @floatFromInt(median_ns));
 
     std.debug.print(
-        "BENCH,A,job_copy_e2e_{s},{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
+        "BENCH,{s},job_copy_e2e_{s},{s},warm_source_cache,{d},{d},{d},{d},{d},{d},{d},{d},{d:.2},{d:.2},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
         .{
+            phase,
             strategy.name(),
             profile.name,
             stats.files,
             stats.directories,
             stats.total_bytes,
             buffer_size,
-            benchmark_iterations,
+            samples.len,
             median_ns,
             samples[0],
             samples[samples.len - 1],
@@ -391,58 +396,34 @@ fn emitRow(
             metrics.copy_file_range_calls,
             metrics.copy_file_range_bytes,
             metrics.buffered_fallback_files,
-            profile_totals.manifest_scan_ns,
-            profile_totals.destination_resolution_ns,
-            profile_totals.recursive_copy_ns,
-            profile_totals.data_transfer_ns,
-            profile_totals.lstat_calls,
-            profile_totals.fstat_calls,
-            profile_totals.opendir_calls,
-            profile_totals.directory_entries,
-            profile_totals.file_open_calls,
-            profile_totals.directory_create_calls,
-            profile_totals.path_allocations,
-            profile_totals.path_allocation_bytes,
+            profiling.manifest_scan_ns,
+            profiling.destination_resolution_ns,
+            profiling.recursive_copy_ns,
+            profiling.data_transfer_ns,
+            profiling.lstat_calls,
+            profiling.fstat_calls,
+            profiling.opendir_calls,
+            profiling.directory_entries,
+            profiling.file_open_calls,
+            profiling.directory_create_calls,
+            profiling.path_allocations,
+            profiling.path_allocation_bytes,
         },
     );
     std.debug.print(
         "{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
         .{
-            profile_totals.manifest_lookup_comparisons,
-            profile_totals.mutex_lock_calls,
-            profile_totals.buffered_read_ns,
-            profile_totals.buffered_write_ns,
-            profile_totals.progress_publish_ns,
-            profile_totals.buffered_read_calls,
-            profile_totals.buffered_write_calls,
-            profile_totals.progress_publish_calls,
-            profile_totals.progress_publish_bytes,
+            profiling.manifest_lookup_comparisons,
+            profiling.mutex_lock_calls,
+            profiling.buffered_read_ns,
+            profiling.buffered_write_ns,
+            profiling.progress_publish_ns,
+            profiling.buffered_read_calls,
+            profiling.buffered_write_calls,
+            profiling.progress_publish_calls,
+            profiling.progress_publish_bytes,
         },
     );
-}
-
-fn addProfileTotals(total: *ops.CopyProfile, sample: ops.CopyProfile) void {
-    total.manifest_scan_ns +|= sample.manifest_scan_ns;
-    total.destination_resolution_ns +|= sample.destination_resolution_ns;
-    total.recursive_copy_ns +|= sample.recursive_copy_ns;
-    total.data_transfer_ns +|= sample.data_transfer_ns;
-    total.buffered_read_ns +|= sample.buffered_read_ns;
-    total.buffered_write_ns +|= sample.buffered_write_ns;
-    total.progress_publish_ns +|= sample.progress_publish_ns;
-    total.buffered_read_calls +|= sample.buffered_read_calls;
-    total.buffered_write_calls +|= sample.buffered_write_calls;
-    total.progress_publish_calls +|= sample.progress_publish_calls;
-    total.progress_publish_bytes +|= sample.progress_publish_bytes;
-    total.lstat_calls +|= sample.lstat_calls;
-    total.fstat_calls +|= sample.fstat_calls;
-    total.opendir_calls +|= sample.opendir_calls;
-    total.directory_entries +|= sample.directory_entries;
-    total.file_open_calls +|= sample.file_open_calls;
-    total.directory_create_calls +|= sample.directory_create_calls;
-    total.path_allocations +|= sample.path_allocations;
-    total.path_allocation_bytes +|= sample.path_allocation_bytes;
-    total.manifest_lookup_comparisons +|= sample.manifest_lookup_comparisons;
-    total.mutex_lock_calls +|= sample.mutex_lock_calls;
 }
 
 fn benchmarkProfile(
@@ -460,7 +441,6 @@ fn benchmarkProfile(
     const stats = try createWorkload(allocator, source_root, profile.kind);
     var runner = try ops.JobRunner.init(allocator);
     defer runner.deinit();
-    runner.profile_enabled = true;
 
     const strategy_count = if (builtin.os.tag == .linux) 3 else 1;
     for (0..strategy_count) |strategy_index| {
@@ -480,7 +460,9 @@ fn benchmarkProfile(
             }
             runner.copy_buffer_bytes = buffer_size;
 
-            // Warm source data and filesystem metadata for this combination.
+            // Warm source data and filesystem metadata without profiling
+            // overhead. Phase A below measures the same uninstrumented path.
+            runner.profile_enabled = false;
             _ = try runCopySample(
                 allocator,
                 runner,
@@ -492,7 +474,6 @@ fn benchmarkProfile(
                 buffer_size,
             );
             var samples: [benchmark_iterations]u64 = undefined;
-            var profile_totals: ops.CopyProfile = .{};
             for (&samples, 0..) |*sample, iteration| {
                 const result = try runCopySample(
                     allocator,
@@ -505,17 +486,42 @@ fn benchmarkProfile(
                     buffer_size,
                 );
                 sample.* = result.elapsed_ns;
-                addProfileTotals(&profile_totals, result.profile);
             }
             sortSamples(&samples);
             emitRow(
+                "A",
                 profile,
                 stats,
                 &samples,
                 buffer_size,
                 strategy,
                 runner.copyMetrics(),
-                profile_totals,
+                .{},
+            );
+
+            // Collect profiling data separately. Its elapsed time is
+            // reported independently and is never mixed into Phase A.
+            runner.profile_enabled = true;
+            const profiled = try runCopySample(
+                allocator,
+                runner,
+                source_root,
+                benchmark_root,
+                profile.name,
+                benchmark_iterations + 1,
+                stats.total_bytes,
+                buffer_size,
+            );
+            const profiled_samples = [_]u64{profiled.elapsed_ns};
+            emitRow(
+                "B",
+                profile,
+                stats,
+                &profiled_samples,
+                buffer_size,
+                strategy,
+                runner.copyMetrics(),
+                profiled.profile,
             );
         }
     }
