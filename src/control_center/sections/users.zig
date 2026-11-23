@@ -166,6 +166,10 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     }
     rows[count] = try selectRow(cc, a, i18n.tr("Session"), "autologin_session", session_labels, selected_session, s.auth != null or s.form != .none or !s.unlocked or snapshot.sessions.len == 0 or snapshot.autologin_user == null, autologinSessionChanged);
     count += 1;
+    if (snapshot.autologin_user == null and snapshot.sessions.len > 0) {
+        rows[count] = text(i18n.tr("Choose a user first to pick a session."), 12, true);
+        count += 1;
+    }
     rows[count] = text(i18n.tr("Takes effect at next boot. The keyring will not unlock automatically."), 12, true);
     count += 1;
     return buildCard(a, rows[0..count]);
