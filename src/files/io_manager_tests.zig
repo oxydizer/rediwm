@@ -4028,3 +4028,31 @@ test "priority queues preserve FIFO and yielded work returns to its priority fro
 
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
 }
+
+test "flushing operation count tracks phase changes, yields, and completion" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    _ = try manager.addOperation(job, .copy_file);
+    try manager.queueJob(job);
+
+    const first_work = manager.dispatchNext().?;
+    try std.testing.expect(manager.completeWork(first_work, .yielded));
+    try std.testing.expect(!manager.jobHasFlushingOperation(job));
+
+    try std.testing.expect(manager.recordOperationProgress(
+        first_work,
+        0,
+        100,
+        .flushing,
+    ));
+    try std.testing.expect(manager.jobHasFlushingOperation(job));
+
+    const retry = manager.dispatchNext().?;
+    try std.testing.expectEqual(first_work.operation_id, retry.operation_id);
+    try std.testing.expect(manager.jobHasFlushingOperation(job));
+
+    try std.testing.expect(manager.completeWork(retry, .completed));
+    try std.testing.expect(!manager.jobHasFlushingOperation(job));
+}

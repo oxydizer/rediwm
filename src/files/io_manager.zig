@@ -400,6 +400,7 @@ const Job = struct {
     source_detach_indices: std.AutoHashMapUnmanaged(io_tree.EntryId, usize) = .empty,
     ready_queues: [3]ReadyQueue = .{ .{}, .{}, .{} },
     ready_count: usize = 0,
+    flushing_operation_count: usize = 0,
     dependency_work_queue: std.ArrayList(usize) = .empty,
     operation_state_counts: [7]usize = .{ 0, 0, 0, 0, 0, 0, 0 },
 
@@ -2865,7 +2866,9 @@ pub const Manager = struct {
         }
         operation.progress_bytes = bytes;
         operation.progress_total_bytes = total_bytes;
+        const was_flushing = isFlushingOperation(operation);
         operation.copy_phase = phase;
+        updateFlushingOperationCount(job, operation, was_flushing);
         updateProgressRate(operation, token.generation, bytes, phase, monotonicMs());
         return true;
     }
@@ -2904,6 +2907,11 @@ pub const Manager = struct {
             if (operation.state == .skipped) return true;
         }
         return false;
+    }
+
+    pub fn jobHasFlushingOperation(self: *const Manager, job_id: JobId) bool {
+        const job = self.findJobConst(job_id) orelse return false;
+        return job.flushing_operation_count != 0;
     }
 
     pub fn operationState(self: *const Manager, job_id: JobId, operation_id: OperationId) ?OperationState {
@@ -3096,6 +3104,7 @@ pub const Manager = struct {
 
 fn transitionOperation(job: *Job, operation: *Operation, next_state: OperationState) void {
     if (operation.state == next_state) return;
+    const was_flushing = isFlushingOperation(operation);
     if (operation.population_accounted and
         !operation.state.isTerminal() and next_state.isTerminal())
     {
@@ -3106,6 +3115,27 @@ fn transitionOperation(job: *Job, operation: *Operation, next_state: OperationSt
     job.operation_state_counts[@backingInt(operation.state)] -= 1;
     job.operation_state_counts[@backingInt(next_state)] += 1;
     operation.state = next_state;
+    updateFlushingOperationCount(job, operation, was_flushing);
+}
+
+fn isFlushingOperation(operation: *const Operation) bool {
+    return operation.copy_phase == .flushing and
+        (operation.state == .pending or operation.state == .running);
+}
+
+fn updateFlushingOperationCount(
+    job: *Job,
+    operation: *const Operation,
+    was_flushing: bool,
+) void {
+    const is_flushing = isFlushingOperation(operation);
+    if (was_flushing == is_flushing) return;
+    if (is_flushing) {
+        job.flushing_operation_count += 1;
+    } else {
+        std.debug.assert(job.flushing_operation_count != 0);
+        job.flushing_operation_count -= 1;
+    }
 }
 
 fn isPopulationOperation(kind: OperationKind) bool {

@@ -807,24 +807,14 @@ pub fn stepOperations(self: *App) void {
     };
 
     if (self.active_io_copy_job) |job_id| {
-        if (manager.treeIndex(job_id)) |tree| {
-            for (tree.entries.items) |entry| {
-                const operation = manager.entryOperationView(job_id, entry.id) orelse
-                    continue;
-                if (operation.copy_phase != .flushing or
-                    (operation.state != .pending and operation.state != .running))
-                {
-                    continue;
-                }
-                const message = @import("i18n").tr("Flushing to storage…");
-                if (self.status_notice == null or
-                    !std.mem.eql(u8, self.status_notice.?, message))
-                {
-                    self.setStatusNotice(message, false);
-                } else {
-                    self.status_notice_until = @import("app_draw.zig").nowMs() + 4000;
-                }
-                break;
+        if (manager.jobHasFlushingOperation(job_id)) {
+            const message = @import("i18n").tr("Flushing to storage…");
+            if (self.status_notice == null or
+                !std.mem.eql(u8, self.status_notice.?, message))
+            {
+                self.setStatusNotice(message, false);
+            } else {
+                self.status_notice_until = @import("app_draw.zig").nowMs() + 4000;
             }
         }
     }
