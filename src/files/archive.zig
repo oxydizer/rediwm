@@ -215,6 +215,37 @@ fn openDirectory(root: c_int, path: []const u8) !c_int {
     return fd;
 }
 
+const DirectoryFdCache = struct {
+    allocator: Allocator,
+    root: c_int,
+    fd: ?c_int = null,
+    path: ?[]u8 = null,
+
+    fn get(self: *DirectoryFdCache, path: []const u8) !c_int {
+        if (self.path) |cached_path| {
+            if (std.mem.eql(u8, cached_path, path)) return self.fd.?;
+        }
+
+        const next_path = try self.allocator.dupe(u8, path);
+        errdefer self.allocator.free(next_path);
+        const next_fd = try openDirectory(self.root, path);
+        errdefer _ = c.close(next_fd);
+
+        if (self.fd) |old_fd| _ = c.close(old_fd);
+        if (self.path) |old_path| self.allocator.free(old_path);
+        self.fd = next_fd;
+        self.path = next_path;
+        return next_fd;
+    }
+
+    fn deinit(self: *DirectoryFdCache) void {
+        if (self.fd) |fd| _ = c.close(fd);
+        if (self.path) |path| self.allocator.free(path);
+        self.fd = null;
+        self.path = null;
+    }
+};
+
 const Links = std.StringHashMapUnmanaged([]const u8);
 
 /// Resolve archive links component by component, including links before '..'.
@@ -264,6 +295,8 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
     const root = c.open(zdest, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
     if (root < 0) return error.WriteFailed;
     defer _ = c.close(root);
+    var directory_cache = DirectoryFdCache{ .allocator = mem, .root = root };
+    defer directory_cache.deinit();
     var arena = std.heap.ArenaAllocator.init(mem);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -326,8 +359,9 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
             continue;
         }
         if ((kind != c.S_IFREG and kind != c.S_IFDIR) or a.archive_entry_hardlink(entry) != null) return error.UnsupportedArchiveEntry;
-        const parent = try openDirectory(root, if (kind == c.S_IFDIR) name else std.fs.path.dirname(name) orelse "");
-        defer _ = c.close(parent);
+        const parent = try directory_cache.get(
+            if (kind == c.S_IFDIR) name else std.fs.path.dirname(name) orelse "",
+        );
         if (kind == c.S_IFDIR) continue;
         const zname = try mem.dupeSentinel(u8, std.fs.path.basename(name), 0);
         defer mem.free(zname);
@@ -375,8 +409,7 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
     iterator = links.iterator();
     while (iterator.next()) |link| {
         try check(cancel);
-        const parent = try openDirectory(root, std.fs.path.dirname(link.key_ptr.*) orelse "");
-        defer _ = c.close(parent);
+        const parent = try directory_cache.get(std.fs.path.dirname(link.key_ptr.*) orelse "");
         const name = try mem.dupeSentinel(u8, std.fs.path.basename(link.key_ptr.*), 0);
         defer mem.free(name);
         const target = try mem.dupeSentinel(u8, link.value_ptr.*, 0);
