@@ -3077,16 +3077,6 @@ pub const Manager = struct {
         return nonterminalOperationCount(job) == 1;
     }
 
-    fn directoryFinalizationIndex(job: *const Job) ?usize {
-        for (job.operations.items, 0..) |operation, index| {
-            if (operation.kind == .finalize_directories) return index;
-        }
-        return null;
-    }
-
-    fn hasDirectoryFinalizationOperation(job: *const Job) bool {
-        return directoryFinalizationIndex(job) != null;
-    }
 
     fn hasDiscoveryWork(job: *const Job) bool {
         return job.discovery_started and

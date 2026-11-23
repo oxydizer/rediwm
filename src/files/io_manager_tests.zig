@@ -711,6 +711,18 @@ test "archive publication barrier waits for dynamically registered operations" {
         publication_token.operation_id,
     );
     try std.testing.expect(manager.completeWork(publication_token, .completed));
+    const detach_operation = try manager.addEntryOperation(
+        job,
+        root,
+        .detach_source,
+    );
+    try std.testing.expectEqual(
+        @as(?bool, false),
+        manager.archivePublicationReady(archive_token),
+    );
+    const detach_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(detach_operation, detach_token.operation_id);
+    try std.testing.expect(manager.completeWork(detach_token, .completed));
     try std.testing.expectEqual(
         @as(?bool, true),
         manager.archivePublicationReady(archive_token),
