@@ -120,8 +120,8 @@ pub fn renderTitlebar(self: *Client, cr: *c.cairo_t, w: i32, h: i32) void {
     c.cairo_line_to(cr, w_f, h_f - 0.5);
     c.cairo_stroke(cr);
 
-    const menu_rect = self.headerButton(.menu);
-    self.app.menu_anchor = menu_rect.x + menu_rect.w;
+    // The menu button lives at the end of the tab strip below, not here.
+    const minimize_rect = self.headerButton(.minimize);
     if (shell_ui.Layer.begin(cr, .{ .x = 16, .y = @floatCast((h_f - 20) / 2), .w = 20, .h = 20 })) |l| {
         var layer = l;
         layer.renderer.drawIcon(0, 0, 20, 20, .{ .id = .edit, .color = ui_theme.global.window_fg });
@@ -132,18 +132,12 @@ pub fn renderTitlebar(self: *Client, cr: *c.cairo_t, w: i32, h: i32) void {
     const metrics = shell_ui.fontMetrics(cr, title_size);
     shell_ui.setSource(cr, ui_theme.global.window_fg);
     c.cairo_save(cr);
-    c.cairo_rectangle(cr, 46, 0, @max(0, menu_rect.x - 54), h_f);
+    c.cairo_rectangle(cr, 46, 0, @max(0, minimize_rect.x - 54), h_f);
     c.cairo_clip(cr);
     shell_ui.drawText(cr, title, 46, (h_f + metrics.ascent - metrics.descent) / 2, title_size, true);
     c.cairo_restore(cr);
 
-    const divider = (menu_rect.x + menu_rect.w + self.headerButton(.minimize).x) / 2;
-    shell_ui.setSource(cr, ui_theme.global.app_divider);
-    c.cairo_set_line_width(cr, 1);
-    c.cairo_move_to(cr, @floor(divider) + 0.5, h_f * 0.3);
-    c.cairo_line_to(cr, @floor(divider) + 0.5, h_f * 0.7);
-    c.cairo_stroke(cr);
-    inline for (.{ HeaderControl.menu, HeaderControl.minimize, HeaderControl.maximize, HeaderControl.close }) |control| {
+    inline for (.{ HeaderControl.minimize, HeaderControl.maximize, HeaderControl.close }) |control| {
         const r = self.headerButton(control);
         if (shell_ui.Layer.begin(cr, r)) |l| {
             var layer = l;

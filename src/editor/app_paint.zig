@@ -131,7 +131,7 @@ pub fn paintCaret(self: *App, cr: *c.cairo_t) void {
 }
 
 pub fn tabRight(self: *const App) f64 {
-    return @as(f64, @floatFromInt(self.w)) - @as(f64, if (self.has_titlebar) 40 else 80);
+    return @as(f64, @floatFromInt(self.w)) - 80;
 }
 
 pub fn dismissMenu(self: *App) void {
@@ -164,7 +164,7 @@ pub fn menuBox(self: *const App) menu.Rect {
     const height = labels.len * menu.row_height + 2 * menu.padding + 2 * menu.separator_space;
     return .{
         .x = std.math.clamp(self.menu_anchor - menu.width, 6, @max(6, @as(f64, @floatFromInt(self.w)) - menu.width - 6)),
-        .y = @min(if (self.has_titlebar or self.strip_in_titlebar) @as(f64, 6) else top + 4, @max(6, @as(f64, @floatFromInt(self.h)) - height - 6)),
+        .y = @min(if (self.strip_in_titlebar) @as(f64, 6) else top + 4, @max(6, @as(f64, @floatFromInt(self.h)) - height - 6)),
         .w = menu.width,
         .h = height,
     };
@@ -251,7 +251,7 @@ fn paintStrip(self: *App, cr: *c.cairo_t) void {
     }
     c.cairo_restore(cr);
     self.paintIcon(cr, self.newButtonBox(), .plus, tr("New tab"), false);
-    if (!self.has_titlebar) self.paintIcon(cr, self.menuButtonBox(), .more, tr("Menu"), self.menu_open);
+    self.paintIcon(cr, self.menuButtonBox(), .more, tr("Menu"), self.menu_open);
 }
 
 pub fn render(self: *App, cr: *c.cairo_t) void {
