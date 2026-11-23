@@ -401,6 +401,7 @@ const Job = struct {
     ready_queues: [3]ReadyQueue = .{ .{}, .{}, .{} },
     ready_count: usize = 0,
     flushing_operation_count: usize = 0,
+    directory_finalization_index: ?usize = null,
     dependency_work_queue: std.ArrayList(usize) = .empty,
     operation_state_counts: [7]usize = .{ 0, 0, 0, 0, 0, 0, 0 },
 
@@ -1423,7 +1424,7 @@ pub const Manager = struct {
                 return error.DuplicateDirectoryPermissionRecord;
         }
 
-        const needs_finalizer = !hasDirectoryFinalizationOperation(job);
+        const needs_finalizer = job.directory_finalization_index == null;
         if (needs_finalizer) {
             if (self.next_operation_id == std.math.maxInt(OperationId))
                 return error.IdExhausted;
@@ -1528,12 +1529,16 @@ pub const Manager = struct {
             return false;
         if (job.outstanding_population_count != 0) return false;
 
-        for (job.operations.items) |operation| {
-            if (operation.id == token.operation_id) continue;
-            if (operation.kind == .finalize_directories) continue;
-            if (!operation.state.isTerminal()) return false;
+        var remaining = nonterminalOperationCount(job);
+        std.debug.assert(remaining != 0);
+        remaining -= 1; // Archive publication barrier.
+        if (job.directory_finalization_index) |finalizer_index| {
+            if (!job.operations.items[finalizer_index].state.isTerminal()) {
+                std.debug.assert(remaining != 0);
+                remaining -= 1;
+            }
         }
-        return true;
+        return remaining == 0;
     }
 
     /// Reports whether all destination-population operations and directory
@@ -1801,6 +1806,10 @@ pub const Manager = struct {
         }
         job.operations.appendAssumeCapacity(.{ .id = id, .kind = kind });
         job.operation_indices.putAssumeCapacity(id, index);
+        if (kind == .finalize_directories) {
+            std.debug.assert(job.directory_finalization_index == null);
+            job.directory_finalization_index = index;
+        }
         self.next_operation_id += 1;
         if (job.state != .planning) {
             job.operation_state_counts[@backingInt(OperationState.pending)] += 1;
@@ -3011,14 +3020,14 @@ pub const Manager = struct {
         if (job.state == .paused or job.state == .planning) return;
         var counts = job.operation_state_counts;
 
-        if (directoryFinalizationIndex(job)) |finalizer_index| {
+        if (job.directory_finalization_index) |finalizer_index| {
             const finalizer = &job.operations.items[finalizer_index];
             if (finalizer.state == .running) {
                 job.state = .finalizing;
                 return;
             }
             if (finalizer.state == .pending) {
-                if (directoryFinalizationReady(job, finalizer_index)) {
+                if (directoryFinalizationReady(job)) {
                     if (!finalizer.finalization_queued) {
                         enqueueReady(job, finalizer_index);
                         finalizer.finalization_queued = true;
@@ -3055,15 +3064,17 @@ pub const Manager = struct {
         }
     }
 
-    fn directoryFinalizationReady(job: *const Job, finalizer_index: usize) bool {
+    fn nonterminalOperationCount(job: *const Job) usize {
+        return job.operation_state_counts[@backingInt(OperationState.pending)] +
+            job.operation_state_counts[@backingInt(OperationState.running)] +
+            job.operation_state_counts[@backingInt(OperationState.waiting)];
+    }
+
+    fn directoryFinalizationReady(job: *const Job) bool {
         if (job.discovery_pending_count != 0 or job.discovery_in_flight != null or
             job.outstanding_population_count != 0)
             return false;
-        for (job.operations.items, 0..) |operation, index| {
-            if (index == finalizer_index) continue;
-            if (!operation.state.isTerminal()) return false;
-        }
-        return true;
+        return nonterminalOperationCount(job) == 1;
     }
 
     fn directoryFinalizationIndex(job: *const Job) ?usize {
