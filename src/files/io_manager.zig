@@ -553,6 +553,86 @@ pub const Manager = struct {
         return true;
     }
 
+    /// Low-level reclamation primitive. Runtime is the only valid production
+    /// caller, and must establish executor quiescence after App detachment
+    /// before invoking it. Manager-owned work and scheduler references are
+    /// checked and removed here before the Job's storage is destroyed.
+    pub fn retireTerminalJob(self: *Manager, job_id: JobId) bool {
+        const index = self.job_indices.get(job_id) orelse return false;
+        const job = &self.jobs.items[index];
+        if (!job.state.isTerminal() or
+            job.discovery_pending_count != 0 or
+            job.discovery_in_flight != null or
+            job.outstanding_population_count != 0 or
+            job.ready_count != 0 or
+            job.cancel_requested or
+            nonterminalOperationCount(job) != 0)
+        {
+            return false;
+        }
+        for (job.operations.items) |operation| {
+            if (!operation.state.isTerminal()) return false;
+        }
+
+        self.removeDiscoveryQueueItemsForJob(job_id);
+        self.removeConflictsForJob(job_id);
+        if (self.preferred_operation) |preferred| {
+            if (preferred.job_id == job_id) self.preferred_operation = null;
+        }
+
+        var removed = self.jobs.orderedRemove(index);
+        removed.deinit(self.allocator);
+        std.debug.assert(self.job_indices.remove(job_id));
+
+        for (self.jobs.items[index..], index..) |shifted_job, shifted_index| {
+            self.job_indices.putAssumeCapacity(shifted_job.id, shifted_index);
+        }
+
+        if (self.jobs.items.len == 0) {
+            self.round_robin_cursor = 0;
+        } else {
+            if (self.round_robin_cursor > index)
+                self.round_robin_cursor -= 1;
+            if (self.round_robin_cursor >= self.jobs.items.len)
+                self.round_robin_cursor = 0;
+        }
+        return true;
+    }
+
+    fn removeDiscoveryQueueItemsForJob(self: *Manager, job_id: JobId) void {
+        for (&self.discovery_queues) |*queue| {
+            var write_index: usize = 0;
+            for (queue.items.items[queue.head..]) |item| {
+                if (item.job_id == job_id) continue;
+                queue.items.items[write_index] = item;
+                write_index += 1;
+            }
+            queue.items.items.len = write_index;
+            queue.head = 0;
+        }
+    }
+
+    fn removeConflictsForJob(self: *Manager, job_id: JobId) void {
+        var read_index = self.conflict_head;
+        var write_index = self.conflict_head;
+        while (read_index < self.conflicts.items.len) : (read_index += 1) {
+            const conflict = &self.conflicts.items[read_index];
+            if (conflict.job_id == job_id) {
+                std.debug.assert(self.conflict_operation_ids.remove(conflict.operation_id));
+                conflict.deinit(self.allocator);
+                continue;
+            }
+            if (write_index != read_index)
+                self.conflicts.items[write_index] = conflict.*;
+            write_index += 1;
+        }
+        self.conflicts.items.len = write_index;
+        if (self.conflict_head >= self.conflicts.items.len) {
+            self.conflicts.clearRetainingCapacity();
+            self.conflict_head = 0;
+        }
+    }
+
     /// Stores the selected destination directory. The Manager owns a copy;
     /// entry paths are constructed from this directory and TreeIndex names.
     pub fn setDestinationDirectory(
@@ -1786,10 +1866,10 @@ pub const Manager = struct {
             });
             self.discovery_queues[@backingInt(DiscoveryPriority.background)]
                 .items.appendAssumeCapacity(.{
-                    .job_id = job.id,
-                    .entry_id = root_id,
-                    .version = 1,
-                });
+                .job_id = job.id,
+                .entry_id = root_id,
+                .version = 1,
+            });
             job.discovery_pending_count += 1;
         }
 
@@ -3100,7 +3180,6 @@ pub const Manager = struct {
         return nonterminalOperationCount(job) == 1;
     }
 
-
     fn hasDiscoveryWork(job: *const Job) bool {
         return job.discovery_started and
             (job.discovery_pending_count != 0 or job.discovery_in_flight != null);
@@ -3166,8 +3245,7 @@ fn updateFlushingOperationCount(
 fn isPopulationOperation(kind: OperationKind) bool {
     return switch (kind) {
         .create_directory, .copy_file, .copy_symlink, .move_entry => true,
-        .finalize_directories, .publish, .detach_source, .purge_source, .archive_extract,
-        .archive_member_extract => false,
+        .finalize_directories, .publish, .detach_source, .purge_source, .archive_extract, .archive_member_extract => false,
     };
 }
 
@@ -3447,6 +3525,98 @@ test "copy progress rate samples every 500ms and expires stale readings" {
     updateProgressRate(&operation, 1, 200, .transferring, 1500);
     try std.testing.expectEqual(@as(u64, 400), currentProgressRate(&operation, 2000));
     try std.testing.expectEqual(@as(u64, 0), currentProgressRate(&operation, 3001));
+}
+
+test "terminal job retirement repairs indexes and clears scheduler references" {
+    var manager = Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const first_job = try manager.createJob(null);
+    const retired_job = try manager.createJob(null);
+    const last_job = try manager.createJob(null);
+    const operation_id = try manager.addOperation(retired_job, .publish);
+
+    try std.testing.expect(!manager.retireTerminalJob(retired_job));
+    try manager.queueJob(retired_job);
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(operation_id, token.operation_id);
+    try std.testing.expect(manager.completeWork(token, .completed));
+    try std.testing.expectEqual(JobState.completed, manager.jobState(retired_job).?);
+
+    manager.preferred_operation = .{
+        .job_id = retired_job,
+        .operation_id = operation_id,
+    };
+    try std.testing.expect(manager.retireTerminalJob(retired_job));
+
+    try std.testing.expectEqual(@as(?JobState, null), manager.jobState(retired_job));
+    try std.testing.expect(manager.preferred_operation == null);
+    try std.testing.expect(manager.findJob(first_job) != null);
+    try std.testing.expect(manager.findJob(last_job) != null);
+    try std.testing.expectEqual(@as(?usize, 0), manager.job_indices.get(first_job));
+    try std.testing.expectEqual(@as(?usize, 1), manager.job_indices.get(last_job));
+}
+
+test "terminal job retirement removes stale discovery queue entries" {
+    var manager = Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job_id = try manager.createJob(null);
+    _ = try manager.addTreeRoot(job_id, "root", .directory, .{}, null);
+    try manager.startDiscovery(job_id, "/tmp/root");
+    _ = try manager.addOperation(job_id, .publish);
+    try manager.queueJob(job_id);
+    try manager.cancelJob(job_id);
+
+    try std.testing.expectEqual(JobState.cancelled, manager.jobState(job_id).?);
+    try std.testing.expect(manager.retireTerminalJob(job_id));
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+}
+
+test "terminal job retirement preserves queued discovery after an advanced head" {
+    var manager = Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const retired_job = try manager.createJob(null);
+    const retained_job = try manager.createJob(null);
+
+    const retired_root = try manager.addTreeRoot(
+        retired_job,
+        "retired",
+        .directory,
+        .{},
+        null,
+    );
+    const retained_root = try manager.addTreeRoot(
+        retained_job,
+        "retained",
+        .directory,
+        .{},
+        null,
+    );
+    try manager.startDiscovery(retired_job, "/tmp/retired");
+    try manager.startDiscovery(retained_job, "/tmp/retained");
+
+    _ = try manager.addOperation(retired_job, .publish);
+    try manager.queueJob(retired_job);
+    try manager.cancelJob(retired_job);
+    try std.testing.expectEqual(JobState.cancelled, manager.jobState(retired_job).?);
+
+    // Consume the terminal first entry while leaving the paused second entry
+    // queued. This advances the queue head without dispatching retained work.
+    manager.findJob(retained_job).?.state = .paused;
+    try std.testing.expect(manager.dispatchDiscovery() == null);
+    try std.testing.expectEqual(@as(usize, 1), manager.discovery_queues[
+        @backingInt(DiscoveryPriority.background)
+    ].head);
+
+    try std.testing.expect(manager.retireTerminalJob(retired_job));
+
+    manager.findJob(retained_job).?.state = .queued;
+    const token = manager.dispatchDiscovery().?;
+    try std.testing.expectEqual(retained_job, token.job_id);
+    try std.testing.expectEqual(retained_root, token.entry_id);
+    try std.testing.expect(manager.treeIndex(retained_job).?.getConst(retired_root) != null);
 }
 
 test "copy progress rate survives yielded generations and resets on regression and flushing" {

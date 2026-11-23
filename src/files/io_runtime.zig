@@ -63,6 +63,15 @@ pub const Runtime = struct {
         return true;
     }
 
+    /// Reclaims a detached terminal Job once both executors and all
+    /// Runtime-owned resources have released their references.
+    pub fn retireJobIfReady(self: *Runtime, job_id: io_manager.JobId) bool {
+        if (!self.isJobRetirementReady(job_id)) return false;
+        if (!self.manager.retireTerminalJob(job_id)) return false;
+        std.debug.assert(self.retirement_requests.remove(job_id));
+        return true;
+    }
+
     /// Cancels a Job across the Manager and both executor-owned resource sets.
     pub fn cancelJob(self: *Runtime, job_id: io_manager.JobId) !void {
         if (self.operation_executor) |*executor| {
@@ -115,7 +124,6 @@ pub const Runtime = struct {
     }
 };
 
-
 test "I/O runtime owns and tears down both executors" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -150,4 +158,8 @@ test "I/O runtime retirement requests require terminal jobs and both executors t
     try runtime.requestJobRetirement(job_id);
     try std.testing.expect(runtime.isJobRetirementReady(job_id));
     try std.testing.expect(!runtime.isJobRetirementReady(job_id + 100));
+    try std.testing.expect(runtime.retireJobIfReady(job_id));
+    try std.testing.expectEqual(@as(?io_manager.JobState, null), runtime.manager.jobState(job_id));
+    try std.testing.expect(!runtime.isJobRetirementReady(job_id));
+    try std.testing.expect(!runtime.retireJobIfReady(job_id));
 }
