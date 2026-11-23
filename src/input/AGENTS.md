@@ -39,6 +39,12 @@
   focus; new compositor input modes go in `motionReachesClient` or
   `candidate`. `sendDeactivated` destroys oneshots synchronously: clear
   `active` first.
+* **Pointer warp** (`pointer_warp.zig`, wp_pointer_warp_v1; Wine's
+  SetCursorPos): honoured only while the target's surface tree has pointer
+  focus and `motionReachesClient`, with a seat serial for that client, inside
+  the surface; never through a lock, only within a confinement. It skips
+  `clientMotion` on purpose (a warp is no relative delta) but runs
+  `processCursorMotion`, the frame and `sync` like `warpCursor`.
 * **The switcher owns the pointer** while it is up: opening it clears pointer
   focus and shows the arrow (a client's hidden or text cursor would otherwise
   stay, since no motion reaches it), unless a press or grab is in progress.

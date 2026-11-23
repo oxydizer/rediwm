@@ -24,6 +24,7 @@ const CursorSerial = @import("input/cursor_serial.zig");
 const ClientWheel = @import("input/client_wheel.zig");
 const WheelDebounce = @import("input/wheel_debounce.zig");
 const PointerConstraints = @import("input/pointer_constraints.zig");
+const PointerWarp = @import("input/pointer_warp.zig");
 const ShortcutsInhibit = @import("input/shortcuts_inhibit.zig");
 const Touch = @import("input/touch.zig");
 const Tablet = @import("input/tablet.zig");
@@ -134,6 +135,7 @@ cursor_mgr: *wlr.XcursorManager,
 pointer_gestures: *wlr.PointerGesturesV1,
 /// Relative motion and pointer lock/confinement for games.
 pointer_constraints: PointerConstraints = undefined,
+pointer_warp: PointerWarp = undefined,
 /// Compositor bindings handed to VMs and remote desktops.
 shortcuts_inhibit: ShortcutsInhibit = undefined,
 /// A file manager slides aside while a file is dragged out of it.
@@ -393,6 +395,8 @@ pub fn init(input: *Input, server: *Server) Server.CompositorError!void {
     input.cursor.events.hold_end.add(&input.cursor_hold_end);
     input.pointer_constraints.init(input) catch return error.PointerConstraintsCreateFailed;
     errdefer input.pointer_constraints.deinit();
+    input.pointer_warp.init(input) catch return error.PointerWarpCreateFailed;
+    errdefer input.pointer_warp.deinit();
     input.shortcuts_inhibit.init(input) catch return error.ShortcutsInhibitCreateFailed;
     errdefer input.shortcuts_inhibit.deinit();
     input.drag_dodge.init(input);
@@ -437,6 +441,7 @@ pub fn deinit(input: *Input) void {
     input.start_drag.link.remove();
     if (input.drag_icon_tree) |tree| tree.node.destroy();
     input.pointer_constraints.deinit();
+    input.pointer_warp.deinit();
     input.shortcuts_inhibit.deinit();
     input.drag_dodge.deinit();
     input.trash_drop.deinit();

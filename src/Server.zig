@@ -91,6 +91,7 @@ pub const CompositorError = error{
     SocketCreateFailed,
     PointerGesturesCreateFailed,
     PointerConstraintsCreateFailed,
+    PointerWarpCreateFailed,
     ShortcutsInhibitCreateFailed,
 };
 

@@ -34,6 +34,7 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.addSystemProtocol("unstable/xdg-output/xdg-output-unstable-v1.xml");
     scanner.addSystemProtocol("unstable/pointer-constraints/pointer-constraints-unstable-v1.xml");
     scanner.addSystemProtocol("unstable/relative-pointer/relative-pointer-unstable-v1.xml");
+    scanner.addSystemProtocol("staging/pointer-warp/pointer-warp-v1.xml");
     scanner.addSystemProtocol("staging/ext-session-lock/ext-session-lock-v1.xml");
     scanner.addCustomProtocol(b.path("protocol/wlr-output-power-management-unstable-v1.xml"));
 
@@ -63,6 +64,7 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.generate("zxdg_output_manager_v1", 3);
     scanner.generate("zwp_pointer_constraints_v1", 1);
     scanner.generate("zwp_relative_pointer_manager_v1", 1);
+    scanner.generate("wp_pointer_warp_v1", 1);
     scanner.generate("ext_session_lock_manager_v1", 1);
     scanner.generate("zwlr_output_power_manager_v1", 1);
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Relative pointer motion and pointer lock/confinement with real Wayland peers."""
+"""Relative pointer motion, pointer lock/confinement and pointer warps with real Wayland peers."""
 import os
 from pathlib import Path
 import subprocess
@@ -17,6 +17,7 @@ def compile_client(tmp):
     protocols = {
         "pointer-constraints-unstable-v1": system / "unstable/pointer-constraints/pointer-constraints-unstable-v1.xml",
         "relative-pointer-unstable-v1": system / "unstable/relative-pointer/relative-pointer-unstable-v1.xml",
+        "pointer-warp-v1": system / "staging/pointer-warp/pointer-warp-v1.xml",
     }
     sources = [tmp / "xdg-shell-protocol.c", tmp / "xdg-decoration-protocol.c"]
     for name, path in protocols.items():
@@ -87,7 +88,7 @@ def run():
                     return tuple(float(v) for v in line.split()[1:])
 
             game = Peer("rediwm.game")
-            for interface in ("zwp_pointer_constraints_v1", "zwp_relative_pointer_manager_v1"):
+            for interface in ("zwp_pointer_constraints_v1", "zwp_relative_pointer_manager_v1", "wp_pointer_warp_v1"):
                 assert f"global {interface} 1\n" in game.text(), game.text()
             other = Peer("rediwm.other")
             focus("rediwm.game")
@@ -108,6 +109,29 @@ def run():
             game.expect_count("relative 7.000 -3.000 7.000 -3.000\n", 1)
             print("PASS: globals and relative motion")
 
+            # A warp moves the cursor to a point on the client's own surface
+            # and reports plain motion there, never a relative delta.
+            relatives = game.count("relative ")
+            game.send("warp main 30 40")
+            assert cursor() == (ox + 30, oy + 40), (cursor(), (ox, oy))
+            assert game.last_motion() == (30, 40), game.last_motion()
+            # Any surface of the focused tree: the child sits at (100,80).
+            game.send("warp child 10 5")
+            assert cursor() == (ox + 110, oy + 85), (cursor(), (ox, oy))
+            game.send("warp main 30 40")
+            assert cursor() == (ox + 30, oy + 40), cursor()
+            assert game.count("relative ") == relatives, "a warp sent relative motion"
+            for refused in ("warp main 50 50 1", "warp main -1 10", "warp main 10 100000"):
+                game.send(refused)
+                assert cursor() == (ox + 30, oy + 40), (refused, cursor())
+            # Only the client under the pointer may move it.
+            focus("rediwm.other")
+            other.send("warp main 20 20")
+            assert cursor() == (ox + 30, oy + 40), ("unfocused warp", cursor())
+            focus("rediwm.game")
+            move(ox + 20, oy + 20)
+            print("PASS: pointer warp to the focused surface tree; bad serial, outside and unfocused refused")
+
             # A lock freezes the cursor and wl_pointer motion but keeps
             # relative deltas flowing: this is mouse-look.
             game.send("lock persistent")
@@ -118,6 +142,8 @@ def run():
             game.expect_count("relative 40.000 25.000 40.000 25.000\n", 1)
             assert cursor() == held, (cursor(), held)
             assert game.count("motion ") == motions, "locked pointer still sent wl_pointer.motion"
+            game.send("warp main 30 40")
+            assert cursor() == held, ("warp moved a locked pointer", cursor(), held)
 
             # Losing keyboard focus releases it; a persistent lock returns
             # with focus while the pointer is still over the surface.
