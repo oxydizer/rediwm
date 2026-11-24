@@ -111,10 +111,16 @@ pub fn stepTabs(self: *App, forward: bool) void {
 /// A tab beside the active one, showing the same folder. An archive's inside
 /// cannot be reopened that way, so a tab made there starts at home.
 pub fn newTab(self: *App) void {
+    const start = if (self.history.archive_len > 0 or recent.isLocation(self.history.current)) self.home_dir else self.history.current;
+    openTab(self, start, true);
+}
+
+/// A tab on `path`, beside the active one; `activate` switches to it, else it
+/// opens in the background like a browser's middle click.
+pub fn openTab(self: *App, path: []const u8, activate_it: bool) void {
     ensureTabs(self);
     if (self.tabs.items.len >= max_tabs or self.chooser != null) return;
-    const start = if (self.history.archive_len > 0 or recent.isLocation(self.history.current)) self.home_dir else self.history.current;
-    var history = history_mod.History.init(self.allocator, start) catch return;
+    var history = history_mod.History.init(self.allocator, path) catch return;
     const tab = self.allocator.create(FolderTab) catch {
         history.deinit();
         return;
@@ -128,7 +134,7 @@ pub fn newTab(self: *App) void {
     };
     self.tab_next_id += 1;
     // `at` is after the active tab, so the selection index has not moved.
-    switchTab(self, at);
+    if (activate_it) switchTab(self, at) else self.invalidate();
 }
 
 /// Closes tab `i`; the last tab closes the window.

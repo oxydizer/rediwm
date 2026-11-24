@@ -1,5 +1,6 @@
 //! Files pointer input: motion, drags, the selection band and clicks.
 
+const recent = @import("recent.zig");
 const std = @import("std");
 const App = @import("app.zig").App;
 const scrollbar = @import("ui").widgets.scrollbar;
@@ -454,6 +455,26 @@ pub fn renderSelectionBand(self: *App, cr: *c.cairo_t) void {
     c.cairo_stroke(cr);
 }
 
+/// Opens the folder under the pointer in a background tab: a folder in the
+/// listing, or a place in the sidebar. Files, archives' insides and the
+/// transfer view are left alone.
+fn openFolderTab(self: *App) void {
+    if (self.dialog != null or self.menu != null or self.chooser != null or self.history.archive_len > 0) return;
+    if (self.itemAt(self.mouse_x, self.mouse_y)) |idx| {
+        const item = self.items.items[idx];
+        if (item.is_dir and !item.missing and !item.transfer_ghost) self.openTab(item.path, false);
+        return;
+    }
+    if (self.hoveredPlace()) |place| {
+        var buf: [4096]u8 = undefined;
+        if (self.deviceAt(place)) |volume| {
+            if (volume.mount) |mount| self.openTab(mount, false);
+        } else if (self.placePath(place, &buf)) |path| {
+            if (recent.isLocation(path) or @import("pins.zig").kindOf(path) == .dir) self.openTab(path, false);
+        }
+    }
+}
+
 pub fn handleButton(self: *App, button: u32, pressed: bool) void {
     if (@import("app_audio_playlist.zig").button(self, button, pressed)) return;
     if (button == 0x110 and !pressed and @import("app_audio_bar.zig").release(self)) return;
@@ -475,6 +496,11 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             self.invalidate();
         }
         if (button == 0x113 or button == 0x116) self.back() else self.forward();
+        return;
+    }
+    // Middle click on a folder (or a place in the sidebar) opens it in a new tab.
+    if (button == 0x112) {
+        if (pressed and self.tabs_visible) self.openFolderTab();
         return;
     }
     if (button != 0x110 and button != 0x111) return;
