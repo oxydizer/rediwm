@@ -6,6 +6,7 @@ const io_tree = @import("io_tree.zig");
 const io_discovery = @import("io_discovery.zig");
 const io_discovery_executor = @import("io_discovery_executor.zig");
 const operation_executor = @import("io_operation_executor.zig");
+const io_resource_ledger = @import("io_resource_ledger.zig");
 const platform_fs = @import("platform").fs;
 
 fn allocZ(allocator: std.mem.Allocator, value: []const u8) ![:0]u8 {
@@ -209,6 +210,27 @@ fn expectDirectoryEmpty(path: []const u8) !void {
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
         return error.DirectoryNotEmpty;
     }
+}
+
+test "operation Runtime uses the supplied shared resource ledger" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    var ledger = io_resource_ledger.Ledger.init(std.testing.allocator);
+    defer ledger.deinit();
+
+    var runtime = try operation_executor.Runtime.initWithLedger(
+        std.testing.allocator,
+        &manager,
+        &ledger,
+        1,
+        1,
+    );
+    defer runtime.deinit();
+
+    try std.testing.expect(runtime.executor.ledger == &ledger);
+    try std.testing.expect(runtime.executor.owned_ledger == null);
+    try std.testing.expect(ledger.isEmpty());
 }
 
 test "Manager operations execute directory creation before dependent symlink and file work" {

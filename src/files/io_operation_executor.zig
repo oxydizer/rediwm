@@ -126,7 +126,7 @@ pub const Runtime = struct {
             .owned_ledger = owned_ledger,
         };
 
-        const executor = try io_executor.Executor.init(
+        const executor = try io_executor.Executor.initWithLedger(
             allocator,
             .{
                 .worker_count = worker_count,
@@ -140,6 +140,7 @@ pub const Runtime = struct {
                 .complete = complete,
                 .discard = discard,
             },
+            context.ledger,
         );
 
         return .{
@@ -391,16 +392,15 @@ fn prepare(
                     destination,
                     details.merge_existing_directory,
                 )
+            else if (details.replace_existing_file)
+                try io_copy.makeReplacementInput(
+                    context.allocator,
+                    source,
+                    destination,
+                    token,
+                )
             else
-                if (details.replace_existing_file)
-                    try io_copy.makeReplacementInput(
-                        context.allocator,
-                        source,
-                        destination,
-                        token,
-                    )
-                else
-                    try io_copy.makeInput(context.allocator, source, destination, token);
+                try io_copy.makeInput(context.allocator, source, destination, token);
         },
         .copy_symlink => blk: {
             const destination = try context.manager.destinationPath(

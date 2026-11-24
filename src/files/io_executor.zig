@@ -5,6 +5,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const io_manager = @import("io_manager.zig");
+const io_resource_ledger = @import("io_resource_ledger.zig");
 
 pub const JobId = io_manager.JobId;
 pub const OperationId = io_manager.OperationId;
@@ -112,14 +113,32 @@ pub const DrainStats = struct {
 };
 
 const WorkerPool = @import("io_workers.zig").WorkerPool;
-const Pool = WorkerPool(WorkItem, WorkCompletion);
+
+const PoolWorkItem = struct {
+    item: WorkItem,
+    ledger_handle: io_resource_ledger.Handle,
+};
+
+const PoolCompletion = struct {
+    completion: WorkCompletion,
+    ledger_handle: io_resource_ledger.Handle,
+};
+
+const Pool = WorkerPool(PoolWorkItem, PoolCompletion);
+
+const PendingWork = struct {
+    item: WorkItem,
+    ledger_handle: io_resource_ledger.Handle,
+};
 
 pub const Executor = struct {
     allocator: Allocator,
     pool: *Pool,
     callback_context: *CallbackContext,
+    ledger: *io_resource_ledger.Ledger,
+    owned_ledger: ?*io_resource_ledger.Ledger = null,
     continuations: std.AutoHashMapUnmanaged(OperationKey, OperationPayloads) = .empty,
-    pending: std.AutoHashMapUnmanaged(OperationKey, WorkItem) = .empty,
+    pending: std.AutoHashMapUnmanaged(OperationKey, PendingWork) = .empty,
     in_flight_by_job: std.AutoHashMapUnmanaged(JobId, usize) = .empty,
     profile_enabled: bool = false,
 
@@ -129,12 +148,56 @@ pub const Executor = struct {
         context: ?*anyopaque,
         callbacks: Callbacks,
     ) !Executor {
+        const ledger = try allocator.create(io_resource_ledger.Ledger);
+        ledger.* = io_resource_ledger.Ledger.init(allocator);
+        errdefer {
+            ledger.deinit();
+            allocator.destroy(ledger);
+        }
+
+        return initInternal(
+            allocator,
+            config,
+            context,
+            callbacks,
+            ledger,
+            ledger,
+        );
+    }
+
+    /// Uses a Runtime-owned ledger instead of creating a private one.
+    pub fn initWithLedger(
+        allocator: Allocator,
+        config: Config,
+        context: ?*anyopaque,
+        callbacks: Callbacks,
+        ledger: *io_resource_ledger.Ledger,
+    ) !Executor {
+        return initInternal(
+            allocator,
+            config,
+            context,
+            callbacks,
+            ledger,
+            null,
+        );
+    }
+
+    fn initInternal(
+        allocator: Allocator,
+        config: Config,
+        context: ?*anyopaque,
+        callbacks: Callbacks,
+        ledger: *io_resource_ledger.Ledger,
+        owned_ledger: ?*io_resource_ledger.Ledger,
+    ) !Executor {
         const callback_context = try allocator.create(CallbackContext);
         errdefer allocator.destroy(callback_context);
 
         callback_context.* = .{
             .user_context = context,
             .callbacks = callbacks,
+            .ledger = ledger,
         };
 
         const pool = try Pool.init(
@@ -143,13 +206,15 @@ pub const Executor = struct {
             config.capacity,
             callback_context,
             executeWork,
-            discardCompletion,
+            discardPoolCompletion,
         );
 
         return .{
             .allocator = allocator,
             .pool = pool,
             .callback_context = callback_context,
+            .ledger = ledger,
+            .owned_ledger = owned_ledger,
         };
     }
 
@@ -160,7 +225,7 @@ pub const Executor = struct {
 
         var pending_iter = self.pending.valueIterator();
         while (pending_iter.next()) |item| {
-            discardWorkItem(self.callback_context, item.*);
+            discardPendingWork(self.callback_context, self.ledger, item.*);
         }
         self.pending.deinit(self.allocator);
 
@@ -173,10 +238,19 @@ pub const Executor = struct {
                 payloads.continuation,
                 null,
             );
+            self.ledger.release(
+                payloads.ledger_handle,
+                .operation_executor,
+            ) catch unreachable;
         }
         self.continuations.deinit(self.allocator);
         self.in_flight_by_job.deinit(self.allocator);
 
+        if (self.owned_ledger) |ledger| {
+            std.debug.assert(ledger.isEmpty());
+            ledger.deinit();
+            self.allocator.destroy(ledger);
+        }
         self.allocator.destroy(self.callback_context);
         self.* = undefined;
     }
@@ -246,7 +320,7 @@ pub const Executor = struct {
             }
             const key = found orelse break;
             if (self.pending.fetchRemove(key)) |removed|
-                discardWorkItem(self.callback_context, removed.value);
+                discardPendingWork(self.callback_context, self.ledger, removed.value);
         }
 
         while (true) {
@@ -268,6 +342,10 @@ pub const Executor = struct {
                     payloads.continuation,
                     null,
                 );
+                self.ledger.release(
+                    payloads.ledger_handle,
+                    .operation_executor,
+                ) catch unreachable;
             }
         }
     }
@@ -286,8 +364,13 @@ pub const Executor = struct {
     ) !DrainStats {
         var stats: DrainStats = .{};
 
-        while (self.pool.tryPopResult()) |completion_value| {
-            var completion = completion_value;
+        while (self.pool.tryPopResult()) |pool_completion| {
+            var completion = pool_completion.completion;
+            self.ledger.transfer(
+                pool_completion.ledger_handle,
+                .operation_worker,
+                .operation_executor,
+            ) catch unreachable;
             defer self.finishInFlight(completion.token.job_id);
             stats.drained += 1;
 
@@ -304,12 +387,18 @@ pub const Executor = struct {
                         self.callback_context.callbacks.complete(
                             self.callback_context.user_context,
                             completion.token,
-                        completion.operation_kind,
+                            completion.operation_kind,
                             .failed,
                             null,
                         );
                     }
-                    discardCompletion(self.callback_context, completion);
+                    discardCompletionAndRelease(
+                        self.callback_context,
+                        self.ledger,
+                        completion,
+                        pool_completion.ledger_handle,
+                        .operation_executor,
+                    );
                     return err;
                 };
             }
@@ -317,7 +406,13 @@ pub const Executor = struct {
             if (!manager.acceptsWorkToken(completion.token)) {
                 // Do not expose stale worker metadata to operation-specific
                 // acceptance logic. The discard path retains payload ownership.
-                discardCompletion(self.callback_context, completion);
+                discardCompletionAndRelease(
+                    self.callback_context,
+                    self.ledger,
+                    completion,
+                    pool_completion.ledger_handle,
+                    .operation_executor,
+                );
                 continue;
             }
 
@@ -340,7 +435,13 @@ pub const Executor = struct {
                             null,
                         );
                     }
-                    discardCompletion(self.callback_context, completion);
+                    discardCompletionAndRelease(
+                        self.callback_context,
+                        self.ledger,
+                        completion,
+                        pool_completion.ledger_handle,
+                        .operation_executor,
+                    );
                     return err;
                 };
             }
@@ -348,7 +449,13 @@ pub const Executor = struct {
             if (!manager.completeWork(completion.token, completion.outcome)) {
                 // Stale or duplicate result: operation-specific cleanup
                 // owns every payload, including external resources.
-                discardCompletion(self.callback_context, completion);
+                discardCompletionAndRelease(
+                    self.callback_context,
+                    self.ledger,
+                    completion,
+                    pool_completion.ledger_handle,
+                    .operation_executor,
+                );
                 continue;
             }
 
@@ -380,6 +487,7 @@ pub const Executor = struct {
                     .operation_kind = completion.operation_kind,
                     .input = completion.input.take(),
                     .continuation = takeOptional(&completion.continuation),
+                    .ledger_handle = pool_completion.ledger_handle,
                 });
             } else {
                 // Terminal input and continuation are abandoned; the
@@ -402,6 +510,12 @@ pub const Executor = struct {
                 completion.outcome,
                 result,
             );
+            if (!retain_payloads) {
+                self.ledger.release(
+                    pool_completion.ledger_handle,
+                    .operation_executor,
+                ) catch unreachable;
+            }
         }
 
         return stats;
@@ -415,9 +529,9 @@ pub const Executor = struct {
         while (manager.dispatchNext()) |token| {
             const key = OperationKey.fromToken(token);
 
-            if (self.pending.getPtr(key)) |pending_item| {
+            if (self.pending.getPtr(key)) |pending_work| {
                 // Retry a retained item with the new dispatch generation.
-                pending_item.token = token;
+                pending_work.item.token = token;
             } else {
                 // Reserve before removing continuation ownership or
                 // calling prepare, so insertion below cannot allocate.
@@ -431,6 +545,10 @@ pub const Executor = struct {
                             payloads.continuation,
                             null,
                         );
+                        self.ledger.release(
+                            payloads.ledger_handle,
+                            .operation_executor,
+                        ) catch unreachable;
                     }
                     if (manager.completeWork(token, .failed)) {
                         self.callback_context.callbacks.complete(
@@ -447,10 +565,13 @@ pub const Executor = struct {
                 if (self.continuations.fetchRemove(key)) |entry| {
                     const payloads = entry.value;
                     self.pending.putAssumeCapacity(key, .{
-                        .token = token,
-                        .operation_kind = payloads.operation_kind,
-                        .input = payloads.input,
-                        .continuation = payloads.continuation,
+                        .item = .{
+                            .token = token,
+                            .operation_kind = payloads.operation_kind,
+                            .input = payloads.input,
+                            .continuation = payloads.continuation,
+                        },
+                        .ledger_handle = payloads.ledger_handle,
                     });
                 } else {
                     const prepared = self.callback_context.callbacks.prepare(
@@ -469,28 +590,63 @@ pub const Executor = struct {
                         continue;
                     };
 
+                    const ledger_handle = self.ledger.register(
+                        token.job_id,
+                        .operation_payload,
+                        .operation_executor,
+                    ) catch |err| {
+                        discardPayloads(
+                            self.callback_context,
+                            prepared.operation_kind,
+                            prepared.input,
+                            null,
+                            null,
+                        );
+                        if (manager.completeWork(token, .failed)) {
+                            self.callback_context.callbacks.complete(
+                                self.callback_context.user_context,
+                                token,
+                                prepared.operation_kind,
+                                .failed,
+                                null,
+                            );
+                        }
+                        return err;
+                    };
+
                     self.pending.putAssumeCapacity(key, .{
-                        .token = token,
-                        .operation_kind = prepared.operation_kind,
-                        .input = prepared.input,
-                        .continuation = null,
+                        .item = .{
+                            .token = token,
+                            .operation_kind = prepared.operation_kind,
+                            .input = prepared.input,
+                            .continuation = null,
+                        },
+                        .ledger_handle = ledger_handle,
                     });
                 }
             }
 
-            const pending_item = self.pending.getPtr(key).?;
-            pending_item.profile_enabled = self.profile_enabled;
+            const pending_work = self.pending.getPtr(key).?;
+            pending_work.item.profile_enabled = self.profile_enabled;
             self.reserveInFlightSlot(token.job_id) catch |err| {
                 // Keep the prepared item in pending and return the operation
                 // to the scheduler; a later dispatch can retry the reserve.
                 if (!manager.completeWork(token, .yielded)) {
                     if (self.pending.fetchRemove(key)) |entry| {
-                        discardWorkItem(self.callback_context, entry.value);
+                        discardPendingWork(self.callback_context, self.ledger, entry.value);
                     }
                 }
                 return err;
             };
-            if (self.pool.trySubmit(pending_item.*)) {
+            self.ledger.transfer(
+                pending_work.ledger_handle,
+                .operation_executor,
+                .operation_worker,
+            ) catch unreachable;
+            if (self.pool.trySubmit(.{
+                .item = pending_work.item,
+                .ledger_handle = pending_work.ledger_handle,
+            })) {
                 // Ownership transfers to the pool. Do not deinit the
                 // removed map value.
                 _ = self.pending.fetchRemove(key).?;
@@ -499,10 +655,16 @@ pub const Executor = struct {
                 continue;
             }
 
+            self.ledger.transfer(
+                pending_work.ledger_handle,
+                .operation_worker,
+                .operation_executor,
+            ) catch unreachable;
+
             // Keep ownership in pending until a later dispatch can submit.
             if (!manager.completeWork(token, .yielded)) {
                 if (self.pending.fetchRemove(key)) |entry| {
-                    discardWorkItem(self.callback_context, entry.value);
+                    discardPendingWork(self.callback_context, self.ledger, entry.value);
                 }
             }
             break;
@@ -512,16 +674,39 @@ pub const Executor = struct {
     }
 };
 
-fn executeWork(context: ?*anyopaque, item: WorkItem) WorkCompletion {
+fn executeWork(context: ?*anyopaque, pool_item: PoolWorkItem) PoolCompletion {
     const callback_context: *CallbackContext = @ptrCast(@alignCast(context.?));
-    return callback_context.callbacks.execute(
-        callback_context.user_context,
-        item,
-    );
+    return .{
+        .completion = callback_context.callbacks.execute(
+            callback_context.user_context,
+            pool_item.item,
+        ),
+        .ledger_handle = pool_item.ledger_handle,
+    };
 }
 
-fn discardCompletion(raw_context: ?*anyopaque, completion: WorkCompletion) void {
+fn discardPoolCompletion(raw_context: ?*anyopaque, pool_completion: PoolCompletion) void {
     const callback_context: *CallbackContext = @ptrCast(@alignCast(raw_context.?));
+    discardPayloads(
+        callback_context,
+        pool_completion.completion.operation_kind,
+        pool_completion.completion.input,
+        pool_completion.completion.continuation,
+        pool_completion.completion.result,
+    );
+    callback_context.ledger.release(
+        pool_completion.ledger_handle,
+        .operation_worker,
+    ) catch unreachable;
+}
+
+fn discardCompletionAndRelease(
+    callback_context: *CallbackContext,
+    ledger: *io_resource_ledger.Ledger,
+    completion: WorkCompletion,
+    ledger_handle: io_resource_ledger.Handle,
+    owner: io_resource_ledger.Owner,
+) void {
     discardPayloads(
         callback_context,
         completion.operation_kind,
@@ -529,16 +714,25 @@ fn discardCompletion(raw_context: ?*anyopaque, completion: WorkCompletion) void 
         completion.continuation,
         completion.result,
     );
+    ledger.release(ledger_handle, owner) catch unreachable;
 }
 
-fn discardWorkItem(callback_context: *CallbackContext, item: WorkItem) void {
+fn discardPendingWork(
+    callback_context: *CallbackContext,
+    ledger: *io_resource_ledger.Ledger,
+    pending: PendingWork,
+) void {
     discardPayloads(
         callback_context,
-        item.operation_kind,
-        item.input,
-        item.continuation,
+        pending.item.operation_kind,
+        pending.item.input,
+        pending.item.continuation,
         null,
     );
+    ledger.release(
+        pending.ledger_handle,
+        .operation_executor,
+    ) catch unreachable;
 }
 
 fn discardPayloads(
@@ -615,13 +809,14 @@ pub const Callbacks = struct {
 const CallbackContext = struct {
     user_context: ?*anyopaque,
     callbacks: Callbacks,
+    ledger: *io_resource_ledger.Ledger,
 };
 
 const OperationPayloads = struct {
     operation_kind: OperationKind,
     input: OwnedPayload,
     continuation: ?OwnedPayload,
-
+    ledger_handle: io_resource_ledger.Handle,
 };
 
 fn takeOptional(value: *?OwnedPayload) ?OwnedPayload {

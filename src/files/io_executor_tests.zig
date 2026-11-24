@@ -1,6 +1,7 @@
 const std = @import("std");
 const io_manager = @import("io_manager.zig");
 const io_executor = @import("io_executor.zig");
+const io_resource_ledger = @import("io_resource_ledger.zig");
 
 const TestContext = struct {
     const ExecutionMode = enum {
@@ -209,11 +210,13 @@ test "executor preserves continuations across yield but rebuilds after waiting" 
     try std.testing.expect(executor.isJobQuiescent(job));
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
     try std.testing.expect(!executor.isJobQuiescent(job));
+    try std.testing.expectEqual(@as(usize, 1), executor.ledger.jobResourceCount(job));
     try waitForOne(&executor);
     try std.testing.expect(!executor.isJobQuiescent(job));
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
     try std.testing.expectEqual(io_manager.OperationState.pending, manager.operationState(job, operation).?);
     try std.testing.expect(!executor.isJobQuiescent(job));
+    try std.testing.expectEqual(@as(usize, 1), executor.ledger.jobResourceCount(job));
 
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
     try std.testing.expect(!executor.isJobQuiescent(job));
@@ -230,6 +233,7 @@ test "executor preserves continuations across yield but rebuilds after waiting" 
 
     try std.testing.expect(executor.isJobQuiescent(job));
     try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(job, operation).?);
+    try std.testing.expect(executor.ledger.isJobEmpty(job));
     try std.testing.expectEqual(@as(usize, 2), context.prepared);
     try std.testing.expectEqual(@as(usize, 3), context.completed);
     try std.testing.expectEqual(@as(usize, 3), context.accepted);
@@ -261,6 +265,7 @@ test "executor discards a retained yielded continuation when its Job is cancelle
 
     try std.testing.expectEqual(io_manager.JobState.cancelled, manager.jobState(job).?);
     try std.testing.expectEqual(io_manager.OperationState.cancelled, manager.operationState(job, operation).?);
+    try std.testing.expect(executor.ledger.isJobEmpty(job));
     try std.testing.expectEqual(@as(usize, 1), context.discard_calls);
     try std.testing.expectEqual(@as(usize, 2), context.discarded_payloads);
 }
@@ -288,10 +293,12 @@ test "executor retains prepared work when the pool applies backpressure" {
     try std.testing.expect(!executor.isJobQuiescent(first_job));
     try std.testing.expect(!executor.isJobQuiescent(second_job));
     try std.testing.expectEqual(@as(usize, 2), context.prepared);
+    try std.testing.expectEqual(@as(usize, 2), executor.ledger.jobResourceCount(first_job) + executor.ledger.jobResourceCount(second_job));
 
     try waitForOne(&executor);
     try std.testing.expectEqual(@as(usize, 1), try executor.drainCompletions(&manager));
     try std.testing.expect(executor.isJobQuiescent(first_job));
+    try std.testing.expect(executor.ledger.isJobEmpty(first_job));
     try std.testing.expect(!executor.isJobQuiescent(second_job));
 
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
@@ -301,6 +308,8 @@ test "executor retains prepared work when the pool applies backpressure" {
 
     try std.testing.expect(executor.isJobQuiescent(first_job));
     try std.testing.expect(executor.isJobQuiescent(second_job));
+    try std.testing.expect(executor.ledger.isJobEmpty(first_job));
+    try std.testing.expect(executor.ledger.isJobEmpty(second_job));
     try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(first_job, first_operation).?);
     try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(second_job, second_operation).?);
     try std.testing.expectEqual(@as(usize, 2), context.prepared);
@@ -333,6 +342,7 @@ test "executor disposes stale completions without calling complete callback" {
     try std.testing.expectEqual(@as(usize, 0), context.accepted);
     try std.testing.expectEqual(@as(usize, 1), context.discard_calls);
     try std.testing.expectEqual(@as(usize, 2), context.discarded_payloads);
+    try std.testing.expect(executor.ledger.isJobEmpty(job));
 }
 
 test "executor fails and discards a completion when acceptance fails" {
@@ -362,6 +372,7 @@ test "executor fails and discards a completion when acceptance fails" {
     try std.testing.expectEqual(@as(usize, 1), context.completed);
     try std.testing.expectEqual(@as(usize, 1), context.discard_calls);
     try std.testing.expectEqual(@as(usize, 2), context.discarded_payloads);
+    try std.testing.expect(executor.ledger.isJobEmpty(job));
 }
 
 test "executor discards retained continuation payloads on shutdown" {
@@ -372,8 +383,23 @@ test "executor discards retained continuation payloads on shutdown" {
     _ = try manager.addOperation(job, .copy_file);
     try manager.queueJob(job);
 
+    var ledger = io_resource_ledger.Ledger.init(std.testing.allocator);
+    defer ledger.deinit();
+
     var context = TestContext{};
-    var executor = try initExecutor(&context, 1);
+    var executor = try io_executor.Executor.initWithLedger(
+        std.testing.allocator,
+        .{ .worker_count = 1, .capacity = 1 },
+        @ptrCast(&context),
+        .{
+            .prepare = prepareWork,
+            .execute = executeWork,
+            .accept = acceptWork,
+            .complete = completeWork,
+            .discard = discardWork,
+        },
+        &ledger,
+    );
 
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
     try waitForOne(&executor);
@@ -383,6 +409,7 @@ test "executor discards retained continuation payloads on shutdown" {
     executor.deinit();
     try std.testing.expectEqual(@as(usize, 1), context.discard_calls);
     try std.testing.expectEqual(@as(usize, 2), context.discarded_payloads);
+    try std.testing.expect(ledger.isJobEmpty(job));
 }
 
 test "executor discards pending work and uncollected results on shutdown" {
@@ -410,4 +437,42 @@ test "executor discards pending work and uncollected results on shutdown" {
     executor.deinit();
     try std.testing.expectEqual(@as(usize, 2), context.discard_calls);
     try std.testing.expectEqual(@as(usize, 3), context.discarded_payloads);
+}
+
+test "executor releases shared-ledger resources after shutdown cleanup" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const first_job = try manager.createJob(null);
+    _ = try manager.addOperation(first_job, .copy_file);
+    try manager.queueJob(first_job);
+
+    const second_job = try manager.createJob(null);
+    _ = try manager.addOperation(second_job, .copy_file);
+    try manager.queueJob(second_job);
+
+    var ledger = io_resource_ledger.Ledger.init(std.testing.allocator);
+    defer ledger.deinit();
+
+    var context = TestContext{};
+    context.mode = .immediate;
+    var executor = try io_executor.Executor.initWithLedger(
+        std.testing.allocator,
+        .{ .worker_count = 1, .capacity = 1 },
+        @ptrCast(&context),
+        .{
+            .prepare = prepareWork,
+            .execute = executeWork,
+            .accept = acceptWork,
+            .complete = completeWork,
+            .discard = discardWork,
+        },
+        &ledger,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try std.testing.expectEqual(@as(usize, 2), ledger.jobResourceCount(first_job) + ledger.jobResourceCount(second_job));
+
+    executor.deinit();
+    try std.testing.expect(ledger.isEmpty());
 }
