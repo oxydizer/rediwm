@@ -10,6 +10,7 @@ const io_runtime = @import("io_runtime.zig");
 const io_service = @import("io_service.zig");
 const io_manager = @import("io_manager.zig");
 const io_tree = @import("io_tree.zig");
+const ops_mod = @import("ops.zig");
 
 const JobId = io_service.JobId;
 
@@ -159,7 +160,7 @@ pub const Coordinator = struct {
             _ = self.service.publishUpdate(routed.window_id, .{
                 .job_id = routed.command.job_id,
                 .kind = .command_rejected,
-                .state_code = @intFromEnum(code),
+                .state_code = @backingInt(code),
             }) catch {};
         };
     }
@@ -217,6 +218,34 @@ pub const Coordinator = struct {
             (destination_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
         {
             return error.InvalidTransferDestination;
+        }
+
+        // Directory roots use Manager-owned incremental discovery. Keep
+        // mixed selections out of this path because move planning has a
+        // distinct operation mode for directory roots.
+        var directory_count: usize = 0;
+        for (request.sources) |source| {
+            if (source.path.len == 0 or
+                !std.fs.path.isAbsolute(source.path) or
+                std.mem.indexOfScalar(u8, source.path, 0) != null)
+            {
+                return error.InvalidTransferSource;
+            }
+
+            const source_z = try self.allocator.dupeSentinel(u8, source.path, 0);
+            defer self.allocator.free(source_z);
+            var source_stat: c.struct_stat = undefined;
+            if (c.lstat(source_z, &source_stat) != 0)
+                return error.InvalidTransferSource;
+            if ((source_stat.st_mode & c.S_IFMT) == c.S_IFDIR)
+                directory_count += 1;
+        }
+
+        if (directory_count != 0) {
+            if (directory_count != request.sources.len)
+                return error.MixedTransferSourceKinds;
+            try self.submitDirectoryTransfer(routed, request, destination_stat);
+            return;
         }
 
         const manager = &self.runtime.manager;
@@ -317,7 +346,137 @@ pub const Coordinator = struct {
         _ = self.service.publishUpdate(routed.window_id, .{
             .job_id = job_id,
             .kind = .job_state,
-            .state_code = @intFromEnum(io_manager.JobState.queued),
+            .state_code = @backingInt(io_manager.JobState.queued),
+        }) catch {};
+    }
+
+    /// Plans selected directory roots and lets Manager incrementally discover
+    /// and schedule their descendants. Discovery and operation execution stay
+    /// on the existing process-owned Runtime.
+    fn submitDirectoryTransfer(
+        self: *Coordinator,
+        routed: io_service.RoutedCommand,
+        request: *const io_service.TransferRequest,
+        destination_stat: c.struct_stat,
+    ) !void {
+        const manager = &self.runtime.manager;
+        const job_id = try manager.createJob(routed.window_id);
+        errdefer std.debug.assert(manager.discardPlanningJob(job_id));
+
+        var roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
+        defer roots.deinit(self.allocator);
+
+        for (request.sources, 0..) |source, index| {
+            const name = std.fs.path.basename(source.path);
+            if (name.len == 0) return error.InvalidTransferSource;
+
+            const source_z = try self.allocator.dupeSentinel(
+                u8,
+                source.path,
+                0,
+            );
+            defer self.allocator.free(source_z);
+
+            var source_stat: c.struct_stat = undefined;
+            if (c.lstat(source_z, &source_stat) != 0 or
+                (source_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
+            {
+                return error.InvalidTransferSource;
+            }
+
+            // Do not move a directory that is itself a mount point.
+            if (request.mode == .move) {
+                const parent_path = std.fs.path.dirname(source.path) orelse "/";
+                const parent_z = try self.allocator.dupeSentinel(
+                    u8,
+                    parent_path,
+                    0,
+                );
+                defer self.allocator.free(parent_z);
+
+                var parent_stat: c.struct_stat = undefined;
+                if (c.stat(parent_z, &parent_stat) != 0 or
+                    source_stat.st_dev != parent_stat.st_dev)
+                {
+                    return error.MountedDirectoryMoveUnsupported;
+                }
+
+                // Independent discovery roots must not overlap during a
+                // move: detaching a parent could invalidate a child root.
+                for (request.sources[0..index]) |previous| {
+                    if (ops_mod.isDescendantOrSame(source.path, previous.path) or
+                        ops_mod.isDescendantOrSame(previous.path, source.path))
+                    {
+                        return error.OverlappingDirectoryMoveRoots;
+                    }
+                }
+            }
+
+            // Discovery must not traverse into the destination it creates.
+            if (ops_mod.isDescendantOrSame(source.path, request.destination_path))
+                return error.TransferDestinationInsideSource;
+
+            const metadata: io_tree.Metadata = .{
+                .mode = @intCast(source_stat.st_mode),
+                .device_id = @intCast(source_stat.st_dev),
+                .inode_id = @intCast(source_stat.st_ino),
+                .mtime_sec = @intCast(source_stat.st_mtim.tv_sec),
+                .mtime_nsec = @intCast(source_stat.st_mtim.tv_nsec),
+                .ctime_sec = @intCast(source_stat.st_ctim.tv_sec),
+                .ctime_nsec = @intCast(source_stat.st_ctim.tv_nsec),
+            };
+
+            const root_id = try manager.addTreeRoot(
+                job_id,
+                name,
+                .directory,
+                metadata,
+                null,
+            );
+            try roots.append(self.allocator, .{
+                .root_id = root_id,
+                .path = source.path,
+            });
+        }
+
+        try manager.setDestinationDirectory(job_id, request.destination_path);
+
+        if (request.mode == .move) {
+            try manager.setDestinationDeviceId(
+                job_id,
+                @intCast(destination_stat.st_dev),
+            );
+            for (roots.items) |root| {
+                _ = try manager.addEntryOperation(
+                    job_id,
+                    root.root_id,
+                    .create_directory,
+                );
+                _ = try manager.addEntryOperation(
+                    job_id,
+                    root.root_id,
+                    .detach_source,
+                );
+            }
+            try manager.enableDiscoveredEntryMoves(job_id);
+        } else {
+            try manager.enableDiscoveredEntryOperations(job_id);
+            for (roots.items) |root| {
+                _ = try manager.addEntryOperation(
+                    job_id,
+                    root.root_id,
+                    .create_directory,
+                );
+            }
+        }
+
+        // This call atomically commits the job and all discovery roots.
+        try manager.queueJobWithDiscoveryRoots(job_id, roots.items);
+
+        _ = self.service.publishUpdate(routed.window_id, .{
+            .job_id = job_id,
+            .kind = .job_state,
+            .state_code = @backingInt(io_manager.JobState.queued),
         }) catch {};
     }
 

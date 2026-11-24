@@ -287,6 +287,118 @@ test "coordinator moves a same-filesystem regular file" {
     try waitForRemoval(source);
 }
 
+test "coordinator discovers and copies a directory tree" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const source_nested = try join(allocator, source, "nested");
+    defer allocator.free(source_nested);
+    const source_file = try join(allocator, source, "root.txt");
+    defer allocator.free(source_file);
+    const source_nested_file = try join(allocator, source_nested, "nested.txt");
+    defer allocator.free(source_nested_file);
+
+    const destination_dir = try join(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    const destination = try join(allocator, destination_dir, "source");
+    defer allocator.free(destination);
+    const destination_nested = try join(allocator, destination, "nested");
+    defer allocator.free(destination_nested);
+    const destination_file = try join(allocator, destination, "root.txt");
+    defer allocator.free(destination_file);
+    const destination_nested_file = try join(allocator, destination_nested, "nested.txt");
+    defer allocator.free(destination_nested_file);
+
+    defer cleanup(destination_dir, true);
+    defer cleanup(destination, true);
+    defer cleanup(destination_nested, true);
+    defer cleanup(destination_file, false);
+    defer cleanup(destination_nested_file, false);
+    defer cleanup(source, true);
+    defer cleanup(source_nested, true);
+    defer cleanup(source_file, false);
+    defer cleanup(source_nested_file, false);
+
+    try makeDirectory(source);
+    try makeDirectory(source_nested);
+    try makeDirectory(destination_dir);
+    try writeFile(source_file, "directory root content");
+    try writeFile(source_nested_file, "directory nested content");
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, &service);
+    defer coordinator.deinit();
+
+    var window = try service.registerWindow();
+    defer window.close() catch unreachable;
+
+    try submitTransfer(allocator, window, .copy, destination_dir, source);
+    try waitForContents(destination_file, "directory root content");
+    try waitForContents(destination_nested_file, "directory nested content");
+
+    try std.testing.expect(pathExists(source_file));
+    try std.testing.expect(pathExists(source_nested_file));
+}
+
+test "coordinator moves a same-filesystem directory tree" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const source_nested = try join(allocator, source, "nested");
+    defer allocator.free(source_nested);
+    const source_file = try join(allocator, source_nested, "payload.txt");
+    defer allocator.free(source_file);
+
+    const destination_dir = try join(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    const destination = try join(allocator, destination_dir, "source");
+    defer allocator.free(destination);
+    const destination_nested = try join(allocator, destination, "nested");
+    defer allocator.free(destination_nested);
+    const destination_file = try join(allocator, destination_nested, "payload.txt");
+    defer allocator.free(destination_file);
+
+    defer cleanup(destination_dir, true);
+    defer cleanup(destination, true);
+    defer cleanup(destination_nested, true);
+    defer cleanup(destination_file, false);
+    defer cleanup(source, true);
+    defer cleanup(source_nested, true);
+    defer cleanup(source_file, false);
+
+    try makeDirectory(source);
+    try makeDirectory(source_nested);
+    try makeDirectory(destination_dir);
+    try writeFile(source_file, "directory move content");
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, &service);
+    defer coordinator.deinit();
+
+    var window = try service.registerWindow();
+    defer window.close() catch unreachable;
+
+    try submitTransfer(allocator, window, .move, destination_dir, source);
+    try waitForContents(destination_file, "directory move content");
+    try waitForRemoval(source);
+}
+
 test "coordinator rejects an invalid transfer source" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
