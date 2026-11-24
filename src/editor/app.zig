@@ -25,6 +25,7 @@ const app_search = @import("app_search.zig");
 const app_edit = @import("app_edit.zig");
 const app_controls = @import("app_controls.zig");
 const app_drafts = @import("app_drafts.zig");
+const app_move = @import("app_move.zig");
 const app_recent = @import("app_recent.zig");
 const drafts = @import("drafts.zig");
 const a = std.heap.c_allocator;
@@ -42,8 +43,8 @@ const Status = struct {
 };
 /// Stand-in for the position of a cursor too far from the view to measure.
 pub const far: c_int = 1_000_000 * 1024;
-pub const Action = enum { new, open, open_recent, save, save_as, find, replace, wrap };
-pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("Open"), i18n.msg("Open Recent"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Replace"), i18n.msg("Word Wrap") };
+pub const Action = enum { new, new_window, open, open_recent, save, save_as, find, replace, wrap };
+pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("New Window"), i18n.msg("Open"), i18n.msg("Open Recent"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Replace"), i18n.msg("Word Wrap") };
 /// The menu row whose submenu lists the recent files.
 pub const recent_row = @intFromEnum(Action.open_recent);
 pub const Tab = struct {
@@ -83,6 +84,11 @@ pub const App = struct {
     dirty: bool = true,
     title_changed: bool = true,
     closed: bool = false,
+    /// Set by the New Window action; the event loop opens the window.
+    new_window: bool = false,
+    /// A tab the strip asked to tear off into a window of its own; the event
+    /// loop opens it.
+    tear_tab: ?usize = null,
     ctrl: bool = false,
     shift: bool = false,
     alt: bool = false,
@@ -265,6 +271,11 @@ pub const App = struct {
     pub const recentEnabled = app_recent.enabled;
     pub const deinitRecent = app_recent.deinitRecent;
 
+    pub const movable = app_move.movable;
+    pub const replaceBlank = app_move.replaceBlank;
+    pub const takeTab = app_move.take;
+    pub const adoptTab = app_move.adopt;
+    pub const join = app_drafts.join;
     pub const openDrafts = app_drafts.openDrafts;
     pub const stepDrafts = app_drafts.stepDrafts;
     pub const draftTimeout = app_drafts.draftTimeout;

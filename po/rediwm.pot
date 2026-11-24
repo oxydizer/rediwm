@@ -7873,6 +7873,10 @@ msgid "Wireless connections"
 msgstr ""
 
 #: src/editor/app.zig
+msgid "New Window"
+msgstr ""
+
+#: src/editor/app.zig
 msgid "Word Wrap"
 msgstr ""
 

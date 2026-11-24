@@ -232,6 +232,8 @@ move_snap: MoveSnap = .{},
 tiling_grab: ?@import("tiling_grab.zig") = null,
 /// An application being dragged from the start menu to the dock.
 dock_drag: @import("dock_drag.zig") = .{},
+/// The dragged-out tab that follows the pointer (`tab_ghost.zig`).
+tab_ghost: @import("tab_ghost.zig") = .{},
 /// Files from a client's drag, dropped on the dock's Trash.
 trash_drop: @import("trash_drop.zig") = .{},
 /// The last titlebar press, for double-click-to-maximize.

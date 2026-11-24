@@ -25,6 +25,7 @@ pub fn target(input: *Input, source: *Toplevel) ?Toplevel.DropTarget {
 
 /// Keeps the drop marker on the strip under the pointer, and only there.
 pub fn update(input: *Input, source: *Toplevel) void {
+    if (source.tab_drag.out) input.tab_ghost.follow(input, source) else input.tab_ghost.hide();
     const found = target(input, source);
     if (input.tab_drop_target) |previous| {
         if (found == null or found.?.toplevel != previous) {
@@ -39,6 +40,7 @@ pub fn update(input: *Input, source: *Toplevel) void {
 }
 
 pub fn clear(input: *Input) void {
+    input.tab_ghost.hide();
     if (input.tab_drop_target) |previous| previous.setTabDrop(null);
     input.tab_drop_target = null;
 }

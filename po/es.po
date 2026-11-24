@@ -6710,6 +6710,10 @@ msgid "Wireless connections"
 msgstr "Conexiones inalámbricas"
 
 #: src/editor/app.zig
+msgid "New Window"
+msgstr "Nueva ventana"
+
+#: src/editor/app.zig
 msgid "Word Wrap"
 msgstr "Ajuste de línea"
 
