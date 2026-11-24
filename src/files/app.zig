@@ -14,6 +14,7 @@ const io_operation_executor_mod = @import("io_operation_executor.zig");
 const io_runtime_mod = @import("io_runtime.zig");
 const clipboard_mod = @import("clipboard.zig");
 const history_mod = @import("history.zig");
+const app_tabs = @import("app_tabs.zig");
 const ops_mod = @import("ops.zig");
 const dirsize = @import("dirsize.zig");
 const thumbs_mod = @import("thumbs.zig");
@@ -122,6 +123,12 @@ pub const App = struct {
 
     terminal: app_terminal.Drawer = .{},
     closed: bool = false,
+    /// Folder tabs (`app_tabs.zig`); empty until something asks, meaning one tab.
+    tabs: std.ArrayList(*app_tabs.FolderTab) = .empty,
+    tab_selected: usize = 0,
+    tab_next_id: usize = 1,
+    /// The compositor shows the strip: the tab keys are live.
+    tabs_visible: bool = false,
     torrents: @import("torrents.zig").Client = .{},
     transfer_view: app_torrents.View = .{},
     children: platform.child.Set = .{},
@@ -519,6 +526,7 @@ pub const App = struct {
         self.preedit.deinit(self.allocator);
         self.search.deinit(self.allocator);
         self.clipboard_text.deinit(self.allocator);
+        self.deinitTabs();
         self.history.deinit();
         self.items.deinit(self.allocator);
         self.items_arena.deinit();
@@ -674,6 +682,17 @@ pub const App = struct {
         self.clampScroll();
         self.restore_view = false;
     }
+
+    // app_tabs.zig
+    pub const ensureTabs = app_tabs.ensureTabs;
+    pub const deinitTabs = app_tabs.deinitTabs;
+    pub const tabTitle = app_tabs.tabTitle;
+    pub const findFolderTab = app_tabs.findTab;
+    pub const switchTab = app_tabs.switchTab;
+    pub const stepTabs = app_tabs.stepTabs;
+    pub const newTab = app_tabs.newTab;
+    pub const closeTab = app_tabs.closeTab;
+    pub const moveTab = app_tabs.moveTab;
 
     // app_listing.zig
     pub const navigate = app_listing.navigate;

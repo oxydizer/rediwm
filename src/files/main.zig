@@ -289,6 +289,9 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     if (self.cursor_shape.manager == null) self.cursor_theme = ClientCursor.loadFallback(self.shm.?);
     defer if (self.cursor_theme) |theme_ptr| theme_ptr.destroy();
 
+    defer self.tabs.deinit();
+    @import("client_tabs.zig").attach(&self);
+
     self.xdg_surface = try self.wm_base.?.getXdgSurface(self.surface);
     defer self.xdg_surface.destroy();
     self.xdg_surface.setListener(*Client, Client.xdgSurfaceEvent, &self);
@@ -331,6 +334,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         self.app.stepOperations();
         self.stepArchiveDrag();
         self.app.stepThumbs();
+        @import("client_tabs.zig").sync(&self);
         self.app.stepWheel(app_mod.nowMs());
         self.app.stepSelection(app_mod.nowMs());
         self.app.stepLayout(app_mod.nowMs());

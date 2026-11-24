@@ -129,6 +129,20 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
             return;
         }
     }
+    if (self.ctrl and self.tabs_visible) {
+        if (sym == c.XKB_KEY_t or sym == c.XKB_KEY_T) {
+            self.newTab();
+            return;
+        }
+        if (sym == c.XKB_KEY_w or sym == c.XKB_KEY_W) {
+            self.closeTab(self.tab_selected);
+            return;
+        }
+        if (sym == c.XKB_KEY_Tab or sym == c.XKB_KEY_ISO_Left_Tab) {
+            self.stepTabs(sym == c.XKB_KEY_Tab and !self.shift);
+            return;
+        }
+    }
     if (self.ctrl and (sym == c.XKB_KEY_f or sym == c.XKB_KEY_F)) {
         self.search_visible = true;
         self.focus = .search;
