@@ -49,13 +49,13 @@ pub const Ime = struct {
     }
     fn event(input: *zwp.TextInputV3, ev: zwp.TextInputV3.Event, self: *Ime) void {
         switch (ev) {
-            .enter => |ev| {
-                if (ev.surface != self.surface) return;
+            .enter => |entered| {
+                if (entered.surface != self.surface) return;
                 self.entered = true;
                 self.revision = std.math.maxInt(usize);
             },
-            .leave => |ev| {
-                if (ev.surface != self.surface) return;
+            .leave => |left| {
+                if (left.surface != self.surface) return;
                 // enable belongs to the surface from enter: disable it before
                 // dropping that surface, or the compositor still believes the
                 // input is enabled and a later enable/commit after re-entering
