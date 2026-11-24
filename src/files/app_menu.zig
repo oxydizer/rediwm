@@ -409,7 +409,7 @@ pub fn runMenu(self: *App, row: usize) void {
         },
         .app => switch (row) {
             0 => self.newTab(),
-            1 => self.openWindowAt(self.history.current),
+            1 => self.openWindowAt(self.tabStart(self.tab_selected)),
             2 => self.toggleHidden(),
             3 => {
                 self.folders_first = !self.folders_first;

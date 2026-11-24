@@ -116,6 +116,16 @@ compose: @import("ui").compose.Compose = .{},
 ime: @import("ime.zig").Ime = undefined,
 /// LC_CTYPE of the session; picks the Compose table (´+c is ç in pt_BR).
 locale: []const u8 = "",
+/// Held while the window has keyboard focus. Keys arrive at every window's
+/// keyboard object, since the windows share one connection and seat.
+focused: bool = false,
+/// A drag is over this window. The data device of every window of the
+/// connection hears every drag that enters any of them.
+drag_here: bool = false,
+registry: ?*wl.Registry = null,
+/// The window's own listing worker and I/O runtime (`client_lifecycle.zig`).
+worker: *@import("worker.zig").Worker = undefined,
+io_runtime: *@import("io_runtime.zig").Runtime = undefined,
 app: app_mod.App,
 
 pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Client) void {
@@ -202,6 +212,15 @@ pub fn pollTimeout(self: *Client) c_int {
 fn earlier(current: ?i64, candidate: i64) i64 {
     return if (current) |value| @min(value, candidate) else candidate;
 }
+
+const client_lifecycle = @import("client_lifecycle.zig");
+pub const poll_slots = client_lifecycle.poll_slots;
+pub const create = client_lifecycle.create;
+pub const step = client_lifecycle.step;
+pub const finished = client_lifecycle.finished;
+pub const pollFill = client_lifecycle.pollFill;
+pub const pollDrain = client_lifecycle.pollDrain;
+pub const destroy = client_lifecycle.destroy;
 
 const client_window = @import("client_window.zig");
 pub const openEditor = client_window.openEditor;

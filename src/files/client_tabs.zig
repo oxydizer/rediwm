@@ -5,6 +5,7 @@ const std = @import("std");
 const ClientTabs = @import("ui").client_tabs;
 const Client = @import("Client.zig");
 const app_tabs = @import("app_tabs.zig");
+const main_mod = @import("main.zig");
 
 pub fn attach(self: *Client) void {
     self.tabs.attach(self.surface, .{
@@ -14,6 +15,8 @@ pub fn attach(self: *Client) void {
         .new_tab = newTab,
         .move = move,
         .leading = leading,
+        .tear_off = tearOff,
+        .drop_on = dropOn,
     });
 }
 
@@ -41,6 +44,30 @@ fn move(ctx: *anyopaque, id: u32, index: u32) void {
     const app = &client(ctx).app;
     const from = app.findFolderTab(id) orelse return;
     app.moveTab(from, index);
+}
+
+/// The strip asked for this tab in a window of its own. The event loop opens it:
+/// a window cannot be made from inside an event.
+fn tearOff(ctx: *anyopaque, id: u32, _: i32, _: i32) void {
+    const app = &client(ctx).app;
+    if (!app.movable() or app.tabs.items.len < 2 or app.findFolderTab(id) == null) return;
+    app.tear_tab = id;
+}
+
+/// The tab was dropped on another of this program's windows. A window whose
+/// last tab goes closes; the event loop sees to that.
+fn dropOn(ctx: *anyopaque, id: u32, target: ?*@import("wayland").client.rediwm.TitlebarTabsV1, index: u32) void {
+    const from = client(ctx);
+    const strip = target orelse return;
+    const to = for (main_mod.open_windows.items) |w| {
+        if (w.tabs.strip == strip) break w;
+    } else return;
+    if (to == from or !from.app.movable() or !to.app.movable() or to.app.closed) return;
+    const tab = from.app.takeTab(id) orelse return;
+    to.app.adoptTab(tab, index) catch {
+        to.app.discardTab(tab);
+        return;
+    };
 }
 
 /// The application icon in the titlebar opens the application menu under it.

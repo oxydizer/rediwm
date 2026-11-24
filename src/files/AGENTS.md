@@ -24,6 +24,16 @@ The window is `Client.zig` (Wayland globals, seat, buffers), re-exported by
 `main.zig`, with its handlers in `client_window`, `client_input`,
 `client_dnd`, `client_clipboard` and `client_render.zig`.
 
+The process can hold several windows (`main.zig` `open_windows`, at most
+`max_windows`) on one Wayland connection, so the compositor sees one client and
+a folder tab can move between them. `client_lifecycle.zig` makes, steps, polls
+and destroys a window: each has its own `Client`, `App`, listing worker and I/O
+runtime and shares only the display. The seat reports every surface of the
+connection, so pointer, keyboard, text-input and drag events are filtered by
+surface (keys by `focused`). `app_tabs.zig` `take` and `adopt` move a tab, with
+its history, between windows; tear-off and drop requests reach the event loop as
+`App.tear_tab` and the strip's `drop_on`; "New Window" is `App.new_window`.
+
 ## Terminal drawer
 
 `app_terminal.zig` owns the per-window controller; `terminal/` owns libvterm,

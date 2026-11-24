@@ -128,20 +128,13 @@ pub fn openPlaceWindow(self: *App, index: usize) void {
     };
 }
 
-/// A new Files window on `path`.
+/// A new Files window on `path`. The event loop opens it in this process, beside
+/// this one, so that tabs can move between them.
 pub fn openWindowAt(self: *App, path: []const u8) void {
-    if (self.chooser != null) return;
-    var exe: [platform.exe.max_path]u8 = undefined;
-    const executable: []const u8 = platform.exe.path(&exe) orelse "rediwm-files";
-    var child = std.process.spawn(self.io, .{
-        .argv = &.{ executable, path },
-    }) catch {
+    if (self.chooser != null or self.new_window != null) return;
+    self.new_window = self.allocator.dupe(u8, path) catch {
         self.setStatusNotice(tr("Could not open new window"), true);
         return;
-    };
-    self.children.add(self.allocator, child.id.?) catch {
-        child.kill(self.io);
-        self.setStatusNotice(tr("Could not open new window"), true);
     };
 }
 

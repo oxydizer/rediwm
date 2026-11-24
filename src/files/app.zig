@@ -131,6 +131,10 @@ pub const App = struct {
     tab_next_id: usize = 1,
     /// The compositor shows the strip: the tab keys are live.
     tabs_visible: bool = false,
+    /// Requests for the event loop, which owns the windows: a folder for a new
+    /// window (owned), and the tab to tear off into one of its own.
+    new_window: ?[]u8 = null,
+    tear_tab: ?usize = null,
     torrents: @import("torrents.zig").Client = .{},
     transfer_view: app_torrents.View = .{},
     children: platform.child.Set = .{},
@@ -496,6 +500,7 @@ pub const App = struct {
         self.discovery_jobs.deinit(self.allocator);
         self.detached_io_jobs.deinit(self.allocator);
         self.torrents.deinit();
+        if (self.new_window) |path| self.allocator.free(path);
         self.stopAudio();
         self.terminal.deinit(self.allocator);
         self.children.deinit(self.allocator);
@@ -708,6 +713,12 @@ pub const App = struct {
     pub const toggleAppMenu = app_menu.toggleAppMenu;
     pub const openWindowAt = app_places.openWindowAt;
     pub const moveTab = app_tabs.moveTab;
+    pub const movable = app_tabs.movable;
+    pub const takeTab = app_tabs.take;
+    pub const adoptTab = app_tabs.adopt;
+    pub const replaceBlank = app_tabs.replaceBlank;
+    pub const discardTab = app_tabs.discard;
+    pub const tabStart = app_tabs.start;
 
     // app_listing.zig
     pub const navigate = app_listing.navigate;

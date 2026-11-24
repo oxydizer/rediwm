@@ -48,19 +48,31 @@ pub fn dataEvent(_: *wl.DataDevice, event: wl.DataDevice.Event, self: *Client) v
             ev.id.setListener(*Offer, offerEvent, offer);
         },
         .enter => |ev| {
+            // Every window's data device hears every drag that enters any
+            // window of the connection; only the one under the drag takes it.
+            if (ev.surface != self.surface) {
+                if (ev.id) |id| self.discardOffer(@ptrCast(@alignCast(id.getUserData())));
+                return;
+            }
+            self.drag_here = true;
             if (self.drag_offer) |old| self.discardOffer(old);
             self.drag_offer = if (ev.id) |id| @ptrCast(@alignCast(id.getUserData())) else null;
             self.drag_enter_serial = ev.serial;
             // Offers are released on leave instead of retaining every re-entry.
             self.dragOver(ev.x.toDouble(), ev.y.toDouble(), true);
         },
-        .motion => |ev| self.dragOver(ev.x.toDouble(), ev.y.toDouble(), false),
+        .motion => |ev| if (self.drag_here) self.dragOver(ev.x.toDouble(), ev.y.toDouble(), false),
         .leave => {
+            if (!self.drag_here) return;
+            self.drag_here = false;
             self.app.dropLeave();
             if (self.drag_offer) |offer| self.discardOffer(offer);
             self.drag_offer = null;
         },
-        .drop => self.dragDropped(),
+        .drop => if (self.drag_here) {
+            self.drag_here = false;
+            self.dragDropped();
+        },
         .selection => |ev| {
             self.cancelReceive();
             if (self.selection_offer) |old| self.discardOffer(old);

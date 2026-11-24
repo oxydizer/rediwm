@@ -168,6 +168,82 @@ pub fn closeTab(self: *App, i: usize) void {
     self.applyHistoryNav(self.history.current);
 }
 
+/// Whether this window can give a tab away or take one: nothing waiting on an
+/// answer that may name a folder of the tab.
+pub fn movable(self: *const App) bool {
+    return self.dialog == null and self.chooser == null;
+}
+
+/// A real folder to open a window on, for tab `i`: its own, or home where the
+/// tab is inside an archive or the Recent view, which a new window cannot start in.
+pub fn start(self: *const App, i: usize) []const u8 {
+    const history = if (i < self.tabs.items.len) (if (self.tabs.items[i].history) |*h| h else &self.history) else &self.history;
+    if (history.archive_len > 0 or recent.isLocation(history.current)) return self.home_dir;
+    return history.current;
+}
+
+/// Frees a tab that was taken and will not be adopted.
+pub fn discard(self: *App, tab: *FolderTab) void {
+    if (tab.history) |*history| history.deinit();
+    self.allocator.destroy(tab);
+}
+
+/// Removes the tab with `id` without freeing it; it carries its folder, its
+/// back and forward history and its sort. A window left with no tabs closes.
+pub fn take(self: *App, id: usize) ?*FolderTab {
+    ensureTabs(self);
+    const i = findTab(self, id) orelse return null;
+    const tab = self.tabs.items[i];
+    if (i != self.tab_selected) {
+        _ = self.tabs.orderedRemove(i);
+        if (i < self.tab_selected) self.tab_selected -= 1;
+        self.invalidate();
+        return tab;
+    }
+    if (self.tabs.items.len == 1) {
+        // The window keeps a stand-in for its own `deinit`: the real folder
+        // goes with the tab.
+        const stand_in = history_mod.History.init(self.allocator, self.history.current) catch return null;
+        park(self);
+        self.history = stand_in;
+        _ = self.tabs.orderedRemove(0);
+        self.closed = true;
+        return tab;
+    }
+    park(self);
+    _ = self.tabs.orderedRemove(i);
+    // The neighbour takes over, as when the active tab is closed.
+    const at = if (i < self.tabs.items.len) i else i - 1;
+    activate(self, at);
+    return tab;
+}
+
+/// Puts a tab taken from another window at `index` (the end if beyond it) and
+/// makes it the active one. The tab gets this window's next id.
+pub fn adopt(self: *App, tab: *FolderTab, index: usize) !void {
+    ensureTabs(self);
+    if (self.tabs.items.len >= max_tabs or tab.history == null) return error.TooManyTabs;
+    const at = @min(index, self.tabs.items.len);
+    try self.tabs.insert(self.allocator, at, tab);
+    tab.id = self.tab_next_id;
+    self.tab_next_id += 1;
+    if (at <= self.tab_selected) self.tab_selected += 1;
+    park(self);
+    activate(self, at);
+}
+
+/// A window that starts with one tab swaps it for the one it was made for.
+pub fn replaceBlank(self: *App, tab: *FolderTab) !void {
+    ensureTabs(self);
+    if (self.tabs.items.len != 1) return error.NotBlank;
+    try adopt(self, tab, 1);
+    const blank = self.tabs.orderedRemove(0);
+    if (blank.history) |*history| history.deinit();
+    self.allocator.destroy(blank);
+    self.tab_selected -= 1;
+    self.invalidate();
+}
+
 /// Moves tab `from` so it ends at `to`; the active tab stays active.
 pub fn moveTab(self: *App, from: usize, to: usize) void {
     ensureTabs(self);
