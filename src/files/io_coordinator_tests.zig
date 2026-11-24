@@ -247,6 +247,7 @@ test "coordinator publishes job state transitions and transfer progress" {
     try submitTransfer(allocator, window, .copy, destination_dir, source);
 
     var saw_progress = false;
+    var saw_running_state = false;
     var saw_terminal_state = false;
     var job_id: ?io_service.JobId = null;
 
@@ -266,7 +267,9 @@ test "coordinator publishes job state transitions and transfer progress" {
                     if (update.completed_bytes > 0)
                         saw_progress = true;
                 } else if (update.kind == .job_state) {
-                    const state: io_manager.JobState = @enumFromInt(update.state_code);
+                    const state: io_manager.JobState = @fromBackingInt(@intCast(update.state_code));
+                    if (state == .running)
+                        saw_running_state = true;
                     if (state.isTerminal()) {
                         try std.testing.expectEqual(io_manager.JobState.completed, state);
                         saw_terminal_state = true;
@@ -279,6 +282,7 @@ test "coordinator publishes job state transitions and transfer progress" {
 
     try std.testing.expect(job_id != null);
     try std.testing.expect(saw_progress);
+    try std.testing.expect(saw_running_state);
     try std.testing.expect(saw_terminal_state);
 }
 
