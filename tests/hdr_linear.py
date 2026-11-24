@@ -8,20 +8,30 @@ kept FP16 image and encodes it back to sRGB. Checks, by IPC screenshots:
   comes back as before, within the few levels FP16 costs saturated colours;
 * turning it off again gives back exactly the frame from before (off means off);
 * after menus, typing and pointer motion, which redraw only damage into the
-  kept image, the screen equals a full linear redraw of the same scene.
+  kept image, the screen equals a full linear redraw of the same scene;
+* captures (phase 5) come from the image's sRGB encode, as they would on an
+  HDR output whose own buffer holds PQ: wlr-screencopy (tests/
+  wlr_protocols_client.c), ext-image-copy-capture in shm and dmabuf buffers
+  (tests/capture_client.c), and grim match the screen, and the
+  `capture_sdr_copies` counter shows that path served them; with HDR off it
+  does not.
 
 Creates its own headless session; never connects to the host desktop.
 Set REDIWM_TEST_SCALE (1 by default) to repeat at a fractional scale.
 """
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import time
 
 from PIL import Image, ImageChops
 
+from desktop_zoom import wait_for
 from ipc_client import IPCClient, spawn_compositor, stop_process
 from ui_driver import UIDriver
+import capture as capture_test
+import wlr_protocols
 
 OUTPUT = "HEADLESS-1"
 
@@ -116,5 +126,122 @@ def run():
     print(f"PASS: linear blending switches live, keeps opaque content and off frames, damage-only frames exact (scale {scale})")
 
 
+def copies(ipc):
+    return ipc.request(query="get_performance_stats").get("capture_sdr_copies", 0)
+
+
+def captures(hdr):
+    """Each capture protocol against an output with `hdr`; returns the SDR copies made."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-hdr-capture-") as directory:
+        tmp = Path(directory)
+        (tmp / "ext").mkdir()
+        (tmp / "sc").mkdir()
+        capture_test.build_client(tmp / "ext")
+        wlr_protocols.compile_fixture(tmp / "sc")
+        config = f'[compositor]\nxwayland = false\n[animations]\nenabled = false\n[[outputs]]\nname = "{OUTPUT}"\nhdr = "{hdr}"\n'
+        process, _ = spawn_compositor(tmp, scale="1", renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
+                                      config_content=config)
+        client = None
+        try:
+            with IPCClient(tmp, timeout=15) as ipc:
+                ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+                display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
+                env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display)
+                env.pop("REDIWM_SOCKET", None)
+                assert output(ipc)["hdr_linear"] == (hdr == "on")
+                ipc.request(action="reset_performance_stats")
+
+                # wlr-screencopy.
+                copy = subprocess.run([str(tmp / "sc" / "fixture"), "screencopy"], env=env, capture_output=True,
+                                      text=True, timeout=20).stdout.split()
+                assert copy[:3] == ["ready", "1280", "720"] and int(copy[3].split("=")[1]) > 0, copy
+                screencopy_copies = copies(ipc)
+
+                # grim, whichever protocol it prefers, against the screen.
+                subprocess.run(["grim", "-o", OUTPUT, str(tmp / "grim.png")], env=env, check=True, timeout=20)
+                screen = shot(ipc, tmp, "screen")
+                with Image.open(tmp / "grim.png") as image:
+                    grabbed = image.convert("RGB")
+                width, height = screen.size
+                assert worst(screen, grabbed, (0, 0, width, height * 85 // 100)) == 0, "grim differs from the screen"
+
+                # ext-image-copy-capture, shm and dmabuf (a fresh fixture each,
+                # as capture.py runs it), against the compositor's own read.
+                for command in ("capture", "capture_dmabuf"):
+                    log_path = tmp / f"{command}.log"
+                    with log_path.open("w") as log:
+                        client = subprocess.Popen([str(tmp / "ext" / "client")], stdin=subprocess.PIPE, stdout=log,
+                                                  stderr=log, text=True, env=env)
+                    wait_for(lambda: "presented\n" in log_path.read_text(), "capture fixture did not present")
+                    win = wait_for(lambda: next((w for w in ipc.get_windows() if w["app_id"] == "rediwm.capture-fixture"), None),
+                                   "capture fixture did not map")
+                    ipc.action("move_window_to", {"id": win["id"], "x": 0, "y": 0})
+                    settle(ipc)
+                    client.stdin.write(command + "\n")
+                    client.stdin.flush()
+                    ready = wait_for(lambda: next((l for l in log_path.read_text().splitlines() if l.startswith("ready")), None),
+                                     f"{command}: no frame")
+                    fmt = int(ready.split()[3])
+                    client.stdin.write("sample 50 50\n")
+                    client.stdin.flush()
+                    line = wait_for(lambda: next((l for l in log_path.read_text().splitlines() if l.startswith("pixel 50 50")), None),
+                                    f"{command}: no sample")
+                    got = capture_test.rgba(fmt, *line.split()[3:7])[:3]
+                    argb = ipc.action("sample_pixels", {"output": OUTPUT, "x": 50, "y": 50})["pixels"][0]  # 0xAARRGGBB
+                    expected = ((argb >> 16) & 255, (argb >> 8) & 255, argb & 255)
+                    assert got == expected, (command, got, expected)
+                    client.stdin.write("quit\n")
+                    client.stdin.flush()
+                    client.wait(timeout=10)
+                    wait_for(lambda: not any(w["app_id"] == "rediwm.capture-fixture" for w in ipc.get_windows()),
+                             "capture fixture did not unmap")
+                total = copies(ipc)
+        finally:
+            if client and client.poll() is None:
+                stop_process(client)
+            stop_process(process)
+        return screencopy_copies, total
+
+
+def run_captures():
+    screencopy_copies, total = captures("on")
+    # Screencopy, grim, and the two ext copies all came from the SDR encode.
+    assert screencopy_copies >= 1 and total >= screencopy_copies + 3, (screencopy_copies, total)
+    assert captures("off") == (0, 0), "an output without HDR used the SDR copies"
+    print("PASS: captures of a linear output come from its sRGB encode and match the screen")
+
+
+def run_mixed():
+    """Two outputs, HDR on the first only: the second draws as without HDR."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-hdr-mixed-") as directory:
+        tmp = Path(directory)
+        process, _ = spawn_compositor(tmp, scale="1", outputs="2", renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"))
+        try:
+            with IPCClient(tmp, timeout=15) as ipc:
+                ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+                ipc.move_cursor(5, 5, output=OUTPUT)
+                for name in (OUTPUT, "HEADLESS-2"):
+                    ipc.wait_for_frame(output=name)
+                time.sleep(0.3)
+                second = tmp / "second_sdr.png"
+                ipc.screenshot(str(second), output="HEADLESS-2")
+                ipc.request(query="set_output_config", params={"output": OUTPUT, "hdr": "on"})
+                settle(ipc)
+                ipc.wait_for_frame(output="HEADLESS-2")
+                outs = {o["name"]: o for o in ipc.get_outputs()}
+                assert outs[OUTPUT]["hdr_linear"] and not outs["HEADLESS-2"]["hdr_linear"], outs
+                after = tmp / "second_after.png"
+                ipc.screenshot(str(after), output="HEADLESS-2")
+                with Image.open(second) as a, Image.open(after) as b:
+                    a, b = a.convert("RGB"), b.convert("RGB")
+                    width, height = a.size
+                    assert worst(a, b, (0, 0, width, height * 85 // 100)) == 0, "HDR on one output changed the other"
+        finally:
+            stop_process(process)
+    print("PASS: HDR on one output leaves the other as it was")
+
+
 if __name__ == "__main__":
     run()
+    run_captures()
+    run_mixed()

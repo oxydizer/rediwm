@@ -19,6 +19,7 @@ const Server = @import("../Server.zig");
 const protocol = @import("../ipc/protocol.zig");
 const gpa = @import("../main.zig").gpa;
 const WindowCaptureSource = @import("window_source.zig").WindowCaptureSource;
+const CaptureSdr = @import("sdr.zig").CaptureSdr;
 
 const log = std.log.scoped(.capture);
 
@@ -38,6 +39,8 @@ pub const Manager = struct {
     toplevel_list: *wlr.ExtForeignToplevelListV1,
     toplevel_source: *wlr.ExtForeignToplevelImageCaptureSourceManagerV1,
     screencopy: *wlr.ScreencopyManagerV1,
+    /// SDR copies of outputs that blend in linear light (HDR, `sdr.zig`).
+    sdr: ?*CaptureSdr = null,
     /// Until when the last screencopy copy keeps the indicator lit.
     screencopy_until_ms: i64 = 0,
     /// One-shot: repaints the indicator once the hold expires.
@@ -66,6 +69,7 @@ pub const Manager = struct {
             .toplevel_list = toplevel_list,
             .toplevel_source = toplevel_source,
             .screencopy = screencopy,
+            .sdr = CaptureSdr.create(server.output_renderer, server.scene_outputs),
         };
         mgr.screencopy_timer = server.wl_server.getEventLoop().addTimer(*Manager, screencopyExpired, mgr) catch null;
         mgr.sessions.init();
@@ -83,6 +87,7 @@ pub const Manager = struct {
         mgr.new_session.link.remove();
         mgr.new_toplevel_request.link.remove();
         if (mgr.screencopy_timer) |timer| timer.remove();
+        CaptureSdr.destroy(mgr.sdr);
         gpa.destroy(mgr);
     }
 
@@ -100,6 +105,9 @@ pub const Manager = struct {
             return;
         };
         mgr.sessions.prepend(tracked);
+        // An output's copies come from its SDR encode while it blends in
+        // linear light (HDR); wlroots copies otherwise.
+        if (mgr.sdr) |sdr| sdr.wrapSource(session.source);
         log.info("capture session started (active={d})", .{mgr.sessions.length()});
         mgr.server.scheduleFrames();
     }
@@ -253,6 +261,10 @@ pub const Manager = struct {
                 return mgr.guardScreencopy(output);
             }
             copying = true;
+            // An HDR output's committed buffer holds PQ: copy its SDR encode.
+            if (mgr.sdr) |sdr| if (@import("../Output.zig").fromWlr(output)) |o| {
+                if (@import("../output/hdr.zig").linearWanted(o)) sdr.takeScreencopy(frame);
+            };
         }
         if (!copying) return;
         const now = monotonicMs();
@@ -332,7 +344,7 @@ const Session = struct {
         tracked.* = .{
             .manager = manager,
             .resource = session.resource,
-            .output = session.source.toOutput(),
+            .output = if (manager.sdr) |sdr| sdr.sourceOutput(session.source) else session.source.toOutput(),
             .window_id = if (findWindowSource(manager, session.source)) |ws| ws.window_id else null,
         };
         session.events.destroy.add(&tracked.destroy);

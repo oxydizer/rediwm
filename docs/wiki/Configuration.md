@@ -263,9 +263,9 @@ cd/m², capped at the peak the display's EDID suggests. Night light still works
 (in the conversion, not the gamma table); apps that set gamma ramps (gammastep,
 wlsunset) are refused on that output, and the cursor is drawn by the
 compositor. If the driver refuses the signal in a mode, the output stays SDR
-until the mode or the setting changes. Not yet: HDR content from apps (HDR
-video and games are shown as SDR), and screenshots or screen sharing of an
-HDR output, which come out washed out. On headless and nested outputs
+until the mode or the setting changes. Screenshots, grim, screen sharing and
+recorders get the output as SDR. Not yet: HDR content from apps (HDR video
+and games are shown as SDR). On headless and nested outputs
 `hdr = "on"` only blends in linear light, still sent as SDR; on other displays
 it does nothing. Translucent edges and glass look slightly different in linear
 light. `rediwm-msg outputs` shows `hdr`, `hdr_supported`, `hdr_linear`,

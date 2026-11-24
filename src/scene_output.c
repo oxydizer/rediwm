@@ -41,6 +41,7 @@ static void output_state_destroy(struct output_state *os) {
     struct effect_cache *c, *next;
     wl_list_for_each_safe(c, next, &os->caches, link) cache_destroy(os->renderer, c);
     rediwm_scene_renderer_destroy_linear_target(os->renderer->pass, os->linear);
+    if (os->sdr) wlr_buffer_drop(os->sdr);
     wl_list_remove(&os->destroy.link);
     wl_list_remove(&os->link);
     free(os);
@@ -102,7 +103,10 @@ bool rediwm_scene_output_set_linear(struct rediwm_output_renderer *r, struct red
     if (!on) {
         rediwm_scene_renderer_destroy_linear_target(r->pass, os->linear);
         os->linear = NULL;
+        if (os->sdr) wlr_buffer_drop(os->sdr);
+        os->sdr = NULL;
     }
+    os->sdr_current = false;
     rediwm_scene_output_damage_whole(out);
     return true;
 }
@@ -134,7 +138,36 @@ static bool linear_ready(struct rediwm_output_renderer *r, struct output_state *
         return false;
     }
     if (fresh) os->linear_valid = false;
+    os->linear_width = buffer->width;
+    os->linear_height = buffer->height;
     return true;
+}
+struct wlr_buffer *rediwm_scene_output_sdr_copy(struct rediwm_output_renderer *r, struct rediwm_scene_output *out) {
+    struct output_state *os = output_state_find(r, out->output);
+    if (!os || !os->linear_wanted || !os->linear_valid || !os->linear) return NULL;
+    if (os->sdr && os->sdr_current) return os->sdr;
+    const int w = os->linear_width, h = os->linear_height;
+    if (os->sdr && (os->sdr->width != w || os->sdr->height != h)) {
+        wlr_buffer_drop(os->sdr);
+        os->sdr = NULL;
+    }
+    if (!os->sdr) {
+        // 8 bits whatever the output renders to; the allocator picks the modifier.
+        uint64_t modifier = DRM_FORMAT_MOD_INVALID;
+        const struct wlr_drm_format format = {.format = DRM_FORMAT_ARGB8888, .len = 1, .capacity = 1,
+            .modifiers = &modifier};
+        os->sdr = wlr_allocator_create_buffer(out->output->allocator, w, h, &format);
+        if (!os->sdr) return NULL;
+    }
+    struct wlr_render_pass *pass = rediwm_scene_pass_begin_linear(r->pass, os->sdr, NULL, os->linear);
+    if (!pass) return NULL;
+    pixman_region32_t whole;
+    pixman_region32_init_rect(&whole, 0, 0, w, h);
+    rediwm_scene_pass_encode(pass, &whole, NULL);
+    pixman_region32_fini(&whole);
+    if (!wlr_render_pass_submit(pass)) return NULL;
+    os->sdr_current = true;
+    return os->sdr;
 }
 static void sample(struct entry *e, struct rediwm_scene_output *out, bool scanout) {
     if (e->item.kind == REDIWM_ITEM_RECT) return;
@@ -378,6 +411,8 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     pixman_region32_init(&draw);
     wlr_damage_ring_rotate_buffer(&out->damage_ring, buffer, &damage);
     pixman_region32_intersect_rect(&damage, &damage, 0, 0, v.width, v.height);
+    // Captures take the next copy from what is drawn now.
+    if (linear) veiled->sdr_current = false;
     if (!linear) pixman_region32_copy(&draw, &damage);
     else if (veiled->linear_valid) {
         pixman_region32_intersect_rect(&draw, &out->pending_commit_damage, 0, 0, v.width, v.height);

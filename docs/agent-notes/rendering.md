@@ -254,8 +254,22 @@ chrome, capture, or retained panel painting. General rules remain in
   setting. While the signal is on, night light is the encode's matrix
   (`night_light/color.zig` `hdrAdjust`) and the gamma table stays neutral,
   client gamma ramps fail (D6), and software cursors are locked (wlroots'
-  GLES2 cursor path ignores colour transforms). Screencopy of such an output
-  copies its PQ buffer as is (phase 5). No headless test reaches this path.
+  GLES2 cursor path ignores colour transforms). No headless test reaches this
+  path.
+* **Captures of linear outputs are SDR** (phase 5, `capture_sdr.c`): an
+  output whose frames come from the linear pass is captured from an sRGB
+  encode of its FP16 image (`rediwm_scene_output_sdr_copy`, once per build),
+  never from its committed buffer, which holds PQ under HDR. wlroots'
+  ext-image-copy-capture output sources get a wrapped `impl` when a session
+  starts (`Manager.handleNewSession`; resolve their output with
+  `CaptureSdr.sourceOutput`, `toOutput()` no longer sees them), and
+  `guardScreencopy` hands screencopy frames on such outputs to
+  `rediwm_capture_sdr_take_screencopy`, which replaces the frame's private
+  commit listener: both reach into wlroots 0.20 objects, so re-check them
+  after an update. The screenshot tool and IPC `sample_pixels` read the same
+  copy (`raw` reads the output's buffer). `capture_sdr_copies` in
+  `rediwm-msg perf` counts them; `tests/hdr_linear.py` checks every path on
+  a headless linear output, where both pictures are the same.
 * **The veil** (`rediwm_scene_output_set_veil`, driven by `reveal.zig`) is
   black drawn over every entry and under the software cursor: the session's
   fade in from black and the greeter's fade out. It exists only on DRM and

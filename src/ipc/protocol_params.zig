@@ -81,12 +81,18 @@ pub fn parseSamplePixelsParams(allocator: std.mem.Allocator, obj: std.json.Objec
     if (obj.get("width")) |w_val| width = try parseU32(w_val);
     if (obj.get("height")) |h_val| height = try parseU32(h_val);
     if (width == 0 or width > 1024 or height == 0 or height > 1024) return error.InvalidRequest;
+    var raw = false;
+    if (obj.get("raw")) |value| {
+        if (value != .bool) return error.InvalidRequest;
+        raw = value.bool;
+    }
     return .{ .sample_pixels = .{
         .output = output,
         .x = try parseI32(x_val),
         .y = try parseI32(y_val),
         .width = width,
         .height = height,
+        .raw = raw,
     } };
 }
 

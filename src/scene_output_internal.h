@@ -23,6 +23,8 @@
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #endif
+#include <drm_fourcc.h>
+#include <wlr/render/allocator.h>
 #include <wlr/render/drm_syncobj.h>
 #include <wlr/render/swapchain.h>
 #include <wlr/render/wlr_texture.h>
@@ -73,6 +75,11 @@ struct output_state {
     // rediwm_scene_output_set_encode: how the linear image reaches the buffer
     // (PQ for an HDR signal, night light there).
     struct rediwm_pass_encode encode;
+    // rediwm_scene_output_sdr_copy: an sRGB encode of `linear` for captures,
+    // made at most once per build (`sdr_current`), and the image's size.
+    struct wlr_buffer *sdr;
+    bool sdr_current;
+    int linear_width, linear_height;
 };
 struct entry {
     struct rediwm_item item;

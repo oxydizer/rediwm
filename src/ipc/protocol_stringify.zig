@@ -541,6 +541,9 @@ pub fn stringifyPerformanceStats(res: PerformanceStatsResult, writer: anytype) !
     if (res.glass_reblurs) |reblurs| {
         try writer.print("\"glass_reblurs\":{d},", .{reblurs});
     }
+    if (res.capture_sdr_copies) |copies| {
+        try writer.print("\"capture_sdr_copies\":{d},", .{copies});
+    }
     if (res.tearing_async_flips) |flips| {
         try writer.print("\"tearing_async_flips\":{d},", .{flips});
     }

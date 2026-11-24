@@ -49,8 +49,8 @@ reserve space on a specific output edge, including from a corner.
   parametric image creation, GPU renderers advertise what wlroots can convert.
   An output with `[[outputs]] hdr = "on"` sends HDR10 (experimental, see
   Configuration), but client colour descriptions are not yet drawn
-  differently, and screencopy and image-copy-capture of such an output hand out
-  its PQ buffer unconverted. No ICC loading.
+  differently. Screencopy and image-copy-capture of such an output get the
+  frame as SDR (sRGB), not its PQ buffer. No ICC loading.
 - **Tearing:** `[compositor] allow_tearing = true` honours async hints from
   focused fullscreen clients. If an output can't do it, that output falls back
   to synchronized presentation until it's recreated. Suppressed while locked.

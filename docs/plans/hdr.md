@@ -1,8 +1,8 @@
 # Plan: HDR output
 
 Status: decided 2026-11-24 (D1-D6 take the recommended options); Phases 1-3
-built, Phase 3 not yet tried on an HDR display (none was available); Phase 4
-next. See Progress at the end. Written 2026-11-16 from the outside
+and 5 built, Phase 3 not yet tried on an HDR display (none was available);
+Phase 4 next. See Progress at the end. Written 2026-11-16 from the outside
 audit in discussion #27 (github.com/oxydizer/rediwm/discussions/27). Its
 author could not read `src/`, so this version checks its assumptions against
 our code and the wlroots 0.20.2 source, and folds in the changes.
@@ -350,7 +350,39 @@ them with a working compositor. Week counts are rough guesses for one person.
     own menu; SDR white looks like the `sdr_white` setting and follows it;
     night light tints without the gamma table; gammastep is refused; the
     cursor looks right; switching drops no frames; turning it off returns to
-    SDR. Screenshots of the output come out washed out until Phase 5.
+    SDR; grim, a portal screen share and the screenshot tool show SDR colours.
+* 2026-11-24, Phase 5 (captures) built before Phase 4, so that turning HDR on
+  breaks no screenshot or screen share.
+  * Every output whose frames come from the linear pass is captured from an
+    sRGB encode of its FP16 image (`rediwm_scene_output_sdr_copy`: an 8-bit
+    ARGB8888 buffer per output, encoded at most once per build), not from its
+    committed buffer. Headless outputs follow the same rule, where both are
+    the same picture: that is how the paths are tested.
+  * ext-image-copy-capture: `capture_sdr.c` wraps the `impl` of wlroots'
+    output source when a session starts; `copy_frame` copies the SDR encode
+    (`wlr_ext_image_copy_capture_frame_v1_copy_buffer`, then `ready`) and
+    everything else, cursor sessions included, is wlroots'. Wrapped sources
+    are resolved to their output through the module, since
+    `wlr_output_try_from_ext_image_capture_source_v1` checks the `impl`.
+  * wlr-screencopy: `guardScreencopy` hands each requested frame on a linear
+    output to the module, which replaces the frame's private commit listener;
+    at the commit it copies the SDR encode (shm by `wlr_texture_read_pixels`,
+    dmabuf by a render pass) and sends flags, damage (the whole box) and
+    ready. A frame that finds the output no longer linear goes back to
+    wlroots' handler. Both hooks depend on wlroots 0.20 internals.
+  * The screenshot tool and IPC `sample_pixels` read the SDR encode;
+    `sample_pixels` takes `raw` for the buffer the output sends (pixel probes
+    of PQ). `rediwm-msg perf` counts `capture_sdr_copies`.
+  * Checked by `tests/hdr_linear.py` on a headless linear output: screencopy,
+    grim, ext-image-copy-capture in shm and dmabuf buffers all match the
+    screen and are counted, an output without HDR counts none, and HDR on one
+    of two outputs leaves the other byte-identical.
+  * Lock and greeter: capture is refused while locked or authenticating
+    before any of this runs; the greeter never blends linearly.
+  * Open: copies are SDR as encoded for an SDR display, so an HDR source
+    looks clipped in a capture once Phase 4 draws HDR content; screencopy
+    `copy_with_damage` frames on a linear output complete at every commit
+    with full damage instead of waiting for damage.
 
 ## Sources
 

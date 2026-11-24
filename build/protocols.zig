@@ -75,6 +75,15 @@ pub fn module(b: *std.Build) *std.Build.Module {
     return b.createModule(.{ .root_source_file = scanner.result });
 }
 
+/// SDR captures of linear outputs (capture_sdr.c), which complete wlroots'
+/// screencopy frames themselves and need that protocol's server header.
+pub fn addCaptureSdr(b: *std.Build, target: *std.Build.Module) void {
+    const header = b.addSystemCommand(&.{ "wayland-scanner", "server-header" });
+    header.addFileArg(b.path("protocol/wlr-screencopy-unstable-v1.xml"));
+    target.addIncludePath(header.addOutputFileArg("wlr-screencopy-unstable-v1-protocol.h").dirname());
+    target.addCSourceFile(.{ .file = b.path("src/capture_sdr.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+}
+
 /// C bindings for the surface state and glass adapter in background_effect.c.
 pub fn addBackgroundEffect(b: *std.Build, target: *std.Build.Module) void {
     const pkg_config = b.graph.environ_map.get("PKG_CONFIG") orelse "pkg-config";

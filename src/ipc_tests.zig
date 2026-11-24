@@ -88,6 +88,17 @@ test "parse output transform configuration" {
     try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"set_output_config\",\"params\":{\"output\":\"DP-1\",\"transform\":\"sideways\"}}"));
 }
 
+test "parse sample_pixels raw" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const plain = try protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"sample_pixels\",\"params\":{\"x\":1,\"y\":2}}");
+    try std.testing.expect(!plain.action.sample_pixels.raw);
+    const raw = try protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"sample_pixels\",\"params\":{\"x\":1,\"y\":2,\"raw\":true}}");
+    try std.testing.expect(raw.action.sample_pixels.raw);
+    try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"sample_pixels\",\"params\":{\"x\":1,\"y\":2,\"raw\":\"yes\"}}"));
+}
+
 test "parse output HDR configuration" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

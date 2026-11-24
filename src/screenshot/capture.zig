@@ -341,7 +341,8 @@ pub const Manager = struct {
             return;
         }
 
-        const buffer = state.buffer orelse {
+        // The frame as sRGB: an HDR output's own buffer holds PQ.
+        const buffer = mgr.server.output_renderer.sdrCopy(scene_output) orelse state.buffer orelse {
             if (is_isolated) {
                 for (disabled_nodes.items) |node| node.setEnabled(true);
                 mgr.server.world.syncPresentation();

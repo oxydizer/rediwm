@@ -42,6 +42,9 @@ pub const Renderer = opaque {
     pub const setLinear = rediwm_scene_output_set_linear;
     extern fn rediwm_scene_output_linear(renderer: *Renderer, output: *SceneOutput) bool;
     pub const linear = rediwm_scene_output_linear;
+    extern fn rediwm_scene_output_sdr_copy(renderer: *Renderer, output: *SceneOutput) ?*wlr.Buffer;
+    /// The last frame of a linear output as sRGB, for captures (null otherwise).
+    pub const sdrCopy = rediwm_scene_output_sdr_copy;
     extern fn rediwm_scene_output_set_encode(renderer: *Renderer, output: *SceneOutput, encode: *const Encode) bool;
     pub const setEncode = rediwm_scene_output_set_encode;
 };

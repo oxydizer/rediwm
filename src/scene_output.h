@@ -45,6 +45,12 @@ bool rediwm_scene_output_set_linear(struct rediwm_output_renderer *, struct redi
 // The last frame built for this output blended in linear light.
 bool rediwm_scene_output_linear(struct rediwm_output_renderer *, struct rediwm_scene_output *);
 struct rediwm_pass_encode;
+// The last frame built for a linear output, encoded as sRGB (gamma 2.2, BT.709)
+// into a buffer of the output's size, for captures (capture_sdr.c): the same
+// picture whether the output sends sRGB or PQ. NULL when the output does not
+// blend linearly or its image is not whole. Valid until the next build; made at
+// most once per build. Outside a pass.
+struct wlr_buffer *rediwm_scene_output_sdr_copy(struct rediwm_output_renderer *, struct rediwm_scene_output *);
 // How a linear output's frames are encoded (scene_pass.h): sRGB, or PQ while its
 // commits carry an HDR10 image description. A change repaints the output.
 // False only when the state could not be allocated.

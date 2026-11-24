@@ -114,7 +114,7 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 | --- | --- | --- |
 | **[auto]** `screenshot` | Action `screenshot` | `--output`, `--window`, `--mode`, `--include-cursor`, `--path`, `--save`. Raw params also take `crop` and `crop_space` (`logical` or `device`) |
 | **[auto]** `dump_buffer` | `dump-buffer <target>` | targets: `titlebar`, `skirt`, `start_menu`, `control_center`, `power_menu`, `taskbar`. `--id`, `--output` |
-| **[auto]** `sample_pixels` | `sample-pixels <x> <y> <w> <h>` | raw framebuffer pixels |
+| **[auto]** `sample_pixels` | `sample-pixels <x> <y> <w> <h>` | an output's pixels as sRGB; IPC param `raw: true` reads the buffer it sends (PQ on an HDR output) |
 | `stop_all_capture` | none | ends every screen capture session |
 
 Prefer `screenshot` and `dump_buffer` over host `grim` when debugging. Host

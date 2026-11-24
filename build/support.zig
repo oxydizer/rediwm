@@ -98,6 +98,7 @@ pub fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) vo
     module.addCSourceFile(.{ .file = b.path("src/explicit_sync.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/switcher_preview.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     @import("protocols.zig").addBackgroundEffect(b, module);
+    @import("protocols.zig").addCaptureSdr(b, module);
     module.addCSourceFile(.{ .file = b.path("src/extra_protocols.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
 }
 

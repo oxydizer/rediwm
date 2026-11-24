@@ -103,7 +103,9 @@ pub fn handleFrameAction(
             var state = wlr.Output.State.init();
             defer state.finish();
             if (!server.buildOutputState(scene_output, &state)) return .{ .err = "CaptureFailed: scene render failed" };
-            const buffer = state.buffer orelse return .{ .err = "CaptureFailed: missing frame buffer" };
+            // An HDR output's buffer holds PQ: read its frame as sRGB unless asked for the raw buffer.
+            const sdr = if (p.raw) null else server.output_renderer.sdrCopy(scene_output);
+            const buffer = sdr orelse state.buffer orelse return .{ .err = "CaptureFailed: missing frame buffer" };
             const texture = wlr.Texture.fromBuffer(server.renderer, buffer) orelse return .{ .err = "CaptureFailed: texture creation failed" };
             defer texture.destroy();
 
@@ -184,6 +186,7 @@ pub fn handleFrameAction(
                 .desktop = stats.global_stats.desktop,
                 .output_skipped_commits = stats.global_stats.output_skipped_commits,
                 .glass_reblurs = @import("../scene_output.zig").reblurs.*,
+                .capture_sdr_copies = @import("../capture/sdr.zig").copies.*,
                 .tearing_async_flips = stats.global_stats.tearing_async_flips,
                 .tearing_refused_flips = stats.global_stats.tearing_refused_flips,
                 .fifo = stats.global_stats.fifo,
@@ -194,6 +197,7 @@ pub fn handleFrameAction(
             stats.global_stats.reset();
             @import("../panel_present.zig").reset();
             @import("../scene_output.zig").reblurs.* = 0;
+            @import("../capture/sdr.zig").copies.* = 0;
             return .{ .ok = .handled };
         },
 
