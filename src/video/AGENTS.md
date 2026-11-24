@@ -46,7 +46,11 @@ the plan and its decisions are in `docs/plans/video-player.md`.
   timestamped blocks. The playhead includes silence through underruns so a
   short audio stream cannot stall the demuxer behind a full video queue.
   Only the noninstalled integration fixture selects the paced null device.
-* **Local playback** sets FFmpeg's protocol whitelist to `file`.
+* **Local playback** opens movies with FFmpeg's protocol whitelist set to
+  `file`. The SubRip demuxer takes an already-open local file descriptor
+  through `fd`. External cues use relative media time and the player's
+  one-shot timer, so their edges can fall between video frames. Their
+  subsurface stays mapped while a cue is active even when the OSD hides.
 * **Idle makes no wakeups.** Play and seek use one-shot timerfd deadlines
   and worker eventfds. Pause and EOF stop audio and disarm the timer.
   `zig build test-video-integration` measures all player threads.

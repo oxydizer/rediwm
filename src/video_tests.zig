@@ -3,4 +3,5 @@ test {
     _ = @import("video/feedback.zig");
     _ = @import("video/queue.zig");
     _ = @import("video/clock.zig");
+    _ = @import("video/subtitles.zig");
 }

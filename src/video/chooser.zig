@@ -27,16 +27,24 @@ const video_types = [_]contract.Rule{
 };
 
 pub const Chooser = struct {
+    pub const Kind = enum { video, video_or_subtitles, subtitles };
     child: std.process.Child,
     handle: platform.child.Handle,
     result: std.Io.File,
+    kind: Kind,
 
-    pub fn open(io: std.Io, directory: []const u8) !Chooser {
+    pub fn open(io: std.Io, directory: []const u8, kind: Kind) !Chooser {
+        const srt = [_]contract.Rule{.{ .kind = 0, .value = "*.[sS][rR][tT]" }};
+        const all_media = video_types ++ srt;
         const options: contract.Options = .{
-            .title = tr("Open File"),
+            .title = if (kind == .subtitles) tr("Open subtitles") else tr("Open File"),
             .current_folder = directory,
             .filters = &.{
-                .{ .name = tr("Videos"), .rules = &video_types },
+                switch (kind) {
+                    .video => .{ .name = tr("Videos"), .rules = &video_types },
+                    .video_or_subtitles => .{ .name = tr("Videos and SRT subtitles"), .rules = &all_media },
+                    .subtitles => .{ .name = tr("SRT subtitles"), .rules = &srt },
+                },
                 .{ .name = tr("All files"), .rules = &.{.{ .kind = 0, .value = "*" }} },
             },
         };
@@ -55,7 +63,7 @@ pub const Chooser = struct {
             .stdout = .{ .file = result },
         });
         errdefer child.kill(io);
-        return .{ .child = child, .handle = try platform.child.Handle.open(child.id.?), .result = result };
+        return .{ .child = child, .handle = try platform.child.Handle.open(child.id.?), .result = result, .kind = kind };
     }
 
     pub fn deinit(self: *Chooser, io: std.Io) void {

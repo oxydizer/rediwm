@@ -12,7 +12,8 @@ const usage =
     \\Space pauses or resumes. Left/Right seek 5 s (Shift for 60 s).
     \\Click to pause or resume. Double-click or F toggles fullscreen. Escape leaves it.
     \\Up/Down adjust volume; M mutes. Comma/period step frames while paused.
-    \\Ctrl+O opens a video. You can also drop a local file onto the window.
+    \\Ctrl+O or a drop opens a video or loads an SRT file for the current video.
+    \\K toggles subtitles. It looks for a matching .srt first, then opens a chooser.
     \\
 ;
 
@@ -49,7 +50,7 @@ pub fn main(init: std.process.Init) !void {
     var selected: ?[:0]u8 = null;
     defer if (selected) |file| std.heap.c_allocator.free(file);
     if (path == null) {
-        var dialog = try @import("video/chooser.zig").Chooser.open(init.io, "");
+        var dialog = try @import("video/chooser.zig").Chooser.open(init.io, "", .video);
         defer dialog.deinit(init.io);
         selected = try dialog.take(init.io);
         path = selected orelse return;

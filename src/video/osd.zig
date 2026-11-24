@@ -42,6 +42,7 @@ pub const Osd = struct {
     toggle: bool = false,
     fullscreen: bool = false,
     open: bool = false,
+    toggle_subtitles: bool = false,
     relative: i64 = 0,
     steps: i32 = 0,
     seek_to: ?f32 = null,

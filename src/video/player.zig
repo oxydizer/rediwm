@@ -15,6 +15,7 @@ const clocks = @import("clock.zig");
 const tr = @import("app_kit").i18n.tr;
 const Watch = @import("app_kit").settings_watch.Watch;
 const Chooser = @import("chooser.zig").Chooser;
+const Track = @import("subtitles.zig").Track;
 const a = std.heap.c_allocator;
 const Pool = @import("software.zig").Pool;
 
@@ -92,12 +93,17 @@ const Player = struct {
     io: std.Io,
     watch: *Watch,
     chooser: ?Chooser = null,
+    subtitles: ?Track = null,
+    show_subtitles: bool = false,
     gain: ?u32 = null,
     last_pts: ?i64 = null,
     stepping: bool = false,
     scrub_playing: ?bool = null,
 
     fn closeMovie(self: *Player) void {
+        if (self.subtitles) |*track| track.deinit();
+        self.subtitles = null;
+        self.show_subtitles = false;
         self.stopAudio();
         const media = self.pipe.media;
         self.pipe.deinit();
@@ -156,7 +162,7 @@ const Player = struct {
         };
         if (selected) |path| {
             defer a.free(path);
-            self.openMovie(path) catch self.window.osd.message(tr("Could not open file"));
+            _ = self.openFile(path, dialog.kind);
         }
     }
 
@@ -168,13 +174,67 @@ const Player = struct {
         };
         if (selected) |path| {
             defer a.free(path);
-            self.openMovie(path) catch {
-                self.window.osd.message(tr("Could not open file"));
-                drop.end(false);
-                return;
-            };
-            drop.end(true);
+            drop.end(self.openFile(path, .video_or_subtitles));
         }
+    }
+
+    fn openFile(self: *Player, path: [:0]const u8, kind: Chooser.Kind) bool {
+        if (kind == .subtitles or std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".srt")) {
+            self.loadSubtitles(path) catch {
+                self.window.osd.message(tr("Could not load subtitles"));
+                return false;
+            };
+        } else self.openMovie(path) catch {
+            self.window.osd.message(tr("Could not open file"));
+            return false;
+        };
+        return true;
+    }
+
+    fn loadSubtitles(self: *Player, path: [:0]const u8) !void {
+        const track = try Track.load(self.io, path);
+        if (self.subtitles) |*old| old.deinit();
+        self.subtitles = track;
+        self.show_subtitles = true;
+        self.window.osd.message(tr("Subtitles on"));
+    }
+
+    fn openChooser(self: *Player, kind: Chooser.Kind) void {
+        if (self.chooser != null) return;
+        self.chooser = Chooser.open(self.io, std.fs.path.dirname(self.path) orelse "", kind) catch null;
+        if (self.chooser == null) self.window.osd.message(tr("Could not open the file chooser."));
+    }
+
+    fn toggleSubtitles(self: *Player) void {
+        if (self.subtitles != null) {
+            self.show_subtitles = !self.show_subtitles;
+            self.window.osd.message(if (self.show_subtitles) tr("Subtitles on") else tr("Subtitles off"));
+            return;
+        }
+        const ext = std.fs.path.extension(self.path);
+        const sidecar = std.fmt.allocPrintSentinel(a, "{s}.srt", .{self.path[0 .. self.path.len - ext.len]}, 0) catch return;
+        defer a.free(sidecar);
+        self.loadSubtitles(sidecar) catch |err| switch (err) {
+            error.FileNotFound => self.openChooser(.subtitles),
+            else => self.window.osd.message(tr("Could not load subtitles")),
+        };
+    }
+
+    fn drawSubtitles(self: *Player, pos: i64, t: i64) !?i64 {
+        const w = self.window;
+        var text: []const u8 = "";
+        var deadline: ?i64 = null;
+        if (self.show_subtitles and !self.ended) {
+            const track = &self.subtitles.?;
+            const time = if (self.scrub_playing != null) self.last_pts orelse pos else pos;
+            if (try track.update(time)) w.subtitles.dirty = true;
+            text = track.active.items;
+            if (self.started and !self.paused) {
+                if (track.next) |next| deadline = t +| (next -| time);
+            }
+        }
+        try w.subtitles.draw(w.root, text, w.osd.density, if (w.osd.visible) w.osd.y else null);
+        return deadline;
     }
 
     fn deinit(self: *Player) void {
@@ -220,10 +280,11 @@ const Player = struct {
         const input = &self.window.osd;
         if (input.open) {
             input.open = false;
-            if (self.chooser == null) {
-                self.chooser = Chooser.open(self.io, std.fs.path.dirname(self.path) orelse "") catch null;
-                if (self.chooser == null) input.message(tr("Could not open the file chooser."));
-            }
+            self.openChooser(.video_or_subtitles);
+        }
+        if (input.toggle_subtitles) {
+            input.toggle_subtitles = false;
+            self.toggleSubtitles();
         }
         if (input.fullscreen) {
             input.fullscreen = false;
@@ -298,7 +359,12 @@ const Player = struct {
             var deadline = w.osd.tick(t);
             self.controls();
             deadline = earlier(deadline, try self.advance());
-            if (w.configured) deadline = earlier(deadline, try w.osd.draw(self.position(t), self.pipe.media.duration, self.paused or self.ended));
+            if (w.configured) {
+                const now = clocks.now();
+                const pos = self.position(now);
+                deadline = earlier(deadline, try self.drawSubtitles(pos, now));
+                deadline = earlier(deadline, try w.osd.draw(pos, self.pipe.media.duration, self.paused or self.ended));
+            }
             w.input.syncCursor();
             w.playing(self.started and !self.preview and !self.paused and !self.ended);
             if (w.drop.deadline) |end| {

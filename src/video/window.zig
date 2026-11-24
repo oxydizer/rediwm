@@ -38,6 +38,7 @@ pub const Window = struct {
     ten_bit: bool = false,
     input: Input = .{},
     osd: Osd = .{},
+    subtitles: @import("subtitle_overlay.zig").Overlay = .{},
     drop: Drop = .{},
     scales: ?*wp.FractionalScaleManagerV1 = null,
     idle_manager: ?*zwp.IdleInhibitManagerV1 = null,
@@ -114,6 +115,7 @@ pub const Window = struct {
         empty.destroy();
         if (self.representation) |manager| self.video_encoding = manager.getSurface(self.video) catch null;
 
+        try self.subtitles.create(compositor, self.subcompositor.?, self.viewporter.?, self.root, self.shm.?);
         try self.osd.create(compositor, self.subcompositor.?, self.viewporter.?, self.root, self.shm.?, self.scales);
         if (self.input.cursor.manager == null) {
             self.input.cursor_theme = @import("ui").client_cursor.loadFallback(self.shm.?);
@@ -166,6 +168,7 @@ pub const Window = struct {
         if (self.content_manager) |mgr| mgr.destroy();
         self.drop.deinit();
         self.osd.deinit();
+        self.subtitles.deinit();
         if (self.scales) |mgr| mgr.destroy();
         if (self.decoration) |decoration| decoration.destroy();
         self.input.deinit();
@@ -256,7 +259,9 @@ pub const Window = struct {
         // Position is parent state. Commit the new viewport on the child
         // without reattaching or rewriting the current buffer.
         self.video.commit();
-        self.subsurface.setPosition(@divTrunc(w - dw, 2), @divTrunc(h - dh, 2));
+        self.subtitles.video = .{ .x = @divTrunc(w - dw, 2), .y = @divTrunc(h - dh, 2), .w = dw, .h = dh };
+        self.subtitles.dirty = true;
+        self.subsurface.setPosition(self.subtitles.video.x, self.subtitles.video.y);
         self.root.commit();
     }
 

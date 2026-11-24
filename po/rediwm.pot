@@ -1830,6 +1830,10 @@ msgstr ""
 msgid "Could not load services. Try Refresh."
 msgstr ""
 
+#: src/video/player.zig
+msgid "Could not load subtitles"
+msgstr ""
+
 #: src/files/volumes.zig
 msgid "Could not mount {name}"
 msgstr ""
@@ -5169,6 +5173,10 @@ msgstr ""
 msgid "Open or close the application launcher."
 msgstr ""
 
+#: src/video/chooser.zig
+msgid "Open subtitles"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Open the session and power menu."
 msgstr ""
@@ -6331,6 +6339,10 @@ msgstr ""
 msgid "SOUND"
 msgstr ""
 
+#: src/video/chooser.zig
+msgid "SRT subtitles"
+msgstr ""
+
 #: src/control_center/sections/firewall_rules.zig
 msgid "SSH (remote login)"
 msgstr ""
@@ -7073,6 +7085,14 @@ msgstr ""
 
 #: src/control_center/sections/appearance.zig
 msgid "Strong"
+msgstr ""
+
+#: src/video/player.zig
+msgid "Subtitles off"
+msgstr ""
+
+#: src/video/player.zig
+msgid "Subtitles on"
 msgstr ""
 
 #: src/control_center/sections/printers_tools.zig
@@ -8213,6 +8233,10 @@ msgstr ""
 
 #: src/files/app.zig
 msgid "Videos"
+msgstr ""
+
+#: src/video/chooser.zig
+msgid "Videos and SRT subtitles"
 msgstr ""
 
 #: src/control_center/sections/bluetooth.zig

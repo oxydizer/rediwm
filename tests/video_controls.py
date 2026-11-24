@@ -8,7 +8,7 @@ import time
 
 from PIL import ImageChops
 
-from video import BIN, ROOT, PLAYER, capture, playing, reference, wait
+from video import BIN, ROOT, PLAYER, capture, check_idle, playing, reference, wait
 
 
 def controls(ipc, env, tmp, fixture):
@@ -131,6 +131,8 @@ def controls(ipc, env, tmp, fixture):
 
         drop_video(ipc, env, tmp, win)
 
+    check_subtitles(ipc, env, tmp, fixture or PLAYER)
+
     if fixture:
         # Measure the actual callback samples, including the upper clamp
         # and mute ramp, independently of the displayed percentage.
@@ -174,6 +176,65 @@ def controls(ipc, env, tmp, fixture):
     print("OSD, seeks and frame steps, fullscreen cursor, chooser, drop, mute and idle inhibitor OK")
 
 
+def check_subtitles(ipc, env, tmp, binary):
+    folder = tmp / "subtitled"
+    folder.mkdir()
+    clip = folder / "film.mp4"
+    # A cue starts and ends between two pictures of a one-frame-per-second
+    # movie. The player must wake for both edges even with its controls hidden.
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "color=black:size=480x270:rate=1:duration=12", "-c:v", "libx264", clip], check=True)
+    sidecar = clip.with_suffix(".srt")
+    sidecar.write_text("1\n00:00:01,000 --> 00:00:03,000\nFIRST LINE\nSECOND LINE\n\n"
+                       "2\n00:00:06,200 --> 00:00:06,800\nSHORT CUE\n")
+    other = folder / "alternate.SRT"
+    other.write_text("1\n00:00:00,000 --> 00:00:04,000\nALTERNATE\n")
+    ipc.move_cursor(1, 1)
+    with playing(ipc, env, tmp, binary, ["--paused", "--start", "1", clip]) as (win, proc, _):
+        ipc.focus_window(win)
+        scale = float(os.environ.get("REDIWM_TEST_SCALE", "1"))
+
+        def lines():
+            im = capture(ipc, win, tmp / "subtitles.png").convert("L")
+            # A patch at the left of the control bar is black when hidden.
+            # Measure only the video above the controls whenever they show.
+            bar = im.getpixel((round(im.width * .13), im.height - round(42 * scale))) > 4
+            end = im.height - round((86 if bar else 5) * scale)
+            center = im.crop((im.width // 4, im.height // 3, im.width * 3 // 4, end))
+            rows = center.point(lambda luma: 255 if luma > 185 else 0).getprojection()[1]
+            return sum(bright and (y == 0 or not rows[y - 1]) for y, bright in enumerate(rows)), bar
+
+        assert lines()[0] == 0, "sidecar should start off"
+        ipc.key_down_up(37)  # K discovers film.srt
+        wait(lambda: lines() == (2, True), "two subtitle lines above the controls")
+        wait(lambda: lines() == (2, False), "subtitle persists after controls hide")
+        check_idle(proc, .4)
+        ipc.key_down_up(106)  # seek to the gap at 6 s
+        wait(lambda: lines()[0] == 0, "paused seek into a gap")
+        ipc.key_down_up(57)
+        wait(lambda: lines()[0] == 1, "cue starts between video frames")
+        wait(lambda: lines()[0] == 0, "cue expires during playback")
+        ipc.key_down_up(57)
+        ipc.key_down_up(105)
+        wait(lambda: lines()[0] == 2, "backward seek restores dialogue")
+        ipc.key_down_up(37)
+        wait(lambda: lines()[0] == 0, "disable subtitles")
+
+        # Open a differently named SRT through the regular media chooser.
+        ipc.key(29, True)
+        ipc.key_down_up(24)
+        ipc.key(29, False)
+        dialog = wait(lambda: next((v["id"] for v in ipc.get_windows()
+                                    if v["app_id"] == "rediwm-file-chooser"), None), "media chooser")
+        ipc.focus_window(dialog)
+        ipc.wait_for("window_geometry_settled", window_id=dialog)
+        ipc.key_down_up(108)  # alternate.SRT sorts first
+        ipc.key_down_up(28)
+        wait(lambda: lines()[0] == 1, "selected SRT replaces the current track")
+        assert next(v["title"] for v in ipc.get_windows() if v["id"] == win) == clip.name
+    print("SRT sidecar, chooser, paused and playing cue timing, and idle threads OK")
+
+
 def drop_video(ipc, env, tmp, win):
     protocols = Path(subprocess.check_output(
         ["pkg-config", "--variable=pkgdatadir", "wayland-protocols"], text=True).strip())
@@ -189,7 +250,10 @@ def drop_video(ipc, env, tmp, win):
                     "-lwayland-client", "-o", sender], check=True)
     path = tmp / "two words #1.mp4"
     shutil.copy(tmp / "h264.mp4", path)
-    for uri, accepted in (("file://remote/missing.mp4", False), (path.as_uri(), True)):
+    subtitle = tmp / "a separate subtitle.srt"
+    subtitle.write_text("1\n00:00:00,000 --> 00:01:00,000\nDROPPED\n")
+    for uri, title in (("file://remote/missing.mp4", None), (subtitle.as_uri(), "a second video.mp4"),
+                       (path.as_uri(), path.name)):
         sender_log = tmp / "sender.log"
         with sender_log.open("w") as out:
             proc = subprocess.Popen([sender], env=dict(env, REDIWM_TEST_TRANSFER=f"# media\r\n{uri}\r\n"),
@@ -211,9 +275,9 @@ def drop_video(ipc, env, tmp, win):
             finally:
                 ipc.pointer_button(272, False)
             wait(lambda: "transfer-sent" in sender_log.read_text(), "player receives the drop")
-            if accepted:
+            if title:
                 wait(lambda: "transfer-finished" in sender_log.read_text(), "copy completes")
-                wait(lambda: next(v["title"] for v in ipc.get_windows() if v["id"] == win) == path.name, "drop opens decoded local URI")
+                wait(lambda: next(v["title"] for v in ipc.get_windows() if v["id"] == win) == title, "drop handled in the same window")
                 assert path.exists()
             else:
                 wait(lambda: ".cancelled()" in sender_log.read_text(), "nonlocal URI refused")

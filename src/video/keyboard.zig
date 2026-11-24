@@ -158,6 +158,7 @@ pub const Input = struct {
                         bar.reveal();
                     },
                     c.XKB_KEY_period => bar.steps +|= 1,
+                    c.XKB_KEY_k, c.XKB_KEY_K => bar.toggle_subtitles = !bar.toggle_subtitles,
                     c.XKB_KEY_comma => bar.steps -|= 1,
                     c.XKB_KEY_Escape => if (self.fullscreen) top.unsetFullscreen(),
                     else => {},

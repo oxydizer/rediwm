@@ -252,8 +252,12 @@ node and the audio socket's traffic after setup.
    type and holds an idle inhibitor during mapped playback. Ctrl+O, launching
    without a filename, and URI-list drops use local files. Opening another
    movie keeps the window and volume. Track menus belong to phase 4.
-4. **Tracks and subtitles:** audio track switching, text and bitmap subtitles,
-   external files, ASS per D5.
+4. **Tracks and subtitles (partial).** External SubRip is implemented.
+   During playback, open an `.srt` with Ctrl+O or drop it onto the window.
+   K toggles the loaded track. On first use it looks for a same-basename
+   `.srt` beside the video and opens a subtitle chooser if the file is
+   missing. Each video starts with subtitles off. Audio track switching,
+   embedded subtitles, WebVTT, bitmap subtitles and ASS per D5 remain planned.
 5. **HDR and 10-bit**, after the pass's answer above.
 6. **Extras:** MPRIS through the `dbus` module (media keys, `playerctl`),
    speed with `atempo`, A-B loop, screenshot, the sandbox (D4).

@@ -11,8 +11,9 @@ python3 tests/<name>.py
 `zig build test-video-integration` runs the video suite with generated FFmpeg
 clips and a paced null audio device. It checks VAAPI and shm pixels, software
 fallback, frame steps, keyframe scrubbing, volume and mute, playback rate
-and idle threads. It drives the real Files chooser and a Wayland URI-list
-source, checks the fullscreen cursor and inspects the player’s idle inhibitor.
+and idle threads. It checks external SRT selection, multiline captions and
+cue changes between video frames. It drives the real Files chooser and a Wayland
+URI-list source, checks the fullscreen cursor and inspects the player’s idle inhibitor.
 Use `WLR_RENDER_DRM_DEVICE` to select each GPU on a hybrid system.
 `python3 tests/video.py` runs the silent subset with the installed player.
 
