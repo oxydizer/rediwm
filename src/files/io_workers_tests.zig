@@ -108,14 +108,16 @@ test "completed uncollected results retain outstanding capacity" {
     try std.testing.expectEqualSlices(u32, &.{ 4, 6 }, &results);
 }
 
-test "deinit joins accepted work and discards every uncollected result" {
+test "deinit finishes queued accepted work and discards every uncollected result" {
     var context = TestContext{};
-    var pool = try initPool(&context, 2, 4);
+    var pool = try initPool(&context, 1, 4);
     try std.testing.expect(pool.trySubmit(1));
     try std.testing.expect(pool.trySubmit(2));
+    try std.testing.expect(pool.trySubmit(3));
+    try std.testing.expect(pool.trySubmit(4));
 
     pool.deinit();
 
-    try std.testing.expectEqual(@as(usize, 2), context.executed.load(.monotonic));
-    try std.testing.expectEqual(@as(usize, 2), context.discarded.load(.monotonic));
+    try std.testing.expectEqual(@as(usize, 4), context.executed.load(.monotonic));
+    try std.testing.expectEqual(@as(usize, 4), context.discarded.load(.monotonic));
 }

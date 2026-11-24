@@ -195,6 +195,30 @@ fn waitForOne(executor: *io_executor.Executor) !void {
     }
 }
 
+fn waitForNotifications(
+    executor: *io_executor.Executor,
+    expected: usize,
+) !void {
+    var notified: u64 = 0;
+    while (notified < expected) {
+        var descriptors = [_]std.posix.pollfd{.{
+            .fd = executor.wakeFd(),
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+
+        const rc = std.posix.system.poll(&descriptors, 1, 5_000);
+        switch (std.posix.errno(rc)) {
+            .SUCCESS => {
+                if (rc == 0) return error.TimedOutWaitingForExecutor;
+                notified +|= executor.drainWake();
+            },
+            .INTR => continue,
+            else => return error.ExecutorPollFailed,
+        }
+    }
+}
+
 test "executor preserves continuations across yield but rebuilds after waiting" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
@@ -372,6 +396,47 @@ test "executor fails and discards a completion when acceptance fails" {
     try std.testing.expectEqual(@as(usize, 1), context.completed);
     try std.testing.expectEqual(@as(usize, 1), context.discard_calls);
     try std.testing.expectEqual(@as(usize, 2), context.discarded_payloads);
+    try std.testing.expect(executor.ledger.isJobEmpty(job));
+}
+
+test "executor drains every queued completion after an acceptance failure" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job = try manager.createJob(null);
+    const first_operation = try manager.addOperation(job, .copy_file);
+    const second_operation = try manager.addOperation(job, .copy_file);
+    try manager.queueJob(job);
+
+    var context = TestContext{};
+    context.mode = .immediate;
+    context.fail_accept = true;
+    var executor = try initExecutor(&context, 2);
+    defer executor.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), try executor.dispatchReady(&manager));
+    try waitForNotifications(&executor, 2);
+
+    // The first acceptance failure must not leave the second result queued
+    // after the worker eventfd has already been drained.
+    try std.testing.expectError(
+        error.TestAcceptanceFailed,
+        executor.drainCompletions(&manager),
+    );
+
+    try std.testing.expect(executor.isJobQuiescent(job));
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, first_operation).?,
+    );
+    try std.testing.expectEqual(
+        io_manager.OperationState.failed,
+        manager.operationState(job, second_operation).?,
+    );
+    try std.testing.expectEqual(@as(usize, 2), context.accepted);
+    try std.testing.expectEqual(@as(usize, 2), context.completed);
+    try std.testing.expectEqual(@as(usize, 2), context.discard_calls);
+    try std.testing.expectEqual(@as(usize, 4), context.discarded_payloads);
     try std.testing.expect(executor.ledger.isJobEmpty(job));
 }
 

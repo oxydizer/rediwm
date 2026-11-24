@@ -363,6 +363,7 @@ pub const Executor = struct {
         manager: *io_manager.Manager,
     ) !DrainStats {
         var stats: DrainStats = .{};
+        var first_error: ?anyerror = null;
 
         while (self.pool.tryPopResult()) |pool_completion| {
             var completion = pool_completion.completion;
@@ -399,7 +400,8 @@ pub const Executor = struct {
                         pool_completion.ledger_handle,
                         .operation_executor,
                     );
-                    return err;
+                    if (first_error == null) first_error = err;
+                    continue;
                 };
             }
 
@@ -442,7 +444,8 @@ pub const Executor = struct {
                         pool_completion.ledger_handle,
                         .operation_executor,
                     );
-                    return err;
+                    if (first_error == null) first_error = err;
+                    continue;
                 };
             }
 
@@ -518,6 +521,7 @@ pub const Executor = struct {
             }
         }
 
+        if (first_error) |err| return err;
         return stats;
     }
 
