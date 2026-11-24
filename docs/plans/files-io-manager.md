@@ -12,13 +12,14 @@ the Files UI and the RediWM shell.
 See [Files I/O Service Architecture](files-io-service-architecture.md) for
 the process boundaries, ownership model, IPC direction, lifecycle and
 supervision, failure guarantees, persistence and recovery strategy, open
-decisions and staged migration plan.
+implementation decisions and staged migration plan. The initial IPC
+contract is agreed but not yet implemented.
 
 Service extraction is a prerequisite to continuing the remaining Manager
 roadmap phases. In particular, per-window Runtime ownership must be replaced
 by one service-owned Manager, Runtime, resource ledger and bounded worker
-capacity. The architecture document distinguishes agreed constraints from
-decisions that remain open.
+capacity. The architecture document distinguishes agreed contract behaviour
+from operation-specific implementation details that remain to be established.
 
 ## Goal
 
