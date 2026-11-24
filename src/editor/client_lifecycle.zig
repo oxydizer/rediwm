@@ -126,6 +126,19 @@ pub fn step(self: *Client) !void {
 
 /// Takes the window down and frees it. Its `App` writes the drafts if it owns them.
 pub fn destroy(self: *Client) void {
+    // Every object bound here has a listener that points at this window. The
+    // connection outlives it, so each one goes first, or the next event for it
+    // lands in freed memory.
+    if (self.keyboard) |k| if (k.getVersion() >= 3) k.release() else k.destroy();
+    if (self.pointer) |p| if (p.getVersion() >= 3) p.release() else p.destroy();
+    if (self.seat) |seat| if (seat.getVersion() >= 5) seat.release() else seat.destroy();
+    self.keyboard = null;
+    self.pointer = null;
+    self.seat = null;
+    if (self.frame_callback) |callback| callback.destroy();
+    self.frame_callback = null;
+    if (self.activation) |activation| activation.destroy();
+    self.activation = null;
     for (self.outputs.items) |info| {
         if (info.logical) |logical| logical.destroy();
         info.proxy.destroy();
@@ -139,6 +152,8 @@ pub fn destroy(self: *Client) void {
     if (self.decoration) |dec| dec.destroy();
     self.xdg_toplevel.destroy();
     self.xdg_surface.destroy();
+    if (self.wm_base) |wm| wm.destroy();
+    self.wm_base = null;
     self.tabs.deinit();
     if (self.cursor_theme) |theme_ptr| theme_ptr.destroy();
     self.cursor_shape.deinit();
