@@ -1,6 +1,7 @@
 //! Git porcelain parsing and archive extraction tests.
 
 const std = @import("std");
+const archive = @import("archive.zig");
 const ops_mod = @import("ops.zig");
 const c = @import("c.zig").api;
 const files_tests = @import("../files_tests.zig");
@@ -104,8 +105,8 @@ fn measureArchiveExtraction(
     allocator: std.mem.Allocator,
     source: []const u8,
     parent: []const u8,
+    metrics: ?*archive.ExtractMetrics,
 ) !u64 {
-    const archive = @import("archive.zig");
     const stage = try archive.temporary(allocator, parent);
     defer {
         ops_mod.deleteRecursive(allocator, stage) catch {};
@@ -113,7 +114,11 @@ fn measureArchiveExtraction(
     }
     var cancel: archive.Cancel = .init(false);
     const start = archiveBenchmarkNowNs();
-    try archive.extract(allocator, source, stage, null, &cancel);
+    if (metrics) |m| {
+        try archive.extractMeasured(allocator, source, stage, &cancel, m);
+    } else {
+        try archive.extract(allocator, source, stage, null, &cancel);
+    }
     return archiveBenchmarkNowNs() - start;
 }
 
@@ -125,10 +130,10 @@ fn benchmarkArchiveLayout(
     file_count: usize,
     directory_count: usize,
 ) !void {
-    _ = try measureArchiveExtraction(allocator, source, parent);
+    _ = try measureArchiveExtraction(allocator, source, parent, null);
     var samples: [3]u64 = undefined;
     for (&samples) |*sample| {
-        sample.* = try measureArchiveExtraction(allocator, source, parent);
+        sample.* = try measureArchiveExtraction(allocator, source, parent, null);
     }
     // Three samples: select the median without allocating or sorting.
     const median = @max(@min(samples[0], samples[1]), @min(@max(samples[0], samples[1]), samples[2]));
@@ -137,6 +142,32 @@ fn benchmarkArchiveLayout(
     std.debug.print(
         "BENCH,archive_extract,{s},{d},{d},{d},{d:.2}\n",
         .{ layout, file_count, directory_count, median, files_per_second },
+    );
+
+    var metrics: archive.ExtractMetrics = .{};
+    const measured_ns = try measureArchiveExtraction(allocator, source, parent, &metrics);
+    std.debug.print(
+        "METRIC,archive_extract,{s},{d},headers={d},header_ns={d},cache_hits={d},cache_misses={d},directory_lookup_ns={d},directory_components={d},mkdir_calls={d},mkdir_existing={d},directory_open_calls={d},directory_component_ns={d},file_creates={d},file_create_ns={d},chmod_calls={d},chmod_ns={d},bytes={d},measured_total_ns={d}\n",
+        .{
+            layout,
+            file_count,
+            metrics.header_calls,
+            metrics.header_ns,
+            metrics.directory_cache_hits,
+            metrics.directory_cache_misses,
+            metrics.directory_lookup_ns,
+            metrics.directory_components,
+            metrics.mkdir_calls,
+            metrics.mkdir_existing,
+            metrics.directory_open_calls,
+            metrics.directory_component_ns,
+            metrics.file_create_calls,
+            metrics.file_create_ns,
+            metrics.chmod_calls,
+            metrics.chmod_ns,
+            metrics.extracted_bytes,
+            measured_ns,
+        },
     );
 }
 
@@ -275,7 +306,6 @@ test "archive directory fd benchmark" {
 }
 
 test "archive relative symlinks survive publication and cannot escape staging" {
-    const archive = @import("archive.zig");
     const mem = std.testing.allocator;
     for ([_][]const u8{ ".zip", ".tar.gz" }) |extension| {
         var buf: [256]u8 = undefined;
@@ -337,7 +367,6 @@ test "archive relative symlinks survive publication and cannot escape staging" {
 
 test "archive index, staged extraction and member reads preserve destination boundaries" {
     for ([_][]const u8{ ".zip", ".tar.gz" }) |extension| {
-        const archive = @import("archive.zig");
         const mem = std.testing.allocator;
         var buf: [256]u8 = undefined;
         const root = try makeTestDir(&buf);
@@ -404,7 +433,6 @@ test "archive index, staged extraction and member reads preserve destination bou
 }
 
 test "selected archive members extract with relative paths and reject invalid selections" {
-    const archive = @import("archive.zig");
     const mem = std.testing.allocator;
     for ([_][]const u8{ ".zip", ".tar.gz" }) |extension| {
         var buf: [256]u8 = undefined;

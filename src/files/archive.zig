@@ -7,6 +7,38 @@ const a = @import("c_archive");
 const Allocator = std.mem.Allocator;
 pub const Cancel = std.atomic.Value(bool);
 
+/// Optional diagnostics for the archive extraction benchmark.
+/// Production extraction passes no metrics and performs no timing calls.
+pub const ExtractMetrics = struct {
+    header_calls: u64 = 0,
+    header_ns: u64 = 0,
+    directory_cache_hits: u64 = 0,
+    directory_cache_misses: u64 = 0,
+    directory_lookup_ns: u64 = 0,
+    directory_components: u64 = 0,
+    mkdir_calls: u64 = 0,
+    mkdir_existing: u64 = 0,
+    directory_open_calls: u64 = 0,
+    directory_component_ns: u64 = 0,
+    file_create_calls: u64 = 0,
+    file_create_ns: u64 = 0,
+    chmod_calls: u64 = 0,
+    chmod_ns: u64 = 0,
+    extracted_bytes: u64 = 0,
+};
+
+fn benchmarkNowNs() u64 {
+    var ts: std.c.timespec = undefined;
+    const result = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+    std.debug.assert(result == 0);
+    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s +
+        @as(u64, @intCast(ts.nsec));
+}
+
+fn addElapsed(target: *u64, started: u64) void {
+    target.* += benchmarkNowNs() - started;
+}
+
 pub fn candidate(path: []const u8) bool {
     inline for (.{ ".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".7z" }) |suffix| {
         if (std.ascii.endsWithIgnoreCase(path, suffix)) return true;
@@ -197,7 +229,7 @@ pub fn temporary(mem: Allocator, parent: []const u8) ![]u8 {
     };
 }
 
-fn openDirectory(root: c_int, path: []const u8) !c_int {
+fn openDirectory(root: c_int, path: []const u8, metrics: ?*ExtractMetrics) !c_int {
     var fd = c.fcntl(root, c.F_DUPFD_CLOEXEC, @as(c_int, 0));
     if (fd < 0) return error.WriteFailed;
     errdefer _ = c.close(fd);
@@ -206,9 +238,19 @@ fn openDirectory(root: c_int, path: []const u8) !c_int {
         if (part.len == 0) continue;
         var buf: [4096]u8 = undefined;
         const name = try std.fmt.bufPrintSentinel(&buf, "{s}", .{part}, 0);
-        if (c.mkdirat(fd, name, @as(c_uint, 0o700)) != 0 and std.c._errno().* != c.EEXIST) return error.WriteFailed;
+        const component_started = if (metrics != null) benchmarkNowNs() else 0;
+        if (metrics) |m| {
+            m.directory_components += 1;
+            m.mkdir_calls += 1;
+        }
+        if (c.mkdirat(fd, name, @as(c_uint, 0o700)) != 0) {
+            if (std.c._errno().* != c.EEXIST) return error.WriteFailed;
+            if (metrics) |m| m.mkdir_existing += 1;
+        }
+        if (metrics) |m| m.directory_open_calls += 1;
         const next = c.openat(fd, name, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
         if (next < 0) return error.UnsafeArchivePath;
+        if (metrics) |m| addElapsed(&m.directory_component_ns, component_started);
         _ = c.close(fd);
         fd = next;
     }
@@ -218,23 +260,33 @@ fn openDirectory(root: c_int, path: []const u8) !c_int {
 const DirectoryFdCache = struct {
     allocator: Allocator,
     root: c_int,
+    metrics: ?*ExtractMetrics = null,
     fd: ?c_int = null,
     path: ?[]u8 = null,
 
     fn get(self: *DirectoryFdCache, path: []const u8) !c_int {
+        const started = if (self.metrics != null) benchmarkNowNs() else 0;
         if (self.path) |cached_path| {
-            if (std.mem.eql(u8, cached_path, path)) return self.fd.?;
+            if (std.mem.eql(u8, cached_path, path)) {
+                if (self.metrics) |m| {
+                    m.directory_cache_hits += 1;
+                    addElapsed(&m.directory_lookup_ns, started);
+                }
+                return self.fd.?;
+            }
         }
 
+        if (self.metrics) |m| m.directory_cache_misses += 1;
         const next_path = try self.allocator.dupe(u8, path);
         errdefer self.allocator.free(next_path);
-        const next_fd = try openDirectory(self.root, path);
+        const next_fd = try openDirectory(self.root, path, self.metrics);
         errdefer _ = c.close(next_fd);
 
         if (self.fd) |old_fd| _ = c.close(old_fd);
         if (self.path) |old_path| self.allocator.free(old_path);
         self.fd = next_fd;
         self.path = next_path;
+        if (self.metrics) |m| addElapsed(&m.directory_lookup_ns, started);
         return next_fd;
     }
 
@@ -276,7 +328,19 @@ fn resolveLink(mem: Allocator, links: *const Links, path: []const u8, resolved: 
 /// Destination must be a private, newly created staging directory. Publication
 /// into the user's folder is handled by JobRunner's no-overwrite transfer path.
 pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member: ?[]const u8, cancel: *const Cancel) !void {
-    return extractSelected(mem, path, destination, null, member, cancel);
+    return extractSelected(mem, path, destination, null, member, cancel, null);
+}
+
+/// Benchmark-only entry point. Normal callers should use extract().
+pub fn extractMeasured(
+    mem: Allocator,
+    path: []const u8,
+    destination: []const u8,
+    cancel: *const Cancel,
+    metrics: *ExtractMetrics,
+) !void {
+    metrics.* = .{};
+    return extractSelected(mem, path, destination, null, null, cancel, metrics);
 }
 
 /// Extract selected files and directory subtrees into a private staging
@@ -284,10 +348,18 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
 /// special files inside selected subtrees are rejected.
 pub fn extractMembers(mem: Allocator, path: []const u8, destination: []const u8, members: []const []const u8, cancel: *const Cancel) !void {
     if (members.len == 0) return error.MemberNotFound;
-    return extractSelected(mem, path, destination, members, null, cancel);
+    return extractSelected(mem, path, destination, members, null, cancel, null);
 }
 
-fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, members: ?[]const []const u8, member: ?[]const u8, cancel: *const Cancel) !void {
+fn extractSelected(
+    mem: Allocator,
+    path: []const u8,
+    destination: []const u8,
+    members: ?[]const []const u8,
+    member: ?[]const u8,
+    cancel: *const Cancel,
+    metrics: ?*ExtractMetrics,
+) !void {
     const reader = try Reader.open(mem, path, cancel);
     defer reader.close();
     const zdest = try mem.dupeSentinel(u8, destination, 0);
@@ -295,7 +367,7 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
     const root = c.open(zdest, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
     if (root < 0) return error.WriteFailed;
     defer _ = c.close(root);
-    var directory_cache = DirectoryFdCache{ .allocator = mem, .root = root };
+    var directory_cache = DirectoryFdCache{ .allocator = mem, .root = root, .metrics = metrics };
     defer directory_cache.deinit();
     var arena = std.heap.ArenaAllocator.init(mem);
     defer arena.deinit();
@@ -319,7 +391,17 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
     var links: Links = .empty;
     var link_bytes: usize = 0;
     var found = false;
-    while (try reader.next(cancel)) |entry| {
+    while (true) {
+        const header_started = if (metrics != null) benchmarkNowNs() else 0;
+        const next_entry = reader.next(cancel) catch |err| {
+            if (metrics) |m| addElapsed(&m.header_ns, header_started);
+            return err;
+        };
+        if (metrics) |m| {
+            m.header_calls += 1;
+            addElapsed(&m.header_ns, header_started);
+        }
+        const entry = next_entry orelse break;
         const raw = a.archive_entry_pathname(entry) orelse return error.InvalidArchive;
         const name = try normalize(mem, std.mem.span(raw));
         defer mem.free(name);
@@ -365,8 +447,11 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
         if (kind == c.S_IFDIR) continue;
         const zname = try mem.dupeSentinel(u8, std.fs.path.basename(name), 0);
         defer mem.free(zname);
+        const create_started = if (metrics != null) benchmarkNowNs() else 0;
+        if (metrics) |m| m.file_create_calls += 1;
         const fd = c.openat(parent, zname, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_NOFOLLOW | c.O_CLOEXEC, @as(c_uint, 0o600));
         if (fd < 0) return error.WriteFailed;
+        if (metrics) |m| addElapsed(&m.file_create_ns, create_started);
         defer _ = c.close(fd);
         var buffer: [65536]u8 = undefined;
         while (true) {
@@ -375,6 +460,7 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
             try check(cancel);
             if (n == 0) break;
             if (n < 0) return error.InvalidArchive;
+            if (metrics) |m| m.extracted_bytes += @intCast(n);
             var offset: usize = 0;
             while (offset < @as(usize, @intCast(n))) {
                 try check(cancel);
@@ -385,7 +471,12 @@ fn extractSelected(mem: Allocator, path: []const u8, destination: []const u8, me
             }
         }
         // Keep ordinary executable bits, never set-id or archive ownership.
-        if (member == null) _ = c.fchmod(fd, @intCast(@as(c_uint, @intCast(a.archive_entry_perm(entry) & 0o777)) | 0o600));
+        if (member == null) {
+            const chmod_started = if (metrics != null) benchmarkNowNs() else 0;
+            if (metrics) |m| m.chmod_calls += 1;
+            _ = c.fchmod(fd, @intCast(@as(c_uint, @intCast(a.archive_entry_perm(entry) & 0o777)) | 0o600));
+            if (metrics) |m| addElapsed(&m.chmod_ns, chmod_started);
+        }
         found = true;
         if (member != null) break;
     }
