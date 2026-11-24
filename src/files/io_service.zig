@@ -111,6 +111,7 @@ fn Ring(comptime T: type, comptime capacity: usize) type {
 const WindowSlot = struct {
     id: WindowId = 0,
     active: bool = false,
+    closing: bool = false,
     normal_commands: Ring(Command, command_capacity_per_window) = .{},
     control_commands: Ring(Command, control_capacity_per_window) = .{},
     updates: Ring(Update, update_capacity_per_window) = .{},
@@ -226,11 +227,15 @@ pub const Service = struct {
             if (!slot.active) continue;
 
             if (slot.control_commands.pop()) |command| {
-                return .{ .window_id = slot.id, .command = command };
+                const routed = RoutedCommand{ .window_id = slot.id, .command = command };
+                self.recycleClosedSlot(slot);
+                return routed;
             }
             if (slot.normal_commands.pop()) |command| {
                 self.pending_normal_commands -= 1;
-                return .{ .window_id = slot.id, .command = command };
+                const routed = RoutedCommand{ .window_id = slot.id, .command = command };
+                self.recycleClosedSlot(slot);
+                return routed;
             }
         }
         return null;
@@ -327,13 +332,21 @@ pub const Service = struct {
         defer self.unlock();
 
         const slot = self.findSlot(window_id) orelse return;
-        self.pending_normal_commands -= slot.normal_commands.count;
+        slot.closing = true;
+        self.recycleClosedSlot(slot);
+    }
+
+    fn recycleClosedSlot(self: *Service, slot: *WindowSlot) void {
+        _ = self;
+        if (!slot.closing) return;
+        if (slot.normal_commands.count != 0 or slot.control_commands.count != 0)
+            return;
         slot.reset();
     }
 
     fn findSlot(self: *Service, window_id: WindowId) ?*WindowSlot {
         for (&self.windows) |*slot| {
-            if (slot.active and slot.id == window_id) return slot;
+            if (slot.active and !slot.closing and slot.id == window_id) return slot;
         }
         return null;
     }

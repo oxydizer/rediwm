@@ -32,7 +32,10 @@ test "normal command admission enforces per-window and aggregate bounds" {
     var handles: [9]service_mod.Handle = undefined;
     var handle_count: usize = 0;
     defer {
-        for (handles[0..handle_count]) |*handle| handle.close() catch unreachable;
+        for (handles[0..handle_count]) |*handle| {
+            handle.close() catch unreachable;
+        }
+        while (service.tryReceiveCommand() != null) {}
     }
     for (&handles) |*handle| {
         handle.* = try service.registerWindow();
@@ -67,7 +70,10 @@ test "reserved control admission remains available when normal capacity is full"
     try service.init();
     defer service.deinit();
     var handle = try service.registerWindow();
-    defer handle.close() catch unreachable;
+    defer {
+        handle.close() catch unreachable;
+        while (service.tryReceiveCommand() != null) {}
+    }
 
     for (0..service_mod.command_capacity_per_window) |i| {
         try handle.trySend(normalCommand(i));
@@ -255,4 +261,39 @@ fn isReadable(fd: std.posix.fd_t) bool {
     }};
     return std.posix.errno(std.posix.system.poll(&fds, 1, 0)) == .SUCCESS and
         fds[0].revents != 0;
+}
+
+test "accepted commands survive window closure and retain their origin ID" {
+    var service: service_mod.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var handle = try service.registerWindow();
+    const stale = handle;
+    const origin_id = handle.window_id;
+
+    try handle.trySend(normalCommand(73));
+    try handle.trySend(controlCommand(74));
+    try handle.close();
+
+    try std.testing.expectError(
+        error.WindowClosed,
+        stale.trySend(normalCommand(75)),
+    );
+
+    const first = service.tryReceiveCommand().?;
+    try std.testing.expectEqual(origin_id, first.window_id);
+    try std.testing.expectEqual(service_mod.CommandKind.cancel_job, first.command.kind);
+    try std.testing.expectEqual(@as(u64, 74), first.command.job_id);
+
+    const second = service.tryReceiveCommand().?;
+    try std.testing.expectEqual(origin_id, second.window_id);
+    try std.testing.expectEqual(service_mod.CommandKind.submit_job, second.command.kind);
+    try std.testing.expectEqual(@as(u64, 73), second.command.job_id);
+
+    try std.testing.expect(service.tryReceiveCommand() == null);
+
+    var replacement = try service.registerWindow();
+    defer replacement.close() catch unreachable;
+    try std.testing.expect(replacement.window_id > origin_id);
 }
