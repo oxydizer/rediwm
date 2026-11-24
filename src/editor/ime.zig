@@ -6,6 +6,9 @@ const App = @import("app.zig").App;
 const a = std.heap.c_allocator;
 pub const Ime = struct {
     app: *App,
+    /// The window's surface: with several windows on one connection the seat's
+    /// enter and leave events name the surface, and only its own count.
+    surface: ?*wl.Surface = null,
     manager: ?*zwp.TextInputManagerV3 = null,
     input: ?*zwp.TextInputV3 = null,
     entered: bool = false,
@@ -46,11 +49,13 @@ pub const Ime = struct {
     }
     fn event(input: *zwp.TextInputV3, ev: zwp.TextInputV3.Event, self: *Ime) void {
         switch (ev) {
-            .enter => {
+            .enter => |entered| {
+                if (entered.surface != self.surface) return;
                 self.entered = true;
                 self.revision = std.math.maxInt(usize);
             },
-            .leave => {
+            .leave => |left| {
+                if (left.surface != self.surface) return;
                 // enable belongs to the surface from enter: disable it before
                 // dropping that surface, or the compositor still believes the
                 // input is enabled and a later enable/commit after re-entering

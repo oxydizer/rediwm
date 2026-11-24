@@ -6704,6 +6704,10 @@ msgid "Wireless connections"
 msgstr "Беспроводные подключения"
 
 #: src/editor/app.zig
+msgid "New Window"
+msgstr "Новое окно"
+
+#: src/editor/app.zig
 msgid "Word Wrap"
 msgstr "Перенос строк"
 

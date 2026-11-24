@@ -272,7 +272,7 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
     }
     if (self.ctrl) switch (sym) {
         c.XKB_KEY_n, c.XKB_KEY_N, c.XKB_KEY_t, c.XKB_KEY_T => {
-            self.act(.new);
+            self.act(if (self.shift and (sym == c.XKB_KEY_n or sym == c.XKB_KEY_N)) .new_window else .new);
             return;
         },
         c.XKB_KEY_o, c.XKB_KEY_O => {
