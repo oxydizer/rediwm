@@ -117,7 +117,7 @@ fn backoff(k: *drafts.Keeper, now: i64) void {
     k.since = now;
 }
 
-fn finish(self: *App, k: *drafts.Keeper, job: *drafts.Job, now: i64) void {
+fn finish(k: *drafts.Keeper, job: *drafts.Job, now: i64) void {
     k.job = null;
     defer job.deinit();
     if (job.err) |err| {
@@ -149,7 +149,7 @@ fn startFlush(self: *App, k: *drafts.Keeper, now: i64) void {
 fn writeNow(self: *App, k: *drafts.Keeper) bool {
     if (k.job) |job| {
         job.wait();
-        finish(self, k, job, key_repeat.nowMs());
+        finish(k, job, key_repeat.nowMs());
     }
     const sig = signature(self);
     if (sig == k.written) return true;
@@ -239,7 +239,7 @@ fn restore(self: *App, loaded: *drafts.Loaded) void {
 /// starts the next one once typing has paused.
 pub fn stepDrafts(self: *App, now: i64) void {
     const k = self.keeper orelse return;
-    if (k.job) |job| if (job.done.load(.acquire)) finish(self, k, job, now);
+    if (k.job) |job| if (job.done.load(.acquire)) finish(k, job, now);
     const sig = signature(self);
     if (sig != k.seen) {
         k.seen = sig;
