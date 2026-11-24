@@ -36,6 +36,13 @@ Compare failures with a clean HEAD worktree before calling them regressions.
 Integration dependencies: Python 3 + Pillow, C compiler, `wayland-scanner`,
 wayland-protocols and GLES2; D-Bus suites also need PyGObject,
 `dbus-run-session` and `busctl`. Check each suite for extra dependencies.
+
+Run `python3 tests/single_pixel.py` at scales 1 and 1.5 for client alpha and
+background blur. Repeat with `REDIWM_NO_GLASS=1` to check the capability event
+and rendering with blur disabled. `python3 tests/night_light.py` uses wlsunset
+or gammastep when installed to test gamma ownership, rejection and restoration
+against simulated per-output gamma tables.
+
 App checks include [calculator](tests/calculator.py), [editor](tests/editor.py),
 [editor visuals](tests/editor_visuals.py) and
 [Files input methods](tests/files_ime.py). Run `python3 tests/text_input_v1.py`

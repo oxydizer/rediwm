@@ -40,6 +40,7 @@ PRIVILEGED_GLOBALS = {
     "zwlr_virtual_pointer_manager_v1",
     "zwp_input_method_manager_v2",
     "zwlr_output_manager_v1",
+    "zwlr_gamma_control_manager_v1",
     "zwlr_output_power_manager_v1",
     "ext_session_lock_manager_v1",
     "zwlr_layer_shell_v1",
@@ -55,6 +56,8 @@ CORE_GLOBALS = {
     "wl_seat",
     "wl_output",
     "wl_subcompositor",
+    "ext_background_effect_manager_v1",
+    "wp_alpha_modifier_v1",
 }
 
 
@@ -220,7 +223,7 @@ xwayland = false
 
 [[sandbox_allow]]
 app_id = "org.example.AllowedApp"
-allow = ["clipboard"]
+allow = ["clipboard", "outputs"]
 """
     with tempfile.TemporaryDirectory(prefix="rediwm-sc-test-") as directory:
         tmp = Path(directory)
@@ -240,6 +243,8 @@ allow = ["clipboard"]
 
             sandboxed_env = dict(session.env, WAYLAND_DISPLAY=str(sandboxed_sock))
             globals_seen = dump_registry(tmp / "fixture", sandboxed_env)
+
+            assert "zwlr_gamma_control_manager_v1" in globals_seen, "outputs grant should include gamma control"
 
             # Clipboard group allowed
             assert "zwlr_data_control_manager_v1" in globals_seen, "data-control should be granted by clipboard group"

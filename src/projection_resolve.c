@@ -11,6 +11,29 @@ static void effect_geometry(const struct rediwm_node *own, const struct rediwm_g
   *enabled = *enabled && t->node.enabled;
   *width = t->dst_width ? t->dst_width : t->buffer_width;
   *height = t->dst_height ? t->dst_height : t->buffer_height;
+  if (info->region) {
+    const pixman_box32_t *bounds = pixman_region32_extents(&info->region->local);
+    *x += bounds->x1;
+    *y += bounds->y1;
+    *width = bounds->x2 - bounds->x1;
+    *height = bounds->y2 - bounds->y1;
+  }
+}
+
+// Region masks are immutable for the life of an effect. Resolve their edges
+// once per transform so every output and backdrop pass consumes the same mask.
+static void resolve_effect_region(struct rediwm_glass_region *region, struct rediwm_edges extent, double scale) {
+  if (region->x == extent.x1 && region->y == extent.y1 && region->scale == scale) return;
+  region->x = extent.x1;
+  region->y = extent.y1;
+  region->scale = scale;
+  const pixman_box32_t *bounds = pixman_region32_extents(&region->local);
+  const pixman_box32_t *rects = pixman_region32_rectangles(&region->local, NULL);
+  for (int i = 0; i < region->count; i++) {
+    region->layout[i] = (struct rediwm_edges){
+        extent.x1 + (rects[i].x1 - bounds->x1) * scale, extent.y1 + (rects[i].y1 - bounds->y1) * scale,
+        extent.x1 + (rects[i].x2 - bounds->x1) * scale, extent.y1 + (rects[i].y2 - bounds->y1) * scale};
+  }
 }
 
 // A clip's size, radii, border or colour changed: its views did not move, so
@@ -84,6 +107,7 @@ static void damage_clip_change(struct rediwm_projection *p, const struct rediwm_
 struct walk {
   double x, y;
   bool enabled, inert;
+  float surface_opacity;
   struct rediwm_xform t;
   const struct rediwm_clip *clip;
   const struct dim *dim;
@@ -163,11 +187,19 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
                  : l->surface ? REDIWM_ITEM_SURFACE : REDIWM_ITEM_BUFFER;
     item->width = b->dst_width;
     item->height = b->dst_height;
+    float opacity = b->opacity * b->alpha_multiplier;
+    if (b->surface) opacity *= w->surface_opacity;
     if (item->kind == REDIWM_ITEM_EFFECT) {
       struct rediwm_glass_info info;
       int ex = 0, ey = 0;
-      if (own && rediwm_glass_effect_info(node, &info))
+      if (own && rediwm_glass_effect_info(node, &info)) {
         effect_geometry(own, &info, &ex, &ey, &item->width, &item->height, &item->enabled);
+        item->blur_region = info.region;
+        if (info.region) {
+          opacity = w->surface_opacity * info.target->opacity * info.target->alpha_multiplier;
+          resolve_effect_region(info.region, rediwm_xform_rect(w->t, x + ex, y + ey, item->width, item->height), w->t.scale);
+        }
+      }
       x += ex;
       y += ey;
     } else if (!item->width || !item->height) {
@@ -183,7 +215,7 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
     content->src_box = b->src_box;
     memcpy(content->sector_rect, b->sector_rect, sizeof(content->sector_rect));
     content->transform = b->transform;
-    content->opacity = b->opacity;
+    content->opacity = opacity;
     content->filter_mode = rediwm_filter_at_scale(w->t.scale, b->filter_mode);
     content->transfer_function = b->transfer_function;
     content->primaries = b->primaries;
@@ -198,7 +230,7 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
     item->kind = REDIWM_ITEM_SHADOW;
     l->shadow = *w->shadow;
     item->shadow = &l->shadow;
-  } else if (item->kind != REDIWM_ITEM_RIBBON && item->shadow) {
+  } else if (item->kind != REDIWM_ITEM_RIBBON && item->kind != REDIWM_ITEM_EFFECT && item->shadow) {
     item->shadow = NULL;
   }
   item->edges = rediwm_xform_rect(w->t, x, y, item->width, item->height);
@@ -219,6 +251,7 @@ static void resolve_own(struct rediwm_projection *p, struct group *g, struct red
     w.x = x;
     w.y = y;
     w.enabled = enabled;
+    w.surface_opacity *= ((struct rediwm_tree *)node)->surface_opacity;
     struct rediwm_clip here;
     struct rediwm_shadow cast;
     apply_tree(p, tree_props_find(&node->addons, &node->props), &w, &here, &cast);
@@ -257,6 +290,7 @@ void projection_resolve(struct rediwm_projection *p, double z, double cx, double
     // The world is resolved from its children, ignoring its own place and state; any
     // other layer is a tree like the rest and hides what it holds when disabled.
     const struct walk base = {.x = world ? 0 : layer->x, .y = world ? 0 : layer->y,
+                              .surface_opacity = ((struct rediwm_tree *)layer)->surface_opacity,
                               .enabled = world || layer->enabled, .t = world ? camera : identity};
     struct rediwm_node *node;
     wl_list_for_each(node, &((struct rediwm_tree *)layer)->children, link) {

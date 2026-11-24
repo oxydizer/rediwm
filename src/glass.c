@@ -8,9 +8,18 @@
 #include <stdlib.h>
 #include <wlr/util/addon.h>
 #include "glass.h"
-#include "node.h"
+#include "node_surface.h"
+#include "scene_graph.h"
 
-enum glass_kind { GLASS_TITLEBAR, GLASS_TASKBAR, GLASS_PANEL, GLASS_SIDEBAR };
+enum glass_kind { GLASS_TITLEBAR, GLASS_TASKBAR, GLASS_PANEL, GLASS_SIDEBAR, GLASS_CLIENT };
+// Gaussian sigma in logical pixels and saturation for each backdrop.
+static const struct { float sigma, saturation; } appearance[] = {
+	[GLASS_TITLEBAR] = {22, 1.5f},
+	[GLASS_TASKBAR] = {24, 1.5f},
+	[GLASS_PANEL] = {26, 1.6f},
+	[GLASS_SIDEBAR] = {8, 1.6f},
+	[GLASS_CLIENT] = {26, 1.f},
+};
 struct glass_effect;
 struct glass_engine {
 	struct wl_list effects;
@@ -29,6 +38,7 @@ struct glass_effect {
 	enum glass_kind kind;
 	uint64_t serial;
 	float radius, opacity;
+	struct rediwm_glass_region region; // GLASS_CLIENT only
 };
 
 struct glass_engine *rediwm_glass_create(void)
@@ -43,6 +53,11 @@ static void handle_destroy(struct wl_listener *listener, void *data)
 {
 	(void)data;
 	struct glass_effect *effect = wl_container_of(listener, effect, destroy);
+	if (effect->kind == GLASS_CLIENT) {
+		if (effect->target->surface) effect->target->surface->glass = NULL;
+		pixman_region32_fini(&effect->region.local);
+		free(effect->region.layout);
+	}
 	wlr_addon_finish(&effect->addon);
 	if (effect->engine->held == effect)
 		effect->engine->held = NULL;
@@ -73,9 +88,9 @@ bool rediwm_glass_effect_info(struct rediwm_node *node, struct rediwm_glass_info
 		return false;
 	*out = (struct rediwm_glass_info){
 	    .target = effect->target,
-	    // Sidebars retain background shapes through a lighter frost.
-	    .sigma = effect->kind == GLASS_SIDEBAR ? 8 : effect->kind == GLASS_TITLEBAR ? 22 : effect->kind == GLASS_TASKBAR ? 24 : 26,
-	    .saturation = effect->kind == GLASS_PANEL || effect->kind == GLASS_SIDEBAR ? 1.6f : 1.5f,
+	    .region = effect->kind == GLASS_CLIENT ? &effect->region : NULL,
+	    .sigma = appearance[effect->kind].sigma,
+	    .saturation = appearance[effect->kind].saturation,
 	    .opacity = effect->opacity,
 	    .radius = effect->radius,
 	    .serial = effect->serial,
@@ -154,4 +169,32 @@ void rediwm_glass_destroy(struct glass_engine *engine)
 	wl_list_for_each_safe(effect, tmp, &engine->effects, link)
 		rediwm_node_destroy(&effect->node->node);
 	free(engine);
+}
+
+struct rediwm_node *rediwm_glass_node(struct glass_effect *effect)
+{
+	return &effect->node->node;
+}
+
+bool rediwm_glass_set_surface_region(struct glass_engine *engine, struct rediwm_surface *surface,
+                                     const pixman_region32_t *region)
+{
+	struct glass_effect *effect = surface->glass;
+	if (effect && pixman_region32_equal(&effect->region.local, region))
+		return true;
+	// Replacing the effect damages both masks even when their extents match.
+	rediwm_glass_detach(effect);
+	if (!pixman_region32_not_empty(region))
+		return true;
+	effect = rediwm_glass_attach(engine, surface->buffer, &surface->buffer->node, GLASS_CLIENT);
+	if (!effect)
+		return false;
+	surface->glass = effect;
+	pixman_region32_init(&effect->region.local);
+	effect->region.count = pixman_region32_n_rects(region);
+	effect->region.layout = calloc(effect->region.count, sizeof(*effect->region.layout));
+	if (effect->region.layout && pixman_region32_copy(&effect->region.local, region))
+		return true;
+	rediwm_glass_detach(effect);
+	return false;
 }

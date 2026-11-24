@@ -287,6 +287,7 @@ pub const NightLightOutputStatus = enum {
     unsupported,
     rejected,
     disabled,
+    external,
 };
 
 pub const NightLightOutputData = struct {

@@ -17,6 +17,8 @@ def build_client(tmp):
     sources = []
     for name, path in (
         ("xdg-shell", "stable/xdg-shell/xdg-shell.xml"),
+        ("alpha-modifier", "staging/alpha-modifier/alpha-modifier-v1.xml"),
+        ("ext-background-effect", "staging/ext-background-effect/ext-background-effect-v1.xml"),
         ("viewporter", "stable/viewporter/viewporter.xml"),
         ("single-pixel-buffer", "staging/single-pixel-buffer/single-pixel-buffer-v1.xml"),
     ):
@@ -27,6 +29,84 @@ def build_client(tmp):
     subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", f"-I{tmp}",
                     str(ROOT / "tests/single_pixel_client.c"), *sources,
                     "-lwayland-client", "-o", str(tmp / "client")], check=True)
+
+
+def check_surface_effects(ipc, tmp, client_log, send, color, capture, pixel, expect):
+    # Surface-only commits multiply premultiplied colour and alpha.
+    send("alpha 2147483648")
+    expect(capture(), 100, 100, (0, 255, 0))
+    send("commit-child")
+    expect(capture(), 100, 100, (0, 128, 127))
+    send("shm")
+    expect(capture(), 100, 100, (128, 0, 255))
+
+    # Reload window opacity while the client multiplier is live, and
+    # commit again. The magenta subsurface now covers 1/4 of the base.
+    config_path = tmp / "rediwm-config.toml"
+    original = config_path.read_text()
+    config_path.write_text(original + '\n[[window_rules]]\napp_id = "rediwm.single-pixel-fixture"\nopacity = 0.5\n')
+    ipc.reload_config()
+    send("alpha 0")
+    send("commit-child")
+    base = pixel(capture(), 100, 100)
+    send("alpha 2147483648")
+    send("commit-child")
+    expected = tuple(round(bg * .75 + fg * .25) for bg, fg in zip(base, (255, 0, 255)))
+    expect(capture(), 100, 100, expected)
+    config_path.write_text(original)
+    ipc.reload_config()
+    expect(capture(), 100, 100, (128, 0, 255))
+    send("alpha-release")
+    expect(capture(), 100, 100, (128, 0, 255))
+    send("commit-child")
+    expect(capture(), 100, 100, (255, 0, 255))
+
+    # A transparent synchronized child blurs two bands over the
+    # parent's blue/white edge. The hole retains the exact base pixels.
+    color(0, 0, 0, 0)
+    send("pattern")
+    blur = "REDIWM_NO_GLASS" not in os.environ
+    assert f"blur-capability {int(blur)}" in client_log.read_text()
+    baseline = capture()
+    send("blur-bands")
+    expect(capture(), 152, 68, pixel(baseline, 152, 68))
+    send("commit-parent")
+    blurred = capture()
+    for y in (68, 132):
+        if blur:
+            assert pixel(blurred, 152, y)[0] > pixel(baseline, 152, y)[0] + 12
+        else:
+            expect(blurred, 152, y, pixel(baseline, 152, y))
+    for y in (45, 100, 155):
+        expect(blurred, 152, y, pixel(baseline, 152, y))
+    send("blur-release")
+    expect(capture(), 152, 68, pixel(blurred, 152, 68))
+    send("commit-child")
+    expect(capture(), 152, 68, pixel(blurred, 152, 68))
+    send("commit-parent")
+    expect(capture(), 152, 68, pixel(baseline, 152, 68))
+    # Rebind and change only the hole, keeping the same extents. Zooming
+    # moves every mask edge with the window.
+    window_id = next(w["id"] for w in ipc.get_windows() if w["app_id"] == "rediwm.single-pixel-fixture")
+    ipc.set_zoom(window_id, 70)
+    send("blur-bands")
+    send("commit-parent")
+    with_hole = capture()
+    send("blur-full")
+    send("commit-parent")
+    full = capture()
+    send("blur-null")
+    send("commit-parent")
+    clear = capture()
+    expect(with_hole, 152, 100, pixel(clear, 152, 100))
+    for image, y in ((with_hole, 68), (full, 100)):
+        if blur:
+            assert pixel(image, 152, y)[0] > pixel(clear, 152, y)[0] + 12
+        else:
+            expect(image, 152, y, pixel(clear, 152, y))
+    ipc.set_zoom(window_id, 100)
+    color(0, 255, 0)
+    send("background")
 
 
 def run():
@@ -79,7 +159,7 @@ def run():
                     with Image.open(path) as image:
                         return image.convert("RGB")
 
-                def expect(image, x, y, rgb):
+                def pixel(image, x, y):
                     window = next(w for w in ipc.get_windows() if w["id"] == win["id"])
                     camera = ipc.action("get_camera")
                     debug = ipc.get_window_debug(win["id"])
@@ -88,7 +168,10 @@ def run():
                     client = debug["client_box"]
                     px = ((window["x"] - camera["x"]) * camera_zoom + (client["x"] - window["x"] + x) * zoom) * scale
                     py = ((window["y"] - camera["y"]) * camera_zoom + (client["y"] - window["y"] + y) * zoom) * scale
-                    actual = image.getpixel((round(px), round(py)))
+                    return image.getpixel((round(px), round(py)))
+
+                def expect(image, x, y, rgb):
+                    actual = pixel(image, x, y)
                     assert all(abs(a - b) <= 1 for a, b in zip(actual, rgb)), (x, y, actual, rgb)
 
                 image = capture()
@@ -125,6 +208,8 @@ def run():
                 expect(capture(), 100, 100, (0, 0, 255))
                 send("single")
                 expect(capture(), 100, 100, (0, 255, 0))
+
+                check_surface_effects(ipc, tmp, client_log, send, color, capture, pixel, expect)
 
                 # Projection must preserve cached colors and viewport geometry.
                 ipc.set_zoom(win["id"], 70)

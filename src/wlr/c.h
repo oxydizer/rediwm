@@ -8,6 +8,7 @@
 #include <wlr/util/box.h>
 #include <wlr/util/edges.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
+#include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>

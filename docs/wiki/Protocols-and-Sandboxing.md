@@ -18,11 +18,20 @@ reserve space on a specific output edge, including from a corner.
 | Workspace | `ext-workspace-v1` | one canvas workspace shared by all outputs |
 | Window metadata | `xdg-toplevel-tag-v1`, `content-type-v1`, `xdg-activation-v1` | window rules, content hints, activation |
 | Colour | `color-management-v1`, `color-representation-v1` | whatever the renderer supports |
+| Surface effects | `ext-background-effect-v1`, `alpha-modifier-v1` | Regional background blur and per-surface fades |
+| Output gamma | `wlr-gamma-control-v1` | wlsunset, gammastep |
 | Presentation | `tearing-control-v1`, `drm-lease-v1` | opt-in fullscreen tearing, VR headsets |
 | Rendering | `fractional-scale-v1`, `viewporter`, `single-pixel-buffer-v1`, `linux-dmabuf-v1` (v5 on renderers with DMA-BUF import), `linux-drm-syncobj-v1`, `presentation-time` | |
 
 ## Things worth knowing
 
+- Clients can blur a region behind a surface when the renderer advertises the
+  blur capability. A surface's alpha multiplier combines with window opacity.
+  Both requests take effect on the surface commit.
+- On outputs with a hardware gamma table, an external gamma ramp overrides
+  Night Light and the configured output gamma. Releasing control restores
+  the current settings for that output. The Night Light IPC query reports
+  `external` while a client controls the ramp.
 - Output changes from clients (wlr-randr, kanshi) are saved just like ones made
   in Settings.
 - Legacy text-input-v1 fields can use the same input method as v3 fields for
@@ -78,7 +87,7 @@ Groups:
 | `clipboard` | data control |
 | `input` | virtual pointer and keyboard |
 | `input_method` | input method |
-| `outputs` | output management, DRM leasing |
+| `outputs` | output management, gamma control, DRM leasing |
 | `lock` | session lock |
 | `layer_shell` | layer shell |
 | `idle` | idle notify |

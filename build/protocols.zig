@@ -74,3 +74,20 @@ pub fn module(b: *std.Build) *std.Build.Module {
 
     return b.createModule(.{ .root_source_file = scanner.result });
 }
+
+/// C bindings for the surface state and glass adapter in background_effect.c.
+pub fn addBackgroundEffect(b: *std.Build, target: *std.Build.Module) void {
+    const pkg_config = b.graph.environ_map.get("PKG_CONFIG") orelse "pkg-config";
+    const dir = b.run(&.{ pkg_config, "--variable=pkgdatadir", "wayland-protocols" });
+    const xml: std.Build.LazyPath = .{ .cwd_relative = b.pathJoin(&.{
+        std.mem.trim(u8, dir, &std.ascii.whitespace),
+        "staging/ext-background-effect/ext-background-effect-v1.xml",
+    }) };
+    const header = b.addSystemCommand(&.{ "wayland-scanner", "server-header" });
+    header.addFileArg(xml);
+    target.addIncludePath(header.addOutputFileArg("ext-background-effect-v1-protocol.h").dirname());
+    const code = b.addSystemCommand(&.{ "wayland-scanner", "private-code" });
+    code.addFileArg(xml);
+    target.addCSourceFile(.{ .file = code.addOutputFileArg("ext-background-effect-v1-protocol.c") });
+    target.addCSourceFile(.{ .file = b.path("src/background_effect.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+}

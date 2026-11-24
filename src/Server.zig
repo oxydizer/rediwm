@@ -247,6 +247,7 @@ foreign_toplevels: ?*wlr.ForeignToplevelManagerV1 = null,
 /// wlr-output-management; not advertised by the greeter.
 output_management: ?*@import("output_management.zig").Manager = null,
 /// wlr-output-power-management; not advertised by the greeter.
+set_gamma: wl.Listener(*@import("output/gamma.zig").Event) = .init(@import("output/gamma.zig").changed),
 output_power: ?*@import("output_power.zig").Manager = null,
 /// ext-session-lock; the greeter is itself a lock and never advertises it.
 session_lock: ?*@import("session/client_lock.zig").Manager = null,

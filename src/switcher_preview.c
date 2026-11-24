@@ -3,7 +3,7 @@
 #define WLR_USE_UNSTABLE
 #define WLR_PRIVATE private
 #include "switcher_preview.h"
-#include "node.h"
+#include "node_surface.h"
 #include "scene_outputs.h"
 #include <assert.h>
 #include <stdlib.h>
@@ -84,6 +84,7 @@ static void refresh(struct preview_binding *binding) {
   unmark_buffer(binding);
   struct wlr_client_buffer *buffer = surface ? surface->buffer : NULL;
   struct rediwm_buffer_options options = {0};
+  rediwm_buffer_sync_surface_alpha(binding->preview, surface);
   if (surface) {
     binding->commit_seq = surface->current.seq;
     options.damage = &surface->buffer_damage;

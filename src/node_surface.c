@@ -5,10 +5,10 @@
 #define WLR_USE_UNSTABLE
 #define WLR_PRIVATE private
 #include "node_surface.h"
+#include "background_effect.h"
 #include <assert.h>
 #include <math.h>
 #include <stdlib.h>
-#include <wlr/types/wlr_alpha_modifier_v1.h>
 #include <wlr/types/wlr_color_management_v1.h>
 #include <wlr/types/wlr_color_representation_v1.h>
 #include <wlr/types/wlr_compositor.h>
@@ -246,16 +246,12 @@ static void surface_reconfigure(struct rediwm_surface *scene_surface) {
     pixman_region32_intersect_rect(&opaque, &opaque, 0, 0, width, height);
   }
 
+  rediwm_background_effect_update(scene_surface, width, height);
   if (width <= 0 || height <= 0) {
     rediwm_buffer_set_buffer(scene_buffer, NULL);
     pixman_region32_fini(&opaque);
     return;
   }
-
-  float opacity = 1.0;
-  const struct wlr_alpha_modifier_surface_v1_state *alpha_modifier_state =
-      wlr_alpha_modifier_v1_get_surface_state(surface);
-  if (alpha_modifier_state != NULL) opacity = (float)alpha_modifier_state->multiplier;
 
   enum wlr_color_transfer_function tf = WLR_COLOR_TRANSFER_FUNCTION_GAMMA22;
   enum wlr_color_named_primaries primaries = WLR_COLOR_NAMED_PRIMARIES_SRGB;
@@ -281,7 +277,6 @@ static void surface_reconfigure(struct rediwm_surface *scene_surface) {
   rediwm_buffer_set_source_box(scene_buffer, &src_box);
   rediwm_buffer_set_dest_size(scene_buffer, width, height);
   rediwm_buffer_set_transform(scene_buffer, state->transform);
-  rediwm_buffer_set_opacity(scene_buffer, opacity);
   // The colour description has no setters of its own: the buffer set below reports it.
   scene_buffer->transfer_function = tf;
   scene_buffer->primaries = primaries;
@@ -335,6 +330,7 @@ static void handle_scene_surface_surface_commit(struct wl_listener *listener, vo
   (void)data;
   struct rediwm_surface *surface = wl_container_of(listener, surface, surface_commit);
 
+  rediwm_buffer_sync_surface_alpha(surface->buffer, surface->surface);
   surface_reconfigure(surface);
 
   // If the surface has requested a frame done event, honour that. The frame_callback_list
@@ -412,6 +408,7 @@ struct rediwm_surface *rediwm_surface_create(struct rediwm_tree *parent, struct 
   surface->surface_commit.notify = handle_scene_surface_surface_commit;
   wl_signal_add(&wlr_surface->events.commit, &surface->surface_commit);
 
+  rediwm_buffer_sync_surface_alpha(scene_buffer, wlr_surface);
   surface_reconfigure(surface);
 
   return surface;

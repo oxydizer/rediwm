@@ -52,7 +52,7 @@ bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *tr
     // for wlroots.
     if (item->kind == REDIWM_ITEM_SURFACE)
         rediwm_projection_feedback_note(r->projection, transport, &visible);
-    if (item->kind != REDIWM_ITEM_EFFECT)
+    if (item->kind != REDIWM_ITEM_EFFECT || item->blur_region)
         rediwm_projection_note_visible(r->projection, transport, &visible);
     if (here)
         pixman_region32_intersect_rect(&visible, &visible, intersection.x, intersection.y,
@@ -95,10 +95,15 @@ bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *tr
         e->glass = glass;
         e->sigma = glass.sigma * item->scale;
         const int pad = (int)ceil(3 * e->sigma);
-        e->padded = (struct wlr_box){box.x - pad, box.y - pad, box.width + 2 * pad, box.height + 2 * pad};
+        // A client viewport can be much larger than the output. Allocate blur
+        // storage only for the visible output and the samples around its edges.
+        const struct wlr_box extent = item->blur_region ? intersection : box;
+        e->padded = (struct wlr_box){extent.x - pad, extent.y - pad, extent.width + 2 * pad, extent.height + 2 * pad};
         pixman_region32_union_rect(&collector->reads, &collector->reads,
             e->padded.x, e->padded.y, e->padded.width, e->padded.height);
-        e->front = &glass.target->node;
+        // The shell uses its foreground texture for antialiased decoration edges.
+        // A client region is a mask behind the surface and needs no client texture.
+        e->front = item->blur_region ? NULL : &glass.target->node;
         return true;
     }
     bool full = item->kind == REDIWM_ITEM_RECT && item->content.color[3] == 1;

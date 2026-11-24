@@ -42,6 +42,7 @@ pub const ColorStatus = enum {
 };
 
 pub const OutputColor = struct {
+    external: ?*wlr.gamma_control.Control = null,
     transform: ?*wlr.ColorTransform = null,
     key: ?ColorKey = null,
     pending: bool = false,
@@ -50,11 +51,10 @@ pub const OutputColor = struct {
     logged_unsupported: bool = false,
     logged_rejected: bool = false,
 
-    pub fn deinit(self: *OutputColor) void {
-        if (self.transform) |tr| {
-            wlr_color_transform_unref(tr);
-            self.transform = null;
-        }
+    /// Takes ownership of the replacement transform.
+    pub fn replaceTransform(self: *OutputColor, transform: ?*wlr.ColorTransform) void {
+        if (self.transform) |old| wlr_color_transform_unref(old);
+        self.transform = transform;
     }
 };
 
@@ -425,8 +425,7 @@ pub fn setIdleBlanked(output: *Output, requested: bool) bool {
         if (ok) {
             output.applyConfig();
             syncLayout(output.server);
-            output.color.key = null;
-            output.server.night_light.retargetOutput(output);
+            @import("output/gamma.zig").refresh(output);
             output.wlr_output.scheduleFrame();
         } else {
             output.idle_blanked = true;
@@ -591,7 +590,7 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     };
     if (output.start_menu) |sm| sm.destroy();
     if (output.power_menu) |pm| pm.destroy();
-    output.color.deinit();
+    output.color.replaceTransform(null);
     if (output.vblank_timer) |timer| timer.remove();
     if (output.late_timer) |timer| timer.remove();
     if (output.callback_idle) |idle| idle.remove();

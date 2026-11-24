@@ -60,6 +60,7 @@ struct rediwm_node {
 struct rediwm_tree {
   struct rediwm_node node;
   struct wl_list children; // rediwm_node.link, bottom to top
+  float surface_opacity; // inherited by client surfaces, including newly mapped subsurfaces
 };
 
 struct rediwm_rect {
@@ -78,7 +79,8 @@ typedef bool (*rediwm_buffer_point_accepts_input)(struct rediwm_buffer *, double
 struct rediwm_buffer {
   struct rediwm_node node;
   rediwm_buffer_point_accepts_input point_accepts_input; // may be NULL
-  float opacity;
+  float opacity; // compositor opacity
+  float alpha_multiplier; // committed client alpha, also copied into frozen views
   enum wlr_scale_filter_mode filter_mode;
   struct wlr_fbox src_box;
   int dst_width, dst_height;
@@ -205,6 +207,7 @@ void rediwm_buffer_set_texture(struct rediwm_buffer *, struct wlr_texture *);
 struct wlr_buffer *rediwm_buffer_get_buffer(const struct rediwm_buffer *);
 void rediwm_buffer_set_dest_size(struct rediwm_buffer *, int width, int height);
 void rediwm_buffer_set_source_box(struct rediwm_buffer *, const struct wlr_fbox *);
+void rediwm_buffer_set_alpha_multiplier(struct rediwm_buffer *, float multiplier);
 void rediwm_buffer_set_opacity(struct rediwm_buffer *, float opacity);
 void rediwm_buffer_set_filter_mode(struct rediwm_buffer *, enum wlr_scale_filter_mode);
 void rediwm_buffer_set_transform(struct rediwm_buffer *, enum wl_output_transform);

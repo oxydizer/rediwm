@@ -71,6 +71,7 @@ pub fn deinit(server: *Server) void {
         s.stopOwnedHelpers(1000);
     }
     server.wl_server.destroyClients();
+    if (!server.greeter_mode) server.set_gamma.link.remove();
     while (server.pending_launches.pop()) |pending| pending.destroy();
     server.pending_launches.deinit(@import("../main.zig").gpa);
     server.window_tabs.deinit();

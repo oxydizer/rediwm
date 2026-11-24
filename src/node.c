@@ -57,6 +57,7 @@ struct rediwm_scene *rediwm_scene_create(void (*notify)(void *, struct rediwm_no
   struct rediwm_scene *scene = calloc(1, sizeof(*scene));
   if (!scene) return NULL;
   node_init(&scene->tree.node, REDIWM_NODE_TREE, NULL);
+  scene->tree.surface_opacity = 1;
   wl_list_init(&scene->tree.children);
   scene->tree.node.scene = scene;
   scene->changed = notify;
@@ -75,6 +76,7 @@ struct rediwm_tree *rediwm_tree_create(struct rediwm_tree *parent) {
   struct rediwm_tree *tree = calloc(1, sizeof(*tree));
   if (!tree) return NULL;
   node_init(&tree->node, REDIWM_NODE_TREE, parent);
+  tree->surface_opacity = 1;
   wl_list_init(&tree->children);
   structure(&tree->node);
   return tree;
@@ -96,7 +98,7 @@ struct rediwm_buffer *rediwm_buffer_create(struct rediwm_tree *parent, struct wl
   struct rediwm_buffer *b = calloc(1, sizeof(*b));
   if (!b) return NULL;
   node_init(&b->node, REDIWM_NODE_BUFFER, parent);
-  b->opacity = 1;
+  b->opacity = b->alpha_multiplier = 1;
   b->filter_mode = WLR_SCALE_FILTER_BILINEAR;
   b->transform = WL_OUTPUT_TRANSFORM_NORMAL;
   pixman_region32_init(&b->opaque_region);
@@ -358,6 +360,12 @@ void rediwm_buffer_set_source_box(struct rediwm_buffer *b, const struct wlr_fbox
   const struct wlr_fbox *next = box ? box : &none;
   if (!memcmp(&b->src_box, next, sizeof(*next))) return;
   b->src_box = *next;
+  changed(&b->node);
+}
+
+void rediwm_buffer_set_alpha_multiplier(struct rediwm_buffer *b, float multiplier) {
+  if (b->alpha_multiplier == multiplier) return;
+  b->alpha_multiplier = multiplier;
   changed(&b->node);
 }
 

@@ -302,7 +302,7 @@ pub const WindowCaptureSource = struct {
         defer texture.destroy();
         if (surface) |client| explicit_sync.ReadFence.note(ctx.read_fence, client);
 
-        var alpha = scene_buffer.opacity;
+        var alpha = scene_buffer.inheritedOpacity() * scene_buffer.alpha_multiplier;
         var luminance_multiplier: f32 = 1.0;
         const options: wlr.RenderPass.TextureOptions = .{
             .texture = texture,

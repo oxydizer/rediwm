@@ -9,6 +9,7 @@
 // output_sample and frame_done.
 #pragma once
 #include "node.h"
+#include <wlr/types/wlr_alpha_modifier_v1.h>
 #include <wlr/util/box.h>
 
 struct wlr_surface;
@@ -20,9 +21,18 @@ struct rediwm_surface {
   struct rediwm_buffer *buffer;
   struct wlr_surface *surface;
   struct wlr_box clip;
+  struct glass_effect *glass;
   struct wl_listener node_destroy, outputs_update, output_sample, frame_done, surface_destroy,
       surface_commit;
 };
+
+// Sample committed alpha only when binding to a surface or following a commit.
+// Reconfiguring a scene clip can also happen between Wayland commits.
+static inline void rediwm_buffer_sync_surface_alpha(struct rediwm_buffer *buffer, struct wlr_surface *surface) {
+  const struct wlr_alpha_modifier_surface_v1_state *state =
+      surface ? wlr_alpha_modifier_v1_get_surface_state(surface) : NULL;
+  rediwm_buffer_set_alpha_multiplier(buffer, state ? (float)state->multiplier : 1);
+}
 
 // A node showing `surface` alone, no subsurfaces. NULL on allocation failure.
 struct rediwm_surface *rediwm_surface_create(struct rediwm_tree *parent, struct wlr_surface *);

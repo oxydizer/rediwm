@@ -9,6 +9,7 @@
 #include <wlr/backend/drm.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/util/log.h>
+#include <wlr/types/wlr_alpha_modifier_v1.h>
 #include <wlr/types/wlr_color_management_v1.h>
 #include <wlr/types/wlr_color_representation_v1.h>
 #include <wlr/types/wlr_compositor.h>
@@ -242,6 +243,7 @@ struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
   wl_list_init(&p->workspace_commit.link);
   wl_list_init(&p->outputs); wl_list_init(&p->tag.link); wl_list_init(&p->description.link);
   wl_list_init(&p->lease_request.link); wl_list_init(&p->layout_add.link);
+  if (!wlr_alpha_modifier_v1_create(display)) goto fail;
   p->content = wlr_content_type_manager_v1_create(display, 1);
   p->tearing = wlr_tearing_control_manager_v1_create(display, 1);
   struct wlr_xdg_toplevel_tag_manager_v1 *tags = wlr_xdg_toplevel_tag_manager_v1_create(display, 1);

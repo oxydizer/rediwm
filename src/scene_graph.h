@@ -434,5 +434,6 @@ struct rediwm_item {
   union {
     const struct rediwm_shadow *shadow;
     const struct rediwm_ribbon *ribbon; // node-owned; normalized to edges
+    const struct rediwm_glass_region *blur_region; // client effects only
   }; // exclusive procedural kinds; ordinary items do not grow for optional effects
 };

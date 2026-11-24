@@ -209,8 +209,7 @@ pub fn refreshConfiguration(output: *Output) void {
     output.server.input.refreshOutputScales();
     if (output.taskbar) |bar| bar.notifyToplevelsChanged();
     syncLayout(output.server);
-    output.color.key = null;
-    output.server.night_light.retargetOutput(output);
+    @import("gamma.zig").refresh(output);
     if (output.server.idle) |im| im.recheckInhibitors();
     output.wlr_output.scheduleFrame();
 }
@@ -287,8 +286,7 @@ pub fn applyConfig(output: *Output) void {
                 if (!out.testState(&mode_state) or !out.commitState(&mode_state)) {
                     log.warn("output {s}: saved display mode rejected", .{out.name});
                 } else {
-                    output.color.key = null;
-                    output.server.night_light.retargetOutput(output);
+                    @import("gamma.zig").refresh(output);
                     out.scheduleFrame();
                 }
             }

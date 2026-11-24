@@ -196,8 +196,7 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
     // measurements; every glass call already accepts a null engine. The greeter
     // has no glass and no clients, and each program it skips is a compile the
     // login screen would wait for (no shader cache there: main.zig).
-    server.glass_engine = if (greeter or environ.getPosix("REDIWM_NO_GLASS") != null) null else glass.Engine.create();
-    errdefer glass.Engine.destroy(server.glass_engine);
+    const want_glass = !greeter and environ.getPosix("REDIWM_NO_GLASS") == null;
     server.output_renderer = scene_output_mod.Renderer.create(renderer) orelse return error.RendererInitFailed;
     errdefer scene_output_mod.Renderer.destroy(server.output_renderer);
     @import("../effects/window_move.zig").configure(server);
@@ -211,11 +210,17 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
         @import("../chrome.zig").polygon_enabler = &enablePolygons;
         // Glass (stage 5c of docs/plans/scene-graph.md); without the blur program
         // each glass surface shows its own tint.
-        if (server.glass_engine != null and !server.output_renderer.enableBackdrops())
-            log.err("glass: blur program unavailable, glass surfaces show their tint", .{});
+        if (want_glass) {
+            if (server.output_renderer.enableBackdrops()) {
+                server.glass_engine = glass.Engine.create();
+            } else {
+                log.err("glass: blur program unavailable, glass surfaces show their tint", .{});
+            }
+        }
     } else {
         log.err("window frames: shaped programs unavailable, windows are drawn square", .{});
     }
+    errdefer glass.Engine.destroy(server.glass_engine);
     server.outputs.init();
     server.layer_surfaces.init();
     try server.world.init(server, world_tree);
@@ -387,6 +392,7 @@ fn initProtocols(server: *Server) CompositorError!void {
         break :blk null;
     };
     if (!greeter) {
+        if (!glass.createBackgroundEffect(wl_server, server.glass_engine)) return error.ExtraProtocolsCreateFailed;
         server.foreign_toplevels = wlr.ForeignToplevelManagerV1.create(server.wl_server) catch |err| blk: {
             log.warn("init: could not create wlr foreign-toplevel manager: {}", .{err});
             break :blk null;
@@ -412,6 +418,8 @@ fn initProtocols(server: *Server) CompositorError!void {
             mgr.events.commit.add(&server.security_context_commit);
         }
     }
+    if (!greeter) @import("../output/gamma.zig").init(server) catch return error.ExtraProtocolsCreateFailed;
+    errdefer if (!greeter) server.set_gamma.link.remove();
     _ = Xwayland.create(server);
 
     const layer_shell = wlr.LayerShellV1.create(wl_server, 5) catch return error.CompositorCreateFailed;

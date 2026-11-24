@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import tempfile
 import time
@@ -37,11 +38,11 @@ def read_samples(path: Path):
     return result
 
 
-def test_default_neutral(tmp: Path):
-    print("Running test_default_neutral...")
+def test_disabled_neutral(tmp: Path):
+    print("Running test_disabled_neutral...")
     compositor, log = spawn_compositor(
         tmp, outputs="2",
-        config_content="",
+        config_content="[night_light]\nenabled = false\n",
         env_extra={"TZ": "UTC"},
     )
     try:
@@ -58,7 +59,7 @@ def test_default_neutral(tmp: Path):
                 assert out["temperature"] == 6500, f"Expected temp=6500, got {out}"
                 assert out["night_light"] is True, f"Expected night_light=true, got {out}"
                 assert out["gamma"] == 1.0, f"Expected gamma=1.0, got {out}"
-            print("  default config neutrality passed")
+            print("  disabled Night Light is neutral")
     except Exception:
         log.flush()
         print((tmp / "compositor.log").read_text())
@@ -106,6 +107,7 @@ temperature = 4000
             log.flush()
             log_text2 = (tmp / "compositor.log").read_text()
             assert log_text2.count("hardware gamma LUT unsupported") == 2
+            expect_gamma_failure(tmp)
             print("  unsupported mode without hook passed")
     except Exception:
         log.flush()
@@ -166,6 +168,7 @@ temperature = 4000
             lines_after = read_samples(samples_file)
             test_events_after = [e for e in lines_after if e.get("event") == "test" and e.get("has_transform")]
             assert len(test_events_after) == 2, f"Expected 2 test events total, got {len(test_events_after)}"
+            expect_gamma_failure(tmp)
             print("  reject mode passed")
     except Exception:
         log.flush()
@@ -423,17 +426,101 @@ day_temperature = 6500
         log.close()
 
 
+GAMMA_CLIENT = shutil.which("wlsunset") or shutil.which("gammastep")
+
+
+def gamma_client(tmp, temperature, stderr):
+    display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
+    if Path(GAMMA_CLIENT).name == "wlsunset":
+        args = ["-o", "HEADLESS-1", "-S", "06:00", "-s", "18:00",
+                "-t", str(temperature), "-T", str(temperature + 1)]
+    else:
+        args = ["-m", "wayland:output=HEADLESS-1", "-l", "0:0",
+                "-t", f"{temperature}:{temperature}", "-r"]
+    return subprocess.Popen([GAMMA_CLIENT, *args],
+        env=dict(os.environ, DISPLAY="", XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display,
+                 XDG_CONFIG_HOME=str(tmp), WAYLAND_DEBUG="client"), stderr=stderr)
+
+
+def expect_gamma_failure(tmp):
+    if not GAMMA_CLIENT:
+        return
+    path = tmp / "gamma-client.log"
+    with path.open("w") as log:
+        client = gamma_client(tmp, 2500, log)
+        try:
+            wait_for(lambda: any("zwlr_gamma_control_v1" in line and ".failed()" in line
+                                 for line in path.read_text().splitlines()),
+                     "gamma client did not receive the failed event")
+        finally:
+            if client.poll() is None:
+                stop_process(client)
+
+
+def test_external_gamma(tmp: Path, hook: Path):
+    # Use a real Wayland client with the simulated output LUT so the test can
+    # inspect which ramp was committed on each output.
+    if not GAMMA_CLIENT:
+        print("Skipping external gamma test (install wlsunset or gammastep)")
+        return
+    samples = tmp / "gamma.jsonl"
+    config = '[night_light]\nenabled = true\nschedule = "always"\ntemperature = 5000\n'
+    compositor, log = spawn_compositor(tmp, outputs="2", config_content=config,
+        env_extra={"LD_PRELOAD": str(hook), "REDIWM_GAMMA_SAMPLES": str(samples)})
+    client = None
+    try:
+        with IPCClient(tmp) as ipc:
+            def latest(name):
+                commits = [e for e in read_samples(samples)
+                           if e["event"] == "commit" and e["output"] == name]
+                return commits[-1] if commits else {}
+
+            wait_for(lambda: latest("HEADLESS-1") and latest("HEADLESS-2"), "initial LUTs missing")
+            initial = latest("HEADLESS-1")["sample_1"]
+            client = gamma_client(tmp, 3000, log)
+            wait_for(lambda: latest("HEADLESS-1")["sample_1"][2] < initial[2] - .1,
+                     "external ramp never reached HEADLESS-1")
+            external = latest("HEADLESS-1")["sample_1"]
+            expect_gamma_failure(tmp)  # A second writer cannot take the output.
+            assert latest("HEADLESS-1")["sample_1"] == external
+            assert latest("HEADLESS-2")["sample_1"] == initial
+            states = {o["name"]: o["status"] for o in ipc.get_night_light()["outputs"]}
+            assert states == {"HEADLESS-1": "external", "HEADLESS-2": "applied"}, states
+
+            # A local retarget while the client owns output 1 affects output 2
+            # immediately. On disconnect, output 1 gets the updated local LUT.
+            (tmp / "rediwm-config.toml").write_text(config.replace("5000", "4000"))
+            ipc.reload_config()
+            wait_for(lambda: latest("HEADLESS-2")["sample_1"] != initial, "local LUT unchanged")
+            assert latest("HEADLESS-1")["sample_1"] == external
+            client.kill()
+            client.wait(timeout=10)
+            wait_for(lambda: latest("HEADLESS-1")["sample_1"] == latest("HEADLESS-2")["sample_1"],
+                     "disconnect did not restore the current Night Light ramp")
+            print(f"  external gamma ownership, reload and disconnect passed ({Path(GAMMA_CLIENT).name})")
+    except Exception:
+        log.flush()
+        print((tmp / "compositor.log").read_text()[-6000:])
+        raise
+    finally:
+        if client and client.poll() is None:
+            stop_process(client)
+        stop_process(compositor)
+        log.close()
+
+
 def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-night-light-") as directory:
         tmp = Path(directory)
         hook = compile_gamma_hook(tmp)
 
-        for sub in ("neutral", "unsupported", "reject", "accept"):
+        for sub in ("neutral", "unsupported", "reject", "accept", "external"):
             (tmp / sub).mkdir(parents=True, exist_ok=True)
 
-        test_default_neutral(tmp / "neutral")
+        test_disabled_neutral(tmp / "neutral")
         test_unsupported_without_hook(tmp / "unsupported")
         test_reject_mode(tmp / "reject", hook)
+        test_external_gamma(tmp / "external", hook)
         test_accept_mode(tmp / "accept", hook)
         print("All night light integration tests passed!")
 

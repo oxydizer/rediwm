@@ -23,6 +23,8 @@ const timestamp = Output.timestamp;
 pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
     if (output.color.pending) {
         var copy = state.*;
+        // The test borrows the rest of the state and owns only its LUT reference.
+        copy.color_transform = null;
         copy.setColorTransform(output.color.transform);
         if (output.wlr_output.testState(&copy)) {
             state.setColorTransform(output.color.transform);
@@ -30,6 +32,7 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
             output.color.status = .rejected;
             output.color.pending = false;
             output.color.consecutive_failures = 0;
+            if (output.color.external) |control| control.fail();
             if (!output.color.logged_rejected) {
                 output.color.logged_rejected = true;
                 log.warn("output '{s}' rejected color transform", .{output.wlr_output.name});
@@ -70,6 +73,7 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
                 if (output.color.consecutive_failures >= 3) {
                     output.color.status = .rejected;
                     output.color.pending = false;
+                    if (output.color.external) |control| control.fail();
                     if (!output.color.logged_rejected) {
                         output.color.logged_rejected = true;
                         log.warn("output '{s}' rejected color transform after 3 failures", .{output.wlr_output.name});
@@ -416,8 +420,7 @@ pub fn setDisplayMode(output: *Output, mode: @import("../output_modes.zig").Choi
     if (!output.wlr_output.testState(&state) or !output.wlr_output.commitState(&state)) return false;
     late.reset(output);
     syncLayout(output.server);
-    output.color.key = null;
-    output.server.night_light.retargetOutput(output);
+    @import("gamma.zig").refresh(output);
     if (output.server.idle) |im| im.recheckInhibitors();
     output.wlr_output.scheduleFrame();
     return true;
@@ -451,8 +454,7 @@ pub fn handleRequestState(
     late.reset(output);
     output.applyConfig();
     syncLayout(output.server);
-    output.color.key = null;
-    output.server.night_light.retargetOutput(output);
+    @import("gamma.zig").refresh(output);
     if (output.server.idle) |im| im.recheckInhibitors();
 }
 

@@ -52,6 +52,7 @@ pub const Edges = @import("edges.zig").Edges;
 
 pub const AddonSet = @import("addon.zig").AddonSet;
 pub const Buffer = @import("buffer.zig").Buffer;
+pub const gamma_control = @import("gamma_control.zig");
 pub const ColorTransform = @import("c.zig").c.wlr_color_transform;
 pub const Compositor = @import("compositor.zig").Compositor;
 pub const Cursor = @import("cursor.zig").Cursor;
