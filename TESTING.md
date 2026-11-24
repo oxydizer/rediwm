@@ -8,6 +8,14 @@ zig build test
 python3 tests/<name>.py
 ```
 
+`zig build test-video-integration` runs the video suite with generated FFmpeg
+clips and a paced null audio device. It checks VAAPI and shm pixels, software
+fallback, frame steps, keyframe scrubbing, volume and mute, playback rate
+and idle threads. It drives the real Files chooser and a Wayland URI-list
+source, checks the fullscreen cursor and inspects the player’s idle inhibitor.
+Use `WLR_RENDER_DRM_DEVICE` to select each GPU on a hybrid system.
+`python3 tests/video.py` runs the silent subset with the installed player.
+
 The long-running Files benchmarks are skipped by default. To include the
 transfer and end-to-end copy benchmarks in the full test run, use:
 
@@ -192,6 +200,37 @@ consumed input, client teardown, config reload and reduced motion in a private h
 `REDIWM_TEST_SCALE=1.5 REDIWM_TEST_OUTPUTS=2`. Also run `focus_zoom.py`,
 `desktop_zoom.py`, `keyboard_shortcuts.py`, `shortcuts_inhibit.py`,
 `pointer_constraints.py` and `switcher_ime.py` after changing its input routing.
+
+## Video player DRM benchmark
+
+`tests/video_bench.py --live-output` briefly opens fullscreen windows on the
+named physical output in a running RediWM session. The default four paired
+rounds take about 4½ minutes. Use a quiet machine on AC. The harness holds
+RediWM's temporary screensaver inhibitor during the run and releases it on
+exit, including on interruption. It requires Linux, FFmpeg, mpv with
+`dmabuf-wayland`, Python with PyGObject, a readable Intel package-0 RAPL
+counter, and the selected GPU's per-client DRM video-engine counters.
+
+```sh
+zig build -Doptimize=ReleaseSafe --prefix zig-out/release-safe
+ffmpeg -hide_banner -loglevel error -nostdin -f lavfi \
+  -i testsrc2=size=1920x1080:rate=60:duration=40 -vf scale=out_color_matrix=bt709 \
+  -an -c:v libx264 -threads 6 -preset veryfast -crf 20 -g 120 -bf 3 \
+  -pix_fmt yuv420p -color_range tv -colorspace bt709 -color_primaries bt709 \
+  -color_trc bt709 /tmp/phase2-1080p60.mp4
+python3 tests/video_bench.py --live-output eDP-1 --render-node /dev/dri/renderD128 \
+  --clip /tmp/phase2-1080p60.mp4 --json /tmp/video-drm.json
+```
+
+Use the actual connector and render node. Each player gets the same clip,
+window geometry and settling period. The sampler reads process CPU, per-thread
+paused context switches, decode-engine time and package energy at the edges
+of each interval. It checks fullscreen ownership, output state, VAAPI and
+media progress. Native progress uses packet DTS at the demuxer's read head.
+mpv exposes its media clock. `--state paused` repeats just the idle samples.
+`--headless` in place of `--live-output NAME` exercises the harness in a
+private compositor. Physical measurements and raw samples are in the
+[player plan](docs/plans/video-player.md#phase-2-measurements).
 
 ## HDR qualification
 

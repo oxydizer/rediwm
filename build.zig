@@ -9,6 +9,7 @@ const Context = @import("build/context.zig").Context;
 const protocols = @import("build/protocols.zig");
 const apps = @import("build/apps.zig");
 const player_build = @import("build/player.zig");
+const video_build = @import("build/video.zig");
 const qt_style = @import("build/qt_style.zig");
 const data = @import("build/data.zig");
 const session_build = @import("build/session.zig");
@@ -264,6 +265,7 @@ pub fn build(b: *std.Build) void {
         .wlroots = wlroots,
         .i18n_mod = i18n_mod,
         .ui_mod = ui_mod,
+        .app_kit_mod = app_kit_mod,
         .dbus_mod = dbus_mod,
         .platform_mod = platform_mod,
         .config_mod = config_mod,
@@ -272,6 +274,7 @@ pub fn build(b: *std.Build) void {
     };
     const app = apps.add(ctx);
     player_build.add(ctx);
+    const video = video_build.add(ctx);
     qt_style.add(ctx);
     const files = app.files;
     const images = app.images;
@@ -287,7 +290,7 @@ pub fn build(b: *std.Build) void {
             .install_dir = .lib,
             .install_subdir = "rediwm",
         });
-        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor, monitor, calculator, theme_helper }) |exe|
+        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor, monitor, calculator, theme_helper, video }) |exe|
             exe.root_module.addRPathSpecial("$ORIGIN/../lib/rediwm");
     }
     data.add(ctx);
@@ -296,6 +299,7 @@ pub fn build(b: *std.Build) void {
     const session_supervisor = session.session_supervisor;
 
     const zig_tests = tests.addZig(ctx, session);
+    video_build.addTests(ctx, zig_tests.test_step);
     @import("build/keys.zig").add(ctx, zig_tests.test_step, &.{ compositor.root_module, zig_tests.ui_tests_module });
     @import("build/firewall.zig").add(ctx, zig_tests.test_step, &.{ compositor.root_module, zig_tests.ui_tests_module });
     @import("build/printing.zig").add(ctx);

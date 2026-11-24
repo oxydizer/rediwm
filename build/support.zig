@@ -16,6 +16,8 @@ pub const CHeaders = struct {
     libinput: *std.Build.Module,
     png: *std.Build.Module,
     archive: *std.Build.Module,
+    /// FFmpeg, libva and libdrm (`c_av`), for rediwm-video.
+    av: *std.Build.Module,
 };
 
 pub const gfx_libs = [_][]const u8{ "cairo", "fontconfig", "freetype2", "harfbuzz", "xkbcommon" };
@@ -28,8 +30,12 @@ pub fn cHeaders(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.l
         .libinput = cHeader(b, target, optimize, b.path("src/c/libinput.h"), &.{ "libinput", "libudev" }),
         .png = cHeader(b, target, optimize, b.path("src/c/png.h"), &.{"libpng16"}),
         .archive = cHeader(b, target, optimize, b.path("src/c/archive.h"), &.{"libarchive"}),
+        .av = cHeader(b, target, optimize, b.path("src/c/av.h"), &av_libs),
     };
 }
+
+/// What rediwm-video links; `c_av` translates their headers.
+pub const av_libs = [_][]const u8{ "libavformat", "libavcodec", "libavutil", "libswscale", "libswresample", "libva", "libva-drm", "libdrm" };
 
 pub fn cHeader(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize, header: std.Build.LazyPath, libs: []const []const u8) *std.Build.Module {
     return b.createModule(.{ .root_source_file = cTranslation(b, target, optimize, header, libs).getOutput() });

@@ -14,6 +14,7 @@ the compositor doesn't decorate windows).
 | Declaration | What it is |
 |---|---|
 | `window.run(App, &app, init, options)` | One xdg-toplevel window: fractional scale, decorations, cursors, keyboard with dead keys and key repeat, live theme reloads, an idle-silent render loop |
+| `window_buffer` | Reusable, release-tracked ARGB shm buffers for app surfaces |
 | `settings`, `settings_watch` | The user's theme, icon pack and app settings, as Files and Calculator read them |
 | `ui` | Widgets, layout, input dispatch, Cairo drawing with theme tokens, text, icons |
 | `i18n`, `c` (libc, cairo, xkbcommon, …), `wayland`, `memory` | The modules those depend on |

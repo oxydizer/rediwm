@@ -6,7 +6,7 @@ Area notes are in an `AGENTS.md` beside the code; read
 the one for the directory you work in: `src/files`, `src/editor`,
 `src/desktop`, `src/input`, `src/control_center`, `src/ui`, `src/session`,
 `src/dm`, `src/accounts_helper`, `src/firewall`, `src/printing`, `src/player`,
-`scripts`, `src/wlr`, `src/platform`.
+`src/video`, `scripts`, `src/wlr`, `src/platform`.
 
 ## Working rules
 

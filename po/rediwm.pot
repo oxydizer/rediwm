@@ -9596,6 +9596,11 @@ msgctxt "desktop:Comment"
 msgid "Play audio files in the background with RediWM"
 msgstr ""
 
+#: data/rediwm-video.desktop
+msgctxt "desktop:Comment"
+msgid "Play videos with RediWM"
+msgstr ""
+
 #: data/rediwm-release-safe.desktop
 msgctxt "desktop:Comment"
 msgid "RediWM Wayland compositor"
@@ -9694,6 +9699,11 @@ msgstr ""
 #: data/rediwm-editor.desktop
 msgctxt "desktop:Name"
 msgid "Text Editor"
+msgstr ""
+
+#: data/rediwm-video.desktop
+msgctxt "desktop:Name"
+msgid "Videos"
 msgstr ""
 
 #: data/org.rediwm.accounts.policy
