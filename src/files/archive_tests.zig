@@ -105,6 +105,7 @@ fn measureArchiveExtraction(
     allocator: std.mem.Allocator,
     source: []const u8,
     parent: []const u8,
+    cache_capacity: usize,
     metrics: ?*archive.ExtractMetrics,
 ) !u64 {
     const stage = try archive.temporary(allocator, parent);
@@ -115,9 +116,16 @@ fn measureArchiveExtraction(
     var cancel: archive.Cancel = .init(false);
     const start = archiveBenchmarkNowNs();
     if (metrics) |m| {
-        try archive.extractMeasured(allocator, source, stage, &cancel, m);
+        try archive.extractMeasuredWithCacheCapacity(
+            allocator,
+            source,
+            stage,
+            &cancel,
+            m,
+            cache_capacity,
+        );
     } else {
-        try archive.extract(allocator, source, stage, null, &cancel);
+        try archive.extractWithCacheCapacity(allocator, source, stage, &cancel, cache_capacity);
     }
     return archiveBenchmarkNowNs() - start;
 }
@@ -130,45 +138,56 @@ fn benchmarkArchiveLayout(
     file_count: usize,
     directory_count: usize,
 ) !void {
-    _ = try measureArchiveExtraction(allocator, source, parent, null);
-    var samples: [3]u64 = undefined;
-    for (&samples) |*sample| {
-        sample.* = try measureArchiveExtraction(allocator, source, parent, null);
-    }
-    // Three samples: select the median without allocating or sorting.
-    const median = @max(@min(samples[0], samples[1]), @min(@max(samples[0], samples[1]), samples[2]));
-    const files_per_second = @as(f64, @floatFromInt(file_count)) *
-        std.time.ns_per_s / @as(f64, @floatFromInt(median));
-    std.debug.print(
-        "BENCH,archive_extract,{s},{d},{d},{d},{d:.2}\n",
-        .{ layout, file_count, directory_count, median, files_per_second },
-    );
 
-    var metrics: archive.ExtractMetrics = .{};
-    const measured_ns = try measureArchiveExtraction(allocator, source, parent, &metrics);
-    std.debug.print(
-        "METRIC,archive_extract,{s},{d},headers={d},header_ns={d},cache_hits={d},cache_misses={d},directory_lookup_ns={d},directory_components={d},mkdir_calls={d},mkdir_existing={d},directory_open_calls={d},directory_component_ns={d},file_creates={d},file_create_ns={d},chmod_calls={d},chmod_ns={d},bytes={d},measured_total_ns={d}\n",
-        .{
-            layout,
-            file_count,
-            metrics.header_calls,
-            metrics.header_ns,
-            metrics.directory_cache_hits,
-            metrics.directory_cache_misses,
-            metrics.directory_lookup_ns,
-            metrics.directory_components,
-            metrics.mkdir_calls,
-            metrics.mkdir_existing,
-            metrics.directory_open_calls,
-            metrics.directory_component_ns,
-            metrics.file_create_calls,
-            metrics.file_create_ns,
-            metrics.chmod_calls,
-            metrics.chmod_ns,
-            metrics.extracted_bytes,
-            measured_ns,
-        },
-    );
+    for ([_]usize{ 1, 64 }) |cache_capacity| {
+        _ = try measureArchiveExtraction(allocator, source, parent, cache_capacity, null);
+        var samples: [3]u64 = undefined;
+        for (&samples) |*sample| {
+            sample.* = try measureArchiveExtraction(allocator, source, parent, cache_capacity, null);
+        }
+        // Three samples: select the median without allocating or sorting.
+        const median = @max(@min(samples[0], samples[1]), @min(@max(samples[0], samples[1]), samples[2]));
+        const files_per_second = @as(f64, @floatFromInt(file_count)) *
+            std.time.ns_per_s / @as(f64, @floatFromInt(median));
+        std.debug.print(
+            "BENCH,archive_extract,{s},{d},{d},{d},{d},{d:.2}\n",
+            .{ layout, file_count, directory_count, cache_capacity, median, files_per_second },
+        );
+
+        var metrics: archive.ExtractMetrics = .{};
+        const measured_ns = try measureArchiveExtraction(
+            allocator,
+            source,
+            parent,
+            cache_capacity,
+            &metrics,
+        );
+        std.debug.print(
+            "METRIC,archive_extract,{s},{d},capacity={d},headers={d},header_ns={d},cache_hits={d},cache_misses={d},cache_evictions={d},directory_lookup_ns={d},directory_components={d},mkdir_calls={d},mkdir_existing={d},directory_open_calls={d},directory_component_ns={d},file_creates={d},file_create_ns={d},chmod_calls={d},chmod_ns={d},bytes={d},measured_total_ns={d}\n",
+            .{
+                layout,
+                file_count,
+                cache_capacity,
+                metrics.header_calls,
+                metrics.header_ns,
+                metrics.directory_cache_hits,
+                metrics.directory_cache_misses,
+                metrics.directory_cache_evictions,
+                metrics.directory_lookup_ns,
+                metrics.directory_components,
+                metrics.mkdir_calls,
+                metrics.mkdir_existing,
+                metrics.directory_open_calls,
+                metrics.directory_component_ns,
+                metrics.file_create_calls,
+                metrics.file_create_ns,
+                metrics.chmod_calls,
+                metrics.chmod_ns,
+                metrics.extracted_bytes,
+                measured_ns,
+            },
+        );
+    }
 }
 
 test "Git porcelain preserves paths, rename pairs, conflicts and directory boundaries" {
@@ -273,7 +292,7 @@ test "archive directory fd benchmark" {
     defer allocator.free(source);
 
     std.debug.print(
-        "BENCH,operation,layout,files,directories,median_ns,files_per_second\n",
+        "BENCH,operation,layout,files,directories,cache_capacity,median_ns,files_per_second\n",
         .{},
     );
     for ([_]struct {

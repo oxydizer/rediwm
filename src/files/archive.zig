@@ -14,6 +14,7 @@ pub const ExtractMetrics = struct {
     header_ns: u64 = 0,
     directory_cache_hits: u64 = 0,
     directory_cache_misses: u64 = 0,
+    directory_cache_evictions: u64 = 0,
     directory_lookup_ns: u64 = 0,
     directory_components: u64 = 0,
     mkdir_calls: u64 = 0,
@@ -257,44 +258,87 @@ fn openDirectory(root: c_int, path: []const u8, metrics: ?*ExtractMetrics) !c_in
     return fd;
 }
 
+const directory_fd_cache_max = 64;
+
 const DirectoryFdCache = struct {
+    const Slot = struct {
+        path: ?[]u8 = null,
+        fd: c_int = -1,
+        last_used: u64 = 0,
+    };
+
     allocator: Allocator,
     root: c_int,
+    capacity: usize,
     metrics: ?*ExtractMetrics = null,
-    fd: ?c_int = null,
-    path: ?[]u8 = null,
+    clock: u64 = 0,
+    slots: [directory_fd_cache_max]Slot = blk: {
+        var result: [directory_fd_cache_max]Slot = undefined;
+        for (&result) |*slot| slot.* = .{};
+        break :blk result;
+    },
 
     fn get(self: *DirectoryFdCache, path: []const u8) !c_int {
         const started = if (self.metrics != null) benchmarkNowNs() else 0;
-        if (self.path) |cached_path| {
-            if (std.mem.eql(u8, cached_path, path)) {
+        for (self.slots[0..self.capacity]) |*slot| {
+            if (slot.path) |cached_path| {
+                if (!std.mem.eql(u8, cached_path, path)) continue;
+                self.clock +%= 1;
+                slot.last_used = self.clock;
                 if (self.metrics) |m| {
                     m.directory_cache_hits += 1;
                     addElapsed(&m.directory_lookup_ns, started);
                 }
-                return self.fd.?;
+                return slot.fd;
             }
         }
 
         if (self.metrics) |m| m.directory_cache_misses += 1;
         const next_path = try self.allocator.dupe(u8, path);
         errdefer self.allocator.free(next_path);
+
+        var victim: usize = 0;
+        var oldest: u64 = std.math.maxInt(u64);
+        for (self.slots[0..self.capacity], 0..) |*slot, index| {
+            if (slot.path == null) {
+                victim = index;
+                oldest = 0;
+                break;
+            }
+            if (slot.last_used < oldest) {
+                oldest = slot.last_used;
+                victim = index;
+            }
+        }
+
+        const slot = &self.slots[victim];
+        if (slot.path) |old_path| {
+            _ = c.close(slot.fd);
+            self.allocator.free(old_path);
+            if (self.metrics) |m| m.directory_cache_evictions += 1;
+        }
+        slot.path = null;
+        slot.fd = -1;
+
         const next_fd = try openDirectory(self.root, path, self.metrics);
         errdefer _ = c.close(next_fd);
-
-        if (self.fd) |old_fd| _ = c.close(old_fd);
-        if (self.path) |old_path| self.allocator.free(old_path);
-        self.fd = next_fd;
-        self.path = next_path;
+        self.clock +%= 1;
+        slot.path = next_path;
+        slot.fd = next_fd;
+        slot.last_used = self.clock;
         if (self.metrics) |m| addElapsed(&m.directory_lookup_ns, started);
         return next_fd;
     }
 
     fn deinit(self: *DirectoryFdCache) void {
-        if (self.fd) |fd| _ = c.close(fd);
-        if (self.path) |path| self.allocator.free(path);
-        self.fd = null;
-        self.path = null;
+        for (&self.slots) |*slot| {
+            if (slot.path) |path| {
+                _ = c.close(slot.fd);
+                self.allocator.free(path);
+                slot.path = null;
+                slot.fd = -1;
+            }
+        }
     }
 };
 
@@ -328,7 +372,18 @@ fn resolveLink(mem: Allocator, links: *const Links, path: []const u8, resolved: 
 /// Destination must be a private, newly created staging directory. Publication
 /// into the user's folder is handled by JobRunner's no-overwrite transfer path.
 pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member: ?[]const u8, cancel: *const Cancel) !void {
-    return extractSelected(mem, path, destination, null, member, cancel, null);
+    return extractSelected(mem, path, destination, null, member, cancel, null, directory_fd_cache_max);
+}
+
+/// Benchmark-only entry point for comparing bounded directory cache sizes.
+pub fn extractWithCacheCapacity(
+    mem: Allocator,
+    path: []const u8,
+    destination: []const u8,
+    cancel: *const Cancel,
+    capacity: usize,
+) !void {
+    return extractSelected(mem, path, destination, null, null, cancel, null, capacity);
 }
 
 /// Benchmark-only entry point. Normal callers should use extract().
@@ -340,7 +395,20 @@ pub fn extractMeasured(
     metrics: *ExtractMetrics,
 ) !void {
     metrics.* = .{};
-    return extractSelected(mem, path, destination, null, null, cancel, metrics);
+    return extractSelected(mem, path, destination, null, null, cancel, metrics, directory_fd_cache_max);
+}
+
+/// Benchmark-only measured extraction with an explicit directory cache size.
+pub fn extractMeasuredWithCacheCapacity(
+    mem: Allocator,
+    path: []const u8,
+    destination: []const u8,
+    cancel: *const Cancel,
+    metrics: *ExtractMetrics,
+    capacity: usize,
+) !void {
+    metrics.* = .{};
+    return extractSelected(mem, path, destination, null, null, cancel, metrics, capacity);
 }
 
 /// Extract selected files and directory subtrees into a private staging
@@ -348,7 +416,7 @@ pub fn extractMeasured(
 /// special files inside selected subtrees are rejected.
 pub fn extractMembers(mem: Allocator, path: []const u8, destination: []const u8, members: []const []const u8, cancel: *const Cancel) !void {
     if (members.len == 0) return error.MemberNotFound;
-    return extractSelected(mem, path, destination, members, null, cancel, null);
+    return extractSelected(mem, path, destination, members, null, cancel, null, directory_fd_cache_max);
 }
 
 fn extractSelected(
@@ -359,7 +427,10 @@ fn extractSelected(
     member: ?[]const u8,
     cancel: *const Cancel,
     metrics: ?*ExtractMetrics,
+    cache_capacity: usize,
 ) !void {
+    if (cache_capacity == 0 or cache_capacity > directory_fd_cache_max)
+        return error.InvalidDirectoryCacheCapacity;
     const reader = try Reader.open(mem, path, cancel);
     defer reader.close();
     const zdest = try mem.dupeSentinel(u8, destination, 0);
@@ -367,7 +438,12 @@ fn extractSelected(
     const root = c.open(zdest, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
     if (root < 0) return error.WriteFailed;
     defer _ = c.close(root);
-    var directory_cache = DirectoryFdCache{ .allocator = mem, .root = root, .metrics = metrics };
+    var directory_cache = DirectoryFdCache{
+        .allocator = mem,
+        .root = root,
+        .capacity = cache_capacity,
+        .metrics = metrics,
+    };
     defer directory_cache.deinit();
     var arena = std.heap.ArenaAllocator.init(mem);
     defer arena.deinit();
