@@ -314,9 +314,37 @@ fn processDetachedIoJobs(self: *App) void {
     }
 }
 
-fn closeArchivePublicationCursor(publication: *App.ArchivePublication) void {
+fn closeArchivePublicationCursor(
+    self: *App,
+    publication: *App.ArchivePublication,
+) void {
     if (publication.cursor) |*cursor| cursor.deinit();
     publication.cursor = null;
+    if (publication.cursor_ledger_handle) |handle| {
+        const runtime = self.io_runtime orelse unreachable;
+        runtime.resource_ledger.release(handle, .app) catch unreachable;
+        publication.cursor_ledger_handle = null;
+    }
+}
+
+fn openArchivePublicationCursor(
+    self: *App,
+    publication: *App.ArchivePublication,
+    path: [:0]const u8,
+) !void {
+    publication.cursor = try io_discovery.Cursor.open(path);
+    const runtime = self.io_runtime orelse {
+        closeArchivePublicationCursor(self, publication);
+        return error.IoRuntimeUnavailable;
+    };
+    publication.cursor_ledger_handle = runtime.resource_ledger.register(
+        publication.job_id,
+        .archive_publication_cursor,
+        .app,
+    ) catch |err| {
+        closeArchivePublicationCursor(self, publication);
+        return err;
+    };
 }
 
 fn failArchivePublication(
@@ -324,7 +352,7 @@ fn failArchivePublication(
     manager: *io_manager.Manager,
     publication: *App.ArchivePublication,
 ) void {
-    closeArchivePublicationCursor(publication);
+    closeArchivePublicationCursor(self, publication);
     if (publication.registration_closed) return;
     const token = publication.token orelse return;
     manager.failArchivePublication(token) catch {
@@ -667,7 +695,7 @@ fn stepArchivePublications(
         const publication = &self.archive_publications.items[index];
         if (manager.jobState(publication.job_id)) |state| {
             if (state.isTerminal()) {
-                closeArchivePublicationCursor(publication);
+                closeArchivePublicationCursor(self, publication);
                 _ = executor.discardArchiveStaging(
                     publication.job_id,
                     publication.operation_id,
@@ -711,7 +739,7 @@ fn stepArchivePublications(
                     continue;
                 };
                 defer self.allocator.free(zpath);
-                publication.cursor = io_discovery.Cursor.open(zpath) catch {
+                openArchivePublicationCursor(self, publication, zpath) catch {
                     failArchivePublication(self, manager, publication);
                     index += 1;
                     continue;
@@ -773,7 +801,7 @@ fn stepArchivePublications(
             if (registration_failed) {
                 failArchivePublication(self, manager, publication);
             } else if (batch.complete) {
-                closeArchivePublicationCursor(publication);
+                closeArchivePublicationCursor(self, publication);
                 manager.closeArchivePublication(token) catch {
                     failArchivePublication(self, manager, publication);
                     index += 1;

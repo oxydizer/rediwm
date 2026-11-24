@@ -7,6 +7,7 @@ const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_runtime = @import("io_runtime.zig");
+const io_resource_ledger = @import("io_resource_ledger.zig");
 const app_model = @import("app_model.zig");
 const app_dialogs = @import("app_dialogs.zig");
 const worker_mod = @import("worker.zig");
@@ -753,6 +754,45 @@ fn writeArchivePublicationFixture(path: []const u8) !void {
         @as(isize, 7),
         api.archive_write_data(writer, "payload", 7),
     );
+    try std.testing.expectEqual(@as(c_int, 0), api.archive_write_close(writer));
+}
+
+fn writeLargeArchivePublicationFixture(path: []const u8) !void {
+    const api = @import("c_archive");
+    const writer = api.archive_write_new() orelse return error.OutOfMemory;
+    defer _ = api.archive_write_free(writer);
+
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        api.archive_write_set_format_zip(writer),
+    );
+    const zpath = try std.testing.allocator.dupeSentinel(u8, path, 0);
+    defer std.testing.allocator.free(zpath);
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        api.archive_write_open_filename(writer, zpath),
+    );
+
+    for (0..65) |index| {
+        var name_buffer: [32]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buffer, "entry-{d}.txt", .{index});
+        const name_z = try std.testing.allocator.dupeSentinel(u8, name, 0);
+        defer std.testing.allocator.free(name_z);
+        const entry = api.archive_entry_new() orelse return error.OutOfMemory;
+        defer api.archive_entry_free(entry);
+        api.archive_entry_set_pathname(entry, name_z);
+        api.archive_entry_set_filetype(entry, c.S_IFREG);
+        api.archive_entry_set_perm(entry, 0o644);
+        api.archive_entry_set_size(entry, 1);
+        try std.testing.expectEqual(
+            @as(c_int, 0),
+            api.archive_write_header(writer, entry),
+        );
+        try std.testing.expectEqual(
+            @as(isize, 1),
+            api.archive_write_data(writer, "x", 1),
+        );
+    }
     try std.testing.expectEqual(@as(c_int, 0), api.archive_write_close(writer));
 }
 
@@ -1969,4 +2009,79 @@ test "archive publication scans roots, discovers descendants and drains the barr
     const contents = try transferTestReadFile(allocator, payload);
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("payload", contents);
+}
+
+test "archive publication cursor is tracked until its scan completes" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTransferTestTempDir(&temp_buffer);
+
+    const source = try transferTestJoin(allocator, temp, "many.zip");
+    defer allocator.free(source);
+    const destination = try transferTestJoin(allocator, temp, "destination");
+    defer allocator.free(destination);
+    defer {
+        transferTestCleanup(destination, true);
+        transferTestCleanup(source, false);
+        transferTestCleanup(temp, true);
+    }
+
+    try writeLargeArchivePublicationFixture(source);
+    try transferTestMkdir(destination);
+
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
+    var app = try testApp();
+    defer app.deinit();
+    app.io_runtime = &runtime;
+    app.io_manager = &runtime.manager;
+
+    app.startExtraction(source, destination);
+    const job = app.active_io_copy_job orelse
+        return error.ArchiveExtractionDidNotStart;
+    var observed_handle: ?io_resource_ledger.Handle = null;
+
+    while (true) {
+        app.stepDiscovery();
+        app.stepOperations();
+
+        for (app.archive_publications.items) |publication| {
+            if (publication.cursor == null) continue;
+            const handle = publication.cursor_ledger_handle orelse
+                return error.ArchivePublicationCursorMissingLedgerHandle;
+            try std.testing.expectEqual(
+                io_resource_ledger.ResourceKind.archive_publication_cursor,
+                runtime.resource_ledger.kindOf(handle).?,
+            );
+            try std.testing.expectEqual(
+                io_resource_ledger.Owner.app,
+                runtime.resource_ledger.ownerOf(handle).?,
+            );
+            observed_handle = handle;
+        }
+
+        if (runtime.manager.jobState(job).?.isTerminal()) break;
+
+        var descriptors = [_]c.struct_pollfd{
+            .{
+                .fd = app.discoveryWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
+            .{
+                .fd = app.operationWakeFd(),
+                .events = c.POLLIN,
+                .revents = 0,
+            },
+        };
+        const result = c.poll(&descriptors, @intCast(descriptors.len), 5_000);
+        if (result == 0) return error.TimedOutWaitingForArchivePublicationCursor;
+        if (result < 0 and std.c._errno().* != c.EINTR)
+            return error.ArchivePublicationCursorPollFailed;
+    }
+
+    const handle = observed_handle orelse
+        return error.ArchivePublicationCursorWasNotRetained;
+    try std.testing.expect(runtime.resource_ledger.kindOf(handle) == null);
+    try std.testing.expectEqual(@as(usize, 0), app.archive_publications.items.len);
 }

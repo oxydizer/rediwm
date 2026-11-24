@@ -12,6 +12,7 @@ const io_discovery_mod = @import("io_discovery.zig");
 const io_discovery_executor_mod = @import("io_discovery_executor.zig");
 const io_operation_executor_mod = @import("io_operation_executor.zig");
 const io_runtime_mod = @import("io_runtime.zig");
+const io_resource_ledger_mod = @import("io_resource_ledger.zig");
 const clipboard_mod = @import("clipboard.zig");
 const history_mod = @import("history.zig");
 const app_tabs = @import("app_tabs.zig");
@@ -86,6 +87,7 @@ pub const App = struct {
         operation_id: io_manager_mod.OperationId,
         token: ?io_manager_mod.WorkToken = null,
         cursor: ?io_discovery_mod.Cursor = null,
+        cursor_ledger_handle: ?io_resource_ledger_mod.Handle = null,
         registration_closed: bool = false,
     };
     pub const ArchiveMemberExtraction = struct {
@@ -475,6 +477,12 @@ pub const App = struct {
         // Cursors must be closed before Runtime deinit removes staging.
         for (self.archive_publications.items) |*publication| {
             if (publication.cursor) |*cursor| cursor.deinit();
+            publication.cursor = null;
+            if (publication.cursor_ledger_handle) |handle| {
+                const runtime = self.io_runtime orelse unreachable;
+                runtime.resource_ledger.release(handle, .app) catch unreachable;
+                publication.cursor_ledger_handle = null;
+            }
         }
         self.archive_publications.deinit(self.allocator);
         self.archive_member_extractions.deinit(self.allocator);
