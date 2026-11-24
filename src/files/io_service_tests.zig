@@ -1,5 +1,6 @@
 const std = @import("std");
 const service_mod = @import("io_service.zig");
+const c = @import("c.zig").api;
 
 fn normalCommand(job_id: u64) service_mod.Command {
     return .{ .kind = .submit_job, .job_id = job_id };
@@ -16,10 +17,10 @@ test "window IDs are centrally assigned, monotonic and not reused" {
     var first = try service.registerWindow();
     const stale = first;
     const first_id = first.window_id;
-    first.close();
+    try first.close();
 
     var second = try service.registerWindow();
-    defer second.close();
+    defer second.close() catch unreachable;
     try std.testing.expect(second.window_id > first_id);
     try std.testing.expectError(error.WindowClosed, stale.trySend(normalCommand(1)));
 }
@@ -31,7 +32,7 @@ test "normal command admission enforces per-window and aggregate bounds" {
     var handles: [9]service_mod.Handle = undefined;
     var handle_count: usize = 0;
     defer {
-        for (handles[0..handle_count]) |*handle| handle.close();
+        for (handles[0..handle_count]) |*handle| handle.close() catch unreachable;
     }
     for (&handles) |*handle| {
         handle.* = try service.registerWindow();
@@ -66,7 +67,7 @@ test "reserved control admission remains available when normal capacity is full"
     try service.init();
     defer service.deinit();
     var handle = try service.registerWindow();
-    defer handle.close();
+    defer handle.close() catch unreachable;
 
     for (0..service_mod.command_capacity_per_window) |i| {
         try handle.trySend(normalCommand(i));
@@ -90,8 +91,8 @@ test "command draining is round-robin across windows" {
     defer service.deinit();
     var first = try service.registerWindow();
     var second = try service.registerWindow();
-    defer first.close();
-    defer second.close();
+    defer first.close() catch unreachable;
+    defer second.close() catch unreachable;
 
     try first.trySend(normalCommand(1));
     try first.trySend(normalCommand(2));
@@ -109,7 +110,7 @@ test "progress coalescing preserves ordering around lifecycle updates" {
     try service.init();
     defer service.deinit();
     var handle = try service.registerWindow();
-    defer handle.close();
+    defer handle.close() catch unreachable;
 
     const first_sequence = try service.publishUpdate(handle.window_id, .{
         .job_id = 7,
@@ -134,12 +135,12 @@ test "progress coalescing preserves ordering around lifecycle updates" {
         .completed_bytes = 30,
     });
 
-    const coalesced = handle.tryReceiveUpdate().?;
+    const coalesced = (try handle.tryReceiveUpdate()).?;
     try std.testing.expectEqual(service_mod.UpdateKind.progress, coalesced.kind);
     try std.testing.expectEqual(@as(u64, 20), coalesced.completed_bytes);
-    const state = handle.tryReceiveUpdate().?;
+    const state = (try handle.tryReceiveUpdate()).?;
     try std.testing.expectEqual(service_mod.UpdateKind.job_state, state.kind);
-    const latest = handle.tryReceiveUpdate().?;
+    const latest = (try handle.tryReceiveUpdate()).?;
     try std.testing.expectEqual(service_mod.UpdateKind.progress, latest.kind);
     try std.testing.expectEqual(@as(u64, 30), latest.completed_bytes);
 }
@@ -149,7 +150,7 @@ test "update overflow is surfaced as an explicit resync marker" {
     try service.init();
     defer service.deinit();
     var handle = try service.registerWindow();
-    defer handle.close();
+    defer handle.close() catch unreachable;
 
     var last_sequence: u64 = 0;
     for (0..service_mod.update_capacity_per_window + 1) |i| {
@@ -160,10 +161,10 @@ test "update overflow is surfaced as an explicit resync marker" {
         });
     }
 
-    const marker = handle.tryReceiveUpdate().?;
+    const marker = (try handle.tryReceiveUpdate()).?;
     try std.testing.expectEqual(service_mod.UpdateKind.resync_required, marker.kind);
     try std.testing.expectEqual(last_sequence, marker.sequence);
-    try std.testing.expect(handle.tryReceiveUpdate() == null);
+    try std.testing.expect((try handle.tryReceiveUpdate()) == null);
 }
 
 test "shutdown rejects admission while handles can unregister cleanly" {
@@ -174,5 +175,32 @@ test "shutdown rejects admission while handles can unregister cleanly" {
     service.beginShutdown();
     try std.testing.expectError(error.ServiceStopping, handle.trySend(normalCommand(1)));
     try std.testing.expectError(error.ServiceStopping, service.registerWindow());
-    handle.close();
+    try handle.close();
+}
+
+test "window operations fail fast under mutex contention and remain retryable" {
+    var service: service_mod.Service = .{};
+    try service.init();
+    defer service.deinit();
+    var handle = try service.registerWindow();
+
+    try std.testing.expectEqual(@as(c_int, 0), c.pthread_mutex_lock(&service.mutex));
+    try std.testing.expectError(
+        error.ServiceBusy,
+        handle.trySend(normalCommand(1)),
+    );
+    try std.testing.expectError(
+        error.ServiceBusy,
+        handle.tryReceiveUpdate(),
+    );
+    try std.testing.expectError(
+        error.ServiceBusy,
+        handle.close(),
+    );
+    try std.testing.expectEqual(@as(c_int, 0), c.pthread_mutex_unlock(&service.mutex));
+
+    // Failed operations did not consume the handle or lose the command.
+    try handle.trySend(normalCommand(2));
+    try std.testing.expectEqual(@as(u64, 2), service.tryReceiveCommand().?.command.job_id);
+    try handle.close();
 }

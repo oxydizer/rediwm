@@ -148,7 +148,7 @@ pub const Service = struct {
 
     /// IDs are monotonic and never reused, even when a slot is recycled.
     pub fn registerWindow(self: *Service) !Handle {
-        self.lock();
+        if (!self.tryLock()) return error.ServiceBusy;
         defer self.unlock();
 
         if (self.stopping) return error.ServiceStopping;
@@ -243,7 +243,7 @@ pub const Service = struct {
     }
 
     fn enqueue(self: *Service, window_id: WindowId, command: Command) !void {
-        self.lock();
+        if (!self.tryLock()) return error.ServiceBusy;
         defer self.unlock();
 
         if (self.stopping) return error.ServiceStopping;
@@ -264,8 +264,8 @@ pub const Service = struct {
         }
     }
 
-    fn receiveUpdate(self: *Service, window_id: WindowId) ?Update {
-        self.lock();
+    fn receiveUpdate(self: *Service, window_id: WindowId) !?Update {
+        if (!self.tryLock()) return error.ServiceBusy;
         defer self.unlock();
 
         const slot = self.findSlot(window_id) orelse return null;
@@ -279,8 +279,8 @@ pub const Service = struct {
         return slot.updates.pop();
     }
 
-    fn unregisterWindow(self: *Service, window_id: WindowId) void {
-        self.lock();
+    fn unregisterWindow(self: *Service, window_id: WindowId) !void {
+        if (!self.tryLock()) return error.ServiceBusy;
         defer self.unlock();
 
         const slot = self.findSlot(window_id) orelse return;
@@ -299,6 +299,10 @@ pub const Service = struct {
         _ = c.pthread_mutex_lock(&self.mutex);
     }
 
+    fn tryLock(self: *Service) bool {
+        return c.pthread_mutex_trylock(&self.mutex) == 0;
+    }
+
     fn unlock(self: *Service) void {
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
@@ -314,12 +318,12 @@ pub const Handle = struct {
         try self.service.enqueue(self.window_id, command);
     }
 
-    pub fn tryReceiveUpdate(self: Handle) ?Update {
+    pub fn tryReceiveUpdate(self: Handle) !?Update {
         return self.service.receiveUpdate(self.window_id);
     }
 
-    pub fn close(self: *Handle) void {
-        self.service.unregisterWindow(self.window_id);
+    pub fn close(self: *Handle) !void {
+        try self.service.unregisterWindow(self.window_id);
         self.* = undefined;
     }
 };
