@@ -4,6 +4,7 @@
 //! It deliberately exposes no Manager, Runtime, executor or ledger pointer.
 const std = @import("std");
 const c = @import("c.zig").api;
+const wake = @import("platform").wake;
 
 pub const WindowId = u64;
 pub const JobId = u64;
@@ -124,6 +125,8 @@ const WindowSlot = struct {
 /// are non-owning capabilities; they cannot access service internals.
 pub const Service = struct {
     mutex: c.pthread_mutex_t = undefined,
+    command_wake_fd: std.posix.fd_t = -1,
+    update_wake_fd: std.posix.fd_t = -1,
     windows: [max_windows]WindowSlot = std.mem.zeroes([max_windows]WindowSlot),
     next_window_id: WindowId = 1,
     next_event_sequence: u64 = 1,
@@ -136,6 +139,12 @@ pub const Service = struct {
         self.* = .{};
         if (c.pthread_mutex_init(&self.mutex, null) != 0)
             return error.MutexInitFailed;
+        errdefer std.debug.assert(c.pthread_mutex_destroy(&self.mutex) == 0);
+
+        self.command_wake_fd = wake.create() orelse return error.WakeDescriptorCreateFailed;
+        errdefer _ = std.posix.system.close(self.command_wake_fd);
+
+        self.update_wake_fd = wake.create() orelse return error.WakeDescriptorCreateFailed;
     }
 
     pub fn deinit(self: *Service) void {
@@ -144,6 +153,28 @@ pub const Service = struct {
         std.debug.assert(self.pending_normal_commands == 0);
         self.unlock();
         std.debug.assert(c.pthread_mutex_destroy(&self.mutex) == 0);
+        _ = std.posix.system.close(self.command_wake_fd);
+        _ = std.posix.system.close(self.update_wake_fd);
+    }
+
+    /// Shared process-wide wake descriptor for newly admitted commands.
+    pub fn commandWakeFd(self: *const Service) std.posix.fd_t {
+        return self.command_wake_fd;
+    }
+
+    /// Shared process-wide wake descriptor for published window updates.
+    pub fn updateWakeFd(self: *const Service) std.posix.fd_t {
+        return self.update_wake_fd;
+    }
+
+    /// Drain the command wake counter after polling commandWakeFd().
+    pub fn drainCommandWake(self: *Service) u64 {
+        return drainWake(self.command_wake_fd);
+    }
+
+    /// Drain the update wake counter after polling updateWakeFd().
+    pub fn drainUpdateWake(self: *Service) u64 {
+        return drainWake(self.update_wake_fd);
     }
 
     /// IDs are monotonic and never reused, even when a slot is recycled.
@@ -220,6 +251,7 @@ pub const Service = struct {
 
         if (slot.needs_resync) {
             slot.resync_sequence = sequence;
+            signalWake(self.update_wake_fd);
             return sequence;
         }
 
@@ -227,6 +259,7 @@ pub const Service = struct {
             if (slot.updates.last()) |last| {
                 if (last.kind == .progress and last.job_id == sequenced.job_id) {
                     last.* = sequenced;
+                    signalWake(self.update_wake_fd);
                     return sequence;
                 }
             }
@@ -239,6 +272,7 @@ pub const Service = struct {
             slot.needs_resync = true;
             slot.resync_sequence = sequence;
         }
+        signalWake(self.update_wake_fd);
         return sequence;
     }
 
@@ -262,6 +296,7 @@ pub const Service = struct {
                 self.pending_normal_commands += 1;
             },
         }
+        signalWake(self.command_wake_fd);
     }
 
     fn receiveUpdate(self: *Service, window_id: WindowId) !?Update {
@@ -306,7 +341,45 @@ pub const Service = struct {
     fn unlock(self: *Service) void {
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
+
+    fn signalWake(fd: std.posix.fd_t) void {
+        const one: u64 = 1;
+        while (true) {
+            const rc = std.posix.system.write(fd, std.mem.asBytes(&one), @sizeOf(u64));
+            switch (std.posix.errno(rc)) {
+                .SUCCESS => {
+                    std.debug.assert(rc == @sizeOf(u64));
+                    return;
+                },
+                .INTR => continue,
+                // A saturated eventfd is already readable.
+                .AGAIN => return,
+                else => std.debug.panic("Files service eventfd write failed: {s}", .{
+                    @tagName(std.posix.errno(rc)),
+                }),
+            }
+        }
+    }
 };
+
+fn drainWake(fd: std.posix.fd_t) u64 {
+    var count: u64 = 0;
+    while (true) {
+        var value: u64 = 0;
+        const rc = std.posix.system.read(fd, std.mem.asBytes(&value), @sizeOf(u64));
+        switch (std.posix.errno(rc)) {
+            .SUCCESS => {
+                std.debug.assert(rc == @sizeOf(u64));
+                count +|= value;
+            },
+            .INTR => continue,
+            .AGAIN => return count,
+            else => std.debug.panic("Files service eventfd read failed: {s}", .{
+                @tagName(std.posix.errno(rc)),
+            }),
+        }
+    }
+}
 
 /// Copyable, non-owning per-window capability. Closing it unregisters its
 /// identity; stale copies then fail admission and receive no updates.

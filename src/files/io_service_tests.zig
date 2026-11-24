@@ -204,3 +204,42 @@ test "window operations fail fast under mutex contention and remain retryable" {
     try std.testing.expectEqual(@as(u64, 2), service.tryReceiveCommand().?.command.job_id);
     try handle.close();
 }
+
+test "command admission and update publication wake their process consumers" {
+    var service: service_mod.Service = .{};
+    try service.init();
+    defer service.deinit();
+    var handle = try service.registerWindow();
+    defer handle.close() catch unreachable;
+
+    try std.testing.expect(!isReadable(service.commandWakeFd()));
+    try handle.trySend(normalCommand(41));
+    try std.testing.expect(isReadable(service.commandWakeFd()));
+    try std.testing.expect(service.drainCommandWake() > 0);
+    try std.testing.expect(!isReadable(service.commandWakeFd()));
+    try std.testing.expectEqual(@as(u64, 41), service.tryReceiveCommand().?.command.job_id);
+
+    try std.testing.expect(!isReadable(service.updateWakeFd()));
+    _ = try service.publishUpdate(handle.window_id, .{
+        .job_id = 41,
+        .kind = .job_state,
+        .state_code = 1,
+    });
+    try std.testing.expect(isReadable(service.updateWakeFd()));
+    try std.testing.expect(service.drainUpdateWake() > 0);
+    try std.testing.expect(!isReadable(service.updateWakeFd()));
+    try std.testing.expectEqual(
+        service_mod.UpdateKind.job_state,
+        (try handle.tryReceiveUpdate()).?.kind,
+    );
+}
+
+fn isReadable(fd: std.posix.fd_t) bool {
+    var fds = [_]std.posix.pollfd{.{
+        .fd = fd,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    return std.posix.errno(std.posix.system.poll(&fds, 1, 0)) == .SUCCESS and
+        fds[0].revents != 0;
+}
