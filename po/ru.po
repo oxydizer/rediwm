@@ -6719,6 +6719,10 @@ msgstr "Беспроводные подключения"
 msgid "New Tab"
 msgstr "Новая вкладка"
 
+#: src/files/app_menu.zig
+msgid "Folders first"
+msgstr "Сначала папки"
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr "Новое окно"

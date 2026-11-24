@@ -190,6 +190,8 @@ pub const App = struct {
     initial_selection: ?[]const u8 = null,
     error_message: ?[]const u8 = null,
     show_hidden: bool = false,
+    /// Directories ahead of files in every sort order (saved with the view).
+    folders_first: bool = true,
     list_view: bool = false,
     non_git_list_view: ?bool = null,
     /// Each sidebar section expands independently. Places is open by default.
@@ -458,6 +460,7 @@ pub const App = struct {
             self.list_view = prefs.list;
             self.unpinned_places = prefs.unpinned_places;
             self.git_view = prefs.git_view;
+            self.folders_first = prefs.folders_first;
             self.terminal.requested_height = @intCast(prefs.terminal_height);
             self.sort_mode = @fromBackingInt(@intCast(prefs.sort));
         }
@@ -644,7 +647,7 @@ pub const App = struct {
 
     pub fn savePreferences(self: *App) void {
         const path = self.preferences_path orelse return;
-        (Preferences{ .list = self.non_git_list_view orelse self.list_view, .sort = @backingInt(self.sort_mode), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height) }).save(self.allocator, self.io, path) catch {
+        (Preferences{ .list = self.non_git_list_view orelse self.list_view, .sort = @backingInt(self.sort_mode), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height), .folders_first = self.folders_first }).save(self.allocator, self.io, path) catch {
             self.setStatusNotice(tr("Could not save view preferences"), true);
         };
     }
@@ -687,6 +690,7 @@ pub const App = struct {
     pub const ensureTabs = app_tabs.ensureTabs;
     pub const deinitTabs = app_tabs.deinitTabs;
     pub const tabTitle = app_tabs.tabTitle;
+    pub const tabIcon = app_tabs.tabIcon;
     pub const findFolderTab = app_tabs.findTab;
     pub const switchTab = app_tabs.switchTab;
     pub const stepTabs = app_tabs.stepTabs;

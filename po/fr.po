@@ -6716,6 +6716,10 @@ msgstr "Connexions sans fil"
 msgid "New Tab"
 msgstr "Nouvel onglet"
 
+#: src/files/app_menu.zig
+msgid "Folders first"
+msgstr "Dossiers d'abord"
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr "Nouvelle fenêtre"

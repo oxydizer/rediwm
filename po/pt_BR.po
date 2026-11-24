@@ -6713,6 +6713,10 @@ msgstr "Conexões sem fio"
 msgid "New Tab"
 msgstr "Nova aba"
 
+#: src/files/app_menu.zig
+msgid "Folders first"
+msgstr "Pastas primeiro"
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr "Nova janela"

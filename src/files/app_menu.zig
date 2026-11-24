@@ -116,6 +116,7 @@ pub fn menuSeparatorBefore(self: *App, row: usize) bool {
         .background => row == 2,
         .sidebar => self.placeActions()[row] == .properties,
         .sort => row == 2 or row == 4 or row == 6,
+        .app => row == 2 or row == 4,
         else => false,
     };
 }
@@ -335,7 +336,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
             .normal => &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Paste"), i18n.msg("Refresh") },
         },
         .chooser_filter => return self.chooser_filter_labels.items,
-        .app => &.{ i18n.msg("New Tab"), i18n.msg("New Window"), i18n.msg("Show hidden files"), i18n.msg("Terminal"), i18n.msg("Transfers") },
+        .app => &.{ i18n.msg("New Tab"), i18n.msg("New Window"), i18n.msg("Show hidden files"), i18n.msg("Folders first"), i18n.msg("Terminal"), i18n.msg("Transfers") },
     };
     for (messages, 0..) |message, i| self.menu_label_text[i] = message.get();
     return self.menu_label_text[0..messages.len];
@@ -410,8 +411,13 @@ pub fn runMenu(self: *App, row: usize) void {
             0 => self.newTab(),
             1 => self.openWindowAt(self.history.current),
             2 => self.toggleHidden(),
-            3 => self.terminalToggle(),
-            4 => self.openTransfers(),
+            3 => {
+                self.folders_first = !self.folders_first;
+                self.rebuildView();
+                self.savePreferences();
+            },
+            4 => self.terminalToggle(),
+            5 => self.openTransfers(),
             else => {},
         },
         .chooser_filter => {
@@ -491,7 +497,7 @@ pub fn renderMenu(self: *App, cr: *c.cairo_t) void {
     for (labels, 0..) |label, i| {
         const row = self.menuRowRect(i);
         const checked = (self.menu == .sort and sort_options[i] == self.effectiveSort()) or
-            (self.menu == .app and i == 2 and self.show_hidden) or
+            (self.menu == .app and ((i == 2 and self.show_hidden) or (i == 3 and self.folders_first))) or
             (self.menu == .filter and ((i == 0 and self.folders_only) or (i == 1 and self.show_hidden) or (i == 2 and self.changed_only) or (i == 3 and self.full_paths)));
         context_menu.row(cr, .{ .x = row.x, .y = row.y, .w = row.w, .h = row.h }, .{
             .label = label,

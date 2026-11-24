@@ -683,8 +683,15 @@ pub fn matches(self: *App, item: worker_mod.Item) bool {
 }
 
 pub fn lessThan(mode: Sort, a: ViewItem, b: ViewItem) bool {
-    // Keep directories ahead of files for every sort mode.
-    if (a.is_dir != b.is_dir) return a.is_dir;
+    return ordered(.{ .mode = mode, .folders_first = true }, a, b);
+}
+
+pub const Order = struct { mode: Sort, folders_first: bool };
+
+pub fn ordered(order_by: Order, a: ViewItem, b: ViewItem) bool {
+    const mode = order_by.mode;
+    // Directories ahead of files for every sort mode, unless turned off.
+    if (order_by.folders_first and a.is_dir != b.is_dir) return a.is_dir;
     if (mode == .size or mode == .size_asc) {
         if (a.is_dir and b.is_dir) {
             const a_calc = a.bytes >= 0;
@@ -801,7 +808,7 @@ pub fn rebuildView(self: *App) void {
         if (missing_key) for (self.items.items) |*item| {
             item.sort_key = null;
         };
-        std.mem.sort(ViewItem, self.items.items, self.effectiveSort(), lessThan);
+        std.mem.sort(ViewItem, self.items.items, Order{ .mode = self.effectiveSort(), .folders_first = self.folders_first }, ordered);
         for (self.items.items, 0..) |item, i| {
             if (old_focus) |path| {
                 if (std.mem.eql(u8, path, item.path)) self.focused_index = i;

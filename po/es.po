@@ -6713,6 +6713,10 @@ msgstr "Conexiones inalámbricas"
 msgid "New Tab"
 msgstr "Nueva pestaña"
 
+#: src/files/app_menu.zig
+msgid "Folders first"
+msgstr "Carpetas primero"
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr "Nueva ventana"

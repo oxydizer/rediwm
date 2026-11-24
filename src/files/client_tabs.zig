@@ -64,7 +64,7 @@ pub fn sync(self: *Client) void {
     const count = @min(app.tabs.items.len, app_tabs.max_tabs);
     for (app.tabs.items[0..count], 0..) |t, i| {
         const title = app.tabTitle(i);
-        list[i] = .{ .id = @truncate(t.id), .title = if (std.unicode.utf8ValidateSlice(title)) title else "?" };
+        list[i] = .{ .id = @truncate(t.id), .title = if (std.unicode.utf8ValidateSlice(title)) title else "?", .icon = app.tabIcon(i) };
     }
     self.tabs.publish(list[0..count], @truncate(app.tabs.items[@min(app.tab_selected, count - 1)].id), true);
 }

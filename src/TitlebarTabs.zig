@@ -29,6 +29,8 @@ const Item = struct {
     id: u32,
     /// What the strip shows: the title, behind a bullet when modified.
     title: []u8,
+    /// An icon-theme name, empty for the application's icon.
+    icon: []u8,
     attention: bool,
 };
 
@@ -50,6 +52,7 @@ detachable: bool = false,
 /// off, so the window that follows opens there.
 pub const TearOff = struct { client: *wl.Client, x: f64, y: f64, deadline_ms: i64 };
 const tear_off_window_ms = 2000;
+const max_icon_name = 128;
 
 pub const Manager = struct {
     global: *wl.Global,
@@ -160,7 +163,7 @@ pub fn fill(self: *const TitlebarTabs, storage: *[window_tabs.max_tabs]chrome_ta
     var current: usize = 0;
     for (self.items.items, 0..) |item, i| {
         const is_selected = item.id == self.selected;
-        storage[i] = .{ .id = item.id, .title = item.title, .active = is_selected, .attention = item.attention };
+        storage[i] = .{ .id = item.id, .title = item.title, .icon = item.icon, .active = is_selected, .attention = item.attention };
         if (is_selected) current = i;
     }
     strip.tabs = storage[0..self.items.items.len];
@@ -227,7 +230,7 @@ pub fn step(self: *TitlebarTabs, forward: bool) void {
 fn handleStripRequest(resource: *Resource, request: Resource.Request, self: *TitlebarTabs) void {
     switch (request) {
         .destroy => resource.destroy(),
-        .add_tab => |args| self.addTab(args.id, std.mem.span(args.title), args.flags),
+        .add_tab => |args| self.addTab(args.id, std.mem.span(args.title), if (args.icon_name) |name| std.mem.span(name) else "", args.flags),
         .set_selected => |args| self.pending_selected = args.id,
         .set_leading_button => |args| self.pending_leading = args.enabled != 0,
         .set_detachable => |args| self.detachable = args.enabled != 0,
@@ -235,7 +238,7 @@ fn handleStripRequest(resource: *Resource, request: Resource.Request, self: *Tit
     }
 }
 
-fn addTab(self: *TitlebarTabs, id: u32, raw: []const u8, flags: u32) void {
+fn addTab(self: *TitlebarTabs, id: u32, raw: []const u8, raw_icon: []const u8, flags: u32) void {
     if (id == 0) {
         self.resource.postError(.invalid_id, "tab ids must not be zero");
         return;
@@ -254,8 +257,16 @@ fn addTab(self: *TitlebarTabs, id: u32, raw: []const u8, flags: u32) void {
         self.resource.getClient().postNoMemory();
         return;
     };
-    self.pending.append(gpa, .{ .id = id, .title = title, .attention = flags & flag_attention != 0 }) catch {
+    // An icon name is a theme name: short, valid UTF-8, or it is ignored.
+    const icon_src = if (raw_icon.len <= max_icon_name and std.unicode.utf8ValidateSlice(raw_icon)) raw_icon else "";
+    const icon = gpa.dupe(u8, icon_src) catch {
         gpa.free(title);
+        self.resource.getClient().postNoMemory();
+        return;
+    };
+    self.pending.append(gpa, .{ .id = id, .title = title, .icon = icon, .attention = flags & flag_attention != 0 }) catch {
+        gpa.free(title);
+        gpa.free(icon);
         self.resource.getClient().postNoMemory();
     };
 }
@@ -298,7 +309,10 @@ fn commit(self: *TitlebarTabs) void {
 }
 
 fn freeItems(list: *std.ArrayList(Item)) void {
-    for (list.items) |item| gpa.free(item.title);
+    for (list.items) |item| {
+        gpa.free(item.title);
+        gpa.free(item.icon);
+    }
     list.clearRetainingCapacity();
 }
 

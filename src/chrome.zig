@@ -90,6 +90,9 @@ pub const ChromeState = struct {
     // drawn at the titlebar's top-left in place of nothing at all. Absent
     // clients just get the title text starting further left, same as today.
     icon: ?icon_service.Entry = null,
+    // The icons of the tabs that name one, by tab index (null: the tab shows `icon`).
+    // Valid only while the buffer is painted, like `tabs`.
+    tab_icons: []const ?icon_service.Entry = &.{},
     // Logical px the icon and title keep in from the left, and the controls from the
     // right, so a polygon outline's slanted ends do not cut them (`Toplevel.controlInsets`).
     inset_left: i32 = 0,
@@ -167,7 +170,7 @@ pub const TitlebarMemo = struct {
             .workspace_focus = state.workspace_focus,
             .workspace_active_border = t.workspace_active_border,
             .title_ptr = title_ptr,
-            .tabs_hash = @import("chrome_tabs.zig").hash(state.tabs),
+            .tabs_hash = @import("chrome_tabs.zig").hash(state.tabs) ^ tabIconsHash(state.tab_icons),
             .scale = state.scale,
             .hover = state.hover,
             .chip_pos = state.chip_pos,
@@ -252,6 +255,16 @@ fn rgbaEql(a: [4]f32, b: [4]f32) bool {
     return std.mem.eql(f32, &a, &b);
 }
 
+/// Which icons the tabs show, for telling two states apart.
+fn tabIconsHash(icons: []const ?icon_service.Entry) u64 {
+    var h = std.hash.Wyhash.init(0);
+    for (icons) |maybe| {
+        const id: u64 = if (maybe) |e| e.id +% 1 else 0;
+        h.update(std.mem.asBytes(&id));
+    }
+    return h.final();
+}
+
 fn iconEql(a: ?icon_service.Entry, b: ?icon_service.Entry) bool {
     const left = a orelse return b == null;
     const right = b orelse return false;
@@ -334,6 +347,7 @@ pub const ChromeBuffer = struct {
         // The title belongs to wlroots and can change while this buffer lives.
         frame.state.title = "";
         frame.state.tabs.tabs = &.{};
+        frame.state.tab_icons = &.{};
         return frame;
     }
 
@@ -353,7 +367,7 @@ pub const ChromeBuffer = struct {
         frame.base.init(&impl, frame.width, frame.height);
         if (state.tabs.tabs.len > 0) {
             const tabs = @import("chrome_tabs.zig");
-            if (previous.tabs_layout_hash == tabs.layoutHash(state.tabs) and
+            if (previous.tabs_layout_hash == tabs.layoutHash(state.tabs) and state.tab_icons.len == 0 and
                 previous.state.hover == state.hover and previous.state.chip_pos == state.chip_pos and previous.state.chip_alpha == state.chip_alpha and previous.state.maximized == state.maximized)
             {
                 const geom = tabs.geometry(state.controlsWidth(frame.logical_width), state.density, state.tabs);
@@ -367,6 +381,7 @@ pub const ChromeBuffer = struct {
             } else try frame.rasterize(null);
             frame.rememberTabs();
             frame.state.tabs.tabs = &.{};
+            frame.state.tab_icons = &.{};
             frame.state.title = "";
             return frame;
         }
@@ -406,6 +421,7 @@ pub const ChromeBuffer = struct {
         }
         frame.state.title = "";
         frame.state.tabs.tabs = &.{};
+        frame.state.tab_icons = &.{};
         return frame;
     }
 
@@ -569,7 +585,7 @@ pub const ChromeBuffer = struct {
         }
 
         if (frame.state.tabs.tabs.len > 0) {
-            @import("chrome_tabs.zig").paint(Color, frame.pixels, frame.width, frame.height, frame.state.controlsWidth(frame.logical_width), frame.state.density, scale, frame.state.tabs, frame.state.icon, clip);
+            @import("chrome_tabs.zig").paint(Color, frame.pixels, frame.width, frame.height, frame.state.controlsWidth(frame.logical_width), frame.state.density, scale, frame.state.tabs, frame.state.icon, frame.state.tab_icons, clip);
             return;
         }
         const text_rect = titleRect(frame.logical_width, frame.state);

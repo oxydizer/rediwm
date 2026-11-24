@@ -6716,6 +6716,10 @@ msgstr "Funkverbindungen"
 msgid "New Tab"
 msgstr "Neuer Tab"
 
+#: src/files/app_menu.zig
+msgid "Folders first"
+msgstr "Ordner zuerst"
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr "Neues Fenster"

@@ -52,6 +52,16 @@ fn folderName(self: *const App, path: []const u8) []const u8 {
     return std.fs.path.basename(path);
 }
 
+/// The icon-theme name of tab `i`'s folder icon.
+pub fn tabIcon(self: *const App, i: usize) []const u8 {
+    const tab = self.tabs.items[i];
+    const path = if (tab.history) |history| history.current else self.history.current;
+    if (recent.isLocation(path)) return "document-open-recent";
+    if (self.trash_dir) |trash| if (std.mem.eql(u8, path, trash)) return "user-trash";
+    if (std.mem.eql(u8, path, self.home_dir)) return "user-home";
+    return "folder";
+}
+
 /// What tab `i` is called: its folder's name.
 pub fn tabTitle(self: *const App, i: usize) []const u8 {
     const tab = self.tabs.items[i];

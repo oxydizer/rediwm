@@ -7876,6 +7876,10 @@ msgstr ""
 msgid "New Tab"
 msgstr ""
 
+#: src/files/app_menu.zig
+msgid "Folders first"
+msgstr ""
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr ""

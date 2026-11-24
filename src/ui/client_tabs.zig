@@ -15,7 +15,8 @@ pub const flag_modified: u32 = 1;
 pub const flag_attention: u32 = 2;
 
 /// Ids are the app's own and must not be zero.
-pub const Tab = struct { id: u32, title: []const u8, modified: bool = false, attention: bool = false };
+pub const Tab = struct { id: u32, title: []const u8, modified: bool = false, attention: bool = false, /// An icon-theme name shown before the title; empty for the application's icon.
+    icon: []const u8 = "" };
 
 /// What the user did in the strip. The app changes its state and publishes the
 /// result; the compositor never changes the selection itself.
@@ -74,12 +75,14 @@ pub fn publish(self: *Self, tabs: []const Tab, selected: u32, leading: bool) voi
     if (self.last) |last| if (last == digest) return;
     self.last = digest;
     var buf: [max_title + 1]u8 = undefined;
+    var icon_buf: [max_title + 1]u8 = undefined;
     for (tabs) |tab| {
         const title = cString(&buf, tab.title);
+        const icon = cString(&icon_buf, tab.icon);
         var flags: u32 = 0;
         if (tab.modified) flags |= flag_modified;
         if (tab.attention) flags |= flag_attention;
-        strip.addTab(tab.id, title, null, flags);
+        strip.addTab(tab.id, title, if (icon.len > 0) icon else null, flags);
     }
     if (tabs.len > 0) strip.setSelected(selected);
     strip.setLeadingButton(@intFromBool(leading));
@@ -128,6 +131,8 @@ fn signature(tabs: []const Tab, selected: u32, leading: bool) u64 {
         const n: u32 = @intCast(tab.title.len);
         h.update(std.mem.asBytes(&n));
         h.update(tab.title);
+        h.update(tab.icon);
+        h.update(&.{0});
     }
     return h.final();
 }
