@@ -6,6 +6,8 @@
 //! Kernel power_supply uevents (plug, unplug, charge state) trigger an
 //! immediate read; capacity and time estimates are re-read on the session power policy's
 //! minute tick, because many firmwares never announce percentage changes.
+//! A snapshot's own time is one instantaneous reading; the power policy
+//! replaces it with `battery_rate`'s estimate over recent snapshots.
 const i18n = @import("i18n");
 const std = @import("std");
 
@@ -61,6 +63,34 @@ pub const Warning = struct {
     }
 };
 
+/// How full the system's batteries are, in the units the driver reports:
+/// micro-Wh with a micro-W rate, or micro-Ah with a micro-A rate.
+pub const Level = struct {
+    pub const Unit = enum { energy, charge };
+
+    unit: Unit,
+    now: f64,
+    full: ?f64,
+    /// The firmware's present rate; null when missing or zero.
+    rate: ?f64,
+
+    pub fn parse(contents: []const u8) ?Level {
+        if (number(contents, "POWER_SUPPLY_ENERGY_NOW")) |now| return .{
+            .unit = .energy,
+            .now = now,
+            .full = number(contents, "POWER_SUPPLY_ENERGY_FULL"),
+            .rate = rateValue(contents, "POWER_SUPPLY_POWER_NOW"),
+        };
+        if (number(contents, "POWER_SUPPLY_CHARGE_NOW")) |now| return .{
+            .unit = .charge,
+            .now = now,
+            .full = number(contents, "POWER_SUPPLY_CHARGE_FULL"),
+            .rate = rateValue(contents, "POWER_SUPPLY_CURRENT_NOW"),
+        };
+        return null;
+    }
+};
+
 fn field(contents: []const u8, key: []const u8) ?[]const u8 {
     var lines = std.mem.tokenizeScalar(u8, contents, '\n');
     while (lines.next()) |line| {
@@ -85,6 +115,10 @@ pub const Snapshot = struct {
     energy_count: u32 = 0,
     cycles: ?u32 = null,
     remaining_minutes: ?u32 = null,
+    /// A pack reported its own time (fuel gauges average it themselves).
+    driver_time: bool = false,
+    level_sum: ?Level = null,
+    level_ok: bool = true,
 
     pub fn add(self: *Snapshot, contents: []const u8) void {
         const kind = field(contents, "POWER_SUPPLY_TYPE") orelse return;
@@ -107,6 +141,8 @@ pub const Snapshot = struct {
         self.sum += percent;
         self.count += 1;
         self.remaining_minutes = estimateMinutes(contents);
+        if (driverMinutes(contents) != null) self.driver_time = true;
+        self.addLevel(contents);
         if (std.mem.eql(u8, field(contents, "POWER_SUPPLY_STATUS") orelse "", "Charging")) self.charging = true;
         if (std.mem.eql(u8, field(contents, "POWER_SUPPLY_STATUS") orelse "", "Discharging")) self.discharging = true;
         if (std.mem.eql(u8, field(contents, "POWER_SUPPLY_STATUS") orelse "", "Full")) self.full_count += 1;
@@ -130,6 +166,32 @@ pub const Snapshot = struct {
             self.energy_count += 1;
         };
         self.cycles = std.fmt.parseInt(u32, field(contents, "POWER_SUPPLY_CYCLE_COUNT") orelse "", 10) catch null;
+    }
+
+    fn addLevel(self: *Snapshot, contents: []const u8) void {
+        const reading = Level.parse(contents) orelse {
+            self.level_ok = false;
+            return;
+        };
+        const sum = self.level_sum orelse {
+            self.level_sum = reading;
+            return;
+        };
+        if (sum.unit != reading.unit) {
+            self.level_ok = false;
+            return;
+        }
+        self.level_sum = .{
+            .unit = sum.unit,
+            .now = sum.now + reading.now,
+            .full = if (sum.full != null and reading.full != null) sum.full.? + reading.full.? else null,
+            .rate = if (sum.rate != null and reading.rate != null) sum.rate.? + reading.rate.? else null,
+        };
+    }
+
+    /// The level of every system battery together, when they share units.
+    pub fn level(self: Snapshot) ?Level {
+        return if (self.level_ok) self.level_sum else null;
     }
 
     pub fn state(self: Snapshot) State {
@@ -158,28 +220,43 @@ fn number(contents: []const u8, key: []const u8) ?f64 {
     return @floatFromInt(value);
 }
 
+/// Some drivers sign the present rate (negative while discharging).
+fn rateValue(contents: []const u8, key: []const u8) ?f64 {
+    const value = std.fmt.parseInt(i64, field(contents, key) orelse return null, 10) catch return null;
+    if (value == 0) return null;
+    return @floatFromInt(@abs(value));
+}
+
+fn driverMinutes(contents: []const u8) ?u32 {
+    const status = field(contents, "POWER_SUPPLY_STATUS") orelse return null;
+    const time_keys = if (std.mem.eql(u8, status, "Charging"))
+        [_][]const u8{ "POWER_SUPPLY_TIME_TO_FULL_NOW", "POWER_SUPPLY_TIME_TO_FULL_AVG" }
+    else if (std.mem.eql(u8, status, "Discharging"))
+        [_][]const u8{ "POWER_SUPPLY_TIME_TO_EMPTY_NOW", "POWER_SUPPLY_TIME_TO_EMPTY_AVG" }
+    else
+        return null;
+    for (time_keys) |key| {
+        if (number(contents, key)) |seconds| {
+            if (minutesFromHours(seconds / 3600)) |minutes| return minutes;
+        }
+    }
+    return null;
+}
+
 // Driver times are seconds; capacity/rate pairs are micro-Wh/micro-W or
 // micro-Ah/micro-A. Keep pairs in the same units, with no voltage guesswork.
 fn estimateMinutes(contents: []const u8) ?u32 {
     const status = field(contents, "POWER_SUPPLY_STATUS") orelse return null;
     const charging = std.mem.eql(u8, status, "Charging");
     if (!charging and !std.mem.eql(u8, status, "Discharging")) return null;
-    const time_keys = if (charging)
-        [_][]const u8{ "POWER_SUPPLY_TIME_TO_FULL_NOW", "POWER_SUPPLY_TIME_TO_FULL_AVG" }
-    else
-        [_][]const u8{ "POWER_SUPPLY_TIME_TO_EMPTY_NOW", "POWER_SUPPLY_TIME_TO_EMPTY_AVG" };
-    for (time_keys) |key| {
-        if (number(contents, key)) |seconds| {
-            if (minutesFromHours(seconds / 3600)) |minutes| return minutes;
-        }
-    }
+    if (driverMinutes(contents)) |minutes| return minutes;
     const pairs = [_][3][]const u8{
         .{ "POWER_SUPPLY_ENERGY_NOW", "POWER_SUPPLY_ENERGY_FULL", "POWER_SUPPLY_POWER_NOW" },
         .{ "POWER_SUPPLY_CHARGE_NOW", "POWER_SUPPLY_CHARGE_FULL", "POWER_SUPPLY_CURRENT_NOW" },
     };
     for (pairs) |keys| {
         const now = number(contents, keys[0]) orelse continue;
-        const rate = number(contents, keys[2]) orelse continue;
+        const rate = rateValue(contents, keys[2]) orelse continue;
         if (rate <= 0) continue;
         const remaining = if (charging) (number(contents, keys[1]) orelse continue) - now else now;
         if (minutesFromHours(remaining / rate)) |minutes| return minutes;
@@ -187,19 +264,19 @@ fn estimateMinutes(contents: []const u8) ?u32 {
     return null;
 }
 
-fn minutesFromHours(hours: f64) ?u32 {
+pub fn minutesFromHours(hours: f64) ?u32 {
     // Reject missing/invalid rates and avoid overflowing on broken firmware.
     const minutes = @ceil(hours * 60);
     if (!std.math.isFinite(minutes) or minutes <= 0 or minutes > std.math.maxInt(u32)) return null;
     return @intFromFloat(minutes);
 }
 
-pub fn read(io: std.Io, allocator: std.mem.Allocator) State {
-    var dir = std.Io.Dir.cwd().openDir(io, "/sys/class/power_supply", .{ .iterate = true }) catch return .{};
+pub fn scan(io: std.Io, allocator: std.mem.Allocator) ?Snapshot {
+    var dir = std.Io.Dir.cwd().openDir(io, "/sys/class/power_supply", .{ .iterate = true }) catch return null;
     defer dir.close(io);
     var snapshot: Snapshot = .{};
     var it = dir.iterate();
-    while (it.next(io) catch return .{}) |entry| {
+    while (it.next(io) catch return null) |entry| {
         var path_buf: [512]u8 = undefined;
         // A HID peripheral battery's uevent can send a synchronous GET_REPORT
         // to the device; `scope` is static, so check it before reading that.
@@ -209,11 +286,11 @@ pub fn read(io: std.Io, allocator: std.mem.Allocator) State {
             if (std.mem.eql(u8, std.mem.trimEnd(u8, scope, "\n"), "Device")) continue;
         } else |_| {}
         const path = std.fmt.bufPrint(&path_buf, "{s}/uevent", .{entry.name}) catch continue;
-        const contents = dir.readFileAlloc(io, path, allocator, .limited(16384)) catch return .{};
+        const contents = dir.readFileAlloc(io, path, allocator, .limited(16384)) catch return null;
         defer allocator.free(contents);
         snapshot.add(contents);
     }
-    return snapshot.state();
+    return snapshot;
 }
 
 pub const openUeventSocket = @import("platform").power_supply.openUeventSocket;
@@ -222,4 +299,5 @@ pub const isSystemPowerSupplyUevent = @import("platform").power_supply.isSystemP
 
 test {
     _ = @import("battery_tests.zig");
+    _ = @import("battery_rate.zig");
 }

@@ -22,6 +22,26 @@ pub fn handleChromeClick(toplevel: *Toplevel, sx: f64, sy: f64, button: u32) voi
 
     const hit = toplevel.tabAt(sx, sy);
     if (hit != .none) {
+        // Tabs the client published: it owns them, so a click is a request.
+        // (A left press on a tab itself is tracked from the button handler, so
+        // it can become a reorder; this is the fallback and the other buttons.)
+        if (toplevel.titlebar_tabs) |published| if (published.active()) {
+            if (button == Input.btn_middle) {
+                if (hit == .tab) published.sendClose(hit.tab);
+                return;
+            }
+            if (button != Input.btn_left) return;
+            switch (hit) {
+                .tab => |id| published.sendSelect(id),
+                .close => |id| published.sendClose(id),
+                .plus => published.sendNewTab(),
+                .previous => published.step(false),
+                .next => published.step(true),
+                .leading => toplevel.activateLeading(),
+                .none => {},
+            }
+            return;
+        };
         if (button != Input.btn_left) return;
         switch (hit) {
             .tab => |id| if (toplevel.server.findToplevelById(id)) |target| toplevel.server.world.focus(target),
@@ -32,7 +52,7 @@ pub fn handleChromeClick(toplevel: *Toplevel, sx: f64, sy: f64, button: u32) voi
             .plus => toplevel.server.window_tabs.launch(toplevel),
             .previous => toplevel.stepTab(false),
             .next => toplevel.stepTab(true),
-            .none => {},
+            .leading, .none => {},
         }
         return;
     }
@@ -80,9 +100,7 @@ pub fn minimize(toplevel: *Toplevel) void {
             adapter.xsurface.setMinimized(true);
             adapter.xsurface.restack(null, .below);
         },
-        .xdg => |*adapter| {
-            _ = adapter.xdg_toplevel.setSuspended(true);
-        },
+        .xdg => |*adapter| setXdgSuspended(adapter, true),
         .placeholder, .shell => {},
     }
 
@@ -121,6 +139,17 @@ pub fn minimize(toplevel: *Toplevel) void {
     }
 }
 
+/// xdg_toplevel's suspended state exists from v6 on. wlroots checks the
+/// global's version, not the client's, so for an older client it still sends
+/// a configure that changes nothing visible. Wine (v2) takes any configure to
+/// a window it minimized itself as the compositor restoring it: a fullscreen
+/// game that minimizes on focus loss would come straight back, windowed and
+/// shown as foreground to nobody, while it still looks minimized here.
+fn setXdgSuspended(adapter: *xdg, suspended: bool) void {
+    if (adapter.xdg_toplevel.resource.getVersion() < 6) return;
+    _ = adapter.xdg_toplevel.setSuspended(suspended);
+}
+
 pub fn restore(toplevel: *Toplevel) void {
     toplevel.server.window_tabs.select(toplevel);
     defer if (toplevel.tab_group != 0) @import("../window_tabs.zig").refreshVisibility(toplevel.server);
@@ -130,9 +159,7 @@ pub fn restore(toplevel: *Toplevel) void {
     toplevel.frame_tree.node.setEnabled(@import("../window_tabs.zig").visible(toplevel));
     switch (toplevel.backend) {
         .xwayland => |*adapter| adapter.xsurface.setMinimized(false),
-        .xdg => |*adapter| {
-            _ = adapter.xdg_toplevel.setSuspended(false);
-        },
+        .xdg => |*adapter| setXdgSuspended(adapter, false),
         .placeholder, .shell => {},
     }
     toplevel.server.world.focus(toplevel);

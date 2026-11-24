@@ -24,6 +24,7 @@ const CursorSerial = @import("input/cursor_serial.zig");
 const ClientWheel = @import("input/client_wheel.zig");
 const WheelDebounce = @import("input/wheel_debounce.zig");
 const PointerConstraints = @import("input/pointer_constraints.zig");
+const PointerWarp = @import("input/pointer_warp.zig");
 const ShortcutsInhibit = @import("input/shortcuts_inhibit.zig");
 const Touch = @import("input/touch.zig");
 const Tablet = @import("input/tablet.zig");
@@ -134,6 +135,7 @@ cursor_mgr: *wlr.XcursorManager,
 pointer_gestures: *wlr.PointerGesturesV1,
 /// Relative motion and pointer lock/confinement for games.
 pointer_constraints: PointerConstraints = undefined,
+pointer_warp: PointerWarp = undefined,
 /// Compositor bindings handed to VMs and remote desktops.
 shortcuts_inhibit: ShortcutsInhibit = undefined,
 /// A file manager slides aside while a file is dragged out of it.
@@ -215,6 +217,10 @@ hovered_toplevel: ?*Toplevel = null,
 glow_toplevel: ?*Toplevel = null,
 hovered_taskbar: ?*Taskbar = null,
 taskbar_drag: ?TaskbarDragSession = null,
+/// The window whose published tab is pressed (a click, or a reorder once the pointer travels).
+tab_drag: ?*Toplevel = null,
+/// The window whose strip shows the drop marker for that drag.
+tab_drop_target: ?*Toplevel = null,
 tray_buttons: u32 = 0,
 taskbar_close_buttons: u32 = 0,
 hovered_toast: ?*@import("notifications/toast.zig").Toast = null,
@@ -226,6 +232,8 @@ move_snap: MoveSnap = .{},
 tiling_grab: ?@import("tiling_grab.zig") = null,
 /// An application being dragged from the start menu to the dock.
 dock_drag: @import("dock_drag.zig") = .{},
+/// The dragged-out tab that follows the pointer (`tab_ghost.zig`).
+tab_ghost: @import("tab_ghost.zig") = .{},
 /// Files from a client's drag, dropped on the dock's Trash.
 trash_drop: @import("trash_drop.zig") = .{},
 /// The last titlebar press, for double-click-to-maximize.
@@ -389,6 +397,8 @@ pub fn init(input: *Input, server: *Server) Server.CompositorError!void {
     input.cursor.events.hold_end.add(&input.cursor_hold_end);
     input.pointer_constraints.init(input) catch return error.PointerConstraintsCreateFailed;
     errdefer input.pointer_constraints.deinit();
+    input.pointer_warp.init(input) catch return error.PointerWarpCreateFailed;
+    errdefer input.pointer_warp.deinit();
     input.shortcuts_inhibit.init(input) catch return error.ShortcutsInhibitCreateFailed;
     errdefer input.shortcuts_inhibit.deinit();
     input.drag_dodge.init(input);
@@ -433,6 +443,7 @@ pub fn deinit(input: *Input) void {
     input.start_drag.link.remove();
     if (input.drag_icon_tree) |tree| tree.node.destroy();
     input.pointer_constraints.deinit();
+    input.pointer_warp.deinit();
     input.shortcuts_inhibit.deinit();
     input.drag_dodge.deinit();
     input.trash_drop.deinit();
@@ -527,6 +538,11 @@ pub fn detachOutput(input: *Input, output: *Output) void {
 
 pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
     if (input.window_menu.references(toplevel)) input.window_menu.close();
+    if (input.tab_drag == toplevel) {
+        @import("input/tab_drop.zig").clear(input);
+        input.tab_drag = null;
+    }
+    if (input.tab_drop_target == toplevel) input.tab_drop_target = null;
     if (input.taskbar_drag) |session| {
         if (session.window_id == toplevel.id) {
             input.taskbar_drag = null;

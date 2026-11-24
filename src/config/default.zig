@@ -153,6 +153,7 @@ pub const source =
     \\dock_pinned_apps = [] # desktop entry IDs pinned by dragging them from the start menu
     \\# Taskbar sections, ordered within each section; prefix with - to hide an item.
     \\taskbar_position = "bottom" # top or bottom
+    \\taskbar_auto_hide = false # show the taskbar only when the pointer reaches its edge; false reserves its space
     \\taskbar_alignment = "center" # left, center or right; visible below 100% length
     \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "~right:input_source", "right:volume", "right:clock", "-right:power"]
     \\# A ~ prefix (~right:wifi, ~right:wired) shows the item only while a wireless adapter
@@ -194,7 +195,7 @@ pub const source =
     \\follow_app_colors     = false # keep GTK/Qt application colors in sync with the main theme
     \\placeholder_delay_ms  = 0     # show splash only if app hasn't appeared after N ms (0 disables)
     \\# wallpaper = ""               # empty = RediWM's; a file in ~/.local/share/rediwm/wallpapers, or a path
-    \\lid_close             = "display_off" # closing the laptop lid: display_off (built-in screen off while another display is on), lock, suspend, ignore
+    \\lid_close             = "display_off" # closing the laptop lid: display_off (built-in screen off while another display is on), lock, suspend, power_off, ignore
     \\lock_on_suspend       = true  # lock before the system sleeps (menu, lid, idle or another program)
     \\
     \\# ───────────────────────────────────────────────
@@ -319,6 +320,7 @@ pub const source =
     \\# enabled = true             # set false to keep this monitor disabled
     \\# primary = true             # preferred fallback output
     \\# transform = "normal"       # normal, 90, 180, 270, or flipped variants
+    \\# adaptive_sync = "auto"     # variable refresh: "auto" while a game fills it, "off", "always"
     \\#
     \\# [[outputs]]
     \\# name = "DP-2"
@@ -340,6 +342,7 @@ pub const source =
     \\
     \\# [notifications]
     \\# daemon = "dunst"            # optional external daemon; restart required
+    \\# game_dnd = true             # no toasts over a fullscreen or borderless game (critical still show)
     \\
     \\# [ipc]
     \\# automation = true           # IPC synthetic input and screen capture; restart required

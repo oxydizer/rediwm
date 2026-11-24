@@ -9,6 +9,7 @@ const activation = @import("../session/activation.zig");
 const settings_portal = @import("../session/settings_portal.zig");
 const Server = @import("../Server.zig");
 const Output = @import("../Output.zig");
+const game = @import("../output/game.zig");
 const toast_mod = @import("toast.zig");
 const image_mod = @import("image.zig");
 const window_rules = @import("config").window_rules;
@@ -173,8 +174,9 @@ pub const Manager = struct {
             }
         }
 
-        // DND policy: if DND is enabled, suppress toast unless critical (urgency=2) or bypassed
-        const suppressed_by_dnd = self.dnd and !dnd_bypass and urgency != 2;
+        // DND policy: if DND is enabled, suppress toast unless critical (urgency=2) or bypassed.
+        // A game where toasts appear counts as DND.
+        const suppressed_by_dnd = (self.dnd or self.gameShown()) and !dnd_bypass and urgency != 2;
         const should_show_toast = !muted and !suppressed_by_dnd;
 
         // In-place update for replaces_id
@@ -256,6 +258,14 @@ pub const Manager = struct {
         }
 
         return id;
+    }
+
+    /// Whether a game (output/game.zig: the focused window filling the output,
+    /// fullscreen or borderless) is on the output toasts appear on.
+    fn gameShown(self: *Manager) bool {
+        if (!self.server.config.notifications.game_dnd) return false;
+        const output = self.server.getDefaultOutput() orelse return false;
+        return game.window(output) != null;
     }
 
     pub fn themeChanged(self: *Manager) void {

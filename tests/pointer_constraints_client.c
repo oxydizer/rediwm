@@ -4,6 +4,7 @@
 #undef main
 #include "pointer-constraints-unstable-v1-client-protocol.h"
 #include "relative-pointer-unstable-v1-client-protocol.h"
+#include "pointer-warp-v1-client-protocol.h"
 #include <poll.h>
 
 static struct zwp_pointer_constraints_v1 *constraints;
@@ -12,6 +13,16 @@ static struct zwp_relative_pointer_v1 *relative;
 static struct zwp_locked_pointer_v1 *locked;
 static struct zwp_confined_pointer_v1 *confined;
 static struct wl_pointer *pointer;
+static struct wp_pointer_warp_v1 *warper;
+static uint32_t enter_serial;
+static struct wl_pointer_listener constraint_pointer_listener;
+
+// The shared fixture listener, plus the enter serial a warp must quote.
+static void warp_enter(void *d, struct wl_pointer *p, uint32_t serial, struct wl_surface *s,
+                       wl_fixed_t x, wl_fixed_t y) {
+  enter_serial = serial;
+  pointer_enter(d, p, serial, s, x, y);
+}
 
 static void relative_motion(void *d, struct zwp_relative_pointer_v1 *r, uint32_t hi, uint32_t lo,
                             wl_fixed_t dx, wl_fixed_t dy, wl_fixed_t udx, wl_fixed_t udy) {
@@ -31,7 +42,9 @@ static void constraint_caps(void *d, struct wl_seat *s, uint32_t c) {
   (void)d;
   if ((c & WL_SEAT_CAPABILITY_POINTER) && !pointer) {
     pointer = wl_seat_get_pointer(s);
-    wl_pointer_add_listener(pointer, &pointer_listener, NULL);
+    constraint_pointer_listener = pointer_listener;
+    constraint_pointer_listener.enter = warp_enter;
+    wl_pointer_add_listener(pointer, &constraint_pointer_listener, NULL);
   }
 }
 static const struct wl_seat_listener constraint_seat_listener = {constraint_caps, seat_name};
@@ -39,6 +52,8 @@ static void constraint_global(void *d, struct wl_registry *r, uint32_t id, const
   printf("global %s %u\n", iface, version);
   if (!strcmp(iface, "zwp_pointer_constraints_v1"))
     constraints = wl_registry_bind(r, id, &zwp_pointer_constraints_v1_interface, 1);
+  else if (!strcmp(iface, "wp_pointer_warp_v1"))
+    warper = wl_registry_bind(r, id, &wp_pointer_warp_v1_interface, 1);
   else if (!strcmp(iface, "zwp_relative_pointer_manager_v1"))
     relative_manager = wl_registry_bind(r, id, &zwp_relative_pointer_manager_v1_interface, 1);
   else if (!strcmp(iface, "wl_seat")) {
@@ -55,9 +70,14 @@ static uint32_t lifetime(const char *mode) {
 
 static void command(char *line) {
   char mode[32];
-  int x, y, w, h;
+  int x, y, w, h, stale = 0;
   double hx, hy;
-  if (!strcmp(line, "relative")) {
+  if (sscanf(line, "warp %31s %lf %lf %d", mode, &hx, &hy, &stale) >= 3) {
+    // "warp main|child X Y [1]": 1 quotes a serial never sent.
+    wp_pointer_warp_v1_warp_pointer(warper, !strcmp(mode, "child") ? child : surface, pointer,
+                                    wl_fixed_from_double(hx), wl_fixed_from_double(hy),
+                                    stale ? enter_serial + 1000 : enter_serial);
+  } else if (!strcmp(line, "relative")) {
     relative = zwp_relative_pointer_manager_v1_get_relative_pointer(relative_manager, pointer);
     zwp_relative_pointer_v1_add_listener(relative, &relative_listener, NULL);
   } else if (sscanf(line, "lock %31s", mode) == 1) {
@@ -94,7 +114,7 @@ int main(int argc, char **argv) {
   wl_registry_add_listener(wl_display_get_registry(display), &constraint_registry, NULL);
   assert(wl_display_roundtrip(display) >= 0);
   assert(wl_display_roundtrip(display) >= 0);
-  assert(constraints && relative_manager && pointer);
+  assert(constraints && relative_manager && warper && pointer);
   app_id = argc > 1 ? argv[1] : "rediwm.pointer-constraints";
   surface = wl_compositor_create_surface(compositor);
   xdg = xdg_wm_base_get_xdg_surface(wm, surface); xdg_surface_add_listener(xdg, &xdg_listener, NULL);

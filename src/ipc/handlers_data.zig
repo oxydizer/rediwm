@@ -6,6 +6,7 @@ const Server = @import("../Server.zig");
 const Output = @import("../Output.zig");
 const Toplevel = @import("../Toplevel.zig");
 const output_tearing = @import("../output/tearing.zig");
+const output_vrr = @import("../output/vrr.zig");
 const stats = @import("stats.zig");
 const protocol = @import("protocol.zig");
 const ui = @import("ui");
@@ -199,6 +200,11 @@ pub fn makeOutputData(server: *Server, output: *Output) protocol.OutputData {
         .tearing_allowed = output_tearing.wanted(output),
         .tearing_active = output.tearing.active,
         .tearing_paused = output_tearing.paused(output),
+        .adaptive_sync = @tagName(output_vrr.mode(output)),
+        .adaptive_sync_supported = output_vrr.supported(output),
+        .adaptive_sync_wanted = output_vrr.wanted(output),
+        .adaptive_sync_active = output_vrr.active(output),
+        .adaptive_sync_needs_modeset = output.vrr.needs_modeset,
         .direct_scanout = if (server.scene_outputs.get(output.wlr_output)) |scene_output| scene_output.directScanout() else false,
     };
 }

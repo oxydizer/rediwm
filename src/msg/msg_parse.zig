@@ -270,6 +270,8 @@ pub fn parseCommand(cli: FlagParser, arg: []const u8) !void {
                     patch.auto_position = true;
                 } else if (std.mem.eql(u8, option, "--transform")) {
                     patch.transform = protocol.parseOutputTransform(value) catch return error.InvalidTransform;
+                } else if (std.mem.eql(u8, option, "--adaptive-sync")) {
+                    patch.adaptive_sync = std.meta.stringToEnum(@typeInfo(@TypeOf(patch.adaptive_sync)).optional.child, value) orelse return error.InvalidAdaptiveSync;
                 } else {
                     var matched = false;
                     inline for (.{ "width", "height", "refresh_mhz", "x", "y" }, .{ "--width", "--height", "--refresh-mhz", "--x", "--y" }) |field, flag| {

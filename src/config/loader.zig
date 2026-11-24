@@ -68,6 +68,7 @@ pub const parseString = loader_fields.parseString;
 pub const unquoteKey = loader_fields.unquoteKey;
 pub const outputsLayoutEql = loader_compare.outputsLayoutEql;
 pub const outputsColorEql = loader_compare.outputsColorEql;
+pub const outputsAdaptiveSyncEql = loader_compare.outputsAdaptiveSyncEql;
 pub const outputsEql = loader_compare.outputsEql;
 pub const nightLightEql = loader_compare.nightLightEql;
 pub const wheelAccel = loader_compare.wheelAccel;
@@ -200,6 +201,7 @@ pub const CompositorConfig = struct {
     dock_pinned_apps: []const []const u8 = &.{},
     taskbar_items: TaskbarItems = .{},
     taskbar_position: types.TaskbarPosition = .bottom,
+    taskbar_auto_hide: bool = false,
     taskbar_alignment: types.TaskbarAlignment = .center,
     /// App identities opted into compositor tabs. Only + launches join a group.
     window_tab_apps: []const []const u8 = &.{},
@@ -306,6 +308,7 @@ pub const OutputConfig = struct {
     /// Preferred fallback output for placement and desktop ownership.
     primary: bool = false,
     transform: output_transform.Transform = .normal,
+    adaptive_sync: @import("output_config.zig").AdaptiveSync = .auto,
     night_light: bool = true,
     gamma: f32 = 1.0,
 };
@@ -324,6 +327,9 @@ pub const IdleConfig = struct {
 pub const NotificationsConfig = struct {
     daemon: []const u8 = "", // Empty selects the built-in daemon; changes require restart.
     dnd: bool = false,
+    /// A game filling the output toasts appear on holds non-critical toasts
+    /// like DND (they still reach the history).
+    game_dnd: bool = true,
     default_timeout_ms: u32 = 5000,
 };
 

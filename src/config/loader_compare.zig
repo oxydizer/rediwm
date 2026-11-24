@@ -20,6 +20,14 @@ pub fn outputsLayoutEql(a: []const OutputConfig, b: []const OutputConfig) bool {
     return true;
 }
 
+pub fn outputsAdaptiveSyncEql(a: []const OutputConfig, b: []const OutputConfig) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |left, right| {
+        if (!std.mem.eql(u8, left.name, right.name) or left.adaptive_sync != right.adaptive_sync) return false;
+    }
+    return true;
+}
+
 pub fn outputsColorEql(a: []const OutputConfig, b: []const OutputConfig) bool {
     if (a.len != b.len) return false;
     for (a, b) |left, right| {

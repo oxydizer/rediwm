@@ -75,6 +75,7 @@ pub const SamplePixelsResult = protocol_results.SamplePixelsResult;
 pub const ScreenshotSelectionStats = protocol_results.ScreenshotSelectionStats;
 pub const PerformanceStatsResult = protocol_results.PerformanceStatsResult;
 pub const DesktopStats = protocol_results.DesktopStats;
+pub const FifoStats = protocol_results.FifoStats;
 pub const StartupStats = protocol_results.StartupStats;
 pub const InhibitorData = protocol_results.InhibitorData;
 pub const IdleStateResult = protocol_results.IdleStateResult;

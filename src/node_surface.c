@@ -44,6 +44,10 @@ static struct wlr_output *get_surface_frame_pacing_output(struct wlr_surface *su
   return frame_pacing_output;
 }
 
+struct wlr_output *rediwm_surface_frame_pacing_output(struct wlr_surface *surface) {
+  return get_surface_frame_pacing_output(surface);
+}
+
 static int get_tf_preference(enum wlr_color_transfer_function tf) {
   switch (tf) {
   case WLR_COLOR_TRANSFER_FUNCTION_GAMMA22:

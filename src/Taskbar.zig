@@ -38,6 +38,7 @@ const taskbar_layout = @import("taskbar/layout.zig");
 const taskbar_reconcile = @import("taskbar/reconcile.zig");
 const taskbar_tick = @import("taskbar/tick.zig");
 const taskbar_pointer = @import("taskbar/pointer.zig");
+const taskbar_reveal = @import("taskbar/reveal.zig");
 const taskbar_classify = @import("taskbar/classify.zig");
 const taskbar_paint_util = @import("taskbar/paint_util.zig");
 const taskbar_paint = @import("taskbar/paint.zig");
@@ -171,6 +172,20 @@ source_scroll: f32 = 0,
 capture_hover: Anim = .{},
 capture_press: Anim = .{ .to = 1 },
 hover_target: Target = .none,
+
+// Auto-hide. `pointer_near` is where the pointer wants the bar (at the edge,
+// or on it once shown); `shown` is what the reveal heads for, which follows
+// after a delay (`reveal_timer` armed for `timer_target`). `reveal` runs 0
+// (away) to 1 and drives the fade and slide; `parked` is hidden and settled,
+// so the tree is disabled and no frames are scheduled. See taskbar/reveal.zig.
+// It starts in place: a bar that never hides must not fade in on its first
+// frame (`relayout` sends an auto-hiding one away).
+reveal: Anim = .{ .from = 1, .to = 1, .property = .opacity },
+shown: bool = false,
+pointer_near: bool = false,
+parked: bool = false,
+reveal_timer: ?*wl.EventSource = null,
+timer_target: ?bool = null,
 
 // Cached master-volume display state, refreshed from `server.audio` only
 // when its `generation` counter has moved since we last looked (see
@@ -314,6 +329,7 @@ pub fn destroy(bar: *Taskbar) void {
     bar.server.input.detachTaskbar(bar);
     bar.timer.remove();
     if (bar.blink_timer) |timer| timer.remove();
+    if (bar.reveal_timer) |timer| timer.remove();
     if (bar.clock_locale) |locale| c_time.freelocale(locale);
     if (bar.start_logo) |e| bar.server.iconRelease(e.id);
     for (bar.chips.items) |chip| {
@@ -326,7 +342,7 @@ pub fn destroy(bar: *Taskbar) void {
     gpa.destroy(bar);
 }
 
-/// Takes a fresh `battery.read` snapshot; only a change requests a frame.
+/// Takes the power policy's fresh battery state; only a change requests a frame.
 pub fn applyBattery(bar: *Taskbar, next: battery.State) void {
     bar.server.updateBatteryWarning(next);
     if (std.meta.eql(next, bar.battery_state)) return;
@@ -548,6 +564,12 @@ pub const ChipSlot = taskbar_pointer.ChipSlot;
 pub const InsertionTarget = taskbar_pointer.InsertionTarget;
 pub const insertionTarget = taskbar_pointer.insertionTarget;
 pub const scrollVolume = taskbar_pointer.scrollVolume;
+
+// taskbar/reveal.zig
+pub const syncReveal = taskbar_reveal.syncReveal;
+pub const applyReveal = taskbar_reveal.applyReveal;
+pub const pointerAt = taskbar_reveal.pointerAt;
+pub const disarmReveal = taskbar_reveal.disarm;
 
 // taskbar/classify.zig
 pub const containsIgnoreCase = taskbar_classify.containsIgnoreCase;

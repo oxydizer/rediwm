@@ -725,11 +725,11 @@ pub const specs = [_]CommandSpec{
     .{
         .id = .set_output_config,
         .kind = .action,
-        .description = "Apply and persist output mode, transform, position, scale and enable policy; auto clears scale or position overrides",
-        .params_schema = "{\"output\": string, \"width\"?: number, \"height\"?: number, \"refresh_mhz\"?: number, \"transform\"?: string, \"x\"?: number, \"y\"?: number, \"scale\"?: number | \"auto\", \"position\"?: \"auto\", \"enabled\"?: boolean, \"primary\"?: boolean}",
+        .description = "Apply and persist output mode, transform, position, scale, variable refresh and enable policy; auto clears scale or position overrides",
+        .params_schema = "{\"output\": string, \"width\"?: number, \"height\"?: number, \"refresh_mhz\"?: number, \"transform\"?: string, \"adaptive_sync\"?: \"off\" | \"auto\" | \"always\", \"x\"?: number, \"y\"?: number, \"scale\"?: number | \"auto\", \"position\"?: \"auto\", \"enabled\"?: boolean, \"primary\"?: boolean}",
         .units = "width/height: device pixels; refresh_mhz: millihertz; x/y: logical pixels; scale: 1–3",
         .description_order = 83,
-        .cli = .{ .name = "output-config", .synopsis = "<output> [--width <PX>] [--height <PX>] [--refresh-mhz <MHZ>] [--transform <normal|90|180|270|flipped|flipped_90|flipped_180|flipped_270>] [--x <X>] [--y <Y>] [--scale <1..3|auto>] [--position auto] [--enabled|--disabled] [--primary|--no-primary]" },
+        .cli = .{ .name = "output-config", .synopsis = "<output> [--width <PX>] [--height <PX>] [--refresh-mhz <MHZ>] [--transform <normal|90|180|270|flipped|flipped_90|flipped_180|flipped_270>] [--adaptive-sync <off|auto|always>] [--x <X>] [--y <Y>] [--scale <1..3|auto>] [--position auto] [--enabled|--disabled] [--primary|--no-primary]" },
     },
     .{
         .id = .get_text_input,

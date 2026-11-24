@@ -27,6 +27,10 @@ static void enable_input(void) {
   zwp_text_input_v3_enable(text_input);
   zwp_text_input_v3_set_surrounding_text(text_input, "hello", 3, 1);
   zwp_text_input_v3_set_content_type(text_input, 1, 0);
+  zwp_text_input_v3_commit(text_input);
+  /* Chromium enables with a commit that does not use set_cursor_rectangle and
+     sends the caret rectangle in a later commit. The compositor must keep
+     using it after that. */
   zwp_text_input_v3_set_cursor_rectangle(text_input, 40, 30, 2, 20);
   zwp_text_input_v3_commit(text_input);
 }
@@ -179,6 +183,11 @@ static void command(char *line) {
     zwp_text_input_v3_set_surrounding_text(text_input,"updated",7,7);
     zwp_text_input_v3_set_text_change_cause(text_input,1);
     zwp_text_input_v3_set_cursor_rectangle(text_input,100,70,3,25);
+    zwp_text_input_v3_commit(text_input);
+  } else if(!strncmp(line,"caret ",6)) {
+    int x, y;
+    if(sscanf(line+6,"%d %d",&x,&y)!=2) abort();
+    zwp_text_input_v3_set_cursor_rectangle(text_input,x,y,3,25);
     zwp_text_input_v3_commit(text_input);
   } else if(!strcmp(line,"extreme-rectangle")) {
     zwp_text_input_v3_set_cursor_rectangle(text_input,INT32_MAX,INT32_MIN,INT32_MAX,INT32_MAX);

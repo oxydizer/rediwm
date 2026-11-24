@@ -15,6 +15,9 @@ const close = Client.close;
 pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void {
     switch (event) {
         .enter => |ev| {
+            // The seat reports every surface of this connection; only this
+            // window's own count (another window of the process has its own client).
+            if (ev.surface != self.surface) return;
             self.cursor_serial = ev.serial;
             self.input_serial = ev.serial;
             self.inside = true;
@@ -24,20 +27,24 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
             self.cursor_name = "";
             self.handlePointerMotion(ev.surface_x.toDouble(), ev.surface_y.toDouble());
         },
-        .leave => {
+        .leave => |ev| {
+            if (ev.surface != self.surface) return;
             self.inside = false;
             self.app.cancelDrag();
             self.app.handleMotion(-1, -1);
             self.app.dirty = true;
         },
         .motion => |ev| {
+            if (!self.inside) return;
             self.handlePointerMotion(ev.surface_x.toDouble(), ev.surface_y.toDouble());
         },
         .button => |ev| {
+            if (!self.inside) return;
             self.input_serial = ev.serial;
             self.handlePointerButton(ev.button, ev.state == .pressed);
         },
         .axis => |ev| {
+            if (!self.inside) return;
             if (ev.axis == .vertical_scroll) {
                 self.app.handleScroll(ev.value.toDouble());
             }
@@ -149,11 +156,6 @@ pub fn toggleMaximized(self: *Client) void {
 }
 
 pub fn handleTitlebarClick(self: *Client) void {
-    if (self.overHeaderButton(.menu)) {
-        const r = self.headerButton(.menu);
-        self.app.toggleMenu(r.x + r.w);
-        return;
-    }
     self.app.dismissMenu();
     if (self.overHeaderButton(.close)) {
         self.app.requestClose();
@@ -207,11 +209,13 @@ pub fn repeatDue(self: *Client) void {
 
 pub fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) void {
     switch (event) {
-        .enter => {
+        .enter => |ev| {
+            if (ev.surface != self.surface) return;
             self.app.focused = true;
             self.app.dirty = true;
         },
-        .leave => {
+        .leave => |ev| {
+            if (ev.surface != self.surface) return;
             self.app.focused = false;
             self.app.dismissMenu();
             self.compose.reset();
@@ -255,6 +259,8 @@ pub fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) v
             }
         },
         .key => |ev| {
+            // Keys arrive at every window's keyboard object; the focused one takes them.
+            if (!self.app.focused) return;
             self.input_serial = ev.serial;
             if (ev.state == .pressed) {
                 const state = self.xkb_state orelse return;

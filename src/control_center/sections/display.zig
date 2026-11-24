@@ -14,6 +14,7 @@ const panel = @import("../panel.zig");
 const setting_save = @import("config").setting_save;
 const output_transform = @import("config").output_transform;
 const Output = @import("../../Output.zig");
+const vrr = @import("../../output/vrr.zig");
 
 /// Row slots; every access goes through these so inserting a row cannot leave
 /// a stale index reading a `.select` widget as `.text` (a live-session panic).
@@ -23,8 +24,9 @@ const row_refresh = 2;
 const row_scale = 3;
 const row_xwayland = 4;
 const row_transform = 5;
-const row_name = 6;
-const row_count = 7;
+const row_adaptive_sync = 6;
+const row_name = 7;
+const row_count = 8;
 const scale_labels = blk: {
     @setEvalBranchQuota(20000);
     var labels: [42][]const u8 = undefined;
@@ -44,8 +46,10 @@ const xwayland_labels = blk: {
 };
 const LidAction = @import("config").loader.LidAction;
 /// In `LidAction` order.
-const lid_labels = [_]i18n.Message{ i18n.msg("Turn off screen"), i18n.msg("Lock"), i18n.msg("Sleep"), i18n.msg("Do nothing") };
+const lid_labels = [_]i18n.Message{ i18n.msg("Turn off screen"), i18n.msg("Lock"), i18n.msg("Sleep"), i18n.msg("Power off"), i18n.msg("Do nothing") };
 const transform_labels = [_]i18n.Message{ i18n.msg("Normal"), i18n.msg("90°"), i18n.msg("180°"), i18n.msg("270°"), i18n.msg("Flipped"), i18n.msg("Flipped 90°"), i18n.msg("Flipped 180°"), i18n.msg("Flipped 270°") };
+/// In `AdaptiveSync` order: off, auto, always.
+const adaptive_sync_labels = [_]i18n.Message{ i18n.msg("Off"), i18n.msg("Automatic"), i18n.msg("Always") };
 const row_height: f32 = 40;
 const nl_temp_min: f32 = 1700;
 const nl_temp_max: f32 = 10000;
@@ -61,6 +65,7 @@ pub const Section = struct {
     initial_scale: ?usize = null,
     initial_xwayland_scale: ?usize = null,
     initial_transform: ?usize = null,
+    initial_adaptive_sync: ?usize = null,
     monitor_labels: [][]const u8 = &.{},
     monitor_names: [][]const u8 = &.{},
     initial_monitor: ?usize = null,
@@ -152,6 +157,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter, wlr_output: *wlr.Output) v
     out.initial_resolution = null;
     out.initial_rate = null;
     out.initial_transform = null;
+    out.initial_adaptive_sync = null;
     out.monitor_labels = &.{};
     out.monitor_names = &.{};
     out.initial_monitor = null;
@@ -174,6 +180,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter, wlr_output: *wlr.Output) v
     setRow(out, row_xwayland, i18n.tr("Xwayland scale (global)"), "", .{});
     const current_transform = transformFromWl(wlr_output.transform);
     setRow(out, row_transform, i18n.tr("Transform"), "{s}", .{output_transform.name(current_transform)});
+    setRow(out, row_adaptive_sync, i18n.tr("Variable refresh rate"), "{s}", .{i18n.tr("Not supported by this display")});
     setRow(out, row_name, i18n.tr("Output name"), "{s}", .{name});
     buildScales(out, wlr_output);
 
@@ -182,11 +189,14 @@ pub fn build(out: *Section, cc: *panel.ControlCenter, wlr_output: *wlr.Output) v
         out.rates = &.{};
     };
     buildTransforms(out, current_transform);
+    const vrr_output = Output.fromWlr(wlr_output);
+    if (vrr_output) |output| buildAdaptiveSync(out, output);
+    const vrr_note = if (vrr_output) |output| output.vrr.needs_modeset and vrr.mode(output) == .auto else false;
     const pal = panel.palette();
     out.top_children = .{
         .{ .kind = .{ .text = .{ .content = i18n.tr("DISPLAY"), .font_size = 12, .weight = 700, .color = pal.dim } } },
         .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.row_storage },
-        .{ .kind = .{ .text = .{ .content = if (out.failed) i18n.tr("Could not apply that display setting.") else if (out.save_failed) i18n.tr("Could not save the display setting.") else if (wlr_output.modes.empty()) i18n.tr("This output does not advertise editable display modes.") else i18n.tr("Changes are saved automatically. Scroll the lists for more modes."), .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = if (out.failed) i18n.tr("Could not apply that display setting.") else if (out.save_failed) i18n.tr("Could not save the display setting.") else if (vrr_note) i18n.tr("This display changes variable refresh only with a mode switch: choose Always or Off.") else if (wlr_output.modes.empty()) i18n.tr("This output does not advertise editable display modes.") else i18n.tr("Changes are saved automatically. Scroll the lists for more modes."), .font_size = 12, .color = pal.dim } } },
     };
     out.root = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.top_children };
     buildNightLight(out);
@@ -348,6 +358,7 @@ fn buildLid(out: *Section) void {
         .display_off => i18n.tr("The built-in screen turns off while another display is connected."),
         .lock => i18n.tr("Locks, and turns off the built-in screen while another display is connected."),
         .@"suspend" => i18n.tr("Locks and sleeps, even with another display connected."),
+        .power_off => i18n.tr("Powers off, even with another display connected."),
         .ignore => i18n.tr("The built-in screen stays on."),
     });
     hint.kind.text.font_size = 12;
@@ -468,6 +479,23 @@ pub fn pendingTransform(out: *Section) ?output_transform.Transform {
     if (out.row_children[row_transform][1].kind != .select) return null;
     const selected = out.row_children[row_transform][1].kind.select.selected orelse return null;
     if (selected == out.initial_transform or selected >= transform_labels.len) return null;
+    return @enumFromInt(selected);
+}
+
+fn buildAdaptiveSync(out: *Section, output: *Output) void {
+    // An unsupported display keeps the text row, unless it is on anyway.
+    if (!vrr.supported(output) and !vrr.active(output)) return;
+    out.initial_adaptive_sync = @intFromEnum(vrr.mode(output));
+    out.row_children[row_adaptive_sync][1] = .{ .name = "adaptive_sync", .kind = .{ .select = .{
+        .labels = panel.translatedLabels(&adaptive_sync_labels),
+        .selected = out.initial_adaptive_sync,
+    } }, .width = .{ .fixed = 190 }, .height = .{ .fixed = row_height } };
+}
+
+pub fn pendingAdaptiveSync(out: *Section) ?vrr.Mode {
+    if (out.row_children[row_adaptive_sync][1].kind != .select) return null;
+    const selected = out.row_children[row_adaptive_sync][1].kind.select.selected orelse return null;
+    if (selected == out.initial_adaptive_sync or selected >= adaptive_sync_labels.len) return null;
     return @enumFromInt(selected);
 }
 

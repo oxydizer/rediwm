@@ -30,6 +30,11 @@ struct rediwm_surface *rediwm_surface_create(struct rediwm_tree *parent, struct 
 // clip when NULL. The subsurface tree sets it; others use rediwm_subsurface_tree_set_clip.
 void rediwm_surface_set_clip(struct rediwm_surface *surface, const struct wlr_box *clip);
 
+// The output that paces `surface` (frame callbacks, presentation feedback, fifo-v1
+// barriers): the highest-refresh output it is shown on. NULL while it is hidden on every
+// output (covered, minimized, another workspace, unmapped, outputs off).
+struct wlr_output *rediwm_surface_frame_pacing_output(struct wlr_surface *surface);
+
 // The surface and its subsurfaces, in a tree that follows them, enabled while mapped.
 struct rediwm_tree *rediwm_subsurface_tree_create(struct rediwm_tree *parent, struct wlr_surface *);
 // Clips every surface of the subsurface trees at or under `node` to `clip` (in the

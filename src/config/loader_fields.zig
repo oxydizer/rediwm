@@ -122,6 +122,7 @@ pub const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(Composi
     .dock_pinned_apps = .json_string_list,
     .taskbar_items = .taskbar_items,
     .taskbar_position = .enumeration,
+    .taskbar_auto_hide = .boolean,
     .taskbar_alignment = .enumeration,
     .icon_theme = .string,
     .window_tab_apps = .json_string_list,
@@ -200,6 +201,7 @@ pub const output_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(OutputConfi
     .enabled = .boolean,
     .primary = .boolean,
     .transform = .output_transform,
+    .adaptive_sync = .enumeration,
     .night_light = .boolean,
     .gamma = .{ .float = .{ .min = 0.5, .max = 2.0 } },
 };
@@ -355,6 +357,8 @@ pub fn applyNotificationsKey(n: *NotificationsConfig, allocator: Allocator, key:
         n.daemon = try parseString(allocator, value);
     } else if (std.mem.eql(u8, key, "dnd")) {
         n.dnd = try parseBool(value);
+    } else if (std.mem.eql(u8, key, "game_dnd")) {
+        n.game_dnd = try parseBool(value);
     } else if (std.mem.eql(u8, key, "default_timeout_ms")) {
         n.default_timeout_ms = try parseU32Range(value, 0, std.math.maxInt(u32));
     } else {

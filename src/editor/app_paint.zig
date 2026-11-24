@@ -131,7 +131,7 @@ pub fn paintCaret(self: *App, cr: *c.cairo_t) void {
 }
 
 pub fn tabRight(self: *const App) f64 {
-    return @as(f64, @floatFromInt(self.w)) - @as(f64, if (self.has_titlebar) 40 else 80);
+    return @as(f64, @floatFromInt(self.w)) - 80;
 }
 
 pub fn dismissMenu(self: *App) void {
@@ -154,11 +154,17 @@ pub fn toggleMenu(self: *App, anchor: f64) void {
     self.dirty = true;
 }
 
+/// Opens the menu with its left edge at `left`, under the leading button of the
+/// compositor's titlebar.
+pub fn openMenuAt(self: *App, left: f64) void {
+    self.toggleMenu(left + menu.width);
+}
+
 pub fn menuBox(self: *const App) menu.Rect {
     const height = labels.len * menu.row_height + 2 * menu.padding + 2 * menu.separator_space;
     return .{
         .x = std.math.clamp(self.menu_anchor - menu.width, 6, @max(6, @as(f64, @floatFromInt(self.w)) - menu.width - 6)),
-        .y = @min(if (self.has_titlebar) @as(f64, 6) else top + 4, @max(6, @as(f64, @floatFromInt(self.h)) - height - 6)),
+        .y = @min(if (self.strip_in_titlebar) @as(f64, 6) else top + 4, @max(6, @as(f64, @floatFromInt(self.h)) - height - 6)),
         .w = menu.width,
         .h = height,
     };
@@ -166,7 +172,7 @@ pub fn menuBox(self: *const App) menu.Rect {
 
 pub fn menuRow(self: *const App, i: usize) menu.Rect {
     const box = self.menuBox();
-    const separators: usize = @as(usize, if (i >= 3) 1 else 0) + @as(usize, if (i >= 5) 1 else 0);
+    const separators: usize = @as(usize, if (i >= 4) 1 else 0) + @as(usize, if (i >= 6) 1 else 0);
     return .{ .x = box.x + menu.padding, .y = box.y + @as(f64, @floatFromInt(menu.padding + i * menu.row_height + separators * menu.separator_space)), .w = box.w - 2 * menu.padding, .h = menu.row_height };
 }
 
@@ -178,14 +184,14 @@ pub fn menuHit(self: *const App, x: f64, y: f64) ?usize {
 pub fn paintMenu(self: *App, cr: *c.cairo_t) void {
     menu.frame(cr, self.menuBox(), true);
     const IconId = @import("ui").layout.IconId;
-    const icons = [_]?IconId{ .plus, .open, .clock, .save, .save, .search, .search, if (self.wrap) .checkmark else null };
-    const hints = [_]?[]const u8{ "CTRL+N", "CTRL+O", null, "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", "CTRL+H", null };
+    const icons = [_]?IconId{ .plus, .plus, .open, .clock, .save, .save, .search, .search, if (self.wrap) .checkmark else null };
+    const hints = [_]?[]const u8{ "CTRL+N", "CTRL+SHIFT+N", "CTRL+O", null, "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", "CTRL+H", null };
     for (labels, 0..) |label, i| menu.row(cr, self.menuRow(i), .{
         .label = label.get(),
         .hint = hints[i],
         .icon = icons[i],
         .selected = self.menu_selected == i,
-        .separator = i == 3 or i == 5,
+        .separator = i == 4 or i == 6,
         .disabled = i == recent_row and !self.recentEnabled(),
     }, true);
     // The chevron says the row opens a submenu.
@@ -217,9 +223,9 @@ pub fn paintButton(self: *App, cr: *c.cairo_t, r: field.Rect, label: []const u8,
     });
 }
 
-pub fn render(self: *App, cr: *c.cairo_t) void {
+/// The window's own tab strip, for when the compositor does not draw the tabs.
+fn paintStrip(self: *App, cr: *c.cairo_t) void {
     const t = theme.global;
-    fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), t.app_bg);
     fill(cr, 0, 0, @floatFromInt(self.w), 38, t.app_bar);
     c.cairo_save(cr);
     c.cairo_rectangle(cr, 0, 0, self.tabRight(), 38);
@@ -245,7 +251,13 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     }
     c.cairo_restore(cr);
     self.paintIcon(cr, self.newButtonBox(), .plus, tr("New tab"), false);
-    if (!self.has_titlebar) self.paintIcon(cr, self.menuButtonBox(), .more, tr("Menu"), self.menu_open);
+    self.paintIcon(cr, self.menuButtonBox(), .more, tr("Menu"), self.menu_open);
+}
+
+pub fn render(self: *App, cr: *c.cairo_t) void {
+    const t = theme.global;
+    fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), t.app_bg);
+    if (!self.strip_in_titlebar) paintStrip(self, cr);
     if (self.find_open) self.paintSearch(cr);
     self.layouts.beginFrame();
     const pt = self.port();

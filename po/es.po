@@ -141,6 +141,10 @@ msgstr "Una cola sin procesar transmite los comandos sin cambios; imprimir archi
 msgid "A toolkit config folder is a symlink. Apply the colors in its real location, or make it a regular folder."
 msgstr "La carpeta de configuración de un toolkit es un enlace simbólico. Aplica los colores en su ubicación real o conviértela en una carpeta normal."
 
+#: src/control_center/sections/display.zig
+msgid "Always"
+msgstr "Siempre"
+
 #: src/control_center/sections/appearance.zig
 msgid "APPEARANCE"
 msgstr "APARIENCIA"
@@ -3227,6 +3231,10 @@ msgid "Locks and sleeps, even with another display connected."
 msgstr "Bloquea y suspende, incluso con otra pantalla conectada."
 
 #: src/control_center/sections/display.zig
+msgid "Powers off, even with another display connected."
+msgstr "Apaga el equipo, incluso con otra pantalla conectada."
+
+#: src/control_center/sections/display.zig
 msgid "Locks, and turns off the built-in screen while another display is connected."
 msgstr "Bloquea y apaga la pantalla integrada mientras hay otra pantalla conectada."
 
@@ -3873,6 +3881,10 @@ msgstr "Sin especificar"
 #: src/session/power_capabilities.zig
 msgid "Not supported"
 msgstr "No compatible"
+
+#: src/control_center/sections/display.zig
+msgid "Not supported by this display"
+msgstr "No compatible con esta pantalla"
 
 #: src/files/app_places.zig
 msgid "Nothing to add to Places"
@@ -6044,6 +6056,10 @@ msgstr "Esta función no tiene un valor predeterminado de cola seleccionable en 
 msgid "This connection has no direct presence check."
 msgstr "Esta conexión no tiene comprobación directa de presencia."
 
+#: src/control_center/sections/display.zig
+msgid "This display changes variable refresh only with a mode switch: choose Always or Off."
+msgstr "Esta pantalla solo cambia la frecuencia variable con un cambio de modo: elige Siempre o Desactivado."
+
 #: src/control_center/sections/printers_tools.zig
 msgid "This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."
 msgstr "Este controlador no permite configurar la resolución sugerida en la cola. Revisa sus opciones de calidad o controlador."
@@ -6500,6 +6516,11 @@ msgstr "Usuarios"
 msgid "Uses the main theme. Apply again after changing it; restart apps to see the colors."
 msgstr "Usa el tema principal. Vuelve a aplicar tras cambiarlo; reinicia las aplicaciones para ver los colores."
 
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+msgid "Variable refresh rate"
+msgstr "Frecuencia de actualización variable"
+
 #: src/control_center/sections/desktop.zig
 msgid "Vertical Pan"
 msgstr "Desplazamiento vertical"
@@ -6531,6 +6552,10 @@ msgstr "Subir volumen"
 #: src/control_center/panel.zig
 msgid "Volume, microphones and output devices."
 msgstr "Volumen, micrófonos y dispositivos de salida."
+
+#: src/control_center/search_index.zig
+msgid "vrr freesync gsync adaptive sync game"
+msgstr "vrr freesync gsync sincronización adaptativa juego"
 
 #: src/control_center/sections/network.zig
 msgid "WPA2 / WPA3 Personal"
@@ -6683,6 +6708,10 @@ msgstr "Conexiones cableadas e inalámbricas."
 #: src/control_center/sections/network.zig
 msgid "Wireless connections"
 msgstr "Conexiones inalámbricas"
+
+#: src/editor/app.zig
+msgid "New Window"
+msgstr "Nueva ventana"
 
 #: src/editor/app.zig
 msgid "Word Wrap"
@@ -6965,8 +6994,8 @@ msgid "keep icons in place"
 msgstr "mantener iconos fijos"
 
 #: src/control_center/search_index.zig
-msgid "laptop suspend sleep"
-msgstr "portátil suspender dormir"
+msgid "laptop suspend sleep power off shut down"
+msgstr "portátil suspender dormir apagar"
 
 #: src/control_center/search_index.zig
 msgid "launcher icon image"

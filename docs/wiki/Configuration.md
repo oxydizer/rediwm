@@ -180,6 +180,7 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `window_tab_apps` | `[]` | app IDs that get tabs |
 | `default_file_manager`, `default_terminal` | `""` | desktop IDs, empty means Files / auto terminal |
 | `taskbar_position` | `"bottom"` | `top` or `bottom` |
+| `taskbar_auto_hide` | `false` | `true` hides the taskbar until the pointer reaches its edge, and frees its strip for windows; `false` reserves it |
 | `dock_position` | `"bottom"` | `top`, `bottom`, `left` or `right`; inside the usable area beside the taskbar |
 | `dock_auto_hide` | `false` | `true` hides the dock until the pointer reaches its edge, and frees its strip for windows; `false` reserves it |
 | `dock_opacity` | unset | 0.0 to 1.0, the dock background's alpha; unset keeps the theme's |
@@ -216,7 +217,7 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `dark_mode` | `false` | live, goes through the Settings portal |
 | `placeholder_delay_ms` | `0` | splash only if the app is this slow to show, 0 disables |
 | `wallpaper` | unset | file in `~/.local/share/rediwm/wallpapers`, or a path |
-| `lid_close` | `"display_off"` | `display_off`, `lock`, `suspend`, `ignore` |
+| `lid_close` | `"display_off"` | `display_off`, `lock`, `suspend`, `power_off`, `ignore` |
 | `lock_on_suspend` | `true` | |
 | `sound_theme`, `sound_enabled`, `sound_disabled_events` | `"freedesktop"`, `true`, `[]` | event sounds, used by `play_sound` |
 
@@ -276,7 +277,7 @@ brightness = 0                   # leave unchanged; otherwise 1–100
 keyboard_brightness = -1          # leave unchanged; 0 turns off, 1–100 sets level
 # blank_after_seconds = 900       # 0 = Never
 # suspend_after_seconds = 0
-# lid_close = "display_off"       # display_off, lock, suspend, ignore
+# lid_close = "display_off"       # display_off, lock, suspend, power_off, ignore
 
 [power.on_battery]
 mode = "power_saver"

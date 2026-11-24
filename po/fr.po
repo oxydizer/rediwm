@@ -144,6 +144,10 @@ msgstr "Une file brute transmet les commandes sans modification ; l'impression 
 msgid "A toolkit config folder is a symlink. Apply the colors in its real location, or make it a regular folder."
 msgstr "Un dossier de configuration de la boîte à outils est un lien symbolique. Appliquez les couleurs à son emplacement réel ou remplacez-le par un dossier ordinaire."
 
+#: src/control_center/sections/display.zig
+msgid "Always"
+msgstr "Toujours"
+
 #: src/control_center/sections/appearance.zig
 msgid "APPEARANCE"
 msgstr "APPARENCE"
@@ -3230,6 +3234,10 @@ msgid "Locks and sleeps, even with another display connected."
 msgstr "Verrouille et met en veille, même avec un autre écran connecté."
 
 #: src/control_center/sections/display.zig
+msgid "Powers off, even with another display connected."
+msgstr "Éteint l'ordinateur, même avec un autre écran connecté."
+
+#: src/control_center/sections/display.zig
 msgid "Locks, and turns off the built-in screen while another display is connected."
 msgstr "Verrouille et éteint l'écran intégré lorsqu'un autre écran est connecté."
 
@@ -3876,6 +3884,10 @@ msgstr "Non précisé"
 #: src/session/power_capabilities.zig
 msgid "Not supported"
 msgstr "Non pris en charge"
+
+#: src/control_center/sections/display.zig
+msgid "Not supported by this display"
+msgstr "Non pris en charge par cet écran"
 
 #: src/files/app_places.zig
 msgid "Nothing to add to Places"
@@ -6047,6 +6059,10 @@ msgstr "Le pilote actuel ne propose pas de valeur par défaut sélectionnable po
 msgid "This connection has no direct presence check."
 msgstr "Cette connexion ne permet pas de vérifier directement la présence."
 
+#: src/control_center/sections/display.zig
+msgid "This display changes variable refresh only with a mode switch: choose Always or Off."
+msgstr "Cet écran ne change le rafraîchissement variable qu’avec un changement de mode : choisissez Toujours ou Désactivé."
+
 #: src/control_center/sections/printers_tools.zig
 msgid "This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."
 msgstr "Ce pilote ne propose pas la résolution suggérée comme paramètre de file. Vérifiez ses options de qualité ou choisissez un autre pilote."
@@ -6503,6 +6519,11 @@ msgstr "Utilisateurs"
 msgid "Uses the main theme. Apply again after changing it; restart apps to see the colors."
 msgstr "Utilise le thème principal. Appliquez de nouveau après toute modification ; redémarrez les applications pour voir les couleurs."
 
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+msgid "Variable refresh rate"
+msgstr "Taux de rafraîchissement variable"
+
 #: src/control_center/sections/desktop.zig
 msgid "Vertical Pan"
 msgstr "Déplacement vertical"
@@ -6534,6 +6555,10 @@ msgstr "Augmenter le volume"
 #: src/control_center/panel.zig
 msgid "Volume, microphones and output devices."
 msgstr "Volume, microphones et périphériques de sortie."
+
+#: src/control_center/search_index.zig
+msgid "vrr freesync gsync adaptive sync game"
+msgstr "vrr freesync gsync synchronisation adaptative jeu"
 
 #: src/control_center/sections/network.zig
 msgid "WPA2 / WPA3 Personal"
@@ -6686,6 +6711,10 @@ msgstr "Connexions filaires et sans fil."
 #: src/control_center/sections/network.zig
 msgid "Wireless connections"
 msgstr "Connexions sans fil"
+
+#: src/editor/app.zig
+msgid "New Window"
+msgstr "Nouvelle fenêtre"
 
 #: src/editor/app.zig
 msgid "Word Wrap"
@@ -6968,8 +6997,8 @@ msgid "keep icons in place"
 msgstr "fixer les icônes"
 
 #: src/control_center/search_index.zig
-msgid "laptop suspend sleep"
-msgstr "portable suspendre veille"
+msgid "laptop suspend sleep power off shut down"
+msgstr "portable suspendre veille éteindre arrêter"
 
 #: src/control_center/search_index.zig
 msgid "launcher icon image"

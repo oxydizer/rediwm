@@ -114,6 +114,10 @@ def output_management(tmp):
         wait_for(lambda: s.output("HEADLESS-1")["scale"] == 1.5, "scale not applied")
         s.run("wlr-randr", "--output", "HEADLESS-1", "--scale", "0.5", ok=False)
         assert s.output("HEADLESS-1")["scale"] == 1.5
+        # Headless cannot run variable refresh: switching it on is refused,
+        # and the mode stays as configured.
+        s.run("wlr-randr", "--output", "HEADLESS-1", "--adaptive-sync", "enabled", ok=False)
+        assert s.output("HEADLESS-1")["adaptive_sync"] == "auto"
 
         # Client changes persist like Settings changes.
         saved = (tmp / "rediwm-config.toml").read_text()
@@ -254,7 +258,7 @@ def extra_protocols(tmp):
         for interface in ("ext_workspace_manager_v1", "wp_color_manager_v1",
                           "wp_color_representation_manager_v1", "xdg_toplevel_tag_manager_v1",
                           "wp_content_type_manager_v1", "wp_tearing_control_manager_v1",
-                          "xdg_activation_v1"):
+                          "xdg_activation_v1", "wp_fifo_manager_v1"):
             assert interface in registry, interface
         assert "wp_drm_lease_device_v1" not in registry, "headless backend must not offer DRM leases"
         # Every global is advertised once. linux-dmabuf used to be created both
@@ -283,6 +287,19 @@ def extra_protocols(tmp):
         tearing = lambda: [o["name"] for o in s.ipc.get_outputs() if o["tearing_allowed"]]
         wait_for(lambda: len(tearing()) == 1, "fullscreen async window did not allow tearing")
         assert not any(o["tearing_active"] or o["tearing_paused"] for o in s.ipc.get_outputs())
+        # Variable refresh in "auto" (the default) is wanted on the game's
+        # output only; headless cannot run it, so it stays off.
+        vrr = lambda: [o["name"] for o in s.ipc.get_outputs() if o["adaptive_sync_wanted"]]
+        assert vrr() == tearing(), (vrr(), tearing())
+        for o in s.ipc.get_outputs():
+            assert o["adaptive_sync"] == "auto" and not o["adaptive_sync_supported"], o
+            assert not o["adaptive_sync_active"] and not o["adaptive_sync_needs_modeset"], o
+        game_output = vrr()[0]
+        s.ipc.request(query="set_output_config", params={"output": game_output, "adaptive_sync": "off"})
+        wait_for(lambda: not vrr(), "adaptive_sync = off still wanted")
+        assert 'adaptive_sync = "off"' in (tmp / "rediwm-config.toml").read_text()
+        s.ipc.request(query="set_output_config", params={"output": game_output, "adaptive_sync": "auto"})
+        wait_for(lambda: vrr() == [game_output], "adaptive_sync = auto not wanted again")
         workspaces = s.ipc.request(query="workspaces")
         assert workspaces == [{"id": 1, "name": "Canvas", "is_focused": True,
                                "is_visible": True, "output": None, "automatic": False,
@@ -292,6 +309,8 @@ def extra_protocols(tmp):
         wait_for(lambda: s.window("rediwm.protocol-extras")["content_type"] == "game", "content hint did not update")
         assert s.window("rediwm.protocol-extras")["tag"] == "main"
         wait_for(lambda: not tearing(), "a vsync hint still allowed tearing")
+        # Variable refresh does not depend on the hint: a vsync game still wants it.
+        assert vrr() == [game_output], vrr()
         rules = s.ipc.request(query="get_window_rules", params={"id": window["id"]})
         assert rules["live"]["opacity"] is None, rules
         child.stdin.write("exit\n"); child.stdin.flush()

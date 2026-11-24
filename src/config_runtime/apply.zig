@@ -48,6 +48,8 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         while (output_it.next()) |output| output.applyConfig();
         @import("../Output.zig").syncLayout(server);
     }
+    // Adaptive sync is decided per frame (output/vrr.zig); a frame applies it.
+    if (!loader.outputsAdaptiveSyncEql(old.outputs, new.outputs)) server.scheduleFrames();
     if (!outputsColorEql(old.outputs, new.outputs) or !nightLightEql(old.night_light, new.night_light)) {
         server.night_light.reconfigure(new.night_light);
     }
@@ -246,6 +248,13 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
             old.compositor.dock_position != new.compositor.dock_position or
             old.compositor.dock_height != new.compositor.dock_height);
     if (old.compositor.taskbar_position != new.compositor.taskbar_position or dock_strip_moved) server.applyTaskbarPosition();
+
+    // An auto-hiding taskbar floats over its strip: refit windows as it comes
+    // or goes, and schedule a frame so a parked bar can reappear.
+    if (old.compositor.taskbar_auto_hide != new.compositor.taskbar_auto_hide) {
+        server.applyTaskbarPosition();
+        server.scheduleFrames();
+    }
 
     if (old.compositor.dock_enabled != new.compositor.dock_enabled) {
         server.scheduleFrames();

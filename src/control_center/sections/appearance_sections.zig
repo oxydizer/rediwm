@@ -87,6 +87,11 @@ pub fn buildTaskbarSection(out: *Section, t: theme.Theme, pal: theme.Theme) Widg
         .{ .name = "taskbar_position", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Top"), i18n.msg("Bottom") }), .selected = @intFromEnum(out.cc.server.config.compositor.taskbar_position), .owner = out, .on_change = &onTaskbarPositionChanged } }, .width = .{ .fixed = segmented_width } },
     };
     const position_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_position_children };
+    out.taskbar_auto_hide_children = .{
+        labelWidget(i18n.tr("Auto-hide taskbar")),
+        .{ .name = "taskbar_auto_hide", .kind = .{ .toggle = .{ .on = out.cc.server.config.compositor.taskbar_auto_hide, .owner = out, .on_change = &appearance_chrome.onTaskbarAutoHideChanged } } },
+    };
+    const auto_hide_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_auto_hide_children };
     out.taskbar_alignment_children = .{
         labelWidget(i18n.tr("Taskbar alignment")),
         .{ .name = "taskbar_alignment", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Left"), i18n.msg("Center"), i18n.msg("Right") }), .selected = @intFromEnum(out.cc.server.config.compositor.taskbar_alignment), .owner = out, .on_change = &appearance_chrome.onTaskbarAlignmentChanged } }, .width = .{ .fixed = segmented_width } },
@@ -155,7 +160,7 @@ pub fn buildTaskbarSection(out: *Section, t: theme.Theme, pal: theme.Theme) Widg
             i18n.tr("Warning: Screen capture is hidden. Recording and screen sharing can continue without a visible indicator or Stop sharing button. Hiding it is not recommended."), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     const items_group: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .@"align" = .stretch, .children = &out.items_children };
-    out.taskbar_section_children = .{ panel.sectionTitle(i18n.tr("Taskbar")), position_row, alignment_row, taskbar_row, edge_gap_row, length_row, radius_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, clock_bold_row, clock_italic_row, items_group };
+    out.taskbar_section_children = .{ panel.sectionTitle(i18n.tr("Taskbar")), position_row, auto_hide_row, alignment_row, taskbar_row, edge_gap_row, length_row, radius_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, clock_bold_row, clock_italic_row, items_group };
     const taskbar_section: Widget = .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.taskbar_section_children };
     return taskbar_section;
 }

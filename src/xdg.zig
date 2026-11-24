@@ -6,6 +6,7 @@ const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 
 const Toplevel = @import("Toplevel.zig");
+const Output = @import("Output.zig");
 
 const Adapter = @This();
 
@@ -116,13 +117,27 @@ fn handleRequestResize(
 fn handleRequestMaximize(listener: *wl.Listener(void)) void {
     const adapter: *Adapter = @fieldParentPtr("request_maximize", listener);
     if (!adapter.window.isInitialized()) return;
+    if (adapter.window.minimized) return;
     adapter.window.setMaximized(adapter.xdg_toplevel.requested.maximized);
 }
 
+/// A minimized window's maximize/fullscreen requests are ignored: `restore`
+/// answers with a configure of the state the window still has, and a client
+/// that still wants the change asks again. Any configure sent to a minimized
+/// window reads to Wine as the compositor restoring it, and a fullscreen game
+/// drops out of fullscreen while minimized on focus loss (its display mode
+/// goes back to the desktop's). Answering then would un-minimize it, windowed;
+/// applying the request on restore would leave Wine, which re-enters
+/// fullscreen on activation, unable to ack that configure or ask again.
 fn handleRequestFullscreen(listener: *wl.Listener(void)) void {
     const adapter: *Adapter = @fieldParentPtr("request_fullscreen", listener);
-    if (!adapter.window.isInitialized()) return;
-    adapter.window.setFullscreen(adapter.xdg_toplevel.requested.fullscreen);
+    if (!adapter.window.isInitialized() or adapter.window.minimized) return;
+    const requested = &adapter.xdg_toplevel.requested;
+    // A game on a second monitor names it; otherwise the window's centre picks.
+    if (requested.fullscreen) if (requested.fullscreen_output) |wlr_output| if (Output.fromWlr(wlr_output)) |output| {
+        if (output.isLogicallyEnabled()) return adapter.window.setFullscreenOn(output);
+    };
+    adapter.window.setFullscreen(requested.fullscreen);
 }
 
 fn handleRequestMinimize(listener: *wl.Listener(void)) void {

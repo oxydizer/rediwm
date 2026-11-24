@@ -17,7 +17,9 @@
   the grab already received still reach it, and the IM's virtual keyboard
   never counts as a physical modifier source (it only echoes forwarded
   state). Lock/auth reject virtual input. IPC `GetTextInput` never returns
-  text.
+  text. Candidate popups follow the client's committed cursor rectangle:
+  wlroots' `active_features` only snapshots the enabling commit, so a
+  rectangle sent later (Chromium's order) needs `cursor_rectangle_seen`.
 * **Layouts:** layout-zero fallback is for binding lookup only; text uses the
   active XKB state.
 * **Input sources** (`input_sources.zig`, `input_sources/`): the config's
@@ -37,6 +39,12 @@
   focus; new compositor input modes go in `motionReachesClient` or
   `candidate`. `sendDeactivated` destroys oneshots synchronously: clear
   `active` first.
+* **Pointer warp** (`pointer_warp.zig`, wp_pointer_warp_v1; Wine's
+  SetCursorPos): honoured only while the target's surface tree has pointer
+  focus and `motionReachesClient`, with a seat serial for that client, inside
+  the surface; never through a lock, only within a confinement. It skips
+  `clientMotion` on purpose (a warp is no relative delta) but runs
+  `processCursorMotion`, the frame and `sync` like `warpCursor`.
 * **The switcher owns the pointer** while it is up: opening it clears pointer
   focus and shows the arrow (a client's hidden or text cursor would otherwise
   stay, since no motion reaches it), unless a press or grab is in progress.

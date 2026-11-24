@@ -144,6 +144,10 @@ msgstr "Очередь без драйвера передаёт команды �
 msgid "A toolkit config folder is a symlink. Apply the colors in its real location, or make it a regular folder."
 msgstr "Папка настроек графического инструментария является символической ссылкой. Примените цвета по её настоящему пути или замените ссылку обычной папкой."
 
+#: src/control_center/sections/display.zig
+msgid "Always"
+msgstr "Всегда"
+
 #: src/control_center/sections/appearance.zig
 msgid "APPEARANCE"
 msgstr "ОФОРМЛЕНИЕ"
@@ -3232,6 +3236,10 @@ msgid "Locks and sleeps, even with another display connected."
 msgstr "Блокирует сеанс и переводит компьютер в сон, даже если подключён другой экран."
 
 #: src/control_center/sections/display.zig
+msgid "Powers off, even with another display connected."
+msgstr "Выключает компьютер, даже при подключённом другом дисплее."
+
+#: src/control_center/sections/display.zig
 msgid "Locks, and turns off the built-in screen while another display is connected."
 msgstr "Блокирует сеанс и выключает встроенный экран, если подключён другой экран."
 
@@ -3878,6 +3886,10 @@ msgstr "Не указано"
 #: src/session/power_capabilities.zig
 msgid "Not supported"
 msgstr "Не поддерживается"
+
+#: src/control_center/sections/display.zig
+msgid "Not supported by this display"
+msgstr "Не поддерживается этим дисплеем"
 
 #: src/files/app_places.zig
 msgid "Nothing to add to Places"
@@ -6050,6 +6062,10 @@ msgstr "Для этой возможности текущий драйвер н�
 msgid "This connection has no direct presence check."
 msgstr "Для этого подключения нет прямой проверки наличия."
 
+#: src/control_center/sections/display.zig
+msgid "This display changes variable refresh only with a mode switch: choose Always or Off."
+msgstr "Этот дисплей меняет переменную частоту только со сменой режима: выберите «Всегда» или «Выкл.»."
+
 #: src/control_center/sections/printers_tools.zig
 msgid "This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."
 msgstr "Этот драйвер не позволяет выбрать предлагаемое разрешение в настройках очереди. Проверьте параметры качества или выберите другой драйвер."
@@ -6506,6 +6522,11 @@ msgstr "Пользователи"
 msgid "Uses the main theme. Apply again after changing it; restart apps to see the colors."
 msgstr "Используется основная тема. Примените повторно после её изменения; перезапустите приложения, чтобы увидеть цвета."
 
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+msgid "Variable refresh rate"
+msgstr "Переменная частота обновления"
+
 #: src/control_center/sections/desktop.zig
 msgid "Vertical Pan"
 msgstr "Вертикальное перемещение"
@@ -6537,6 +6558,10 @@ msgstr "Увеличить громкость"
 #: src/control_center/panel.zig
 msgid "Volume, microphones and output devices."
 msgstr "Громкость, микрофоны и устройства вывода."
+
+#: src/control_center/search_index.zig
+msgid "vrr freesync gsync adaptive sync game"
+msgstr "vrr freesync gsync адаптивная синхронизация игра"
 
 #: src/control_center/sections/network.zig
 msgid "WPA2 / WPA3 Personal"
@@ -6689,6 +6714,10 @@ msgstr "Проводные и беспроводные подключения."
 #: src/control_center/sections/network.zig
 msgid "Wireless connections"
 msgstr "Беспроводные подключения"
+
+#: src/editor/app.zig
+msgid "New Window"
+msgstr "Новое окно"
 
 #: src/editor/app.zig
 msgid "Word Wrap"
@@ -6971,8 +7000,8 @@ msgid "keep icons in place"
 msgstr "закрепить значки"
 
 #: src/control_center/search_index.zig
-msgid "laptop suspend sleep"
-msgstr "ноутбук приостановить сон"
+msgid "laptop suspend sleep power off shut down"
+msgstr "ноутбук приостановить сон выключить завершение"
 
 #: src/control_center/search_index.zig
 msgid "launcher icon image"

@@ -30,7 +30,7 @@ test "notifications unit: replaces_id, urgency, DND, lock suppression" {
     server.locker = null;
     server.environ = std.process.Environ.empty;
     server.config = undefined;
-    server.config.notifications = .{ .dnd = false, .default_timeout_ms = 5000 };
+    server.config.notifications = .{ .dnd = false, .game_dnd = false, .default_timeout_ms = 5000 };
     server.config.notification_rules = &.{};
     server.ipc = null;
     server.icon_service = null;

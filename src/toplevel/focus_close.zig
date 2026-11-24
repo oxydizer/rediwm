@@ -50,7 +50,11 @@ pub fn setActivated(toplevel: *Toplevel, activated: bool) void {
     if (!activated) toplevel.setGlow(null);
     if (toplevel.wlr_foreign) |handle| handle.setActivated(activated);
     switch (toplevel.backend) {
-        .xdg => |*adapter| _ = adapter.xdg_toplevel.setActivated(activated),
+        // wlroots sends a configure on every call; an unchanged one reads to
+        // Wine as a restore when it reaches a window it minimized itself.
+        .xdg => |*adapter| if (adapter.xdg_toplevel.scheduled.activated != activated) {
+            _ = adapter.xdg_toplevel.setActivated(activated);
+        },
         .xwayland => |*adapter| {
             if (activated) {
                 switch (adapter.xsurface.icccmInputModel()) {

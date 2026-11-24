@@ -180,6 +180,7 @@ pub fn finishClose(self: *App) void {
 pub fn act(self: *App, action: Action) void {
     switch (action) {
         .new => self.newTab() catch |err| self.failure(err),
+        .new_window => self.new_window = true,
         .open => self.choose(false),
         .open_recent => {}, // the menu opens its submenu; nothing to run
         .save => self.save(false),

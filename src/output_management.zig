@@ -147,7 +147,7 @@ const Phase = enum {
 
 fn isEmpty(p: Patch) bool {
     return p.enabled == null and p.width == null and p.height == null and p.refresh_mhz == null and
-        p.x == null and p.y == null and p.scale == null and p.transform == null;
+        p.x == null and p.y == null and p.scale == null and p.transform == null and p.adaptive_sync == null;
 }
 
 fn findHead(config: *wlr.OutputConfigurationV1, output: *wlr.Output) ?*wlr.OutputConfigurationV1.Head {
@@ -184,6 +184,11 @@ fn diff(server: *Server, output: *Output, state: *const wlr.OutputHeadV1.State) 
     if (@abs(state.scale - out.scale) > 0.001) p.scale = state.scale;
     if (state.transform != out.transform) {
         p.transform = @enumFromInt(@intFromEnum(state.transform));
+    }
+    // Heads report whether variable refresh is on now; a client switching it
+    // chooses Always or Off (`wlr-randr --adaptive-sync`).
+    if (state.adaptive_sync_enabled != (out.adaptive_sync_status == .enabled)) {
+        p.adaptive_sync = if (state.adaptive_sync_enabled) .always else .off;
     }
     return p;
 }

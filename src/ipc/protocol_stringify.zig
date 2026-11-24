@@ -547,6 +547,9 @@ pub fn stringifyPerformanceStats(res: PerformanceStatsResult, writer: anytype) !
     if (res.tearing_refused_flips) |flips| {
         try writer.print("\"tearing_refused_flips\":{d},", .{flips});
     }
+    if (res.fifo) |fifo| {
+        try writer.print("\"fifo\":{f},", .{std.json.fmt(fifo, .{})});
+    }
     try writer.print("\"output_commits\":{d},\"output_failed_commits\":{d},\"fps\":{d:.1},\"frame_time_ms\":{d:.1},\"missed_frames\":{d},\"refresh_hz\":{d:.1},\"titlebar_paints\":{d},\"footer_paints\":{d},\"edge_samples_attempted\":{d},\"edge_samples_succeeded\":{d},\"edge_samples_skipped\":{d},\"edge_sample_ns\":{d},\"panel_paints\":{d},\"panel_allocated_bytes\":{d},\"panel_reused_bytes\":{d},\"icon_cache_hits\":{d},\"icon_cache_misses\":{d},\"icon_decode_ns\":{d},\"icon_decode_count\":{d},\"icon_decoded_bytes\":{d},\"icon_queue_depth_max\":{d},", .{
         res.output_commits,
         res.output_failed_commits,
@@ -876,6 +879,9 @@ pub fn stringifyOutput(out: OutputData, writer: anytype) !void {
     try writer.print(",\"scale\":{d},\"refresh_hz\":{d},\"is_focused\":", .{ out.scale, out.refresh_hz });
     try writer.writeAll(if (out.is_focused) "true" else "false");
     try writer.print(",\"tearing_allowed\":{},\"tearing_active\":{},\"tearing_paused\":{},\"direct_scanout\":{}", .{ out.tearing_allowed, out.tearing_active, out.tearing_paused, out.direct_scanout });
+    try writer.writeAll(",\"adaptive_sync\":");
+    try writer.print("{f}", .{std.json.fmt(out.adaptive_sync, .{})});
+    try writer.print(",\"adaptive_sync_supported\":{},\"adaptive_sync_wanted\":{},\"adaptive_sync_active\":{},\"adaptive_sync_needs_modeset\":{}", .{ out.adaptive_sync_supported, out.adaptive_sync_wanted, out.adaptive_sync_active, out.adaptive_sync_needs_modeset });
     try writer.writeByte('}');
 }
 

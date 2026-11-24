@@ -74,6 +74,7 @@ pub const CompositorError = error{
     XdgShellCreateFailed,
     XdgDecorationCreateFailed,
     KdeDecorationCreateFailed,
+    TitlebarTabsCreateFailed,
     CompositorCreateFailed,
     SubcompositorCreateFailed,
     DataDeviceManagerCreateFailed,
@@ -90,6 +91,8 @@ pub const CompositorError = error{
     SocketCreateFailed,
     PointerGesturesCreateFailed,
     PointerConstraintsCreateFailed,
+    PointerWarpCreateFailed,
+    FifoManagerCreateFailed,
     ShortcutsInhibitCreateFailed,
 };
 
@@ -151,6 +154,8 @@ layer_surfaces: wl.list.Head(@import("LayerSurface.zig"), .link) = undefined,
 input: Input,
 activation: @import("input/activation.zig") = .{},
 extra_protocols: ?*@import("extra_protocols.zig").Protocols = null,
+/// wp_fifo_v1 (`fifo.zig`); null in the greeter.
+fifo: ?*@import("fifo.zig").Manager = null,
 launch_feedback: @import("launch_feedback.zig") = .{},
 window_tabs: @import("window_tabs.zig") = .{},
 text_input: ?*@import("input/text_input.zig") = null,
