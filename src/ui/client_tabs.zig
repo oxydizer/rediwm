@@ -15,8 +15,14 @@ pub const flag_modified: u32 = 1;
 pub const flag_attention: u32 = 2;
 
 /// Ids are the app's own and must not be zero.
-pub const Tab = struct { id: u32, title: []const u8, modified: bool = false, attention: bool = false, /// An icon-theme name shown before the title; empty for the application's icon.
-    icon: []const u8 = "" };
+pub const Tab = struct {
+    id: u32,
+    title: []const u8,
+    modified: bool = false,
+    attention: bool = false,
+    /// An icon-theme name shown before the title; empty for the application's icon.
+    icon: []const u8 = "",
+};
 
 /// What the user did in the strip. The app changes its state and publishes the
 /// result; the compositor never changes the selection itself.
