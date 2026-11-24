@@ -341,11 +341,21 @@ pub const Runtime = struct {
         self: *Runtime,
         handle: io_resource_ledger.Handle,
     ) !void {
+        const owner = self.context.ledger.ownerOf(handle) orelse
+            return error.UnknownResource;
+        if (owner != .operation_executor)
+            return error.ResourceOwnerMismatch;
+        const job_id = self.context.ledger.jobIdOf(handle) orelse
+            return error.UnknownResource;
+        if (self.context.ledger.kindOf(handle) != .archive_staging)
+            return error.ResourceNotReleasable;
+
         var iter = self.context.archive_staging.iterator();
         while (iter.next()) |entry| {
             if (entry.value_ptr.ledger_handle.id != handle.id) continue;
 
             const key = entry.key_ptr.*;
+            if (key.job_id != job_id) return error.ResourceLedgerMismatch;
             const state = self.context.manager.jobState(key.job_id) orelse
                 return error.UnknownJob;
             if (!state.isTerminal()) return error.ResourceBusy;
@@ -354,10 +364,10 @@ pub const Runtime = struct {
             try ops.deleteRecursive(self.allocator, lease.path);
             self.allocator.free(lease.path);
             _ = self.context.archive_staging.remove(key);
-            try self.context.ledger.release(
+            self.context.ledger.release(
                 lease.ledger_handle,
                 .operation_executor,
-            );
+            ) catch unreachable;
             return;
         }
 
@@ -1123,4 +1133,64 @@ test "archive completion releases its cancellation handle" {
 
     try std.testing.expect(!context.archive_cancellations.contains(42));
     try std.testing.expect(ledger.isJobEmpty(42));
+}
+
+test "operation executor physically deletes released archive staging" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    _ = try std.fmt.bufPrint(
+        &temp_buffer,
+        "/tmp/rediwm_archive_release_XXXXXX\x00",
+        .{},
+    );
+    const temp_ptr = c.mkdtemp(@ptrCast(&temp_buffer)) orelse
+        return error.MkdtempFailed;
+    const temp_path = std.mem.span(@as([*:0]const u8, @ptrCast(temp_ptr)));
+    const temp_z = try allocator.dupeSentinel(u8, temp_path, 0);
+    defer allocator.free(temp_z);
+    defer _ = c.rmdir(temp_z);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job_id = try manager.createJob(null);
+    try manager.queueJob(job_id);
+    const state = manager.jobState(job_id) orelse return error.UnknownJob;
+    if (!state.isTerminal()) return error.EmptyJobDidNotComplete;
+
+    var ledger = io_resource_ledger.Ledger.init(allocator);
+    defer ledger.deinit();
+    var runtime = try Runtime.initWithLedger(
+        allocator,
+        &manager,
+        &ledger,
+        1,
+        1,
+    );
+    defer runtime.deinit();
+
+    const handle = try ledger.register(
+        job_id,
+        .archive_staging,
+        .operation_executor,
+    );
+    const path = try allocator.dupe(u8, temp_path);
+    try runtime.context.archive_staging.put(allocator, .{
+        .job_id = job_id,
+        .operation_id = 1,
+    }, .{
+        .allocator = allocator,
+        .token = undefined,
+        .path = path,
+        .ledger_handle = handle,
+    });
+
+    try runtime.releaseResource(handle);
+    var stat: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, -1), c.lstat(temp_z, &stat));
+    try std.testing.expect(ledger.ownerOf(handle) == null);
+    try std.testing.expect(ledger.isJobEmpty(job_id));
+    try std.testing.expectError(
+        error.UnknownResource,
+        runtime.releaseResource(handle),
+    );
 }

@@ -10,10 +10,10 @@ test "coordinator rejects transfer submissions without a payload" {
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(std.testing.allocator, &service);
-    defer coordinator.deinit();
 
     var window = try service.registerWindow();
     defer window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try window.trySend(.{ .kind = .submit_job, .job_id = 73 });
     try std.testing.expect(waitReadable(service.updateWakeFd(), 2000));
@@ -266,12 +266,12 @@ test "coordinator routes conflicts to their owning window and resolves them ther
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, &service);
-    defer coordinator.deinit();
 
     var owner_window = try service.registerWindow();
     defer owner_window.close() catch unreachable;
     var other_window = try service.registerWindow();
     defer other_window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try submitTransfer(allocator, owner_window, .copy, destination_dir, source);
 
@@ -297,11 +297,20 @@ test "coordinator routes conflicts to their owning window and resolves them ther
 
     // A different window cannot resolve another window's conflict.
     try resolveConflict(allocator, other_window, id, .skip);
-    try std.testing.expect(waitReadable(service.updateWakeFd(), 2000));
-    _ = service.drainUpdateWake();
-    const rejected = (try other_window.tryReceiveUpdate()) orelse
+    var rejected: ?io_service.Update = null;
+    for (0..500) |_| {
+        if (waitReadable(service.updateWakeFd(), 10))
+            _ = service.drainUpdateWake();
+        rejected = other_window.tryReceiveUpdate() catch {
+            waitBriefly();
+            continue;
+        };
+        if (rejected != null) break;
+        waitBriefly();
+    }
+    const rejection = rejected orelse
         return error.MissingConflictOwnershipRejection;
-    try std.testing.expectEqual(io_service.UpdateKind.command_rejected, rejected.kind);
+    try std.testing.expectEqual(io_service.UpdateKind.command_rejected, rejection.kind);
 
     try resolveConflict(allocator, owner_window, id, .skip);
 
@@ -329,12 +338,12 @@ test "coordinator validates discovery payloads and routes rejections to the send
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(std.testing.allocator, &service);
-    defer coordinator.deinit();
 
     var owner_window = try service.registerWindow();
     defer owner_window.close() catch unreachable;
     var other_window = try service.registerWindow();
     defer other_window.close() catch unreachable;
+    defer coordinator.deinit();
 
     const job_id: io_service.JobId = 73;
 
@@ -412,10 +421,10 @@ test "coordinator accepts discovery prioritization for a submitted directory job
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, &service);
-    defer coordinator.deinit();
 
     var window = try service.registerWindow();
     defer window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source_dir);
 
@@ -475,10 +484,10 @@ test "coordinator copies a regular-file transfer" {
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, &service);
-    defer coordinator.deinit();
 
     var window = try service.registerWindow();
     defer window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
     try waitForContents(destination, "coordinator regular-file copy");
@@ -511,10 +520,10 @@ test "coordinator publishes job state transitions and transfer progress" {
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, &service);
-    defer coordinator.deinit();
 
     var window = try service.registerWindow();
     defer window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
 
@@ -588,10 +597,10 @@ test "coordinator copies a symlink without dereferencing its target" {
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, &service);
-    defer coordinator.deinit();
 
     var window = try service.registerWindow();
     defer window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
     try waitForPath(destination);
@@ -627,10 +636,10 @@ test "coordinator moves a same-filesystem regular file" {
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, &service);
-    defer coordinator.deinit();
 
     var window = try service.registerWindow();
     defer window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .move, destination_dir, source);
     try waitForContents(destination, "coordinator same-filesystem move");
@@ -685,10 +694,10 @@ test "coordinator discovers and copies a directory tree" {
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, &service);
-    defer coordinator.deinit();
 
     var window = try service.registerWindow();
     defer window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
     try waitForContents(destination_file, "directory root content");
@@ -739,10 +748,10 @@ test "coordinator moves a same-filesystem directory tree" {
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, &service);
-    defer coordinator.deinit();
 
     var window = try service.registerWindow();
     defer window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .move, destination_dir, source);
     try waitForContents(destination_file, "directory move content");
@@ -768,10 +777,10 @@ test "coordinator rejects an invalid transfer source" {
 
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, &service);
-    defer coordinator.deinit();
 
     var window = try service.registerWindow();
     defer window.close() catch unreachable;
+    defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, missing_source);
 

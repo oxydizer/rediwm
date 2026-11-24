@@ -5,6 +5,7 @@
 //! returns the cursor and batch for main-thread reconciliation.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_discovery = @import("io_discovery.zig");
 const io_workers = @import("io_workers.zig");
@@ -182,19 +183,30 @@ pub const Executor = struct {
     /// Releases a retained resource by its stable ledger handle.
     /// Worker-owned resources are never present in these retained maps.
     pub fn releaseResource(self: *Executor, handle: LedgerHandle) !void {
+        const owner = self.ledger.ownerOf(handle) orelse
+            return error.UnknownResource;
+        if (owner != .discovery_executor)
+            return error.ResourceOwnerMismatch;
+        const job_id = self.ledger.jobIdOf(handle) orelse
+            return error.UnknownResource;
+        const kind = self.ledger.kindOf(handle) orelse
+            return error.UnknownResource;
+
         var job_iter = self.cursors.iterator();
         while (job_iter.next()) |job_entry| {
             var cursor_iter = job_entry.value_ptr.iterator();
             while (cursor_iter.next()) |entry| {
                 if (entry.value_ptr.ledger_handle.id != handle.id) continue;
+                if (kind != .discovery_cursor or job_entry.key_ptr.* != job_id)
+                    return error.ResourceLedgerMismatch;
                 const entry_id = entry.key_ptr.*;
                 const removed = job_entry.value_ptr.fetchRemove(entry_id).?;
                 var cursor = removed.value.cursor;
                 cursor.deinit();
-                try self.ledger.release(
+                self.ledger.release(
                     removed.value.ledger_handle,
                     .discovery_executor,
-                );
+                ) catch unreachable;
                 return;
             }
         }
@@ -204,13 +216,15 @@ pub const Executor = struct {
             const key = key_ptr.*;
             const lease = self.anchors.get(key) orelse continue;
             if (lease.ledger_handle.id != handle.id) continue;
+            if (kind != .discovery_anchor or key.job_id != job_id)
+                return error.ResourceLedgerMismatch;
             const removed = self.anchors.fetchRemove(key).?;
             var anchor = removed.value.anchor;
             anchor.deinit();
-            try self.ledger.release(
+            self.ledger.release(
                 removed.value.ledger_handle,
                 .discovery_executor,
-            );
+            ) catch unreachable;
             return;
         }
 
@@ -653,4 +667,71 @@ fn discardCompletion(raw_context: ?*anyopaque, completion: Completion) void {
         discarded.ledger_handle,
         .discovery_worker,
     ) catch unreachable;
+}
+
+test "discovery executor releases retained cursors and anchors" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    _ = try std.fmt.bufPrint(
+        &temp_buffer,
+        "/tmp/rediwm_discovery_release_XXXXXX\x00",
+        .{},
+    );
+    const temp_ptr = c.mkdtemp(@ptrCast(&temp_buffer)) orelse
+        return error.MkdtempFailed;
+    const temp_path = std.mem.span(@as([*:0]const u8, @ptrCast(temp_ptr)));
+    const temp_z = try allocator.dupeSentinel(u8, temp_path, 0);
+    defer allocator.free(temp_z);
+    defer _ = c.rmdir(temp_z);
+
+    var ledger = Ledger.init(allocator);
+    defer ledger.deinit();
+    var executor = try Executor.initWithLedger(allocator, &ledger, 1, 1, 1);
+    defer executor.deinit();
+
+    const job_id: JobId = 71;
+    const root_id: u64 = 9;
+    const cursor = try io_discovery.Cursor.open(temp_z);
+    const cursor_fd = cursor.fd;
+    const cursor_handle = try ledger.register(
+        job_id,
+        .discovery_cursor,
+        .discovery_executor,
+    );
+    var job_cursors: std.AutoHashMapUnmanaged(u64, CursorLease) = .empty;
+    errdefer job_cursors.deinit(allocator);
+    try job_cursors.put(allocator, 3, .{
+        .cursor = cursor,
+        .ledger_handle = cursor_handle,
+    });
+    try executor.cursors.put(allocator, job_id, job_cursors);
+
+    const anchor = try io_discovery.Anchor.open(temp_z);
+    const anchor_fd = anchor.fd;
+    const anchor_handle = try ledger.register(
+        job_id,
+        .discovery_anchor,
+        .discovery_executor,
+    );
+    try executor.anchors.put(allocator, .{
+        .job_id = job_id,
+        .root_id = root_id,
+    }, .{
+        .anchor = anchor,
+        .ledger_handle = anchor_handle,
+    });
+
+    try executor.releaseResource(cursor_handle);
+    try std.testing.expectEqual(@as(c_int, -1), c.fcntl(cursor_fd, c.F_GETFD));
+    try std.testing.expect(ledger.ownerOf(cursor_handle) == null);
+
+    try executor.releaseResource(anchor_handle);
+    try std.testing.expectEqual(@as(c_int, -1), c.fcntl(anchor_fd, c.F_GETFD));
+    try std.testing.expect(ledger.ownerOf(anchor_handle) == null);
+    try std.testing.expect(ledger.isJobEmpty(job_id));
+
+    try std.testing.expectError(
+        error.UnknownResource,
+        executor.releaseResource(cursor_handle),
+    );
 }
