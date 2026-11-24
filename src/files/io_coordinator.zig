@@ -80,8 +80,14 @@ pub const Coordinator = struct {
     }
 
     fn waitForWork(self: *Coordinator) void {
-        const discovery = self.runtime.discovery_executor.?;
-        const operation = self.runtime.operation_executor.?;
+        const discovery = if (self.runtime.discovery_executor) |*executor|
+            executor
+        else
+            unreachable;
+        const operation = if (self.runtime.operation_executor) |*executor|
+            executor
+        else
+            unreachable;
         var fds = [_]std.posix.pollfd{
             .{
                 .fd = self.service.commandWakeFd(),
@@ -116,21 +122,25 @@ pub const Coordinator = struct {
     fn pumpExecutors(self: *Coordinator) void {
         if (self.runtime.discovery_executor) |*executor| {
             _ = executor.drainWake();
-            executor.drainCompletions(&self.runtime.manager) catch {
-                std.log.err("Files discovery completion reconciliation failed", .{});
+            _ = executor.drainCompletions(&self.runtime.manager) catch |err| blk: {
+                std.log.err("Files discovery completion reconciliation failed: {s}", .{@errorName(err)});
+                break :blk 0;
             };
-            executor.dispatchReady(&self.runtime.manager) catch {
-                std.log.err("Files discovery scheduling failed", .{});
+            _ = executor.dispatchReady(&self.runtime.manager) catch |err| blk: {
+                std.log.err("Files discovery scheduling failed: {s}", .{@errorName(err)});
+                break :blk 0;
             };
         }
 
         if (self.runtime.operation_executor) |*executor| {
             _ = executor.drainWake();
-            executor.drainCompletions() catch {
-                std.log.err("Files operation completion reconciliation failed", .{});
+            _ = executor.drainCompletions() catch |err| blk: {
+                std.log.err("Files operation completion reconciliation failed: {s}", .{@errorName(err)});
+                break :blk 0;
             };
-            executor.dispatchReady() catch {
-                std.log.err("Files operation scheduling failed", .{});
+            _ = executor.dispatchReady() catch |err| blk: {
+                std.log.err("Files operation scheduling failed: {s}", .{@errorName(err)});
+                break :blk 0;
             };
         }
     }
