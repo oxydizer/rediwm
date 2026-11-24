@@ -11,6 +11,26 @@ const App = app_mod.App;
 const Tab = app_mod.Tab;
 const a = std.heap.c_allocator;
 
+/// Every open window's `App`, in the order they were opened. The drafts cover
+/// all of them; the keeper itself lives in one (the first, normally) and moves
+/// on when that window closes. Only the event loop's thread touches this.
+var windows: std.ArrayList(*App) = .empty;
+
+pub fn join(self: *App) void {
+    windows.append(a, self) catch std.log.warn("rediwm-editor: this window's tabs will not be kept as drafts", .{});
+}
+
+fn forget(self: *App) void {
+    for (windows.items, 0..) |w, i| if (w == self) {
+        _ = windows.orderedRemove(i);
+        break;
+    };
+    if (windows.items.len == 0) {
+        windows.deinit(a);
+        windows = .empty;
+    }
+}
+
 /// A tab with work worth keeping: changed, and not an empty new document.
 fn wants(t: *const Tab) bool {
     return t.doc.modified() and (t.path != null or t.doc.text.items.len > 0);
@@ -18,8 +38,8 @@ fn wants(t: *const Tab) bool {
 fn fits(t: *const Tab, total: usize) bool {
     return t.doc.text.items.len <= drafts.text_limit and total + t.doc.text.items.len <= drafts.total_limit;
 }
-fn anyWanted(self: *App) bool {
-    for (self.tabs.items) |t| if (wants(t)) return true;
+fn anyWanted() bool {
+    for (windows.items) |w| for (w.tabs.items) |t| if (wants(t)) return true;
     return false;
 }
 
@@ -29,12 +49,16 @@ fn anyWanted(self: *App) bool {
 fn signature(self: *App) u64 {
     var hash = std.hash.Wyhash.init(0);
     hash.update(std.mem.asBytes(&self.selected));
-    for (self.tabs.items) |t| {
-        hash.update(std.mem.asBytes(&t.id));
-        hash.update(std.mem.asBytes(&t.doc.revision));
-        hash.update(&.{ @intFromBool(t.doc.modified()), 0 });
-        if (t.path) |path| hash.update(path);
-        hash.update(&.{0});
+    for (windows.items) |w| {
+        // A window boundary, so moving a tab between windows changes the number.
+        hash.update(&.{1});
+        for (w.tabs.items) |t| {
+            hash.update(std.mem.asBytes(&@intFromPtr(t)));
+            hash.update(std.mem.asBytes(&t.doc.revision));
+            hash.update(&.{ @intFromBool(t.doc.modified()), 0 });
+            if (t.path) |path| hash.update(path);
+            hash.update(&.{0});
+        }
     }
     return hash.final();
 }
@@ -48,7 +72,7 @@ fn snapshot(self: *App, k: *drafts.Keeper) !drafts.Snapshot {
     }
     var total: usize = 0;
     var selected: usize = 0;
-    for (self.tabs.items, 0..) |t, i| {
+    for (windows.items) |w| for (w.tabs.items, 0..) |t, i| {
         if (!wants(t) or !fits(t, total)) continue;
         total += t.doc.text.items.len;
         const path = if (t.path) |p| try a.dupe(u8, p) else null;
@@ -57,7 +81,7 @@ fn snapshot(self: *App, k: *drafts.Keeper) !drafts.Snapshot {
         errdefer if (text) |x| a.free(x);
         try items.append(a, .{
             .entry = .{ .name = t.draft_name orelse k.next, .path = path, .stamp = t.stamp, .cursor = t.doc.cursor, .anchor = t.doc.anchor, .top = t.doc.top, .bom = t.doc.bom },
-            .tab_id = t.id,
+            .tab_id = @intFromPtr(t),
             .revision = t.doc.revision,
             .text = text,
         });
@@ -65,16 +89,16 @@ fn snapshot(self: *App, k: *drafts.Keeper) !drafts.Snapshot {
             t.draft_name = k.next;
             k.next += 1;
         }
-        if (i == self.selected) selected = items.items.len - 1;
-    }
+        if (w == self and i == self.selected) selected = items.items.len - 1;
+    };
     return .{ .selected = selected, .next = k.next, .items = try items.toOwnedSlice(a) };
 }
 
 /// A written snapshot is what the disk holds now. Tabs that left it lost their files.
-fn commit(self: *App, k: *drafts.Keeper, snap: drafts.Snapshot, sig: u64) void {
-    for (self.tabs.items) |t| {
+fn commit(k: *drafts.Keeper, snap: drafts.Snapshot, sig: u64) void {
+    for (windows.items) |w| for (w.tabs.items) |t| {
         const item = for (snap.items) |item| {
-            if (item.tab_id == t.id) break item;
+            if (item.tab_id == @intFromPtr(t)) break item;
         } else null;
         if (item) |it| {
             if (it.text != null) t.draft_rev = it.revision;
@@ -82,7 +106,7 @@ fn commit(self: *App, k: *drafts.Keeper, snap: drafts.Snapshot, sig: u64) void {
             t.draft_name = null;
             t.draft_rev = null;
         }
-    }
+    };
     k.written = sig;
     k.on_disk = snap.items.len > 0;
 }
@@ -101,7 +125,7 @@ fn finish(self: *App, k: *drafts.Keeper, job: *drafts.Job, now: i64) void {
         backoff(k, now);
         return;
     }
-    commit(self, k, job.snapshot, job.signature);
+    commit(k, job.snapshot, job.signature);
 }
 
 fn startFlush(self: *App, k: *drafts.Keeper, now: i64) void {
@@ -135,7 +159,7 @@ fn writeNow(self: *App, k: *drafts.Keeper) bool {
         std.log.warn("rediwm-editor: cannot write drafts: {}", .{err});
         return false;
     };
-    commit(self, k, snap, sig);
+    commit(k, snap, sig);
     k.seen = sig;
     k.since = null;
     return true;
@@ -223,7 +247,7 @@ pub fn stepDrafts(self: *App, now: i64) void {
     }
     if (k.seen == k.written) {
         k.since = null;
-    } else if (!k.on_disk and !anyWanted(self)) {
+    } else if (!k.on_disk and !anyWanted()) {
         // Nothing to keep and nothing to clear: no timer for a tab switch.
         k.written = k.seen;
         k.since = null;
@@ -253,8 +277,15 @@ pub fn signaled(self: *App) bool {
 }
 
 pub fn deinitDrafts(self: *App) void {
+    defer forget(self);
     const k = self.keeper orelse return;
     self.keeper = null;
+    // Another window is still open: it takes over the keeper, and the next
+    // step notices that this window's tabs are gone.
+    for (windows.items) |w| if (w != self) {
+        w.keeper = k;
+        return;
+    };
     drafts.releaseSignals();
     _ = writeNow(self, k);
     k.store.deinit();

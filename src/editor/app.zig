@@ -265,6 +265,7 @@ pub const App = struct {
     pub const recentEnabled = app_recent.enabled;
     pub const deinitRecent = app_recent.deinitRecent;
 
+    pub const join = app_drafts.join;
     pub const openDrafts = app_drafts.openDrafts;
     pub const stepDrafts = app_drafts.stepDrafts;
     pub const draftTimeout = app_drafts.draftTimeout;
