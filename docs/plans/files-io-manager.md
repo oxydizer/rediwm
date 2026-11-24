@@ -3,6 +3,23 @@
 Status: in progress. The I/O Manager is replacing `JobRunner` as the sole
 execution and coordination architecture for Files filesystem operations.
 
+## Architecture direction
+
+The Manager is moving behind a standalone, session-managed Files I/O service
+so filesystem operations outlive Files windows and remain isolated from both
+the Files UI and the RediWM shell.
+
+See [Files I/O Service Architecture](files-io-service-architecture.md) for
+the process boundaries, ownership model, IPC direction, lifecycle and
+supervision, failure guarantees, persistence and recovery strategy, open
+decisions and staged migration plan.
+
+Service extraction is a prerequisite to continuing the remaining Manager
+roadmap phases. In particular, per-window Runtime ownership must be replaced
+by one service-owned Manager, Runtime, resource ledger and bounded worker
+capacity. The architecture document distinguishes agreed constraints from
+decisions that remain open.
+
 ## Goal
 
 Build one process-level I/O Manager that coordinates all Files jobs through a
