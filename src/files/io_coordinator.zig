@@ -10,6 +10,7 @@ const io_runtime = @import("io_runtime.zig");
 const io_service = @import("io_service.zig");
 const io_manager = @import("io_manager.zig");
 const io_tree = @import("io_tree.zig");
+const io_resource_ledger = @import("io_resource_ledger.zig");
 const ops_mod = @import("ops.zig");
 
 const JobId = io_service.JobId;
@@ -200,7 +201,73 @@ pub const Coordinator = struct {
                 routed.window_id,
                 command.payload,
             ),
-            .release_resource => return error.UnsupportedCommand,
+            .release_resource => try self.releaseResource(
+                routed.window_id,
+                command.job_id,
+                command.resource_id,
+            ),
+        }
+    }
+
+    fn releaseResource(
+        self: *Coordinator,
+        window_id: io_service.WindowId,
+        job_id: JobId,
+        resource_id: io_service.ResourceId,
+    ) !void {
+        const handle = io_resource_ledger.Handle{ .id = resource_id };
+        const ledger = &self.runtime.resource_ledger;
+        const resource_job_id = ledger.jobIdOf(handle) orelse
+            return error.UnknownResource;
+        if (resource_job_id != job_id) return error.ResourceJobMismatch;
+
+        const owner = ledger.ownerOf(handle) orelse return error.UnknownResource;
+        const kind = ledger.kindOf(handle) orelse return error.UnknownResource;
+
+        const snapshots = try self.runtime.manager.snapshotJobs(self.allocator);
+        defer {
+            for (snapshots) |*snapshot| snapshot.deinit();
+            self.allocator.free(snapshots);
+        }
+
+        var owns_job = false;
+        for (snapshots) |snapshot| {
+            if (snapshot.id != job_id) continue;
+            owns_job = snapshot.origin_window_id == window_id;
+            break;
+        }
+        if (!owns_job) return error.ResourceWindowMismatch;
+
+        switch (owner) {
+            .operation_worker, .discovery_worker => return error.ResourceBusy,
+            .app => return error.ResourceNotServiceOwned,
+            .operation_executor, .discovery_executor => {},
+        }
+
+        const state = self.runtime.manager.jobState(job_id) orelse
+            return error.UnknownJob;
+        if (!state.isTerminal()) return error.ResourceBusy;
+
+        switch (owner) {
+            .discovery_executor => {
+                if (kind != .discovery_anchor and kind != .discovery_cursor)
+                    return error.ResourceNotReleasable;
+                const executor = if (self.runtime.discovery_executor) |*value|
+                    value
+                else
+                    return error.ResourceOwnerUnavailable;
+                try executor.releaseResource(handle);
+            },
+            .operation_executor => {
+                if (kind != .archive_staging)
+                    return error.ResourceNotReleasable;
+                const executor = if (self.runtime.operation_executor) |*value|
+                    value
+                else
+                    return error.ResourceOwnerUnavailable;
+                try executor.releaseResource(handle);
+            },
+            .operation_worker, .discovery_worker, .app => unreachable,
         }
     }
 
@@ -713,4 +780,91 @@ fn rejectionCode(err: anyerror) RejectionCode {
         .job_not_terminal
     else
         .other;
+}
+
+test "coordinator protects worker and App resources during release" {
+    const allocator = std.testing.allocator;
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var runtime = io_runtime.Runtime.init(allocator);
+    defer runtime.deinit();
+
+    var owner_window = try service.registerWindow();
+    defer owner_window.close() catch unreachable;
+    var other_window = try service.registerWindow();
+    defer other_window.close() catch unreachable;
+
+    const job_id = try runtime.manager.createJob(owner_window.window_id);
+    const app_resource = try runtime.resource_ledger.register(
+        job_id,
+        .archive_publication_cursor,
+        .app,
+    );
+    const worker_resource = try runtime.resource_ledger.register(
+        job_id,
+        .archive_cancellation,
+        .operation_worker,
+    );
+
+    var coordinator: Coordinator = .{
+        .allocator = allocator,
+        .service = &service,
+        .runtime = &runtime,
+    };
+
+    try std.testing.expectError(
+        error.ResourceWindowMismatch,
+        coordinator.releaseResource(
+            other_window.window_id,
+            job_id,
+            app_resource.id,
+        ),
+    );
+    try std.testing.expectError(
+        error.ResourceNotServiceOwned,
+        coordinator.releaseResource(
+            owner_window.window_id,
+            job_id,
+            app_resource.id,
+        ),
+    );
+    try std.testing.expectError(
+        error.ResourceBusy,
+        coordinator.releaseResource(
+            owner_window.window_id,
+            job_id,
+            worker_resource.id,
+        ),
+    );
+    try std.testing.expectError(
+        error.UnknownResource,
+        coordinator.releaseResource(
+            owner_window.window_id,
+            job_id,
+            std.math.maxInt(io_service.ResourceId),
+        ),
+    );
+    try std.testing.expectError(
+        error.ResourceJobMismatch,
+        coordinator.releaseResource(
+            owner_window.window_id,
+            job_id + 1,
+            app_resource.id,
+        ),
+    );
+
+    try std.testing.expectEqual(
+        io_resource_ledger.Owner.app,
+        runtime.resource_ledger.ownerOf(app_resource).?,
+    );
+    try std.testing.expectEqual(
+        io_resource_ledger.Owner.operation_worker,
+        runtime.resource_ledger.ownerOf(worker_resource).?,
+    );
+
+    try runtime.resource_ledger.release(app_resource, .app);
+    try runtime.resource_ledger.release(worker_resource, .operation_worker);
 }

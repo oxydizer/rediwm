@@ -200,6 +200,46 @@ fn resolveConflict(
     };
 }
 
+fn sendDiscoveryCommand(
+    allocator: std.mem.Allocator,
+    window: io_service.Handle,
+    kind: io_service.CommandKind,
+    job_id: io_service.JobId,
+    root_entry_id: u64,
+    root_path: ?[]const u8,
+) !void {
+    const payload = try io_service.OwnedPayload.createDiscovery(
+        allocator,
+        root_entry_id,
+        root_path,
+    );
+    var command: io_service.Command = .{
+        .kind = kind,
+        .job_id = job_id,
+        .payload = payload,
+    };
+    window.trySendOwned(&command) catch |err| {
+        payload.deinit();
+        return err;
+    };
+}
+
+fn waitForRejection(
+    service: *io_service.Service,
+    window: io_service.Handle,
+    job_id: io_service.JobId,
+) !io_service.Update {
+    for (0..500) |_| {
+        if (waitReadable(service.updateWakeFd(), 10))
+            _ = service.drainUpdateWake();
+        while (try window.tryReceiveUpdate()) |update| {
+            if (update.kind == .command_rejected and update.job_id == job_id)
+                return update;
+        }
+    }
+    return error.CommandRejectionTimedOut;
+}
+
 test "coordinator routes conflicts to their owning window and resolves them there" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
@@ -280,6 +320,134 @@ test "coordinator routes conflicts to their owning window and resolves them ther
         if (saw_terminal_state) break;
     }
     try std.testing.expect(saw_terminal_state);
+}
+
+test "coordinator validates discovery payloads and routes rejections to the sender" {
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(std.testing.allocator, &service);
+    defer coordinator.deinit();
+
+    var owner_window = try service.registerWindow();
+    defer owner_window.close() catch unreachable;
+    var other_window = try service.registerWindow();
+    defer other_window.close() catch unreachable;
+
+    const job_id: io_service.JobId = 73;
+
+    try owner_window.trySend(.{
+        .kind = .start_discovery,
+        .job_id = job_id,
+    });
+    const missing_payload = try waitForRejection(&service, owner_window, job_id);
+    try std.testing.expectEqual(
+        @as(u8, 5),
+        missing_payload.state_code,
+    );
+
+    try sendDiscoveryCommand(
+        std.testing.allocator,
+        owner_window,
+        .start_discovery,
+        job_id,
+        1,
+        null,
+    );
+    const missing_path = try waitForRejection(&service, owner_window, job_id);
+    try std.testing.expectEqual(
+        @as(u8, 255),
+        missing_path.state_code,
+    );
+
+    try sendDiscoveryCommand(
+        std.testing.allocator,
+        owner_window,
+        .start_discovery,
+        job_id,
+        1,
+        "/tmp/discovery-root",
+    );
+    const unknown_job = try waitForRejection(&service, owner_window, job_id);
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        unknown_job.state_code,
+    );
+
+    try std.testing.expect((try other_window.tryReceiveUpdate()) == null);
+}
+
+test "coordinator accepts discovery prioritization for a submitted directory job" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const source_dir = try join(allocator, temp, "source");
+    defer allocator.free(source_dir);
+    defer cleanup(source_dir, true);
+    const source_file = try join(allocator, source_dir, "payload.txt");
+    defer allocator.free(source_file);
+    defer cleanup(source_file, false);
+    const destination_dir = try join(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    defer cleanup(destination_dir, true);
+    const destination_file = try join(
+        allocator,
+        destination_dir,
+        "source/payload.txt",
+    );
+    defer allocator.free(destination_file);
+    defer cleanup(destination_file, false);
+
+    try makeDirectory(source_dir);
+    try makeDirectory(destination_dir);
+    try writeFile(source_file, "discovery priority payload");
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, &service);
+    defer coordinator.deinit();
+
+    var window = try service.registerWindow();
+    defer window.close() catch unreachable;
+
+    try submitTransfer(allocator, window, .copy, destination_dir, source_dir);
+
+    var job_id: ?io_service.JobId = null;
+    for (0..500) |_| {
+        if (waitReadable(service.updateWakeFd(), 10))
+            _ = service.drainUpdateWake();
+        while (try window.tryReceiveUpdate()) |update| {
+            if (update.kind == .job_state) {
+                job_id = update.job_id;
+                break;
+            }
+        }
+        if (job_id != null) break;
+    }
+    const submitted_job_id = job_id orelse return error.JobStateUpdateTimedOut;
+
+    try sendDiscoveryCommand(
+        allocator,
+        window,
+        .prioritize_discovery,
+        submitted_job_id,
+        1,
+        null,
+    );
+
+    try waitForContents(destination_file, "discovery priority payload");
+
+    while (try window.tryReceiveUpdate()) |update| {
+        if (update.kind == .command_rejected and update.job_id == submitted_job_id)
+            return error.DiscoveryPrioritizationRejected;
+    }
 }
 
 test "coordinator copies a regular-file transfer" {

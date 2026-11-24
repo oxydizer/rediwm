@@ -179,6 +179,44 @@ pub const Executor = struct {
         return true;
     }
 
+    /// Releases a retained resource by its stable ledger handle.
+    /// Worker-owned resources are never present in these retained maps.
+    pub fn releaseResource(self: *Executor, handle: LedgerHandle) !void {
+        var job_iter = self.cursors.iterator();
+        while (job_iter.next()) |job_entry| {
+            var cursor_iter = job_entry.value_ptr.iterator();
+            while (cursor_iter.next()) |entry| {
+                if (entry.value_ptr.ledger_handle.id != handle.id) continue;
+                const entry_id = entry.key_ptr.*;
+                const removed = job_entry.value_ptr.fetchRemove(entry_id).?;
+                var cursor = removed.value.cursor;
+                cursor.deinit();
+                try self.ledger.release(
+                    removed.value.ledger_handle,
+                    .discovery_executor,
+                );
+                return;
+            }
+        }
+
+        var anchor_iter = self.anchors.keyIterator();
+        while (anchor_iter.next()) |key_ptr| {
+            const key = key_ptr.*;
+            const lease = self.anchors.get(key) orelse continue;
+            if (lease.ledger_handle.id != handle.id) continue;
+            const removed = self.anchors.fetchRemove(key).?;
+            var anchor = removed.value.anchor;
+            anchor.deinit();
+            try self.ledger.release(
+                removed.value.ledger_handle,
+                .discovery_executor,
+            );
+            return;
+        }
+
+        return error.ResourceNotOwnedByDiscoveryExecutor;
+    }
+
     fn reserveInFlightSlot(self: *Executor, job_id: JobId) !void {
         if (!self.in_flight_by_job.contains(job_id)) {
             try self.in_flight_by_job.ensureUnusedCapacity(self.allocator, 1);

@@ -334,6 +334,35 @@ pub const Runtime = struct {
         ) catch unreachable;
         return true;
     }
+
+    /// Releases a retained staging resource by its ledger handle. The
+    /// staging directory is physically deleted before its ledger entry.
+    pub fn releaseResource(
+        self: *Runtime,
+        handle: io_resource_ledger.Handle,
+    ) !void {
+        var iter = self.context.archive_staging.iterator();
+        while (iter.next()) |entry| {
+            if (entry.value_ptr.ledger_handle.id != handle.id) continue;
+
+            const key = entry.key_ptr.*;
+            const state = self.context.manager.jobState(key.job_id) orelse
+                return error.UnknownJob;
+            if (!state.isTerminal()) return error.ResourceBusy;
+
+            const lease = entry.value_ptr.*;
+            try ops.deleteRecursive(self.allocator, lease.path);
+            self.allocator.free(lease.path);
+            _ = self.context.archive_staging.remove(key);
+            try self.context.ledger.release(
+                lease.ledger_handle,
+                .operation_executor,
+            );
+            return;
+        }
+
+        return error.ResourceNotOwnedByOperationExecutor;
+    }
 };
 
 fn prepare(

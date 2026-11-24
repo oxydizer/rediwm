@@ -169,6 +169,11 @@ pub const Ledger = struct {
         return self.records.items[index].kind;
     }
 
+    pub fn jobIdOf(self: *const Ledger, handle: Handle) ?io_manager.JobId {
+        const index = self.index_by_id.get(handle.id) orelse return null;
+        return self.records.items[index].job_id;
+    }
+
     pub fn jobResourceCount(
         self: *const Ledger,
         job_id: io_manager.JobId,
