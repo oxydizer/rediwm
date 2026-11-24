@@ -1,6 +1,7 @@
 const std = @import("std");
 const io_coordinator = @import("io_coordinator.zig");
 const io_service = @import("io_service.zig");
+const io_manager = @import("io_manager.zig");
 
 test "coordinator rejects transfer submissions without a payload" {
     var service: io_service.Service = .{};
@@ -211,6 +212,74 @@ test "coordinator copies a regular-file transfer" {
     try waitForContents(destination, "coordinator regular-file copy");
 
     try std.testing.expect(pathExists(source));
+}
+
+test "coordinator publishes job state transitions and transfer progress" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const source = try join(allocator, temp, "payload.bin");
+    defer allocator.free(source);
+    defer cleanup(source, false);
+    const destination_dir = try join(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    defer cleanup(destination_dir, true);
+    try makeDirectory(destination_dir);
+
+    const contents = try allocator.alloc(u8, 16 * 1024 * 1024);
+    defer allocator.free(contents);
+    @memset(contents, 0x5a);
+    try writeFile(source, contents);
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, &service);
+    defer coordinator.deinit();
+
+    var window = try service.registerWindow();
+    defer window.close() catch unreachable;
+
+    try submitTransfer(allocator, window, .copy, destination_dir, source);
+
+    var saw_progress = false;
+    var saw_terminal_state = false;
+    var job_id: ?io_service.JobId = null;
+
+    for (0..500) |_| {
+        if (waitReadable(service.updateWakeFd(), 10)) {
+            _ = service.drainUpdateWake();
+            while (try window.tryReceiveUpdate()) |update| {
+                if (update.kind == .job_state or update.kind == .progress) {
+                    if (job_id) |expected|
+                        try std.testing.expectEqual(expected, update.job_id)
+                    else
+                        job_id = update.job_id;
+                }
+
+                if (update.kind == .progress) {
+                    try std.testing.expect(update.total_bytes > 0);
+                    if (update.completed_bytes > 0)
+                        saw_progress = true;
+                } else if (update.kind == .job_state) {
+                    const state: io_manager.JobState = @enumFromInt(update.state_code);
+                    if (state.isTerminal()) {
+                        try std.testing.expectEqual(io_manager.JobState.completed, state);
+                        saw_terminal_state = true;
+                    }
+                }
+            }
+        }
+        if (saw_terminal_state) break;
+    }
+
+    try std.testing.expect(job_id != null);
+    try std.testing.expect(saw_progress);
+    try std.testing.expect(saw_terminal_state);
 }
 
 test "coordinator copies a symlink without dereferencing its target" {

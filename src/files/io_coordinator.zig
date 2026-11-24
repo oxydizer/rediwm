@@ -14,6 +14,14 @@ const ops_mod = @import("ops.zig");
 
 const JobId = io_service.JobId;
 
+const PublishedJobState = struct {
+    state: ?io_manager.JobState = null,
+    has_progress: bool = false,
+    completed_bytes: u64 = 0,
+    total_bytes: u64 = 0,
+    rate_bytes_per_second: u64 = 0,
+};
+
 const RejectionCode = enum(u8) {
     unsupported_command = 1,
     unknown_job = 2,
@@ -28,6 +36,7 @@ pub const Coordinator = struct {
     service: *io_service.Service,
     runtime: *io_runtime.Runtime,
     thread: ?std.Thread = null,
+    published_jobs: std.AutoHashMapUnmanaged(JobId, PublishedJobState) = .empty,
 
     /// Initialize at a stable address. The Runtime is allocated separately
     /// because its executors retain pointers into it and into its Manager.
@@ -61,6 +70,7 @@ pub const Coordinator = struct {
     pub fn deinit(self: *Coordinator) void {
         self.service.beginShutdown();
         if (self.thread) |thread| thread.join();
+        self.published_jobs.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -77,6 +87,9 @@ pub const Coordinator = struct {
             }
 
             self.pumpExecutors();
+            self.publishJobUpdates() catch |err| {
+                std.log.err("Files job update publication failed: {s}", .{@errorName(err)});
+            };
             self.retireReadyJobs();
 
             if (self.service.isStopping()) break;
@@ -342,12 +355,6 @@ pub const Coordinator = struct {
         if (request.mode == .move)
             try manager.setDestinationDeviceId(job_id, @intCast(destination_stat.st_dev));
         try manager.queueJob(job_id);
-
-        _ = self.service.publishUpdate(routed.window_id, .{
-            .job_id = job_id,
-            .kind = .job_state,
-            .state_code = @backingInt(io_manager.JobState.queued),
-        }) catch {};
     }
 
     /// Plans selected directory roots and lets Manager incrementally discover
@@ -472,12 +479,81 @@ pub const Coordinator = struct {
 
         // This call atomically commits the job and all discovery roots.
         try manager.queueJobWithDiscoveryRoots(job_id, roots.items);
+    }
 
-        _ = self.service.publishUpdate(routed.window_id, .{
-            .job_id = job_id,
-            .kind = .job_state,
-            .state_code = @backingInt(io_manager.JobState.queued),
-        }) catch {};
+    /// Publishes immutable job state and aggregate operation progress to the
+    /// window that submitted each job. The cache suppresses unchanged updates.
+    fn publishJobUpdates(self: *Coordinator) !void {
+        const snapshots = try self.runtime.manager.snapshotJobs(self.allocator);
+        defer {
+            for (snapshots) |*snapshot| snapshot.deinit();
+            self.allocator.free(snapshots);
+        }
+
+        for (snapshots) |snapshot| {
+            const window_id = snapshot.origin_window_id orelse continue;
+            var published = self.published_jobs.get(snapshot.id) orelse
+                PublishedJobState{};
+            var changed = false;
+
+            if (published.state != snapshot.state) {
+                _ = self.service.publishUpdate(window_id, .{
+                    .job_id = snapshot.id,
+                    .kind = .job_state,
+                    .state_code = @intCast(@intFromEnum(snapshot.state)),
+                }) catch |err| {
+                    if (err != error.WindowClosed) {
+                        std.log.err(
+                            "Files job state update failed for job {d}: {s}",
+                            .{ snapshot.id, @errorName(err) },
+                        );
+                    }
+                    continue;
+                };
+                published.state = snapshot.state;
+                changed = true;
+            }
+
+            var completed_bytes: u64 = 0;
+            var total_bytes: u64 = 0;
+            var rate_bytes_per_second: u64 = 0;
+            for (snapshot.operations) |operation| {
+                completed_bytes +|= operation.progress_bytes;
+                total_bytes +|= operation.progress_total_bytes;
+                rate_bytes_per_second +|= operation.progress_bytes_per_second;
+            }
+
+            if (total_bytes > 0 and
+                (!published.has_progress or
+                    published.completed_bytes != completed_bytes or
+                    published.total_bytes != total_bytes or
+                    published.rate_bytes_per_second != rate_bytes_per_second))
+            {
+                _ = self.service.publishUpdate(window_id, .{
+                    .job_id = snapshot.id,
+                    .kind = .progress,
+                    .completed_bytes = completed_bytes,
+                    .total_bytes = total_bytes,
+                    .rate_bytes_per_second = rate_bytes_per_second,
+                }) catch |err| {
+                    if (err != error.WindowClosed) {
+                        std.log.err(
+                            "Files job progress update failed for job {d}: {s}",
+                            .{ snapshot.id, @errorName(err) },
+                        );
+                    }
+                    continue;
+                };
+                published.has_progress = true;
+                published.completed_bytes = completed_bytes;
+                published.total_bytes = total_bytes;
+                published.rate_bytes_per_second = rate_bytes_per_second;
+                changed = true;
+            }
+
+            if (changed)
+                try self.published_jobs.put(self.allocator, snapshot.id, published);
+        }
     }
 
     fn retireReadyJobs(self: *Coordinator) void {
@@ -493,6 +569,7 @@ pub const Coordinator = struct {
 
             const job_id = candidate orelse return;
             if (!self.runtime.retireJobIfReady(job_id)) return;
+            _ = self.published_jobs.remove(job_id);
         }
     }
 };
