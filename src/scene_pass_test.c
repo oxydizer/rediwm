@@ -4,6 +4,7 @@
 #include "scene_pass_draw.c"
 #include "scene_pass_backdrop.c"
 #include "scene_pass_ribbon.c"
+#include "scene_pass_linear.c"
 #include "scene_graph.h"
 #include <math.h>
 #include <stdarg.h>
@@ -98,6 +99,7 @@ static struct wlr_texture *texture_create(struct wlr_renderer *renderer, bool op
 #include "scene_pass_test_shading.c"
 #include "scene_pass_test_backdrop.c"
 #include "scene_pass_test_ribbon.c"
+#include "scene_pass_test_linear.c"
 
 int main(void) {
     wlr_log_init(WLR_ERROR, NULL);
@@ -121,6 +123,8 @@ int main(void) {
     parity(r, actual, expected, true);
     damage(r, actual, expected);
     state_restoration(r, actual);
+    // Before the ribbons: their gate fails since 475817c restyled the flames.
+    linear_gates(r, allocator);
     ribbon_gate(r, actual);
     external_texture(r, allocator, actual, expected);
     external_yuv(r, actual, expected);
@@ -137,6 +141,7 @@ int main(void) {
         parity(r, actual, expected, false);
         parity(r, actual, expected, true);
         state_restoration(r, actual);
+        linear_gates(r, allocator);
         ribbon_gate(r, actual);
         r->has_vao = true;
     }

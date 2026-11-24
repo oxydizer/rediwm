@@ -227,6 +227,22 @@ chrome, capture, or retained panel painting. General rules remain in
   layout trees), never `wlr_scene_node_at` on the root. GLES2 lets go of a
   plain buffer once uploaded, so "has content" is a buffer, a texture or a
   single-pixel colour (`present_leaf`, `collect`).
+* **Linear passes** (HDR phase 2, `scene_pass_linear.c`, `docs/plans/hdr.md`):
+  an output with `[[outputs]] hdr = "on"` that `output/hdr.zig` lets blend in
+  linear light (headless, nested, or a display that takes HDR10; never the
+  greeter) is drawn through the `LINEAR` twins of the shaped programs into a
+  kept FP16 image (`rediwm_scene_output_set_linear`, set before every build by
+  `Server.buildOutputState`). Each frame draws only `pending_commit_damage`
+  into it and then `rediwm_scene_pass_encode`s the swapchain buffer's age
+  damage; scan-out or a failed frame makes the next one draw it whole. Every
+  colour a shader reads goes through `LIN()` (sRGB as displayed, gamma 2.2, to
+  linear BT.2020, 1.0 = SDR white): a new draw kind or colour uniform must too,
+  or it shows too bright or dark on such outputs only. Glass blurs in FP16; a
+  blur keeps the encoding it was taken in, so switching re-takes it. With no
+  linear output nothing of this is compiled or allocated, and the plain
+  programs compile to what they were (`LIN(c)` is `(c)`). The damage audit
+  skips linear frames. `tests/hdr_linear.py`; the pass gates are in
+  `scene_pass_test_linear.c`.
 * **The veil** (`rediwm_scene_output_set_veil`, driven by `reveal.zig`) is
   black drawn over every entry and under the software cursor: the session's
   fade in from black and the greeter's fade out. It exists only on DRM and

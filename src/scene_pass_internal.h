@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <wlr/render/drm_syncobj.h>
 #include <wlr/render/egl.h>
@@ -39,6 +40,7 @@ struct program {
 struct rediwm_backdrop {
     GLuint tex, fbo;
     int width, height;     // the reduced size
+    bool linear;           // FP16 linear light (a linear pass), else 8-bit as drawn
     int x, y;              // device pixel the image starts at
     float extent_w, extent_h; // device pixels it covers (width * factor)
 };
@@ -78,6 +80,19 @@ struct rediwm_scene_renderer {
     GLuint prefix_tex, prefix_fbo, small_tex, small_fbo;
     int small_w, small_h;
     bool has_backdrops, backdrops_tried;
+    // Phase 2 of docs/plans/hdr.md, built by enable_linear the first time an
+    // output blends in linear light and never otherwise: the shaped programs
+    // with LINEAR defined (every input decoded to linear BT.2020, 1.0 = SDR
+    // white), the ribbon likewise, the encode from the FP16 target into the
+    // output's buffer, and FP16 scratch for glass. A base program built later
+    // (external, polygons, ribbons) gets its linear twin then.
+    struct program lin, lin_external, lin_poly, lin_poly_external, ribbon_lin, encode;
+    GLint ribbon_lin_fade;
+    GLuint lin_prefix_tex, lin_prefix_fbo, lin_small_tex, lin_small_fbo;
+    int lin_small_w, lin_small_h;
+    GLint half_internal;   // the FP16 texture format that renders here
+    GLenum half_type;
+    bool has_linear, linear_tried;
     bool active, has_external, has_sync, has_vao, has_shapes, shapes_tried;
     GLuint vertex_array, vertices;
     PFNGLGENVERTEXARRAYSOESPROC gen_vertex_arrays;
@@ -106,18 +121,45 @@ struct pass {
     struct wlr_box region, valid; // device pixels; `valid` is the part in the buffer
     float factor;                 // device pixels per pixel of the image
     int small_w, small_h;
+    // A linear pass (rediwm_scene_pass_begin_linear) draws into this FP16 image
+    // of the buffer and reaches the buffer only through rediwm_scene_pass_encode,
+    // after which nothing more may be drawn.
+    struct rediwm_linear_target *linear;
+    bool encoded;
+};
+struct rediwm_linear_target {
+    GLuint tex, fbo;
+    int width, height;
 };
 
 // The unit quad every draw is made of.
 static const GLfloat positions[] = {0, 0, 1, 0, 0, 1, 1, 1};
 
-// The program a draw of `shape` (NULL: none) uses: the polygon variant for an outline.
+// The program a draw of `shape` (NULL: none) uses: the polygon variant for an
+// outline, the linear one in a linear pass.
 static inline struct program *shaped_for(struct rediwm_scene_renderer *r,
-        const struct rediwm_pass_shape *shape, bool external) {
+        const struct rediwm_pass_shape *shape, bool external, bool linear) {
     const bool poly = shape && (shape->poly_count > 0 || shape->sector.radii[1] > 0);
+    if (linear) {
+        if (external) return poly ? &r->lin_poly_external : &r->lin_external;
+        return poly ? &r->lin_poly : &r->lin;
+    }
     if (external) return poly ? &r->shaped_poly_external : &r->shaped_external;
     return poly ? &r->shaped_poly : &r->shaped;
 }
+// What the pass draws into: its FP16 image when linear, else the buffer.
+static inline GLuint pass_fbo(const struct pass *p) {
+    return p->linear ? p->linear->fbo : wlr_gles2_renderer_get_buffer_fbo(p->renderer->renderer, p->buffer);
+}
+// GLSL shared by the linear programs: an sRGB colour as the display shows it
+// (gamma 2.2, as node_surface.c describes sRGB surfaces), premultiplied, to
+// linear BT.2020 with 1.0 at SDR white, still premultiplied. Its inverse is
+// the encode (scene_pass_linear.c).
+#define GLSL_BT709_TO_BT2020 "mat3(.627404,.069097,.016391,.329283,.919540,.088013,.043313,.011362,.895595)"
+#define GLSL_LIN \
+    "vec4 lin(vec4 c){ if(c.a<=0.) return vec4(0.);" \
+    "vec3 s=pow(clamp(c.rgb/c.a,0.,1.),vec3(2.2));" \
+    "return vec4(" GLSL_BT709_TO_BT2020 "*s*c.a,c.a); }"
 // The shape's uniforms. A degenerate or non-finite shape is the caller's bug;
 // it fails the pass at submit like any other bad draw.
 static inline bool shape_usable(const struct rediwm_pass_shape *s) {
@@ -180,5 +222,12 @@ void scene_pass_setup(struct pass *p, struct program *program, struct wlr_box bo
         enum wlr_render_blend_mode blend);
 void scene_pass_draw(const struct pass *p, const pixman_region32_t *clip);
 void scene_pass_set_shape(const struct pass *p, const struct program *g, const struct rediwm_pass_shape *s);
+// The sources the linear programs are built from (scene_pass.c, scene_pass_ribbon.c).
+extern const char scene_pass_shaped_vertex[], scene_pass_shaped_fragment[];
+// Builds the linear twin of every base program that exists and lacks one, inside
+// scene_pass_enter (scene_pass_linear.c); false when one failed to build.
+bool scene_pass_linear_build(struct rediwm_scene_renderer *r);
+bool scene_pass_ribbon_build_linear(struct rediwm_scene_renderer *r);
+void scene_pass_linear_destroy(struct rediwm_scene_renderer *r);
 
 #endif

@@ -1,7 +1,7 @@
 # Plan: HDR output
 
-Status: decided 2026-11-24 (D1-D6 take the recommended options); Phase 1
-done, Phase 2 next, see Progress at the end. Written 2026-11-16 from the outside
+Status: decided 2026-11-24 (D1-D6 take the recommended options); Phases 1
+and 2 done, Phase 3 next (needs an HDR monitor), see Progress at the end. Written 2026-11-16 from the outside
 audit in discussion #27 (github.com/oxydizer/rediwm/discussions/27). Its
 author could not read `src/`, so this version checks its assumptions against
 our code and the wlroots 0.20.2 source, and folds in the changes.
@@ -256,6 +256,55 @@ them with a working compositor. Week counts are rough guesses for one person.
   fixture, `tests/wlr_protocols.py` (round trip, refusals, saved file) and
   `tests/control_center.py` (headless card). The Settings switch itself
   only appears on an HDR display, so it has no automated test.
+* 2026-11-24, Phase 2 built: linear blending, encoded back to sRGB.
+  * Pass: `scene_pass_linear.c` builds, the first time an output asks, the
+    `LINEAR` twins of the shaped programs (every colour read goes through
+    `LIN()`: unpremultiply, gamma 2.2, BT.709 to BT.2020, premultiply; the
+    dim and glass saturation use BT.2020 luminance and the gamma-2.2
+    equivalent of the brightness step), a twin of the ribbon program, and the
+    encode (BT.2020 to BT.709, clip, gamma 1/2.2). The renderer probes an FP16
+    format that renders (ES 3 sized, OES sized, OES unsized) and needs
+    bilinear FP16 for glass (ES 3 or `OES_texture_half_float_linear`). Glass
+    scratch and kept blurs are FP16 in linear passes; a blur records its
+    encoding, and compositing it in a pass of the other kind fails the pass.
+  * Output: `rediwm_scene_output_set_linear` keeps an FP16 image per output.
+    Each frame draws only `pending_commit_damage` into it, then encodes the
+    swapchain buffer's age damage, so nothing is drawn twice; a new or
+    resized image, scan-out or a failed frame makes the next frame draw it
+    whole. Switching repaints the output and re-takes its glass. The damage
+    audit skips linear frames.
+  * Zig: `output/hdr.zig` `linearWanted` (hdr on, not the greeter, and
+    headless, nested or HDR10-capable) is applied before every build
+    (`Server.buildOutputState`, so captures too) and at once on a settings
+    change (`syncAll`). IPC outputs gain `hdr_linear`.
+  * Checked: `scene_pass_test_linear.c` (opaque round trip, linear blend
+    against the formula, kept image, partial encode, nothing after the
+    encode, dim, glass in FP16 and the encoding guard, with and without
+    vertex arrays); `tests/hdr_linear.py` at scale 1 and 1.5 (live switch,
+    wallpaper within 3 levels, off gives back the frame from before, and
+    damage-only frames equal a full redraw byte for byte); HDR-off frames are
+    byte-identical to the build before Phase 2 at scale 1 and 1.5;
+    `glass_reblur.py`, `wlr_protocols.py`, unit tests, Debug, ReleaseSafe and
+    `-Ddamage-audit` builds.
+  * Look (D5): translucent light colours over dark (the start menu outline,
+    the taskbar button backing) come out a little lighter, glass spreads
+    bright colours further, text edges differ by a few levels. Saturated
+    colours can move by up to 3 levels in a channel near zero: the BT.2020 to
+    sRGB conversion reaches it by cancellation, FP16 leaves about 3e-5, and
+    gamma 2.2 is steep near black. PQ output (Phase 3) does not show this.
+  * Cost when on (Debug build, headless 1280x720 on the Intel iGPU, the glass
+    start menu open, the pointer sweeping): GPU per frame 1.12-1.13 ms off,
+    1.24-1.29 ms on at the median (+10-15 %); CPU per frame within noise.
+    Memory: the FP16 image is 8 bytes per pixel (7 MiB at 1280x720, 63 MiB at
+    3840x2160) plus FP16 glass scratch and about six programs (140 KiB each),
+    only while some output is linear; the image is freed when it switches off.
+  * Not in Phase 2: the software cursor lock and everything else that only
+    matters with a PQ signal is Phase 3. The software cursor already goes
+    through the pass, so it is decoded like everything else.
+  * Found on the way, failing before Phase 2 too: `test-scene-pass`'s
+    `ribbon_gate` since the flame restyle in 475817c (the linear gates run
+    before it), `tests/glass_hold.py` ("mixed-scale desktop keeps
+    repainting"), and `tests/control_center.py`'s window resize check.
 
 ## Sources
 

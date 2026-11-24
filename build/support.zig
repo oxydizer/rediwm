@@ -90,7 +90,7 @@ pub fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) vo
     module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFiles(.{ .files = &.{ "src/node_surface.c", "src/node_subsurface_tree.c", "src/node_xdg_shell.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFiles(.{ .files = &.{ "src/scene_pass.c", "src/scene_pass_draw.c", "src/scene_pass_backdrop.c", "src/scene_pass_ribbon.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFiles(.{ .files = &.{ "src/scene_pass.c", "src/scene_pass_draw.c", "src/scene_pass_backdrop.c", "src/scene_pass_ribbon.c", "src/scene_pass_linear.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFiles(.{ .files = &scene_output_sources, .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });

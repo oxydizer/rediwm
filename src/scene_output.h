@@ -37,6 +37,13 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *,
 // above every effect. Direct scan-out waits until it is 0. False only when the
 // state for a nonzero veil could not be allocated.
 bool rediwm_scene_output_set_veil(struct rediwm_output_renderer *, struct rediwm_scene_output *, float alpha);
+// Blend this output in linear light (docs/plans/hdr.md, phase 2), encoded back to
+// sRGB for now. A change repaints the whole output and re-takes its glass. If the
+// renderer cannot, frames are built as before and a warning is logged once.
+// False only when the state for `on` could not be allocated.
+bool rediwm_scene_output_set_linear(struct rediwm_output_renderer *, struct rediwm_scene_output *, bool on);
+// The last frame built for this output blended in linear light.
+bool rediwm_scene_output_linear(struct rediwm_output_renderer *, struct rediwm_scene_output *);
 bool rediwm_output_snapshot(struct rediwm_output_renderer *, struct rediwm_projection *,
     struct rediwm_scene_output *, struct rediwm_node *, struct wlr_box, float,
     struct wlr_buffer *, struct rediwm_read_fence *, struct rediwm_buffer *);

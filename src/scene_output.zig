@@ -27,4 +27,8 @@ pub const Renderer = opaque {
     pub const beginPass = rediwm_output_begin_pass;
     extern fn rediwm_scene_output_set_veil(renderer: *Renderer, output: *SceneOutput, alpha: f32) bool;
     pub const setVeil = rediwm_scene_output_set_veil;
+    extern fn rediwm_scene_output_set_linear(renderer: *Renderer, output: *SceneOutput, on: bool) bool;
+    pub const setLinear = rediwm_scene_output_set_linear;
+    extern fn rediwm_scene_output_linear(renderer: *Renderer, output: *SceneOutput) bool;
+    pub const linear = rediwm_scene_output_linear;
 };

@@ -167,3 +167,32 @@ struct rediwm_pass_backdrop {
 // Composites `backdrop` through `shape` over `box` (device pixels).
 void rediwm_scene_pass_add_backdrop(struct wlr_render_pass *, const struct rediwm_pass_shape *,
     struct wlr_box box, const struct rediwm_pass_backdrop *);
+
+// Phase 2 of docs/plans/hdr.md: blending in linear light. A linear pass draws
+// into an FP16 image of the buffer (`rediwm_linear_target`, kept by the caller
+// between frames so only damage is redrawn) with programs that decode every
+// colour they read (textures, rects, rings, shadows, ribbons) from sRGB as
+// displayed (gamma 2.2) to linear BT.2020, 1.0 at SDR white, and blur glass in
+// FP16 too. rediwm_scene_pass_encode then writes chosen parts of that image to
+// the buffer, the last thing the pass does. Draws, backdrops and blurs are the
+// same calls as in any pass; a blur keeps the encoding it was taken in, and
+// compositing it in a pass of the other kind fails the pass.
+struct rediwm_linear_target;
+// Builds the linear programs (about 140 KiB each: one per base program built so
+// far, the encode and the ribbon's twin), outside a pass; later calls return the
+// first result. False when the renderer has no renderable FP16 format or the
+// programs did not build: linear passes cannot begin then.
+bool rediwm_scene_renderer_enable_linear(struct rediwm_scene_renderer *);
+// Makes `*target` an FP16 image of `width` x `height` (creating it if NULL),
+// outside a pass. `*fresh` says its contents are new and undefined: the next
+// pass must draw all of it. False on failure; `*target` is then still the
+// caller's to destroy.
+bool rediwm_scene_renderer_ensure_linear_target(struct rediwm_scene_renderer *,
+    struct rediwm_linear_target **target, int width, int height, bool *fresh);
+void rediwm_scene_renderer_destroy_linear_target(struct rediwm_scene_renderer *, struct rediwm_linear_target *);
+// As rediwm_scene_pass_begin, drawing into `target`, which must be the buffer's size.
+struct wlr_render_pass *rediwm_scene_pass_begin_linear(struct rediwm_scene_renderer *,
+    struct wlr_buffer *, const struct wlr_buffer_pass_options *, struct rediwm_linear_target *target);
+// Encodes `region` (device pixels) of the target into the buffer. Once per
+// linear pass, outside a backdrop; any draw after it fails the pass.
+void rediwm_scene_pass_encode(struct wlr_render_pass *, const pixman_region32_t *region);

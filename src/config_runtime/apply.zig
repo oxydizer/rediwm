@@ -50,6 +50,8 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     }
     // Adaptive sync is decided per frame (output/vrr.zig); a frame applies it.
     if (!loader.outputsAdaptiveSyncEql(old.outputs, new.outputs)) server.scheduleFrames();
+    // Linear blending switches at once (output/hdr.zig), not with the next damage.
+    if (!loader.outputsHdrEql(old.outputs, new.outputs)) @import("../output/hdr.zig").syncAll(server);
     if (!outputsColorEql(old.outputs, new.outputs) or !nightLightEql(old.night_light, new.night_light)) {
         server.night_light.reconfigure(new.night_light);
     }

@@ -196,6 +196,8 @@ pub const OutputData = struct {
     hdr_supported: bool = false,
     /// The output has committed an HDR image description.
     hdr_active: bool = false,
+    /// The last frame blended in linear light (FP16), the HDR pipeline.
+    hdr_linear: bool = false,
     /// `[[outputs]] sdr_white`: SDR brightness on an HDR output, in nits.
     sdr_white: f32 = 203,
 };

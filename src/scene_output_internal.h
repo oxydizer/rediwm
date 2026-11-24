@@ -63,6 +63,13 @@ struct output_state {
     // changed since the last frame was built, so that change re-blurs no glass.
     float veil;
     bool veil_changed;
+    // rediwm_scene_output_set_linear (docs/plans/hdr.md, phase 2): this output
+    // blends in linear light into `linear`, an FP16 image of its buffer kept
+    // between frames, and encodes into each swapchain buffer what that buffer
+    // lacks. `linear_valid`: the image holds the last frame everywhere, so only
+    // new damage is drawn into it.
+    bool linear_wanted, linear_valid, linear_failed;
+    struct rediwm_linear_target *linear;
 };
 struct entry {
     struct rediwm_item item;

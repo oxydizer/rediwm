@@ -255,10 +255,14 @@ Omit coordinates for automatic left-to-right placement. Scale and placement
 apply live. `REDIWM_SCALE` overrides every output. Changes from Settings,
 `wlr-randr`, kanshi or `rediwm-msg output-config` are all saved here.
 
-HDR is in development ([plan](../plans/hdr.md)): `hdr` and `sdr_white` are
-saved and reported (`rediwm-msg outputs` shows `hdr`, `hdr_supported`,
-`hdr_active` and `sdr_white`), but every output is still sent SDR. Settings
-offers the switch only on displays whose EDID and driver can take HDR10.
+HDR is in development ([plan](../plans/hdr.md)). `hdr = "on"` already makes
+the output blend in linear light (FP16) on a display that can take HDR10, and
+on headless and nested outputs, but the result is still sent as SDR; on other
+displays it does nothing. Translucent edges and glass look slightly different
+in linear light. `rediwm-msg outputs` shows `hdr`, `hdr_supported`,
+`hdr_linear`, `hdr_active` (an HDR signal, not sent yet) and `sdr_white`, which
+takes effect with the HDR signal. Settings offers the switch only on displays
+whose EDID and driver can take HDR10.
 
 ## Power and battery
 

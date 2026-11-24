@@ -69,6 +69,7 @@ pub const unquoteKey = loader_fields.unquoteKey;
 pub const outputsLayoutEql = loader_compare.outputsLayoutEql;
 pub const outputsColorEql = loader_compare.outputsColorEql;
 pub const outputsAdaptiveSyncEql = loader_compare.outputsAdaptiveSyncEql;
+pub const outputsHdrEql = loader_compare.outputsHdrEql;
 pub const outputsEql = loader_compare.outputsEql;
 pub const nightLightEql = loader_compare.nightLightEql;
 pub const wheelAccel = loader_compare.wheelAccel;
