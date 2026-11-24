@@ -5,6 +5,7 @@ const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
 const io_executor = @import("io_executor.zig");
+const io_resource_ledger = @import("io_resource_ledger.zig");
 const io_copy = @import("io_copy.zig");
 const io_directory = @import("io_directory.zig");
 const io_symlink = @import("io_symlink.zig");
@@ -24,26 +25,41 @@ const Context = struct {
     ) = .empty,
     archive_cancellations: std.AutoHashMapUnmanaged(
         io_manager.JobId,
-        *archive.Cancel,
+        ArchiveCancellationLease,
     ) = .empty,
+    ledger: *io_resource_ledger.Ledger,
+    owned_ledger: ?*io_resource_ledger.Ledger = null,
 };
 
 const ArchiveStagingLease = struct {
     allocator: Allocator,
     token: io_manager.WorkToken,
     path: []u8,
+    ledger_handle: io_resource_ledger.Handle,
 
-    fn deinit(self: *ArchiveStagingLease) void {
+    fn deinit(
+        self: *ArchiveStagingLease,
+        ledger: *io_resource_ledger.Ledger,
+    ) void {
         ops.deleteRecursive(self.allocator, self.path) catch {};
         self.allocator.free(self.path);
+        ledger.release(
+            self.ledger_handle,
+            .operation_executor,
+        ) catch unreachable;
         self.* = undefined;
     }
 };
 
+const ArchiveCancellationLease = struct {
+    cancel: *archive.Cancel,
+    ledger_handle: io_resource_ledger.Handle,
+};
+
 fn requestArchiveCancellation(context: *Context) void {
     var cancellations = context.archive_cancellations.valueIterator();
-    while (cancellations.next()) |cancel| {
-        cancel.*.store(true, .release);
+    while (cancellations.next()) |lease| {
+        lease.cancel.store(true, .release);
     }
 }
 
@@ -51,7 +67,11 @@ fn requestArchiveCancellation(context: *Context) void {
 /// its cancellation handle is no longer needed and can be reclaimed.
 fn releaseArchiveCancellation(context: *Context, job_id: io_manager.JobId) void {
     const entry = context.archive_cancellations.fetchRemove(job_id) orelse return;
-    context.allocator.destroy(entry.value);
+    context.allocator.destroy(entry.value.cancel);
+    context.ledger.release(
+        entry.value.ledger_handle,
+        .operation_executor,
+    ) catch unreachable;
 }
 
 pub const Runtime = struct {
@@ -65,11 +85,45 @@ pub const Runtime = struct {
         worker_count: usize,
         capacity: usize,
     ) !Runtime {
+        return initInternal(allocator, manager, null, worker_count, capacity);
+    }
+
+    /// Uses the process Runtime's shared resource ledger. Standalone executor
+    /// users retain the self-owned ledger provided by init().
+    pub fn initWithLedger(
+        allocator: Allocator,
+        manager: *io_manager.Manager,
+        ledger: *io_resource_ledger.Ledger,
+        worker_count: usize,
+        capacity: usize,
+    ) !Runtime {
+        return initInternal(allocator, manager, ledger, worker_count, capacity);
+    }
+
+    fn initInternal(
+        allocator: Allocator,
+        manager: *io_manager.Manager,
+        shared_ledger: ?*io_resource_ledger.Ledger,
+        worker_count: usize,
+        capacity: usize,
+    ) !Runtime {
+        const owned_ledger = if (shared_ledger == null) blk: {
+            const ledger = try allocator.create(io_resource_ledger.Ledger);
+            ledger.* = io_resource_ledger.Ledger.init(allocator);
+            break :blk ledger;
+        } else null;
+        errdefer if (owned_ledger) |ledger| {
+            ledger.deinit();
+            allocator.destroy(ledger);
+        };
+
         const context = try allocator.create(Context);
         errdefer allocator.destroy(context);
         context.* = .{
             .allocator = allocator,
             .manager = manager,
+            .ledger = shared_ledger orelse owned_ledger.?,
+            .owned_ledger = owned_ledger,
         };
 
         const executor = try io_executor.Executor.init(
@@ -102,13 +156,24 @@ pub const Runtime = struct {
         self.executor.deinit();
 
         var staging = self.context.archive_staging.valueIterator();
-        while (staging.next()) |lease| lease.deinit();
+        while (staging.next()) |lease| lease.deinit(self.context.ledger);
         self.context.archive_staging.deinit(self.allocator);
 
         var cancellations = self.context.archive_cancellations.valueIterator();
-        while (cancellations.next()) |cancel| self.allocator.destroy(cancel.*);
+        while (cancellations.next()) |lease| {
+            self.allocator.destroy(lease.cancel);
+            self.context.ledger.release(
+                lease.ledger_handle,
+                .operation_executor,
+            ) catch unreachable;
+        }
         self.context.archive_cancellations.deinit(self.allocator);
 
+        if (self.context.owned_ledger) |ledger| {
+            std.debug.assert(ledger.isEmpty());
+            ledger.deinit();
+            self.allocator.destroy(ledger);
+        }
         self.allocator.destroy(self.context);
         self.* = undefined;
     }
@@ -161,8 +226,8 @@ pub const Runtime = struct {
     }
 
     pub fn cancelJob(self: *Runtime, job_id: io_manager.JobId) !void {
-        if (self.context.archive_cancellations.get(job_id)) |cancel| {
-            cancel.store(true, .release);
+        if (self.context.archive_cancellations.get(job_id)) |lease| {
+            lease.cancel.store(true, .release);
         }
         try self.context.manager.cancelJob(job_id);
         self.executor.cancelJob(job_id);
@@ -207,9 +272,15 @@ pub const Runtime = struct {
         if (self.context.manager.archivePublicationReady(token) != true) return false;
         const key = io_executor.OperationKey.fromToken(token);
         const lease = self.context.archive_staging.getPtr(key) orelse return false;
-        try ops.deleteRecursive(self.allocator, lease.path);
-        self.allocator.free(lease.path);
+        const ledger_handle = lease.ledger_handle;
+        const path = lease.path;
+        try ops.deleteRecursive(self.allocator, path);
+        self.allocator.free(path);
         _ = self.context.archive_staging.remove(key);
+        self.context.ledger.release(
+            ledger_handle,
+            .operation_executor,
+        ) catch unreachable;
         return true;
     }
 
@@ -225,6 +296,10 @@ pub const Runtime = struct {
         const lease = self.context.archive_staging.get(key) orelse return null;
         if (!std.meta.eql(lease.token, token)) return null;
 
+        self.context.ledger.transferOut(
+            lease.ledger_handle,
+            .operation_executor,
+        ) catch return null;
         const removed = self.context.archive_staging.fetchRemove(key) orelse
             return null;
         return .{
@@ -247,9 +322,15 @@ pub const Runtime = struct {
             .operation_id = operation_id,
         };
         const lease = self.context.archive_staging.getPtr(key) orelse return false;
-        try ops.deleteRecursive(self.allocator, lease.path);
-        self.allocator.free(lease.path);
+        const ledger_handle = lease.ledger_handle;
+        const path = lease.path;
+        try ops.deleteRecursive(self.allocator, path);
+        self.allocator.free(path);
         _ = self.context.archive_staging.remove(key);
+        self.context.ledger.release(
+            ledger_handle,
+            .operation_executor,
+        ) catch unreachable;
         return true;
     }
 };
@@ -545,6 +626,7 @@ fn prepareArchive(
     if (context.archive_cancellations.contains(token.job_id))
         return error.ArchiveCancellationAlreadyActive;
 
+    try context.archive_cancellations.ensureUnusedCapacity(context.allocator, 1);
     const cancel = try context.allocator.create(archive.Cancel);
     errdefer context.allocator.destroy(cancel);
     cancel.* = .init(false);
@@ -563,11 +645,19 @@ fn prepareArchive(
         owned_input.deinit();
     }
 
-    try context.archive_cancellations.put(
-        context.allocator,
+    const ledger_handle = try context.ledger.register(
         token.job_id,
-        cancel,
+        .archive_cancellation,
+        .operation_executor,
     );
+    errdefer context.ledger.release(
+        ledger_handle,
+        .operation_executor,
+    ) catch unreachable;
+    context.archive_cancellations.putAssumeCapacity(token.job_id, .{
+        .cancel = cancel,
+        .ledger_handle = ledger_handle,
+    });
 
     return .{
         .operation_kind = details.kind,
@@ -751,16 +841,32 @@ fn complete(
                 };
                 owned.bytes = null;
                 const key = io_executor.OperationKey.fromToken(token);
+                context.archive_staging.ensureUnusedCapacity(
+                    context.allocator,
+                    1,
+                ) catch {
+                    ops.deleteRecursive(context.allocator, path) catch {};
+                    context.allocator.free(path);
+                    context.manager.failWaiting(token.job_id, token.operation_id) catch {};
+                    return;
+                };
+                const ledger_handle = context.ledger.register(
+                    token.job_id,
+                    .archive_staging,
+                    .operation_executor,
+                ) catch {
+                    ops.deleteRecursive(context.allocator, path) catch {};
+                    context.allocator.free(path);
+                    context.manager.failWaiting(token.job_id, token.operation_id) catch {};
+                    return;
+                };
                 const lease = ArchiveStagingLease{
                     .allocator = context.allocator,
                     .token = token,
                     .path = path,
+                    .ledger_handle = ledger_handle,
                 };
-                context.archive_staging.put(context.allocator, key, lease) catch {
-                    var failed_lease = lease;
-                    failed_lease.deinit();
-                    context.manager.failWaiting(token.job_id, token.operation_id) catch {};
-                };
+                context.archive_staging.putAssumeCapacity(key, lease);
             } else {
                 discardArchiveResult(context.allocator, result);
             }
@@ -884,15 +990,15 @@ fn discard(
                         usize,
                         bytes[@sizeOf(io_manager.JobId)..header_size],
                     );
-                    if (context.archive_cancellations.fetchRemove(job_id)) |entry| {
-                        if (@intFromPtr(entry.value) == cancel_address)
-                            context.allocator.destroy(entry.value)
-                        else
-                            context.archive_cancellations.put(
-                                context.allocator,
-                                job_id,
-                                entry.value,
-                            ) catch context.allocator.destroy(entry.value);
+                    if (context.archive_cancellations.get(job_id)) |lease| {
+                        if (@intFromPtr(lease.cancel) == cancel_address) {
+                            _ = context.archive_cancellations.fetchRemove(job_id).?;
+                            context.allocator.destroy(lease.cancel);
+                            context.ledger.release(
+                                lease.ledger_handle,
+                                .operation_executor,
+                            ) catch unreachable;
+                        }
                     }
                 }
             }
@@ -930,21 +1036,36 @@ test "archive shutdown requests cancellation for every active extraction" {
     var manager = io_manager.Manager.init(allocator);
     defer manager.deinit();
 
+    var ledger = io_resource_ledger.Ledger.init(allocator);
+    defer ledger.deinit();
     var context: Context = .{
         .allocator = allocator,
         .manager = &manager,
+        .ledger = &ledger,
     };
     defer context.archive_cancellations.deinit(allocator);
 
-    var first: archive.Cancel = .init(false);
-    var second: archive.Cancel = .init(false);
-    try context.archive_cancellations.put(allocator, 1, &first);
-    try context.archive_cancellations.put(allocator, 2, &second);
+    const first = try allocator.create(archive.Cancel);
+    first.* = .init(false);
+    const first_handle = try ledger.register(1, .archive_cancellation, .operation_executor);
+    const second = try allocator.create(archive.Cancel);
+    second.* = .init(false);
+    const second_handle = try ledger.register(2, .archive_cancellation, .operation_executor);
+    try context.archive_cancellations.put(allocator, 1, .{
+        .cancel = first,
+        .ledger_handle = first_handle,
+    });
+    try context.archive_cancellations.put(allocator, 2, .{
+        .cancel = second,
+        .ledger_handle = second_handle,
+    });
 
     requestArchiveCancellation(&context);
 
     try std.testing.expect(first.load(.acquire));
     try std.testing.expect(second.load(.acquire));
+    releaseArchiveCancellation(&context, 1);
+    releaseArchiveCancellation(&context, 2);
 }
 
 test "archive completion releases its cancellation handle" {
@@ -952,17 +1073,25 @@ test "archive completion releases its cancellation handle" {
     var manager = io_manager.Manager.init(allocator);
     defer manager.deinit();
 
+    var ledger = io_resource_ledger.Ledger.init(allocator);
+    defer ledger.deinit();
     var context: Context = .{
         .allocator = allocator,
         .manager = &manager,
+        .ledger = &ledger,
     };
     defer context.archive_cancellations.deinit(allocator);
 
     const cancel = try allocator.create(archive.Cancel);
     cancel.* = .init(false);
-    try context.archive_cancellations.put(allocator, 42, cancel);
+    const handle = try ledger.register(42, .archive_cancellation, .operation_executor);
+    try context.archive_cancellations.put(allocator, 42, .{
+        .cancel = cancel,
+        .ledger_handle = handle,
+    });
 
     releaseArchiveCancellation(&context, 42);
 
     try std.testing.expect(!context.archive_cancellations.contains(42));
+    try std.testing.expect(ledger.isJobEmpty(42));
 }

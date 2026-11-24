@@ -183,6 +183,10 @@ pub const Ledger = struct {
         return self.jobResourceCount(job_id) == 0;
     }
 
+    pub fn isEmpty(self: *const Ledger) bool {
+        return self.records.items.len == 0;
+    }
+
     /// Drops empty per-Job bookkeeping. A Job with outstanding resources
     /// cannot be removed from the ledger.
     pub fn releaseJob(self: *Ledger, job_id: io_manager.JobId) !void {

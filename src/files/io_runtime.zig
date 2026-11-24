@@ -7,18 +7,21 @@ const Allocator = std.mem.Allocator;
 const io_manager = @import("io_manager.zig");
 const io_discovery_executor = @import("io_discovery_executor.zig");
 const io_operation_executor = @import("io_operation_executor.zig");
+const io_resource_ledger = @import("io_resource_ledger.zig");
 
 pub const Runtime = struct {
     allocator: Allocator,
     manager: io_manager.Manager,
     discovery_executor: ?io_discovery_executor.Executor = null,
     operation_executor: ?io_operation_executor.Runtime = null,
+    resource_ledger: io_resource_ledger.Ledger,
     retirement_requests: std.AutoHashMapUnmanaged(io_manager.JobId, void) = .empty,
 
     pub fn init(allocator: Allocator) Runtime {
         return .{
             .allocator = allocator,
             .manager = io_manager.Manager.init(allocator),
+            .resource_ledger = io_resource_ledger.Ledger.init(allocator),
         };
     }
 
@@ -26,7 +29,9 @@ pub const Runtime = struct {
         // Stop long-running archive work before joining either worker pool.
         if (self.operation_executor) |*executor| executor.deinit();
         if (self.discovery_executor) |*executor| executor.deinit();
+        std.debug.assert(self.resource_ledger.isEmpty());
         self.retirement_requests.deinit(self.allocator);
+        self.resource_ledger.deinit();
         self.manager.deinit();
         self.* = undefined;
     }
@@ -53,6 +58,7 @@ pub const Runtime = struct {
         if (!self.retirement_requests.contains(job_id)) return false;
         const state = self.manager.jobState(job_id) orelse return false;
         if (!state.isTerminal()) return false;
+        if (!self.resource_ledger.isJobEmpty(job_id)) return false;
 
         if (self.operation_executor) |*executor| {
             if (!executor.isJobQuiescent(job_id)) return false;
@@ -68,6 +74,7 @@ pub const Runtime = struct {
     pub fn retireJobIfReady(self: *Runtime, job_id: io_manager.JobId) bool {
         if (!self.isJobRetirementReady(job_id)) return false;
         if (!self.manager.retireTerminalJob(job_id)) return false;
+        self.resource_ledger.releaseJob(job_id) catch unreachable;
         std.debug.assert(self.retirement_requests.remove(job_id));
         return true;
     }
@@ -103,9 +110,10 @@ pub const Runtime = struct {
         self: *Runtime,
     ) !*io_operation_executor.Runtime {
         if (self.operation_executor == null) {
-            self.operation_executor = try io_operation_executor.Runtime.init(
+            self.operation_executor = try io_operation_executor.Runtime.initWithLedger(
                 self.allocator,
                 &self.manager,
+                &self.resource_ledger,
                 2,
                 4,
             );
