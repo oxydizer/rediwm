@@ -178,6 +178,110 @@ fn submitTransfer(
     };
 }
 
+fn resolveConflict(
+    allocator: std.mem.Allocator,
+    window: io_service.Handle,
+    conflict_id: io_manager.ConflictId,
+    action: io_service.ConflictAction,
+) !void {
+    const payload = try io_service.OwnedPayload.createConflictResolution(
+        allocator,
+        conflict_id,
+        action,
+        null,
+    );
+    var command: io_service.Command = .{
+        .kind = .resolve_conflict,
+        .payload = payload,
+    };
+    window.trySendOwned(&command) catch |err| {
+        payload.deinit();
+        return err;
+    };
+}
+
+test "coordinator routes conflicts to their owning window and resolves them there" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const source = try join(allocator, temp, "payload.txt");
+    defer allocator.free(source);
+    defer cleanup(source, false);
+    const destination_dir = try join(allocator, temp, "destination");
+    defer allocator.free(destination_dir);
+    defer cleanup(destination_dir, true);
+    const destination = try join(allocator, destination_dir, "payload.txt");
+    defer allocator.free(destination);
+    defer cleanup(destination, false);
+
+    try makeDirectory(destination_dir);
+    try writeFile(source, "source contents");
+    try writeFile(destination, "existing contents");
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, &service);
+    defer coordinator.deinit();
+
+    var owner_window = try service.registerWindow();
+    defer owner_window.close() catch unreachable;
+    var other_window = try service.registerWindow();
+    defer other_window.close() catch unreachable;
+
+    try submitTransfer(allocator, owner_window, .copy, destination_dir, source);
+
+    var conflict_id: ?io_manager.ConflictId = null;
+    var other_window_saw_conflict = false;
+    for (0..500) |_| {
+        if (waitReadable(service.updateWakeFd(), 10))
+            _ = service.drainUpdateWake();
+
+        while (try owner_window.tryReceiveUpdate()) |update| {
+            if (update.kind == .conflict)
+                conflict_id = update.conflict_id;
+        }
+        while (try other_window.tryReceiveUpdate()) |update| {
+            if (update.kind == .conflict)
+                other_window_saw_conflict = true;
+        }
+        if (conflict_id != null) break;
+    }
+
+    const id = conflict_id orelse return error.ConflictNotificationTimedOut;
+    try std.testing.expect(!other_window_saw_conflict);
+
+    // A different window cannot resolve another window's conflict.
+    try resolveConflict(allocator, other_window, id, .skip);
+    try std.testing.expect(waitReadable(service.updateWakeFd(), 2000));
+    _ = service.drainUpdateWake();
+    const rejected = (try other_window.tryReceiveUpdate()) orelse
+        return error.MissingConflictOwnershipRejection;
+    try std.testing.expectEqual(io_service.UpdateKind.command_rejected, rejected.kind);
+
+    try resolveConflict(allocator, owner_window, id, .skip);
+
+    var saw_terminal_state = false;
+    for (0..500) |_| {
+        if (waitReadable(service.updateWakeFd(), 10))
+            _ = service.drainUpdateWake();
+        while (try owner_window.tryReceiveUpdate()) |update| {
+            if (update.kind == .job_state) {
+                const state: io_manager.JobState = @fromBackingInt(
+                    @intCast(update.state_code),
+                );
+                if (state.isTerminal()) saw_terminal_state = true;
+            }
+        }
+        if (saw_terminal_state) break;
+    }
+    try std.testing.expect(saw_terminal_state);
+}
+
 test "coordinator copies a regular-file transfer" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;

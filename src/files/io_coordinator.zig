@@ -37,6 +37,7 @@ pub const Coordinator = struct {
     runtime: *io_runtime.Runtime,
     thread: ?std.Thread = null,
     published_jobs: std.AutoHashMapUnmanaged(JobId, PublishedJobState) = .empty,
+    last_published_conflict_id: ?io_manager.ConflictId = null,
 
     /// Initialize at a stable address. The Runtime is allocated separately
     /// because its executors retain pointers into it and into its Manager.
@@ -89,6 +90,9 @@ pub const Coordinator = struct {
             self.pumpExecutors();
             self.publishJobUpdates() catch |err| {
                 std.log.err("Files job update publication failed: {s}", .{@errorName(err)});
+            };
+            self.publishConflictUpdate() catch |err| {
+                std.log.err("Files conflict update publication failed: {s}", .{@errorName(err)});
             };
             self.retireReadyJobs();
 
@@ -190,14 +194,90 @@ pub const Coordinator = struct {
             .cancel_job => try self.runtime.cancelJob(command.job_id),
             .retire_job => try self.runtime.requestJobRetirement(command.job_id),
             .submit_job => try self.submitTransfer(routed),
+            .start_discovery => try self.startDiscovery(command.job_id, command.payload),
+            .prioritize_discovery => try self.prioritizeDiscovery(command.job_id, command.payload),
+            .resolve_conflict => try self.resolveConflict(
+                routed.window_id,
+                command.payload,
+            ),
+            .release_resource => return error.UnsupportedCommand,
+        }
+    }
 
-            // These commands need distinct request payloads or opaque resource
-            // handles; they are not represented by the transfer request.
-            .start_discovery,
-            .prioritize_discovery,
-            .resolve_conflict,
-            .release_resource,
-            => return error.UnsupportedCommand,
+    fn startDiscovery(
+        self: *Coordinator,
+        job_id: JobId,
+        payload: ?*io_service.OwnedPayload,
+    ) !void {
+        const owned = payload orelse return error.MissingDiscoveryPayload;
+        const request = switch (owned.data) {
+            .discovery => |*discovery| discovery,
+            else => return error.UnexpectedDiscoveryPayload,
+        };
+        const root_path = request.root_path orelse
+            return error.MissingDiscoveryRootPath;
+        try self.runtime.manager.startRootDiscovery(
+            job_id,
+            request.root_entry_id,
+            root_path,
+        );
+    }
+
+    fn prioritizeDiscovery(
+        self: *Coordinator,
+        job_id: JobId,
+        payload: ?*io_service.OwnedPayload,
+    ) !void {
+        const owned = payload orelse return error.MissingDiscoveryPayload;
+        const request = switch (owned.data) {
+            .discovery => |*discovery| discovery,
+            else => return error.UnexpectedDiscoveryPayload,
+        };
+        try self.runtime.manager.prioritizeDiscovery(
+            job_id,
+            request.root_entry_id,
+        );
+    }
+
+    fn resolveConflict(
+        self: *Coordinator,
+        window_id: io_service.WindowId,
+        payload: ?*io_service.OwnedPayload,
+    ) !void {
+        const owned = payload orelse return error.MissingConflictResolutionPayload;
+        const request = switch (owned.data) {
+            .conflict_resolution => |*resolution| resolution,
+            else => return error.UnexpectedConflictResolutionPayload,
+        };
+        const manager = &self.runtime.manager;
+        const conflict = manager.nextConflict() orelse
+            return error.ConflictNotAtQueueHead;
+        if (conflict.id != request.conflict_id)
+            return error.ConflictNotAtQueueHead;
+
+        const snapshots = try manager.snapshotJobs(self.allocator);
+        defer {
+            for (snapshots) |*snapshot| snapshot.deinit();
+            self.allocator.free(snapshots);
+        }
+        var owns_job = false;
+        for (snapshots) |snapshot| {
+            if (snapshot.id != conflict.job_id) continue;
+            owns_job = snapshot.origin_window_id == window_id;
+            break;
+        }
+        if (!owns_job) return error.ConflictWindowMismatch;
+
+        switch (request.action) {
+            .retry => try manager.resolveConflict(request.conflict_id),
+            .replace => try manager.replaceConflict(request.conflict_id),
+            .merge => try manager.mergeConflict(request.conflict_id),
+            .rename => try manager.renameConflict(
+                request.conflict_id,
+                request.destination_path orelse return error.MissingConflictDestinationPath,
+            ),
+            .skip => try manager.skipConflict(request.conflict_id),
+            .cancel => try manager.cancelConflict(request.conflict_id),
         }
     }
 
@@ -558,6 +638,48 @@ pub const Coordinator = struct {
         }
     }
 
+    /// Publishes only the FIFO conflict head. Its Job snapshot supplies the
+    /// originating window; the conflict view itself remains Manager-owned.
+    /// A new head receives a new notification, while repeated coordinator
+    /// iterations do not duplicate the current notification.
+    fn publishConflictUpdate(self: *Coordinator) !void {
+        const conflict = self.runtime.manager.nextConflict() orelse {
+            self.last_published_conflict_id = null;
+            return;
+        };
+        if (self.last_published_conflict_id == conflict.id) return;
+
+        const snapshots = try self.runtime.manager.snapshotJobs(self.allocator);
+        defer {
+            for (snapshots) |*snapshot| snapshot.deinit();
+            self.allocator.free(snapshots);
+        }
+
+        for (snapshots) |snapshot| {
+            if (snapshot.id != conflict.job_id) continue;
+            const window_id = snapshot.origin_window_id orelse {
+                self.last_published_conflict_id = conflict.id;
+                return;
+            };
+            _ = self.service.publishUpdate(window_id, .{
+                .job_id = conflict.job_id,
+                .kind = .conflict,
+                .conflict_id = conflict.id,
+            }) catch |err| {
+                if (err == error.WindowClosed) {
+                    self.last_published_conflict_id = conflict.id;
+                    return;
+                }
+                return err;
+            };
+            self.last_published_conflict_id = conflict.id;
+            return;
+        }
+
+        // The conflict's Job may have been retired between observations.
+        self.last_published_conflict_id = conflict.id;
+    }
+
     fn retireReadyJobs(self: *Coordinator) void {
         while (true) {
             var candidate: ?JobId = null;
@@ -579,7 +701,9 @@ pub const Coordinator = struct {
 fn rejectionCode(err: anyerror) RejectionCode {
     return if (err == error.UnsupportedCommand)
         .unsupported_command
-    else if (err == error.MissingTransferPayload)
+    else if (err == error.MissingTransferPayload or
+        err == error.MissingDiscoveryPayload or
+        err == error.MissingConflictResolutionPayload)
         .missing_payload
     else if (err == error.UnknownJob)
         .unknown_job
