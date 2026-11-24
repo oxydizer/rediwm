@@ -547,10 +547,13 @@ fn buildHdr(out: *Section, maybe_output: ?*Output) void {
         out.hdr_rows[out.hdr_row_count] = rowWidget(&out.sdr_white_row_children);
         out.hdr_row_count += 1;
     }
-    // Phase 1 of docs/plans/hdr.md: the setting is saved, nothing renders
-    // differently yet. Remove with the PQ encode (Phase 3).
+    // Untried on real HDR displays so far (docs/plans/hdr.md): say so, and say
+    // when the driver would not take the signal.
     out.hdr_rows[out.hdr_row_count] = .{ .kind = .{ .text = .{
-        .content = i18n.tr("HDR output is still in development: the setting is saved, the screen stays SDR for now."),
+        .content = if (mode == .on and hdr.refused(output))
+            i18n.tr("This display or its driver did not accept HDR in this mode, so it stays SDR.")
+        else
+            i18n.tr("HDR is experimental: it has not been tried on a real HDR display yet."),
         .font_size = 12,
         .color = panel.palette().dim,
     } } };

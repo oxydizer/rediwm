@@ -124,6 +124,8 @@ callback_frame_seq: u64 = 0,
 tearing: output_tearing.State = .{},
 /// Adaptive sync for the `[[outputs]] adaptive_sync` mode (`output/vrr.zig`).
 vrr: output_vrr.State = .{},
+/// The HDR10 signal for `[[outputs]] hdr` (`output/hdr.zig`).
+hdr: @import("output/hdr.zig").State = .{},
 /// An ext-session-lock client waits for this output to commit a locked frame.
 lock_commit_pending: bool = false,
 /// Hardware cursor state as of the last commit. Atomic DRM applies cursor

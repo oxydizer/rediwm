@@ -87,7 +87,7 @@ struct rediwm_scene_renderer {
     // output's buffer, and FP16 scratch for glass. A base program built later
     // (external, polygons, ribbons) gets its linear twin then.
     struct program lin, lin_external, lin_poly, lin_poly_external, ribbon_lin, encode;
-    GLint ribbon_lin_fade;
+    GLint ribbon_lin_fade, encode_white, encode_adjust;
     GLuint lin_prefix_tex, lin_prefix_fbo, lin_small_tex, lin_small_fbo;
     int lin_small_w, lin_small_h;
     GLint half_internal;   // the FP16 texture format that renders here

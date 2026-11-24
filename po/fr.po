@@ -2782,8 +2782,8 @@ msgid "HDR"
 msgstr "HDR"
 
 #: src/control_center/sections/display.zig
-msgid "HDR output is still in development: the setting is saved, the screen stays SDR for now."
-msgstr "La sortie HDR est encore en développement : le réglage est enregistré, l'écran reste en SDR pour l'instant."
+msgid "HDR is experimental: it has not been tried on a real HDR display yet."
+msgstr "Le HDR est expérimental : il n'a encore été essayé sur aucun véritable écran HDR."
 
 #: src/control_center/sections/network.zig
 msgid "Hardware blocked"
@@ -6058,6 +6058,10 @@ msgstr "Cette connexion ne permet pas de vérifier directement la présence."
 #: src/control_center/sections/display.zig
 msgid "This display changes variable refresh only with a mode switch: choose Always or Off."
 msgstr "Cet écran ne change le rafraîchissement variable qu’avec un changement de mode : choisissez Toujours ou Désactivé."
+
+#: src/control_center/sections/display.zig
+msgid "This display or its driver did not accept HDR in this mode, so it stays SDR."
+msgstr "Cet écran ou son pilote n'a pas accepté le HDR dans ce mode ; il reste donc en SDR."
 
 #: src/control_center/sections/printers_tools.zig
 msgid "This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."

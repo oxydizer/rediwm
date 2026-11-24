@@ -193,6 +193,18 @@ void rediwm_scene_renderer_destroy_linear_target(struct rediwm_scene_renderer *,
 // As rediwm_scene_pass_begin, drawing into `target`, which must be the buffer's size.
 struct wlr_render_pass *rediwm_scene_pass_begin_linear(struct rediwm_scene_renderer *,
     struct wlr_buffer *, const struct wlr_buffer_pass_options *, struct rediwm_linear_target *target);
+// How a linear pass is encoded into the buffer. NULL is sRGB with no adjustment.
+struct rediwm_pass_encode {
+  // HDR10: SMPTE ST 2084 (PQ) on BT.2020, for a buffer of 10 bits a channel
+  // and an output that commits that image description. Else sRGB as displayed
+  // (gamma 2.2, BT.709).
+  bool pq;
+  float sdr_white; // cd/m² that 1.0 (SDR white) is sent at under PQ, 1 to 10000
+  // Applied to linear BT.2020 first, column-major (night light on an HDR
+  // output, whose gamma table must stay neutral). All zero is the identity.
+  float adjust[9];
+};
 // Encodes `region` (device pixels) of the target into the buffer. Once per
 // linear pass, outside a backdrop; any draw after it fails the pass.
-void rediwm_scene_pass_encode(struct wlr_render_pass *, const pixman_region32_t *region);
+void rediwm_scene_pass_encode(struct wlr_render_pass *, const pixman_region32_t *region,
+    const struct rediwm_pass_encode *);

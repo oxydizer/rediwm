@@ -85,6 +85,24 @@ pub fn fillLut(r: []u16, g: []u16, b: []u16, wp: [3]f64, gamma: f64) void {
     }
 }
 
+/// Night light on an HDR signal: the white point the gamma table would
+/// multiply encoded sRGB by (`whitepoint`), as the linear gain it
+/// amounts to under gamma 2.2, moved into BT.2020. Column-major; all zero at
+/// 6500 K (the identity).
+pub fn hdrAdjust(kelvin: u16) [9]f32 {
+    if (kelvin == 6500) return @splat(0);
+    const wp = whitepoint(kelvin);
+    const to2020 = [3][3]f64{ .{ 0.627404, 0.329283, 0.043313 }, .{ 0.069097, 0.919540, 0.011362 }, .{ 0.016391, 0.088013, 0.895595 } };
+    const to709 = [3][3]f64{ .{ 1.660491, -0.587641, -0.072850 }, .{ -0.124550, 1.132900, -0.008349 }, .{ -0.018151, -0.100579, 1.118730 } };
+    var out: [9]f32 = undefined;
+    for (0..3) |row| for (0..3) |col| {
+        var sum: f64 = 0;
+        for (0..3) |k| sum += to2020[row][k] * std.math.pow(f64, wp[k], 2.2) * to709[k][col];
+        out[col * 3 + row] = @floatCast(sum);
+    };
+    return out;
+}
+
 test "whitepoint: 6500 K is neutral and channels monotonic" {
     const wp6500 = whitepoint(6500);
     try std.testing.expectEqual(@as(f64, 1.0), wp6500[0]);
@@ -167,4 +185,21 @@ test "LUT generation: sizes 2 and 4096, linear and gamma 2.0" {
     try std.testing.expectEqual(@as(u16, @intFromFloat(@round(65535.0 * wp[0]))), r4096[4095]);
     try std.testing.expectEqual(@as(u16, @intFromFloat(@round(65535.0 * wp[1]))), g4096[4095]);
     try std.testing.expectEqual(@as(u16, @intFromFloat(@round(65535.0 * wp[2]))), b4096[4095]);
+}
+
+test "night light's matrix keeps white's chromaticity of the gamma table and is the identity at 6500 K" {
+    try std.testing.expectEqual(@as([9]f32, @splat(0)), hdrAdjust(6500));
+    // 3400 K: the gamma table multiplies encoded sRGB by the white point, so
+    // linear sRGB white goes to wp^2.2; through the matrix (BT.2020 in and
+    // out) BT.2020 white must land on the same light.
+    const m = hdrAdjust(3400);
+    const wp = whitepoint(3400);
+    const to2020 = [3][3]f64{ .{ 0.627404, 0.329283, 0.043313 }, .{ 0.069097, 0.919540, 0.011362 }, .{ 0.016391, 0.088013, 0.895595 } };
+    for (0..3) |row| {
+        var want: f64 = 0;
+        for (0..3) |k| want += to2020[row][k] * std.math.pow(f64, wp[k], 2.2);
+        var got: f64 = 0;
+        for (0..3) |col| got += m[col * 3 + row];
+        try std.testing.expectApproxEqAbs(want, got, 2e-4);
+    }
 }

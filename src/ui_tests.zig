@@ -85,6 +85,8 @@ test {
     _ = @import("output/late_render_tests.zig");
     _ = @import("output/tearing_policy.zig");
     _ = @import("output/vrr_policy.zig");
+    _ = @import("output/hdr_policy.zig");
+    _ = @import("output/edid_hdr.zig");
     _ = @import("fifo.zig");
     _ = @import("config").keybinds;
     _ = @import("osd_paint.zig");

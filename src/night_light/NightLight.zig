@@ -214,7 +214,15 @@ pub const NightLight = struct {
             }
         }
 
-        const target_temp: u16 = if (self.config.enabled and nl_enabled) self.current_temperature else 6500;
+        // On an HDR signal night light is part of the encode (output/hdr.zig):
+        // the gamma table, which would act on PQ, stays neutral.
+        const hdr = @import("../output/hdr.zig");
+        const hdr_signal = hdr.signal(output);
+        if (hdr_signal) {
+            hdr.sync(output);
+            gamma = 1.0;
+        }
+        const target_temp: u16 = if (self.config.enabled and nl_enabled and !hdr_signal) self.current_temperature else 6500;
         const is_neutral = (target_temp == 6500 and gamma == 1.0);
 
         const gamma_size = output.wlr_output.getGammaSize();

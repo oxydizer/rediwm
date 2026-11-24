@@ -1,7 +1,8 @@
 # Plan: HDR output
 
-Status: decided 2026-11-24 (D1-D6 take the recommended options); Phases 1
-and 2 done, Phase 3 next (needs an HDR monitor), see Progress at the end. Written 2026-11-16 from the outside
+Status: decided 2026-11-24 (D1-D6 take the recommended options); Phases 1-3
+built, Phase 3 not yet tried on an HDR display (none was available); Phase 4
+next. See Progress at the end. Written 2026-11-16 from the outside
 audit in discussion #27 (github.com/oxydizer/rediwm/discussions/27). Its
 author could not read `src/`, so this version checks its assumptions against
 our code and the wlroots 0.20.2 source, and folds in the changes.
@@ -305,6 +306,51 @@ them with a working compositor. Week counts are rough guesses for one person.
     `ribbon_gate` since the flame restyle in 475817c (the linear gates run
     before it), `tests/glass_hold.py` ("mixed-scale desktop keeps
     repainting"), and `tests/control_center.py`'s window resize check.
+* 2026-11-24, Phase 3 built without an HDR display (the user chose to go
+  ahead); everything below that needs the real signal is unverified.
+  * `output/hdr_policy.zig` decides per frame: the signal when the setting is
+    on, the output blends linear, is DRM, takes PQ and BT.2020 and is lit. A
+    refusal (every test commit fails, two failed commits, or a commit the
+    driver takes without showing it) holds until the mode or the setting
+    changes; a switch off is retried until it holds. Unit-tested.
+  * `output/hdr.zig` `prepare`, from `runFrame` before the build, test-commits
+    XRGB2101010, then XBGR2101010, with the image description (PQ, BT.2020
+    primaries, mastering luminance and MaxCLL/MaxFALL from the EDID's
+    suggested range, zero when unknown), puts them on the frame state and
+    switches the encode for that frame. The switch counts in
+    `commitIsRedundant`; `committed` (from `commitFrameState`) counts only
+    commits that carry it. The gamma table changes hands in the switching
+    commit.
+  * Encode: one program, mode sRGB or PQ (ST 2084, 1.0 at the SDR white over
+    10000 cd/m², clipped), after a linear BT.2020 matrix. Night light on the
+    signal is that matrix (`night_light/color.zig` `hdrAdjust`: the white
+    point the gamma table would apply, as linear gain under gamma 2.2, in
+    BT.2020); the per-output `gamma` setting does not apply under the signal.
+  * `sdr_white` is capped at the desired content maximum luminance in the
+    EDID's CTA-861 HDR static metadata block (`output/edid_hdr.zig`, read from
+    sysfs once, unit-tested). Displays that describe HDR only in DisplayID
+    blocks get no cap.
+  * Software cursors are locked while the signal is on; client gamma ramps
+    fail (D6), at the switch and on later requests.
+  * IPC outputs gain `hdr_refused`; the Settings note says HDR is
+    experimental, or that the display refused it.
+  * Checked: the PQ encode against the ST 2084 formula (white level, grey,
+    sRGB red in the BT.2020 container, the matrix first, a bad white level,
+    8- and 10-bit buffers) in `scene_pass_test_linear.c`; the policy, EDID
+    parser and night light matrix in unit tests; `ImageDescription`'s layout
+    in `test-wlroots`; the headless suites (`hdr_linear.py`,
+    `night_light.py`, `wlr_protocols.py`, `greeter.py`). Not checked:
+    anything on a real DRM HDR output, including that wlroots' test commit
+    allocates a buffer for a render format change as expected, and the
+    existing scan-out gate under a committed description (no headless output
+    can commit one).
+  * First run on an HDR display: `rediwm-msg outputs` shows `hdr_supported`;
+    with `hdr = "on"` the log says "HDR10 on" and `hdr_active` turns true
+    (or `hdr_refused`, with the reason logged); the display reports HDR in its
+    own menu; SDR white looks like the `sdr_white` setting and follows it;
+    night light tints without the gamma table; gammastep is refused; the
+    cursor looks right; switching drops no frames; turning it off returns to
+    SDR. Screenshots of the output come out washed out until Phase 5.
 
 ## Sources
 

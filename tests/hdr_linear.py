@@ -72,7 +72,9 @@ def run():
 
                 set_hdr(ipc, "on")
                 out = output(ipc)
+                # Headless cannot carry the signal: linear blending only.
                 assert out["hdr_linear"] and not out["hdr_active"] and not out["hdr_supported"], out
+                assert not out["hdr_refused"], out
                 linear = shot(ipc, tmp, "linear")
                 # The wallpaper above the taskbar is opaque: only saturated
                 # channels near zero move, by at most three levels.

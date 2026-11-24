@@ -3489,7 +3489,7 @@ msgid "HDR"
 msgstr ""
 
 #: src/control_center/sections/display.zig
-msgid "HDR output is still in development: the setting is saved, the screen stays SDR for now."
+msgid "HDR is experimental: it has not been tried on a real HDR display yet."
 msgstr ""
 
 #: src/control_center/sections/network_proxy.zig
@@ -7669,6 +7669,10 @@ msgstr ""
 
 #: src/control_center/sections/display.zig
 msgid "This display changes variable refresh only with a mode switch: choose Always or Off."
+msgstr ""
+
+#: src/control_center/sections/display.zig
+msgid "This display or its driver did not accept HDR in this mode, so it stays SDR."
 msgstr ""
 
 #: src/control_center/sections/printers_tools.zig

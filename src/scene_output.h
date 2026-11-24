@@ -44,6 +44,12 @@ bool rediwm_scene_output_set_veil(struct rediwm_output_renderer *, struct rediwm
 bool rediwm_scene_output_set_linear(struct rediwm_output_renderer *, struct rediwm_scene_output *, bool on);
 // The last frame built for this output blended in linear light.
 bool rediwm_scene_output_linear(struct rediwm_output_renderer *, struct rediwm_scene_output *);
+struct rediwm_pass_encode;
+// How a linear output's frames are encoded (scene_pass.h): sRGB, or PQ while its
+// commits carry an HDR10 image description. A change repaints the output.
+// False only when the state could not be allocated.
+bool rediwm_scene_output_set_encode(struct rediwm_output_renderer *, struct rediwm_scene_output *,
+    const struct rediwm_pass_encode *);
 bool rediwm_output_snapshot(struct rediwm_output_renderer *, struct rediwm_projection *,
     struct rediwm_scene_output *, struct rediwm_node *, struct wlr_box, float,
     struct wlr_buffer *, struct rediwm_read_fence *, struct rediwm_buffer *);

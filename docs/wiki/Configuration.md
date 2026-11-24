@@ -255,14 +255,22 @@ Omit coordinates for automatic left-to-right placement. Scale and placement
 apply live. `REDIWM_SCALE` overrides every output. Changes from Settings,
 `wlr-randr`, kanshi or `rediwm-msg output-config` are all saved here.
 
-HDR is in development ([plan](../plans/hdr.md)). `hdr = "on"` already makes
-the output blend in linear light (FP16) on a display that can take HDR10, and
-on headless and nested outputs, but the result is still sent as SDR; on other
-displays it does nothing. Translucent edges and glass look slightly different
-in linear light. `rediwm-msg outputs` shows `hdr`, `hdr_supported`,
-`hdr_linear`, `hdr_active` (an HDR signal, not sent yet) and `sdr_white`, which
-takes effect with the HDR signal. Settings offers the switch only on displays
-whose EDID and driver can take HDR10.
+HDR is experimental and has not been tried on a real HDR display yet
+([plan](../plans/hdr.md)). On a display whose EDID and driver take HDR10,
+`hdr = "on"` sends an HDR10 signal (PQ, BT.2020, 10 bits): the desktop and
+every app are drawn in linear light and SDR content is shown at `sdr_white`
+cd/m², capped at the peak the display's EDID suggests. Night light still works
+(in the conversion, not the gamma table); apps that set gamma ramps (gammastep,
+wlsunset) are refused on that output, and the cursor is drawn by the
+compositor. If the driver refuses the signal in a mode, the output stays SDR
+until the mode or the setting changes. Not yet: HDR content from apps (HDR
+video and games are shown as SDR), and screenshots or screen sharing of an
+HDR output, which come out washed out. On headless and nested outputs
+`hdr = "on"` only blends in linear light, still sent as SDR; on other displays
+it does nothing. Translucent edges and glass look slightly different in linear
+light. `rediwm-msg outputs` shows `hdr`, `hdr_supported`, `hdr_linear`,
+`hdr_active` (the signal is on), `hdr_refused` and `sdr_white`. Settings
+offers the switch only on displays that take HDR10.
 
 ## Power and battery
 

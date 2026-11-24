@@ -210,6 +210,7 @@ pub fn makeOutputData(server: *Server, output: *Output) protocol.OutputData {
         .hdr_supported = output_hdr.supported(output),
         .hdr_active = output_hdr.active(output),
         .hdr_linear = output_hdr.linear(output),
+        .hdr_refused = output_hdr.refused(output),
         .sdr_white = output_hdr.sdrWhite(output),
         .direct_scanout = if (server.scene_outputs.get(output.wlr_output)) |scene_output| scene_output.directScanout() else false,
     };

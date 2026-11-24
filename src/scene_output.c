@@ -106,6 +106,18 @@ bool rediwm_scene_output_set_linear(struct rediwm_output_renderer *r, struct red
     rediwm_scene_output_damage_whole(out);
     return true;
 }
+bool rediwm_scene_output_set_encode(struct rediwm_output_renderer *r, struct rediwm_scene_output *out,
+        const struct rediwm_pass_encode *encode) {
+    static const struct rediwm_pass_encode plain = {0};
+    const bool is_plain = memcmp(encode, &plain, sizeof(plain)) == 0;
+    struct output_state *os = is_plain ? output_state_find(r, out->output) : output_state_get(r, out->output);
+    if (!os) return is_plain;
+    if (memcmp(&os->encode, encode, sizeof(*encode)) == 0) return true;
+    os->encode = *encode;
+    // Every pixel of the buffer changes; the linear image does not.
+    rediwm_scene_output_damage_whole(out);
+    return true;
+}
 bool rediwm_scene_output_linear(struct rediwm_output_renderer *r, struct rediwm_scene_output *out) {
     struct output_state *os = output_state_find(r, out->output);
     return os && os->linear_wanted && os->linear_valid;
@@ -384,7 +396,7 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     if (veil > 0) wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
         .box = {0, 0, buffer->width, buffer->height}, .color = {0, 0, 0, veil}, .clip = &draw});
     wlr_output_add_software_cursors_to_render_pass(output, pass, &draw);
-    if (linear) rediwm_scene_pass_encode(pass, &damage);
+    if (linear) rediwm_scene_pass_encode(pass, &damage, &veiled->encode);
     bool submitted = wlr_render_pass_submit(pass);
     if (linear) veiled->linear_valid = ok && submitted;
     // Successful reads still need release points when another item failed to

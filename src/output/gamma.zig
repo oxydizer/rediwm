@@ -18,6 +18,11 @@ pub fn changed(_: *wl.Listener(*Event), event: *Event) void {
     };
     const color = &output.color;
     if (event.control) |control| {
+        // A ramp is written for an SDR signal (docs/plans/hdr.md, D6).
+        if (@import("hdr.zig").signal(output)) {
+            control.fail();
+            return;
+        }
         const transform = control.getTransform() orelse {
             control.fail();
             return;

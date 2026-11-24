@@ -13,6 +13,7 @@ const trace = @import("frame_trace.zig");
 const late = @import("late.zig");
 const tearing = @import("tearing.zig");
 const vrr = @import("vrr.zig");
+const hdr = @import("hdr.zig");
 const wlr_color_transform_unref = Output.wlr_color_transform_unref;
 const log = std.log.scoped(.output);
 const CursorState = Output.CursorState;
@@ -56,6 +57,7 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
         tearing.refused(output);
         success = output.wlr_output.commitState(state);
     }
+    hdr.committed(output, state, success);
     if (success) {
         tearing.committed(output, state);
         vrr.committed(output, state);
@@ -97,7 +99,8 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
 /// without scene damage is checked here: hardware cursor moves, output
 /// capture (which holds an attach-render lock) and gamma changes.
 pub fn commitIsRedundant(output: *Output, scene_output: *SceneOutput) bool {
-    if (output.vblank_timer == null or output.color.pending or output.vrr.pending != null) return false;
+    if (output.vblank_timer == null or output.color.pending or output.vrr.pending != null or
+        output.hdr.policy.pending != null) return false;
     const wlr_output = output.wlr_output;
     if (!wlr_output.enabled or wlr_output.attach_render_locks > 0) return false;
     if (scene_output.hasPendingDamage()) return false;
@@ -319,7 +322,10 @@ pub fn runFrame(output: *Output) void {
         var state = wlr.Output.State.init();
         defer state.finish();
         const vrr_change = vrr.prepare(output);
-        var should_commit = scene_output.needsFrame() or output.color.pending or vrr_change;
+        // Before the build: a switch of the HDR signal changes the render
+        // format, and the frame is encoded for it.
+        const hdr_change = hdr.prepare(output, &state);
+        var should_commit = scene_output.needsFrame() or output.color.pending or vrr_change or hdr_change;
         if (should_commit and commitIsRedundant(output, scene_output)) {
             // `needs_frame` is a latch only a commit clears; while set,
             // later cursor moves or capture requests could not schedule.

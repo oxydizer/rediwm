@@ -70,6 +70,9 @@ struct output_state {
     // new damage is drawn into it.
     bool linear_wanted, linear_valid, linear_failed;
     struct rediwm_linear_target *linear;
+    // rediwm_scene_output_set_encode: how the linear image reaches the buffer
+    // (PQ for an HDR signal, night light there).
+    struct rediwm_pass_encode encode;
 };
 struct entry {
     struct rediwm_item item;

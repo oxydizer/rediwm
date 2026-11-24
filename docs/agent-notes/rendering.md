@@ -243,6 +243,19 @@ chrome, capture, or retained panel painting. General rules remain in
   programs compile to what they were (`LIN(c)` is `(c)`). The damage audit
   skips linear frames. `tests/hdr_linear.py`; the pass gates are in
   `scene_pass_test_linear.c`.
+* **The HDR10 signal** (phase 3, `output/hdr.zig`, `hdr_policy.zig`): on a DRM
+  output that takes PQ and BT.2020, `hdr.prepare` runs in `runFrame` *before*
+  the build: it test-commits a 10-bit render format (XRGB2101010, then
+  XBGR2101010) with the PQ/BT.2020 image description, puts both on the frame
+  state, and `hdr.sync` switches the pass's encode to PQ (`sdr_white` capped by
+  the EDID's suggested peak, `edid_hdr.zig`) for that same frame; the switch
+  counts in `commitIsRedundant`, and `hdr.committed` (from
+  `commitFrameState`) records the outcome. A refusal holds for the mode and
+  setting. While the signal is on, night light is the encode's matrix
+  (`night_light/color.zig` `hdrAdjust`) and the gamma table stays neutral,
+  client gamma ramps fail (D6), and software cursors are locked (wlroots'
+  GLES2 cursor path ignores colour transforms). Screencopy of such an output
+  copies its PQ buffer as is (phase 5). No headless test reaches this path.
 * **The veil** (`rediwm_scene_output_set_veil`, driven by `reveal.zig`) is
   black drawn over every entry and under the software cursor: the session's
   fade in from black and the greeter's fade out. It exists only on DRM and

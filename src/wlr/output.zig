@@ -38,6 +38,7 @@ const c = @import("c.zig").c;
 const assertSameLayout = @import("signal.zig").assertSameLayout;
 const assertFieldOffset = @import("signal.zig").assertFieldOffset;
 const box = @import("box.zig");
+const color = @import("color.zig");
 
 pub fn Types(
     comptime Backend: type,
@@ -110,6 +111,25 @@ pub fn Types(
             pub const AdaptiveSyncStatus = enum(c_int) {
                 disabled,
                 enabled,
+            };
+
+            /// What an output's signal means (HDR10: PQ, BT.2020), with the
+            /// mastering display's metadata; zero luminances are unknown.
+            pub const ImageDescription = extern struct {
+                primaries: color.NamedPrimaries,
+                transfer_function: color.TransferFunction,
+                mastering_display_primaries: color.Primaries = std.mem.zeroes(color.Primaries),
+                mastering_luminance: extern struct { min: f64 = 0, max: f64 = 0 } = .{},
+                max_cll: f64 = 0,
+                max_fall: f64 = 0,
+
+                comptime {
+                    assertSameLayout(ImageDescription, c.wlr_output_image_description);
+                    assertFieldOffset(ImageDescription, c.wlr_output_image_description, "mastering_display_primaries");
+                    assertFieldOffset(ImageDescription, c.wlr_output_image_description, "mastering_luminance");
+                    assertFieldOffset(ImageDescription, c.wlr_output_image_description, "max_cll");
+                    assertFieldOffset(ImageDescription, c.wlr_output_image_description, "max_fall");
+                }
             };
 
             pub const State = extern struct {
@@ -207,6 +227,11 @@ pub fn Types(
 
                 pub fn setRenderFormat(state: *State, format: u32) void {
                     c.wlr_output_state_set_render_format(@ptrCast(state), format);
+                }
+
+                /// null goes back to the default (SDR). False when out of memory.
+                pub fn setImageDescription(state: *State, description: ?*const ImageDescription) bool {
+                    return c.wlr_output_state_set_image_description(@ptrCast(state), @ptrCast(description));
                 }
 
                 pub fn setSubpixel(state: *State, subpixel: wl.Output.Subpixel) void {

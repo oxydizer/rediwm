@@ -5,14 +5,18 @@
 // until an output asks for it.
 #include "scene_pass_internal.h"
 
-// FP16 to the output's buffer: BT.2020 to BT.709, clipped, gamma 2.2 (the
-// inverse of GLSL_LIN for anything inside sRGB's gamut). Phase 3 adds PQ.
+// FP16 to the output's buffer, after `adjust` (night light, a matrix on linear
+// BT.2020). `mode` 0: BT.2020 to BT.709, clipped, gamma 2.2, the inverse of
+// GLSL_LIN inside sRGB's gamut. 1: HDR10, SMPTE ST 2084 (PQ) on BT.2020 with
+// 1.0 at `white` (SDR white over 10000 cd/m²), clipped at 10000.
 static const char encode_vertex[] =
     "attribute vec2 position; void main(){ gl_Position=vec4(position*2.-1.,0.,1.); }";
 static const char encode_fragment[] =
     "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n"
-    "uniform sampler2D tex; uniform vec2 target;"
-    "void main(){ vec3 c=texture2D(tex,gl_FragCoord.xy/target).rgb;"
+    "uniform sampler2D tex; uniform vec2 target; uniform float mode, white; uniform mat3 adjust;"
+    "void main(){ vec3 c=adjust*texture2D(tex,gl_FragCoord.xy/target).rgb;"
+    "if(mode>.5){ vec3 p=pow(clamp(c*white,0.,1.),vec3(.1593017578125));"
+    "gl_FragColor=vec4(pow((.8359375+18.8515625*p)/(1.+18.6875*p),vec3(78.84375)),1.); return; }"
     "c=clamp(mat3(1.660491,-.124550,-.018151,-.587641,1.132900,-.100579,-.072850,-.008349,1.118730)*c,0.,1.);"
     "gl_FragColor=vec4(pow(c,vec3(1./2.2)),1.); }";
 
@@ -70,7 +74,11 @@ bool scene_pass_linear_build(struct rediwm_scene_renderer *r) {
     if (r->shaped_poly_external.id && !r->lin_poly_external.id) ok = scene_pass_program_init(&r->lin_poly_external,
         4096, scene_pass_shaped_vertex, "#extension GL_OES_EGL_image_external : require\n#define LINEAR 1\n"
         "#define POLY 1\nuniform samplerExternalOES tex;\n", scene_pass_shaped_fragment) && ok;
-    if (!r->encode.id) ok = scene_pass_program_init(&r->encode, 8192, encode_vertex, "", encode_fragment) && ok;
+    if (!r->encode.id && scene_pass_program_init(&r->encode, 8192, encode_vertex, "", encode_fragment)) {
+        r->encode_white = glGetUniformLocation(r->encode.id, "white");
+        r->encode_adjust = glGetUniformLocation(r->encode.id, "adjust");
+    }
+    ok = r->encode.id && ok;
     ok = scene_pass_ribbon_build_linear(r) && ok;
     if (!ok) wlr_log(WLR_ERROR, "scene pass: a linear program failed to build; linear passes using it fail");
     return ok;
@@ -171,17 +179,33 @@ struct wlr_render_pass *rediwm_scene_pass_begin_linear(struct rediwm_scene_rende
     return base;
 }
 
-void rediwm_scene_pass_encode(struct wlr_render_pass *base, const pixman_region32_t *region) {
+static bool encode_usable(const struct rediwm_pass_encode *e) {
+    if (!e) return true;
+    if (e->pq && !(isfinite(e->sdr_white) && e->sdr_white >= 1 && e->sdr_white <= 10000)) return false;
+    for (int i = 0; i < 9; i++) if (!isfinite(e->adjust[i])) return false;
+    return true;
+}
+void rediwm_scene_pass_encode(struct wlr_render_pass *base, const pixman_region32_t *region,
+        const struct rediwm_pass_encode *options) {
     struct pass *p = owned_pass(base);
     struct rediwm_scene_renderer *r = p->renderer;
     if (p->failed) return;
-    if (!p->linear || p->redirected || p->encoded || !r->encode.id) { p->failed = true; return; }
+    if (!p->linear || p->redirected || p->encoded || !r->encode.id || !encode_usable(options)) {
+        p->failed = true;
+        return;
+    }
     if (!pixman_region32_not_empty((pixman_region32_t *)region)) { p->encoded = true; return; }
     glBindFramebuffer(GL_FRAMEBUFFER, wlr_gles2_renderer_get_buffer_fbo(r->renderer, p->buffer));
     glViewport(0, 0, p->buffer->width, p->buffer->height);
     glUseProgram(r->encode.id);
     p->program = r->encode.id;
     glUniform2f(r->encode.target, p->buffer->width, p->buffer->height);
+    static const float identity[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    bool adjusted = false;
+    if (options) for (int i = 0; i < 9; i++) if (options->adjust[i] != 0) adjusted = true;
+    glUniformMatrix3fv(r->encode_adjust, 1, GL_FALSE, adjusted ? options->adjust : identity);
+    glUniform1f(r->encode.mode, options && options->pq ? 1.f : 0.f);
+    glUniform1f(r->encode_white, options && options->pq ? options->sdr_white / 10000.f : 1.f);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, p->linear->tex);
     glUniform1i(r->encode.sampler, 0);
