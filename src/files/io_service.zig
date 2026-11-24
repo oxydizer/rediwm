@@ -3,6 +3,7 @@
 //! This module contains only bounded message delivery and window identity.
 //! It deliberately exposes no Manager, Runtime, executor or ledger pointer.
 const std = @import("std");
+const c = @import("c.zig").api;
 
 pub const WindowId = u64;
 pub const JobId = u64;
@@ -122,7 +123,7 @@ const WindowSlot = struct {
 /// The process owner creates one Service at a stable address. Window handles
 /// are non-owning capabilities; they cannot access service internals.
 pub const Service = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: c.pthread_mutex_t = undefined,
     windows: [max_windows]WindowSlot = std.mem.zeroes([max_windows]WindowSlot),
     next_window_id: WindowId = 1,
     next_event_sequence: u64 = 1,
@@ -130,21 +131,25 @@ pub const Service = struct {
     pending_normal_commands: usize = 0,
     stopping: bool = false,
 
-    pub fn init() Service {
-        return .{};
+    /// Initialize in place: an initialized pthread mutex must not be copied.
+    pub fn init(self: *Service) !void {
+        self.* = .{};
+        if (c.pthread_mutex_init(&self.mutex, null) != 0)
+            return error.MutexInitFailed;
     }
 
     pub fn deinit(self: *Service) void {
-        self.mutex.lock();
+        self.lock();
         for (self.windows) |slot| std.debug.assert(!slot.active);
         std.debug.assert(self.pending_normal_commands == 0);
-        self.mutex.unlock();
+        self.unlock();
+        std.debug.assert(c.pthread_mutex_destroy(&self.mutex) == 0);
     }
 
     /// IDs are monotonic and never reused, even when a slot is recycled.
     pub fn registerWindow(self: *Service) !Handle {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
 
         if (self.stopping) return error.ServiceStopping;
         if (self.next_window_id == std.math.maxInt(WindowId))
@@ -163,8 +168,8 @@ pub const Service = struct {
     /// Stops new admission. Existing handles may still drain queued updates
     /// and unregister; the process owner controls final teardown.
     pub fn beginShutdown(self: *Service) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
         self.stopping = true;
     }
 
@@ -172,8 +177,8 @@ pub const Service = struct {
     /// round-robin across windows; control commands precede normal commands
     /// within each window.
     pub fn tryReceiveCommand(self: *Service) ?RoutedCommand {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
 
         for (0..max_windows) |_| {
             const index = self.next_drain_slot;
@@ -201,8 +206,8 @@ pub const Service = struct {
         window_id: WindowId,
         update: Update,
     ) !u64 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
 
         const slot = self.findSlot(window_id) orelse return error.WindowClosed;
         if (self.next_event_sequence == std.math.maxInt(u64))
@@ -238,8 +243,8 @@ pub const Service = struct {
     }
 
     fn enqueue(self: *Service, window_id: WindowId, command: Command) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
 
         if (self.stopping) return error.ServiceStopping;
         const slot = self.findSlot(window_id) orelse return error.WindowClosed;
@@ -260,8 +265,8 @@ pub const Service = struct {
     }
 
     fn receiveUpdate(self: *Service, window_id: WindowId) ?Update {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
 
         const slot = self.findSlot(window_id) orelse return null;
         if (slot.needs_resync) {
@@ -275,8 +280,8 @@ pub const Service = struct {
     }
 
     fn unregisterWindow(self: *Service, window_id: WindowId) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
 
         const slot = self.findSlot(window_id) orelse return;
         self.pending_normal_commands -= slot.normal_commands.count;
@@ -288,6 +293,14 @@ pub const Service = struct {
             if (slot.active and slot.id == window_id) return slot;
         }
         return null;
+    }
+
+    fn lock(self: *Service) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+    }
+
+    fn unlock(self: *Service) void {
+        _ = c.pthread_mutex_unlock(&self.mutex);
     }
 };
 

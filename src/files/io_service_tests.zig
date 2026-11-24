@@ -10,7 +10,8 @@ fn controlCommand(job_id: u64) service_mod.Command {
 }
 
 test "window IDs are centrally assigned, monotonic and not reused" {
-    var service = service_mod.Service.init();
+    var service: service_mod.Service = .{};
+    try service.init();
     defer service.deinit();
     var first = try service.registerWindow();
     const stale = first;
@@ -24,7 +25,8 @@ test "window IDs are centrally assigned, monotonic and not reused" {
 }
 
 test "normal command admission enforces per-window and aggregate bounds" {
-    var service = service_mod.Service.init();
+    var service: service_mod.Service = .{};
+    try service.init();
     defer service.deinit();
     var handles: [9]service_mod.Handle = undefined;
     var handle_count: usize = 0;
@@ -60,7 +62,8 @@ test "normal command admission enforces per-window and aggregate bounds" {
 }
 
 test "reserved control admission remains available when normal capacity is full" {
-    var service = service_mod.Service.init();
+    var service: service_mod.Service = .{};
+    try service.init();
     defer service.deinit();
     var handle = try service.registerWindow();
     defer handle.close();
@@ -82,7 +85,8 @@ test "reserved control admission remains available when normal capacity is full"
 }
 
 test "command draining is round-robin across windows" {
-    var service = service_mod.Service.init();
+    var service: service_mod.Service = .{};
+    try service.init();
     defer service.deinit();
     var first = try service.registerWindow();
     var second = try service.registerWindow();
@@ -101,7 +105,8 @@ test "command draining is round-robin across windows" {
 }
 
 test "progress coalescing preserves ordering around lifecycle updates" {
-    var service = service_mod.Service.init();
+    var service: service_mod.Service = .{};
+    try service.init();
     defer service.deinit();
     var handle = try service.registerWindow();
     defer handle.close();
@@ -140,7 +145,8 @@ test "progress coalescing preserves ordering around lifecycle updates" {
 }
 
 test "update overflow is surfaced as an explicit resync marker" {
-    var service = service_mod.Service.init();
+    var service: service_mod.Service = .{};
+    try service.init();
     defer service.deinit();
     var handle = try service.registerWindow();
     defer handle.close();
@@ -161,7 +167,8 @@ test "update overflow is surfaced as an explicit resync marker" {
 }
 
 test "shutdown rejects admission while handles can unregister cleanly" {
-    var service = service_mod.Service.init();
+    var service: service_mod.Service = .{};
+    try service.init();
     defer service.deinit();
     var handle = try service.registerWindow();
     service.beginShutdown();
