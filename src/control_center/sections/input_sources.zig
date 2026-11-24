@@ -103,12 +103,12 @@ fn card(a: std.mem.Allocator, items: []const W) !W {
     return result;
 }
 
-fn badge(a: std.mem.Allocator, value: []const u8) !W {
+fn badge(scale: f32, a: std.mem.Allocator, value: []const u8) !W {
     const t = panel.palette();
     var label = text(value, 12, false);
     label.kind.text.weight = 700;
     const width: f32 = 44;
-    const ink = ui.measure.textNatural(value, .sans, 700, 12).w;
+    const ink = ui.measure.textNaturalAtScale(value, .sans, 700, 12, scale).w;
     return .{
         .kind = .{ .rect = .{ .color = t.surface_hover, .radius = 6 } },
         .direction = .row,
@@ -146,7 +146,7 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 fn tree(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Allocator, saved: ?ui.layout.TextInputData) !W {
     var items: std.ArrayList(W) = .empty;
     try items.append(a, panel.sectionTitle(tr("Input Sources")));
-    try items.append(a, try panel.paragraph(a, tr("The taskbar shows the active source. Click it, or press Super+Shift+Space, to switch."), contentWidth(cc), 12, true));
+    try items.append(a, try panel.paragraph(cc.toplevel.render_scale, a, tr("The taskbar shows the active source. Click it, or press Super+Shift+Space, to switch."), contentWidth(cc), 12, true));
 
     const layouts = manager.configuredLayouts();
     const sources = manager.sources();
@@ -155,10 +155,10 @@ fn tree(s: *Section, cc: *panel.ControlCenter, manager: anytype, a: std.mem.Allo
         const label = if (i < sources.len) sources[i].label else layout.layout;
         const name = if (i < sources.len) sources[i].name else layout.layout;
         var id_buf: [160]u8 = undefined;
-        var info = try column(a, &.{ text(name, 13, false), idText(try a.dupe(u8, layout.format(&id_buf))) }, 2);
+        var info = try column(a, &.{ text(name, 13, false), idText(cc.toplevel.render_scale, try a.dupe(u8, layout.format(&id_buf))) }, 2);
         info.width = .{ .flex = 1 };
         var line = try row(a, &.{
-            try badge(a, label),
+            try badge(cc.toplevel.render_scale, a, label),
             info,
             iconButton(cc, try std.fmt.allocPrint(a, "input_source_up_{d}", .{i}), tr("Move up"), .chevron_up, i, i > 0, moveUp),
             iconButton(cc, try std.fmt.allocPrint(a, "input_source_down_{d}", .{i}), tr("Move down"), .chevron_down, i, i + 1 < layouts.len, moveDown),
@@ -322,15 +322,15 @@ fn resultRow(cc: *panel.ControlCenter, a: std.mem.Allocator, index: usize, name:
         .width = .{ .percent = 1 },
         .height = .{ .fixed = 34 },
         .padding = ui.layout.Edges.xy(10, 0),
-        .children = try a.dupe(W, &.{ label, idText(spelled) }),
+        .children = try a.dupe(W, &.{ label, idText(cc.toplevel.render_scale, spelled) }),
     };
 }
 
 /// A layout's XKB spelling at its own measured width, so a fractional scale
 /// never ellipsizes it.
-fn idText(spelled: []const u8) W {
+fn idText(scale: f32, spelled: []const u8) W {
     var id = text(spelled, 11, true);
-    id.width = .{ .fixed = @ceil(ui.measure.textNatural(spelled, .sans, 400, 11).w) + 8 };
+    id.width = .{ .fixed = ui.measure.textNaturalAtScale(spelled, .sans, 400, 11, scale).w };
     return id;
 }
 
@@ -383,7 +383,7 @@ fn fcitxBlock(cc: *panel.ControlCenter, manager: anytype, a: std.mem.Allocator, 
             any = true;
             var name = text(source.name, 13, false);
             name.width = .{ .flex = 1 };
-            var line = try row(a, &.{ try badge(a, source.label), name });
+            var line = try row(a, &.{ try badge(cc.toplevel.render_scale, a, source.label), name });
             line.name = try std.fmt.allocPrint(a, "input_method_{d}", .{i});
             try items.append(a, line);
         }

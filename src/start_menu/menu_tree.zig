@@ -184,6 +184,7 @@ pub fn buildTree(menu: *StartMenu) void {
             .kind = .container,
             .direction = .column,
             .gap = 2,
+            .@"align" = .stretch,
             .width = .{ .flex = 1 },
             .children = col_children,
         };
@@ -435,7 +436,7 @@ pub fn buildTree(menu: *StartMenu) void {
         const height: f32 = @floatFromInt(menu.panel_box.height);
         menu.root.width = .{ .fixed = width };
         menu.root.height = .{ .fixed = height };
-        ui.measure.measure(&menu.root, width, height);
+        ui.measure.measureAtScale(&menu.root, width, height, menu.wlr_output.scale);
         ui.arrange.arrange(&menu.root, 0, 0, width, height);
     }
 }

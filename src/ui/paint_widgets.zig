@@ -345,8 +345,7 @@ pub fn paintPill(widget: *const Widget, style: TextStyle, renderer: *Renderer) v
     });
     var text = style;
     text.color = lerp4(style.color, t.fg, glow);
-    const text_x = centeredTextX(x, w, style.content, style.font_size);
-    renderer.drawText(text_x, y, @max(0, x + w - text_x), h, text);
+    renderer.drawTextCentered(x, y, w, h, text);
 }
 
 pub fn centeredTextX(cell_x: f32, cell_w: f32, label: []const u8, font_size: f32) f32 {
@@ -382,7 +381,7 @@ pub fn paintSegmented(widget: *const Widget, data: SegmentedData, renderer: *Ren
                 .border_color = t.accent,
             });
         }
-        renderer.drawText(centeredTextX(cell_x, cell_w, label, t.font_size), widget.computed_y, cell_w, widget.computed_height, .{
+        renderer.drawTextCentered(cell_x, widget.computed_y, cell_w, widget.computed_height, .{
             .content = label,
             .font_size = t.font_size,
             .weight = 600,
@@ -434,7 +433,7 @@ pub fn paintStepper(widget: *const Widget, data: StepperData, renderer: *Rendere
     const label = std.fmt.bufPrint(&buf, "{d} {s}", .{ @as(i32, @intFromFloat(@round(data.value))), data.unit }) catch "";
     const mid_x = widget.computed_x + stepper_button_width;
     const mid_w = @max(0, widget.computed_width - 2 * stepper_button_width);
-    renderer.drawText(centeredTextX(mid_x, mid_w, label, t.font_size), widget.computed_y, mid_w, widget.computed_height, .{
+    renderer.drawTextCentered(mid_x, widget.computed_y, mid_w, widget.computed_height, .{
         .content = label,
         .font_size = t.font_size,
         .weight = 600,

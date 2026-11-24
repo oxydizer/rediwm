@@ -353,7 +353,8 @@ pub fn localPoint(cc: *const ControlCenter, lx: f64, ly: f64) struct { x: f64, y
 
 /// Nothing left to lay out, paint or glide.
 pub fn settled(cc: *const ControlCenter) bool {
-    return !cc.dirty and !cc.refresh_pending and !cc.layout_pending and !cc.scroll_gliding and !cc.bars.active and
+    return cc.root.measured_scale == cc.toplevel.render_scale and !cc.dirty and !cc.refresh_pending and
+        !cc.layout_pending and !cc.scroll_gliding and !cc.bars.active and
         cc.nav_selection.settled(anim.nowMs()) and !cc.nav_hover.animating(anim.nowMs());
 }
 

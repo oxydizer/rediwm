@@ -542,6 +542,7 @@ pub const Widget = struct {
     justify: Justify = .start,
 
     // --- Computed by layout passes (do not set manually) ---
+    measured_scale: f32 = 1,
     computed_x: f32 = 0,
     computed_y: f32 = 0,
     computed_width: f32 = 0,

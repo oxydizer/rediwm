@@ -201,8 +201,8 @@ fn text(value: []const u8, size: f32, dim: bool) W {
     return .{ .kind = .{ .text = .{ .content = value, .font_size = size, .weight = if (dim) 400 else 600, .color = if (dim) t.dim else t.fg } } };
 }
 
-fn paragraph(a: std.mem.Allocator, value: []const u8, width: f32) !W {
-    return panel.paragraph(a, value, width - 28, 12, true);
+fn paragraph(scale: f32, a: std.mem.Allocator, value: []const u8, width: f32) !W {
+    return panel.paragraph(scale, a, value, width - 28, 12, true);
 }
 
 fn container(a: std.mem.Allocator, direction: ui.layout.Direction, items: []const W) !W {
@@ -347,13 +347,13 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, keyboard_so
         text(tr("Time zone"), 13, false),
         try choice(s, cc, a, "timezone", 0, s.zones.items, try timezone(a, cc), null),
         toggle,
-        try paragraph(a, tr("Taskbar, calendar, lock screen and new apps."), paragraph_width),
+        try paragraph(cc.toplevel.render_scale, a, tr("Taskbar, calendar, lock screen and new apps."), paragraph_width),
         seconds_toggle,
         day_toggle,
-        try paragraph(a, tr("Taskbar clock. The date uses your regional format."), paragraph_width),
+        try paragraph(cc.toplevel.render_scale, a, tr("Taskbar clock. The date uses your regional format."), paragraph_width),
         text(tr("First day of the week"), 13, false),
         .{ .name = "first_day_of_week", .kind = .{ .select = .{ .labels = panel.translatedLabels(&days), .selected = @intFromEnum(prefs.first_day_of_week), .owner = cc, .on_change = firstDayChanged } }, .width = .{ .percent = 1 } },
-        try paragraph(a, tr("Changes the taskbar calendar."), paragraph_width),
+        try paragraph(cc.toplevel.render_scale, a, tr("Changes the taskbar calendar."), paragraph_width),
     });
     language.width = .{ .flex = 1 };
     keyboard.width = .{ .flex = 1 };
@@ -363,8 +363,8 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, keyboard_so
     var body = try container(a, .column, &.{ language, keyboard, timing, region });
     body.width = .{ .percent = 1 };
     var root = try container(a, .column, &.{
-        try paragraph(a, tr("Saved for your user’s RediWM session only; system defaults are unchanged."), paragraph_width),
-        try paragraph(a, try localeHint(a, cc), content_width),
+        try paragraph(cc.toplevel.render_scale, a, tr("Saved for your user’s RediWM session only; system defaults are unchanged."), paragraph_width),
+        try paragraph(cc.toplevel.render_scale, a, try localeHint(a, cc), content_width),
         body,
         text(s.message, 12, true),
     });

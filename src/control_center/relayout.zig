@@ -173,7 +173,7 @@ pub fn layoutContent(cc: *ControlCenter) void {
         cc.body_children[1].kind.scroll_container = cc.search.saved_scroll;
         cc.search.restore_scroll = false;
     }
-    ui.measure.measure(&cc.root, width, height);
+    ui.measure.measureAtScale(&cc.root, width, height, cc.toplevel.render_scale);
     ui.arrange.arrange(&cc.root, 0, 0, width, height);
     if (!cc.search.empty() and ui.input.current.focused != &cc.search.field) {
         if (cc.page == .appearance) appearance_section.restoreItemFocus(&cc.appearance);

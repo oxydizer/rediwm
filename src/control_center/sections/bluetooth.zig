@@ -202,7 +202,7 @@ fn deviceDetails(s: *Section, cc: *panel.ControlCenter, a: A) !W {
     if (d == null) {
         const available_width = @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100;
         const description_width = if (cc.panel_box.width < 1000) available_width else (available_width - 16) * 1.25 / 2.25 - 32;
-        return card(a, &.{ icon(.bluetooth, 48), panel.sectionTitle(i18n.tr("Select a device")), try panel.paragraph(a, i18n.tr("View its connection, battery and device settings."), description_width, 13, true) });
+        return card(a, &.{ icon(.bluetooth, 48), panel.sectionTitle(i18n.tr("Select a device")), try panel.paragraph(cc.toplevel.render_scale, a, i18n.tr("View its connection, battery and device settings."), description_width, 13, true) });
     }
     const dev = d.?;
     const manager = m.?;

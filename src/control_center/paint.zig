@@ -24,8 +24,12 @@ pub fn tick(cc: *ControlCenter, now_ms: i64) bool {
     if (cc.search.pending_result != null) settings_search.apply(cc);
     // A live update must not wait for an open dropdown: that leaves the
     // page permanently unsettled. rebuildTree preserves compatible menus.
+    const scale_changed = cc.root.measured_scale != cc.toplevel.render_scale;
+    // Remeasure on the new output. Rebuild wrapped lines and fixed text
+    // columns once a pressed control can release its widget.
+    if (scale_changed) cc.refresh_pending = true;
     const rebuild = cc.refresh_pending and !cc.pointer_down;
-    if ((cc.layout_pending or rebuild) and cc.panel_box.width > 0 and cc.panel_box.height > 0) {
+    if ((cc.layout_pending or scale_changed or rebuild) and cc.panel_box.width > 0 and cc.panel_box.height > 0) {
         cc.layout_pending = false;
         const body = if (!cc.search.reset_scroll and cc.search.empty() == cc.search.built_empty and cc.body_children[1].kind == .scroll_container) cc.body_children[1].kind.scroll_container else null;
         if (rebuild or cc.resizeNeedsTree()) cc.rebuildTree();
@@ -45,10 +49,6 @@ pub fn tick(cc: *ControlCenter, now_ms: i64) bool {
         const revision = ui.layout.paint_revision;
         cc.bars = ui.widgets.scroll_container.stepBars(&cc.root, now_ms);
         if (revision != ui.layout.paint_revision) cc.dirty = true;
-    }
-    if (cc.painted_scale != cc.toplevel.render_scale) {
-        cc.background.invalidate();
-        cc.dirty = true;
     }
     if (cc.stepNavHighlights(now_ms)) cc.dirty = true;
     if (cc.dirty) cc.paintContent();

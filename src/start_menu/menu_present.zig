@@ -54,7 +54,7 @@ pub fn relayout(menu: *StartMenu) void {
         (menu.panel_box.width != @as(i32, @intFromFloat(target_width)) or menu.panel_box.height != @as(i32, @intFromFloat(target_height)))) menu.buildTree();
     menu.root.width = .{ .fixed = target_width };
     menu.root.height = .{ .fixed = target_height };
-    ui.measure.measure(&menu.root, target_width, target_height);
+    ui.measure.measureAtScale(&menu.root, target_width, target_height, menu.wlr_output.scale);
     ui.arrange.arrange(&menu.root, 0, 0, target_width, target_height);
     menu.restoreScrollOffset(scroll_offset);
 

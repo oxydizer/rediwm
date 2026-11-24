@@ -522,6 +522,39 @@ def run_highlight_reload():
             log.close()
 
 
+def check_result_text(client, tmp, scale, descriptions):
+    # The long entry starts with the same words, then enough spaces that
+    # its ellipsis is well outside the crop. Both searches put the label
+    # in the same selected row, so their first words must paint identically.
+    masks = []
+    client.type_text("Launcher App ")
+    for number, description in enumerate(descriptions):
+        client.type_text(str(number))
+        client.wait_for_frame()
+        widgets = client.get_widget_tree("start_menu")["widgets"]
+        label = next(w for w in widgets if w.get("label") == description)
+        column = widgets[label["parent_index"]]["global_box"]
+        if number == 1:
+            assert label["global_box"]["width"] <= column["width"], "description overlaps the row controls"
+            assert label["text_width"] > column["width"], "fixture should overflow"
+        box = label["global_box"]
+        path = tmp / f"result-{number}.png"
+        path.unlink(missing_ok=True)
+        client.screenshot(path=str(path))
+        with Image.open(path) as image:
+            crop = (box["x"], box["y"], box["x"] + 130, box["y"] + box["height"])
+            mask = image.crop(tuple(round(v * float(scale)) for v in crop)).convert("L").point(lambda v: 255 if v > 120 else 0)
+        assert mask.getbbox(), "no description ink in screenshot"
+        masks.append(mask)
+        client.key_down_up(14)
+    assert masks[0].size == masks[1].size
+    assert ImageChops.difference(*masks).getbbox() is None, "a fitting description lost its ending"
+    client.key(29, True)
+    client.key_down_up(30)  # Ctrl+A
+    client.key(29, False)
+    client.key_down_up(14)
+
+
 def run_launcher():
     """Centered keyboard launcher: placement, shared theme, pin/history and launch."""
     for scale in ("1", "1.5"):
@@ -529,10 +562,13 @@ def run_launcher():
             tmp = Path(directory)
             apps = tmp / "data" / "applications"
             apps.mkdir(parents=True)
+            short_description = "Software Center"
+            descriptions = (short_description, short_description + " " * 48 + "Configuration editor for dconf. " * 30 + "End")
             for number in range(8):
+                description = descriptions[number] if number < len(descriptions) else f"Launcher fixture {number}"
                 (apps / f"launcher-{number}.desktop").write_text(
                     "[Desktop Entry]\nType=Application\n"
-                    f"Name=Launcher App {number}\nComment=Launcher fixture {number}\n"
+                    f"Name=Launcher App {number}\nComment={description}\n"
                     f"Exec=/usr/bin/touch {tmp}/launched-{number}\nIcon=system-file-manager\n")
             env = {"XDG_DATA_HOME": str(tmp / "data"), "XDG_DATA_DIRS": str(tmp / "empty"), "XDG_CACHE_HOME": str(tmp / "cache"),
                    "DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_FILES_DEVICES": "0"}
@@ -639,6 +675,7 @@ def run_launcher():
                     client.key_down_up(57)
                     client.key(125, False)
                     client.wait_for("menu_opened", timeout_ms=5000)
+                    check_result_text(client, tmp, scale, descriptions)
                     if scale == "1":
                         (tmp / "launched-3").unlink()
                         card = next(w for w in client.get_widget_tree("start_menu")["widgets"] if w.get("name") == "recent_app")
@@ -657,6 +694,7 @@ def run_launcher():
                     (tmp / "launched-3").unlink(missing_ok=True)
                     client.open_start_menu()
                     client.wait_for("menu_opened", timeout_ms=5000)
+                    check_result_text(client, tmp, scale, descriptions)
                     client.type_text("Launcher")
                     client.key_down_up(28)
                     client.wait_for("menu_closed", timeout_ms=5000)

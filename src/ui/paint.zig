@@ -83,10 +83,7 @@ fn deviceBox(b: ReliefBox, s: f32) relief.Shape {
 pub const Image = struct { pixels: []const u32, width: i32, height: i32 };
 
 pub fn fontFor(style: TextStyle) text_mod.Font {
-    return switch (style.family) {
-        .sans => if (style.weight >= 700) .manrope_heavy else if (style.weight >= 600) .manrope_bold else .manrope,
-        .mono => if (style.weight >= 600) .mono_bold else .mono,
-    };
+    return @import("measure.zig").fontFor(style.family, style.weight);
 }
 
 /// Geometry + colours of one rounded-rect fill, so the general (edge and
@@ -373,6 +370,15 @@ pub const Renderer = struct {
             }
             while (px < x1) : (px += 1) shape.shade(r.pixels, row + @as(usize, @intCast(px)), @as(f32, @floatFromInt(px)) + 0.5, sy);
         }
+    }
+
+    pub fn textWidth(r: *const Renderer, style: TextStyle) f32 {
+        return @floatFromInt(text_mod.measureWidth(style.content, fontFor(style), style.font_size, r.scale) catch 0);
+    }
+
+    pub fn drawTextCentered(r: *Renderer, x: f32, y: f32, w: f32, h: f32, style: TextStyle) void {
+        const inset = @max(0, (w - r.textWidth(style)) / 2);
+        r.drawText(x + inset, y, w - inset, h, style);
     }
 
     pub fn drawText(r: *Renderer, x: f32, y: f32, w: f32, h: f32, style: TextStyle) void {
