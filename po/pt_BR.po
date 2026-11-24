@@ -6685,6 +6685,10 @@ msgid "Wireless connections"
 msgstr "Conexões sem fio"
 
 #: src/editor/app.zig
+msgid "New Window"
+msgstr "Nova janela"
+
+#: src/editor/app.zig
 msgid "Word Wrap"
 msgstr "Quebra de linha"
 

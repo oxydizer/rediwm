@@ -6688,6 +6688,10 @@ msgid "Wireless connections"
 msgstr "Funkverbindungen"
 
 #: src/editor/app.zig
+msgid "New Window"
+msgstr "Neues Fenster"
+
+#: src/editor/app.zig
 msgid "Word Wrap"
 msgstr "Zeilenumbruch"
 

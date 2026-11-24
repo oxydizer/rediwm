@@ -187,6 +187,9 @@ pub const Buffer = struct {
 };
 
 /// What every window of the process shares when it is created.
+/// What the poll array below has room for: three fixed entries plus a few per window.
+const max_windows = 24;
+
 pub const Setup = struct { io: std.Io, environ: std.process.Environ, force_csd: bool };
 
 pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@import("instance.zig").Instance, initial_token: []const u8) !void {
@@ -246,6 +249,17 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
             index += 1;
         }
         if (windows.items.len == 0) break;
+        // New Window: opened here, outside the loop above, so the list is not
+        // changing under it. The new window starts with one empty tab.
+        for (windows.items) |window| {
+            if (!window.app.new_window) continue;
+            window.app.new_window = false;
+            if (windows.items.len >= max_windows) continue;
+            if (Client.create(display, setup, false, &.{})) |created| {
+                windows.append(a, created) catch created.destroy();
+            } else |err| std.log.warn("rediwm-editor: cannot open a window: {}", .{err});
+            break; // the list may have grown; one a turn is plenty
+        }
 
         while (!display.prepareRead()) {
             if (display.dispatchPending() != .SUCCESS) return error.DisplayFailed;

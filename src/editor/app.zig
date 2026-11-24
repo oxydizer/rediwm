@@ -42,8 +42,8 @@ const Status = struct {
 };
 /// Stand-in for the position of a cursor too far from the view to measure.
 pub const far: c_int = 1_000_000 * 1024;
-pub const Action = enum { new, open, open_recent, save, save_as, find, replace, wrap };
-pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("Open"), i18n.msg("Open Recent"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Replace"), i18n.msg("Word Wrap") };
+pub const Action = enum { new, new_window, open, open_recent, save, save_as, find, replace, wrap };
+pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("New Window"), i18n.msg("Open"), i18n.msg("Open Recent"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Replace"), i18n.msg("Word Wrap") };
 /// The menu row whose submenu lists the recent files.
 pub const recent_row = @intFromEnum(Action.open_recent);
 pub const Tab = struct {
@@ -83,6 +83,8 @@ pub const App = struct {
     dirty: bool = true,
     title_changed: bool = true,
     closed: bool = false,
+    /// Set by the New Window action; the event loop opens the window.
+    new_window: bool = false,
     ctrl: bool = false,
     shift: bool = false,
     alt: bool = false,
