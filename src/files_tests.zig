@@ -7,6 +7,7 @@ const clipboard_mod = @import("files/clipboard.zig");
 const dirsize_mod = @import("files/dirsize.zig");
 const transfer_bench_mod = @import("files/transfer_bench.zig");
 const io_manager_tests = @import("files/io_manager_tests.zig");
+const io_service_tests = @import("files/io_service_tests.zig");
 const io_workers_tests = @import("files/io_workers_tests.zig");
 const io_executor_tests = @import("files/io_executor_tests.zig");
 const io_copy_tests = @import("files/io_copy_tests.zig");
@@ -23,6 +24,7 @@ const linux = std.os.linux;
 test {
     _ = transfer_bench_mod;
     _ = io_manager_tests;
+    _ = io_service_tests;
     _ = io_workers_tests;
     _ = io_executor_tests;
     _ = io_copy_tests;

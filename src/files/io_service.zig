@@ -1,0 +1,312 @@
+//! Process-owned Files I/O service boundary.
+//!
+//! This module contains only bounded message delivery and window identity.
+//! It deliberately exposes no Manager, Runtime, executor or ledger pointer.
+const std = @import("std");
+
+pub const WindowId = u64;
+pub const JobId = u64;
+pub const ResourceId = u64;
+
+pub const max_windows = 16;
+pub const command_capacity_per_window = 8;
+pub const control_capacity_per_window = 2;
+pub const aggregate_command_capacity = 64;
+pub const update_capacity_per_window = 32;
+
+pub const CommandKind = enum {
+    submit_job,
+    start_discovery,
+    prioritize_discovery,
+    pause_job,
+    resume_job,
+    cancel_job,
+    resolve_conflict,
+    retire_job,
+    release_resource,
+};
+
+pub const CommandClass = enum {
+    normal,
+    control,
+};
+
+pub const Command = struct {
+    kind: CommandKind,
+    job_id: JobId = 0,
+    resource_id: ResourceId = 0,
+
+    pub fn class(self: Command) CommandClass {
+        return switch (self.kind) {
+            .submit_job, .start_discovery, .prioritize_discovery => .normal,
+            .pause_job, .resume_job, .cancel_job, .resolve_conflict,
+            .retire_job, .release_resource => .control,
+        };
+    }
+};
+
+pub const RoutedCommand = struct {
+    window_id: WindowId,
+    command: Command,
+};
+
+pub const UpdateKind = enum {
+    progress,
+    job_state,
+    conflict,
+    archive_ready,
+    resync_required,
+};
+
+/// A copied value. Path strings and other owned payloads are deliberately
+/// excluded; later command/update variants must define their ownership.
+pub const Update = struct {
+    sequence: u64 = 0,
+    job_id: JobId = 0,
+    kind: UpdateKind,
+    completed_bytes: u64 = 0,
+    total_bytes: u64 = 0,
+    rate_bytes_per_second: u64 = 0,
+    state_code: u8 = 0,
+    conflict_id: u64 = 0,
+    resource_id: ResourceId = 0,
+};
+
+fn Ring(comptime T: type, comptime capacity: usize) type {
+    return struct {
+        items: [capacity]T = undefined,
+        head: usize = 0,
+        count: usize = 0,
+
+        fn push(self: *@This(), value: T) bool {
+            if (self.count == capacity) return false;
+            self.items[(self.head + self.count) % capacity] = value;
+            self.count += 1;
+            return true;
+        }
+
+        fn pop(self: *@This()) ?T {
+            if (self.count == 0) return null;
+            const value = self.items[self.head];
+            self.head = (self.head + 1) % capacity;
+            self.count -= 1;
+            return value;
+        }
+
+        fn clear(self: *@This()) void {
+            self.head = 0;
+            self.count = 0;
+        }
+
+        fn last(self: *@This()) ?*T {
+            if (self.count == 0) return null;
+            return &self.items[(self.head + self.count - 1) % capacity];
+        }
+    };
+}
+
+const WindowSlot = struct {
+    id: WindowId = 0,
+    active: bool = false,
+    normal_commands: Ring(Command, command_capacity_per_window) = .{},
+    control_commands: Ring(Command, control_capacity_per_window) = .{},
+    updates: Ring(Update, update_capacity_per_window) = .{},
+    needs_resync: bool = false,
+    resync_sequence: u64 = 0,
+
+    fn reset(self: *WindowSlot) void {
+        self.* = .{};
+    }
+};
+
+/// The process owner creates one Service at a stable address. Window handles
+/// are non-owning capabilities; they cannot access service internals.
+pub const Service = struct {
+    mutex: std.Thread.Mutex = .{},
+    windows: [max_windows]WindowSlot = std.mem.zeroes([max_windows]WindowSlot),
+    next_window_id: WindowId = 1,
+    next_event_sequence: u64 = 1,
+    next_drain_slot: usize = 0,
+    pending_normal_commands: usize = 0,
+    stopping: bool = false,
+
+    pub fn init() Service {
+        return .{};
+    }
+
+    pub fn deinit(self: *Service) void {
+        self.mutex.lock();
+        for (self.windows) |slot| std.debug.assert(!slot.active);
+        std.debug.assert(self.pending_normal_commands == 0);
+        self.mutex.unlock();
+    }
+
+    /// IDs are monotonic and never reused, even when a slot is recycled.
+    pub fn registerWindow(self: *Service) !Handle {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.stopping) return error.ServiceStopping;
+        if (self.next_window_id == std.math.maxInt(WindowId))
+            return error.WindowIdExhausted;
+
+        for (&self.windows) |*slot| {
+            if (slot.active) continue;
+            const id = self.next_window_id;
+            self.next_window_id += 1;
+            slot.* = .{ .id = id, .active = true };
+            return .{ .service = self, .window_id = id };
+        }
+        return error.TooManyWindows;
+    }
+
+    /// Stops new admission. Existing handles may still drain queued updates
+    /// and unregister; the process owner controls final teardown.
+    pub fn beginShutdown(self: *Service) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.stopping = true;
+    }
+
+    /// Called only by the service coordinator. Commands are selected
+    /// round-robin across windows; control commands precede normal commands
+    /// within each window.
+    pub fn tryReceiveCommand(self: *Service) ?RoutedCommand {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        for (0..max_windows) |_| {
+            const index = self.next_drain_slot;
+            self.next_drain_slot = (self.next_drain_slot + 1) % max_windows;
+            const slot = &self.windows[index];
+            if (!slot.active) continue;
+
+            if (slot.control_commands.pop()) |command| {
+                return .{ .window_id = slot.id, .command = command };
+            }
+            if (slot.normal_commands.pop()) |command| {
+                self.pending_normal_commands -= 1;
+                return .{ .window_id = slot.id, .command = command };
+            }
+        }
+        return null;
+    }
+
+    /// Publishes one update to one registered window and assigns its
+    /// service-wide sequence number. Progress is coalesced only with the
+    /// immediately preceding progress update for the same job, preserving
+    /// event order around lifecycle updates.
+    pub fn publishUpdate(
+        self: *Service,
+        window_id: WindowId,
+        update: Update,
+    ) !u64 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const slot = self.findSlot(window_id) orelse return error.WindowClosed;
+        if (self.next_event_sequence == std.math.maxInt(u64))
+            return error.SequenceExhausted;
+        const sequence = self.next_event_sequence;
+        self.next_event_sequence += 1;
+
+        var sequenced = update;
+        sequenced.sequence = sequence;
+
+        if (slot.needs_resync) {
+            slot.resync_sequence = sequence;
+            return sequence;
+        }
+
+        if (sequenced.kind == .progress) {
+            if (slot.updates.last()) |last| {
+                if (last.kind == .progress and last.job_id == sequenced.job_id) {
+                    last.* = sequenced;
+                    return sequence;
+                }
+            }
+        }
+
+        if (!slot.updates.push(sequenced)) {
+            // A full queue cannot pretend to be continuous. Discard the
+            // partial stream and make the loss explicit to its consumer.
+            slot.updates.clear();
+            slot.needs_resync = true;
+            slot.resync_sequence = sequence;
+        }
+        return sequence;
+    }
+
+    fn enqueue(self: *Service, window_id: WindowId, command: Command) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.stopping) return error.ServiceStopping;
+        const slot = self.findSlot(window_id) orelse return error.WindowClosed;
+        switch (command.class()) {
+            .control => {
+                if (!slot.control_commands.push(command))
+                    return error.ControlQueueFull;
+            },
+            .normal => {
+                if (slot.normal_commands.count == command_capacity_per_window)
+                    return error.WindowQueueFull;
+                if (self.pending_normal_commands == aggregate_command_capacity)
+                    return error.AggregateQueueFull;
+                std.debug.assert(slot.normal_commands.push(command));
+                self.pending_normal_commands += 1;
+            },
+        }
+    }
+
+    fn receiveUpdate(self: *Service, window_id: WindowId) ?Update {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const slot = self.findSlot(window_id) orelse return null;
+        if (slot.needs_resync) {
+            slot.needs_resync = false;
+            return .{
+                .sequence = slot.resync_sequence,
+                .kind = .resync_required,
+            };
+        }
+        return slot.updates.pop();
+    }
+
+    fn unregisterWindow(self: *Service, window_id: WindowId) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const slot = self.findSlot(window_id) orelse return;
+        self.pending_normal_commands -= slot.normal_commands.count;
+        slot.reset();
+    }
+
+    fn findSlot(self: *Service, window_id: WindowId) ?*WindowSlot {
+        for (&self.windows) |*slot| {
+            if (slot.active and slot.id == window_id) return slot;
+        }
+        return null;
+    }
+};
+
+/// Copyable, non-owning per-window capability. Closing it unregisters its
+/// identity; stale copies then fail admission and receive no updates.
+pub const Handle = struct {
+    service: *Service,
+    window_id: WindowId,
+
+    pub fn trySend(self: Handle, command: Command) !void {
+        try self.service.enqueue(self.window_id, command);
+    }
+
+    pub fn tryReceiveUpdate(self: Handle) ?Update {
+        return self.service.receiveUpdate(self.window_id);
+    }
+
+    pub fn close(self: *Handle) void {
+        self.service.unregisterWindow(self.window_id);
+        self.* = undefined;
+    }
+};
