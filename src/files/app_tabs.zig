@@ -111,8 +111,8 @@ pub fn stepTabs(self: *App, forward: bool) void {
 /// A tab beside the active one, showing the same folder. An archive's inside
 /// cannot be reopened that way, so a tab made there starts at home.
 pub fn newTab(self: *App) void {
-    const start = if (self.history.archive_len > 0 or recent.isLocation(self.history.current)) self.home_dir else self.history.current;
-    openTab(self, start, true);
+    const initial_location = if (self.history.archive_len > 0 or recent.isLocation(self.history.current)) self.home_dir else self.history.current;
+    openTab(self, initial_location, true);
 }
 
 /// A tab on `path`, beside the active one; `activate` switches to it, else it
