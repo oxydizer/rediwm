@@ -5,8 +5,11 @@
 //! handles and immutable updates.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
 const io_service = @import("io_service.zig");
+const io_manager = @import("io_manager.zig");
+const io_tree = @import("io_tree.zig");
 
 const JobId = io_service.JobId;
 
@@ -15,6 +18,7 @@ const RejectionCode = enum(u8) {
     unknown_job = 2,
     invalid_job_state = 3,
     job_not_terminal = 4,
+    missing_payload = 5,
     other = 255,
 };
 
@@ -150,7 +154,7 @@ pub const Coordinator = struct {
         routed: io_service.RoutedCommand,
     ) void {
         defer routed.command.deinitPayload();
-        self.applyCommand(routed.command) catch |err| {
+        self.applyCommand(routed) catch |err| {
             const code = rejectionCode(err);
             _ = self.service.publishUpdate(routed.window_id, .{
                 .job_id = routed.command.job_id,
@@ -162,23 +166,159 @@ pub const Coordinator = struct {
 
     fn applyCommand(
         self: *Coordinator,
-        command: io_service.Command,
+        routed: io_service.RoutedCommand,
     ) anyerror!void {
+        const command = routed.command;
         switch (command.kind) {
             .pause_job => try self.runtime.manager.pauseJob(command.job_id),
             .resume_job => try self.runtime.manager.resumeJob(command.job_id),
             .cancel_job => try self.runtime.cancelJob(command.job_id),
             .retire_job => try self.runtime.requestJobRetirement(command.job_id),
+            .submit_job => try self.submitTransfer(routed),
 
-            // These commands need owned operation payloads or opaque resource
-            // handles that the current v1 Command value does not yet carry.
-            .submit_job,
+            // These commands need distinct request payloads or opaque resource
+            // handles; they are not represented by the transfer request.
             .start_discovery,
             .prioritize_discovery,
             .resolve_conflict,
             .release_resource,
             => return error.UnsupportedCommand,
         }
+    }
+
+    /// Builds and queues a basic file/symlink transfer entirely on the
+    /// coordinator thread. No filesystem metadata crosses the UI boundary.
+    fn submitTransfer(
+        self: *Coordinator,
+        routed: io_service.RoutedCommand,
+    ) !void {
+        const payload = routed.command.payload orelse
+            return error.MissingTransferPayload;
+        const request = switch (payload.data) {
+            .transfer => |*transfer| transfer,
+        };
+        if (request.sources.len == 0) return error.EmptyTransfer;
+        if (request.destination_path.len == 0 or
+            !std.fs.path.isAbsolute(request.destination_path) or
+            std.mem.indexOfScalar(u8, request.destination_path, 0) != null)
+        {
+            return error.InvalidTransferDestination;
+        }
+
+        const destination_z = try self.allocator.dupeSentinel(
+            u8,
+            request.destination_path,
+            0,
+        );
+        defer self.allocator.free(destination_z);
+
+        var destination_stat: c.struct_stat = undefined;
+        if (c.stat(destination_z, &destination_stat) != 0 or
+            (destination_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
+        {
+            return error.InvalidTransferDestination;
+        }
+
+        const manager = &self.runtime.manager;
+        const job_id = try manager.createJob(routed.window_id);
+        errdefer std.debug.assert(manager.discardPlanningJob(job_id));
+
+        for (request.sources) |source| {
+            if (source.path.len == 0 or
+                !std.fs.path.isAbsolute(source.path) or
+                std.mem.indexOfScalar(u8, source.path, 0) != null)
+            {
+                return error.InvalidTransferSource;
+            }
+
+            const name = std.fs.path.basename(source.path);
+            if (name.len == 0) return error.InvalidTransferSource;
+
+            const source_z = try self.allocator.dupeSentinel(u8, source.path, 0);
+            defer self.allocator.free(source_z);
+
+            var source_stat: c.struct_stat = undefined;
+            if (c.lstat(source_z, &source_stat) != 0)
+                return error.InvalidTransferSource;
+
+            const kind: io_tree.EntryKind = switch (source_stat.st_mode & c.S_IFMT) {
+                c.S_IFREG => .regular_file,
+                c.S_IFLNK => .symlink,
+                else => return error.UnsupportedTransferSource,
+            };
+
+            var symlink_target: ?[]u8 = null;
+            defer if (symlink_target) |target| self.allocator.free(target);
+            if (kind == .symlink) {
+                var target_buffer: [4096]u8 = undefined;
+                const target_len = c.readlink(
+                    source_z,
+                    &target_buffer,
+                    target_buffer.len,
+                );
+                if (target_len < 0 or target_len == target_buffer.len)
+                    return error.InvalidTransferSource;
+                symlink_target = try self.allocator.dupe(
+                    u8,
+                    target_buffer[0..@intCast(target_len)],
+                );
+            }
+
+            const target_path = try std.fs.path.join(
+                self.allocator,
+                &.{ request.destination_path, name },
+            );
+            defer self.allocator.free(target_path);
+            if (std.mem.eql(u8, source.path, target_path))
+                return error.TransferSourceEqualsDestination;
+
+            const metadata: io_tree.Metadata = .{
+                .size = @intCast(@max(source_stat.st_size, 0)),
+                .mode = @intCast(source_stat.st_mode),
+                .device_id = @intCast(source_stat.st_dev),
+                .inode_id = @intCast(source_stat.st_ino),
+                .mtime_sec = @intCast(source_stat.st_mtim.tv_sec),
+                .mtime_nsec = @intCast(source_stat.st_mtim.tv_nsec),
+                .ctime_sec = @intCast(source_stat.st_ctim.tv_sec),
+                .ctime_nsec = @intCast(source_stat.st_ctim.tv_nsec),
+            };
+
+            const root_id = try manager.addTreeRoot(
+                job_id,
+                name,
+                kind,
+                metadata,
+                symlink_target,
+            );
+            try manager.setRootSourcePath(job_id, root_id, source.path);
+
+            const operation_kind: io_manager.OperationKind = switch (kind) {
+                .regular_file => .copy_file,
+                .symlink => .copy_symlink,
+                else => unreachable,
+            };
+
+            if (request.mode == .move and
+                source_stat.st_dev == destination_stat.st_dev)
+            {
+                _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
+            } else {
+                _ = try manager.addEntryOperation(job_id, root_id, operation_kind);
+                if (request.mode == .move)
+                    _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
+            }
+        }
+
+        try manager.setDestinationDirectory(job_id, request.destination_path);
+        if (request.mode == .move)
+            try manager.setDestinationDeviceId(job_id, @intCast(destination_stat.st_dev));
+        try manager.queueJob(job_id);
+
+        _ = self.service.publishUpdate(routed.window_id, .{
+            .job_id = job_id,
+            .kind = .job_state,
+            .state_code = @intFromEnum(io_manager.JobState.queued),
+        }) catch {};
     }
 
     fn retireReadyJobs(self: *Coordinator) void {
@@ -201,6 +341,8 @@ pub const Coordinator = struct {
 fn rejectionCode(err: anyerror) RejectionCode {
     return if (err == error.UnsupportedCommand)
         .unsupported_command
+    else if (err == error.MissingTransferPayload)
+        .missing_payload
     else if (err == error.UnknownJob)
         .unknown_job
     else if (err == error.InvalidJobState)

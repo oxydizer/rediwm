@@ -2,7 +2,7 @@ const std = @import("std");
 const io_coordinator = @import("io_coordinator.zig");
 const io_service = @import("io_service.zig");
 
-test "coordinator owns its Runtime thread and reports unsupported commands" {
+test "coordinator rejects transfer submissions without a payload" {
     var service: io_service.Service = .{};
     try service.init();
     defer service.deinit();
@@ -21,7 +21,7 @@ test "coordinator owns its Runtime thread and reports unsupported commands" {
     const update = (try window.tryReceiveUpdate()).?;
     try std.testing.expectEqual(io_service.UpdateKind.command_rejected, update.kind);
     try std.testing.expectEqual(@as(u64, 73), update.job_id);
-    try std.testing.expectEqual(@as(u8, 1), update.state_code);
+    try std.testing.expectEqual(@as(u8, 5), update.state_code);
 }
 
 fn waitReadable(fd: std.posix.fd_t, timeout_ms: i32) bool {
