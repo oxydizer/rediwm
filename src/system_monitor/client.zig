@@ -758,8 +758,8 @@ const Buffer = struct {
 
 pub fn run(init: std.process.Init) !void {
     platform.process.ignoreBrokenPipes();
-    defer @import("../files/settings.zig").deinitTheme();
-    var watch = try @import("settings_watch.zig").Watch.init(init.io, init.minimal.environ);
+    defer @import("app_kit").settings.deinitTheme();
+    var watch = try @import("app_kit").settings_watch.Watch.init(init.io, init.minimal.environ);
     defer watch.deinit();
     defer @import("ui").compose.flushTable();
     const display = try wl.Display.connect(null);

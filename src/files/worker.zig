@@ -82,7 +82,7 @@ pub const Worker = struct {
 
     animation_settings: @import("ui").anim.Settings = .{},
     /// Latest theme from `Settings.poll`; null once the app has taken it.
-    theme: ?@import("settings.zig").ThemeUpdate = null,
+    theme: ?@import("app_kit").settings.ThemeUpdate = null,
 
     // State protected by mutex
     current_dir: []u8,
@@ -298,7 +298,7 @@ pub const Worker = struct {
     }
 
     fn run(self: *Worker) void {
-        var settings: @import("settings.zig").Settings = @import("settings.zig").Settings.init(self.allocator, self.environ) catch .{};
+        var settings: @import("app_kit").settings.Settings = @import("app_kit").settings.Settings.init(self.allocator, self.environ) catch .{};
         defer settings.deinit(self.allocator);
         // Without file watching the watchers keep fd -1 and the loop polls.
         var dir_watcher = platform.watch.Watcher.init() catch platform.watch.Watcher{};

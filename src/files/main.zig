@@ -208,8 +208,8 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     // same fallback as a compositor without xdg-decoration support.
     const force_csd = init.minimal.environ.getPosix("REDIWM_FILES_FORCE_CSD") != null;
     // The worker follows later edits.
-    @import("settings.zig").loadTheme(init.gpa, init.io, init.minimal.environ);
-    defer @import("settings.zig").deinitTheme();
+    @import("app_kit").settings.loadTheme(init.gpa, init.io, init.minimal.environ);
+    defer @import("app_kit").settings.deinitTheme();
 
     const display = try wl.Display.connect(null);
     defer display.disconnect();

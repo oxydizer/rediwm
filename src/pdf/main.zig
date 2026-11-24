@@ -269,8 +269,8 @@ pub fn run(init: std.process.Init.Minimal) !void {
     if (print_fd < 0) std.log.warn("print helper unavailable; printing is disabled", .{});
     const force_csd = init.environ.getPosix("REDIWM_PDF_FORCE_CSD") != null;
     // Read before the sandbox closes the filesystem.
-    @import("../files/settings.zig").loadTheme(a, std.Io.Threaded.global_single_threaded.io(), init.environ);
-    defer @import("../files/settings.zig").deinitTheme();
+    @import("app_kit").settings.loadTheme(a, std.Io.Threaded.global_single_threaded.io(), init.environ);
+    defer @import("app_kit").settings.deinitTheme();
     // Open the selected faces now: user-installed fonts can live outside
     // the system font directories the sandbox permits.
     for ([_]shell_text.Font{ .manrope, .manrope_bold }) |font| {

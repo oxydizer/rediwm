@@ -237,7 +237,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             const ty = self.listColumn(2);
             drawEllipsis(cr, if (item.transfer_stub) @import("i18n").tr("Download") else itemType(item), ty.x + 4, y + baseline, ty.w - 8, shell_ui.textSize(), false);
             const mt = self.listColumn(3);
-            const timestamp = if (item.transfer_stub) "—" else @import("settings.zig").dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
+            const timestamp = if (item.transfer_stub) "—" else @import("app_kit").settings.dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
             drawEllipsis(cr, timestamp, mt.x + 4, y + baseline, mt.w - 8, shell_ui.textSize(), false);
             const permissions = self.listColumn(4);
             if (item.transfer_stub or item.transfer_ghost) {

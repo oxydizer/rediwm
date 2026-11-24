@@ -248,9 +248,14 @@ panel painting. The key rules:
   tokens (`app_*`, `shellPalette().accent`) and shell icons. Text is
   the effective `window_fg` (placeholder at half alpha) at `text_size`,
   `heading_size` or `status_size`, never hardcoded sizes. Load the theme with
-  `files/settings.zig` before the first frame (PDF: before its sandbox).
+  `app_kit.settings` before the first frame (PDF: before its sandbox).
   That loader resolves `Theme.forApp()` so `app_fg`, menu and field overrides
   can differ from compositor chrome; sidebar text uses `sidebarForeground()`.
+* **`app_kit`** (`src/app_kit/`, public like `ui`) is what standalone apps
+  are built from, here or in another repository ([app kit](docs/app-kit.md)):
+  settings and their watch, and `window.run`, the xdg-toplevel host
+  Calculator uses. Its App contract is in `window.zig`'s header; keep that,
+  `Options` and `mod.zig` compatible, since outside apps build against them.
 * Secrets live in `secret_input.Input` over caller-owned mlocked storage;
   hand-laid secret fields draw the caret with `CaretOverlay`.
 * **Dead keys:** `xkb_state_key_get_utf8` returns nothing for them, so any

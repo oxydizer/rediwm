@@ -103,7 +103,9 @@ pub fn build(b: *std.Build) void {
         b.step("i18n-" ++ entry[0], entry[1]).dependOn(&run.step);
     }
     const border_glow_mod = b.createModule(.{ .root_source_file = b.path("src/border_glow.zig"), .target = target, .optimize = optimize });
-    const ui_mod = b.createModule(.{ .root_source_file = b.path("src/ui/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    // Public (addModule) so apps in other repositories can depend on this
+    // package; see docs/app-kit.md.
+    const ui_mod = b.addModule("ui", .{ .root_source_file = b.path("src/ui/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
     ui_mod.addImport("border_glow", border_glow_mod);
     ui_mod.addImport("i18n", i18n_mod);
     ui_mod.addImport("memory", memory_mod);
@@ -139,6 +141,17 @@ pub fn build(b: *std.Build) void {
     config_mod.addImport("i18n", i18n_mod);
     config_mod.addImport("xkbcommon", xkbcommon);
     config_mod.linkSystemLibrary("xkbcommon", .{});
+    // The standalone-app kit (window host, theme settings and reloads), public
+    // like `ui` for apps built outside this repository.
+    const app_kit_mod = b.addModule("app_kit", .{ .root_source_file = b.path("src/app_kit/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    app_kit_mod.addImport("ui", ui_mod);
+    app_kit_mod.addImport("i18n", i18n_mod);
+    app_kit_mod.addImport("config", config_mod);
+    app_kit_mod.addImport("platform", platform_mod);
+    app_kit_mod.addImport("memory", memory_mod);
+    app_kit_mod.addImport("wayland", wayland);
+    app_kit_mod.addImport("c_gfx", c_headers.gfx);
+    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon" }) |lib| app_kit_mod.linkSystemLibrary(lib, .{});
 
     const theme_helper = b.addExecutable(.{
         .name = "rediwm-theme",
@@ -298,6 +311,9 @@ pub fn build(b: *std.Build) void {
     const dbus_service = zig_tests.dbus_service;
     const polkit_service = zig_tests.polkit_service;
 
+    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, monitor.root_module, calculator.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
+        module.addImport("app_kit", app_kit_mod);
+    }
     // Hosts also rasterize app-specific content through their own C imports.
     inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
         inline for (.{ "cairo", "librsvg-2.0", "freetype2", "harfbuzz", "fontconfig" }) |lib| module.linkSystemLibrary(lib, .{});

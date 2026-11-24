@@ -349,12 +349,12 @@ pub const App = struct {
             .transfer_tree_state = app_transfer_tree.State.init(allocator),
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
-            .single_click_open = @import("settings.zig").singleClickOpen(),
-            .audio_player = @import("settings.zig").audioPlayer(),
+            .single_click_open = @import("app_kit").settings.singleClickOpen(),
+            .audio_player = @import("app_kit").settings.audioPlayer(),
         };
 
-        self.theme_cfg.override_root = @import("settings.zig").iconRoot();
-        const icon_base = @import("settings.zig").iconTheme();
+        self.theme_cfg.override_root = @import("app_kit").settings.iconRoot();
+        const icon_base = @import("app_kit").settings.iconTheme();
         if (icon_base.len > 0) self.theme_cfg.theme_name = icon_base;
         const data_home = environ.getPosix("XDG_DATA_HOME");
         self.trash_dir = if (data_home != null and std.fs.path.isAbsolute(data_home.?))

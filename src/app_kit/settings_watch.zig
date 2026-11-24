@@ -2,7 +2,7 @@
 //! paused or suspended. Watch parent directories so atomic saves work too.
 const std = @import("std");
 const platform = @import("platform");
-const settings = @import("../files/settings.zig");
+const settings = @import("settings.zig");
 const a = std.heap.c_allocator;
 pub const Watch = struct {
     watcher: platform.watch.Watcher,

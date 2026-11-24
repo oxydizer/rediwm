@@ -4,7 +4,7 @@
 //! including atomic replacement. Shared by the Files, Images, PDF and System
 //! Monitor clients.
 const std = @import("std");
-const c = @import("c.zig").api;
+const c = @import("c_gfx");
 const platform = @import("platform");
 const anim = @import("ui").anim;
 const anim_config = @import("config").animations;
