@@ -48,3 +48,12 @@ objects, surface and `App`. What changes is only that they share one
   re-entrantly; they only update state, so this should be safe.
 * Drafts (stage 2) are the real risk: a snapshot that ignores another window's
   tabs would delete their drafts.
+
+## As built
+
+All four stages landed on `feat/editor-multiwindow`.
+
+1. Windows are `Client`s on one shared `wl_display`; the seat, keyboard, pointer and text-input events of every surface reach every `Client`, which filters by surface. A closing window releases its seat, keyboard, pointer, `wm_base` and frame callback first, since their listeners point at it.
+2. Drafts cover every window (`app_drafts.zig` keeps the list of `App`s). Tabs are keyed by pointer, not by their per-window id. The keeper moves to another window when its owner closes.
+3. New Window (Ctrl+Shift+N, menu row): one empty tab. Closing a window's last tab closes only that window; the process ends with the last window. At most 24 windows.
+4. The Editor opts in to detaching (`set_detachable`). Tear-off opens a window and moves the `Tab` (document and undo history) into it; dropping on another window's strip moves it there, and an emptied window closes. Moves are refused while a dialog or a close prompt names a tab. The compositor paints a ghost tab at the pointer during a drag-out (`tab_ghost.zig`).
