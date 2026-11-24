@@ -25,6 +25,7 @@ const app_search = @import("app_search.zig");
 const app_edit = @import("app_edit.zig");
 const app_controls = @import("app_controls.zig");
 const app_drafts = @import("app_drafts.zig");
+const app_move = @import("app_move.zig");
 const app_recent = @import("app_recent.zig");
 const drafts = @import("drafts.zig");
 const a = std.heap.c_allocator;
@@ -85,6 +86,9 @@ pub const App = struct {
     closed: bool = false,
     /// Set by the New Window action; the event loop opens the window.
     new_window: bool = false,
+    /// A tab the strip asked to tear off into a window of its own; the event
+    /// loop opens it.
+    tear_tab: ?usize = null,
     ctrl: bool = false,
     shift: bool = false,
     alt: bool = false,
@@ -267,6 +271,10 @@ pub const App = struct {
     pub const recentEnabled = app_recent.enabled;
     pub const deinitRecent = app_recent.deinitRecent;
 
+    pub const movable = app_move.movable;
+    pub const replaceBlank = app_move.replaceBlank;
+    pub const takeTab = app_move.take;
+    pub const adoptTab = app_move.adopt;
     pub const join = app_drafts.join;
     pub const openDrafts = app_drafts.openDrafts;
     pub const stepDrafts = app_drafts.stepDrafts;

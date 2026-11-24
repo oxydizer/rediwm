@@ -190,6 +190,10 @@ pub const Buffer = struct {
 /// What the poll array below has room for: three fixed entries plus a few per window.
 const max_windows = 24;
 
+/// Every open window, in the order they were opened. The tab strip handlers
+/// look windows up here to move a tab between them.
+pub var open_windows: std.ArrayList(*Client) = .empty;
+
 pub const Setup = struct { io: std.Io, environ: std.process.Environ, force_csd: bool };
 
 pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@import("instance.zig").Instance, initial_token: []const u8) !void {
@@ -214,7 +218,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     defer display.disconnect();
     const setup: Setup = .{ .io = init.io, .environ = init.minimal.environ, .force_csd = force_csd };
 
-    var windows: std.ArrayList(*Client) = .empty;
+    const windows = &open_windows;
     defer {
         for (windows.items) |window| window.destroy();
         windows.deinit(a);
@@ -259,6 +263,31 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
                 windows.append(a, created) catch created.destroy();
             } else |err| std.log.warn("rediwm-editor: cannot open a window: {}", .{err});
             break; // the list may have grown; one a turn is plenty
+        }
+
+        // Tear-off: the tab leaves for a window of its own, where the compositor
+        // is about to place it (it was told at the same moment as this program).
+        for (windows.items) |window| {
+            const id = window.app.tear_tab orelse continue;
+            window.app.tear_tab = null;
+            if (windows.items.len >= max_windows or !window.app.movable() or window.app.tabs.items.len < 2) continue;
+            const created = Client.create(display, setup, false, &.{}) catch |err| {
+                std.log.warn("rediwm-editor: cannot open a window: {}", .{err});
+                continue;
+            };
+            const tab = window.app.takeTab(id) orelse {
+                created.destroy();
+                continue;
+            };
+            created.app.replaceBlank(tab) catch {
+                tab.deinit();
+                created.destroy();
+                continue;
+            };
+            windows.append(a, created) catch {
+                created.destroy();
+            };
+            break;
         }
 
         while (!display.prepareRead()) {
