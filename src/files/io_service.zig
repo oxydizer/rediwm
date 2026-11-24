@@ -33,10 +33,88 @@ pub const CommandClass = enum {
     control,
 };
 
+pub const TransferMode = enum {
+    copy,
+    move,
+};
+
+pub const TransferSource = struct {
+    path: []u8,
+};
+
+pub const TransferRequest = struct {
+    mode: TransferMode,
+    destination_path: []u8,
+    sources: []TransferSource,
+
+    fn deinit(self: *TransferRequest, allocator: std.mem.Allocator) void {
+        allocator.free(self.destination_path);
+        for (self.sources) |source| allocator.free(source.path);
+        allocator.free(self.sources);
+    }
+};
+
+/// Heap-owned command data. The allocator travels with the payload so every
+/// consumer can release it without depending on the originating window.
+pub const OwnedPayload = struct {
+    allocator: std.mem.Allocator,
+    data: union(enum) {
+        transfer: TransferRequest,
+    },
+
+    pub fn createTransfer(
+        allocator: std.mem.Allocator,
+        mode: TransferMode,
+        destination_path: []const u8,
+        source_paths: []const []const u8,
+    ) !*OwnedPayload {
+        const payload = try allocator.create(OwnedPayload);
+        errdefer allocator.destroy(payload);
+
+        const destination = try allocator.dupe(u8, destination_path);
+        errdefer allocator.free(destination);
+
+        const sources = try allocator.alloc(TransferSource, source_paths.len);
+        var initialized: usize = 0;
+        errdefer {
+            for (sources[0..initialized]) |source| allocator.free(source.path);
+            allocator.free(sources);
+        }
+
+        for (source_paths, 0..) |path, index| {
+            sources[index] = .{ .path = try allocator.dupe(u8, path) };
+            initialized += 1;
+        }
+
+        payload.* = .{
+            .allocator = allocator,
+            .data = .{ .transfer = .{
+                .mode = mode,
+                .destination_path = destination,
+                .sources = sources,
+            } },
+        };
+        return payload;
+    }
+
+    pub fn deinit(self: *OwnedPayload) void {
+        const allocator = self.allocator;
+        switch (self.data) {
+            .transfer => |*request| request.deinit(allocator),
+        }
+        allocator.destroy(self);
+    }
+};
+
 pub const Command = struct {
     kind: CommandKind,
     job_id: JobId = 0,
     resource_id: ResourceId = 0,
+    payload: ?*OwnedPayload = null,
+
+    pub fn deinitPayload(self: Command) void {
+        if (self.payload) |payload| payload.deinit();
+    }
 
     pub fn class(self: Command) CommandClass {
         return switch (self.kind) {
@@ -289,15 +367,22 @@ pub const Service = struct {
         return sequence;
     }
 
-    fn enqueue(self: *Service, window_id: WindowId, command: Command) !void {
+    fn enqueue(
+        self: *Service,
+        window_id: WindowId,
+        command: *Command,
+        allow_payload: bool,
+    ) !void {
         if (!self.tryLock()) return error.ServiceBusy;
         defer self.unlock();
 
+        if (!allow_payload and command.payload != null)
+            return error.OwnedPayloadRequiresTransfer;
         if (self.stopping) return error.ServiceStopping;
         const slot = self.findSlot(window_id) orelse return error.WindowClosed;
         switch (command.class()) {
             .control => {
-                if (!slot.control_commands.push(command))
+                if (!slot.control_commands.push(command.*))
                     return error.ControlQueueFull;
             },
             .normal => {
@@ -305,10 +390,13 @@ pub const Service = struct {
                     return error.WindowQueueFull;
                 if (self.pending_normal_commands == aggregate_command_capacity)
                     return error.AggregateQueueFull;
-                std.debug.assert(slot.normal_commands.push(command));
+                std.debug.assert(slot.normal_commands.push(command.*));
                 self.pending_normal_commands += 1;
             },
         }
+        // The queue now owns the payload. On every admission error above,
+        // the caller's Command remains unchanged and retains ownership.
+        command.payload = null;
         signalWake(self.command_wake_fd);
     }
 
@@ -409,7 +497,14 @@ pub const Handle = struct {
     window_id: WindowId,
 
     pub fn trySend(self: Handle, command: Command) !void {
-        try self.service.enqueue(self.window_id, command);
+        var copy = command;
+        try self.service.enqueue(self.window_id, &copy, false);
+    }
+
+    /// On success, ownership of command.payload moves into the service queue
+    /// and command.payload is cleared. On failure, the caller retains it.
+    pub fn trySendOwned(self: Handle, command: *Command) !void {
+        try self.service.enqueue(self.window_id, command, true);
     }
 
     pub fn tryReceiveUpdate(self: Handle) !?Update {

@@ -297,3 +297,111 @@ test "accepted commands survive window closure and retain their origin ID" {
     defer replacement.close() catch unreachable;
     try std.testing.expect(replacement.window_id > origin_id);
 }
+
+test "owned command admission transfers payload only after successful enqueue" {
+    var service: service_mod.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var handle = try service.registerWindow();
+    defer handle.close() catch unreachable;
+
+    const source_paths = [_][]const u8{ "/source/one", "/source/two" };
+    var command: service_mod.Command = .{
+        .kind = .submit_job,
+        .payload = try service_mod.OwnedPayload.createTransfer(
+            std.testing.allocator,
+            .copy,
+            "/destination",
+            &source_paths,
+        ),
+    };
+    defer command.deinitPayload();
+
+    // Ordinary value admission must not accidentally transfer an owner.
+    try std.testing.expectError(
+        error.OwnedPayloadRequiresTransfer,
+        handle.trySend(command),
+    );
+    try std.testing.expect(command.payload != null);
+
+    try handle.trySendOwned(&command);
+    try std.testing.expect(command.payload == null);
+
+    const routed = service.tryReceiveCommand().?;
+    try std.testing.expectEqual(service_mod.CommandKind.submit_job, routed.command.kind);
+    try std.testing.expect(routed.command.payload != null);
+
+    const payload = routed.command.payload.?;
+    switch (payload.data) {
+        .transfer => |request| {
+            try std.testing.expectEqual(service_mod.TransferMode.copy, request.mode);
+            try std.testing.expectEqualStrings("/destination", request.destination_path);
+            try std.testing.expectEqual(@as(usize, 2), request.sources.len);
+            try std.testing.expectEqualStrings("/source/one", request.sources[0].path);
+            try std.testing.expectEqualStrings("/source/two", request.sources[1].path);
+        },
+    }
+    routed.command.deinitPayload();
+}
+
+test "failed owned command admission leaves payload with caller" {
+    var service: service_mod.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var handle = try service.registerWindow();
+    defer {
+        handle.close() catch unreachable;
+        while (service.tryReceiveCommand()) |routed|
+            routed.command.deinitPayload();
+    }
+
+    for (0..service_mod.command_capacity_per_window) |i| {
+        try handle.trySend(normalCommand(i));
+    }
+
+    const source_paths = [_][]const u8{"/source/file"};
+    var command: service_mod.Command = .{
+        .kind = .submit_job,
+        .payload = try service_mod.OwnedPayload.createTransfer(
+            std.testing.allocator,
+            .move,
+            "/destination",
+            &source_paths,
+        ),
+    };
+    defer command.deinitPayload();
+
+    try std.testing.expectError(error.WindowQueueFull, handle.trySendOwned(&command));
+    try std.testing.expect(command.payload != null);
+}
+
+test "owned commands remain valid after their originating window closes" {
+    var service: service_mod.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var handle = try service.registerWindow();
+    const origin_id = handle.window_id;
+    const source_paths = [_][]const u8{"/source/file"};
+    var command: service_mod.Command = .{
+        .kind = .submit_job,
+        .payload = try service_mod.OwnedPayload.createTransfer(
+            std.testing.allocator,
+            .copy,
+            "/destination",
+            &source_paths,
+        ),
+    };
+    defer command.deinitPayload();
+
+    try handle.trySendOwned(&command);
+    try handle.close();
+
+    const routed = service.tryReceiveCommand().?;
+    try std.testing.expectEqual(origin_id, routed.window_id);
+    try std.testing.expect(routed.command.payload != null);
+    routed.command.deinitPayload();
+    try std.testing.expect(service.tryReceiveCommand() == null);
+}

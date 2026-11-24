@@ -149,6 +149,7 @@ pub const Coordinator = struct {
         self: *Coordinator,
         routed: io_service.RoutedCommand,
     ) void {
+        defer routed.command.deinitPayload();
         self.applyCommand(routed.command) catch |err| {
             const code = rejectionCode(err);
             _ = self.service.publishUpdate(routed.window_id, .{
