@@ -500,7 +500,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
     }
     // Middle click on a folder (or a place in the sidebar) opens it in a new tab.
     if (button == 0x112) {
-        if (pressed and self.tabs_visible) self.openFolderTab();
+        if (pressed and self.tabs_visible) openFolderTab(self);
         return;
     }
     if (button != 0x110 and button != 0x111) return;
