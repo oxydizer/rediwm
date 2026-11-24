@@ -109,6 +109,87 @@ Moving orchestration off the UI thread is the primary guarantee. The service thr
 
 The service thread may perform Manager state transitions and bounded in-memory coordination. It must not wait synchronously for a worker, filesystem operation, UI response or user decision.
 
+### Cancellation without blocking
+
+Cancellation is an asynchronous service state transition, not a synchronous
+worker-control operation.
+
+- A cancellation command records cancellation intent in service-owned state
+  and signals the affected in-flight work through a cancellation token or
+  equivalent thread-safe mechanism.
+- Workers observe cancellation at defined safe checkpoints within their
+  bounded work units. They do not mutate Manager state or release
+  service-owned resources.
+- A worker that observes cancellation returns an owned completion describing
+  the work performed and any resources or partial output that remain.
+- The service reconciles every dispatched unit and performs the required
+  cleanup before releasing its resource leases or declaring the job
+  `Cancelled`.
+- Work that cannot be interrupted safely, including an in-progress
+  uninterruptible filesystem call, may delay cancellation. It must not block
+  the service loop or prevent unrelated jobs and commands from progressing.
+- Queued work that has not started may be withdrawn when the worker-pool
+  contract permits it. The service must still account for every dispatched
+  unit exactly once.
+
+The service must not wait for an individual worker, synchronously join a
+pool, or wait for pool quiescence while processing ordinary commands or
+completions. During shutdown it continues coordinating cancellation and
+completion reconciliation. Worker joins belong to final teardown, after
+outstanding work has been accounted for and the pools have stopped accepting
+work.
+
+### Service command admission and fairness
+
+Service ingress is bounded independently of the per-window update queues.
+
+- Each window has a bounded command allowance, and the service enforces a
+  bounded aggregate command capacity.
+- The service processes commands fairly across windows, using bounded
+  per-window work quotas so a busy producer cannot monopolise the service
+  thread.
+- Capacity limits and per-iteration processing quotas must be explicit
+  implementation constants, covered by saturation and fairness tests.
+- A full command queue produces an explicit non-blocking rejection. The UI
+  must not wait for capacity or assume that a rejected command was accepted.
+- Cancellation and other control commands must not be starved by ordinary
+  submissions. Their admission path must have reserved capacity or an
+  equivalent bounded priority mechanism.
+
+No command queue may grow without limit, and queue saturation must never
+cause the service thread to block waiting for a producer or consumer.
+
+### Worker preparation ownership
+
+If measurements justify moving preparation work to workers, the service
+thread first captures the required inputs into an immutable, independently
+owned task payload.
+
+Workers may inspect and transform that payload and perform the filesystem
+work assigned to them. They must not read or mutate Manager-owned state,
+retain pointers into Manager collections, or perform lifecycle transitions.
+They return owned results through the normal completion path; only the
+service thread validates and applies those results to authoritative state.
+
+This rule applies to preparation, metadata access, publication and cleanup
+tasks as well as the primary operation workers.
+
+### Bounded UI update delivery
+
+Each UI consumer processes a bounded number of messages or a bounded amount
+of delivery work per event-loop iteration. A large backlog for one window
+must not monopolise the process event loop or delay other windows.
+
+The service publishes fairly across consumers. Replaceable progress updates
+may be coalesced by job, while non-coalescible lifecycle and user-actionable
+events retain their ordering guarantees.
+
+If a consumer's bounded queue cannot preserve continuity, the service marks
+that consumer as requiring resynchronisation rather than blocking or
+silently discarding authoritative state transitions. The consumer obtains
+a fresh snapshot and resumes from its sequence position.
+
+
 ## 7. Archive lifecycle split
 
 Archive handling currently crosses service and App responsibilities. It must be separated deliberately.
@@ -151,10 +232,13 @@ The service thread owns orderly Runtime shutdown:
 1. Stop accepting new commands.
 2. Apply the service's defined shutdown policy to active jobs.
 3. Request cancellation where required by that policy.
-4. Stop and join worker pools without leaving workers accessing destroyed state.
-5. Release service-owned staging and other resources.
-6. Verify the resource ledger is empty and deinitialize Manager/Runtime.
-7. Close communication queues and notify or disconnect clients as appropriate.
+4. Continue processing worker completions and cleanup until all dispatched
+   work has been accounted for and workers have stopped accessing
+   service-owned state.
+5. Stop and join worker pools during final teardown.
+6. Release service-owned staging and other resources.
+7. Verify the resource ledger is empty and deinitialize Manager/Runtime.
+8. Close communication queues and notify or disconnect clients as appropriate.
 
 UI shutdown only releases that window's subscriptions, queues and UI-owned state. It must not tear down the shared service Runtime.
 
