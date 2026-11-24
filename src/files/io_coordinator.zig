@@ -165,8 +165,9 @@ pub const Coordinator = struct {
 
     fn handleCommand(
         self: *Coordinator,
-        routed: io_service.RoutedCommand,
+        routed_value: io_service.RoutedCommand,
     ) void {
+        var routed = routed_value;
         defer routed.command.deinitPayload();
         self.applyCommand(routed) catch |err| {
             const code = rejectionCode(err);
@@ -210,6 +211,7 @@ pub const Coordinator = struct {
             return error.MissingTransferPayload;
         const request = switch (payload.data) {
             .transfer => |*transfer| transfer,
+            .discovery, .conflict_resolution => return error.UnexpectedTransferPayload,
         };
         if (request.sources.len == 0) return error.EmptyTransfer;
         if (request.destination_path.len == 0 or

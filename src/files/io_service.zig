@@ -54,12 +54,45 @@ pub const TransferRequest = struct {
     }
 };
 
+pub const DiscoveryRequest = struct {
+    root_entry_id: u64,
+    root_path: ?[]u8 = null,
+
+    fn deinit(self: *DiscoveryRequest, allocator: std.mem.Allocator) void {
+        if (self.root_path) |path| allocator.free(path);
+    }
+};
+
+pub const ConflictAction = enum {
+    retry,
+    replace,
+    merge,
+    rename,
+    skip,
+    cancel,
+};
+
+pub const ConflictResolutionRequest = struct {
+    conflict_id: u64,
+    action: ConflictAction,
+    destination_path: ?[]u8 = null,
+
+    fn deinit(
+        self: *ConflictResolutionRequest,
+        allocator: std.mem.Allocator,
+    ) void {
+        if (self.destination_path) |path| allocator.free(path);
+    }
+};
+
 /// Heap-owned command data. The allocator travels with the payload so every
 /// consumer can release it without depending on the originating window.
 pub const OwnedPayload = struct {
     allocator: std.mem.Allocator,
     data: union(enum) {
         transfer: TransferRequest,
+        discovery: DiscoveryRequest,
+        conflict_resolution: ConflictResolutionRequest,
     },
 
     pub fn createTransfer(
@@ -97,10 +130,65 @@ pub const OwnedPayload = struct {
         return payload;
     }
 
+    pub fn createDiscovery(
+        allocator: std.mem.Allocator,
+        root_entry_id: u64,
+        root_path: ?[]const u8,
+    ) !*OwnedPayload {
+        const payload = try allocator.create(OwnedPayload);
+        errdefer allocator.destroy(payload);
+
+        const owned_path = if (root_path) |path|
+            try allocator.dupe(u8, path)
+        else
+            null;
+        errdefer if (owned_path) |path| allocator.free(path);
+
+        payload.* = .{
+            .allocator = allocator,
+            .data = .{ .discovery = .{
+                .root_entry_id = root_entry_id,
+                .root_path = owned_path,
+            } },
+        };
+        return payload;
+    }
+
+    pub fn createConflictResolution(
+        allocator: std.mem.Allocator,
+        conflict_id: u64,
+        action: ConflictAction,
+        destination_path: ?[]const u8,
+    ) !*OwnedPayload {
+        if ((action == .rename) != (destination_path != null))
+            return error.InvalidConflictResolutionPayload;
+
+        const payload = try allocator.create(OwnedPayload);
+        errdefer allocator.destroy(payload);
+
+        const owned_path = if (destination_path) |path|
+            try allocator.dupe(u8, path)
+        else
+            null;
+        errdefer if (owned_path) |path| allocator.free(path);
+
+        payload.* = .{
+            .allocator = allocator,
+            .data = .{ .conflict_resolution = .{
+                .conflict_id = conflict_id,
+                .action = action,
+                .destination_path = owned_path,
+            } },
+        };
+        return payload;
+    }
+
     pub fn deinit(self: *OwnedPayload) void {
         const allocator = self.allocator;
         switch (self.data) {
             .transfer => |*request| request.deinit(allocator),
+            .discovery => |*request| request.deinit(allocator),
+            .conflict_resolution => |*request| request.deinit(allocator),
         }
         allocator.destroy(self);
     }
@@ -112,15 +200,17 @@ pub const Command = struct {
     resource_id: ResourceId = 0,
     payload: ?*OwnedPayload = null,
 
-    pub fn deinitPayload(self: Command) void {
-        if (self.payload) |payload| payload.deinit();
+    pub fn deinitPayload(self: *Command) void {
+        if (self.payload) |payload| {
+            self.payload = null;
+            payload.deinit();
+        }
     }
 
     pub fn class(self: Command) CommandClass {
         return switch (self.kind) {
             .submit_job, .start_discovery, .prioritize_discovery => .normal,
-            .pause_job, .resume_job, .cancel_job, .resolve_conflict,
-            .retire_job, .release_resource => .control,
+            .pause_job, .resume_job, .cancel_job, .resolve_conflict, .retire_job, .release_resource => .control,
         };
     }
 };

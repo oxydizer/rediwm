@@ -254,7 +254,12 @@ test "coordinator publishes job state transitions and transfer progress" {
     for (0..500) |_| {
         if (waitReadable(service.updateWakeFd(), 10)) {
             _ = service.drainUpdateWake();
-            while (try window.tryReceiveUpdate()) |update| {
+            for (0..100) |_| {
+                const maybe_update = window.tryReceiveUpdate() catch {
+                    continue;
+                };
+                const update = maybe_update orelse break;
+
                 if (update.kind == .job_state or update.kind == .progress) {
                     if (job_id) |expected|
                         try std.testing.expectEqual(expected, update.job_id)

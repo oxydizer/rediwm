@@ -328,7 +328,7 @@ test "owned command admission transfers payload only after successful enqueue" {
     try handle.trySendOwned(&command);
     try std.testing.expect(command.payload == null);
 
-    const routed = service.tryReceiveCommand().?;
+    var routed = service.tryReceiveCommand().?;
     try std.testing.expectEqual(service_mod.CommandKind.submit_job, routed.command.kind);
     try std.testing.expect(routed.command.payload != null);
 
@@ -341,6 +341,7 @@ test "owned command admission transfers payload only after successful enqueue" {
             try std.testing.expectEqualStrings("/source/one", request.sources[0].path);
             try std.testing.expectEqualStrings("/source/two", request.sources[1].path);
         },
+        else => return error.UnexpectedPayloadKind,
     }
     routed.command.deinitPayload();
 }
@@ -353,8 +354,10 @@ test "failed owned command admission leaves payload with caller" {
     var handle = try service.registerWindow();
     defer {
         handle.close() catch unreachable;
-        while (service.tryReceiveCommand()) |routed|
+        while (service.tryReceiveCommand()) |routed_value| {
+            var routed = routed_value;
             routed.command.deinitPayload();
+        }
     }
 
     for (0..service_mod.command_capacity_per_window) |i| {
@@ -399,9 +402,102 @@ test "owned commands remain valid after their originating window closes" {
     try handle.trySendOwned(&command);
     try handle.close();
 
-    const routed = service.tryReceiveCommand().?;
+    var routed = service.tryReceiveCommand().?;
     try std.testing.expectEqual(origin_id, routed.window_id);
     try std.testing.expect(routed.command.payload != null);
     routed.command.deinitPayload();
     try std.testing.expect(service.tryReceiveCommand() == null);
+}
+
+test "discovery payload owns its root path and entry identity" {
+    var payload = try service_mod.OwnedPayload.createDiscovery(
+        std.testing.allocator,
+        42,
+        "/source/tree",
+    );
+    defer payload.deinit();
+
+    switch (payload.data) {
+        .discovery => |request| {
+            try std.testing.expectEqual(@as(u64, 42), request.root_entry_id);
+            try std.testing.expectEqualStrings("/source/tree", request.root_path.?);
+        },
+        else => return error.UnexpectedPayloadKind,
+    }
+}
+
+test "discovery priority payload can omit a root path" {
+    var payload = try service_mod.OwnedPayload.createDiscovery(
+        std.testing.allocator,
+        73,
+        null,
+    );
+    defer payload.deinit();
+
+    switch (payload.data) {
+        .discovery => |request| {
+            try std.testing.expectEqual(@as(u64, 73), request.root_entry_id);
+            try std.testing.expect(request.root_path == null);
+        },
+        else => return error.UnexpectedPayloadKind,
+    }
+}
+
+test "conflict resolution payload owns rename destination" {
+    var payload = try service_mod.OwnedPayload.createConflictResolution(
+        std.testing.allocator,
+        91,
+        .rename,
+        "/destination/renamed",
+    );
+    defer payload.deinit();
+
+    switch (payload.data) {
+        .conflict_resolution => |request| {
+            try std.testing.expectEqual(@as(u64, 91), request.conflict_id);
+            try std.testing.expectEqual(service_mod.ConflictAction.rename, request.action);
+            try std.testing.expectEqualStrings(
+                "/destination/renamed",
+                request.destination_path.?,
+            );
+        },
+        else => return error.UnexpectedPayloadKind,
+    }
+}
+
+test "conflict resolution payload rejects inconsistent rename data" {
+    try std.testing.expectError(
+        error.InvalidConflictResolutionPayload,
+        service_mod.OwnedPayload.createConflictResolution(
+            std.testing.allocator,
+            92,
+            .rename,
+            null,
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidConflictResolutionPayload,
+        service_mod.OwnedPayload.createConflictResolution(
+            std.testing.allocator,
+            93,
+            .skip,
+            "/unexpected/path",
+        ),
+    );
+}
+
+test "command payload destruction consumes ownership" {
+    var command: service_mod.Command = .{
+        .kind = .start_discovery,
+        .payload = try service_mod.OwnedPayload.createDiscovery(
+            std.testing.allocator,
+            101,
+            "/source",
+        ),
+    };
+
+    command.deinitPayload();
+    try std.testing.expect(command.payload == null);
+    command.deinitPayload();
+    try std.testing.expect(command.payload == null);
 }
