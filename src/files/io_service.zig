@@ -57,6 +57,7 @@ pub const UpdateKind = enum {
     job_state,
     conflict,
     archive_ready,
+    command_rejected,
     resync_required,
 };
 
@@ -202,6 +203,13 @@ pub const Service = struct {
         self.lock();
         defer self.unlock();
         self.stopping = true;
+        signalWake(self.command_wake_fd);
+    }
+
+    pub fn isStopping(self: *Service) bool {
+        self.lock();
+        defer self.unlock();
+        return self.stopping;
     }
 
     /// Called only by the service coordinator. Commands are selected

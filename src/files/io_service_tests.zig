@@ -178,6 +178,19 @@ test "shutdown rejects admission while handles can unregister cleanly" {
     try handle.close();
 }
 
+test "shutdown wakes the process command consumer" {
+    var service: service_mod.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    try std.testing.expect(!isReadable(service.commandWakeFd()));
+    service.beginShutdown();
+    try std.testing.expect(service.isStopping());
+    try std.testing.expect(isReadable(service.commandWakeFd()));
+    try std.testing.expect(service.drainCommandWake() > 0);
+    try std.testing.expect(!isReadable(service.commandWakeFd()));
+}
+
 test "window operations fail fast under mutex contention and remain retryable" {
     var service: service_mod.Service = .{};
     try service.init();
