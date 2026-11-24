@@ -49,6 +49,11 @@ pub const Renderer = extern struct {
             return error.RenderInitFailed;
     }
 
+    pub fn initShm(renderer: *Renderer, server: *wl.Server) !void {
+        if (!c.wlr_renderer_init_wl_shm(@ptrCast(renderer), @ptrCast(server)))
+            return error.RenderInitFailed;
+    }
+
     pub fn getDrmFd(renderer: *Renderer) c_int {
         return c.wlr_renderer_get_drm_fd(@ptrCast(renderer));
     }

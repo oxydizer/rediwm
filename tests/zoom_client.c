@@ -28,6 +28,7 @@ static struct zxdg_toplevel_decoration_v1 *decoration;
 static int width = 400, height = 260, frames;
 static int test_min_w, test_min_h, test_max_w, test_max_h;
 static int test_unmapped;
+static unsigned test_xdg_version = 2;
 static void released(void *data, struct wl_buffer *buffer) {
   (void)data;
   wl_buffer_destroy(buffer);
@@ -271,7 +272,18 @@ static void top_configure(void *data, struct xdg_toplevel *t, int32_t w,
                           int32_t h, struct wl_array *states) {
   (void)data;
   (void)t;
-  (void)states;
+  if (test_xdg_version >= 6) {
+    uint32_t *state;
+    int top = 0, bottom = 0, left = 0, right = 0;
+    wl_array_for_each(state, states) {
+      if (*state == XDG_TOPLEVEL_STATE_CONSTRAINED_TOP) top = 1;
+      if (*state == XDG_TOPLEVEL_STATE_CONSTRAINED_BOTTOM) bottom = 1;
+      if (*state == XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT) left = 1;
+      if (*state == XDG_TOPLEVEL_STATE_CONSTRAINED_RIGHT) right = 1;
+    }
+    printf("constrained%s%s%s%s\n", top ? " top" : "", bottom ? " bottom" : "",
+           left ? " left" : "", right ? " right" : "");
+  }
   if (w > 0)
     width = w;
   if (h > 0)
@@ -306,7 +318,14 @@ static void confirm_close(void *data, struct xdg_toplevel *t) {
   wl_surface_destroy(confirm_surface);
   confirm_top = NULL;
 }
-static const struct xdg_toplevel_listener confirm_top_listener = { .configure = confirm_size, .close = confirm_close };
+static void bounds(void *data, struct xdg_toplevel *top, int32_t w, int32_t h) {
+  (void)data; (void)top; (void)w; (void)h;
+}
+static void capabilities(void *data, struct xdg_toplevel *top, struct wl_array *caps) {
+  (void)data; (void)top; (void)caps;
+}
+static const struct xdg_toplevel_listener confirm_top_listener = {
+    .configure = confirm_size, .close = confirm_close, .configure_bounds = bounds, .wm_capabilities = capabilities};
 static void show_confirm(void) {
   if (confirm_top) return;
   confirm_surface = wl_compositor_create_surface(compositor);
@@ -327,7 +346,7 @@ static void top_close(void *data, struct xdg_toplevel *t) {
   exit(0);
 }
 static const struct xdg_toplevel_listener top_listener = {
-    .configure = top_configure, .close = top_close};
+    .configure = top_configure, .close = top_close, .configure_bounds = bounds, .wm_capabilities = capabilities};
 static void popup_configure(void *data, struct xdg_popup *p, int32_t x,
                             int32_t y, int32_t w, int32_t h) {
   (void)data;
@@ -596,7 +615,8 @@ static void global(void *d, struct wl_registry *r, uint32_t id,
   else if (!strcmp(interface, "zxdg_decoration_manager_v1"))
     decoration_manager = wl_registry_bind(r, id, &zxdg_decoration_manager_v1_interface, 1);
   else if (!strcmp(interface, "xdg_wm_base")) {
-    wm = wl_registry_bind(r, id, &xdg_wm_base_interface, 2);
+    assert(version >= test_xdg_version);
+    wm = wl_registry_bind(r, id, &xdg_wm_base_interface, test_xdg_version);
     xdg_wm_base_add_listener(wm, &wm_listener, NULL);
   } else if (!strcmp(interface, "wl_seat")) {
     seat = wl_registry_bind(r, id, &wl_seat_interface, 5);
@@ -618,6 +638,7 @@ static void decoration_configure(void *data, struct zxdg_toplevel_decoration_v1 
 static const struct zxdg_toplevel_decoration_v1_listener decoration_listener = {decoration_configure};
 int main(int argc, char *argv[]) {
   setbuf(stdout, NULL);
+  if (getenv("REDIWM_TEST_XDG_VERSION")) test_xdg_version = atoi(getenv("REDIWM_TEST_XDG_VERSION"));
   edge_mode = getenv("REDIWM_TEST_EDGE") != NULL;
   perf_mode = getenv("REDIWM_TEST_PERF") != NULL;
   perf_damage = getenv("REDIWM_TEST_PERF_DAMAGE") != NULL;

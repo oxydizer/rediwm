@@ -63,6 +63,7 @@ pub const CompositorError = error{
     RendererInitFailed,
     AllocatorCreateFailed,
     ShmInitFailed,
+    LinuxDmabufCreateFailed,
     SceneCreateFailed,
     OutputLayoutCreateFailed,
     XdgOutputManagerCreateFailed,

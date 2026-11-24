@@ -29,6 +29,7 @@ pub const Node = struct {
     ratio: f64 = 0.5,
     enabled: bool = false,
     rect: ?Box = null,
+    outer_edges: std.EnumSet(Direction) = .empty,
     split: ?Split = null,
 
     fn destroy(node: *Node, allocator: Allocator) void {
@@ -91,7 +92,7 @@ pub const Node = struct {
             .vertical => .{ .width = @max(a.width, b.width), .height = a.height +| b.height +| gap },
         };
     }
-    fn place(node: *Node, box: Box, gap: i32) void {
+    fn place(node: *Node, box: Box, gap: i32, outer_edges: std.EnumSet(Direction)) void {
         node.rect = null;
         node.split = null;
         if (node.member) |m| {
@@ -100,14 +101,15 @@ pub const Node = struct {
             if (m.max_width > 0) rect.width = @min(rect.width, @max(m.min_width, m.max_width));
             if (m.max_height > 0) rect.height = @min(rect.height, @max(m.min_height, m.max_height));
             node.rect = rect;
+            node.outer_edges = outer_edges;
             return;
         }
         const c = node.children.?;
         const a = c.a.minimum(gap);
         const b = c.b.minimum(gap);
         if (a.width == 0 or b.width == 0) {
-            c.a.place(box, gap);
-            c.b.place(box, gap);
+            c.a.place(box, gap, outer_edges);
+            c.b.place(box, gap, outer_edges);
             return;
         }
         var first = box;
@@ -128,8 +130,12 @@ pub const Node = struct {
         }
         const span = if (node.axis == .horizontal) box.width - gap else box.height - gap;
         node.split = .{ .axis = node.axis, .span = span, .ratio = @as(f64, @floatFromInt(if (node.axis == .horizontal) first.width else first.height)) / @as(f64, @floatFromInt(span)) };
-        c.a.place(first, gap);
-        c.b.place(second, gap);
+        var first_edges = outer_edges;
+        var second_edges = outer_edges;
+        first_edges.remove(if (node.axis == .horizontal) .right else .down);
+        second_edges.remove(if (node.axis == .horizontal) .left else .up);
+        c.a.place(first, gap, first_edges);
+        c.b.place(second, gap, second_edges);
     }
 };
 
@@ -142,6 +148,11 @@ pub const Tree = struct {
     }
     pub fn contains(tree: *const Tree, key: Key) bool {
         return if (tree.root) |node| node.find(key) != null else false;
+    }
+    /// Edges facing the outside of the layout. A live divider remains resizable.
+    pub fn outerEdges(tree: *const Tree, key: Key) std.EnumSet(Direction) {
+        const node = (tree.root orelse return .empty).find(key) orelse return .empty;
+        return if (node.rect != null) node.outer_edges else .empty;
     }
     pub fn rectangle(tree: *const Tree, key: Key) ?Box {
         const node = (tree.root orelse return null).find(key) orelse return null;
@@ -333,7 +344,7 @@ pub const Tree = struct {
             const size = root.minimum(gap);
             if (size.width > box.width or size.height > box.height) node.enabled = false;
         }
-        root.place(box, gap);
+        root.place(box, gap, .full);
     }
     fn disable(node: *Node) void {
         node.enabled = false;
@@ -357,12 +368,15 @@ test "stable splits, gaps, suspension, overflow and recovery" {
     try testing.expectEqual(first.x + first.width + 8, second.x);
     try testing.expectEqual(second.y + second.height + 8, third.y);
     try testing.expectEqual(screen.x + screen.width - 8, third.x + third.width);
+    try testing.expectEqual(std.EnumSet(Direction).initMany(&.{ .left, .up, .down }), tree.outerEdges(members[0].key));
+    try testing.expectEqual(std.EnumSet(Direction).initMany(&.{ .right, .down }), tree.outerEdges(members[2].key));
     try tree.sync(testing.allocator, &members, screen, 8);
     try testing.expectEqual(first, tree.rectangle(members[0].key).?);
     members[1].active = false;
     try tree.sync(testing.allocator, &members, screen, 8);
     try testing.expectEqual(first, tree.rectangle(members[0].key).?);
     try testing.expectEqual(@as(?Box, null), tree.rectangle(members[1].key));
+    try testing.expectEqual(std.EnumSet(Direction).initMany(&.{ .right, .up, .down }), tree.outerEdges(members[2].key));
     members[1].active = true;
     members[2].min_width = 1200;
     try tree.sync(testing.allocator, &members, screen, 8);
@@ -372,6 +386,7 @@ test "stable splits, gaps, suspension, overflow and recovery" {
     try testing.expectEqual(third, tree.rectangle(members[2].key).?);
     try tree.sync(testing.allocator, members[0..1], screen, 8);
     try testing.expectEqual(screen.width - 16, tree.rectangle(members[0].key).?.width);
+    try testing.expectEqual(std.EnumSet(Direction).full, tree.outerEdges(members[0].key));
 }
 
 test "rotation, resizing, swapping and bounded clients" {

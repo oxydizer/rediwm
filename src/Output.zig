@@ -91,6 +91,8 @@ lid_blanked: bool = false,
 power_off: bool = false,
 user_disabled: bool = false,
 cached_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
+/// Set while mapped layer surfaces reserve part of the shell's work area.
+layer_work_area: ?wlr.Box = null,
 /// Paces frames whose output commit was skipped (see `commitIsRedundant`):
 /// no page flip is pending then, so this timer stands in for the vblank.
 vblank_timer: ?*wl.EventSource = null,
@@ -369,23 +371,8 @@ pub fn dockAreaBox(output: *Output) wlr.Box {
     return box;
 }
 
-/// The output's usable area for compositor-driven placement (maximize, tiles,
-/// new windows, popups): `dockAreaBox` less the strip a docked (not
-/// auto-hiding) dock claims. Windows never open or maximize behind either.
-pub fn usableBox(output: *Output) wlr.Box {
-    var box = output.dockAreaBox();
-    const strip = @import("Dock.zig").reservedStrip(output.server, box);
-    if (strip == 0) return box;
-    switch (output.server.config.compositor.dock_position) {
-        .top => box.y += strip,
-        .left => box.x += strip,
-        .bottom, .right => {},
-    }
-    if (output.server.config.compositor.dock_position.vertical()) {
-        box.width = @max(1, box.width - strip);
-    } else box.height = @max(1, box.height - strip);
-    return box;
-}
+pub const shellUsableBox = output_layout.shellUsableBox;
+pub const usableBox = output_layout.usableBox;
 
 /// Place a taskbar popup on the inward side of the selected edge.
 pub fn taskbarPopupY(output: *Output, height: i32, gap: i32) i32 {

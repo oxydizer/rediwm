@@ -350,7 +350,11 @@ fn initServices(server: *Server) CompositorError!void {
 fn initProtocols(server: *Server) CompositorError!void {
     const wl_server = server.wl_server;
     const greeter = server.greeter_mode;
-    server.renderer.initServer(wl_server) catch return error.ShmInitFailed;
+    server.renderer.initShm(wl_server) catch return error.ShmInitFailed;
+    // wlroots' combined display initializer would also register a v4 DMA-BUF global.
+    if (server.renderer.getTextureFormats(@backingInt(wlr.BufferCap.dmabuf)) != null and server.renderer.getDrmFd() >= 0) {
+        _ = wlr.LinuxDmabufV1.createWithRenderer(wl_server, 5, server.renderer) catch return error.LinuxDmabufCreateFailed;
+    }
 
     const compositor = wlr.Compositor.create(server.wl_server, 6, server.renderer) catch return error.CompositorCreateFailed;
     server.compositor = compositor;
@@ -363,9 +367,6 @@ fn initProtocols(server: *Server) CompositorError!void {
     _ = wlr.Viewporter.create(server.wl_server) catch return error.ViewporterCreateFailed;
     _ = wlr.FractionalScaleManagerV1.create(server.wl_server, 1) catch return error.FractionalScaleManagerCreateFailed;
     _ = wlr.SinglePixelBufferManagerV1.create(server.wl_server) catch return error.SinglePixelBufferManagerCreateFailed;
-    // linux-dmabuf v4 comes from `initServer` above (wlr_renderer_init_wl_display),
-    // only when the renderer imports dmabufs (not pixman). Creating it here too
-    // advertised a second global, and Mesa's WSI bound both and leaked one.
     // Explicit sync: the proprietary NVIDIA driver has no implicit sync, so
     // without it Xwayland and Vulkan clients flicker or show torn frames.
     // wlr_scene waits on acquire points and signals release points; the
@@ -413,7 +414,7 @@ fn initProtocols(server: *Server) CompositorError!void {
     }
     _ = Xwayland.create(server);
 
-    const layer_shell = wlr.LayerShellV1.create(wl_server, 4) catch return error.CompositorCreateFailed;
+    const layer_shell = wlr.LayerShellV1.create(wl_server, 5) catch return error.CompositorCreateFailed;
     layer_shell.events.new_surface.add(&server.new_layer);
     server.backend.events.new_output.add(&server.new_output);
     if (server.session) |s| {

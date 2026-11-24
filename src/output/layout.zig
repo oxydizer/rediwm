@@ -22,6 +22,27 @@ const atLayout = Output.atLayout;
 const scaled = Output.scaled;
 const recomputeWorldBounds = Output.recomputeWorldBounds;
 
+/// The space left by the built-in taskbar and dock, before external panels.
+pub fn shellUsableBox(output: *Output) wlr.Box {
+    var box = output.dockAreaBox();
+    const strip = @import("../Dock.zig").reservedStrip(output.server, box);
+    if (strip == 0) return box;
+    switch (output.server.config.compositor.dock_position) {
+        .top => box.y += strip,
+        .left => box.x += strip,
+        .bottom, .right => {},
+    }
+    if (output.server.config.compositor.dock_position.vertical()) {
+        box.width = @max(1, box.width - strip);
+    } else box.height = @max(1, box.height - strip);
+    return box;
+}
+
+/// Window placement also respects the exclusive zones of mapped layer surfaces.
+pub fn usableBox(output: *Output) wlr.Box {
+    return output.layer_work_area orelse output.shellUsableBox();
+}
+
 /// Apply and persist one output patch, shared by IPC and Settings. Mode and scale
 /// are tested/committed together; a failed publication restores the previous state.
 pub fn applyAndPersist(output: *Output, requested: @import("config").output_config.Patch) !void {
@@ -313,16 +334,11 @@ pub fn syncLayout(server: *Server) void {
         server.output_layout.getBox(output.wlr_output, &output.cached_box);
         output.syncWallpaper();
         output.syncTaskbar();
+        _ = @import("../LayerSurface.zig").arrangeOutput(output);
         output.syncStartMenu();
         output.syncPowerMenu();
         if (server.input.open_control_center) |cc| cc.refresh();
         if (server.ipc) |ipc| events.onOutputChanged(ipc, output);
-    }
-    var layers = server.layer_surfaces.iterator(.forward);
-    while (layers.next()) |layer| {
-        if (!layer.layer.initialized) continue;
-        const out = fromWlr(layer.layer.output orelse continue) orelse continue;
-        if (!out.idle_blanked and !out.user_disabled) layer.arrange();
     }
     recomputeWorldBounds(server);
     server.world.workspaces.setMode(server, server.config.compositor.desktop_mode == .workspaces);

@@ -196,6 +196,7 @@ pub fn setupInitialRestoreGeometry(toplevel: *Toplevel, output: *Output) void {
 }
 
 pub fn configureInitialXdgState(toplevel: *Toplevel) void {
+    defer toplevel.syncXdgEdges();
     const adapter = switch (toplevel.backend) {
         .xdg => |*a| a,
         .xwayland, .placeholder, .shell => return,

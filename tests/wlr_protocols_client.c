@@ -41,6 +41,7 @@ static struct zwlr_screencopy_manager_v1 *screencopy;
 static struct ext_session_lock_manager_v1 *lock_manager;
 static struct wp_security_context_manager_v1 *security_context_manager;
 static bool dump_registry_mode = false;
+static bool dump_versions = false;
 
 static bool bind_extra(struct wl_registry *, uint32_t, const char *);
 static bool extras_mode;
@@ -49,7 +50,8 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
   (void)data;
   (void)version;
   if (dump_registry_mode) {
-    printf("%s\n", interface);
+    if (dump_versions) printf("%s %u\n", interface, version);
+    else printf("%s\n", interface);
     return;
   }
   if (bind_extra(registry, name, interface)) return;
@@ -517,6 +519,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (strcmp(argv[1], "dump-registry") == 0) dump_registry_mode = true;
+  dump_versions = dump_registry_mode && argc > 2 && strcmp(argv[2], "--versions") == 0;
   workspace_test_mode = strcmp(argv[1], "workspaces") == 0;
   if (workspace_test_mode && argc > 2) activate_workspace_id = (unsigned)atoi(argv[2]);
   extras_mode = strcmp(argv[1], "extras") == 0 || workspace_test_mode;

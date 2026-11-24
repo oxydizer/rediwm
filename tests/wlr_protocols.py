@@ -199,7 +199,8 @@ def session_lock(tmp):
         expect_line(lock, "locked")
         assert locked(s.ipc)
         # Everything else is refused while locked.
-        refused = s.spawn(fixture, "lock")
+        # Keep stdin open until the lock client receives the compositor's reply.
+        refused = s.spawn(fixture, "lock", stdin=subprocess.PIPE)
         expect_line(refused, "finished")
         copy = s.run(fixture, "screencopy", ok=None)
         assert copy.returncode == 3 and copy.stdout.strip() == "disconnected", (copy.returncode, copy.stdout)
@@ -241,7 +242,7 @@ def session_lock(tmp):
         except IPCError as exc:  # the release already meets the lock
             assert "SessionLocked" in str(exc), exc
         wait_for(lambda: locked(s.ipc), "built-in lock did not engage")
-        refused = s.spawn(fixture, "lock")
+        refused = s.spawn(fixture, "lock", stdin=subprocess.PIPE)
         expect_line(refused, "finished")
         assert locked(s.ipc)
     finally:
@@ -254,18 +255,23 @@ def extra_protocols(tmp):
     s = Session(tmp, outputs="2", config=config)
     try:
         fixture = str(tmp / "fixture")
-        registry = s.run(fixture, "dump-registry").stdout
+        registry = s.run(fixture, "dump-registry", "--versions").stdout
+        globals_ = [line.split() for line in registry.splitlines() if line and line != "done"]
+        versions = {name: int(version) for name, version in globals_}
+        assert versions["xdg_wm_base"] == 7 and versions["zwlr_layer_shell_v1"] == 5, versions
+        if "zwp_linux_dmabuf_v1" in versions:
+            assert versions["zwp_linux_dmabuf_v1"] == 5, versions
         for interface in ("ext_workspace_manager_v1", "wp_color_manager_v1",
                           "wp_color_representation_manager_v1", "xdg_toplevel_tag_manager_v1",
                           "wp_content_type_manager_v1", "wp_tearing_control_manager_v1",
                           "xdg_activation_v1", "wp_fifo_manager_v1"):
-            assert interface in registry, interface
-        assert "wp_drm_lease_device_v1" not in registry, "headless backend must not offer DRM leases"
+            assert interface in versions, interface
+        assert "wp_drm_lease_device_v1" not in versions, "headless backend must not offer DRM leases"
         # Every global is advertised once. linux-dmabuf used to be created both
         # by wlr_renderer_init_wl_display and by setup.zig, and Mesa's WSI bound
         # both and leaked one. Only per-device globals repeat: one wl_output
         # per output (two here), and a seat per seat.
-        counts = Counter(line for line in registry.splitlines() if line and line != "done")
+        counts = Counter(name for name, _ in globals_)
         repeated = {name: n for name, n in counts.items() if n > 1 and name not in ("wl_output", "wl_seat")}
         assert not repeated, f"globals advertised more than once: {repeated}"
         assert counts["wl_output"] == 2, counts

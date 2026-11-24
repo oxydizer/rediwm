@@ -2,7 +2,9 @@
 
 ## Wayland protocols
 
-On top of xdg-shell, layer-shell and Xwayland:
+RediWM supports xdg-shell v7, wlr-layer-shell v5 and Xwayland. Tiled
+Wayland windows receive resize hints for their outer edges. Panels can
+reserve space on a specific output edge, including from a corner.
 
 | Area | Protocols | Works with |
 | --- | --- | --- |
@@ -17,7 +19,7 @@ On top of xdg-shell, layer-shell and Xwayland:
 | Window metadata | `xdg-toplevel-tag-v1`, `content-type-v1`, `xdg-activation-v1` | window rules, content hints, activation |
 | Colour | `color-management-v1`, `color-representation-v1` | whatever the renderer supports |
 | Presentation | `tearing-control-v1`, `drm-lease-v1` | opt-in fullscreen tearing, VR headsets |
-| Rendering | `fractional-scale-v1`, `viewporter`, `single-pixel-buffer-v1`, `linux-dmabuf-v1`, `linux-drm-syncobj-v1`, `presentation-time` | |
+| Rendering | `fractional-scale-v1`, `viewporter`, `single-pixel-buffer-v1`, `linux-dmabuf-v1` (v5 on renderers with DMA-BUF import), `linux-drm-syncobj-v1`, `presentation-time` | |
 
 ## Things worth knowing
 
