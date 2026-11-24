@@ -6715,6 +6715,10 @@ msgstr "Проводные и беспроводные подключения."
 msgid "Wireless connections"
 msgstr "Беспроводные подключения"
 
+#: src/files/app_menu.zig
+msgid "New Tab"
+msgstr "Новая вкладка"
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr "Новое окно"

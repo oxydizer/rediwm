@@ -7872,6 +7872,10 @@ msgstr ""
 msgid "Wireless connections"
 msgstr ""
 
+#: src/files/app_menu.zig
+msgid "New Tab"
+msgstr ""
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr ""

@@ -43,8 +43,10 @@ fn move(ctx: *anyopaque, id: u32, index: u32) void {
     app.moveTab(from, index);
 }
 
-/// Files has no leading button; the strip is not asked for one.
-fn leading(_: *anyopaque, _: i32, _: i32, _: i32, _: i32) void {}
+/// The application icon in the titlebar opens the application menu under it.
+fn leading(ctx: *anyopaque, x: i32, _: i32, _: i32, _: i32) void {
+    client(ctx).app.toggleAppMenu(@floatFromInt(@max(0, x)));
+}
 
 /// Shows the strip in the titlebar or takes it back, and keeps it current.
 /// Cheap to call often: an unchanged strip sends nothing.
@@ -64,5 +66,5 @@ pub fn sync(self: *Client) void {
         const title = app.tabTitle(i);
         list[i] = .{ .id = @truncate(t.id), .title = if (std.unicode.utf8ValidateSlice(title)) title else "?" };
     }
-    self.tabs.publish(list[0..count], @truncate(app.tabs.items[@min(app.tab_selected, count - 1)].id), false);
+    self.tabs.publish(list[0..count], @truncate(app.tabs.items[@min(app.tab_selected, count - 1)].id), true);
 }

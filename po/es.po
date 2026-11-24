@@ -6709,6 +6709,10 @@ msgstr "Conexiones cableadas e inalámbricas."
 msgid "Wireless connections"
 msgstr "Conexiones inalámbricas"
 
+#: src/files/app_menu.zig
+msgid "New Tab"
+msgstr "Nueva pestaña"
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr "Nueva ventana"

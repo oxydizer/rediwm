@@ -6709,6 +6709,10 @@ msgstr "Conexões cabeadas e sem fio."
 msgid "Wireless connections"
 msgstr "Conexões sem fio"
 
+#: src/files/app_menu.zig
+msgid "New Tab"
+msgstr "Nova aba"
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr "Nova janela"

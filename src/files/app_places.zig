@@ -128,6 +128,23 @@ pub fn openPlaceWindow(self: *App, index: usize) void {
     };
 }
 
+/// A new Files window on `path`.
+pub fn openWindowAt(self: *App, path: []const u8) void {
+    if (self.chooser != null) return;
+    var exe: [platform.exe.max_path]u8 = undefined;
+    const executable: []const u8 = platform.exe.path(&exe) orelse "rediwm-files";
+    var child = std.process.spawn(self.io, .{
+        .argv = &.{ executable, path },
+    }) catch {
+        self.setStatusNotice(tr("Could not open new window"), true);
+        return;
+    };
+    self.children.add(self.allocator, child.id.?) catch {
+        child.kill(self.io);
+        self.setStatusNotice(tr("Could not open new window"), true);
+    };
+}
+
 /// A click on a pin: a folder is browsed, a file opened as a double-click
 /// would (a file chooser browses the folder holding it instead).
 pub fn openPin(self: *App, j: usize) void {

@@ -17,7 +17,7 @@ const Editor = @import("editor.zig").Editor;
 
 pub const DeviceOp = struct { id: []u8, unmount: bool, open: bool, navigation: u32 };
 
-pub const MenuKind = enum { new, sort, filter, file, background, sidebar, device, chooser_filter };
+pub const MenuKind = enum { new, sort, filter, file, background, sidebar, device, chooser_filter, app };
 pub const PlaceAction = enum {
     open,
     open_window,

@@ -335,6 +335,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
             .normal => &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Paste"), i18n.msg("Refresh") },
         },
         .chooser_filter => return self.chooser_filter_labels.items,
+        .app => &.{ i18n.msg("New Tab"), i18n.msg("New Window"), i18n.msg("Show hidden files"), i18n.msg("Terminal"), i18n.msg("Transfers") },
     };
     for (messages, 0..) |message, i| self.menu_label_text[i] = message.get();
     return self.menu_label_text[0..messages.len];
@@ -350,6 +351,17 @@ pub fn openMenu(self: *App, kind: MenuKind, x: f64, y: f64) void {
     self.menu_selected = 0;
     self.last_click_index = null;
     self.invalidate();
+}
+
+/// The application menu, opened from the titlebar's leading button at `x`; a
+/// second press on the button closes it.
+pub fn toggleAppMenu(self: *App, x: f64) void {
+    if (self.menu == .app) {
+        self.menu = null;
+        self.invalidate();
+        return;
+    }
+    self.openMenu(.app, x, 4);
 }
 
 pub fn menuHit(self: *App, x: f64, y: f64) ?usize {
@@ -393,6 +405,14 @@ pub fn runMenu(self: *App, row: usize) void {
             },
             .mount => self.activateDevice(self.menu_place - self.deviceBase()),
             .eject => self.ejectDevice(self.menu_place - self.deviceBase()),
+        },
+        .app => switch (row) {
+            0 => self.newTab(),
+            1 => self.openWindowAt(self.history.current),
+            2 => self.toggleHidden(),
+            3 => self.terminalToggle(),
+            4 => self.openTransfers(),
+            else => {},
         },
         .chooser_filter => {
             if (row < self.chooser.?.filters.len) self.chooser.?.filter_index = row;
@@ -471,6 +491,7 @@ pub fn renderMenu(self: *App, cr: *c.cairo_t) void {
     for (labels, 0..) |label, i| {
         const row = self.menuRowRect(i);
         const checked = (self.menu == .sort and sort_options[i] == self.effectiveSort()) or
+            (self.menu == .app and i == 2 and self.show_hidden) or
             (self.menu == .filter and ((i == 0 and self.folders_only) or (i == 1 and self.show_hidden) or (i == 2 and self.changed_only) or (i == 3 and self.full_paths)));
         context_menu.row(cr, .{ .x = row.x, .y = row.y, .w = row.w, .h = row.h }, .{
             .label = label,

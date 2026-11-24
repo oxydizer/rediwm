@@ -6712,6 +6712,10 @@ msgstr "Kabel- und Funkverbindungen."
 msgid "Wireless connections"
 msgstr "Funkverbindungen"
 
+#: src/files/app_menu.zig
+msgid "New Tab"
+msgstr "Neuer Tab"
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr "Neues Fenster"

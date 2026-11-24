@@ -692,6 +692,8 @@ pub const App = struct {
     pub const stepTabs = app_tabs.stepTabs;
     pub const newTab = app_tabs.newTab;
     pub const closeTab = app_tabs.closeTab;
+    pub const toggleAppMenu = app_menu.toggleAppMenu;
+    pub const openWindowAt = app_places.openWindowAt;
     pub const moveTab = app_tabs.moveTab;
 
     // app_listing.zig
