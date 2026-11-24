@@ -10,6 +10,35 @@ const readTestFile = files_tests.readTestFile;
 
 extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 
+fn archiveBenchmarkRoot(
+    allocator: std.mem.Allocator,
+    fallback_buf: []u8,
+) ![]u8 {
+    const configured = getenv("REDIWM_ARCHIVE_BENCH_DIR") orelse {
+        const fallback = try makeTestDir(fallback_buf);
+        return allocator.dupe(u8, fallback);
+    };
+
+    const base = std.mem.span(configured);
+    if (base.len == 0) return error.InvalidBenchmarkDirectory;
+
+    const template = try std.fmt.allocPrintSentinel(
+        allocator,
+        "{s}/rediwm_archive_bench_XXXXXX",
+        .{base},
+        0,
+    );
+    defer allocator.free(template);
+
+    const created = c.mkdtemp(template) orelse
+        return error.BenchmarkDirectoryCreationFailed;
+
+    return allocator.dupe(u8, std.mem.span(created)) catch |err| {
+        _ = c.rmdir(created);
+        return err;
+    };
+}
+
 fn writeArchiveBenchmarkFixture(
     allocator: std.mem.Allocator,
     path: []const u8,
@@ -206,7 +235,8 @@ test "archive directory fd benchmark" {
     const files_per_directory = 128;
     const file_count = directory_count * files_per_directory;
     var buf: [256]u8 = undefined;
-    const root = try makeTestDir(&buf);
+    const root = try archiveBenchmarkRoot(allocator, &buf);
+    defer allocator.free(root);
     defer ops_mod.deleteRecursive(allocator, root) catch {};
     const source = try std.fmt.allocPrint(allocator, "{s}/archive.zip", .{root});
     defer allocator.free(source);
