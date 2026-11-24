@@ -1,6 +1,6 @@
 //! The HDR static metadata data block of an EDID's CTA-861 extensions (CTA-861-H
 //! 7.5.13): which transfer functions the display takes and the luminance range
-//! it suggests for content. HDR (docs/plans/hdr.md, phase 3) caps the SDR white
+//! it suggests for content. HDR caps the SDR white
 //! level at that peak and sends the range as mastering metadata. A display that
 //! describes itself only in DisplayID blocks reports nothing here.
 

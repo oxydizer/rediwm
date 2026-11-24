@@ -118,9 +118,7 @@ def output_management(tmp):
         # and the mode stays as configured.
         s.run("wlr-randr", "--output", "HEADLESS-1", "--adaptive-sync", "enabled", ok=False)
         assert s.output("HEADLESS-1")["adaptive_sync"] == "auto"
-        # HDR (docs/plans/hdr.md, Phase 1): headless cannot take HDR10, but
-        # the setting is saved and reported like on any output; nothing is
-        # committed differently yet.
+        # Headless outputs persist HDR settings and keep an SDR signal.
         out = s.output("HEADLESS-2")
         assert (out["hdr"], out["hdr_supported"], out["hdr_active"], out["sdr_white"]) == ("off", False, False, 203), out
         s.ipc.request(query="set_output_config", params={"output": "HEADLESS-2", "hdr": "on", "sdr_white": 250})

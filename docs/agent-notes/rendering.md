@@ -227,7 +227,7 @@ chrome, capture, or retained panel painting. General rules remain in
   layout trees), never `wlr_scene_node_at` on the root. GLES2 lets go of a
   plain buffer once uploaded, so "has content" is a buffer, a texture or a
   single-pixel colour (`present_leaf`, `collect`).
-* **Linear passes** (HDR phase 2, `scene_pass_linear.c`, `docs/plans/hdr.md`):
+* **Linear passes** (`scene_pass_linear.c`):
   an output with `[[outputs]] hdr = "on"` that `output/hdr.zig` lets blend in
   linear light (headless, nested, or a display that takes HDR10; never the
   greeter) is drawn through the `LINEAR` twins of the shaped programs into a
@@ -253,9 +253,22 @@ chrome, capture, or retained panel painting. General rules remain in
   `commitFrameState`) records the outcome. A refusal holds for the mode and
   setting. While the signal is on, night light is the encode's matrix
   (`night_light/color.zig` `hdrAdjust`) and the gamma table stays neutral,
-  client gamma ramps fail (D6), and software cursors are locked (wlroots'
+  client gamma ramps fail, and software cursors are locked (wlroots'
   GLES2 cursor path ignores colour transforms). No headless test reaches this
   path.
+* **Client colour** (`scene_pass_color.c`, `scene_pass_yuv.c`). Set the pass
+  source for both textures and single-pixel surface colours. The managed
+  shader decodes the straight sample and restores alpha before blending.
+  The pass destination supplies absolute PQ scaling and selects SDR highlight
+  roll-off. A change in desktop white or signal invalidates the retained
+  image and blurs. The EGLImage for a tagged video buffer includes the plane
+  modifiers, YCbCr matrix and range. Its lifetime follows the buffer addon.
+  Changes to only a colour description touch the node so projection damages
+  its previous pixels. Live previews follow the same committed metadata.
+  Preferred descriptions follow the primary visible output and its committed
+  colour serial. wlroots initialises late feedback objects to SDR, so
+  `surface_feedback.c` refreshes them before a preferred-description query.
+  `zig build test-hdr` and `tests/hdr_content.py` exercise these paths.
 * **Captures of linear outputs are SDR** (phase 5, `capture_sdr.c`): an
   output whose frames come from the linear pass is captured from an sRGB
   encode of its FP16 image (`rediwm_scene_output_sdr_copy`, once per build),
@@ -269,7 +282,14 @@ chrome, capture, or retained panel painting. General rules remain in
   after an update. The screenshot tool and IPC `sample_pixels` read the same
   copy (`raw` reads the output's buffer). `capture_sdr_copies` in
   `rediwm-msg perf` counts them; `tests/hdr_linear.py` checks every path on
-  a headless linear output, where both pictures are the same.
+  a headless linear output, where both pictures are the same. wlroots
+  negotiates shm formats from scanout. For a 10-bit shm request, encode SDR
+  into a buffer matching the native swapchain format. An eight-bit FBO can
+  leave a packed ten-bit GL read untouched. Both SDR buffers are allocated
+  on demand and encoded once per build and depth. Screencopy substitutes
+  the SDR buffer in the commit event and leaves damage tracking and frame
+  cleanup to wlroots. `tests/hdr_linear.py --ten-bit-capture` checks both
+  capture protocols and the screencopy buffer release.
 * **The veil** (`rediwm_scene_output_set_veil`, driven by `reveal.zig`) is
   black drawn over every entry and under the software cursor: the session's
   fade in from black and the greeter's fade out. It exists only on DRM and

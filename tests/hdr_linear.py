@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HDR phase 2 (docs/plans/hdr.md): linear blending on a headless output.
+"""Linear blending and SDR capture on a headless output.
 
 With `[[outputs]] hdr = "on"` a headless output blends in linear light into a
 kept FP16 image and encodes it back to sRGB. Checks, by IPC screenshots:
@@ -19,6 +19,7 @@ kept FP16 image and encodes it back to sRGB. Checks, by IPC screenshots:
 Creates its own headless session; never connects to the host desktop.
 Set REDIWM_TEST_SCALE (1 by default) to repeat at a fractional scale.
 """
+import argparse
 import os
 from pathlib import Path
 import subprocess
@@ -34,6 +35,15 @@ import capture as capture_test
 import wlr_protocols
 
 OUTPUT = "HEADLESS-1"
+RGB10_FORMATS = tuple(int.from_bytes(name, "little") for name in (b"XR30", b"AR30", b"XB30", b"AB30"))
+
+
+def capture_rgb(fmt, octets):
+    if fmt not in RGB10_FORMATS:
+        return capture_test.rgba(fmt, *octets)[:3]
+    word = int.from_bytes(bytes(map(int, octets)), "little")
+    lo, green, hi = (((word >> shift & 1023) * 255 + 511) // 1023 for shift in (0, 10, 20))
+    return (hi, green, lo) if fmt in RGB10_FORMATS[:2] else (lo, green, hi)
 
 
 def output(ipc):
@@ -130,7 +140,7 @@ def copies(ipc):
     return ipc.request(query="get_performance_stats").get("capture_sdr_copies", 0)
 
 
-def captures(hdr):
+def captures(hdr, deep=False):
     """Each capture protocol against an output with `hdr`; returns the SDR copies made."""
     with tempfile.TemporaryDirectory(prefix="rediwm-hdr-capture-") as directory:
         tmp = Path(directory)
@@ -138,9 +148,16 @@ def captures(hdr):
         (tmp / "sc").mkdir()
         capture_test.build_client(tmp / "ext")
         wlr_protocols.compile_fixture(tmp / "sc")
+        private = {}
+        if deep:
+            hook = tmp / "hdr-capture-format.so"
+            flags = subprocess.check_output(["pkg-config", "--cflags", "--libs", "wlroots-0.20", "libdrm"], text=True)
+            subprocess.run(["cc", "-shared", "-fPIC", str(Path(__file__).with_name("hdr_capture_format.c")),
+                            "-o", str(hook), *flags.split(), "-ldl"], check=True)
+            private["LD_PRELOAD"] = str(hook)
         config = f'[compositor]\nxwayland = false\n[animations]\nenabled = false\n[[outputs]]\nname = "{OUTPUT}"\nhdr = "{hdr}"\n'
         process, _ = spawn_compositor(tmp, scale="1", renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
-                                      config_content=config)
+                                      config_content=config, env_extra=private)
         client = None
         try:
             with IPCClient(tmp, timeout=15) as ipc:
@@ -155,6 +172,9 @@ def captures(hdr):
                 copy = subprocess.run([str(tmp / "sc" / "fixture"), "screencopy"], env=env, capture_output=True,
                                       text=True, timeout=20).stdout.split()
                 assert copy[:3] == ["ready", "1280", "720"] and int(copy[3].split("=")[1]) > 0, copy
+                if deep:
+                    fmt = int(copy[4].split("=")[1])
+                    assert fmt in RGB10_FORMATS, f"screencopy did not negotiate 10-bit shm: {fmt:#x}"
                 screencopy_copies = copies(ipc)
 
                 # grim, whichever protocol it prefers, against the screen.
@@ -163,7 +183,7 @@ def captures(hdr):
                 with Image.open(tmp / "grim.png") as image:
                     grabbed = image.convert("RGB")
                 width, height = screen.size
-                assert worst(screen, grabbed, (0, 0, width, height * 85 // 100)) == 0, "grim differs from the screen"
+                assert worst(screen, grabbed, (0, 0, width, height * 85 // 100)) <= (1 if deep else 0), "grim differs from the screen"
 
                 # ext-image-copy-capture, shm and dmabuf (a fresh fixture each,
                 # as capture.py runs it), against the compositor's own read.
@@ -182,14 +202,17 @@ def captures(hdr):
                     ready = wait_for(lambda: next((l for l in log_path.read_text().splitlines() if l.startswith("ready")), None),
                                      f"{command}: no frame")
                     fmt = int(ready.split()[3])
+                    if deep:
+                        assert fmt in RGB10_FORMATS, f"{command} did not negotiate a 10-bit buffer: {fmt:#x}"
                     client.stdin.write("sample 50 50\n")
                     client.stdin.flush()
                     line = wait_for(lambda: next((l for l in log_path.read_text().splitlines() if l.startswith("pixel 50 50")), None),
                                     f"{command}: no sample")
-                    got = capture_test.rgba(fmt, *line.split()[3:7])[:3]
+                    got = capture_rgb(fmt, line.split()[3:7])
                     argb = ipc.action("sample_pixels", {"output": OUTPUT, "x": 50, "y": 50})["pixels"][0]  # 0xAARRGGBB
                     expected = ((argb >> 16) & 255, (argb >> 8) & 255, argb & 255)
-                    assert got == expected, (command, got, expected)
+                    # The 8-bit and native 10-bit SDR encodes round independently.
+                    assert max(abs(a-b) for a, b in zip(got, expected)) <= (1 if deep else 0), (command, got, expected)
                     client.stdin.write("quit\n")
                     client.stdin.flush()
                     client.wait(timeout=10)
@@ -203,11 +226,12 @@ def captures(hdr):
         return screencopy_copies, total
 
 
-def run_captures():
-    screencopy_copies, total = captures("on")
+def run_captures(deep=False):
+    screencopy_copies, total = captures("on", deep)
     # Screencopy, grim, and the two ext copies all came from the SDR encode.
     assert screencopy_copies >= 1 and total >= screencopy_copies + 3, (screencopy_copies, total)
-    assert captures("off") == (0, 0), "an output without HDR used the SDR copies"
+    if not deep:
+        assert captures("off") == (0, 0), "an output without HDR used the SDR copies"
     print("PASS: captures of a linear output come from its sRGB encode and match the screen")
 
 
@@ -242,6 +266,11 @@ def run_mixed():
 
 
 if __name__ == "__main__":
-    run()
-    run_captures()
-    run_mixed()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ten-bit-capture", action="store_true", help="exercise capture on a real 10-bit headless swapchain")
+    if parser.parse_args().ten_bit_capture:
+        run_captures(deep=True)
+    else:
+        run()
+        run_captures()
+        run_mixed()

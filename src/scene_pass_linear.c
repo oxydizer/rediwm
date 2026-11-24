@@ -1,23 +1,26 @@
-// ---- Linear passes (docs/plans/hdr.md, phase 2) ---------------------------------
+// Linear composition and output encoding.
 // Part of scene_pass.c. A linear pass blends in linear light (BT.2020, 1.0 =
 // SDR white) into an FP16 image of the output kept by the caller, then encodes
 // the parts the output's buffer lacks. Nothing here is built or allocated
 // until an output asks for it.
 #include "scene_pass_internal.h"
+#include "scene_pass_color.h"
 
 // FP16 to the output's buffer, after `adjust` (night light, a matrix on linear
 // BT.2020). `mode` 0: BT.2020 to BT.709, clipped, gamma 2.2, the inverse of
 // GLSL_LIN inside sRGB's gamut. 1: HDR10, SMPTE ST 2084 (PQ) on BT.2020 with
-// 1.0 at `white` (SDR white over 10000 cd/m²), clipped at 10000.
+// 1.0 at `white` (SDR white over 10000 cd/m²), clipped at 10000. Mode 2
+// rolls extended highlights into the SDR range for a capture.
 static const char encode_vertex[] =
     "attribute vec2 position; void main(){ gl_Position=vec4(position*2.-1.,0.,1.); }";
 static const char encode_fragment[] =
     "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n"
-    "uniform sampler2D tex; uniform vec2 target; uniform float mode, white; uniform mat3 adjust;"
+    GLSL_SDR_KNEE
+    "uniform highp sampler2D tex; uniform vec2 target; uniform float mode, white; uniform mat3 adjust;"
     "void main(){ vec3 c=adjust*texture2D(tex,gl_FragCoord.xy/target).rgb;"
-    "if(mode>.5){ vec3 p=pow(clamp(c*white,0.,1.),vec3(.1593017578125));"
+    "if(mode==1.){ vec3 p=pow(clamp(c*white,0.,1.),vec3(.1593017578125));"
     "gl_FragColor=vec4(pow((.8359375+18.8515625*p)/(1.+18.6875*p),vec3(78.84375)),1.); return; }"
-    "c=clamp(mat3(1.660491,-.124550,-.018151,-.587641,1.132900,-.100579,-.072850,-.008349,1.118730)*c,0.,1.);"
+    "c=" GLSL_BT2020_TO_BT709 "*c; if(mode==2.)c=knee(c); c=clamp(c,0.,1.);"
     "gl_FragColor=vec4(pow(c,vec3(1./2.2)),1.); }";
 
 #ifndef GL_HALF_FLOAT
@@ -204,7 +207,7 @@ void rediwm_scene_pass_encode(struct wlr_render_pass *base, const pixman_region3
     bool adjusted = false;
     if (options) for (int i = 0; i < 9; i++) if (options->adjust[i] != 0) adjusted = true;
     glUniformMatrix3fv(r->encode_adjust, 1, GL_FALSE, adjusted ? options->adjust : identity);
-    glUniform1f(r->encode.mode, options && options->pq ? 1.f : 0.f);
+    glUniform1f(r->encode.mode, options && options->pq ? 1.f : options && options->tone_map ? 2.f : 0.f);
     glUniform1f(r->encode_white, options && options->pq ? options->sdr_white / 10000.f : 1.f);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, p->linear->tex);

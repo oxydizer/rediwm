@@ -547,7 +547,7 @@ fn buildHdr(out: *Section, maybe_output: ?*Output) void {
         out.hdr_rows[out.hdr_row_count] = rowWidget(&out.sdr_white_row_children);
         out.hdr_row_count += 1;
     }
-    // Untried on real HDR displays so far (docs/plans/hdr.md): say so, and say
+    // Untried on real HDR displays so far: say so, and say
     // when the driver would not take the signal.
     out.hdr_rows[out.hdr_row_count] = .{ .kind = .{ .text = .{
         .content = if (mode == .on and hdr.refused(output))

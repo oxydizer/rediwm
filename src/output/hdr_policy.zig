@@ -1,4 +1,4 @@
-//! When an output carries an HDR10 signal (docs/plans/hdr.md, phase 3), and
+//! When an output carries an HDR10 signal, and
 //! how a refusal is remembered. Pure, so the decisions are unit-tested;
 //! `hdr.zig` applies them to the output and its frame state.
 

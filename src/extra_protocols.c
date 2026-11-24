@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <wlr/backend/drm.h>
-#include <wlr/render/wlr_renderer.h>
+#include <wlr/render/gles2.h>
 #include <wlr/util/log.h>
 #include <wlr/types/wlr_alpha_modifier_v1.h>
 #include <wlr/types/wlr_color_management_v1.h>
@@ -18,11 +18,13 @@
 #include <wlr/types/wlr_ext_workspace_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include "scene_outputs.h"
+#include "surface_feedback.h"
 #include <wlr/types/wlr_tearing_control_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xdg_toplevel_tag_v1.h>
 
 struct rediwm_protocols {
+  struct rediwm_color_feedback feedback;
   struct wlr_content_type_manager_v1 *content;
   struct wlr_tearing_control_manager_v1 *tearing;
   struct wlr_drm_lease_v1_manager *lease;
@@ -229,7 +231,11 @@ void rediwm_protocols_destroy(struct rediwm_protocols *p) {
   wl_list_remove(&p->tag.link); wl_list_remove(&p->description.link);
   wl_list_remove(&p->lease_request.link); wl_list_remove(&p->layout_add.link);
   // The outputs go before the display: detach the colour manager they follow.
-  if (p->scene) rediwm_scene_outputs_set_color_manager(p->scene, NULL);
+  if (p->scene) {
+    rediwm_color_feedback_finish(&p->feedback);
+    p->scene->feedback = NULL;
+    rediwm_scene_outputs_set_color_manager(p->scene, NULL);
+  }
   wl_list_remove(&p->workspace_commit.link);
   free(p);
 }
@@ -250,18 +256,42 @@ struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
   if (!p->content || !p->tearing || !tags) goto fail;
   p->tag.notify = on_tag; wl_signal_add(&tags->events.set_tag, &p->tag);
   p->description.notify = on_description; wl_signal_add(&tags->events.set_description, &p->description);
-  if (!wlr_color_representation_manager_v1_create_with_renderer(display, 1, renderer)) goto fail;
-  struct wlr_color_manager_v1_options options = {0};
-  options.features.parametric = renderer->features.input_color_transform;
+  const enum wp_color_representation_surface_v1_alpha_mode alpha =
+      WP_COLOR_REPRESENTATION_SURFACE_V1_ALPHA_MODE_PREMULTIPLIED_ELECTRICAL;
+  const struct wlr_color_representation_v1_coeffs_and_range pairs[] = {
+      { WP_COLOR_REPRESENTATION_SURFACE_V1_COEFFICIENTS_IDENTITY, WP_COLOR_REPRESENTATION_SURFACE_V1_RANGE_FULL },
+#define YUV_RANGES(c) { WP_COLOR_REPRESENTATION_SURFACE_V1_COEFFICIENTS_##c, WP_COLOR_REPRESENTATION_SURFACE_V1_RANGE_FULL }, \
+                      { WP_COLOR_REPRESENTATION_SURFACE_V1_COEFFICIENTS_##c, WP_COLOR_REPRESENTATION_SURFACE_V1_RANGE_LIMITED }
+      YUV_RANGES(BT601), YUV_RANGES(BT709), YUV_RANGES(BT2020),
+#undef YUV_RANGES
+  };
+  const struct wlr_color_representation_v1_options representation = {
+      .supported_alpha_modes = &alpha, .supported_alpha_modes_len = 1,
+      .supported_coeffs_and_ranges = pairs,
+      .supported_coeffs_and_ranges_len = wlr_gles2_renderer_check_ext(renderer, "GL_OES_EGL_image_external")
+          ? sizeof(pairs) / sizeof(pairs[0]) : 1,
+  };
+  if (!wlr_color_representation_manager_v1_create(display, 1, &representation)) goto fail;
+  const enum wp_color_manager_v1_transfer_function functions[] = {
+      WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA22, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_COMPOUND_POWER_2_4,
+      WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ,
+  };
+  const enum wp_color_manager_v1_primaries primaries[] = {
+      WP_COLOR_MANAGER_V1_PRIMARIES_SRGB, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020,
+  };
   const enum wp_color_manager_v1_render_intent intent = WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL;
-  options.render_intents = &intent; options.render_intents_len = 1;
-  // A renderer without input transforms returns empty capability lists.
-  // It still exposes output/surface feedback, but no parametric creator.
-  options.transfer_functions = wlr_color_manager_v1_transfer_function_list_from_renderer(renderer, &options.transfer_functions_len);
-  options.primaries = wlr_color_manager_v1_primaries_list_from_renderer(renderer, &options.primaries_len);
+  const struct wlr_color_manager_v1_options options = {
+      .features = {.parametric = true, .set_mastering_display_primaries = true},
+      .render_intents = &intent, .render_intents_len = 1,
+      .transfer_functions = functions, .transfer_functions_len = sizeof(functions) / sizeof(functions[0]),
+      .primaries = primaries, .primaries_len = sizeof(primaries) / sizeof(primaries[0]),
+  };
   struct wlr_color_manager_v1 *color = wlr_color_manager_v1_create(display, 2, &options);
-  free((void *)options.transfer_functions); free((void *)options.primaries);
   if (!color) goto fail;
+  p->feedback.display = display;
+  p->feedback.manager = color;
+  wl_list_init(&p->feedback.hdr_surfaces);
+  scene->feedback = &p->feedback;
   rediwm_scene_outputs_set_color_manager(scene, color);
   p->scene = scene;
   struct wlr_ext_workspace_manager_v1 *workspaces = wlr_ext_workspace_manager_v1_create(display, 1);

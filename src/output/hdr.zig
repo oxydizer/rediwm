@@ -1,9 +1,9 @@
-//! HDR on an `Output` (docs/plans/hdr.md): the `[[outputs]] hdr` and
+//! HDR on an `Output`: the `[[outputs]] hdr` and
 //! `sdr_white` settings, what the display can do, whether the output pass
 //! blends it in linear light (phase 2), and the HDR10 signal (phase 3): a
 //! 10-bit render format and a PQ/BT.2020 image description committed with a
 //! frame encoded for them, night light moved from the gamma table into the
-//! encode, software cursors, and client gamma ramps refused (D6). Decided per
+//! encode, software cursors, and client gamma ramps refused. Decided per
 //! frame (`hdr_policy.zig`); a refusal is remembered for the mode.
 
 const std = @import("std");
@@ -116,7 +116,7 @@ pub fn prepare(output: *Output, state: *wlr.Output.State) bool {
         }
         // The gamma table changes hands in the same commit: neutral under the
         // signal (night light moves into the encode, a client ramp is
-        // refused, D6), night light's again without it.
+        // refused), night light's again without it.
         if (changes) handOverGamma(output);
     }
     sync(output);
@@ -198,7 +198,10 @@ pub fn sync(output: *Output) void {
 }
 
 fn encodeFor(output: *Output) Encode {
-    if (!signal(output)) return .{};
+    if (!signal(output)) {
+        const white = sdrWhite(output);
+        return .{ .sdr_white = if (white == output_config.sdr_white_default) 0 else white };
+    }
     return .{ .pq = true, .sdr_white = sdrWhiteSent(output), .adjust = night_color.hdrAdjust(output.server.night_light.outputTemperature(output)) };
 }
 
@@ -221,6 +224,28 @@ pub fn syncAll(server: *Server) void {
         sync(output);
         output.wlr_output.scheduleFrame();
     }
+}
+
+/// A refused FP16 target or a failed PQ composition must not send SDR pixels
+/// under the HDR signal. The next frame restores the SDR format and gamma.
+pub fn buildFailed(output: *Output) void {
+    policy.refuse(&output.hdr.policy);
+    handOverGamma(output);
+    output.wlr_output.scheduleFrame();
+}
+
+/// Capture from an output-sized composited image. A fullscreen HDR client's
+/// scanout buffer can have a crop and has no retained SDR encode of its frame.
+pub fn captureBuffer(output: *Output, scene_output: *SceneOutput, state: *wlr.Output.State, raw: bool) ?*wlr.Buffer {
+    const pq = active(output);
+    if (pq) output.wlr_output.lockAttachRender(true);
+    defer if (pq) output.wlr_output.lockAttachRender(false);
+    if (!output.server.buildOutputState(scene_output, state)) return null;
+    if (!raw) {
+        if (output.server.output_renderer.sdrCopy(scene_output)) |buffer| return buffer;
+        if (pq) return null;
+    }
+    return state.buffer;
 }
 
 /// The last frame built for this output blended in linear light.

@@ -10,6 +10,8 @@
 #pragma once
 #include "node.h"
 #include <wlr/types/wlr_alpha_modifier_v1.h>
+#include <wlr/types/wlr_color_management_v1.h>
+#include <wlr/types/wlr_color_representation_v1.h>
 #include <wlr/util/box.h>
 
 struct wlr_surface;
@@ -25,6 +27,37 @@ struct rediwm_surface {
   struct wl_listener node_destroy, outputs_update, output_sample, frame_done, surface_destroy,
       surface_commit;
 };
+
+// A metadata-only commit changes every displayed pixel, including in live previews.
+static inline void rediwm_buffer_sync_surface_color(struct rediwm_buffer *scene_buffer, struct wlr_surface *surface) {
+  enum wlr_color_transfer_function tf = WLR_COLOR_TRANSFER_FUNCTION_GAMMA22;
+  enum wlr_color_named_primaries primaries = WLR_COLOR_NAMED_PRIMARIES_SRGB;
+  const struct wlr_image_description_v1_data *img_desc =
+      surface ? wlr_surface_get_image_description_v1_data(surface) : NULL;
+  if (img_desc != NULL) {
+    tf = wlr_color_manager_v1_transfer_function_to_wlr(img_desc->tf_named);
+    primaries = wlr_color_manager_v1_primaries_to_wlr(img_desc->primaries_named);
+  }
+
+  enum wlr_color_encoding color_encoding = WLR_COLOR_ENCODING_NONE;
+  enum wlr_color_range color_range = WLR_COLOR_RANGE_NONE;
+  const struct wlr_color_representation_v1_surface_state *color_repr =
+      surface ? wlr_color_representation_v1_get_surface_state(surface) : NULL;
+  if (color_repr != NULL) {
+    if (color_repr->coefficients != 0)
+      color_encoding = wlr_color_representation_v1_color_encoding_to_wlr(color_repr->coefficients);
+    if (color_repr->range != 0)
+      color_range = wlr_color_representation_v1_color_range_to_wlr(color_repr->range);
+  }
+
+  const bool color_changed = scene_buffer->transfer_function != tf || scene_buffer->primaries != primaries ||
+      scene_buffer->color_encoding != color_encoding || scene_buffer->color_range != color_range;
+  scene_buffer->transfer_function = tf;
+  scene_buffer->primaries = primaries;
+  scene_buffer->color_encoding = color_encoding;
+  scene_buffer->color_range = color_range;
+  if (color_changed) rediwm_node_touch(&scene_buffer->node);
+}
 
 // Sample committed alpha only when binding to a surface or following a commit.
 // Reconfiguring a scene clip can also happen between Wayland commits.

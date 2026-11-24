@@ -27,6 +27,7 @@
 struct program {
     GLuint id;
     unsigned bit; // which bit of pass.targets_set tracks this program's target size
+    GLint source_color;
     GLint target, dst, color, alpha, opaque, sampler, coords;
     // Shaped programs only (-1 elsewhere): the shape, and the shadow's own terms.
     GLint mode, origin, size, radii, npoly, poly, border, bcolor, glow, gcolor, offset, softness, hide, use_shape, dim;
@@ -65,6 +66,9 @@ struct rediwm_scene_renderer {
     // uniform, which every fragment of a draw reads the same). The one for external
     // textures is built by enable_external.
     struct program shaped, shaped_external;
+    struct program client[8]; // managed source draws, by destination, polygon and sampler
+    bool yuv_warned;
+    struct wl_list yuv_images; // EGL images for client buffers with declared YCbCr representation
     bool external_tried, external_ok;
     // The same, with the polygon distance compiled in (POLY), built on demand by
     // enable_polygons the first time a theme gives a window or the bar an outline.
@@ -80,7 +84,7 @@ struct rediwm_scene_renderer {
     GLuint prefix_tex, prefix_fbo, small_tex, small_fbo;
     int small_w, small_h;
     bool has_backdrops, backdrops_tried;
-    // Phase 2 of docs/plans/hdr.md, built by enable_linear the first time an
+    // Linear-light programs, built by enable_linear the first time an
     // output blends in linear light and never otherwise: the shaped programs
     // with LINEAR defined (every input decoded to linear BT.2020, 1.0 = SDR
     // white), the ribbon likewise, the encode from the FP16 target into the
@@ -125,7 +129,10 @@ struct pass {
     // of the buffer and reaches the buffer only through rediwm_scene_pass_encode,
     // after which nothing more may be drawn.
     struct rediwm_linear_target *linear;
-    bool encoded;
+    bool encoded, hdr, convert;
+    float sdr_white;
+    const struct rediwm_buffer *source;
+    GLuint yuv_texture; // temporary binding for this pass
 };
 struct rediwm_linear_target {
     GLuint tex, fbo;
@@ -224,6 +231,11 @@ void scene_pass_draw(const struct pass *p, const pixman_region32_t *clip);
 void scene_pass_set_shape(const struct pass *p, const struct program *g, const struct rediwm_pass_shape *s);
 // The sources the linear programs are built from (scene_pass.c, scene_pass_ribbon.c).
 extern const char scene_pass_shaped_vertex[], scene_pass_shaped_fragment[];
+struct program *scene_pass_color_program(struct pass *, const struct rediwm_pass_shape *, bool external);
+void scene_pass_color_uniform(const struct pass *, const struct program *);
+bool scene_pass_yuv_texture(struct pass *, struct wlr_gles2_texture_attribs *);
+void scene_pass_yuv_finish(struct rediwm_scene_renderer *);
+
 // Builds the linear twin of every base program that exists and lacks one, inside
 // scene_pass_enter (scene_pass_linear.c); false when one failed to build.
 bool scene_pass_linear_build(struct rediwm_scene_renderer *r);

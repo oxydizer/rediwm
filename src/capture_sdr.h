@@ -1,4 +1,4 @@
-// SDR captures of outputs that blend in linear light (docs/plans/hdr.md, phase 5).
+// SDR captures of outputs that blend in linear light.
 //
 // wlroots' screencopy frames and ext-image-copy-capture output sources copy
 // the buffer an output commits, which on an HDR output holds PQ in 10 bits.
@@ -28,6 +28,6 @@ void rediwm_capture_sdr_wrap_source(struct rediwm_capture_sdr *, struct wlr_ext_
 struct wlr_output *rediwm_capture_sdr_source_output(struct rediwm_capture_sdr *, struct wlr_ext_image_capture_source_v1 *);
 
 // A screencopy frame whose copy is requested is completed from the SDR encode at
-// its output's next commit, if that output is linear then; else wlroots copies
-// it as usual. Before the commit; idempotent.
-void rediwm_capture_sdr_take_screencopy(struct rediwm_capture_sdr *, struct wlr_screencopy_frame_v1 *);
+// a linear output's commit. wlroots handles damage, completion and releases.
+// Also track negotiated 10-bit shm so a mode change can invalidate the request.
+void rediwm_capture_sdr_take_screencopy(struct rediwm_capture_sdr *, struct wlr_screencopy_frame_v1 *, bool linear_wanted);

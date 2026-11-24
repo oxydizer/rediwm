@@ -1,4 +1,4 @@
-// Linear pass gates (docs/plans/hdr.md, phase 2): opaque content round-trips,
+// Linear pass gates: opaque content round-trips,
 // translucency blends in linear light, the FP16 image is kept between passes,
 // the encode writes only its region and ends the pass, and glass blurs keep the
 // encoding they were taken in.
@@ -79,6 +79,49 @@ static void pq_gates(struct rediwm_scene_renderer *r, struct wlr_allocator *allo
         assert(abs(px[0] - pq_level(203)) <= 1 && px[0] == px[1] && px[1] == px[2]);
         wlr_buffer_drop(deep);
     }
+    // PQ submitted by a client is absolute. Changing desktop white must leave
+    // these 1000-nit samples unchanged after composition and PQ encoding.
+    struct rediwm_buffer node = {.transfer_function = WLR_COLOR_TRANSFER_FUNCTION_ST2084_PQ,
+        .primaries = WLR_COLOR_NAMED_PRIMARIES_BT2020};
+    for (int white = 100; white <= 400; white *= 2) {
+        pq = (struct rediwm_pass_encode){.pq = true, .sdr_white = white};
+        pass = linear_pass(r, a, t);
+        rediwm_scene_pass_set_destination(pass, &pq);
+        rediwm_scene_pass_set_source(pass, &node);
+        float encoded = pq_level(1000) / 255.f;
+        solid(pass, (struct wlr_box){0, 0, WIDTH, HEIGHT}, encoded, encoded, encoded, 1);
+        rediwm_scene_pass_encode(pass, whole, &pq);
+        assert(wlr_render_pass_submit(pass));
+        pixel_at(r, a, 10, 10, px);
+        assert(abs(px[0] - pq_level(1000)) <= 1 && px[0] == px[1] && px[0] == px[2]);
+    }
+    // Half-transparent electrically premultiplied PQ over black yields half
+    // the light, before encoding or the SDR capture's shoulder.
+    pq.sdr_white = 203;
+    pass = linear_pass(r, a, t);
+    rediwm_scene_pass_set_destination(pass, &pq);
+    solid(pass, (struct wlr_box){0, 0, WIDTH, HEIGHT}, 0, 0, 0, 1);
+    rediwm_scene_pass_set_source(pass, &node);
+    float half = .5f * pq_level(1000) / 255.f;
+    solid(pass, (struct wlr_box){0, 0, WIDTH, HEIGHT}, half, half, half, .5f);
+    rediwm_scene_pass_encode(pass, whole, &pq);
+    assert(wlr_render_pass_submit(pass));
+    pixel_at(r, a, 10, 10, px);
+    assert(abs(px[0] - pq_level(500)) <= 1);
+    pass = linear_pass(r, a, t);
+    rediwm_scene_pass_encode(pass, whole, &(struct rediwm_pass_encode){.tone_map = true});
+    assert(wlr_render_pass_submit(pass));
+    pixel_at(r, a, 10, 10, px);
+    assert(abs(px[0] - 251) <= 1 && px[0] == px[1] && px[0] == px[2]);
+    // Extended-linear samples above reference white use the same shoulder.
+    node.transfer_function = WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR;
+    pass = linear_pass(r, a, t);
+    rediwm_scene_pass_set_source(pass, &node);
+    solid(pass, (struct wlr_box){0, 0, WIDTH, HEIGHT}, 2, 2, 2, 1);
+    rediwm_scene_pass_encode(pass, whole, NULL);
+    assert(wlr_render_pass_submit(pass));
+    pixel_at(r, a, 10, 10, px);
+    assert(abs(px[0] - 250) <= 1 && px[0] == px[1] && px[0] == px[2]);
     wlr_buffer_drop(a);
     printf("PASS: PQ encodes: white level, BT.2020 container, adjustment first, %s\n",
         deep ? "8 and 10 bits" : "8 bits (no 10-bit buffers here)");

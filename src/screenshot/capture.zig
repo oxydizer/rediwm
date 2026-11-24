@@ -331,18 +331,7 @@ pub const Manager = struct {
         defer state.finish();
 
         if (is_isolated) mgr.server.world.syncPresentation();
-        if (!mgr.server.buildOutputState(scene_output, &state)) {
-            if (is_isolated) {
-                for (disabled_nodes.items) |node| node.setEnabled(true);
-                mgr.server.world.syncPresentation();
-            }
-            log.err("processPendingJob: buildState failed for {s}", .{job.output_name});
-            failJob(job, "CaptureFailed: scene render failed");
-            return;
-        }
-
-        // The frame as sRGB: an HDR output's own buffer holds PQ.
-        const buffer = mgr.server.output_renderer.sdrCopy(scene_output) orelse state.buffer orelse {
+        const buffer = @import("../output/hdr.zig").captureBuffer(job.output, scene_output, &state, false) orelse {
             if (is_isolated) {
                 for (disabled_nodes.items) |node| node.setEnabled(true);
                 mgr.server.world.syncPresentation();

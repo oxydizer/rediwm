@@ -1,7 +1,5 @@
-//! SDR captures of outputs that blend in linear light (capture_sdr.h,
-//! docs/plans/hdr.md phase 5): screencopy frames and ext-image-copy-capture
-//! output sources copy an sRGB encode of the frame instead of a buffer that
-//! may hold PQ.
+//! Screencopy and ext-image-copy-capture use the SDR encode of a linear
+//! output for screen sharing. See capture_sdr.h.
 const wlr = @import("wlroots");
 const Renderer = @import("../scene_output.zig").Renderer;
 const SceneOutputs = @import("../scene_outputs.zig").SceneOutputs;
@@ -19,6 +17,6 @@ pub const CaptureSdr = opaque {
     pub const wrapSource = rediwm_capture_sdr_wrap_source;
     extern fn rediwm_capture_sdr_source_output(sdr: *CaptureSdr, source: *wlr.ExtImageCaptureSourceV1) ?*wlr.Output;
     pub const sourceOutput = rediwm_capture_sdr_source_output;
-    extern fn rediwm_capture_sdr_take_screencopy(sdr: *CaptureSdr, frame: *wlr.ScreencopyFrameV1) void;
+    extern fn rediwm_capture_sdr_take_screencopy(sdr: *CaptureSdr, frame: *wlr.ScreencopyFrameV1, linear_wanted: bool) void;
     pub const takeScreencopy = rediwm_capture_sdr_take_screencopy;
 };

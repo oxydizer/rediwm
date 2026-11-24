@@ -54,6 +54,7 @@ struct rediwm_projection {
     float scale;
     enum wl_output_transform transform;
     enum wl_output_subpixel subpixel;
+    uint64_t color_serial;
     bool known;
   } shown_output[64];
   // The outputs whose scale, transform or subpixel order changed since: a surface

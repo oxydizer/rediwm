@@ -11,6 +11,7 @@ pub const reblurs: *u64 = &rediwm_scene_output_reblurs;
 pub const Encode = extern struct {
     /// HDR10 (PQ, BT.2020); else sRGB as displayed.
     pq: bool = false,
+    tone_map: bool = false,
     /// cd/m² of SDR white under PQ.
     sdr_white: f32 = 0,
     /// Linear BT.2020 adjustment, column-major; all zero is the identity.

@@ -48,9 +48,11 @@ void rediwm_projection_feedback_begin(struct rediwm_projection *p) {
     const unsigned i = out->index % FEEDBACK_OUTPUTS;
     if (p->shown_output[i].known &&
         (p->shown_output[i].scale != out->output->scale ||
+         p->shown_output[i].color_serial != out->color_serial ||
          p->shown_output[i].transform != out->output->transform ||
          p->shown_output[i].subpixel != out->output->subpixel))
       p->forced |= 1ull << i;
+    p->shown_output[i].color_serial = out->color_serial;
     p->shown_output[i].scale = out->output->scale;
     p->shown_output[i].transform = out->output->transform;
     p->shown_output[i].subpixel = out->output->subpixel;
@@ -108,7 +110,7 @@ static void update_feedback(struct leaf *l) {
   f->primary = primary;
   if (before == active && before_primary == primary && !(active & l->projection->forced)) return;
   struct rediwm_scene_output *outputs[FEEDBACK_OUTPUTS];
-  struct rediwm_outputs_update_event event = {.active = outputs, .size = count};
+  struct rediwm_outputs_update_event event = {.active = outputs, .size = count, .primary = primary};
   size_t i = 0;
   wl_list_for_each(out, &scene->outputs, link)
       if (active & (1ull << (out->index % FEEDBACK_OUTPUTS))) outputs[i++] = out;

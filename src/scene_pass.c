@@ -1,5 +1,6 @@
 // Stage 3 drawing backend. No output, scene traversal or geometry policy here.
 #include "scene_pass_internal.h"
+#include "scene_pass_color.h"
 
 // The parts: this file holds the renderer, its GL state and programs;
 // scene_pass_draw.c the pass and its draws (rects, textures, shapes, shadows,
@@ -132,7 +133,7 @@ const char scene_pass_shaped_vertex[] =
     "vec2 d=abs(q)-(size*.5-vec2(rad));" \
     "return length(max(d,0.))+min(max(d.x,d.y),0.)-rad; }" \
     "float cov(float d){ return clamp(.5-d,0.,1.); }" \
-    /* Linear passes (docs/plans/hdr.md, phase 2) decode every colour they read */ \
+    /* Linear passes decode every colour they read */ \
     /* and grade in linear light; elsewhere these are what the code said before. */ \
     "\n#ifdef LINEAR\n" GLSL_LIN \
     "\n#define LIN(c) lin(c)\n#define LUMA vec3(.2627,.678,.0593)\n#define DIMMED(b) pow(1.-(b),2.2)\n#define SAT(x) max(x,0.)\n" \
@@ -152,7 +153,7 @@ const char scene_pass_shaped_vertex[] =
 // distance field, so corners match it as exactly as edges), kept out of the shape
 // when `hide` is set, which matters under translucent windows. One program for the
 // three because a program costs the driver 130-150 KiB however small it is.
-const char scene_pass_shaped_fragment[] = SHAPED_HEAD
+const char scene_pass_shaped_fragment[] = SHAPED_HEAD GLSL_CLIENT_COLOR
     "uniform float alpha, opaque, mode, softness, hide; uniform vec2 offset, dim;"
     "uniform sampler2D front; uniform vec4 bmap, fmap; uniform float saturation, front_alpha, has_front, use_shape;"
     // A dimmed window (rediwm_scene_pass_set_dim): colour pulled toward its
@@ -170,7 +171,7 @@ const char scene_pass_shaped_fragment[] = SHAPED_HEAD
     "float a=f>=.99999?0.:clamp((c-f)/(1.-f),0.,1.); gl_FragColor=vec4(rgb*a,a); return; }"
     "if(mode>1.5){ float s=clamp(1.-sdf(local-offset,radii)/softness,0.,1.); s=s*s*(3.-2.*s);"
     "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=LIN(color)*s; return; }"
-    "vec4 c=LIN(color);"
+    "vec4 c=SAMPLE(color);"
     "\n#ifdef POLY\n"
     // How much of this fragment a draw that fills only part of a polar image
     // (sector_rect) takes part in: the body and the ring over it alike.
@@ -185,7 +186,7 @@ const char scene_pass_shaped_fragment[] = SHAPED_HEAD
     "at=mix(mix(sector_coords[0].xy,sector_coords[0].zw,p.x),"
     "mix(sector_coords[1].xy,sector_coords[1].zw,p.x),p.y); }"
     "\n#endif\n"
-    "c=texture2D(tex,at); if(opaque>.5)c.a=1.; c=LIN(c); c*=alpha*content; }"
+    "c=texture2D(tex,at); if(opaque>.5)c.a=1.; c=SAMPLE(c); c*=alpha*content; }"
     // A colour standing for such a part (a single-pixel buffer) ends with the
     // image and the part too. One that stands for the whole image is unchanged.
     "\n#ifdef POLY\n"
@@ -267,6 +268,7 @@ bool scene_pass_program_init(struct program *p, unsigned bit, const char *vertex
     glDeleteShader(vs);
     glDeleteShader(fs);
     if (!p->id) return false;
+    p->source_color = glGetUniformLocation(p->id, "source_color");
     p->target = glGetUniformLocation(p->id, "target");
     p->dst = glGetUniformLocation(p->id, "dst");
     p->color = glGetUniformLocation(p->id, "color");
@@ -317,6 +319,7 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
     struct rediwm_scene_renderer *r = calloc(1, sizeof(*r));
     if (!r) return NULL;
     r->renderer = renderer;
+    wl_list_init(&r->yuv_images);
     r->has_external = wlr_gles2_renderer_check_ext(renderer, "GL_OES_EGL_image_external");
     r->gen_vertex_arrays = (PFNGLGENVERTEXARRAYSOESPROC)eglGetProcAddress("glGenVertexArraysOES");
     r->bind_vertex_array = (PFNGLBINDVERTEXARRAYOESPROC)eglGetProcAddress("glBindVertexArrayOES");
@@ -359,6 +362,7 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
 void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
     if (!r) return;
     assert(!r->active);
+    scene_pass_yuv_finish(r);
     struct gl_state state;
     if (scene_pass_enter(r, &state)) {
         if (r->vertex_array) r->delete_vertex_arrays(1, &r->vertex_array);
@@ -374,6 +378,7 @@ void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
         glDeleteFramebuffers(1, &r->prefix_fbo);
         glDeleteTextures(1, &r->small_tex);
         glDeleteFramebuffers(1, &r->small_fbo);
+        for (size_t i = 0; i < 8; i++) glDeleteProgram(r->client[i].id);
         scene_pass_linear_destroy(r);
         scene_pass_leave(r, &state);
     }

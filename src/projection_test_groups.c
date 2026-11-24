@@ -240,11 +240,12 @@ static void test_graph_damage(struct rediwm_scene_outputs *scene, struct rediwm_
 // Stage 6a: what the output pass reports of a surface becomes the signals wlroots
 // would have sent. Two outputs side by side, a node over the seam.
 static int outputs_updates, frame_dones, update_size;
-static struct rediwm_scene_output *update_active[4];
+static struct rediwm_scene_output *update_active[4], *update_primary;
 static void on_outputs_update(struct wl_listener *listener, void *data) {
   (void)listener;
   const struct rediwm_outputs_update_event *event = data;
   outputs_updates++;
+  update_primary = event->primary;
   update_size = (int)event->size;
   for (size_t i = 0; i < event->size && i < 4; i++) update_active[i] = event->active[i];
 }
@@ -297,13 +298,13 @@ static void test_feedback(struct rediwm_scene_outputs *scene, struct wlr_backend
 
   // Over the seam: both outputs show more than a tenth, the one with most is primary.
   report(p, &node->node, seam - 26, 50, 200, 100); // 26 columns left, 174 right
-  assert(outputs_updates == 1 && update_size == 2 && l->feedback->primary == right);
+  assert(outputs_updates == 1 && update_size == 2 && update_primary == right && l->feedback->primary == right);
   assert(l->feedback->active == (1ull << left->index | 1ull << right->index));
   report(p, &node->node, seam - 26, 50, 200, 100);
   assert(outputs_updates == 1); // Unchanged: no signal.
   // A sliver on the other side is ignored (10 % rule): 2 of 28 columns.
   report(p, &node->node, seam - 26, 50, 28, 100);
-  assert(outputs_updates == 2 && update_size == 1 && update_active[0] == left && l->feedback->primary == left);
+  assert(outputs_updates == 2 && update_size == 1 && update_active[0] == left && update_primary == left && l->feedback->primary == left);
   // Frames are sent for what is shown, and for no output it is not.
   rediwm_projection_send_frame_done(p, left, &now);
   assert(frame_dones == 1);
@@ -331,6 +332,12 @@ static void test_feedback(struct rediwm_scene_outputs *scene, struct wlr_backend
   assert(outputs_updates == 5);
   report(p, &node->node, seam - 26, 50, 26, 100);
   assert(outputs_updates == 5);
+  // Switching the signal on a stationary output refreshes colour feedback once.
+  left->color_serial++;
+  report(p, &node->node, seam - 26, 50, 26, 100);
+  assert(outputs_updates == 6 && update_primary == left);
+  report(p, &node->node, seam - 26, 50, 26, 100);
+  assert(outputs_updates == 6);
   wlr_output_state_init(&state);
   wlr_output_state_set_scale(&state, 1.f);
   assert(wlr_output_commit_state(left_output, &state));

@@ -192,3 +192,73 @@ consumed input, client teardown, config reload and reduced motion in a private h
 `REDIWM_TEST_SCALE=1.5 REDIWM_TEST_OUTPUTS=2`. Also run `focus_zoom.py`,
 `desktop_zoom.py`, `keyboard_shortcuts.py`, `shortcuts_inhibit.py`,
 `pointer_constraints.py` and `switcher_ime.py` after changing its input routing.
+
+## HDR qualification
+
+Run `zig build test-hdr` with a GLES2 render node. Select it with
+`WLR_RENDER_DRM_DEVICE` on a multi-GPU machine. The fixture checks linear
+composition, absolute PQ values at several desktop white levels, the SDR
+capture shoulder and 10-bit targets where available. On drivers that import
+linear NV12 or P010 it also checks BT.601, BT.709 and BT.2020 in both ranges.
+Record any skipped formats with the driver and device.
+
+Run `python3 tests/hdr_content.py` and `python3 tests/hdr_linear.py` at
+`REDIWM_TEST_SCALE=1` and `1.5`. The former attaches a five-bar buffer once,
+changes its Wayland description on successive commits, and compares the raw
+and SDR IPC samples with independent transfer functions and gamut matrices.
+Add `--mpv` to the content test for a real gpu-next Wayland Vulkan client
+with a lossless HDR pattern (requires FFmpeg and mpv). The raw IPC reply
+reports the signal code in eight bits per channel. The linear test checks
+retained damage, capture protocols and a mixed-output desktop. Run
+`python3 tests/hdr_linear.py --ten-bit-capture` on a GPU that offers 10-bit
+shm readback to exercise the recorder protocols with a 10-bit swapchain.
+On a headless or nested output the final signal is SDR.
+
+For idle cost, use identical ReleaseSafe builds, one render node, and a quiet
+machine on AC. Run `python3 tests/hdr_idle.py --baseline /path/to/phase5/rediwm`.
+It alternates the baseline and candidate in fresh 1280×720 sessions and reports
+CPU as a percentage of one core, thread switches per second, process
+memory and DRM memory by client. The default is three 15-second samples per
+build and setting. GPU buffers can also be mapped into the process, so compare
+DRM residency and PSS separately.
+
+The 2026-11-24 reference run used Intel i915 and one headless GLES2
+output at scale 1. Each row shows the median of three 15-second idle runs
+with no recorder or video playing. Phase 5 is commit `bc268ec`.
+
+| Build | HDR setting | CPU, % of one core | Thread switches/s | PSS, MiB | Private, MiB | i915 resident, MiB |
+|---|---|---:|---:|---:|---:|---:|
+| Phase 5 | off | 0.039 | 2.00 | 64.87 | 55.33 | 20.66 |
+| Phase 5 | on | 0.027 | 0.87 | 70.38 | 60.51 | 30.21 |
+| Phases 4 + 6 | off | 0.031 | 0.80 | 65.59 | 55.28 | 20.66 |
+| Phases 4 + 6 | on | 0.046 | 1.07 | 71.02 | 60.15 | 30.21 |
+
+### On a physical HDR10 display
+
+Use a dedicated DRM session with IPC automation enabled for the probes. Record
+GPU, driver, kernel, connector, mode, refresh, EDID luminance and monitor
+picture mode alongside the results.
+
+1. Record the EDID with `edid-decode` and the connector properties and plane
+   formats with `drm_info`. Enable HDR in Settings. Confirm `hdr_supported`
+   and `hdr_active` in `rediwm-msg outputs`, 10-bit output, PQ metadata,
+   BT.2020 signalling and the monitor's HDR indicator. Toggle off and on,
+   change mode, and check the SDR return and any `hdr_refused` log.
+2. With a normal output transform, neutral night light and the pointer clear
+   of the bars, run `python3 tests/hdr_content.py --live-output DP-1` using
+   the actual connector name. The probe opens a temporary fullscreen client.
+   Run it with HDR off and on. If the display caps white, supply the logged
+   value with `--effective-white NITS`. Repeat at another SDR white level.
+   The PQ bars keep their absolute codes while SDR white follows the setting.
+   Compare the monitor with a known HDR reference still or a colorimeter.
+3. Play HDR10 video in mpv, enable HDR in a Proton game using its Wayland
+   driver, and play HDR video in a browser. Check dark detail, saturated
+   colours, highlights and SDR UI. Move each client across an HDR/SDR pair,
+   including a window straddling the seam. Change HDR while it stays mapped.
+   Compare fullscreen direct scanout with a composited frame and repeat
+   with night light on. Check the software cursor and gamma-client refusal.
+4. Check a screenshot, grim, window and monitor portal shares, and a recording
+   in OBS or wf-recorder. Compare SDR highlights and skin tones on an SDR
+   display. Lock and unlock during a share, then unplug and reconnect the
+   HDR monitor. Check capture denial while locked, correct preferred colours
+   after reconnect, and SDR output in the greeter.

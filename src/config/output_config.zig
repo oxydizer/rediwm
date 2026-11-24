@@ -5,7 +5,7 @@ const output_transform = @import("output_transform.zig");
 /// output: on only while a game fills it, never, or always.
 pub const AdaptiveSync = enum { off, auto, always };
 
-/// HDR10 output (docs/plans/hdr.md), opt-in per output. An enum so `auto`
+/// HDR10 output, opt-in per output. An enum so `auto`
 /// can follow once tone mapping has been seen on several monitors (D4).
 pub const Hdr = enum { off, on };
 

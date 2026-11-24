@@ -113,10 +113,12 @@ static void output_commit(struct wl_listener *listener, void *data) {
     }
   }
 
+  if (state->committed & WLR_OUTPUT_STATE_IMAGE_DESCRIPTION) out->color_serial++;
+
   // A new mode, or the output coming on, changes what every pixel shows. (Which surfaces
   // are on it is the projection's to work out each frame.)
   if (state->committed & (WLR_OUTPUT_STATE_TRANSFORM | WLR_OUTPUT_STATE_SCALE |
-                          WLR_OUTPUT_STATE_SUBPIXEL | WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_ENABLED))
+                          WLR_OUTPUT_STATE_IMAGE_DESCRIPTION | WLR_OUTPUT_STATE_SUBPIXEL | WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_ENABLED))
     rediwm_scene_output_damage_whole(out);
 }
 

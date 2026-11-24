@@ -109,7 +109,7 @@ static const char ribbon_fragment[] =
     "vec4 c=mix(color,bcolor,core*.22);"
     "gl_FragColor=vec4(c.rgb*c.a*a,c.a*a); }";
 
-// The linear twin (docs/plans/hdr.md, phase 2): the same shader under another
+// The linear twin: the same shader under another
 // name, whose sRGB, premultiplied result is decoded to linear light. Built inside
 // scene_pass_enter, when ribbons and linear passes are both on.
 bool scene_pass_ribbon_build_linear(struct rediwm_scene_renderer *r) {

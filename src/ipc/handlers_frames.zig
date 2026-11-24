@@ -102,14 +102,14 @@ pub fn handleFrameAction(
             const scene_output = server.scene_outputs.get(target_out.wlr_output) orelse return .{ .err = "NoSceneOutput" };
             var state = wlr.Output.State.init();
             defer state.finish();
-            if (!server.buildOutputState(scene_output, &state)) return .{ .err = "CaptureFailed: scene render failed" };
-            // An HDR output's buffer holds PQ: read its frame as sRGB unless asked for the raw buffer.
-            const sdr = if (p.raw) null else server.output_renderer.sdrCopy(scene_output);
-            const buffer = sdr orelse state.buffer orelse return .{ .err = "CaptureFailed: missing frame buffer" };
+            const buffer = @import("../output/hdr.zig").captureBuffer(target_out, scene_output, &state, p.raw) orelse
+                return .{ .err = "CaptureFailed: missing frame buffer" };
             const texture = wlr.Texture.fromBuffer(server.renderer, buffer) orelse return .{ .err = "CaptureFailed: texture creation failed" };
             defer texture.destroy();
 
-            const format = texture.preferredReadFormat();
+            // GLES always supports RGBA/UNSIGNED_BYTE readback. Keep the IPC
+            // packing and allocation four bytes per pixel on 10-bit outputs too.
+            const format: u32 = 0x34324241; // DRM_FORMAT_ABGR8888
             const count = p.width * p.height;
             const pixels = try allocator.alloc(u32, count);
             const ok = texture.readPixels(&.{

@@ -65,7 +65,7 @@ struct output_state {
     // changed since the last frame was built, so that change re-blurs no glass.
     float veil;
     bool veil_changed;
-    // rediwm_scene_output_set_linear (docs/plans/hdr.md, phase 2): this output
+    // rediwm_scene_output_set_linear: this output
     // blends in linear light into `linear`, an FP16 image of its buffer kept
     // between frames, and encodes into each swapchain buffer what that buffer
     // lacks. `linear_valid`: the image holds the last frame everywhere, so only
@@ -76,9 +76,13 @@ struct output_state {
     // (PQ for an HDR signal, night light there).
     struct rediwm_pass_encode encode;
     // rediwm_scene_output_sdr_copy: an sRGB encode of `linear` for captures,
-    // made at most once per build (`sdr_current`), and the image's size.
-    struct wlr_buffer *sdr;
-    bool sdr_current;
+    // once per requested depth per build. Slot 1 is for 10-bit shm readers.
+    struct {
+        struct wlr_buffer *buffer;
+        uint32_t format;
+        bool current;
+    } sdr[2];
+    bool hdr_content;
     int linear_width, linear_height;
 };
 struct entry {

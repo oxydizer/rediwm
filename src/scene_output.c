@@ -37,11 +37,18 @@ static void cache_destroy(struct rediwm_output_renderer *r, struct effect_cache 
     wl_list_remove(&c->link);
     free(c);
 }
+static void clear_sdr_copies(struct output_state *os) {
+    for (size_t i = 0; i < 2; i++) {
+        if (os->sdr[i].buffer) wlr_buffer_drop(os->sdr[i].buffer);
+        os->sdr[i].buffer = NULL;
+        os->sdr[i].current = false;
+    }
+}
 static void output_state_destroy(struct output_state *os) {
     struct effect_cache *c, *next;
     wl_list_for_each_safe(c, next, &os->caches, link) cache_destroy(os->renderer, c);
     rediwm_scene_renderer_destroy_linear_target(os->renderer->pass, os->linear);
-    if (os->sdr) wlr_buffer_drop(os->sdr);
+    clear_sdr_copies(os);
     wl_list_remove(&os->destroy.link);
     wl_list_remove(&os->link);
     free(os);
@@ -103,22 +110,27 @@ bool rediwm_scene_output_set_linear(struct rediwm_output_renderer *r, struct red
     if (!on) {
         rediwm_scene_renderer_destroy_linear_target(r->pass, os->linear);
         os->linear = NULL;
-        if (os->sdr) wlr_buffer_drop(os->sdr);
-        os->sdr = NULL;
+        clear_sdr_copies(os);
     }
-    os->sdr_current = false;
+    os->sdr[0].current = os->sdr[1].current = false;
     rediwm_scene_output_damage_whole(out);
     return true;
 }
 bool rediwm_scene_output_set_encode(struct rediwm_output_renderer *r, struct rediwm_scene_output *out,
         const struct rediwm_pass_encode *encode) {
-    static const struct rediwm_pass_encode plain = {0};
-    const bool is_plain = memcmp(encode, &plain, sizeof(plain)) == 0;
+    static const float neutral[9] = {0};
+    const bool is_plain = !encode->pq && !encode->tone_map && encode->sdr_white == 0 &&
+        memcmp(encode->adjust, neutral, sizeof(neutral)) == 0;
     struct output_state *os = is_plain ? output_state_find(r, out->output) : output_state_get(r, out->output);
     if (!os) return is_plain;
-    if (memcmp(&os->encode, encode, sizeof(*encode)) == 0) return true;
+    if (os->encode.pq == encode->pq && os->encode.sdr_white == encode->sdr_white &&
+        os->encode.tone_map == encode->tone_map && !memcmp(os->encode.adjust, encode->adjust, sizeof(encode->adjust))) return true;
+    if (os->encode.sdr_white != encode->sdr_white || os->encode.pq != encode->pq) {
+        os->linear_valid = os->sdr[0].current = os->sdr[1].current = false;
+        struct effect_cache *c;
+        wl_list_for_each(c, &os->caches, link) c->valid = false;
+    }
     os->encode = *encode;
-    // Every pixel of the buffer changes; the linear image does not.
     rediwm_scene_output_damage_whole(out);
     return true;
 }
@@ -142,32 +154,42 @@ static bool linear_ready(struct rediwm_output_renderer *r, struct output_state *
     os->linear_height = buffer->height;
     return true;
 }
-struct wlr_buffer *rediwm_scene_output_sdr_copy(struct rediwm_output_renderer *r, struct rediwm_scene_output *out) {
+struct wlr_buffer *rediwm_scene_output_sdr_for_shm(struct rediwm_output_renderer *r, struct rediwm_scene_output *out,
+        bool deep) {
     struct output_state *os = output_state_find(r, out->output);
     if (!os || !os->linear_wanted || !os->linear_valid || !os->linear) return NULL;
-    if (os->sdr && os->sdr_current) return os->sdr;
+    // GLES guarantees RGBA8 reads, but a packed 10-bit read requires a
+    // compatible FBO. Match the swapchain from which wlroots negotiated shm.
+    uint32_t fourcc = deep ? out->output->render_format : DRM_FORMAT_ARGB8888;
+    if (deep && fourcc != DRM_FORMAT_XRGB2101010 && fourcc != DRM_FORMAT_XBGR2101010) return NULL;
     const int w = os->linear_width, h = os->linear_height;
-    if (os->sdr && (os->sdr->width != w || os->sdr->height != h)) {
-        wlr_buffer_drop(os->sdr);
-        os->sdr = NULL;
+    struct wlr_buffer *buffer = os->sdr[deep].buffer;
+    if (buffer && (buffer->width != w || buffer->height != h || fourcc != os->sdr[deep].format)) {
+        wlr_buffer_drop(buffer);
+        os->sdr[deep].buffer = buffer = NULL;
     }
-    if (!os->sdr) {
-        // 8 bits whatever the output renders to; the allocator picks the modifier.
+    if (buffer && os->sdr[deep].current) return buffer;
+    if (!buffer) {
         uint64_t modifier = DRM_FORMAT_MOD_INVALID;
-        const struct wlr_drm_format format = {.format = DRM_FORMAT_ARGB8888, .len = 1, .capacity = 1,
-            .modifiers = &modifier};
-        os->sdr = wlr_allocator_create_buffer(out->output->allocator, w, h, &format);
-        if (!os->sdr) return NULL;
+        const struct wlr_drm_format format = {.format = fourcc, .len = 1, .capacity = 1, .modifiers = &modifier};
+        os->sdr[deep].buffer = buffer = wlr_allocator_create_buffer(out->output->allocator, w, h, &format);
+        if (!buffer) return NULL;
+        os->sdr[deep].format = fourcc;
+        os->sdr[deep].current = false;
     }
-    struct wlr_render_pass *pass = rediwm_scene_pass_begin_linear(r->pass, os->sdr, NULL, os->linear);
+    struct wlr_render_pass *pass = rediwm_scene_pass_begin_linear(r->pass, buffer, NULL, os->linear);
     if (!pass) return NULL;
     pixman_region32_t whole;
     pixman_region32_init_rect(&whole, 0, 0, w, h);
-    rediwm_scene_pass_encode(pass, &whole, NULL);
+    const struct rediwm_pass_encode sdr = {.tone_map = os->encode.pq && os->hdr_content};
+    rediwm_scene_pass_encode(pass, &whole, &sdr);
     pixman_region32_fini(&whole);
     if (!wlr_render_pass_submit(pass)) return NULL;
-    os->sdr_current = true;
-    return os->sdr;
+    os->sdr[deep].current = true;
+    return buffer;
+}
+struct wlr_buffer *rediwm_scene_output_sdr_copy(struct rediwm_output_renderer *r, struct rediwm_scene_output *out) {
+    return rediwm_scene_output_sdr_for_shm(r, out, false);
 }
 static void sample(struct entry *e, struct rediwm_scene_output *out, bool scanout) {
     if (e->item.kind == REDIWM_ITEM_RECT) return;
@@ -261,6 +283,8 @@ static void audit_damage(struct rediwm_output_renderer *r, struct rediwm_scene_o
     if (!copy) return;
     struct wlr_render_pass *pass = rediwm_scene_pass_begin(r->pass, copy, &(struct wlr_buffer_pass_options){0});
     if (!pass) return;
+    struct output_state *os = output_state_find(r, output);
+    rediwm_scene_pass_set_destination(pass, os ? &os->encode : NULL);
     pixman_region32_t whole;
     pixman_region32_init_rect(&whole, 0, 0, real->width, real->height);
     wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
@@ -316,6 +340,18 @@ static void audit_damage(struct rediwm_output_renderer *r, struct rediwm_scene_o
     free(b);
 }
 #endif
+static void update_capture_state(struct output_state *os, const struct entry *entries, size_t len) {
+    os->sdr[0].current = os->sdr[1].current = os->hdr_content = false;
+    if (!os->encode.pq) return;
+    for (size_t i = 0; i < len; i++) {
+        const enum wlr_color_transfer_function tf = entries[i].item.content.transfer_function;
+        if (tf == WLR_COLOR_TRANSFER_FUNCTION_ST2084_PQ || tf == WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR) {
+            os->hdr_content = true;
+            break;
+        }
+    }
+}
+
 bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
         struct rediwm_projection *projection, struct rediwm_scene_output *out, struct wlr_output_state *state) {
     if ((state->committed & WLR_OUTPUT_STATE_ENABLED) && !state->enabled) return true;
@@ -382,7 +418,12 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     }
     pixman_region32_fini(&changed);
     wlr_output_state_set_damage(state, &out->pending_commit_damage);
-    bool scanout = len == 1 && veil == 0 && try_scanout(&entries[0], out, state, &v);
+    // A night-light matrix runs in the PQ encode. A matching PQ surface
+    // still needs composition while that adjustment is active.
+    static const float neutral[9] = {0};
+    const bool adjusted = veiled && veiled->encode.pq &&
+        memcmp(veiled->encode.adjust, neutral, sizeof(neutral)) != 0;
+    bool scanout = len == 1 && veil == 0 && !adjusted && try_scanout(&entries[0], out, state, &v);
     // Scan-out bypasses the FP16 image, which then misses what changed.
     if (scanout && veiled) veiled->linear_valid = false;
     if (out->prev_scanout != scanout) {
@@ -396,11 +437,13 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     buffer = wlr_swapchain_acquire(output->swapchain);
     if (!buffer) goto done;
     linear = veiled && veiled->linear_wanted && linear_ready(r, veiled, buffer);
+    if (veiled && veiled->encode.pq && !linear) goto done;
     const struct wlr_buffer_pass_options pass_options = {.signal_timeline = out->in_timeline,
         .signal_point = ++out->in_point};
     struct wlr_render_pass *pass = linear ? rediwm_scene_pass_begin_linear(r->pass, buffer, &pass_options, veiled->linear) :
         rediwm_scene_pass_begin(r->pass, buffer, &pass_options);
     if (!pass) goto done;
+    rediwm_scene_pass_set_destination(pass, veiled ? &veiled->encode : NULL);
     // `damage` is what this buffer lacks; `draw` what the pass draws: the same,
     // except that a linear pass keeps its FP16 image and draws into it only
     // what changed since the last frame (all of it when the image is not
@@ -411,8 +454,7 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     pixman_region32_init(&draw);
     wlr_damage_ring_rotate_buffer(&out->damage_ring, buffer, &damage);
     pixman_region32_intersect_rect(&damage, &damage, 0, 0, v.width, v.height);
-    // Captures take the next copy from what is drawn now.
-    if (linear) veiled->sdr_current = false;
+    if (linear) update_capture_state(veiled, entries, len);
     if (!linear) pixman_region32_copy(&draw, &damage);
     else if (veiled->linear_valid) {
         pixman_region32_intersect_rect(&draw, &out->pending_commit_damage, 0, 0, v.width, v.height);

@@ -17,7 +17,7 @@ reserve space on a specific output edge, including from a corner.
 | Input | `text-input-v1`, `text-input-v3`, `input-method-v2`, `relative-pointer-v1`, `pointer-constraints-v1`, `keyboard-shortcuts-inhibit-v1`, `pointer-gestures-v1`, `cursor-shape-v1` | fcitx5, IBus, games, virt-manager |
 | Workspace | `ext-workspace-v1` | one canvas workspace shared by all outputs |
 | Window metadata | `xdg-toplevel-tag-v1`, `content-type-v1`, `xdg-activation-v1` | window rules, content hints, activation |
-| Colour | `color-management-v1`, `color-representation-v1` | whatever the renderer supports |
+| Colour | `color-management-v1`, `color-representation-v1` | named RGB descriptions and YCbCr coefficients/ranges |
 | Surface effects | `ext-background-effect-v1`, `alpha-modifier-v1` | Regional background blur and per-surface fades |
 | Output gamma | `wlr-gamma-control-v1` | wlsunset, gammastep |
 | Presentation | `tearing-control-v1`, `drm-lease-v1` | opt-in fullscreen tearing, VR headsets |
@@ -45,12 +45,14 @@ reserve space on a specific output edge, including from a corner.
   `app_id`.
 - **Content type** hints (photo, video, game) don't change idle or focus
   policy.
-- **Colour:** follows the renderer. Pixman gives colour feedback without
-  parametric image creation, GPU renderers advertise what wlroots can convert.
-  An output with `[[outputs]] hdr = "on"` sends HDR10 (experimental, see
-  Configuration), but client colour descriptions are not yet drawn
-  differently. Screencopy and image-copy-capture of such an output get the
-  frame as SDR (sRGB), not its PQ buffer. No ICC loading.
+- **Colour.** The compositor accepts named gamma 2.2, compound-power sRGB
+  (protocol v2), extended linear and ST 2084 PQ, with sRGB or BT.2020
+  primaries. The output showing the largest visible portion of a surface
+  determines its preferred description. A PQ surface retains absolute
+  luminance on HDR10 outputs and receives highlight roll-off on SDR outputs.
+  Screencopy and image-copy-capture deliver SDR. External YCbCr buffers
+  support BT.601, BT.709 and BT.2020 non-constant-luminance coefficients in
+  full or limited range. EGL performs the conversion during sampling.
 - **Tearing:** `[compositor] allow_tearing = true` honours async hints from
   focused fullscreen clients. If an output can't do it, that output falls back
   to synchronized presentation until it's recreated. Suppressed while locked.

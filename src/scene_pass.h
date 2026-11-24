@@ -168,7 +168,7 @@ struct rediwm_pass_backdrop {
 void rediwm_scene_pass_add_backdrop(struct wlr_render_pass *, const struct rediwm_pass_shape *,
     struct wlr_box box, const struct rediwm_pass_backdrop *);
 
-// Phase 2 of docs/plans/hdr.md: blending in linear light. A linear pass draws
+// A linear pass draws
 // into an FP16 image of the buffer (`rediwm_linear_target`, kept by the caller
 // between frames so only damage is redrawn) with programs that decode every
 // colour they read (textures, rects, rings, shadows, ribbons) from sRGB as
@@ -199,11 +199,16 @@ struct rediwm_pass_encode {
   // and an output that commits that image description. Else sRGB as displayed
   // (gamma 2.2, BT.709).
   bool pq;
+  bool tone_map; // SDR capture of a scene containing HDR content
   float sdr_white; // cd/m² that 1.0 (SDR white) is sent at under PQ, 1 to 10000
   // Applied to linear BT.2020 first, column-major (night light on an HDR
   // output, whose gamma table must stay neutral). All zero is the identity.
   float adjust[9];
 };
+// The destination sets the absolute PQ scale and whether a source needs SDR tone mapping.
+void rediwm_scene_pass_set_destination(struct wlr_render_pass *, const struct rediwm_pass_encode *);
+struct rediwm_buffer;
+void rediwm_scene_pass_set_source(struct wlr_render_pass *, const struct rediwm_buffer *);
 // Encodes `region` (device pixels) of the target into the buffer. Once per
 // linear pass, outside a backdrop; any draw after it fails the pass.
 void rediwm_scene_pass_encode(struct wlr_render_pass *, const pixman_region32_t *region,

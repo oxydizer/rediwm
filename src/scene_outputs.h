@@ -30,6 +30,7 @@ struct rediwm_scene_output {
   struct wlr_addon addon;
   struct wlr_damage_ring damage_ring;
   int x, y; // in the layout
+  uint64_t color_serial; // incremented after a committed image description change
   int index; // below 64: a bit in the projection's masks
   struct {
     struct wl_signal destroy;
@@ -55,6 +56,7 @@ struct rediwm_scene_outputs {
   bool direct_scanout;
   // For the preferred image description of surfaces; NULL until set.
   struct wlr_color_manager_v1 *color_manager_v1;
+  struct rediwm_color_feedback *feedback;
   struct wlr_output_layout *layout;
   struct wl_listener color_manager_destroy, layout_change, layout_destroy;
 };
@@ -63,6 +65,7 @@ struct rediwm_scene_outputs {
 struct rediwm_outputs_update_event {
   struct rediwm_scene_output **active;
   size_t size;
+  struct rediwm_scene_output *primary;
 };
 struct rediwm_output_sample_event {
   struct rediwm_scene_output *output;

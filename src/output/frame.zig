@@ -356,6 +356,7 @@ pub fn runFrame(output: *Output) void {
                     output.greeter_commit_seq = null;
                 }
             } else {
+                if (hdr.signal(output)) hdr.buildFailed(output);
                 committed = false;
             }
             if (committed) {

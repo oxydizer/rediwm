@@ -255,8 +255,9 @@ Omit coordinates for automatic left-to-right placement. Scale and placement
 apply live. `REDIWM_SCALE` overrides every output. Changes from Settings,
 `wlr-randr`, kanshi or `rediwm-msg output-config` are all saved here.
 
-HDR is experimental and has not been tried on a real HDR display yet
-([plan](../plans/hdr.md)). On a display whose EDID and driver take HDR10,
+HDR is experimental. Physical display qualification remains open. [Hardware checklist](../../TESTING.md#on-a-physical-hdr10-display)
+
+On a display whose EDID and driver take HDR10,
 `hdr = "on"` sends an HDR10 signal (PQ, BT.2020, 10 bits): the desktop and
 every app are drawn in linear light and SDR content is shown at `sdr_white`
 cd/m², capped at the peak the display's EDID suggests. Night light still works
@@ -264,8 +265,11 @@ cd/m², capped at the peak the display's EDID suggests. Night light still works
 wlsunset) are refused on that output, and the cursor is drawn by the
 compositor. If the driver refuses the signal in a mode, the output stays SDR
 until the mode or the setting changes. Screenshots, grim, screen sharing and
-recorders get the output as SDR. Not yet: HDR content from apps (HDR video
-and games are shown as SDR). On headless and nested outputs
+recorders get the output as SDR. Wayland clients can submit PQ/BT.2020
+content at absolute luminance. SDR outputs roll off its highlights. An app
+crossing displays receives the preferred description of the output showing
+most of its surface. X11 and untagged buffers use the desktop white level.
+On headless and nested outputs
 `hdr = "on"` only blends in linear light, still sent as SDR; on other displays
 it does nothing. Translucent edges and glass look slightly different in linear
 light. `rediwm-msg outputs` shows `hdr`, `hdr_supported`, `hdr_linear`,

@@ -228,6 +228,7 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
     pixman_region32_init(&blend);
     pixman_region32_init(&core);
     bool graded = false;
+    bool client_source = false;
     if (backdrop) pixman_region32_init_rect(&clip, dst.x, dst.y, dst.width, dst.height);
     else {
         pixman_region32_copy(&clip, &e->visible);
@@ -305,6 +306,8 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
         else if (pixman_region32_not_empty(&clip)) rediwm_scene_pass_add_rect_shaped(pass, &rect, &shape);
     } else {
         struct rediwm_buffer *b = rediwm_buffer_from_node(e->transport);
+        client_source = c->transfer_function != 0 || c->primaries != 0 || c->color_encoding != 0;
+        if (client_source) rediwm_scene_pass_set_source(pass, b);
         if (b->is_single_pixel_buffer) {
             const uint32_t *color = b->single_pixel_buffer_color;
             // Single-pixel colours and the draw call both use premultiplied RGBA.
@@ -349,6 +352,7 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
 done:
     // What is drawn next (the next item, the software cursor) is not this item's.
     if (graded) rediwm_scene_pass_set_dim(pass, 0, 0);
+    if (client_source) rediwm_scene_pass_set_source(pass, NULL);
     pixman_region32_fini(&clip);
     pixman_region32_fini(&blend);
     pixman_region32_fini(&core);

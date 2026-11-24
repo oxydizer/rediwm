@@ -85,6 +85,7 @@ static void refresh(struct preview_binding *binding) {
   struct wlr_client_buffer *buffer = surface ? surface->buffer : NULL;
   struct rediwm_buffer_options options = {0};
   rediwm_buffer_sync_surface_alpha(binding->preview, surface);
+  rediwm_buffer_sync_surface_color(binding->preview, surface);
   if (surface) {
     binding->commit_seq = surface->current.seq;
     options.damage = &surface->buffer_damage;
@@ -156,6 +157,7 @@ bool rediwm_switcher_preview_set_owned(struct rediwm_buffer *preview,
     client->private.n_ignore_locks++;
     binding->marked = client;
   }
+  rediwm_buffer_sync_surface_color(preview, NULL);
   rediwm_buffer_set_buffer(preview, buffer);
   return true;
 }

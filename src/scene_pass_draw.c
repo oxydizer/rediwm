@@ -87,9 +87,10 @@ static void add_rect(struct wlr_render_pass *base, const struct wlr_render_rect_
     if (p->failed || (o->clip && !pixman_region32_not_empty(o->clip))) return;
     struct wlr_box box;
     wlr_render_rect_options_get_box(o, p->buffer, &box);
-    struct program *g = shaped_for(p->renderer, NULL, false, p->linear != NULL);
+    struct program *g = scene_pass_color_program(p, NULL, false);
     if (!g->id) { p->failed = true; return; }
     scene_pass_setup(p, g, box, o->blend_mode);
+    scene_pass_color_uniform(p, g);
     glUniform4f(g->color, o->color.r, o->color.g, o->color.b, o->color.a);
     glUniform1f(g->mode, 1.f);
     glUniform1f(g->use_shape, 0.f);
@@ -98,12 +99,13 @@ static void add_rect(struct wlr_render_pass *base, const struct wlr_render_rect_
 }
 static void rect_shaped(struct pass *p, const struct wlr_render_rect_options *o,
         const struct rediwm_pass_shape *shape) {
-    struct program *g = shaped_for(p->renderer, shape, false, p->linear != NULL);
+    struct program *g = scene_pass_color_program(p, shape, false);
     if (p->failed || (o->clip && !pixman_region32_not_empty(o->clip))) return;
     if (!g->id || !shape_usable(shape)) { p->failed = true; return; }
     struct wlr_box box;
     wlr_render_rect_options_get_box(o, p->buffer, &box);
     scene_pass_setup(p, g, box, o->blend_mode);
+    scene_pass_color_uniform(p, g);
     glUniform4f(g->color, o->color.r, o->color.g, o->color.b, o->color.a);
     glUniform1f(g->mode, 1.f);
     scene_pass_set_shape(p, g, shape);
@@ -126,16 +128,15 @@ static bool wait_point(struct pass *p, struct wlr_drm_syncobj_timeline *timeline
 }
 static void texture_draw(struct pass *p, const struct wlr_render_texture_options *o,
         struct wlr_gles2_texture_attribs a, const struct rediwm_pass_shape *shape) {
-    struct rediwm_scene_renderer *r = p->renderer;
-    const bool linear = p->linear != NULL;
-    struct program *program = a.target == GL_TEXTURE_2D ? shaped_for(r, shape, false, linear) :
-        a.target == GL_TEXTURE_EXTERNAL_OES ? shaped_for(r, shape, true, linear) : NULL;
+    struct program *program = a.target == GL_TEXTURE_2D || a.target == GL_TEXTURE_EXTERNAL_OES ?
+        scene_pass_color_program(p, shape, a.target == GL_TEXTURE_EXTERNAL_OES) : NULL;
     if (!program || !program->id || (shape && !shape_usable(shape))) { p->failed = true; return; }
     struct wlr_box dst;
     struct wlr_fbox src;
     wlr_render_texture_options_get_dst_box(o, &dst);
     wlr_render_texture_options_get_src_box(o, &src);
     scene_pass_setup(p, program, dst, o->blend_mode);
+    scene_pass_color_uniform(p, program);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(a.target, a.tex);
     GLint filter = o->filter_mode == WLR_SCALE_FILTER_NEAREST ? GL_NEAREST : GL_LINEAR;
@@ -187,6 +188,10 @@ static void texture_add(struct wlr_render_pass *base, const struct wlr_render_te
     }
     struct wlr_gles2_texture_attribs a;
     wlr_gles2_texture_get_attribs(o->texture, &a);
+    if (p->source && !scene_pass_yuv_texture(p, &a) && !p->renderer->yuv_warned) {
+        wlr_log(WLR_ERROR, "Cannot import declared YCbCr representation; using driver-default conversion");
+        p->renderer->yuv_warned = true;
+    }
     texture_draw(p, o, a, shape);
 }
 static void add_texture(struct wlr_render_pass *base, const struct wlr_render_texture_options *o) {
@@ -217,6 +222,7 @@ static bool submit(struct wlr_render_pass *base) {
     // Failed submissions must not leave untracked reads in flight: callers
     // register release points only after success (see explicit_sync.c).
     if (!ok) glFinish();
+    if (p->yuv_texture) glDeleteTextures(1, &p->yuv_texture);
     scene_pass_leave(r, &p->state);
     wlr_buffer_unlock(p->buffer);
     r->active = false;
@@ -236,6 +242,7 @@ struct wlr_render_pass *rediwm_scene_pass_begin(struct rediwm_scene_renderer *r,
     GLuint fbo = wlr_gles2_renderer_get_buffer_fbo(r->renderer, buffer);
     if (!fbo) { scene_pass_leave(r, &p->state); free(p); return NULL; }
     p->renderer = r;
+    p->sdr_white = 203.f;
     p->buffer = wlr_buffer_lock(buffer);
     if (options && options->signal_timeline) {
         p->signal_timeline = wlr_drm_syncobj_timeline_ref(options->signal_timeline);
