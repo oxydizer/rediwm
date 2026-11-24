@@ -429,6 +429,10 @@ pub const OperationSnapshot = struct {
     kind: OperationKind,
     state: OperationState,
     generation: u64,
+    progress_bytes: u64,
+    progress_total_bytes: u64,
+    progress_bytes_per_second: u64,
+    copy_phase: CopyPhase,
     dependencies: []OperationId,
     copy_metrics: CopyMetrics,
 };
@@ -3112,6 +3116,13 @@ pub const Manager = struct {
                 .kind = operation.kind,
                 .state = operation.state,
                 .generation = operation.generation,
+                .progress_bytes = operation.progress_bytes,
+                .progress_total_bytes = operation.progress_total_bytes,
+                .progress_bytes_per_second = currentProgressRate(
+                    &operation,
+                    monotonicMs(),
+                ),
+                .copy_phase = operation.copy_phase,
                 .dependencies = dependencies,
                 .copy_metrics = operation.copy_metrics,
             };
@@ -3124,6 +3135,30 @@ pub const Manager = struct {
             .state = job.state,
             .operations = operations,
         };
+    }
+
+    /// Returns caller-owned snapshots of every live Job.
+    ///
+    /// Each snapshot owns its operation and dependency data independently
+    /// of the Manager. The caller must deinitialize every returned snapshot
+    /// and free the containing slice.
+    pub fn snapshotJobs(
+        self: *const Manager,
+        allocator: Allocator,
+    ) ![]JobSnapshot {
+        const snapshots = try allocator.alloc(JobSnapshot, self.jobs.items.len);
+        var initialized: usize = 0;
+        errdefer {
+            for (snapshots[0..initialized]) |*snapshot| snapshot.deinit();
+            allocator.free(snapshots);
+        }
+
+        for (self.jobs.items) |job| {
+            snapshots[initialized] = try self.snapshotJob(allocator, job.id);
+            initialized += 1;
+        }
+
+        return snapshots;
     }
 
     fn findJob(self: *Manager, id: JobId) ?*Job {

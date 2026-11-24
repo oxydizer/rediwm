@@ -2300,6 +2300,57 @@ test "snapshots own dependency data and planning closes at queue time" {
     try std.testing.expectError(error.InvalidJobState, manager.addOperation(job, .publish));
 }
 
+test "job snapshots expose progress and snapshotJobs lists independent live jobs" {
+    const allocator = std.testing.allocator;
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+
+    const first_job = try manager.createJob(17);
+    const entry = try manager.addTreeRoot(
+        first_job,
+        "large.bin",
+        .regular_file,
+        .{ .size = 100_000 },
+        null,
+    );
+    _ = try manager.addEntryOperation(first_job, entry, .copy_file);
+    try manager.queueJob(first_job);
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expect(manager.completeWork(token, .yielded));
+    try std.testing.expect(manager.recordOperationProgress(
+        token,
+        65_536,
+        100_000,
+        .transferring,
+    ));
+
+    const second_job = try manager.createJob(29);
+
+    const snapshots = try manager.snapshotJobs(allocator);
+    defer {
+        for (snapshots) |*snapshot| snapshot.deinit();
+        allocator.free(snapshots);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), snapshots.len);
+    try std.testing.expectEqual(first_job, snapshots[0].id);
+    try std.testing.expectEqual(@as(?io_manager.WindowId, 17), snapshots[0].origin_window_id);
+    try std.testing.expectEqual(second_job, snapshots[1].id);
+    try std.testing.expectEqual(@as(?io_manager.WindowId, 29), snapshots[1].origin_window_id);
+
+    try std.testing.expectEqual(@as(usize, 1), snapshots[0].operations.len);
+    const operation = snapshots[0].operations[0];
+    try std.testing.expectEqual(@as(u64, 65_536), operation.progress_bytes);
+    try std.testing.expectEqual(@as(u64, 100_000), operation.progress_total_bytes);
+    try std.testing.expectEqual(io_manager.CopyPhase.transferring, operation.copy_phase);
+
+    // Snapshot storage remains valid after the live Manager changes.
+    const resumed_token = manager.dispatchNext().?;
+    try std.testing.expect(manager.completeWork(resumed_token, .completed));
+    try std.testing.expectEqual(@as(u64, 65_536), snapshots[0].operations[0].progress_bytes);
+}
+
 test "queued Jobs accept operations as discovery progresses" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
