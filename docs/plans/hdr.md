@@ -1,10 +1,10 @@
 # Plan: HDR output
 
-Status: draft, 2026-11-16. Nothing is built. Started from the outside audit
-in discussion #27 (github.com/oxydizer/rediwm/discussions/27). Its author
-could not read `src/`, so this version checks its assumptions against our
-code and the wlroots 0.20.2 source, and folds in the changes. The decisions
-below are proposals.
+Status: decided 2026-11-24 (D1-D6 take the recommended options); Phase 1
+done, Phase 2 next, see Progress at the end. Written 2026-11-16 from the outside
+audit in discussion #27 (github.com/oxydizer/rediwm/discussions/27). Its
+author could not read `src/`, so this version checks its assumptions against
+our code and the wlroots 0.20.2 source, and folds in the changes.
 
 Scope: HDR10 output (PQ, BT.2020) on DRM outputs, an SDR white level, and
 color-management-v1 content (HDR video, games) on top of it. Out of scope:
@@ -45,7 +45,8 @@ Revisit only if wlroots drops its GLES2 renderer.
 
 ## What the code says
 
-Verified 2026-11-16 on master (df0b032) and wlroots 0.20.2:
+Verified 2026-11-16 on master (df0b032) and wlroots 0.20.2; re-checked
+2026-11-24 on c738a87 (still wlroots 0.20.2), with corrections marked:
 
 * **The DRM side does not depend on the renderer** (the audit's highest risk,
   its Phase 0 go/no-go). `wlr_output_state_set_image_description` is checked
@@ -65,16 +66,20 @@ Verified 2026-11-16 on master (df0b032) and wlroots 0.20.2:
   (`render/gles2/pixel_format.c`). Rendering into a 10-bit dmabuf and an FP16
   texture also needs `EXT_color_buffer_half_float`; Phase 0 checks it on our
   drivers.
-* **The protocols are advertised but SDR-only.** `src/extra_protocols.c:252-259`
+* **The protocols are advertised but SDR-only.** `src/extra_protocols.c:254-265`
   builds the colour manager's lists from the renderer, and GLES2 reports no
   input colour transforms, so the transfer function and primaries lists are
   empty and `parametric` is off. `rediwm_surface_edge_is_srgb` and
   `node_surface.c` already read per-surface descriptions; nothing draws
   differently with them.
 * **The output format is never set.** `wlr_output_configure_primary_swapchain`
-  (`src/scene_output.c:313`) picks the default 8-bit format; the
-  `setRenderFormat` binding exists (`src/wlr/output.zig:208`) but is unused.
+  (now `src/scene_output_async.c:184`, moved with the tearing swapchain)
+  picks the default 8-bit format; the `setRenderFormat` binding exists
+  (`src/wlr/output.zig:208`) but is unused.
 * **Glass blurs encoded values.** `scene_pass_backdrop.c` never linearizes.
+  Client glass from ext-background-effect (`src/background_effect.c`,
+  d929bdc) feeds the same glass engine and backdrop pass, so it needs no
+  separate linear path.
 * **The hardware cursor would be wrong.** wlroots colour-converts a cursor
   for an HDR output by passing `color_transform` to the cursor's render pass
   (`types/output/cursor.c:259`), but the GLES2 renderer ignores that option
@@ -84,11 +89,16 @@ Verified 2026-11-16 on master (df0b032) and wlroots 0.20.2:
   copy the committed buffer through the renderer with no conversion. Window
   capture (`src/capture/window_source.zig`) renders through our pass and can
   render SDR directly.
-* **Direct scanout ignores colour.** `try_scanout` (`src/scene_output.c:102`)
-  would put an sRGB client buffer straight onto a PQ output. wlroots' scene
-  had `color_management_is_scanout_allowed` for this.
+* **Direct scanout already checks colour** (corrected 2026-11-24; the first
+  draft said it did not). `try_scanout` (`src/scene_output.c:102`) has, since
+  the owned pass (96b7eb0), compared the surface's transfer function and
+  primaries with the output's committed image description, allowed only sRGB
+  or gamma 2.2 sRGB where there is none, and refused YCbCr. It does not
+  compare mastering luminance, which is acceptable for HDR10.
 * **Night light uses the KMS gamma table** (`src/output/frame.zig`, the
   `color_transform` in the output state). On a PQ signal that table is wrong.
+  Since d929bdc wlr-gamma-control clients also write that table through
+  `src/output/gamma.zig`; their ramps are wrong on PQ too (D6).
 
 ## Off means off
 
@@ -138,7 +148,12 @@ Side channels:
   pass colour transforms or we render cursor buffers ourselves. The software
   cursor is drawn by our pass (`scene_output_effects.c`), so it gets step 2.
 * **Direct scanout:** on an HDR output, allowed only for a surface whose
-  description matches the output's.
+  description matches the output's. `try_scanout` already does this once
+  the output commits its description; Phase 3 only adds a test for it.
+* **Gamma ramps:** night light becomes a linear-light multiply in the encode
+  (step 4). A wlr-gamma-control client's ramp is refused on an HDR output
+  (D6); it gets the protocol's `failed` event, as on an output without a
+  gamma table.
 * **Capture:** an owned output capture source that renders the output through
   the pass in SDR mode into the client's 8-bit buffer. This follows how
   `WindowCaptureSource` replaced wlroots' helper. Capture clients only ever
@@ -153,29 +168,43 @@ Side channels:
 
 ## Decisions
 
-* **D1, working primaries:** BT.2020 (recommended; it is the signal's gamut,
-  and the encode is then just a clip and PQ) or BT.709 with negative values
-  (scRGB-style; cheaper for an all-sRGB desktop, but the encode needs a
-  matrix).
-* **D2, SDR white level:** per output (recommended, since the setting already
-  lives on the output), default 203 nits (BT.2408 reference white), capped
-  below the EDID's peak.
+Decided 2026-11-24: every decision takes the recommended option. The
+alternatives are kept for the record.
+
+* **D1, working primaries: BT.2020.** It is the signal's gamut, and the
+  encode is then just a clip and PQ. (Rejected: BT.709 with negative values,
+  scRGB-style; cheaper for an all-sRGB desktop, but the encode needs a
+  matrix.)
+* **D2, SDR white level: per output**, since the setting already lives on the
+  output: `sdr_white`, default 203 nits (BT.2408 reference white), 80-1000 in
+  the config, capped below the EDID's peak once Phase 3 reads it.
 * **D3, colour manager when HDR is off.** Its lists are global and sent when a
-  client binds, not per output. Recommended: once Phase 4 lands, advertise
-  parametric support always, send each surface its output's description as
-  preferred (sRGB on SDR outputs, so well-behaved clients send SDR there), and
-  tone map with a cheap clip and knee, built on demand, if HDR content lands
-  on an SDR output anyway. The alternative, advertising only when some output
-  has HDR at startup, keeps today's protocol behaviour exactly but means
-  protocol support needs a restart after turning HDR on.
-* **D4, `auto`:** ship `off`/`on` first. Add `auto` (on when the EDID says
-  PQ) only after tone mapping and brightness have been seen on several
-  monitors.
-* **D5, blend look:** linear blending makes translucency and antialiased
+  client binds, not per output. Once Phase 4 lands: advertise parametric
+  support always, send each surface its output's description as preferred
+  (sRGB on SDR outputs, so well-behaved clients send SDR there), and tone map
+  with a cheap clip and knee, built on demand, if HDR content lands on an SDR
+  output anyway. (Rejected: advertising only when some output has HDR at
+  startup; it keeps today's protocol behaviour exactly but needs a restart
+  after turning HDR on.)
+* **D4, `auto`: not yet.** Ship `off`/`on` first, as an enum so `auto` (on
+  when the EDID says PQ) can be added after tone mapping and brightness have
+  been seen on several monitors.
+* **D5, blend look: accept linear blending.** Translucency and antialiased
   edges (window_bg 0.80, shadows, text) look slightly different from the SDR
-  path, which blends encoded values. Accept it (recommended; other HDR
-  compositors do the same), or blend SDR content in an encoded space and
-  convert after (exact match, but HDR content then blends wrongly).
+  path, which blends encoded values; other HDR compositors do the same.
+  (Rejected: blending SDR content in an encoded space and converting after;
+  exact match, but HDR content then blends wrongly.)
+* **D6, gamma ramps on HDR outputs: refused** (added 2026-11-24 with
+  wlr-gamma-control). A ramp is written for an SDR signal, and the hardware
+  table must stay neutral under PQ. The client gets `failed`; night light
+  keeps working in the encode. (Rejected: applying the ramp to the
+  linear-light value in the encode; no client writes ramps for that.)
+* **Where the linear pass runs without an HDR signal.** With `hdr = "on"`, a
+  DRM output that cannot signal HDR stays SDR, unchanged. Headless and nested
+  outputs run the linear pass with an sRGB encode instead: that is how
+  Phase 2 is checked, by the integration suites and in a nested window, with
+  no test hook. Settings offers the HDR switch only where the output can
+  signal it.
 
 ## Phases
 
@@ -185,9 +214,9 @@ them with a working compositor. Week counts are rough guesses for one person.
 | Phase | Work | Exit check | Est. |
 |---|---|---|---|
 | 0. Hardware recon | `drm_info` (`Colorspace`, `HDR_OUTPUT_METADATA`, plane formats) and `edid-decode` (static metadata, luminance) on the test monitor; GL extensions for 10-bit and FP16 rendering on Intel/AMD/NVIDIA; read wlroots' `supported_*` bits for the output. The code-side questions are answered above. | Written list of what the test monitor and drivers support | 2-3 days |
-| 1. Plumbing | `hdr = off/on` and `sdr_white` in `[[outputs]]` (`config/output_config.zig`, `output_save.zig`), `rediwm-msg output-config`, the Settings display page (`control_center/sections/display.zig`, greyed out when the output cannot do HDR), `Output.applyAndPersist`. No rendering change. | Config round-trips; Settings shows availability; frames unchanged | 1 wk |
-| 2. Linear pass | FP16 blend buffer, input conversion for every draw kind, theme colours, linear glass, software cursor; HDR programs on demand. Encode back to sRGB for now. | With HDR forced on, an SDR monitor looks like SDR within D5's tolerance (screenshot diff); off is byte-identical | 2-3 wks |
-| 3. Encode and scan out | PQ encode, `XRGB2101010` render format with a test-commit fallback, image description commit and commit reason, night light in the encode, software cursor lock, scanout gate. | PQ test pattern and a known HDR still correct on a real monitor; toggling HDR drops no frames | 2 wks |
+| 1. Plumbing | `hdr = off/on` and `sdr_white` in `[[outputs]]` (`config/output_config.zig`, `output_save.zig`), IPC `set_output_config` and `rediwm-msg output-config`, IPC output state, the Settings display page (`control_center/sections/display.zig`, "Not supported by this display" when the output cannot do HDR), `Output.applyAndPersist`. Same path as `adaptive_sync` (8f6f223). No rendering change. | Config round-trips; Settings shows availability; frames unchanged | 1 wk |
+| 2. Linear pass | FP16 blend buffer, input conversion for every draw kind, theme colours, linear glass, software cursor; HDR programs on demand. Encode back to sRGB for now (headless and nested outputs, see the last decision). | With HDR on in a headless or nested session, the output looks like SDR within D5's tolerance (screenshot diff); off is byte-identical | 2-3 wks |
+| 3. Encode and scan out | PQ encode, `XRGB2101010` render format with a test-commit fallback, image description commit and commit reason, night light in the encode, D6's ramp refusal, software cursor lock, a test of the existing scanout gate, `sdr_white` capped from the EDID. | PQ test pattern and a known HDR still correct on a real monitor; toggling HDR drops no frames | 2 wks |
 | 4. Client content | Parametric descriptions backed by the pass (sRGB, gamma 2.2, linear, PQ, BT.2020) replacing the renderer lists in `extra_protocols.c`; per-surface decode; preferred description per output; color-representation-v1 YCbCr coefficients and range; D3's tone map. dmabuf and explicit sync paths unchanged. | mpv, a Proton HDR game (Wayland driver) and browser HDR video right under HDR and cleanly SDR elsewhere | 2-3 wks |
 | 5. Side channels | Owned output capture source in SDR, IPC screenshot SDR/raw, lock and greeter rules, mixed HDR/SDR outputs and the camera across them. | grim, wf-recorder, OBS and portal sharing look right with HDR on; every row of the README protocol table is correct under HDR or documented SDR-only | 1-2 wks |
 | 6. Hardening | Hardware checklist in `TESTING.md` (nested and headless cannot exercise HDR), pixel probes through the raw IPC read, idle CPU and RAM re-measured with HDR off and on. | HDR off at the baseline; HDR on cost written down | 1 wk |
@@ -206,6 +235,27 @@ them with a working compositor. Week counts are rough guesses for one person.
   Measure after Phase 2, not at the end.
 * **Test coverage.** Everything past Phase 2 needs a real HDR monitor, which
   makes regressions easy to miss. Phase 6's raw probes are the guard.
+* **No HDR monitor yet.** On 2026-11-24 the only display on the development
+  laptop is its eDP panel (BOE, i915), whose EDID has 8 bits per colour and
+  no HDR static metadata. Phases 1 and 2 can be built and checked on it;
+  Phase 0 and Phases 3-6 wait for an external HDR monitor.
+
+## Progress
+
+* 2026-11-24: plan re-checked against c738a87 and decided (D1-D6).
+* 2026-11-24, Phase 1 built (on d929bdc): `[[outputs]] hdr = "off"|"on"`
+  and `sdr_white` (config, `output_save`, `Patch`), `output/hdr.zig`
+  (mode, white level, `supported` from wlroots' `supported_*` bits, `active`
+  = a committed image description), IPC `set_output_config` (parsing moved
+  to `ipc/protocol_params_output.zig`) and outputs `hdr`, `hdr_supported`,
+  `hdr_active`, `sdr_white`, `rediwm-msg output-config --hdr/--sdr-white`,
+  and an HDR card in Settings > Displays: "Not supported by this display",
+  or Off/On, the white level while on, and a note that output stays SDR
+  until Phase 3. wlr-output-management has no HDR field, so clients cannot
+  change it. Tests: `loader_sections_tests`, `ipc_tests`, the serializer
+  fixture, `tests/wlr_protocols.py` (round trip, refusals, saved file) and
+  `tests/control_center.py` (headless card). The Settings switch itself
+  only appears on an HDR display, so it has no automated test.
 
 ## Sources
 

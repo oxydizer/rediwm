@@ -6,6 +6,7 @@ const theme_mod = @import("ui").theme;
 const types = @import("types.zig");
 const window_rules = @import("window_rules.zig");
 const output_transform = @import("output_transform.zig");
+const output_config = @import("output_config.zig");
 const schedule_mod = @import("schedule.zig");
 const NightLightConfig = schedule_mod.NightLightConfig;
 const AccelProfile = types.AccelProfile;
@@ -202,6 +203,8 @@ pub const output_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(OutputConfi
     .primary = .boolean,
     .transform = .output_transform,
     .adaptive_sync = .enumeration,
+    .hdr = .enumeration,
+    .sdr_white = .{ .float = .{ .min = output_config.sdr_white_min, .max = output_config.sdr_white_max } },
     .night_light = .boolean,
     .gamma = .{ .float = .{ .min = 0.5, .max = 2.0 } },
 };

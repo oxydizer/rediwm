@@ -244,13 +244,21 @@ refresh_mhz = 60000    # omit for the highest at this size
 enabled = true
 primary = false
 transform = "normal"   # normal, 90, 180, 270, flipped variants
+adaptive_sync = "auto" # variable refresh: "auto" while a game fills it, "off", "always"
 night_light = false    # never tint this monitor
 gamma = 1.0            # 0.5 to 2.0
+hdr = "off"            # "on": HDR10 where the display supports it
+sdr_white = 203        # SDR brightness on an HDR output, nits (80 to 1000)
 ```
 
 Omit coordinates for automatic left-to-right placement. Scale and placement
 apply live. `REDIWM_SCALE` overrides every output. Changes from Settings,
 `wlr-randr`, kanshi or `rediwm-msg output-config` are all saved here.
+
+HDR is in development ([plan](../plans/hdr.md)): `hdr` and `sdr_white` are
+saved and reported (`rediwm-msg outputs` shows `hdr`, `hdr_supported`,
+`hdr_active` and `sdr_white`), but every output is still sent SDR. Settings
+offers the switch only on displays whose EDID and driver can take HDR10.
 
 ## Power and battery
 

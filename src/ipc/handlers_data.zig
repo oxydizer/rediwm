@@ -7,6 +7,7 @@ const Output = @import("../Output.zig");
 const Toplevel = @import("../Toplevel.zig");
 const output_tearing = @import("../output/tearing.zig");
 const output_vrr = @import("../output/vrr.zig");
+const output_hdr = @import("../output/hdr.zig");
 const stats = @import("stats.zig");
 const protocol = @import("protocol.zig");
 const ui = @import("ui");
@@ -205,6 +206,10 @@ pub fn makeOutputData(server: *Server, output: *Output) protocol.OutputData {
         .adaptive_sync_wanted = output_vrr.wanted(output),
         .adaptive_sync_active = output_vrr.active(output),
         .adaptive_sync_needs_modeset = output.vrr.needs_modeset,
+        .hdr = @tagName(output_hdr.mode(output)),
+        .hdr_supported = output_hdr.supported(output),
+        .hdr_active = output_hdr.active(output),
+        .sdr_white = output_hdr.sdrWhite(output),
         .direct_scanout = if (server.scene_outputs.get(output.wlr_output)) |scene_output| scene_output.directScanout() else false,
     };
 }

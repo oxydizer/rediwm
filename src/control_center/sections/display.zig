@@ -15,6 +15,7 @@ const setting_save = @import("config").setting_save;
 const output_transform = @import("config").output_transform;
 const Output = @import("../../Output.zig");
 const vrr = @import("../../output/vrr.zig");
+const hdr = @import("../../output/hdr.zig");
 
 /// Row slots; every access goes through these so inserting a row cannot leave
 /// a stale index reading a `.select` widget as `.text` (a live-session panic).
@@ -50,6 +51,16 @@ const lid_labels = [_]i18n.Message{ i18n.msg("Turn off screen"), i18n.msg("Lock"
 const transform_labels = [_]i18n.Message{ i18n.msg("Normal"), i18n.msg("90°"), i18n.msg("180°"), i18n.msg("270°"), i18n.msg("Flipped"), i18n.msg("Flipped 90°"), i18n.msg("Flipped 180°"), i18n.msg("Flipped 270°") };
 /// In `AdaptiveSync` order: off, auto, always.
 const adaptive_sync_labels = [_]i18n.Message{ i18n.msg("Off"), i18n.msg("Automatic"), i18n.msg("Always") };
+/// In `hdr.Mode` order: off, on.
+const hdr_labels = [_]i18n.Message{ i18n.msg("Off"), i18n.msg("On") };
+/// SDR white level choices in nits (cd/m²); 203 is the BT.2408 reference white.
+const sdr_white_steps = [_]f32{ 80, 100, 120, 150, 203, 250, 300, 400, 500 };
+const sdr_white_labels = blk: {
+    var labels: [sdr_white_steps.len][]const u8 = undefined;
+    for (sdr_white_steps, 0..) |nits, i| labels[i] = std.fmt.comptimePrint("{d} cd/m²", .{nits});
+    const final = labels;
+    break :blk final;
+};
 const row_height: f32 = 40;
 const nl_temp_min: f32 = 1700;
 const nl_temp_max: f32 = 10000;
@@ -84,6 +95,14 @@ pub const Section = struct {
     nl_temp_slider: Widget = undefined,
     nl_group_children: [3]Widget = undefined,
     tearing_label_children: [2]Widget = undefined,
+    /// The HDR card: the switch, then the white level while HDR is on and a
+    /// note, on displays that can take HDR.
+    hdr_row_children: [2]Widget = undefined,
+    sdr_white_row_children: [2]Widget = undefined,
+    hdr_rows: [3]Widget = undefined,
+    hdr_row_count: usize = 0,
+    initial_hdr: ?usize = null,
+    initial_sdr_white: ?usize = null,
     tearing_group_children: [2]Widget = undefined,
     /// Shown only on machines with a lid switch.
     has_lid: bool = false,
@@ -139,13 +158,17 @@ fn valueWidget(text: []const u8) Widget {
 fn setRow(out: *Section, index: usize, label: []const u8, comptime fmt: []const u8, args: anytype) void {
     const value = std.fmt.bufPrint(&out.value_bufs[index], fmt, args) catch "?";
     out.row_children[index] = .{ labelWidget(label), valueWidget(value) };
-    out.row_storage[index] = .{
+    out.row_storage[index] = rowWidget(&out.row_children[index]);
+}
+
+fn rowWidget(children: *[2]Widget) Widget {
+    return .{
         .kind = .container,
         .direction = .row,
         .justify = .space_between,
         .@"align" = .center,
         .height = .{ .fixed = row_height },
-        .children = &out.row_children[index],
+        .children = children,
     };
 }
 
@@ -191,6 +214,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter, wlr_output: *wlr.Output) v
     buildTransforms(out, current_transform);
     const vrr_output = Output.fromWlr(wlr_output);
     if (vrr_output) |output| buildAdaptiveSync(out, output);
+    buildHdr(out, vrr_output);
     const vrr_note = if (vrr_output) |output| output.vrr.needs_modeset and vrr.mode(output) == .auto else false;
     const pal = panel.palette();
     out.top_children = .{
@@ -497,6 +521,63 @@ pub fn pendingAdaptiveSync(out: *Section) ?vrr.Mode {
     const selected = out.row_children[row_adaptive_sync][1].kind.select.selected orelse return null;
     if (selected == out.initial_adaptive_sync or selected >= adaptive_sync_labels.len) return null;
     return @enumFromInt(selected);
+}
+
+fn buildHdr(out: *Section, maybe_output: ?*Output) void {
+    out.initial_hdr = null;
+    out.initial_sdr_white = null;
+    out.hdr_row_children = .{ labelWidget(i18n.tr("HDR")), valueWidget(i18n.tr("Not supported by this display")) };
+    out.hdr_rows[0] = rowWidget(&out.hdr_row_children);
+    out.hdr_row_count = 1;
+    const output = maybe_output orelse return;
+    // An unsupported display keeps the text row, unless HDR is on anyway.
+    if (!hdr.supported(output) and !hdr.active(output)) return;
+    const mode = hdr.mode(output);
+    out.initial_hdr = @intFromEnum(mode);
+    out.hdr_row_children[1] = .{ .name = "hdr", .kind = .{ .select = .{
+        .labels = panel.translatedLabels(&hdr_labels),
+        .selected = out.initial_hdr,
+    } }, .width = .{ .fixed = 190 }, .height = .{ .fixed = row_height } };
+    if (mode == .on) {
+        out.initial_sdr_white = nearestSdrWhite(hdr.sdrWhite(output));
+        out.sdr_white_row_children = .{ labelWidget(i18n.tr("SDR brightness")), .{ .name = "sdr_white", .kind = .{ .select = .{
+            .labels = &sdr_white_labels,
+            .selected = out.initial_sdr_white,
+        } }, .width = .{ .fixed = 190 }, .height = .{ .fixed = row_height } } };
+        out.hdr_rows[out.hdr_row_count] = rowWidget(&out.sdr_white_row_children);
+        out.hdr_row_count += 1;
+    }
+    // Phase 1 of docs/plans/hdr.md: the setting is saved, nothing renders
+    // differently yet. Remove with the PQ encode (Phase 3).
+    out.hdr_rows[out.hdr_row_count] = .{ .kind = .{ .text = .{
+        .content = i18n.tr("HDR output is still in development: the setting is saved, the screen stays SDR for now."),
+        .font_size = 12,
+        .color = panel.palette().dim,
+    } } };
+    out.hdr_row_count += 1;
+}
+
+fn nearestSdrWhite(nits: f32) usize {
+    var best: usize = 0;
+    for (sdr_white_steps, 0..) |step, i| {
+        if (@abs(step - nits) < @abs(sdr_white_steps[best] - nits)) best = i;
+    }
+    return best;
+}
+
+pub fn pendingHdr(out: *Section) ?hdr.Mode {
+    if (out.hdr_row_children[1].kind != .select) return null;
+    const selected = out.hdr_row_children[1].kind.select.selected orelse return null;
+    if (selected == out.initial_hdr or selected >= hdr_labels.len) return null;
+    return @enumFromInt(selected);
+}
+
+/// Nits.
+pub fn pendingSdrWhite(out: *Section) ?f32 {
+    if (out.initial_sdr_white == null or out.sdr_white_row_children[1].kind != .select) return null;
+    const selected = out.sdr_white_row_children[1].kind.select.selected orelse return null;
+    if (selected == out.initial_sdr_white or selected >= sdr_white_steps.len) return null;
+    return sdr_white_steps[selected];
 }
 
 pub const ScaleChange = union(enum) { auto, factor: f32 };

@@ -88,6 +88,23 @@ test "parse output transform configuration" {
     try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"set_output_config\",\"params\":{\"output\":\"DP-1\",\"transform\":\"sideways\"}}"));
 }
 
+test "parse output HDR configuration" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const request = try protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"set_output_config\",\"params\":{\"output\":\"DP-1\",\"hdr\":\"on\",\"sdr_white\":250}}");
+    switch (request) {
+        .action => |action| switch (action) {
+            .set_output_config => |patch| try std.testing.expectEqual(@as(protocol.OutputConfigPatch, .{ .output = patch.output, .hdr = .on, .sdr_white = 250 }), patch),
+            else => return error.TestFailed,
+        },
+        else => return error.TestFailed,
+    }
+    inline for (.{ "\"hdr\":true", "\"hdr\":\"auto\"", "\"sdr_white\":79", "\"sdr_white\":1001", "\"sdr_white\":\"203\"" }) |param| {
+        try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"set_output_config\",\"params\":{\"output\":\"DP-1\"," ++ param ++ "}}"));
+    }
+}
+
 test {
     _ = @import("ipc/protocol_stringify_tests.zig");
 }

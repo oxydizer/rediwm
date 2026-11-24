@@ -321,6 +321,8 @@ pub const source =
     \\# primary = true             # preferred fallback output
     \\# transform = "normal"       # normal, 90, 180, 270, or flipped variants
     \\# adaptive_sync = "auto"     # variable refresh: "auto" while a game fills it, "off", "always"
+    \\# hdr = "off"                # "on": HDR10 where the display supports it (in development: saved, still SDR)
+    \\# sdr_white = 203            # SDR brightness on an HDR output, in nits (80 to 1000)
     \\#
     \\# [[outputs]]
     \\# name = "DP-2"

@@ -49,7 +49,7 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 | Command | CLI | What it does |
 | --- | --- | --- |
 | `outputs` | `outputs` | list outputs |
-| `set_output_config` | `output-config <out> ...` | mode, transform, position, scale, enable. Applied and saved |
+| `set_output_config` | `output-config <out> ...` | mode, transform, position, scale, variable refresh, HDR, enable. Applied and saved |
 | `workspaces` | `workspaces` | there's one, the canvas (`workspace_id = 1`) |
 | `get_camera` | none | position, bounds, zoom |
 | `set_camera` / `reset_camera` | none | `set_camera` takes integer `x`, `y` |
@@ -58,7 +58,8 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 
 `output-config` flags: `--width --height --refresh-mhz --x --y`,
 `--scale <1..3|auto>`, `--position auto`, `--transform <normal|90|180|270|flipped|flipped_90|flipped_180|flipped_270>`,
-`--enabled`/`--disabled`, `--primary`/`--no-primary`. `auto` clears the override.
+`--enabled`/`--disabled`, `--primary`/`--no-primary`, `--adaptive-sync <off|auto|always>`,
+`--hdr <off|on>`, `--sdr-white <80..1000>` (nits). `auto` clears the override.
 
 ## Inspecting the shell and scene
 

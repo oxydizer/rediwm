@@ -347,6 +347,9 @@ print(f'fixture,backlight,{value},{value}%,100')
                     assert any(w["label"] == "Variable refresh rate" for w in widgets())
                     assert any(w["label"] == "Not supported by this display" for w in widgets())
                     assert not any(w.get("name") == "adaptive_sync" for w in widgets())
+                    # Nor HDR: the HDR card says so, with no switch.
+                    assert any(w["label"] == "HDR" for w in widgets())
+                    assert not any(w.get("name") in ("hdr", "sdr_white") for w in widgets())
                     # Tearing is off by default; the switch saves and applies it.
                     assert ui.scroll_into_view("allow_tearing")["on"] is False
                     click(ui.scroll_into_view("allow_tearing"))

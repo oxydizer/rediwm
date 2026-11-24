@@ -31,7 +31,7 @@ pub fn prepare(allocator: std.mem.Allocator, io: Io, path: []const u8, name: []c
     try patch.validate();
     var fields_list: std.ArrayList(u8) = .empty;
     defer fields_list.deinit(allocator);
-    inline for (.{ "width", "height", "refresh_mhz", "x", "y", "scale" }) |key| {
+    inline for (.{ "width", "height", "refresh_mhz", "x", "y", "scale", "sdr_white" }) |key| {
         if (@field(patch, key)) |value| {
             const line = try std.fmt.allocPrint(allocator, "{s} = {d}\n", .{ key, value });
             defer allocator.free(line);
@@ -45,6 +45,11 @@ pub fn prepare(allocator: std.mem.Allocator, io: Io, path: []const u8, name: []c
     }
     if (patch.adaptive_sync) |value| {
         const line = try std.fmt.allocPrint(allocator, "adaptive_sync = \"{s}\"\n", .{@tagName(value)});
+        defer allocator.free(line);
+        try fields_list.appendSlice(allocator, line);
+    }
+    if (patch.hdr) |value| {
+        const line = try std.fmt.allocPrint(allocator, "hdr = \"{s}\"\n", .{@tagName(value)});
         defer allocator.free(line);
         try fields_list.appendSlice(allocator, line);
     }
@@ -143,11 +148,12 @@ fn appendBlock(allocator: std.mem.Allocator, result: *std.ArrayList(u8), block: 
         const eq = std.mem.indexOfScalar(u8, line, '=');
         const key = if (eq) |i| std.mem.trim(u8, line[0..i], " \t\"") else "";
         const replaced = blk: {
-            inline for (.{ "width", "height", "refresh_mhz", "x", "y", "scale" }) |field| {
+            inline for (.{ "width", "height", "refresh_mhz", "x", "y", "scale", "sdr_white" }) |field| {
                 if (std.mem.eql(u8, key, field) and @field(patch, field) != null) break :blk true;
             }
             if (patch.transform != null and std.mem.eql(u8, key, "transform")) break :blk true;
             if (patch.adaptive_sync != null and std.mem.eql(u8, key, "adaptive_sync")) break :blk true;
+            if (patch.hdr != null and std.mem.eql(u8, key, "hdr")) break :blk true;
             if (patch.auto_scale and std.mem.eql(u8, key, "scale")) break :blk true;
             if (patch.auto_position and (std.mem.eql(u8, key, "x") or std.mem.eql(u8, key, "y"))) break :blk true;
             if (patch.enabled != null and std.mem.eql(u8, key, "enabled")) break :blk true;

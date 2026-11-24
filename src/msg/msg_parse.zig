@@ -272,6 +272,10 @@ pub fn parseCommand(cli: FlagParser, arg: []const u8) !void {
                     patch.transform = protocol.parseOutputTransform(value) catch return error.InvalidTransform;
                 } else if (std.mem.eql(u8, option, "--adaptive-sync")) {
                     patch.adaptive_sync = std.meta.stringToEnum(@typeInfo(@TypeOf(patch.adaptive_sync)).optional.child, value) orelse return error.InvalidAdaptiveSync;
+                } else if (std.mem.eql(u8, option, "--hdr")) {
+                    patch.hdr = std.meta.stringToEnum(@typeInfo(@TypeOf(patch.hdr)).optional.child, value) orelse return error.InvalidHdr;
+                } else if (std.mem.eql(u8, option, "--sdr-white")) {
+                    patch.sdr_white = try std.fmt.parseFloat(f32, value);
                 } else {
                     var matched = false;
                     inline for (.{ "width", "height", "refresh_mhz", "x", "y" }, .{ "--width", "--height", "--refresh-mhz", "--x", "--y" }) |field, flag| {

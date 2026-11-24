@@ -2,12 +2,10 @@
 
 const std = @import("std");
 const commands = @import("commands.zig");
-const output_transform = @import("config").output_transform;
 const RectData = @import("protocol_data.zig").RectData;
 const MatchWindowRulesParams = @import("protocol_data.zig").MatchWindowRulesParams;
 const FractionCoord = @import("protocol_data.zig").FractionCoord;
 const EventFilter = @import("protocol_results.zig").EventFilter;
-const OutputConfigPatch = @import("protocol_results.zig").OutputConfigPatch;
 const LayoutTarget = @import("protocol_results.zig").LayoutTarget;
 const ServiceMode = @import("protocol_results.zig").ServiceMode;
 const ParseError = @import("protocol_parse.zig").ParseError;
@@ -25,6 +23,7 @@ const parseRect = @import("protocol_parse.zig").parseRect;
 const emptyAction = @import("protocol_parse.zig").emptyAction;
 const emptyRequest = @import("protocol_parse.zig").emptyRequest;
 const parseWaitCondition = @import("protocol_wait.zig").parseWaitCondition;
+const parseOutputConfigParams = @import("protocol_params_output.zig").parseOutputConfigParams;
 const Action = @import("protocol.zig").Action;
 const Request = @import("protocol.zig").Request;
 
@@ -566,46 +565,7 @@ pub fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.Rou
             return parseSamplePixelsParams(allocator, params orelse return error.InvalidRequest);
         },
 
-        .set_output_config => {
-            const p = params orelse return error.InvalidRequest;
-            const name = p.get("output") orelse return error.InvalidRequest;
-            if (name != .string or name.string.len == 0) return error.InvalidRequest;
-            var patch = OutputConfigPatch{ .output = try allocator.dupe(u8, name.string) };
-            inline for (.{ "width", "height", "refresh_mhz", "x", "y" }) |field| {
-                if (p.get(field)) |value| @field(patch, field) = try parseI32(value);
-            }
-            if (p.get("scale")) |value| {
-                if (value == .string and std.mem.eql(u8, value.string, "auto")) {
-                    patch.auto_scale = true;
-                } else {
-                    const scale = try parseF64(value);
-                    if (scale < 1 or scale > 3) return error.InvalidRequest;
-                    patch.scale = @floatCast(scale);
-                }
-            }
-            if (p.get("position")) |value| {
-                if (value != .string or !std.mem.eql(u8, value.string, "auto")) return error.InvalidRequest;
-                patch.auto_position = true;
-            }
-            if (p.get("enabled")) |value| {
-                if (value != .bool) return error.InvalidRequest;
-                patch.enabled = value.bool;
-            }
-            if (p.get("primary")) |value| {
-                if (value != .bool) return error.InvalidRequest;
-                patch.primary = value.bool;
-            }
-            if (p.get("transform")) |value| {
-                if (value != .string) return error.InvalidRequest;
-                patch.transform = output_transform.parseName(value.string) catch return error.InvalidRequest;
-            }
-            if (p.get("adaptive_sync")) |value| {
-                if (value != .string) return error.InvalidRequest;
-                patch.adaptive_sync = std.meta.stringToEnum(@import("config").output_config.AdaptiveSync, value.string) orelse return error.InvalidRequest;
-            }
-            patch.validate() catch return error.InvalidRequest;
-            return .{ .set_output_config = patch };
-        },
+        .set_output_config => return .{ .set_output_config = try parseOutputConfigParams(allocator, params) },
         .set_idle_config => {
             const p = params orelse return error.InvalidRequest;
             var enabled: ?bool = null;

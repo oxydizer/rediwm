@@ -57,6 +57,8 @@ test "outputs fields parse through the rule table" {
         \\transform = "flipped_90"
         \\night_light = false
         \\gamma = 1.2
+        \\hdr = "on"
+        \\sdr_white = 250.5
         \\
         \\[[outputs]]
         \\name = "DP-2"
@@ -75,18 +77,35 @@ test "outputs fields parse through the rule table" {
     try std.testing.expectEqual(false, o.night_light);
     try std.testing.expectApproxEqAbs(@as(f32, 1.2), o.gamma, 0.001);
     try std.testing.expectEqual(@as(?f32, null), cfg.outputs[1].scale);
+    try std.testing.expectEqual(.on, o.hdr);
+    try std.testing.expectEqual(@as(f32, 250.5), o.sdr_white);
+    // HDR is opt-in; the white level defaults to the BT.2408 reference white.
+    try std.testing.expectEqual(.off, cfg.outputs[1].hdr);
+    try std.testing.expectEqual(@as(f32, 203), cfg.outputs[1].sdr_white);
 
     inline for (.{
-        "width = 0",       "height = -1",        "refresh_mhz = 1.5", "x = 1.5",
-        "scale = 0.9",     "scale = 3.1",        "scale = \"nan\"",   "scale = auto",
-        "transform = 45",  "transform = \"45\"", "enabled = 1",       "name = DP-1",
-        "unknown_key = 1",
+        "width = 0",        "height = -1",        "refresh_mhz = 1.5", "x = 1.5",
+        "scale = 0.9",      "scale = 3.1",        "scale = \"nan\"",   "scale = auto",
+        "transform = 45",   "transform = \"45\"", "enabled = 1",       "name = DP-1",
+        "unknown_key = 1",  "hdr = true",         "hdr = \"auto\"",    "sdr_white = 79",
+        "sdr_white = 1001",
     }) |line| {
         try std.testing.expectError(error.InvalidConfig, parse(a, "[[outputs]]\n" ++ line ++ "\n", "err"));
     }
     try std.testing.expectEqualStrings("a positive integer", fieldHint(OutputConfig, output_rules, "width"));
     try std.testing.expectEqualStrings("an integer", fieldHint(OutputConfig, output_rules, "x"));
     try std.testing.expectEqualStrings("a number between 0.5 and 2", fieldHint(OutputConfig, output_rules, "gamma"));
+    try std.testing.expectEqualStrings("a number between 80 and 1000", fieldHint(OutputConfig, output_rules, "sdr_white"));
+}
+
+test "output patches validate the HDR white level" {
+    const Patch = @import("output_config.zig").Patch;
+    try (Patch{ .hdr = .on }).validate();
+    try (Patch{ .sdr_white = 80 }).validate();
+    try (Patch{ .sdr_white = 1000 }).validate();
+    try std.testing.expectError(error.InvalidOutputConfig, (Patch{ .sdr_white = 79.9 }).validate());
+    try std.testing.expectError(error.InvalidOutputConfig, (Patch{ .sdr_white = std.math.nan(f32) }).validate());
+    try std.testing.expectError(error.EmptyOutputConfig, (Patch{}).validate());
 }
 
 test "night_light sun and always schedules" {

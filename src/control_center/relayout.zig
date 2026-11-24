@@ -103,6 +103,18 @@ pub fn applyPending(cc: *ControlCenter) void {
             cc.relayout();
             cc.requestRepaint();
         }
+        if (display_section.pendingHdr(&cc.display)) |mode| {
+            const output = @import("../Output.zig").fromWlr(cc.selectedDisplayOutput() orelse return) orelse return;
+            cc.applyOutputPatch(output, .{ .hdr = mode });
+            cc.relayout();
+            cc.requestRepaint();
+        }
+        if (display_section.pendingSdrWhite(&cc.display)) |nits| {
+            const output = @import("../Output.zig").fromWlr(cc.selectedDisplayOutput() orelse return) orelse return;
+            cc.applyOutputPatch(output, .{ .sdr_white = nits });
+            cc.relayout();
+            cc.requestRepaint();
+        }
     }
     if (cc.pending_page) |page| {
         cc.pending_page = null;

@@ -309,6 +309,9 @@ pub const OutputConfig = struct {
     primary: bool = false,
     transform: output_transform.Transform = .normal,
     adaptive_sync: @import("output_config.zig").AdaptiveSync = .auto,
+    hdr: @import("output_config.zig").Hdr = .off,
+    /// Nits; see `output_config.sdr_white_default`.
+    sdr_white: f32 = @import("output_config.zig").sdr_white_default,
     night_light: bool = true,
     gamma: f32 = 1.0,
 };

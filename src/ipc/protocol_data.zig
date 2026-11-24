@@ -190,6 +190,14 @@ pub const OutputData = struct {
     adaptive_sync_active: bool = false,
     /// The driver cannot switch it without a modeset, so "auto" leaves it.
     adaptive_sync_needs_modeset: bool = false,
+    /// `[[outputs]] hdr`: "off" or "on".
+    hdr: []const u8 = "off",
+    /// The display and driver can take an HDR10 (PQ, BT.2020) signal.
+    hdr_supported: bool = false,
+    /// The output has committed an HDR image description.
+    hdr_active: bool = false,
+    /// `[[outputs]] sdr_white`: SDR brightness on an HDR output, in nits.
+    sdr_white: f32 = 203,
 };
 
 pub const WorkspaceData = struct {

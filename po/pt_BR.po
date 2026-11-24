@@ -2774,6 +2774,14 @@ msgstr "Grupo"
 msgid "Groups"
 msgstr "Grupos"
 
+#: src/control_center/search_index.zig
+msgid "HDR"
+msgstr "HDR"
+
+#: src/control_center/sections/display.zig
+msgid "HDR output is still in development: the setting is saved, the screen stays SDR for now."
+msgstr "A saída HDR ainda está em desenvolvimento: a configuração é salva, mas a tela continua em SDR por enquanto."
+
 #: src/control_center/sections/network.zig
 msgid "Hardware blocked"
 msgstr "Bloqueado por hardware"
@@ -4936,6 +4944,10 @@ msgstr "Arredondado"
 msgid "Running"
 msgstr "Em execução"
 
+#: src/control_center/sections/display.zig
+msgid "SDR brightness"
+msgstr "Brilho SDR"
+
 #: src/control_center/sections/sound.zig
 msgid "SOUND"
 msgstr "SOM"
@@ -6944,6 +6956,10 @@ msgstr "falha ao alternar git"
 #: src/control_center/search_index.zig
 msgid "hide automatically"
 msgstr "ocultar automaticamente"
+
+#: src/control_center/search_index.zig
+msgid "high dynamic range hdr10 sdr brightness nits"
+msgstr "alto alcance dinâmico hdr10 sdr brilho nits"
 
 #: src/control_center/search_index.zig
 msgid "hotkeys keybindings bindings terminal screenshot volume brightness workspaces"

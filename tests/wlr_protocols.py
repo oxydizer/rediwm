@@ -118,10 +118,27 @@ def output_management(tmp):
         # and the mode stays as configured.
         s.run("wlr-randr", "--output", "HEADLESS-1", "--adaptive-sync", "enabled", ok=False)
         assert s.output("HEADLESS-1")["adaptive_sync"] == "auto"
+        # HDR (docs/plans/hdr.md, Phase 1): headless cannot take HDR10, but
+        # the setting is saved and reported like on any output; nothing is
+        # committed differently yet.
+        out = s.output("HEADLESS-2")
+        assert (out["hdr"], out["hdr_supported"], out["hdr_active"], out["sdr_white"]) == ("off", False, False, 203), out
+        s.ipc.request(query="set_output_config", params={"output": "HEADLESS-2", "hdr": "on", "sdr_white": 250})
+        wait_for(lambda: (s.output("HEADLESS-2")["hdr"], s.output("HEADLESS-2")["sdr_white"]) == ("on", 250), "hdr not saved")
+        assert not s.output("HEADLESS-2")["hdr_active"]
+        for params in ({"sdr_white": 79}, {"sdr_white": 1001}, {"hdr": "auto"}):
+            try:
+                s.ipc.request(query="set_output_config", params={"output": "HEADLESS-2", **params})
+            except IPCError:
+                pass
+            else:
+                raise AssertionError(f"accepted {params}")
+        assert s.output("HEADLESS-2")["sdr_white"] == 250
 
         # Client changes persist like Settings changes.
         saved = (tmp / "rediwm-config.toml").read_text()
         assert 'name = "HEADLESS-1"' in saved and "x = 2000" in saved, saved
+        assert 'hdr = "on"' in saved and "sdr_white = 250" in saved, saved
 
         s.run("wlr-randr", "--output", "HEADLESS-2", "--off")
         wait_for(lambda: not s.output("HEADLESS-2")["enabled"], "output not disabled")

@@ -3484,6 +3484,14 @@ msgstr ""
 msgid "Groups"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "HDR"
+msgstr ""
+
+#: src/control_center/sections/display.zig
+msgid "HDR output is still in development: the setting is saved, the screen stays SDR for now."
+msgstr ""
+
 #: src/control_center/sections/network_proxy.zig
 msgid "HTTP proxy"
 msgstr ""
@@ -6311,6 +6319,10 @@ msgstr ""
 msgid "Running"
 msgstr ""
 
+#: src/control_center/sections/display.zig
+msgid "SDR brightness"
+msgstr ""
+
 #: src/control_center/sections/network_proxy.zig
 msgid "SOCKS host"
 msgstr ""
@@ -8801,6 +8813,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "hide automatically"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "high dynamic range hdr10 sdr brightness nits"
 msgstr ""
 
 #: src/control_center/sections/firewall_rules.zig
