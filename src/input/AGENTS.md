@@ -10,7 +10,10 @@
   `tests/input_persistence.py` uses a noninstalled backend fixture; physical
   touchpad/mouse scroll feel and libinput DWT pairing still need manual checks.
 
-* **Text input/IME** (`text_input.zig`): `syncFocus` is the only enter path.
+* **Text input/IME** (`text_input.zig`, `text_input_v1.zig`): `syncFocus` is the only enter path.
+  A v1 field names its seat and surface in `activate`. Its setters work
+  without `commit_state`; when supplied, its serial belongs on v1 edits.
+  The v2 method's done serial independently rejects stale replies.
   IM grabs replace client delivery only (bindings, hardware keys and
   shell/lock UI win); an IM's own virtual keyboard bypasses its grab.
   While an overlay owns new input, modifier updates and the release of keys

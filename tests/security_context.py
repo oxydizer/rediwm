@@ -116,6 +116,7 @@ def test_registry_and_guess_bind():
             # 3. Dump registry through sandboxed connection
             sandboxed_env = dict(session.env, WAYLAND_DISPLAY=str(sandboxed_sock))
             sandboxed_globals = dump_registry(tmp / "fixture", sandboxed_env)
+            assert {"zwp_text_input_manager_v1", "zwp_text_input_manager_v3"} <= sandboxed_globals
 
             # Core globals present
             for cg in CORE_GLOBALS:

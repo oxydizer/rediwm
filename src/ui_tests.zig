@@ -23,6 +23,7 @@ test {
     _ = @import("ui").key_repeat;
     _ = @import("ui").hover_glide;
     _ = @import("input/ime_placement.zig");
+    _ = @import("input/text_input_v1.zig");
     _ = @import("lifecycle_tests.zig");
     _ = @import("ui").layout;
     _ = @import("ui").measure;

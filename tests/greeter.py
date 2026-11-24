@@ -93,7 +93,7 @@ def run(with_dm):
                 wayland_socket = next(p for p in tmp.iterdir() if p.name.startswith("wayland-") and not p.name.endswith(".lock"))
                 dump_env = dict(env, WAYLAND_DISPLAY=wayland_socket.name)
                 registry_res = subprocess.run([str(tmp / "fixture"), "dump-registry"], env=dump_env, capture_output=True, text=True, check=True)
-                for interface in ("wp_security_context_manager_v1", "ext_workspace_manager_v1",
+                for interface in ("wp_security_context_manager_v1", "ext_workspace_manager_v1", "zwp_text_input_manager_v1",
                                   "wp_drm_lease_device_v1", "xdg_toplevel_tag_manager_v1",
                                   "wp_content_type_manager_v1", "wp_tearing_control_manager_v1",
                                   "wp_color_manager_v1", "wp_color_representation_manager_v1"):

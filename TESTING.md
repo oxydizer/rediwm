@@ -38,7 +38,8 @@ wayland-protocols and GLES2; D-Bus suites also need PyGObject,
 `dbus-run-session` and `busctl`. Check each suite for extra dependencies.
 App checks include [calculator](tests/calculator.py), [editor](tests/editor.py),
 [editor visuals](tests/editor_visuals.py) and
-[Files input methods](tests/files_ime.py).
+[Files input methods](tests/files_ime.py). Run `python3 tests/text_input_v1.py`
+for legacy fields, v3 coexistence, IME reconnect and lock isolation.
 
 Application colors: `python3 tests/app_colors.py` checks snapshot exports and
 opt-in following with a private bus, scratch HOME/XDG directories, and real

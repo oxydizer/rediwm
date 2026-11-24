@@ -1,5 +1,4 @@
-//! Seat-local text-input-v3 / input-method-v2 relay. The protocol objects
-//! belong to wlroots; this module owns listeners, focus policy and popup nodes.
+//! Seat-local text-input-v1/v3 to input-method-v2 relay.
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
@@ -8,13 +7,16 @@ const Server = @import("../Server.zig");
 const Keyboard = @import("../Keyboard.zig");
 const Toplevel = @import("../Toplevel.zig");
 const gpa = @import("../main.zig").gpa;
+const Legacy = @import("text_input_v1.zig");
 const Self = @This();
 
 server: *Server,
 inputs: wl.list.Head(TextInput, .link) = undefined,
+v1_inputs: wl.list.Head(Legacy, .link) = undefined,
+v1_global: ?*wl.Global = null,
 popups: wl.list.Head(Popup, .link) = undefined,
 method: ?*wlr.InputMethodV2 = null,
-active: ?*TextInput = null,
+active: ?Endpoint = null,
 done_serial: u32 = 0,
 grab_generation: u64 = 0,
 new_input: wl.Listener(*wlr.TextInputV3) = .init(newInput),
@@ -28,6 +30,46 @@ grab_destroy: wl.Listener(void) = .init(grabDestroy),
 new_popup: wl.Listener(*wlr.InputPopupSurfaceV2) = .init(newPopup),
 grab: ?*wlr.InputMethodV2.KeyboardGrab = null,
 
+pub const Endpoint = union(enum) {
+    v1: *Legacy,
+    v3: *TextInput,
+
+    fn surface(self: Endpoint) ?*wlr.Surface {
+        return switch (self) {
+            .v1 => |v| if (v.entered) v.target else null,
+            .v3 => |v| v.input.focused_surface,
+        };
+    }
+
+    fn enabled(self: Endpoint) bool {
+        return switch (self) {
+            .v1 => |v| v.entered,
+            .v3 => |v| v.input.current_enabled,
+        };
+    }
+
+    fn state(self: Endpoint) *const wlr.TextInputV3.State {
+        return switch (self) {
+            .v1 => |v| &v.current,
+            .v3 => |v| &v.input.current,
+        };
+    }
+
+    fn features(self: Endpoint) wlr.TextInputV3.Features {
+        return switch (self) {
+            .v1 => |v| v.current.features,
+            .v3 => |v| v.input.active_features,
+        };
+    }
+
+    fn caret(self: Endpoint) ?wlr.Box {
+        return switch (self) {
+            .v1 => |v| if (v.current.features.cursor_rectangle) v.current.cursor_rectangle else null,
+            .v3 => |v| if (v.cursor_rectangle_seen) v.input.current.cursor_rectangle else null,
+        };
+    }
+};
+
 pub fn create(server: *Server) !*Self {
     const self = try gpa.create(Self);
     errdefer gpa.destroy(self);
@@ -37,7 +79,9 @@ pub fn create(server: *Server) !*Self {
     const vk = try wlr.VirtualKeyboardManagerV1.create(server.wl_server);
     self.* = .{ .server = server };
     self.inputs.init();
+    self.v1_inputs.init();
     self.popups.init();
+    if (!server.greeter_mode) self.v1_global = try Legacy.createGlobal(self);
     ti.events.new_text_input.add(&self.new_input);
     im.events.new_input_method.add(&self.new_method);
     vk.events.new_virtual_keyboard.add(&self.new_keyboard);
@@ -51,6 +95,8 @@ pub fn destroy(self: *Self) void {
     self.new_keyboard.link.remove();
     self.focus_change.link.remove();
     self.detachMethod();
+    if (self.v1_global) |global| global.destroy();
+    while (self.v1_inputs.first()) |input| input.resource.destroy();
     while (self.popups.first()) |popup| popup.destroy();
     while (self.inputs.first()) |input| input.destroy();
     gpa.destroy(self);
@@ -109,20 +155,39 @@ fn focusChanged(listener: *wl.Listener(*wlr.Seat.event.KeyboardFocusChange), _: 
     self.syncFocus();
 }
 
-fn syncFocus(self: *Self) void {
-    const surface = if (self.method != null and (self.server.locker == null and self.server.polkit_dialog == null))
-        self.server.input.seat.keyboard_state.focused_surface
-    else
-        null;
+pub fn blocked(self: *Self) bool {
+    return self.server.locker != null or self.server.polkit_dialog != null or self.server.shutting_down;
+}
+
+pub fn isActive(self: *Self, endpoint: Endpoint) bool {
+    return std.meta.eql(self.active orelse return false, endpoint);
+}
+
+pub fn syncFocus(self: *Self) void {
+    const focus = if (self.blocked()) null else self.server.input.seat.keyboard_state.focused_surface;
+    const surface = if (self.method != null) focus else null;
     if (self.active) |active| {
-        if (surface == null or active.input.focused_surface != surface) self.deactivate();
+        if (surface == null or active.surface() != surface) self.deactivate();
+    }
+    // V1 activates a particular surface explicitly. A request can arrive
+    // before keyboard focus or before the method connects. The newest request
+    // for this surface wins; an entered field loses its request on focus loss.
+    var candidate: ?*Legacy = null;
+    var legacy = self.v1_inputs.iterator(.forward);
+    while (legacy.next()) |input| {
+        const target = input.target orelse continue;
+        if (self.blocked() or (input.entered and target != focus)) {
+            input.release(true);
+        } else if (target == focus) {
+            if (candidate == null) candidate = input else input.release(true);
+        }
     }
     // Leave every old input before entering the new client. A client may have
     // multiple text-input objects, but only its most recently enabled one wins.
     var it = self.inputs.iterator(.forward);
     while (it.next()) |input| {
         if (input.input.focused_surface != null and input.input.focused_surface != surface) {
-            if (self.active == input) self.deactivate();
+            if (self.isActive(.{ .v3 = input })) self.deactivate();
             input.input.sendLeave();
         }
     }
@@ -134,10 +199,30 @@ fn syncFocus(self: *Self) void {
             }
         }
     }
+    if (candidate) |input| {
+        const newly_entered = !input.entered;
+        if (newly_entered) {
+            input.resource.sendEnter(input.target.?.resource);
+            input.entered = true;
+        }
+        if (self.method != null and (newly_entered or self.active == null)) self.activate(.{ .v1 = input });
+    }
     self.updatePopups();
 }
 
-fn deactivate(self: *Self) void {
+pub fn activate(self: *Self, next: Endpoint) void {
+    const method = self.method orelse return;
+    const surface = next.surface() orelse return;
+    if (self.blocked() or surface != self.server.input.seat.keyboard_state.focused_surface) return;
+    if (self.active) |old| {
+        if (old == .v1 and !self.isActive(next)) old.v1.release(true) else self.deactivate();
+    }
+    self.active = next;
+    method.sendActivate();
+    self.sendState();
+}
+
+pub fn deactivate(self: *Self) void {
     if (self.active == null) return;
     self.active = null;
     if (self.method) |method| {
@@ -147,14 +232,17 @@ fn deactivate(self: *Self) void {
     self.updatePopups();
 }
 
-fn sendState(self: *Self) void {
-    const input = (self.active orelse return).input;
+pub fn sendState(self: *Self) void {
+    const input = self.active orelse return;
+    const surface = input.surface() orelse return;
+    if (self.blocked() or self.server.input.seat.keyboard_state.focused_surface != surface) return;
     const method = self.method orelse return;
-    if (input.active_features.surrounding_text) {
-        method.sendSurroundingText(input.current.surrounding.text orelse "", input.current.surrounding.cursor, input.current.surrounding.anchor);
+    const state = input.state();
+    if (input.features().surrounding_text) {
+        method.sendSurroundingText(state.surrounding.text orelse "", state.surrounding.cursor, state.surrounding.anchor);
     }
-    method.sendTextChangeCause(input.current.text_change_cause);
-    if (input.active_features.content_type) method.sendContentType(input.current.content_type.hint, input.current.content_type.purpose);
+    method.sendTextChangeCause(state.text_change_cause);
+    if (input.features().content_type) method.sendContentType(state.content_type.hint, state.content_type.purpose);
     self.done();
     self.updatePopups();
 }
@@ -179,25 +267,18 @@ const TextInput = struct {
 
     fn enabled(listener: *wl.Listener(void)) void {
         const self: *TextInput = @fieldParentPtr("enable", listener);
-        const relay = self.relay;
-        const method = relay.method orelse return;
-        if (relay.server.locker != null or relay.server.polkit_dialog != null or self.input.focused_surface == null or
-            self.input.focused_surface != relay.server.input.seat.keyboard_state.focused_surface) return;
-        relay.deactivate();
-        relay.active = self;
-        method.sendActivate();
-        relay.sendState();
+        self.relay.activate(.{ .v3 = self });
     }
 
     fn disabled(listener: *wl.Listener(void)) void {
         const self: *TextInput = @fieldParentPtr("disable", listener);
-        if (self.relay.active == self) self.relay.deactivate();
+        if (self.relay.isActive(.{ .v3 = self })) self.relay.deactivate();
     }
 
     fn committed(listener: *wl.Listener(void)) void {
         const self: *TextInput = @fieldParentPtr("commit", listener);
         if (self.input.current.features.cursor_rectangle) self.cursor_rectangle_seen = true;
-        if (self.relay.active == self and self.input.current_enabled) self.relay.sendState();
+        if (self.relay.isActive(.{ .v3 = self }) and self.input.current_enabled) self.relay.sendState();
     }
 
     fn onDestroy(listener: *wl.Listener(void)) void {
@@ -206,7 +287,7 @@ const TextInput = struct {
     }
 
     fn destroy(self: *TextInput) void {
-        if (self.relay.active == self) self.relay.deactivate();
+        if (self.relay.isActive(.{ .v3 = self })) self.relay.deactivate();
         self.enable.link.remove();
         self.disable.link.remove();
         self.commit.link.remove();
@@ -250,12 +331,13 @@ fn newMethod(listener: *wl.Listener(*wlr.InputMethodV2), method: *wlr.InputMetho
 fn methodCommit(listener: *wl.Listener(void)) void {
     const self: *Self = @fieldParentPtr("method_commit", listener);
     const active = self.active orelse return;
-    const input = active.input;
-    if (self.server.locker != null or self.server.polkit_dialog != null or !input.current_enabled or input.focused_surface == null or
-        input.focused_surface != self.server.input.seat.keyboard_state.focused_surface) return;
+    const surface = active.surface() orelse return;
+    if (self.blocked() or !active.enabled() or surface != self.server.input.seat.keyboard_state.focused_surface) return;
     const method = self.method orelse return;
     if (method.current_serial != self.done_serial) return;
     const state = &method.current;
+    if (active == .v1) return active.v1.deliver(state);
+    const input = active.v3.input;
     // Empty preedit clears the previous composition, including on commit-only
     // updates. Ignore replies to a state predating the latest done/focus change.
     input.sendPreeditString(state.preedit.text orelse "", state.preedit.cursor_begin, state.preedit.cursor_end);
@@ -302,12 +384,13 @@ fn detachMethod(self: *Self) void {
 fn methodDestroy(listener: *wl.Listener(void)) void {
     const self: *Self = @fieldParentPtr("method_destroy", listener);
     // Clear composition before leaving, so a reconnect cannot strand preedit.
-    if (self.active) |active| {
-        if (active.input.focused_surface != null) {
-            active.input.sendPreeditString("", 0, 0);
-            active.input.sendDone();
-        }
-    }
+    if (self.active) |active| switch (active) {
+        .v1 => |v| v.clearPreedit(),
+        .v3 => |v| if (v.input.focused_surface != null) {
+            v.input.sendPreeditString("", 0, 0);
+            v.input.sendDone();
+        },
+    };
     self.detachMethod();
     self.syncFocus();
 }
@@ -389,8 +472,7 @@ pub fn updatePopups(self: *Self) void {
                 shell.open_start_menu != null or shell.open_wifi != null or shell.open_battery != null or shell.open_calendar != null or shell.open_power_menu != null or
                 (if (shell.open_control_center) |cc| cc.hasKeyboardFocus() else false)) break :visible false;
             const active = self.active orelse break :visible false;
-            const input = active.input;
-            const surface = input.focused_surface orelse break :visible false;
+            const surface = active.surface() orelse break :visible false;
             if (!surface.mapped or !popup.popup.surface.mapped) break :visible false;
             const node = surfaceNode(&self.server.nodes.tree, surface) orelse break :visible false;
             var sx: i32 = 0;
@@ -421,9 +503,7 @@ pub fn updatePopups(self: *Self) void {
                 y = layout.y;
                 scale *= self.server.world.camera.zoom();
             } else if (wlr.LayerSurfaceV1.tryFromWlrSurface(surface.getRootSurface()) == null) break :visible false;
-            // `active_features` is a snapshot of the enabling commit's features,
-            // so a client may have sent the rectangle afterwards (Chromium does).
-            const rect = if (active.cursor_rectangle_seen) input.current.cursor_rectangle else wlr.Box{ .x = 0, .y = 0, .width = surface.current.width, .height = surface.current.height };
+            const rect = active.caret() orelse wlr.Box{ .x = 0, .y = 0, .width = surface.current.width, .height = surface.current.height };
             // Rectangle coordinates are client-controlled signed 32-bit values.
             // Zoom and adding the scene origin can exceed that range.
             const rx: i64 = @intFromFloat(@round(x + @as(f64, @floatFromInt(rect.x)) * scale));
@@ -468,23 +548,21 @@ pub fn inspect(self: *Self, allocator: std.mem.Allocator) !@import("../ipc/proto
     var result = Result{};
     result.input_method = .{ .connected = self.method != null, .active = self.active != null, .keyboard_grab = self.grab != null };
     const focused = self.server.input.seat.keyboard_state.focused_surface;
-    var inputs = self.inputs.iterator(.forward);
-    while (inputs.next()) |tracked| {
-        const surface = focused orelse break;
-        const input = tracked.input;
-        if (input.resource.getClient() != surface.resource.getClient()) continue;
-        const rect = input.current.cursor_rectangle;
-        result.focused = .{
-            .window_id = if (Toplevel.fromSurface(self.server, surface)) |top| top.id else null,
-            .enabled = input.current_enabled,
-            .features = @bitCast(input.active_features),
-            .content_purpose = input.current.content_type.purpose,
-            .content_hint = input.current.content_type.hint,
-            .cursor_rectangle = .{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height },
-            .surrounding_bytes = if (input.current.surrounding.text) |t| std.mem.len(t) else 0,
-            .pending = input.focused_surface == null,
-        };
-        if (self.active == tracked) break;
+    if (focused) |surface| {
+        if (self.focusedInput(surface)) |input| {
+            const state = input.state();
+            const rect = state.cursor_rectangle;
+            result.focused = .{
+                .window_id = if (Toplevel.fromSurface(self.server, surface)) |top| top.id else null,
+                .enabled = input.enabled(),
+                .features = @bitCast(input.features()),
+                .content_purpose = state.content_type.purpose,
+                .content_hint = state.content_type.hint,
+                .cursor_rectangle = .{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height },
+                .surrounding_bytes = if (state.surrounding.text) |t| std.mem.len(t) else 0,
+                .pending = input.surface() == null or self.method == null,
+            };
+        }
     }
     var popups: std.ArrayList(std.meta.Elem(@FieldType(Result, "popups"))) = .empty;
     errdefer popups.deinit(allocator);
@@ -507,4 +585,13 @@ pub fn inspect(self: *Self, allocator: std.mem.Allocator) !@import("../ipc/proto
     result.popups = try popups.toOwnedSlice(allocator);
     result.input_method.popup_count = result.popups.len;
     return result;
+}
+
+fn focusedInput(self: *Self, surface: *wlr.Surface) ?Endpoint {
+    if (self.active) |input| if (input.surface() == surface) return input;
+    var legacy = self.v1_inputs.iterator(.forward);
+    while (legacy.next()) |v| if (v.target == surface) return .{ .v1 = v };
+    var inputs = self.inputs.iterator(.forward);
+    while (inputs.next()) |v| if (v.input.resource.getClient() == surface.resource.getClient()) return .{ .v3 = v };
+    return null;
 }

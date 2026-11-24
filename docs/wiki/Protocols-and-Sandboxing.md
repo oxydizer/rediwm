@@ -14,7 +14,7 @@ reserve space on a specific output edge, including from a corner.
 | Locking and idle | `ext-session-lock-v1`, `ext-idle-notify-v1`, `idle-inhibit-v1` | swaylock, gtklock, swayidle |
 | Remote input | `virtual-pointer-v1`, `virtual-keyboard-v1` | wayvnc, KDE Connect, wtype |
 | Clipboard | `wlr-data-control-v1`, `ext-data-control-v1`, primary selection | wl-clipboard |
-| Input | `text-input-v3`, `input-method-v2`, `relative-pointer-v1`, `pointer-constraints-v1`, `keyboard-shortcuts-inhibit-v1`, `pointer-gestures-v1`, `cursor-shape-v1` | fcitx5, IBus, games, virt-manager |
+| Input | `text-input-v1`, `text-input-v3`, `input-method-v2`, `relative-pointer-v1`, `pointer-constraints-v1`, `keyboard-shortcuts-inhibit-v1`, `pointer-gestures-v1`, `cursor-shape-v1` | fcitx5, IBus, games, virt-manager |
 | Workspace | `ext-workspace-v1` | one canvas workspace shared by all outputs |
 | Window metadata | `xdg-toplevel-tag-v1`, `content-type-v1`, `xdg-activation-v1` | window rules, content hints, activation |
 | Colour | `color-management-v1`, `color-representation-v1` | whatever the renderer supports |
@@ -25,6 +25,10 @@ reserve space on a specific output edge, including from a corner.
 
 - Output changes from clients (wlr-randr, kanshi) are saved just like ones made
   in Settings.
+- Legacy text-input-v1 fields can use the same input method as v3 fields for
+  composition, surrounding-text edits and candidate popups. V1 requests for
+  on-screen keyboard visibility, a preferred language and actions on preedit
+  text have no input-method-v2 equivalent.
 - **Workspace:** the canvas is advertised as one workspace. You can't create,
   remove or switch workspaces through the protocol. Window IPC reports
   `workspace_id = 1`, plus `tag`, `description` and `content_type` when the
