@@ -7,6 +7,8 @@ const zxdg = @import("wayland").client.zxdg;
 const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
 const io_runtime_mod = @import("io_runtime.zig");
+const io_service_mod = @import("io_service.zig");
+const io_coordinator_mod = @import("io_coordinator.zig");
 const key_repeat = @import("ui").key_repeat;
 const shell_ui = @import("ui").cairo;
 const ui_theme = @import("ui").theme;
@@ -241,6 +243,23 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     // is what lets a tab move from one of its windows to another.
     const display = try wl.Display.connect(null);
     defer display.disconnect();
+
+    // The Service and Coordinator outlive every window. Clients receive only
+    // their own non-owning Service handle; legacy App runtimes remain local
+    // until their migration units are completed.
+    var service: io_service_mod.Service = .{};
+    try service.init();
+    var coordinator_ready = false;
+    errdefer if (!coordinator_ready) service.deinit();
+
+    var coordinator: io_coordinator_mod.Coordinator = undefined;
+    try coordinator.init(a, &service);
+    coordinator_ready = true;
+    defer {
+        coordinator.deinit();
+        service.deinit();
+    }
+
     const setup: Setup = .{ .io = init.io, .environ = init.minimal.environ, .home_dir = home_dir, .force_csd = force_csd };
 
     const windows = &open_windows;
@@ -254,7 +273,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         .chooser = chooser,
         .torrent_source = torrent_source,
         .transfers = transfers,
-    }));
+    }, &service));
 
     // A file chooser is one window and ends with its answer; it is printed
     // from the window before it goes.
@@ -293,7 +312,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
                 window.app.setStatusNotice(@import("i18n").tr("Could not open new window"), true);
                 break;
             }
-            if (Client.create(display, setup, .{ .dir = path })) |created| {
+            if (Client.create(display, setup, .{ .dir = path }, &service)) |created| {
                 windows.append(a, created) catch created.destroy();
                 opened = true;
             } else |err| {
@@ -310,7 +329,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             window.app.tear_tab = null;
             if (windows.items.len >= max_windows or !window.app.movable() or window.app.tabs.items.len < 2) continue;
             const at = window.app.findFolderTab(id) orelse continue;
-            const created = Client.create(display, setup, .{ .dir = window.app.tabStart(at) }) catch |err| {
+            const created = Client.create(display, setup, .{ .dir = window.app.tabStart(at) }, &service) catch |err| {
                 std.log.warn("rediwm-files: cannot open a window: {}", .{err});
                 continue;
             };

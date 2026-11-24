@@ -126,6 +126,8 @@ registry: ?*wl.Registry = null,
 /// The window's own listing worker and I/O runtime (`client_lifecycle.zig`).
 worker: *@import("worker.zig").Worker = undefined,
 io_runtime: *@import("io_runtime.zig").Runtime = undefined,
+/// Non-owning capability for this window's process-wide Files I/O service.
+io_handle: @import("io_service.zig").Handle = undefined,
 app: app_mod.App,
 
 pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Client) void {

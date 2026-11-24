@@ -10,6 +10,7 @@ const ClientCursor = @import("ui").client_cursor;
 const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
 const io_runtime_mod = @import("io_runtime.zig");
+const io_service_mod = @import("io_service.zig");
 const worker_mod = @import("worker.zig");
 const transfer = @import("transfer.zig");
 const client_tabs = @import("client_tabs.zig");
@@ -20,6 +21,20 @@ const Setup = main.Setup;
 const Launch = main.Launch;
 const a = std.heap.c_allocator;
 
+/// Handle.close() is deliberately retryable on mutex contention. Window
+/// destruction cannot abandon a registered slot, so retry until it closes.
+fn closeIoHandle(handle: *io_service_mod.Handle) void {
+    while (true) {
+        handle.close() catch |err| {
+            if (err == error.ServiceBusy) continue;
+            std.debug.panic("Could not close Files service handle: {s}", .{
+                @errorName(err),
+            });
+        };
+        return;
+    }
+}
+
 /// Poll entries one window owns. Entry 0 of the block is unused: the display
 /// is polled once for all windows, ahead of them.
 pub const poll_slots = 26;
@@ -27,7 +42,15 @@ pub const poll_slots = 26;
 /// Opens a window. A failed creation leaks what it had made: the first window
 /// failing ends the process, and a later one failing is rare enough to cost a
 /// few proxies.
-pub fn create(display: *wl.Display, setup: Setup, launch: Launch) !*Client {
+pub fn create(
+    display: *wl.Display,
+    setup: Setup,
+    launch: Launch,
+    service: *io_service_mod.Service,
+) !*Client {
+    var io_handle = try service.registerWindow();
+    errdefer closeIoHandle(&io_handle);
+
     const worker = try worker_mod.Worker.init(a, setup.io, setup.environ, launch.dir);
     errdefer worker.deinit();
 
@@ -57,6 +80,7 @@ pub fn create(display: *wl.Display, setup: Setup, launch: Launch) !*Client {
         .locale = @import("ui").compose.localeFromEnviron(setup.environ),
         .worker = worker,
         .io_runtime = io_runtime,
+        .io_handle = io_handle,
     };
     self.ime = .{ .app = &self.app };
     if (launch.chooser) |options| try self.app.configureChooser(options);
@@ -283,6 +307,7 @@ pub fn destroy(self: *Client) void {
     self.app.deinit();
     self.compose.deinit();
     self.ime.deinit();
+    closeIoHandle(&self.io_handle);
     self.io_runtime.deinit();
     a.destroy(self.io_runtime);
     self.worker.deinit();
