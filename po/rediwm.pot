@@ -59,6 +59,10 @@ msgstr ""
 msgid "180°"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "192.168.1.0/24"
+msgstr ""
+
 #: src/control_center/sections/network_editor.zig
 msgid "192.168.1.1"
 msgstr ""
@@ -77,6 +81,10 @@ msgstr ""
 
 #: src/control_center/sections/network_editor.zig
 msgid "2001:db8::20"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "203.0.113.9 or 10.0.0.0/8"
 msgstr ""
 
 #: src/control_center/sections/network_editor.zig
@@ -119,6 +127,10 @@ msgstr ""
 msgid "8080"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "8080 or 6000-6010"
+msgstr ""
+
 #: src/control_center/sections/display.zig
 msgid "90°"
 msgstr ""
@@ -157,6 +169,10 @@ msgstr ""
 
 #: src/control_center/sections/printers.zig
 msgid "A printer with this queue name already exists. Choose another name."
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "A program"
 msgstr ""
 
 #: src/control_center/sections/printers_add.zig
@@ -199,8 +215,16 @@ msgstr ""
 msgid "Accounts"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Action"
+msgstr ""
+
 #: src/control_center/sections/services.zig
 msgid "Activated by: {name}"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Add"
 msgstr ""
 
 #: src/files/open_with.zig
@@ -221,6 +245,14 @@ msgstr ""
 
 #: src/control_center/sections/input_sources.zig
 msgid "Add layout…"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Add rule"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Add rule…"
 msgstr ""
 
 #: src/files/app_model.zig
@@ -271,12 +303,16 @@ msgstr ""
 msgid "Additional setup required"
 msgstr ""
 
-#: src/control_center/sections/network_editor.zig
+#: src/control_center/sections/firewall_rules.zig
 msgid "Address"
 msgstr ""
 
 #: src/control_center/sections/printers_add.zig
 msgid "Address checks support IPP printers. Other connections can be tested with an explicit print after setup."
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Address or network"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -285,6 +321,10 @@ msgstr ""
 
 #: src/polkit/dialog.zig
 msgid "Administrator privileges are required to continue."
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Advanced"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -307,8 +347,24 @@ msgstr ""
 msgid "All items in Trash"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "All network connections are blocked."
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "All networks"
+msgstr ""
+
 #: src/system_monitor/app.zig
 msgid "All processes"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "All traffic"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Allow"
 msgstr ""
 
 #: src/desktop/app_actions.zig
@@ -319,17 +375,28 @@ msgstr ""
 msgid "Allow connections from this device without asking."
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Allow on home networks"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Allow pairing with this device?"
 msgstr ""
 
 #: src/control_center/search_index.zig
-#: src/control_center/sections/display.zig
 msgid "Allow tearing in games"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Allow, rate-limited"
 msgstr ""
 
 #: src/files/app_places.zig
 msgid "Already in Places"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Also active:"
 msgstr ""
 
 #: src/control_center/sections/input_sources.zig
@@ -341,7 +408,6 @@ msgstr ""
 msgid "Alt+Shift"
 msgstr ""
 
-#: src/control_center/sections/input_sources.zig
 #: src/control_center/sections/display.zig
 msgid "Always"
 msgstr ""
@@ -352,6 +418,10 @@ msgstr ""
 
 #: src/files/open_with.zig
 msgid "Always use this app for {value} files"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "An address"
 msgstr ""
 
 #: src/files/app_opening.zig
@@ -378,8 +448,28 @@ msgstr ""
 msgid "Animations"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Another firewall change is still running."
+msgstr ""
+
 #: src/session/power_requests.zig
 msgid "Another power action is already in progress."
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Answer ping"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Answered"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Any network"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Anywhere"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -460,6 +550,10 @@ msgstr ""
 
 #: src/printing/admin.zig
 msgid "Applying printer change; authorization may be required…"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Applying…"
 msgstr ""
 
 #: src/start_menu/menu_tree.zig
@@ -586,7 +680,7 @@ msgstr ""
 msgid "Authentication unavailable. Try again."
 msgstr ""
 
-#: src/control_center/sections/users_helper.zig
+#: src/control_center/sections/firewall.zig
 msgid "Authentication was cancelled or denied."
 msgstr ""
 
@@ -606,11 +700,14 @@ msgstr ""
 msgid "Auto-hide dock"
 msgstr ""
 
+#: src/control_center/sections/appearance_sections.zig
+msgid "Auto-hide taskbar"
+msgstr ""
+
 #: src/network/popup.zig
 msgid "Auto-join this network"
 msgstr ""
 
-#: src/control_center/sections/input_sources.zig
 #: src/control_center/sections/display.zig
 msgid "Automatic"
 msgstr ""
@@ -719,6 +816,14 @@ msgstr ""
 msgid "Blank or no output"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Block"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Block all connections"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Blocked"
 msgstr ""
@@ -737,6 +842,14 @@ msgstr ""
 
 #: src/session/power_requests.zig
 msgid "Blocked by {application}: {reason}"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Blocking all connections"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Blocking stops every program from connecting out unless a rule allows it. It is undone after 20 s unless you keep it."
 msgstr ""
 
 #: src/control_center/panel.zig
@@ -1283,6 +1396,10 @@ msgstr ""
 msgid "Choose a source. Escape cancels."
 msgstr ""
 
+#: src/control_center/sections/users.zig
+msgid "Choose a user first to pick a session."
+msgstr ""
+
 #: src/files/app_chooser.zig
 msgid "Choose an accessible file or folder and a valid filename."
 msgstr ""
@@ -1383,7 +1500,7 @@ msgstr ""
 msgid "Clock seconds"
 msgstr ""
 
-#: src/calculator/client.zig
+#: src/app_kit/window.zig
 msgid "Close"
 msgstr ""
 
@@ -1439,7 +1556,7 @@ msgstr ""
 msgid "Comment"
 msgstr ""
 
-#: src/files/app_torrent_rows.zig
+#: src/files/app_sidebar_paint.zig
 msgid "Complete"
 msgstr ""
 
@@ -1563,6 +1680,10 @@ msgstr ""
 msgid "Connection settings"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Connections the firewall refused in the last day."
+msgstr ""
+
 #: src/session/lock_view.zig
 msgid "Continue"
 msgstr ""
@@ -1587,6 +1708,14 @@ msgstr ""
 
 #: src/control_center/sections/keys_details.zig
 msgid "Copy public key"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
+msgid "Copying"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
+msgid "Copying files"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -1621,6 +1750,10 @@ msgstr ""
 msgid "Could not apply or save the display scale."
 msgstr ""
 
+#: src/files/app_pointer.zig
+msgid "Could not apply permission changes"
+msgstr ""
+
 #: src/control_center/sections/display.zig
 msgid "Could not apply that display setting."
 msgstr ""
@@ -1633,7 +1766,7 @@ msgstr ""
 msgid "Could not apply this choice. Please try again."
 msgstr ""
 
-#: src/files/properties.zig
+#: src/files/app_pointer.zig
 msgid "Could not change permissions"
 msgstr ""
 
@@ -1741,6 +1874,10 @@ msgstr ""
 msgid "Could not open file"
 msgstr ""
 
+#: src/files/app_pointer.zig
+msgid "Could not open file to change permissions"
+msgstr ""
+
 #: src/files/app_places.zig
 msgid "Could not open folder"
 msgstr ""
@@ -1799,6 +1936,10 @@ msgstr ""
 
 #: src/network/manager_objects.zig
 msgid "Could not read Wi-Fi networks"
+msgstr ""
+
+#: src/files/app_pointer.zig
+msgid "Could not read file permissions"
 msgstr ""
 
 #: src/desktop/app_actions.zig
@@ -2133,6 +2274,10 @@ msgstr ""
 msgid "Cut"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Cut this computer off from every network until you stop it or restart. Undone after 20 s unless you keep it."
+msgstr ""
+
 #: src/files/app_fileops.zig
 msgid "Cut {count} item"
 msgid_plural "Cut {count} items"
@@ -2151,16 +2296,16 @@ msgstr ""
 msgid "Cycles"
 msgstr ""
 
-#: src/files/app_sidebar_paint.zig
-msgid "DEVICES"
-msgstr ""
-
 #: src/control_center/sections/display.zig
 msgid "DISPLAY"
 msgstr ""
 
 #: src/control_center/sections/network_details.zig
 msgid "DNS servers"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
+msgid "DRIVES"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -2329,6 +2474,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "Dim screen after"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Direction"
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -2547,6 +2696,10 @@ msgstr ""
 msgid "Driver"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Drops a source that opens more than 6 SSH connections a minute."
+msgstr ""
+
 #: src/files/app_torrent_rows.zig
 msgid "ETA: Choose files first"
 msgstr ""
@@ -2683,6 +2836,10 @@ msgstr ""
 msgid "Enter a password (1–63 bytes)."
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Enter a port from 1 to 65535, or a range like 6000-6010."
+msgstr ""
+
 #: src/control_center/sections/printers.zig
 msgid "Enter a supported printer address without credentials."
 msgstr ""
@@ -2705,6 +2862,10 @@ msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Enter a valid username and full name."
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Enter an IP address, or a network like 10.0.0.0/8."
 msgstr ""
 
 #: src/control_center/sections/network_editor.zig
@@ -2807,7 +2968,7 @@ msgstr ""
 msgid "Excellent"
 msgstr ""
 
-#: src/files/properties.zig
+#: src/files/app_paint.zig
 msgid "Execute"
 msgstr ""
 
@@ -2839,8 +3000,16 @@ msgstr ""
 msgid "Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
 msgstr ""
 
-#: src/files/app_paint.zig
-msgid "Extracting {current}/{total}: {name}... (Esc to cancel)"
+#: src/files/app_sidebar_paint.zig
+msgid "Extracting"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
+msgid "Extracting archive member"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
+msgid "Extracting files"
 msgstr ""
 
 #: src/files/archive.zig
@@ -2931,6 +3100,10 @@ msgstr ""
 msgid "File operation failed"
 msgstr ""
 
+#: src/files/app_sidebar_paint.zig
+msgid "File transfer"
+msgstr ""
+
 #: src/control_center/sections/keys_forms.zig
 msgid "Filename in ~/.ssh"
 msgstr ""
@@ -2941,6 +3114,10 @@ msgstr ""
 
 #: src/delete_dialog.zig
 msgid "Files and folders in this selection"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Files transfers (BitTorrent)"
 msgstr ""
 
 #: src/files/app_paint.zig
@@ -2981,6 +3158,14 @@ msgstr ""
 
 #: src/files/app_places.zig
 msgid "Finish the running file operation first"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Firewall"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Firewall settings are not installed for this build: its polkit policy is missing."
 msgstr ""
 
 #: src/control_center/sections/power.zig
@@ -3211,6 +3396,10 @@ msgstr ""
 msgid "Forward"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Forwarding"
+msgstr ""
+
 #: src/control_center/sections/input_sources.zig
 msgid "Four keyboard layouts is the most XKB allows."
 msgstr ""
@@ -3221,6 +3410,10 @@ msgstr ""
 
 #: src/control_center/sections/region.zig
 msgid "Friday"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "From"
 msgstr ""
 
 #: src/screenshot/selector.zig
@@ -3283,7 +3476,7 @@ msgstr ""
 msgid "Grid"
 msgstr ""
 
-#: src/files/properties.zig
+#: src/files/app_paint.zig
 msgid "Group"
 msgstr ""
 
@@ -3323,7 +3516,7 @@ msgstr ""
 msgid "Hide after"
 msgstr ""
 
-#: src/printing/options.zig
+#: src/control_center/sections/firewall.zig
 msgid "High"
 msgstr ""
 
@@ -3335,8 +3528,20 @@ msgstr ""
 msgid "Highlighted: bottom-left screen"
 msgstr ""
 
-#: src/desktop/watcher.zig
+#: src/control_center/sections/firewall_cards.zig
 msgid "Home"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Home networks also get the rules marked \"home networks only\", such as sharing and device discovery. New networks are Public."
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Home networks only"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Home or local networks"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -3403,6 +3608,10 @@ msgstr ""
 msgid "Idle"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Ignored"
+msgstr ""
+
 #: src/control_center/sections/appearance_wallpaper.zig
 msgid "Image"
 msgstr ""
@@ -3431,12 +3640,24 @@ msgstr ""
 msgid "In Files, show a play button on audio files and play them in the background player. A default application chosen in Open With still takes over."
 msgstr ""
 
+#: src/files/app_sidebar_paint.zig
+msgid "In progress"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Inactive window opacity"
 msgstr ""
 
 #: src/control_center/sections/printers_tools.zig
 msgid "Inches"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Incoming"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Incoming connections"
 msgstr ""
 
 #: src/session/lock_account.zig
@@ -3631,6 +3852,14 @@ msgstr ""
 msgid "Join Hidden Network"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "KDE Connect / GSConnect"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Keep change"
+msgstr ""
+
 #: src/control_center/sections/printers_add.zig
 msgid "Keep connection"
 msgstr ""
@@ -3685,6 +3914,10 @@ msgstr ""
 
 #: src/control_center/panel.zig
 msgid "Keys & Certificates"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Kind"
 msgstr ""
 
 #: src/files/app_torrent_rows.zig
@@ -3767,6 +4000,10 @@ msgstr ""
 msgid "Left-handed mode"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Let other computers check that this one is there."
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Lid close action"
 msgstr ""
@@ -3819,8 +4056,20 @@ msgstr ""
 msgid "List"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Listening programs"
+msgstr ""
+
 #: src/system_monitor/app_summary_cpu.zig
 msgid "Load"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Load the firewall before the network comes up."
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Loaded by other programs. RediWM never changes them, and they apply in addition to the rules above."
 msgstr ""
 
 #: src/control_center/sections/printers_tools.zig
@@ -3859,6 +4108,14 @@ msgstr ""
 msgid "Loading services…"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Local network"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Local network discovery (mDNS)"
+msgstr ""
+
 #: src/control_center/sections/keys_details.zig
 msgid "Location"
 msgstr ""
@@ -3879,12 +4136,16 @@ msgstr ""
 msgid "Lock the session and turn off the display."
 msgstr ""
 
-#: src/control_center/sections/display.zig
-msgid "Locks and sleeps, even with another display connected."
+#: src/control_center/sections/firewall_cards.zig
+msgid "Lockdown"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Locked"
 msgstr ""
 
 #: src/control_center/sections/display.zig
-msgid "Powers off, even with another display connected."
+msgid "Locks and sleeps, even with another display connected."
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -3899,8 +4160,20 @@ msgstr ""
 msgid "Log Out"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Log blocked connections"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Log out of the desktop session."
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Logging"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Logging is off, so only blocks from before it was turned off can show."
 msgstr ""
 
 #: src/session/power_requests.zig
@@ -3921,6 +4194,10 @@ msgstr ""
 
 #: src/session/lock_account.zig
 msgid "Lost contact with login service. Try again."
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Low"
 msgstr ""
 
 #: src/server/wakeups.zig
@@ -3963,7 +4240,11 @@ msgstr ""
 msgid "Manage the current user's keys in ~/.ssh."
 msgstr ""
 
-#: src/control_center/sections/printers_details.zig
+#: src/control_center/sections/firewall.zig
+msgid "Managed by RediOS. Change it with redi; it is shown here read-only."
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
 msgid "Manage…"
 msgstr ""
 
@@ -3999,6 +4280,10 @@ msgstr ""
 msgid "Measured rectangle width"
 msgstr ""
 
+#: src/files/app_torrents.zig
+msgid "Measuring…"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Media"
 msgstr ""
@@ -4009,6 +4294,10 @@ msgstr ""
 
 #: src/printing/ladder.zig
 msgid "Media and resolution need confirmation against what is loaded in the printer."
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Media sharing (DLNA)"
 msgstr ""
 
 #: src/control_center/sections/appearance.zig
@@ -4063,6 +4352,10 @@ msgstr ""
 msgid "Millimetres"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Minecraft server"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "Mini Map"
 msgstr ""
@@ -4103,6 +4396,10 @@ msgstr ""
 msgid "More settings"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "More than one firewall is active. Turn all but one off to make changes here."
+msgstr ""
+
 #: src/system_monitor/app_summary_ram.zig
 msgid "Most memory"
 msgstr ""
@@ -4121,6 +4418,10 @@ msgstr ""
 
 #: src/files/app_places.zig
 msgid "Mounting…"
+msgstr ""
+
+#: src/files/app_torrents.zig
+msgid "Move"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -4195,6 +4496,14 @@ msgstr ""
 msgid "Moved to Trash."
 msgstr ""
 
+#: src/files/app_sidebar_paint.zig
+msgid "Moving"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
+msgid "Moving files"
+msgstr ""
+
 #: src/images/app_render.zig
 msgid "Moving to Trash…"
 msgstr ""
@@ -4221,6 +4530,10 @@ msgstr ""
 
 #: src/system_monitor/app_footer.zig
 msgid "NET"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "NFS file sharing"
 msgstr ""
 
 #: src/files/app_layout.zig
@@ -4289,6 +4602,10 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "NetworkManager unavailable"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Networks"
 msgstr ""
 
 #: src/control_center/sections/input_sources.zig
@@ -4375,7 +4692,7 @@ msgstr ""
 msgid "Night light temperature"
 msgstr ""
 
-#: src/control_center/sections/network_editor.zig
+#: src/control_center/sections/firewall.zig
 msgid "No"
 msgstr ""
 
@@ -4435,6 +4752,10 @@ msgstr ""
 msgid "No document open. Click 'Open' or press Ctrl+O."
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "No firewall tool is installed (nftables, ufw, firewalld or pf)."
+msgstr ""
+
 #: src/control_center/sections/appearance_wallpaper.zig
 msgid "No images in this folder"
 msgstr ""
@@ -4453,6 +4774,10 @@ msgstr ""
 
 #: src/control_center/sections/input_sources.zig
 msgid "No layouts match."
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "No listening program can be reached from every network."
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -4519,12 +4844,24 @@ msgstr ""
 msgid "No printers configured."
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "No program is listening for connections."
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "No program is listening."
+msgstr ""
+
 #: src/files/app_paint.zig
 msgid "No recent files"
 msgstr ""
 
 #: src/printing/ladder.zig
 msgid "No recent job information is available."
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "No rules. Incoming connections follow the default: {policy}."
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -4537,6 +4874,10 @@ msgstr ""
 
 #: src/control_center/search.zig
 msgid "No settings found"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "No single rule opens this port; check the rules list."
 msgstr ""
 
 #: src/share_picker/client.zig
@@ -4619,6 +4960,10 @@ msgstr ""
 msgid "Not authorized to mount {name}"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Not available"
+msgstr ""
+
 #: src/session/power_requests.zig
 msgid "Not available on this system."
 msgstr ""
@@ -4671,8 +5016,16 @@ msgstr ""
 msgid "Not supported by this display"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Note"
+msgstr ""
+
 #: src/files/app_places.zig
 msgid "Nothing to add to Places"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Nothing was blocked recently."
 msgstr ""
 
 #: src/notifications/toast.zig
@@ -4712,7 +5065,6 @@ msgid "OK"
 msgstr ""
 
 #: src/control_center/sections/appearance.zig
-#: src/control_center/sections/display.zig
 msgid "Off"
 msgstr ""
 
@@ -4744,7 +5096,7 @@ msgstr ""
 msgid "One-sided"
 msgstr ""
 
-#: src/files/properties.zig
+#: src/files/app_pointer.zig
 msgid "Only the owner can change permissions"
 msgstr ""
 
@@ -4833,6 +5185,10 @@ msgstr ""
 msgid "Optimize"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Optional"
+msgstr ""
+
 #: src/files/app_menu.zig
 msgid "Original location unknown: these items have no Trash information"
 msgstr ""
@@ -4845,12 +5201,24 @@ msgstr ""
 msgid "Other (unchanged)"
 msgstr ""
 
-#: src/files/properties.zig
+#: src/control_center/sections/firewall_cards.zig
+msgid "Other programs' rules"
+msgstr ""
+
+#: src/files/app_paint.zig
 msgid "Others"
 msgstr ""
 
 #: src/files/git.zig
 msgid "Out of memory"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Outgoing"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Outgoing connections"
 msgstr ""
 
 #: src/pdf/app_paint.zig
@@ -4877,7 +5245,7 @@ msgstr ""
 msgid "Output: {name}"
 msgstr ""
 
-#: src/files/properties.zig
+#: src/files/app_paint.zig
 msgid "Owner"
 msgstr ""
 
@@ -5005,15 +5373,11 @@ msgstr ""
 msgid "Pause"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Pause all"
-msgstr ""
-
 #: src/system_monitor/app.zig
 msgid "Pause updates"
 msgstr ""
 
-#: src/files/app_torrent_rows.zig
+#: src/files/app_sidebar_paint.zig
 msgid "Paused"
 msgstr ""
 
@@ -5055,6 +5419,10 @@ msgstr ""
 
 #: src/start_menu/menu_cards.zig
 msgid "Pin application"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Ping"
 msgstr ""
 
 #: src/start_menu/menu_cards.zig
@@ -5101,8 +5469,12 @@ msgstr ""
 msgid "Pointer speed"
 msgstr ""
 
-#: src/control_center/sections/network_proxy.zig
+#: src/control_center/sections/firewall_rules.zig
 msgid "Port"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Port or range"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -5153,7 +5525,7 @@ msgstr ""
 msgid "Power mode could not be changed."
 msgstr ""
 
-#: src/control_center/sections/power.zig
+#: src/control_center/sections/display.zig
 msgid "Power off"
 msgstr ""
 
@@ -5193,8 +5565,16 @@ msgstr ""
 msgid "Poweroff Auto"
 msgstr ""
 
+#: src/control_center/sections/display.zig
+msgid "Powers off, even with another display connected."
+msgstr ""
+
 #: src/control_center/sections/network_editor.zig
 msgid "Prefix length"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
+msgid "Preparing…"
 msgstr ""
 
 #: src/session/lock_account.zig
@@ -5329,6 +5709,10 @@ msgstr ""
 msgid "Printer setup requires the local default CUPS server."
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Printer sharing (IPP)"
+msgstr ""
+
 #: src/control_center/panel.zig
 msgid "Printer status, jobs and connection diagnostics."
 msgstr ""
@@ -5385,6 +5769,10 @@ msgstr ""
 msgid "Profiles appear after pairing"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Programs waiting for connections, and who can reach them through the firewall."
+msgstr ""
+
 #: src/files/app_layout.zig
 msgid "Progress"
 msgstr ""
@@ -5401,8 +5789,20 @@ msgstr ""
 msgid "Properties — Escape closes"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Protected by {name} · {incoming}, {outgoing}"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Protocol"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Proxy"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Public"
 msgstr ""
 
 #: src/control_center/sections/keys_ssh.zig
@@ -5505,7 +5905,7 @@ msgstr ""
 msgid "Raw sample resolution (dpi)"
 msgstr ""
 
-#: src/files/properties.zig
+#: src/files/app_paint.zig
 msgid "Read"
 msgstr ""
 
@@ -5513,7 +5913,11 @@ msgstr ""
 msgid "Read only"
 msgstr ""
 
-#: src/printing/cups.zig
+#: src/control_center/sections/firewall.zig
+msgid "Reading…"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
 msgid "Ready"
 msgstr ""
 
@@ -5537,12 +5941,24 @@ msgstr ""
 msgid "Recent"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Recent blocks"
+msgstr ""
+
 #: src/files/open_with.zig
 msgid "Recommended Apps"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Records blocked connections in the system log, at a limited rate."
+msgstr ""
+
 #: src/control_center/sections/keys_details.zig
 msgid "Recreate missing .pub file"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "RediWM (nftables)"
 msgstr ""
 
 #: src/files/app.zig
@@ -5569,7 +5985,7 @@ msgstr ""
 msgid "Reduced motion"
 msgstr ""
 
-#: src/control_center/sections/keys_ssh.zig
+#: src/control_center/sections/firewall.zig
 msgid "Refresh"
 msgstr ""
 
@@ -5593,8 +6009,16 @@ msgstr ""
 msgid "Regional formats are unavailable for this session."
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Reject"
+msgstr ""
+
 #: src/control_center/sections/printers_tools.zig
 msgid "Remember loaded paper size"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Remote desktop (RDP)"
 msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
@@ -5627,6 +6051,10 @@ msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "Remove · keep files"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Remove?"
 msgstr ""
 
 #: src/desktop/app_actions.zig
@@ -5875,6 +6303,10 @@ msgstr ""
 msgid "Round"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Rules"
+msgstr ""
+
 #: src/system_monitor/app_table.zig
 msgid "Running"
 msgstr ""
@@ -5885,6 +6317,10 @@ msgstr ""
 
 #: src/control_center/sections/sound.zig
 msgid "SOUND"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "SSH (remote login)"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -6037,6 +6473,10 @@ msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
 msgid "Screen capture appears while recording or sharing your screen. Keeping it enabled is recommended."
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Screen sharing (VNC)"
 msgstr ""
 
 #: src/control_center/panel.zig
@@ -6211,7 +6651,7 @@ msgstr ""
 msgid "Servers, separated by commas"
 msgstr ""
 
-#: src/control_center/sections/services.zig
+#: src/control_center/sections/firewall_rules.zig
 msgid "Service"
 msgstr ""
 
@@ -6277,6 +6717,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Shortcut already in use. Try another."
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Show"
 msgstr ""
 
 #: src/control_center/sections/bluetooth.zig
@@ -6415,6 +6859,10 @@ msgstr ""
 msgid "Slow"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Slow down SSH login attempts"
+msgstr ""
+
 #: src/control_center/sections/appearance.zig
 msgid "Small"
 msgstr ""
@@ -6483,8 +6931,12 @@ msgstr ""
 msgid "Spawn"
 msgstr ""
 
-#: src/printing/options.zig
+#: src/files/app_sidebar_paint.zig
 msgid "Speed"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Spotify local discovery"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -6501,6 +6953,10 @@ msgstr ""
 
 #: src/control_center/sections/printers.zig
 msgid "Start CUPS"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "Start at boot"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -6547,6 +7003,10 @@ msgstr ""
 msgid "Starting session…"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Starts at boot"
+msgstr ""
+
 #: src/systemd/requests.zig
 msgid "Startup setting saved. Running status is unchanged."
 msgstr ""
@@ -6571,6 +7031,10 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Steam Remote Play"
+msgstr ""
+
 #: src/control_center/sections/services.zig
 msgid "Stop"
 msgstr ""
@@ -6583,12 +7047,12 @@ msgstr ""
 msgid "Stop accepting jobs"
 msgstr ""
 
-#: src/control_center/sections/power.zig
-msgid "Stop charging at"
+#: src/control_center/sections/firewall.zig
+msgid "Stop blocking"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Stop seeding"
+#: src/control_center/sections/power.zig
+msgid "Stop charging at"
 msgstr ""
 
 #: src/printing/cups.zig
@@ -6695,6 +7159,14 @@ msgstr ""
 msgid "Symbolic link"
 msgstr ""
 
+#: src/files/app_pointer.zig
+msgid "Symbolic link permissions cannot be changed"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Syncthing"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "System"
 msgstr ""
@@ -6727,8 +7199,20 @@ msgstr ""
 msgid "Systemd is unavailable."
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "TCP"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "TCP and UDP"
+msgstr ""
+
 #: src/system_monitor/app_footer.zig
 msgid "TEMP"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
+msgid "TRANSFERS"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -6757,6 +7241,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "Taskbar alignment"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Taskbar auto hide"
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -6967,6 +7455,14 @@ msgstr ""
 msgid "The filename is too long."
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "The firewall helper could not be started."
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "The firewall helper did not answer."
+msgstr ""
+
 #: src/control_center/sections/keys.zig
 msgid "The key changed since it was selected. Refresh and try again."
 msgstr ""
@@ -6977,6 +7473,10 @@ msgstr ""
 
 #: src/control_center/sections/keys.zig
 msgid "The key operation could not be completed. Refresh and try again."
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "The last change is undone in about {seconds} s unless you keep it."
 msgstr ""
 
 #: src/printing/ladder.zig
@@ -7013,6 +7513,10 @@ msgstr ""
 
 #: src/printing/ladder.zig
 msgid "The network printer did not answer."
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "The note may use up to 64 plain characters, without quotes."
 msgstr ""
 
 #: src/control_center/sections/keys_forms.zig
@@ -7143,6 +7647,10 @@ msgstr ""
 msgid "This capability has no selectable queue default in the current driver."
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "This computer only"
+msgstr ""
+
 #: src/printing/ladder.zig
 msgid "This connection has no direct presence check."
 msgstr ""
@@ -7165,6 +7673,10 @@ msgstr ""
 
 #: src/editor/app_files.zig
 msgid "This file is not valid UTF-8 text."
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "This firewall applies the same rules on every network."
 msgstr ""
 
 #: src/files/app_paint.zig
@@ -7201,6 +7713,10 @@ msgstr ""
 
 #: src/files/git.zig
 msgid "This repository runs its own programs; switch branches in a terminal"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "This rule cannot be added."
 msgstr ""
 
 #: src/network/manager.zig
@@ -7259,6 +7775,10 @@ msgstr ""
 msgid "Titlebar height"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "To"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Toggle Floating"
 msgstr ""
@@ -7307,6 +7827,10 @@ msgstr ""
 msgid "Torrent file or magnet link"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "Traffic passing through this computer, for virtual machines or sharing a connection."
+msgstr ""
+
 #: src/files/app_torrents.zig
 msgid "Transfer"
 msgstr ""
@@ -7315,16 +7839,12 @@ msgstr ""
 msgid "Transfer request could not be sent. Please retry."
 msgstr ""
 
+#: src/files/app_sidebar_paint.zig
+msgid "Transferred"
+msgstr ""
+
 #: src/files/ops.zig
 msgid "Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr ""
-
-#: src/files/app_paint.zig
-msgid "Transferring {current}/{total}: {name}... (Esc to cancel)"
-msgstr ""
-
-#: src/files/app_paint.zig
-msgid "Transferring..."
 msgstr ""
 
 #: src/files/app.zig
@@ -7337,10 +7857,6 @@ msgstr ""
 
 #: src/files/torrents.zig
 msgid "Transfers is disconnected. Reopen Transfers to reconnect."
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Transfers needs attention"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -7411,6 +7927,10 @@ msgstr ""
 msgid "Turned off"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "Turning on adds RediWM's anchor to pf.conf (a backup is kept)."
+msgstr ""
+
 #: src/control_center/sections/network.zig
 msgid "Turns off Wi-Fi, Bluetooth and other radios."
 msgstr ""
@@ -7447,6 +7967,10 @@ msgstr ""
 msgid "Type: Z to A"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "UDP"
+msgstr ""
+
 #: src/control_center/sections/appearance_rows.zig
 msgid "UI font"
 msgstr ""
@@ -7467,7 +7991,7 @@ msgstr ""
 msgid "Unable to unlock. Try again."
 msgstr ""
 
-#: src/battery_popup.zig
+#: src/app_kit/settings.zig
 msgid "Unavailable"
 msgstr ""
 
@@ -7487,7 +8011,7 @@ msgstr ""
 msgid "Undo the last layout change."
 msgstr ""
 
-#: src/control_center/sections/printers_details.zig
+#: src/control_center/sections/firewall_cards.zig
 msgid "Unknown"
 msgstr ""
 
@@ -7495,12 +8019,20 @@ msgstr ""
 msgid "Unknown key"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/firewall_cards.zig
+msgid "Unknown program"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
 msgid "Unlock"
 msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "Unlock to change connection settings."
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Unlock to change firewall settings."
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -7509,6 +8041,10 @@ msgstr ""
 
 #: src/control_center/sections/services.zig
 msgid "Unlock to make service changes."
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "Unlock to view the firewall."
 msgstr ""
 
 #: src/network/manager.zig
@@ -7648,12 +8184,11 @@ msgid "Uses the main theme. Apply again after changing it; restart apps to see t
 msgstr ""
 
 #: src/control_center/search_index.zig
-#: src/control_center/sections/display.zig
-msgid "Variable refresh rate"
+msgid "VPN"
 msgstr ""
 
 #: src/control_center/search_index.zig
-msgid "VPN"
+msgid "Variable refresh rate"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -7688,10 +8223,6 @@ msgstr ""
 msgid "Volume, microphones and output devices."
 msgstr ""
 
-#: src/control_center/search_index.zig
-msgid "vrr freesync gsync adaptive sync game"
-msgstr ""
-
 #: src/control_center/sections/network.zig
 msgid "WPA2 / WPA3 Personal"
 msgstr ""
@@ -7712,8 +8243,16 @@ msgstr ""
 msgid "Waiting for authentication service…"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/firewall.zig
 msgid "Waiting for authentication…"
+msgstr ""
+
+#: src/files/app_sidebar_paint.zig
+msgid "Waiting for confirmation"
+msgstr ""
+
+#: src/files/app_torrents.zig
+msgid "Waiting for decision"
 msgstr ""
 
 #: src/control_center/sections/bluetooth.zig
@@ -7744,6 +8283,14 @@ msgstr ""
 msgid "Weak algorithm or key size"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Web server (HTTP)"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Web server (HTTPS)"
+msgstr ""
+
 #: src/control_center/sections/region.zig
 msgid "Wednesday"
 msgstr ""
@@ -7752,12 +8299,20 @@ msgstr ""
 msgid "Welcome to RediWM"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "What happens to connections no rule allows. Block is the safe choice."
+msgstr ""
+
 #: src/control_center/sections/power.zig
 msgid "When the lid closes"
 msgstr ""
 
 #: src/control_center/sections/display.zig
 msgid "When the lid is closed"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "Where"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -7864,6 +8419,14 @@ msgstr ""
 msgid "Windows"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "Windows file sharing (Samba)"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "WireGuard server"
+msgstr ""
+
 #: src/control_center/panel.zig
 msgid "Wired and wireless connections."
 msgstr ""
@@ -7908,7 +8471,7 @@ msgstr ""
 msgid "Workspaces · Hyprland-style preset"
 msgstr ""
 
-#: src/files/properties.zig
+#: src/files/app_paint.zig
 msgid "Write"
 msgstr ""
 
@@ -7932,7 +8495,7 @@ msgstr ""
 msgid "Xwayland: {active}× active. Restart the compositor to apply {pending}×."
 msgstr ""
 
-#: src/control_center/sections/network_editor.zig
+#: src/control_center/sections/firewall.zig
 msgid "Yes"
 msgstr ""
 
@@ -8028,8 +8591,20 @@ msgstr ""
 msgid "accessibility animations"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "allows incoming"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "allows outgoing"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "alt tab linear circular applications"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "another firewall"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8072,6 +8647,14 @@ msgstr ""
 msgid "battery health threshold"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "blocks incoming"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "blocks outgoing"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "blue light warm screen"
 msgstr ""
@@ -8098,6 +8681,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "calendar monday sunday"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "can only be removed here"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8189,7 +8776,15 @@ msgid "files folders application"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "firewall ports block allow incoming outgoing ufw firewalld pf nftables ssh listening lockdown"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "flight radios bluetooth wi-fi rfkill"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "from"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8206,6 +8801,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "hide automatically"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "home networks only"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8230,6 +8829,14 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "import pack"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "in"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "incoming"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8274,6 +8881,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "light appearance theme"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "local network only"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8340,8 +8951,20 @@ msgstr ""
 msgid "now"
 msgstr ""
 
+#: src/control_center/sections/firewall_rules.zig
+msgid "on"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "orientation portrait landscape screen"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "out"
+msgstr ""
+
+#: src/control_center/sections/firewall_rules.zig
+msgid "outgoing"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8358,6 +8981,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "panel height"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "panel hide automatically"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8382,6 +9009,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "performance balanced saver plugged unplugged"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "pf (RediWM rules)"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8544,6 +9175,10 @@ msgstr ""
 msgid "time taskbar font"
 msgstr ""
 
+#: src/control_center/sections/firewall_cards.zig
+msgid "to"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "top bottom left right"
 msgstr ""
@@ -8582,6 +9217,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "users login password administrator groups"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "vrr freesync gsync adaptive sync game"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -8636,6 +9275,10 @@ msgstr ""
 msgid "{action} failed"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "{allow} allowed · {block} blocked"
+msgstr ""
+
 #: src/control_center/sections/network_details.zig
 msgid "{band} · channel {channel}"
 msgstr ""
@@ -8670,6 +9313,10 @@ msgstr[1] ""
 
 #: src/files/app_trash.zig
 msgid "{count} kept under a new name"
+msgstr ""
+
+#: src/control_center/sections/firewall_cards.zig
+msgid "{count} rules"
 msgstr ""
 
 #: src/files/open_with.zig
@@ -8740,6 +9387,10 @@ msgstr ""
 msgid "{name} (default)"
 msgstr ""
 
+#: src/control_center/sections/firewall.zig
+msgid "{name} (port {port}) can be reached from any network."
+msgstr ""
+
 #: src/control_center/sections/region.zig
 msgid "{name} ({locale})"
 msgstr ""
@@ -8758,6 +9409,10 @@ msgstr ""
 
 #: src/files/volumes.zig
 msgid "{name} is busy"
+msgstr ""
+
+#: src/control_center/sections/firewall.zig
+msgid "{name} is installed but not filtering. Unprotected."
 msgstr ""
 
 #: src/files/volumes.zig
@@ -8834,6 +9489,10 @@ msgstr[1] ""
 msgid "{rate} KiB/s"
 msgstr ""
 
+#: src/files/app_sidebar_paint.zig
+msgid "{rate}/s"
+msgstr ""
+
 #: src/control_center/sections/input_sources.zig
 msgid "{shown} of {total} layouts; type to narrow the list."
 msgstr ""
@@ -8857,10 +9516,6 @@ msgid "{value} (supported {min}–{max})"
 msgstr ""
 
 #: src/files/app_torrents.zig
-msgid "{value} active · {rate} KiB/s"
-msgstr ""
-
-#: src/files/app_torrents.zig
 msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
 msgstr ""
 
@@ -8868,8 +9523,12 @@ msgstr ""
 msgid "~{time} left"
 msgstr ""
 
+#: src/files/app_torrents.zig
+msgid "↑ {upload}/s · ↓ {download}/s"
+msgstr ""
+
 #: src/files/app_torrent_rows.zig
-msgid "↓ {rate} KiB/s    ↑ {rate2} KiB/s"
+msgid "↓ {rate}/s    ↑ {rate2}/s"
 msgstr ""
 
 #: src/control_center/sections/sound.zig
@@ -9021,3 +9680,4 @@ msgstr ""
 msgctxt "polkit"
 msgid "Authentication is required to manage login accounts"
 msgstr ""
+

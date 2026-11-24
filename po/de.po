@@ -1813,10 +1813,6 @@ msgstr "Zum vorherigen vorhandenen Arbeitsbereich wechseln."
 msgid "Cycles"
 msgstr "Zyklen"
 
-#: src/files/app_sidebar_paint.zig
-msgid "DEVICES"
-msgstr "GERÄTE"
-
 #: src/control_center/sections/display.zig
 msgid "DISPLAY"
 msgstr "BILDSCHIRM"
@@ -2420,10 +2416,6 @@ msgstr "Entpacken nach…"
 #: src/files/ops.zig
 msgid "Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
 msgstr "Entpackt: {completed}. Übersprungen: {skipped}. Fehlgeschlagen: {failed}. Verbleibend: {remaining}."
-
-#: src/files/app_paint.zig
-msgid "Extracting {current}/{total}: {name}... (Esc to cancel)"
-msgstr "Entpacken {current}/{total}: {name}… (Esc zum Abbrechen)"
 
 #: src/files/archive.zig
 msgid "Extraction cancelled"
@@ -4193,10 +4185,6 @@ msgstr "Einfügen"
 msgid "Pause"
 msgstr "Pausieren"
 
-#: src/files/app_torrents.zig
-msgid "Pause all"
-msgstr "Alle pausieren"
-
 #: src/system_monitor/app.zig
 msgid "Pause updates"
 msgstr "Aktualisierungen pausieren"
@@ -5579,10 +5567,6 @@ msgstr "Suche beenden"
 msgid "Stop accepting jobs"
 msgstr "Keine Aufträge mehr annehmen"
 
-#: src/files/app_torrents.zig
-msgid "Stop seeding"
-msgstr "Verteilen stoppen"
-
 #: src/printing/cups.zig
 msgid "Stopped"
 msgstr "Gestoppt"
@@ -6223,14 +6207,6 @@ msgstr "Übertragungsanfrage konnte nicht gesendet werden. Versuche es erneut."
 msgid "Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
 msgstr "Übertragen: {completed}. Übersprungen: {skipped}. Fehlgeschlagen: {failed}. Verbleibend: {remaining}."
 
-#: src/files/app_paint.zig
-msgid "Transferring {current}/{total}: {name}... (Esc to cancel)"
-msgstr "Übertragung {current}/{total}: {name}… (Esc zum Abbrechen)"
-
-#: src/files/app_paint.zig
-msgid "Transferring..."
-msgstr "Übertragung…"
-
 #: src/files/app.zig
 msgid "Transfers"
 msgstr "Übertragungen"
@@ -6242,10 +6218,6 @@ msgstr "Übertragungen wurde getrennt. Öffne Übertragungen erneut zum Verbinde
 #: src/files/torrents.zig
 msgid "Transfers is disconnected. Reopen Transfers to reconnect."
 msgstr "Übertragungen ist getrennt. Öffne Übertragungen erneut zum Verbinden."
-
-#: src/files/app_torrents.zig
-msgid "Transfers needs attention"
-msgstr "Übertragungen benötigt Aufmerksamkeit"
 
 #: src/control_center/sections/display.zig
 msgid "Transform"
@@ -7479,16 +7451,8 @@ msgid "{value} (supported {min}–{max})"
 msgstr "{value} (unterstützt {min}–{max})"
 
 #: src/files/app_torrents.zig
-msgid "{value} active · {rate} KiB/s"
-msgstr "{value} aktiv · {rate} KiB/s"
-
-#: src/files/app_torrents.zig
 msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
 msgstr "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
-
-#: src/files/app_torrent_rows.zig
-msgid "↓ {rate} KiB/s    ↑ {rate2} KiB/s"
-msgstr "↓ {rate} KiB/s    ↑ {rate2} KiB/s"
 
 #: src/control_center/sections/sound.zig
 msgctxt "balance"

@@ -1815,10 +1815,6 @@ msgstr "Перейти к предыдущему существующему ра
 msgid "Cycles"
 msgstr "Циклы"
 
-#: src/files/app_sidebar_paint.zig
-msgid "DEVICES"
-msgstr "УСТРОЙСТВА"
-
 #: src/control_center/sections/display.zig
 msgid "DISPLAY"
 msgstr "ЭКРАН"
@@ -2422,10 +2418,6 @@ msgstr "Извлечь в…"
 #: src/files/ops.zig
 msgid "Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
 msgstr "Извлечено: {completed}. Пропущено: {skipped}. Ошибок: {failed}. Осталось: {remaining}."
-
-#: src/files/app_paint.zig
-msgid "Extracting {current}/{total}: {name}... (Esc to cancel)"
-msgstr "Извлечение {current}/{total}: {name}… (Esc: отмена)"
 
 #: src/files/archive.zig
 msgid "Extraction cancelled"
@@ -4195,10 +4187,6 @@ msgstr "Вставить"
 msgid "Pause"
 msgstr "Приостановить"
 
-#: src/files/app_torrents.zig
-msgid "Pause all"
-msgstr "Приостановить все"
-
 #: src/system_monitor/app.zig
 msgid "Pause updates"
 msgstr "Приостановить обновления"
@@ -5582,10 +5570,6 @@ msgstr "Остановить поиск"
 msgid "Stop accepting jobs"
 msgstr "Перестать принимать задания"
 
-#: src/files/app_torrents.zig
-msgid "Stop seeding"
-msgstr "Остановить раздачу"
-
 #: src/printing/cups.zig
 msgid "Stopped"
 msgstr "Остановлено"
@@ -6226,14 +6210,6 @@ msgstr "Не удалось отправить запрос передачи. П
 msgid "Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
 msgstr "Передано: {completed}. Пропущено: {skipped}. Ошибок: {failed}. Осталось: {remaining}."
 
-#: src/files/app_paint.zig
-msgid "Transferring {current}/{total}: {name}... (Esc to cancel)"
-msgstr "Передача {current}/{total}: {name}… (Esc: отмена)"
-
-#: src/files/app_paint.zig
-msgid "Transferring..."
-msgstr "Передача…"
-
 #: src/files/app.zig
 msgid "Transfers"
 msgstr "Передачи"
@@ -6245,10 +6221,6 @@ msgstr "Связь с «Передачами» потеряна. Откройт�
 #: src/files/torrents.zig
 msgid "Transfers is disconnected. Reopen Transfers to reconnect."
 msgstr "«Передачи» отключены. Откройте «Передачи» снова для подключения."
-
-#: src/files/app_torrents.zig
-msgid "Transfers needs attention"
-msgstr "«Передачи» требуют внимания"
 
 #: src/control_center/sections/display.zig
 msgid "Transform"
@@ -7493,16 +7465,8 @@ msgid "{value} (supported {min}–{max})"
 msgstr "{value} (поддерживается {min}–{max})"
 
 #: src/files/app_torrents.zig
-msgid "{value} active · {rate} KiB/s"
-msgstr "Активных: {value} · {rate} КиБ/с"
-
-#: src/files/app_torrents.zig
 msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
 msgstr "{value}% · ↓ {rate} КиБ/с · ↑ {rate3} КиБ/с"
-
-#: src/files/app_torrent_rows.zig
-msgid "↓ {rate} KiB/s    ↑ {rate2} KiB/s"
-msgstr "↓ {rate} КиБ/с    ↑ {rate2} КиБ/с"
 
 #: src/control_center/sections/sound.zig
 msgctxt "balance"

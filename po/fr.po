@@ -1813,10 +1813,6 @@ msgstr "Passer à l'espace de travail existant précédent."
 msgid "Cycles"
 msgstr "Cycles"
 
-#: src/files/app_sidebar_paint.zig
-msgid "DEVICES"
-msgstr "PÉRIPHÉRIQUES"
-
 #: src/control_center/sections/display.zig
 msgid "DISPLAY"
 msgstr "ÉCRAN"
@@ -2420,10 +2416,6 @@ msgstr "Extraire vers…"
 #: src/files/ops.zig
 msgid "Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
 msgstr "Extraits : {completed}. Ignorés : {skipped}. Échecs : {failed}. Restants : {remaining}."
-
-#: src/files/app_paint.zig
-msgid "Extracting {current}/{total}: {name}... (Esc to cancel)"
-msgstr "Extraction {current}/{total} : {name}… (Échap pour annuler)"
 
 #: src/files/archive.zig
 msgid "Extraction cancelled"
@@ -4193,10 +4185,6 @@ msgstr "Coller"
 msgid "Pause"
 msgstr "Mettre en pause"
 
-#: src/files/app_torrents.zig
-msgid "Pause all"
-msgstr "Tout mettre en pause"
-
 #: src/system_monitor/app.zig
 msgid "Pause updates"
 msgstr "Suspendre les mises à jour"
@@ -5579,10 +5567,6 @@ msgstr "Arrêter la recherche"
 msgid "Stop accepting jobs"
 msgstr "Ne plus accepter de tâches"
 
-#: src/files/app_torrents.zig
-msgid "Stop seeding"
-msgstr "Arrêter le partage"
-
 #: src/printing/cups.zig
 msgid "Stopped"
 msgstr "Arrêté"
@@ -6223,14 +6207,6 @@ msgstr "Impossible d'envoyer la requête de transfert. Réessayez."
 msgid "Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
 msgstr "Transférés : {completed}. Ignorés : {skipped}. Échecs : {failed}. Restants : {remaining}."
 
-#: src/files/app_paint.zig
-msgid "Transferring {current}/{total}: {name}... (Esc to cancel)"
-msgstr "Transfert {current}/{total} : {name}… (Échap pour annuler)"
-
-#: src/files/app_paint.zig
-msgid "Transferring..."
-msgstr "Transfert…"
-
 #: src/files/app.zig
 msgid "Transfers"
 msgstr "Transferts"
@@ -6242,10 +6218,6 @@ msgstr "Transferts déconnecté. Rouvrez Transferts pour vous reconnecter."
 #: src/files/torrents.zig
 msgid "Transfers is disconnected. Reopen Transfers to reconnect."
 msgstr "Transferts est déconnecté. Rouvrez Transferts pour vous reconnecter."
-
-#: src/files/app_torrents.zig
-msgid "Transfers needs attention"
-msgstr "Transferts nécessite votre attention"
 
 #: src/control_center/sections/display.zig
 msgid "Transform"
@@ -7479,16 +7451,8 @@ msgid "{value} (supported {min}–{max})"
 msgstr "{value} (pris en charge de {min} à {max})"
 
 #: src/files/app_torrents.zig
-msgid "{value} active · {rate} KiB/s"
-msgstr "{value} actifs · {rate} Kio/s"
-
-#: src/files/app_torrents.zig
 msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
 msgstr "{value} % · ↓ {rate} Kio/s · ↑ {rate3} Kio/s"
-
-#: src/files/app_torrent_rows.zig
-msgid "↓ {rate} KiB/s    ↑ {rate2} KiB/s"
-msgstr "↓ {rate} Kio/s    ↑ {rate2} Kio/s"
 
 #: src/control_center/sections/sound.zig
 msgctxt "balance"
