@@ -608,12 +608,14 @@ test "runtime retirement waits for cancelled discovery completion to drain" {
 
     const executor = try runtime.ensureDiscoveryExecutor();
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&runtime.manager));
+    try std.testing.expectEqual(@as(usize, 2), runtime.resource_ledger.jobResourceCount(job));
     try std.testing.expect(!executor.isJobQuiescent(job));
     try waitForWake(executor);
 
     // The worker has returned, but its completion still owns the Job until
     // the main thread drains and rejects the now-stale result.
     try runtime.cancelJob(job);
+    try std.testing.expectEqual(@as(usize, 1), runtime.resource_ledger.jobResourceCount(job));
     try runtime.requestJobRetirement(job);
     try std.testing.expect(!runtime.isJobRetirementReady(job));
     try std.testing.expect(!runtime.retireJobIfReady(job));
@@ -623,6 +625,7 @@ test "runtime retirement waits for cancelled discovery completion to drain" {
         @as(usize, 1),
         try executor.drainCompletions(&runtime.manager),
     );
+    try std.testing.expect(runtime.resource_ledger.isJobEmpty(job));
     try std.testing.expect(executor.isJobQuiescent(job));
     try std.testing.expect(runtime.isJobRetirementReady(job));
     try std.testing.expect(runtime.retireJobIfReady(job));

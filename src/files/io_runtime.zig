@@ -96,8 +96,9 @@ pub const Runtime = struct {
         self: *Runtime,
     ) !*io_discovery_executor.Executor {
         if (self.discovery_executor == null) {
-            self.discovery_executor = try io_discovery_executor.Executor.init(
+            self.discovery_executor = try io_discovery_executor.Executor.initWithLedger(
                 self.allocator,
+                &self.resource_ledger,
                 2,
                 4,
                 64,

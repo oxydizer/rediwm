@@ -8,9 +8,22 @@ const Allocator = std.mem.Allocator;
 const io_manager = @import("io_manager.zig");
 const io_discovery = @import("io_discovery.zig");
 const io_workers = @import("io_workers.zig");
+const io_resource_ledger = @import("io_resource_ledger.zig");
 
 const JobId = io_manager.JobId;
 const DiscoveryToken = io_manager.DiscoveryToken;
+const Ledger = io_resource_ledger.Ledger;
+const LedgerHandle = io_resource_ledger.Handle;
+
+const AnchorLease = struct {
+    anchor: io_discovery.Anchor,
+    ledger_handle: LedgerHandle,
+};
+
+const CursorLease = struct {
+    cursor: io_discovery.Cursor,
+    ledger_handle: LedgerHandle,
+};
 
 const RootKey = struct {
     job_id: JobId,
@@ -20,10 +33,12 @@ const RootKey = struct {
 const Task = struct {
     token: DiscoveryToken,
     cursor: io_discovery.Cursor,
+    ledger_handle: LedgerHandle,
 };
 
 const Completion = struct {
     token: DiscoveryToken,
+    ledger_handle: LedgerHandle,
     cursor: ?io_discovery.Cursor = null,
     batch: ?io_discovery.Batch = null,
     failed: bool = false,
@@ -32,6 +47,7 @@ const Completion = struct {
 const Context = struct {
     allocator: Allocator,
     batch_size: usize,
+    ledger: *Ledger,
 };
 
 const Pool = io_workers.WorkerPool(Task, Completion);
@@ -40,15 +56,40 @@ pub const Executor = struct {
     allocator: Allocator,
     context: *Context,
     pool: *Pool,
-    anchors: std.AutoHashMapUnmanaged(RootKey, io_discovery.Anchor) = .empty,
+    ledger: *Ledger,
+    owned_ledger: ?*Ledger = null,
+    anchors: std.AutoHashMapUnmanaged(RootKey, AnchorLease) = .empty,
     cursors: std.AutoHashMapUnmanaged(
         JobId,
-        std.AutoHashMapUnmanaged(u64, io_discovery.Cursor),
+        std.AutoHashMapUnmanaged(u64, CursorLease),
     ) = .empty,
     in_flight_by_job: std.AutoHashMapUnmanaged(JobId, usize) = .empty,
 
     pub fn init(
         allocator: Allocator,
+        worker_count: usize,
+        capacity: usize,
+        batch_size: usize,
+    ) !Executor {
+        const ledger = try allocator.create(Ledger);
+        errdefer allocator.destroy(ledger);
+        ledger.* = Ledger.init(allocator);
+        errdefer ledger.deinit();
+
+        var executor = try initWithLedger(
+            allocator,
+            ledger,
+            worker_count,
+            capacity,
+            batch_size,
+        );
+        executor.owned_ledger = ledger;
+        return executor;
+    }
+
+    pub fn initWithLedger(
+        allocator: Allocator,
+        ledger: *Ledger,
         worker_count: usize,
         capacity: usize,
         batch_size: usize,
@@ -60,6 +101,7 @@ pub const Executor = struct {
         context.* = .{
             .allocator = allocator,
             .batch_size = batch_size,
+            .ledger = ledger,
         };
 
         const pool = try Pool.init(
@@ -75,6 +117,7 @@ pub const Executor = struct {
             .allocator = allocator,
             .context = context,
             .pool = pool,
+            .ledger = ledger,
         };
     }
 
@@ -86,17 +129,36 @@ pub const Executor = struct {
         var job_cursor_iter = self.cursors.valueIterator();
         while (job_cursor_iter.next()) |job_cursors| {
             var cursor_iter = job_cursors.valueIterator();
-            while (cursor_iter.next()) |cursor| cursor.deinit();
+            while (cursor_iter.next()) |lease| {
+                var cursor = lease.cursor;
+                cursor.deinit();
+                self.ledger.release(
+                    lease.ledger_handle,
+                    .discovery_executor,
+                ) catch unreachable;
+            }
             job_cursors.deinit(self.allocator);
         }
         self.cursors.deinit(self.allocator);
 
         var anchor_iter = self.anchors.valueIterator();
-        while (anchor_iter.next()) |anchor| anchor.deinit();
+        while (anchor_iter.next()) |lease| {
+            var anchor = lease.anchor;
+            anchor.deinit();
+            self.ledger.release(
+                lease.ledger_handle,
+                .discovery_executor,
+            ) catch unreachable;
+        }
         self.anchors.deinit(self.allocator);
         self.in_flight_by_job.deinit(self.allocator);
 
         self.allocator.destroy(self.context);
+        if (self.owned_ledger) |ledger| {
+            std.debug.assert(ledger.isEmpty());
+            ledger.deinit();
+            self.allocator.destroy(ledger);
+        }
         self.* = undefined;
     }
 
@@ -165,8 +227,12 @@ pub const Executor = struct {
                 .root_id = root_id,
             };
             if (self.anchors.fetchRemove(key)) |removed| {
-                var anchor = removed.value;
+                var anchor = removed.value.anchor;
                 anchor.deinit();
+                self.ledger.release(
+                    removed.value.ledger_handle,
+                    .discovery_executor,
+                ) catch unreachable;
             }
         }
     }
@@ -180,11 +246,11 @@ pub const Executor = struct {
         var submitted: usize = 0;
 
         while (manager.dispatchDiscovery()) |token| {
-            var cursor: io_discovery.Cursor = undefined;
+            var lease: CursorLease = undefined;
             var owns_cursor = false;
 
             if (self.takeCursor(token.job_id, token.entry_id)) |retained| {
-                cursor = retained;
+                lease = retained;
                 owns_cursor = true;
             } else {
                 self.prepareCursorSlot(token.job_id) catch |err| {
@@ -206,7 +272,7 @@ pub const Executor = struct {
                     continue;
                 };
 
-                cursor = anchor.openCursorForEntry(
+                const cursor = anchor.openCursorForEntry(
                     self.allocator,
                     tree,
                     token.entry_id,
@@ -215,6 +281,21 @@ pub const Executor = struct {
                     self.closeAnchorIfComplete(manager, token.job_id);
                     continue;
                 };
+                const handle = self.ledger.register(
+                    token.job_id,
+                    .discovery_cursor,
+                    .discovery_executor,
+                ) catch |err| {
+                    var cursor_to_close = cursor;
+                    cursor_to_close.deinit();
+                    _ = manager.failDiscovery(token);
+                    self.closeAnchorIfComplete(manager, token.job_id);
+                    return err;
+                };
+                lease = .{
+                    .cursor = cursor,
+                    .ledger_handle = handle,
+                };
                 owns_cursor = true;
             }
 
@@ -222,19 +303,29 @@ pub const Executor = struct {
             self.reserveInFlightSlot(token.job_id) catch |err| {
                 // The cursor slot was prepared before opening or taking the
                 // cursor, so ownership can safely return to the retained map.
-                self.storeCursorAssumeCapacity(token.job_id, token.entry_id, cursor);
+                self.storeCursorAssumeCapacity(token.job_id, token.entry_id, lease);
                 if (!manager.yieldDiscovery(token)) {
                     if (self.takeCursor(token.job_id, token.entry_id)) |retained| {
-                        var cursor_to_close = retained;
+                        var cursor_to_close = retained.cursor;
                         cursor_to_close.deinit();
+                        self.ledger.release(
+                            retained.ledger_handle,
+                            .discovery_executor,
+                        ) catch unreachable;
                     }
                     self.closeAnchorIfComplete(manager, token.job_id);
                 }
                 return err;
             };
+            self.ledger.transfer(
+                lease.ledger_handle,
+                .discovery_executor,
+                .discovery_worker,
+            ) catch unreachable;
             if (self.pool.trySubmit(.{
                 .token = token,
-                .cursor = cursor,
+                .cursor = lease.cursor,
+                .ledger_handle = lease.ledger_handle,
             })) {
                 // Cursor ownership transferred to the worker pool.
                 self.addInFlightAssumeCapacity(token.job_id);
@@ -244,11 +335,20 @@ pub const Executor = struct {
 
             // Backpressure is nonblocking. Retain the cursor for the next
             // dispatch and return this entry to its priority queue.
-            self.storeCursorAssumeCapacity(token.job_id, token.entry_id, cursor);
+            self.ledger.transfer(
+                lease.ledger_handle,
+                .discovery_worker,
+                .discovery_executor,
+            ) catch unreachable;
+            self.storeCursorAssumeCapacity(token.job_id, token.entry_id, lease);
             if (!manager.yieldDiscovery(token)) {
                 if (self.takeCursor(token.job_id, token.entry_id)) |retained| {
-                    var cursor_to_close = retained;
+                    var cursor_to_close = retained.cursor;
                     cursor_to_close.deinit();
+                    self.ledger.release(
+                        retained.ledger_handle,
+                        .discovery_executor,
+                    ) catch unreachable;
                 }
                 self.closeAnchorIfComplete(manager, token.job_id);
             }
@@ -272,6 +372,10 @@ pub const Executor = struct {
             drained += 1;
 
             if (completion.failed) {
+                self.ledger.release(
+                    completion.ledger_handle,
+                    .discovery_worker,
+                ) catch unreachable;
                 _ = manager.failDiscovery(completion.token);
                 self.closeAnchorIfComplete(manager, completion.token.job_id);
                 continue;
@@ -279,6 +383,10 @@ pub const Executor = struct {
 
             if (completion.batch == null) {
                 if (completion.cursor) |*cursor| cursor.deinit();
+                self.ledger.release(
+                    completion.ledger_handle,
+                    .discovery_worker,
+                ) catch unreachable;
                 _ = manager.failDiscovery(completion.token);
                 self.closeAnchorIfComplete(manager, completion.token.job_id);
                 continue;
@@ -290,6 +398,10 @@ pub const Executor = struct {
                 ) catch |err| {
                     if (completion.batch) |*batch| batch.deinit();
                     if (completion.cursor) |*cursor| cursor.deinit();
+                    self.ledger.release(
+                        completion.ledger_handle,
+                        .discovery_worker,
+                    ) catch unreachable;
                     _ = manager.failDiscovery(completion.token);
                     self.closeAnchorIfComplete(manager, completion.token.job_id);
                     if (first_error == null) first_error = err;
@@ -303,6 +415,10 @@ pub const Executor = struct {
             ) catch |err| {
                 if (completion.batch) |*batch| batch.deinit();
                 if (completion.cursor) |*cursor| cursor.deinit();
+                self.ledger.release(
+                    completion.ledger_handle,
+                    .discovery_worker,
+                ) catch unreachable;
                 _ = manager.failDiscovery(completion.token);
                 self.closeAnchorIfComplete(manager, completion.token.job_id);
                 if (first_error == null) first_error = err;
@@ -312,6 +428,10 @@ pub const Executor = struct {
             if (!accepted) {
                 if (completion.batch) |*batch| batch.deinit();
                 if (completion.cursor) |*cursor| cursor.deinit();
+                self.ledger.release(
+                    completion.ledger_handle,
+                    .discovery_worker,
+                ) catch unreachable;
                 self.closeAnchorIfComplete(manager, completion.token.job_id);
                 continue;
             }
@@ -319,12 +439,25 @@ pub const Executor = struct {
             // completeDiscovery consumes the batch on acceptance.
             completion.batch = null;
             if (completion.cursor) |cursor| {
+                self.ledger.transfer(
+                    completion.ledger_handle,
+                    .discovery_worker,
+                    .discovery_executor,
+                ) catch unreachable;
                 self.storeCursorAssumeCapacity(
                     completion.token.job_id,
                     completion.token.entry_id,
-                    cursor,
+                    .{
+                        .cursor = cursor,
+                        .ledger_handle = completion.ledger_handle,
+                    },
                 );
                 completion.cursor = null;
+            } else {
+                self.ledger.release(
+                    completion.ledger_handle,
+                    .discovery_worker,
+                ) catch unreachable;
             }
 
             self.closeAnchorIfComplete(manager, completion.token.job_id);
@@ -345,7 +478,7 @@ pub const Executor = struct {
             .job_id = token.job_id,
             .root_id = root_id,
         };
-        if (self.anchors.getPtr(key)) |anchor| return anchor;
+        if (self.anchors.getPtr(key)) |lease| return &lease.anchor;
 
         self.anchors.ensureUnusedCapacity(self.allocator, 1) catch return error.OutOfMemory;
         const path = manager.discoveryRootPath(token.job_id, root_id) orelse return null;
@@ -354,8 +487,20 @@ pub const Executor = struct {
 
         const anchor = io_discovery.Anchor.open(path_z) catch
             return null;
-        self.anchors.putAssumeCapacity(key, anchor);
-        return self.anchors.getPtr(key).?;
+        const handle = self.ledger.register(
+            token.job_id,
+            .discovery_anchor,
+            .discovery_executor,
+        ) catch |err| {
+            var anchor_to_close = anchor;
+            anchor_to_close.deinit();
+            return err;
+        };
+        self.anchors.putAssumeCapacity(key, .{
+            .anchor = anchor,
+            .ledger_handle = handle,
+        });
+        return &self.anchors.getPtr(key).?.anchor;
     }
 
     fn closeAnchorIfComplete(
@@ -373,8 +518,12 @@ pub const Executor = struct {
                 .root_id = root_id,
             };
             if (self.anchors.fetchRemove(key)) |entry| {
-                var anchor = entry.value;
+                var anchor = entry.value.anchor;
                 anchor.deinit();
+                self.ledger.release(
+                    entry.value.ledger_handle,
+                    .discovery_executor,
+                ) catch unreachable;
             }
         }
     }
@@ -383,7 +532,7 @@ pub const Executor = struct {
         self: *Executor,
         job_id: JobId,
         entry_id: u64,
-    ) ?io_discovery.Cursor {
+    ) ?CursorLease {
         const job_cursors = self.cursors.getPtr(job_id) orelse return null;
         const retained = job_cursors.fetchRemove(entry_id) orelse return null;
         return retained.value;
@@ -396,7 +545,7 @@ pub const Executor = struct {
         }
 
         try self.cursors.ensureUnusedCapacity(self.allocator, 1);
-        var job_cursors: std.AutoHashMapUnmanaged(u64, io_discovery.Cursor) = .empty;
+        var job_cursors: std.AutoHashMapUnmanaged(u64, CursorLease) = .empty;
         errdefer job_cursors.deinit(self.allocator);
         try job_cursors.ensureUnusedCapacity(self.allocator, 1);
         self.cursors.putAssumeCapacity(job_id, job_cursors);
@@ -406,7 +555,7 @@ pub const Executor = struct {
         self: *Executor,
         job_id: JobId,
         entry_id: u64,
-        cursor: io_discovery.Cursor,
+        cursor: CursorLease,
     ) void {
         self.cursors.getPtr(job_id).?.putAssumeCapacity(entry_id, cursor);
     }
@@ -415,7 +564,14 @@ pub const Executor = struct {
         const removed = self.cursors.fetchRemove(job_id) orelse return;
         var job_cursors = removed.value;
         var cursor_iter = job_cursors.valueIterator();
-        while (cursor_iter.next()) |cursor| cursor.deinit();
+        while (cursor_iter.next()) |lease| {
+            var cursor = lease.cursor;
+            cursor.deinit();
+            self.ledger.release(
+                lease.ledger_handle,
+                .discovery_executor,
+            ) catch unreachable;
+        }
         job_cursors.deinit(self.allocator);
     }
 };
@@ -428,6 +584,7 @@ fn executeBatch(raw_context: ?*anyopaque, task: Task) Completion {
         cursor.deinit();
         return .{
             .token = task.token,
+            .ledger_handle = task.ledger_handle,
             .failed = true,
         };
     };
@@ -436,19 +593,26 @@ fn executeBatch(raw_context: ?*anyopaque, task: Task) Completion {
         cursor.deinit();
         return .{
             .token = task.token,
+            .ledger_handle = task.ledger_handle,
             .batch = batch,
         };
     }
 
     return .{
         .token = task.token,
+        .ledger_handle = task.ledger_handle,
         .cursor = cursor,
         .batch = batch,
     };
 }
 
-fn discardCompletion(_: ?*anyopaque, completion: Completion) void {
+fn discardCompletion(raw_context: ?*anyopaque, completion: Completion) void {
+    const context: *Context = @ptrCast(@alignCast(raw_context.?));
     var discarded = completion;
     if (discarded.batch) |*batch| batch.deinit();
     if (discarded.cursor) |*cursor| cursor.deinit();
+    context.ledger.release(
+        discarded.ledger_handle,
+        .discovery_worker,
+    ) catch unreachable;
 }
