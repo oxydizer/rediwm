@@ -280,7 +280,7 @@ test "Manager operations execute directory creation before dependent symlink and
     const file_operation = try manager.addEntryOperation(job, file_id, .copy_file);
     try manager.queueJob(job);
 
-    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 1);
     defer runtime.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
@@ -1151,7 +1151,7 @@ test "Manager Runtime moves regular files and symlinks with native rename" {
     const link_operation = try manager.addEntryOperation(job, link_root, .move_entry);
     try manager.queueJob(job);
 
-    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 1);
     defer runtime.deinit();
 
     while (!manager.jobState(job).?.isTerminal()) {
@@ -1254,7 +1254,7 @@ test "Manager Runtime falls back to copy-and-detach after a real EXDEV rename" {
     const link_operation = try manager.addEntryOperation(job, link_root, .move_entry);
     try manager.queueJob(job);
 
-    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 1);
     defer runtime.deinit();
 
     while (!manager.jobState(job).?.isTerminal()) {
@@ -1639,7 +1639,7 @@ test "Manager Runtime reports partial directory finalization failures" {
     );
     try manager.queueJob(job);
 
-    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 2);
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 1);
     defer runtime.deinit();
 
     while (manager.operationState(job, good_operation).? != .completed or
@@ -1823,7 +1823,7 @@ test "Manager Runtime copies and detaches file and symlink roots" {
     const link_detach = try manager.addEntryOperation(job, link_root, .detach_source);
     try manager.queueJob(job);
 
-    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
+    var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 1);
     defer runtime.deinit();
 
     while (!manager.jobState(job).?.isTerminal()) {

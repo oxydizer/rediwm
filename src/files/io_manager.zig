@@ -395,6 +395,7 @@ const Job = struct {
     discovery_generation: u64 = 0,
     discovery_in_flight: ?DiscoveryToken = null,
     operations: std.ArrayList(Operation) = .empty,
+    dependency_edge_count: usize = 0,
     operation_indices: std.AutoHashMapUnmanaged(OperationId, usize) = .empty,
     entry_operation_indices: std.AutoHashMapUnmanaged(io_tree.EntryId, usize) = .empty,
     source_detach_indices: std.AutoHashMapUnmanaged(io_tree.EntryId, usize) = .empty,
@@ -1984,6 +1985,12 @@ pub const Manager = struct {
         if (dependency_operation_index) |dependency_index| {
             const dependency_operation = &job.operations.items[dependency_index];
             try dependency_operation.dependents.ensureUnusedCapacity(self.allocator, 1);
+            if (job.state != .planning) {
+                try job.dependency_work_queue.ensureTotalCapacity(
+                    self.allocator,
+                    job.dependency_edge_count + 1,
+                );
+            }
             // Reserve the parent link before inserting this operation, so
             // dependency registration cannot allocate after insertion.
         }
@@ -2016,6 +2023,7 @@ pub const Manager = struct {
             operation.dependencies.appendAssumeCapacity(dependency_operation.id);
             operation.dependency_indices.appendAssumeCapacity(dependency_index);
             dependency_operation.dependents.appendAssumeCapacity(operation_index);
+            job.dependency_edge_count += 1;
 
             if (job.state != .planning) {
                 switch (dependency_operation.state) {
@@ -2068,9 +2076,16 @@ pub const Manager = struct {
         try operation.dependencies.ensureUnusedCapacity(self.allocator, 1);
         try operation.dependency_indices.ensureUnusedCapacity(self.allocator, 1);
         try dependency.dependents.ensureUnusedCapacity(self.allocator, 1);
+        // Failure propagation may enqueue every dependency edge. Reserve
+        // enough space for the complete graph before exposing this new edge.
+        try job.dependency_work_queue.ensureTotalCapacity(
+            self.allocator,
+            job.dependency_edge_count + 1,
+        );
         operation.dependencies.appendAssumeCapacity(dependency.id);
         operation.dependency_indices.appendAssumeCapacity(dependency_index);
         dependency.dependents.appendAssumeCapacity(operation_index);
+        job.dependency_edge_count += 1;
 
         if (job.state == .planning or operation.state != .pending) return;
         switch (dependency.state) {
@@ -2265,6 +2280,7 @@ pub const Manager = struct {
             self.allocator,
             dependency_count,
         );
+        job.dependency_edge_count = dependency_count;
     }
 
     fn commitJobQueue(_: *Manager, job: *Job) void {
@@ -2783,7 +2799,7 @@ pub const Manager = struct {
     }
 
     /// Dispatches the preferred operation ahead of normal Job and kind
-    /// priority, without bypassing dependencies or per-Job serialization.
+    /// priority, without bypassing dependencies or pause/cancel gates.
     fn dispatchPreferred(self: *Manager) ?WorkToken {
         const preferred = self.preferred_operation orelse return null;
 
@@ -2809,7 +2825,7 @@ pub const Manager = struct {
                 return null;
             }
             if ((job.state != .queued and job.state != .running) or
-                job.operation_state_counts[@backingInt(OperationState.running)] != 0 or
+                job.pause_requested or job.cancel_requested or
                 operation.unresolved_dependencies != 0 or
                 !dependenciesCompleted(job, operation))
             {
@@ -2849,7 +2865,7 @@ pub const Manager = struct {
         return null;
     }
 
-    /// One active Operation per Job preserves its FIFO execution order.
+    /// Independent Operations within a Job may execute concurrently.
     /// The cursor rotates across Jobs after every successful dispatch.
     pub fn dispatchNext(self: *Manager) ?WorkToken {
         const count = self.jobs.items.len;
@@ -2866,8 +2882,7 @@ pub const Manager = struct {
                 if (job.state != .queued and job.state != .running and
                     job.state != .finalizing)
                     continue;
-                if (job.operation_state_counts[@backingInt(OperationState.running)] != 0)
-                    continue;
+                if (job.pause_requested or job.cancel_requested) continue;
 
                 while (dequeueReadyPriority(job, priority)) |operation_index| {
                     const operation = &job.operations.items[operation_index];
@@ -2920,9 +2935,14 @@ pub const Manager = struct {
                 operation,
                 if (result == .completed) .completed else .cancelled,
             );
-            job.cancel_requested = false;
-            self.cancelOutstanding(job, false);
-            job.state = .cancelled;
+            // Other workers still own their Operations. Keep the Job
+            // nonterminal until every in-flight result has been reconciled.
+            if (job.operation_state_counts[@backingInt(OperationState.running)] == 0) {
+                job.cancel_requested = false;
+                job.state = .cancelled;
+            } else {
+                job.state = .running;
+            }
             return true;
         }
 
@@ -2952,7 +2972,9 @@ pub const Manager = struct {
         } else if (result == .failed or result == .skipped or result == .cancelled) {
             self.propagateUnmetDependencies(job, operation_index);
         }
-        if (pause_after) {
+        if (pause_after and
+            job.operation_state_counts[@backingInt(OperationState.running)] == 0)
+        {
             job.pause_requested = false;
             job.state = .paused;
         } else {
@@ -3639,4 +3661,57 @@ test "copy progress rate survives yielded generations and resets on regression a
     try std.testing.expectEqual(@as(u64, 0), currentProgressRate(&operation, 2600));
     updateProgressRate(&operation, 4, 1000, .transferring, 3100);
     try std.testing.expectEqual(@as(u64, 1000), currentProgressRate(&operation, 3100));
+}
+
+test "dynamic dependency propagation grows its work queue" {
+    var manager = Manager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    const job_id = try manager.createJob(null);
+    const root_id = try manager.addOperation(job_id, .copy_file);
+    const left_id = try manager.addOperation(job_id, .copy_file);
+    const right_id = try manager.addOperation(job_id, .copy_file);
+    const join_count = 300;
+    const join_ids = try std.testing.allocator.alloc(OperationId, join_count);
+    defer std.testing.allocator.free(join_ids);
+
+    for (join_ids) |*id| {
+        id.* = try manager.addOperation(job_id, .publish);
+    }
+    try manager.queueJob(job_id);
+
+    const job = manager.findJob(job_id).?;
+    const root_index = findOperationIndex(job, root_id).?;
+    const left_index = findOperationIndex(job, left_id).?;
+    const right_index = findOperationIndex(job, right_id).?;
+
+    try manager.addDynamicDependency(job, left_index, root_index);
+    try manager.addDynamicDependency(job, right_index, root_index);
+
+    for (join_ids) |id| {
+        const join_index = findOperationIndex(job, id).?;
+        try manager.addDynamicDependency(job, join_index, left_index);
+        try manager.addDynamicDependency(job, join_index, right_index);
+    }
+
+    const token = manager.dispatchNext().?;
+    try std.testing.expectEqual(root_id, token.operation_id);
+    try std.testing.expect(manager.completeWork(token, .failed));
+
+    try std.testing.expectEqual(
+        OperationState.skipped,
+        manager.operationState(job_id, left_id).?,
+    );
+    try std.testing.expectEqual(
+        OperationState.skipped,
+        manager.operationState(job_id, right_id).?,
+    );
+
+    for (join_ids) |id| {
+        try std.testing.expectEqual(
+            OperationState.skipped,
+            manager.operationState(job_id, id).?,
+        );
+    }
+    try std.testing.expectEqual(JobState.failed, manager.jobState(job_id).?);
 }

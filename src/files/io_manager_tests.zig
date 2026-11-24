@@ -180,7 +180,7 @@ test "hovered copy operation gets one-shot priority over normal scheduling" {
     try std.testing.expect(manager.completeWork(normal_job, .completed));
 }
 
-test "dependencies block descendants but not independent operations" {
+test "independent operations run concurrently while dependencies remain blocked" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
 
@@ -193,10 +193,13 @@ test "dependencies block descendants but not independent operations" {
 
     const first = manager.dispatchNext().?;
     try std.testing.expectEqual(parent, first.operation_id);
-    try std.testing.expect(manager.completeWork(first, .completed));
     const second = manager.dispatchNext().?;
     try std.testing.expectEqual(independent, second.operation_id);
     try std.testing.expect(manager.completeWork(second, .completed));
+    // The child is still blocked by its prerequisite, even though the
+    // independent operation has completed and the parent is still running.
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expect(manager.completeWork(first, .completed));
     const third = manager.dispatchNext().?;
     try std.testing.expectEqual(child, third.operation_id);
     try std.testing.expect(manager.completeWork(third, .completed));
@@ -1219,6 +1222,7 @@ test "directory finalization waits for publication and discovery to drain" {
     try manager.setRootSourcePath(job, root, "/tmp/Photos");
     _ = try manager.addEntryOperation(job, root, .create_directory);
     const publication = try manager.addOperation(job, .publish);
+    const second_publication = try manager.addOperation(job, .publish);
     try manager.startDiscovery(job, "/tmp/Photos");
     try manager.queueJob(job);
 
@@ -1238,10 +1242,9 @@ test "directory finalization waits for publication and discovery to drain" {
 
     const publication_token = manager.dispatchNext().?;
     try std.testing.expectEqual(publication, publication_token.operation_id);
+    const second_publication_token = manager.dispatchNext().?;
+    try std.testing.expectEqual(second_publication, second_publication_token.operation_id);
     try std.testing.expect(manager.completeWork(publication_token, .completed));
-
-    try std.testing.expect(manager.dispatchNext() == null);
-    try std.testing.expectEqual(io_manager.JobState.queued, manager.jobState(job).?);
 
     const scan = manager.dispatchDiscovery().?;
     var batch: io_discovery.Batch = .{
@@ -1249,6 +1252,11 @@ test "directory finalization waits for publication and discovery to drain" {
         .complete = true,
     };
     try std.testing.expect(try manager.completeDiscovery(scan, &batch));
+    try std.testing.expectEqual(io_manager.JobState.running, manager.jobState(job).?);
+    // The finalizer must wait for the other active operation as well as
+    // discovery and publication registration.
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expect(manager.completeWork(second_publication_token, .completed));
     try std.testing.expectEqual(io_manager.JobState.finalizing, manager.jobState(job).?);
 
     const finalizer_token = manager.dispatchNext().?;
@@ -1948,21 +1956,28 @@ test "pause prevents dispatch and resume restores eligible work" {
     try std.testing.expect(manager.dispatchNext() != null);
 }
 
-test "pause requested during work takes effect at the next yielded boundary" {
+test "pause stops dispatch and waits for every active operation to return" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
 
     const job = try manager.createJob(null);
     const first = try manager.addOperation(job, .copy_file);
     const second = try manager.addOperation(job, .copy_file);
+    const third = try manager.addOperation(job, .copy_file);
     try manager.queueJob(job);
 
-    const token = manager.dispatchNext().?;
+    const first_token = manager.dispatchNext().?;
+    const second_token = manager.dispatchNext().?;
     try manager.pauseJob(job);
     try std.testing.expectEqual(io_manager.JobState.running, manager.jobState(job).?);
-    try std.testing.expect(manager.completeWork(token, .yielded));
-    try std.testing.expectEqual(io_manager.JobState.paused, manager.jobState(job).?);
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expect(manager.completeWork(first_token, .yielded));
+    try std.testing.expectEqual(io_manager.JobState.running, manager.jobState(job).?);
     try std.testing.expectEqual(io_manager.OperationState.pending, manager.operationState(job, first).?);
+    try std.testing.expect(manager.operationState(job, second).? == .running);
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expect(manager.completeWork(second_token, .completed));
+    try std.testing.expectEqual(io_manager.JobState.paused, manager.jobState(job).?);
     try std.testing.expect(manager.dispatchNext() == null);
 
     try manager.resumeJob(job);
@@ -1970,25 +1985,32 @@ test "pause requested during work takes effect at the next yielded boundary" {
     try std.testing.expectEqual(first, resumed.operation_id);
     try std.testing.expect(manager.completeWork(resumed, .completed));
     const next = manager.dispatchNext().?;
-    try std.testing.expectEqual(second, next.operation_id);
+    try std.testing.expectEqual(third, next.operation_id);
 }
 
-test "cancel requested during work cancels remaining operations at the next boundary" {
+test "cancellation waits for every active operation to return" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();
 
     const job = try manager.createJob(null);
     const active = try manager.addOperation(job, .copy_file);
+    const second_active = try manager.addOperation(job, .copy_file);
     const pending = try manager.addOperation(job, .copy_file);
     try manager.queueJob(job);
 
     const token = manager.dispatchNext().?;
+    const second_token = manager.dispatchNext().?;
     try manager.cancelJob(job);
     try std.testing.expectEqual(io_manager.JobState.running, manager.jobState(job).?);
     try std.testing.expectEqual(io_manager.OperationState.cancelled, manager.operationState(job, pending).?);
     try std.testing.expect(manager.completeWork(token, .yielded));
-    try std.testing.expectEqual(io_manager.JobState.cancelled, manager.jobState(job).?);
+    try std.testing.expectEqual(io_manager.JobState.running, manager.jobState(job).?);
     try std.testing.expectEqual(io_manager.OperationState.cancelled, manager.operationState(job, active).?);
+    try std.testing.expectEqual(io_manager.OperationState.running, manager.operationState(job, second_active).?);
+    try std.testing.expect(manager.dispatchNext() == null);
+    try std.testing.expect(manager.completeWork(second_token, .completed));
+    try std.testing.expectEqual(io_manager.JobState.cancelled, manager.jobState(job).?);
+    try std.testing.expectEqual(io_manager.OperationState.completed, manager.operationState(job, second_active).?);
     try std.testing.expect(manager.dispatchNext() == null);
 }
 
