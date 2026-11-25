@@ -6,6 +6,9 @@
 const std = @import("std");
 const io_thread_guard = @import("io_thread_guard.zig");
 const io_transfer_plan = @import("io_transfer_plan.zig");
+const io_service_tasks = @import("io_service_tasks.zig");
+const resources = @import("io_coordinator_resources.zig");
+const lifecycle = @import("io_coordinator_lifecycle.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
@@ -17,12 +20,24 @@ const ops_mod = @import("ops.zig");
 
 const JobId = io_service.JobId;
 
+pub const WindowHeld = struct {
+    /// Owned.
+    path: []u8,
+};
+
+/// A submit whose plan is being prepared on a worker.
+const Preparing = struct {
+    mode: io_service.TransferMode,
+    cancelled: bool = false,
+};
+
 /// The last record written for a job, and when progress and the speed
 /// history were last written.
 const Published = struct {
     record: io_service.JobRecord,
     last_progress_ms: i64 = 0,
     last_sample_ms: i64 = 0,
+    retirement_requested: bool = false,
 };
 
 /// Progress-only changes are written at most this often per job; state,
@@ -81,6 +96,21 @@ pub const Coordinator = struct {
     thread: ?std.Thread = null,
     published: std.AutoHashMapUnmanaged(JobId, Published) = .empty,
     next_failed_submit_id: JobId = failed_submit_id_base,
+    /// Blocking filesystem work handed off by this thread (threading §8).
+    tasks: *io_service_tasks.Pool = undefined,
+    task_context: io_service_tasks.Context = undefined,
+    /// Tasks the pool had no room for, submitted in order as room frees.
+    task_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
+    /// Jobs whose submit is being prepared on a worker.
+    preparing: std.AutoHashMapUnmanaged(JobId, Preparing) = .empty,
+    /// Set once shutdown has begun: no new submits; accepted ordinary work
+    /// finishes (threading §10).
+    draining: bool = false,
+    /// A second quit: cancel everything, ordinary jobs included.
+    abort_requested: std.atomic.Value(bool) = .init(false),
+    aborting: bool = false,
+    /// What disposing a window-owned resource needs, by ledger handle id.
+    window_held: std.AutoHashMapUnmanaged(u64, WindowHeld) = .empty,
 
     /// Initialize at a stable address. The Runtime is allocated separately
     /// because its executors retain pointers into it and into its Manager.
@@ -105,22 +135,41 @@ pub const Coordinator = struct {
         _ = try runtime.ensureDiscoveryExecutor();
         _ = try runtime.ensureOperationExecutor();
 
+        self.task_context = .{
+            .allocator = allocator,
+            .on_discard_delete = discardDeleteResult,
+            .owner = self,
+        };
+        self.tasks = try io_service_tasks.create(&self.task_context);
+        errdefer self.tasks.deinit();
+
         self.runtime = runtime;
         self.thread = try std.Thread.spawn(.{}, threadMain, .{self});
     }
 
-    /// Stops admission, wakes the coordinator and joins its thread. Runtime
-    /// teardown happens on the coordinator thread after its loop has ended.
+    /// Begins the drain and waits for it: no new submits, accepted ordinary
+    /// work finishes, archive extractions and jobs no one can answer are
+    /// cancelled, then the thread tears the Runtime down and exits. The
+    /// caller is the process owner after every window is gone (threading §10).
     pub fn deinit(self: *Coordinator) void {
         self.service.beginShutdown();
         if (self.thread) |thread| thread.join();
         self.published.deinit(self.allocator);
+        self.preparing.deinit(self.allocator);
+        var held = self.window_held.valueIterator();
+        while (held.next()) |entry| self.allocator.free(entry.path);
+        self.window_held.deinit(self.allocator);
+        self.task_backlog.deinit(self.allocator);
         self.* = undefined;
     }
 
     fn threadMain(self: *Coordinator) void {
         io_thread_guard.markCurrent(.coordinator);
         defer {
+            // Tasks first: finishing or discarding them may release ledger
+            // entries the Runtime still owns.
+            self.tasks.deinit();
+            self.discardTaskBacklog();
             self.runtime.deinit();
             self.allocator.destroy(self.runtime);
         }
@@ -131,14 +180,32 @@ pub const Coordinator = struct {
                 self.handleCommand(routed);
             }
 
+            self.sweepClosedWindows();
+            self.pumpTasks();
             self.pumpExecutors();
+
+            // Decisions the coordinator makes on its own come before
+            // publication, so their results reach the table in this pass.
+            if (self.service.isStopping()) {
+                if (!self.draining) self.beginDraining();
+                if (self.abort_requested.load(.acquire) and !self.aborting) self.abortAll();
+            }
+            if (!self.service.anyWindowOpen() or self.draining) self.cancelUnanswerableConflicts();
+
             const deadline = self.publishRecords(monotonicMs());
             self.retireReadyJobs();
-
-            if (self.service.isStopping()) break;
-            self.waitForWork(deadline);
+            if (self.draining and self.isIdle()) break;
+            // While draining, re-check progress at least every 50 ms: the
+            // phase is short, and some transitions raise no wake of their own.
+            self.waitForWork(if (self.draining) earliest(deadline, monotonicMs() + 50) else deadline);
         }
     }
+
+    pub const requestAbort = lifecycle.requestAbort;
+    const beginDraining = lifecycle.beginDraining;
+    const abortAll = lifecycle.abortAll;
+    const cancelUnanswerableConflicts = lifecycle.cancelUnanswerableConflicts;
+    const isIdle = lifecycle.isIdle;
 
     /// Waits for a command, a completion, or `deadline` (monotonic ms) when
     /// throttled progress or a speed sample is still due.
@@ -164,6 +231,11 @@ pub const Coordinator = struct {
             },
             .{
                 .fd = operation.wakeFd(),
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+            .{
+                .fd = self.tasks.wakeFd(),
                 .events = std.posix.POLL.IN,
                 .revents = 0,
             },
@@ -218,7 +290,7 @@ pub const Coordinator = struct {
     ) void {
         var routed = routed_value;
         defer routed.command.deinitPayload();
-        if (routed.command.kind == .submit_job) return self.handleSubmit(routed);
+        if (routed.command.kind == .submit_job) return self.handleSubmit(&routed);
         // There is no reply channel: a command that cannot apply changes
         // nothing; the job table shows what did happen (threading §5).
         self.applyCommand(routed) catch |err| {
@@ -231,44 +303,154 @@ pub const Coordinator = struct {
     /// Every admitted submit ends up as a record: the job's, or a `failed`
     /// one carrying the rejection code, so the window always learns the
     /// outcome through its submit_tag.
-    fn handleSubmit(self: *Coordinator, routed: io_service.RoutedCommand) void {
+    ///
+    /// Accept is bounded and does no I/O: the job is created in `planning`,
+    /// its record appears at once, and the request moves into a prepare
+    /// task. `applyPrepared` finishes the submit when the plan returns.
+    fn handleSubmit(self: *Coordinator, routed: *io_service.RoutedCommand) void {
         var record: io_service.JobRecord = .{
             .origin_window_id = routed.window_id,
             .submit_tag = routed.command.submit_tag,
             .started_at_ms = wallClockMs(),
         };
-        if (routed.command.payload) |payload| switch (payload.data) {
-            .transfer => |*request| {
-                record.kind = if (request.mode == .move) .move else .copy;
-                record.source_count = @intCast(@min(request.sources.len, std.math.maxInt(u32)));
-                if (request.sources.len > 0) record.setLabel(std.fs.path.basename(request.sources[0].path));
-            },
-            else => {},
+        const payload = routed.command.payload orelse
+            return self.failSubmit(&record, error.MissingTransferPayload);
+        const request = switch (payload.data) {
+            .transfer => |*request| request,
+            else => return self.failSubmit(&record, error.UnexpectedTransferPayload),
         };
+        record.kind = if (request.mode == .move) .move else .copy;
+        record.source_count = @intCast(@min(request.sources.len, std.math.maxInt(u32)));
+        if (request.sources.len > 0) record.setLabel(std.fs.path.basename(request.sources[0].path));
 
-        if (self.submitTransfer(routed)) |job_id| {
-            record.id = job_id;
-            record.state = .queued;
-            if (self.runtime.manager.jobSummary(job_id)) |summary| applySummary(&record, summary);
-            self.service.createJobRecord(record, true) catch |err| {
-                std.log.err("Files job record for job {d} failed: {s}", .{ job_id, @errorName(err) });
-                return;
-            };
-            self.published.put(self.allocator, job_id, .{ .record = record }) catch |err| {
-                std.log.err("Files job record cache failed: {s}", .{@errorName(err)});
-            };
-        } else |err| {
-            record.id = self.next_failed_submit_id;
-            self.next_failed_submit_id += 1;
-            record.state = .failed;
-            record.error_code = @backingInt(rejectionCode(err));
-            record.finished_at_ms = record.started_at_ms;
-            self.service.createJobRecord(record, true) catch |create_err| {
-                std.log.err("Files failed-submit record failed: {s}", .{@errorName(create_err)});
-                return;
-            };
-            self.service.retireJobRecord(record.id) catch {};
+        const manager = &self.runtime.manager;
+        const job_id = manager.createJob(routed.window_id) catch |err|
+            return self.failSubmit(&record, err);
+        record.id = job_id;
+        record.state = .planning;
+        self.preparing.ensureUnusedCapacity(self.allocator, 1) catch |err| {
+            std.debug.assert(manager.discardPlanningJob(job_id));
+            return self.failSubmit(&record, err);
+        };
+        self.published.ensureUnusedCapacity(self.allocator, 1) catch |err| {
+            std.debug.assert(manager.discardPlanningJob(job_id));
+            return self.failSubmit(&record, err);
+        };
+        self.service.createJobRecord(record, true) catch |err| {
+            std.log.err("Files job record for job {d} failed: {s}", .{ job_id, @errorName(err) });
+            std.debug.assert(manager.discardPlanningJob(job_id));
+            return;
+        };
+        self.published.putAssumeCapacity(job_id, .{ .record = record });
+        self.preparing.putAssumeCapacity(job_id, .{ .mode = request.mode });
+
+        // The task owns the payload from here on.
+        routed.command.payload = null;
+        self.submitTask(.{ .prepare_transfer = .{ .job_id = job_id, .payload = payload } });
+    }
+
+    /// A submit that failed before any Manager job existed.
+    fn failSubmit(self: *Coordinator, record: *io_service.JobRecord, err: anyerror) void {
+        record.id = self.next_failed_submit_id;
+        self.next_failed_submit_id += 1;
+        record.state = .failed;
+        record.error_code = @backingInt(rejectionCode(err));
+        record.finished_at_ms = record.started_at_ms;
+        self.service.createJobRecord(record.*, true) catch |create_err| {
+            std.log.err("Files failed-submit record failed: {s}", .{@errorName(create_err)});
+            return;
+        };
+        self.service.retireJobRecord(record.id) catch {};
+    }
+
+    /// Ends a job that never left `planning`: discards it and retires its
+    /// record as cancelled or failed.
+    fn endPlanningJob(self: *Coordinator, job_id: JobId, state: io_service.JobState, err: ?anyerror) void {
+        _ = self.runtime.manager.discardPlanningJob(job_id);
+        const entry = self.published.fetchRemove(job_id) orelse return;
+        var record = entry.value.record;
+        record.state = state;
+        record.error_code = if (err) |e| @backingInt(rejectionCode(e)) else 0;
+        record.finished_at_ms = wallClockMs();
+        self.service.updateJobRecord(record) catch {};
+        self.service.retireJobRecord(job_id) catch {};
+    }
+
+    pub fn submitTask(self: *Coordinator, task: io_service_tasks.Task) void {
+        if (self.task_backlog.items.len == 0 and self.tasks.trySubmit(task)) return;
+        self.task_backlog.append(self.allocator, task) catch {
+            // Out of memory with a full pool: give the work up visibly.
+            std.log.err("Files service task dropped: out of memory", .{});
+            switch (task) {
+                .prepare_transfer => |prepare| {
+                    prepare.payload.deinit();
+                    _ = self.preparing.remove(prepare.job_id);
+                    self.endPlanningJob(prepare.job_id, .failed, error.OutOfMemory);
+                },
+                .delete_tree => |delete| {
+                    self.allocator.free(delete.path);
+                    self.finishCleanup(delete.handle);
+                },
+            }
+        };
+    }
+
+    pub fn pumpTasks(self: *Coordinator) void {
+        _ = self.tasks.drainWake();
+        while (self.tasks.tryPopResult()) |result_value| {
+            var result = result_value;
+            defer result.deinit(self.allocator);
+            switch (result) {
+                .prepared => |*prepared| self.applyPrepared(prepared.job_id, &prepared.plan),
+                .deleted => |deleted| {
+                    if (deleted.failed) |err| std.log.err(
+                        "Files could not delete {s}: {s}",
+                        .{ deleted.path, @errorName(err) },
+                    );
+                    self.finishCleanup(deleted.handle);
+                },
+            }
         }
+        while (self.task_backlog.items.len > 0) {
+            if (!self.tasks.trySubmit(self.task_backlog.items[0])) break;
+            _ = self.task_backlog.orderedRemove(0);
+        }
+    }
+
+    /// Applies a prepared plan to its planning job, unless the job was
+    /// cancelled meanwhile or the plan failed.
+    fn applyPrepared(self: *Coordinator, job_id: JobId, plan_result: *anyerror!io_transfer_plan.TransferPlan) void {
+        const entry = self.preparing.fetchRemove(job_id) orelse return;
+        if (entry.value.cancelled) return self.endPlanningJob(job_id, .cancelled, null);
+        const plan = if (plan_result.*) |*plan| plan else |err|
+            return self.endPlanningJob(job_id, .failed, err);
+        self.applyTransferPlan(job_id, entry.value.mode, plan) catch |err|
+            return self.endPlanningJob(job_id, .failed, err);
+    }
+
+    /// A worker finished destroying a resource it held: release its entry.
+    /// A failed delete is released too; it is under a known staging root
+    /// that a later start sweeps (roadmap phase 5).
+    fn finishCleanup(self: *Coordinator, handle: io_resource_ledger.Handle) void {
+        self.runtime.resource_ledger.release(handle, .operation_worker) catch |err| {
+            std.log.err("Files cleanup release of resource {d} failed: {s}", .{ handle.id, @errorName(err) });
+        };
+    }
+
+    fn discardDeleteResult(raw: ?*anyopaque, handle: io_resource_ledger.Handle) void {
+        const self: *Coordinator = @ptrCast(@alignCast(raw.?));
+        self.finishCleanup(handle);
+    }
+
+    fn discardTaskBacklog(self: *Coordinator) void {
+        for (self.task_backlog.items) |task| switch (task) {
+            .prepare_transfer => |prepare| prepare.payload.deinit(),
+            .delete_tree => |delete| {
+                self.allocator.free(delete.path);
+                self.finishCleanup(delete.handle);
+            },
+        };
+        self.task_backlog.clearRetainingCapacity();
     }
 
     fn applyCommand(
@@ -279,8 +461,14 @@ pub const Coordinator = struct {
         switch (command.kind) {
             .pause_job => try self.runtime.manager.pauseJob(command.job_id),
             .resume_job => try self.runtime.manager.resumeJob(command.job_id),
-            .cancel_job => try self.runtime.cancelJob(command.job_id),
-            .retire_job => try self.runtime.requestJobRetirement(command.job_id),
+            .cancel_job => if (self.preparing.getPtr(command.job_id)) |preparing| {
+                // Still being prepared: the plan is discarded on return.
+                preparing.cancelled = true;
+                if (self.published.getPtr(command.job_id)) |entry| {
+                    entry.record.cancel_requested = true;
+                    self.service.updateJobRecord(entry.record) catch {};
+                }
+            } else try self.runtime.cancelJob(command.job_id),
             .submit_job => unreachable, // handleSubmit
             .start_discovery => try self.startDiscovery(command.job_id, command.payload),
             .prioritize_discovery => try self.prioritizeDiscovery(command.job_id, command.payload),
@@ -288,67 +476,20 @@ pub const Coordinator = struct {
                 routed.window_id,
                 command.payload,
             ),
-            .release_resource => try self.releaseResource(
+            .release_borrow => try self.runtime.resource_ledger.releaseBorrow(
+                .{ .id = command.resource_id },
                 routed.window_id,
-                command.job_id,
-                command.resource_id,
+            ),
+            .dispose_resource => try self.disposeWindowResource(
+                .{ .id = command.resource_id },
+                routed.window_id,
             ),
         }
     }
 
-    fn releaseResource(
-        self: *Coordinator,
-        window_id: io_service.WindowId,
-        job_id: JobId,
-        resource_id: io_service.ResourceId,
-    ) !void {
-        const io_guard_2 = io_thread_guard.exempt(.c2_resource_cleanup);
-        defer io_guard_2.end();
-        const handle = io_resource_ledger.Handle{ .id = resource_id };
-        const ledger = &self.runtime.resource_ledger;
-        const resource_job_id = ledger.jobIdOf(handle) orelse
-            return error.UnknownResource;
-        if (resource_job_id != job_id) return error.ResourceJobMismatch;
-
-        const owner = ledger.ownerOf(handle) orelse return error.UnknownResource;
-        const kind = ledger.kindOf(handle) orelse return error.UnknownResource;
-
-        // The origin check goes in S2, when a holder check replaces it.
-        if (self.runtime.manager.jobOriginWindow(job_id) != window_id)
-            return error.ResourceWindowMismatch;
-
-        switch (owner) {
-            .operation_worker, .discovery_worker => return error.ResourceBusy,
-            .app => return error.ResourceNotServiceOwned,
-            .operation_executor, .discovery_executor => {},
-        }
-
-        const state = self.runtime.manager.jobState(job_id) orelse
-            return error.UnknownJob;
-        if (!state.isTerminal()) return error.ResourceBusy;
-
-        switch (owner) {
-            .discovery_executor => {
-                if (kind != .discovery_anchor and kind != .discovery_cursor)
-                    return error.ResourceNotReleasable;
-                const executor = if (self.runtime.discovery_executor) |*value|
-                    value
-                else
-                    return error.ResourceOwnerUnavailable;
-                try executor.releaseResource(handle);
-            },
-            .operation_executor => {
-                if (kind != .archive_staging)
-                    return error.ResourceNotReleasable;
-                const executor = if (self.runtime.operation_executor) |*value|
-                    value
-                else
-                    return error.ResourceOwnerUnavailable;
-                try executor.releaseResource(handle);
-            },
-            .operation_worker, .discovery_worker, .app => unreachable,
-        }
-    }
+    pub const handResourceToWindow = resources.handResourceToWindow;
+    pub const disposeWindowResource = resources.disposeWindowResource;
+    pub const sweepClosedWindows = resources.sweepClosedWindows;
 
     fn startDiscovery(
         self: *Coordinator,
@@ -401,9 +542,8 @@ pub const Coordinator = struct {
         if (conflict.id != request.conflict_id)
             return error.ConflictNotAtQueueHead;
 
-        // The origin check goes in S2: any window may resolve any conflict.
-        if (manager.jobOriginWindow(conflict.job_id) != window_id)
-            return error.ConflictWindowMismatch;
+        // Any window may resolve any conflict (architecture §4).
+        _ = window_id;
 
         switch (request.action) {
             .retry => try manager.resolveConflict(request.conflict_id),
@@ -418,38 +558,16 @@ pub const Coordinator = struct {
         }
     }
 
-    /// Plans a transfer of any mix of files, symlinks and directories and
-    /// queues it as one Manager job. Filesystem inspection is confined to
-    /// `prepareTransfer`, which stage S2 moves onto a discovery worker;
-    /// `applyTransferPlan` touches only the Manager.
-    fn submitTransfer(
-        self: *Coordinator,
-        routed: io_service.RoutedCommand,
-    ) !JobId {
-        const payload = routed.command.payload orelse
-            return error.MissingTransferPayload;
-        const request = switch (payload.data) {
-            .transfer => |*transfer| transfer,
-            .discovery, .conflict_resolution => return error.UnexpectedTransferPayload,
-        };
-        var plan = plan: {
-            const io_guard = io_thread_guard.exempt(.c1_submit_validation);
-            defer io_guard.end();
-            break :plan try io_transfer_plan.prepare(self.allocator, request);
-        };
-        defer plan.deinit();
-        return self.applyTransferPlan(routed.window_id, request.mode, &plan);
-    }
-
+    /// Turns a prepared plan into the roots and operations of a planning
+    /// job and queues it. Touches only the Manager. On error the job stays in
+    /// `planning` for the caller to discard.
     fn applyTransferPlan(
         self: *Coordinator,
-        window_id: io_service.WindowId,
+        job_id: JobId,
         mode: io_service.TransferMode,
         plan: *const io_transfer_plan.TransferPlan,
-    ) !JobId {
+    ) !void {
         const manager = &self.runtime.manager;
-        const job_id = try manager.createJob(window_id);
-        errdefer std.debug.assert(manager.discardPlanningJob(job_id));
 
         var discovery_roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
         defer discovery_roots.deinit(self.allocator);
@@ -494,7 +612,7 @@ pub const Coordinator = struct {
 
         if (directory_root_ids.items.len == 0) {
             try manager.queueJob(job_id);
-            return job_id;
+            return;
         }
 
         if (mode == .move) {
@@ -511,7 +629,6 @@ pub const Coordinator = struct {
         }
         // Atomically commits the job and all discovery roots.
         try manager.queueJobWithDiscoveryRoots(job_id, discovery_roots.items);
-        return job_id;
     }
 
     /// Writes each job's record from its O(1) Manager summary. State,
@@ -528,15 +645,26 @@ pub const Coordinator = struct {
             const entry = self.published.getPtr(summary.id) orelse continue;
             var next = entry.record;
             applySummary(&next, summary);
+            next.borrow_count = @intCast(@min(self.runtime.resource_ledger.jobBorrowCount(summary.id), 255));
             next.pending_conflict = if (head) |conflict|
                 (if (conflict.job_id == summary.id) conflict.id else 0)
             else
                 0;
             if (next.state.isTerminal() and next.finished_at_ms == 0) next.finished_at_ms = wallClockMs();
+            // Retirement is automatic (architecture §6). It happens once the
+            // executors are quiescent for the job and the ledger holds
+            // nothing it owns; no consumer is waited for.
+            if (next.state.isTerminal() and !entry.retirement_requested) {
+                self.runtime.requestJobRetirement(summary.id) catch |err| {
+                    std.log.err("Files job {d} retirement request failed: {s}", .{ summary.id, @errorName(err) });
+                };
+                entry.retirement_requested = true;
+            }
 
             const previous = entry.record;
             const structural = next.state != previous.state or
                 next.cancel_requested != previous.cancel_requested or
+                next.borrow_count != previous.borrow_count or
                 next.pending_conflict != previous.pending_conflict;
             const progressed = next.completed_bytes != previous.completed_bytes or
                 next.total_bytes != previous.total_bytes or
@@ -596,7 +724,9 @@ fn earliest(current: ?i64, candidate: i64) i64 {
 
 fn applySummary(record: *io_service.JobRecord, summary: io_manager.JobSummary) void {
     record.state = recordState(summary.state);
-    record.cancel_requested = summary.cancel_requested;
+    // A cancel request never goes back; it may also come from the
+    // coordinator for a job still being prepared.
+    record.cancel_requested = record.cancel_requested or summary.cancel_requested;
     record.completed_bytes = summary.completed_bytes;
     record.total_bytes = summary.total_bytes;
     record.rate_bytes_per_second = summary.rate_bytes_per_second;
@@ -636,89 +766,3 @@ fn rejectionCode(err: anyerror) RejectionCode {
 }
 
 
-test "coordinator protects worker and App resources during release" {
-    const allocator = std.testing.allocator;
-
-    var service: io_service.Service = .{};
-    try service.init();
-    defer service.deinit();
-
-    var runtime = io_runtime.Runtime.init(allocator);
-    defer runtime.deinit();
-
-    var owner_window = try service.registerWindow();
-    defer owner_window.close();
-    var other_window = try service.registerWindow();
-    defer other_window.close();
-
-    const job_id = try runtime.manager.createJob(owner_window.window_id);
-    const app_resource = try runtime.resource_ledger.register(
-        job_id,
-        .archive_publication_cursor,
-        .app,
-    );
-    const worker_resource = try runtime.resource_ledger.register(
-        job_id,
-        .archive_cancellation,
-        .operation_worker,
-    );
-
-    var coordinator: Coordinator = .{
-        .allocator = allocator,
-        .service = &service,
-        .runtime = &runtime,
-    };
-
-    try std.testing.expectError(
-        error.ResourceWindowMismatch,
-        coordinator.releaseResource(
-            other_window.window_id,
-            job_id,
-            app_resource.id,
-        ),
-    );
-    try std.testing.expectError(
-        error.ResourceNotServiceOwned,
-        coordinator.releaseResource(
-            owner_window.window_id,
-            job_id,
-            app_resource.id,
-        ),
-    );
-    try std.testing.expectError(
-        error.ResourceBusy,
-        coordinator.releaseResource(
-            owner_window.window_id,
-            job_id,
-            worker_resource.id,
-        ),
-    );
-    try std.testing.expectError(
-        error.UnknownResource,
-        coordinator.releaseResource(
-            owner_window.window_id,
-            job_id,
-            std.math.maxInt(io_service.ResourceId),
-        ),
-    );
-    try std.testing.expectError(
-        error.ResourceJobMismatch,
-        coordinator.releaseResource(
-            owner_window.window_id,
-            job_id + 1,
-            app_resource.id,
-        ),
-    );
-
-    try std.testing.expectEqual(
-        io_resource_ledger.Owner.app,
-        runtime.resource_ledger.ownerOf(app_resource).?,
-    );
-    try std.testing.expectEqual(
-        io_resource_ledger.Owner.operation_worker,
-        runtime.resource_ledger.ownerOf(worker_resource).?,
-    );
-
-    try runtime.resource_ledger.release(app_resource, .app);
-    try runtime.resource_ledger.release(worker_resource, .operation_worker);
-}

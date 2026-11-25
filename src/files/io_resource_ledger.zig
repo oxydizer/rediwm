@@ -25,7 +25,21 @@ pub const Owner = enum {
     operation_worker,
     discovery_executor,
     discovery_worker,
+    /// Until S4: the archive publication cursor of the per-window Runtime.
     app,
+    /// A window of the I/O service (architecture §6). Set only through
+    /// `handToWindow`; the record then names its holder window and no longer
+    /// counts toward its job.
+    window,
+};
+
+/// Borrows a window may hold at once on resources it does not own.
+pub const max_borrows_per_window = 4;
+
+const Borrow = struct {
+    handle_id: u64,
+    job_id: io_manager.JobId,
+    window_id: u64,
 };
 
 /// Stable identity for one registered ownership obligation.
@@ -38,6 +52,11 @@ const Record = struct {
     job_id: io_manager.JobId,
     kind: ResourceKind,
     owner: Owner,
+    /// The holding window when `owner` is `window`.
+    holder_window: u64 = 0,
+    /// Whether the record counts toward its job. A resource handed to a
+    /// window stops counting: it must not block, and may outlive, the job.
+    counted: bool = true,
 };
 
 pub const Ledger = struct {
@@ -45,6 +64,7 @@ pub const Ledger = struct {
     records: std.ArrayListUnmanaged(Record) = .empty,
     index_by_id: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     resource_count_by_job: std.AutoHashMapUnmanaged(io_manager.JobId, usize) = .empty,
+    borrows: std.ArrayListUnmanaged(Borrow) = .empty,
     next_resource_id: u64 = 1,
 
     pub fn init(allocator: Allocator) Ledger {
@@ -55,6 +75,7 @@ pub const Ledger = struct {
         self.records.deinit(self.allocator);
         self.index_by_id.deinit(self.allocator);
         self.resource_count_by_job.deinit(self.allocator);
+        self.borrows.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -68,6 +89,7 @@ pub const Ledger = struct {
     ) !Handle {
         if (self.next_resource_id == std.math.maxInt(u64))
             return error.ResourceIdExhausted;
+        if (owner == .window) return error.WindowOwnerNeedsHandOff;
 
         try self.records.ensureUnusedCapacity(self.allocator, 1);
         try self.index_by_id.ensureUnusedCapacity(self.allocator, 1);
@@ -109,7 +131,126 @@ pub const Ledger = struct {
         const record = &self.records.items[index];
         if (record.owner != expected_owner) return error.ResourceOwnerMismatch;
         if (expected_owner == new_owner) return error.SameResourceOwner;
+        if (expected_owner == .window or new_owner == .window)
+            return error.WindowOwnerNeedsHandOff;
         record.owner = new_owner;
+    }
+
+    /// Hands a resource to a window (a clipboard, drag or Open With hand-off).
+    /// It stops counting toward its job, so it neither blocks the job's
+    /// retirement nor depends on the job existing.
+    pub fn handToWindow(self: *Ledger, handle: Handle, expected_owner: Owner, window_id: u64) !void {
+        const record = try self.recordPtr(handle);
+        if (record.owner != expected_owner or expected_owner == .window)
+            return error.ResourceOwnerMismatch;
+        if (window_id == 0) return error.InvalidWindow;
+        if (self.isBorrowed(handle)) return error.ResourceBorrowed;
+        record.owner = .window;
+        record.holder_window = window_id;
+        if (record.counted) {
+            record.counted = false;
+            self.decrementJob(record.job_id);
+        }
+    }
+
+    /// Takes a resource back from the window that holds it, for disposal by
+    /// `new_owner`. Fails unless `window_id` is the holder.
+    pub fn takeFromWindow(self: *Ledger, handle: Handle, window_id: u64, new_owner: Owner) !void {
+        const record = try self.recordPtr(handle);
+        if (record.owner != .window) return error.ResourceOwnerMismatch;
+        if (record.holder_window != window_id) return error.ResourceHolderMismatch;
+        if (new_owner == .window) return error.WindowOwnerNeedsHandOff;
+        record.owner = new_owner;
+        record.holder_window = 0;
+    }
+
+    pub fn holderOf(self: *const Ledger, handle: Handle) ?u64 {
+        const index = self.index_by_id.get(handle.id) orelse return null;
+        const record = self.records.items[index];
+        return if (record.owner == .window) record.holder_window else null;
+    }
+
+    /// Copies the handles `window_id` holds into `out`; returns how many.
+    pub fn windowResources(self: *const Ledger, window_id: u64, out: []Handle) usize {
+        var count: usize = 0;
+        for (self.records.items) |record| {
+            if (record.owner != .window or record.holder_window != window_id) continue;
+            if (count == out.len) break;
+            out[count] = record.handle;
+            count += 1;
+        }
+        return count;
+    }
+
+    // ---- borrows ----
+
+    /// Lets a window read a resource it does not own. A borrowed resource
+    /// cannot be released or handed off, and its job cannot retire, until
+    /// the borrow is dropped.
+    pub fn borrow(self: *Ledger, handle: Handle, window_id: u64) !void {
+        const record = try self.recordPtr(handle);
+        if (window_id == 0) return error.InvalidWindow;
+        var held: usize = 0;
+        for (self.borrows.items) |b| {
+            if (b.window_id != window_id) continue;
+            if (b.handle_id == handle.id) return error.AlreadyBorrowed;
+            held += 1;
+        }
+        if (held >= max_borrows_per_window) return error.TooManyBorrows;
+        try self.borrows.append(self.allocator, .{
+            .handle_id = handle.id,
+            .job_id = record.job_id,
+            .window_id = window_id,
+        });
+    }
+
+    pub fn releaseBorrow(self: *Ledger, handle: Handle, window_id: u64) !void {
+        for (self.borrows.items, 0..) |b, i| {
+            if (b.handle_id == handle.id and b.window_id == window_id) {
+                _ = self.borrows.swapRemove(i);
+                return;
+            }
+        }
+        return error.NotBorrowed;
+    }
+
+    /// Drops every borrow of a closing window; returns how many.
+    pub fn dropBorrowsOf(self: *Ledger, window_id: u64) usize {
+        var dropped: usize = 0;
+        var i: usize = 0;
+        while (i < self.borrows.items.len) {
+            if (self.borrows.items[i].window_id == window_id) {
+                _ = self.borrows.swapRemove(i);
+                dropped += 1;
+            } else i += 1;
+        }
+        return dropped;
+    }
+
+    pub fn jobBorrowCount(self: *const Ledger, job_id: io_manager.JobId) usize {
+        var count: usize = 0;
+        for (self.borrows.items) |b| {
+            if (b.job_id == job_id) count += 1;
+        }
+        return count;
+    }
+
+    pub fn isBorrowed(self: *const Ledger, handle: Handle) bool {
+        for (self.borrows.items) |b| {
+            if (b.handle_id == handle.id) return true;
+        }
+        return false;
+    }
+
+    fn recordPtr(self: *Ledger, handle: Handle) !*Record {
+        const index = self.index_by_id.get(handle.id) orelse return error.UnknownResource;
+        return &self.records.items[index];
+    }
+
+    fn decrementJob(self: *Ledger, job_id: io_manager.JobId) void {
+        const count = self.resource_count_by_job.getPtr(job_id) orelse unreachable;
+        std.debug.assert(count.* > 0);
+        count.* -= 1;
     }
 
     /// Records that the current owner has destroyed or otherwise released
@@ -143,6 +284,8 @@ pub const Ledger = struct {
             return error.UnknownResource;
         const record = self.records.items[index];
         if (record.owner != expected_owner) return error.ResourceOwnerMismatch;
+        // Never destroyed under a borrower.
+        if (self.isBorrowed(handle)) return error.ResourceBorrowed;
 
         const last_index = self.records.items.len - 1;
         if (index != last_index) {
@@ -153,10 +296,7 @@ pub const Ledger = struct {
         self.records.items.len = last_index;
         std.debug.assert(self.index_by_id.remove(handle.id));
 
-        const count = self.resource_count_by_job.getPtr(record.job_id) orelse
-            unreachable;
-        std.debug.assert(count.* > 0);
-        count.* -= 1;
+        if (record.counted) self.decrementJob(record.job_id);
     }
 
     pub fn ownerOf(self: *const Ledger, handle: Handle) ?Owner {
@@ -199,6 +339,10 @@ pub const Ledger = struct {
         _ = self.resource_count_by_job.remove(job_id);
     }
 };
+
+test {
+    _ = @import("io_resource_ledger_tests.zig");
+}
 
 test "ledger registers resources and tracks per-job counts" {
     var ledger = Ledger.init(std.testing.allocator);

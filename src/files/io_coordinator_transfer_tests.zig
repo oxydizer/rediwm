@@ -7,6 +7,7 @@ const io_coordinator = @import("io_coordinator.zig");
 const io_service = @import("io_service.zig");
 const ops = @import("ops.zig");
 const support = @import("io_coordinator_test_support.zig");
+const io_service_tasks = @import("io_service_tasks.zig");
 
 const allocator = std.testing.allocator;
 const Code = io_coordinator.RejectionCode;
@@ -219,4 +220,70 @@ test "a folder copied into itself is refused" {
     try support.submitSources(allocator, f.window, .copy, inner, &.{folder});
 
     try std.testing.expectEqual(Code.destination_inside_source, try f.rejection());
+}
+
+test "a submit whose preparation hangs does not delay other jobs or its own cancellation" {
+    var f: Fixture = .{};
+    try f.start();
+    defer f.stop();
+    const gate = io_service_tasks.test_gate;
+    defer gate.release(); // before f.stop joins the workers
+
+    const hung = try f.path("hung.txt");
+    defer allocator.free(hung);
+    const other = try f.path("other.txt");
+    defer allocator.free(other);
+    const destination = try f.path("destination");
+    defer allocator.free(destination);
+    try support.writeFile(hung, "hung");
+    try support.writeFile(other, "other");
+    try support.makeDirectory(destination);
+
+    // Job 1's preparation parks on a service worker, as on a hung mount. Its
+    // record exists at once, in `planning`.
+    gate.arm();
+    try support.submitSources(allocator, f.window, .copy, destination, &.{hung});
+    try f.view.waitState(1, .planning);
+    for (0..1000) |_| {
+        if (gate.parked.load(.acquire)) break;
+        support.waitBriefly();
+    } else return error.Timeout;
+
+    // Job 2 is prepared on the other worker and completes meanwhile.
+    try support.submitSources(allocator, f.window, .copy, destination, &.{other});
+    const copied_other = try f.path("destination/other.txt");
+    defer allocator.free(copied_other);
+    try support.waitForContents(copied_other, "other");
+    try f.view.waitState(2, .completed);
+
+    // Cancelling the parked job is accepted at once; the plan is discarded
+    // when it returns, and nothing of job 1 is copied.
+    try support.send(f.window, .{ .kind = .cancel_job, .job_id = 1 });
+    _ = try f.view.waitFor(support.CancelRequested{ .id = 1 });
+    gate.release();
+    try f.view.waitState(1, .cancelled);
+    const copied_hung = try f.path("destination/hung.txt");
+    defer allocator.free(copied_hung);
+    try std.testing.expect(!support.pathExists(copied_hung));
+    try std.testing.expect(f.view.find(1).?.removed);
+}
+
+test "finished jobs retire on their own, so the live table never fills" {
+    var f: Fixture = .{};
+    try f.start();
+    defer f.stop();
+
+    const file = try f.path("note.txt");
+    defer allocator.free(file);
+    try support.writeFile(file, "copy me");
+
+    // More jobs than the live table holds, one after another. Each copy into
+    // the same folder gets a unique name; each finished job retires with no
+    // retire command, freeing its slot.
+    const jobs = io_service.max_live_jobs + 6;
+    for (1..jobs + 1) |id| {
+        try support.submitSources(allocator, f.window, .copy, f.temp, &.{file});
+        const final = try f.view.waitFor(support.Retired{ .id = id });
+        try std.testing.expectEqual(io_service.JobState.completed, final.state);
+    }
 }

@@ -51,7 +51,7 @@ test "coordinator rejects transfer submissions without a payload" {
 
 const c = @import("c.zig").api;
 
-test "coordinator shows conflicts to every window and resolves them from the origin" {
+test "coordinator shows conflicts to every window, and any window resolves them" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
     const temp = try makeTempDir(&temp_buffer);
@@ -80,7 +80,8 @@ test "coordinator shows conflicts to every window and resolves them from the ori
 
     var owner_window = try service.registerWindow();
     var owner_window_view = support.View.init(owner_window, &service);
-    defer owner_window.close();
+    var owner_closed = false;
+    defer if (!owner_closed) owner_window.close();
     var other_window = try service.registerWindow();
     var other_window_view = support.View.init(other_window, &service);
     defer other_window.close();
@@ -95,18 +96,13 @@ test "coordinator shows conflicts to every window and resolves them from the ori
     try std.testing.expectEqual(owner_view.pending_conflict, other_view.pending_conflict);
     const id = owner_view.pending_conflict;
 
-    // Until S2 removes the origin check, another window's resolution is not
-    // applied. A failed submit queued behind it from the same window proves
-    // the coordinator has processed it (control before normal).
+    // Any window may resolve it, also after the window that submitted the
+    // job has closed: jobs belong to the service, not to a window.
+    owner_window.close();
+    owner_closed = true;
     try resolveConflict(allocator, other_window, id, .skip);
-    try send(other_window, .{ .kind = .submit_job });
-    _ = try other_window_view.failedSubmit();
-    try owner_window_view.sync();
-    try std.testing.expectEqual(id, owner_window_view.find(owner_view.id).?.pending_conflict);
-
-    try resolveConflict(allocator, owner_window, id, .skip);
-    try owner_window_view.waitState(owner_view.id, .completed);
-    try std.testing.expectEqual(@as(u64, 0), owner_window_view.find(owner_view.id).?.pending_conflict);
+    try other_window_view.waitState(owner_view.id, .completed);
+    try std.testing.expectEqual(@as(u64, 0), other_window_view.find(owner_view.id).?.pending_conflict);
 }
 
 test "coordinator ignores invalid discovery commands without disturbing anything" {
@@ -262,8 +258,9 @@ test "coordinator publishes a job record with planned totals and final progress"
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
 
-    // The first record already knows the planned total, before any copying.
-    const first = try window_view.waitFor(support.AnyLiveJob{});
+    // The record exists from accept, in `planning`; once the worker's plan
+    // is applied it knows the planned total, before any copying.
+    const first = try window_view.waitFor(support.PlannedJob{});
     try std.testing.expectEqual(@as(u64, size), first.total_bytes);
     try std.testing.expectEqual(@as(u64, 1), first.total_items);
     try std.testing.expectEqualStrings("payload.bin", first.label());

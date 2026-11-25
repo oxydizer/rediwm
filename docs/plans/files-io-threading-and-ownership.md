@@ -321,6 +321,10 @@ call `stat`, `lstat`, `readlink`, `open`, read a directory, or resolve a path. A
 those can block indefinitely on a hung network or FUSE mount, and the same thread
 handles cancellation and completions for every window.
 
+Service tasks run on a small pool owned by the coordinator (`io_service_tasks`, two
+workers), not on the discovery pool: a prepare stalled by a hung mount then holds
+neither a discovery worker of another job nor the coordinator.
+
 So `submit_job` is three steps:
 
 1. **Accept.** The coordinator creates the job in `planning`, moves the owned request
@@ -544,10 +548,10 @@ listed here so the guard's allowlist states it explicitly.
 
 | # | Call site | Blocking work | Removed in |
 | --- | --- | --- | --- |
-| C1 | `Coordinator.submitTransfer` and its file and directory helpers | `stat`, `lstat`, `readlink` on user paths | S2 (prepare task, §8) |
-| C2 | `Coordinator.releaseResource` → `io_operation_executor.Runtime.releaseResource` | `ops.deleteRecursive` of archive staging | S2 (cleanup task, §8) |
+| ~~C1~~ | `Coordinator.submitTransfer` and its file and directory helpers | `stat`, `lstat`, `readlink` on user paths | **Removed in S2**: `io_transfer_plan.prepare` runs as a service task |
+| ~~C2~~ | `Coordinator.releaseResource` → `io_operation_executor.Runtime.releaseResource` | `ops.deleteRecursive` of archive staging | **Removed in S2**: `takeStagingForCleanup`, a `delete_tree` service task, `finishStagingCleanup` |
 | C3 | `releaseResource`, `resolveConflict`, the publish loop | `snapshotJobs` allocation and copy per command or pass. Not I/O, but O(all jobs) | S1 (dirty set) |
-| C4 | `io_discovery_executor.Executor.dispatchReady` → `getOrOpenAnchor`, `Anchor.openCursorForEntry` | Opens root anchors and directory cursors inline before handing them to a worker. Found by the guard, not the first audit. Runs on the UI thread too while windows own a Runtime (inside U3) | S2 (opening becomes part of the discovery worker unit) |
+| ~~C4~~ | `io_discovery_executor.Executor.dispatchReady` → `getOrOpenAnchor`, `Anchor.openCursorForEntry` | Opened root anchors and directory cursors inline before handing them to a worker. Found by the guard | **Removed in S2**: dispatch builds the path from the tree in memory; the worker opens the root anchor (if needed) and the cursor. The coordinator exemption list is now empty |
 
 ### Not yet covered: application state files
 

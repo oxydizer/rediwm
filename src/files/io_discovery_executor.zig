@@ -32,10 +32,33 @@ const RootKey = struct {
     root_id: u64,
 };
 
+/// A directory the worker must open before reading it. Built on the
+/// coordinator from Manager state without filesystem access; the blocking
+/// opens happen on the worker (threading §13, C4).
+const OpenRequest = struct {
+    root_id: u64,
+    /// The job's root anchor, borrowed: the executor keeps it open while the
+    /// job has work in flight. -1 when the worker must open the root first.
+    anchor_fd: c_int = -1,
+    /// Owned. Set when `anchor_fd` is -1.
+    root_path: ?[:0]u8 = null,
+    /// Worker-held ledger entry for the anchor the worker opens.
+    anchor_handle: ?LedgerHandle = null,
+    /// Owned names from the root down to the entry.
+    components: [][:0]u8,
+
+    fn deinit(self: *OpenRequest, allocator: Allocator) void {
+        if (self.root_path) |path| allocator.free(path);
+        io_discovery.freeComponents(allocator, self.components);
+    }
+};
+
+/// Exactly one of `cursor` (a retained cursor) and `open` is set.
 const Task = struct {
     token: DiscoveryToken,
-    cursor: io_discovery.Cursor,
     ledger_handle: LedgerHandle,
+    cursor: ?io_discovery.Cursor = null,
+    open: ?OpenRequest = null,
 };
 
 const Completion = struct {
@@ -44,6 +67,11 @@ const Completion = struct {
     cursor: ?io_discovery.Cursor = null,
     batch: ?io_discovery.Batch = null,
     failed: bool = false,
+    /// A root anchor the worker opened, with its worker-held entry. The
+    /// handle is set whenever the task asked for a root to be opened.
+    anchor: ?io_discovery.Anchor = null,
+    anchor_handle: ?LedgerHandle = null,
+    anchor_root_id: u64 = 0,
 };
 
 const Context = struct {
@@ -219,6 +247,9 @@ pub const Executor = struct {
             if (lease.ledger_handle.id != handle.id) continue;
             if (kind != .discovery_anchor or key.job_id != job_id)
                 return error.ResourceLedgerMismatch;
+            // Workers borrow the anchor's fd to open cursors: never close it
+            // under one, even for a terminal (cancelled) job.
+            if (self.in_flight_by_job.contains(job_id)) return error.ResourceBusy;
             const removed = self.anchors.fetchRemove(key).?;
             var anchor = removed.value.anchor;
             anchor.deinit();
@@ -296,10 +327,6 @@ pub const Executor = struct {
         self: *Executor,
         manager: *io_manager.Manager,
     ) !usize {
-        // Dispatch opens root anchors and directory cursors inline before
-        // handing them to a worker (plan C4; moves into the worker unit in S2).
-        const io_guard_dispatch = io_thread_guard.exempt(.c4_discovery_anchor_open);
-        defer io_guard_dispatch.end();
         var submitted: usize = 0;
 
         while (manager.dispatchDiscovery()) |token| {
@@ -310,50 +337,14 @@ pub const Executor = struct {
                 lease = retained;
                 owns_cursor = true;
             } else {
-                self.prepareCursorSlot(token.job_id) catch |err| {
-                    _ = manager.failDiscovery(token);
-                    self.closeAnchorIfComplete(manager, token.job_id);
-                    return err;
-                };
-
-                const anchor = self.getOrOpenAnchor(manager, token) catch |err| {
-                    _ = manager.failDiscovery(token);
-                    self.closeAnchorIfComplete(manager, token.job_id);
-                    return err;
-                } orelse {
-                    _ = manager.failDiscovery(token);
-                    continue;
-                };
-                const tree = manager.treeIndex(token.job_id) orelse {
-                    _ = manager.failDiscovery(token);
-                    continue;
-                };
-
-                const cursor = anchor.openCursorForEntry(
-                    self.allocator,
-                    tree,
-                    token.entry_id,
-                ) catch {
-                    _ = manager.failDiscovery(token);
-                    self.closeAnchorIfComplete(manager, token.job_id);
-                    continue;
-                };
-                const handle = self.ledger.register(
-                    token.job_id,
-                    .discovery_cursor,
-                    .discovery_executor,
-                ) catch |err| {
-                    var cursor_to_close = cursor;
-                    cursor_to_close.deinit();
-                    _ = manager.failDiscovery(token);
-                    self.closeAnchorIfComplete(manager, token.job_id);
-                    return err;
-                };
-                lease = .{
-                    .cursor = cursor,
-                    .ledger_handle = handle,
-                };
-                owns_cursor = true;
+                // No cursor yet: the worker opens it, and the root anchor too
+                // if this is the job's first unit for that root.
+                switch (try self.dispatchOpen(manager, token)) {
+                    .submitted => submitted += 1,
+                    .failed => {},
+                    .full => break,
+                }
+                continue;
             }
 
             std.debug.assert(owns_cursor);
@@ -427,6 +418,7 @@ pub const Executor = struct {
             var completion = completion_value;
             defer self.finishInFlight(completion.token.job_id);
             drained += 1;
+            self.adoptAnchor(&completion);
 
             if (completion.failed) {
                 self.ledger.release(
@@ -524,45 +516,92 @@ pub const Executor = struct {
         return drained;
     }
 
-    fn getOrOpenAnchor(
+    const DispatchOutcome = enum { submitted, failed, full };
+
+    /// Submits a unit whose cursor the worker opens. Does no filesystem
+    /// access: the path components come from the Manager's tree, and an
+    /// existing anchor is lent by fd.
+    fn dispatchOpen(
         self: *Executor,
         manager: *io_manager.Manager,
         token: DiscoveryToken,
-    ) !?*io_discovery.Anchor {
-        const tree = manager.treeIndex(token.job_id) orelse return null;
-        const root_id = tree.rootForEntry(token.entry_id) orelse return null;
-        const key: RootKey = .{
-            .job_id = token.job_id,
-            .root_id = root_id,
-        };
-        if (self.anchors.getPtr(key)) |lease| return &lease.anchor;
-
-        self.anchors.ensureUnusedCapacity(self.allocator, 1) catch return error.OutOfMemory;
-        const path = manager.discoveryRootPath(token.job_id, root_id) orelse return null;
-        const path_z = try self.allocator.dupeSentinel(u8, path, 0);
-        defer self.allocator.free(path_z);
-
-        // Opening a root is a blocking open of a user path on the thread
-        // that dispatches (plan C4; becomes part of the worker unit in S2).
-        const anchor = anchor: {
-            const io_guard = io_thread_guard.exempt(.c4_discovery_anchor_open);
-            defer io_guard.end();
-            break :anchor io_discovery.Anchor.open(path_z) catch return null;
-        };
-        const handle = self.ledger.register(
-            token.job_id,
-            .discovery_anchor,
-            .discovery_executor,
-        ) catch |err| {
-            var anchor_to_close = anchor;
-            anchor_to_close.deinit();
+    ) !DispatchOutcome {
+        self.prepareCursorSlot(token.job_id) catch |err| {
+            _ = manager.failDiscovery(token);
+            self.closeAnchorIfComplete(manager, token.job_id);
             return err;
         };
-        self.anchors.putAssumeCapacity(key, .{
-            .anchor = anchor,
-            .ledger_handle = handle,
-        });
-        return &self.anchors.getPtr(key).?.anchor;
+        const tree = manager.treeIndex(token.job_id) orelse {
+            _ = manager.failDiscovery(token);
+            return .failed;
+        };
+        const root_id = tree.rootForEntry(token.entry_id) orelse {
+            _ = manager.failDiscovery(token);
+            return .failed;
+        };
+        var open: OpenRequest = .{
+            .root_id = root_id,
+            .components = io_discovery.relativeComponents(self.allocator, tree, token.entry_id) catch {
+                _ = manager.failDiscovery(token);
+                self.closeAnchorIfComplete(manager, token.job_id);
+                return .failed;
+            },
+        };
+        var open_owned = true;
+        defer if (open_owned) open.deinit(self.allocator);
+
+        if (self.anchors.get(.{ .job_id = token.job_id, .root_id = root_id })) |anchor| {
+            open.anchor_fd = anchor.anchor.fd;
+        } else {
+            const path = manager.discoveryRootPath(token.job_id, root_id) orelse {
+                _ = manager.failDiscovery(token);
+                return .failed;
+            };
+            open.root_path = try self.allocator.dupeSentinel(u8, path, 0);
+            open.anchor_handle = try self.ledger.register(token.job_id, .discovery_anchor, .discovery_worker);
+        }
+        errdefer if (open.anchor_handle) |handle| self.ledger.release(handle, .discovery_worker) catch unreachable;
+
+        const cursor_handle = try self.ledger.register(token.job_id, .discovery_cursor, .discovery_worker);
+        errdefer self.ledger.release(cursor_handle, .discovery_worker) catch unreachable;
+
+        try self.reserveInFlightSlot(token.job_id);
+        if (self.pool.trySubmit(.{ .token = token, .ledger_handle = cursor_handle, .open = open })) {
+            open_owned = false;
+            self.addInFlightAssumeCapacity(token.job_id);
+            return .submitted;
+        }
+
+        // Backpressure is nonblocking: give the entry back to its queue.
+        self.ledger.release(cursor_handle, .discovery_worker) catch unreachable;
+        if (open.anchor_handle) |handle| self.ledger.release(handle, .discovery_worker) catch unreachable;
+        open.anchor_handle = null;
+        if (!manager.yieldDiscovery(token)) self.closeAnchorIfComplete(manager, token.job_id);
+        return .full;
+    }
+
+    /// Stores, or gives up, the root anchor a worker opened for a completion.
+    fn adoptAnchor(self: *Executor, completion: *Completion) void {
+        const handle = completion.anchor_handle orelse return;
+        completion.anchor_handle = null;
+        var anchor = completion.anchor orelse {
+            self.ledger.release(handle, .discovery_worker) catch unreachable;
+            return;
+        };
+        completion.anchor = null;
+        const key: RootKey = .{ .job_id = completion.token.job_id, .root_id = completion.anchor_root_id };
+        if (self.anchors.contains(key)) {
+            // Cannot happen with one unit in flight per job; stay correct anyway.
+            anchor.deinit();
+            self.ledger.release(handle, .discovery_worker) catch unreachable;
+            return;
+        }
+        self.anchors.put(self.allocator, key, .{ .anchor = anchor, .ledger_handle = handle }) catch {
+            anchor.deinit();
+            self.ledger.release(handle, .discovery_worker) catch unreachable;
+            return;
+        };
+        self.ledger.transfer(handle, .discovery_worker, .discovery_executor) catch unreachable;
     }
 
     fn closeAnchorIfComplete(
@@ -638,34 +677,52 @@ pub const Executor = struct {
     }
 };
 
-fn executeBatch(raw_context: ?*anyopaque, task: Task) Completion {
+fn executeBatch(raw_context: ?*anyopaque, task_value: Task) Completion {
     const context: *Context = @ptrCast(@alignCast(raw_context.?));
-    var cursor = task.cursor;
-
-    const batch = cursor.nextBatch(context.allocator, context.batch_size) catch {
-        cursor.deinit();
-        return .{
+    var task = task_value;
+    var opened_anchor: ?io_discovery.Anchor = null;
+    var cursor: io_discovery.Cursor = if (task.cursor) |retained| retained else cursor: {
+        var open = task.open.?;
+        defer open.deinit(context.allocator);
+        var anchor_fd = open.anchor_fd;
+        if (anchor_fd < 0) {
+            opened_anchor = io_discovery.Anchor.open(open.root_path.?) catch null;
+            if (opened_anchor) |anchor| anchor_fd = anchor.fd;
+        }
+        const failed: Completion = .{
             .token = task.token,
             .ledger_handle = task.ledger_handle,
             .failed = true,
+            .anchor = opened_anchor,
+            .anchor_handle = open.anchor_handle,
+            .anchor_root_id = open.root_id,
         };
+        if (anchor_fd < 0) return failed;
+        break :cursor io_discovery.openCursorAt(anchor_fd, open.components) catch return failed;
     };
+    const anchor_handle = if (task.open) |open| open.anchor_handle else null;
+    const anchor_root_id = if (task.open) |open| open.root_id else 0;
+    task.open = null;
 
-    if (batch.complete) {
-        cursor.deinit();
-        return .{
-            .token = task.token,
-            .ledger_handle = task.ledger_handle,
-            .batch = batch,
-        };
-    }
-
-    return .{
+    var completion: Completion = .{
         .token = task.token,
         .ledger_handle = task.ledger_handle,
-        .cursor = cursor,
-        .batch = batch,
+        .anchor = opened_anchor,
+        .anchor_handle = anchor_handle,
+        .anchor_root_id = anchor_root_id,
     };
+    const batch = cursor.nextBatch(context.allocator, context.batch_size) catch {
+        cursor.deinit();
+        completion.failed = true;
+        return completion;
+    };
+    completion.batch = batch;
+    if (batch.complete) {
+        cursor.deinit();
+    } else {
+        completion.cursor = cursor;
+    }
+    return completion;
 }
 
 fn discardCompletion(raw_context: ?*anyopaque, completion: Completion) void {
@@ -677,6 +734,8 @@ fn discardCompletion(raw_context: ?*anyopaque, completion: Completion) void {
         discarded.ledger_handle,
         .discovery_worker,
     ) catch unreachable;
+    if (discarded.anchor) |*anchor| anchor.deinit();
+    if (discarded.anchor_handle) |handle| context.ledger.release(handle, .discovery_worker) catch unreachable;
 }
 
 test "discovery executor releases retained cursors and anchors" {

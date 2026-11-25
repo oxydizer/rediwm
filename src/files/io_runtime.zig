@@ -59,6 +59,8 @@ pub const Runtime = struct {
         const state = self.manager.jobState(job_id) orelse return false;
         if (!state.isTerminal()) return false;
         if (!self.resource_ledger.isJobEmpty(job_id)) return false;
+        // A window still reading one of its resources holds the job.
+        if (self.resource_ledger.jobBorrowCount(job_id) != 0) return false;
 
         if (self.operation_executor) |*executor| {
             if (!executor.isJobQuiescent(job_id)) return false;

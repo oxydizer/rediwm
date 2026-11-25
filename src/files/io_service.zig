@@ -6,6 +6,7 @@ const std = @import("std");
 const c = @import("c.zig").api;
 const wake = @import("platform").wake;
 const io_job_table = @import("io_job_table.zig");
+const commands = @import("io_service_commands.zig");
 
 pub const JobRecord = io_job_table.Record;
 pub const JobState = io_job_table.State;
@@ -49,212 +50,17 @@ comptime {
 /// `trylock`; this turns either into an immediate panic.
 threadlocal var holding_service_mutex: bool = false;
 
-pub const CommandKind = enum {
-    submit_job,
-    start_discovery,
-    prioritize_discovery,
-    pause_job,
-    resume_job,
-    cancel_job,
-    resolve_conflict,
-    retire_job,
-    release_resource,
-};
-
-pub const CommandClass = enum {
-    normal,
-    control,
-};
-
-pub const TransferMode = enum {
-    copy,
-    move,
-};
-
-pub const TransferSource = struct {
-    path: []u8,
-};
-
-pub const TransferRequest = struct {
-    mode: TransferMode,
-    destination_path: []u8,
-    sources: []TransferSource,
-
-    fn deinit(self: *TransferRequest, allocator: std.mem.Allocator) void {
-        allocator.free(self.destination_path);
-        for (self.sources) |source| allocator.free(source.path);
-        allocator.free(self.sources);
-    }
-};
-
-pub const DiscoveryRequest = struct {
-    root_entry_id: u64,
-    root_path: ?[]u8 = null,
-
-    fn deinit(self: *DiscoveryRequest, allocator: std.mem.Allocator) void {
-        if (self.root_path) |path| allocator.free(path);
-    }
-};
-
-pub const ConflictAction = enum {
-    retry,
-    replace,
-    merge,
-    rename,
-    skip,
-    cancel,
-};
-
-pub const ConflictResolutionRequest = struct {
-    conflict_id: u64,
-    action: ConflictAction,
-    destination_path: ?[]u8 = null,
-
-    fn deinit(
-        self: *ConflictResolutionRequest,
-        allocator: std.mem.Allocator,
-    ) void {
-        if (self.destination_path) |path| allocator.free(path);
-    }
-};
-
-/// Heap-owned command data. The allocator travels with the payload so every
-/// consumer can release it without depending on the originating window.
-pub const OwnedPayload = struct {
-    allocator: std.mem.Allocator,
-    data: union(enum) {
-        transfer: TransferRequest,
-        discovery: DiscoveryRequest,
-        conflict_resolution: ConflictResolutionRequest,
-    },
-
-    pub fn createTransfer(
-        allocator: std.mem.Allocator,
-        mode: TransferMode,
-        destination_path: []const u8,
-        source_paths: []const []const u8,
-    ) !*OwnedPayload {
-        const payload = try allocator.create(OwnedPayload);
-        errdefer allocator.destroy(payload);
-
-        const destination = try allocator.dupe(u8, destination_path);
-        errdefer allocator.free(destination);
-
-        const sources = try allocator.alloc(TransferSource, source_paths.len);
-        var initialized: usize = 0;
-        errdefer {
-            for (sources[0..initialized]) |source| allocator.free(source.path);
-            allocator.free(sources);
-        }
-
-        for (source_paths, 0..) |path, index| {
-            sources[index] = .{ .path = try allocator.dupe(u8, path) };
-            initialized += 1;
-        }
-
-        payload.* = .{
-            .allocator = allocator,
-            .data = .{ .transfer = .{
-                .mode = mode,
-                .destination_path = destination,
-                .sources = sources,
-            } },
-        };
-        return payload;
-    }
-
-    pub fn createDiscovery(
-        allocator: std.mem.Allocator,
-        root_entry_id: u64,
-        root_path: ?[]const u8,
-    ) !*OwnedPayload {
-        const payload = try allocator.create(OwnedPayload);
-        errdefer allocator.destroy(payload);
-
-        const owned_path = if (root_path) |path|
-            try allocator.dupe(u8, path)
-        else
-            null;
-        errdefer if (owned_path) |path| allocator.free(path);
-
-        payload.* = .{
-            .allocator = allocator,
-            .data = .{ .discovery = .{
-                .root_entry_id = root_entry_id,
-                .root_path = owned_path,
-            } },
-        };
-        return payload;
-    }
-
-    pub fn createConflictResolution(
-        allocator: std.mem.Allocator,
-        conflict_id: u64,
-        action: ConflictAction,
-        destination_path: ?[]const u8,
-    ) !*OwnedPayload {
-        if ((action == .rename) != (destination_path != null))
-            return error.InvalidConflictResolutionPayload;
-
-        const payload = try allocator.create(OwnedPayload);
-        errdefer allocator.destroy(payload);
-
-        const owned_path = if (destination_path) |path|
-            try allocator.dupe(u8, path)
-        else
-            null;
-        errdefer if (owned_path) |path| allocator.free(path);
-
-        payload.* = .{
-            .allocator = allocator,
-            .data = .{ .conflict_resolution = .{
-                .conflict_id = conflict_id,
-                .action = action,
-                .destination_path = owned_path,
-            } },
-        };
-        return payload;
-    }
-
-    pub fn deinit(self: *OwnedPayload) void {
-        const allocator = self.allocator;
-        switch (self.data) {
-            .transfer => |*request| request.deinit(allocator),
-            .discovery => |*request| request.deinit(allocator),
-            .conflict_resolution => |*request| request.deinit(allocator),
-        }
-        allocator.destroy(self);
-    }
-};
-
-pub const Command = struct {
-    kind: CommandKind,
-    job_id: JobId = 0,
-    resource_id: ResourceId = 0,
-    /// For `submit_job`: chosen by the window, echoed in the job's record so
-    /// the window can recognise the job it submitted.
-    submit_tag: u64 = 0,
-    payload: ?*OwnedPayload = null,
-
-    pub fn deinitPayload(self: *Command) void {
-        if (self.payload) |payload| {
-            self.payload = null;
-            payload.deinit();
-        }
-    }
-
-    pub fn class(self: Command) CommandClass {
-        return switch (self.kind) {
-            .submit_job, .start_discovery, .prioritize_discovery => .normal,
-            .pause_job, .resume_job, .cancel_job, .resolve_conflict, .retire_job, .release_resource => .control,
-        };
-    }
-};
-
-pub const RoutedCommand = struct {
-    window_id: WindowId,
-    command: Command,
-};
+pub const CommandKind = commands.CommandKind;
+pub const CommandClass = commands.CommandClass;
+pub const TransferMode = commands.TransferMode;
+pub const TransferSource = commands.TransferSource;
+pub const TransferRequest = commands.TransferRequest;
+pub const DiscoveryRequest = commands.DiscoveryRequest;
+pub const ConflictAction = commands.ConflictAction;
+pub const ConflictResolutionRequest = commands.ConflictResolutionRequest;
+pub const OwnedPayload = commands.OwnedPayload;
+pub const Command = commands.Command;
+pub const RoutedCommand = commands.RoutedCommand;
 
 fn Ring(comptime T: type, comptime capacity: usize) type {
     return struct {
@@ -338,6 +144,11 @@ pub const Service = struct {
     /// Consumers 0..max_windows-1 are the window slots, in slot order; the
     /// rest are external subscribers. Guarded by the mutex.
     table: io_job_table.Table(max_windows + max_external_consumers) = .{},
+    /// Windows whose slot was recycled since the coordinator last asked, so
+    /// it can drop their borrows and dispose what they own. Guarded by the
+    /// mutex. On overflow the coordinator sweeps every holder instead.
+    closed_windows: Ring(WindowId, max_windows) = .{},
+    closed_overflow: bool = false,
     external_ids: [max_external_consumers]u64 = @splat(0),
     stopping: std.atomic.Value(bool) = .init(false),
 
@@ -609,7 +420,50 @@ pub const Service = struct {
         if (slot.normal_commands.count != 0 or slot.control_commands.count != 0)
             return;
         self.table.detach(self.slotIndex(slot));
+        if (!self.closed_windows.push(slotId(slot.word.load(.acquire)))) self.closed_overflow = true;
         slot.reset();
+        signalWake(self.command_wake_fd);
+    }
+
+    /// Called by the coordinator: the next window closed since its last
+    /// call, or null. `overflowed` is set when some were not recorded and
+    /// every holder must be checked with `isWindowOpen`.
+    pub fn takeClosedWindow(self: *Service, overflowed: *bool) ?WindowId {
+        self.lock();
+        defer self.unlock();
+        if (self.closed_overflow) {
+            self.closed_overflow = false;
+            overflowed.* = true;
+        }
+        return self.closed_windows.pop();
+    }
+
+    /// Lock-free: whether any window is registered and not closing.
+    pub fn anyWindowOpen(self: *const Service) bool {
+        for (&self.windows) |*slot| {
+            if (slotState(slot.word.load(.acquire)) == .active) return true;
+        }
+        return false;
+    }
+
+    /// Whether any accepted command still waits in a queue.
+    pub fn hasQueuedCommands(self: *Service) bool {
+        self.lock();
+        defer self.unlock();
+        for (&self.windows) |*slot| {
+            if (slot.normal_commands.count != 0 or slot.control_commands.count != 0) return true;
+        }
+        return false;
+    }
+
+    /// Lock-free: whether `window_id` is registered and not closing.
+    pub fn isWindowOpen(self: *const Service, window_id: WindowId) bool {
+        if (window_id == 0 or window_id > max_window_id) return false;
+        const active = packSlot(window_id, .active);
+        for (&self.windows) |*slot| {
+            if (slot.word.load(.acquire) == active) return true;
+        }
+        return false;
     }
 
     fn slotIndex(self: *const Service, slot: *const WindowSlot) usize {
