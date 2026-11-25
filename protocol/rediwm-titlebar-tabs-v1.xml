@@ -69,10 +69,9 @@
     <request name="add_tab">
       <description summary="append a tab to the pending strip">
         Tabs show in the order they are added. Titles longer than 256 bytes
-        are cut; a title that is not valid UTF-8 is replaced. The icon name,
-        a name from the icon theme, is shown in front of the title; without
-        one, or when no such icon is found, the tab shows the application's
-        icon.
+        are cut; a title that is not valid UTF-8 is replaced. The icon name
+        is accepted and ignored: tabs show no icon, so the title has the
+        room. The application's icon is on the leading button.
       </description>
       <arg name="id" type="uint" summary="the application's id for the tab, not zero"/>
       <arg name="title" type="string"/>
