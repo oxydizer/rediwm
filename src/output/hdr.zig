@@ -139,9 +139,11 @@ fn enable(output: *Output, state: *wlr.Output.State) bool {
     for (formats_10bit) |format| {
         var copy = wlr.Output.State.init();
         defer copy.finish();
+        copy.allow_reconfiguration = true;
         copy.setRenderFormat(format);
         if (!copy.setImageDescription(&description)) return false;
         if (!output.wlr_output.testState(&copy)) continue;
+        state.allow_reconfiguration = true;
         state.setRenderFormat(format);
         return state.setImageDescription(&description);
     }
