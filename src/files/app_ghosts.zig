@@ -183,11 +183,12 @@ fn appendRow(self: *App, mem: std.mem.Allocator, old: *const std.StringHashMap(V
             item.transfer_entry_id = row.entry_id;
             item.missing = !item.is_dir;
             applyProgress(item, row);
-        } else if (is_dir and state == .copying) {
+        } else if (is_dir and (state == .copying or state == .pending)) {
             // Real, still filling: its ring stays, and hovering it still
-            // promotes what is left inside.
+            // promotes what is left inside (not a folder a job only writes
+            // beneath, which has no entry of its own).
             item.transfer_job_id = row.job_id;
-            item.transfer_entry_id = row.entry_id;
+            item.transfer_entry_id = if (row.entry_id != 0) row.entry_id else null;
             applyProgress(item, row);
         }
         return;

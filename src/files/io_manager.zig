@@ -2975,8 +2975,10 @@ pub const Manager = struct {
             {
                 continue;
             }
-            hold.* = true;
+            // Only a copy that is really queued holds the others back: one
+            // still waiting for discovery or a conflict must not stall them.
             if (!dequeueReadyIndex(job, found.index)) continue;
+            hold.* = true;
 
             if (operation.generation == std.math.maxInt(u64)) {
                 transitionOperation(job, operation, .failed);

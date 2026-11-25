@@ -697,6 +697,8 @@ pub const Coordinator = struct {
                 0;
             next.conflict_orphaned = next.pending_conflict != 0 and
                 !self.service.isWindowOpen(next.origin_window_id);
+            if (next.pending_conflict != entry.record.pending_conflict and next.pending_conflict != 0)
+                std.log.info("Files job {d} waits on conflict {d}{s}", .{ summary.id, next.pending_conflict, if (next.conflict_orphaned) " (its window is gone)" else "" });
             if (next.state.isTerminal() and next.finished_at_ms == 0) next.finished_at_ms = wallClockMs();
             // Retirement is automatic (architecture §6). It happens once the
             // executors are quiescent for the job and the ledger holds

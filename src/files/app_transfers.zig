@@ -156,8 +156,10 @@ pub fn checkConflicts(self: *App) void {
 /// Asks the service what the dialog for `conflict` shows (a card row
 /// waiting for an answer, clicked, asks too).
 pub fn askConflict(self: *App, conflict: u64) void {
-    if (app_requests.send(self, .{ .conflict_details = .{ .conflict_id = conflict } }, .conflict))
+    if (app_requests.send(self, .{ .conflict_details = .{ .conflict_id = conflict } }, .conflict)) {
+        std.log.info("Files window asks about conflict {d}", .{conflict});
         self.service.transfers.conflict_asked = conflict;
+    } else std.log.info("Files window could not ask about conflict {d}", .{conflict});
 }
 
 /// A conflict dialog whose conflict another window answered, or that the
@@ -245,7 +247,13 @@ fn showsAffected(self: *App, transfer: *const Transfer) bool {
 /// The conflict's details arrived: show it, unless something else is open
 /// or it was resolved meanwhile.
 pub fn showConflict(self: *App, details: ?io_requests.ConflictDetails) void {
-    const conflict = details orelse return;
+    const conflict = details orelse {
+        // No longer at the head of the queue: ask again when it is.
+        std.log.info("Files conflict answered before it was shown", .{});
+        self.service.transfers.conflict_asked = 0;
+        return;
+    };
+    std.log.info("Files shows conflict {d} of job {d}", .{ conflict.conflict_id, conflict.job_id });
     if (self.dialog != null) {
         // Asked again once the dialog closes.
         self.service.transfers.conflict_asked = 0;

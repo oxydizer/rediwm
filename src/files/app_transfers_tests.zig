@@ -210,3 +210,46 @@ test "Rename in the conflict dialog keeps both" {
     defer allocator.free(kept);
     try std.testing.expectEqualStrings("old", kept);
 }
+
+fn mergeOffered(app: *App) bool {
+    return conflictShown(app) and app.managerConflictCanMerge();
+}
+
+test "copying a folder again into the same place asks, and Merge finishes it" {
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try support.makeTempDir(&temp_buffer);
+    defer ops.deleteRecursive(allocator, temp) catch {};
+    const folder = try support.join(allocator, temp, "Season");
+    defer allocator.free(folder);
+    const destination = try support.join(allocator, temp, "Backup");
+    defer allocator.free(destination);
+    try support.makeDirectory(folder);
+    try support.makeDirectory(destination);
+    var name_buf: [32]u8 = undefined;
+    for (0..6) |i| {
+        const name = try std.fmt.bufPrint(&name_buf, "Season/e{d}.mkv", .{i});
+        const path = try support.join(allocator, temp, name);
+        defer allocator.free(path);
+        try support.writeFile(path, "episode");
+    }
+
+    var s: ServiceApp = .{};
+    try s.start();
+    defer s.stop();
+
+    // The first copy, as the earlier run left it, complete.
+    try std.testing.expect(s.app.executeTransfer(.copy, &.{folder}, destination, false));
+    try s.until(idle);
+
+    // Again: the folder is there already.
+    try s.app.history.navigate(destination);
+    try std.testing.expect(s.app.executeTransfer(.copy, &.{folder}, destination, false));
+    try s.until(mergeOffered);
+    s.app.resolveConflictDialog(.merge);
+    // Each file is there too: skip them.
+    for (0..20) |_| {
+        s.until(conflictShown) catch break;
+        s.app.resolveConflictDialog(.skip);
+    }
+    try s.until(idle);
+}

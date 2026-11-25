@@ -60,6 +60,7 @@ test "a watched folder shows what jobs bring into it, at any depth, and follows 
     try f.watch(.{ .slot = 0, .path = "/dest" });
     try f.watch(.{ .slot = 1, .path = "/dest/folder" });
     try f.watch(.{ .slot = 2, .path = "/elsewhere" });
+    try f.watch(.{ .slot = 3, .path = "/" });
     _ = job_views.publishViews(&f.coordinator, 1000);
 
     const roots = (try f.take(0)).?;
@@ -81,6 +82,14 @@ test "a watched folder shows what jobs bring into it, at any depth, and follows 
     const elsewhere = (try f.take(2)).?;
     defer elsewhere.destroy();
     try std.testing.expectEqual(@as(usize, 0), elsewhere.rows.len);
+    // Above the destination, the folder the job writes beneath shows its
+    // progress, as a real folder.
+    const above = (try f.take(3)).?;
+    defer above.destroy();
+    try std.testing.expectEqual(@as(usize, 1), above.rows.len);
+    try std.testing.expectEqualStrings("dest", above.name(above.rows[0]));
+    try std.testing.expect(above.rows[0].materialized);
+    try std.testing.expectEqual(@as(u64, 400), above.rows[0].total_bytes);
 
     // Nothing changed: nothing is written.
     _ = job_views.publishViews(&f.coordinator, 1010);

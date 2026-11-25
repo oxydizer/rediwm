@@ -111,6 +111,35 @@ fn resolve(manager: *const io_manager.Manager, job_id: io_manager.JobId, path: [
 
 const max_levels = 8;
 
+/// A folder in the watched one that a job writes into, or whose subtree
+/// does: it shows the job's progress, though it is not in the job's tree.
+const Ancestor = struct {
+    job_id: io_manager.JobId,
+    name: []const u8,
+    completed_bytes: u64,
+    total_bytes: u64,
+};
+
+fn ancestors(manager: *io_manager.Manager, path: []const u8, out: *[max_levels]Ancestor) []Ancestor {
+    var count: usize = 0;
+    for (0..manager.jobCount()) |index| {
+        if (count == out.len) break;
+        const summary = manager.jobSummaryAt(index);
+        if (summary.state.isTerminal()) continue;
+        const destination = manager.destinationDirectory(summary.id) orelse continue;
+        const root = path.len == 1 and path[0] == '/';
+        const prefix_len = if (root) 1 else path.len + 1;
+        if (destination.len <= prefix_len or !std.mem.startsWith(u8, destination, path) or
+            (!root and destination[path.len] != '/')) continue;
+        const rest = destination[prefix_len..];
+        const name = rest[0 .. std.mem.indexOfScalar(u8, rest, '/') orelse rest.len];
+        if (name.len == 0) continue;
+        out[count] = .{ .job_id = summary.id, .name = name, .completed_bytes = summary.completed_bytes, .total_bytes = summary.total_bytes };
+        count += 1;
+    }
+    return out[0..count];
+}
+
 fn levels(manager: *io_manager.Manager, path: []const u8, out: *[max_levels]Level) []Level {
     var count: usize = 0;
     for (0..manager.jobCount()) |index| {
@@ -134,6 +163,8 @@ pub fn publishViews(self: *Coordinator, now: i64) ?i64 {
         const watching = item.value_ptr;
         var level_storage: [max_levels]Level = undefined;
         const found = levels(manager, watching.path, &level_storage);
+        var ancestor_storage: [max_levels]Ancestor = undefined;
+        const over = ancestors(manager, watching.path, &ancestor_storage);
 
         // Watching a folder inside a job's tree is interest in it: discover
         // it first, as navigating into it would.
@@ -159,6 +190,11 @@ pub fn publishViews(self: *Coordinator, now: i64) ?i64 {
                 bytes +%= row.completed_bytes +% row.total_bytes *% 31;
             }
         }
+        for (over) |ancestor| {
+            shape.update(std.mem.asBytes(&ancestor.job_id));
+            shape.update(ancestor.name);
+            bytes +%= ancestor.completed_bytes +% ancestor.total_bytes *% 31;
+        }
         shape.update(std.mem.asBytes(&total));
         const shape_hash = shape.final();
         const structural = !watching.written or shape_hash != watching.shape;
@@ -169,7 +205,7 @@ pub fn publishViews(self: *Coordinator, now: i64) ?i64 {
             deadline = if (deadline) |d| @min(d, at) else at;
             continue;
         }
-        const snapshot = build(self.allocator, manager, watching, found, total) catch continue;
+        const snapshot = build(self.allocator, manager, watching, found, total, over) catch continue;
         if (!self.service.deliverView(watching.window_id, snapshot)) {
             dropped.append(self.allocator, item.key_ptr.*) catch {};
             continue;
@@ -225,11 +261,12 @@ fn build(
     watching: *const Watching,
     found: []const Level,
     total: usize,
+    over: []const Ancestor,
 ) !*views.Snapshot {
     // Rows `offset` to `offset + limit` across the jobs, in job order.
     const start = @min(total, watching.offset);
     const end = @min(total, start + watching.limit);
-    var rows = try allocator.alloc(views.Row, end - start);
+    var rows = try allocator.alloc(views.Row, end - start + over.len);
     errdefer allocator.free(rows);
     var names: std.ArrayList(u8) = .empty;
     errdefer names.deinit(allocator);
@@ -246,6 +283,23 @@ fn build(
             rows[count] = row;
             count += 1;
         }
+    }
+    // Folders a job writes beneath: real, with the job's progress.
+    for (over) |ancestor| {
+        const name_len: u16 = @intCast(@min(ancestor.name.len, std.math.maxInt(u16)));
+        rows[count] = .{
+            .job_id = ancestor.job_id,
+            .entry_id = 0,
+            .name_start = @intCast(names.items.len),
+            .name_len = name_len,
+            .kind = .directory,
+            .state = if (ancestor.completed_bytes > 0) .running else .pending,
+            .materialized = true,
+            .completed_bytes = ancestor.completed_bytes,
+            .total_bytes = ancestor.total_bytes,
+        };
+        try names.appendSlice(allocator, ancestor.name[0..name_len]);
+        count += 1;
     }
     if (count < rows.len) rows = try allocator.realloc(rows, count);
     const owned_names = try names.toOwnedSlice(allocator);
