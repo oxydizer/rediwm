@@ -1,266 +1,293 @@
+# Files I/O Threading and Ownership
 
-# Files I/O Threading and Ownership Model
+**Status:** The command rings, wake descriptors and coordinator loop exist. The
+job table (S1), draining shutdown (S2) and worker-side submit validation (S5)
+described here are not built yet. Where this document and the code differ, this
+document is the target and the code is the current state.
 
-**Status:** Design agreed; implementation pending.
+It supplements [Service Architecture](files-io-service-architecture.md), which
+says what the service is and who owns what. This document says how it runs.
 
-This document records the agreed execution-thread and responsibility split for the Files I/O service. It supplements [Files I/O Service Architecture](files-io-service-architecture.md) and its Initial IPC Contract.
+## 1. The invariant
 
-## 1. Goal
+**No Files UI event-loop thread performs I/O service orchestration, drains
+worker completions, or blocks on filesystem work. The coordinator thread never
+waits on a worker, a filesystem call or a user decision.**
 
-Keep the RediWM Files UI responsive under heavy, concurrent filesystem activity.
+This is a responsiveness requirement, not a code-organisation preference.
 
-The UI event-loop thread must remain focused on presentation and user interaction. Filesystem orchestration, completion reconciliation, resource lifecycle management and other potentially expensive I/O service work must not run on that thread.
+## 2. Threads
 
-This is a responsiveness requirement, not merely a preference about code organization.
+| Thread | Does | Never does |
+| --- | --- | --- |
+| UI thread (one event loop for all windows) | Wayland, rendering, input, submitting commands, reading the job table | Manager or Runtime access, worker queue draining, filesystem scans for jobs |
+| Coordinator (one) | Owns the Manager, Runtime, ledger and executors; applies commands and completions; dispatches work; updates the job table | Blocking syscalls, waiting for workers, UI calls |
+| Discovery workers (2), operation workers (2) | One bounded unit of filesystem work, returned as an owned completion | Touching the Manager, the ledger's job state, or any window |
 
-## 2. Agreed architecture
+The worker counts and queue capacities are shared process configuration. Changing
+them is a separate, measured decision (roadmap phase 7).
 
-The service uses a dedicated I/O service thread. The service thread owns the process-level I/O Runtime and coordinates the existing bounded worker pools.
+## 3. Locking
 
-The initial design does not replace the worker pools or create a worker pool per window. Existing discovery and operation workers remain shared service resources. The dedicated service thread is an orchestration and ownership boundary, not a substitute for filesystem workers.
+There is **one mutex**, inside the Service. It guards the window registry, the
+command rings and the job table. There is no other lock between the UI and the
+coordinator, so there is no lock ordering to get wrong.
 
-The high-level flow is:
+Critical sections are bounded and tiny. Inside the lock there is no allocation (all
+storage is fixed arrays), no syscall other than the non-blocking eventfd write, no
+callback and no wait. The most the lock covers is a copy of at most `max_jobs`
+records. Because of that, **both sides take the mutex blocking**. The earlier
+`trylock`/`ServiceBusy` scheme is removed: it made `register`, `close` and the update
+read spuriously fail, and a failed read after the wake was drained lost the wakeup.
+
+The Manager, Runtime and ledger are coordinator-private and are not behind this
+mutex. The coordinator computes what it wants to publish first, then takes the lock
+only to write it.
+
+## 4. Wake descriptors
+
+Two process-wide non-blocking eventfds, both owned by the Service:
+
+* `command_wake_fd`: signalled when a command is admitted or when drain begins.
+  Polled by the coordinator.
+* `update_wake_fd`: signalled when any job record changes. Polled by the UI event
+  loop, once for all windows.
+
+Rules:
+
+* The consumer drains the wake counter **first**, then reads the state. A change
+  that lands in between leaves the counter non-zero, so the worst case is one
+  spurious pass.
+* A wake only says that something may have changed. The job table is
+  level-triggered, so any number of signals collapse into one read. A late or missed
+  signal cannot lose information.
+* A saturated counter is already readable, so a write that would block is skipped.
+
+## 5. Commands: admission and processing
+
+* Each window has a bounded ring for normal commands and a separate small ring for
+  control commands, plus an aggregate cap on normal commands. Control commands never
+  wait behind normal ones.
+* Admission never blocks. A full ring returns an error (`WindowQueueFull`,
+  `AggregateQueueFull`, `ControlQueueFull`). The UI shows a notice for a
+  user-initiated command. It does not retry silently, and it never assumes success.
+* Admission of `submit_job` also reserves a job-table slot, so a submit that is
+  accepted always has a record to appear in. A full table returns `TooManyJobs`
+  synchronously.
+* Payloads are heap-owned with the allocator carried along. A successful enqueue
+  moves ownership into the ring and clears the caller's pointer. A failed enqueue
+  leaves it with the caller. The coordinator frees the payload after handling.
+* A window closing does not drop its queued commands. They are processed, and the
+  slot is recycled when its rings are empty.
+* **The coordinator takes at most `command_quota` commands per loop pass**, then
+  moves on to completions and dispatch. A busy producer cannot starve them. Within a
+  pass, windows are served round-robin and control commands first within a window.
+* Commands are idempotent in effect. Cancelling twice, or pausing a finished job, is
+  harmless. A command that cannot apply changes nothing and is logged. There is no
+  per-command reply channel: the window learns what happened from the job table.
+
+A submit that fails validation does not reply with an error. It produces a job
+record that goes straight to `failed` with an `error_code`. The window correlates it
+with the `submit_tag` it chose when it submitted. That keeps one feedback path.
+
+## 6. Job table
+
+The table is the only service-to-window channel for state.
+
+* **Fixed storage.** `max_jobs` records of plain copied values, with no pointers and
+  no slices. Text such as the job label is a fixed-size buffer.
+* **Writer.** Only the coordinator writes, under the lock. It bumps a service-wide
+  sequence and stamps the changed record with it as `revision`, then signals the
+  update wake.
+* **Reader.** `fetchChanges(window, cursor, out) -> {count, next_cursor, more}`
+  copies out records with `revision > cursor`, oldest first, and records the
+  window's cursor in its slot. A window loops until `more` is false. A window can
+  bound its work per event-loop pass by passing a small `out` buffer.
+* **Removal.** Retiring a job sets `removed` and a new revision. The tombstone stays
+  until the lowest cursor across registered windows has passed it, then the slot is
+  reused. With no windows registered the tombstone is dropped at once.
+* **Why there is no resync.** The table is state, not a stream of events. A window
+  that reads late, or never, still gets the current record when it does read. The
+  update rings, the coalescing rule and the `resync_required` marker of the first
+  implementation are removed, and with them the failure mode where an overflow
+  wiped a terminal state or a conflict notification.
+* **Fairness.** Each window processes a bounded number of records per event-loop
+  iteration (its `out` buffer), so a large backlog in one window cannot monopolise
+  the loop.
+
+### What the coordinator publishes, and how often
+
+* A **state change** is published immediately.
+* **Progress** is rate-limited at the source: at most one update per job per
+  `progress_interval` (about 50 ms), with the final value always published. The
+  event-loop wake is rate-limited naturally.
+* The coordinator does not rebuild the table from a full snapshot. The Manager keeps
+  an O(1) per-job summary (state, aggregate bytes, rate, head conflict) and a **dirty
+  set** of jobs changed since the last publication. Each pass visits the dirty set
+  only. `snapshotJobs` stays available for tests and diagnostics, and it is not
+  called in the loop. The cost of a pass is proportional to what changed, not to the
+  total number of operations.
+
+## 7. The coordinator loop
 
 ```text
-Files UI windows
-  |  bounded commands
-  v
-I/O service thread
-  |  Manager, Runtime, scheduling, reconciliation
-  v
-Existing bounded worker pools
-  |  filesystem work and completions
-  v
-I/O service thread
-  |  snapshots and sequenced updates
-  v
-Files UI windows
+loop:
+    drain command wake
+    handle up to command_quota commands          (round-robin, control first)
+    apply finished prepare tasks                 (section 8)
+    pump executors: drain wake, reconcile completions, dispatch ready work
+    housekeeping:
+        auto-cancel conflicts if no window is registered
+        release leases whose holder window is gone
+        retire terminal jobs that are ready        (try every candidate)
+    publish dirty jobs to the job table          (rate-limited progress)
+    if draining and idle: break
+    if more commands are pending or the quota was hit: continue
+    wait on: command wake, discovery wake, operation wake,
+             timeout = next progress-publish deadline, or none
 ```
 
-The service core remains independent of GTK, Wayland surfaces and window state.
+The poll checks `revents`. An error or invalid descriptor is a bug and is reported,
+not spun on. Retirement tries every candidate each pass. One that is not ready does
+not block the others.
 
-## 3. Service-thread ownership
+## 8. Blocking-call discipline
 
-The service thread exclusively owns and accesses:
+The coordinator may change Manager state and do bounded in-memory work. It does not
+call `stat`, `lstat`, `readlink`, `open`, read a directory, or resolve a path. Any of
+those can block indefinitely on a hung network or FUSE mount, and the same thread
+handles cancellation and completions for every window.
 
-- The authoritative `io_manager.Manager`.
-- The process-level `io_runtime.Runtime`.
-- The shared discovery and operation executors and their worker-pool coordination.
-- The process-level resource ledger and retirement bookkeeping.
-- Job and operation lifecycle transitions.
-- Scheduling, dispatch preparation and completion reconciliation.
-- Cancellation, pause/resume coordination and safe retirement.
-- Collision detection and conflict registration/resolution.
-- Archive staging, publication barriers, extraction lifecycle and cleanup.
-- Service-side filesystem resource ownership and hand-offs.
-- Service-wide event sequencing and publication of job snapshots/updates.
+So `submit_job` is three steps:
 
-Manager and Runtime pointers are not exposed to UI windows. Their mutable state is not concurrently accessed by UI threads.
+1. **Accept.** The coordinator creates the job in `planning`, moves the owned request
+   into a **prepare task** and dispatches it to the discovery pool. This is bounded
+   and does no I/O.
+2. **Prepare (worker).** The worker validates paths, classifies each source
+   (regular file, symlink, directory), reads symlink targets, checks the mount-point
+   and overlap rules for moves, checks that the destination is not inside a source,
+   and compares device and inode identity. It returns an owned plan. If it fails,
+   the plan carries the error.
+3. **Apply.** The coordinator validates the plan against the job (still `planning`,
+   not cancelled) and applies it through the Manager, or fails the job with the
+   `error_code`. A plan for a cancelled job is discarded together with the planning
+   job.
 
-Workers continue to execute bounded work units and return owned completions. They do not directly mutate Manager state or access UI objects.
+Rules for any worker task, whether prepare, metadata, publication or cleanup:
 
-## 4. UI-thread ownership
+* The coordinator first captures the inputs into an immutable, independently owned
+  payload.
+* The worker never reads Manager-owned state, keeps no pointer into a Manager
+  collection and performs no lifecycle transition.
+* The result comes back through the normal completion path. Only the coordinator
+  applies it. Every dispatched unit is accounted for exactly once, in the ledger.
 
-The Files UI thread exclusively owns:
+Until S5 lands, the inline validation in `submitTransfer` is acceptable. The risk is
+a hung mount stalling the service, and S5 removes it.
 
-- GTK and Wayland objects, surfaces and interaction state.
-- Windows, tabs, navigation, selection and browsing presentation.
-- Rendering and view-model updates.
-- User interaction and UI-specific notices.
-- Opening an extracted archive member in a viewer/editor.
-- Clipboard and drag-and-drop integration that requires UI or platform objects.
+## 9. Cancellation
 
-A window submits requests to the service and consumes service snapshots or updates. It does not directly call Manager or Runtime methods, drain worker completion queues, dispatch work, or perform service-owned cleanup.
+Cancellation is an asynchronous state transition, not a synchronous worker control.
 
-The UI thread must not block waiting for a filesystem operation or for the service to finish processing a command. Command submission and update delivery are asynchronous.
+* `cancel_job` records the intent in coordinator-owned state and signals in-flight
+  work through a thread-safe cancellation token.
+* Workers check at defined safe points inside their bounded units. They do not
+  mutate the Manager or release service-owned resources. A worker that sees
+  cancellation returns an owned completion describing what it did and what partial
+  output or resources remain.
+* The coordinator reconciles every dispatched unit, performs the cleanup, releases
+  the job's leases and only then marks the job `cancelled`.
+* Work that cannot be interrupted safely (an in-progress uninterruptible syscall)
+  may delay cancellation. It must not stall the coordinator loop or any unrelated
+  job.
+* Queued work that has not started may be withdrawn if the pool contract allows. It
+  is still accounted for exactly once.
+* Archive extraction keeps its cooperative cancellation and staging cleanup.
 
-## 5. Communication boundary
+## 10. Shutdown: the draining state machine
 
-Windows and the service communicate through bounded message queues. The queue abstraction is an internal thread boundary; it does not replace or redefine the separately specified Unix-domain socket IPC contract.
+```text
+running --beginDrain--> draining --idle--> stopped
+```
 
-Commands sent from a window express intent. The service validates and processes them, then publishes authoritative state. A successful enqueue or command response does not imply that the requested job transition has completed.
+The process owner calls `beginDrain` when the last window is gone, or when the
+process is asked to quit. **Accepted ordinary filesystem operations finish.** They
+are not abandoned half done.
 
-Service-to-window data consists of immutable snapshots and sequenced updates. Windows may maintain local presentation projections, but may not invent authoritative job state.
+In `draining` the coordinator keeps running its normal loop. It does not break after
+one pass.
 
-The communication design must provide:
+* New `submit_job` is refused (`ServiceDraining`).
+* Archive extractions are cancelled cooperatively, and their staging is cleaned.
+* Jobs waiting on a conflict are cancelled, since no window can answer.
+* Running and queued ordinary jobs run to completion. Terminal jobs retire as usual.
+* The coordinator reports **idle** when no job is non-terminal, both executors are
+  quiescent and no accepted command is left in any ring.
 
-- Bounded command and update queues.
-- Explicit handling of queue saturation.
-- No blocking UI-thread send or receive.
-- Fair processing so one window cannot monopolise service work.
-- Coalescing of replaceable progress updates.
-- Preservation of non-coalescible lifecycle and user-actionable events.
-- Sequence-based gap detection and snapshot resynchronisation.
-- Safe handling of window closure and client disconnection.
+At idle, still on the coordinator thread:
 
-If a UI consumer cannot keep up, replaceable progress may be coalesced. Important state transitions and conflict requests must not be silently discarded. The consumer must be able to detect lost continuity and obtain a fresh snapshot.
+1. Release remaining service-owned resources.
+2. Verify the ledger is empty. A non-empty ledger is logged with the leaking
+   resource kinds and is a failed assertion in debug builds.
+3. Stop and join the worker pools. Joining belongs here, after the work has been
+   accounted for. It is never done while ordinary commands or completions are being
+   processed.
+4. Free the Manager and Runtime, then the thread exits.
 
-## 6. Responsiveness and bounded work
+**Abort.** A second quit request, or an explicit abort, cancels every job, including
+ordinary ones, and waits for reconciliation. If a worker is stuck in an
+uninterruptible call, the owner may exit after a timeout and logs the jobs it
+abandoned. This is the one case where an operation is left half done, and it is a
+last resort that must be visible in the log.
 
-Moving orchestration off the UI thread is the primary guarantee. The service thread must also avoid becoming an unbounded bottleneck.
+**Process-owner order.** `main.run` creates the Service and Coordinator before the
+Wayland display and the first window. On the way out it destroys the windows, then
+disconnects from the compositor, then calls `beginDrain` and waits for the
+coordinator thread. A headless process has no business holding a compositor
+connection while it finishes a copy.
 
-- Service command processing and per-client delivery must be bounded and fair.
-- Worker queues remain bounded and apply backpressure.
-- Progress publication should be coalesced rather than generating unbounded updates.
-- Completion reconciliation should be measured and split into bounded units where necessary.
-- Potentially expensive filesystem preparation, metadata access, directory opening, archive staging and cleanup must not migrate back to the UI thread.
-- Expensive service-side preparation or publication work may be moved to worker tasks when measurements and ownership requirements justify it.
-- Worker counts and queue capacities remain shared service configuration; tuning them is a separate measured decision.
+## 11. Window lifecycle contract
 
-The service thread may perform Manager state transitions and bounded in-memory coordination. It must not wait synchronously for a worker, filesystem operation, UI response or user decision.
+* **Register before the first command.** `registerWindow` fails only on
+  `TooManyWindows`, `ServiceDraining` or exhaustion of the 64-bit window id.
+* **Close always completes.** `Handle.close()` takes the lock blocking, so it cannot
+  fail and there is nothing to retry. It marks the slot closing. The slot is
+  recycled once its queued commands have been processed. Closing slots count toward
+  `max_windows` until then, so the limit applies to open plus closing windows.
+* Closing releases the window's leases, as in the architecture document §6.
+* A stale `Handle` copy fails on its window id, because ids are never reused.
+* All `Handle`s must be closed before `Service.deinit`. This is asserted.
+* The `Handle` is a non-owning capability. It exposes `trySend`, `trySendOwned`,
+  `fetchChanges` and `close`, and nothing else. It cannot reach the Manager.
 
-### Cancellation without blocking
+## 12. Required tests
 
-Cancellation is an asynchronous service state transition, not a synchronous
-worker-control operation.
+The existing queue tests stay: bounded admission, aggregate bounds, reserved control
+capacity, round-robin draining, payload ownership transfer on success and on failure,
+and acceptance after window closure. The update-ring and resync tests are replaced by
+the table tests below.
 
-- A cancellation command records cancellation intent in service-owned state
-  and signals the affected in-flight work through a cancellation token or
-  equivalent thread-safe mechanism.
-- Workers observe cancellation at defined safe checkpoints within their
-  bounded work units. They do not mutate Manager state or release
-  service-owned resources.
-- A worker that observes cancellation returns an owned completion describing
-  the work performed and any resources or partial output that remain.
-- The service reconciles every dispatched unit and performs the required
-  cleanup before releasing its resource leases or declaring the job
-  `Cancelled`.
-- Work that cannot be interrupted safely, including an in-progress
-  uninterruptible filesystem call, may delay cancellation. It must not block
-  the service loop or prevent unrelated jobs and commands from progressing.
-- Queued work that has not started may be withdrawn when the worker-pool
-  contract permits it. The service must still account for every dispatched
-  unit exactly once.
+| Area | Test |
+| --- | --- |
+| Job table | A late-registered window sees every live job |
+| Job table | A window that never reads still sees a terminal state and a pending conflict when it does |
+| Job table | A tombstone is retained until the lowest cursor passes it, then reused |
+| Job table | Interleaved progress from several jobs cannot overflow or lose a lifecycle change |
+| Wake | Drain-then-read never misses a change made between the drain and the read |
+| Orphans | A job whose origin window closed has its conflict resolved from another window |
+| Orphans | A lease held by a window that closes is released by the service, and the ledger ends empty |
+| Conflicts | With no window registered, a pending conflict cancels its job and the next job's conflict is not blocked |
+| Retirement | A terminal job is retired only after every window's cursor passed it |
+| Shutdown | After the last window closes, an accepted cross-filesystem move finishes, including its detach step |
+| Shutdown | Draining cancels an archive extraction and leaves no staging behind |
+| Shutdown | Abort cancels ordinary jobs and reports any it had to abandon |
+| Admission | A flood of `submit_job` cannot delay completion reconciliation beyond `command_quota` per pass |
+| Admission | `submit_job` into a full table returns `TooManyJobs` and leaks no payload |
+| Submit | An invalid source produces a `failed` record carrying the window's `submit_tag` |
+| Prepare | A prepare task that blocks does not delay `cancel_job` or other jobs' completions |
+| Prepare | A plan arriving for a cancelled job is discarded with its planning job |
+| Cost | A pass with one changed job in a table of many does work proportional to one job |
+| Lifecycle | Opening and closing windows repeatedly does not exhaust slots |
 
-The service must not wait for an individual worker, synchronously join a
-pool, or wait for pool quiescence while processing ordinary commands or
-completions. During shutdown it continues coordinating cancellation and
-completion reconciliation. Worker joins belong to final teardown, after
-outstanding work has been accounted for and the pools have stopped accepting
-work.
-
-### Service command admission and fairness
-
-Service ingress is bounded independently of the per-window update queues.
-
-- Each window has a bounded command allowance, and the service enforces a
-  bounded aggregate command capacity.
-- The service processes commands fairly across windows, using bounded
-  per-window work quotas so a busy producer cannot monopolise the service
-  thread.
-- Capacity limits and per-iteration processing quotas must be explicit
-  implementation constants, covered by saturation and fairness tests.
-- A full command queue produces an explicit non-blocking rejection. The UI
-  must not wait for capacity or assume that a rejected command was accepted.
-- Cancellation and other control commands must not be starved by ordinary
-  submissions. Their admission path must have reserved capacity or an
-  equivalent bounded priority mechanism.
-
-No command queue may grow without limit, and queue saturation must never
-cause the service thread to block waiting for a producer or consumer.
-
-### Worker preparation ownership
-
-If measurements justify moving preparation work to workers, the service
-thread first captures the required inputs into an immutable, independently
-owned task payload.
-
-Workers may inspect and transform that payload and perform the filesystem
-work assigned to them. They must not read or mutate Manager-owned state,
-retain pointers into Manager collections, or perform lifecycle transitions.
-They return owned results through the normal completion path; only the
-service thread validates and applies those results to authoritative state.
-
-This rule applies to preparation, metadata access, publication and cleanup
-tasks as well as the primary operation workers.
-
-### Bounded UI update delivery
-
-Each UI consumer processes a bounded number of messages or a bounded amount
-of delivery work per event-loop iteration. A large backlog for one window
-must not monopolise the process event loop or delay other windows.
-
-The service publishes fairly across consumers. Replaceable progress updates
-may be coalesced by job, while non-coalescible lifecycle and user-actionable
-events retain their ordering guarantees.
-
-If a consumer's bounded queue cannot preserve continuity, the service marks
-that consumer as requiring resynchronisation rather than blocking or
-silently discarding authoritative state transitions. The consumer obtains
-a fresh snapshot and resumes from its sequence position.
-
-
-## 7. Archive lifecycle split
-
-Archive handling currently crosses service and App responsibilities. It must be separated deliberately.
-
-Service-owned responsibilities include:
-
-- Archive extraction and staging work.
-- Staging resource leases and ledger accounting.
-- Cancellation and cleanup of staging data.
-- Publication registration and barrier state.
-- Validation that publication work has drained.
-- Completion and retirement of archive-related jobs.
-- Preparing an owned hand-off when extracted content is ready for a UI consumer.
-
-UI-owned responsibilities include:
-
-- Deciding whether the relevant window is still in the navigation context that requested the extraction.
-- Opening an extracted member in a viewer or editor.
-- Clipboard and drag integration that requires UI/platform facilities.
-- Accepting or declining a prepared hand-off.
-
-The service must not call GTK/Wayland or retain pointers to an App or window. A UI hand-off must use an explicit owned payload or lease with defined transfer and cleanup semantics. Closing the requesting window must not leak staging resources or prevent the service from cleaning them up.
-
-This split must preserve the existing publication-barrier and resource-ledger invariants. It is not permission to simplify away those guarantees.
-
-## 8. Window and job lifetime
-
-Jobs belong to the service, not to the window that submitted them.
-
-The originating window identifier, where retained, is metadata for origin/context and is not a lifetime owner or an authorization to destroy the job.
-
-A window may hold a presentation reference to a job. Closing that window releases its local subscription and presentation state only. It must not implicitly cancel, retire or destroy the job.
-
-Another window may inspect and manage the same service-owned job. The service remains responsible for job lifetime, resource quiescence and retirement.
-
-## 9. Shutdown and failure
-
-The service thread owns orderly Runtime shutdown:
-
-1. Stop accepting new commands.
-2. Apply the service's defined shutdown policy to active jobs.
-3. Request cancellation where required by that policy.
-4. Continue processing worker completions and cleanup until all dispatched
-   work has been accounted for and workers have stopped accessing
-   service-owned state.
-5. Stop and join worker pools during final teardown.
-6. Release service-owned staging and other resources.
-7. Verify the resource ledger is empty and deinitialize Manager/Runtime.
-8. Close communication queues and notify or disconnect clients as appropriate.
-
-UI shutdown only releases that window's subscriptions, queues and UI-owned state. It must not tear down the shared service Runtime.
-
-The exact process supervision and durable crash-recovery behaviour remain governed by the parent service architecture and IPC contract.
-
-## 10. Migration constraints
-
-The transition must be incremental and reviewable.
-
-- Preserve the existing Manager state-machine and resource-ledger correctness.
-- Do not expose Manager or Runtime pointers across the thread boundary.
-- Audit every executor callback and archive hand-off before moving ownership.
-- Separate service-side filesystem/lifecycle actions from UI/platform actions.
-- Preserve origin-window metadata without making it job ownership.
-- Keep existing worker pools shared; do not multiply them per window.
-- Add tests for queue saturation, ordering, shutdown, window closure, multiple consumers and archive lease transfer.
-- Measure UI responsiveness under concurrent heavy I/O, not only operation throughput.
-
-No implementation detail should be changed solely to fit the new thread model if it weakens an established lifecycle or recovery invariant.
-
-## 11. Core invariant
-
-**No Files UI event-loop thread performs I/O service orchestration, drains worker completions, or blocks on filesystem work.**
-
-The service thread owns authoritative I/O state and lifecycle. Workers perform bounded filesystem work. UI threads present state and handle user/platform interaction. Communication between these responsibilities is asynchronous, bounded and explicit.
+Measure UI responsiveness under concurrent heavy I/O as well as throughput. A
+service that is fast but makes the event loop stall has failed the requirement in §1.
