@@ -95,10 +95,10 @@ pub fn handleInputAction(
         .scroll => |p| {
             const now = VirtualInput.nowMs();
             if (p.dy != 0) {
-                server.input.processAxis(now, .vertical_scroll, p.dy, 0, .continuous);
+                server.input.processAxis(now, .vertical_scroll, p.dy, 0, .continuous, .identical);
             }
             if (p.dx != 0) {
-                server.input.processAxis(now, .horizontal_scroll, p.dx, 0, .continuous);
+                server.input.processAxis(now, .horizontal_scroll, p.dx, 0, .continuous, .identical);
             }
             server.input.seat.pointerNotifyFrame();
             return .{ .ok = .handled };

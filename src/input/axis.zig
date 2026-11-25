@@ -7,6 +7,7 @@ const wlr = @import("wlroots");
 const control_center = @import("../control_center/panel.zig");
 const ui_scroll = @import("ui").widgets.scroll_container;
 const Pointer = @import("../Pointer.zig");
+const libinput = @import("../libinput.zig");
 const Toplevel = @import("../Toplevel.zig");
 const chrome = @import("../chrome.zig");
 const resize = @import("../resize.zig");
@@ -18,6 +19,15 @@ pub fn cursorAxis(
 ) void {
     const input: *Input = @fieldParentPtr("cursor_axis", listener);
     if (input.blockedVirtual(&event.pointer.base)) return;
+    var relative_direction = event.relative_direction;
+    var pointer_it = input.pointers.iterator(.forward);
+    while (pointer_it.next()) |pointer| {
+        if (pointer.device != &event.pointer.base) continue;
+        if (libinput.getNaturalScroll(pointer.device)) |natural_scroll| {
+            relative_direction = if (natural_scroll) .inverted else .identical;
+        }
+        break;
+    }
     if (input.zoom_device != &event.pointer.base) {
         input.zoom_scroll.reset();
         input.wheel_debounce = .{ .{}, .{} };
@@ -31,31 +41,26 @@ pub fn cursorAxis(
         delta = notch.delta;
         delta_discrete = notch.discrete;
     }
-    input.processAxis(event.time_msec, event.orientation, delta, delta_discrete, event.source);
+    input.processAxis(event.time_msec, event.orientation, delta, delta_discrete, event.source, relative_direction);
 }
 
 pub fn processAxis(
     input: *Input,
     time_msec: u32,
     orientation: wl.Pointer.Axis,
-    raw_delta: f64,
-    raw_delta_discrete: i32,
+    delta: f64,
+    delta_discrete: i32,
     source: wl.Pointer.AxisSource,
+    relative_direction: wl.Pointer.AxisRelativeDirection,
 ) void {
     if (input.server.idle) |im| im.notifyActivity(.pointer);
     if (input.server.locker) |lock| {
-        if (lock.client) |client| if (input.server.polkit_dialog == null) client.axis(time_msec, orientation, raw_delta, raw_delta_discrete, source);
+        if (lock.client) |client| if (input.server.polkit_dialog == null) client.axis(time_msec, orientation, delta, delta_discrete, source, relative_direction);
         return;
     }
     if (input.server.polkit_dialog != null or input.server.screenshot_selector.output != null) return;
     if (input.server.world.mini_map.dragging) return;
     if (input.server.switcher.active()) return;
-    // Flip here, before zoom/UI/client branches, so `invert_scroll` behaves
-    // like `natural_scroll` would if libinput's device toggle applied to
-    // this device: a single, uniform reversal rather than one per consumer.
-    const invert = input.server.config.input.invert_scroll;
-    const delta: f64 = if (invert) -raw_delta else raw_delta;
-    const delta_discrete: i32 = if (invert) -raw_delta_discrete else raw_delta_discrete;
     if (input.server.world.overview.active()) {
         // Wheel zooms the preview under the pointer (wheel up enlarges).
         if (orientation == .vertical_scroll) {
@@ -139,7 +144,7 @@ pub fn processAxis(
     // the middle-drag rubber-band/fling model. Mouse wheels stay no-ops here.
     const desktop_finger = !input.server.world.workspaces.active and source == .finger and (scroll_hit == .none or input.finger_pan);
     if (desktop_finger and input.cursor_mode == .passthrough and input.resize_session == null) {
-        if (raw_delta == 0 and raw_delta_discrete == 0) {
+        if (delta == 0 and delta_discrete == 0) {
             if (input.finger_pan) {
                 input.finger_pan = false;
                 input.server.world.endPanGesture();
@@ -150,9 +155,9 @@ pub fn processAxis(
         const z = input.server.world.camera.zoom();
         const pan_speed = input.server.config.input.pan_speed;
         if (orientation == .vertical_scroll) {
-            input.server.world.panBy(0, -raw_delta * pan_speed / z);
+            input.server.world.panBy(0, -delta * pan_speed / z);
         } else {
-            input.server.world.panBy(-raw_delta * pan_speed / z, 0);
+            input.server.world.panBy(-delta * pan_speed / z, 0);
         }
         input.finger_pan = true;
         return;
@@ -209,13 +214,13 @@ pub fn processAxis(
         },
         else => {},
     }
-    if (notch) return input.client_wheel.forward(time_msec, orientation, delta, delta_discrete);
+    if (notch) return input.client_wheel.forward(time_msec, orientation, delta, delta_discrete, relative_direction);
     input.seat.pointerNotifyAxis(
         time_msec,
         orientation,
         delta,
         delta_discrete,
         source,
-        .identical,
+        relative_direction,
     );
 }
