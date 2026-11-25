@@ -36,6 +36,10 @@ pub fn deinit(server: *Server) void {
     server.world.destroyClosing();
     server.night_light.deinit();
     server.power_policy.deinit();
+    if (server.keyboard_backlight_watch) |watch| {
+        watch.destroy();
+        server.keyboard_backlight_watch = null;
+    }
     server.brightness.deinit(server);
     server.keyboard_brightness.deinit(server);
     if (server.locker) |lock| {

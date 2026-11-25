@@ -261,6 +261,7 @@ polkit_dialog: ?*@import("polkit/dialog.zig").Dialog = null,
 tray: ?*@import("tray.zig").Tray = null,
 power: ?*power_mod.Manager = null,
 power_profiles: ?*power_profiles_mod.Manager = null,
+keyboard_backlight_watch: ?*@import("keyboard_backlight.zig") = null,
 /// Moves launched apps into their own systemd scopes; null in the greeter
 /// and nested sessions.
 app_scopes: ?*@import("session/app_scope.zig").Scopes = null,

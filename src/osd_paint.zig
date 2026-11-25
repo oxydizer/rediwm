@@ -3,19 +3,32 @@ const std = @import("std");
 const ui = @import("ui");
 const Profile = @import("power_profiles.zig").Profile;
 
-pub const Kind = enum { volume, microphone, brightness, caps_lock, power_profile, zoom };
+pub const Kind = enum { volume, microphone, brightness, keyboard_backlight, caps_lock, power_profile, zoom };
+const KeyboardLevel = struct {
+    current: u32 = 0,
+    maximum: u32 = 3,
+
+    fn label(self: KeyboardLevel) []const u8 {
+        if (self.current == 0) return i18n.tr("Off");
+        if (self.maximum == 1) return i18n.tr("On");
+        if (self.maximum > 3) return i18n.tr("Keyboard backlight");
+        if (self.current == self.maximum) return i18n.tr("High");
+        return if (self.current == 1) i18n.tr("Low") else i18n.tr("Medium");
+    }
+};
 pub const State = struct {
     kind: Kind,
     level: f32 = 0,
     active: bool = false, // muted for audio, enabled for Caps Lock
     profile: Profile = .balanced,
+    keyboard: KeyboardLevel = .{},
 };
 
 pub fn width(kind: Kind) i32 {
     return switch (kind) {
         .volume, .brightness => 304,
         .zoom => 320,
-        .power_profile => 212,
+        .power_profile, .keyboard_backlight => 212,
         .microphone, .caps_lock => 76,
     };
 }
@@ -39,6 +52,7 @@ pub fn paint(r: *ui.paint.Renderer, state: State) void {
         .volume => if (state.active) .volume_muted else if (state.level < 0.4) .volume_low else .volume,
         .microphone => if (state.active) .mic_muted else .mic_outline,
         .brightness => .brightness,
+        .keyboard_backlight => .keyboard,
         .zoom => .zoom_out,
         .caps_lock => .caps_lock,
         .power_profile => switch (state.profile) {
@@ -47,16 +61,18 @@ pub fn paint(r: *ui.paint.Renderer, state: State) void {
             .performance => .power_performance,
         },
     };
-    if (state.kind == .power_profile) {
+    if (state.kind == .power_profile or state.kind == .keyboard_backlight) {
         r.drawIcon(16, 17, icon_size, icon_size, .{ .id = icon, .color = white, .stroke_width = 2.5 });
-        r.drawText(54, 10, w - 70, 22, .{ .content = state.profile.label(), .font_size = 15, .color = white });
-        // One segment per profile, filled up to the active one like a level.
-        const gap = 4;
-        const segment = (w - 70 - gap * 2) / 3;
-        const filled = @intFromEnum(state.profile) + 1;
-        for (0..3) |i| {
-            const x = 54 + @as(f32, @floatFromInt(i)) * (segment + gap);
-            r.fillRect(x, 37, segment, 6, .{ .color = if (i < filled) red else track, .radius = 3 });
+        const label = if (state.kind == .power_profile) state.profile.label() else state.keyboard.label();
+        r.drawText(54, 10, w - 70, 22, .{ .content = label, .font_size = 15, .color = white });
+        if (state.kind == .power_profile) {
+            paintSegments(r, w - 70, @backingInt(state.profile) + 1, 3, red, track);
+        } else if (state.keyboard.maximum <= 3) {
+            paintSegments(r, w - 70, state.keyboard.current, state.keyboard.maximum, red, track);
+        } else {
+            const fraction = @as(f32, @floatFromInt(state.keyboard.current)) / @as(f32, @floatFromInt(state.keyboard.maximum));
+            r.fillRect(54, 37, w - 70, 6, .{ .color = track, .radius = 3 });
+            r.fillRect(54, 37, (w - 70) * fraction, 6, .{ .color = red, .radius = 3 });
         }
         return;
     }
@@ -75,6 +91,15 @@ pub fn paint(r: *ui.paint.Renderer, state: State) void {
     } else {
         if (state.active) r.fillRect(47, 27, 6, 6, .{ .color = if (state.kind == .microphone) red else white, .radius = 3 });
         r.drawText(if (state.kind == .microphone) 17 else 30, 34, 52, 20, .{ .content = if (state.kind == .microphone) (if (state.active) i18n.tr("Muted") else i18n.tr("Mic on")) else (if (state.active) i18n.tr("On") else i18n.tr("Off")), .font_size = 12, .color = white });
+    }
+}
+
+fn paintSegments(r: *ui.paint.Renderer, bar_width: f32, filled: u32, count: u32, accent: [4]f32, track: [4]f32) void {
+    const gap = 4;
+    const segment = (bar_width - gap * @as(f32, @floatFromInt(count - 1))) / @as(f32, @floatFromInt(count));
+    for (0..count) |i| {
+        const x = 54 + @as(f32, @floatFromInt(i)) * (segment + gap);
+        r.fillRect(x, 37, segment, 6, .{ .color = if (i < filled) accent else track, .radius = 3 });
     }
 }
 
