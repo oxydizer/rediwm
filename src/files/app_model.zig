@@ -277,6 +277,11 @@ pub const Dialog = struct {
     target_path: ?[]u8 = null,
     conflict_name: ?[]u8 = null,
     manager_conflict_id: ?u64 = null,
+    /// The conflict belongs to a service job (`app_transfers.zig`).
+    service_conflict: bool = false,
+    conflict_can_merge: bool = false,
+    /// Owned: where the conflicting item would go.
+    conflict_destination: ?[]u8 = null,
     deletion: deletion.State = .{},
     applications: ?open_with.State = null,
     properties: ?properties.State = null,

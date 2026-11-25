@@ -503,6 +503,7 @@ pub const App = struct {
         if (self.archive_drag_export) |*drag_export| drag_export.deinit();
         self.discovery_jobs.deinit(self.allocator);
         app_requests.deinitPending(self);
+        self.service.transfers.deinit(self.allocator);
         self.service.deinit();
         self.detached_io_jobs.deinit(self.allocator);
         self.torrents.deinit();
@@ -794,6 +795,8 @@ pub const App = struct {
 
     // app_service.zig
     pub const submitDeletion = app_service.submitDeletion;
+    pub const submitTransfer = @import("app_transfers.zig").submitTransfer;
+    pub const openServiceConflictDialog = app_dialogs.openServiceConflictDialog;
     pub const serviceUpdated = app_service.serviceUpdated;
     pub const stepService = app_service.stepService;
     pub const serviceTimeout = app_service.serviceTimeout;

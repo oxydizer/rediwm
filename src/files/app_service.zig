@@ -11,6 +11,7 @@ const io_service = @import("io_service.zig");
 const io_window_link = @import("io_window_link.zig");
 const io_coordinator = @import("io_coordinator.zig");
 const app_requests = @import("app_requests.zig");
+const app_transfers = @import("app_transfers.zig");
 
 /// A window cannot have more submits in flight than it has outcome slots.
 pub const max_deletions = io_service.outcome_slots_per_window;
@@ -31,6 +32,8 @@ pub const Link = struct {
     deletion_count: usize = 0,
     /// Requests waiting for their reply: at most one per reply slot.
     requests: [io_service.reply_slots_per_window]app_requests.Entry = undefined,
+    /// Copies and moves this window submitted (`app_transfers.zig`).
+    transfers: app_transfers.List = .{},
     request_count: usize = 0,
     /// Tags of submits and requests alike.
     next_tag: u64 = 1,
@@ -110,11 +113,14 @@ pub fn stepService(self: *App) void {
     };
     const fetched = link.last_fetch orelse return;
     for (records[0..fetched.count]) |record| {
-        if (record.origin_window_id != handle.window_id or !record.state.isTerminal()) continue;
+        if (record.origin_window_id != handle.window_id) continue;
+        if (app_transfers.onRecord(self, record)) continue;
+        if (!record.state.isTerminal()) continue;
         const deletion = link.take(record.submit_tag) orelse continue;
         finishDeletion(self, deletion.kind, record);
     }
     app_requests.takeReplies(self);
+    app_transfers.checkConflicts(self);
 }
 
 /// How soon the event loop must step this window for the service: null

@@ -22,8 +22,6 @@ pub const Role = enum { none, ui, coordinator };
 
 /// Audited call sites that still block on a guarded thread, by plan id.
 pub const Exemption = enum {
-    /// App transfer preparation: lstat, readlink, stat (S3).
-    u1_transfer_prepare,
     /// JobRunner start and polling (S3, needs phase 2).
     u2_job_runner,
     /// Per-window Runtime pumping on the UI thread (S3).

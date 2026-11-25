@@ -10,6 +10,7 @@ const git = @import("git.zig");
 const ops_mod = @import("ops.zig");
 const icons = @import("../icon_cache.zig");
 const app_requests = @import("app_requests.zig");
+const app_transfers = @import("app_transfers.zig");
 const deletion = @import("../delete_dialog.zig");
 const open_with = @import("open_with.zig");
 const properties = @import("properties.zig");
@@ -44,6 +45,7 @@ pub fn closeDialog(self: *App) void {
         dlg.edit.text.deinit(self.allocator);
         if (dlg.target_path) |tp| self.allocator.free(tp);
         if (dlg.conflict_name) |cn| self.allocator.free(cn);
+        if (dlg.conflict_destination) |path| self.allocator.free(path);
         self.dialog = null;
         self.open_with_archive_paths = false;
         self.invalidate();
@@ -358,10 +360,27 @@ pub fn openManagerConflictDialog(
     self.invalidate();
 }
 
+/// A service job's conflict, the head of the queue: `destination` is where
+/// the conflicting item would go.
+pub fn openServiceConflictDialog(self: *App, conflict_id: u64, destination: []const u8, can_merge: bool) void {
+    if (self.dialog != null) return;
+    self.dialog = Dialog{
+        .kind = .conflict,
+        .title = tr("File Conflict"),
+        .conflict_name = self.allocator.dupe(u8, std.fs.path.basename(destination)) catch null,
+        .manager_conflict_id = conflict_id,
+        .service_conflict = true,
+        .conflict_can_merge = can_merge,
+        .conflict_destination = self.allocator.dupe(u8, destination) catch null,
+    };
+    self.invalidate();
+}
+
 /// Merge is available only for the current Manager FIFO directory conflict.
 /// The legacy JobRunner dialog deliberately retains its original actions.
 pub fn managerConflictCanMerge(self: *const App) bool {
     const dlg = self.dialog orelse return false;
+    if (dlg.service_conflict) return dlg.conflict_can_merge;
     const conflict_id = dlg.manager_conflict_id orelse return false;
     const manager = if (self.io_manager) |value| value else return false;
     const conflict = manager.nextConflict() orelse return false;
@@ -416,7 +435,14 @@ pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
     const dlg = self.dialog orelse return;
     if (dlg.kind != .conflict) return;
 
-    if (dlg.manager_conflict_id) |conflict_id| {
+    if (dlg.service_conflict) {
+        if (dlg.manager_conflict_id) |conflict_id| app_transfers.resolveConflict(self, conflict_id, dlg.conflict_destination orelse "", switch (action) {
+            .skip => .skip,
+            .merge => .merge,
+            .rename => .rename,
+            .cancel => .cancel,
+        });
+    } else if (dlg.manager_conflict_id) |conflict_id| {
         resolveManagerConflict(self, conflict_id, action) catch {
             self.setStatusNotice(tr("Could not resolve file conflict"), true);
             return;

@@ -14,6 +14,7 @@ const icons = @import("../icon_cache.zig");
 const tc = @import("c_terminal");
 const app_trash = @import("app_trash.zig");
 const ops = @import("ops.zig");
+const app_transfers = @import("app_transfers.zig");
 
 /// What to do with a reply. Owned strings are freed when it is.
 pub const Pending = union(enum) {
@@ -40,6 +41,10 @@ pub const Pending = union(enum) {
     /// canonicalised.
     drop: struct { paths: [][]u8, move: bool },
     chooser: struct { named: ?[]u8 },
+    /// A transfer's conflict, to show in the dialog.
+    conflict,
+    /// A free name for a conflict renamed, in `dir`.
+    conflict_rename: struct { conflict_id: u64, dir: []u8 },
 
     fn deinit(self: *Pending, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -52,6 +57,7 @@ pub const Pending = union(enum) {
             .pin_drop => |p| freeAll(allocator, p.paths),
             .drop => |p| freeAll(allocator, p.paths),
             .chooser => |p| if (p.named) |path| allocator.free(path),
+            .conflict_rename => |p| allocator.free(p.dir),
             else => {},
         }
     }
@@ -206,6 +212,13 @@ fn finish(self: *App, pending: *Pending, reply: *io_service.Reply) void {
         .terminal_directory => |p| finishTerminal(self, p.navigation, reply.data.canonical),
         .drop => |p| finishDrop(self, p.paths, p.move, reply.data.canonical),
         .chooser => |p| self.finishChooser(p.named, &reply.data.chooser),
+        .conflict => app_transfers.showConflict(self, reply.data.conflict),
+        .conflict_rename => |p| {
+            const name = reply.data.unique_name catch return self.setStatusNotice(tr("Could not resolve file conflict"), true);
+            const path = std.fs.path.join(self.allocator, &.{ p.dir, name }) catch return;
+            defer self.allocator.free(path);
+            app_transfers.sendResolution(self, p.conflict_id, .rename, path);
+        },
     }
 }
 

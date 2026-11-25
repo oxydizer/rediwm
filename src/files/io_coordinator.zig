@@ -11,6 +11,7 @@ const resources = @import("io_coordinator_resources.zig");
 const lifecycle = @import("io_coordinator_lifecycle.zig");
 const deletions = @import("io_coordinator_deletions.zig");
 const job_views = @import("io_coordinator_views.zig");
+const coordinator_requests = @import("io_coordinator_requests.zig");
 const io_deletion = @import("io_deletion.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
@@ -226,6 +227,7 @@ pub const Coordinator = struct {
     const watchView = job_views.watchView;
     const unwatchView = job_views.unwatchView;
     const publishViews = job_views.publishViews;
+    const handleRequest = coordinator_requests.handleRequest;
 
     /// Waits for a command, a completion, or `deadline` (monotonic ms) when
     /// throttled progress or a speed sample is still due.
@@ -374,16 +376,6 @@ pub const Coordinator = struct {
         // The task owns the payload from here on.
         routed.command.payload = null;
         self.submitTask(.{ .prepare_transfer = .{ .job_id = job_id, .payload = payload } });
-    }
-
-    /// Moves a request to a service task. A request that cannot run gives
-    /// back its reply slot, so the window is never left one short.
-    fn handleRequest(self: *Coordinator, routed: *io_service.RoutedCommand) void {
-        const payload = routed.command.payload orelse
-            return self.service.cancelReplyReservation(routed.window_id);
-        if (payload.data != .request) return self.service.cancelReplyReservation(routed.window_id);
-        routed.command.payload = null;
-        self.submitTask(.{ .request = .{ .window_id = routed.window_id, .tag = routed.command.submit_tag, .payload = payload } });
     }
 
     /// A submit that failed before any Manager job existed.
