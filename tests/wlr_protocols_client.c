@@ -45,6 +45,8 @@ static bool dump_registry_mode = false;
 static bool dump_versions = false;
 
 static bool bind_extra(struct wl_registry *, uint32_t, const char *);
+static bool bind_xdg_foreign(struct wl_registry *, uint32_t, const char *);
+static int foreign_version;
 static bool extras_mode;
 static const char *hdr_output_name;
 static struct wl_output *hdr_output;
@@ -452,9 +454,10 @@ static const struct wp_color_representation_manager_v1_listener representation_l
   .supported_alpha_mode = alpha_mode, .supported_coefficients_and_ranges = coeff_range, .done = representation_finished,
 };
 static bool bind_extra(struct wl_registry *r, uint32_t name, const char *iface) {
-  if (!extras_mode) return false;
+  if (!extras_mode && !foreign_version) return false;
 #define BIND(member, type) if (strcmp(iface, #type) == 0) { member = wl_registry_bind(r, name, &type##_interface, 1);
   BIND(xdg, xdg_wm_base) xdg_wm_base_add_listener(xdg, &xdg_listener, NULL); }
+  else if (foreign_version) return bind_xdg_foreign(r, name, iface);
   else BIND(bell, xdg_system_bell_v1) }
   else BIND(tags, xdg_toplevel_tag_manager_v1) }
   else BIND(content_manager, wp_content_type_manager_v1) }
@@ -502,6 +505,7 @@ static void describe(struct wp_color_management_surface_v1 *color, uint32_t tf, 
   wp_image_description_v1_destroy(image);
 }
 #include "hdr_pattern.c"
+#include "xdg_foreign_client.c"
 static int run_extras(void) {
   assert(xdg && tags && content_manager && tearing_manager && color_manager && representation_manager && workspace_manager);
   assert(wl_display_roundtrip(display) >= 0);
@@ -564,6 +568,10 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (strcmp(argv[1], "dump-registry") == 0) dump_registry_mode = true;
+  if (!strcmp(argv[1], "xdg-foreign")) {
+    if ((argc != 3 && argc != 4) || (strcmp(argv[2], "1") && strcmp(argv[2], "2"))) return 1;
+    foreign_version = atoi(argv[2]);
+  }
   dump_versions = dump_registry_mode && argc > 2 && strcmp(argv[2], "--versions") == 0;
   workspace_test_mode = strcmp(argv[1], "workspaces") == 0;
   if (workspace_test_mode && argc > 2) activate_workspace_id = (unsigned)atoi(argv[2]);
@@ -574,6 +582,7 @@ int main(int argc, char **argv) {
   struct wl_registry *registry = wl_display_get_registry(display);
   wl_registry_add_listener(registry, &registry_listener, NULL);
   wl_display_roundtrip(display);
+  if (foreign_version) return run_xdg_foreign(argc == 4 ? argv[3] : NULL);
   if (workspace_test_mode) {
     assert(workspace_manager);
     assert(wl_display_roundtrip(display) >= 0);

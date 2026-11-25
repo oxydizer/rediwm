@@ -20,6 +20,9 @@
 #include "scene_outputs.h"
 #include "surface_feedback.h"
 #include <wlr/types/wlr_tearing_control_v1.h>
+#include <wlr/types/wlr_xdg_foreign_registry.h>
+#include <wlr/types/wlr_xdg_foreign_v1.h>
+#include <wlr/types/wlr_xdg_foreign_v2.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xdg_system_bell_v1.h>
 #include <wlr/types/wlr_xdg_toplevel_tag_v1.h>
@@ -260,6 +263,10 @@ struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
   wl_list_init(&p->outputs); wl_list_init(&p->tag.link); wl_list_init(&p->description.link);
   wl_list_init(&p->lease_request.link); wl_list_init(&p->layout_add.link);
   if (!wlr_alpha_modifier_v1_create(display)) goto fail;
+  // The display owns the registry. A handle exported by either version works with both importers.
+  struct wlr_xdg_foreign_registry *foreign = wlr_xdg_foreign_registry_create(display);
+  if (!foreign || !wlr_xdg_foreign_v1_create(display, foreign) ||
+      !wlr_xdg_foreign_v2_create(display, foreign)) goto fail;
   p->content = wlr_content_type_manager_v1_create(display, 1);
   p->tearing = wlr_tearing_control_manager_v1_create(display, 1);
   struct wlr_xdg_toplevel_tag_manager_v1 *tags = wlr_xdg_toplevel_tag_manager_v1_create(display, 1);

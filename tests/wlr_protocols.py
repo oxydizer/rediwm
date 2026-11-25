@@ -22,6 +22,8 @@ def compile_fixture(tmp):
         ["pkg-config", "--variable=pkgdatadir", "wayland-protocols"], text=True).strip())
     sources = []
     for name, path in (("ext-session-lock-v1", system / "staging/ext-session-lock/ext-session-lock-v1.xml"),
+                       ("xdg-foreign-unstable-v1", system / "unstable/xdg-foreign/xdg-foreign-unstable-v1.xml"),
+                       ("xdg-foreign-unstable-v2", system / "unstable/xdg-foreign/xdg-foreign-unstable-v2.xml"),
                        ("wlr-screencopy-unstable-v1", ROOT / "protocol/wlr-screencopy-unstable-v1.xml"),
                        ("security-context-v1", system / "staging/security-context/security-context-v1.xml")):
         for mode, suffix in (("client-header", "client-protocol.h"), ("private-code", "protocol.c")):
@@ -87,16 +89,16 @@ class Session:
         assert "panic:" not in text and "reached unreachable" not in text, text[-4000:]
 
 
+def read_line(child, timeout=10):
+    assert select.select([child.stdout], [], [], timeout)[0], "timed out waiting for fixture output"
+    line = child.stdout.readline()
+    assert line, f"fixture exited before replying: {child.poll()}"
+    return line.strip()
+
+
 def expect_line(child, wanted, timeout=10):
-    """Next stdout line of a fixture, which must be `wanted`."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        ready, _, _ = select.select([child.stdout], [], [], 0.1)
-        if ready:
-            line = child.stdout.readline().strip()
-            assert line == wanted, (line, wanted)
-            return
-    raise AssertionError(f"fixture did not print {wanted!r}")
+    line = read_line(child, timeout)
+    assert line == wanted, (line, wanted)
 
 
 def output_management(tmp):
@@ -400,8 +402,49 @@ def system_bell(tmp):
     print("PASS: xdg-system-bell playback, burst coalescing, mute and session lock")
 
 
+def xdg_foreign(tmp):
+    s = Session(tmp, config='[compositor]\nxwayland = false\ndesktop_mode = "workspaces"\n')
+    try:
+        def launch(version, *args):
+            return s.spawn(str(tmp / "fixture"), "xdg-foreign", str(version), *args, stdin=subprocess.PIPE)
+
+        def advance(client):
+            client.stdin.write("\n")
+            client.stdin.flush()
+
+        def finish(client):
+            advance(client)
+            assert client.wait(timeout=5) == 0
+
+        for export_version, import_version in ((1, 1), (2, 2), (1, 2), (2, 1)):
+            parent = launch(export_version)
+            handle = read_line(parent)
+            assert handle
+            child = launch(import_version, handle)
+            expect_line(child, "parented")
+            child_id = s.window("rediwm.foreign-child")["id"]
+            parent_id = s.window("rediwm.foreign-parent")["id"]
+
+            # Moving the child to another workspace carries its actual owner with it.
+            s.ipc.action("move_to_workspace", {"id": child_id, "workspace": 2})
+            assert s.window("rediwm.foreign-parent")["workspace_id"] == 2
+            advance(parent)
+            expect_line(child, "revoked")
+            s.ipc.action("move_to_workspace", {"id": parent_id, "workspace": 1})
+            assert s.window("rediwm.foreign-child")["workspace_id"] == 2
+            finish(child)
+
+            stale = launch(import_version, handle)
+            expect_line(stale, "revoked")
+            finish(stale)
+            finish(parent)
+    finally:
+        s.close()
+    print("PASS: xdg-foreign v1/v2 parenting, cross-version handles and revocation")
+
+
 def run():
-    for case in (system_bell, extra_protocols, output_management, foreign_toplevel, screencopy_and_virtual_pointer, session_lock):
+    for case in (xdg_foreign, system_bell, extra_protocols, output_management, foreign_toplevel, screencopy_and_virtual_pointer, session_lock):
         with tempfile.TemporaryDirectory(prefix="rediwm-wlr-protocols-") as directory:
             tmp = Path(directory)
             compile_fixture(tmp)

@@ -10,6 +10,7 @@ reserve space on a specific output edge, including from a corner.
 | --- | --- | --- |
 | Displays | `wlr-output-management-v1`, `xdg-output-v1` | wlr-randr, kanshi, nwg-displays |
 | Window lists | `wlr-foreign-toplevel-management-v1`, `ext-foreign-toplevel-list-v1` | docks, waybar, rofi/fuzzel, wlrctl |
+| Window parenting | `xdg-foreign-unstable-v1`, `xdg-foreign-unstable-v2` | a dialog in another process can use an exported window as its parent. Handles work across both versions. |
 | Capture | `wlr-screencopy-v1`, `ext-image-copy-capture-v1` | grim, wf-recorder, OBS, xdg-desktop-portal-wlr |
 | Locking and idle | `ext-session-lock-v1`, `ext-idle-notify-v1`, `idle-inhibit-v1` | swaylock, gtklock, swayidle |
 | Remote input | `virtual-pointer-v1`, `virtual-keyboard-v1` | wayvnc, KDE Connect, wtype |

@@ -200,7 +200,7 @@ static void submit_print(helper *h, guint32 token) {
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(strrchr(h->request, '/') + 1));
     g_variant_builder_add(&options, "{sv}", "token", g_variant_new_uint32(token));
-    // RediWM has no xdg-foreign, so the dialog cannot name a parent window.
+    // The viewer's print request currently carries no parent window handle.
     g_dbus_connection_call_with_unix_fd_list(
         h->bus, PORTAL_NAME, PORTAL_PATH, "org.freedesktop.portal.Print", "Print",
         g_variant_new("(ssha{sv})", "", h->title, 0, &options), G_VARIANT_TYPE("(o)"),
