@@ -4,6 +4,7 @@
 //! It owns all access to Runtime after startup; windows retain only Service
 //! handles and immutable updates.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
@@ -77,6 +78,7 @@ pub const Coordinator = struct {
     }
 
     fn threadMain(self: *Coordinator) void {
+        io_thread_guard.markCurrent(.coordinator);
         defer {
             self.runtime.deinit();
             self.allocator.destroy(self.runtime);
@@ -215,6 +217,8 @@ pub const Coordinator = struct {
         job_id: JobId,
         resource_id: io_service.ResourceId,
     ) !void {
+        const io_guard_2 = io_thread_guard.exempt(.c2_resource_cleanup);
+        defer io_guard_2.end();
         const handle = io_resource_ledger.Handle{ .id = resource_id };
         const ledger = &self.runtime.resource_ledger;
         const resource_job_id = ledger.jobIdOf(handle) orelse
@@ -354,6 +358,9 @@ pub const Coordinator = struct {
         self: *Coordinator,
         routed: io_service.RoutedCommand,
     ) !void {
+        const io_guard_1 = io_thread_guard.exempt(.c1_submit_validation);
+        defer io_guard_1.end();
+        io_thread_guard.blocking("submit validation");
         const payload = routed.command.payload orelse
             return error.MissingTransferPayload;
         const request = switch (payload.data) {
@@ -515,6 +522,9 @@ pub const Coordinator = struct {
         request: *const io_service.TransferRequest,
         destination_stat: c.struct_stat,
     ) !void {
+        const io_guard_0 = io_thread_guard.exempt(.c1_submit_validation);
+        defer io_guard_0.end();
+        io_thread_guard.blocking("submit validation");
         const manager = &self.runtime.manager;
         const job_id = try manager.createJob(routed.window_id);
         errdefer std.debug.assert(manager.discardPlanningJob(job_id));

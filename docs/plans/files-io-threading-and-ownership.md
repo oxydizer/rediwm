@@ -502,9 +502,10 @@ service that is fast but makes the event loop stall has failed the requirement i
 
 ## 13. Audit: blocking work reachable from the event loop and the coordinator
 
-Audited at `ca9e828` (feat/files-io-manager). This table becomes the debug guard's
-exemption list in S1 (§1). An entry is deleted when its stage lands. No stage may
-add one.
+Audited at `ca9e828` (feat/files-io-manager). This table is the debug guard's
+exemption list (`src/files/io_thread_guard.zig`, `Exemption`). An entry is deleted
+when its stage lands. No stage may add one; an entry the guard itself uncovers in
+existing code (C4) is recorded, never a new violation.
 
 ### UI thread
 
@@ -539,6 +540,15 @@ listed here so the guard's allowlist states it explicitly.
 | C1 | `Coordinator.submitTransfer` and its file and directory helpers | `stat`, `lstat`, `readlink` on user paths | S2 (prepare task, §8) |
 | C2 | `Coordinator.releaseResource` → `io_operation_executor.Runtime.releaseResource` | `ops.deleteRecursive` of archive staging | S2 (cleanup task, §8) |
 | C3 | `releaseResource`, `resolveConflict`, the publish loop | `snapshotJobs` allocation and copy per command or pass. Not I/O, but O(all jobs) | S1 (dirty set) |
+| C4 | `io_discovery_executor.Executor.dispatchReady` → `getOrOpenAnchor`, `Anchor.openCursorForEntry` | Opens root anchors and directory cursors inline before handing them to a worker. Found by the guard, not the first audit. Runs on the UI thread too while windows own a Runtime (inside U3) | S2 (opening becomes part of the discovery worker unit) |
+
+### Not yet covered: application state files
+
+Places pins (`pins.save`), Recent, history and settings read and write small
+files under `$XDG_STATE_HOME` and `$XDG_CONFIG_HOME` on the UI thread. They are
+not user-selected paths, but a home directory on NFS makes them blocking. They
+are outside the guard for now. Whether they move to a worker is a separate
+decision, recorded here so it is not forgotten.
 
 ### Off the UI thread already, outside the service
 

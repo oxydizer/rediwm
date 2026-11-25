@@ -2,6 +2,7 @@
 
 const recent = @import("recent.zig");
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const App = @import("app.zig").App;
 const scrollbar = @import("ui").widgets.scrollbar;
 const c = @import("c.zig").api;
@@ -78,6 +79,8 @@ pub fn permissionHit(self: *App, x: f64, y: f64) ?PermissionHit {
 }
 
 pub fn toggleInlinePermission(self: *App, hit: PermissionHit) void {
+    const io_guard_1 = io_thread_guard.exempt(.u9_properties);
+    defer io_guard_1.end();
     if (hit.index >= self.items.items.len or hit.bit >= 9) return;
     const path = self.items.items[hit.index].path;
     const mode = properties.togglePathPermission(path, hit.bit) catch |err| {
@@ -459,6 +462,8 @@ pub fn renderSelectionBand(self: *App, cr: *c.cairo_t) void {
 /// listing, or a place in the sidebar. Files, archives' insides and the
 /// transfer view are left alone.
 fn openFolderTab(self: *App) void {
+    const io_guard_0 = io_thread_guard.exempt(.u11_places);
+    defer io_guard_0.end();
     if (self.dialog != null or self.menu != null or self.chooser != null or self.history.archive_len > 0) return;
     if (self.itemAt(self.mouse_x, self.mouse_y)) |idx| {
         const item = self.items.items[idx];

@@ -1,5 +1,6 @@
 //! Resumable, bounded directory discovery for Files I/O jobs.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const tree = @import("io_tree.zig");
@@ -39,6 +40,7 @@ pub const Anchor = struct {
 
     /// Opens the root without following a symlink in its final component.
     pub fn open(path: [:0]const u8) !Anchor {
+        io_thread_guard.blocking("Anchor.open");
         const fd = c.open(
             path,
             c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC,
@@ -60,6 +62,7 @@ pub const Anchor = struct {
         index: *const tree.TreeIndex,
         entry_id: tree.EntryId,
     ) !Cursor {
+        io_thread_guard.blocking("Anchor.openCursorForEntry");
         var components: std.ArrayList([]const u8) = .empty;
         defer components.deinit(allocator);
 
@@ -118,6 +121,7 @@ pub const Cursor = struct {
 
     /// Opens the root without following a symlink in its final component.
     pub fn open(path: [:0]const u8) !Cursor {
+        io_thread_guard.blocking("Cursor.open");
         const fd = c.open(path, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
         if (fd < 0) return error.DirectoryOpenFailed;
         return fromOwnedFd(fd);
@@ -125,6 +129,7 @@ pub const Cursor = struct {
 
     /// Opens a discovered child relative to its already-open parent.
     pub fn openAt(parent_fd: c_int, name: [:0]const u8) !Cursor {
+        io_thread_guard.blocking("Cursor.openAt");
         const fd = c.openat(
             parent_fd,
             name,
@@ -150,6 +155,7 @@ pub const Cursor = struct {
     /// Reads no more than max_entries non-dot entries. The next call resumes
     /// from the same directory stream position.
     pub fn nextBatch(self: *Cursor, allocator: Allocator, max_entries: usize) !Batch {
+        io_thread_guard.blocking("Cursor.nextBatch");
         if (max_entries == 0) return error.InvalidBatchSize;
         var batch: Batch = .{ .allocator = allocator, .complete = self.complete };
         errdefer batch.deinit();

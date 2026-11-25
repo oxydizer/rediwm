@@ -1,5 +1,6 @@
 //! Runtime integration for the Manager-owned Files discovery service.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const App = @import("app.zig").App;
 const io_manager = @import("io_manager.zig");
 const io_tree = @import("io_tree.zig");
@@ -106,6 +107,8 @@ fn promoteDiscoveryPathWithPriority(
 /// Reconciles completed batches and submits more bounded discovery work.
 /// Called on the Files main thread; workers never access App or Manager.
 pub fn stepDiscovery(self: *App) void {
+    const io_guard_5 = io_thread_guard.exempt(.u3_window_runtime);
+    defer io_guard_5.end();
     const executor = if (self.discovery_executor) |value| value else return;
     const manager = if (self.io_manager) |value| value else return;
 
@@ -288,6 +291,8 @@ fn hasArchiveTracking(self: *const App, job_id: io_manager.JobId) bool {
 /// Retries App-acknowledged retirements on later main-loop passes. Archive
 /// trackers remain an App reference until their staging hand-off is complete.
 fn processDetachedIoJobs(self: *App) void {
+    const io_guard_4 = io_thread_guard.exempt(.u3_window_runtime);
+    defer io_guard_4.end();
     const runtime = self.io_runtime orelse return;
     var index: usize = 0;
     while (index < self.detached_io_jobs.items.len) {
@@ -332,6 +337,8 @@ fn openArchivePublicationCursor(
     publication: *App.ArchivePublication,
     path: [:0]const u8,
 ) !void {
+    const io_guard_3 = io_thread_guard.exempt(.u13_archive_publication);
+    defer io_guard_3.end();
     publication.cursor = try io_discovery.Cursor.open(path);
     const runtime = self.io_runtime orelse {
         closeArchivePublicationCursor(self, publication);
@@ -690,6 +697,10 @@ fn stepArchivePublications(
     manager: *io_manager.Manager,
     executor: *io_operation_executor.Runtime,
 ) void {
+    const io_guard_2 = io_thread_guard.exempt(.u14_archive_discard);
+    defer io_guard_2.end();
+    const io_guard_1 = io_thread_guard.exempt(.u13_archive_publication);
+    defer io_guard_1.end();
     var index: usize = 0;
     while (index < self.archive_publications.items.len) {
         const publication = &self.archive_publications.items[index];
@@ -883,6 +894,8 @@ fn updateMovedClipboard(
 
 /// Drains completed operations and submits newly ready work on the main thread.
 pub fn stepOperations(self: *App) void {
+    const io_guard_0 = io_thread_guard.exempt(.u3_window_runtime);
+    defer io_guard_0.end();
     const executor = if (self.operation_executor) |value| value else return;
     const manager = if (self.io_manager) |value| value else return;
 

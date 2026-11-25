@@ -1,5 +1,6 @@
 //! A snapshot of one file, owned independently of directory refreshes.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const c = @import("c.zig").api;
@@ -84,6 +85,7 @@ pub const State = struct {
     }
 
     pub fn init(a: std.mem.Allocator, path: []const u8, preview: ?icons.Entry) !State {
+        io_thread_guard.blocking("properties.State.init");
         const owned = try a.dupeSentinel(u8, path, 0);
         errdefer a.free(owned);
         // O_PATH pins the inode without reading a file, opening a device or
@@ -310,6 +312,7 @@ test "permission toggles reject invalid indices" {
 /// O_PATH pins the inode, and the proc-fd path keeps chmod from following a
 /// replacement symlink if the directory entry changes after it is opened.
 pub fn togglePathPermission(path: []const u8, index: usize) !c.mode_t {
+    io_thread_guard.blocking("properties.togglePathPermission");
     const allocator = std.heap.page_allocator;
     const owned = try allocator.dupeSentinel(u8, path, 0);
     defer allocator.free(owned);

@@ -4,6 +4,7 @@
 //! exclusive ownership of one directory cursor for one bounded batch, then
 //! returns the cursor and batch for main-thread reconciliation.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
@@ -295,6 +296,10 @@ pub const Executor = struct {
         self: *Executor,
         manager: *io_manager.Manager,
     ) !usize {
+        // Dispatch opens root anchors and directory cursors inline before
+        // handing them to a worker (plan C4; moves into the worker unit in S2).
+        const io_guard_dispatch = io_thread_guard.exempt(.c4_discovery_anchor_open);
+        defer io_guard_dispatch.end();
         var submitted: usize = 0;
 
         while (manager.dispatchDiscovery()) |token| {
@@ -537,8 +542,13 @@ pub const Executor = struct {
         const path_z = try self.allocator.dupeSentinel(u8, path, 0);
         defer self.allocator.free(path_z);
 
-        const anchor = io_discovery.Anchor.open(path_z) catch
-            return null;
+        // Opening a root is a blocking open of a user path on the thread
+        // that dispatches (plan C4; becomes part of the worker unit in S2).
+        const anchor = anchor: {
+            const io_guard = io_thread_guard.exempt(.c4_discovery_anchor_open);
+            defer io_guard.end();
+            break :anchor io_discovery.Anchor.open(path_z) catch return null;
+        };
         const handle = self.ledger.register(
             token.job_id,
             .discovery_anchor,

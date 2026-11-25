@@ -4,6 +4,7 @@
 //! file is the truth: Files re-reads it before every change, so two windows
 //! never overwrite each other's pins.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const c = @import("c.zig").api;
 
 pub const max = 64;
@@ -25,6 +26,7 @@ pub const Pin = struct {
 pub const InsertError = error{ Invalid, Duplicate, Missing, Full, OutOfMemory };
 
 pub fn kindOf(path: []const u8) Kind {
+    io_thread_guard.blocking("pins.kindOf");
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     if (path.len >= buf.len) return .missing;
     @memcpy(buf[0..path.len], path);
@@ -69,6 +71,9 @@ pub const List = struct {
 
     /// Pins `path` so it ends up at `slot` (clamped to the end).
     pub fn insert(self: *List, a: std.mem.Allocator, slot: usize, path: []const u8) InsertError!void {
+        // Every caller is on the UI thread (plan U11).
+        const io_guard_0 = io_thread_guard.exempt(.u11_places);
+        defer io_guard_0.end();
         const clean = normalize(path) orelse return error.Invalid;
         if (self.find(clean) != null) return error.Duplicate;
         if (self.items.items.len >= max) return error.Full;
@@ -86,12 +91,18 @@ pub const List = struct {
 
     /// Looks at the targets again: they come and go with removable drives.
     pub fn refresh(self: *List) void {
+        // Every caller is on the UI thread (plan U11).
+        const io_guard_1 = io_thread_guard.exempt(.u11_places);
+        defer io_guard_1.end();
         for (self.items.items) |*pin| pin.kind = kindOf(pin.path);
     }
 
     /// What the file holds; nothing for a missing or unreadable one, and
     /// lines that are not usable paths are dropped.
     pub fn load(a: std.mem.Allocator, io: std.Io, file: []const u8) List {
+        // Every caller is on the UI thread (plan U11).
+        const io_guard_2 = io_thread_guard.exempt(.u11_places);
+        defer io_guard_2.end();
         var list: List = .{};
         const data = std.Io.Dir.cwd().readFileAlloc(io, file, a, .limited(file_limit)) catch return list;
         defer a.free(data);

@@ -10,6 +10,7 @@
 //! media, which needs its own containment checks.
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const c = @import("c.zig").api;
 const ops = @import("ops.zig");
 const Allocator = std.mem.Allocator;
@@ -243,6 +244,7 @@ fn canEnterAndWrite(dir: []const u8) bool {
 /// existing item: a taken name gets the first free "name (N).ext". Missing
 /// parent folders are recreated and removed again if the move fails.
 pub fn restoreEntry(a: Allocator, files_dir: []const u8, name: []const u8) !Restored {
+    io_thread_guard.blocking("trash.restoreEntry");
     if (!validName(name)) return error.InvalidName;
     var src_buf: [std.fs.max_path_bytes]u8 = undefined;
     const src = try entryPath(&src_buf, files_dir, name);
@@ -355,6 +357,7 @@ fn removeDirectorySize(a: Allocator, files_dir: []const u8, name: []const u8) !v
 /// first: a crash then leaves an orphaned `.trashinfo` (swept by
 /// `sweepOrphans`) instead of an item that can no longer be restored.
 pub fn deleteEntry(a: Allocator, files_dir: []const u8, name: []const u8) !void {
+    io_thread_guard.blocking("trash.deleteEntry");
     if (!validName(name)) return error.InvalidName;
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const entry = try entryPath(&buf, files_dir, name);
@@ -416,6 +419,7 @@ pub fn freeNames(a: Allocator, names: []const []u8) void {
 /// Removes `.trashinfo` files whose item no longer exists (a crash between the
 /// two deletions, or an item moved out by other means).
 pub fn sweepOrphans(a: Allocator, files_dir: []const u8) void {
+    io_thread_guard.blocking("trash.sweepOrphans");
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
     const info_dir = std.fmt.bufPrintSentinel(&dir_buf, "{s}/info", .{root(files_dir)}, 0) catch return;
     const dir = c.opendir(info_dir) orelse return;

@@ -1,6 +1,7 @@
 //! Files in chooser mode: the portal file dialog's footer, filters and results.
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -203,6 +204,9 @@ pub fn acceptChooser(self: *App) void {
 }
 
 pub fn collectChooser(self: *App) !void {
+    const io_guard_0 = io_thread_guard.exempt(.u10_chooser);
+    defer io_guard_0.end();
+    io_thread_guard.blocking("chooser path checks");
     const opts = self.chooser orelse return;
     for (self.chooser_paths.items) |path| self.allocator.free(path);
     self.chooser_paths.clearRetainingCapacity();

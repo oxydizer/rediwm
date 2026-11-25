@@ -1,5 +1,6 @@
 //! Files terminal controller. All terminal state stays in this client process.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -110,6 +111,9 @@ pub fn overTerminalDivider(self: *App, x: f64, y: f64) bool {
 }
 
 fn rememberDirectory(self: *App) void {
+    const io_guard_0 = io_thread_guard.exempt(.u12_path_resolution);
+    defer io_guard_0.end();
+    io_thread_guard.blocking("terminal realpath");
     if (self.terminal.navigation == self.navigation_count) return;
     self.terminal.navigation = self.navigation_count;
     if (self.isRecent() or self.history.archive_len != 0) return;

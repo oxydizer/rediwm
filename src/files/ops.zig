@@ -1,4 +1,5 @@
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const builtin = @import("builtin");
 const platform = @import("platform");
 const i18n = @import("i18n");
@@ -441,6 +442,7 @@ pub fn validateFilename(name: []const u8) !void {
 }
 
 pub fn createFolder(allocator: Allocator, dir: []const u8, name: []const u8) !void {
+    io_thread_guard.blocking("ops.createFolder");
     try validateFilename(name);
     const full_path = try std.fmt.allocPrintSentinel(allocator, "{s}/{s}", .{ dir, name }, 0);
     defer allocator.free(full_path);
@@ -455,6 +457,7 @@ pub fn createFolder(allocator: Allocator, dir: []const u8, name: []const u8) !vo
 }
 
 pub fn createFile(allocator: Allocator, dir: []const u8, name: []const u8) !void {
+    io_thread_guard.blocking("ops.createFile");
     try validateFilename(name);
     const full_path = try std.fmt.allocPrintSentinel(allocator, "{s}/{s}", .{ dir, name }, 0);
     defer allocator.free(full_path);
@@ -471,6 +474,7 @@ pub fn createFile(allocator: Allocator, dir: []const u8, name: []const u8) !void
 }
 
 pub fn renameItem(allocator: Allocator, old_path: []const u8, new_name: []const u8) !void {
+    io_thread_guard.blocking("ops.renameItem");
     try validateFilename(new_name);
     const parent = std.fs.path.dirname(old_path) orelse return error.InvalidPath;
     if (std.mem.eql(u8, std.fs.path.basename(old_path), new_name)) return;
@@ -490,6 +494,7 @@ pub fn renameItem(allocator: Allocator, old_path: []const u8, new_name: []const 
 
 /// rm removes directory trees without following symlinks; -- protects option-like names.
 pub fn deleteItems(io: std.Io, paths: []const []const u8) !void {
+    io_thread_guard.blocking("ops.deleteItems");
     if (paths.len == 0) return;
     var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(std.heap.c_allocator);
@@ -504,6 +509,7 @@ pub fn deleteItems(io: std.Io, paths: []const []const u8) !void {
 
 /// Let GIO remove both trashed contents and their restore metadata.
 pub fn emptyTrash(io: std.Io) !void {
+    io_thread_guard.blocking("ops.emptyTrash");
     var child = std.process.spawn(io, .{ .argv = &.{ "gio", "trash", "--empty" } }) catch |err| {
         if (err == error.FileNotFound) return error.GioNotAvailable;
         return error.TrashFailed;
@@ -513,6 +519,7 @@ pub fn emptyTrash(io: std.Io) !void {
 }
 
 pub fn trashItems(io: std.Io, paths: []const []const u8) !void {
+    io_thread_guard.blocking("ops.trashItems");
     if (paths.len == 0) return;
     var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(std.heap.c_allocator);
@@ -563,6 +570,7 @@ pub fn isDescendantOrSame(src: []const u8, dst: []const u8) bool {
 }
 
 pub fn generateUniqueName(allocator: Allocator, dest_dir: []const u8, original_name: []const u8) ![]u8 {
+    io_thread_guard.blocking("ops.generateUniqueName");
     var path_buf: [4096]u8 = undefined;
     const initial_z = try std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ dest_dir, original_name }, 0);
     var st: c.struct_stat = undefined;
@@ -1130,6 +1138,7 @@ fn copyRecursiveTrackedImpl(
 }
 
 pub fn deleteRecursive(allocator: Allocator, path: []const u8) !void {
+    io_thread_guard.blocking("ops.deleteRecursive");
     const path_z = try allocator.dupeSentinel(u8, path, 0);
     defer allocator.free(path_z);
 
@@ -1193,6 +1202,7 @@ fn crossDeviceMoveTracked(
 }
 
 pub fn moveItem(allocator: Allocator, src: []const u8, dst: []const u8, cancel: ?*std.atomic.Value(bool)) !void {
+    io_thread_guard.blocking("ops.moveItem");
     return moveItemTracked(allocator, src, dst, cancel, null, 0);
 }
 

@@ -1,6 +1,7 @@
 //! Files dialogs: opening, confirming and keyboard handling of the modal cards.
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -49,6 +50,8 @@ pub fn closeDialog(self: *App) void {
 }
 
 pub fn openProperties(self: *App, path: []const u8, preview: ?icons.Entry) void {
+    const io_guard_2 = io_thread_guard.exempt(.u9_properties);
+    defer io_guard_2.end();
     const state = properties.State.init(self.allocator, path, preview) catch {
         self.setStatusNotice(tr("Could not read file properties"), true);
         return;
@@ -373,6 +376,8 @@ pub fn managerConflictCanMerge(self: *const App) bool {
 }
 
 fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) !void {
+    const io_guard_1 = io_thread_guard.exempt(.u8_small_mutations);
+    defer io_guard_1.end();
     const manager = if (self.io_manager) |value| value else
         return error.OperationManagerUnavailable;
     const conflict = manager.nextConflict() orelse return error.ConflictNoLongerPending;
@@ -434,6 +439,8 @@ pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
 }
 
 pub fn confirmDialog(self: *App) void {
+    const io_guard_0 = io_thread_guard.exempt(.u8_small_mutations);
+    defer io_guard_0.end();
     const dlg = self.dialog orelse return;
     switch (dlg.kind) {
         .transfers => {},

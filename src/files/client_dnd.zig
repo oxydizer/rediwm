@@ -1,6 +1,7 @@
 //! Drag and drop: data offers, drops into folders or the terminal, and dragging files out.
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const wl = @import("wayland").client.wl;
 const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
@@ -155,6 +156,7 @@ pub fn startDropReceive(self: *Client, offer: *Offer, slot: ?usize, target: []co
 }
 
 pub fn canonicalPath(path: []const u8) ![]u8 {
+    io_thread_guard.blocking("client_dnd.canonicalPath");
     const terminated = try a.dupeSentinel(u8, path, 0);
     defer a.free(terminated);
     var buffer: [4096]u8 = undefined;
@@ -163,6 +165,8 @@ pub fn canonicalPath(path: []const u8) ![]u8 {
 }
 
 pub fn receiveDrop(self: *Client) void {
+    const io_guard_0 = io_thread_guard.exempt(.u12_path_resolution);
+    defer io_guard_0.end();
     const receive = if (self.drop_receiving) |*r| r else return;
     if (app_mod.nowMs() - receive.started > transfer.timeout_ms) {
         self.app.setStatusNotice(@import("i18n").tr("The drop timed out"), true);

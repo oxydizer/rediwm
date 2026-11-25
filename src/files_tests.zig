@@ -8,6 +8,7 @@ const dirsize_mod = @import("files/dirsize.zig");
 const transfer_bench_mod = @import("files/transfer_bench.zig");
 const io_manager_tests = @import("files/io_manager_tests.zig");
 const io_service_tests = @import("files/io_service_tests.zig");
+const io_thread_guard = @import("files/io_thread_guard.zig");
 const io_coordinator_tests = @import("files/io_coordinator_tests.zig");
 const io_workers_tests = @import("files/io_workers_tests.zig");
 const io_executor_tests = @import("files/io_executor_tests.zig");
@@ -26,6 +27,7 @@ test {
     _ = transfer_bench_mod;
     _ = io_manager_tests;
     _ = io_service_tests;
+    _ = io_thread_guard;
     _ = io_coordinator_tests;
     _ = io_workers_tests;
     _ = io_executor_tests;

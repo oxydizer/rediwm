@@ -2,6 +2,7 @@
 //! there, and restoring or deleting its entries (the work is in trash.zig).
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -104,6 +105,8 @@ pub fn takeTrashDrop(self: *App) bool {
 /// Moves what was dropped on the Trash row to the Trash. What is in the
 /// Trash already stays where it is.
 pub fn trashDropped(self: *App, paths: []const []const u8) void {
+    const io_guard_1 = io_thread_guard.exempt(.u4_delete_trash_spawn);
+    defer io_guard_1.end();
     var kept: std.ArrayList([]const u8) = .empty;
     defer kept.deinit(self.allocator);
     for (paths) |path| {
@@ -124,6 +127,8 @@ pub fn trashDropped(self: *App, paths: []const []const u8) void {
 }
 
 fn restore(self: *App, names: []const []const u8) void {
+    const io_guard_0 = io_thread_guard.exempt(.u7_trash_restore);
+    defer io_guard_0.end();
     const summary = trash.restoreMany(self.allocator, self.trash_dir.?, names);
     reportRestore(self, summary);
     self.refresh();
