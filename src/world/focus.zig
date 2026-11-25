@@ -112,7 +112,6 @@ pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) 
     toplevel.setActivated(true);
 
     @import("../config_runtime/apply.zig").applyInactiveOpacity(world.server);
-    world.server.refreshTaskbars();
 
     if (world.server.ipc) |ipc| {
         events.onWindowFocused(ipc, toplevel.id);
@@ -122,9 +121,11 @@ pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) 
     const next = enter orelse {
         if (world.server.desktop) |desktop| desktop.yieldKeyboard();
         seat.keyboardClearFocus();
+        world.server.refreshTaskbars();
         return;
     };
     @import("../Keyboard.zig").enter(world.server, next);
+    world.server.refreshTaskbars();
 }
 
 /// A transient dialog must stay above its owner even when the owner itself
