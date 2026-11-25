@@ -34,6 +34,7 @@ def run():
                      "XDG_STATE_HOME": str(tmp / "state")}
         process, log = spawn_compositor(tmp, config_content=config, env_extra=env_extra)
         client = None
+        second_client = None
         try:
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.wait_for("wallpaper_presented", timeout_ms=10000)
@@ -83,6 +84,38 @@ def run():
                 ipc.fullscreen(win_id)
                 wait_for(lambda: not ipc.get_window_debug(win_id)["fullscreen"], "window did not leave fullscreen")
                 wait_for(shown, "taskbar did not return after fullscreen with auto-hide off")
+
+                # Fullscreen visibility follows the focused toplevel, not
+                # whichever window happens to be first in the world list.
+                second_log_path = tmp / "second-client.log"
+                with second_log_path.open("w") as second_log:
+                    second_client = subprocess.Popen(
+                        [str(tmp / "client"), "--app-id", "autohide-second", "--title", "Second window"],
+                        env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display,
+                                 REDIWM_TEST_DECORATION="server", REDIWM_TEST_RESIZE="1"),
+                        stdout=second_log, stderr=second_log)
+                second_win = wait_for(
+                    lambda: next((w for w in ipc.get_windows() if w["app_id"] == "autohide-second"), None),
+                    "second client map")
+                second_id = second_win["id"]
+                ipc.focus_window(second_id)
+                wait_for(
+                    lambda: (ipc.get_focused_window() or {}).get("id") == second_id,
+                    "second window did not receive focus")
+                ipc.fullscreen(second_id)
+                wait_for(lambda: ipc.get_window_debug(second_id)["fullscreen"],
+                         "focused second window did not enter fullscreen")
+                wait_for(hidden, "taskbar remained above the focused fullscreen window")
+                ipc.fullscreen(second_id)
+                wait_for(lambda: not ipc.get_window_debug(second_id)["fullscreen"],
+                         "second window did not leave fullscreen")
+                wait_for(shown, "taskbar did not return after second window fullscreen")
+                second_client.terminate()
+                second_client.wait(timeout=2)
+                second_client = None
+                wait_for(
+                    lambda: not any(w["id"] == second_id for w in ipc.get_windows()),
+                    "second window did not close")
 
                 # Settings turns it on, saves it, and windows take the whole edge.
                 ipc.action("open_appearance")
@@ -168,6 +201,12 @@ def run():
                     client.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     client.kill()
+            if second_client:
+                second_client.terminate()
+                try:
+                    second_client.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    second_client.kill()
             stop_process(process)
             log.close()
     print("taskbar_auto_hide: ok")
