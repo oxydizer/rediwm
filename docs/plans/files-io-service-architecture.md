@@ -128,6 +128,8 @@ JobRecord {
     label,                       // fixed-size display name, e.g. first source and item count
     state,                       // io_manager.JobState
     completed_bytes, total_bytes, rate_bytes_per_second,
+    completed_items, total_items,    // files and directories, for "12 of 340"
+    started_at, finished_at,         // wall clock, for elapsed time and history
     pending_conflict: ?ConflictId,   // set on the job at the head of the conflict queue
     offered_resource: ?ResourceId,   // e.g. finished extraction staging a window may borrow or take
     borrow_count,                    // borrows outstanding; non-zero blocks retirement
@@ -298,6 +300,12 @@ hung-worker tests of threading §12 that cover that stage's paths pass.
 * UI-side `trySend` and `fetchChanges` stay fail-fast. Add the window outbox and
   `fetch_pending` (threading §3).
 * Add the Manager's O(1) per-job summary and dirty set.
+* Cursors belong to **consumers**, not only windows: a window, or an external
+  subscriber (§13). The registry has `max_windows` window slots and
+  `max_external_consumers` (4) external slots. Only windows have outcome slots;
+  an external consumer sees final records through the tombstone ring and resync.
+* A per-job rate history (§13) is kept beside the table, so a panel opened in the
+  middle of a transfer can draw its speed graph from the start.
 
 *Done when:* a late-joining window sees all live jobs; a window that never reads
 loses none of its own outcomes or pending conflicts, does not delay retirement and
@@ -306,6 +314,12 @@ the live set; and the coordinator no longer calls `snapshotJobs` on its loop (C3
 
 **S2, lifecycle and coordinator hygiene.**
 * Draining shutdown (threading §10); headless drain after the last window.
+* Closing the last window while ordinary jobs run asks first: keep them running
+  in the background, or cancel them. Archive extractions are listed as being
+  cancelled in either case (threading §10).
+* While headless, each job's end (completed, failed, or cancelled because a
+  conflict had no one to answer it) sends a desktop notification. Once the shell
+  panel exists (S6), the notifications stay as a fallback for a shell without it.
 * Automatic retirement (§6).
 * Resource ownership classes (§6): the `window(id)` owner, borrows, close-time
   sweep, `release_borrow` and `dispose_resource`. These replace the origin checks in
@@ -355,6 +369,19 @@ time.
   copies, archive extraction and a stalled FUSE mount, across two or more windows.
 * Close any gap found by the measurement.
 
+**S6, external endpoint and single instance** (§13). Needs S3, so that every
+window renders from the job table.
+* One private endpoint owned by the Files process, served by its own endpoint
+  thread.
+* `open_window`: launching Files while a Files process runs, headless or not,
+  opens a window in that process instead of starting another one.
+* `subscribe` and job control for the shell's tray icon and panel.
+
+*Done when:* launching Files during a headless drain opens a window that shows the
+running transfers, and a test client subscribed to the endpoint sees every job
+from submission to its final record, pauses and resumes one, and recovers through
+resync after it stops reading.
+
 ## 10. Constraints
 
 * No Manager, Runtime, executor or ledger pointer is reachable from window code.
@@ -376,7 +403,9 @@ Revisit only when one of these is a concrete requirement:
 
 * Jobs must survive a Files crash or exit. The headless drain does not cover
   this.
-* The shell must show or control file activity while Files is not running.
+* The shell must show or control file activity while **no** Files process is
+  running. Showing and controlling it while one runs, headless included, is the
+  S6 endpoint (§13), not a trigger.
 * A second program needs to submit jobs.
 
 If it happens, the agreed contract is kept in
@@ -387,3 +416,59 @@ that would still need real design are the journal and per-operation recovery
 rules. A recorded intent does not prove the filesystem action did not already
 happen, so recovery cannot be generic. Do that work per operation when it is
 needed, not before.
+
+## 13. External endpoint: the shell panel and single instance
+
+The service is the backend for the shell's file-activity tray icon and panel:
+all active jobs, with pause, resume and cancel, and transfer-speed graphs. It is
+also how a second launch of Files finds the running process. Both use one
+endpoint, built in S6.
+
+Because the Files process stays alive while it has jobs (headless drain, S2), the
+shell can always reach the jobs it has to show while a Files process is running.
+This needs no separate service process, no journal and no restart recovery: the
+in-process decision of §2 stands.
+
+**Transport.** A private Unix stream socket, `files-io.sock` in the Files runtime
+directory. Like `files-transfers.sock`, it is deliberately outside
+`rediwm-*.sock` compositor discovery. The directory is private, the socket is
+created with umask 0177, and both ends check peer credentials (same uid). The
+message envelopes, `subscribe` snapshot and sequence semantics, backpressure and
+error codes follow the deferred contract
+([files-io-ipc-contract-deferred.md](files-io-ipc-contract-deferred.md) §2, §3,
+§7, §8, §9, §10). Its journal, recovery and idempotency sections (§4.1, §6) do
+not apply.
+
+**Threading.** An endpoint thread owns the listening socket and the client
+connections, all non-blocking. It is a consumer of the Service like a window:
+it holds an external consumer slot per subscriber, reads by cursor and queues
+control commands through the Service's rings. It never runs on the UI thread or
+the coordinator, and it never touches the Manager.
+
+**Subscribers map onto the job table.** `subscribe` is a fetch from cursor 0
+(the snapshot), then deltas by cursor. Each client has a bounded output buffer.
+A client that stops reading stops advancing its cursor, and it can block nothing
+but itself (threading §6). If it falls behind the tombstone ring, it gets the same
+`resync` a window gets. A client that has not read for a long time is
+disconnected, and reconnecting starts from a new snapshot.
+
+**Controls.** `pause_job`, `resume_job` and `cancel_job` from the shell are
+ordinary control commands. A pending conflict is shown in the panel with an
+action that opens a Files window on it (`open_window` with the job id). The
+conflict dialog stays in Files.
+
+**Speed graphs.** The service keeps a fixed rate history per live job (one
+sample per second, 120 samples), beside the job table rather than inside every
+record. A record copy therefore stays small, and a panel opened mid-transfer
+can still draw the graph from the start. The history goes with the job when it
+retires.
+
+**Single instance.** `open_window(path?, job?)` asks the running process to open a
+window. A Files launch first tries the endpoint. If the endpoint answers, the new
+process hands over its arguments and exits; otherwise it becomes the instance.
+A headless process reconnects to the compositor for the new window.
+
+**Limits.** At most `max_external_consumers` subscribers (4). Request sizes,
+paths and output buffers are bounded. A shell that crashes or restarts
+resubscribes and gets a new snapshot.
+

@@ -36,6 +36,7 @@ the table below says otherwise.
 | S3 windows move onto the service | **Needs phase 2.** The coordinator rejects mixed file and directory selections today, and `JobRunner` work is invisible to the service, so the fallback must go first |
 | S4 archive lifecycle | Builds on phase 1. The archive publication cursor becomes service-owned |
 | S5 limits and validation | Overlaps phase 5 (shutdown ordering, allocation failure), phase 6 (measured scheduling) and phase 7 (capacity calibration). UI responsiveness is not deferred to S5: it is an acceptance criterion of every stage (threading §1, §13) |
+| S6 external endpoint | Independent of the phases. Serves the shell tray and panel and single-instance launch from the same job table |
 
 ## Goal
 

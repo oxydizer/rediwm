@@ -56,6 +56,7 @@ measured latency check on top.
 | --- | --- | --- |
 | UI thread (one event loop for all windows) | Wayland, rendering, input, submitting commands, reading the job table | Manager or Runtime access, worker queue draining, filesystem scans for jobs |
 | Coordinator (one) | Owns the Manager, Runtime, ledger and executors; applies commands and completions; dispatches work; updates the job table | Blocking syscalls, waiting for workers, UI calls |
+| Endpoint (one, from S6) | The external socket: shell subscribers and `open_window` (architecture §13). A consumer of the Service like a window | Blocking socket calls, Manager access, UI calls |
 | Discovery workers (2), operation workers (2) | One bounded unit of filesystem work, returned as an owned completion | Touching the Manager, the ledger's job state, or any window |
 
 The worker counts and queue capacities are shared process configuration. Changing
