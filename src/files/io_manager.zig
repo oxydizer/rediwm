@@ -761,9 +761,18 @@ pub const Manager = struct {
         if (job.auto_plan_discovered_entries)
             return error.DiscoveryOperationModeAlreadySet;
 
+        // A move job may mix directory roots, whose contents are discovered
+        // and moved entry by entry, with file and symlink roots, which carry
+        // their own operation and are never discovered.
+        var directory_roots: usize = 0;
         for (job.tree.roots()) |root_id| {
             const root = job.tree.get(root_id) orelse return error.UnknownEntry;
-            if (root.kind != .directory) return error.RootNotDirectory;
+            if (root.kind != .directory) {
+                if (!job.entry_operation_indices.contains(root_id))
+                    return error.MissingRootOperation;
+                continue;
+            }
+            directory_roots += 1;
             const destination_index = job.entry_operation_indices.get(root_id) orelse
                 return error.MissingRootDirectoryOperation;
             if (job.operations.items[destination_index].kind != .create_directory)
@@ -771,6 +780,7 @@ pub const Manager = struct {
             if (!job.source_detach_indices.contains(root_id))
                 return error.MissingRootSourceDetachOperation;
         }
+        if (directory_roots == 0) return error.RootNotDirectory;
         job.auto_move_discovered_entries = true;
     }
 

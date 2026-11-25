@@ -5,6 +5,7 @@
 //! handles and immutable updates.
 const std = @import("std");
 const io_thread_guard = @import("io_thread_guard.zig");
+const io_transfer_plan = @import("io_transfer_plan.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
@@ -24,12 +25,19 @@ const PublishedJobState = struct {
     rate_bytes_per_second: u64 = 0,
 };
 
-const RejectionCode = enum(u8) {
+pub const RejectionCode = enum(u8) {
     unsupported_command = 1,
     unknown_job = 2,
     invalid_job_state = 3,
     job_not_terminal = 4,
     missing_payload = 5,
+    invalid_destination = 6,
+    invalid_source = 7,
+    unsupported_source = 8,
+    destination_inside_source = 9,
+    overlapping_move_roots = 10,
+    mounted_directory_move = 11,
+    nothing_to_transfer = 12,
     other = 255,
 };
 
@@ -352,292 +360,99 @@ pub const Coordinator = struct {
         }
     }
 
-    /// Builds and queues a basic file/symlink transfer entirely on the
-    /// coordinator thread. No filesystem metadata crosses the UI boundary.
+    /// Plans a transfer of any mix of files, symlinks and directories and
+    /// queues it as one Manager job. Filesystem inspection is confined to
+    /// `prepareTransfer`, which stage S2 moves onto a discovery worker;
+    /// `applyTransferPlan` touches only the Manager.
     fn submitTransfer(
         self: *Coordinator,
         routed: io_service.RoutedCommand,
     ) !void {
-        const io_guard_1 = io_thread_guard.exempt(.c1_submit_validation);
-        defer io_guard_1.end();
-        io_thread_guard.blocking("submit validation");
         const payload = routed.command.payload orelse
             return error.MissingTransferPayload;
         const request = switch (payload.data) {
             .transfer => |*transfer| transfer,
             .discovery, .conflict_resolution => return error.UnexpectedTransferPayload,
         };
-        if (request.sources.len == 0) return error.EmptyTransfer;
-        if (request.destination_path.len == 0 or
-            !std.fs.path.isAbsolute(request.destination_path) or
-            std.mem.indexOfScalar(u8, request.destination_path, 0) != null)
-        {
-            return error.InvalidTransferDestination;
-        }
+        var plan = plan: {
+            const io_guard = io_thread_guard.exempt(.c1_submit_validation);
+            defer io_guard.end();
+            break :plan try io_transfer_plan.prepare(self.allocator, request);
+        };
+        defer plan.deinit();
+        try self.applyTransferPlan(routed.window_id, request.mode, &plan);
+    }
 
-        const destination_z = try self.allocator.dupeSentinel(
-            u8,
-            request.destination_path,
-            0,
-        );
-        defer self.allocator.free(destination_z);
+    fn applyTransferPlan(
+        self: *Coordinator,
+        window_id: io_service.WindowId,
+        mode: io_service.TransferMode,
+        plan: *const io_transfer_plan.TransferPlan,
+    ) !void {
+        const manager = &self.runtime.manager;
+        const job_id = try manager.createJob(window_id);
+        errdefer std.debug.assert(manager.discardPlanningJob(job_id));
 
-        var destination_stat: c.struct_stat = undefined;
-        if (c.stat(destination_z, &destination_stat) != 0 or
-            (destination_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
-        {
-            return error.InvalidTransferDestination;
-        }
+        var discovery_roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
+        defer discovery_roots.deinit(self.allocator);
+        var directory_root_ids: std.ArrayList(io_tree.EntryId) = .empty;
+        defer directory_root_ids.deinit(self.allocator);
 
-        // Directory roots use Manager-owned incremental discovery. Keep
-        // mixed selections out of this path because move planning has a
-        // distinct operation mode for directory roots.
-        var directory_count: usize = 0;
-        for (request.sources) |source| {
-            if (source.path.len == 0 or
-                !std.fs.path.isAbsolute(source.path) or
-                std.mem.indexOfScalar(u8, source.path, 0) != null)
-            {
-                return error.InvalidTransferSource;
+        for (plan.sources.items) |source| {
+            const root_id = try manager.addTreeRoot(
+                job_id,
+                source.destination_name,
+                source.kind,
+                source.metadata,
+                source.symlink_target,
+            );
+            switch (source.kind) {
+                .directory => {
+                    try discovery_roots.append(self.allocator, .{
+                        .root_id = root_id,
+                        .path = source.path,
+                    });
+                    try directory_root_ids.append(self.allocator, root_id);
+                },
+                .regular_file, .symlink => {
+                    try manager.setRootSourcePath(job_id, root_id, source.path);
+                    const copy_kind: io_manager.OperationKind =
+                        if (source.kind == .regular_file) .copy_file else .copy_symlink;
+                    if (mode == .move and source.same_device) {
+                        _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
+                    } else {
+                        _ = try manager.addEntryOperation(job_id, root_id, copy_kind);
+                        if (mode == .move)
+                            _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
+                    }
+                },
+                .other => unreachable,
             }
-
-            const source_z = try self.allocator.dupeSentinel(u8, source.path, 0);
-            defer self.allocator.free(source_z);
-            var source_stat: c.struct_stat = undefined;
-            if (c.lstat(source_z, &source_stat) != 0)
-                return error.InvalidTransferSource;
-            if ((source_stat.st_mode & c.S_IFMT) == c.S_IFDIR)
-                directory_count += 1;
         }
 
-        if (directory_count != 0) {
-            if (directory_count != request.sources.len)
-                return error.MixedTransferSourceKinds;
-            try self.submitDirectoryTransfer(routed, request, destination_stat);
+        try manager.setDestinationDirectory(job_id, plan.destination_path);
+        if (mode == .move)
+            try manager.setDestinationDeviceId(job_id, plan.destination_device_id);
+
+        if (directory_root_ids.items.len == 0) {
+            try manager.queueJob(job_id);
             return;
         }
 
-        const manager = &self.runtime.manager;
-        const job_id = try manager.createJob(routed.window_id);
-        errdefer std.debug.assert(manager.discardPlanningJob(job_id));
-
-        for (request.sources) |source| {
-            if (source.path.len == 0 or
-                !std.fs.path.isAbsolute(source.path) or
-                std.mem.indexOfScalar(u8, source.path, 0) != null)
-            {
-                return error.InvalidTransferSource;
-            }
-
-            const name = std.fs.path.basename(source.path);
-            if (name.len == 0) return error.InvalidTransferSource;
-
-            const source_z = try self.allocator.dupeSentinel(u8, source.path, 0);
-            defer self.allocator.free(source_z);
-
-            var source_stat: c.struct_stat = undefined;
-            if (c.lstat(source_z, &source_stat) != 0)
-                return error.InvalidTransferSource;
-
-            const kind: io_tree.EntryKind = switch (source_stat.st_mode & c.S_IFMT) {
-                c.S_IFREG => .regular_file,
-                c.S_IFLNK => .symlink,
-                else => return error.UnsupportedTransferSource,
-            };
-
-            var symlink_target: ?[]u8 = null;
-            defer if (symlink_target) |target| self.allocator.free(target);
-            if (kind == .symlink) {
-                var target_buffer: [4096]u8 = undefined;
-                const target_len = c.readlink(
-                    source_z,
-                    &target_buffer,
-                    target_buffer.len,
-                );
-                if (target_len < 0 or target_len == target_buffer.len)
-                    return error.InvalidTransferSource;
-                symlink_target = try self.allocator.dupe(
-                    u8,
-                    target_buffer[0..@intCast(target_len)],
-                );
-            }
-
-            const target_path = try std.fs.path.join(
-                self.allocator,
-                &.{ request.destination_path, name },
-            );
-            defer self.allocator.free(target_path);
-            if (std.mem.eql(u8, source.path, target_path))
-                return error.TransferSourceEqualsDestination;
-
-            const metadata: io_tree.Metadata = .{
-                .size = @intCast(@max(source_stat.st_size, 0)),
-                .mode = @intCast(source_stat.st_mode),
-                .device_id = @intCast(source_stat.st_dev),
-                .inode_id = @intCast(source_stat.st_ino),
-                .mtime_sec = @intCast(source_stat.st_mtim.tv_sec),
-                .mtime_nsec = @intCast(source_stat.st_mtim.tv_nsec),
-                .ctime_sec = @intCast(source_stat.st_ctim.tv_sec),
-                .ctime_nsec = @intCast(source_stat.st_ctim.tv_nsec),
-            };
-
-            const root_id = try manager.addTreeRoot(
-                job_id,
-                name,
-                kind,
-                metadata,
-                symlink_target,
-            );
-            try manager.setRootSourcePath(job_id, root_id, source.path);
-
-            const operation_kind: io_manager.OperationKind = switch (kind) {
-                .regular_file => .copy_file,
-                .symlink => .copy_symlink,
-                else => unreachable,
-            };
-
-            if (request.mode == .move and
-                source_stat.st_dev == destination_stat.st_dev)
-            {
-                _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
-            } else {
-                _ = try manager.addEntryOperation(job_id, root_id, operation_kind);
-                if (request.mode == .move)
-                    _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
-            }
-        }
-
-        try manager.setDestinationDirectory(job_id, request.destination_path);
-        if (request.mode == .move)
-            try manager.setDestinationDeviceId(job_id, @intCast(destination_stat.st_dev));
-        try manager.queueJob(job_id);
-    }
-
-    /// Plans selected directory roots and lets Manager incrementally discover
-    /// and schedule their descendants. Discovery and operation execution stay
-    /// on the existing process-owned Runtime.
-    fn submitDirectoryTransfer(
-        self: *Coordinator,
-        routed: io_service.RoutedCommand,
-        request: *const io_service.TransferRequest,
-        destination_stat: c.struct_stat,
-    ) !void {
-        const io_guard_0 = io_thread_guard.exempt(.c1_submit_validation);
-        defer io_guard_0.end();
-        io_thread_guard.blocking("submit validation");
-        const manager = &self.runtime.manager;
-        const job_id = try manager.createJob(routed.window_id);
-        errdefer std.debug.assert(manager.discardPlanningJob(job_id));
-
-        var roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
-        defer roots.deinit(self.allocator);
-
-        for (request.sources, 0..) |source, index| {
-            const name = std.fs.path.basename(source.path);
-            if (name.len == 0) return error.InvalidTransferSource;
-
-            const source_z = try self.allocator.dupeSentinel(
-                u8,
-                source.path,
-                0,
-            );
-            defer self.allocator.free(source_z);
-
-            var source_stat: c.struct_stat = undefined;
-            if (c.lstat(source_z, &source_stat) != 0 or
-                (source_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
-            {
-                return error.InvalidTransferSource;
-            }
-
-            // Do not move a directory that is itself a mount point.
-            if (request.mode == .move) {
-                const parent_path = std.fs.path.dirname(source.path) orelse "/";
-                const parent_z = try self.allocator.dupeSentinel(
-                    u8,
-                    parent_path,
-                    0,
-                );
-                defer self.allocator.free(parent_z);
-
-                var parent_stat: c.struct_stat = undefined;
-                if (c.stat(parent_z, &parent_stat) != 0 or
-                    source_stat.st_dev != parent_stat.st_dev)
-                {
-                    return error.MountedDirectoryMoveUnsupported;
-                }
-
-                // Independent discovery roots must not overlap during a
-                // move: detaching a parent could invalidate a child root.
-                for (request.sources[0..index]) |previous| {
-                    if (ops_mod.isDescendantOrSame(source.path, previous.path) or
-                        ops_mod.isDescendantOrSame(previous.path, source.path))
-                    {
-                        return error.OverlappingDirectoryMoveRoots;
-                    }
-                }
-            }
-
-            // Discovery must not traverse into the destination it creates.
-            if (ops_mod.isDescendantOrSame(source.path, request.destination_path))
-                return error.TransferDestinationInsideSource;
-
-            const metadata: io_tree.Metadata = .{
-                .mode = @intCast(source_stat.st_mode),
-                .device_id = @intCast(source_stat.st_dev),
-                .inode_id = @intCast(source_stat.st_ino),
-                .mtime_sec = @intCast(source_stat.st_mtim.tv_sec),
-                .mtime_nsec = @intCast(source_stat.st_mtim.tv_nsec),
-                .ctime_sec = @intCast(source_stat.st_ctim.tv_sec),
-                .ctime_nsec = @intCast(source_stat.st_ctim.tv_nsec),
-            };
-
-            const root_id = try manager.addTreeRoot(
-                job_id,
-                name,
-                .directory,
-                metadata,
-                null,
-            );
-            try roots.append(self.allocator, .{
-                .root_id = root_id,
-                .path = source.path,
-            });
-        }
-
-        try manager.setDestinationDirectory(job_id, request.destination_path);
-
-        if (request.mode == .move) {
-            try manager.setDestinationDeviceId(
-                job_id,
-                @intCast(destination_stat.st_dev),
-            );
-            for (roots.items) |root| {
-                _ = try manager.addEntryOperation(
-                    job_id,
-                    root.root_id,
-                    .create_directory,
-                );
-                _ = try manager.addEntryOperation(
-                    job_id,
-                    root.root_id,
-                    .detach_source,
-                );
+        if (mode == .move) {
+            for (directory_root_ids.items) |root_id| {
+                _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
+                _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
             }
             try manager.enableDiscoveredEntryMoves(job_id);
         } else {
             try manager.enableDiscoveredEntryOperations(job_id);
-            for (roots.items) |root| {
-                _ = try manager.addEntryOperation(
-                    job_id,
-                    root.root_id,
-                    .create_directory,
-                );
+            for (directory_root_ids.items) |root_id| {
+                _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
             }
         }
-
-        // This call atomically commits the job and all discovery roots.
-        try manager.queueJobWithDiscoveryRoots(job_id, roots.items);
+        // Atomically commits the job and all discovery roots.
+        try manager.queueJobWithDiscoveryRoots(job_id, discovery_roots.items);
     }
 
     /// Publishes immutable job state and aggregate operation progress to the
@@ -788,9 +603,24 @@ fn rejectionCode(err: anyerror) RejectionCode {
         .invalid_job_state
     else if (err == error.JobNotTerminal)
         .job_not_terminal
+    else if (err == error.InvalidTransferDestination)
+        .invalid_destination
+    else if (err == error.InvalidTransferSource or err == error.EmptyTransfer)
+        .invalid_source
+    else if (err == error.UnsupportedTransferSource)
+        .unsupported_source
+    else if (err == error.TransferDestinationInsideSource)
+        .destination_inside_source
+    else if (err == error.OverlappingMoveRoots)
+        .overlapping_move_roots
+    else if (err == error.MountedDirectoryMoveUnsupported)
+        .mounted_directory_move
+    else if (err == error.TransferSourceEqualsDestination)
+        .nothing_to_transfer
     else
         .other;
 }
+
 
 test "coordinator protects worker and App resources during release" {
     const allocator = std.testing.allocator;
