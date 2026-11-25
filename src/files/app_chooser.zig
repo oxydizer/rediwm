@@ -246,8 +246,10 @@ pub fn collectChooser(self: *App) !void {
         check.selected = selected.items;
         if (opts.mode == .folder and !self.loading and self.error_message == null) check.fallback = self.history.current;
     }
-    if (!app_requests.send(self, .{ .chooser = check }, .{ .chooser = .{ .named = named } })) return error.Unavailable;
+    // The pending entry owns `named` from here, sent or not.
+    const pending: app_requests.Pending = .{ .chooser = .{ .named = named } };
     named = null;
+    if (!app_requests.send(self, .{ .chooser = check }, pending)) return error.Unavailable;
 }
 
 /// The service checked the choice (`collectChooser`).
