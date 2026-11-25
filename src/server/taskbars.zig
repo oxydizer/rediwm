@@ -114,7 +114,7 @@ pub fn applyTaskbarPosition(server: *Server) void {
 // outputs keep their bar, since a fullscreen window elsewhere shouldn't
 // blank an unrelated monitor's taskbar.
 pub fn updateTaskbarFullscreenVisibility(server: *Server) void {
-    const focused = server.world.toplevels.first();
+    const focused = @import("../ipc/handlers.zig").findFocusedToplevel(server);
     // The raw compositor-side intent flag, not `isFullscreen()`: for xdg
     // surfaces that reads the client-acked `current.fullscreen`, which lags
     // a round trip behind the resize we already applied synchronously in

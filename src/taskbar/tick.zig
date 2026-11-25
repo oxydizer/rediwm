@@ -25,11 +25,14 @@ const trayHit = Taskbar.trayHit;
 // Runs once per output frame while anything is unsettled. Returns whether
 // the caller should schedule another frame to keep the animation going.
 pub fn tick(bar: *Taskbar, now_ms: i64) bool {
+    const was_parked = bar.parked;
     const revealing = reveal.syncReveal(bar, now_ms);
+    if (bar.parked != was_parked) {
+        bar.server.updateTaskbarFullscreenVisibility();
+    }
     if (bar.parked) {
         // Away: the tree stays off, so nothing paints or takes hits; its
         // pending dirt is kept and renders once the bar is revealed again.
-        bar.tree.node.setEnabled(false);
         return revealing;
     }
     // A fullscreen window on this output keeps the bar hidden.
