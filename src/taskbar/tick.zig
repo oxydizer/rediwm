@@ -32,7 +32,8 @@ pub fn tick(bar: *Taskbar, now_ms: i64) bool {
         bar.tree.node.setEnabled(false);
         return revealing;
     }
-    bar.tree.node.setEnabled(true);
+    // A fullscreen window on this output keeps the bar hidden.
+    bar.tree.node.setEnabled(!bar.fullscreen_hidden);
 
     var causes = bar.paint_causes;
     bar.paint_causes = 0;
