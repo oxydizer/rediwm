@@ -3,6 +3,50 @@ const io_coordinator = @import("io_coordinator.zig");
 const io_service = @import("io_service.zig");
 const io_manager = @import("io_manager.zig");
 
+// The Service fails fast with `ServiceBusy` while the coordinator thread holds
+// its mutex; callers retry later instead of waiting. These helpers do that for
+// tests, which may spin briefly where the UI would retry on its next iteration.
+const busy_retries = 100_000;
+
+fn send(window: io_service.Handle, command: io_service.Command) !void {
+    for (0..busy_retries) |_| {
+        window.trySend(command) catch |err| switch (err) {
+            error.ServiceBusy => {
+                std.Thread.yield() catch {};
+                continue;
+            },
+            else => return err,
+        };
+        return;
+    }
+    return error.ServiceBusy;
+}
+
+fn sendOwned(window: io_service.Handle, command: *io_service.Command) !void {
+    for (0..busy_retries) |_| {
+        window.trySendOwned(command) catch |err| switch (err) {
+            error.ServiceBusy => {
+                std.Thread.yield() catch {};
+                continue;
+            },
+            else => return err,
+        };
+        return;
+    }
+    return error.ServiceBusy;
+}
+
+fn receive(window: io_service.Handle) !?io_service.Update {
+    for (0..busy_retries) |_| {
+        return window.tryReceiveUpdate() catch {
+            // ServiceBusy is its only error.
+            std.Thread.yield() catch {};
+            continue;
+        };
+    }
+    return error.ServiceBusy;
+}
+
 test "coordinator rejects transfer submissions without a payload" {
     var service: io_service.Service = .{};
     try service.init();
@@ -12,14 +56,14 @@ test "coordinator rejects transfer submissions without a payload" {
     try coordinator.init(std.testing.allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
-    try window.trySend(.{ .kind = .submit_job, .job_id = 73 });
+    try send(window, .{ .kind = .submit_job, .job_id = 73 });
     try std.testing.expect(waitReadable(service.updateWakeFd(), 2000));
     _ = service.drainUpdateWake();
 
-    const update = (try window.tryReceiveUpdate()).?;
+    const update = (try receive(window)).?;
     try std.testing.expectEqual(io_service.UpdateKind.command_rejected, update.kind);
     try std.testing.expectEqual(@as(u64, 73), update.job_id);
     try std.testing.expectEqual(@as(u8, 5), update.state_code);
@@ -172,7 +216,7 @@ fn submitTransfer(
         .kind = .submit_job,
         .payload = payload,
     };
-    window.trySendOwned(&command) catch |err| {
+    sendOwned(window, &command) catch |err| {
         payload.deinit();
         return err;
     };
@@ -194,7 +238,7 @@ fn resolveConflict(
         .kind = .resolve_conflict,
         .payload = payload,
     };
-    window.trySendOwned(&command) catch |err| {
+    sendOwned(window, &command) catch |err| {
         payload.deinit();
         return err;
     };
@@ -218,7 +262,7 @@ fn sendDiscoveryCommand(
         .job_id = job_id,
         .payload = payload,
     };
-    window.trySendOwned(&command) catch |err| {
+    sendOwned(window, &command) catch |err| {
         payload.deinit();
         return err;
     };
@@ -232,7 +276,7 @@ fn waitForRejection(
     for (0..500) |_| {
         if (waitReadable(service.updateWakeFd(), 10))
             _ = service.drainUpdateWake();
-        while (try window.tryReceiveUpdate()) |update| {
+        while (try receive(window)) |update| {
             if (update.kind == .command_rejected and update.job_id == job_id)
                 return update;
         }
@@ -268,9 +312,9 @@ test "coordinator routes conflicts to their owning window and resolves them ther
     try coordinator.init(allocator, &service);
 
     var owner_window = try service.registerWindow();
-    defer owner_window.close() catch unreachable;
+    defer owner_window.close();
     var other_window = try service.registerWindow();
-    defer other_window.close() catch unreachable;
+    defer other_window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, owner_window, .copy, destination_dir, source);
@@ -281,11 +325,11 @@ test "coordinator routes conflicts to their owning window and resolves them ther
         if (waitReadable(service.updateWakeFd(), 10))
             _ = service.drainUpdateWake();
 
-        while (try owner_window.tryReceiveUpdate()) |update| {
+        while (try receive(owner_window)) |update| {
             if (update.kind == .conflict)
                 conflict_id = update.conflict_id;
         }
-        while (try other_window.tryReceiveUpdate()) |update| {
+        while (try receive(other_window)) |update| {
             if (update.kind == .conflict)
                 other_window_saw_conflict = true;
         }
@@ -301,7 +345,7 @@ test "coordinator routes conflicts to their owning window and resolves them ther
     for (0..500) |_| {
         if (waitReadable(service.updateWakeFd(), 10))
             _ = service.drainUpdateWake();
-        rejected = other_window.tryReceiveUpdate() catch {
+        rejected = receive(other_window) catch {
             waitBriefly();
             continue;
         };
@@ -318,7 +362,7 @@ test "coordinator routes conflicts to their owning window and resolves them ther
     for (0..500) |_| {
         if (waitReadable(service.updateWakeFd(), 10))
             _ = service.drainUpdateWake();
-        while (try owner_window.tryReceiveUpdate()) |update| {
+        while (try receive(owner_window)) |update| {
             if (update.kind == .job_state) {
                 const state: io_manager.JobState = @fromBackingInt(
                     @intCast(update.state_code),
@@ -340,14 +384,14 @@ test "coordinator validates discovery payloads and routes rejections to the send
     try coordinator.init(std.testing.allocator, &service);
 
     var owner_window = try service.registerWindow();
-    defer owner_window.close() catch unreachable;
+    defer owner_window.close();
     var other_window = try service.registerWindow();
-    defer other_window.close() catch unreachable;
+    defer other_window.close();
     defer coordinator.deinit();
 
     const job_id: io_service.JobId = 73;
 
-    try owner_window.trySend(.{
+    try send(owner_window, .{
         .kind = .start_discovery,
         .job_id = job_id,
     });
@@ -385,7 +429,7 @@ test "coordinator validates discovery payloads and routes rejections to the send
         unknown_job.state_code,
     );
 
-    try std.testing.expect((try other_window.tryReceiveUpdate()) == null);
+    try std.testing.expect((try receive(other_window)) == null);
 }
 
 test "coordinator accepts discovery prioritization for a submitted directory job" {
@@ -423,7 +467,7 @@ test "coordinator accepts discovery prioritization for a submitted directory job
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source_dir);
@@ -432,7 +476,7 @@ test "coordinator accepts discovery prioritization for a submitted directory job
     for (0..500) |_| {
         if (waitReadable(service.updateWakeFd(), 10))
             _ = service.drainUpdateWake();
-        while (try window.tryReceiveUpdate()) |update| {
+        while (try receive(window)) |update| {
             if (update.kind == .job_state) {
                 job_id = update.job_id;
                 break;
@@ -453,7 +497,7 @@ test "coordinator accepts discovery prioritization for a submitted directory job
 
     try waitForContents(destination_file, "discovery priority payload");
 
-    while (try window.tryReceiveUpdate()) |update| {
+    while (try receive(window)) |update| {
         if (update.kind == .command_rejected and update.job_id == submitted_job_id)
             return error.DiscoveryPrioritizationRejected;
     }
@@ -486,7 +530,7 @@ test "coordinator copies a regular-file transfer" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
@@ -522,7 +566,7 @@ test "coordinator publishes job state transitions and transfer progress" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
@@ -536,7 +580,7 @@ test "coordinator publishes job state transitions and transfer progress" {
         if (waitReadable(service.updateWakeFd(), 10)) {
             _ = service.drainUpdateWake();
             for (0..100) |_| {
-                const maybe_update = window.tryReceiveUpdate() catch {
+                const maybe_update = receive(window) catch {
                     continue;
                 };
                 const update = maybe_update orelse break;
@@ -599,7 +643,7 @@ test "coordinator copies a symlink without dereferencing its target" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
@@ -638,7 +682,7 @@ test "coordinator moves a same-filesystem regular file" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .move, destination_dir, source);
@@ -696,7 +740,7 @@ test "coordinator discovers and copies a directory tree" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
@@ -750,7 +794,7 @@ test "coordinator moves a same-filesystem directory tree" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .move, destination_dir, source);
@@ -779,7 +823,7 @@ test "coordinator rejects an invalid transfer source" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, missing_source);
@@ -787,7 +831,7 @@ test "coordinator rejects an invalid transfer source" {
     try std.testing.expect(waitReadable(service.updateWakeFd(), 2000));
     _ = service.drainUpdateWake();
 
-    const update = (try window.tryReceiveUpdate()).?;
+    const update = (try receive(window)).?;
     try std.testing.expectEqual(io_service.UpdateKind.command_rejected, update.kind);
     try std.testing.expectEqual(@as(u8, 255), update.state_code);
     try std.testing.expectEqual(@as(usize, 0), blk: {

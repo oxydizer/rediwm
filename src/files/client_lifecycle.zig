@@ -21,20 +21,6 @@ const Setup = main.Setup;
 const Launch = main.Launch;
 const a = std.heap.c_allocator;
 
-/// Handle.close() is deliberately retryable on mutex contention. Window
-/// destruction cannot abandon a registered slot, so retry until it closes.
-fn closeIoHandle(handle: *io_service_mod.Handle) void {
-    while (true) {
-        handle.close() catch |err| {
-            if (err == error.ServiceBusy) continue;
-            std.debug.panic("Could not close Files service handle: {s}", .{
-                @errorName(err),
-            });
-        };
-        return;
-    }
-}
-
 /// Poll entries one window owns. Entry 0 of the block is unused: the display
 /// is polled once for all windows, ahead of them.
 pub const poll_slots = 26;
@@ -49,7 +35,7 @@ pub fn create(
     service: *io_service_mod.Service,
 ) !*Client {
     var io_handle = try service.registerWindow();
-    errdefer closeIoHandle(&io_handle);
+    errdefer io_handle.close();
 
     const worker = try worker_mod.Worker.init(a, setup.io, setup.environ, launch.dir);
     errdefer worker.deinit();
@@ -307,7 +293,8 @@ pub fn destroy(self: *Client) void {
     self.app.deinit();
     self.compose.deinit();
     self.ime.deinit();
-    closeIoHandle(&self.io_handle);
+    // Never fails and never waits on the Service mutex.
+    self.io_handle.close();
     self.io_runtime.deinit();
     a.destroy(self.io_runtime);
     self.worker.deinit();

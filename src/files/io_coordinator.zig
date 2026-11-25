@@ -793,9 +793,9 @@ test "coordinator protects worker and App resources during release" {
     defer runtime.deinit();
 
     var owner_window = try service.registerWindow();
-    defer owner_window.close() catch unreachable;
+    defer owner_window.close();
     var other_window = try service.registerWindow();
-    defer other_window.close() catch unreachable;
+    defer other_window.close();
 
     const job_id = try runtime.manager.createJob(owner_window.window_id);
     const app_resource = try runtime.resource_ledger.register(
