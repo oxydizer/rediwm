@@ -33,6 +33,27 @@ pub fn conflictShortcut(sym: u32, alt: bool, can_merge: bool) ?ConflictAction {
     };
 }
 
+/// The small modal's height: a service conflict has an "Apply to all" row.
+pub fn smallDialogHeight(self: *const App) f64 {
+    const dlg = self.dialog orelse return 130;
+    return if (dlg.kind == .conflict and dlg.service_conflict) 162 else 130;
+}
+
+/// Where the "Apply to all" checkbox of a service conflict sits.
+pub fn applyAllRect(self: *const App) @import("header.zig").Rect {
+    const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
+    const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2.0;
+    const dy = (@as(f64, @floatFromInt(self.h)) - smallDialogHeight(self)) / 2.0;
+    return .{ .x = dx + 16, .y = dy + 122, .w = dw - 32, .h = 24 };
+}
+
+pub fn toggleApplyAll(self: *App) void {
+    if (self.dialog) |*dlg| if (dlg.kind == .conflict and dlg.service_conflict) {
+        dlg.conflict_apply_all = !dlg.conflict_apply_all;
+        self.invalidate();
+    };
+}
+
 pub fn closeDialog(self: *App) void {
     if (self.dialog) |open| if (open.service_conflict)
         std.log.info("Files conflict dialog {d} closed", .{open.manager_conflict_id orelse 0});
@@ -364,7 +385,7 @@ pub fn openManagerConflictDialog(
 
 /// A service job's conflict, the head of the queue: `destination` is where
 /// the conflicting item would go.
-pub fn openServiceConflictDialog(self: *App, conflict_id: u64, destination: []const u8, can_merge: bool) void {
+pub fn openServiceConflictDialog(self: *App, conflict_id: u64, job_id: u64, destination: []const u8, can_merge: bool) void {
     if (self.dialog != null) return;
     self.dialog = Dialog{
         .kind = .conflict,
@@ -374,6 +395,7 @@ pub fn openServiceConflictDialog(self: *App, conflict_id: u64, destination: []co
         .service_conflict = true,
         .conflict_can_merge = can_merge,
         .conflict_destination = self.allocator.dupe(u8, destination) catch null,
+        .conflict_job_id = job_id,
     };
     self.invalidate();
 }
@@ -437,12 +459,15 @@ pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
     if (dlg.kind != .conflict) return;
 
     if (dlg.service_conflict) {
-        if (dlg.manager_conflict_id) |conflict_id| app_transfers.resolveConflict(self, conflict_id, dlg.conflict_destination orelse "", switch (action) {
+        const answer: @import("io_service.zig").ConflictAction = switch (action) {
             .skip => .skip,
             .merge => .merge,
             .rename => .rename,
             .cancel => .cancel,
-        });
+        };
+        if (dlg.conflict_apply_all and action != .cancel)
+            app_transfers.standFor(self, dlg.conflict_job_id, dlg.conflict_can_merge, answer);
+        if (dlg.manager_conflict_id) |conflict_id| app_transfers.resolveConflict(self, conflict_id, dlg.conflict_destination orelse "", answer);
     } else if (dlg.manager_conflict_id) |conflict_id| {
         resolveManagerConflict(self, conflict_id, action) catch {
             self.setStatusNotice(tr("Could not resolve file conflict"), true);
@@ -525,6 +550,10 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
         return;
     }
     if (dlg.kind == .conflict) {
+        if (self.alt and (sym == c.XKB_KEY_a or sym == c.XKB_KEY_A)) {
+            toggleApplyAll(self);
+            return;
+        }
         if (conflictShortcut(sym, self.alt, self.managerConflictCanMerge())) |action| {
             self.resolveConflictDialog(action);
             return;

@@ -286,6 +286,10 @@ pub const Dialog = struct {
     conflict_can_merge: bool = false,
     /// Owned: where the conflicting item would go.
     conflict_destination: ?[]u8 = null,
+    /// The service job the conflict belongs to.
+    conflict_job_id: u64 = 0,
+    /// "Apply to all": the answer also settles the job's later conflicts.
+    conflict_apply_all: bool = false,
     deletion: deletion.State = .{},
     applications: ?open_with.State = null,
     properties: ?properties.State = null,

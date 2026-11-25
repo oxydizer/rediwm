@@ -602,7 +602,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             return;
         }
         const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
-        const dh: f64 = 130;
+        const dh = self.smallDialogHeight();
         const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2.0;
         const dy = (@as(f64, @floatFromInt(self.h)) - dh) / 2.0;
 
@@ -620,6 +620,10 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             return;
         }
         if (dlg.kind == .conflict) {
+            if (dlg.service_conflict and self.applyAllRect().contains(x, y)) {
+                self.toggleApplyAll();
+                return;
+            }
             if (self.managerConflictCanMerge()) {
                 const button_width = (dw - 56) / 4;
                 if (x >= dx + 16 and x <= dx + 16 + button_width and y >= dy + 84 and y <= dy + 112) {
