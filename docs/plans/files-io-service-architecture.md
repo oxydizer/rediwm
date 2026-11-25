@@ -103,7 +103,9 @@ does not mean the transition happened; the job table shows what happened.
 | `start_discovery`, `prioritize_discovery` | Job id and an owned discovery request | normal |
 | `pause_job`, `resume_job`, `cancel_job` | Job id | control |
 | `resolve_conflict` | Owned request: conflict id, action, optional rename path | control |
-| `release_lease` | Job id and resource id, for a hand-off lease the window holds | control |
+| `release_borrow` | Resource id of a borrow this window holds | control |
+| `dispose_resource` | Resource id of a window-owned resource. Ownership moves back to its executor, which destroys it on a worker | control |
+| `request` | Owned metadata or small-mutation request (threading §8). Reply goes to the window's reserved reply slot | normal |
 
 There is no `retire_job` command. The service retires terminal jobs itself (§6).
 A command whose omission could leak a resource must not exist: cleanup is the
@@ -127,7 +129,8 @@ JobRecord {
     state,                       // io_manager.JobState
     completed_bytes, total_bytes, rate_bytes_per_second,
     pending_conflict: ?ConflictId,   // set on the job at the head of the conflict queue
-    lease: ?{ resource_id, holder_window_id },
+    offered_resource: ?ResourceId,   // e.g. finished extraction staging a window may borrow or take
+    borrow_count,                    // borrows outstanding; non-zero blocks retirement
     error_code,                  // set when state is failed or completed_with_errors
     revision,                    // service sequence at the last change
     removed,                     // tombstone, see below
@@ -140,14 +143,16 @@ JobRecord {
 * A window keeps a `cursor`. `fetchChanges(cursor)` returns the records whose
   `revision` is greater than the cursor, in revision order, with a `more` flag.
 * The state is level-triggered. If a window misses a wake, or reads late, the
-  next fetch still returns the current record. **Nothing needs resynchronising,
-  because nothing is a lost event.**
-* A removed job leaves a tombstone until every registered window's cursor has
-  passed it, then the slot is reused.
+  next fetch still returns the current record of every live job.
 * A window registering late starts at cursor 0 and sees every live job.
-* The table has a fixed capacity (`max_jobs`). Terminal jobs retire
-  automatically (§6), so only live jobs and fresh tombstones occupy it. A
-  submit into a full table is rejected with `TooManyJobs`.
+* Capacity is fixed: `max_live_jobs = 64`, 16 outcome slots per window and a
+  64-entry tombstone ring (threading §6). **A consumer never occupies
+  live-table capacity.** Retirement depends only on the job.
+* The origin window gets every outcome of its own jobs (the slot is reserved at
+  submit). Other windows get a bounded tombstone ring and an explicit `resync`
+  if they fall behind it. A window that stops reading can block only its own next
+  submit (`WindowOutcomesFull`), never another window's and never retirement.
+* A submit into a full live table is rejected with `TooManyJobs`.
 
 ## 6. Job lifecycle
 
@@ -158,11 +163,12 @@ States are the Manager's: `planning`, `queued`, `running`, `finalizing`,
 * **Commands and states are separate.** `pause_job` leads to `paused` only at a
   safe pause point. `cancel_job` leads to `cancelled` only after workers have
   stopped and cleanup is done.
-* **Retirement is automatic.** A terminal job is retired when the executors are
-  quiescent for it, the ledger holds nothing it owns, and every registered
-  window's cursor has passed its terminal revision (or no window is registered).
-  A window that wants to keep a finished transfer on screen keeps its own copy
-  of the record it saw.
+* **Retirement is automatic and depends only on the job.** A terminal job is
+  retired when the executors are quiescent for it, the ledger holds no job-owned
+  resource for it, and no window holds a borrow on its resources. Cursors play no
+  part. The final record goes to the origin window's outcome slot and to the
+  tombstone ring. A window that wants to keep a finished transfer on screen keeps
+  its own copy of the record it saw.
 * **Failure is contained.** A filesystem error fails the operation and the job
   that hit it. It does not stop other jobs.
 
@@ -177,35 +183,71 @@ resolves every conflict as `cancel` for its job. This is deliberate: it can neve
 overwrite data unasked, and it can never leave the process waiting forever for an
 answer nobody can give.
 
-### Leases
+### Resource ownership
 
-When the service has prepared something a window will use (an extracted archive
-member, a staging directory), the job record carries a `lease` naming the
-resource and the window that holds it.
+Every resource has exactly one **cleanup owner** at a time, recorded in the
+ledger. The cleanup owner is the only party that may physically destroy it, and
+it does so through a worker when destruction can block (threading §8). A
+**borrow** is separate from ownership. It is permission to read a resource that
+someone else owns, and it delays that owner's cleanup.
 
-* The window uses the content and then sends `release_lease`.
-* If the holder window unregisters first, the **service releases the lease**.
-  Closing a window never leaks staging.
-* Clipboard, drag and Open With hand-offs keep their existing meaning: once a
-  resource is transferred to its external owner it stops being job-owned and
-  does not block retirement.
-* Today the archive publication cursor is registered as App-owned in the
-  ledger. Stage S4 makes it service-owned. Until then that one resource stays
-  with the App.
+| Class | Ledger owner | Examples | Who destroys it | What closing a window does |
+| --- | --- | --- | --- | --- |
+| Executor-owned | `operation_executor`, `discovery_executor` | Archive staging before hand-off, discovery anchors and retained cursors, archive cancellation state | The executor, on the coordinator for bounded cleanup and on a worker otherwise | Nothing, even for jobs that window submitted |
+| Held by an active operation | `operation_worker`, `discovery_worker` | In-flight discovery cursors, operation payloads and their descriptors | Nobody while the unit is in flight. The completion path transfers it back to the executor | Nothing. Cancellation does not free it either (threading §9) |
+| Window-owned | `window(window_id)` (new owner variant) | Clipboard, drag and Open With staging after hand-off; until S4, the archive publication cursor | The owning window *decides* when, by `dispose_resource`. That moves ownership back to the executor, which destroys it on a worker | Every resource owned by that window is moved to its executor for disposal |
+| Borrowed | Owner unchanged, plus a borrow `{resource, window_id}` | A window reading a finished extraction it has not taken | The owner, after the last borrow is dropped and the job is terminal | Its borrows are dropped. The owner then cleans up as usual |
+
+Rules the ledger enforces:
+
+* **Transfers are explicit and checked.** `transfer(handle, expected, new)` fails
+  on a mismatch. A resource is never owned by two parties, and never by nobody
+  while it still exists.
+* **Window close touches only `window(W)` records and W's borrows.** The
+  coordinator does this when it observes the slot in `closing`. It never calls
+  `release` on an executor-owned or worker-held record on a window's behalf.
+* **A window can release only what it holds.** `release_borrow` and
+  `dispose_resource` check the holder, not the job's origin. This replaces the
+  origin check in today's `releaseResource`, which is removed in S2. Any window may
+  still *control* any job (§4).
+* **Hand-off out of Files.** The clipboard, drag and Open With hand-offs change the
+  owner from the executor to `window(W)`, instead of today's `transferOut`, which
+  drops the record. That gives the resource an accountable owner for its whole
+  life. It also means `StagingLease.deinit` stops deleting on the UI thread: the
+  window disposes through the service.
+* **Retirement.** Window-owned resources no longer count as job-owned, so they do
+  not block retirement (unchanged meaning). Borrows do block it. Each window can
+  hold at most 4 borrows, and close drops them, so a stalled window delays at most
+  those jobs.
+* **Commands in flight.** A `dispose_resource` still queued when its window closes
+  is processed (§4). The close-time sweep skips records that already have a
+  pending dispose, so nothing is disposed twice.
+
+Today the archive publication cursor is registered as `.app`-owned in the ledger.
+S4 makes it service-owned. Until then it is the one window-owned resource whose
+physical work (open and read) still runs on the UI thread, and it is listed as an
+exemption (threading §13).
 
 ## 7. Responsiveness
 
-The requirement is that the UI event loop never orchestrates I/O, drains worker
-completions or waits on the filesystem, and that the coordinator does not become
-the bottleneck. The rules that make this true (what may run on the coordinator
-thread, how progress is rate-limited, bounded processing per pass) are in the
-threading document.
+**UI responsiveness under heavy filesystem I/O is a hard requirement and an
+acceptance criterion of every stage from S1 on.** The UI thread never performs a
+potentially blocking filesystem operation, never waits on a worker, an executor, a
+service response, a join or a lock, and only submits requests and consumes
+asynchronous results. The coordinator performs no potentially blocking filesystem
+operation either. The full rule set, the debug guard that enforces it, and the
+audit of every current violation with the stage that removes it are in threading
+§1, §3 and §13.
+
+S5 does not make anything asynchronous for the first time. By the end of S4 the
+exemption table is empty. S5 adds limits and measurement on top.
 
 ## 8. Failure semantics
 
 | Event | Result |
 | --- | --- |
-| A window closes | Its jobs continue; its queued commands still run; its leases are released |
+| A window closes | Its jobs continue; its queued commands still run; its borrows are dropped and its window-owned resources are disposed by their executor |
+| A window stops reading | Retirement and other windows are unaffected; it gets its own outcomes when it reads again; it may be refused new submits after 16 unread outcomes |
 | All windows close | The process runs headless, finishes accepted work and exits |
 | One job hits an error | That job reports it; other jobs continue |
 | Queue full | Explicit rejection; nothing blocks, nothing is lost silently |
@@ -220,65 +262,98 @@ phase 5. They do not need a journal.
 ## 9. Stages
 
 Each stage is independently reviewable and ends with the full Files suite
-green. Commit and push after each.
+green. Commit and push after each. **Every stage's acceptance includes the
+responsiveness criterion:** the debug guard passes with no exemption added, the
+exemptions listed for that stage are removed (threading §13), and the
+hung-worker tests of threading §12 that cover that stage's paths pass.
 
-**S0, done.**
-* The Service primitives (bounded queues, wake descriptors, owned payloads).
-* The Coordinator thread.
-* Copy and move of files, symlinks and directories.
-* Discovery, conflict and resource-release commands.
-* Per-job state and progress publication, owned snapshots.
-* Process-owned lifecycle in `main.run`.
-* A `Handle` per window (`Client.io_handle`).
+**S0, done. Kept as is unless noted.**
+* Owned command contract (`OwnedPayload`, `trySendOwned` ownership transfer). Kept.
+* Bounded admission: per-window, control and aggregate caps. Kept.
+* Coordinator thread; discovery and conflict handling. Kept. Its inline
+  `stat`/`lstat`/`readlink` (C1) and its per-command `snapshotJobs` (C3) are revised
+  in S1 and S2.
+* Copy and move of files, symlinks and directories through the coordinator. Kept.
+* Executor-owned resource release, including its refusal of worker-held and App-owned
+  resources. Kept. Its inline `deleteRecursive` (C2) becomes a cleanup task in S2,
+  and its origin check becomes a holder check in S2.
+* Per-window `Handle` (`Client.io_handle`). Kept. Its close spin is fixed before S1.
+* Per-window update rings, coalescing and the resync marker. **Replaced** in S1.
+* Process-owned lifecycle in `main.run`. Kept.
 
-**S1, job table.** Replace the per-window update rings, coalescing and resync
-marker with the job table and cursor fetch (§5). Window-side calls take the
-mutex blocking, since critical sections are bounded (threading §3). Add the
-Manager's O(1) per-job summary and dirty set so the coordinator stops copying
-every job on every wake. *Done when:* a late-joining window sees all live jobs; a
-window that never reads cannot lose a terminal state or a conflict; and the
-coordinator no longer calls `snapshotJobs` on its loop.
+**Before S1.**
+* Merge these plan docs.
+* Make `Handle.close` atomic and non-failing, and delete the `closeIoHandle` spin
+  (U17). Make `registerWindow` lock-free. Update the contention test (threading §3).
+* Debug builds: errorcheck mutex, and assert pthread return codes.
+* Fix the capacity constants (threading §6) in `io_service.zig`.
+* Add the debug UI-thread and coordinator-thread guard with the exemption table
+  of threading §13, U1 to U16 and C1 to C3, so S1 is already measured against it.
+* Add the hung-worker test fixture: a worker unit that parks on a gate the test
+  controls.
 
-**S2, lifecycle.**
-* Draining shutdown (threading §9).
-* Headless drain after the last window.
+**S1, job table.**
+* Replace the per-window update rings, coalescing and resync marker with the live
+  table, outcome slots, tombstone ring and cursor fetch (§5, threading §6).
+* UI-side `trySend` and `fetchChanges` stay fail-fast. Add the window outbox and
+  `fetch_pending` (threading §3).
+* Add the Manager's O(1) per-job summary and dirty set.
+
+*Done when:* a late-joining window sees all live jobs; a window that never reads
+loses none of its own outcomes or pending conflicts, does not delay retirement and
+does not block other windows' submits; a lagging foreign window resyncs to exactly
+the live set; and the coordinator no longer calls `snapshotJobs` on its loop (C3).
+
+**S2, lifecycle and coordinator hygiene.**
+* Draining shutdown (threading §10); headless drain after the last window.
 * Automatic retirement (§6).
-* Lease reclaim on window close.
+* Resource ownership classes (§6): the `window(id)` owner, borrows, close-time
+  sweep, `release_borrow` and `dispose_resource`. These replace the origin checks in
+  `resolve_conflict` and `release_resource`. Remove `retire_job`.
 * Conflict auto-cancel with no window.
-* Remove the origin checks from `resolve_conflict` and `release_resource`.
-* Remove `retire_job`.
+* Prepare tasks for `submit_job` and cleanup tasks for executor-owned resources
+  (threading §8). This was in S5 and moved here (C1, C2).
 
 *Done when:* an accepted cross-filesystem move finishes, including its detach
-step, after the last window closes. And a job whose origin window closed can have
-its conflict resolved from another window.
+step, after the last window closes; a job whose origin window closed can have its
+conflict resolved from another window; closing a window never releases an executor
+or worker resource; and the coordinator exemption table is empty.
 
 **S3, windows move onto the service** (the earlier stages 3 and 4, combined).
-* Prerequisite: the Coordinator accepts mixed file and directory selections
-  (today it rejects them with `MixedTransferSourceKinds`), so JobRunner's
-  fallback can go. This is roadmap phase 2.
-* Then the App submits through its `Handle`.
-* The Transfers UI renders from job records.
-* `Client.io_runtime` and `App.io_runtime` are removed. This is when the per-window Runtime
-  stops existing.
+* S3a. Delete, move to Trash, Empty Trash and Trash deletion as service jobs, and
+  metadata and small mutations as requests (U4 to U12). No phase-2 dependency, so
+  this can land first.
+* S3b. Prerequisite: the Coordinator accepts mixed file and directory selections
+  (today it rejects them with `MixedTransferSourceKinds`), so JobRunner's fallback
+  can go. This is roadmap phase 2. Then the App submits transfers through its
+  `Handle` (U1, U2), and the Transfers UI renders from job records.
+* S3c. `Client.io_runtime` and `App.io_runtime` are removed (U3). This is when the
+  per-window Runtime stops existing. Window teardown joins nothing on the UI thread.
+  The helper threads that remain go to the reaper (U16).
 
 *Done when:* no production code outside the coordinator touches `io_runtime`,
-`io_manager` or an executor, and `JobRunner` is gone.
+`io_manager` or an executor, `JobRunner` is gone, and U1 to U12 and U16 are
+removed.
 
 **S4, archive lifecycle.**
 * Staging, publication barrier and cancellation move to the service.
-* The UI hand-off is a lease.
-* The publication cursor becomes service-owned.
+* The publication cursor becomes service-owned (U13). Staging discard runs on a
+  worker (U14).
+* UI hand-offs become `window(id)`-owned resources disposed through the service.
+  `StagingLease.deinit` no longer deletes (U15).
 * The publication-barrier and ledger invariants are preserved as they are.
 
-**S5, responsiveness hardening.**
-* Submit-time validation moves to discovery workers (threading §8).
+*Done when:* the UI exemption table is empty.
+
+**S5, limits and validation.** Nothing becomes asynchronous here for the first
+time.
 * Per-pass command quotas.
 * Time-based progress rate limit.
-* A measured check that the UI thread stays responsive under heavy concurrent
-  I/O.
-
-Moving S5's submit validation earlier is fine if a hung-mount case shows up
-before then.
+* Calibrate capacities (live table, outcome slots, tombstones, queues) with phase 7.
+* A measured check that the UI thread stays responsive under heavy concurrent I/O:
+  event-loop iteration latency under concurrent large copies, many-small-file
+  copies, archive extraction and a stalled FUSE mount, across two or more windows.
+* Close any gap found by the measurement.
 
 ## 10. Constraints
 

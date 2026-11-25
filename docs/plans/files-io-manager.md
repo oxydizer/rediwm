@@ -32,10 +32,10 @@ the table below says otherwise.
 
 | Service stage | Relation to the phases |
 | --- | --- |
-| S1 job table, S2 lifecycle | Independent of the phases. S1 adds the Manager's O(1) per-job summary and dirty set, which also serves phase 6 |
+| S1 job table, S2 lifecycle | Independent of the phases. S1 adds the Manager's O(1) per-job summary and dirty set, which also serves phase 6. S2 moves submit-time preparation and blocking resource cleanup off the coordinator |
 | S3 windows move onto the service | **Needs phase 2.** The coordinator rejects mixed file and directory selections today, and `JobRunner` work is invisible to the service, so the fallback must go first |
 | S4 archive lifecycle | Builds on phase 1. The archive publication cursor becomes service-owned |
-| S5 responsiveness | Overlaps phase 5 (shutdown ordering, allocation failure) and phase 6 (measured scheduling) |
+| S5 limits and validation | Overlaps phase 5 (shutdown ordering, allocation failure), phase 6 (measured scheduling) and phase 7 (capacity calibration). UI responsiveness is not deferred to S5: it is an acceptance criterion of every stage (threading §1, §13) |
 
 ## Goal
 
@@ -121,6 +121,8 @@ supports explicit ownership transfer and release.
 * Archive cancellation state and staging directories.
 * Archive publication cursors and staging ownership across the Runtime/App
   boundary.
+* Window-owned resources (a `window(id)` owner) and borrows, so that closing a
+  window reclaims only what it owns (architecture §6, service stage S2).
 * Any other resource family found during the ownership audit.
 
 ### Teardown contract
@@ -133,7 +135,10 @@ supports explicit ownership transfer and release.
 
 Never close or free a resource that an in-flight worker may still access.
 Preserve explicit handoff semantics for clipboard, drag and Open With staging
-leases: once transferred, those resources belong to their receiving owner.
+leases: once transferred, those resources belong to their receiving window,
+which is recorded as their owner. The window disposes of them through the
+service, and an operation worker destroys them. They are never deleted on the
+UI thread.
 
 ### Validation
 
@@ -259,7 +264,7 @@ Candidate areas:
 * Safety on abnormal exit: partial output never under a final name, and staging
   under a known directory that a later start can sweep. This replaces the need
   for a journal while the service is in-process.
-* Blocking metadata calls off the coordinator thread (service stage S5).
+* Blocking metadata calls and recursive cleanup off the coordinator thread (service stage S2).
 
 Prefer focused regression tests for each confirmed issue.
 
