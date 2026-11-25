@@ -53,9 +53,22 @@ pub fn startDiscoveryRoots(
 /// Gives the active copy Job a one-shot preference for a hovered transfer
 /// ghost. The Manager retains the preference after pointer leave.
 pub fn prioritizeTransferEntry(self: *App, entry_id: io_tree.EntryId) bool {
+    // A ghost of a service job: ask the service to copy it next.
+    for (self.items.items) |item| {
+        if (item.transfer_job_id == 0 or item.transfer_entry_id != entry_id) continue;
+        return sendPriority(self, .prioritize_entry, item.transfer_job_id, entry_id);
+    }
     const job_id = self.active_io_copy_job orelse return false;
     const manager = self.io_manager orelse return false;
     return manager.prioritizeEntryOperation(job_id, entry_id);
+}
+
+fn sendPriority(self: *App, kind: @import("io_service.zig").CommandKind, job_id: u64, entry_id: u64) bool {
+    const link = &self.service;
+    const handle = link.handle orelse return false;
+    var command: @import("io_service.zig").Command = .{ .kind = kind, .job_id = job_id, .resource_id = entry_id };
+    link.outbox.send(handle, &command) catch return false;
+    return true;
 }
 
 /// Promotes the discovered directory corresponding to a newly navigated
@@ -66,6 +79,12 @@ pub fn promoteDiscoveryPath(self: *App, path: []const u8) void {
 
 /// Promotes a hovered directory and its discovered descendants.
 pub fn promoteDiscoverySubtreePath(self: *App, path: []const u8) void {
+    // A ghost folder of a service job: ask the service to bring it sooner.
+    for (self.items.items) |item| {
+        if (item.transfer_job_id == 0 or !std.mem.eql(u8, item.path, path)) continue;
+        if (item.transfer_entry_id) |entry_id| _ = sendPriority(self, .promote_subtree, item.transfer_job_id, entry_id);
+        return;
+    }
     promoteDiscoveryPathWithPriority(self, path, false);
 }
 

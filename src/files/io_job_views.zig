@@ -1,21 +1,24 @@
-//! Job views: per-entry state of a job's tree for what a window shows
-//! (docs/plans/files-io-service-architecture.md §14). A window watches a
-//! level of a job's tree in one of its view slots; the coordinator writes a
-//! bounded snapshot of that level and the Service hands it over, latest wins.
+//! Job views: what running jobs are bringing into a folder, for the window
+//! showing it (docs/plans/files-io-service-architecture.md §14). A window
+//! watches a folder by path in a view slot; the coordinator finds every job
+//! writing into it, at any depth of the job's tree, and writes a bounded
+//! snapshot of their entries there. The Service hands it over, latest wins.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const slots_per_window = 4;
 pub const max_rows = 512;
 
-/// What a window asks to see: the children of `entry_id` (0: the job's
-/// roots), rows `offset` to `offset + limit`.
+/// What a window asks to see: the entries jobs are bringing into `path`,
+/// rows `offset` to `offset + limit`.
 pub const Watch = struct {
     slot: u8,
-    job_id: u64,
-    entry_id: u64 = 0,
+    /// Owned by the payload that carries it.
+    path: []const u8,
     offset: u32 = 0,
     limit: u32 = max_rows,
+    /// Chosen by the window, echoed in every snapshot of this watch.
+    generation: u64 = 0,
 };
 
 pub const Kind = enum(u8) { directory, regular_file, symlink, other };
@@ -31,6 +34,8 @@ pub const RowState = enum(u8) {
 };
 
 pub const Row = struct {
+    /// The job and the entry of its tree: what a priority request names.
+    job_id: u64 = 0,
     entry_id: u64,
     /// Into the snapshot's `names`.
     name_start: u32,
@@ -43,14 +48,15 @@ pub const Row = struct {
     total_bytes: u64,
 };
 
-/// An owned snapshot of one watched level.
+/// An owned snapshot of one watched folder.
 pub const Snapshot = struct {
     allocator: Allocator,
     slot: u8,
-    job_id: u64,
-    entry_id: u64,
+    /// Which watch of the slot this answers: a window ignores snapshots of
+    /// a watch it has replaced.
+    generation: u64 = 0,
     offset: u32,
-    /// Children of the level in all, not only those in `rows`.
+    /// Entries in all, not only those in `rows`.
     total_children: u32,
     rows: []Row,
     names: []u8,

@@ -28,6 +28,10 @@ pub const CommandKind = enum {
     watch_view,
     /// Stop the watch in view slot `submit_tag`.
     unwatch_view,
+    /// Copy entry `resource_id` of job `job_id` next (a hovered ghost).
+    prioritize_entry,
+    /// Discover and copy folder `resource_id` of job `job_id` sooner.
+    promote_subtree,
 };
 
 pub const CommandClass = enum {
@@ -203,7 +207,10 @@ pub const OwnedPayload = struct {
         if (watch.slot >= io_job_views.slots_per_window or watch.limit == 0 or watch.limit > io_job_views.max_rows)
             return error.InvalidWatch;
         const payload = try allocator.create(OwnedPayload);
-        payload.* = .{ .allocator = allocator, .data = .{ .watch = watch } };
+        errdefer allocator.destroy(payload);
+        var owned = watch;
+        owned.path = try allocator.dupe(u8, watch.path);
+        payload.* = .{ .allocator = allocator, .data = .{ .watch = owned } };
         return payload;
     }
 
@@ -266,7 +273,7 @@ pub const OwnedPayload = struct {
             .transfer => |*request| request.deinit(allocator),
             .deletion => |*request| request.deinit(allocator),
             .request => |*request| request.deinit(),
-            .watch => {},
+            .watch => |w| allocator.free(w.path),
             .discovery => |*request| request.deinit(allocator),
             .conflict_resolution => |*request| request.deinit(allocator),
         }
@@ -292,7 +299,7 @@ pub const Command = struct {
 
     pub fn class(self: Command) CommandClass {
         return switch (self.kind) {
-            .submit_job, .start_discovery, .prioritize_discovery, .request, .watch_view, .unwatch_view => .normal,
+            .submit_job, .start_discovery, .prioritize_discovery, .request, .watch_view, .unwatch_view, .prioritize_entry, .promote_subtree => .normal,
             .pause_job, .resume_job, .cancel_job, .resolve_conflict, .release_borrow, .dispose_resource => .control,
         };
     }

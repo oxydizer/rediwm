@@ -24,7 +24,7 @@ const Fixture = struct {
     }
 
     fn stop(self: *Fixture) void {
-        self.coordinator.watching.deinit(allocator);
+        job_views.deinitWatching(&self.coordinator);
         self.window.close();
         self.runtime.deinit();
         self.service.deinit();
@@ -41,7 +41,7 @@ const Fixture = struct {
     }
 };
 
-test "a watched level shows its entries, follows progress and keeps only the newest snapshot" {
+test "a watched folder shows what jobs bring into it, at any depth, and follows progress" {
     var f: Fixture = .{};
     try f.start();
     defer f.stop();
@@ -51,18 +51,21 @@ test "a watched level shows its entries, follows progress and keeps only the new
     const folder = try manager.addTreeRoot(job, "folder", .directory, .{}, null);
     const a = try manager.addTreeEntry(job, folder, "a.bin", .regular_file, .{ .size = 100 }, null);
     const b = try manager.addTreeEntry(job, folder, "b.bin", .regular_file, .{ .size = 300 }, null);
+    try manager.setDestinationDirectory(job, "/dest");
     _ = try manager.addEntryOperation(job, folder, .create_directory);
     _ = try manager.addEntryOperation(job, a, .copy_file);
     _ = try manager.addEntryOperation(job, b, .copy_file);
     try manager.queueJob(job);
 
-    try f.watch(.{ .slot = 0, .job_id = job });
-    try f.watch(.{ .slot = 1, .job_id = job, .entry_id = folder });
+    try f.watch(.{ .slot = 0, .path = "/dest" });
+    try f.watch(.{ .slot = 1, .path = "/dest/folder" });
+    try f.watch(.{ .slot = 2, .path = "/elsewhere" });
     _ = job_views.publishViews(&f.coordinator, 1000);
 
     const roots = (try f.take(0)).?;
     defer roots.destroy();
     try std.testing.expectEqual(@as(u32, 1), roots.total_children);
+    try std.testing.expectEqual(job, roots.rows[0].job_id);
     try std.testing.expectEqualStrings("folder", roots.name(roots.rows[0]));
     try std.testing.expectEqual(views.Kind.directory, roots.rows[0].kind);
     try std.testing.expectEqual(@as(u64, 400), roots.rows[0].total_bytes);
@@ -74,6 +77,10 @@ test "a watched level shows its entries, follows progress and keeps only the new
     try std.testing.expectEqual(@as(usize, 2), level.rows.len);
     try std.testing.expectEqualStrings("a.bin", level.name(level.rows[0]));
     try std.testing.expectEqualStrings("b.bin", level.name(level.rows[1]));
+    // A folder no job writes into gets an empty snapshot, once.
+    const elsewhere = (try f.take(2)).?;
+    defer elsewhere.destroy();
+    try std.testing.expectEqual(@as(usize, 0), elsewhere.rows.len);
 
     // Nothing changed: nothing is written.
     _ = job_views.publishViews(&f.coordinator, 1010);

@@ -1,8 +1,11 @@
-//! Ghost rows of service transfers (stage S3b): the items a copy or move of
-//! this window is bringing into the folder shown, with their progress, from
-//! job views (architecture §14). The window watches the job's root level in
-//! view slots 0 and 1; a snapshot whose shape changed rebuilds the listing,
-//! one with only new bytes updates the rows in place.
+//! Ghost rows of service jobs (stage S3b): what running copies and moves,
+//! of any window, are bringing into the folder shown, with their progress,
+//! from job views (architecture §14). The window watches the folder it shows
+//! by path in view slot 0, whether or not it started a job: ghosts show the
+//! future state of the filesystem. A ghost folder can be entered; its ghost
+//! files come from the same watch on the deeper path. A snapshot whose shape
+//! changed rebuilds the listing; one with only new bytes updates the rows in
+//! place.
 const std = @import("std");
 const app_mod = @import("app.zig");
 const App = app_mod.App;
@@ -11,86 +14,84 @@ const io_service = @import("io_service.zig");
 const views = @import("io_job_views.zig");
 const fold = @import("ui").fold;
 
-/// View slots used for ghosts: two transfers into one folder at a time.
-pub const slots = 2;
-
-pub const Watched = struct {
-    job_id: io_service.JobId = 0,
-    snapshot: ?*views.Snapshot = null,
-    shape: u64 = 0,
-};
+pub const slot = 0;
 
 pub const State = struct {
-    watched: [slots]Watched = .{ .{}, .{} },
+    /// Owned: the folder watched, or null before the first watch.
+    path: ?[]u8 = null,
+    generation: u64 = 0,
+    snapshot: ?*views.Snapshot = null,
+    shape: u64 = 0,
 
-    pub fn deinit(self: *State) void {
-        for (&self.watched) |*w| if (w.snapshot) |s| {
-            s.destroy();
-            w.snapshot = null;
-        };
+    pub fn deinit(self: *State, allocator: std.mem.Allocator) void {
+        if (self.snapshot) |s| s.destroy();
+        self.snapshot = null;
+        if (self.path) |path| allocator.free(path);
+        self.path = null;
     }
 };
 
-/// Keeps the ghost watches on the transfers of this window that go into the
-/// folder shown.
+/// Watches the folder shown: a new folder replaces the watch, and its
+/// ghosts are dropped until the first snapshot arrives.
 pub fn updateWatches(self: *App) void {
     const link = &self.service;
     const handle = link.handle orelse return;
-    var wanted: [slots]io_service.JobId = .{ 0, 0 };
-    var count: usize = 0;
-    if (self.chooser == null and !self.transfer_view.active and self.history.archive_len == 0) {
-        for (link.transfers.items[0..link.transfers.len]) |transfer| {
-            if (count == slots) break;
-            if (transfer.job_id == 0 or !std.mem.eql(u8, transfer.destination, self.history.current)) continue;
-            wanted[count] = transfer.job_id;
-            count += 1;
-        }
-    }
-    var changed = false;
-    for (&link.ghosts.watched, wanted, 0..) |*w, job_id, slot| {
-        if (w.job_id == job_id) continue;
-        var command: io_service.Command = if (job_id == 0)
-            .{ .kind = .unwatch_view, .submit_tag = slot }
-        else
-            .{ .kind = .watch_view, .payload = io_service.OwnedPayload.createWatch(self.allocator, .{ .slot = @intCast(slot), .job_id = job_id }) catch continue };
-        defer command.deinitPayload();
-        link.outbox.send(handle, &command) catch continue;
-        if (w.snapshot) |s| s.destroy();
-        w.* = .{ .job_id = job_id };
-        changed = true;
-    }
-    if (changed) self.rebuildView();
+    const ghosts = &link.ghosts;
+    const wanted: ?[]const u8 = if (self.chooser == null and !self.transfer_view.active and
+        self.history.archive_len == 0 and !self.isRecent()) self.history.current else null;
+    if (ghosts.path) |path| {
+        if (wanted) |want| if (std.mem.eql(u8, path, want)) return;
+    } else if (wanted == null) return;
+
+    var command: io_service.Command = if (wanted) |path|
+        .{ .kind = .watch_view, .payload = io_service.OwnedPayload.createWatch(self.allocator, .{
+            .slot = slot,
+            .path = path,
+            .generation = ghosts.generation + 1,
+        }) catch return }
+    else
+        .{ .kind = .unwatch_view, .submit_tag = slot };
+    defer command.deinitPayload();
+    link.outbox.send(handle, &command) catch return;
+    const owned = if (wanted) |path| self.allocator.dupe(u8, path) catch null else null;
+    const had_rows = if (ghosts.snapshot) |snapshot| snapshot.rows.len > 0 else false;
+    ghosts.deinit(self.allocator);
+    ghosts.path = owned;
+    ghosts.generation += 1;
+    ghosts.shape = 0;
+    if (had_rows) self.rebuildView();
 }
 
-/// Takes the newest snapshots of the ghost views.
+/// Takes the newest snapshot of the watched folder.
 pub fn takeViews(self: *App) void {
     const link = &self.service;
     const handle = link.handle orelse return;
-    var rebuild = false;
-    for (&link.ghosts.watched, 0..) |*w, slot| {
-        if (w.job_id == 0) continue;
-        const snapshot = (handle.takeView(@intCast(slot)) catch |err| switch (err) {
-            error.ServiceBusy => {
-                link.dirty = true;
-                return;
-            },
-            else => continue,
-        }) orelse continue;
-        // A snapshot of a watch this window already left.
-        if (snapshot.job_id != w.job_id) {
-            snapshot.destroy();
-            continue;
-        }
-        const shape = shapeOf(snapshot);
-        if (w.snapshot) |old| old.destroy();
-        w.snapshot = snapshot;
-        // A row that finished shows the real entry, which the folder's
-        // own watch lists.
-        if (shape != w.shape) rebuild = true;
-        w.shape = shape;
-        if (!rebuild) updateInPlace(self, snapshot);
-    }
-    if (rebuild) self.rebuildView();
+    const ghosts = &link.ghosts;
+    if (ghosts.path == null) return;
+    const snapshot = (handle.takeView(slot) catch |err| switch (err) {
+        error.ServiceBusy => {
+            link.dirty = true;
+            return;
+        },
+        else => return,
+    }) orelse return;
+    // A snapshot of a folder this window has left.
+    if (snapshot.generation != ghosts.generation) return snapshot.destroy();
+    const shape = shapeOf(snapshot);
+    if (ghosts.snapshot) |old| old.destroy();
+    ghosts.snapshot = snapshot;
+    // A row that finished shows the real entry, which the folder's own
+    // watch lists.
+    if (shape != ghosts.shape) {
+        ghosts.shape = shape;
+        self.rebuildView();
+    } else updateInPlace(self, snapshot);
+}
+
+/// Whether running jobs bring anything into the folder shown.
+pub fn active(self: *const App) bool {
+    const snapshot = self.service.ghosts.snapshot orelse return false;
+    return snapshot.rows.len > 0;
 }
 
 fn shapeOf(snapshot: *const views.Snapshot) u64 {
@@ -156,10 +157,8 @@ fn transferState(state: views.RowState) ?@import("ops.zig").TransferEntryState {
 pub fn appendRows(self: *App, mem: std.mem.Allocator, old: *const std.StringHashMap(ViewItem)) void {
     if (self.chooser != null or self.transfer_view.active or
         self.history.archive_len > 0 or self.isRecent() or self.changedOnly()) return;
-    for (self.service.ghosts.watched) |w| {
-        const snapshot = w.snapshot orelse continue;
-        for (snapshot.rows) |row| appendRow(self, mem, old, snapshot, row);
-    }
+    const snapshot = self.service.ghosts.snapshot orelse return;
+    for (snapshot.rows) |row| appendRow(self, mem, old, snapshot, row);
 }
 
 fn appendRow(self: *App, mem: std.mem.Allocator, old: *const std.StringHashMap(ViewItem), snapshot: *const views.Snapshot, row: views.Row) void {
@@ -176,6 +175,8 @@ fn appendRow(self: *App, mem: std.mem.Allocator, old: *const std.StringHashMap(V
         if (if (is_dir) ghost else state == .copying) {
             item.transfer_ghost = true;
             item.transfer_state = state;
+            item.transfer_job_id = row.job_id;
+            item.transfer_entry_id = row.entry_id;
             item.missing = !item.is_dir;
             applyProgress(item, row);
         }
@@ -195,6 +196,8 @@ fn appendRow(self: *App, mem: std.mem.Allocator, old: *const std.StringHashMap(V
         .is_broken = false,
         .transfer_ghost = true,
         .transfer_state = state,
+        .transfer_job_id = row.job_id,
+        .transfer_entry_id = row.entry_id,
         .missing = true,
         .bytes = @intCast(@min(row.total_bytes, @as(u64, std.math.maxInt(i64)))),
         .mtime = 0,
@@ -221,14 +224,14 @@ test "a watched transfer's rows appear as ghosts with their progress, and finish
     try app.history.navigate("/destination");
 
     var rows = [_]views.Row{
-        .{ .entry_id = 1, .name_start = 0, .name_len = 6, .kind = .directory, .state = .running, .completed_bytes = 25, .total_bytes = 100 },
+        .{ .job_id = 7, .entry_id = 1, .name_start = 0, .name_len = 6, .kind = .directory, .state = .running, .completed_bytes = 25, .total_bytes = 100 },
         .{ .entry_id = 2, .name_start = 6, .name_len = 5, .kind = .regular_file, .state = .pending, .completed_bytes = 0, .total_bytes = 40 },
         .{ .entry_id = 3, .name_start = 11, .name_len = 4, .kind = .regular_file, .state = .done, .completed_bytes = 9, .total_bytes = 9 },
     };
     var names = "folderb.txtdone".*;
-    var snapshot: views.Snapshot = .{ .allocator = allocator, .slot = 0, .job_id = 7, .entry_id = 0, .offset = 0, .total_children = 3, .rows = &rows, .names = &names };
-    app.service.ghosts.watched[0] = .{ .job_id = 7, .snapshot = &snapshot };
-    defer app.service.ghosts.watched[0] = .{};
+    var snapshot: views.Snapshot = .{ .allocator = allocator, .slot = 0, .offset = 0, .total_children = 3, .rows = &rows, .names = &names };
+    app.service.ghosts.snapshot = &snapshot;
+    defer app.service.ghosts.snapshot = null;
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -243,6 +246,7 @@ test "a watched transfer's rows appear as ghosts with their progress, and finish
     try std.testing.expectEqualStrings("/destination/folder", folder.path);
     try std.testing.expect(folder.transfer_ghost and folder.is_dir);
     try std.testing.expectEqual(@as(?f64, 0.25), folder.transfer_progress);
+    try std.testing.expectEqual(@as(u64, 7), folder.transfer_job_id);
     const file = app.items.items[before + 1];
     try std.testing.expectEqualStrings("b.txt", file.name);
     try std.testing.expectEqual(@as(?u64, 40), file.transfer_total_bytes);

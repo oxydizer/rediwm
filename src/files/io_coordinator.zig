@@ -163,7 +163,7 @@ pub const Coordinator = struct {
         var remaining = self.deletions.valueIterator();
         while (remaining.next()) |entry| self.allocator.destroy(entry.control);
         self.deletions.deinit(self.allocator);
-        self.watching.deinit(self.allocator);
+        job_views.deinitWatching(self);
         var held = self.window_held.valueIterator();
         while (held.next()) |entry| self.allocator.free(entry.path);
         self.window_held.deinit(self.allocator);
@@ -511,6 +511,10 @@ pub const Coordinator = struct {
             .request => unreachable, // handleRequest
             .watch_view => try self.watchView(routed.window_id, command.payload),
             .unwatch_view => self.unwatchView(routed.window_id, command.submit_tag),
+            // A hovered ghost: copy it next. A hovered ghost folder: sooner.
+            .prioritize_entry => if (!self.runtime.manager.prioritizeEntryOperation(command.job_id, command.resource_id))
+                return error.NotPrioritized,
+            .promote_subtree => try self.runtime.manager.promoteDiscoverySubtree(command.job_id, command.resource_id),
             .start_discovery => try self.startDiscovery(command.job_id, command.payload),
             .prioritize_discovery => try self.prioritizeDiscovery(command.job_id, command.payload),
             .resolve_conflict => try self.resolveConflict(

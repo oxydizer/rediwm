@@ -201,6 +201,8 @@ pub const ViewItem = struct {
     transfer_stub: bool = false,
     transfer_ghost: bool = false,
     transfer_entry_id: ?@import("io_tree.zig").EntryId = null,
+    /// The service job a ghost row comes from (`app_ghosts.zig`); 0 for none.
+    transfer_job_id: u64 = 0,
     transfer_state: ?@import("ops.zig").TransferEntryState = null,
     transfer_bytes: ?u64 = null,
     transfer_total_bytes: ?u64 = null,

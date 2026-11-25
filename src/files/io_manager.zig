@@ -1542,6 +1542,11 @@ pub const Manager = struct {
 
     /// Read-only access; callers must retain EntryIds, not pointers into the
     /// backing array, across any subsequent TreeIndex mutation.
+    /// Where a job writes, once set.
+    pub fn destinationDirectory(self: *const Manager, job_id: JobId) ?[]const u8 {
+        return (self.findJobConst(job_id) orelse return null).destination_directory;
+    }
+
     /// Bytes done and total of an entry: over the subtree for a directory.
     pub fn entryBytes(self: *const Manager, job_id: JobId, entry_id: io_tree.EntryId) ?EntryBytes {
         return entryProgress(self.findJobConst(job_id) orelse return null, entry_id);

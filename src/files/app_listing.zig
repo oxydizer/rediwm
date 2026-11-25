@@ -40,7 +40,7 @@ pub fn refresh(self: *App) void {
     // Refresh its manifest projection instead while the transfer is active.
     if (self.transfer_browse_root != null and
         (self.job_state == .running or self.job_state == .paused or
-            self.job_state == .waiting_conflict))
+            self.job_state == .waiting_conflict or @import("app_ghosts.zig").active(self)))
     {
         self.transfer_tree_state.markDirty();
         self.transfer_rows_dirty = true;

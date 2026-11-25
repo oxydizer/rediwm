@@ -548,16 +548,24 @@ tree, and a running transfer opened like a folder. That is per-entry state of
 the job's tree, which lives in the Manager on the coordinator thread. Windows
 never read the Manager (§4), so the coordinator pushes it.
 
-**Subscribe to a level.** A window sends `watch_view` with a view slot (0 to
-3), a job id, a tree entry (0 for the job's roots) and a window of rows (offset
-and at most 512 entries). The coordinator remembers the subscription and
-writes a **view snapshot** for it: the level's children in tree order, each
-with its entry id, name, kind, state (pending, running, done, failed, skipped)
-and bytes done and total, plus the level's total child count. `unwatch_view`
-drops it; closing the window drops all of its views (the close sweep, §6).
-Four slots cover what a window shows at once: the ghosts in the folder it
-displays, a transfer it browses, and the expanded levels of the Transfers tree
-(more levels than slots are served most recently watched first).
+**Subscribe to a folder.** Ghosts show the future state of the filesystem,
+so they belong to a folder, not to the window that started a job: any window
+showing a folder that jobs write into shows their ghosts, and a ghost folder
+can be entered to see its ghost files. A window sends `watch_view` with a view
+slot (0 to 3), the folder's path and a window of rows (offset, at most 512).
+Each pass the coordinator finds the jobs writing into that folder: those whose
+destination is the folder (their roots land there) or an ancestor of it (the
+folder is inside their tree, found by name). The **view snapshot** lists their
+entries there, each with its job and entry id, name, kind, state (pending,
+running, done, failed, skipped, cancelled) and bytes done and total, plus the
+count in all. `unwatch_view` drops it; closing the window drops all of its views
+(the close sweep, §6). A snapshot carries the watch's generation, so a window
+ignores one for a folder it has left.
+
+**Interest is priority.** Watching a folder inside a job's tree asks the
+coordinator to discover that folder first, as navigating into it did. Hovering
+a ghost file sends `prioritize_entry` (copy it next); hovering a ghost folder
+sends `promote_subtree`. Both name the job and entry from the snapshot row.
 
 **When it is written.** With the record of its job: at once on structural
 change (a level gained or lost entries, an entry changed state), and at most
@@ -583,6 +591,7 @@ conflict id and the offered resource stay in the job table. Conflict details
 for the dialog (names, kinds, sizes and dates of both sides) are a request the
 coordinator answers from memory, since they are needed once per conflict.
 
-**Limits.** 4 view slots per window, 512 rows per snapshot, names bounded by
-the filesystem's 255 bytes. Memory per window is bounded by four snapshots in
+**Limits.** 4 view slots per window (ghosts use slot 0), 512 rows per
+snapshot, names bounded by the filesystem's 255 bytes. A folder resolves
+against at most 8 jobs at once. Memory per window is bounded by four snapshots in
 flight and four held.
