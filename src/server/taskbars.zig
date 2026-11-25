@@ -129,6 +129,6 @@ pub fn updateTaskbarFullscreenVisibility(server: *Server) void {
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
         const bar = output.taskbar orelse continue;
-        bar.tree.node.setEnabled(fullscreen_output != output);
+        bar.tree.node.setEnabled(!bar.parked and fullscreen_output != output);
     }
 }

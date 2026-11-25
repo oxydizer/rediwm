@@ -75,6 +75,15 @@ def run():
                 assert shown(), "a bar that never hides was not hit-testable"
                 wait_for(lambda: window_bottom() == height - bar["height"], "maximized window did not leave the strip")
 
+                # Fullscreen must suppress the bar, and leaving fullscreen
+                # must restore it when auto-hide is disabled.
+                ipc.fullscreen(win_id)
+                wait_for(lambda: ipc.get_window_debug(win_id)["fullscreen"], "window did not enter fullscreen")
+                wait_for(hidden, "taskbar remained above a fullscreen window with auto-hide off")
+                ipc.fullscreen(win_id)
+                wait_for(lambda: not ipc.get_window_debug(win_id)["fullscreen"], "window did not leave fullscreen")
+                wait_for(shown, "taskbar did not return after fullscreen with auto-hide off")
+
                 # Settings turns it on, saves it, and windows take the whole edge.
                 ipc.action("open_appearance")
                 ipc.wait_for_panel_settled("control_center")
@@ -97,6 +106,14 @@ def run():
                 if time.monotonic() - started < REVEAL_DELAY / 2:
                     assert not early, "bar revealed without waiting for the delay"
                 wait_for(shown, "edge did not reveal the bar", timeout=5)
+
+                # A revealed auto-hide bar must also yield to fullscreen.
+                ipc.fullscreen(win_id)
+                wait_for(lambda: ipc.get_window_debug(win_id)["fullscreen"], "window did not enter fullscreen with auto-hide on")
+                wait_for(hidden, "revealed taskbar remained above a fullscreen window")
+                ipc.fullscreen(win_id)
+                wait_for(lambda: not ipc.get_window_debug(win_id)["fullscreen"], "window did not leave fullscreen with auto-hide on")
+                wait_for(shown, "revealed taskbar did not return after fullscreen")
 
                 # On the bar it stays out.
                 ipc.move_cursor(*center)
