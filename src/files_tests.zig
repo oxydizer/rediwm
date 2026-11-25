@@ -15,6 +15,7 @@ const io_manager_summary_tests = @import("files/io_manager_summary_tests.zig");
 const io_staging_cleanup_tests = @import("files/io_staging_cleanup_tests.zig");
 const io_coordinator_tests = @import("files/io_coordinator_tests.zig");
 const io_coordinator_transfer_tests = @import("files/io_coordinator_transfer_tests.zig");
+const io_coordinator_shutdown_tests = @import("files/io_coordinator_shutdown_tests.zig");
 const io_workers_tests = @import("files/io_workers_tests.zig");
 const io_executor_tests = @import("files/io_executor_tests.zig");
 const io_copy_tests = @import("files/io_copy_tests.zig");
@@ -39,6 +40,7 @@ test {
     _ = io_staging_cleanup_tests;
     _ = io_coordinator_tests;
     _ = io_coordinator_transfer_tests;
+    _ = io_coordinator_shutdown_tests;
     _ = io_workers_tests;
     _ = io_executor_tests;
     _ = io_copy_tests;

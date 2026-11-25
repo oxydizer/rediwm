@@ -635,6 +635,24 @@ pub const Service = struct {
         return self.closed_windows.pop();
     }
 
+    /// Lock-free: whether any window is registered and not closing.
+    pub fn anyWindowOpen(self: *const Service) bool {
+        for (&self.windows) |*slot| {
+            if (slotState(slot.word.load(.acquire)) == .active) return true;
+        }
+        return false;
+    }
+
+    /// Whether any accepted command still waits in a queue.
+    pub fn hasQueuedCommands(self: *Service) bool {
+        self.lock();
+        defer self.unlock();
+        for (&self.windows) |*slot| {
+            if (slot.normal_commands.count != 0 or slot.control_commands.count != 0) return true;
+        }
+        return false;
+    }
+
     /// Lock-free: whether `window_id` is registered and not closing.
     pub fn isWindowOpen(self: *const Service, window_id: WindowId) bool {
         if (window_id == 0 or window_id > max_window_id) return false;

@@ -130,6 +130,13 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             return result;
         }
 
+        /// No accepted task is queued, running, or waiting to be collected.
+        pub fn isIdle(self: *Self) bool {
+            self.lock();
+            defer self.unlock();
+            return self.outstanding == 0;
+        }
+
         /// Event descriptor for the main thread's poll loop.
         pub fn wakeFd(self: *const Self) std.posix.fd_t {
             return self.event_fd;

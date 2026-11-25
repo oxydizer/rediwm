@@ -2566,6 +2566,16 @@ pub const Manager = struct {
         return summaryOf(job);
     }
 
+    /// Whether the job extracts an archive (used when draining: archive
+    /// work is cancelled, ordinary transfers finish).
+    pub fn jobHasArchiveOperation(self: *const Manager, job_id: JobId) bool {
+        const job = self.findJobConst(job_id) orelse return false;
+        for (job.operations.items) |operation| {
+            if (operation.kind == .archive_extract or operation.kind == .archive_member_extract) return true;
+        }
+        return false;
+    }
+
     pub fn jobOriginWindow(self: *const Manager, job_id: JobId) ?WindowId {
         const job = self.findJobConst(job_id) orelse return null;
         return job.origin_window_id;
