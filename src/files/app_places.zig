@@ -1,6 +1,7 @@
 //! Files sidebar rows: Places, pins and devices, their drops and actions.
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -72,6 +73,9 @@ pub fn placeVisible(self: *App, index: usize) bool {
 }
 
 pub fn openPlace(self: *App, index: usize) void {
+    const io_guard_2 = io_thread_guard.exempt(.u11_places);
+    defer io_guard_2.end();
+    io_thread_guard.blocking("create place directory");
     if (index == 2) {
         self.navigate(recent.location);
         self.focus = .file_view;
@@ -100,6 +104,9 @@ pub fn openPlace(self: *App, index: usize) void {
 }
 
 pub fn openPlaceWindow(self: *App, index: usize) void {
+    const io_guard_1 = io_thread_guard.exempt(.u11_places);
+    defer io_guard_1.end();
+    io_thread_guard.blocking("create place directory");
     if (self.chooser != null) return;
     var buf: [4096]u8 = undefined;
     const path = if (self.deviceAt(index)) |volume|
@@ -141,6 +148,8 @@ pub fn openWindowAt(self: *App, path: []const u8) void {
 /// A click on a pin: a folder is browsed, a file opened as a double-click
 /// would (a file chooser browses the folder holding it instead).
 pub fn openPin(self: *App, j: usize) void {
+    const io_guard_0 = io_thread_guard.exempt(.u11_places);
+    defer io_guard_0.end();
     if (j >= self.pins.items.items.len) return;
     const pin = &self.pins.items.items[j];
     pin.kind = pins_mod.kindOf(pin.path);

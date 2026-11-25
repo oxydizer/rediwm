@@ -2,6 +2,28 @@ const std = @import("std");
 const io_coordinator = @import("io_coordinator.zig");
 const io_service = @import("io_service.zig");
 const io_manager = @import("io_manager.zig");
+const io_operation_executor = @import("io_operation_executor.zig");
+const support = @import("io_coordinator_test_support.zig");
+const send = support.send;
+const sendOwned = support.sendOwned;
+const waitReadable = support.waitReadable;
+const allocZ = support.allocZ;
+const join = support.join;
+const makeTempDir = support.makeTempDir;
+const makeDirectory = support.makeDirectory;
+const writeFile = support.writeFile;
+const readFile = support.readFile;
+const makeSymlink = support.makeSymlink;
+const readLink = support.readLink;
+const pathExists = support.pathExists;
+const waitBriefly = support.waitBriefly;
+const waitForContents = support.waitForContents;
+const waitForPath = support.waitForPath;
+const waitForRemoval = support.waitForRemoval;
+const cleanup = support.cleanup;
+const submitTransfer = support.submitTransfer;
+const resolveConflict = support.resolveConflict;
+const sendDiscoveryCommand = support.sendDiscoveryCommand;
 
 test "coordinator rejects transfer submissions without a payload" {
     var service: io_service.Service = .{};
@@ -12,235 +34,24 @@ test "coordinator rejects transfer submissions without a payload" {
     try coordinator.init(std.testing.allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    var window_view = support.View.init(window, &service);
+    defer window.close();
     defer coordinator.deinit();
 
-    try window.trySend(.{ .kind = .submit_job, .job_id = 73 });
-    try std.testing.expect(waitReadable(service.updateWakeFd(), 2000));
-    _ = service.drainUpdateWake();
+    try send(window, .{ .kind = .submit_job, .submit_tag = 73 });
 
-    const update = (try window.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(io_service.UpdateKind.command_rejected, update.kind);
-    try std.testing.expectEqual(@as(u64, 73), update.job_id);
-    try std.testing.expectEqual(@as(u8, 5), update.state_code);
-}
-
-fn waitReadable(fd: std.posix.fd_t, timeout_ms: i32) bool {
-    var fds = [_]std.posix.pollfd{.{
-        .fd = fd,
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    }};
-    const rc = std.posix.system.poll(&fds, 1, timeout_ms);
-    return std.posix.errno(rc) == .SUCCESS and fds[0].revents != 0;
+    // The failed submit is the window's own outcome, recognisable by its tag.
+    const record = try window_view.waitFor(support.FailedSubmit{});
+    try std.testing.expectEqual(@as(u64, 73), record.submit_tag);
+    try std.testing.expectEqual(
+        @intFromEnum(io_coordinator.RejectionCode.missing_payload),
+        record.error_code,
+    );
 }
 
 const c = @import("c.zig").api;
 
-fn allocZ(allocator: std.mem.Allocator, value: []const u8) ![:0]u8 {
-    const result = try allocator.allocSentinel(u8, value.len, 0);
-    @memcpy(result, value);
-    return result;
-}
-
-fn join(allocator: std.mem.Allocator, parent: []const u8, name: []const u8) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent, name });
-}
-
-fn makeTempDir(buffer: []u8) ![]const u8 {
-    _ = try std.fmt.bufPrint(buffer, "/tmp/rediwm_coordinator_XXXXXX\x00", .{});
-    const result = c.mkdtemp(@ptrCast(buffer.ptr)) orelse return error.MkdtempFailed;
-    return std.mem.span(@as([*:0]const u8, @ptrCast(result)));
-}
-
-fn makeDirectory(path: []const u8) !void {
-    const zpath = try allocZ(std.testing.allocator, path);
-    defer std.testing.allocator.free(zpath);
-    if (c.mkdir(zpath, 0o755) != 0) return error.MkdirFailed;
-}
-
-fn writeFile(path: []const u8, contents: []const u8) !void {
-    const zpath = try allocZ(std.testing.allocator, path);
-    defer std.testing.allocator.free(zpath);
-    const fd = c.open(
-        zpath,
-        c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC,
-        @as(c_uint, 0o600),
-    );
-    if (fd < 0) return error.OpenFailed;
-    defer _ = c.close(fd);
-    if (c.write(fd, contents.ptr, contents.len) != contents.len)
-        return error.WriteFailed;
-}
-
-fn readFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    const zpath = try allocZ(allocator, path);
-    defer allocator.free(zpath);
-    const fd = c.open(zpath, c.O_RDONLY | c.O_CLOEXEC, @as(c_uint, 0));
-    if (fd < 0) return error.OpenFailed;
-    defer _ = c.close(fd);
-    var buffer: [4096]u8 = undefined;
-    const count = c.read(fd, &buffer, buffer.len);
-    if (count < 0) return error.ReadFailed;
-    return allocator.dupe(u8, buffer[0..@intCast(count)]);
-}
-
-fn makeSymlink(target: []const u8, path: []const u8) !void {
-    const ztarget = try allocZ(std.testing.allocator, target);
-    defer std.testing.allocator.free(ztarget);
-    const zpath = try allocZ(std.testing.allocator, path);
-    defer std.testing.allocator.free(zpath);
-    if (c.symlink(ztarget, zpath) != 0) return error.SymlinkFailed;
-}
-
-fn readLink(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    const zpath = try allocZ(allocator, path);
-    defer allocator.free(zpath);
-    var buffer: [4096]u8 = undefined;
-    const count = c.readlink(zpath, &buffer, buffer.len);
-    if (count < 0) return error.ReadlinkFailed;
-    return allocator.dupe(u8, buffer[0..@intCast(count)]);
-}
-
-fn pathExists(path: []const u8) bool {
-    const zpath = allocZ(std.heap.page_allocator, path) catch return false;
-    defer std.heap.page_allocator.free(zpath);
-    var stat: c.struct_stat = undefined;
-    return c.lstat(zpath, &stat) == 0;
-}
-
-fn waitBriefly() void {
-    _ = std.posix.system.poll(&.{}, 0, 10);
-}
-
-fn waitForContents(path: []const u8, expected: []const u8) !void {
-    for (0..500) |_| {
-        if (pathExists(path)) {
-            const contents = readFile(std.testing.allocator, path) catch {
-                waitBriefly();
-                continue;
-            };
-            defer std.testing.allocator.free(contents);
-            if (std.mem.eql(u8, contents, expected)) return;
-        }
-        waitBriefly();
-    }
-    return error.TransferTimedOut;
-}
-
-fn waitForPath(path: []const u8) !void {
-    for (0..500) |_| {
-        if (pathExists(path)) return;
-        waitBriefly();
-    }
-    return error.TransferTimedOut;
-}
-
-fn waitForRemoval(path: []const u8) !void {
-    for (0..500) |_| {
-        if (!pathExists(path)) return;
-        waitBriefly();
-    }
-    return error.TransferTimedOut;
-}
-
-fn cleanup(path: []const u8, directory: bool) void {
-    const zpath = allocZ(std.heap.page_allocator, path) catch return;
-    defer std.heap.page_allocator.free(zpath);
-    if (directory) {
-        _ = c.rmdir(zpath);
-    } else {
-        _ = c.unlink(zpath);
-    }
-}
-
-fn submitTransfer(
-    allocator: std.mem.Allocator,
-    window: io_service.Handle,
-    mode: io_service.TransferMode,
-    destination: []const u8,
-    source: []const u8,
-) !void {
-    const sources = [_][]const u8{source};
-    var payload = try io_service.OwnedPayload.createTransfer(
-        allocator,
-        mode,
-        destination,
-        &sources,
-    );
-    var command: io_service.Command = .{
-        .kind = .submit_job,
-        .payload = payload,
-    };
-    window.trySendOwned(&command) catch |err| {
-        payload.deinit();
-        return err;
-    };
-}
-
-fn resolveConflict(
-    allocator: std.mem.Allocator,
-    window: io_service.Handle,
-    conflict_id: io_manager.ConflictId,
-    action: io_service.ConflictAction,
-) !void {
-    const payload = try io_service.OwnedPayload.createConflictResolution(
-        allocator,
-        conflict_id,
-        action,
-        null,
-    );
-    var command: io_service.Command = .{
-        .kind = .resolve_conflict,
-        .payload = payload,
-    };
-    window.trySendOwned(&command) catch |err| {
-        payload.deinit();
-        return err;
-    };
-}
-
-fn sendDiscoveryCommand(
-    allocator: std.mem.Allocator,
-    window: io_service.Handle,
-    kind: io_service.CommandKind,
-    job_id: io_service.JobId,
-    root_entry_id: u64,
-    root_path: ?[]const u8,
-) !void {
-    const payload = try io_service.OwnedPayload.createDiscovery(
-        allocator,
-        root_entry_id,
-        root_path,
-    );
-    var command: io_service.Command = .{
-        .kind = kind,
-        .job_id = job_id,
-        .payload = payload,
-    };
-    window.trySendOwned(&command) catch |err| {
-        payload.deinit();
-        return err;
-    };
-}
-
-fn waitForRejection(
-    service: *io_service.Service,
-    window: io_service.Handle,
-    job_id: io_service.JobId,
-) !io_service.Update {
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
-        while (try window.tryReceiveUpdate()) |update| {
-            if (update.kind == .command_rejected and update.job_id == job_id)
-                return update;
-        }
-    }
-    return error.CommandRejectionTimedOut;
-}
-
-test "coordinator routes conflicts to their owning window and resolves them there" {
+test "coordinator shows conflicts to every window and resolves them from the origin" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
     const temp = try makeTempDir(&temp_buffer);
@@ -268,70 +79,37 @@ test "coordinator routes conflicts to their owning window and resolves them ther
     try coordinator.init(allocator, &service);
 
     var owner_window = try service.registerWindow();
-    defer owner_window.close() catch unreachable;
+    var owner_window_view = support.View.init(owner_window, &service);
+    defer owner_window.close();
     var other_window = try service.registerWindow();
-    defer other_window.close() catch unreachable;
+    var other_window_view = support.View.init(other_window, &service);
+    defer other_window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, owner_window, .copy, destination_dir, source);
 
-    var conflict_id: ?io_manager.ConflictId = null;
-    var other_window_saw_conflict = false;
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
+    // The pending conflict is part of the job's record, so every window
+    // sees it, including one that did not submit the job.
+    const owner_view = try owner_window_view.waitFor(support.PendingConflict{});
+    const other_view = try other_window_view.waitFor(support.PendingConflict{});
+    try std.testing.expectEqual(owner_view.pending_conflict, other_view.pending_conflict);
+    const id = owner_view.pending_conflict;
 
-        while (try owner_window.tryReceiveUpdate()) |update| {
-            if (update.kind == .conflict)
-                conflict_id = update.conflict_id;
-        }
-        while (try other_window.tryReceiveUpdate()) |update| {
-            if (update.kind == .conflict)
-                other_window_saw_conflict = true;
-        }
-        if (conflict_id != null) break;
-    }
-
-    const id = conflict_id orelse return error.ConflictNotificationTimedOut;
-    try std.testing.expect(!other_window_saw_conflict);
-
-    // A different window cannot resolve another window's conflict.
+    // Until S2 removes the origin check, another window's resolution is not
+    // applied. A failed submit queued behind it from the same window proves
+    // the coordinator has processed it (control before normal).
     try resolveConflict(allocator, other_window, id, .skip);
-    var rejected: ?io_service.Update = null;
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
-        rejected = other_window.tryReceiveUpdate() catch {
-            waitBriefly();
-            continue;
-        };
-        if (rejected != null) break;
-        waitBriefly();
-    }
-    const rejection = rejected orelse
-        return error.MissingConflictOwnershipRejection;
-    try std.testing.expectEqual(io_service.UpdateKind.command_rejected, rejection.kind);
+    try send(other_window, .{ .kind = .submit_job });
+    _ = try other_window_view.failedSubmit();
+    try owner_window_view.sync();
+    try std.testing.expectEqual(id, owner_window_view.find(owner_view.id).?.pending_conflict);
 
     try resolveConflict(allocator, owner_window, id, .skip);
-
-    var saw_terminal_state = false;
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
-        while (try owner_window.tryReceiveUpdate()) |update| {
-            if (update.kind == .job_state) {
-                const state: io_manager.JobState = @fromBackingInt(
-                    @intCast(update.state_code),
-                );
-                if (state.isTerminal()) saw_terminal_state = true;
-            }
-        }
-        if (saw_terminal_state) break;
-    }
-    try std.testing.expect(saw_terminal_state);
+    try owner_window_view.waitState(owner_view.id, .completed);
+    try std.testing.expectEqual(@as(u64, 0), owner_window_view.find(owner_view.id).?.pending_conflict);
 }
 
-test "coordinator validates discovery payloads and routes rejections to the sender" {
+test "coordinator ignores invalid discovery commands without disturbing anything" {
     var service: io_service.Service = .{};
     try service.init();
     defer service.deinit();
@@ -339,53 +117,23 @@ test "coordinator validates discovery payloads and routes rejections to the send
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(std.testing.allocator, &service);
 
-    var owner_window = try service.registerWindow();
-    defer owner_window.close() catch unreachable;
-    var other_window = try service.registerWindow();
-    defer other_window.close() catch unreachable;
+    var window = try service.registerWindow();
+    var window_view = support.View.init(window, &service);
+    defer window.close();
     defer coordinator.deinit();
 
     const job_id: io_service.JobId = 73;
+    // Missing payload, missing root path, unknown job. There is no reply
+    // channel: a command that cannot apply changes nothing and is logged.
+    try send(window, .{ .kind = .start_discovery, .job_id = job_id });
+    try sendDiscoveryCommand(std.testing.allocator, window, .start_discovery, job_id, 1, null);
+    try sendDiscoveryCommand(std.testing.allocator, window, .start_discovery, job_id, 1, "/tmp/discovery-root");
 
-    try owner_window.trySend(.{
-        .kind = .start_discovery,
-        .job_id = job_id,
-    });
-    const missing_payload = try waitForRejection(&service, owner_window, job_id);
-    try std.testing.expectEqual(
-        @as(u8, 5),
-        missing_payload.state_code,
-    );
-
-    try sendDiscoveryCommand(
-        std.testing.allocator,
-        owner_window,
-        .start_discovery,
-        job_id,
-        1,
-        null,
-    );
-    const missing_path = try waitForRejection(&service, owner_window, job_id);
-    try std.testing.expectEqual(
-        @as(u8, 255),
-        missing_path.state_code,
-    );
-
-    try sendDiscoveryCommand(
-        std.testing.allocator,
-        owner_window,
-        .start_discovery,
-        job_id,
-        1,
-        "/tmp/discovery-root",
-    );
-    const unknown_job = try waitForRejection(&service, owner_window, job_id);
-    try std.testing.expectEqual(
-        @as(u8, 2),
-        unknown_job.state_code,
-    );
-
-    try std.testing.expect((try other_window.tryReceiveUpdate()) == null);
+    // A failed submit queued behind them, in the same normal queue, proves
+    // they were processed; the table holds nothing but that marker.
+    try send(window, .{ .kind = .submit_job, .submit_tag = 9 });
+    _ = try window_view.failedSubmit();
+    try std.testing.expectEqual(@as(usize, 0), window_view.len);
 }
 
 test "coordinator accepts discovery prioritization for a submitted directory job" {
@@ -423,24 +171,13 @@ test "coordinator accepts discovery prioritization for a submitted directory job
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    var window_view = support.View.init(window, &service);
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source_dir);
 
-    var job_id: ?io_service.JobId = null;
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
-        while (try window.tryReceiveUpdate()) |update| {
-            if (update.kind == .job_state) {
-                job_id = update.job_id;
-                break;
-            }
-        }
-        if (job_id != null) break;
-    }
-    const submitted_job_id = job_id orelse return error.JobStateUpdateTimedOut;
+    const submitted_job_id = (try window_view.waitFor(support.AnyLiveJob{})).id;
 
     try sendDiscoveryCommand(
         allocator,
@@ -452,11 +189,7 @@ test "coordinator accepts discovery prioritization for a submitted directory job
     );
 
     try waitForContents(destination_file, "discovery priority payload");
-
-    while (try window.tryReceiveUpdate()) |update| {
-        if (update.kind == .command_rejected and update.job_id == submitted_job_id)
-            return error.DiscoveryPrioritizationRejected;
-    }
+    try window_view.waitState(submitted_job_id, .completed);
 }
 
 test "coordinator copies a regular-file transfer" {
@@ -486,7 +219,7 @@ test "coordinator copies a regular-file transfer" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
@@ -495,7 +228,7 @@ test "coordinator copies a regular-file transfer" {
     try std.testing.expect(pathExists(source));
 }
 
-test "coordinator publishes job state transitions and transfer progress" {
+test "coordinator publishes a job record with planned totals and final progress" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
     const temp = try makeTempDir(&temp_buffer);
@@ -509,7 +242,8 @@ test "coordinator publishes job state transitions and transfer progress" {
     defer cleanup(destination_dir, true);
     try makeDirectory(destination_dir);
 
-    const contents = try allocator.alloc(u8, 16 * 1024 * 1024);
+    const size = 16 * 1024 * 1024;
+    const contents = try allocator.alloc(u8, size);
     defer allocator.free(contents);
     @memset(contents, 0x5a);
     try writeFile(source, contents);
@@ -522,54 +256,26 @@ test "coordinator publishes job state transitions and transfer progress" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    var window_view = support.View.init(window, &service);
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
 
-    var saw_progress = false;
-    var saw_running_state = false;
-    var saw_terminal_state = false;
-    var job_id: ?io_service.JobId = null;
+    // The first record already knows the planned total, before any copying.
+    const first = try window_view.waitFor(support.AnyLiveJob{});
+    try std.testing.expectEqual(@as(u64, size), first.total_bytes);
+    try std.testing.expectEqual(@as(u64, 1), first.total_items);
+    try std.testing.expectEqualStrings("payload.bin", first.label());
+    try std.testing.expectEqual(io_service.JobKind.copy, first.kind);
+    try std.testing.expect(first.started_at_ms > 0);
 
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10)) {
-            _ = service.drainUpdateWake();
-            for (0..100) |_| {
-                const maybe_update = window.tryReceiveUpdate() catch {
-                    continue;
-                };
-                const update = maybe_update orelse break;
-
-                if (update.kind == .job_state or update.kind == .progress) {
-                    if (job_id) |expected|
-                        try std.testing.expectEqual(expected, update.job_id)
-                    else
-                        job_id = update.job_id;
-                }
-
-                if (update.kind == .progress) {
-                    try std.testing.expect(update.total_bytes > 0);
-                    if (update.completed_bytes > 0)
-                        saw_progress = true;
-                } else if (update.kind == .job_state) {
-                    const state: io_manager.JobState = @fromBackingInt(@intCast(update.state_code));
-                    if (state == .running)
-                        saw_running_state = true;
-                    if (state.isTerminal()) {
-                        try std.testing.expectEqual(io_manager.JobState.completed, state);
-                        saw_terminal_state = true;
-                    }
-                }
-            }
-        }
-        if (saw_terminal_state) break;
-    }
-
-    try std.testing.expect(job_id != null);
-    try std.testing.expect(saw_progress);
-    try std.testing.expect(saw_running_state);
-    try std.testing.expect(saw_terminal_state);
+    // Progress is coalesced; the terminal record carries the final values.
+    try window_view.waitState(first.id, .completed);
+    const final = window_view.find(first.id).?;
+    try std.testing.expectEqual(@as(u64, size), final.completed_bytes);
+    try std.testing.expectEqual(@as(u64, 1), final.completed_items);
+    try std.testing.expect(final.finished_at_ms >= final.started_at_ms);
 }
 
 test "coordinator copies a symlink without dereferencing its target" {
@@ -599,7 +305,7 @@ test "coordinator copies a symlink without dereferencing its target" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
@@ -638,7 +344,7 @@ test "coordinator moves a same-filesystem regular file" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .move, destination_dir, source);
@@ -696,7 +402,7 @@ test "coordinator discovers and copies a directory tree" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
@@ -750,7 +456,7 @@ test "coordinator moves a same-filesystem directory tree" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .move, destination_dir, source);
@@ -779,17 +485,16 @@ test "coordinator rejects an invalid transfer source" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
-    defer window.close() catch unreachable;
+    var window_view = support.View.init(window, &service);
+    defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, missing_source);
 
-    try std.testing.expect(waitReadable(service.updateWakeFd(), 2000));
-    _ = service.drainUpdateWake();
-
-    const update = (try window.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(io_service.UpdateKind.command_rejected, update.kind);
-    try std.testing.expectEqual(@as(u8, 255), update.state_code);
+    try std.testing.expectEqual(
+        @intFromEnum(io_coordinator.RejectionCode.invalid_source),
+        try window_view.failedSubmit(),
+    );
     try std.testing.expectEqual(@as(usize, 0), blk: {
         var count: usize = 0;
         const zpath = try allocZ(allocator, destination_dir);
@@ -803,4 +508,79 @@ test "coordinator rejects an invalid transfer source" {
         }
         break :blk count;
     });
+}
+
+test "a hung worker does not stall the coordinator, other jobs or window calls" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const hung_source = try join(allocator, temp, "hung.bin");
+    defer allocator.free(hung_source);
+    defer cleanup(hung_source, false);
+    const other_source = try join(allocator, temp, "other.bin");
+    defer allocator.free(other_source);
+    defer cleanup(other_source, false);
+    const hung_dir = try join(allocator, temp, "hung-destination");
+    defer allocator.free(hung_dir);
+    defer cleanup(hung_dir, true);
+    const hung_destination = try join(allocator, hung_dir, "hung.bin");
+    defer allocator.free(hung_destination);
+    defer cleanup(hung_destination, false);
+    const other_dir = try join(allocator, temp, "other-destination");
+    defer allocator.free(other_dir);
+    defer cleanup(other_dir, true);
+    const other_destination = try join(allocator, other_dir, "other.bin");
+    defer allocator.free(other_destination);
+    defer cleanup(other_destination, false);
+
+    try writeFile(hung_source, "parked like a hung mount");
+    try writeFile(other_source, "copied while the other worker is parked");
+    try makeDirectory(hung_dir);
+    try makeDirectory(other_dir);
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, &service);
+
+    var window = try service.registerWindow();
+    var window_view = support.View.init(window, &service);
+    defer window.close();
+    defer coordinator.deinit();
+    // Runs before coordinator.deinit joins the workers, even on failure.
+    const gate = io_operation_executor.test_gate;
+    defer gate.release();
+
+    // Job 1's copy unit parks on its worker, as on a hung mount.
+    gate.arm();
+    try submitTransfer(allocator, window, .copy, hung_dir, hung_source);
+    for (0..1000) |_| {
+        if (gate.parked.load(.acquire)) break;
+        waitBriefly();
+    } else return error.Timeout;
+
+    // The coordinator keeps dispatching and reconciling: job 2 completes on
+    // the other operation worker while job 1 is still parked.
+    try submitTransfer(allocator, window, .copy, other_dir, other_source);
+    try waitForContents(other_destination, "copied while the other worker is parked");
+    try window_view.waitState(2, .completed);
+
+    // Window-side calls do not wait on the parked work.
+    var second = try service.registerWindow();
+    second.close();
+    try window_view.sync();
+
+    // Cancellation is applied while the unit is still parked: the record
+    // shows cancel_requested before the job can reach `cancelled`.
+    try send(window, .{ .kind = .cancel_job, .job_id = 1 });
+    _ = try window_view.waitFor(support.CancelRequested{ .id = 1 });
+    try std.testing.expect(gate.parked.load(.acquire));
+
+    // The job reaches `cancelled` only once the parked unit has returned.
+    gate.release();
+    try window_view.waitState(1, .cancelled);
 }

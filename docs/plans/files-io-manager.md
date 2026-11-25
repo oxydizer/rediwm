@@ -36,6 +36,7 @@ the table below says otherwise.
 | S3 windows move onto the service | **Needs phase 2.** The coordinator rejects mixed file and directory selections today, and `JobRunner` work is invisible to the service, so the fallback must go first |
 | S4 archive lifecycle | Builds on phase 1. The archive publication cursor becomes service-owned |
 | S5 limits and validation | Overlaps phase 5 (shutdown ordering, allocation failure), phase 6 (measured scheduling) and phase 7 (capacity calibration). UI responsiveness is not deferred to S5: it is an acceptance criterion of every stage (threading §1, §13) |
+| S6 external endpoint | Independent of the phases. Serves the shell tray and panel and single-instance launch from the same job table |
 
 ## Goal
 
@@ -159,8 +160,35 @@ Once the ledger foundation is established, finish migrating the remaining
 user-facing transfer functionality to the I/O Manager. There must be no
 production transfer fallback to `JobRunner`.
 
-This phase is the prerequisite for service stage S3. Mixed selections are the
-first item, since the coordinator rejects them today.
+This phase is the prerequisite for service stage S3. It is done in two parts.
+
+**Inventory** (at `723777a`). `App.executeTransfer` tries the Manager and silently
+falls back to `JobRunner` when:
+
+1. the selection mixes files and folders;
+2. a Manager transfer is already running in the window (`active_io_copy_job`):
+   `JobRunner` is how a window gets a second concurrent transfer today;
+3. a move has overlapping roots, or moves an item onto itself, or a copy lands
+   on its source (JobRunner asks skip / rename / cancel);
+4. a source is missing, unreadable, not absolute, or a special file (JobRunner
+   fails those with `UnsupportedFileType` too);
+5. the Manager path returns any error.
+
+Not missing from the Manager: conflict actions (a superset of JobRunner's skip,
+rename and cancel), cut-clipboard updates after a move, ghost progress, the
+transfer tree, and the sidebar and keyboard controls.
+
+**2a, coordinator capability (done, `ddcab66`).** The coordinator accepts items
+1, 3 and 4: mixed selections in one job, a unique name for a copy onto its
+source, a no-op for a move onto itself, and its own rejection code for every
+refusal. Planning is `io_transfer_plan.prepare` (moved onto a worker in S2).
+
+**2b, removal (in S3b).** Item 2 cannot be removed before the window UI shows
+several Manager jobs: the UI is built around one `active_io_copy_job`, and
+archive extraction refuses with `Busy` while anything runs. So the fallback,
+`JobRunner` and its legacy benchmarks (`copy_bench`, `transfer_bench`) are
+deleted in S3b, together with the multi-job Transfers UI rendered from job
+records.
 
 ### Remaining migration work
 

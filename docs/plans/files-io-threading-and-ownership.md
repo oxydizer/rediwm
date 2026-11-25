@@ -56,6 +56,7 @@ measured latency check on top.
 | --- | --- | --- |
 | UI thread (one event loop for all windows) | Wayland, rendering, input, submitting commands, reading the job table | Manager or Runtime access, worker queue draining, filesystem scans for jobs |
 | Coordinator (one) | Owns the Manager, Runtime, ledger and executors; applies commands and completions; dispatches work; updates the job table | Blocking syscalls, waiting for workers, UI calls |
+| Endpoint (one, from S6) | The external socket: shell subscribers and `open_window` (architecture §13). A consumer of the Service like a window | Blocking socket calls, Manager access, UI calls |
 | Discovery workers (2), operation workers (2) | One bounded unit of filesystem work, returned as an owned completion | Touching the Manager, the ledger's job state, or any window |
 
 The worker counts and queue capacities are shared process configuration. Changing
@@ -174,7 +175,8 @@ Rules:
   pass, windows are served round-robin and control commands first within a window.
 * Commands are idempotent in effect. Cancelling twice, or pausing a finished job, is
   harmless. A command that cannot apply changes nothing and is logged. There is no
-  per-command reply channel: the window learns what happened from the job table.
+  per-command reply channel: the window learns what happened from the job table. A cancel that has been applied but is still waiting for running work shows as
+  `cancel_requested` in the job's record.
 
 A submit that fails validation does not reply with an error. It produces a job
 record that goes straight to `failed` with an `error_code`. The window correlates it
@@ -276,12 +278,17 @@ terminal state or a conflict notification.
 * **Progress** is rate-limited at the source: at most one update per job per
   `progress_interval` (about 50 ms), with the final value always published. The
   event-loop wake is rate-limited naturally.
-* The coordinator does not rebuild the table from a full snapshot. The Manager keeps
-  an O(1) per-job summary (state, aggregate bytes, rate, head conflict) and a **dirty
-  set** of jobs changed since the last publication. Each pass visits the dirty set
-  only. `snapshotJobs` stays available for tests and diagnostics, and it is not
-  called in the loop. The cost of a pass is proportional to what changed, not to the
-  total number of operations.
+* The coordinator does not rebuild the table from a full snapshot. Each job keeps
+  running totals (planned and completed bytes, items, job-level throughput), updated
+  where operation progress and state change, and `Manager.jobSummary` reads them
+  without visiting any operation. Each pass compares every live job's summary with
+  the record it last wrote. Live jobs are bounded by the table (64), so that walk is
+  cheap; the cost that mattered, walking operations, is gone. A per-job dirty set was
+  planned here and dropped: at this bound it would add a way to miss an update
+  without lowering the cost. `snapshotJobs` stays for tests and diagnostics and is not
+  called by the coordinator.
+* A job is sampled for its speed history only while it is `running` or `finalizing`,
+  so a paused job, or one waiting on a conflict, causes no wakeups.
 
 ## 7. The coordinator loop
 
@@ -502,9 +509,10 @@ service that is fast but makes the event loop stall has failed the requirement i
 
 ## 13. Audit: blocking work reachable from the event loop and the coordinator
 
-Audited at `ca9e828` (feat/files-io-manager). This table becomes the debug guard's
-exemption list in S1 (§1). An entry is deleted when its stage lands. No stage may
-add one.
+Audited at `ca9e828` (feat/files-io-manager). This table is the debug guard's
+exemption list (`src/files/io_thread_guard.zig`, `Exemption`). An entry is deleted
+when its stage lands. No stage may add one; an entry the guard itself uncovers in
+existing code (C4) is recorded, never a new violation.
 
 ### UI thread
 
@@ -539,6 +547,15 @@ listed here so the guard's allowlist states it explicitly.
 | C1 | `Coordinator.submitTransfer` and its file and directory helpers | `stat`, `lstat`, `readlink` on user paths | S2 (prepare task, §8) |
 | C2 | `Coordinator.releaseResource` → `io_operation_executor.Runtime.releaseResource` | `ops.deleteRecursive` of archive staging | S2 (cleanup task, §8) |
 | C3 | `releaseResource`, `resolveConflict`, the publish loop | `snapshotJobs` allocation and copy per command or pass. Not I/O, but O(all jobs) | S1 (dirty set) |
+| C4 | `io_discovery_executor.Executor.dispatchReady` → `getOrOpenAnchor`, `Anchor.openCursorForEntry` | Opens root anchors and directory cursors inline before handing them to a worker. Found by the guard, not the first audit. Runs on the UI thread too while windows own a Runtime (inside U3) | S2 (opening becomes part of the discovery worker unit) |
+
+### Not yet covered: application state files
+
+Places pins (`pins.save`), Recent, history and settings read and write small
+files under `$XDG_STATE_HOME` and `$XDG_CONFIG_HOME` on the UI thread. They are
+not user-selected paths, but a home directory on NFS makes them blocking. They
+are outside the guard for now. Whether they move to a worker is a separate
+decision, recorded here so it is not forgotten.
 
 ### Off the UI thread already, outside the service
 

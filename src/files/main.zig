@@ -230,6 +230,8 @@ pub var open_windows: std.ArrayList(*Client) = .empty;
 
 pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]const u8, chooser: ?@import("chooser.zig").Options, torrent_source: ?[]const u8, transfers: bool) !void {
     platform.process.ignoreBrokenPipes();
+    // This thread runs the event loop for every window (plan §1).
+    @import("io_thread_guard.zig").markCurrent(.ui);
 
     const home_dir = init.minimal.environ.getPosix("HOME") orelse "/";
     // Test-only escape hatch: skip decoration negotiation to exercise the

@@ -364,6 +364,48 @@ fn updateProgressRate(
     }
 }
 
+fn summaryOf(job: *const Job) JobSummary {
+    return .{
+        .id = job.id,
+        .origin_window_id = job.origin_window_id,
+        .state = job.state,
+        .cancel_requested = job.cancel_requested,
+        .completed_bytes = job.summary_completed_bytes,
+        .total_bytes = job.summary_total_bytes,
+        .rate_bytes_per_second = job.rate_bytes_per_second,
+        .completed_items = job.summary_completed_items,
+        .total_items = job.summary_total_items,
+    };
+}
+
+/// Recomputes the job's throughput at most once per 500 ms window, and
+/// reports zero once bytes have stopped moving for 1.5 s.
+fn updateJobRate(job: *Job, now: i64) void {
+    if (job.rate_sample_at_ms == 0 or now < job.rate_sample_at_ms or
+        job.summary_completed_bytes < job.rate_sample_bytes)
+    {
+        job.rate_sample_at_ms = now;
+        job.rate_sample_bytes = job.summary_completed_bytes;
+        job.rate_bytes_per_second = 0;
+        return;
+    }
+    const elapsed = now - job.rate_sample_at_ms;
+    if (elapsed >= 500) {
+        const moved = job.summary_completed_bytes - job.rate_sample_bytes;
+        if (moved > 0) {
+            job.rate_bytes_per_second = @intCast(@min(
+                (@as(u128, moved) * 1000) / @as(u128, @intCast(elapsed)),
+                std.math.maxInt(u64),
+            ));
+            job.rate_updated_at_ms = now;
+        } else if (now - job.rate_updated_at_ms > 1500) {
+            job.rate_bytes_per_second = 0;
+        }
+        job.rate_sample_at_ms = now;
+        job.rate_sample_bytes = job.summary_completed_bytes;
+    }
+}
+
 fn currentProgressRate(operation: *const Operation, now: i64) u64 {
     const updated_at = operation.progress_rate_updated_at_ms;
     if (updated_at <= 0 or now < updated_at or now - updated_at > 1500) return 0;
@@ -405,6 +447,18 @@ const Job = struct {
     directory_finalization_index: ?usize = null,
     dependency_work_queue: std.ArrayList(usize) = .empty,
     operation_state_counts: [7]usize = .{ 0, 0, 0, 0, 0, 0, 0 },
+    // Running totals behind `jobSummary`, kept current where operation
+    // progress and state change, so a summary never walks the operations.
+    summary_completed_bytes: u64 = 0,
+    summary_total_bytes: u64 = 0,
+    summary_completed_items: u64 = 0,
+    summary_total_items: u64 = 0,
+    // Job-level throughput: bytes over time across all its operations, so a
+    // run of small files that each finish in one unit still has a speed.
+    rate_sample_bytes: u64 = 0,
+    rate_sample_at_ms: i64 = 0,
+    rate_updated_at_ms: i64 = 0,
+    rate_bytes_per_second: u64 = 0,
 
     fn deinit(self: *Job, allocator: Allocator) void {
         var source_path_iter = self.source_root_paths.valueIterator();
@@ -467,6 +521,19 @@ pub const EntryOperationView = struct {
 };
 
 /// Caller-owned copy; it remains valid independently of the live manager.
+/// What a job record needs, in O(1) per job: no operation is visited.
+pub const JobSummary = struct {
+    id: JobId,
+    origin_window_id: ?WindowId,
+    state: JobState,
+    cancel_requested: bool,
+    completed_bytes: u64,
+    total_bytes: u64,
+    rate_bytes_per_second: u64,
+    completed_items: u64,
+    total_items: u64,
+};
+
 pub const JobSnapshot = struct {
     allocator: Allocator,
     id: JobId,
@@ -761,9 +828,18 @@ pub const Manager = struct {
         if (job.auto_plan_discovered_entries)
             return error.DiscoveryOperationModeAlreadySet;
 
+        // A move job may mix directory roots, whose contents are discovered
+        // and moved entry by entry, with file and symlink roots, which carry
+        // their own operation and are never discovered.
+        var directory_roots: usize = 0;
         for (job.tree.roots()) |root_id| {
             const root = job.tree.get(root_id) orelse return error.UnknownEntry;
-            if (root.kind != .directory) return error.RootNotDirectory;
+            if (root.kind != .directory) {
+                if (!job.entry_operation_indices.contains(root_id))
+                    return error.MissingRootOperation;
+                continue;
+            }
+            directory_roots += 1;
             const destination_index = job.entry_operation_indices.get(root_id) orelse
                 return error.MissingRootDirectoryOperation;
             if (job.operations.items[destination_index].kind != .create_directory)
@@ -771,6 +847,7 @@ pub const Manager = struct {
             if (!job.source_detach_indices.contains(root_id))
                 return error.MissingRootSourceDetachOperation;
         }
+        if (directory_roots == 0) return error.RootNotDirectory;
         job.auto_move_discovered_entries = true;
     }
 
@@ -2008,6 +2085,10 @@ pub const Manager = struct {
         dependency_indices = .empty;
         operation.entry_id = entry_id;
         operation.discovery_gate = is_source_detach and entry.kind == .directory;
+        if (!is_source_detach) {
+            job.summary_total_items += 1;
+            if (kind == .copy_file) setOperationTotal(job, operation, entry.metadata.size);
+        }
         if (accounts_population) {
             operation.population_accounted = true;
             job.outstanding_population_count += 1;
@@ -2467,6 +2548,29 @@ pub const Manager = struct {
 
     /// Returns the global FIFO head. The view remains valid until the next
     /// conflict-queue mutation or Manager teardown.
+    pub fn jobCount(self: *const Manager) usize {
+        return self.jobs.items.len;
+    }
+
+    /// The summary of the job at `index` (0 ..< jobCount()). Samples the
+    /// job's throughput, so it takes the Manager mutably.
+    pub fn jobSummaryAt(self: *Manager, index: usize) JobSummary {
+        const job = &self.jobs.items[index];
+        updateJobRate(job, monotonicMs());
+        return summaryOf(job);
+    }
+
+    pub fn jobSummary(self: *Manager, job_id: JobId) ?JobSummary {
+        const job = self.findJob(job_id) orelse return null;
+        updateJobRate(job, monotonicMs());
+        return summaryOf(job);
+    }
+
+    pub fn jobOriginWindow(self: *const Manager, job_id: JobId) ?WindowId {
+        const job = self.findJobConst(job_id) orelse return null;
+        return job.origin_window_id;
+    }
+
     pub fn nextConflict(self: *const Manager) ?ConflictView {
         if (self.conflict_head >= self.conflicts.items.len) return null;
         return self.conflicts.items[self.conflict_head].view();
@@ -2850,7 +2954,7 @@ pub const Manager = struct {
             if (operation.kind == .copy_file) {
                 if (operation.entry_id) |entry_id| {
                     if (job.tree.getConst(entry_id)) |entry| {
-                        operation.progress_total_bytes = entry.metadata.size;
+                        setOperationTotal(job, operation, entry.metadata.size);
                     }
                 }
             }
@@ -2903,7 +3007,7 @@ pub const Manager = struct {
                     if (operation.kind == .copy_file) {
                         if (operation.entry_id) |entry_id| {
                             if (job.tree.getConst(entry_id)) |entry| {
-                                operation.progress_total_bytes = entry.metadata.size;
+                                setOperationTotal(job, operation, entry.metadata.size);
                             }
                         }
                     }
@@ -2961,7 +3065,7 @@ pub const Manager = struct {
         };
         transitionOperation(job, operation, next_state);
         if (result == .completed and operation.kind == .copy_file) {
-            operation.progress_bytes = operation.progress_total_bytes;
+            setOperationBytes(job, operation, operation.progress_total_bytes);
         }
         if (result == .yielded) {
             enqueueReadyFront(job, operation_index);
@@ -3003,8 +3107,8 @@ pub const Manager = struct {
         {
             return false;
         }
-        operation.progress_bytes = bytes;
-        operation.progress_total_bytes = total_bytes;
+        setOperationBytes(job, operation, bytes);
+        setOperationTotal(job, operation, total_bytes);
         const was_flushing = isFlushingOperation(operation);
         operation.copy_phase = phase;
         updateFlushingOperationCount(job, operation, was_flushing);
@@ -3275,8 +3379,31 @@ fn transitionOperation(job: *Job, operation: *Operation, next_state: OperationSt
     }
     job.operation_state_counts[@backingInt(operation.state)] -= 1;
     job.operation_state_counts[@backingInt(next_state)] += 1;
+    if (operation.entry_id != null and countsAsItem(operation.kind)) {
+        const was_done = operation.state.isTerminal();
+        const is_done = next_state.isTerminal();
+        if (!was_done and is_done) job.summary_completed_items += 1;
+        if (was_done and !is_done) job.summary_completed_items -|= 1;
+    }
     operation.state = next_state;
     updateFlushingOperationCount(job, operation, was_flushing);
+}
+
+fn countsAsItem(kind: OperationKind) bool {
+    return switch (kind) {
+        .create_directory, .copy_file, .copy_symlink, .move_entry => true,
+        else => false,
+    };
+}
+
+fn setOperationBytes(job: *Job, operation: *Operation, bytes: u64) void {
+    job.summary_completed_bytes = (job.summary_completed_bytes -| operation.progress_bytes) +| bytes;
+    operation.progress_bytes = bytes;
+}
+
+fn setOperationTotal(job: *Job, operation: *Operation, total: u64) void {
+    job.summary_total_bytes = (job.summary_total_bytes -| operation.progress_total_bytes) +| total;
+    operation.progress_total_bytes = total;
 }
 
 fn isFlushingOperation(operation: *const Operation) bool {

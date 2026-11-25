@@ -4,6 +4,8 @@
 //! It owns all access to Runtime after startup; windows retain only Service
 //! handles and immutable updates.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
+const io_transfer_plan = @import("io_transfer_plan.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
@@ -15,20 +17,60 @@ const ops_mod = @import("ops.zig");
 
 const JobId = io_service.JobId;
 
-const PublishedJobState = struct {
-    state: ?io_manager.JobState = null,
-    has_progress: bool = false,
-    completed_bytes: u64 = 0,
-    total_bytes: u64 = 0,
-    rate_bytes_per_second: u64 = 0,
+/// The last record written for a job, and when progress and the speed
+/// history were last written.
+const Published = struct {
+    record: io_service.JobRecord,
+    last_progress_ms: i64 = 0,
+    last_sample_ms: i64 = 0,
 };
 
-const RejectionCode = enum(u8) {
+/// Progress-only changes are written at most this often per job; state,
+/// cancellation and conflict changes are written at once (threading §6).
+const progress_interval_ms = 50;
+const rate_sample_interval_ms = 1000;
+
+/// Ids for submits that failed before a Manager job existed. The high bit
+/// keeps them apart from Manager job ids, which count up from 1.
+const failed_submit_id_base: JobId = 1 << 63;
+
+fn monotonicMs() i64 {
+    var ts: c.struct_timespec = undefined;
+    _ = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
+    return @as(i64, @intCast(ts.tv_sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
+}
+
+fn wallClockMs() i64 {
+    var ts: c.struct_timespec = undefined;
+    _ = c.clock_gettime(c.CLOCK_REALTIME, &ts);
+    return @as(i64, @intCast(ts.tv_sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
+}
+
+/// Manager and record states share names and order.
+fn recordState(state: io_manager.JobState) io_service.JobState {
+    comptime {
+        const a = @typeInfo(io_manager.JobState).@"enum";
+        const b = @typeInfo(io_service.JobState).@"enum";
+        std.debug.assert(a.field_names.len == b.field_names.len);
+        for (a.field_names, b.field_names, a.field_values, b.field_values) |x, y, xv, yv|
+            std.debug.assert(std.mem.eql(u8, x, y) and xv == yv);
+    }
+    return @enumFromInt(@intFromEnum(state));
+}
+
+pub const RejectionCode = enum(u8) {
     unsupported_command = 1,
     unknown_job = 2,
     invalid_job_state = 3,
     job_not_terminal = 4,
     missing_payload = 5,
+    invalid_destination = 6,
+    invalid_source = 7,
+    unsupported_source = 8,
+    destination_inside_source = 9,
+    overlapping_move_roots = 10,
+    mounted_directory_move = 11,
+    nothing_to_transfer = 12,
     other = 255,
 };
 
@@ -37,8 +79,8 @@ pub const Coordinator = struct {
     service: *io_service.Service,
     runtime: *io_runtime.Runtime,
     thread: ?std.Thread = null,
-    published_jobs: std.AutoHashMapUnmanaged(JobId, PublishedJobState) = .empty,
-    last_published_conflict_id: ?io_manager.ConflictId = null,
+    published: std.AutoHashMapUnmanaged(JobId, Published) = .empty,
+    next_failed_submit_id: JobId = failed_submit_id_base,
 
     /// Initialize at a stable address. The Runtime is allocated separately
     /// because its executors retain pointers into it and into its Manager.
@@ -72,11 +114,12 @@ pub const Coordinator = struct {
     pub fn deinit(self: *Coordinator) void {
         self.service.beginShutdown();
         if (self.thread) |thread| thread.join();
-        self.published_jobs.deinit(self.allocator);
+        self.published.deinit(self.allocator);
         self.* = undefined;
     }
 
     fn threadMain(self: *Coordinator) void {
+        io_thread_guard.markCurrent(.coordinator);
         defer {
             self.runtime.deinit();
             self.allocator.destroy(self.runtime);
@@ -89,20 +132,17 @@ pub const Coordinator = struct {
             }
 
             self.pumpExecutors();
-            self.publishJobUpdates() catch |err| {
-                std.log.err("Files job update publication failed: {s}", .{@errorName(err)});
-            };
-            self.publishConflictUpdate() catch |err| {
-                std.log.err("Files conflict update publication failed: {s}", .{@errorName(err)});
-            };
+            const deadline = self.publishRecords(monotonicMs());
             self.retireReadyJobs();
 
             if (self.service.isStopping()) break;
-            self.waitForWork();
+            self.waitForWork(deadline);
         }
     }
 
-    fn waitForWork(self: *Coordinator) void {
+    /// Waits for a command, a completion, or `deadline` (monotonic ms) when
+    /// throttled progress or a speed sample is still due.
+    fn waitForWork(self: *Coordinator, deadline: ?i64) void {
         const discovery = if (self.runtime.discovery_executor) |*executor|
             executor
         else
@@ -129,8 +169,12 @@ pub const Coordinator = struct {
             },
         };
 
+        const timeout: i32 = if (deadline) |at|
+            @intCast(std.math.clamp(at - monotonicMs(), 0, std.math.maxInt(i32)))
+        else
+            -1;
         while (true) {
-            const rc = std.posix.system.poll(&fds, fds.len, -1);
+            const rc = std.posix.system.poll(&fds, fds.len, timeout);
             switch (std.posix.errno(rc)) {
                 .SUCCESS => return,
                 .INTR => continue,
@@ -174,14 +218,57 @@ pub const Coordinator = struct {
     ) void {
         var routed = routed_value;
         defer routed.command.deinitPayload();
+        if (routed.command.kind == .submit_job) return self.handleSubmit(routed);
+        // There is no reply channel: a command that cannot apply changes
+        // nothing; the job table shows what did happen (threading §5).
         self.applyCommand(routed) catch |err| {
-            const code = rejectionCode(err);
-            _ = self.service.publishUpdate(routed.window_id, .{
-                .job_id = routed.command.job_id,
-                .kind = .command_rejected,
-                .state_code = @backingInt(code),
-            }) catch {};
+            std.log.info("Files I/O command {s} for job {d} not applied: {s}", .{
+                @tagName(routed.command.kind), routed.command.job_id, @errorName(err),
+            });
         };
+    }
+
+    /// Every admitted submit ends up as a record: the job's, or a `failed`
+    /// one carrying the rejection code, so the window always learns the
+    /// outcome through its submit_tag.
+    fn handleSubmit(self: *Coordinator, routed: io_service.RoutedCommand) void {
+        var record: io_service.JobRecord = .{
+            .origin_window_id = routed.window_id,
+            .submit_tag = routed.command.submit_tag,
+            .started_at_ms = wallClockMs(),
+        };
+        if (routed.command.payload) |payload| switch (payload.data) {
+            .transfer => |*request| {
+                record.kind = if (request.mode == .move) .move else .copy;
+                record.source_count = @intCast(@min(request.sources.len, std.math.maxInt(u32)));
+                if (request.sources.len > 0) record.setLabel(std.fs.path.basename(request.sources[0].path));
+            },
+            else => {},
+        };
+
+        if (self.submitTransfer(routed)) |job_id| {
+            record.id = job_id;
+            record.state = .queued;
+            if (self.runtime.manager.jobSummary(job_id)) |summary| applySummary(&record, summary);
+            self.service.createJobRecord(record, true) catch |err| {
+                std.log.err("Files job record for job {d} failed: {s}", .{ job_id, @errorName(err) });
+                return;
+            };
+            self.published.put(self.allocator, job_id, .{ .record = record }) catch |err| {
+                std.log.err("Files job record cache failed: {s}", .{@errorName(err)});
+            };
+        } else |err| {
+            record.id = self.next_failed_submit_id;
+            self.next_failed_submit_id += 1;
+            record.state = .failed;
+            record.error_code = @backingInt(rejectionCode(err));
+            record.finished_at_ms = record.started_at_ms;
+            self.service.createJobRecord(record, true) catch |create_err| {
+                std.log.err("Files failed-submit record failed: {s}", .{@errorName(create_err)});
+                return;
+            };
+            self.service.retireJobRecord(record.id) catch {};
+        }
     }
 
     fn applyCommand(
@@ -194,7 +281,7 @@ pub const Coordinator = struct {
             .resume_job => try self.runtime.manager.resumeJob(command.job_id),
             .cancel_job => try self.runtime.cancelJob(command.job_id),
             .retire_job => try self.runtime.requestJobRetirement(command.job_id),
-            .submit_job => try self.submitTransfer(routed),
+            .submit_job => unreachable, // handleSubmit
             .start_discovery => try self.startDiscovery(command.job_id, command.payload),
             .prioritize_discovery => try self.prioritizeDiscovery(command.job_id, command.payload),
             .resolve_conflict => try self.resolveConflict(
@@ -215,6 +302,8 @@ pub const Coordinator = struct {
         job_id: JobId,
         resource_id: io_service.ResourceId,
     ) !void {
+        const io_guard_2 = io_thread_guard.exempt(.c2_resource_cleanup);
+        defer io_guard_2.end();
         const handle = io_resource_ledger.Handle{ .id = resource_id };
         const ledger = &self.runtime.resource_ledger;
         const resource_job_id = ledger.jobIdOf(handle) orelse
@@ -224,19 +313,9 @@ pub const Coordinator = struct {
         const owner = ledger.ownerOf(handle) orelse return error.UnknownResource;
         const kind = ledger.kindOf(handle) orelse return error.UnknownResource;
 
-        const snapshots = try self.runtime.manager.snapshotJobs(self.allocator);
-        defer {
-            for (snapshots) |*snapshot| snapshot.deinit();
-            self.allocator.free(snapshots);
-        }
-
-        var owns_job = false;
-        for (snapshots) |snapshot| {
-            if (snapshot.id != job_id) continue;
-            owns_job = snapshot.origin_window_id == window_id;
-            break;
-        }
-        if (!owns_job) return error.ResourceWindowMismatch;
+        // The origin check goes in S2, when a holder check replaces it.
+        if (self.runtime.manager.jobOriginWindow(job_id) != window_id)
+            return error.ResourceWindowMismatch;
 
         switch (owner) {
             .operation_worker, .discovery_worker => return error.ResourceBusy,
@@ -322,18 +401,9 @@ pub const Coordinator = struct {
         if (conflict.id != request.conflict_id)
             return error.ConflictNotAtQueueHead;
 
-        const snapshots = try manager.snapshotJobs(self.allocator);
-        defer {
-            for (snapshots) |*snapshot| snapshot.deinit();
-            self.allocator.free(snapshots);
-        }
-        var owns_job = false;
-        for (snapshots) |snapshot| {
-            if (snapshot.id != conflict.job_id) continue;
-            owns_job = snapshot.origin_window_id == window_id;
-            break;
-        }
-        if (!owns_job) return error.ConflictWindowMismatch;
+        // The origin check goes in S2: any window may resolve any conflict.
+        if (manager.jobOriginWindow(conflict.job_id) != window_id)
+            return error.ConflictWindowMismatch;
 
         switch (request.action) {
             .retry => try manager.resolveConflict(request.conflict_id),
@@ -348,403 +418,154 @@ pub const Coordinator = struct {
         }
     }
 
-    /// Builds and queues a basic file/symlink transfer entirely on the
-    /// coordinator thread. No filesystem metadata crosses the UI boundary.
+    /// Plans a transfer of any mix of files, symlinks and directories and
+    /// queues it as one Manager job. Filesystem inspection is confined to
+    /// `prepareTransfer`, which stage S2 moves onto a discovery worker;
+    /// `applyTransferPlan` touches only the Manager.
     fn submitTransfer(
         self: *Coordinator,
         routed: io_service.RoutedCommand,
-    ) !void {
+    ) !JobId {
         const payload = routed.command.payload orelse
             return error.MissingTransferPayload;
         const request = switch (payload.data) {
             .transfer => |*transfer| transfer,
             .discovery, .conflict_resolution => return error.UnexpectedTransferPayload,
         };
-        if (request.sources.len == 0) return error.EmptyTransfer;
-        if (request.destination_path.len == 0 or
-            !std.fs.path.isAbsolute(request.destination_path) or
-            std.mem.indexOfScalar(u8, request.destination_path, 0) != null)
-        {
-            return error.InvalidTransferDestination;
-        }
-
-        const destination_z = try self.allocator.dupeSentinel(
-            u8,
-            request.destination_path,
-            0,
-        );
-        defer self.allocator.free(destination_z);
-
-        var destination_stat: c.struct_stat = undefined;
-        if (c.stat(destination_z, &destination_stat) != 0 or
-            (destination_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
-        {
-            return error.InvalidTransferDestination;
-        }
-
-        // Directory roots use Manager-owned incremental discovery. Keep
-        // mixed selections out of this path because move planning has a
-        // distinct operation mode for directory roots.
-        var directory_count: usize = 0;
-        for (request.sources) |source| {
-            if (source.path.len == 0 or
-                !std.fs.path.isAbsolute(source.path) or
-                std.mem.indexOfScalar(u8, source.path, 0) != null)
-            {
-                return error.InvalidTransferSource;
-            }
-
-            const source_z = try self.allocator.dupeSentinel(u8, source.path, 0);
-            defer self.allocator.free(source_z);
-            var source_stat: c.struct_stat = undefined;
-            if (c.lstat(source_z, &source_stat) != 0)
-                return error.InvalidTransferSource;
-            if ((source_stat.st_mode & c.S_IFMT) == c.S_IFDIR)
-                directory_count += 1;
-        }
-
-        if (directory_count != 0) {
-            if (directory_count != request.sources.len)
-                return error.MixedTransferSourceKinds;
-            try self.submitDirectoryTransfer(routed, request, destination_stat);
-            return;
-        }
-
-        const manager = &self.runtime.manager;
-        const job_id = try manager.createJob(routed.window_id);
-        errdefer std.debug.assert(manager.discardPlanningJob(job_id));
-
-        for (request.sources) |source| {
-            if (source.path.len == 0 or
-                !std.fs.path.isAbsolute(source.path) or
-                std.mem.indexOfScalar(u8, source.path, 0) != null)
-            {
-                return error.InvalidTransferSource;
-            }
-
-            const name = std.fs.path.basename(source.path);
-            if (name.len == 0) return error.InvalidTransferSource;
-
-            const source_z = try self.allocator.dupeSentinel(u8, source.path, 0);
-            defer self.allocator.free(source_z);
-
-            var source_stat: c.struct_stat = undefined;
-            if (c.lstat(source_z, &source_stat) != 0)
-                return error.InvalidTransferSource;
-
-            const kind: io_tree.EntryKind = switch (source_stat.st_mode & c.S_IFMT) {
-                c.S_IFREG => .regular_file,
-                c.S_IFLNK => .symlink,
-                else => return error.UnsupportedTransferSource,
-            };
-
-            var symlink_target: ?[]u8 = null;
-            defer if (symlink_target) |target| self.allocator.free(target);
-            if (kind == .symlink) {
-                var target_buffer: [4096]u8 = undefined;
-                const target_len = c.readlink(
-                    source_z,
-                    &target_buffer,
-                    target_buffer.len,
-                );
-                if (target_len < 0 or target_len == target_buffer.len)
-                    return error.InvalidTransferSource;
-                symlink_target = try self.allocator.dupe(
-                    u8,
-                    target_buffer[0..@intCast(target_len)],
-                );
-            }
-
-            const target_path = try std.fs.path.join(
-                self.allocator,
-                &.{ request.destination_path, name },
-            );
-            defer self.allocator.free(target_path);
-            if (std.mem.eql(u8, source.path, target_path))
-                return error.TransferSourceEqualsDestination;
-
-            const metadata: io_tree.Metadata = .{
-                .size = @intCast(@max(source_stat.st_size, 0)),
-                .mode = @intCast(source_stat.st_mode),
-                .device_id = @intCast(source_stat.st_dev),
-                .inode_id = @intCast(source_stat.st_ino),
-                .mtime_sec = @intCast(source_stat.st_mtim.tv_sec),
-                .mtime_nsec = @intCast(source_stat.st_mtim.tv_nsec),
-                .ctime_sec = @intCast(source_stat.st_ctim.tv_sec),
-                .ctime_nsec = @intCast(source_stat.st_ctim.tv_nsec),
-            };
-
-            const root_id = try manager.addTreeRoot(
-                job_id,
-                name,
-                kind,
-                metadata,
-                symlink_target,
-            );
-            try manager.setRootSourcePath(job_id, root_id, source.path);
-
-            const operation_kind: io_manager.OperationKind = switch (kind) {
-                .regular_file => .copy_file,
-                .symlink => .copy_symlink,
-                else => unreachable,
-            };
-
-            if (request.mode == .move and
-                source_stat.st_dev == destination_stat.st_dev)
-            {
-                _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
-            } else {
-                _ = try manager.addEntryOperation(job_id, root_id, operation_kind);
-                if (request.mode == .move)
-                    _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
-            }
-        }
-
-        try manager.setDestinationDirectory(job_id, request.destination_path);
-        if (request.mode == .move)
-            try manager.setDestinationDeviceId(job_id, @intCast(destination_stat.st_dev));
-        try manager.queueJob(job_id);
+        var plan = plan: {
+            const io_guard = io_thread_guard.exempt(.c1_submit_validation);
+            defer io_guard.end();
+            break :plan try io_transfer_plan.prepare(self.allocator, request);
+        };
+        defer plan.deinit();
+        return self.applyTransferPlan(routed.window_id, request.mode, &plan);
     }
 
-    /// Plans selected directory roots and lets Manager incrementally discover
-    /// and schedule their descendants. Discovery and operation execution stay
-    /// on the existing process-owned Runtime.
-    fn submitDirectoryTransfer(
+    fn applyTransferPlan(
         self: *Coordinator,
-        routed: io_service.RoutedCommand,
-        request: *const io_service.TransferRequest,
-        destination_stat: c.struct_stat,
-    ) !void {
+        window_id: io_service.WindowId,
+        mode: io_service.TransferMode,
+        plan: *const io_transfer_plan.TransferPlan,
+    ) !JobId {
         const manager = &self.runtime.manager;
-        const job_id = try manager.createJob(routed.window_id);
+        const job_id = try manager.createJob(window_id);
         errdefer std.debug.assert(manager.discardPlanningJob(job_id));
 
-        var roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
-        defer roots.deinit(self.allocator);
+        var discovery_roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
+        defer discovery_roots.deinit(self.allocator);
+        var directory_root_ids: std.ArrayList(io_tree.EntryId) = .empty;
+        defer directory_root_ids.deinit(self.allocator);
 
-        for (request.sources, 0..) |source, index| {
-            const name = std.fs.path.basename(source.path);
-            if (name.len == 0) return error.InvalidTransferSource;
-
-            const source_z = try self.allocator.dupeSentinel(
-                u8,
-                source.path,
-                0,
-            );
-            defer self.allocator.free(source_z);
-
-            var source_stat: c.struct_stat = undefined;
-            if (c.lstat(source_z, &source_stat) != 0 or
-                (source_stat.st_mode & c.S_IFMT) != c.S_IFDIR)
-            {
-                return error.InvalidTransferSource;
-            }
-
-            // Do not move a directory that is itself a mount point.
-            if (request.mode == .move) {
-                const parent_path = std.fs.path.dirname(source.path) orelse "/";
-                const parent_z = try self.allocator.dupeSentinel(
-                    u8,
-                    parent_path,
-                    0,
-                );
-                defer self.allocator.free(parent_z);
-
-                var parent_stat: c.struct_stat = undefined;
-                if (c.stat(parent_z, &parent_stat) != 0 or
-                    source_stat.st_dev != parent_stat.st_dev)
-                {
-                    return error.MountedDirectoryMoveUnsupported;
-                }
-
-                // Independent discovery roots must not overlap during a
-                // move: detaching a parent could invalidate a child root.
-                for (request.sources[0..index]) |previous| {
-                    if (ops_mod.isDescendantOrSame(source.path, previous.path) or
-                        ops_mod.isDescendantOrSame(previous.path, source.path))
-                    {
-                        return error.OverlappingDirectoryMoveRoots;
-                    }
-                }
-            }
-
-            // Discovery must not traverse into the destination it creates.
-            if (ops_mod.isDescendantOrSame(source.path, request.destination_path))
-                return error.TransferDestinationInsideSource;
-
-            const metadata: io_tree.Metadata = .{
-                .mode = @intCast(source_stat.st_mode),
-                .device_id = @intCast(source_stat.st_dev),
-                .inode_id = @intCast(source_stat.st_ino),
-                .mtime_sec = @intCast(source_stat.st_mtim.tv_sec),
-                .mtime_nsec = @intCast(source_stat.st_mtim.tv_nsec),
-                .ctime_sec = @intCast(source_stat.st_ctim.tv_sec),
-                .ctime_nsec = @intCast(source_stat.st_ctim.tv_nsec),
-            };
-
+        for (plan.sources.items) |source| {
             const root_id = try manager.addTreeRoot(
                 job_id,
-                name,
-                .directory,
-                metadata,
-                null,
+                source.destination_name,
+                source.kind,
+                source.metadata,
+                source.symlink_target,
             );
-            try roots.append(self.allocator, .{
-                .root_id = root_id,
-                .path = source.path,
-            });
+            switch (source.kind) {
+                .directory => {
+                    try discovery_roots.append(self.allocator, .{
+                        .root_id = root_id,
+                        .path = source.path,
+                    });
+                    try directory_root_ids.append(self.allocator, root_id);
+                },
+                .regular_file, .symlink => {
+                    try manager.setRootSourcePath(job_id, root_id, source.path);
+                    const copy_kind: io_manager.OperationKind =
+                        if (source.kind == .regular_file) .copy_file else .copy_symlink;
+                    if (mode == .move and source.same_device) {
+                        _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
+                    } else {
+                        _ = try manager.addEntryOperation(job_id, root_id, copy_kind);
+                        if (mode == .move)
+                            _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
+                    }
+                },
+                .other => unreachable,
+            }
         }
 
-        try manager.setDestinationDirectory(job_id, request.destination_path);
+        try manager.setDestinationDirectory(job_id, plan.destination_path);
+        if (mode == .move)
+            try manager.setDestinationDeviceId(job_id, plan.destination_device_id);
 
-        if (request.mode == .move) {
-            try manager.setDestinationDeviceId(
-                job_id,
-                @intCast(destination_stat.st_dev),
-            );
-            for (roots.items) |root| {
-                _ = try manager.addEntryOperation(
-                    job_id,
-                    root.root_id,
-                    .create_directory,
-                );
-                _ = try manager.addEntryOperation(
-                    job_id,
-                    root.root_id,
-                    .detach_source,
-                );
+        if (directory_root_ids.items.len == 0) {
+            try manager.queueJob(job_id);
+            return job_id;
+        }
+
+        if (mode == .move) {
+            for (directory_root_ids.items) |root_id| {
+                _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
+                _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
             }
             try manager.enableDiscoveredEntryMoves(job_id);
         } else {
             try manager.enableDiscoveredEntryOperations(job_id);
-            for (roots.items) |root| {
-                _ = try manager.addEntryOperation(
-                    job_id,
-                    root.root_id,
-                    .create_directory,
-                );
+            for (directory_root_ids.items) |root_id| {
+                _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
             }
         }
-
-        // This call atomically commits the job and all discovery roots.
-        try manager.queueJobWithDiscoveryRoots(job_id, roots.items);
+        // Atomically commits the job and all discovery roots.
+        try manager.queueJobWithDiscoveryRoots(job_id, discovery_roots.items);
+        return job_id;
     }
 
-    /// Publishes immutable job state and aggregate operation progress to the
-    /// window that submitted each job. The cache suppresses unchanged updates.
-    fn publishJobUpdates(self: *Coordinator) !void {
-        const snapshots = try self.runtime.manager.snapshotJobs(self.allocator);
-        defer {
-            for (snapshots) |*snapshot| snapshot.deinit();
-            self.allocator.free(snapshots);
-        }
+    /// Writes each job's record from its O(1) Manager summary. State,
+    /// cancellation and conflict changes are written at once; progress at
+    /// most every `progress_interval_ms`; a speed sample every second.
+    /// Returns the next time throttled work is due, if any.
+    fn publishRecords(self: *Coordinator, now: i64) ?i64 {
+        const manager = &self.runtime.manager;
+        const head = manager.nextConflict();
+        var deadline: ?i64 = null;
 
-        for (snapshots) |snapshot| {
-            const window_id = snapshot.origin_window_id orelse continue;
-            var published = self.published_jobs.get(snapshot.id) orelse
-                PublishedJobState{};
-            var changed = false;
+        for (0..manager.jobCount()) |index| {
+            const summary = manager.jobSummaryAt(index);
+            const entry = self.published.getPtr(summary.id) orelse continue;
+            var next = entry.record;
+            applySummary(&next, summary);
+            next.pending_conflict = if (head) |conflict|
+                (if (conflict.job_id == summary.id) conflict.id else 0)
+            else
+                0;
+            if (next.state.isTerminal() and next.finished_at_ms == 0) next.finished_at_ms = wallClockMs();
 
-            if (published.state != snapshot.state) {
-                _ = self.service.publishUpdate(window_id, .{
-                    .job_id = snapshot.id,
-                    .kind = .job_state,
-                    .state_code = @intCast(@intFromEnum(snapshot.state)),
-                }) catch |err| {
-                    if (err != error.WindowClosed) {
-                        std.log.err(
-                            "Files job state update failed for job {d}: {s}",
-                            .{ snapshot.id, @errorName(err) },
-                        );
-                    }
+            const previous = entry.record;
+            const structural = next.state != previous.state or
+                next.cancel_requested != previous.cancel_requested or
+                next.pending_conflict != previous.pending_conflict;
+            const progressed = next.completed_bytes != previous.completed_bytes or
+                next.total_bytes != previous.total_bytes or
+                next.completed_items != previous.completed_items or
+                next.total_items != previous.total_items or
+                next.rate_bytes_per_second != previous.rate_bytes_per_second;
+
+            if (structural or (progressed and now - entry.last_progress_ms >= progress_interval_ms)) {
+                self.service.updateJobRecord(next) catch |err| {
+                    std.log.err("Files job record update for job {d} failed: {s}", .{ summary.id, @errorName(err) });
                     continue;
                 };
-                published.state = snapshot.state;
-                changed = true;
+                entry.record = next;
+                entry.last_progress_ms = now;
+            } else if (progressed) {
+                deadline = earliest(deadline, entry.last_progress_ms + progress_interval_ms);
             }
 
-            var completed_bytes: u64 = 0;
-            var total_bytes: u64 = 0;
-            var rate_bytes_per_second: u64 = 0;
-            for (snapshot.operations) |operation| {
-                completed_bytes +|= operation.progress_bytes;
-                total_bytes +|= operation.progress_total_bytes;
-                rate_bytes_per_second +|= operation.progress_bytes_per_second;
-            }
-
-            if (total_bytes > 0 and
-                (!published.has_progress or
-                    published.completed_bytes != completed_bytes or
-                    published.total_bytes != total_bytes or
-                    published.rate_bytes_per_second != rate_bytes_per_second))
-            {
-                _ = self.service.publishUpdate(window_id, .{
-                    .job_id = snapshot.id,
-                    .kind = .progress,
-                    .completed_bytes = completed_bytes,
-                    .total_bytes = total_bytes,
-                    .rate_bytes_per_second = rate_bytes_per_second,
-                }) catch |err| {
-                    if (err != error.WindowClosed) {
-                        std.log.err(
-                            "Files job progress update failed for job {d}: {s}",
-                            .{ snapshot.id, @errorName(err) },
-                        );
-                    }
-                    continue;
-                };
-                published.has_progress = true;
-                published.completed_bytes = completed_bytes;
-                published.total_bytes = total_bytes;
-                published.rate_bytes_per_second = rate_bytes_per_second;
-                changed = true;
-            }
-
-            if (changed)
-                try self.published_jobs.put(self.allocator, snapshot.id, published);
-        }
-    }
-
-    /// Publishes only the FIFO conflict head. Its Job snapshot supplies the
-    /// originating window; the conflict view itself remains Manager-owned.
-    /// A new head receives a new notification, while repeated coordinator
-    /// iterations do not duplicate the current notification.
-    fn publishConflictUpdate(self: *Coordinator) !void {
-        const conflict = self.runtime.manager.nextConflict() orelse {
-            self.last_published_conflict_id = null;
-            return;
-        };
-        if (self.last_published_conflict_id == conflict.id) return;
-
-        const snapshots = try self.runtime.manager.snapshotJobs(self.allocator);
-        defer {
-            for (snapshots) |*snapshot| snapshot.deinit();
-            self.allocator.free(snapshots);
-        }
-
-        for (snapshots) |snapshot| {
-            if (snapshot.id != conflict.job_id) continue;
-            const window_id = snapshot.origin_window_id orelse {
-                self.last_published_conflict_id = conflict.id;
-                return;
-            };
-            _ = self.service.publishUpdate(window_id, .{
-                .job_id = conflict.job_id,
-                .kind = .conflict,
-                .conflict_id = conflict.id,
-            }) catch |err| {
-                if (err == error.WindowClosed) {
-                    self.last_published_conflict_id = conflict.id;
-                    return;
+            // Only moving jobs are sampled: a paused job or one waiting on a
+            // conflict must not wake the coordinator every second.
+            if (next.state == .running or next.state == .finalizing) {
+                if (now - entry.last_sample_ms >= rate_sample_interval_ms) {
+                    self.service.appendRateSample(summary.id, summary.rate_bytes_per_second);
+                    entry.last_sample_ms = now;
                 }
-                return err;
-            };
-            self.last_published_conflict_id = conflict.id;
-            return;
+                deadline = earliest(deadline, entry.last_sample_ms + rate_sample_interval_ms);
+            }
         }
-
-        // The conflict's Job may have been retired between observations.
-        self.last_published_conflict_id = conflict.id;
+        return deadline;
     }
 
     fn retireReadyJobs(self: *Coordinator) void {
@@ -760,10 +581,28 @@ pub const Coordinator = struct {
 
             const job_id = candidate orelse return;
             if (!self.runtime.retireJobIfReady(job_id)) return;
-            _ = self.published_jobs.remove(job_id);
+            if (self.published.fetchRemove(job_id)) |_| {
+                self.service.retireJobRecord(job_id) catch |err| {
+                    std.log.err("Files job record retirement for job {d} failed: {s}", .{ job_id, @errorName(err) });
+                };
+            }
         }
     }
 };
+
+fn earliest(current: ?i64, candidate: i64) i64 {
+    return if (current) |value| @min(value, candidate) else candidate;
+}
+
+fn applySummary(record: *io_service.JobRecord, summary: io_manager.JobSummary) void {
+    record.state = recordState(summary.state);
+    record.cancel_requested = summary.cancel_requested;
+    record.completed_bytes = summary.completed_bytes;
+    record.total_bytes = summary.total_bytes;
+    record.rate_bytes_per_second = summary.rate_bytes_per_second;
+    record.completed_items = summary.completed_items;
+    record.total_items = summary.total_items;
+}
 
 fn rejectionCode(err: anyerror) RejectionCode {
     return if (err == error.UnsupportedCommand)
@@ -778,9 +617,24 @@ fn rejectionCode(err: anyerror) RejectionCode {
         .invalid_job_state
     else if (err == error.JobNotTerminal)
         .job_not_terminal
+    else if (err == error.InvalidTransferDestination)
+        .invalid_destination
+    else if (err == error.InvalidTransferSource or err == error.EmptyTransfer)
+        .invalid_source
+    else if (err == error.UnsupportedTransferSource)
+        .unsupported_source
+    else if (err == error.TransferDestinationInsideSource)
+        .destination_inside_source
+    else if (err == error.OverlappingMoveRoots)
+        .overlapping_move_roots
+    else if (err == error.MountedDirectoryMoveUnsupported)
+        .mounted_directory_move
+    else if (err == error.TransferSourceEqualsDestination)
+        .nothing_to_transfer
     else
         .other;
 }
+
 
 test "coordinator protects worker and App resources during release" {
     const allocator = std.testing.allocator;
@@ -793,9 +647,9 @@ test "coordinator protects worker and App resources during release" {
     defer runtime.deinit();
 
     var owner_window = try service.registerWindow();
-    defer owner_window.close() catch unreachable;
+    defer owner_window.close();
     var other_window = try service.registerWindow();
-    defer other_window.close() catch unreachable;
+    defer other_window.close();
 
     const job_id = try runtime.manager.createJob(owner_window.window_id);
     const app_resource = try runtime.resource_ledger.register(

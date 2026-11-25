@@ -1,4 +1,5 @@
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const Allocator = std.mem.Allocator;
 const ops = @import("ops.zig");
 
@@ -9,6 +10,8 @@ pub const StagingLease = struct {
     path: []u8,
 
     pub fn deinit(self: *StagingLease) void {
+        const io_guard_0 = io_thread_guard.exempt(.u15_staging_lease);
+        defer io_guard_0.end();
         ops.deleteRecursive(self.allocator, self.path) catch {};
         self.allocator.free(self.path);
         self.* = undefined;

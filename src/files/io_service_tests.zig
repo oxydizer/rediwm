@@ -17,10 +17,10 @@ test "window IDs are centrally assigned, monotonic and not reused" {
     var first = try service.registerWindow();
     const stale = first;
     const first_id = first.window_id;
-    try first.close();
+    first.close();
 
     var second = try service.registerWindow();
-    defer second.close() catch unreachable;
+    defer second.close();
     try std.testing.expect(second.window_id > first_id);
     try std.testing.expectError(error.WindowClosed, stale.trySend(normalCommand(1)));
 }
@@ -33,7 +33,7 @@ test "normal command admission enforces per-window and aggregate bounds" {
     var handle_count: usize = 0;
     defer {
         for (handles[0..handle_count]) |*handle| {
-            handle.close() catch unreachable;
+            handle.close();
         }
         while (service.tryReceiveCommand() != null) {}
     }
@@ -71,7 +71,7 @@ test "reserved control admission remains available when normal capacity is full"
     defer service.deinit();
     var handle = try service.registerWindow();
     defer {
-        handle.close() catch unreachable;
+        handle.close();
         while (service.tryReceiveCommand() != null) {}
     }
 
@@ -97,8 +97,8 @@ test "command draining is round-robin across windows" {
     defer service.deinit();
     var first = try service.registerWindow();
     var second = try service.registerWindow();
-    defer first.close() catch unreachable;
-    defer second.close() catch unreachable;
+    defer first.close();
+    defer second.close();
 
     try first.trySend(normalCommand(1));
     try first.trySend(normalCommand(2));
@@ -111,68 +111,6 @@ test "command draining is round-robin across windows" {
     try std.testing.expectEqual(second.window_id, service.tryReceiveCommand().?.window_id);
 }
 
-test "progress coalescing preserves ordering around lifecycle updates" {
-    var service: service_mod.Service = .{};
-    try service.init();
-    defer service.deinit();
-    var handle = try service.registerWindow();
-    defer handle.close() catch unreachable;
-
-    const first_sequence = try service.publishUpdate(handle.window_id, .{
-        .job_id = 7,
-        .kind = .progress,
-        .completed_bytes = 10,
-    });
-    const second_sequence = try service.publishUpdate(handle.window_id, .{
-        .job_id = 7,
-        .kind = .progress,
-        .completed_bytes = 20,
-    });
-    try std.testing.expect(second_sequence > first_sequence);
-
-    _ = try service.publishUpdate(handle.window_id, .{
-        .job_id = 7,
-        .kind = .job_state,
-        .state_code = 2,
-    });
-    _ = try service.publishUpdate(handle.window_id, .{
-        .job_id = 7,
-        .kind = .progress,
-        .completed_bytes = 30,
-    });
-
-    const coalesced = (try handle.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(service_mod.UpdateKind.progress, coalesced.kind);
-    try std.testing.expectEqual(@as(u64, 20), coalesced.completed_bytes);
-    const state = (try handle.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(service_mod.UpdateKind.job_state, state.kind);
-    const latest = (try handle.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(service_mod.UpdateKind.progress, latest.kind);
-    try std.testing.expectEqual(@as(u64, 30), latest.completed_bytes);
-}
-
-test "update overflow is surfaced as an explicit resync marker" {
-    var service: service_mod.Service = .{};
-    try service.init();
-    defer service.deinit();
-    var handle = try service.registerWindow();
-    defer handle.close() catch unreachable;
-
-    var last_sequence: u64 = 0;
-    for (0..service_mod.update_capacity_per_window + 1) |i| {
-        last_sequence = try service.publishUpdate(handle.window_id, .{
-            .job_id = i + 1,
-            .kind = .job_state,
-            .state_code = 1,
-        });
-    }
-
-    const marker = (try handle.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(service_mod.UpdateKind.resync_required, marker.kind);
-    try std.testing.expectEqual(last_sequence, marker.sequence);
-    try std.testing.expect((try handle.tryReceiveUpdate()) == null);
-}
-
 test "shutdown rejects admission while handles can unregister cleanly" {
     var service: service_mod.Service = .{};
     try service.init();
@@ -181,7 +119,7 @@ test "shutdown rejects admission while handles can unregister cleanly" {
     service.beginShutdown();
     try std.testing.expectError(error.ServiceStopping, handle.trySend(normalCommand(1)));
     try std.testing.expectError(error.ServiceStopping, service.registerWindow());
-    try handle.close();
+    handle.close();
 }
 
 test "shutdown wakes the process command consumer" {
@@ -204,32 +142,62 @@ test "window operations fail fast under mutex contention and remain retryable" {
     var handle = try service.registerWindow();
 
     try std.testing.expectEqual(@as(c_int, 0), c.pthread_mutex_lock(&service.mutex));
+    // Send and receive never wait for the mutex: they fail fast and the
+    // caller retries on a later event-loop iteration.
     try std.testing.expectError(
         error.ServiceBusy,
         handle.trySend(normalCommand(1)),
     );
+    var records: [4]service_mod.JobRecord = undefined;
     try std.testing.expectError(
         error.ServiceBusy,
-        handle.tryReceiveUpdate(),
+        handle.fetchChanges(&records),
     );
-    try std.testing.expectError(
-        error.ServiceBusy,
-        handle.close(),
-    );
+    // Registering and closing take no lock at all, so they succeed while
+    // the mutex is held and cannot leave window teardown spinning.
+    var second = try service.registerWindow();
+    try std.testing.expect(second.window_id > handle.window_id);
     try std.testing.expectEqual(@as(c_int, 0), c.pthread_mutex_unlock(&service.mutex));
 
     // Failed operations did not consume the handle or lose the command.
     try handle.trySend(normalCommand(2));
+
+    try std.testing.expectEqual(@as(c_int, 0), c.pthread_mutex_lock(&service.mutex));
+    handle.close();
+    second.close();
+    try std.testing.expectEqual(@as(c_int, 0), c.pthread_mutex_unlock(&service.mutex));
+
+    // A command queued before close is still delivered, and draining
+    // recycles both closed slots.
     try std.testing.expectEqual(@as(u64, 2), service.tryReceiveCommand().?.command.job_id);
-    try handle.close();
+    try std.testing.expect(service.tryReceiveCommand() == null);
+    var handles: [service_mod.max_windows]service_mod.Handle = undefined;
+    for (&handles) |*h| h.* = try service.registerWindow();
+    for (&handles) |*h| h.close();
 }
 
-test "command admission and update publication wake their process consumers" {
+test "closing a stale handle copy never closes a later window in the same slot" {
+    var service: service_mod.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var first = try service.registerWindow();
+    var stale = first;
+    first.close();
+    var later = try service.registerWindow();
+    defer later.close();
+
+    stale.close();
+    try later.trySend(normalCommand(5));
+    try std.testing.expectEqual(later.window_id, service.tryReceiveCommand().?.window_id);
+}
+
+test "command admission and record changes wake their process consumers" {
     var service: service_mod.Service = .{};
     try service.init();
     defer service.deinit();
     var handle = try service.registerWindow();
-    defer handle.close() catch unreachable;
+    defer handle.close();
 
     try std.testing.expect(!isReadable(service.commandWakeFd()));
     try handle.trySend(normalCommand(41));
@@ -238,19 +206,17 @@ test "command admission and update publication wake their process consumers" {
     try std.testing.expect(!isReadable(service.commandWakeFd()));
     try std.testing.expectEqual(@as(u64, 41), service.tryReceiveCommand().?.command.job_id);
 
+    // A record written after the consumer drained the wake leaves the
+    // counter readable, and the read that follows sees the record.
     try std.testing.expect(!isReadable(service.updateWakeFd()));
-    _ = try service.publishUpdate(handle.window_id, .{
-        .job_id = 41,
-        .kind = .job_state,
-        .state_code = 1,
-    });
+    try service.createJobRecord(.{ .id = 41, .origin_window_id = handle.window_id, .state = .queued }, true);
     try std.testing.expect(isReadable(service.updateWakeFd()));
     try std.testing.expect(service.drainUpdateWake() > 0);
     try std.testing.expect(!isReadable(service.updateWakeFd()));
-    try std.testing.expectEqual(
-        service_mod.UpdateKind.job_state,
-        (try handle.tryReceiveUpdate()).?.kind,
-    );
+    var records: [4]service_mod.JobRecord = undefined;
+    const result = try handle.fetchChanges(&records);
+    try std.testing.expectEqual(@as(usize, 1), result.count);
+    try std.testing.expectEqual(@as(u64, 41), records[0].id);
 }
 
 fn isReadable(fd: std.posix.fd_t) bool {
@@ -274,7 +240,7 @@ test "accepted commands survive window closure and retain their origin ID" {
 
     try handle.trySend(normalCommand(73));
     try handle.trySend(controlCommand(74));
-    try handle.close();
+    handle.close();
 
     try std.testing.expectError(
         error.WindowClosed,
@@ -294,7 +260,7 @@ test "accepted commands survive window closure and retain their origin ID" {
     try std.testing.expect(service.tryReceiveCommand() == null);
 
     var replacement = try service.registerWindow();
-    defer replacement.close() catch unreachable;
+    defer replacement.close();
     try std.testing.expect(replacement.window_id > origin_id);
 }
 
@@ -304,7 +270,7 @@ test "owned command admission transfers payload only after successful enqueue" {
     defer service.deinit();
 
     var handle = try service.registerWindow();
-    defer handle.close() catch unreachable;
+    defer handle.close();
 
     const source_paths = [_][]const u8{ "/source/one", "/source/two" };
     var command: service_mod.Command = .{
@@ -353,7 +319,7 @@ test "failed owned command admission leaves payload with caller" {
 
     var handle = try service.registerWindow();
     defer {
-        handle.close() catch unreachable;
+        handle.close();
         while (service.tryReceiveCommand()) |routed_value| {
             var routed = routed_value;
             routed.command.deinitPayload();
@@ -400,7 +366,7 @@ test "owned commands remain valid after their originating window closes" {
     defer command.deinitPayload();
 
     try handle.trySendOwned(&command);
-    try handle.close();
+    handle.close();
 
     var routed = service.tryReceiveCommand().?;
     try std.testing.expectEqual(origin_id, routed.window_id);

@@ -1,6 +1,7 @@
 //! Files clipboard and file operations: copy, cut, paste, size and delete.
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -187,6 +188,9 @@ fn startManagerFileCopy(
     paths: []const []const u8,
     directory: []const u8,
 ) !bool {
+    const io_guard_5 = io_thread_guard.exempt(.u1_transfer_prepare);
+    defer io_guard_5.end();
+    io_thread_guard.blocking("transfer preparation");
     if (paths.len == 0 or self.active_io_copy_job != null) return false;
 
     const RootPlan = struct {
@@ -296,6 +300,9 @@ fn startManagerFileMove(
     directory: []const u8,
     clipboard: bool,
 ) !bool {
+    const io_guard_4 = io_thread_guard.exempt(.u1_transfer_prepare);
+    defer io_guard_4.end();
+    io_thread_guard.blocking("transfer preparation");
     if (paths.len == 0 or self.active_io_copy_job != null) return false;
 
     const destination_z = try self.allocator.dupeSentinel(u8, directory, 0);
@@ -434,6 +441,9 @@ fn startManagerDirectoryTransfer(
     is_move: bool,
     clipboard: bool,
 ) !bool {
+    const io_guard_3 = io_thread_guard.exempt(.u1_transfer_prepare);
+    defer io_guard_3.end();
+    io_thread_guard.blocking("transfer preparation");
     if (paths.len == 0 or self.active_io_copy_job != null) return false;
 
     const destination_z = try self.allocator.dupeSentinel(u8, directory, 0);
@@ -644,6 +654,10 @@ pub fn deleteAction(self: *App, action: deletion.Action) void {
 }
 
 pub fn executeDeletion(self: *App) void {
+    const io_guard_2 = io_thread_guard.exempt(.u6_trash_sweep);
+    defer io_guard_2.end();
+    const io_guard_1 = io_thread_guard.exempt(.u4_delete_trash_spawn);
+    defer io_guard_1.end();
     const state = &self.dialog.?.deletion;
     if (state.in_trash) return self.deleteFromTrash(state.paths.items);
     const result = if (state.empty_trash) ops_mod.emptyTrash(self.io) else if (state.permanent) ops_mod.deleteItems(self.io, state.paths.items) else ops_mod.trashItems(self.io, state.paths.items);
@@ -660,6 +674,8 @@ pub fn executeDeletion(self: *App) void {
 
 /// Permanently deletes entries of the Trash view with their metadata.
 pub fn deleteFromTrash(self: *App, paths: []const []const u8) void {
+    const io_guard_0 = io_thread_guard.exempt(.u5_trash_delete);
+    defer io_guard_0.end();
     const dir = self.trash_dir orelse return;
     var names: std.ArrayList([]const u8) = .empty;
     defer names.deinit(self.allocator);
