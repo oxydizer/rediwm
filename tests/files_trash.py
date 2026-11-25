@@ -278,7 +278,8 @@ def run():
                 put("late.txt", home / "late.txt", "twelve chars")
                 mode = files.stat().st_mode
                 geometry = next(iter(windows()))
-                row = (geometry["x"] + 75, geometry["y"] + 221)  # sidebar: Home, Trash, Recent
+                # sidebar: the PLACES card header (32 px), then Home, Trash, Recent
+                row = (geometry["x"] + 75, geometry["y"] + 253)
 
                 def trash_properties():
                     ipc.click_at(*row, 0x111)
