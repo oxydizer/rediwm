@@ -7,14 +7,8 @@ const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const platform = @import("platform");
 const worker_mod = @import("worker.zig");
-const io_manager_mod = @import("io_manager.zig");
-const io_discovery_mod = @import("io_discovery.zig");
-const io_discovery_executor_mod = @import("io_discovery_executor.zig");
-const io_operation_executor_mod = @import("io_operation_executor.zig");
-const io_runtime_mod = @import("io_runtime.zig");
 const app_service = @import("app_service.zig");
 const app_requests = @import("app_requests.zig");
-const io_resource_ledger_mod = @import("io_resource_ledger.zig");
 const clipboard_mod = @import("clipboard.zig");
 const history_mod = @import("history.zig");
 const app_tabs = @import("app_tabs.zig");
@@ -46,8 +40,6 @@ const app_sidebar_paint = @import("app_sidebar_paint.zig");
 const app_scroll = @import("app_scroll.zig");
 const app_torrents = @import("app_torrents.zig");
 const app_torrent_rows = @import("app_torrent_rows.zig");
-const app_transfer_rows = @import("app_transfer_rows.zig");
-const app_transfer_tree = @import("app_transfer_tree.zig");
 const app_git_sidebar = @import("app_git_sidebar.zig");
 const app_opening = @import("app_opening.zig");
 const app_audio = @import("app_audio.zig");
@@ -83,35 +75,7 @@ pub const FontMetrics = app_draw.FontMetrics;
 pub const fontMetrics = app_draw.fontMetrics;
 pub const measureText = app_draw.measureText;
 pub const App = struct {
-    pub const IoRuntime = io_runtime_mod.Runtime;
-    pub const ArchivePublication = struct {
-        job_id: io_manager_mod.JobId,
-        operation_id: io_manager_mod.OperationId,
-        token: ?io_manager_mod.WorkToken = null,
-        cursor: ?io_discovery_mod.Cursor = null,
-        cursor_ledger_handle: ?io_resource_ledger_mod.Handle = null,
-        registration_closed: bool = false,
-    };
-    pub const ArchiveMemberExtraction = struct {
-        job_id: io_manager_mod.JobId,
-        operation_id: io_manager_mod.OperationId,
-        token: ?io_manager_mod.WorkToken = null,
-        preview: bool,
-        navigation_count: u32,
-        registration_closed: bool = false,
-        opened: bool = false,
-        staging_transferred: bool = false,
-    };
-    pub const ArchiveExportPurpose = enum { clipboard, drag, open_with };
-    pub const ArchiveExportExtraction = struct {
-        job_id: io_manager_mod.JobId,
-        operation_id: io_manager_mod.OperationId,
-        token: ?io_manager_mod.WorkToken = null,
-        member_paths: std.ArrayList([]const u8) = .empty,
-        staging_lease: ?clipboard_mod.StagingLease = null,
-        registration_closed: bool = false,
-        purpose: ArchiveExportPurpose,
-    };
+    pub const ArchiveExportPurpose = @import("app_archives.zig").ExportUse;
     pub const ArchiveDragExport = struct {
         allocator: Allocator,
         paths: std.ArrayList([]const u8),
@@ -154,20 +118,11 @@ pub const App = struct {
     environ: std.process.Environ,
     theme_cfg: theme.Config,
     worker: *worker_mod.Worker,
-    io_runtime: ?*io_runtime_mod.Runtime = null,
     /// This window's link to the process-wide I/O service (`app_service.zig`).
     service: app_service.Link = .{},
     /// The user chose what happens to running jobs when this, the last
     /// window, closes (`app_quit.zig`).
     quit_confirmed: bool = false,
-    io_manager: ?*io_manager_mod.Manager = null,
-    discovery_executor: ?*io_discovery_executor_mod.Executor = null,
-    operation_executor: ?*io_operation_executor_mod.Runtime = null,
-    discovery_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
-    detached_io_jobs: std.ArrayList(io_manager_mod.JobId) = .empty,
-    archive_publications: std.ArrayList(ArchivePublication) = .empty,
-    archive_member_extractions: std.ArrayList(ArchiveMemberExtraction) = .empty,
-    archive_exports: std.ArrayList(ArchiveExportExtraction) = .empty,
     archive_open_with_leases: std.ArrayList(clipboard_mod.StagingLease) = .empty,
     archive_drag_export: ?ArchiveDragExport = null,
     history: history_mod.History,
@@ -359,28 +314,11 @@ pub const App = struct {
     // Operations & Jobs
     dialog: ?Dialog = null,
     open_with_archive_paths: bool = false,
-    active_io_copy_job: ?io_manager_mod.JobId = null,
-    active_io_copy_destination: ?[]u8 = null,
-    active_io_copy_is_directory: bool = false,
-    active_io_copy_is_move: bool = false,
-    active_io_copy_is_archive: bool = false,
-    active_io_copy_is_archive_member: bool = false,
-    active_io_copy_is_archive_clipboard: bool = false,
-    active_io_copy_is_archive_drag: bool = false,
-    active_io_copy_is_archive_open_with: bool = false,
-    active_io_copy_archive_member_opened: bool = false,
-    active_io_copy_item_count: usize = 0,
-    archive_preview: bool = false,
     extract_picker_fd: ?c_int = null,
     extract_picker_source: ?[]u8 = null,
     extract_picker_members: std.ArrayList([]const u8) = .empty,
     extract_picker_bytes: std.ArrayList(u8) = .empty,
-    job_cut_revision: ?usize = null,
-    job_transferred_bytes: u64 = 0,
-    job_bytes_per_second: u64 = 0,
-    job_state: ops_mod.JobState = .idle,
     transfer_rows_dirty: bool = false,
-    transfer_tree_state: app_transfer_tree.State,
     status_notice: ?[]u8 = null,
     status_notice_until: i64 = 0,
     status_is_error: bool = false,
@@ -420,7 +358,6 @@ pub const App = struct {
         environ: std.process.Environ,
         theme_cfg: theme.Config,
         worker: *worker_mod.Worker,
-        io_runtime: *io_runtime_mod.Runtime,
         initial_dir: []const u8,
         home_dir: []const u8,
     ) !App {
@@ -433,12 +370,9 @@ pub const App = struct {
             .environ = environ,
             .theme_cfg = theme_cfg,
             .worker = worker,
-            .io_runtime = io_runtime,
-            .io_manager = &io_runtime.manager,
             .history = hist,
             .home_dir = home_dir,
             .items_arena = std.heap.ArenaAllocator.init(allocator),
-            .transfer_tree_state = app_transfer_tree.State.init(allocator),
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
             .single_click_open = @import("settings.zig").singleClickOpen(),
@@ -475,31 +409,17 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
-        // Cursors must be closed before Runtime deinit removes staging.
-        for (self.archive_publications.items) |*publication| {
-            if (publication.cursor) |*cursor| cursor.deinit();
-            publication.cursor = null;
-            if (publication.cursor_ledger_handle) |handle| {
-                const runtime = self.io_runtime orelse unreachable;
-                runtime.resource_ledger.release(handle, .app) catch unreachable;
-                publication.cursor_ledger_handle = null;
-            }
-        }
-        self.archive_publications.deinit(self.allocator);
-        self.archive_member_extractions.deinit(self.allocator);
-        for (self.archive_exports.items) |*extraction| {
-            if (extraction.staging_lease) |*lease| lease.deinit();
-            for (extraction.member_paths.items) |path| self.allocator.free(path);
-            extraction.member_paths.deinit(self.allocator);
-        }
-        self.archive_exports.deinit(self.allocator);
+        // Leases give their staging back through the service link: first.
         if (self.archive_drag_export) |*drag_export| drag_export.deinit();
-        self.discovery_jobs.deinit(self.allocator);
+        self.archive_drag_export = null;
+        for (self.archive_open_with_leases.items) |*lease| lease.deinit();
+        self.archive_open_with_leases.deinit(self.allocator);
+        self.clearClipboard();
+        self.service.archives.deinit(self.allocator);
         app_requests.deinitPending(self);
         self.service.transfers.deinit(self.allocator);
         self.service.ghosts.deinit(self.allocator);
         self.service.deinit();
-        self.detached_io_jobs.deinit(self.allocator);
         self.torrents.deinit();
         if (self.new_window) |path| self.allocator.free(path);
         self.stopAudio();
@@ -520,8 +440,6 @@ pub const App = struct {
         self.pins.deinit(self.allocator);
         if (self.preview_return_fd) |fd| _ = c.close(fd);
         if (self.editor_path) |path| self.allocator.free(path);
-        if (self.active_io_copy_destination) |path| self.allocator.free(path);
-        self.transfer_tree_state.deinit();
         self.clearFolderSizes();
         self.folder_sizes.deinit();
         if (self.dirsize_pool) |p| p.deinit();
@@ -531,11 +449,8 @@ pub const App = struct {
         if (self.device_op) |op| self.allocator.free(op.id);
         self.thumb_wants.deinit(self.allocator);
         self.thumb_arrived.deinit(self.allocator);
-        self.clearClipboard();
         self.clipboard_paths.deinit(self.allocator);
         self.closeDialog();
-        for (self.archive_open_with_leases.items) |*lease| lease.deinit();
-        self.archive_open_with_leases.deinit(self.allocator);
         if (self.status_notice) |sn| self.allocator.free(sn);
 
         if (self.snapshot) |snap| snap.destroy();
@@ -767,7 +682,6 @@ pub const App = struct {
     pub const openTrashConfirmDialog = app_dialogs.openTrashConfirmDialog;
     pub const openTrashConfirmDialogWithMode = app_dialogs.openTrashConfirmDialogWithMode;
     pub const openConflictDialog = app_dialogs.openConflictDialog;
-    pub const openManagerConflictDialog = app_dialogs.openManagerConflictDialog;
     pub const managerConflictCanMerge = app_dialogs.managerConflictCanMerge;
     pub const resolveConflictDialog = app_dialogs.resolveConflictDialog;
     pub const smallDialogHeight = app_dialogs.smallDialogHeight;
@@ -801,17 +715,8 @@ pub const App = struct {
 
     // app_io.zig
     const app_io = @import("app_io.zig");
-    pub const startDiscovery = app_io.startDiscovery;
-    pub const startDiscoveryRoots = app_io.startDiscoveryRoots;
-    pub const promoteDiscoveryPath = app_io.promoteDiscoveryPath;
     pub const promoteDiscoverySubtreePath = app_io.promoteDiscoverySubtreePath;
     pub const prioritizeTransferEntry = app_io.prioritizeTransferEntry;
-    pub const stepDiscovery = app_io.stepDiscovery;
-    pub const discoveryWakeFd = app_io.discoveryWakeFd;
-    pub const startOperations = app_io.startOperations;
-    pub const trackArchivePublication = app_io.trackArchivePublication;
-    pub const stepOperations = app_io.stepOperations;
-    pub const operationWakeFd = app_io.operationWakeFd;
 
     // app_trash.zig
     pub const trashRelation = app_trash.trashRelation;
@@ -1020,7 +925,6 @@ pub const App = struct {
     pub const fileOpsSidebarHover = app_sidebar_paint.fileOpsSidebarHover;
     pub const fileOpsSidebarClick = app_sidebar_paint.fileOpsSidebarClick;
     pub const renderFileOpsSidebar = app_sidebar_paint.renderFileOpsSidebar;
-    pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
 
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
@@ -1030,8 +934,6 @@ pub const App = struct {
     pub const torrentForItem = app_torrent_rows.torrentForItem;
     pub const hasFolderTransfers = app_torrent_rows.hasFolderTransfers;
     pub const appendTorrentRows = app_torrent_rows.appendTorrentRows;
-    pub const appendTransferRows = app_transfer_rows.appendTransferRows;
-    pub const appendDiscoveryRows = app_io.appendDiscoveryRows;
     pub const inlineTorrentWidth = app_torrent_rows.inlineTorrentWidth;
     pub const renderInlineTorrent = app_torrent_rows.renderInlineTorrent;
     pub const inlineTorrentHit = app_torrent_rows.inlineTorrentHit;

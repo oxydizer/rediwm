@@ -45,6 +45,8 @@ pub const Pending = union(enum) {
     conflict,
     /// A free name for a conflict renamed, in `dir`.
     conflict_rename: struct { conflict_id: u64, dir: []u8 },
+    /// The staging an archive job (`app_archives.zig`, by tag) handed over.
+    archive_handoff: struct { tag: u64 },
 
     fn deinit(self: *Pending, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -218,6 +220,12 @@ fn finish(self: *App, pending: *Pending, reply: *io_service.Reply) void {
             const path = std.fs.path.join(self.allocator, &.{ p.dir, name }) catch return;
             defer self.allocator.free(path);
             app_transfers.sendResolution(self, p.conflict_id, .rename, path);
+        },
+        .archive_handoff => |p| {
+            // The lease takes the staging string; the reply must not free it.
+            const handoff = reply.data.handoff;
+            reply.data.handoff = null;
+            @import("app_archives.zig").finishHandoff(self, p.tag, handoff);
         },
     }
 }

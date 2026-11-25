@@ -299,7 +299,6 @@ pub fn dropMotion(self: *App, x: f64, y: f64) bool {
 pub fn dropDirectoryAt(self: *App, x: f64, y: f64) ?[]const u8 {
     if (self.transfer_view.active) return null;
     if (self.chooser != null or self.dialog != null or self.menu != null or self.history.archive_len > 0) return null;
-    if (self.job_state == .running or self.job_state == .waiting_conflict) return null;
     if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter())) or
         y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.contentBottom()))) return null;
     if (self.itemAt(x, y)) |idx| {
@@ -526,7 +525,7 @@ pub fn ejectDevice(self: *App, k: usize) void {
     if (self.device_op != null) return;
     // Any running service job may be using the volume, whichever window
     // started it.
-    if (self.job_state == .running or @import("app_jobs_card.zig").count(self) > 0) {
+    if (@import("app_jobs_card.zig").count(self) > 0) {
         self.setStatusNotice(tr("Finish the running file operation first"), true);
         return;
     }

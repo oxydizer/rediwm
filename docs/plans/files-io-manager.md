@@ -86,7 +86,7 @@ publication. The process owns them. Windows do not use them yet: each still owns
 its own Runtime until stage S3.
 
 `JobRunner` is **removed** (S3b). Every copy and move goes through the service;
-the window keeps a Manager of its own only for archive jobs until S3c and S4.
+since S3c and S4 archives too, and no window has a Manager of its own.
 
 ## Phase 1 — Per-job resource ledger
 

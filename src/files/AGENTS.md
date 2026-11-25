@@ -16,7 +16,10 @@ are free functions taking `self: *App` in `app_*.zig`, grouped by concern:
 `app_git_sidebar`, `app_scroll`, `app_opening`, `app_pointer`,
 `app_keyboard`, `app_menu`, `app_paint`, `app_items`, `app_trash`,
 `app_service` and `app_requests` (the window's side of the I/O service:
-deletion jobs, and requests whose replies finish an action later). Shared enums and
+deletion jobs, and requests whose replies finish an action later),
+`app_transfers` (copies and moves), `app_archives` (extracting, opening a
+member, exporting members; the window holds handed-over staging as a service
+resource and gives it back through `StagingLease`). Shared enums and
 records are in `app_model.zig`, drawing helpers in `app_draw.zig`, tests in
 `app_tests.zig` (with `app_*_tests.zig` by area). A new method goes in its
 group file plus an alias line in `App`; a file that calls a sibling's
@@ -29,8 +32,8 @@ The window is `Client.zig` (Wayland globals, seat, buffers), re-exported by
 The process can hold several windows (`main.zig` `open_windows`, at most
 `max_windows`) on one Wayland connection, so the compositor sees one client and
 a folder tab can move between them. `client_lifecycle.zig` makes, steps, polls
-and destroys a window: each has its own `Client`, `App`, listing worker and I/O
-runtime and shares the display and the process's I/O service. Anything that
+and destroys a window: each has its own `Client`, `App` and listing worker and
+shares the display and the process's I/O service. Anything that
 touches a user path (stat, realpath, mkdir, rename, chmod, restore, delete) goes
 to the service as a job or a request; the window never waits for it. The seat reports every surface of the
 connection, so pointer, keyboard, text-input and drag events are filtered by

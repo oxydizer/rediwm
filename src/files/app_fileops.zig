@@ -1,96 +1,23 @@
 //! Files clipboard and file operations: copy, cut, paste, size and delete.
 
 const std = @import("std");
-const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
 const recent = @import("recent.zig");
 const ops_mod = @import("ops.zig");
-const io_tree = @import("io_tree.zig");
-const io_manager = @import("io_manager.zig");
 const clipboard_mod = @import("clipboard.zig");
 const deletion = @import("../delete_dialog.zig");
 const trash = @import("trash.zig");
 const c = @import("c.zig").api;
 
 fn startArchiveExport(self: *App, purpose: App.ArchiveExportPurpose) !void {
-    if (!self.hasSelectedArchiveMembers()) return error.NoSelectedArchiveMembers;
-    if (purpose == .open_with) {
-        for (self.items.items) |item| {
-            if (item.selected and !item.transfer_ghost and item.is_dir)
-                return error.NoSelectedArchiveMembers;
-        }
-    }
-    if (self.active_io_copy_job != null) return error.Busy;
-
-    const archive_len = self.history.archive_len;
-    const archive_path = self.history.current[0..archive_len];
-    var members: std.ArrayList([]const u8) = .empty;
-    defer {
-        for (members.items) |member| self.allocator.free(member);
-        members.deinit(self.allocator);
-    }
-
-    for (self.items.items) |item| {
-        if (!item.selected or item.transfer_ghost) continue;
-        const member = try self.allocator.dupe(
-            u8,
-            item.path[archive_len + 1 ..],
-        );
-        members.append(self.allocator, member) catch |err| {
-            self.allocator.free(member);
-            return err;
-        };
-    }
-
-    try self.startOperations();
-    const manager = self.io_manager orelse return error.OperationManagerUnavailable;
-    try self.archive_exports.ensureUnusedCapacity(self.allocator, 1);
-
-    const job_id = try manager.createJob(null);
-    errdefer _ = manager.discardPlanningJob(job_id);
-    const operation_id = try manager.addArchiveOperation(
-        job_id,
-        .archive_extract,
-        .{
-            .source_path = archive_path,
-            .staging_parent = "/tmp",
-            .member_paths = members.items,
-        },
-    );
-    try manager.setDestinationDirectory(job_id, "/tmp");
-    try manager.queueJob(job_id);
-
-    self.archive_exports.appendAssumeCapacity(.{
-        .job_id = job_id,
-        .operation_id = operation_id,
-        .member_paths = members,
-        .purpose = purpose,
-    });
-    members = .empty;
-
-    self.active_io_copy_job = job_id;
-    self.active_io_copy_is_directory = false;
-    self.active_io_copy_is_move = false;
-    self.active_io_copy_is_archive = false;
-    self.active_io_copy_is_archive_member = false;
-    self.active_io_copy_is_archive_clipboard = purpose == .clipboard;
-    self.active_io_copy_is_archive_drag = purpose == .drag;
-    self.active_io_copy_is_archive_open_with = purpose == .open_with;
-    self.active_io_copy_item_count = self.archive_exports.items[
-        self.archive_exports.items.len - 1
-    ].member_paths.items.len;
-    self.setStatusNotice(switch (purpose) {
-        .clipboard => "Preparing archive members for clipboard",
-        .drag => "Preparing files for drag…",
-        .open_with => "Preparing archive members for Open With…",
-    }, false);
-    self.invalidate();
+    _ = try @import("app_archives.zig").startExport(self, purpose);
 }
 
-pub fn startArchiveDragExport(self: *App) !void {
-    try startArchiveExport(self, .drag);
+/// The export's tag, for the drag to wait on.
+pub fn startArchiveDragExport(self: *App) !u64 {
+    return @import("app_archives.zig").startExport(self, .drag);
 }
 
 pub fn startArchiveOpenWith(self: *App) !void {
@@ -99,12 +26,9 @@ pub fn startArchiveOpenWith(self: *App) !void {
 
 pub fn copySelected(self: *App) void {
     if (self.history.archive_len > 0) {
-        startArchiveExport(self, .clipboard) catch |err| {
+        startArchiveExport(self, .clipboard) catch {
             self.setStatusNotice(
-                if (err == error.Busy)
-                    tr("A file operation is already running")
-                else
-                    tr("Could not copy archive members"),
+                tr("Could not copy archive members"),
                 true,
             );
         };
@@ -208,7 +132,6 @@ pub fn executePasteExternal(self: *App, mode: clipboard_mod.ClipboardMode, paths
         self.clipboard_cut = true;
         self.clipboard_is_text = false;
         self.clipboard_revision += 1;
-        self.job_cut_revision = self.clipboard_revision;
     }
 }
 

@@ -51,6 +51,7 @@ pub fn disposeWindowResource(
 /// Never touches executor-owned or worker-held resources, or any job.
 fn sweepClosedWindow(self: *Coordinator, window_id: io_service.WindowId) void {
     @import("io_coordinator_views.zig").dropWindowViews(self, window_id);
+    self.dropWindowHandoffs(window_id);
     const ledger = &self.runtime.resource_ledger;
     _ = ledger.dropBorrowsOf(window_id);
     var held: [16]io_resource_ledger.Handle = undefined;

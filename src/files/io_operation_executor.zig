@@ -15,7 +15,6 @@ const io_detach = @import("io_detach.zig");
 const io_finalize = @import("io_finalize.zig");
 const archive = @import("archive.zig");
 const ops = @import("ops.zig");
-const clipboard = @import("clipboard.zig");
 
 const Context = struct {
     allocator: Allocator,
@@ -265,75 +264,27 @@ pub const Runtime = struct {
         return lease.token;
     }
 
-    /// Releases staging only after publication registration, discovery and
-    /// every publication operation have drained.
-    pub fn releaseArchiveStaging(
-        self: *Runtime,
-        token: io_manager.WorkToken,
-    ) !bool {
-        if (self.context.manager.archivePublicationReady(token) != true) return false;
-        const key = io_executor.OperationKey.fromToken(token);
-        const lease = self.context.archive_staging.getPtr(key) orelse return false;
-        const ledger_handle = lease.ledger_handle;
-        const path = lease.path;
-        try ops.deleteRecursive(self.allocator, path);
-        self.allocator.free(path);
-        _ = self.context.archive_staging.remove(key);
-        self.context.ledger.release(
-            ledger_handle,
-            .operation_executor,
-        ) catch unreachable;
-        return true;
-    }
+    pub const DetachedStaging = struct {
+        handle: io_resource_ledger.Handle,
+        /// Owned by the caller now.
+        path: []u8,
+    };
 
-    /// Transfers a completed extraction directory to an external owner.
-    /// The publication barrier must be closed and all publication work drained.
-    pub fn takeArchiveStaging(
-        self: *Runtime,
-        token: io_manager.WorkToken,
-    ) ?clipboard.StagingLease {
-        if (self.context.manager.archivePublicationReady(token) != true)
-            return null;
-        const key = io_executor.OperationKey.fromToken(token);
-        const lease = self.context.archive_staging.get(key) orelse return null;
-        if (!std.meta.eql(lease.token, token)) return null;
-
-        self.context.ledger.transferOut(
-            lease.ledger_handle,
-            .operation_executor,
-        ) catch return null;
-        const removed = self.context.archive_staging.fetchRemove(key) orelse
-            return null;
-        return .{
-            .allocator = removed.value.allocator,
-            .path = removed.value.path,
-        };
-    }
-
-    /// Removes a retained staging lease after its Manager job has become
-    /// terminal. This is used for cancelled archive operations.
-    pub fn discardArchiveStaging(
+    /// Takes a staging folder out of the executor without touching the
+    /// filesystem: its ledger entry stays executor-owned, and the caller
+    /// hands it on, to a worker that deletes it or to a window (stage S4).
+    /// Only once publication has drained, or once the job has ended.
+    pub fn detachArchiveStaging(
         self: *Runtime,
         job_id: io_manager.JobId,
         operation_id: io_manager.OperationId,
-    ) !bool {
-        const state = self.context.manager.jobState(job_id) orelse return false;
-        if (!state.isTerminal()) return false;
-        const key: io_executor.OperationKey = .{
-            .job_id = job_id,
-            .operation_id = operation_id,
-        };
-        const lease = self.context.archive_staging.getPtr(key) orelse return false;
-        const ledger_handle = lease.ledger_handle;
-        const path = lease.path;
-        try ops.deleteRecursive(self.allocator, path);
-        self.allocator.free(path);
-        _ = self.context.archive_staging.remove(key);
-        self.context.ledger.release(
-            ledger_handle,
-            .operation_executor,
-        ) catch unreachable;
-        return true;
+    ) ?DetachedStaging {
+        const key: io_executor.OperationKey = .{ .job_id = job_id, .operation_id = operation_id };
+        const lease = self.context.archive_staging.get(key) orelse return null;
+        const ended = if (self.context.manager.jobState(job_id)) |state| state.isTerminal() else true;
+        if (!ended and self.context.manager.archivePublicationReady(lease.token) != true) return null;
+        const removed = self.context.archive_staging.fetchRemove(key) orelse return null;
+        return .{ .handle = removed.value.ledger_handle, .path = removed.value.path };
     }
 
     /// Releases a retained staging resource by its ledger handle. The

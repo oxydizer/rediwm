@@ -37,11 +37,15 @@ pub const Request = union(enum) {
     /// What the conflict dialog shows. Answered by the coordinator from the
     /// Manager, in memory: never on a worker (`answeredByCoordinator`).
     conflict_details: struct { conflict_id: u64 },
+    /// What a finished archive member or export job left this window:
+    /// its staging, now the window's (`dispose_resource` when done with it).
+    /// Answered by the coordinator.
+    archive_handoff: struct { job_id: u64 },
 };
 
 /// Requests about Manager state: the coordinator answers them itself.
 pub fn answeredByCoordinator(request: *const Request) bool {
-    return request.* == .conflict_details;
+    return request.* == .conflict_details or request.* == .archive_handoff;
 }
 
 pub const ConflictDetails = struct {
@@ -51,6 +55,14 @@ pub const ConflictDetails = struct {
     destination_path: []u8,
     /// Both sides are folders: Merge is offered.
     can_merge: bool,
+};
+
+pub const Handoff = struct {
+    /// The resource to dispose of when the window is done with it.
+    resource_id: u64,
+    /// Owned: the staging folder; members are inside it under their
+    /// archive paths.
+    staging: []u8,
 };
 
 pub const ChooserCheck = struct {
@@ -115,6 +127,8 @@ pub const ReplyData = union(enum) {
     unique_name: anyerror![]u8,
     /// Null when the conflict is no longer at the head of the queue.
     conflict: ?ConflictDetails,
+    /// Null when the job left nothing (it failed, or was taken already).
+    handoff: ?Handoff,
 };
 
 pub const Reply = struct {
@@ -133,6 +147,7 @@ pub const Reply = struct {
             },
             .unique_name => |name| if (name) |n| self.allocator.free(n) else |_| {},
             .conflict => |details| if (details) |d| self.allocator.free(d.destination_path),
+            .handoff => |handoff| if (handoff) |h| self.allocator.free(h.staging),
             .chooser => |result| {
                 for (result.paths) |path| self.allocator.free(path);
                 self.allocator.free(result.paths);
@@ -169,6 +184,7 @@ pub fn create(allocator: Allocator, request: Request) !Owned {
         } },
         .unique_name => |r| .{ .unique_name = .{ .dir = try a.dupe(u8, r.dir), .name = try a.dupe(u8, r.name) } },
         .conflict_details => |r| .{ .conflict_details = r },
+        .archive_handoff => |r| .{ .archive_handoff = r },
     };
     return owned;
 }
@@ -206,6 +222,7 @@ fn run(allocator: Allocator, io: std.Io, request: *const Request) ReplyData {
         .unique_name => |r| .{ .unique_name = ops.generateUniqueName(allocator, r.dir, r.name) },
         // Never reaches a worker (`answeredByCoordinator`).
         .conflict_details => .{ .conflict = null },
+        .archive_handoff => .{ .handoff = null },
     };
 }
 

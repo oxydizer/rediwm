@@ -267,10 +267,8 @@ pub fn startFileDrag(self: *Client) !void {
     if (self.data_manager == null or self.data_device == null) return;
 
     if (self.app.history.archive_len > 0) {
-        if (self.pending_archive_drag_job != null) return;
-        try self.app.startArchiveDragExport();
-        self.pending_archive_drag_job = self.app.active_io_copy_job orelse
-            return error.ArchiveExportJobUnavailable;
+        if (self.pending_archive_drag != null) return;
+        self.pending_archive_drag = try self.app.startArchiveDragExport();
         self.pending_archive_drag_serial = self.drag_serial;
         self.app.cancelDrag();
         return;
@@ -286,30 +284,25 @@ pub fn startFileDrag(self: *Client) !void {
 }
 
 pub fn cancelPendingArchiveDrag(self: *Client) void {
-    const job_id = self.pending_archive_drag_job orelse return;
-    if (self.app.io_runtime) |runtime| {
-        runtime.cancelJob(job_id) catch {};
-    } else if (self.app.io_manager) |manager| {
-        manager.cancelJob(job_id) catch {};
-    }
+    const tag = self.pending_archive_drag orelse return;
+    @import("app_archives.zig").abandon(&self.app, tag);
     var pending_export = self.app.takeArchiveDragExport();
     if (pending_export) |*drag_export| drag_export.deinit();
 }
 
+/// Starts the drag an archive export was preparing once its members are
+/// ready, as long as the button is still held over the window.
 pub fn stepArchiveDrag(self: *Client) void {
-    const job_id = self.pending_archive_drag_job orelse return;
+    const tag = self.pending_archive_drag orelse return;
     if (!self.left_button_held or !self.inside) {
         self.cancelPendingArchiveDrag();
-        for (self.app.archive_exports.items) |extraction| {
-            if (extraction.job_id == job_id) return;
-        }
-        self.pending_archive_drag_job = null;
+        self.pending_archive_drag = null;
         return;
     }
 
     var pending_export = self.app.takeArchiveDragExport();
     if (pending_export) |*drag_export| {
-        self.pending_archive_drag_job = null;
+        self.pending_archive_drag = null;
         const lease = drag_export.staging_lease;
         drag_export.staging_lease = null;
         startFileDragPaths(
@@ -323,9 +316,6 @@ pub fn stepArchiveDrag(self: *Client) void {
         drag_export.deinit();
         return;
     }
-
-    for (self.app.archive_exports.items) |extraction| {
-        if (extraction.job_id == job_id) return;
-    }
-    self.pending_archive_drag_job = null;
+    // Failed or cancelled: nothing will come.
+    if (!@import("app_archives.zig").pending(&self.app, tag)) self.pending_archive_drag = null;
 }

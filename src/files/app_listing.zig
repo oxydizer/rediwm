@@ -8,7 +8,6 @@ const App = @import("app.zig").App;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const worker_mod = @import("worker.zig");
-const ops_mod = @import("ops.zig");
 const recent = @import("recent.zig");
 const collation = @import("collation.zig");
 const fold = @import("ui").fold;
@@ -26,7 +25,6 @@ const withAlpha = @import("app_draw.zig").withAlpha;
 const drawEllipsis = @import("app_draw.zig").drawEllipsis;
 const measureText = @import("app_draw.zig").measureText;
 const formatPermissions = @import("app_draw.zig").formatPermissions;
-const transfer_rows = @import("app_transfer_rows.zig");
 
 pub fn navigate(self: *App, new_path: []const u8) void {
     if (!self.recentAvailable() and recent.isLocation(new_path)) return;
@@ -38,11 +36,7 @@ pub fn navigate(self: *App, new_path: []const u8) void {
 pub fn refresh(self: *App) void {
     // A virtual directory cannot be scanned by the filesystem worker.
     // Refresh its manifest projection instead while the transfer is active.
-    if (self.transfer_browse_root != null and
-        (self.job_state == .running or self.job_state == .paused or
-            self.job_state == .waiting_conflict or @import("app_ghosts.zig").active(self)))
-    {
-        self.transfer_tree_state.markDirty();
+    if (self.transfer_browse_root != null and @import("app_ghosts.zig").active(self)) {
         self.transfer_rows_dirty = true;
         self.rebuildView();
         return;
@@ -139,8 +133,6 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
         transfer_browse = self.transfer_browse_root != null;
     }
 
-    if (!transfer_browse) self.promoteDiscoveryPath(path);
-
     self.leaveTransfers();
     self.navigation_count +%= 1;
     self.overwrite_pending = false;
@@ -199,19 +191,6 @@ pub fn isStaleSnapshot(snapshot_request_id: u64, active_request_id: u64) bool {
 
 /// Damage only the surfaces that display file-operation byte progress.
 /// Structural changes still use invalidate(), because they can change layout.
-/// The transfer tooltip is the only consumer of the live byte/rate counters.
-fn damageTransferTip(self: *App) void {
-    if (@import("app_transfer_tip.zig").bounds(
-        self.w,
-        self.h,
-        self.mouse_x,
-        self.mouse_y,
-        3,
-    )) |rect| {
-        self.addDamageRegion(rect);
-    }
-}
-
 pub fn sync(self: *App) void {
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "sync", self.items.items.len);
@@ -250,72 +229,7 @@ pub fn sync(self: *App) void {
         self.clampScroll();
         self.invalidate();
     }
-    // Manager-backed copies use the existing transfer sidebar/listing state.
-    // Their detailed progress is supplied separately by the I/O Manager.
-    if (self.active_io_copy_job) |job_id| {
-        if (self.io_manager) |manager| {
-            if (manager.jobState(job_id)) |manager_state| {
-                var transferred_bytes: u64 = 0;
-                var bytes_per_second: u64 = 0;
-                if (manager.treeIndex(job_id)) |tree| {
-                    for (tree.entries.items) |entry| {
-                        if (entry.kind != .regular_file) continue;
-                        const operation = manager.entryOperationView(job_id, entry.id) orelse continue;
-                        transferred_bytes +|= operation.progress_bytes;
-                        bytes_per_second +|= operation.progress_bytes_per_second;
-                    }
-                }
-                const tooltip_hovered = self.hoverKey() == std.math.maxInt(usize) - 2002;
-                const progress_changed =
-                    self.job_transferred_bytes != transferred_bytes or
-                    self.job_bytes_per_second != bytes_per_second;
-                for (self.items.items, 0..) |*item, index| {
-                    if (!transfer_rows.syncManagerProgress(item, manager, job_id)) continue;
-                    const columns = self.columns();
-                    const item_index: i32 = @intCast(index);
-                    const row_y = self.viewTop() + self.itemInset() +
-                        @divTrunc(item_index, columns) * self.rowHeight() -
-                        self.scroll_y;
-                    const row_x: f64 = if (self.list_view)
-                        @floatFromInt(self.sidebarWidth())
-                    else
-                        @floatFromInt(self.sidebarWidth() + self.itemLeftInset() +
-                            @mod(item_index, columns) * self.cellWidth());
-                    const row_width: f64 = if (self.list_view)
-                        @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter())
-                    else
-                        @floatFromInt(self.cellWidth() - 20);
-                    self.addDamageRegion(self.clipToViewport(.{
-                        .x = row_x,
-                        .y = @floatFromInt(row_y),
-                        .w = row_width,
-                        .h = @floatFromInt(self.cardHeight()),
-                    }));
-                }
-                self.job_transferred_bytes = transferred_bytes;
-                self.job_bytes_per_second = bytes_per_second;
-                const mapped_state: ops_mod.JobState = switch (manager_state) {
-                    .planning, .queued, .running, .finalizing => .running,
-                    .paused => .paused,
-                    .waiting => .waiting_conflict,
-                    .completed, .completed_with_errors, .failed, .cancelled => .finished,
-                };
-                const state_changed = self.job_state != mapped_state;
-                self.job_state = mapped_state;
-                if (state_changed) {
-                    self.transfer_rows_dirty = true;
-                    self.transfer_tree_state.markDirty();
-                    self.invalidate();
-                } else if (progress_changed and tooltip_hovered) {
-                    damageTransferTip(self);
-                }
-            }
-        }
-    }
-
-    const file_ops_active = self.job_state == .running or
-        self.job_state == .paused or
-        self.job_state == .waiting_conflict;
+    const file_ops_active = @import("app_jobs_card.zig").count(self) > 0;
     const torrent_active = for (self.torrents.items()) |transfer| {
         if (transfer.@"error".len == 0 and
             !transfer.finished and
@@ -540,8 +454,6 @@ pub fn rebuildView(self: *App) void {
             }
             self.appendTorrentRows(mem, &selected_paths);
         }
-        self.appendTransferRows(mem, &selected_paths);
-        self.appendDiscoveryRows(mem, &selected_paths);
         @import("app_ghosts.zig").appendRows(self, mem, &selected_paths);
         // Transfer placeholders and synthetic snapshots have no worker key.
         // Give those rows keys from the same locale before sorting so every

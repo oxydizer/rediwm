@@ -446,11 +446,10 @@ connection while it finishes a copy. This join is the only blocking wait on the
 main thread, and it happens after the UI is gone.
 
 **Window teardown while other windows live.** Destroying one window must not wait
-on anything. `Handle.close` is atomic (§3). Today `Client.destroy` joins the
-window's Runtime worker pools (`io_runtime.deinit`) and its listing worker
-(`worker.deinit`), all on the UI thread (the `JobRunner` thread went in S3b). A
-worker stuck on a hung mount therefore freezes every window. The first two go away
-with the per-window Runtime and `JobRunner` in S3. Per-window helper threads that
+on anything. `Handle.close` is atomic (§3). Today `Client.destroy` still joins the
+window's listing worker (`worker.deinit`) on the UI thread; the `JobRunner` thread
+went in S3b and the Runtime's worker pools in S3c. A worker stuck on a hung mount
+therefore still freezes every window. Per-window helper threads that
 remain (listing worker, folder-size, thumbnails, Trash totals) are signalled to stop
 and handed to a process-owned reaper that joins them off the UI thread. That reaper
 lands with S3, since S3 is when window teardown is rewritten.
@@ -531,20 +530,20 @@ existing code (C4) is recorded, never a new violation.
 | --- | --- | --- | --- |
 | U1 | `app_fileops.startManagerFileCopy`, `startManagerFileMove`, `startManagerDirectoryTransfer` | `lstat`, `readlink` per source, `stat` of the destination and of source parents | S3: App submits through `Handle`, prepare runs on a worker (S2) |
 | ~~U2~~ | `App.executeTransfer` fallback to `JobRunner`; `app_listing` polling | JobRunner start and polling on the UI thread | **Removed in S3b**: JobRunner is deleted; transfers are service jobs |
-| U3 | `app_io.stepOperations`, `stepDiscovery`, `processDetachedIoJobs` | Per-window Runtime: draining completions, reconciliation, dispatch on the UI thread | S3 |
+| ~~U3~~ | `app_io.stepOperations`, `stepDiscovery`, `processDetachedIoJobs` | Per-window Runtime: draining completions, reconciliation, dispatch on the UI thread | **Removed in S3c**: the per-window Runtime is gone |
 | ~~U4~~ | `app_fileops.executeDeletion` → `ops.deleteItems`, `ops.trashItems`, `ops.emptyTrash`; `app_trash.trashDropped` → `ops.trashItems` | Spawns `rm -r` / `gio trash` and **waits for it** | **Removed in S3a**: `delete`, `trash` and `empty_trash` jobs (`io_deletion.zig`, `io_coordinator_deletions.zig`) |
 | ~~U5~~ | `app_fileops.deleteFromTrash` → `trash.deleteMany` → `ops.deleteRecursive` | Recursive delete | **Removed in S3a**: a `delete` job (request kind `delete_from_trash`) |
 | ~~U6~~ | `app_fileops.executeDeletion` → `trash.sweepOrphans` | `opendir`, `readdir`, `unlink` over `Trash/info` | **Removed in S3a**: the last step of the `empty_trash` job |
 | ~~U7~~ | `app_trash.restoreSelected`/`restoreAll` → `trash.restoreMany` (and `trash.listEntries` for Restore All) | `lstat`, `rename`, `rmdir`, metadata rewrite | **Removed in S3a**: `restore` request |
-| U8 | `app_dialogs`: `ops.createFolder`, `ops.createFile`, `ops.renameItem`; `resolveManagerConflict` → `ops.generateUniqueName` | `mkdir`, `open`, `renameat2`, `lstat` loop | **S3a removed** new folder, new file and rename (`create_folder`, `create_file`, `rename` requests). The conflict rename stays until S3b, which moves conflicts off the window's Runtime |
+| ~~U8~~ | `app_dialogs`: `ops.createFolder`, `ops.createFile`, `ops.renameItem`; `resolveManagerConflict` → `ops.generateUniqueName` | `mkdir`, `open`, `renameat2`, `lstat` loop | **S3a removed** new folder, new file and rename (`create_folder`, `create_file`, `rename` requests). The conflict rename went in S3b (`unique_name` request), the window Manager's own conflicts in S3c |
 | ~~U9~~ | `app_dialogs` → `properties.State.init`; `app_pointer` → `properties.togglePathPermission` | `open(O_PATH)`, `statx`; `chmod` | **Removed in S3a**: `properties` and `toggle_permission` requests |
 | ~~U10~~ | `app_chooser.collectChooser` | `stat`, `lstat`, `access` on confirm | **Removed in S3a**: the `chooser` request, including the free-name loop for multi-file saves |
 | ~~U11~~ | `app_places` → `createDirPath`, `pins.kindOf` | `mkdir -p`, `stat` | **Removed in S3a**: `make_directory` and `path_kinds` requests. The pins file loads without looking at targets; kinds arrive afterwards |
 | ~~U12~~ | `app_terminal` (`realpath`, `stat`); `client_dnd.canonicalPath` (`realpath`) | Path resolution on user paths | **Removed in S3a**: the `canonical` request, one batch per drop |
-| U13 | `app_io.openArchivePublicationCursor`, `stepArchivePublications` (`Cursor.open`, `nextBatch`) | `openat`, `getdents` on staging | S4 (publication cursor becomes service-owned) |
-| U14 | `app_io` → `executor.discardArchiveStaging` | `deleteRecursive` of staging | S4 |
-| U15 | `clipboard.StagingLease.deinit` (clipboard replace, `App.deinit`, extraction cleanup, `client_clipboard`) | `deleteRecursive` of a transferred-out staging lease | S4: disposal handed to an operation worker |
-| U16 | `Client.destroy` → `io_runtime.deinit`, `worker.deinit` | Thread joins on the UI thread | S3 (JobRunner gone in S3b; Runtime in S3c; reaper for the rest) |
+| ~~U13~~ | `app_io.openArchivePublicationCursor`, `stepArchivePublications` (`Cursor.open`, `nextBatch`) | `openat`, `getdents` on staging | **Removed in S4**: a `scan_staging` service task |
+| ~~U14~~ | `app_io` → `executor.discardArchiveStaging` | `deleteRecursive` of staging | **Removed in S4**: staging is deleted by a `delete_tree` task |
+| ~~U15~~ | `clipboard.StagingLease.deinit` (clipboard replace, `App.deinit`, extraction cleanup, `client_clipboard`) | `deleteRecursive` of a transferred-out staging lease | **Removed in S4**: the lease gives its window-owned resource back with `dispose_resource` |
+| U16 | `Client.destroy` → `worker.deinit` | Thread joins on the UI thread | Reaper (JobRunner went in S3b, the Runtime in S3c) |
 | U17 | `client_lifecycle.closeIoHandle` | Busy-wait on `ServiceBusy` | **Before S1** (atomic close, §3) |
 
 `app_audio` checks the existence of a socket with `access` in the runtime
