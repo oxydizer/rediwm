@@ -374,6 +374,50 @@ pub const Runtime = struct {
 
         return error.ResourceNotOwnedByOperationExecutor;
     }
+
+    /// The first half of a staging release that must not block the calling
+    /// thread: checks the same conditions as `releaseResource`, removes the
+    /// lease and moves its ledger entry to `operation_worker`, so the job
+    /// cannot retire while the directory still exists. The caller deletes the
+    /// returned path on a worker and then calls `finishStagingCleanup`.
+    /// The path is owned by the caller.
+    pub fn takeStagingForCleanup(
+        self: *Runtime,
+        handle: io_resource_ledger.Handle,
+    ) ![]u8 {
+        const owner = self.context.ledger.ownerOf(handle) orelse
+            return error.UnknownResource;
+        if (owner != .operation_executor)
+            return error.ResourceOwnerMismatch;
+        const job_id = self.context.ledger.jobIdOf(handle) orelse
+            return error.UnknownResource;
+        if (self.context.ledger.kindOf(handle) != .archive_staging)
+            return error.ResourceNotReleasable;
+
+        var iter = self.context.archive_staging.iterator();
+        while (iter.next()) |entry| {
+            if (entry.value_ptr.ledger_handle.id != handle.id) continue;
+            const key = entry.key_ptr.*;
+            if (key.job_id != job_id) return error.ResourceLedgerMismatch;
+            const state = self.context.manager.jobState(key.job_id) orelse
+                return error.UnknownJob;
+            if (!state.isTerminal()) return error.ResourceBusy;
+
+            const path = entry.value_ptr.path;
+            _ = self.context.archive_staging.remove(key);
+            self.context.ledger.transfer(handle, .operation_executor, .operation_worker) catch unreachable;
+            return path;
+        }
+        return error.ResourceNotOwnedByOperationExecutor;
+    }
+
+    /// Records that a worker finished deleting staging taken with
+    /// `takeStagingForCleanup`. A failed delete is still released: the
+    /// directory is under the known staging root, which a later start sweeps
+    /// (roadmap phase 5), and the job must not stay unretirable.
+    pub fn finishStagingCleanup(self: *Runtime, handle: io_resource_ledger.Handle) void {
+        self.context.ledger.release(handle, .operation_worker) catch unreachable;
+    }
 };
 
 fn prepare(

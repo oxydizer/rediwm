@@ -6,6 +6,7 @@
 const std = @import("std");
 const io_thread_guard = @import("io_thread_guard.zig");
 const io_transfer_plan = @import("io_transfer_plan.zig");
+const io_service_tasks = @import("io_service_tasks.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
@@ -16,6 +17,12 @@ const io_resource_ledger = @import("io_resource_ledger.zig");
 const ops_mod = @import("ops.zig");
 
 const JobId = io_service.JobId;
+
+/// A submit whose plan is being prepared on a worker.
+const Preparing = struct {
+    mode: io_service.TransferMode,
+    cancelled: bool = false,
+};
 
 /// The last record written for a job, and when progress and the speed
 /// history were last written.
@@ -81,6 +88,13 @@ pub const Coordinator = struct {
     thread: ?std.Thread = null,
     published: std.AutoHashMapUnmanaged(JobId, Published) = .empty,
     next_failed_submit_id: JobId = failed_submit_id_base,
+    /// Blocking filesystem work handed off by this thread (threading §8).
+    tasks: *io_service_tasks.Pool = undefined,
+    task_context: io_service_tasks.Context = undefined,
+    /// Tasks the pool had no room for, submitted in order as room frees.
+    task_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
+    /// Jobs whose submit is being prepared on a worker.
+    preparing: std.AutoHashMapUnmanaged(JobId, Preparing) = .empty,
 
     /// Initialize at a stable address. The Runtime is allocated separately
     /// because its executors retain pointers into it and into its Manager.
@@ -105,6 +119,14 @@ pub const Coordinator = struct {
         _ = try runtime.ensureDiscoveryExecutor();
         _ = try runtime.ensureOperationExecutor();
 
+        self.task_context = .{
+            .allocator = allocator,
+            .on_discard_delete = discardDeleteResult,
+            .owner = self,
+        };
+        self.tasks = try io_service_tasks.create(&self.task_context);
+        errdefer self.tasks.deinit();
+
         self.runtime = runtime;
         self.thread = try std.Thread.spawn(.{}, threadMain, .{self});
     }
@@ -115,12 +137,18 @@ pub const Coordinator = struct {
         self.service.beginShutdown();
         if (self.thread) |thread| thread.join();
         self.published.deinit(self.allocator);
+        self.preparing.deinit(self.allocator);
+        self.task_backlog.deinit(self.allocator);
         self.* = undefined;
     }
 
     fn threadMain(self: *Coordinator) void {
         io_thread_guard.markCurrent(.coordinator);
         defer {
+            // Tasks first: finishing or discarding them may release ledger
+            // entries the Runtime still owns.
+            self.tasks.deinit();
+            self.discardTaskBacklog();
             self.runtime.deinit();
             self.allocator.destroy(self.runtime);
         }
@@ -131,6 +159,7 @@ pub const Coordinator = struct {
                 self.handleCommand(routed);
             }
 
+            self.pumpTasks();
             self.pumpExecutors();
             const deadline = self.publishRecords(monotonicMs());
             self.retireReadyJobs();
@@ -164,6 +193,11 @@ pub const Coordinator = struct {
             },
             .{
                 .fd = operation.wakeFd(),
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+            .{
+                .fd = self.tasks.wakeFd(),
                 .events = std.posix.POLL.IN,
                 .revents = 0,
             },
@@ -218,7 +252,7 @@ pub const Coordinator = struct {
     ) void {
         var routed = routed_value;
         defer routed.command.deinitPayload();
-        if (routed.command.kind == .submit_job) return self.handleSubmit(routed);
+        if (routed.command.kind == .submit_job) return self.handleSubmit(&routed);
         // There is no reply channel: a command that cannot apply changes
         // nothing; the job table shows what did happen (threading §5).
         self.applyCommand(routed) catch |err| {
@@ -231,44 +265,149 @@ pub const Coordinator = struct {
     /// Every admitted submit ends up as a record: the job's, or a `failed`
     /// one carrying the rejection code, so the window always learns the
     /// outcome through its submit_tag.
-    fn handleSubmit(self: *Coordinator, routed: io_service.RoutedCommand) void {
+    ///
+    /// Accept is bounded and does no I/O: the job is created in `planning`,
+    /// its record appears at once, and the request moves into a prepare
+    /// task. `applyPrepared` finishes the submit when the plan returns.
+    fn handleSubmit(self: *Coordinator, routed: *io_service.RoutedCommand) void {
         var record: io_service.JobRecord = .{
             .origin_window_id = routed.window_id,
             .submit_tag = routed.command.submit_tag,
             .started_at_ms = wallClockMs(),
         };
-        if (routed.command.payload) |payload| switch (payload.data) {
-            .transfer => |*request| {
-                record.kind = if (request.mode == .move) .move else .copy;
-                record.source_count = @intCast(@min(request.sources.len, std.math.maxInt(u32)));
-                if (request.sources.len > 0) record.setLabel(std.fs.path.basename(request.sources[0].path));
-            },
-            else => {},
+        const payload = routed.command.payload orelse
+            return self.failSubmit(&record, error.MissingTransferPayload);
+        const request = switch (payload.data) {
+            .transfer => |*request| request,
+            else => return self.failSubmit(&record, error.UnexpectedTransferPayload),
         };
+        record.kind = if (request.mode == .move) .move else .copy;
+        record.source_count = @intCast(@min(request.sources.len, std.math.maxInt(u32)));
+        if (request.sources.len > 0) record.setLabel(std.fs.path.basename(request.sources[0].path));
 
-        if (self.submitTransfer(routed)) |job_id| {
-            record.id = job_id;
-            record.state = .queued;
-            if (self.runtime.manager.jobSummary(job_id)) |summary| applySummary(&record, summary);
-            self.service.createJobRecord(record, true) catch |err| {
-                std.log.err("Files job record for job {d} failed: {s}", .{ job_id, @errorName(err) });
-                return;
-            };
-            self.published.put(self.allocator, job_id, .{ .record = record }) catch |err| {
-                std.log.err("Files job record cache failed: {s}", .{@errorName(err)});
-            };
-        } else |err| {
-            record.id = self.next_failed_submit_id;
-            self.next_failed_submit_id += 1;
-            record.state = .failed;
-            record.error_code = @backingInt(rejectionCode(err));
-            record.finished_at_ms = record.started_at_ms;
-            self.service.createJobRecord(record, true) catch |create_err| {
-                std.log.err("Files failed-submit record failed: {s}", .{@errorName(create_err)});
-                return;
-            };
-            self.service.retireJobRecord(record.id) catch {};
+        const manager = &self.runtime.manager;
+        const job_id = manager.createJob(routed.window_id) catch |err|
+            return self.failSubmit(&record, err);
+        record.id = job_id;
+        record.state = .planning;
+        self.preparing.ensureUnusedCapacity(self.allocator, 1) catch |err| {
+            std.debug.assert(manager.discardPlanningJob(job_id));
+            return self.failSubmit(&record, err);
+        };
+        self.published.ensureUnusedCapacity(self.allocator, 1) catch |err| {
+            std.debug.assert(manager.discardPlanningJob(job_id));
+            return self.failSubmit(&record, err);
+        };
+        self.service.createJobRecord(record, true) catch |err| {
+            std.log.err("Files job record for job {d} failed: {s}", .{ job_id, @errorName(err) });
+            std.debug.assert(manager.discardPlanningJob(job_id));
+            return;
+        };
+        self.published.putAssumeCapacity(job_id, .{ .record = record });
+        self.preparing.putAssumeCapacity(job_id, .{ .mode = request.mode });
+
+        // The task owns the payload from here on.
+        routed.command.payload = null;
+        self.submitTask(.{ .prepare_transfer = .{ .job_id = job_id, .payload = payload } });
+    }
+
+    /// A submit that failed before any Manager job existed.
+    fn failSubmit(self: *Coordinator, record: *io_service.JobRecord, err: anyerror) void {
+        record.id = self.next_failed_submit_id;
+        self.next_failed_submit_id += 1;
+        record.state = .failed;
+        record.error_code = @backingInt(rejectionCode(err));
+        record.finished_at_ms = record.started_at_ms;
+        self.service.createJobRecord(record.*, true) catch |create_err| {
+            std.log.err("Files failed-submit record failed: {s}", .{@errorName(create_err)});
+            return;
+        };
+        self.service.retireJobRecord(record.id) catch {};
+    }
+
+    /// Ends a job that never left `planning`: discards it and retires its
+    /// record as cancelled or failed.
+    fn endPlanningJob(self: *Coordinator, job_id: JobId, state: io_service.JobState, err: ?anyerror) void {
+        _ = self.runtime.manager.discardPlanningJob(job_id);
+        const entry = self.published.fetchRemove(job_id) orelse return;
+        var record = entry.value.record;
+        record.state = state;
+        record.error_code = if (err) |e| @backingInt(rejectionCode(e)) else 0;
+        record.finished_at_ms = wallClockMs();
+        self.service.updateJobRecord(record) catch {};
+        self.service.retireJobRecord(job_id) catch {};
+    }
+
+    fn submitTask(self: *Coordinator, task: io_service_tasks.Task) void {
+        if (self.task_backlog.items.len == 0 and self.tasks.trySubmit(task)) return;
+        self.task_backlog.append(self.allocator, task) catch {
+            // Out of memory with a full pool: give the work up visibly.
+            std.log.err("Files service task dropped: out of memory", .{});
+            switch (task) {
+                .prepare_transfer => |prepare| {
+                    prepare.payload.deinit();
+                    _ = self.preparing.remove(prepare.job_id);
+                    self.endPlanningJob(prepare.job_id, .failed, error.OutOfMemory);
+                },
+                .delete_tree => |delete| {
+                    self.allocator.free(delete.path);
+                    self.finishCleanup(delete.handle);
+                },
+            }
+        };
+    }
+
+    fn pumpTasks(self: *Coordinator) void {
+        _ = self.tasks.drainWake();
+        while (self.tasks.tryPopResult()) |result_value| {
+            var result = result_value;
+            defer result.deinit(self.allocator);
+            switch (result) {
+                .prepared => |*prepared| self.applyPrepared(prepared.job_id, &prepared.plan),
+                .deleted => |deleted| {
+                    if (deleted.failed) |err| std.log.err(
+                        "Files could not delete {s}: {s}",
+                        .{ deleted.path, @errorName(err) },
+                    );
+                    self.finishCleanup(deleted.handle);
+                },
+            }
         }
+        while (self.task_backlog.items.len > 0) {
+            if (!self.tasks.trySubmit(self.task_backlog.items[0])) break;
+            _ = self.task_backlog.orderedRemove(0);
+        }
+    }
+
+    /// Applies a prepared plan to its planning job, unless the job was
+    /// cancelled meanwhile or the plan failed.
+    fn applyPrepared(self: *Coordinator, job_id: JobId, plan_result: *anyerror!io_transfer_plan.TransferPlan) void {
+        const entry = self.preparing.fetchRemove(job_id) orelse return;
+        if (entry.value.cancelled) return self.endPlanningJob(job_id, .cancelled, null);
+        const plan = if (plan_result.*) |*plan| plan else |err|
+            return self.endPlanningJob(job_id, .failed, err);
+        self.applyTransferPlan(job_id, entry.value.mode, plan) catch |err|
+            return self.endPlanningJob(job_id, .failed, err);
+    }
+
+    fn finishCleanup(self: *Coordinator, handle: io_resource_ledger.Handle) void {
+        if (self.runtime.operation_executor) |*executor| executor.finishStagingCleanup(handle);
+    }
+
+    fn discardDeleteResult(raw: ?*anyopaque, handle: io_resource_ledger.Handle) void {
+        const self: *Coordinator = @ptrCast(@alignCast(raw.?));
+        self.finishCleanup(handle);
+    }
+
+    fn discardTaskBacklog(self: *Coordinator) void {
+        for (self.task_backlog.items) |task| switch (task) {
+            .prepare_transfer => |prepare| prepare.payload.deinit(),
+            .delete_tree => |delete| {
+                self.allocator.free(delete.path);
+                self.finishCleanup(delete.handle);
+            },
+        };
+        self.task_backlog.clearRetainingCapacity();
     }
 
     fn applyCommand(
@@ -279,7 +418,14 @@ pub const Coordinator = struct {
         switch (command.kind) {
             .pause_job => try self.runtime.manager.pauseJob(command.job_id),
             .resume_job => try self.runtime.manager.resumeJob(command.job_id),
-            .cancel_job => try self.runtime.cancelJob(command.job_id),
+            .cancel_job => if (self.preparing.getPtr(command.job_id)) |preparing| {
+                // Still being prepared: the plan is discarded on return.
+                preparing.cancelled = true;
+                if (self.published.getPtr(command.job_id)) |entry| {
+                    entry.record.cancel_requested = true;
+                    self.service.updateJobRecord(entry.record) catch {};
+                }
+            } else try self.runtime.cancelJob(command.job_id),
             .retire_job => try self.runtime.requestJobRetirement(command.job_id),
             .submit_job => unreachable, // handleSubmit
             .start_discovery => try self.startDiscovery(command.job_id, command.payload),
@@ -302,8 +448,6 @@ pub const Coordinator = struct {
         job_id: JobId,
         resource_id: io_service.ResourceId,
     ) !void {
-        const io_guard_2 = io_thread_guard.exempt(.c2_resource_cleanup);
-        defer io_guard_2.end();
         const handle = io_resource_ledger.Handle{ .id = resource_id };
         const ledger = &self.runtime.resource_ledger;
         const resource_job_id = ledger.jobIdOf(handle) orelse
@@ -344,7 +488,9 @@ pub const Coordinator = struct {
                     value
                 else
                     return error.ResourceOwnerUnavailable;
-                try executor.releaseResource(handle);
+                // The recursive delete runs on a service worker (threading §8).
+                const path = try executor.takeStagingForCleanup(handle);
+                self.submitTask(.{ .delete_tree = .{ .handle = handle, .path = path } });
             },
             .operation_worker, .discovery_worker, .app => unreachable,
         }
@@ -418,38 +564,16 @@ pub const Coordinator = struct {
         }
     }
 
-    /// Plans a transfer of any mix of files, symlinks and directories and
-    /// queues it as one Manager job. Filesystem inspection is confined to
-    /// `prepareTransfer`, which stage S2 moves onto a discovery worker;
-    /// `applyTransferPlan` touches only the Manager.
-    fn submitTransfer(
-        self: *Coordinator,
-        routed: io_service.RoutedCommand,
-    ) !JobId {
-        const payload = routed.command.payload orelse
-            return error.MissingTransferPayload;
-        const request = switch (payload.data) {
-            .transfer => |*transfer| transfer,
-            .discovery, .conflict_resolution => return error.UnexpectedTransferPayload,
-        };
-        var plan = plan: {
-            const io_guard = io_thread_guard.exempt(.c1_submit_validation);
-            defer io_guard.end();
-            break :plan try io_transfer_plan.prepare(self.allocator, request);
-        };
-        defer plan.deinit();
-        return self.applyTransferPlan(routed.window_id, request.mode, &plan);
-    }
-
+    /// Turns a prepared plan into the roots and operations of a planning
+    /// job and queues it. Touches only the Manager. On error the job stays in
+    /// `planning` for the caller to discard.
     fn applyTransferPlan(
         self: *Coordinator,
-        window_id: io_service.WindowId,
+        job_id: JobId,
         mode: io_service.TransferMode,
         plan: *const io_transfer_plan.TransferPlan,
-    ) !JobId {
+    ) !void {
         const manager = &self.runtime.manager;
-        const job_id = try manager.createJob(window_id);
-        errdefer std.debug.assert(manager.discardPlanningJob(job_id));
 
         var discovery_roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
         defer discovery_roots.deinit(self.allocator);
@@ -494,7 +618,7 @@ pub const Coordinator = struct {
 
         if (directory_root_ids.items.len == 0) {
             try manager.queueJob(job_id);
-            return job_id;
+            return;
         }
 
         if (mode == .move) {
@@ -511,7 +635,6 @@ pub const Coordinator = struct {
         }
         // Atomically commits the job and all discovery roots.
         try manager.queueJobWithDiscoveryRoots(job_id, discovery_roots.items);
-        return job_id;
     }
 
     /// Writes each job's record from its O(1) Manager summary. State,
@@ -596,7 +719,9 @@ fn earliest(current: ?i64, candidate: i64) i64 {
 
 fn applySummary(record: *io_service.JobRecord, summary: io_manager.JobSummary) void {
     record.state = recordState(summary.state);
-    record.cancel_requested = summary.cancel_requested;
+    // A cancel request never goes back; it may also come from the
+    // coordinator for a job still being prepared.
+    record.cancel_requested = record.cancel_requested or summary.cancel_requested;
     record.completed_bytes = summary.completed_bytes;
     record.total_bytes = summary.total_bytes;
     record.rate_bytes_per_second = summary.rate_bytes_per_second;

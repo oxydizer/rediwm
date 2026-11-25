@@ -52,10 +52,6 @@ pub const Exemption = enum {
     u14_archive_discard,
     /// Transferred-out staging lease deletion (S4).
     u15_staging_lease,
-    /// Coordinator submit-time validation (S2).
-    c1_submit_validation,
-    /// Coordinator resource release deleting staging (S2).
-    c2_resource_cleanup,
     /// Discovery dispatch opening root anchors and directory cursors (S2).
     c4_discovery_anchor_open,
 };

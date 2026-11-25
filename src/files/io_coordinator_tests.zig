@@ -262,8 +262,9 @@ test "coordinator publishes a job record with planned totals and final progress"
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
 
-    // The first record already knows the planned total, before any copying.
-    const first = try window_view.waitFor(support.AnyLiveJob{});
+    // The record exists from accept, in `planning`; once the worker's plan
+    // is applied it knows the planned total, before any copying.
+    const first = try window_view.waitFor(support.PlannedJob{});
     try std.testing.expectEqual(@as(u64, size), first.total_bytes);
     try std.testing.expectEqual(@as(u64, 1), first.total_items);
     try std.testing.expectEqualStrings("payload.bin", first.label());

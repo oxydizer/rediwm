@@ -382,3 +382,10 @@ pub const AnyLiveJob = struct {
         return !r.removed and r.state != .failed;
     }
 };
+
+/// A job past `planning`: its plan was applied and its totals are known.
+pub const PlannedJob = struct {
+    pub fn matches(_: PlannedJob, r: io_service.JobRecord) bool {
+        return !r.removed and r.state != .planning and r.state != .failed;
+    }
+};
