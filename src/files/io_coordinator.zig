@@ -10,6 +10,7 @@ const io_service_tasks = @import("io_service_tasks.zig");
 const resources = @import("io_coordinator_resources.zig");
 const lifecycle = @import("io_coordinator_lifecycle.zig");
 const deletions = @import("io_coordinator_deletions.zig");
+const job_views = @import("io_coordinator_views.zig");
 const io_deletion = @import("io_deletion.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
@@ -88,6 +89,8 @@ pub const Coordinator = struct {
     deletion_context: io_deletion.Context = undefined,
     deletions: std.AutoHashMapUnmanaged(JobId, deletions.Deletion) = .empty,
     next_deletion_id: JobId = deletions.id_base,
+    /// Levels of job trees that windows watch, by window and view slot.
+    watching: std.AutoHashMapUnmanaged(u64, job_views.Watching) = .empty,
     thread: ?std.Thread = null,
     published: std.AutoHashMapUnmanaged(JobId, Published) = .empty,
     next_failed_submit_id: JobId = failed_submit_id_base,
@@ -159,6 +162,7 @@ pub const Coordinator = struct {
         var remaining = self.deletions.valueIterator();
         while (remaining.next()) |entry| self.allocator.destroy(entry.control);
         self.deletions.deinit(self.allocator);
+        self.watching.deinit(self.allocator);
         var held = self.window_held.valueIterator();
         while (held.next()) |entry| self.allocator.free(entry.path);
         self.window_held.deinit(self.allocator);
@@ -200,6 +204,7 @@ pub const Coordinator = struct {
             const now = monotonicMs();
             var deadline = self.publishRecords(now);
             if (self.publishDeletions(now)) |at| deadline = earliest(deadline, at);
+            if (self.publishViews(now)) |at| deadline = earliest(deadline, at);
             self.retireReadyJobs();
             if (self.draining and self.isIdle()) break;
             // While draining, re-check progress at least every 50 ms: the
@@ -218,6 +223,9 @@ pub const Coordinator = struct {
     pub const cancelAllDeletions = deletions.cancelAllDeletions;
     const pumpDeletions = deletions.pumpDeletions;
     const publishDeletions = deletions.publishDeletions;
+    const watchView = job_views.watchView;
+    const unwatchView = job_views.unwatchView;
+    const publishViews = job_views.publishViews;
 
     /// Waits for a command, a completion, or `deadline` (monotonic ms) when
     /// throttled progress or a speed sample is still due.
@@ -509,6 +517,8 @@ pub const Coordinator = struct {
             } else try self.runtime.cancelJob(command.job_id),
             .submit_job => unreachable, // handleSubmit
             .request => unreachable, // handleRequest
+            .watch_view => try self.watchView(routed.window_id, command.payload),
+            .unwatch_view => self.unwatchView(routed.window_id, command.submit_tag),
             .start_discovery => try self.startDiscovery(command.job_id, command.payload),
             .prioritize_discovery => try self.prioritizeDiscovery(command.job_id, command.payload),
             .resolve_conflict => try self.resolveConflict(
