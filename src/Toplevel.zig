@@ -417,6 +417,7 @@ pub const moveToOutput = toplevel_position.moveToOutput;
 pub const moveFromUsableToOutput = toplevel_position.moveFromUsableToOutput;
 pub const rememberOutputDisconnect = toplevel_position.rememberOutputDisconnect;
 pub const markOutputDisconnectPosition = toplevel_position.markOutputDisconnectPosition;
+pub const hasOutputDisconnect = toplevel_position.hasOutputDisconnect;
 pub const clearOutputDisconnect = toplevel_position.clearOutputDisconnect;
 pub const restoreOutputDisconnect = toplevel_position.restoreOutputDisconnect;
 pub const setPositionAnimated = toplevel_position.setPositionAnimated;

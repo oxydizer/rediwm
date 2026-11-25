@@ -87,6 +87,7 @@ test {
     _ = @import("output/vrr_policy.zig");
     _ = @import("output/hdr_policy.zig");
     _ = @import("output/edid_hdr.zig");
+    _ = @import("output/auto_place.zig");
     _ = @import("fifo.zig");
     _ = @import("commit_refresh.zig");
     _ = @import("config").keybinds;

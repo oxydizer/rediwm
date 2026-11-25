@@ -152,6 +152,8 @@ locker: ?*@import("session/lock.zig").Lock = null,
 /// `rediwm --greeter`: rediwm-dm's greeter, locked for its whole life.
 greeter_mode: bool = false,
 outputs: wl.list.Head(Output, .link) = undefined,
+/// Where outputs without a saved position go (`output/auto_place.zig`).
+auto_order: @import("output/auto_place.zig").Order = .{},
 layer_surfaces: wl.list.Head(@import("LayerSurface.zig"), .link) = undefined,
 
 input: Input,

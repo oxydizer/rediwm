@@ -65,6 +65,11 @@ pub fn moveFromUsableToOutput(toplevel: *Toplevel, source_box: wlr.Box, output: 
 }
 
 pub fn rememberOutputDisconnect(toplevel: *Toplevel, output_name: []const u8, source_box: wlr.Box) void {
+    // A window moved off an output that went away keeps that home while it
+    // stays where it was put: when the output it was moved to goes too (two
+    // monitors dropping on a wake from sleep, or a closed lid's panel standing
+    // in and hidden again), it is displaced again, not rehomed.
+    if (hasOutputDisconnect(toplevel)) return;
     if (output_name.len == 0 or output_name.len > toplevel.reconnect_output.len) {
         toplevel.reconnect_output_len = 0;
         return;
@@ -79,6 +84,12 @@ pub fn rememberOutputDisconnect(toplevel: *Toplevel, output_name: []const u8, so
     toplevel.reconnect_maximized = toplevel.isMaximized();
     toplevel.reconnect_fullscreen = toplevel.isFullscreen();
     toplevel.reconnect_tile = toplevel.tile;
+}
+
+/// The window waits for an output that went away and hasn't been moved since.
+pub fn hasOutputDisconnect(toplevel: *const Toplevel) bool {
+    return toplevel.reconnect_output_len != 0 and
+        toplevel.x == toplevel.reconnect_expected_x and toplevel.y == toplevel.reconnect_expected_y;
 }
 
 pub fn markOutputDisconnectPosition(toplevel: *Toplevel) void {

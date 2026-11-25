@@ -1,8 +1,9 @@
 //! wlr.OutputLayout, backed by translate-c against
 //! wlr/types/wlr_output_layout.h. `OutputLayout.Output` (the per-output
-//! layout entry) is declared only far enough to be a valid
-//! `wl.list.Head` element -- RediWM never calls `.get()` or walks
-//! `layout.outputs` itself, only `events.change` on the layout itself.
+//! layout entry) is declared far enough to be a valid `wl.list.Head`
+//! element and to read its position: `output/auto_place.zig` walks
+//! `layout.outputs` to place outputs; elsewhere RediWM uses
+//! `events.change` on the layout itself.
 const wl = @import("wayland").server.wl;
 const c = @import("c.zig").c;
 const assertSameLayout = @import("signal.zig").assertSameLayout;

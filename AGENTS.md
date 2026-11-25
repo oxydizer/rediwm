@@ -154,6 +154,11 @@ panel painting. The key rules:
   `dockAreaBox` for the dock and taskbar popups, `usableBox` for windows.
   Read [dock details](docs/agent-notes/dock.md) before changing the dock,
   its painting, layout/reservation, OSD clearance, hover or auto-hide.
+* **Outputs without a saved position** are placed by `output/auto_place.zig`
+  in session order, never `addAuto`: a monitor that drops out (a wake from
+  sleep) comes back to its old place, and windows ride along with outputs
+  that move (`auto_place.Carry`). Windows moved off a lost output keep their
+  first home until moved (`rememberOutputDisconnect`); `tests/output_reconnect.py`.
 * **Tiles are compositor-owned geometry** like maximize (`snap.zig`,
   `forcedGeometry()`). `Toplevel.layout()` reads the `maximized` field, not
   `isMaximized()` (xdg acks later). Leaving a layout without moving goes

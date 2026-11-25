@@ -6,6 +6,7 @@ const wlr = @import("wlroots");
 const Server = @import("../Server.zig");
 const events = @import("../ipc/events.zig");
 const gpa = @import("../main.zig").gpa;
+const auto_place = @import("auto_place.zig");
 const log = std.log.scoped(.output);
 const Placement = Output.Placement;
 const lidHides = Output.lidHides;
@@ -306,20 +307,16 @@ pub fn applyConfig(output: *Output) void {
         return;
     }
     if (output.idle_blanked or output.user_disabled) return;
-    var placed = false;
-    for (output.server.config.outputs) |config| {
-        if (std.mem.eql(u8, config.name, std.mem.span(out.name)) and (config.x != null or config.y != null)) {
-            _ = output.server.output_layout.add(out, config.x orelse 0, config.y orelse 0) catch {};
-            placed = true;
-            break;
-        }
+    if (auto_place.savedPosition(output.server, out)) |at| {
+        _ = output.server.output_layout.add(out, at[0], at[1]) catch {};
     }
-    if (!placed) _ = output.server.output_layout.addAuto(out) catch {};
+    auto_place.arrange(output.server);
     restoreReconnectedWindows(output);
 }
 
 /// Automatic layout can move existing outputs when a neighbour changes size.
 pub fn syncLayout(server: *Server) void {
+    auto_place.arrange(server);
     server.world.mini_map.reconfigure();
     server.screenshot_selector.cancel();
     var it = server.outputs.iterator(.forward);

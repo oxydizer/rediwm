@@ -22,6 +22,7 @@ const output_frame = @import("output/frame.zig");
 const output_late = @import("output/late.zig");
 const output_tearing = @import("output/tearing.zig");
 const output_vrr = @import("output/vrr.zig");
+const auto_place = @import("output/auto_place.zig");
 
 pub const wlr_color_transform_init_lut_3x1d = wlr.color.transformInitLut3x1d;
 pub const wlr_color_transform_unref = wlr.color.transformUnref;
@@ -275,17 +276,17 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     output.late_timer = server.wl_server.getEventLoop().addTimer(*Output, lateFire, output) catch null;
     errdefer if (output.late_timer) |timer| timer.remove();
 
+    // A returning output takes its old place among the automatic ones; the
+    // windows of outputs that move aside for it go along (once it is placed).
+    auto_place.note(server, wlr_output);
+    var carry = auto_place.Carry.begin(server);
+    defer carry.deinit();
     // Layout entry and scene output are addons on `wlr_output`. On error the
     // caller destroys that output, which is safer than a second explicit
     // destroy (that would double-free the addon).
     const layout_output = blk: {
-        const name = std.mem.span(wlr_output.name);
-        for (server.config.outputs) |placement| {
-            if (std.mem.eql(u8, placement.name, name) and (placement.x != null or placement.y != null)) {
-                break :blk try server.output_layout.add(wlr_output, placement.x orelse 0, placement.y orelse 0);
-            }
-        }
-        break :blk try server.output_layout.addAuto(wlr_output);
+        const at = auto_place.savedPosition(server, wlr_output) orelse auto_place.provisionalPosition(server);
+        break :blk try server.output_layout.add(wlr_output, at[0], at[1]);
     };
     _ = try server.scene_outputs.createOutput(wlr_output, layout_output);
 
@@ -312,6 +313,10 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     wlr_output.events.request_state.add(&output.request_state);
     wlr_output.events.destroy.add(&output.destroy);
     server.outputs.append(output);
+    auto_place.arrange(server);
+    server.output_layout.getBox(wlr_output, &output.cached_box);
+    // Before restoring any window that waited for this output (applyConfig).
+    carry.finish(server);
     server.input.refreshOutputScales();
 
     // Apply the saved enable policy before publishing the added event so
@@ -546,6 +551,13 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     // Remove the layout entry now so remaining automatic positions have
     // settled before we cache their boxes and rebuild output-local UI.
     server.output_layout.remove(output.wlr_output);
+    {
+        // Automatic outputs right of it close the gap, windows and all.
+        var carry = auto_place.Carry.begin(server);
+        defer carry.deinit();
+        auto_place.arrange(server);
+        carry.finish(server);
+    }
 
     // Pre-empt capture teardown explicitly rather than rely on wlroots' own
     // source (see docs/screen-sharing.md's failure contract: "Output
