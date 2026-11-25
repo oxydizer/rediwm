@@ -12,7 +12,7 @@ const Rect = button.Rect;
 /// What the strip says about a "+" that is still being served.
 pub const Notice = enum { none, opening, failed };
 
-pub const Tab = struct { id: u64, title: []const u8, active: bool, attention: bool, icon: []const u8 = "" };
+pub const Tab = struct { id: u64, title: []const u8, active: bool, attention: bool };
 pub const Strip = struct {
     tabs: []const Tab = &.{},
     first: usize = 0,
@@ -136,10 +136,7 @@ fn hashImpl(strip: Strip, include_titles: bool) u64 {
     h.update(std.mem.asBytes(&drop));
     for (strip.tabs) |t| {
         h.update(std.mem.asBytes(&t.id));
-        if (include_titles) {
-            h.update(t.title);
-            h.update(t.icon);
-        }
+        if (include_titles) h.update(t.title);
         h.update(std.mem.asBytes(&t.active));
         h.update(std.mem.asBytes(&t.attention));
     }

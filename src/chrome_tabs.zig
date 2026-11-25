@@ -25,7 +25,7 @@ pub const hit = title_tabs.hit;
 pub const hash = title_tabs.hash;
 pub const layoutHash = title_tabs.layoutHash;
 
-pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_width: i32, density: f32, scale: f32, strip: Strip, icon: ?icon_service.Entry, tab_icons: []const ?icon_service.Entry, clip: ?chrome.Rect) void {
+pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_width: i32, density: f32, scale: f32, strip: Strip, icon: ?icon_service.Entry, clip: ?chrome.Rect) void {
     if (strip.tabs.len == 0) return;
     const g = geometry(logical_width, density, strip);
     const band: f32 = @floatFromInt((window_chrome.Metrics{ .density = density }).titlebarHeight());
@@ -61,15 +61,9 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
             pixels[index] = c.over(C.fromPremultiplied(pixels[index])).argb();
         };
         if (t.active) fillBox(C, pixels, width, height, scale, clip_left, clip_right, rect.x + 8 * density, band - 2 * density, rect.x + rect.w - 8 * density, band, theme.shellPalette().accent);
-        const size = @min(20 * density, rect.h - 6);
-        var left = rect.x + 6 * density;
-        // A tab that names an icon shows it; one that does not, or whose icon
-        // is not found yet, shows the application's.
-        const own: ?icon_service.Entry = if (g.first + i < tab_icons.len) tab_icons[g.first + i] else null;
-        if (own orelse icon) |image| {
-            renderer.drawImageCover(left, rect.y + (rect.h - size) / 2, size, size, 0, .{ .pixels = image.pixels, .width = image.size, .height = image.size });
-        } else renderer.drawIcon(left, rect.y + (rect.h - size) / 2, size, size, .{ .id = .generic, .color = theme.global.window_fg });
-        left += size + 6 * density;
+        // Tabs carry no icon: the title gets the room. The application's icon
+        // stays on the leading button.
+        const left = rect.x + 12 * density;
         var close = g.close(i);
         close.x += rect.x - g.tab(i).x;
         renderer.drawText(left, rect.y, @max(0, close.x - left - 3), rect.h, .{

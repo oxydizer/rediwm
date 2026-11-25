@@ -162,8 +162,6 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     // ReleaseSafe would fill on every client commit.
     const tab_storage = if (toplevel.hasTabStrip()) try gpa.create([@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) else null;
     defer if (tab_storage) |storage| gpa.destroy(storage);
-    const tab_icon_storage = if (tab_storage != null) try gpa.create([@import("../window_tabs.zig").max_tabs]?icon_service.Entry) else null;
-    defer if (tab_icon_storage) |storage| gpa.destroy(storage);
     var state: chrome.ChromeState = .{
         .tabs = toplevel.tabStrip(tab_storage),
         .active = toplevel.activated,
@@ -178,24 +176,6 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
         .chip_alpha = chip_alpha,
         .icon = icon,
     };
-    // Tabs that name an icon get it from the theme; one not loaded yet shows the
-    // application's until the icon service wakes this window again.
-    if (tab_icon_storage) |icons| {
-        const raster = geometry.devicePixels((chrome.Metrics{ .density = toplevel.chromeDensity() }).iconSize(), toplevel.render_scale);
-        var any = false;
-        for (state.tabs.tabs, 0..) |tab, i| {
-            icons[i] = null;
-            if (tab.icon.len == 0) continue;
-            switch (toplevel.server.iconLookup(tab.icon, raster)) {
-                .ready => |entry| {
-                    icons[i] = entry;
-                    any = true;
-                },
-                .pending, .missing => {},
-            }
-        }
-        if (any) state.tab_icons = icons[0..state.tabs.tabs.len];
-    }
     toplevel.last_painted_hover = hover;
     toplevel.chrome_width = width;
     toplevel.chrome_height = height;
