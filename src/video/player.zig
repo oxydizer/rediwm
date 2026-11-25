@@ -16,6 +16,7 @@ const tr = @import("app_kit").i18n.tr;
 const Watch = @import("app_kit").settings_watch.Watch;
 const Chooser = @import("chooser.zig").Chooser;
 const Track = @import("subtitles.zig").Track;
+const max_audio_tracks = @import("subtitle_menu.zig").max_audio_tracks;
 const a = std.heap.c_allocator;
 const Pool = @import("software.zig").Pool;
 
@@ -49,6 +50,7 @@ pub fn run(init: std.process.Init, options: Options) !void {
     defer player.deinit();
     if (options.path) |path| try player.loadMovie(path);
     window.osd.empty = player.pipe == null;
+    if (window.osd.empty) window.osd.reveal();
     try window.map(if (options.path) |path| std.fs.path.basename(path) else tr("Videos"), "rediwm-video");
     defer window.deinit();
     try player.loop();
@@ -76,6 +78,7 @@ const Player = struct {
     pending: ?Picture = null,
     preview: bool = true,
     started: bool = false,
+    audio_track: ?usize = null,
     ended: bool = false,
     audio_running: bool = false,
     audio_finished: bool = false,
@@ -142,6 +145,7 @@ const Player = struct {
         const pipe = try Pipeline.init(media, self.decodeDevice(), target, paused, self.pipe);
         self.closeMovie();
         self.pipe = pipe;
+        self.audio_track = media.default_track;
         self.path = owned;
         self.clock = .{ .media = target };
         self.paused = paused;
@@ -315,6 +319,18 @@ const Player = struct {
             if (self.window.input.fullscreen) self.window.toplevel.unsetFullscreen() else self.window.toplevel.setFullscreen(null);
         }
         const pipe = self.pipe orelse return;
+        if (input.audio_menu) {
+            input.audio_menu = false;
+            var names: [max_audio_tracks][]const u8 = undefined;
+            const tracks = pipe.media.tracks;
+            const count = @min(tracks.len, names.len);
+            for (tracks[0..count], 0..) |*track, i| names[i] = track.name();
+            input.showAudioMenu(names[0..count], self.audio_track);
+        }
+        if (input.audio_pick) |index| {
+            input.audio_pick = null;
+            self.selectAudio(pipe, index);
+        }
         if (input.toggle_subtitles) {
             input.toggle_subtitles = false;
             self.toggleSubtitles();
@@ -381,6 +397,17 @@ const Player = struct {
         }
         if (self.paused) self.stopAudio();
         self.clock.set(pos, t, self.started and !self.paused);
+    }
+
+    /// Switch the decoded audio stream and resume from where we are; after
+    /// the end, the next replay uses the new stream.
+    fn selectAudio(self: *Player, pipe: *Pipeline, index: usize) void {
+        const tracks = pipe.media.tracks;
+        if (index >= tracks.len or self.audio_track == index) return;
+        self.audio_track = index;
+        pipe.selectAudio(tracks[index]);
+        if (!self.ended) self.seek(self.position(clocks.now()), false);
+        self.window.osd.message(tracks[index].name());
     }
 
     fn sliderPosition(self: *Player, value: f32) i64 {

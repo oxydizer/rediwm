@@ -124,7 +124,7 @@ def controls(ipc, env, tmp, fixture):
         assert next(v["title"] for v in ipc.get_windows() if v["id"] == win) == clip.name
         ipc.focus_window(win)
         box = ipc.get_window_debug(win)["client_box"]
-        ipc.move_cursor(round(box["x"] + box["width"] - 106), round(box["y"] + box["height"] - 27))
+        ipc.move_cursor(round(box["x"] + box["width"] - 142), round(box["y"] + box["height"] - 27))
         wait(bar_visible, "open button")
         ipc.click()
         dialog = wait(lambda: chooser(ipc), "Open button launches chooser")
@@ -155,7 +155,7 @@ def controls(ipc, env, tmp, fixture):
                     box = ipc.get_window_debug(win)["client_box"]
                     # Use the volume slider, then wheel outside the seek bar
                     # and press Up enough times to pass its upper limit.
-                    ipc.click_at(round(box["x"] + 165), round(box["y"] + box["height"] - 27))
+                    ipc.click_at(round(box["x"] + 125), round(box["y"] + box["height"] - 27))
                     ipc.scroll(0, 10)
                     for _ in range(32):
                         ipc.key_down_up(103)
@@ -172,8 +172,53 @@ def controls(ipc, env, tmp, fixture):
                 peaks.append(float(m[2]))
         assert peaks[0] > 0 and abs(peaks[1] / peaks[0] - 1.5) < .04, peaks
 
+    if fixture:
+        check_audio_tracks(ipc, env, tmp, fixture)
     check_empty_launch(ipc, env, tmp, fixture or PLAYER, sender)
     print("OSD, seeks and frame steps, fullscreen cursor, chooser, drop, mute and idle inhibitor OK")
+
+
+def check_audio_tracks(ipc, env, tmp, binary):
+    # Track 1 (the default) is silent and track 2 is a tone, so audible frames
+    # at the null device prove the switch, live and while paused.
+    clip = tmp / "two-tracks.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=480x270:rate=25:duration=6",
+                    "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "6",
+                    "-map", "0:v", "-map", "1:a", "-map", "2:a", "-ac", "2",
+                    "-metadata:s:a:0", "language=eng", "-metadata:s:a:0", "title=Silence",
+                    "-metadata:s:a:1", "language=spa", "-metadata:s:a:1", "title=Tone",
+                    "-c:v", "libx264", "-g", "25", "-c:a", "aac", clip], check=True)
+    ipc.move_cursor(1, 1)
+
+    def nonzero(log):
+        m = re.search(r"null device played (\d+) nonzero frames", log.read_text())
+        assert m, log.read_text()[-2000:]
+        return int(m[1])
+
+    def choose(win, row):
+        box = ipc.get_window_debug(win)["client_box"]
+        right = round(box["x"] + box["width"])
+        bottom = round(box["y"] + box["height"])
+        ipc.click_at(right - 68, bottom - 30)  # audio track button
+        time.sleep(.3)
+        ipc.click_at(right - 130, bottom - (145 if row == 0 else 111))
+        time.sleep(.2)
+
+    for paused in (False, True):
+        args = ["--hwdec=no", clip] if not paused else ["--hwdec=no", "--paused", clip]
+        with playing(ipc, env, tmp, binary, args) as (win, _, log):
+            ipc.focus_window(win)
+            if not paused:
+                wait(lambda: inhibitor(ipc), "playing the silent default track")
+                time.sleep(.5)
+            choose(win, 1)
+            if paused:
+                ipc.key_down_up(57)
+                wait(lambda: inhibitor(ipc), "resume after choosing a track")
+            time.sleep(1.2)
+        assert nonzero(log) > 20000, ("the second track was not played", paused, nonzero(log))
+    print("Audio track menu switches the decoded stream, playing and paused OK")
 
 
 def check_empty_launch(ipc, env, tmp, binary, sender):
@@ -188,8 +233,10 @@ def check_empty_launch(ipc, env, tmp, binary, sender):
         assert "decoding " not in log.read_text()
         check_idle(proc, .5)
         box = ipc.get_window_debug(win)["client_box"]
-        ipc.click_at(round(box["x"] + box["width"] / 2), round(box["y"] + box["height"] / 2))
-        dialog = wait(lambda: chooser(ipc), "Open File button in empty window")
+        # The empty window shows the usual bottom controls; Open File is the
+        # button left of Subtitles.
+        ipc.click_at(round(box["x"] + box["width"] / 2 + 120), round(box["y"] + box["height"] - 30))
+        dialog = wait(lambda: chooser(ipc), "Open File button in the empty window's controls")
         ipc.focus_window(dialog)
         ipc.key_down_up(1)
         wait(lambda: not chooser(ipc), "cancel leaves player open")
@@ -253,10 +300,10 @@ def check_subtitles(ipc, env, tmp, binary):
 
         def menu_visible():
             im = capture(ipc, win, tmp / "subtitle-menu.png")
-            return max(im.getpixel((im.width - round(90 * scale), im.height - round(111 * scale)))[:3]) > 12
+            return max(im.getpixel((im.width - round(126 * scale), im.height - round(111 * scale)))[:3]) > 12
 
         def open_menu():
-            ipc.click_at(right - 70, bottom - 30)
+            ipc.click_at(right - 105, bottom - 30)
             wait(menu_visible, "subtitle menu above the controls")
 
         assert lines()[0] == 0, "sidecar should start off"

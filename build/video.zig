@@ -37,11 +37,17 @@ pub fn add(ctx: Context) *std.Build.Step.Compile {
     const video = executable(ctx, false);
     const install = b.addInstallArtifact(video, .{});
     const entry = b.addInstallFileWithDir(support.localizedData(b, ctx.i18n_tool, ctx.layout.prefix, "data/rediwm-video.desktop"), .prefix, "share/applications/rediwm-video.desktop");
-    b.getInstallStep().dependOn(&install.step);
-    b.getInstallStep().dependOn(&entry.step);
+    // Desktop-specific defaults (`rediwm-mimeapps.list`) rank below the user's
+    // own mimeapps.list but above the distribution's, so a fresh account opens
+    // videos here without overriding anyone's choice.
+    const defaults = b.addInstallFileWithDir(b.path("data/rediwm-mimeapps.list"), .prefix, "share/applications/rediwm-mimeapps.list");
+    const icon_256 = b.addInstallFileWithDir(b.path("assets/icons/redi-video-icon-256.png"), .prefix, "share/icons/hicolor/256x256/apps/redi-video-icon.png");
+    const icon_512 = b.addInstallFileWithDir(b.path("assets/icons/redi-video-icon-512.png"), .prefix, "share/icons/hicolor/512x512/apps/redi-video-icon.png");
     const step = b.step("video", "Build the video player");
-    step.dependOn(&install.step);
-    step.dependOn(&entry.step);
+    inline for (.{ &install.step, &entry.step, &defaults.step, &icon_256.step, &icon_512.step }) |s| {
+        b.getInstallStep().dependOn(s);
+        step.dependOn(s);
+    }
     return video;
 }
 

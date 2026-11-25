@@ -11,7 +11,7 @@ const now = @import("clock.zig").now;
 const Widget = ui.layout.Widget;
 const subtitles = @import("subtitle_menu.zig");
 const ns = std.time.ns_per_s;
-const Item = enum(usize) { elapsed, seek, remaining, play, mute, volume, percent, open, subtitles, fullscreen, notice, empty_open };
+const Item = enum(usize) { elapsed, seek, remaining, play, mute, volume, percent, open, subtitles, audio, fullscreen, notice };
 
 pub const Osd = struct {
     surface: ?*wl.Surface = null,
@@ -28,6 +28,8 @@ pub const Osd = struct {
     dispatch: ui.input.Dispatcher = .{},
     menu: subtitles.Menu = .{},
     subtitle_action: ?subtitles.Action = null,
+    audio_menu: bool = false,
+    audio_pick: ?usize = null,
     position_dirty: bool = true,
     x: i32 = 0,
     y: i32 = 0,
@@ -88,11 +90,11 @@ pub const Osd = struct {
                 .elapsed, .remaining, .percent, .notice => .{ .kind = .{ .text = .{ .content = "", .font_size = ui.cairo.statusSize(), .color = ui.theme.global.window_fg } } },
                 .seek, .volume => .{ .kind = .{ .slider = .{ .value = 0, .min = 0, .max = if (item == .volume) 150 else 1, .owner = self, .id = id, .on_change = changed } } },
                 else => .{ .kind = .{ .button = switch (item) {
-                    .empty_open => .{ .variant = .primary, .leading_icon = .folder, .label = tr("Open File") },
                     .play => .{ .variant = .primary, .icon = .play, .icon_scale = 0.42 },
                     .mute => .{ .variant = .ghost, .icon = .volume, .label = tr("Mute") },
                     .open => .{ .leading_icon = .folder, .label = tr("Open File") },
                     .subtitles => .{ .leading_icon = .captions, .trailing_icon = .chevron_down, .alignment = .left, .label = tr("Subtitles") },
+                    .audio => .{ .variant = .ghost, .icon = .music, .icon_scale = 0.65, .label = tr("Audio track") },
                     .fullscreen => .{ .variant = .ghost, .icon = .region, .icon_scale = 0.65, .label = tr("Fullscreen") },
                     else => unreachable,
                 } } },
@@ -101,7 +103,7 @@ pub const Osd = struct {
                 w.kind.button.owner = self;
                 w.kind.button.id = id;
                 w.kind.button.on_click = clicked;
-                if (item != .empty_open) w.kind.button.size = .sm;
+                w.kind.button.size = .sm;
             }
         }
         self.root.children = &self.items;
@@ -135,8 +137,9 @@ pub const Osd = struct {
         switch (@as(Item, @fromBackingInt(@intCast(id)))) {
             .play => self.toggle = !self.toggle,
             .mute => self.muted = !self.muted,
-            .open, .empty_open => self.open = true,
+            .open => self.open = true,
             .subtitles => self.subtitle_action = .menu,
+            .audio => self.audio_menu = true,
             .fullscreen => self.fullscreen = true,
             else => unreachable,
         }
@@ -181,20 +184,14 @@ pub const Osd = struct {
     }
 
     fn updateChildren(self: *Osd) void {
-        const notice = @backingInt(Item.notice);
-        const empty_open = @backingInt(Item.empty_open);
-        if (self.empty) {
-            const first = if (self.notice_until != null) notice else empty_open;
-            self.root.children = self.items[first..];
-            if (self.width > 0) self.layout();
-        } else {
-            self.root.children = if (self.notice_until != null) self.items[@backingInt(Item.play)..empty_open] else self.items[0..notice];
-        }
+        self.root.children = if (self.notice_until != null) self.items[@backingInt(Item.play)..] else self.items[0..@backingInt(Item.notice)];
     }
 
     pub fn movieChanged(self: *Osd) void {
         self.closeMenu();
         self.subtitle_action = null;
+        self.audio_menu = false;
+        self.audio_pick = null;
         self.setSubtitlesEnabled(false);
         self.cancelPress();
         self.empty = false;
@@ -211,11 +208,10 @@ pub const Osd = struct {
 
     pub fn resize(self: *Osd, w: i32, h: i32) void {
         if (self.surface == null) return;
-        const max_width: i32 = if (self.empty) 360 else 680;
-        self.width = @min(max_width, w -| @min(16, @divTrunc(w, 12)));
+        self.width = @min(680, w -| @min(16, @divTrunc(w, 12)));
         self.height = @min(h, @as(i32, @intFromFloat(@ceil(58 + ui.cairo.statusSize() * 1.5))));
         self.x = @divTrunc(w - self.width, 2);
-        self.y = if (self.empty) @divTrunc(h - self.height, 2) else @max(0, h - self.height - 8);
+        self.y = @max(0, h - self.height - 8);
         self.position_dirty = true;
         self.layout();
         self.dirty = true;
@@ -242,11 +238,6 @@ pub const Osd = struct {
         const pad: f32 = 7;
         const row = (height - 2 * pad) / 2;
         self.place(.notice, pad, pad, width - 2 * pad, row);
-        if (self.empty) {
-            const button_w = @min(180, width - 2 * pad);
-            self.place(.empty_open, (width - button_w) / 2, if (self.notice_until != null) pad + row else (height - row) / 2, button_w, row);
-            return;
-        }
         const label_w = @min(width * 0.26, 6.1 * ui.cairo.statusSize());
         self.place(.elapsed, pad, pad, label_w, row);
         self.place(.seek, pad + label_w, pad, width - (pad + label_w) * 2, row);
@@ -260,6 +251,7 @@ pub const Osd = struct {
         self.place(.mute, pad + play + gap, y, button_w, row);
         const volume_x = pad + play + button_w + 2 * gap;
         const full_x = width - pad - button_w;
+        const audio_x = full_x - gap - button_w;
         const open = self.get(.open);
         const subs = self.get(.subtitles);
         // Measure translated labels with their leading and trailing glyphs.
@@ -267,14 +259,14 @@ pub const Osd = struct {
             w.kind.button.icon = null;
             ui.measure.measureAtScale(w, width, row, self.density);
         }
-        const labels_fit = full_x - open.computed_width - subs.computed_width - volume_x - 3 * gap >= 80;
+        const labels_fit = audio_x - open.computed_width - subs.computed_width - volume_x - 3 * gap >= 80;
         if (!labels_fit) {
             open.kind.button.icon = .folder;
             subs.kind.button.icon = .captions;
         }
         const sub_w = if (labels_fit) subs.computed_width else button_w;
         const open_w = if (labels_fit) open.computed_width else button_w;
-        const sub_x = full_x - gap - sub_w;
+        const sub_x = audio_x - gap - sub_w;
         const open_x = sub_x - gap - open_w;
         const available = @max(0, open_x - gap - volume_x);
         const label: f32 = if (available >= 80) ui.cairo.statusSize() * 3.5 else 0;
@@ -283,8 +275,9 @@ pub const Osd = struct {
         self.place(.percent, volume_x + vol_w + 4, y, label, row);
         self.place(.open, open_x, y, open_w, row);
         self.place(.subtitles, sub_x, y, sub_w, row);
+        self.place(.audio, audio_x, y, button_w, row);
         self.place(.fullscreen, full_x, y, button_w, row);
-        if (self.menu.open) self.menu.layout(sub_x + sub_w, width, self.root.computed_y + height);
+        if (self.menu.open) self.menu.layout(if (self.menu.audio) audio_x + button_w else sub_x + sub_w, width, self.root.computed_y + height);
     }
 
     fn localX(self: *Osd) f32 {
@@ -312,6 +305,15 @@ pub const Osd = struct {
         self.reveal();
     }
 
+    pub fn showAudioMenu(self: *Osd, names: []const []const u8, selected: ?usize) void {
+        self.cancelPress();
+        self.click_at = null;
+        self.menu.showAudio(names, selected);
+        self.position_dirty = true;
+        self.layout();
+        self.reveal();
+    }
+
     pub fn closeMenu(self: *Osd) void {
         if (!self.menu.open) return;
         self.cancelPress();
@@ -333,6 +335,12 @@ pub const Osd = struct {
     }
 
     fn takeMenuChoice(self: *Osd) void {
+        if (self.menu.audio_choice) |track| {
+            self.menu.audio_choice = null;
+            self.audio_pick = track;
+            self.closeMenu();
+            return;
+        }
         self.subtitle_action = self.menu.choice orelse return;
         self.menu.choice = null;
         self.closeMenu();
@@ -497,7 +505,7 @@ pub const Osd = struct {
         var r = ui.paint.Renderer.init(pixels[0..@intCast(px * py)], px, py, self.density);
         @memset(r.pixels, 0);
         r.palette = ui.theme.shellPalette();
-        if (!self.empty or self.notice_until != null) r.fillRect(0, self.root.computed_y, self.root.computed_width, self.root.computed_height, .{
+        r.fillRect(0, self.root.computed_y, self.root.computed_width, self.root.computed_height, .{
             .color = ui.theme.global.app_toolbar,
             .radius = 8,
             .border_width = 1,

@@ -65,11 +65,26 @@ the plan and its decisions are in `docs/plans/video-player.md`.
   playback until release, previews the preceding keyframe and finishes with
   an exact seek. A backward step starts one stream tick before the displayed
   PTS so the preceding GOP is available at keyframe boundaries.
-* **Launching without a movie** maps the player with a persistent Open File
-  button. The first successful open starts the pipeline and applies any
+* **Launching without a movie** maps the player with the usual bottom controls,
+  kept visible (no auto-hide); their Open File button starts a chooser, and the
+  other controls do nothing until a movie loads. The first successful open starts the pipeline and applies any
   launch-time seek or pause. The empty window has no decoder or audio device.
 * **File selection and drops are event-driven.** Poll the Files chooser's
   child handle and the URI-list pipe with Wayland. Negotiate copy only and
   finish the offer after opening a local file. Stage the new pipeline before
   retiring the old one. When both have audio, stop the device and join the
   old producer before reusing the ring with the new worker wake descriptors.
+* **Default for videos:** `data/rediwm-mimeapps.list` installs as
+  `share/applications/rediwm-mimeapps.list`, the desktop-specific defaults GIO
+  reads for `XDG_CURRENT_DESKTOP=rediwm`. It ranks below the user's own
+  `mimeapps.list`, so a chosen player wins, and other desktops are unaffected.
+  Keep its types in step with `rediwm-video.desktop`'s `MimeType`. The icon is
+  `redi-video-icon` (`assets/icons/`, installed at 256 and 512 px).
+* **Audio tracks:** `Media.tracks` holds every decodable audio stream
+  (immutable after `open`, labelled "title or language · codec channels"), so
+  workers can copy an entry without owning it. The strip's music button opens
+  the same menu as Subtitles (`subtitle_menu.zig`, `showAudio`). A choice sets
+  `Pipeline.audio` under the lock and then seeks to the current position: the
+  reader and the audio decoder take the stream only at the start of a
+  generation, and the decoder reopens its codec when the index changed. At EOF
+  only the selection changes; a replay uses it.

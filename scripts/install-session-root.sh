@@ -51,6 +51,10 @@ install -Dm644 "$release_dir/share/icons/hicolor/scalable/apps/rediwm-calculator
 install -Dm644 "$release_dir/share/applications/rediwm-editor.desktop" "${datadir}/applications/rediwm-editor.desktop"
 install -Dm644 "$release_dir/share/applications/rediwm-pdf.desktop" "${datadir}/applications/rediwm-pdf.desktop"
 install -Dm644 "$release_dir/share/applications/rediwm-player.desktop" "${datadir}/applications/rediwm-player.desktop"
+install -Dm644 "$release_dir/share/applications/rediwm-video.desktop" "${datadir}/applications/rediwm-video.desktop"
+install -Dm644 "$release_dir/share/applications/rediwm-mimeapps.list" "${datadir}/applications/rediwm-mimeapps.list"
+install -Dm644 "$release_dir/share/icons/hicolor/256x256/apps/redi-video-icon.png" "${datadir}/icons/hicolor/256x256/apps/redi-video-icon.png"
+install -Dm644 "$release_dir/share/icons/hicolor/512x512/apps/redi-video-icon.png" "${datadir}/icons/hicolor/512x512/apps/redi-video-icon.png"
 install -Dm644 "$release_dir/share/licenses/rediwm/miniaudio-LICENSE" "${datadir}/licenses/rediwm/miniaudio-LICENSE"
 if [ -z "$dest" ] && command -v update-mime-database >/dev/null 2>&1; then update-mime-database "${datadir}/mime"; fi
 if [ -z "$dest" ] && command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "${datadir}/applications"; fi
