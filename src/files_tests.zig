@@ -11,6 +11,7 @@ const io_service_tests = @import("files/io_service_tests.zig");
 const io_thread_guard = @import("files/io_thread_guard.zig");
 const io_job_table = @import("files/io_job_table.zig");
 const io_window_link = @import("files/io_window_link.zig");
+const io_manager_summary_tests = @import("files/io_manager_summary_tests.zig");
 const io_coordinator_tests = @import("files/io_coordinator_tests.zig");
 const io_coordinator_transfer_tests = @import("files/io_coordinator_transfer_tests.zig");
 const io_workers_tests = @import("files/io_workers_tests.zig");
@@ -33,6 +34,7 @@ test {
     _ = io_thread_guard;
     _ = io_job_table;
     _ = io_window_link;
+    _ = io_manager_summary_tests;
     _ = io_coordinator_tests;
     _ = io_coordinator_transfer_tests;
     _ = io_workers_tests;
