@@ -103,9 +103,11 @@ composition silently stops after a window switch.
 
 ## Trash
 
-* **Moving in stays on `gio trash`** (`ops.trashItems`, which knows the
-  per-volume rules) and so does Empty Trash (`gio trash --empty`, followed by
-  `trash.sweepOrphans`). Everything else on the home trash is native in
+* **Moving in stays on `gio trash`** (which knows the per-volume rules) and
+  so does Empty Trash (`gio trash --empty`, followed by `trash.sweepOrphans`).
+  Both, Delete and deleting from the Trash view are I/O service jobs
+  (`io_deletion.zig` on its workers, `app_service.zig` in the window): the
+  window never waits for `rm` or `gio`. Everything else on the home trash is native in
   `trash.zig`: restore, permanent delete, `.trashinfo` parsing and the
   `directorysizes` line. Tests build fixture trash directories, no `gio`.
 * **Home trash only.** Per-volume trashes (`$topdir/.Trash-$uid`) are neither
@@ -250,7 +252,7 @@ control bytes are refused because terminal paste would alter them.
   through symlinks. Pins take their gap from `pin_drop`.
 * Ctrl-click deselection waits for release so Ctrl-drag keeps the selection.
 * The sidebar's Trash row (`trashDropAt`, `trash_drop` outline) takes
-  *move* only, like the dock's Trash: `trashDropped` runs `ops.trashItems`
+  *move* only, like the dock's Trash: `trashDropped` starts a `trash` job
   with no dialog and skips what is in the Trash already. Copy-only sources
   (Files' Trash view, most browsers) are refused. `tests/files_drag.py --trash`.
 
