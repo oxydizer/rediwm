@@ -56,6 +56,9 @@ pub const Record = struct {
     removed: bool = false,
     error_code: u8 = 0,
     borrow_count: u8 = 0,
+    /// How many sources the submit named; with the label, enough for
+    /// "photo.jpg and 3 more".
+    source_count: u32 = 0,
     label_len: u8 = 0,
     label_buf: [label_capacity]u8 = @splat(0),
     completed_bytes: u64 = 0,

@@ -20,7 +20,6 @@ pub const max_windows = 16;
 pub const command_capacity_per_window = 8;
 pub const control_capacity_per_window = 2;
 pub const aggregate_command_capacity = 64;
-pub const update_capacity_per_window = 32;
 
 // Job-table capacities for stage S1 (docs/plans/files-io-threading-and-ownership.md
 // §6). Starting values; roadmap phase 7 calibrates them.
@@ -257,29 +256,6 @@ pub const RoutedCommand = struct {
     command: Command,
 };
 
-pub const UpdateKind = enum {
-    progress,
-    job_state,
-    conflict,
-    archive_ready,
-    command_rejected,
-    resync_required,
-};
-
-/// A copied value. Path strings and other owned payloads are deliberately
-/// excluded; later command/update variants must define their ownership.
-pub const Update = struct {
-    sequence: u64 = 0,
-    job_id: JobId = 0,
-    kind: UpdateKind,
-    completed_bytes: u64 = 0,
-    total_bytes: u64 = 0,
-    rate_bytes_per_second: u64 = 0,
-    state_code: u8 = 0,
-    conflict_id: u64 = 0,
-    resource_id: ResourceId = 0,
-};
-
 fn Ring(comptime T: type, comptime capacity: usize) type {
     return struct {
         items: [capacity]T = undefined,
@@ -306,10 +282,6 @@ fn Ring(comptime T: type, comptime capacity: usize) type {
             self.count = 0;
         }
 
-        fn last(self: *@This()) ?*T {
-            if (self.count == 0) return null;
-            return &self.items[(self.head + self.count - 1) % capacity];
-        }
     };
 }
 
@@ -341,9 +313,6 @@ const WindowSlot = struct {
     word: std.atomic.Value(u64) = .init(0),
     normal_commands: Ring(Command, command_capacity_per_window) = .{},
     control_commands: Ring(Command, control_capacity_per_window) = .{},
-    updates: Ring(Update, update_capacity_per_window) = .{},
-    needs_resync: bool = false,
-    resync_sequence: u64 = 0,
 
     /// Called under the Service mutex on a closing slot. Clears the guarded
     /// fields first, then publishes the slot as free with release ordering,
@@ -352,9 +321,6 @@ const WindowSlot = struct {
         std.debug.assert(slotState(self.word.load(.acquire)) == .closing);
         self.normal_commands = .{};
         self.control_commands = .{};
-        self.updates = .{};
-        self.needs_resync = false;
-        self.resync_sequence = 0;
         self.word.store(0, .release);
     }
 };
@@ -367,7 +333,6 @@ pub const Service = struct {
     update_wake_fd: std.posix.fd_t = -1,
     windows: [max_windows]WindowSlot = std.mem.zeroes([max_windows]WindowSlot),
     next_window_id: std.atomic.Value(WindowId) = .init(1),
-    next_event_sequence: u64 = 1,
     next_drain_slot: usize = 0,
     pending_normal_commands: usize = 0,
     /// Consumers 0..max_windows-1 are the window slots, in slot order; the
@@ -414,7 +379,7 @@ pub const Service = struct {
         return self.command_wake_fd;
     }
 
-    /// Shared process-wide wake descriptor for published window updates.
+    /// Shared process-wide wake descriptor, signalled when any job record changes.
     pub fn updateWakeFd(self: *const Service) std.posix.fd_t {
         return self.update_wake_fd;
     }
@@ -458,7 +423,7 @@ pub const Service = struct {
         return false;
     }
 
-    /// Stops new admission. Existing handles may still drain queued updates
+    /// Stops new admission. Existing handles may still read the job table
     /// and unregister; the process owner controls final teardown.
     pub fn beginShutdown(self: *Service) void {
         self.lock();
@@ -501,54 +466,6 @@ pub const Service = struct {
             self.recycleClosedSlot(slot);
         }
         return null;
-    }
-
-    /// Publishes one update to one registered window and assigns its
-    /// service-wide sequence number. Progress is coalesced only with the
-    /// immediately preceding progress update for the same job, preserving
-    /// event order around lifecycle updates.
-    pub fn publishUpdate(
-        self: *Service,
-        window_id: WindowId,
-        update: Update,
-    ) !u64 {
-        self.lock();
-        defer self.unlock();
-
-        const slot = self.findSlot(window_id) orelse return error.WindowClosed;
-        if (self.next_event_sequence == std.math.maxInt(u64))
-            return error.SequenceExhausted;
-        const sequence = self.next_event_sequence;
-        self.next_event_sequence += 1;
-
-        var sequenced = update;
-        sequenced.sequence = sequence;
-
-        if (slot.needs_resync) {
-            slot.resync_sequence = sequence;
-            signalWake(self.update_wake_fd);
-            return sequence;
-        }
-
-        if (sequenced.kind == .progress) {
-            if (slot.updates.last()) |last| {
-                if (last.kind == .progress and last.job_id == sequenced.job_id) {
-                    last.* = sequenced;
-                    signalWake(self.update_wake_fd);
-                    return sequence;
-                }
-            }
-        }
-
-        if (!slot.updates.push(sequenced)) {
-            // A full queue cannot pretend to be continuous. Discard the
-            // partial stream and make the loss explicit to its consumer.
-            slot.updates.clear();
-            slot.needs_resync = true;
-            slot.resync_sequence = sequence;
-        }
-        signalWake(self.update_wake_fd);
-        return sequence;
     }
 
     fn enqueue(
@@ -657,20 +574,6 @@ pub const Service = struct {
         self.table.appendRateSample(job_id, bytes_per_second);
     }
 
-    fn receiveUpdate(self: *Service, window_id: WindowId) !?Update {
-        if (!self.tryLock()) return error.ServiceBusy;
-        defer self.unlock();
-
-        const slot = self.findSlot(window_id) orelse return null;
-        if (slot.needs_resync) {
-            slot.needs_resync = false;
-            return .{
-                .sequence = slot.resync_sequence,
-                .kind = .resync_required,
-            };
-        }
-        return slot.updates.pop();
-    }
 
     /// Marks the window closing with one compare-and-swap. Takes no lock,
     /// cannot fail and never waits, so window teardown cannot stall the UI
@@ -800,7 +703,7 @@ fn drainWake(fd: std.posix.fd_t) u64 {
 }
 
 /// Copyable, non-owning per-window capability. Closing it unregisters its
-/// identity; stale copies then fail admission and receive no updates.
+/// identity; stale copies then fail admission and job-table reads.
 pub const Handle = struct {
     service: *Service,
     window_id: WindowId,
@@ -814,10 +717,6 @@ pub const Handle = struct {
     /// and command.payload is cleared. On failure, the caller retains it.
     pub fn trySendOwned(self: Handle, command: *Command) !void {
         try self.service.enqueue(self.window_id, command, true);
-    }
-
-    pub fn tryReceiveUpdate(self: Handle) !?Update {
-        return self.service.receiveUpdate(self.window_id);
     }
 
     /// Reads job records changed since this window's last read, its own

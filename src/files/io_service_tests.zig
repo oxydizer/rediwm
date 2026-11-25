@@ -111,68 +111,6 @@ test "command draining is round-robin across windows" {
     try std.testing.expectEqual(second.window_id, service.tryReceiveCommand().?.window_id);
 }
 
-test "progress coalescing preserves ordering around lifecycle updates" {
-    var service: service_mod.Service = .{};
-    try service.init();
-    defer service.deinit();
-    var handle = try service.registerWindow();
-    defer handle.close();
-
-    const first_sequence = try service.publishUpdate(handle.window_id, .{
-        .job_id = 7,
-        .kind = .progress,
-        .completed_bytes = 10,
-    });
-    const second_sequence = try service.publishUpdate(handle.window_id, .{
-        .job_id = 7,
-        .kind = .progress,
-        .completed_bytes = 20,
-    });
-    try std.testing.expect(second_sequence > first_sequence);
-
-    _ = try service.publishUpdate(handle.window_id, .{
-        .job_id = 7,
-        .kind = .job_state,
-        .state_code = 2,
-    });
-    _ = try service.publishUpdate(handle.window_id, .{
-        .job_id = 7,
-        .kind = .progress,
-        .completed_bytes = 30,
-    });
-
-    const coalesced = (try handle.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(service_mod.UpdateKind.progress, coalesced.kind);
-    try std.testing.expectEqual(@as(u64, 20), coalesced.completed_bytes);
-    const state = (try handle.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(service_mod.UpdateKind.job_state, state.kind);
-    const latest = (try handle.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(service_mod.UpdateKind.progress, latest.kind);
-    try std.testing.expectEqual(@as(u64, 30), latest.completed_bytes);
-}
-
-test "update overflow is surfaced as an explicit resync marker" {
-    var service: service_mod.Service = .{};
-    try service.init();
-    defer service.deinit();
-    var handle = try service.registerWindow();
-    defer handle.close();
-
-    var last_sequence: u64 = 0;
-    for (0..service_mod.update_capacity_per_window + 1) |i| {
-        last_sequence = try service.publishUpdate(handle.window_id, .{
-            .job_id = i + 1,
-            .kind = .job_state,
-            .state_code = 1,
-        });
-    }
-
-    const marker = (try handle.tryReceiveUpdate()).?;
-    try std.testing.expectEqual(service_mod.UpdateKind.resync_required, marker.kind);
-    try std.testing.expectEqual(last_sequence, marker.sequence);
-    try std.testing.expect((try handle.tryReceiveUpdate()) == null);
-}
-
 test "shutdown rejects admission while handles can unregister cleanly" {
     var service: service_mod.Service = .{};
     try service.init();
@@ -210,9 +148,10 @@ test "window operations fail fast under mutex contention and remain retryable" {
         error.ServiceBusy,
         handle.trySend(normalCommand(1)),
     );
+    var records: [4]service_mod.JobRecord = undefined;
     try std.testing.expectError(
         error.ServiceBusy,
-        handle.tryReceiveUpdate(),
+        handle.fetchChanges(&records),
     );
     // Registering and closing take no lock at all, so they succeed while
     // the mutex is held and cannot leave window teardown spinning.
@@ -253,7 +192,7 @@ test "closing a stale handle copy never closes a later window in the same slot" 
     try std.testing.expectEqual(later.window_id, service.tryReceiveCommand().?.window_id);
 }
 
-test "command admission and update publication wake their process consumers" {
+test "command admission and record changes wake their process consumers" {
     var service: service_mod.Service = .{};
     try service.init();
     defer service.deinit();
@@ -267,19 +206,17 @@ test "command admission and update publication wake their process consumers" {
     try std.testing.expect(!isReadable(service.commandWakeFd()));
     try std.testing.expectEqual(@as(u64, 41), service.tryReceiveCommand().?.command.job_id);
 
+    // A record written after the consumer drained the wake leaves the
+    // counter readable, and the read that follows sees the record.
     try std.testing.expect(!isReadable(service.updateWakeFd()));
-    _ = try service.publishUpdate(handle.window_id, .{
-        .job_id = 41,
-        .kind = .job_state,
-        .state_code = 1,
-    });
+    try service.createJobRecord(.{ .id = 41, .origin_window_id = handle.window_id, .state = .queued }, true);
     try std.testing.expect(isReadable(service.updateWakeFd()));
     try std.testing.expect(service.drainUpdateWake() > 0);
     try std.testing.expect(!isReadable(service.updateWakeFd()));
-    try std.testing.expectEqual(
-        service_mod.UpdateKind.job_state,
-        (try handle.tryReceiveUpdate()).?.kind,
-    );
+    var records: [4]service_mod.JobRecord = undefined;
+    const result = try handle.fetchChanges(&records);
+    try std.testing.expectEqual(@as(usize, 1), result.count);
+    try std.testing.expectEqual(@as(u64, 41), records[0].id);
 }
 
 fn isReadable(fd: std.posix.fd_t) bool {

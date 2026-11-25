@@ -18,12 +18,14 @@ const Fixture = struct {
     service: io_service.Service = .{},
     coordinator: io_coordinator.Coordinator = undefined,
     window: io_service.Handle = undefined,
+    view: support.View = undefined,
 
     fn start(self: *Fixture) !void {
         self.temp = try support.makeTempDir(&self.temp_buffer);
         try self.service.init();
         try self.coordinator.init(allocator, &self.service);
         self.window = try self.service.registerWindow();
+        self.view = support.View.init(self.window, &self.service);
     }
 
     fn stop(self: *Fixture) void {
@@ -38,7 +40,7 @@ const Fixture = struct {
     }
 
     fn rejection(self: *Fixture) !Code {
-        return @enumFromInt(try support.waitForAnyRejection(self.window, &self.service));
+        return @enumFromInt(try self.view.failedSubmit());
     }
 };
 
@@ -68,7 +70,7 @@ test "a mixed selection of files and folders copies as one job" {
     defer allocator.free(copied_child);
     try support.waitForContents(copied_file, "loose file");
     try support.waitForContents(copied_child, "inside the folder");
-    try support.waitForJobState(f.window, &f.service, 1, .completed);
+    try f.view.waitState(1, .completed);
     try std.testing.expect(support.pathExists(file));
     try std.testing.expect(support.pathExists(child));
 }
@@ -99,7 +101,7 @@ test "a mixed selection of files and folders moves as one job" {
     defer allocator.free(moved_child);
     try support.waitForContents(moved_file, "loose file");
     try support.waitForContents(moved_child, "inside the folder");
-    try support.waitForJobState(f.window, &f.service, 1, .completed);
+    try f.view.waitState(1, .completed);
     try support.waitForRemoval(file);
     try support.waitForRemoval(folder);
 }
@@ -120,7 +122,7 @@ test "copying a file into its own folder makes a uniquely named copy" {
     try support.submitSources(allocator, f.window, .copy, f.temp, &.{file});
 
     try support.waitForContents(expected, "original");
-    try support.waitForJobState(f.window, &f.service, 1, .completed);
+    try f.view.waitState(1, .completed);
     try support.waitForContents(file, "original");
 }
 
@@ -143,7 +145,7 @@ test "copying a folder into its own parent makes a uniquely named copy" {
     try support.submitSources(allocator, f.window, .copy, f.temp, &.{folder});
 
     try support.waitForContents(expected_child, "track");
-    try support.waitForJobState(f.window, &f.service, 1, .completed);
+    try f.view.waitState(1, .completed);
     try support.waitForContents(child, "track");
 }
 

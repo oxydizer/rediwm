@@ -6,7 +6,6 @@ const io_operation_executor = @import("io_operation_executor.zig");
 const support = @import("io_coordinator_test_support.zig");
 const send = support.send;
 const sendOwned = support.sendOwned;
-const receive = support.receive;
 const waitReadable = support.waitReadable;
 const allocZ = support.allocZ;
 const join = support.join;
@@ -25,9 +24,6 @@ const cleanup = support.cleanup;
 const submitTransfer = support.submitTransfer;
 const resolveConflict = support.resolveConflict;
 const sendDiscoveryCommand = support.sendDiscoveryCommand;
-const waitForRejection = support.waitForRejection;
-const waitForJobState = support.waitForJobState;
-const waitForRejection999 = support.waitForRejection999;
 
 test "coordinator rejects transfer submissions without a payload" {
     var service: io_service.Service = .{};
@@ -38,22 +34,24 @@ test "coordinator rejects transfer submissions without a payload" {
     try coordinator.init(std.testing.allocator, &service);
 
     var window = try service.registerWindow();
+    var window_view = support.View.init(window, &service);
     defer window.close();
     defer coordinator.deinit();
 
-    try send(window, .{ .kind = .submit_job, .job_id = 73 });
-    try std.testing.expect(waitReadable(service.updateWakeFd(), 2000));
-    _ = service.drainUpdateWake();
+    try send(window, .{ .kind = .submit_job, .submit_tag = 73 });
 
-    const update = (try receive(window)).?;
-    try std.testing.expectEqual(io_service.UpdateKind.command_rejected, update.kind);
-    try std.testing.expectEqual(@as(u64, 73), update.job_id);
-    try std.testing.expectEqual(@as(u8, 5), update.state_code);
+    // The failed submit is the window's own outcome, recognisable by its tag.
+    const record = try window_view.waitFor(support.FailedSubmit{});
+    try std.testing.expectEqual(@as(u64, 73), record.submit_tag);
+    try std.testing.expectEqual(
+        @intFromEnum(io_coordinator.RejectionCode.missing_payload),
+        record.error_code,
+    );
 }
 
 const c = @import("c.zig").api;
 
-test "coordinator routes conflicts to their owning window and resolves them there" {
+test "coordinator shows conflicts to every window and resolves them from the origin" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
     const temp = try makeTempDir(&temp_buffer);
@@ -81,70 +79,37 @@ test "coordinator routes conflicts to their owning window and resolves them ther
     try coordinator.init(allocator, &service);
 
     var owner_window = try service.registerWindow();
+    var owner_window_view = support.View.init(owner_window, &service);
     defer owner_window.close();
     var other_window = try service.registerWindow();
+    var other_window_view = support.View.init(other_window, &service);
     defer other_window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, owner_window, .copy, destination_dir, source);
 
-    var conflict_id: ?io_manager.ConflictId = null;
-    var other_window_saw_conflict = false;
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
+    // The pending conflict is part of the job's record, so every window
+    // sees it, including one that did not submit the job.
+    const owner_view = try owner_window_view.waitFor(support.PendingConflict{});
+    const other_view = try other_window_view.waitFor(support.PendingConflict{});
+    try std.testing.expectEqual(owner_view.pending_conflict, other_view.pending_conflict);
+    const id = owner_view.pending_conflict;
 
-        while (try receive(owner_window)) |update| {
-            if (update.kind == .conflict)
-                conflict_id = update.conflict_id;
-        }
-        while (try receive(other_window)) |update| {
-            if (update.kind == .conflict)
-                other_window_saw_conflict = true;
-        }
-        if (conflict_id != null) break;
-    }
-
-    const id = conflict_id orelse return error.ConflictNotificationTimedOut;
-    try std.testing.expect(!other_window_saw_conflict);
-
-    // A different window cannot resolve another window's conflict.
+    // Until S2 removes the origin check, another window's resolution is not
+    // applied. A failed submit queued behind it from the same window proves
+    // the coordinator has processed it (control before normal).
     try resolveConflict(allocator, other_window, id, .skip);
-    var rejected: ?io_service.Update = null;
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
-        rejected = receive(other_window) catch {
-            waitBriefly();
-            continue;
-        };
-        if (rejected != null) break;
-        waitBriefly();
-    }
-    const rejection = rejected orelse
-        return error.MissingConflictOwnershipRejection;
-    try std.testing.expectEqual(io_service.UpdateKind.command_rejected, rejection.kind);
+    try send(other_window, .{ .kind = .submit_job });
+    _ = try other_window_view.failedSubmit();
+    try owner_window_view.sync();
+    try std.testing.expectEqual(id, owner_window_view.find(owner_view.id).?.pending_conflict);
 
     try resolveConflict(allocator, owner_window, id, .skip);
-
-    var saw_terminal_state = false;
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
-        while (try receive(owner_window)) |update| {
-            if (update.kind == .job_state) {
-                const state: io_manager.JobState = @fromBackingInt(
-                    @intCast(update.state_code),
-                );
-                if (state.isTerminal()) saw_terminal_state = true;
-            }
-        }
-        if (saw_terminal_state) break;
-    }
-    try std.testing.expect(saw_terminal_state);
+    try owner_window_view.waitState(owner_view.id, .completed);
+    try std.testing.expectEqual(@as(u64, 0), owner_window_view.find(owner_view.id).?.pending_conflict);
 }
 
-test "coordinator validates discovery payloads and routes rejections to the sender" {
+test "coordinator ignores invalid discovery commands without disturbing anything" {
     var service: io_service.Service = .{};
     try service.init();
     defer service.deinit();
@@ -152,53 +117,23 @@ test "coordinator validates discovery payloads and routes rejections to the send
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(std.testing.allocator, &service);
 
-    var owner_window = try service.registerWindow();
-    defer owner_window.close();
-    var other_window = try service.registerWindow();
-    defer other_window.close();
+    var window = try service.registerWindow();
+    var window_view = support.View.init(window, &service);
+    defer window.close();
     defer coordinator.deinit();
 
     const job_id: io_service.JobId = 73;
+    // Missing payload, missing root path, unknown job. There is no reply
+    // channel: a command that cannot apply changes nothing and is logged.
+    try send(window, .{ .kind = .start_discovery, .job_id = job_id });
+    try sendDiscoveryCommand(std.testing.allocator, window, .start_discovery, job_id, 1, null);
+    try sendDiscoveryCommand(std.testing.allocator, window, .start_discovery, job_id, 1, "/tmp/discovery-root");
 
-    try send(owner_window, .{
-        .kind = .start_discovery,
-        .job_id = job_id,
-    });
-    const missing_payload = try waitForRejection(&service, owner_window, job_id);
-    try std.testing.expectEqual(
-        @as(u8, 5),
-        missing_payload.state_code,
-    );
-
-    try sendDiscoveryCommand(
-        std.testing.allocator,
-        owner_window,
-        .start_discovery,
-        job_id,
-        1,
-        null,
-    );
-    const missing_path = try waitForRejection(&service, owner_window, job_id);
-    try std.testing.expectEqual(
-        @as(u8, 255),
-        missing_path.state_code,
-    );
-
-    try sendDiscoveryCommand(
-        std.testing.allocator,
-        owner_window,
-        .start_discovery,
-        job_id,
-        1,
-        "/tmp/discovery-root",
-    );
-    const unknown_job = try waitForRejection(&service, owner_window, job_id);
-    try std.testing.expectEqual(
-        @as(u8, 2),
-        unknown_job.state_code,
-    );
-
-    try std.testing.expect((try receive(other_window)) == null);
+    // A failed submit queued behind them, in the same normal queue, proves
+    // they were processed; the table holds nothing but that marker.
+    try send(window, .{ .kind = .submit_job, .submit_tag = 9 });
+    _ = try window_view.failedSubmit();
+    try std.testing.expectEqual(@as(usize, 0), window_view.len);
 }
 
 test "coordinator accepts discovery prioritization for a submitted directory job" {
@@ -236,24 +171,13 @@ test "coordinator accepts discovery prioritization for a submitted directory job
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
+    var window_view = support.View.init(window, &service);
     defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source_dir);
 
-    var job_id: ?io_service.JobId = null;
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
-        while (try receive(window)) |update| {
-            if (update.kind == .job_state) {
-                job_id = update.job_id;
-                break;
-            }
-        }
-        if (job_id != null) break;
-    }
-    const submitted_job_id = job_id orelse return error.JobStateUpdateTimedOut;
+    const submitted_job_id = (try window_view.waitFor(support.AnyLiveJob{})).id;
 
     try sendDiscoveryCommand(
         allocator,
@@ -265,11 +189,7 @@ test "coordinator accepts discovery prioritization for a submitted directory job
     );
 
     try waitForContents(destination_file, "discovery priority payload");
-
-    while (try receive(window)) |update| {
-        if (update.kind == .command_rejected and update.job_id == submitted_job_id)
-            return error.DiscoveryPrioritizationRejected;
-    }
+    try window_view.waitState(submitted_job_id, .completed);
 }
 
 test "coordinator copies a regular-file transfer" {
@@ -308,7 +228,7 @@ test "coordinator copies a regular-file transfer" {
     try std.testing.expect(pathExists(source));
 }
 
-test "coordinator publishes job state transitions and transfer progress" {
+test "coordinator publishes a job record with planned totals and final progress" {
     const allocator = std.testing.allocator;
     var temp_buffer: [256]u8 = undefined;
     const temp = try makeTempDir(&temp_buffer);
@@ -322,7 +242,8 @@ test "coordinator publishes job state transitions and transfer progress" {
     defer cleanup(destination_dir, true);
     try makeDirectory(destination_dir);
 
-    const contents = try allocator.alloc(u8, 16 * 1024 * 1024);
+    const size = 16 * 1024 * 1024;
+    const contents = try allocator.alloc(u8, size);
     defer allocator.free(contents);
     @memset(contents, 0x5a);
     try writeFile(source, contents);
@@ -335,54 +256,26 @@ test "coordinator publishes job state transitions and transfer progress" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
+    var window_view = support.View.init(window, &service);
     defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, source);
 
-    var saw_progress = false;
-    var saw_running_state = false;
-    var saw_terminal_state = false;
-    var job_id: ?io_service.JobId = null;
+    // The first record already knows the planned total, before any copying.
+    const first = try window_view.waitFor(support.AnyLiveJob{});
+    try std.testing.expectEqual(@as(u64, size), first.total_bytes);
+    try std.testing.expectEqual(@as(u64, 1), first.total_items);
+    try std.testing.expectEqualStrings("payload.bin", first.label());
+    try std.testing.expectEqual(io_service.JobKind.copy, first.kind);
+    try std.testing.expect(first.started_at_ms > 0);
 
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10)) {
-            _ = service.drainUpdateWake();
-            for (0..100) |_| {
-                const maybe_update = receive(window) catch {
-                    continue;
-                };
-                const update = maybe_update orelse break;
-
-                if (update.kind == .job_state or update.kind == .progress) {
-                    if (job_id) |expected|
-                        try std.testing.expectEqual(expected, update.job_id)
-                    else
-                        job_id = update.job_id;
-                }
-
-                if (update.kind == .progress) {
-                    try std.testing.expect(update.total_bytes > 0);
-                    if (update.completed_bytes > 0)
-                        saw_progress = true;
-                } else if (update.kind == .job_state) {
-                    const state: io_manager.JobState = @fromBackingInt(@intCast(update.state_code));
-                    if (state == .running)
-                        saw_running_state = true;
-                    if (state.isTerminal()) {
-                        try std.testing.expectEqual(io_manager.JobState.completed, state);
-                        saw_terminal_state = true;
-                    }
-                }
-            }
-        }
-        if (saw_terminal_state) break;
-    }
-
-    try std.testing.expect(job_id != null);
-    try std.testing.expect(saw_progress);
-    try std.testing.expect(saw_running_state);
-    try std.testing.expect(saw_terminal_state);
+    // Progress is coalesced; the terminal record carries the final values.
+    try window_view.waitState(first.id, .completed);
+    const final = window_view.find(first.id).?;
+    try std.testing.expectEqual(@as(u64, size), final.completed_bytes);
+    try std.testing.expectEqual(@as(u64, 1), final.completed_items);
+    try std.testing.expect(final.finished_at_ms >= final.started_at_ms);
 }
 
 test "coordinator copies a symlink without dereferencing its target" {
@@ -592,19 +485,15 @@ test "coordinator rejects an invalid transfer source" {
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
+    var window_view = support.View.init(window, &service);
     defer window.close();
     defer coordinator.deinit();
 
     try submitTransfer(allocator, window, .copy, destination_dir, missing_source);
 
-    try std.testing.expect(waitReadable(service.updateWakeFd(), 2000));
-    _ = service.drainUpdateWake();
-
-    const update = (try receive(window)).?;
-    try std.testing.expectEqual(io_service.UpdateKind.command_rejected, update.kind);
     try std.testing.expectEqual(
         @intFromEnum(io_coordinator.RejectionCode.invalid_source),
-        update.state_code,
+        try window_view.failedSubmit(),
     );
     try std.testing.expectEqual(@as(usize, 0), blk: {
         var count: usize = 0;
@@ -659,6 +548,7 @@ test "a hung worker does not stall the coordinator, other jobs or window calls" 
     try coordinator.init(allocator, &service);
 
     var window = try service.registerWindow();
+    var window_view = support.View.init(window, &service);
     defer window.close();
     defer coordinator.deinit();
     // Runs before coordinator.deinit joins the workers, even on failure.
@@ -677,22 +567,20 @@ test "a hung worker does not stall the coordinator, other jobs or window calls" 
     // the other operation worker while job 1 is still parked.
     try submitTransfer(allocator, window, .copy, other_dir, other_source);
     try waitForContents(other_destination, "copied while the other worker is parked");
-    try waitForJobState(window, &service, 2, .completed);
+    try window_view.waitState(2, .completed);
 
     // Window-side calls do not wait on the parked work.
     var second = try service.registerWindow();
     second.close();
-    _ = try receive(window);
+    try window_view.sync();
 
-    // Cancellation is applied while the unit is still parked. Control
-    // commands run in order, so the rejection of a cancel for an unknown job
-    // queued right behind it proves the real one was applied.
+    // Cancellation is applied while the unit is still parked: the record
+    // shows cancel_requested before the job can reach `cancelled`.
     try send(window, .{ .kind = .cancel_job, .job_id = 1 });
-    try send(window, .{ .kind = .cancel_job, .job_id = 999 });
-    try waitForRejection999(window, &service);
+    _ = try window_view.waitFor(support.CancelRequested{ .id = 1 });
     try std.testing.expect(gate.parked.load(.acquire));
 
     // The job reaches `cancelled` only once the parked unit has returned.
     gate.release();
-    try waitForJobState(window, &service, 1, .cancelled);
+    try window_view.waitState(1, .cancelled);
 }

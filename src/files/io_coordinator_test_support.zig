@@ -38,16 +38,6 @@ pub fn sendOwned(window: io_service.Handle, command: *io_service.Command) !void 
     return error.ServiceBusy;
 }
 
-pub fn receive(window: io_service.Handle) !?io_service.Update {
-    for (0..busy_retries) |_| {
-        return window.tryReceiveUpdate() catch {
-            // ServiceBusy is its only error.
-            std.Thread.yield() catch {};
-            continue;
-        };
-    }
-    return error.ServiceBusy;
-}
 
 pub fn waitReadable(fd: std.posix.fd_t, timeout_ms: i32) bool {
     var fds = [_]std.posix.pollfd{.{
@@ -246,42 +236,8 @@ pub fn sendDiscoveryCommand(
     };
 }
 
-pub fn waitForRejection(
-    service: *io_service.Service,
-    window: io_service.Handle,
-    job_id: io_service.JobId,
-) !io_service.Update {
-    for (0..500) |_| {
-        if (waitReadable(service.updateWakeFd(), 10))
-            _ = service.drainUpdateWake();
-        while (try receive(window)) |update| {
-            if (update.kind == .command_rejected and update.job_id == job_id)
-                return update;
-        }
-    }
-    return error.CommandRejectionTimedOut;
-}
 
-pub fn waitForJobState(window: io_service.Handle, service: *io_service.Service, job_id: u64, state: io_manager.JobState) !void {
-    for (0..1000) |_| {
-        if (waitReadable(service.updateWakeFd(), 10)) _ = service.drainUpdateWake();
-        while (try receive(window)) |update| {
-            if (update.kind == .job_state and update.job_id == job_id and
-                update.state_code == @intFromEnum(state)) return;
-        }
-    }
-    return error.Timeout;
-}
 
-pub fn waitForRejection999(window: io_service.Handle, service: *io_service.Service) !void {
-    for (0..1000) |_| {
-        if (waitReadable(service.updateWakeFd(), 10)) _ = service.drainUpdateWake();
-        while (try receive(window)) |update| {
-            if (update.kind == .command_rejected and update.job_id == 999) return;
-        }
-    }
-    return error.Timeout;
-}
 
 pub fn submitSources(
     allocator: std.mem.Allocator,
@@ -307,12 +263,122 @@ pub fn submitSources(
 }
 
 /// Waits for the next rejection routed to `window` and returns its code.
-pub fn waitForAnyRejection(window: io_service.Handle, service: *io_service.Service) !u8 {
-    for (0..1000) |_| {
-        if (waitReadable(service.updateWakeFd(), 10)) _ = service.drainUpdateWake();
-        while (try receive(window)) |update| {
-            if (update.kind == .command_rejected) return update.state_code;
+
+/// A window's accumulated view: the latest record of each job, as a window
+/// keeps it. Waits look at everything seen so far, not only the newest read,
+/// because records are state rather than events. One per window per test:
+/// window ids restart with every Service.
+pub const View = struct {
+    window: io_service.Handle,
+    service: *io_service.Service,
+    records: [256]io_service.JobRecord = undefined,
+    len: usize = 0,
+
+    pub fn init(window: io_service.Handle, service: *io_service.Service) View {
+        return .{ .window = window, .service = service };
+    }
+
+    fn apply(self: *View, record: io_service.JobRecord) void {
+        for (self.records[0..self.len]) |*existing| {
+            if (existing.id == record.id) {
+                if (record.revision >= existing.revision) existing.* = record;
+                return;
+            }
+        }
+        if (self.len < self.records.len) {
+            self.records[self.len] = record;
+            self.len += 1;
         }
     }
-    return error.Timeout;
-}
+
+    /// Reads everything changed since the last read, retrying ServiceBusy.
+    pub fn sync(self: *View) !void {
+        var out: [16]io_service.JobRecord = undefined;
+        var retries: usize = 0;
+        while (true) {
+            const result = self.window.fetchChanges(&out) catch |err| switch (err) {
+                error.ServiceBusy => {
+                    retries += 1;
+                    if (retries > busy_retries) return err;
+                    std.Thread.yield() catch {};
+                    continue;
+                },
+                else => return err,
+            };
+            if (result.resync) self.len = 0;
+            for (out[0..result.count]) |record| self.apply(record);
+            if (!result.more) return;
+        }
+    }
+
+    pub fn find(self: *const View, job_id: io_service.JobId) ?io_service.JobRecord {
+        for (self.records[0..self.len]) |record| {
+            if (record.id == job_id) return record;
+        }
+        return null;
+    }
+
+    /// Waits until some record satisfies `matcher.matches(record)`.
+    pub fn waitFor(self: *View, matcher: anytype) !io_service.JobRecord {
+        for (0..1000) |_| {
+            try self.sync();
+            for (self.records[0..self.len]) |record| {
+                if (matcher.matches(record)) return record;
+            }
+            if (waitReadable(self.service.updateWakeFd(), 10)) _ = self.service.drainUpdateWake();
+        }
+        return error.Timeout;
+    }
+
+    pub fn waitState(self: *View, job_id: io_service.JobId, state: io_service.JobState) !void {
+        _ = try self.waitFor(JobInState{ .id = job_id, .state = state });
+    }
+
+    /// Waits for this window's next failed submit and returns its rejection
+    /// code. Each failed submit is reported once.
+    pub fn failedSubmit(self: *View) !u8 {
+        const record = try self.waitFor(FailedSubmit{});
+        for (self.records[0..self.len], 0..) |r, i| {
+            if (r.id == record.id) {
+                self.records[i] = self.records[self.len - 1];
+                self.len -= 1;
+                break;
+            }
+        }
+        return record.error_code;
+    }
+};
+
+pub const JobInState = struct {
+    id: io_service.JobId,
+    state: io_service.JobState,
+    pub fn matches(self: JobInState, r: io_service.JobRecord) bool {
+        return r.id == self.id and r.state == self.state;
+    }
+};
+
+pub const FailedSubmit = struct {
+    pub fn matches(_: FailedSubmit, r: io_service.JobRecord) bool {
+        return r.state == .failed and r.error_code != 0;
+    }
+};
+
+pub const PendingConflict = struct {
+    id: ?io_service.JobId = null,
+    pub fn matches(self: PendingConflict, r: io_service.JobRecord) bool {
+        return r.pending_conflict != 0 and (self.id == null or r.id == self.id.?);
+    }
+};
+
+pub const CancelRequested = struct {
+    id: io_service.JobId,
+    pub fn matches(self: CancelRequested, r: io_service.JobRecord) bool {
+        return r.id == self.id and r.cancel_requested;
+    }
+};
+
+pub const AnyLiveJob = struct {
+    pub fn matches(_: AnyLiveJob, r: io_service.JobRecord) bool {
+        return !r.removed and r.state != .failed;
+    }
+};
