@@ -357,8 +357,13 @@ reserved reply slot (4 per window), dispatched to the discovery pool. The UI sho
 the result when the reply arrives. Until it arrives, the dialog shows its pending
 state and keeps accepting input. Delete, move to Trash and Empty Trash are **jobs**
 (kinds `delete`, `trash`, `empty_trash`), because they can be long and want
-progress and cancellation. Their child-process wait (`rm`, `gio`) runs on an
-operation worker.
+progress and cancellation. Their child-process wait (`rm`, `gio`) runs on a
+worker of the deletion pool (`io_deletion.zig`, two workers), not on the
+operation executor: a deletion is not a Manager job and has no tree to plan.
+The worker runs `rm` or `gio` over batches of 32 paths, so the job reports
+progress per batch, a cancel takes effect between batches, and a running child
+is terminated on cancel. The child is collected with `WNOHANG` polling, never a
+blocking wait.
 
 Rules for any worker task, whether prepare, metadata, publication or cleanup:
 
@@ -525,9 +530,9 @@ existing code (C4) is recorded, never a new violation.
 | U1 | `app_fileops.startManagerFileCopy`, `startManagerFileMove`, `startManagerDirectoryTransfer` | `lstat`, `readlink` per source, `stat` of the destination and of source parents | S3: App submits through `Handle`, prepare runs on a worker (S2) |
 | U2 | `App.executeTransfer` fallback to `JobRunner`; `app_listing` polling | JobRunner start and polling on the UI thread | S3 (needs phase 2) |
 | U3 | `app_io.stepOperations`, `stepDiscovery`, `processDetachedIoJobs` | Per-window Runtime: draining completions, reconciliation, dispatch on the UI thread | S3 |
-| U4 | `app_fileops.executeDeletion` → `ops.deleteItems`, `ops.trashItems`, `ops.emptyTrash` | Spawns `rm -r` / `gio trash` and **waits for it** | S3, as `delete`, `trash`, `empty_trash` jobs. No phase-2 dependency, so it can land first in S3 |
-| U5 | `app_fileops.deleteFromTrash` → `trash.deleteMany` → `ops.deleteRecursive` | Recursive delete | S3 (`delete` job) |
-| U6 | `app_fileops.executeDeletion` → `trash.sweepOrphans` | `opendir`, `readdir`, `unlink` over `Trash/info` | S3 (cleanup step of `empty_trash`) |
+| ~~U4~~ | `app_fileops.executeDeletion` → `ops.deleteItems`, `ops.trashItems`, `ops.emptyTrash`; `app_trash.trashDropped` → `ops.trashItems` | Spawns `rm -r` / `gio trash` and **waits for it** | **Removed in S3a**: `delete`, `trash` and `empty_trash` jobs (`io_deletion.zig`, `io_coordinator_deletions.zig`) |
+| ~~U5~~ | `app_fileops.deleteFromTrash` → `trash.deleteMany` → `ops.deleteRecursive` | Recursive delete | **Removed in S3a**: a `delete` job (request kind `delete_from_trash`) |
+| ~~U6~~ | `app_fileops.executeDeletion` → `trash.sweepOrphans` | `opendir`, `readdir`, `unlink` over `Trash/info` | **Removed in S3a**: the last step of the `empty_trash` job |
 | U7 | `app_trash.restoreSelected`/`restoreAll` → `trash.restoreMany` | `lstat`, `rename`, `rmdir`, metadata rewrite | S3 (request) |
 | U8 | `app_dialogs`: `ops.createFolder`, `ops.createFile`, `ops.renameItem`, `ops.generateUniqueName` | `mkdir`, `open`, `renameat2`, `lstat` loop | S3 (requests) |
 | U9 | `app_dialogs` → `properties.State.init`; `app_pointer` → `properties.togglePathPermission` | `open(O_PATH)`, `statx`; `chmod` | S3 (requests) |

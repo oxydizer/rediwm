@@ -12,6 +12,7 @@ const io_discovery_mod = @import("io_discovery.zig");
 const io_discovery_executor_mod = @import("io_discovery_executor.zig");
 const io_operation_executor_mod = @import("io_operation_executor.zig");
 const io_runtime_mod = @import("io_runtime.zig");
+const app_service = @import("app_service.zig");
 const io_resource_ledger_mod = @import("io_resource_ledger.zig");
 const clipboard_mod = @import("clipboard.zig");
 const history_mod = @import("history.zig");
@@ -153,6 +154,8 @@ pub const App = struct {
     theme_cfg: theme.Config,
     worker: *worker_mod.Worker,
     io_runtime: ?*io_runtime_mod.Runtime = null,
+    /// This window's link to the process-wide I/O service (`app_service.zig`).
+    service: app_service.Link = .{},
     io_manager: ?*io_manager_mod.Manager = null,
     discovery_executor: ?*io_discovery_executor_mod.Executor = null,
     operation_executor: ?*io_operation_executor_mod.Runtime = null,
@@ -498,6 +501,7 @@ pub const App = struct {
         self.archive_exports.deinit(self.allocator);
         if (self.archive_drag_export) |*drag_export| drag_export.deinit();
         self.discovery_jobs.deinit(self.allocator);
+        self.service.deinit();
         self.detached_io_jobs.deinit(self.allocator);
         self.torrents.deinit();
         if (self.new_window) |path| self.allocator.free(path);
@@ -785,6 +789,12 @@ pub const App = struct {
     pub const executePasteExternal = app_fileops.executePasteExternal;
     pub const deleteAction = app_fileops.deleteAction;
     pub const executeDeletion = app_fileops.executeDeletion;
+
+    // app_service.zig
+    pub const submitDeletion = app_service.submitDeletion;
+    pub const serviceUpdated = app_service.serviceUpdated;
+    pub const stepService = app_service.stepService;
+    pub const serviceTimeout = app_service.serviceTimeout;
     pub const deleteFromTrash = app_fileops.deleteFromTrash;
 
     // app_io.zig

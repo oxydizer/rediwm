@@ -105,8 +105,6 @@ pub fn takeTrashDrop(self: *App) bool {
 /// Moves what was dropped on the Trash row to the Trash. What is in the
 /// Trash already stays where it is.
 pub fn trashDropped(self: *App, paths: []const []const u8) void {
-    const io_guard_1 = io_thread_guard.exempt(.u4_delete_trash_spawn);
-    defer io_guard_1.end();
     var kept: std.ArrayList([]const u8) = .empty;
     defer kept.deinit(self.allocator);
     for (paths) |path| {
@@ -117,13 +115,7 @@ pub fn trashDropped(self: *App, paths: []const []const u8) void {
         };
     }
     if (kept.items.len == 0) return;
-    ops.trashItems(self.io, kept.items) catch |err| {
-        self.setStatusNotice(if (err == error.GioNotAvailable) tr("Trash unavailable (gio not installed)") else tr("Could not move all items to Trash"), true);
-        self.refresh();
-        return;
-    };
-    self.setStatusNotice(tr("Items moved to Trash"), false);
-    self.refresh();
+    self.submitDeletion(.trash, kept.items, null);
 }
 
 fn restore(self: *App, names: []const []const u8) void {

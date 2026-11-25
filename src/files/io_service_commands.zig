@@ -47,6 +47,33 @@ pub const TransferRequest = struct {
     }
 };
 
+/// What a deletion job does (threading §8: delete, trash and empty_trash
+/// are jobs, since they can be long and want progress and cancellation).
+pub const DeletionKind = enum {
+    /// `rm -r` on each path.
+    delete,
+    /// `gio trash` on each path.
+    trash,
+    /// `gio trash --empty`, then the orphaned metadata under `trash_dir`.
+    empty_trash,
+    /// Top-level entries of the Trash view, with their metadata.
+    delete_from_trash,
+};
+
+pub const DeletionRequest = struct {
+    kind: DeletionKind,
+    paths: [][]u8,
+    /// The Trash `files/` directory, for `empty_trash` and
+    /// `delete_from_trash`; null otherwise.
+    trash_dir: ?[]u8 = null,
+
+    fn deinit(self: *DeletionRequest, allocator: std.mem.Allocator) void {
+        for (self.paths) |path| allocator.free(path);
+        allocator.free(self.paths);
+        if (self.trash_dir) |dir| allocator.free(dir);
+    }
+};
+
 pub const DiscoveryRequest = struct {
     root_entry_id: u64,
     root_path: ?[]u8 = null,
@@ -84,6 +111,7 @@ pub const OwnedPayload = struct {
     allocator: std.mem.Allocator,
     data: union(enum) {
         transfer: TransferRequest,
+        deletion: DeletionRequest,
         discovery: DiscoveryRequest,
         conflict_resolution: ConflictResolutionRequest,
     },
@@ -119,6 +147,36 @@ pub const OwnedPayload = struct {
                 .destination_path = destination,
                 .sources = sources,
             } },
+        };
+        return payload;
+    }
+
+    pub fn createDeletion(
+        allocator: std.mem.Allocator,
+        kind: DeletionKind,
+        paths: []const []const u8,
+        trash_dir: ?[]const u8,
+    ) !*OwnedPayload {
+        const payload = try allocator.create(OwnedPayload);
+        errdefer allocator.destroy(payload);
+
+        const owned_dir = if (trash_dir) |dir| try allocator.dupe(u8, dir) else null;
+        errdefer if (owned_dir) |dir| allocator.free(dir);
+
+        const owned = try allocator.alloc([]u8, paths.len);
+        var initialized: usize = 0;
+        errdefer {
+            for (owned[0..initialized]) |path| allocator.free(path);
+            allocator.free(owned);
+        }
+        for (paths, 0..) |path, index| {
+            owned[index] = try allocator.dupe(u8, path);
+            initialized += 1;
+        }
+
+        payload.* = .{
+            .allocator = allocator,
+            .data = .{ .deletion = .{ .kind = kind, .paths = owned, .trash_dir = owned_dir } },
         };
         return payload;
     }
@@ -180,6 +238,7 @@ pub const OwnedPayload = struct {
         const allocator = self.allocator;
         switch (self.data) {
             .transfer => |*request| request.deinit(allocator),
+            .deletion => |*request| request.deinit(allocator),
             .discovery => |*request| request.deinit(allocator),
             .conflict_resolution => |*request| request.deinit(allocator),
         }

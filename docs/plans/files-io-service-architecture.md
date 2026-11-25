@@ -347,6 +347,12 @@ or worker resource; and the coordinator exemption table is empty.
 * S3a. Delete, move to Trash, Empty Trash and Trash deletion as service jobs, and
   metadata and small mutations as requests (U4 to U12). No phase-2 dependency, so
   this can land first.
+  *Jobs done:* deletion jobs are service jobs without a Manager job. Their ids
+  are a range of their own (`1 << 62` up), their records are kept by the
+  coordinator (`io_coordinator_deletions.zig`) and they retire as soon as they
+  end. The window sends the submit through its outbox and learns the end from
+  its outcome slot (`app_service.zig`); the main loop polls the service's update
+  wake for every window. U4 to U6 are removed. Requests (U7 to U12) are next.
 * S3b. Prerequisite: the Coordinator accepts mixed file and directory selections
   (today it rejects them with `MixedTransferSourceKinds`), so JobRunner's fallback
   can go. This is roadmap phase 2. Then the App submits transfers through its
