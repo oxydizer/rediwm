@@ -496,6 +496,7 @@ pub fn confirmDialog(self: *App) void {
         .conflict => {
             self.resolveConflictDialog(.skip);
         },
+        .quit_jobs => @import("app_quit.zig").choose(self, .keep),
     }
 }
 
@@ -522,6 +523,11 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
     }
     if (dlg.kind == .trash_confirm) {
         self.deleteAction(self.dialog.?.deletion.key(sym));
+        return;
+    }
+    if (dlg.kind == .quit_jobs) {
+        if (sym == c.XKB_KEY_Escape) @import("app_quit.zig").choose(self, .cancel);
+        if (sym == c.XKB_KEY_Return or sym == c.XKB_KEY_KP_Enter) @import("app_quit.zig").choose(self, .keep);
         return;
     }
     if (dlg.kind == .conflict) {

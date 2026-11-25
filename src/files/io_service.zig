@@ -522,6 +522,15 @@ pub const Service = struct {
         return self.closed_windows.pop();
     }
 
+    /// Lock-free: how many windows are registered and not closing.
+    pub fn openWindowCount(self: *const Service) usize {
+        var count: usize = 0;
+        for (&self.windows) |*slot| {
+            if (slotState(slot.word.load(.acquire)) == .active) count += 1;
+        }
+        return count;
+    }
+
     /// Lock-free: whether any window is registered and not closing.
     pub fn anyWindowOpen(self: *const Service) bool {
         for (&self.windows) |*slot| {

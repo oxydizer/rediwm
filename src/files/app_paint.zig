@@ -667,6 +667,12 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
         drawEllipsis(cr, tr("Closing ends this shell and its running jobs."), dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
         self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("Close"), true, 1);
         self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true, 2);
+    } else if (dlg.kind == .quit_jobs) {
+        drawEllipsis(cr, @import("app_quit.zig").message(self, &buf), dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
+        const button_w = (dw - 48) / 3;
+        self.renderButton(cr, dx + 16, dy + 84, button_w, 28, tr("Keep running"), true, 1);
+        self.renderButton(cr, dx + 24 + button_w, dy + 84, button_w, 28, tr("Stop them"), true, 2);
+        self.renderButton(cr, dx + 32 + 2 * button_w, dy + 84, button_w, 28, tr("Cancel"), true, 3);
     } else if (dlg.kind == .conflict) {
         const conflict_str = dlg.conflict_name orelse "";
         const conflict_msg = i18n.fmt(&buf, tr("File '{value}' already exists in destination."), .{ .value = conflict_str }) catch tr("Conflict");

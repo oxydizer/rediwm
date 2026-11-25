@@ -261,6 +261,8 @@ pub const DialogKind = enum {
     torrent_source,
     torrent_destination,
     terminal_close,
+    /// Closing the last window while service jobs run (`app_quit.zig`).
+    quit_jobs,
     new_folder,
     new_file,
     new_branch,

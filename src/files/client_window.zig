@@ -193,7 +193,7 @@ pub fn xdgToplevelEvent(_: *xdg.Toplevel, event: xdg.Toplevel.Event, self: *Clie
             self.app.invalidate();
         },
         .close => {
-            self.app.terminalRequestClose();
+            self.app.requestClose();
         },
         .configure_bounds, .wm_capabilities => {},
     }

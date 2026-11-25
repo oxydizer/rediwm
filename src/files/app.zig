@@ -157,6 +157,9 @@ pub const App = struct {
     io_runtime: ?*io_runtime_mod.Runtime = null,
     /// This window's link to the process-wide I/O service (`app_service.zig`).
     service: app_service.Link = .{},
+    /// The user chose what happens to running jobs when this, the last
+    /// window, closes (`app_quit.zig`).
+    quit_confirmed: bool = false,
     io_manager: ?*io_manager_mod.Manager = null,
     discovery_executor: ?*io_discovery_executor_mod.Executor = null,
     operation_executor: ?*io_operation_executor_mod.Runtime = null,
@@ -796,6 +799,7 @@ pub const App = struct {
 
     // app_service.zig
     pub const submitDeletion = app_service.submitDeletion;
+    pub const requestClose = @import("app_quit.zig").requestClose;
     pub const submitTransfer = @import("app_transfers.zig").submitTransfer;
     pub const openServiceConflictDialog = app_dialogs.openServiceConflictDialog;
     pub const serviceUpdated = app_service.serviceUpdated;

@@ -253,3 +253,31 @@ test "copying a folder again into the same place asks, and Merge finishes it" {
     }
     try s.until(idle);
 }
+
+test "closing the last window while a job runs asks, and Cancel keeps it open" {
+    var s: ServiceApp = .{};
+    try s.start();
+    defer s.stop();
+    s.app.service.jobs.apply(.{ .id = 3, .kind = .copy, .state = .running, .started_at_ms = 1 });
+
+    s.app.requestClose();
+    try std.testing.expectEqual(app_mod.DialogKind.quit_jobs, s.app.dialog.?.kind);
+    try std.testing.expect(!s.app.closed);
+    @import("app_quit.zig").choose(&s.app, .cancel);
+    try std.testing.expect(s.app.dialog == null and !s.app.closed);
+
+    s.app.requestClose();
+    @import("app_quit.zig").choose(&s.app, .keep);
+    try std.testing.expect(s.app.closed);
+}
+
+test "a window that is not the last closes without asking" {
+    var s: ServiceApp = .{};
+    try s.start();
+    defer s.stop();
+    var other = try s.service.registerWindow();
+    defer other.close();
+    s.app.service.jobs.apply(.{ .id = 3, .kind = .copy, .state = .running, .started_at_ms = 1 });
+    s.app.requestClose();
+    try std.testing.expect(s.app.dialog == null and s.app.closed);
+}
