@@ -16,6 +16,32 @@ pub const control_capacity_per_window = 2;
 pub const aggregate_command_capacity = 64;
 pub const update_capacity_per_window = 32;
 
+// Job-table capacities for stage S1 (docs/plans/files-io-threading-and-ownership.md
+// §6). Starting values; roadmap phase 7 calibrates them.
+
+/// Jobs from admission until retirement. Never occupied by a consumer.
+pub const max_live_jobs = 64;
+/// Final records of a window's own jobs, reserved at submit.
+pub const outcome_slots_per_window = 16;
+/// Final records of retired jobs for every other window.
+pub const tombstone_capacity = 64;
+/// Replies to metadata and small-mutation requests, reserved at admission.
+pub const reply_slots_per_window = 4;
+/// Borrows a window may hold on resources it does not own.
+pub const max_borrows_per_window = 4;
+/// Window-local queue for commands refused with ServiceBusy.
+pub const outbox_capacity = 4;
+
+comptime {
+    // A queued submit must always find a live slot to reserve.
+    std.debug.assert(max_live_jobs >= aggregate_command_capacity);
+}
+
+/// Debug aid: set while this thread holds a Service mutex. Relocking a
+/// default mutex from its holder deadlocks with `lock` and fails forever with
+/// `trylock`; this turns either into an immediate panic.
+threadlocal var holding_service_mutex: bool = false;
+
 pub const CommandKind = enum {
     submit_job,
     start_discovery,
@@ -338,7 +364,15 @@ pub const Service = struct {
     /// Initialize in place: an initialized pthread mutex must not be copied.
     pub fn init(self: *Service) !void {
         self.* = .{};
-        if (c.pthread_mutex_init(&self.mutex, null) != 0)
+        // Safety-checked builds use an error-checking mutex, so an unlock by
+        // a thread that does not hold it is reported instead of undefined.
+        var attr: c.pthread_mutexattr_t = undefined;
+        if (c.pthread_mutexattr_init(&attr) != 0) return error.MutexInitFailed;
+        defer std.debug.assert(c.pthread_mutexattr_destroy(&attr) == 0);
+        if (std.debug.runtime_safety and
+            c.pthread_mutexattr_settype(&attr, c.PTHREAD_MUTEX_ERRORCHECK) != 0)
+            return error.MutexInitFailed;
+        if (c.pthread_mutex_init(&self.mutex, &attr) != 0)
             return error.MutexInitFailed;
         errdefer std.debug.assert(c.pthread_mutex_destroy(&self.mutex) == 0);
 
@@ -593,16 +627,34 @@ pub const Service = struct {
         return null;
     }
 
+    /// Blocking acquisition: the coordinator, and the process owner after
+    /// the UI is gone. Never on the UI thread (threading §3).
     fn lock(self: *Service) void {
-        _ = c.pthread_mutex_lock(&self.mutex);
+        assertNotHolding();
+        const rc = c.pthread_mutex_lock(&self.mutex);
+        if (rc != 0) std.debug.panic("Files service mutex lock failed: {d}", .{rc});
+        holding_service_mutex = true;
     }
 
+    /// Fail-fast acquisition for UI-side calls.
     fn tryLock(self: *Service) bool {
-        return c.pthread_mutex_trylock(&self.mutex) == 0;
+        assertNotHolding();
+        const rc = c.pthread_mutex_trylock(&self.mutex);
+        if (rc == c.EBUSY) return false;
+        if (rc != 0) std.debug.panic("Files service mutex trylock failed: {d}", .{rc});
+        holding_service_mutex = true;
+        return true;
     }
 
     fn unlock(self: *Service) void {
-        _ = c.pthread_mutex_unlock(&self.mutex);
+        holding_service_mutex = false;
+        const rc = c.pthread_mutex_unlock(&self.mutex);
+        if (rc != 0) std.debug.panic("Files service mutex unlock failed: {d}", .{rc});
+    }
+
+    fn assertNotHolding() void {
+        if (std.debug.runtime_safety and holding_service_mutex)
+            std.debug.panic("Files service mutex relocked by its holder", .{});
     }
 
     fn signalWake(fd: std.posix.fd_t) void {
