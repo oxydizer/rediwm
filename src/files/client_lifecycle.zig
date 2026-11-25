@@ -70,6 +70,7 @@ pub fn create(
     };
     self.ime = .{ .app = &self.app };
     self.app.service.handle = io_handle;
+    self.app.requestPinKinds();
     if (launch.chooser) |options| try self.app.configureChooser(options);
     if (launch.selected_file) |path| self.app.selectOnLoad(path);
     self.app.startDevices();

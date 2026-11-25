@@ -352,7 +352,15 @@ or worker resource; and the coordinator exemption table is empty.
   coordinator (`io_coordinator_deletions.zig`) and they retire as soon as they
   end. The window sends the submit through its outbox and learns the end from
   its outcome slot (`app_service.zig`); the main loop polls the service's update
-  wake for every window. U4 to U6 are removed. Requests (U7 to U12) are next.
+  wake for every window. U4 to U6 are removed.
+  *Requests done:* a `request` command carries an owned request
+  (`io_requests.zig`); admission reserves one of the window's four reply slots,
+  the coordinator hands it to a service task, and the reply lands in the slot.
+  The window keeps a pending entry per tag (`app_requests.zig`) and finishes
+  the action when the reply arrives, so dialogs, places, pins, the chooser,
+  drops and the terminal never stat or resolve a user path themselves. U7 and
+  U9 to U12 are removed; U8 keeps only the conflict rename, which goes with
+  the Transfers UI in S3b.
 * S3b. Prerequisite: the Coordinator accepts mixed file and directory selections
   (today it rejects them with `MixedTransferSourceKinds`), so JobRunner's fallback
   can go. This is roadmap phase 2. Then the App submits transfers through its

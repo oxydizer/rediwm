@@ -10,6 +10,8 @@ const header = @import("header.zig");
 const shell_ui = @import("ui").cairo;
 const ui_button = @import("ui").widgets.button;
 const ui_theme = @import("ui").theme;
+const app_requests = @import("app_requests.zig");
+const io_requests = @import("io_requests.zig");
 const chooser_mod = @import("chooser.zig");
 const Focus = @import("app_model.zig").Focus;
 const setSource = @import("app_draw.zig").setSource;
@@ -203,17 +205,30 @@ pub fn acceptChooser(self: *App) void {
     self.invalidate();
 }
 
+/// Checks the choice on the I/O service; `finishChooser` acts on the
+/// verdict. What needs no filesystem (names, the selection) is checked here.
 pub fn collectChooser(self: *App) !void {
-    const io_guard_0 = io_thread_guard.exempt(.u10_chooser);
-    defer io_guard_0.end();
-    io_thread_guard.blocking("chooser path checks");
     const opts = self.chooser orelse return;
-    for (self.chooser_paths.items) |path| self.allocator.free(path);
-    self.chooser_paths.clearRetainingCapacity();
+    if (app_requests.waiting(self, .chooser)) return;
+    for (opts.files) |name| if (!chooser_mod.validName(name)) return error.InvalidName;
+    var check: io_requests.ChooserCheck = .{
+        .mode = switch (opts.mode) {
+            .open => .open,
+            .save => .save,
+            .folder => .folder,
+        },
+        .parent = self.history.current,
+        .overwrite_confirmed = self.overwrite_pending,
+        .files = opts.files,
+    };
+    var named: ?[]u8 = null;
+    errdefer if (named) |path| self.allocator.free(path);
+    var selected: std.ArrayList([]const u8) = .empty;
+    defer selected.deinit(self.allocator);
     if (opts.mode == .save or (opts.mode == .open and !opts.multiple and self.filename.text.items.len > 0)) {
         const name = self.filename.text.items;
         if (!chooser_mod.validName(name)) return error.InvalidName;
-        const path = if (self.isRecent()) selected: {
+        named = if (self.isRecent()) selected: {
             // Recent spans directories, so the filename alone is not a path.
             for (self.items.items) |item| {
                 if (item.selected and std.mem.eql(u8, item.name, name))
@@ -221,72 +236,43 @@ pub fn collectChooser(self: *App) !void {
             }
             return error.NoSelection;
         } else try std.fs.path.join(self.allocator, &.{ self.history.current, name });
-        defer self.allocator.free(path);
-        const zpath = try self.allocator.dupeSentinel(u8, path, 0);
-        defer self.allocator.free(zpath);
-        var stat: c.struct_stat = undefined;
-        const exists = c.stat(zpath, &stat) == 0;
-        if (exists and stat.st_mode & c.S_IFMT == c.S_IFDIR) {
-            self.navigate(path);
-            return;
-        }
-        if (opts.mode == .open and (!exists or c.access(zpath, c.R_OK) != 0)) return error.Inaccessible;
-        if (opts.mode == .save) {
-            const parent = try self.allocator.dupeSentinel(u8, self.history.current, 0);
-            defer self.allocator.free(parent);
-            if (c.access(parent, c.W_OK | c.X_OK) != 0) return error.Inaccessible;
-        }
-        // lstat also detects a dangling symlink, which saving would replace.
-        if (opts.mode == .save and c.lstat(zpath, &stat) == 0 and !self.overwrite_pending) {
-            self.overwrite_pending = true;
-            return;
-        }
-        try self.chooser_paths.append(self.allocator, try self.allocator.dupe(u8, path));
+        check.named = named;
     } else {
         for (self.items.items) |item| {
             if (!item.selected or item.is_broken or item.is_dir != (opts.mode == .folder)) continue;
-            const zpath = try self.allocator.dupeSentinel(u8, item.path, 0);
-            defer self.allocator.free(zpath);
-            var stat: c.struct_stat = undefined;
-            if (c.stat(zpath, &stat) != 0 or c.access(zpath, c.R_OK) != 0 or (stat.st_mode & c.S_IFMT == c.S_IFDIR) != (opts.mode == .folder)) return error.Inaccessible;
-            const path = try self.allocator.dupe(u8, item.path);
-            errdefer self.allocator.free(path);
-            try self.chooser_paths.append(self.allocator, path);
+            try selected.append(self.allocator, item.path);
             if (!opts.multiple) break;
         }
-        if (opts.mode == .folder and self.chooser_paths.items.len == 0 and !self.loading and self.error_message == null) {
-            try self.chooser_paths.append(self.allocator, try self.allocator.dupe(u8, self.history.current));
-        }
+        check.selected = selected.items;
+        if (opts.mode == .folder and !self.loading and self.error_message == null) check.fallback = self.history.current;
     }
-    if (self.chooser_paths.items.len == 0) return error.NoSelection;
-    if (opts.files.len > 0) {
-        const folder = self.chooser_paths.items[0];
-        defer self.allocator.free(folder);
-        self.chooser_paths.clearRetainingCapacity();
-        for (opts.files) |name| {
-            if (!chooser_mod.validName(name)) return error.InvalidName;
-            var index: usize = 0;
-            while (true) : (index += 1) {
-                if (index > 10000) return error.TooManyFiles;
-                const path = if (index == 0) try std.fs.path.join(self.allocator, &.{ folder, name }) else try std.fmt.allocPrint(self.allocator, "{s}/{s}.{d}", .{ folder, name, index });
-                const zpath = try self.allocator.dupeSentinel(u8, path, 0);
-                defer self.allocator.free(zpath);
-                var stat: c.struct_stat = undefined;
-                var exists = c.lstat(zpath, &stat) == 0;
-                for (self.chooser_paths.items) |chosen| if (std.mem.eql(u8, chosen, path)) {
-                    exists = true;
-                };
-                if (exists) {
+    if (!app_requests.send(self, .{ .chooser = check }, .{ .chooser = .{ .named = named } })) return error.Unavailable;
+    named = null;
+}
+
+/// The service checked the choice (`collectChooser`).
+pub fn finishChooser(self: *App, named: ?[]const u8, result: *io_requests.ChooserResult) void {
+    switch (result.verdict) {
+        .navigate => if (named) |path| self.navigate(path),
+        .confirm_overwrite => self.overwrite_pending = true,
+        .inaccessible, .no_selection => self.setStatusNotice(tr("Choose an accessible file or folder and a valid filename."), true),
+        .accept => {
+            for (self.chooser_paths.items) |path| self.allocator.free(path);
+            self.chooser_paths.clearRetainingCapacity();
+            for (result.paths) |path| {
+                self.chooser_paths.append(self.allocator, path) catch {
                     self.allocator.free(path);
                     continue;
-                }
-                try self.chooser_paths.append(self.allocator, path);
-                break;
+                };
             }
-        }
+            // The paths now belong to the chooser.
+            self.allocator.free(result.paths);
+            result.paths = &.{};
+            self.chooser_done = true;
+            self.chooser_accepted = true;
+        },
     }
-    self.chooser_done = true;
-    self.chooser_accepted = true;
+    self.invalidate();
 }
 
 pub fn renderChooser(self: *App, cr: *c.cairo_t) void {

@@ -104,7 +104,7 @@ test "only the holder disposes a window-owned resource, and closing a window dis
     var other = try service.registerWindow();
     defer other.close();
 
-    var context: io_service_tasks.Context = .{ .allocator = allocator };
+    var context: io_service_tasks.Context = .{ .allocator = allocator, .io = std.testing.io };
     var coordinator: Coordinator = .{
         .allocator = allocator,
         .service = &service,

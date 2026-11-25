@@ -133,6 +133,7 @@ pub const Coordinator = struct {
 
         self.task_context = .{
             .allocator = allocator,
+            .io = io,
             .on_discard_delete = discardDeleteResult,
             .owner = self,
         };
@@ -307,6 +308,7 @@ pub const Coordinator = struct {
         var routed = routed_value;
         defer routed.command.deinitPayload();
         if (routed.command.kind == .submit_job) return self.handleSubmit(&routed);
+        if (routed.command.kind == .request) return self.handleRequest(&routed);
         // There is no reply channel: a command that cannot apply changes
         // nothing; the job table shows what did happen (threading §5).
         self.applyCommand(routed) catch |err| {
@@ -366,6 +368,16 @@ pub const Coordinator = struct {
         self.submitTask(.{ .prepare_transfer = .{ .job_id = job_id, .payload = payload } });
     }
 
+    /// Moves a request to a service task. A request that cannot run gives
+    /// back its reply slot, so the window is never left one short.
+    fn handleRequest(self: *Coordinator, routed: *io_service.RoutedCommand) void {
+        const payload = routed.command.payload orelse
+            return self.service.cancelReplyReservation(routed.window_id);
+        if (payload.data != .request) return self.service.cancelReplyReservation(routed.window_id);
+        routed.command.payload = null;
+        self.submitTask(.{ .request = .{ .window_id = routed.window_id, .tag = routed.command.submit_tag, .payload = payload } });
+    }
+
     /// A submit that failed before any Manager job existed.
     pub fn failSubmit(self: *Coordinator, record: *io_service.JobRecord, err: anyerror) void {
         record.id = self.next_failed_submit_id;
@@ -408,6 +420,10 @@ pub const Coordinator = struct {
                     self.allocator.free(delete.path);
                     self.finishCleanup(delete.handle);
                 },
+                .request => |request| {
+                    request.payload.deinit();
+                    self.service.cancelReplyReservation(request.window_id);
+                },
             }
         };
     }
@@ -426,6 +442,10 @@ pub const Coordinator = struct {
                     );
                     self.finishCleanup(deleted.handle);
                 },
+                .replied => |replied| if (replied.reply) |reply|
+                    self.service.deliverReply(replied.window_id, reply)
+                else
+                    self.service.cancelReplyReservation(replied.window_id),
             }
         }
         while (self.task_backlog.items.len > 0) {
@@ -466,6 +486,7 @@ pub const Coordinator = struct {
                 self.allocator.free(delete.path);
                 self.finishCleanup(delete.handle);
             },
+            .request => |request| request.payload.deinit(),
         };
         self.task_backlog.clearRetainingCapacity();
     }
@@ -487,6 +508,7 @@ pub const Coordinator = struct {
                 }
             } else try self.runtime.cancelJob(command.job_id),
             .submit_job => unreachable, // handleSubmit
+            .request => unreachable, // handleRequest
             .start_discovery => try self.startDiscovery(command.job_id, command.payload),
             .prioritize_discovery => try self.prioritizeDiscovery(command.job_id, command.payload),
             .resolve_conflict => try self.resolveConflict(

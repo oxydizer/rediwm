@@ -353,7 +353,9 @@ Closing a directory or `O_PATH` descriptor is bounded and may stay inline. Today
 permission toggles, unique-name generation, chooser path checks, pin kind checks,
 terminal and drop path canonicalisation, and Trash restore are not jobs. They go
 through the service as **requests**: an owned payload in, a reply in the window's
-reserved reply slot (4 per window), dispatched to the discovery pool. The UI shows
+reserved reply slot (4 per window), dispatched to the service task pool
+(`io_service_tasks`, kind `request`; `io_requests.zig` holds the request and
+reply types). The UI shows
 the result when the reply arrives. Until it arrives, the dialog shows its pending
 state and keeps accepting input. Delete, move to Trash and Empty Trash are **jobs**
 (kinds `delete`, `trash`, `empty_trash`), because they can be long and want
@@ -533,12 +535,12 @@ existing code (C4) is recorded, never a new violation.
 | ~~U4~~ | `app_fileops.executeDeletion` → `ops.deleteItems`, `ops.trashItems`, `ops.emptyTrash`; `app_trash.trashDropped` → `ops.trashItems` | Spawns `rm -r` / `gio trash` and **waits for it** | **Removed in S3a**: `delete`, `trash` and `empty_trash` jobs (`io_deletion.zig`, `io_coordinator_deletions.zig`) |
 | ~~U5~~ | `app_fileops.deleteFromTrash` → `trash.deleteMany` → `ops.deleteRecursive` | Recursive delete | **Removed in S3a**: a `delete` job (request kind `delete_from_trash`) |
 | ~~U6~~ | `app_fileops.executeDeletion` → `trash.sweepOrphans` | `opendir`, `readdir`, `unlink` over `Trash/info` | **Removed in S3a**: the last step of the `empty_trash` job |
-| U7 | `app_trash.restoreSelected`/`restoreAll` → `trash.restoreMany` | `lstat`, `rename`, `rmdir`, metadata rewrite | S3 (request) |
-| U8 | `app_dialogs`: `ops.createFolder`, `ops.createFile`, `ops.renameItem`, `ops.generateUniqueName` | `mkdir`, `open`, `renameat2`, `lstat` loop | S3 (requests) |
-| U9 | `app_dialogs` → `properties.State.init`; `app_pointer` → `properties.togglePathPermission` | `open(O_PATH)`, `statx`; `chmod` | S3 (requests) |
-| U10 | `app_chooser.collectChooser` | `stat`, `lstat`, `access` on confirm | S3 (request) |
-| U11 | `app_places` → `createDirPath`, `pins.kindOf` | `mkdir -p`, `stat` | S3 (requests) |
-| U12 | `app_terminal` (`realpath`, `stat`); `client_dnd.canonicalPath` (`realpath`) | Path resolution on user paths | S3 (requests) |
+| ~~U7~~ | `app_trash.restoreSelected`/`restoreAll` → `trash.restoreMany` (and `trash.listEntries` for Restore All) | `lstat`, `rename`, `rmdir`, metadata rewrite | **Removed in S3a**: `restore` request |
+| U8 | `app_dialogs`: `ops.createFolder`, `ops.createFile`, `ops.renameItem`; `resolveManagerConflict` → `ops.generateUniqueName` | `mkdir`, `open`, `renameat2`, `lstat` loop | **S3a removed** new folder, new file and rename (`create_folder`, `create_file`, `rename` requests). The conflict rename stays until S3b, which moves conflicts off the window's Runtime |
+| ~~U9~~ | `app_dialogs` → `properties.State.init`; `app_pointer` → `properties.togglePathPermission` | `open(O_PATH)`, `statx`; `chmod` | **Removed in S3a**: `properties` and `toggle_permission` requests |
+| ~~U10~~ | `app_chooser.collectChooser` | `stat`, `lstat`, `access` on confirm | **Removed in S3a**: the `chooser` request, including the free-name loop for multi-file saves |
+| ~~U11~~ | `app_places` → `createDirPath`, `pins.kindOf` | `mkdir -p`, `stat` | **Removed in S3a**: `make_directory` and `path_kinds` requests. The pins file loads without looking at targets; kinds arrive afterwards |
+| ~~U12~~ | `app_terminal` (`realpath`, `stat`); `client_dnd.canonicalPath` (`realpath`) | Path resolution on user paths | **Removed in S3a**: the `canonical` request, one batch per drop |
 | U13 | `app_io.openArchivePublicationCursor`, `stepArchivePublications` (`Cursor.open`, `nextBatch`) | `openat`, `getdents` on staging | S4 (publication cursor becomes service-owned) |
 | U14 | `app_io` → `executor.discardArchiveStaging` | `deleteRecursive` of staging | S4 |
 | U15 | `clipboard.StagingLease.deinit` (clipboard replace, `App.deinit`, extraction cleanup, `client_clipboard`) | `deleteRecursive` of a transferred-out staging lease | S4: disposal handed to an operation worker |

@@ -13,6 +13,7 @@ const io_discovery_executor_mod = @import("io_discovery_executor.zig");
 const io_operation_executor_mod = @import("io_operation_executor.zig");
 const io_runtime_mod = @import("io_runtime.zig");
 const app_service = @import("app_service.zig");
+const app_requests = @import("app_requests.zig");
 const io_resource_ledger_mod = @import("io_resource_ledger.zig");
 const clipboard_mod = @import("clipboard.zig");
 const history_mod = @import("history.zig");
@@ -474,7 +475,7 @@ pub const App = struct {
             self.sort_mode = @fromBackingInt(@intCast(prefs.sort));
         }
         self.pins_path = pins_mod.statePath(allocator, environ) catch null;
-        if (self.pins_path) |path| self.pins = pins_mod.List.load(allocator, io, path);
+        if (self.pins_path) |path| self.pins = pins_mod.List.loadPaths(allocator, io, path);
         self.location.anchor = self.location.cursor;
         self.loading_since = nowMs();
         return self;
@@ -501,6 +502,7 @@ pub const App = struct {
         self.archive_exports.deinit(self.allocator);
         if (self.archive_drag_export) |*drag_export| drag_export.deinit();
         self.discovery_jobs.deinit(self.allocator);
+        app_requests.deinitPending(self);
         self.service.deinit();
         self.detached_io_jobs.deinit(self.allocator);
         self.torrents.deinit();
@@ -832,6 +834,7 @@ pub const App = struct {
     pub const chooserKey = app_chooser.chooserKey;
     pub const acceptChooser = app_chooser.acceptChooser;
     pub const collectChooser = app_chooser.collectChooser;
+    pub const finishChooser = app_chooser.finishChooser;
     pub const renderChooser = app_chooser.renderChooser;
 
     pub const BreadcrumbHit = struct { path: []const u8, index: usize };
@@ -941,6 +944,7 @@ pub const App = struct {
     pub const placeVisible = app_places.placeVisible;
     pub const openPlace = app_places.openPlace;
     pub const openPlaceWindow = app_places.openPlaceWindow;
+    pub const openPlaceWindowNow = app_places.openPlaceWindowNow;
     pub const openPin = app_places.openPin;
     pub const placeAt = app_places.placeAt;
     pub const placeActive = app_places.placeActive;
@@ -963,6 +967,10 @@ pub const App = struct {
     pub const reloadPins = app_places.reloadPins;
     pub const pinsChanged = app_places.pinsChanged;
     pub const refreshPins = app_places.refreshPins;
+    pub const pinDroppedKnown = app_places.pinDroppedKnown;
+    pub const setPinKind = app_places.setPinKind;
+    pub const openPinNow = app_places.openPinNow;
+    pub const requestPinKinds = app_requests.requestPinKinds;
     pub const deviceLabel = app_places.deviceLabel;
     pub const startDevices = app_places.startDevices;
     pub const startAudio = app_audio.startAudio;

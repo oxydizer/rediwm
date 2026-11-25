@@ -7,6 +7,7 @@ const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
 const trash = @import("trash.zig");
+const app_requests = @import("app_requests.zig");
 const ops = @import("ops.zig");
 const header = @import("header.zig");
 
@@ -62,18 +63,7 @@ pub fn restoreSelected(self: *App) void {
 
 pub fn restoreAll(self: *App) void {
     if (trashRelation(self) != .root) return;
-    const names = trash.listEntries(self.allocator, self.trash_dir.?) catch {
-        self.setStatusNotice(tr("Could not restore the items in Trash"), true);
-        return;
-    };
-    defer self.allocator.free(names);
-    defer trash.freeNames(self.allocator, names);
-    if (names.len == 0) {
-        self.setStatusNotice(tr("Trash is empty"), false);
-        return;
-    }
-    const view: []const []const u8 = @ptrCast(names);
-    restore(self, view);
+    _ = app_requests.send(self, .{ .restore = .{ .trash_dir = self.trash_dir.?, .all = true } }, .{ .restore = .{ .all = true } });
 }
 
 /// Whether a drag at (`x`, `y`) is over the sidebar's Trash row, where a
@@ -118,12 +108,9 @@ pub fn trashDropped(self: *App, paths: []const []const u8) void {
     self.submitDeletion(.trash, kept.items, null);
 }
 
+/// The service restores them; `app_requests` reports how it went.
 fn restore(self: *App, names: []const []const u8) void {
-    const io_guard_0 = io_thread_guard.exempt(.u7_trash_restore);
-    defer io_guard_0.end();
-    const summary = trash.restoreMany(self.allocator, self.trash_dir.?, names);
-    reportRestore(self, summary);
-    self.refresh();
+    _ = app_requests.send(self, .{ .restore = .{ .trash_dir = self.trash_dir.?, .names = names } }, .{ .restore = .{ .all = false } });
 }
 
 /// "Restored 3 items. 1 kept under a new name. 1 has no Trash information."

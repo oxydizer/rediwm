@@ -1,6 +1,7 @@
 //! Commands windows send to the Files I/O service, and their owned payloads.
 //! Re-exported by io_service.zig.
 const std = @import("std");
+const io_requests = @import("io_requests.zig");
 
 pub const WindowId = u64;
 pub const JobId = u64;
@@ -19,6 +20,9 @@ pub const CommandKind = enum {
     /// Gives a window-owned resource (`resource_id`) back to its executor,
     /// which destroys it on a worker.
     dispose_resource,
+    /// A metadata or small-mutation request (`io_requests.zig`). `submit_tag`
+    /// names it; its reply goes to one of the window's reply slots.
+    request,
 };
 
 pub const CommandClass = enum {
@@ -112,6 +116,7 @@ pub const OwnedPayload = struct {
     data: union(enum) {
         transfer: TransferRequest,
         deletion: DeletionRequest,
+        request: io_requests.Owned,
         discovery: DiscoveryRequest,
         conflict_resolution: ConflictResolutionRequest,
     },
@@ -181,6 +186,13 @@ pub const OwnedPayload = struct {
         return payload;
     }
 
+    pub fn createRequest(allocator: std.mem.Allocator, request: io_requests.Request) !*OwnedPayload {
+        const payload = try allocator.create(OwnedPayload);
+        errdefer allocator.destroy(payload);
+        payload.* = .{ .allocator = allocator, .data = .{ .request = try io_requests.create(allocator, request) } };
+        return payload;
+    }
+
     pub fn createDiscovery(
         allocator: std.mem.Allocator,
         root_entry_id: u64,
@@ -239,6 +251,7 @@ pub const OwnedPayload = struct {
         switch (self.data) {
             .transfer => |*request| request.deinit(allocator),
             .deletion => |*request| request.deinit(allocator),
+            .request => |*request| request.deinit(),
             .discovery => |*request| request.deinit(allocator),
             .conflict_resolution => |*request| request.deinit(allocator),
         }
@@ -264,7 +277,7 @@ pub const Command = struct {
 
     pub fn class(self: Command) CommandClass {
         return switch (self.kind) {
-            .submit_job, .start_discovery, .prioritize_discovery => .normal,
+            .submit_job, .start_discovery, .prioritize_discovery, .request => .normal,
             .pause_job, .resume_job, .cancel_job, .resolve_conflict, .release_borrow, .dispose_resource => .control,
         };
     }

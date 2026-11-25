@@ -10,6 +10,7 @@ const App = app_mod.App;
 const io_service = @import("io_service.zig");
 const io_window_link = @import("io_window_link.zig");
 const io_coordinator = @import("io_coordinator.zig");
+const app_requests = @import("app_requests.zig");
 
 /// A window cannot have more submits in flight than it has outcome slots.
 pub const max_deletions = io_service.outcome_slots_per_window;
@@ -28,10 +29,25 @@ pub const Link = struct {
     dirty: bool = false,
     deletions: [max_deletions]Deletion = undefined,
     deletion_count: usize = 0,
+    /// Requests waiting for their reply: at most one per reply slot.
+    requests: [io_service.reply_slots_per_window]app_requests.Entry = undefined,
+    request_count: usize = 0,
+    /// Tags of submits and requests alike.
     next_tag: u64 = 1,
 
+    /// Pending requests are freed by `app_requests.deinitPending` first.
     pub fn deinit(self: *Link) void {
         self.outbox.deinit();
+    }
+
+    pub fn takeRequest(self: *Link, tag: u64) ?app_requests.Pending {
+        for (self.requests[0..self.request_count], 0..) |entry, i| {
+            if (entry.tag != tag) continue;
+            self.requests[i] = self.requests[self.request_count - 1];
+            self.request_count -= 1;
+            return entry.pending;
+        }
+        return null;
     }
 
     fn take(self: *Link, tag: u64) ?Deletion {
@@ -98,13 +114,14 @@ pub fn stepService(self: *App) void {
         const deletion = link.take(record.submit_tag) orelse continue;
         finishDeletion(self, deletion.kind, record);
     }
+    app_requests.takeReplies(self);
 }
 
 /// How soon the event loop must step this window for the service: null
 /// when it can wait for the update wake.
 pub fn serviceTimeout(self: *const App) ?i32 {
     const link = &self.service;
-    if (link.outbox.pending()) return 1;
+    if (link.outbox.pending() or link.dirty) return 1;
     return link.reader.pollTimeoutMs(link.last_fetch);
 }
 
