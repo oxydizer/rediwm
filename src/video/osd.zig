@@ -9,11 +9,13 @@ const BufferPool = @import("app_kit").window_buffer.Pool;
 const tr = @import("app_kit").i18n.tr;
 const now = @import("clock.zig").now;
 const Widget = ui.layout.Widget;
+const subtitles = @import("subtitle_menu.zig");
 const ns = std.time.ns_per_s;
-const Item = enum(usize) { elapsed, seek, remaining, play, mute, volume, percent, open, fullscreen, notice };
+const Item = enum(usize) { elapsed, seek, remaining, play, mute, volume, percent, open, subtitles, fullscreen, notice, empty_open };
 
 pub const Osd = struct {
     surface: ?*wl.Surface = null,
+    parent: *wl.Surface = undefined,
     sub: *wl.Subsurface = undefined,
     viewport: *wp.Viewport = undefined,
     pool: BufferPool = .{ .name = "video-controls" },
@@ -24,12 +26,16 @@ pub const Osd = struct {
     root: Widget = .{ .kind = .container },
     items: [std.enums.values(Item).len]Widget = undefined,
     dispatch: ui.input.Dispatcher = .{},
+    menu: subtitles.Menu = .{},
+    subtitle_action: ?subtitles.Action = null,
+    position_dirty: bool = true,
     x: i32 = 0,
     y: i32 = 0,
     width: i32 = 0,
     height: i32 = 0,
     mouse_x: f32 = -1,
     mouse_y: f32 = -1,
+    empty: bool = false,
     visible: bool = false,
     attached: bool = false,
     dirty: bool = true,
@@ -62,6 +68,7 @@ pub const Osd = struct {
     pub fn create(self: *Osd, compositor: *wl.Compositor, subcompositor: *wl.Subcompositor, viewporter: *wp.Viewporter, root: *wl.Surface, shm: *wl.Shm, scales: ?*wp.FractionalScaleManagerV1) !void {
         const surface = try compositor.createSurface();
         self.surface = surface;
+        self.parent = root;
         self.sub = try subcompositor.getSubsurface(surface, root);
         self.sub.setDesync();
         self.viewport = try viewporter.getViewport(surface);
@@ -80,21 +87,32 @@ pub const Osd = struct {
             w.* = switch (item) {
                 .elapsed, .remaining, .percent, .notice => .{ .kind = .{ .text = .{ .content = "", .font_size = ui.cairo.statusSize(), .color = ui.theme.global.window_fg } } },
                 .seek, .volume => .{ .kind = .{ .slider = .{ .value = 0, .min = 0, .max = if (item == .volume) 150 else 1, .owner = self, .id = id, .on_change = changed } } },
-                else => .{ .kind = .{ .button = .{ .variant = .ghost, .size = .sm, .owner = self, .id = id, .on_click = clicked, .icon = switch (item) {
-                    .open => .folder,
-                    .mute => .volume,
-                    .fullscreen => .maximize,
-                    else => null,
-                } } } },
+                else => .{ .kind = .{ .button = switch (item) {
+                    .empty_open => .{ .variant = .primary, .leading_icon = .folder, .label = tr("Open File") },
+                    .play => .{ .variant = .primary, .icon = .play, .icon_scale = 0.42 },
+                    .mute => .{ .variant = .ghost, .icon = .volume, .label = tr("Mute") },
+                    .open => .{ .leading_icon = .folder, .label = tr("Open File") },
+                    .subtitles => .{ .leading_icon = .captions, .trailing_icon = .chevron_down, .alignment = .left, .label = tr("Subtitles") },
+                    .fullscreen => .{ .variant = .ghost, .icon = .region, .icon_scale = 0.65, .label = tr("Fullscreen") },
+                    else => unreachable,
+                } } },
             };
+            if (w.kind == .button) {
+                w.kind.button.owner = self;
+                w.kind.button.id = id;
+                w.kind.button.on_click = clicked;
+                if (item != .empty_open) w.kind.button.size = .sm;
+            }
         }
         self.root.children = &self.items;
         self.root.linkParents();
+        self.visible = self.empty;
         self.clearNotice();
     }
 
     fn scaleEvent(_: *wp.FractionalScaleV1, event: wp.FractionalScaleV1.Event, self: *Osd) void {
         self.density = std.math.clamp(@as(f32, @floatFromInt(event.preferred_scale.scale)) / 120, 0.25, 8);
+        if (self.width > 0) self.layout();
         self.dirty = true;
     }
 
@@ -117,7 +135,8 @@ pub const Osd = struct {
         switch (@as(Item, @fromBackingInt(@intCast(id)))) {
             .play => self.toggle = !self.toggle,
             .mute => self.muted = !self.muted,
-            .open => self.open = true,
+            .open, .empty_open => self.open = true,
+            .subtitles => self.subtitle_action = .menu,
             .fullscreen => self.fullscreen = true,
             else => unreachable,
         }
@@ -146,22 +165,40 @@ pub const Osd = struct {
     }
 
     pub fn message(self: *Osd, msg: []const u8) void {
+        self.closeMenu();
         self.cancelPress();
         self.setLabel(.notice, msg);
-        self.root.children = self.items[@backingInt(Item.play)..];
         self.notice_until = now() + 3 * ns;
+        self.updateChildren();
         self.dirty = true;
         self.reveal();
     }
 
     pub fn clearNotice(self: *Osd) void {
-        self.root.children = self.items[0..@backingInt(Item.notice)];
         self.notice_until = null;
+        self.updateChildren();
         self.dirty = true;
     }
 
+    fn updateChildren(self: *Osd) void {
+        const notice = @backingInt(Item.notice);
+        const empty_open = @backingInt(Item.empty_open);
+        if (self.empty) {
+            const first = if (self.notice_until != null) notice else empty_open;
+            self.root.children = self.items[first..];
+            if (self.width > 0) self.layout();
+        } else {
+            self.root.children = if (self.notice_until != null) self.items[@backingInt(Item.play)..empty_open] else self.items[0..notice];
+        }
+    }
+
     pub fn movieChanged(self: *Osd) void {
+        self.closeMenu();
+        self.subtitle_action = null;
+        self.setSubtitlesEnabled(false);
         self.cancelPress();
+        self.empty = false;
+        self.toggle_subtitles = false;
         self.steps = 0;
         self.seek_to = null;
         self.scrub_end = false;
@@ -174,63 +211,143 @@ pub const Osd = struct {
 
     pub fn resize(self: *Osd, w: i32, h: i32) void {
         if (self.surface == null) return;
-        self.width = @min(680, w -| @min(16, @divTrunc(w, 12)));
-        self.height = @min(h, @as(i32, @intFromFloat(@ceil(54 + ui.cairo.statusSize() * 1.5))));
+        const max_width: i32 = if (self.empty) 360 else 680;
+        self.width = @min(max_width, w -| @min(16, @divTrunc(w, 12)));
+        self.height = @min(h, @as(i32, @intFromFloat(@ceil(58 + ui.cairo.statusSize() * 1.5))));
         self.x = @divTrunc(w - self.width, 2);
-        self.y = @max(0, h - self.height - 8);
-        self.sub.setPosition(self.x, self.y);
-        self.viewport.setDestination(self.width, self.height);
+        self.y = if (self.empty) @divTrunc(h - self.height, 2) else @max(0, h - self.height - 8);
+        self.position_dirty = true;
         self.layout();
         self.dirty = true;
     }
 
     fn place(self: *Osd, id: Item, x: f32, y: f32, w: f32, h: f32) void {
-        ui.arrange.arrange(self.get(id), x, y, @max(0, w), @max(0, h));
+        ui.arrange.arrange(self.get(id), x, self.root.computed_y + y, @max(0, w), @max(0, h));
+    }
+
+    fn menuSpace(self: *Osd) i32 {
+        return if (self.menu.open) @min(self.y, self.menu.height() + 5) else 0;
+    }
+
+    pub fn top(self: *Osd) i32 {
+        return self.y - self.menuSpace();
     }
 
     fn layout(self: *Osd) void {
         const width: f32 = @floatFromInt(self.width);
         const height: f32 = @floatFromInt(self.height);
+        self.root.computed_y = @floatFromInt(self.menuSpace());
         self.root.computed_width = width;
         self.root.computed_height = height;
         const pad: f32 = 7;
         const row = (height - 2 * pad) / 2;
-        const label_w = @min(width * 0.26, 6.1 * ui.cairo.statusSize());
         self.place(.notice, pad, pad, width - 2 * pad, row);
+        if (self.empty) {
+            const button_w = @min(180, width - 2 * pad);
+            self.place(.empty_open, (width - button_w) / 2, if (self.notice_until != null) pad + row else (height - row) / 2, button_w, row);
+            return;
+        }
+        const label_w = @min(width * 0.26, 6.1 * ui.cairo.statusSize());
         self.place(.elapsed, pad, pad, label_w, row);
         self.place(.seek, pad + label_w, pad, width - (pad + label_w) * 2, row);
         self.place(.remaining, width - pad - label_w, pad, label_w, row);
+        const gap: f32 = if (width < 300) 2 else 6;
+        const button_w = @min(row, (width - 2 * pad - 5 * gap) / 6);
+        const play = @min(row + 4, button_w + 4);
         const y = pad + row;
-        const button_w = @min(36, width * 0.13);
-        const play = @min(74, width * 0.25);
-        self.place(.play, pad, y, play, row);
-        self.place(.mute, pad + play, y, button_w, row);
-        const volume_x = pad + play + button_w;
-        const right = width - pad - button_w * 2;
-        const label: f32 = if (width >= 300) @min(50, ui.cairo.statusSize() * 3.5) else 0;
-        const vol_w = @min(130, right - volume_x - label - 4);
+        self.place(.play, pad, y + (row - play) / 2, play, play);
+        self.get(.play).kind.button.radius = play / 2;
+        self.place(.mute, pad + play + gap, y, button_w, row);
+        const volume_x = pad + play + button_w + 2 * gap;
+        const full_x = width - pad - button_w;
+        const open = self.get(.open);
+        const subs = self.get(.subtitles);
+        // Measure translated labels with their leading and trailing glyphs.
+        for ([_]*Widget{ open, subs }) |w| {
+            w.kind.button.icon = null;
+            ui.measure.measureAtScale(w, width, row, self.density);
+        }
+        const labels_fit = full_x - open.computed_width - subs.computed_width - volume_x - 3 * gap >= 80;
+        if (!labels_fit) {
+            open.kind.button.icon = .folder;
+            subs.kind.button.icon = .captions;
+        }
+        const sub_w = if (labels_fit) subs.computed_width else button_w;
+        const open_w = if (labels_fit) open.computed_width else button_w;
+        const sub_x = full_x - gap - sub_w;
+        const open_x = sub_x - gap - open_w;
+        const available = @max(0, open_x - gap - volume_x);
+        const label: f32 = if (available >= 80) ui.cairo.statusSize() * 3.5 else 0;
+        const vol_w = @min(120, @max(0, available - label - 4));
         self.place(.volume, volume_x, y, vol_w, row);
         self.place(.percent, volume_x + vol_w + 4, y, label, row);
-        self.place(.open, right, y, button_w, row);
-        self.place(.fullscreen, right + button_w, y, button_w, row);
+        self.place(.open, open_x, y, open_w, row);
+        self.place(.subtitles, sub_x, y, sub_w, row);
+        self.place(.fullscreen, full_x, y, button_w, row);
+        if (self.menu.open) self.menu.layout(sub_x + sub_w, width, self.root.computed_y + height);
     }
 
     fn localX(self: *Osd) f32 {
         return self.mouse_x - @as(f32, @floatFromInt(self.x));
     }
     fn localY(self: *Osd) f32 {
-        return self.mouse_y - @as(f32, @floatFromInt(self.y));
+        return self.mouse_y - @as(f32, @floatFromInt(self.top()));
+    }
+
+    fn inputRoot(self: *Osd) *Widget {
+        return if (self.menu.open) &self.menu.root else &self.root;
+    }
+
+    pub fn setSubtitlesEnabled(self: *Osd, enabled: bool) void {
+        self.get(.subtitles).kind.button.selected = enabled;
+        self.dirty = true;
+    }
+
+    pub fn showMenu(self: *Osd, name: ?[]const u8, enabled: bool) void {
+        self.cancelPress();
+        self.click_at = null;
+        self.menu.show(name, enabled);
+        self.position_dirty = true;
+        self.layout();
+        self.reveal();
+    }
+
+    pub fn closeMenu(self: *Osd) void {
+        if (!self.menu.open) return;
+        self.cancelPress();
+        self.menu.open = false;
+        self.menu.root.children = &.{};
+        self.position_dirty = true;
+        self.layout();
+        self.reveal();
+    }
+
+    pub fn menuNavigate(self: *Osd, back: bool) void {
+        _ = self.dispatch.focusNext(&self.menu.root, back);
+        self.dirty = true;
+    }
+
+    pub fn menuActivate(self: *Osd) void {
+        if (self.dispatch.focused) |w| ui.widgets.button.press(w);
+        self.takeMenuChoice();
+    }
+
+    fn takeMenuChoice(self: *Osd) void {
+        self.subtitle_action = self.menu.choice orelse return;
+        self.menu.choice = null;
+        self.closeMenu();
     }
 
     pub fn motion(self: *Osd, x: f32, y: f32) void {
         self.mouse_x = x;
         self.mouse_y = y;
         self.reveal();
-        self.dispatch.pointerMotion(&self.root, self.localX(), self.localY());
+        self.dispatch.pointerMotion(self.inputRoot(), self.localX(), self.localY());
         self.dirty = true;
     }
 
     pub fn leave(self: *Osd) void {
+        self.closeMenu();
         self.cancelPress();
         self.mouse_x = -1;
         self.mouse_y = -1;
@@ -240,7 +357,8 @@ pub const Osd = struct {
         if (self.surface == null) return;
         if (self.dragSeek()) self.scrub_end = true;
         if (self.dispatch.slider_drag) |w| ui.widgets.slider.endDrag(w);
-        self.dispatch.pointerLeave(&self.root);
+        self.dispatch.pointerLeave(self.inputRoot());
+        self.dispatch.setHovered(null);
         if (self.dispatch.pressed) |w| ui.input.setButtonOrRowState(w, .idle);
         self.dispatch.reset();
         self.video_press = false;
@@ -257,6 +375,18 @@ pub const Osd = struct {
     }
 
     pub fn button(self: *Osd, down: bool) void {
+        if (self.menu.open) {
+            if (down and !self.menu.root.contains(self.localX(), self.localY())) {
+                self.closeMenu();
+            } else if (down) {
+                self.dispatch.pointerButtonDown(&self.menu.root, self.localX(), self.localY());
+            } else {
+                self.dispatch.pointerButtonUp(&self.menu.root, self.localX(), self.localY());
+                self.takeMenuChoice();
+            }
+            self.dirty = true;
+            return;
+        }
         const over = self.visible and self.root.contains(self.localX(), self.localY());
         self.reveal();
         if (down) {
@@ -294,6 +424,7 @@ pub const Osd = struct {
     }
 
     pub fn scroll(self: *Osd, notches: f64) void {
+        if (self.menu.open) return;
         self.reveal();
         const seek = ui.input.hitTest(&self.root, self.localX(), self.localY()) == self.get(.seek);
         if (seek != self.wheel_seek) self.wheel_remainder = 0;
@@ -314,7 +445,7 @@ pub const Osd = struct {
         if (self.notice_until) |end| {
             if (t >= end) self.clearNotice() else deadline = @min(deadline orelse end, end);
         }
-        if (self.visible and !self.bar_press) {
+        if (self.visible and !self.empty and !self.bar_press and !self.menu.open) {
             if (t >= self.hide_at) {
                 self.visible = false;
                 self.clearNotice();
@@ -353,9 +484,11 @@ pub const Osd = struct {
         const next = if (anim.deadline) |ms| ms * std.time.ns_per_ms else null;
         if (!self.dirty and revision == ui.layout.paint_revision and !anim.active and self.second == sec and self.fraction == seek.value and self.was_paused == paused) return next;
         const px: i32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(self.width)) * self.density));
-        const py: i32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(self.height)) * self.density));
+        const total_height = self.height + self.menuSpace();
+        const py: i32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(total_height)) * self.density));
         const buf = try self.pool.acquire(px, py) orelse return next;
         self.get(.play).kind.button.label = if (paused) tr("Play") else tr("Pause");
+        self.get(.play).kind.button.icon = if (paused) .play else .pause;
         self.get(.mute).kind.button.icon = if (self.muted or self.volume == 0) .volume_muted else .volume;
         self.setLabel(.elapsed, timestamp(&self.elapsed_text, sec, false));
         self.setLabel(.remaining, timestamp(&self.remaining_text, @divTrunc(@max(0, duration - display_pos), ns), true));
@@ -364,16 +497,30 @@ pub const Osd = struct {
         var r = ui.paint.Renderer.init(pixels[0..@intCast(px * py)], px, py, self.density);
         @memset(r.pixels, 0);
         r.palette = ui.theme.shellPalette();
-        r.fillRect(0, 0, self.root.computed_width, self.root.computed_height, .{ .color = ui.theme.global.app_bg, .radius = 8 });
+        if (!self.empty or self.notice_until != null) r.fillRect(0, self.root.computed_y, self.root.computed_width, self.root.computed_height, .{
+            .color = ui.theme.global.app_toolbar,
+            .radius = 8,
+            .border_width = 1,
+            .border_color = ui.theme.global.app_item_border,
+        });
         ui.input.active_dispatcher = &self.dispatch;
         defer ui.input.active_dispatcher = null;
         ui.paint.paint(&self.root, &r);
+        if (self.menu.open) ui.paint.paint(&self.menu.root, &r);
         self.callback = try surface.frame();
         self.callback.?.setListener(*Osd, frame, self);
         self.pool.submit(buf);
+        if (self.position_dirty) {
+            self.sub.setPosition(self.x, self.top());
+            self.viewport.setDestination(self.width, total_height);
+        }
         surface.attach(buf.wl_buffer, 0, 0);
         surface.damageBuffer(0, 0, px, py);
         surface.commit();
+        if (self.position_dirty) {
+            self.parent.commit();
+            self.position_dirty = false;
+        }
         self.attached = true;
         self.dirty = false;
         self.second = sec;

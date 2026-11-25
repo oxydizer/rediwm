@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -9,6 +10,21 @@ import time
 from PIL import ImageChops
 
 from video import BIN, ROOT, PLAYER, capture, check_idle, playing, reference, wait
+
+
+def inhibitor(ipc):
+    state = ipc.request(query="get_idle_state")
+    return [i for i in state["inhibitors"] if i["app_id"] == "rediwm-video" and i["is_active"]]
+
+
+def chooser(ipc):
+    return next((v["id"] for v in ipc.get_windows() if v["app_id"] == "rediwm-file-chooser"), None)
+
+
+def open_shortcut(ipc):
+    ipc.key(29, True)
+    ipc.key_down_up(24)
+    ipc.key(29, False)
 
 
 def controls(ipc, env, tmp, fixture):
@@ -28,21 +44,13 @@ def controls(ipc, env, tmp, fixture):
     def expected(at):
         return reference(clip, at, tmp / "controls-ref.png").getpixel((160, 90))[0]
 
-    def inhibitor():
-        state = ipc.request(query="get_idle_state")
-        return [i for i in state["inhibitors"] if i["app_id"] == "rediwm-video" and i["is_active"]]
-
-    def shortcut(code):
-        ipc.key(29, True)
-        ipc.key_down_up(code)
-        ipc.key(29, False)
-
     env = dict(env, PATH=str(BIN) + os.pathsep + env["PATH"], REDIWM_FILES_DEVICES="0",
                WAYLAND_DEBUG="client", GIO_USE_VFS="local")
+    sender = make_drop_sender(tmp)
     with playing(ipc, env, tmp, fixture or PLAYER, ["--hwdec=no", "--paused", "--start", 3, clip]) as (win, _, log):
         ipc.focus_window(win)
         assert next(v for v in ipc.get_windows() if v["id"] == win)["content_type"] == "video"
-        assert not inhibitor()
+        assert not inhibitor(ipc)
 
         def shot():
             return capture(ipc, win, tmp / "controls.png")
@@ -90,33 +98,36 @@ def controls(ipc, env, tmp, fixture):
         wait(lambda: abs(shot().getpixel((base.width // 2, base.height // 3))[0] - before[0]) > 12,
              "wheel over seek rail")
         ipc.click_at(x + 38, y + h - 27)  # play button
-        wait(inhibitor, "playing video idle inhibitor")
+        wait(lambda: inhibitor(ipc), "playing video idle inhibitor")
         ipc.click_at(x + 50, y + 36)  # single click on picture
-        wait(lambda: not inhibitor(), "pause releases inhibitor")
+        wait(lambda: not inhibitor(ipc), "pause releases inhibitor")
         ipc.click()
         ipc.click()
         wait(lambda: ipc.get_window_debug(win)["fullscreen"], "double click fullscreen")
-        assert not inhibitor(), "double click also toggled playback"
+        assert not inhibitor(ipc), "double click also toggled playback"
         wait(lambda: re.search(r'wl_pointer#\d+\.set_cursor\(\d+, (?:nil|null),', log.read_text()), "hidden fullscreen cursor", timeout=5)
         ipc.move_cursor(150, 130)
         wait(lambda: 'set_shape' in log.read_text().rsplit('set_cursor', 1)[-1], "cursor restored on motion")
         ipc.key_down_up(1)
         wait(lambda: not ipc.get_window_debug(win)["fullscreen"], "Escape")
+        ipc.wait_for("window_geometry_settled", window_id=win)
+        ipc.click_at(x + w - 31, y + h - 30)
+        wait(lambda: ipc.get_window_debug(win)["fullscreen"], "fullscreen icon")
+        ipc.key_down_up(1)
+        wait(lambda: not ipc.get_window_debug(win)["fullscreen"], "return to window")
         # Real Files chooser cancellation and filtered selection in the same window.
-        def chooser():
-            return next((v["id"] for v in ipc.get_windows() if v["app_id"] == "rediwm-file-chooser"), None)
-        shortcut(24)  # Ctrl+O
-        dialog = wait(chooser, "Files open dialog")
+        open_shortcut(ipc)
+        dialog = wait(lambda: chooser(ipc), "Files open dialog")
         ipc.focus_window(dialog)
         ipc.key_down_up(1)
-        wait(lambda: not chooser(), "cancelled chooser closes")
+        wait(lambda: not chooser(ipc), "cancelled chooser closes")
         assert next(v["title"] for v in ipc.get_windows() if v["id"] == win) == clip.name
         ipc.focus_window(win)
         box = ipc.get_window_debug(win)["client_box"]
-        ipc.move_cursor(round(box["x"] + box["width"] - 64), round(box["y"] + box["height"] - 27))
+        ipc.move_cursor(round(box["x"] + box["width"] - 106), round(box["y"] + box["height"] - 27))
         wait(bar_visible, "open button")
         ipc.click()
-        dialog = wait(chooser, "Open button launches chooser")
+        dialog = wait(lambda: chooser(ipc), "Open button launches chooser")
         ipc.focus_window(dialog)
         ipc.wait_for("window_geometry_settled", window_id=dialog)
         ipc.key_down_up(108)  # first matching file in the movie's folder
@@ -124,12 +135,12 @@ def controls(ipc, env, tmp, fixture):
         try:
             wait(lambda: next(v["title"] for v in ipc.get_windows() if v["id"] == win) == chosen.name, "chosen video in same window")
         except AssertionError:
-            if chooser():
+            if chooser(ipc):
                 capture(ipc, dialog, tmp / "chooser.png")
             raise
         assert len([v for v in ipc.get_windows() if v["app_id"] == "rediwm-video"]) == 1
 
-        drop_video(ipc, env, tmp, win)
+        drop_video(ipc, env, tmp, win, sender, chosen.name)
 
     check_subtitles(ipc, env, tmp, fixture or PLAYER)
 
@@ -151,7 +162,7 @@ def controls(ipc, env, tmp, fixture):
                 elif mode == "mute":
                     ipc.key_down_up(50)
                 ipc.key_down_up(57)
-                wait(inhibitor, "playing with selected volume")
+                wait(lambda: inhibitor(ipc), "playing with selected volume")
                 time.sleep(.5)
             m = re.search(r"null device played (\d+) nonzero frames, peak ([0-9.]+)", log.read_text())
             assert m, log.read_text()[-2000:]
@@ -161,19 +172,51 @@ def controls(ipc, env, tmp, fixture):
                 peaks.append(float(m[2]))
         assert peaks[0] > 0 and abs(peaks[1] / peaks[0] - 1.5) < .04, peaks
 
-    # A launcher invocation with no filename opens the chooser immediately.
-    with (tmp / "empty-launch.log").open("w") as out:
-        proc = subprocess.Popen([fixture or PLAYER], env=env, stdout=out, stderr=out)
-    try:
-        dialog = wait(chooser, "chooser on empty launch")
+    check_empty_launch(ipc, env, tmp, fixture or PLAYER, sender)
+    print("OSD, seeks and frame steps, fullscreen cursor, chooser, drop, mute and idle inhibitor OK")
+
+
+def check_empty_launch(ipc, env, tmp, binary, sender):
+    home = tmp / "empty-launch-home"
+    home.mkdir()
+    movie = home / "first movie.mp4"
+    shutil.copy(tmp / "clock.mp4", movie)
+    # Launch from the app menu, cancel Open, then select the first movie.
+    ipc.move_cursor(1, 1)
+    with playing(ipc, dict(env, HOME=str(home)), tmp, binary, []) as (win, proc, log):
+        assert not chooser(ipc) and not inhibitor(ipc)
+        assert "decoding " not in log.read_text()
+        check_idle(proc, .5)
+        box = ipc.get_window_debug(win)["client_box"]
+        ipc.click_at(round(box["x"] + box["width"] / 2), round(box["y"] + box["height"] / 2))
+        dialog = wait(lambda: chooser(ipc), "Open File button in empty window")
         ipc.focus_window(dialog)
         ipc.key_down_up(1)
-        assert proc.wait(5) == 0
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
-    print("OSD, seeks and frame steps, fullscreen cursor, chooser, drop, mute and idle inhibitor OK")
+        wait(lambda: not chooser(ipc), "cancel leaves player open")
+        ipc.focus_window(win)
+        for key in (57, 106, 52, 37):  # media shortcuts before the first movie
+            ipc.key_down_up(key)
+        open_shortcut(ipc)
+        dialog = wait(lambda: chooser(ipc), "Ctrl+O in empty window")
+        ipc.focus_window(dialog)
+        ipc.wait_for("window_geometry_settled", window_id=dialog)
+        ipc.key_down_up(108)
+        ipc.key_down_up(28)
+        wait(lambda: any(v["id"] == win and v["title"] == movie.name for v in ipc.get_windows()), "first movie in the launcher window")
+        wait(lambda: inhibitor(ipc), "first movie plays")
+
+    with playing(ipc, env, tmp, binary, ["--hwdec=no", "--paused", "--start", 3]) as (win, _, _):
+        drop_video(ipc, env, tmp, win, sender, None)
+        target = reference(movie, 3, tmp / "empty-start-ref.png").getpixel((160, 90))[0]
+        def first_picture():
+            im = capture(ipc, win, tmp / "empty-start.png")
+            return abs(im.getpixel((im.width // 2, im.height // 3))[0] - target) <= 1
+        wait(first_picture, "the first drop honors --start")
+        assert not inhibitor(ipc), "the first drop should honor --paused"
+        ipc.focus_window(win)
+        ipc.key_down_up(57)
+        wait(lambda: inhibitor(ipc), "resume first dropped video")
+    print("Empty launch, idle threads, chooser cancellation and first playback from chooser or drop OK")
 
 
 def check_subtitles(ipc, env, tmp, binary):
@@ -204,8 +247,25 @@ def check_subtitles(ipc, env, tmp, binary):
             rows = center.point(lambda luma: 255 if luma > 185 else 0).getprojection()[1]
             return sum(bright and (y == 0 or not rows[y - 1]) for y, bright in enumerate(rows)), bar
 
+        box = ipc.get_window_debug(win)["client_box"]
+        right = round(box["x"] + box["width"])
+        bottom = round(box["y"] + box["height"])
+
+        def menu_visible():
+            im = capture(ipc, win, tmp / "subtitle-menu.png")
+            return max(im.getpixel((im.width - round(90 * scale), im.height - round(111 * scale)))[:3]) > 12
+
+        def open_menu():
+            ipc.click_at(right - 70, bottom - 30)
+            wait(menu_visible, "subtitle menu above the controls")
+
         assert lines()[0] == 0, "sidecar should start off"
-        ipc.key_down_up(37)  # K discovers film.srt
+        open_menu()
+        ipc.click_at(round(box["x"] + 40), round(box["y"] + 15))
+        wait(lambda: not menu_visible(), "outside click dismisses subtitle menu")
+        check_idle(proc, .4)  # dismissal must not play the movie
+        open_menu()
+        ipc.click_at(right - 130, bottom - 145)  # matching film.srt
         wait(lambda: lines() == (2, True), "two subtitle lines above the controls")
         wait(lambda: lines() == (2, False), "subtitle persists after controls hide")
         check_idle(proc, .4)
@@ -217,15 +277,17 @@ def check_subtitles(ipc, env, tmp, binary):
         ipc.key_down_up(57)
         ipc.key_down_up(105)
         wait(lambda: lines()[0] == 2, "backward seek restores dialogue")
-        ipc.key_down_up(37)
+        open_menu()
+        if keep := os.environ.get("REDIWM_TEST_LOG_DIR"):
+            capture(ipc, win, Path(keep) / "video-subtitle-menu.png")
+        ipc.click_at(right - 130, bottom - 178)  # Off
         wait(lambda: lines()[0] == 0, "disable subtitles")
+        ipc.key_down_up(37)
+        wait(lambda: lines()[0] == 2, "K restores selected subtitles")
 
-        # Open a differently named SRT through the regular media chooser.
-        ipc.key(29, True)
-        ipc.key_down_up(24)
-        ipc.key(29, False)
-        dialog = wait(lambda: next((v["id"] for v in ipc.get_windows()
-                                    if v["app_id"] == "rediwm-file-chooser"), None), "media chooser")
+        open_menu()
+        ipc.click_at(right - 130, bottom - 111)
+        dialog = wait(lambda: chooser(ipc), "Load subtitle file opens the subtitle chooser")
         ipc.focus_window(dialog)
         ipc.wait_for("window_geometry_settled", window_id=dialog)
         ipc.key_down_up(108)  # alternate.SRT sorts first
@@ -235,7 +297,7 @@ def check_subtitles(ipc, env, tmp, binary):
     print("SRT sidecar, chooser, paused and playing cue timing, and idle threads OK")
 
 
-def drop_video(ipc, env, tmp, win):
+def make_drop_sender(tmp):
     protocols = Path(subprocess.check_output(
         ["pkg-config", "--variable=pkgdatadir", "wayland-protocols"], text=True).strip())
     sources = []
@@ -246,13 +308,18 @@ def drop_video(ipc, env, tmp, win):
         subprocess.run(["wayland-scanner", "private-code", protocols / xml, source], check=True)
         sources.append(source)
     sender = tmp / "transfer-client"
-    subprocess.run(["cc", "-I", tmp, ROOT / "tests/desktop_transfer.c", *sources,
-                    "-lwayland-client", "-o", sender], check=True)
+    flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs", "wayland-client"], text=True))
+    subprocess.run(["cc", "-I", tmp, ROOT / "tests/desktop_transfer.c", *sources, *flags, "-o", sender], check=True)
+    return sender
+
+
+def drop_video(ipc, env, tmp, win, sender, movie_title):
+    initial = next(v["title"] for v in ipc.get_windows() if v["id"] == win)
     path = tmp / "two words #1.mp4"
-    shutil.copy(tmp / "h264.mp4", path)
+    shutil.copy(tmp / ("h264.mp4" if movie_title else "clock.mp4"), path)
     subtitle = tmp / "a separate subtitle.srt"
     subtitle.write_text("1\n00:00:00,000 --> 00:01:00,000\nDROPPED\n")
-    for uri, title in (("file://remote/missing.mp4", None), (subtitle.as_uri(), "a second video.mp4"),
+    for uri, title in (("file://remote/missing.mp4", None), (subtitle.as_uri(), movie_title),
                        (path.as_uri(), path.name)):
         sender_log = tmp / "sender.log"
         with sender_log.open("w") as out:
@@ -280,8 +347,8 @@ def drop_video(ipc, env, tmp, win):
                 wait(lambda: next(v["title"] for v in ipc.get_windows() if v["id"] == win) == title, "drop handled in the same window")
                 assert path.exists()
             else:
-                wait(lambda: ".cancelled()" in sender_log.read_text(), "nonlocal URI refused")
-                assert next(v["title"] for v in ipc.get_windows() if v["id"] == win) == "a second video.mp4"
+                wait(lambda: ".cancelled()" in sender_log.read_text(), "unusable drop refused")
+                assert next(v["title"] for v in ipc.get_windows() if v["id"] == win) == initial
         finally:
             proc.terminate()
             proc.wait(5)

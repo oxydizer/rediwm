@@ -128,6 +128,7 @@ pub const IconId = enum {
     skip_previous,
     skip_next,
     stop,
+    captions,
     view_grid,
     view_list,
     sort,
@@ -253,6 +254,8 @@ pub const ButtonData = struct {
     /// than the usual text pill.
     icon: ?IconId = null,
     icon_scale: f32 = 0.5,
+    radius: ?f32 = null,
+    selected: bool = false,
     leading_icon: ?IconId = null,
     trailing_icon: ?IconId = null,
     stacked: bool = false,

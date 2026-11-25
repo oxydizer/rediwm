@@ -72,6 +72,7 @@ pub fn paintButton(widget: *const Widget, data: ButtonData, renderer: *Renderer)
         .h = widget.computed_height,
     }, button_widget.optionsOf(data), .{
         .pointer = data.state,
+        .selected = data.selected,
         .focused = ui_input.isFocused(widget),
         .proximity_distance = data.proximity_distance,
         .proximity_x = data.proximity_x,

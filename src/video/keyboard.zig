@@ -141,6 +141,15 @@ pub const Input = struct {
                 const delta: i64 = if (c.xkb_state_mod_name_is_active(s, "Shift", c.XKB_STATE_MODS_EFFECTIVE) > 0) 60 else 5;
                 const bar = self.osd;
                 const sym = c.xkb_state_key_get_one_sym(s, k.key + 8);
+                if (bar.menu.open) {
+                    switch (sym) {
+                        c.XKB_KEY_Escape => return bar.closeMenu(),
+                        c.XKB_KEY_Up, c.XKB_KEY_ISO_Left_Tab => return bar.menuNavigate(true),
+                        c.XKB_KEY_Down, c.XKB_KEY_Tab => return bar.menuNavigate(false),
+                        c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_space => return bar.menuActivate(),
+                        else => bar.closeMenu(),
+                    }
+                }
                 if (c.xkb_state_mod_name_is_active(s, "Control", c.XKB_STATE_MODS_EFFECTIVE) > 0) {
                     if (sym == c.XKB_KEY_o or sym == c.XKB_KEY_O) bar.open = true;
                     return;

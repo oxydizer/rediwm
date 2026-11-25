@@ -65,6 +65,9 @@ the plan and its decisions are in `docs/plans/video-player.md`.
   playback until release, previews the preceding keyframe and finishes with
   an exact seek. A backward step starts one stream tick before the displayed
   PTS so the preceding GOP is available at keyframe boundaries.
+* **Launching without a movie** maps the player with a persistent Open File
+  button. The first successful open starts the pipeline and applies any
+  launch-time seek or pause. The empty window has no decoder or audio device.
 * **File selection and drops are event-driven.** Poll the Files chooser's
   child handle and the URI-list pipe with Wayland. Negotiate copy only and
   finish the offer after opening a local file. Stage the new pipeline before

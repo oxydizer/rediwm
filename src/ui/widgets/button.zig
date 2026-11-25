@@ -173,6 +173,7 @@ pub fn optionsOf(data: layout.ButtonData) Options {
         .label = data.label,
         .icon = data.icon,
         .icon_scale = data.icon_scale,
+        .radius = data.radius,
         .leading_icon = data.leading_icon,
         .trailing_icon = data.trailing_icon,
         .stacked = data.stacked,

@@ -21,6 +21,7 @@ const Cue = struct {
 };
 
 pub const Track = struct {
+    name: []const u8 = "",
     cues: std.ArrayList(Cue) = .empty,
     active: std.ArrayList(u8) = .empty,
     sampled: ?i64 = null,
@@ -69,10 +70,12 @@ pub const Track = struct {
             latest = @max(latest, cue.end);
             cue.latest_end = latest;
         }
+        track.name = try a.dupe(u8, std.fs.path.basename(path));
         return track;
     }
 
     pub fn deinit(self: *Track) void {
+        a.free(self.name);
         for (self.cues.items) |cue| a.free(cue.text);
         self.cues.deinit(a);
         self.active.deinit(a);

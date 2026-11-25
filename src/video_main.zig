@@ -4,7 +4,7 @@ const std = @import("std");
 const usage =
     \\Usage: rediwm-video [--start SECONDS] [--paused] [--hwdec=no] [FILE]
     \\
-    \\Plays a local video file.
+    \\Opens the player window, optionally with a local video file.
     \\  --start SECONDS  begin at this time
     \\  --paused         show the first frame and wait
     \\  --hwdec=no       decode in software
@@ -22,8 +22,7 @@ pub fn main(init: std.process.Init) !void {
     defer if (kit.memory.deinit()) std.log.err("video player memory leaks reported above", .{});
     kit.i18n.init(init.minimal.environ);
     const args = init.minimal.args.vector;
-    var options: @import("video/player.zig").Options = .{ .path = undefined };
-    var path: ?[:0]const u8 = null;
+    var options: @import("video/player.zig").Options = .{};
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = std.mem.span(args[i]);
@@ -40,21 +39,12 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--hwdec=no")) {
             options.hardware = false;
         } else if (std.mem.eql(u8, arg, "--")) {
-            if (i + 1 < args.len) path = std.mem.span(args[i + 1]);
+            if (i + 1 < args.len) options.path = std.mem.span(args[i + 1]);
             break;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             std.debug.print("{s}", .{usage});
             return error.UnexpectedArgument;
-        } else path = std.mem.span(args[i]);
+        } else options.path = std.mem.span(args[i]);
     }
-    var selected: ?[:0]u8 = null;
-    defer if (selected) |file| std.heap.c_allocator.free(file);
-    if (path == null) {
-        var dialog = try @import("video/chooser.zig").Chooser.open(init.io, "", .video);
-        defer dialog.deinit(init.io);
-        selected = try dialog.take(init.io);
-        path = selected orelse return;
-    }
-    options.path = path.?;
     try @import("video/player.zig").run(init, options);
 }

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import os
 import re
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -142,6 +143,10 @@ def pixels(ipc, win, tmp, clip, at, label):
 
 
 def switches(pid):
+    if sys.platform.startswith("freebsd"):
+        rows = subprocess.check_output(["ps", "-H", "-p", str(pid), "-o", "lwp=", "-o", "nvcsw=", "-o", "nivcsw="], text=True)
+        return {tid: int(voluntary) + int(involuntary)
+                for tid, voluntary, involuntary in (line.split() for line in rows.splitlines() if line.strip())}
     tasks = Path(f"/proc/{pid}/task")
     if not tasks.exists():
         return None
@@ -172,7 +177,9 @@ def check_paused_vp9(ipc, env, tmp, clip):
 
 def check_modifier_fallback(ipc, env, tmp, clip):
     shim = tmp / "video-export.so"
-    subprocess.run(["cc", "-shared", "-fPIC", "-o", shim, ROOT / "tests/video_export.c", "-ldl"], check=True)
+    flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "libva"], text=True))
+    dl = ["-ldl"] if sys.platform.startswith("linux") else []
+    subprocess.run(["cc", *flags, "-shared", "-fPIC", "-o", shim, ROOT / "tests/video_export.c", *dl], check=True)
     with playing(ipc, dict(env, LD_PRELOAD=str(shim)), tmp, PLAYER, [clip]) as (win, _, log):
         wait(lambda: "modifier 0xffffffffffffffff" in log.read_text(), "unadvertised layout")
         ipc.focus_window(win)

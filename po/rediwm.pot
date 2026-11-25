@@ -3432,6 +3432,10 @@ msgstr ""
 msgid "Full name"
 msgstr ""
 
+#: src/video/osd.zig
+msgid "Fullscreen"
+msgstr ""
+
 #: src/control_center/sections/display.zig
 msgid "Fullscreen games with VSync off show new frames at once; the picture may tear"
 msgstr ""
@@ -4076,6 +4080,10 @@ msgstr ""
 msgid "Load"
 msgstr ""
 
+#: src/video/subtitle_menu.zig
+msgid "Load subtitle file…"
+msgstr ""
+
 #: src/control_center/sections/firewall_cards.zig
 msgid "Load the firewall before the network comes up."
 msgstr ""
@@ -4524,6 +4532,10 @@ msgstr ""
 msgid "Music"
 msgstr ""
 
+#: src/video/osd.zig
+msgid "Mute"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Mute or unmute system audio."
 msgstr ""
@@ -4654,6 +4666,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "New SSH key"
+msgstr ""
+
+#: src/editor/app.zig
+msgid "New Window"
 msgstr ""
 
 #: src/files/app_git_sidebar.zig
@@ -5151,6 +5167,10 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "Open a browser to sign in"
+msgstr ""
+
+#: src/video/player.zig
+msgid "Open a video before loading subtitles"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -7087,6 +7107,10 @@ msgstr ""
 msgid "Strong"
 msgstr ""
 
+#: src/video/osd.zig
+msgid "Subtitles"
+msgstr ""
+
 #: src/video/player.zig
 msgid "Subtitles off"
 msgstr ""
@@ -8473,10 +8497,6 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "Wireless connections"
-msgstr ""
-
-#: src/editor/app.zig
-msgid "New Window"
 msgstr ""
 
 #: src/editor/app.zig

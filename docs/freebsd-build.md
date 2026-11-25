@@ -7,15 +7,13 @@ features work is in the plan.
 
 ## Packages
 
-These are the packages' names. Each was checked against the FreeBSD 15.1
-`latest` catalogue on 2026-11-06 and exists. To check again (`pkg search -e`
-compares the name with its version, so it finds nothing here; `pkg rquery`
-compares the name alone):
+Check these package names against the FreeBSD 15.1 catalogue with `pkg rquery`,
+which compares the name alone:
 
     for p in wayland wayland-protocols wlroots020 libxkbcommon cups pixman \
         freetype2 harfbuzz fontconfig cairo pango librsvg2-rust gdk-pixbuf2 \
         glib webp libarchive libinput libudev-devd png jpeg-turbo pulseaudio \
-        pipewire libxcb poppler-glib readline libglvnd mesa-dri libdrm \
+        pipewire libxcb poppler-glib readline libglvnd mesa-dri libdrm ffmpeg libva \
         pkgconf python3 py312-pillow seatd dbus xwayland dejavu; do
         [ -n "$(pkg rquery -x '%n' "^$p\$")" ] && echo "ok $p" || echo "MISSING $p"
     done
@@ -33,6 +31,10 @@ What each is for:
   `fontconfig`, `librsvg2-rust`, `gdk-pixbuf2`, `glib` (gio and gobject),
   `png`, `jpeg-turbo`, `webp`, `libarchive`, `poppler-glib` (the PDF viewer),
   `readline` (the Files terminal's shell hook).
+* The **video player** uses headers and shared libraries from `ffmpeg`,
+  `libva` and `libdrm`. A compatible VAAPI driver enables hardware decoding.
+  Software playback uses Wayland shared memory. The Files app supplies the
+  player's Open File dialog.
 * **Services the compositor talks to:** `cups`, `pulseaudio` (libpulse),
   `pipewire` (the bass boost; it is linked, not optional). PAM is the base
   system's OpenPAM, `libutil` and `libm` are base too.
@@ -56,6 +58,23 @@ Off by default on FreeBSD: the transfers helper (`-Dtransfers`) and
 
 ## Tests
 
+This command builds the player and its chooser and runs the video unit tests.
+
+    zig build video files test-video
+
+On a machine with a working RediWM render node, `zig build test-video-integration`
+also exercises empty launch, chooser and drag-and-drop, subtitle timing, software
+decoding and the available hardware path. The audio fixture uses a paced null
+device. On FreeBSD, the idle check reads the player's thread counters with `ps -H`.
+
+On 2026-11-25 the player passed its five unit tests in Debug and ReleaseSafe
+on FreeBSD 15.1-RELEASE amd64 with Zig 0.17. Both builds also passed playback
+checks in a headless Sway session. These covered empty launch, chooser selection
+and cancellation, dropping a movie and an SRT file, subtitle pixels across
+seeks, and OSS audio through `snd_dummy`. Idle player threads recorded zero
+context switches.
+The guest had no DRM render node for VAAPI or the RediWM compositor.
+
 `zig build test` runs the unit tests and the other `test-*` steps single
 areas. On FreeBSD 15.1 without a GPU (2026-11-06) these pass: `test`,
 `test-monitor`, `test-platform`, `test-polkit`, `test-dbus` (its part that
@@ -74,10 +93,10 @@ without one with `No rediwm-*.sock found`: `test-power`,
 `test-printers`, `test-files-terminal` and the `tests/*.py` suites. The
 Python tests import PIL (`py312-pillow`), and some compile C clients with
 plain `cc`: export `CPATH=/usr/local/include LIBRARY_PATH=/usr/local/lib`.
-A qemu guest has a render node only with a virtio GPU:
-`-device virtio-vga-gl -display sdl,gl=on`, and `virtio_gpu_drm` in
-`kld_list`. With that, the headless compositor runs GLES2 on
-`/dev/dri/renderD128` (Mesa's virgl driver).
+In a QEMU guest, check for a guest `/dev/dri/renderD*` before running these
+suites. A VirtIO framebuffer can display the console without providing a DRM
+render node. Hardware video qualification also needs a working VAAPI driver
+for the compositor's render device.
 
 Run the suites one at a time, each in its own scratch `HOME` and `XDG_*`
 directories, and do not wrap them in `timeout(1)`: on FreeBSD it can keep

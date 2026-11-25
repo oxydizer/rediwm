@@ -20,7 +20,7 @@ const a = std.heap.c_allocator;
 const Pool = @import("software.zig").Pool;
 
 pub const Options = struct {
-    path: [:0]const u8,
+    path: ?[:0]const u8 = null,
     start: f64 = 0,
     paused: bool = false,
     hardware: bool = true,
@@ -38,28 +38,19 @@ pub fn run(init: std.process.Init, options: Options) !void {
     var window: Window = .{ .display = display };
     try window.connect();
 
-    var node_buf: [64]u8 = undefined;
-    var device: ?hw.Device = null;
-    if (options.hardware and window.dmabuf != null) {
-        if (window.feedback.main_device) |dev| {
-            if (hw.renderNode(dev, &node_buf)) |node| device = hw.Device.open(node);
-        }
-    }
-    defer if (device) |*d| d.deinit();
-    const media = try load(options.path);
-    const target = clampSeek(media, std.math.lossyCast(i64, options.start * std.time.ns_per_s));
-    const pipe = Pipeline.init(media, if (device) |*d| d else null, target, options.paused, null) catch |err| {
-        media.deinit();
-        a.destroy(media);
-        return err;
+    var player: Player = .{
+        .window = &window,
+        .io = init.io,
+        .watch = &watch,
+        .hardware = options.hardware,
+        .paused = options.paused,
+        .clock = .{ .media = std.math.lossyCast(i64, options.start * std.time.ns_per_s) },
     };
-    var player: Player = .{ .window = &window, .pipe = pipe, .paused = options.paused, .clock = .{ .media = target }, .io = init.io, .watch = &watch };
     defer player.deinit();
-    player.path = try a.dupe(u8, options.path);
-    window.setVideoSize(media.width, media.height);
-    try window.map(std.fs.path.basename(options.path), "rediwm-video");
+    if (options.path) |path| try player.loadMovie(path);
+    window.osd.empty = player.pipe == null;
+    try window.map(if (options.path) |path| std.fs.path.basename(path) else tr("Videos"), "rediwm-video");
     defer window.deinit();
-    if (device) |*d| player.cache = .{ .display = display, .dmabuf = window.dmabuf.?, .va = d.display };
     try player.loop();
 }
 
@@ -76,7 +67,9 @@ fn clampSeek(media: *const Media, target: i64) i64 {
 
 const Player = struct {
     window: *Window,
-    pipe: *Pipeline,
+    pipe: ?*Pipeline = null,
+    hardware: bool,
+    device: ?hw.Device = null,
     cache: ?Cache = null,
     pool: Pool = .{},
     // A shm release may be needed before this frame can be committed.
@@ -101,22 +94,37 @@ const Player = struct {
     scrub_playing: ?bool = null,
 
     fn closeMovie(self: *Player) void {
+        const pipe = self.pipe orelse return;
         if (self.subtitles) |*track| track.deinit();
         self.subtitles = null;
         self.show_subtitles = false;
         self.stopAudio();
-        const media = self.pipe.media;
-        self.pipe.deinit();
+        const media = pipe.media;
+        pipe.deinit();
+        self.pipe = null;
         media.deinit();
         a.destroy(media);
         if (self.pending) |pic| pic.free();
         self.pending = null;
+        a.free(self.path);
+        self.path = "";
     }
 
-    fn openMovie(self: *Player, path: [:0]const u8) !void {
-        const sys = @import("c");
-        var st: sys.struct_stat = undefined;
-        if (sys.stat(path.ptr, &st) < 0 or (st.st_mode & sys.S_IFMT) != sys.S_IFREG) return error.InvalidFile;
+    fn decodeDevice(self: *Player) ?*const hw.Device {
+        // Keep a software fallback in effect across movie changes.
+        if (self.pipe) |pipe| return pipe.device;
+        if (!self.hardware) return null;
+        if (self.device) |*device| return device;
+        const dmabuf = self.window.dmabuf orelse return null;
+        const dev = self.window.feedback.main_device orelse return null;
+        var buf: [64]u8 = undefined;
+        const node = hw.renderNode(dev, &buf) orelse return null;
+        self.device = hw.Device.open(node) orelse return null;
+        self.cache = .{ .display = self.window.display, .dmabuf = dmabuf, .va = self.device.?.display };
+        return &self.device.?;
+    }
+
+    fn loadMovie(self: *Player, path: [:0]const u8) !void {
         const owned = try a.dupe(u8, path);
         errdefer a.free(owned);
         const media = try load(path);
@@ -129,13 +137,14 @@ const Player = struct {
             self.clock.set(self.position(t), t, true);
             self.stopAudio();
         }
-        const pipe = try Pipeline.init(media, self.pipe.device, 0, false, self.pipe);
+        const target = if (self.pipe == null) clampSeek(media, self.clock.media) else 0;
+        const paused = self.pipe == null and self.paused;
+        const pipe = try Pipeline.init(media, self.decodeDevice(), target, paused, self.pipe);
         self.closeMovie();
         self.pipe = pipe;
-        a.free(self.path);
         self.path = owned;
-        self.clock = .{};
-        self.paused = false;
+        self.clock = .{ .media = target };
+        self.paused = paused;
         self.started = false;
         self.ended = false;
         self.audio_finished = false;
@@ -144,9 +153,16 @@ const Player = struct {
         self.stepping = false;
         self.scrub_playing = null;
         self.gain = null;
+        self.window.setVideoSize(media.width, media.height);
+    }
+
+    fn openMovie(self: *Player, path: [:0]const u8) !void {
+        const sys = @import("c");
+        var st: sys.struct_stat = undefined;
+        if (sys.stat(path.ptr, &st) < 0 or (st.st_mode & sys.S_IFMT) != sys.S_IFREG) return error.InvalidFile;
+        try self.loadMovie(path);
         self.window.osd.movieChanged();
         self.window.setTitle(std.fs.path.basename(path));
-        self.window.setVideoSize(media.width, media.height);
         if (self.window.configured) self.window.layout();
     }
 
@@ -180,6 +196,10 @@ const Player = struct {
 
     fn openFile(self: *Player, path: [:0]const u8, kind: Chooser.Kind) bool {
         if (kind == .subtitles or std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".srt")) {
+            if (self.pipe == null) {
+                self.window.osd.message(tr("Open a video before loading subtitles"));
+                return false;
+            }
             self.loadSubtitles(path) catch {
                 self.window.osd.message(tr("Could not load subtitles"));
                 return false;
@@ -195,8 +215,13 @@ const Player = struct {
         const track = try Track.load(self.io, path);
         if (self.subtitles) |*old| old.deinit();
         self.subtitles = track;
-        self.show_subtitles = true;
-        self.window.osd.message(tr("Subtitles on"));
+        self.setSubtitles(true);
+    }
+
+    fn setSubtitles(self: *Player, enabled: bool) void {
+        self.show_subtitles = enabled;
+        self.window.osd.setSubtitlesEnabled(enabled);
+        self.window.osd.message(if (enabled) tr("Subtitles on") else tr("Subtitles off"));
     }
 
     fn openChooser(self: *Player, kind: Chooser.Kind) void {
@@ -205,19 +230,20 @@ const Player = struct {
         if (self.chooser == null) self.window.osd.message(tr("Could not open the file chooser."));
     }
 
-    fn toggleSubtitles(self: *Player) void {
-        if (self.subtitles != null) {
-            self.show_subtitles = !self.show_subtitles;
-            self.window.osd.message(if (self.show_subtitles) tr("Subtitles on") else tr("Subtitles off"));
-            return;
-        }
+    fn discoverSubtitles(self: *Player) !void {
+        if (self.subtitles != null) return;
         const ext = std.fs.path.extension(self.path);
-        const sidecar = std.fmt.allocPrintSentinel(a, "{s}.srt", .{self.path[0 .. self.path.len - ext.len]}, 0) catch return;
+        const sidecar = try std.fmt.allocPrintSentinel(a, "{s}.srt", .{self.path[0 .. self.path.len - ext.len]}, 0);
         defer a.free(sidecar);
-        self.loadSubtitles(sidecar) catch |err| switch (err) {
+        self.subtitles = try Track.load(self.io, sidecar);
+    }
+
+    fn toggleSubtitles(self: *Player) void {
+        self.discoverSubtitles() catch |err| return switch (err) {
             error.FileNotFound => self.openChooser(.subtitles),
             else => self.window.osd.message(tr("Could not load subtitles")),
         };
+        self.setSubtitles(!self.show_subtitles);
     }
 
     fn drawSubtitles(self: *Player, pos: i64, t: i64) !?i64 {
@@ -233,29 +259,30 @@ const Player = struct {
                 if (track.next) |next| deadline = t +| (next -| time);
             }
         }
-        try w.subtitles.draw(w.root, text, w.osd.density, if (w.osd.visible) w.osd.y else null);
+        try w.subtitles.draw(w.root, text, w.osd.density, if (w.osd.visible) w.osd.top() else null);
         return deadline;
     }
 
     fn deinit(self: *Player) void {
         if (self.chooser) |*dlg| dlg.deinit(self.io);
         self.closeMovie();
-        a.free(self.path);
         self.pool.deinit();
         if (self.cache) |*cache| cache.deinit();
+        if (self.device) |*device| device.deinit();
         std.log.info("dropped {d} late video frames", .{self.dropped});
     }
 
     fn position(self: *Player, t: i64) i64 {
         if (self.audio_running) {
-            const pts = self.pipe.output.?.rv_audio_clock();
-            if (pts != std.math.minInt(i64)) return @max(self.pipe.target, pts);
+            const pipe = self.pipe.?;
+            const pts = pipe.output.?.rv_audio_clock();
+            if (pts != std.math.minInt(i64)) return @max(pipe.target, pts);
         }
         return self.clock.position(t);
     }
 
     fn stopAudio(self: *Player) void {
-        if (self.audio_running) self.pipe.output.?.rv_audio_stop();
+        if (self.audio_running) self.pipe.?.output.?.rv_audio_stop();
         self.audio_running = false;
     }
 
@@ -267,8 +294,9 @@ const Player = struct {
         self.stopAudio();
         if (self.pending) |pic| pic.free();
         self.pending = null;
-        const target = clampSeek(self.pipe.media, pos);
-        self.pipe.seek(target, software, self.paused, mode);
+        const pipe = self.pipe.?;
+        const target = clampSeek(pipe.media, pos);
+        pipe.seek(target, software, self.paused, mode);
         self.clock.set(target, clocks.now(), false);
         self.preview = true;
         self.started = false;
@@ -280,19 +308,34 @@ const Player = struct {
         const input = &self.window.osd;
         if (input.open) {
             input.open = false;
-            self.openChooser(.video_or_subtitles);
-        }
-        if (input.toggle_subtitles) {
-            input.toggle_subtitles = false;
-            self.toggleSubtitles();
+            self.openChooser(if (self.pipe == null) .video else .video_or_subtitles);
         }
         if (input.fullscreen) {
             input.fullscreen = false;
             if (self.window.input.fullscreen) self.window.toplevel.unsetFullscreen() else self.window.toplevel.setFullscreen(null);
         }
+        const pipe = self.pipe orelse return;
+        if (input.toggle_subtitles) {
+            input.toggle_subtitles = false;
+            self.toggleSubtitles();
+        }
+        if (input.subtitle_action) |action| {
+            input.subtitle_action = null;
+            switch (action) {
+                .menu => {
+                    // Opening the menu can discover a matching file without
+                    // enabling captions until the viewer selects it.
+                    self.discoverSubtitles() catch {};
+                    input.showMenu(if (self.subtitles) |track| track.name else null, self.show_subtitles);
+                },
+                .off => self.setSubtitles(false),
+                .track => if (self.subtitles != null) self.setSubtitles(true),
+                .load => self.openChooser(.subtitles),
+            }
+        }
         const gain: u32 = @intCast(if (input.muted) @as(i32, 0) else input.volume);
         if (gain != self.gain) {
-            if (self.pipe.output) |out| out.rv_audio_volume(gain);
+            if (pipe.output) |out| out.rv_audio_volume(gain);
             self.gain = gain;
             input.dirty = true;
         }
@@ -332,7 +375,7 @@ const Player = struct {
         self.paused = !self.paused;
         // A paused seek primes only video. Otherwise an audio lead longer
         // than both bounded queues could block delivery of the still frame.
-        if (!self.paused and self.pipe.preview_only and self.pipe.output != null) {
+        if (!self.paused and pipe.preview_only and pipe.output != null) {
             self.seek(pos, false);
             return;
         }
@@ -341,7 +384,7 @@ const Player = struct {
     }
 
     fn sliderPosition(self: *Player, value: f32) i64 {
-        return std.math.lossyCast(i64, @as(f64, @floatFromInt(self.pipe.media.duration)) * value);
+        return std.math.lossyCast(i64, @as(f64, @floatFromInt(self.pipe.?.media.duration)) * value);
     }
 
     fn loop(self: *Player) !void {
@@ -358,12 +401,14 @@ const Player = struct {
             const t = clocks.now();
             var deadline = w.osd.tick(t);
             self.controls();
-            deadline = earlier(deadline, try self.advance());
             if (w.configured) {
-                const now = clocks.now();
-                const pos = self.position(now);
-                deadline = earlier(deadline, try self.drawSubtitles(pos, now));
-                deadline = earlier(deadline, try w.osd.draw(pos, self.pipe.media.duration, self.paused or self.ended));
+                if (self.pipe) |pipe| {
+                    deadline = earlier(deadline, try self.advance(pipe));
+                    const now = clocks.now();
+                    const pos = self.position(now);
+                    deadline = earlier(deadline, try self.drawSubtitles(pos, now));
+                    deadline = earlier(deadline, try w.osd.draw(pos, pipe.media.duration, self.paused or self.ended));
+                } else deadline = earlier(deadline, try w.osd.draw(0, 0, true));
             }
             w.input.syncCursor();
             w.playing(self.started and !self.preview and !self.paused and !self.ended);
@@ -388,7 +433,7 @@ const Player = struct {
             var fds = [_]std.posix.pollfd{
                 .{ .fd = display.getFd(), .events = std.posix.POLL.IN | @as(i16, if (flushed == .AGAIN) std.posix.POLL.OUT else 0), .revents = 0 },
                 .{ .fd = timer, .events = std.posix.POLL.IN, .revents = 0 },
-                .{ .fd = self.pipe.main_fd, .events = std.posix.POLL.IN, .revents = 0 },
+                .{ .fd = if (self.pipe) |pipe| pipe.main_fd else -1, .events = std.posix.POLL.IN, .revents = 0 },
                 .{ .fd = self.watch.fd(), .events = std.posix.POLL.IN, .revents = 0 },
                 .{ .fd = if (self.chooser) |dlg| dlg.handle.fd else -1, .events = std.posix.POLL.IN, .revents = 0 },
                 .{ .fd = w.drop.fd, .events = std.posix.POLL.IN, .revents = 0 },
@@ -405,16 +450,14 @@ const Player = struct {
                 pipeline.drain(timer);
                 armed = null;
             }
-            if (fds[2].revents != 0) pipeline.drain(self.pipe.main_fd);
+            if (fds[2].revents != 0) pipeline.drain(fds[2].fd);
             if (fds[3].revents != 0 and self.watch.poll() and w.configured) w.layout();
             if (fds[4].revents != 0) self.readChoice();
             if (fds[5].revents != 0) self.readDrop();
         }
     }
 
-    fn advance(self: *Player) !?i64 {
-        if (!self.window.configured) return null;
-        const pipe = self.pipe;
+    fn advance(self: *Player, pipe: *Pipeline) !?i64 {
         const t = clocks.now();
         pipe.lock();
         const err = pipe.failure;

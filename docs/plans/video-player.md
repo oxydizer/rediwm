@@ -249,8 +249,9 @@ node and the audio socket's traffic after setup.
    The bar unmaps after three seconds. In fullscreen the cursor hides with
    it. Click pauses, double-click toggles fullscreen, and comma/period step
    through decoded pictures while paused. The video advertises its content
-   type and holds an idle inhibitor during mapped playback. Ctrl+O, launching
-   without a filename, and URI-list drops use local files. Opening another
+   type and holds an idle inhibitor during mapped playback. Launching Videos
+   without a filename opens an idle player window with an Open File button.
+   Ctrl+O and URI-list drops open local files in that window. Opening another
    movie keeps the window and volume. Track menus belong to phase 4.
 4. **Tracks and subtitles (partial).** External SubRip is implemented.
    During playback, open an `.srt` with Ctrl+O or drop it onto the window.

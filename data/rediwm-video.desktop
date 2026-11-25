@@ -7,4 +7,3 @@ Icon=video-x-generic
 Terminal=false
 Categories=AudioVideo;Video;Player;
 MimeType=video/mp4;video/x-m4v;video/matroska;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;video/mpeg;video/mp2t;video/ogg;video/x-ogm+ogg;video/x-flv;video/3gpp;video/3gpp2;video/x-ms-wmv;
-NoDisplay=true
