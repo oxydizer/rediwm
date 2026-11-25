@@ -197,4 +197,20 @@ pub fn paintContent(cc: *ControlCenter) void {
     panel_present.addPaint(elapsed_ns);
     cc.painted_scale = scale;
     cc.dirty = false;
+    if (cc.idle_timer) |timer| timer.timerUpdate(idle_release_ms) catch {};
+}
+
+/// How long Settings keeps its repaint caches after its last paint.
+const idle_release_ms = 15_000;
+
+/// Settings left open keeps three window-sized images: the background and
+/// last complete image `Background` repairs from, and the pooled buffer last
+/// shown (about 27 MB at 1076x830 and scale 1.6, 2026-11-25). The node's
+/// texture keeps showing the window; an idle window gives them back, and the
+/// next change paints it whole once.
+pub fn releaseIdlePixels(cc: *ControlCenter) void {
+    if (cc.dirty) return;
+    cc.background.deinit(gpa);
+    // Only buffers wlroots has let go of are pooled.
+    PanelBuffer.drainPool();
 }

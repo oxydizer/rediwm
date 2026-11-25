@@ -9,7 +9,11 @@ Desktop keyboard focus and compositor drop targets are in the root
 * One retained canvas published as 240-logical-px tiles (`embedded.zig`); only
   damaged tiles get new buffers. Rasterize the selection band once per paint;
   repair clips snap outward to device pixels. Labels/icons are rasterized at
-  exact scale.
+  exact scale. The canvas is calloc'd on the first paint and freed 3 s after the
+  last (`canvas_idle_ms`); each tile knows whether the canvas holds it
+  (`valid`), and damage reaching a stale tile repaints it whole. A tile with no
+  visible pixel keeps its node and texture at opacity 0: not drawn, still the
+  desktop for picks, updated in place when it shows something again.
   Selection colours come from `Theme.desktopSelectionColor`,
   `desktopSelectionBorder` and `desktopSelectedColor`: explicit desktop tokens
   win, otherwise they follow the shell accent, including on live reload.

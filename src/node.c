@@ -19,7 +19,9 @@ static void buffer_set_wait_timeline(struct rediwm_buffer *b, struct wlr_drm_syn
 // moved, stacked or destroyed), which the owner treats as a change of everything.
 static void report(struct rediwm_node *node, bool structural) {
   struct rediwm_scene *scene = node->scene;
-  if (scene && scene->changed) scene->changed(scene->changed_data, node, structural);
+  if (!scene) return;
+  scene->serial++;
+  if (scene->changed) scene->changed(scene->changed_data, node, structural);
 }
 static void changed(struct rediwm_node *node) { report(node, false); }
 static void structure(struct rediwm_node *node) { report(node, true); }
@@ -394,6 +396,13 @@ void rediwm_buffer_set_sector_rect(struct rediwm_buffer *b, const float rect[4])
       next[2] == b->sector_rect[2] && next[3] == b->sector_rect[3]) return;
   for (int i = 0; i < 4; i++) b->sector_rect[i] = next[i];
   changed(&b->node);
+}
+
+// Not in 0.20's public headers, but exported (projection_present.c uses it too).
+struct wlr_client_buffer *wlr_client_buffer_create(struct wlr_buffer *buffer, struct wlr_renderer *renderer);
+struct wlr_buffer *rediwm_texture_buffer_create(struct wlr_renderer *renderer, struct wlr_buffer *source) {
+  struct wlr_client_buffer *client = wlr_client_buffer_create(source, renderer);
+  return client ? &client->base : NULL;
 }
 
 void rediwm_buffer_set_opaque_region(struct rediwm_buffer *b, const pixman_region32_t *region) {

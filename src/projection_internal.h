@@ -89,6 +89,11 @@ struct group {
   struct wl_listener destroy;
   struct wlr_addon source_lookup;
   bool seen;
+  // Covers every leaf of the group a pick can choose, as present() last snapped
+  // them, so a pick passes over a window the point is outside of. Unknown
+  // (always tested) until the group is first presented.
+  struct rediwm_snap pick_bounds;
+  bool has_pick_bounds;
 };
 // A list link that is always valid to remove: alone, or in a live list.
 static inline void detach(struct wl_list *link) {

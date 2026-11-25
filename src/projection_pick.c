@@ -11,6 +11,10 @@ static bool pick_leaf(struct rediwm_projection *p, const struct group *only, dou
   for (struct wl_list *gl = p->paint.prev; gl != &p->paint; gl = gl->prev) {
     struct group *g = wl_container_of(gl, g, paint);
     if (!g->enabled || (only && g != only)) continue;
+    if (g->has_pick_bounds && (g->pick_bounds.width <= 0 || px < g->pick_bounds.x ||
+        px >= g->pick_bounds.x + g->pick_bounds.width || py < g->pick_bounds.y ||
+        py >= g->pick_bounds.y + g->pick_bounds.height))
+      continue;
     for (struct wl_list *ll = g->items.prev; ll != &g->items; ll = ll->prev) {
       struct leaf *l = wl_container_of(ll, l, paint);
       const struct rediwm_item *item = &l->item;

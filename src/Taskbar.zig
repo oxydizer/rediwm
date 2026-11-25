@@ -231,6 +231,7 @@ pub const Color = taskbar_types.Color;
 pub const Fill = taskbar_types.Fill;
 pub const TileStyle = taskbar_types.TileStyle;
 pub const BarBuffer = taskbar_types.BarBuffer;
+pub const TitleBackground = taskbar_types.TitleBackground;
 pub const ChipPaint = taskbar_types.ChipPaint;
 pub const ChipFlat = taskbar_types.ChipFlat;
 
@@ -332,8 +333,8 @@ pub fn destroy(bar: *Taskbar) void {
     if (bar.reveal_timer) |timer| timer.remove();
     if (bar.clock_locale) |locale| c_time.freelocale(locale);
     if (bar.start_logo) |e| bar.server.iconRelease(e.id);
-    for (bar.chips.items) |chip| {
-        if (chip.raster) |raster| raster.base.drop();
+    for (bar.chips.items) |*chip| {
+        chip.releaseRasters();
         if (chip.icon) |e| bar.server.iconRelease(e.id);
     }
     bar.chips.deinit(gpa);

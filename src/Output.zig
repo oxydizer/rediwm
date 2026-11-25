@@ -288,7 +288,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     server.output_layout.getBox(wlr_output, &output.cached_box);
 
     if (server.wallpaper) |image| {
-        output.wallpaper = server.background_tree.createSceneBuffer(&image.base) catch |err| blk: {
+        output.wallpaper = server.background_tree.createSceneBuffer(image.buffer) catch |err| blk: {
             log.err("Output.create: could not create wallpaper node: {}", .{err});
             break :blk null;
         };

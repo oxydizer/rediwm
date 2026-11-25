@@ -6,7 +6,9 @@ Settings is an ordinary window with a compositor-drawn body (`Backend.shell`).
 helpers (and `panel.ControlCenter`); `sections/` one file per page.
 
 * The body paints into `scene_tree` at `render_scale` and presents with
-  `presentOwned`.
+  `presentOwned`. 15 s after its last paint, `releaseIdlePixels` frees the
+  `Background` repair images and the panel buffer pool (about 27 MB at a
+  1076x830 window and scale 1.6); the next change paints the body whole.
 * No wl_surface, so focus is "first in `world.toplevels`, activated, no seat
   focus, desktop unfocused" (`hasKeyboardFocus`). `World.focusSurface`
   deactivates a previous `.shell` window and calls `Desktop.yieldKeyboard`;

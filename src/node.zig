@@ -241,6 +241,10 @@ pub const Buffer = extern struct {
     pub const setSectorRect = rediwm_buffer_set_sector_rect;
     extern fn rediwm_buffer_set_opaque_region(buffer: *Buffer, region: ?*const pixman.Region32) void;
     pub const setOpaqueRegion = rediwm_buffer_set_opaque_region;
+    extern fn rediwm_texture_buffer_create(renderer: *wlr.Renderer, source: *wlr.Buffer) ?*wlr.Buffer;
+    /// `source` uploaded once into a texture that nodes share (node.h); `source`
+    /// may be dropped right after. Carries one lock.
+    pub const textureBuffer = rediwm_texture_buffer_create;
 
     pub fn fromNode(node: *Node) *Buffer {
         return @fieldParentPtr("node", node);
@@ -264,6 +268,8 @@ pub const Scene = extern struct {
     outputs: ?*anyopaque,
     /// A client surface committed with frame callbacks waiting (node.h).
     frame_callbacks: ?*const fn (output: *wlr.Output) callconv(.c) void,
+    /// Bumped by every reported change (node.h).
+    serial: u64,
 
     extern fn rediwm_scene_create(changed: ?*const fn (?*anyopaque, ?*Node, bool) callconv(.c) void, data: ?*anyopaque) ?*Scene;
     pub fn create() !*Scene {

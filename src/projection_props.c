@@ -41,6 +41,39 @@ static bool set_tree_scale(struct wlr_addon_set *set, void **slot, double factor
   return true;
 }
 static bool finite_at_least_zero(double value) { return isfinite(value) && value >= 0; }
+// Field by field, not memcmp: zig cc lowers memcmp() != 0 to compiler-rt's bytewise
+// bcmp, and a window's clip and shadow (about 430 bytes each, mostly unused polygon
+// vertices) are applied on every client commit.
+static bool doubles_equal(const double *a, const double *b, int n) {
+  for (int i = 0; i < n; i++)
+    if (a[i] != b[i]) return false;
+  return true;
+}
+static bool floats_equal(const float *a, const float *b, int n) {
+  for (int i = 0; i < n; i++)
+    if (a[i] != b[i]) return false;
+  return true;
+}
+static bool polygons_equal(const double a[][2], const double b[][2], int count) {
+  return doubles_equal(&a[0][0], &b[0][0], 2 * count);
+}
+static bool clip_spec_equal(const struct rediwm_clip_spec *a, const struct rediwm_clip_spec *b) {
+  return a->width == b->width && a->height == b->height && a->poly_count == b->poly_count &&
+      doubles_equal(a->radii, b->radii, 4) && a->border == b->border &&
+      floats_equal(a->border_color, b->border_color, 4) && a->glow_x == b->glow_x &&
+      a->glow_y == b->glow_y && a->glow_radius == b->glow_radius && a->glow_depth == b->glow_depth &&
+      floats_equal(a->glow_color, b->glow_color, 4) && polygons_equal(a->poly, b->poly, a->poly_count) &&
+      doubles_equal(a->sector.center, b->sector.center, 2) && doubles_equal(a->sector.radii, b->sector.radii, 2) &&
+      doubles_equal(a->sector.axis, b->sector.axis, 2) &&
+      doubles_equal(a->sector.half_angle, b->sector.half_angle, 2) &&
+      a->sector_texture_height == b->sector_texture_height;
+}
+static bool shadow_spec_equal(const struct rediwm_shadow_spec *a, const struct rediwm_shadow_spec *b) {
+  return a->width == b->width && a->height == b->height && a->poly_count == b->poly_count &&
+      doubles_equal(a->radii, b->radii, 4) && a->offset_x == b->offset_x && a->offset_y == b->offset_y &&
+      a->softness == b->softness && floats_equal(a->color, b->color, 4) &&
+      polygons_equal(a->poly, b->poly, a->poly_count);
+}
 // 0 is no polygon. Otherwise 3 to REDIWM_POLY_MAX finite vertices inside the box,
 // none the same as the next (a zero-length edge has no direction).
 static bool valid_polygon(const double v[][2], int count, int width, int height) {
@@ -75,7 +108,7 @@ static bool set_tree_clip(struct wlr_addon_set *set, void **slot,
     return false;
   struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
-  if (!props->has_clip || memcmp(&props->clip, spec, sizeof(*spec))) props_changed = true;
+  if (!props->has_clip || !clip_spec_equal(&props->clip, spec)) props_changed = true;
   props->clip = *spec;
   props->has_clip = true;
   return true;
@@ -96,7 +129,7 @@ static bool set_tree_shadow(struct wlr_addon_set *set, void **slot,
     if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->color[i])) return false;
   struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
-  if (!props->has_shadow || memcmp(&props->shadow, spec, sizeof(*spec))) props_changed = true;
+  if (!props->has_shadow || !shadow_spec_equal(&props->shadow, spec)) props_changed = true;
   props->shadow = *spec;
   props->has_shadow = true;
   return true;

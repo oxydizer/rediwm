@@ -219,7 +219,7 @@ fn destroyRenderer(server: *Server) void {
     server.allocator.destroy();
     if (server.gpu_timer) |timer| timer.destroy();
     server.renderer.destroy();
-    if (server.wallpaper) |image| image.base.drop();
+    if (server.wallpaper) |image| image.release();
     server.config.deinit();
     server.wl_server.destroy();
     log.info("compositor session teardown complete", .{});

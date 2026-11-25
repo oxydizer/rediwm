@@ -30,6 +30,7 @@ pub fn main(init: std.process.Init) void {
         log.err("refusing to run as root; start rediwm as a regular user", .{});
         std.process.exit(1);
     }
+    @import("memory").tuneForLongRunning();
 
     // Xwayland and other helper clients communicate over sockets. If one
     // dies between readiness and event dispatch, a write must report EPIPE

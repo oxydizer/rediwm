@@ -135,6 +135,9 @@ struct rediwm_scene {
   // A client surface shown on `output` committed with frame callbacks waiting. NULL
   // schedules a frame, which delivers them; the owner may deliver them without one.
   void (*frame_callbacks)(struct wlr_output *output);
+  // Bumped by every change reported through `changed`: an unchanged value means
+  // nothing the tree shows has changed (input skips re-syncing presentation).
+  uint64_t serial;
 };
 
 static inline struct rediwm_tree *rediwm_tree_from_node(struct rediwm_node *node) {
@@ -215,6 +218,11 @@ void rediwm_buffer_set_transform(struct rediwm_buffer *, enum wl_output_transfor
 void rediwm_buffer_set_sector_rect(struct rediwm_buffer *, const float rect[4]);
 // A copy of the region, in buffer-local units; NULL clears it.
 void rediwm_buffer_set_opaque_region(struct rediwm_buffer *, const pixman_region32_t *);
+// `source` uploaded into a texture behind a buffer that holds no pixels of its
+// own: nodes showing it share the texture, and `source` may go right away. The
+// result carries one lock and is freed when the last is dropped; NULL when the
+// upload failed.
+struct wlr_buffer *rediwm_texture_buffer_create(struct wlr_renderer *, struct wlr_buffer *source);
 // The size the buffer node is shown at when nothing sets one: the destination, else
 // the buffer's own size with the transform applied.
 void rediwm_buffer_size(const struct rediwm_buffer *, int *width, int *height);

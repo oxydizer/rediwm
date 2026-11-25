@@ -82,8 +82,8 @@ struct rediwm_clip_spec {
   int width, height;
   // 0 for the rounded rectangle; otherwise 3 to REDIWM_POLY_MAX vertices of
   // `poly` (source units, from the tree's origin, inside the box) are the shape
-  // and `radii` is ignored. `reserved` keeps the struct free of padding, which
-  // it is compared byte for byte.
+  // and `radii` is ignored. `reserved` keeps the struct free of padding (the Zig
+  // mirror lays it out the same way); setters compare it field by field.
   int poly_count, reserved;
   // Top-left, top-right, bottom-right, bottom-left.
   double radii[4];

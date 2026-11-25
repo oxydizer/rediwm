@@ -35,7 +35,8 @@ its methods in a lowercase directory: `Toplevel.zig` (`toplevel/`),
 `Keyboard.zig` (`keyboard/`). Other hosts keep them beside them under a
 prefix: `files/app.zig`, `pdf/app.zig`, `desktop/app.zig`, `images/app.zig`,
 `editor/app.zig` (`app_*.zig`); `files/Client.zig` and the `Client` in
-`editor/main.zig` and `pdf/main.zig` (`client_*.zig`);
+`editor/main.zig` and `pdf/main.zig` (`client_*.zig`); the `Desktop` in
+`desktop/embedded.zig` (`embedded_tiles.zig`);
 `control_center/ControlCenter.zig` (`tree`, `keys`, `relayout`, `paint.zig`);
 `start_menu/StartMenu.zig` (`menu_*.zig`); `session/lock.zig`, `power.zig`
 (`lock_*`, `power_*.zig`); `systemd.zig` (`systemd/`); `network/manager.zig`,
@@ -92,7 +93,10 @@ panel painting. The key rules:
   (groups) whose nodes changed, and nothing when no group and not the camera did:
   a change the node setters cannot see must call `Node.touch`, and a node whose
   geometry depends on another group's (a glass effect) is walked every sync. The
-  `-Ddamage-audit` build logs any item the gate left stale.
+  `-Ddamage-audit` build logs any item the gate left stale. Every reported change
+  bumps `Scene.serial`; hit tests skip `World.syncPresentation` while it and the
+  camera are unchanged (`syncPresentationForInput`), and each group keeps pick
+  bounds from its last present.
 * **The world has no second tree:** its source tree stays disabled. Pick with
   `rediwm_projection_node_at`, send callbacks through `Server.sendFrameDone`,
   and emit feedback/`output_sample` on source buffers. GLES may release
@@ -120,6 +124,9 @@ panel painting. The key rules:
   explicitly. Shaped programs are opt-in; without them windows are square.
 * Restore owned GL state, especially `GL_ARRAY_BUFFER`, before wlroots draws.
   Draw borders with their bodies; blend NONE only in the opaque, ring-free core.
+  The renderer's EGL context stays current once a pass has run
+  (`scene_pass_enter`): never unbind it, or every wlroots upload goes back to
+  bind, flush and unbind.
 * **Glass belongs to the output pass.** Attribute changes through projection
   damage events; only painted leaves emit them. Input-only nodes must not
   invalidate glass. Retained blurs and holds are per effect and output.
@@ -328,6 +335,11 @@ panel painting. The key rules:
   `MALLOC_PERTURB_`: `0xa5…`), leaks print at exit in the compositor log. Free
   process-lifetime caches in `main.start`'s defers; state workers read during
   shutdown comes from `std.heap.c_allocator`. Never mix allocators.
+  The compositor fixes glibc's mmap threshold at 1 MiB and trim at 4 MiB
+  (`memory.tuneForLongRunning`), so freed window-sized rasters go back to the
+  system; per-frame rasters stay below it. Window-sized caches that sit idle
+  are released on a deadline (desktop canvas, Settings' repaint images), and
+  the wallpaper is only a texture (`server/wallpaper.zig` `Wallpaper`).
 * Cairo `ARGB32` is premultiplied `0xAARRGGBB`, like our buffers. `png.zig`
   reads only 8-bpc non-interlaced truecolour(+alpha). Read
   `/sys/class/power_supply/*/uevent` only on uevents and the minute tick.

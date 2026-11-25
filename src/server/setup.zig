@@ -50,10 +50,14 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     const backend = wlr.Backend.autocreate(wl_server.getEventLoop(), &session) catch return error.BackendCreateFailed;
     errdefer backend.destroy();
 
+    // glvnd loads its EGL vendors at the renderer's first EGL call.
+    const egl_limit = @import("../gl_vendor.zig").limitForRenderer(io, backend.getDrmFd(), session != null);
     const renderer = wlr.Renderer.autocreate(backend) catch {
+        egl_limit.end();
         log.err("init: no renderer (GLES2 is required; with several GPUs pick one with WLR_RENDER_DRM_DEVICE=/dev/dri/renderD*)", .{});
         return error.RendererInitFailed;
     };
+    egl_limit.end();
     errdefer renderer.destroy();
     // The output pass is GLES2 only (docs/plans/scene-graph.md, renderer policy).
     // A machine without a GPU runs Mesa's llvmpipe: WLR_RENDERER_ALLOW_SOFTWARE=1.
@@ -329,11 +333,13 @@ fn initServices(server: *Server) CompositorError!void {
         };
     }
 
-    server.wallpaper = ImageBuffer.createSolid(1, 1, themeColorArgb(ui_theme.global.bg)) catch |err| blk: {
+    server.wallpaper = if (ImageBuffer.createSolid(1, 1, themeColorArgb(ui_theme.global.bg))) |image|
+        server_wallpaper.Wallpaper.fromImage(server, image)
+    else |err| blk: {
         log.warn("init: failed to create solid wallpaper: {}", .{err});
         break :blk null;
     };
-    errdefer if (server.wallpaper) |image| image.base.drop();
+    errdefer if (server.wallpaper) |image| image.release();
 
     const loop = server.wl_server.getEventLoop();
     server.catalog_wake_source = loop.addFd(*Server, catalog.wakeFd(), .{ .readable = true }, handleCatalogWake, server) catch |err| blk: {

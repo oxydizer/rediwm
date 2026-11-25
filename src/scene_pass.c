@@ -7,6 +7,12 @@
 // dim); scene_pass_backdrop.c the glass backdrops. Shared types and helpers
 // are in scene_pass_internal.h.
 
+// The saved context is the renderer's own, bound without surfaces: entering and
+// leaving need no eglMakeCurrent.
+static bool scene_pass_is_own(const struct gl_state *s, EGLContext own) {
+    return s->context == own && s->previous_display == s->display &&
+        s->draw == EGL_NO_SURFACE && s->read == EGL_NO_SURFACE;
+}
 bool scene_pass_enter(struct rediwm_scene_renderer *r, struct gl_state *s) {
     struct wlr_egl *egl = wlr_gles2_renderer_get_egl(r->renderer);
     s->display = wlr_egl_get_display(egl);
@@ -14,8 +20,20 @@ bool scene_pass_enter(struct rediwm_scene_renderer *r, struct gl_state *s) {
     s->context = eglGetCurrentContext();
     s->draw = eglGetCurrentSurface(EGL_DRAW);
     s->read = eglGetCurrentSurface(EGL_READ);
-    if (!eglMakeCurrent(s->display, EGL_NO_SURFACE, EGL_NO_SURFACE,
-            wlr_egl_get_context(egl))) return false;
+    // With nothing current, leave the renderer's context bound afterwards. Every
+    // wlroots upload and pass saves the current context and restores it; restoring
+    // "none" unbinds, which makes Mesa flush and rebind on the next call (6% of a
+    // frame's instructions, kernel time on top). Bound, the restores are no-ops.
+    const EGLContext own = wlr_egl_get_context(egl);
+    if (s->context == EGL_NO_CONTEXT) {
+        s->previous_display = s->display;
+        s->context = own;
+        s->draw = s->read = EGL_NO_SURFACE;
+        if (!eglMakeCurrent(s->display, EGL_NO_SURFACE, EGL_NO_SURFACE, own)) return false;
+    } else if (!scene_pass_is_own(s, own) &&
+            !eglMakeCurrent(s->display, EGL_NO_SURFACE, EGL_NO_SURFACE, own)) {
+        return false;
+    }
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &s->fbo);
     glGetIntegerv(GL_CURRENT_PROGRAM, &s->program);
     glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &s->array_buffer);
@@ -69,6 +87,7 @@ void scene_pass_leave(struct rediwm_scene_renderer *r, struct gl_state *s) {
     glBlendEquationSeparate(s->equation_rgb, s->equation_alpha);
     (s->blend ? glEnable : glDisable)(GL_BLEND);
     (s->scissor ? glEnable : glDisable)(GL_SCISSOR_TEST);
+    if (scene_pass_is_own(s, wlr_egl_get_context(wlr_gles2_renderer_get_egl(r->renderer)))) return;
     if (s->previous_display != EGL_NO_DISPLAY)
         eglMakeCurrent(s->previous_display, s->draw, s->read, s->context);
     else

@@ -132,7 +132,7 @@ background_tree: *sn.Tree,
 desktop_tree: *sn.Tree,
 world_desktop_tree: *sn.Tree,
 new_layer: wl.Listener(*wlr.LayerSurfaceV1) = .init(newLayer),
-wallpaper: ?*ImageBuffer = null,
+wallpaper: ?server_wallpaper.Wallpaper = null,
 world: World,
 taskbar_tree: *sn.Tree,
 // While > 0 `refreshTaskbars` only records the request; see `holdTaskbars`.

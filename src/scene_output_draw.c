@@ -219,6 +219,22 @@ static void clip_effect_region(const struct rediwm_glass_region *region, const s
 // `backdrop`: drawing into an effect's quarter-size image (stage 5f), where an
 // item counts with its whole box, not what is visible of it on screen, and
 // `damage` is the region the blur reads.
+// The layout region whose device pixels can meet `damage`, cut before converting:
+// scaling and expanding every rectangle of a complex visible region (the wallpaper
+// around the windows) cost 10% of a frame for a small repaint. A layout point p
+// lands within [floor((p - x) s) - 1, ceil((p - x) s) + 1]; the margin covers that.
+// Transformed outputs convert the whole region, as before.
+static void cut_to_damage(pixman_region32_t *layout, const struct output_view *v, pixman_region32_t *damage) {
+    if (v->transform != WL_OUTPUT_TRANSFORM_NORMAL || v->scale <= 0) return;
+    const pixman_box32_t *d = pixman_region32_extents(damage);
+    const double s = v->scale;
+    const int x1 = (int)floor((d->x1 - 3) / s) - 1 + v->logical.x;
+    const int y1 = (int)floor((d->y1 - 3) / s) - 1 + v->logical.y;
+    const int x2 = (int)ceil((d->x2 + 3) / s) + 1 + v->logical.x;
+    const int y2 = (int)ceil((d->y2 + 3) / s) + 1 + v->logical.y;
+    if (x2 <= x1 || y2 <= y1) return;
+    pixman_region32_intersect_rect(layout, layout, x1, y1, (unsigned)(x2 - x1), (unsigned)(y2 - y1));
+}
 bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e, struct rediwm_scene_output *out,
         struct wlr_render_pass *pass, const struct output_view *v, pixman_region32_t *damage, bool backdrop) {
     struct wlr_box dst = device_box(e->box, v);
@@ -232,6 +248,7 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
     if (backdrop) pixman_region32_init_rect(&clip, dst.x, dst.y, dst.width, dst.height);
     else {
         pixman_region32_copy(&clip, &e->visible);
+        cut_to_damage(&clip, v, damage);
         device_region(&clip, v, true);
     }
     pixman_region32_intersect(&clip, &clip, damage);

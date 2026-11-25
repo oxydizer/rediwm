@@ -110,7 +110,8 @@ and `effects/minimize_mesh.zig` (minimize snapshots and deformation),
   `power.zig` (+ `power_*.zig`), `login_manager.zig` (`login_manager/`: service
   logind/ConsoleKit2 protocol shared with the supervisor and polkit), portals (`settings_portal.zig`,
   `file_chooser.zig`), services.
-* The desktop icons (`desktop/`), `power_menu.zig`, `osd.zig`,
+* The desktop icons (`desktop/`; the compositor's own in `embedded.zig`, its canvas
+  and tiles in `embedded_tiles.zig`), `power_menu.zig`, `osd.zig`,
   `calendar.zig`, `battery_popup.zig`, `network/popup.zig`, `mini_map.zig`,
   `notifications/`, `tray.zig`, `polkit/` (authentication agent).
 

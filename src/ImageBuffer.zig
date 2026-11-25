@@ -14,7 +14,7 @@ format: u32,
 pixels: []u32,
 
 const drm_format_argb8888: u32 = 0x34325241; // DRM_FORMAT_ARGB8888
-const drm_format_xrgb8888: u32 = 0x34325258; // DRM_FORMAT_XRGB8888
+pub const drm_format_xrgb8888: u32 = 0x34325258; // DRM_FORMAT_XRGB8888
 
 const impl = wlr.Buffer.Impl{
     .destroy = destroy,
