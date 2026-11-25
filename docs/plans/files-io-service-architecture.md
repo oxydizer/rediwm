@@ -340,7 +340,8 @@ or worker resource; and the coordinator exemption table is empty.
 * S3b. Prerequisite: the Coordinator accepts mixed file and directory selections
   (today it rejects them with `MixedTransferSourceKinds`), so JobRunner's fallback
   can go. This is roadmap phase 2. Then the App submits transfers through its
-  `Handle` (U1, U2), and the Transfers UI renders from job records.
+  `Handle` (U1, U2), and the Transfers UI renders from job records through the
+  source-agnostic presentation layer of §13, which torrent rows use too.
 * S3c. `Client.io_runtime` and `App.io_runtime` are removed (U3). This is when the
   per-window Runtime stops existing. Window teardown joins nothing on the UI thread.
   The helper threads that remain go to the reaper (U16).
@@ -467,6 +468,40 @@ retires.
 window. A Files launch first tries the endpoint. If the endpoint answers, the new
 process hands over its arguments and exits; otherwise it becomes the instance.
 A headless process reconnects to the compositor for the new window.
+
+### One Transfers panel for file operations and torrents
+
+The shell shows **one** Transfers tray icon and panel, for Files jobs and torrents
+together. Long term, torrents should feel like file management: a torrent opens
+like a folder, its files are chosen there, and they appear with the same ghost
+rows and progress rings as a copy in progress.
+
+* **Two sources, one view model.** Torrents belong to the torrent helper, which
+  outlives Files (`docs/files-torrents.md`), so they cannot come from this
+  service. The shell subscribes to both `files-io.sock` (while a Files process
+  runs) and `files-transfers.sock` (while the helper runs), and merges them into
+  one panel model: a source-qualified id, kind (copy, move, extract, delete,
+  trash, torrent), label, state, bytes done and total, items, rates (download and
+  upload for torrents), the controls the item supports, and its speed history.
+  Neither source learns about the other.
+* **Speed history for torrents too.** The torrent helper keeps the same per-item
+  history (1 Hz, 120 samples) and includes it in its snapshot, so the panel draws
+  both kinds the same way.
+* **One tray icon.** When the shell panel is present, the helper's own
+  StatusNotifierItem is not shown. It stays for other desktops. How the helper
+  tells the two cases apart is decided in S6.
+
+### Files side: one presentation layer for ghosts and progress rings
+
+Folder rows show work in progress in two separate ways today: copy and move
+ghosts (`transfer_ghost`, from the window's own Runtime) and unpublished torrent
+payload (`transfer_stub`, from the torrent subscription in `app_torrent_rows`).
+When S3 makes the Transfers UI render from job records, it does that through one
+**source-agnostic presentation layer**: a path maps to a ghost or stub and its
+progress, fed by job records and by the torrent snapshot alike. Opening a torrent
+as a folder, with file selection driven by the helper's existing file
+priorities, then reuses that layer. That feature itself is Files and helper work
+on top of the layer, not a service stage.
 
 **Limits.** At most `max_external_consumers` subscribers (4). Request sizes,
 paths and output buffers are bounded. A shell that crashes or restarts
