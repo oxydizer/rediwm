@@ -7,6 +7,7 @@ const wlr = @import("wlroots");
 const control_center = @import("../control_center/panel.zig");
 const ui_scroll = @import("ui").widgets.scroll_container;
 const Pointer = @import("../Pointer.zig");
+const libinput = @import("../libinput.zig");
 const Toplevel = @import("../Toplevel.zig");
 const chrome = @import("../chrome.zig");
 const resize = @import("../resize.zig");
@@ -18,6 +19,17 @@ pub fn cursorAxis(
 ) void {
     const input: *Input = @fieldParentPtr("cursor_axis", listener);
     if (input.blockedVirtual(&event.pointer.base)) return;
+    var relative_direction = event.relative_direction;
+    var pointer_it = input.pointers.iterator(.forward);
+    while (pointer_it.next()) |pointer| {
+        if (pointer.device != &event.pointer.base) continue;
+        if (libinput.getNaturalScroll(pointer.device)) |natural_scroll| {
+            relative_direction = if (natural_scroll) .inverted else .identical;
+        }
+        break;
+    }
+    const raw_delta = event.delta;
+    const raw_delta_discrete = event.delta_discrete;
     if (input.zoom_device != &event.pointer.base) {
         input.zoom_scroll.reset();
         input.wheel_debounce = .{ .{}, .{} };
@@ -31,7 +43,20 @@ pub fn cursorAxis(
         delta = notch.delta;
         delta_discrete = notch.discrete;
     }
-    input.processAxis(event.time_msec, event.orientation, delta, delta_discrete, event.source);
+    std.log.debug(
+        "axis input: source={s} orientation={s} relative_direction={s} effective_relative_direction={s} raw_delta={d} raw_discrete={d} processed_delta={d} processed_discrete={d}",
+        .{
+            @tagName(event.source),
+            @tagName(event.orientation),
+            @tagName(event.relative_direction),
+            @tagName(relative_direction),
+            raw_delta,
+            raw_delta_discrete,
+            delta,
+            delta_discrete,
+        },
+    );
+    input.processAxis(event.time_msec, event.orientation, delta, delta_discrete, event.source, relative_direction);
 }
 
 pub fn processAxis(
@@ -41,10 +66,11 @@ pub fn processAxis(
     delta: f64,
     delta_discrete: i32,
     source: wl.Pointer.AxisSource,
+    relative_direction: wl.Pointer.AxisRelativeDirection,
 ) void {
     if (input.server.idle) |im| im.notifyActivity(.pointer);
     if (input.server.locker) |lock| {
-        if (lock.client) |client| if (input.server.polkit_dialog == null) client.axis(time_msec, orientation, delta, delta_discrete, source);
+        if (lock.client) |client| if (input.server.polkit_dialog == null) client.axis(time_msec, orientation, delta, delta_discrete, source, relative_direction);
         return;
     }
     if (input.server.polkit_dialog != null or input.server.screenshot_selector.output != null) return;
@@ -203,13 +229,13 @@ pub fn processAxis(
         },
         else => {},
     }
-    if (notch) return input.client_wheel.forward(time_msec, orientation, delta, delta_discrete);
+    if (notch) return input.client_wheel.forward(time_msec, orientation, delta, delta_discrete, relative_direction);
     input.seat.pointerNotifyAxis(
         time_msec,
         orientation,
         delta,
         delta_discrete,
         source,
-        .identical,
+        relative_direction,
     );
 }
