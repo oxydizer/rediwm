@@ -110,6 +110,7 @@ pub fn prepare(output: *Output, state: *wlr.Output.State) bool {
                 log.warn("output '{s}': the driver refused an HDR10 signal in this mode; it stays SDR", .{out.name});
             }
         } else {
+            state.allow_reconfiguration = true;
             state.setRenderFormat(format_sdr);
             changes = state.setImageDescription(null);
             if (!changes) output.hdr.policy.pending = null;
