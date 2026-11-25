@@ -5,6 +5,12 @@
 const std = @import("std");
 const c = @import("c.zig").api;
 const wake = @import("platform").wake;
+const io_job_table = @import("io_job_table.zig");
+
+pub const JobRecord = io_job_table.Record;
+pub const JobState = io_job_table.State;
+pub const JobKind = io_job_table.Kind;
+pub const FetchResult = io_job_table.FetchResult;
 
 pub const WindowId = u64;
 pub const JobId = u64;
@@ -20,11 +26,13 @@ pub const update_capacity_per_window = 32;
 // §6). Starting values; roadmap phase 7 calibrates them.
 
 /// Jobs from admission until retirement. Never occupied by a consumer.
-pub const max_live_jobs = 64;
+pub const max_live_jobs = io_job_table.max_live_jobs;
 /// Final records of a window's own jobs, reserved at submit.
-pub const outcome_slots_per_window = 16;
+pub const outcome_slots_per_window = io_job_table.outcome_slots_per_window;
 /// Final records of retired jobs for every other window.
-pub const tombstone_capacity = 64;
+pub const tombstone_capacity = io_job_table.tombstone_capacity;
+/// Subscribers that are not windows (the shell panel, stage S6).
+pub const max_external_consumers = 4;
 /// Replies to metadata and small-mutation requests, reserved at admission.
 pub const reply_slots_per_window = 4;
 /// Borrows a window may hold on resources it does not own.
@@ -224,6 +232,9 @@ pub const Command = struct {
     kind: CommandKind,
     job_id: JobId = 0,
     resource_id: ResourceId = 0,
+    /// For `submit_job`: chosen by the window, echoed in the job's record so
+    /// the window can recognise the job it submitted.
+    submit_tag: u64 = 0,
     payload: ?*OwnedPayload = null,
 
     pub fn deinitPayload(self: *Command) void {
@@ -359,6 +370,10 @@ pub const Service = struct {
     next_event_sequence: u64 = 1,
     next_drain_slot: usize = 0,
     pending_normal_commands: usize = 0,
+    /// Consumers 0..max_windows-1 are the window slots, in slot order; the
+    /// rest are external subscribers. Guarded by the mutex.
+    table: io_job_table.Table(max_windows + max_external_consumers) = .{},
+    external_ids: [max_external_consumers]u64 = @splat(0),
     stopping: std.atomic.Value(bool) = .init(false),
 
     /// Initialize in place: an initialized pthread mutex must not be copied.
@@ -386,6 +401,7 @@ pub const Service = struct {
         self.lock();
         self.reapClosedSlots();
         for (&self.windows) |*slot| std.debug.assert(slot.word.load(.acquire) == 0);
+        for (self.external_ids) |id| std.debug.assert(id == 0);
         std.debug.assert(self.pending_normal_commands == 0);
         self.unlock();
         std.debug.assert(c.pthread_mutex_destroy(&self.mutex) == 0);
@@ -472,17 +488,17 @@ pub const Service = struct {
 
             if (slot.control_commands.pop()) |command| {
                 const routed = RoutedCommand{ .window_id = window_id, .command = command };
-                recycleClosedSlot(slot);
+                self.recycleClosedSlot(slot);
                 return routed;
             }
             if (slot.normal_commands.pop()) |command| {
                 self.pending_normal_commands -= 1;
                 const routed = RoutedCommand{ .window_id = window_id, .command = command };
-                recycleClosedSlot(slot);
+                self.recycleClosedSlot(slot);
                 return routed;
             }
             // A slot closed with nothing queued is recycled here.
-            recycleClosedSlot(slot);
+            self.recycleClosedSlot(slot);
         }
         return null;
     }
@@ -558,6 +574,12 @@ pub const Service = struct {
                     return error.WindowQueueFull;
                 if (self.pending_normal_commands == aggregate_command_capacity)
                     return error.AggregateQueueFull;
+                // An accepted submit always has a record to appear in, and
+                // its window an outcome slot (threading §5).
+                if (command.kind == .submit_job) {
+                    const index = self.ensureConsumer(slot, window_id);
+                    try self.table.reserveSubmit(index);
+                }
                 std.debug.assert(slot.normal_commands.push(command.*));
                 self.pending_normal_commands += 1;
             },
@@ -566,6 +588,73 @@ pub const Service = struct {
         // the caller's Command remains unchanged and retains ownership.
         command.payload = null;
         signalWake(self.command_wake_fd);
+    }
+
+    // ---- job table: consumers ----
+
+    /// Fail-fast table read for a window (UI thread). See
+    /// `io_job_table.Table.fetch` for the ordering and resync contract.
+    fn fetchChanges(self: *Service, window_id: WindowId, out: []JobRecord) !FetchResult {
+        if (!self.tryLock()) return error.ServiceBusy;
+        defer self.unlock();
+        const slot = self.findSlot(window_id) orelse return error.WindowClosed;
+        const index = self.ensureConsumer(slot, window_id);
+        return self.table.fetch(index, out);
+    }
+
+    fn copyRateHistory(self: *Service, window_id: WindowId, job_id: JobId, out: []u64) !usize {
+        if (!self.tryLock()) return error.ServiceBusy;
+        defer self.unlock();
+        _ = self.findSlot(window_id) orelse return error.WindowClosed;
+        return self.table.copyRateHistory(job_id, out);
+    }
+
+    /// Registers a subscriber that is not a window (stage S6). Called from
+    /// the endpoint thread, never the UI thread, so it may take the lock.
+    pub fn registerExternal(self: *Service) !ExternalHandle {
+        self.lock();
+        defer self.unlock();
+        if (self.stopping.load(.acquire)) return error.ServiceStopping;
+        for (&self.external_ids, 0..) |*slot_id, i| {
+            if (slot_id.* != 0) continue;
+            const id = self.next_window_id.fetchAdd(1, .monotonic);
+            if (id > max_window_id) return error.WindowIdExhausted;
+            slot_id.* = id;
+            self.table.attach(max_windows + i, id, false);
+            return .{ .service = self, .index = i, .id = id };
+        }
+        return error.TooManyConsumers;
+    }
+
+    // ---- job table: writer (coordinator only) ----
+
+    /// Creates a job's record. `from_reservation` consumes the live slot that
+    /// `submit_job` admission reserved.
+    pub fn createJobRecord(self: *Service, record: JobRecord, from_reservation: bool) !void {
+        self.lock();
+        defer self.unlock();
+        try self.table.create(record, from_reservation);
+        signalWake(self.update_wake_fd);
+    }
+
+    pub fn updateJobRecord(self: *Service, record: JobRecord) !void {
+        self.lock();
+        defer self.unlock();
+        try self.table.update(record);
+        signalWake(self.update_wake_fd);
+    }
+
+    pub fn retireJobRecord(self: *Service, job_id: JobId) !void {
+        self.lock();
+        defer self.unlock();
+        try self.table.retire(job_id);
+        signalWake(self.update_wake_fd);
+    }
+
+    pub fn appendRateSample(self: *Service, job_id: JobId, bytes_per_second: u64) void {
+        self.lock();
+        defer self.unlock();
+        self.table.appendRateSample(job_id, bytes_per_second);
     }
 
     fn receiveUpdate(self: *Service, window_id: WindowId) !?Update {
@@ -597,7 +686,7 @@ pub const Service = struct {
             // the slot once they are. Recycle at once if nobody holds the
             // mutex, but never wait for it.
             if (self.tryLock()) {
-                recycleClosedSlot(slot);
+                self.recycleClosedSlot(slot);
                 self.unlock();
             }
             signalWake(self.command_wake_fd);
@@ -607,15 +696,29 @@ pub const Service = struct {
 
     /// Called under the mutex.
     fn reapClosedSlots(self: *Service) void {
-        for (&self.windows) |*slot| recycleClosedSlot(slot);
+        for (&self.windows) |*slot| self.recycleClosedSlot(slot);
     }
 
-    /// Called under the mutex.
-    fn recycleClosedSlot(slot: *WindowSlot) void {
+    /// Called under the mutex. Drops the window's table view (cursor and
+    /// outcomes) with the slot; jobs are never touched.
+    fn recycleClosedSlot(self: *Service, slot: *WindowSlot) void {
         if (slotState(slot.word.load(.acquire)) != .closing) return;
         if (slot.normal_commands.count != 0 or slot.control_commands.count != 0)
             return;
+        self.table.detach(self.slotIndex(slot));
         slot.reset();
+    }
+
+    fn slotIndex(self: *const Service, slot: *const WindowSlot) usize {
+        return (@intFromPtr(slot) - @intFromPtr(&self.windows[0])) / @sizeOf(WindowSlot);
+    }
+
+    /// Called under the mutex. A window's table consumer is attached on its
+    /// first locked call, since registration itself takes no lock.
+    fn ensureConsumer(self: *Service, slot: *WindowSlot, window_id: WindowId) usize {
+        const index = self.slotIndex(slot);
+        if (!self.table.isAttached(index, window_id)) self.table.attach(index, window_id, true);
+        return index;
     }
 
     /// Called under the mutex. Finds an open (not closing) window.
@@ -717,9 +820,45 @@ pub const Handle = struct {
         return self.service.receiveUpdate(self.window_id);
     }
 
+    /// Reads job records changed since this window's last read, its own
+    /// outcomes first. Fails fast with `ServiceBusy`; retry on a later
+    /// event-loop iteration (threading §3).
+    pub fn fetchChanges(self: Handle, out: []JobRecord) !FetchResult {
+        return self.service.fetchChanges(self.window_id, out);
+    }
+
+    /// Copies a live job's speed history, oldest first.
+    pub fn rateHistory(self: Handle, job_id: JobId, out: []u64) !usize {
+        return self.service.copyRateHistory(self.window_id, job_id, out);
+    }
+
     /// Never fails and never waits (see `Service.unregisterWindow`).
     pub fn close(self: *Handle) void {
         self.service.unregisterWindow(self.window_id);
         self.* = undefined;
+    }
+};
+
+/// A subscriber that is not a window (stage S6). Used from the endpoint
+/// thread, which may block on the Service mutex.
+pub const ExternalHandle = struct {
+    service: *Service,
+    index: usize,
+    id: u64,
+
+    pub fn fetchChanges(self: ExternalHandle, out: []JobRecord) FetchResult {
+        self.service.lock();
+        defer self.service.unlock();
+        return self.service.table.fetch(max_windows + self.index, out);
+    }
+
+    pub fn close(self: *ExternalHandle) void {
+        const service = self.service;
+        const index = self.index;
+        self.* = undefined;
+        service.lock();
+        defer service.unlock();
+        service.table.detach(max_windows + index);
+        service.external_ids[index] = 0;
     }
 };
