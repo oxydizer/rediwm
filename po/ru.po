@@ -2784,8 +2784,8 @@ msgid "HDR"
 msgstr "HDR"
 
 #: src/control_center/sections/display.zig
-msgid "HDR is experimental: it has not been tried on a real HDR display yet."
-msgstr "HDR — экспериментальная функция: на настоящем HDR-экране она ещё не проверялась."
+msgid "HDR is experimental."
+msgstr "HDR — экспериментальная функция."
 
 #: src/control_center/sections/network.zig
 msgid "Hardware blocked"
