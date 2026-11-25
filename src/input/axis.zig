@@ -28,8 +28,6 @@ pub fn cursorAxis(
         }
         break;
     }
-    const raw_delta = event.delta;
-    const raw_delta_discrete = event.delta_discrete;
     if (input.zoom_device != &event.pointer.base) {
         input.zoom_scroll.reset();
         input.wheel_debounce = .{ .{}, .{} };
@@ -43,19 +41,6 @@ pub fn cursorAxis(
         delta = notch.delta;
         delta_discrete = notch.discrete;
     }
-    std.log.debug(
-        "axis input: source={s} orientation={s} relative_direction={s} effective_relative_direction={s} raw_delta={d} raw_discrete={d} processed_delta={d} processed_discrete={d}",
-        .{
-            @tagName(event.source),
-            @tagName(event.orientation),
-            @tagName(event.relative_direction),
-            @tagName(relative_direction),
-            raw_delta,
-            raw_delta_discrete,
-            delta,
-            delta_discrete,
-        },
-    );
     input.processAxis(event.time_msec, event.orientation, delta, delta_discrete, event.source, relative_direction);
 }
 
