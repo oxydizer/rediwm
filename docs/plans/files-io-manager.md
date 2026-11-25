@@ -85,9 +85,8 @@ conflict and resource-release commands, and per-job state and progress
 publication. The process owns them. Windows do not use them yet: each still owns
 its own Runtime until stage S3.
 
-`JobRunner` is **not yet removed**. It remains the fallback for transfers the
-Manager path does not accept, notably mixed selections and unsupported entry
-types. Legacy progress, manifest and transfer UI paths also remain.
+`JobRunner` is **removed** (S3b). Every copy and move goes through the service;
+the window keeps a Manager of its own only for archive jobs until S3c and S4.
 
 ## Phase 1 — Per-job resource ledger
 
@@ -154,7 +153,7 @@ UI thread.
 Migrate resource families incrementally. Do not attempt a wholesale rewrite
 of all existing cleanup paths in one change.
 
-## Phase 2 — Remove JobRunner completely
+## Phase 2 — Remove JobRunner completely (done in S3b)
 
 Once the ledger foundation is established, finish migrating the remaining
 user-facing transfer functionality to the I/O Manager. There must be no
@@ -183,12 +182,14 @@ transfer tree, and the sidebar and keyboard controls.
 source, a no-op for a move onto itself, and its own rejection code for every
 refusal. Planning is `io_transfer_plan.prepare` (moved onto a worker in S2).
 
-**2b, removal (in S3b).** Item 2 cannot be removed before the window UI shows
+**2b, removal (done in S3b).** Item 2 cannot be removed before the window UI shows
 several Manager jobs: the UI is built around one `active_io_copy_job`, and
 archive extraction refuses with `Busy` while anything runs. So the fallback,
 `JobRunner` and its legacy benchmarks (`copy_bench`, `transfer_bench`) are
 deleted in S3b, together with the multi-job Transfers UI rendered from job
-records.
+records. What is left in `ops.zig` is plain helpers: names, creation, deletion,
+trash, and a `moveItem` with its own rename and cross-device fallback, used by
+Trash restore.
 
 ### Remaining migration work
 
@@ -341,9 +342,8 @@ Use measurements to choose safe defaults for worker count, queue capacity
 and operation unit size. Validate persisted or configured values and retain
 a safe fallback.
 
-The existing `bench-files-copy` JobRunner benchmark is legacy and must not
-be used as a proxy for production I/O Manager performance. Retire it after
-the replacement benchmark is useful.
+The JobRunner benchmarks (`bench-files-copy`, `bench-files-transfers`) were
+removed with JobRunner in S3b. A Manager benchmark replaces them.
 
 ## Phase 8 — Module boundaries and maintainability
 

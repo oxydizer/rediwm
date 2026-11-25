@@ -43,7 +43,7 @@ pub const TransferPlan = struct {
 /// Inspects the request's destination and sources. This is the blocking
 /// half of a submit (lstat, stat, readlink); it reads no Manager state.
 ///
-/// Rules, matching what the JobRunner fallback covered:
+/// Rules, matching what the retired JobRunner fallback covered:
 /// * Files, symlinks and directories may be mixed in one job.
 /// * A copy whose target is the source itself gets a unique destination name.
 /// * A move whose target is the source itself is a no-op for that source; a

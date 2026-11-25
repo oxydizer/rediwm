@@ -10,6 +10,9 @@ const io_service_tasks = @import("io_service_tasks.zig");
 const resources = @import("io_coordinator_resources.zig");
 const lifecycle = @import("io_coordinator_lifecycle.zig");
 const deletions = @import("io_coordinator_deletions.zig");
+const job_views = @import("io_coordinator_views.zig");
+const coordinator_requests = @import("io_coordinator_requests.zig");
+const notify = @import("io_coordinator_notify.zig");
 const io_deletion = @import("io_deletion.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
@@ -88,6 +91,10 @@ pub const Coordinator = struct {
     deletion_context: io_deletion.Context = undefined,
     deletions: std.AutoHashMapUnmanaged(JobId, deletions.Deletion) = .empty,
     next_deletion_id: JobId = deletions.id_base,
+    /// Levels of job trees that windows watch, by window and view slot.
+    watching: std.AutoHashMapUnmanaged(u64, job_views.Watching) = .empty,
+    /// Desktop notifications for jobs that end with no window open.
+    notifier: notify.Notifier = undefined,
     thread: ?std.Thread = null,
     published: std.AutoHashMapUnmanaged(JobId, Published) = .empty,
     next_failed_submit_id: JobId = failed_submit_id_base,
@@ -140,6 +147,7 @@ pub const Coordinator = struct {
         self.tasks = try io_service_tasks.create(&self.task_context);
         errdefer self.tasks.deinit();
         self.deletion_context = .{ .allocator = allocator, .io = io };
+        self.notifier = .{ .io = io };
         self.deletion_pool = try io_deletion.create(&self.deletion_context);
         errdefer self.deletion_pool.deinit();
 
@@ -159,6 +167,7 @@ pub const Coordinator = struct {
         var remaining = self.deletions.valueIterator();
         while (remaining.next()) |entry| self.allocator.destroy(entry.control);
         self.deletions.deinit(self.allocator);
+        job_views.deinitWatching(self);
         var held = self.window_held.valueIterator();
         while (held.next()) |entry| self.allocator.free(entry.path);
         self.window_held.deinit(self.allocator);
@@ -174,6 +183,7 @@ pub const Coordinator = struct {
             self.tasks.deinit();
             self.discardTaskBacklog();
             self.deletion_pool.deinit();
+            self.notifier.deinit();
             self.runtime.deinit();
             self.allocator.destroy(self.runtime);
         }
@@ -200,6 +210,7 @@ pub const Coordinator = struct {
             const now = monotonicMs();
             var deadline = self.publishRecords(now);
             if (self.publishDeletions(now)) |at| deadline = earliest(deadline, at);
+            if (self.publishViews(now)) |at| deadline = earliest(deadline, at);
             self.retireReadyJobs();
             if (self.draining and self.isIdle()) break;
             // While draining, re-check progress at least every 50 ms: the
@@ -218,6 +229,10 @@ pub const Coordinator = struct {
     pub const cancelAllDeletions = deletions.cancelAllDeletions;
     const pumpDeletions = deletions.pumpDeletions;
     const publishDeletions = deletions.publishDeletions;
+    const watchView = job_views.watchView;
+    const unwatchView = job_views.unwatchView;
+    const publishViews = job_views.publishViews;
+    const handleRequest = coordinator_requests.handleRequest;
 
     /// Waits for a command, a completion, or `deadline` (monotonic ms) when
     /// throttled progress or a speed sample is still due.
@@ -368,16 +383,6 @@ pub const Coordinator = struct {
         self.submitTask(.{ .prepare_transfer = .{ .job_id = job_id, .payload = payload } });
     }
 
-    /// Moves a request to a service task. A request that cannot run gives
-    /// back its reply slot, so the window is never left one short.
-    fn handleRequest(self: *Coordinator, routed: *io_service.RoutedCommand) void {
-        const payload = routed.command.payload orelse
-            return self.service.cancelReplyReservation(routed.window_id);
-        if (payload.data != .request) return self.service.cancelReplyReservation(routed.window_id);
-        routed.command.payload = null;
-        self.submitTask(.{ .request = .{ .window_id = routed.window_id, .tag = routed.command.submit_tag, .payload = payload } });
-    }
-
     /// A submit that failed before any Manager job existed.
     pub fn failSubmit(self: *Coordinator, record: *io_service.JobRecord, err: anyerror) void {
         record.id = self.next_failed_submit_id;
@@ -509,6 +514,12 @@ pub const Coordinator = struct {
             } else try self.runtime.cancelJob(command.job_id),
             .submit_job => unreachable, // handleSubmit
             .request => unreachable, // handleRequest
+            .watch_view => try self.watchView(routed.window_id, command.payload),
+            .unwatch_view => self.unwatchView(routed.window_id, command.submit_tag),
+            // A hovered ghost: copy it next. A hovered ghost folder: sooner.
+            .prioritize_entry => if (!self.runtime.manager.prioritizeEntryOperation(command.job_id, command.resource_id))
+                return error.NotPrioritized,
+            .promote_subtree => try self.runtime.manager.promoteDiscoverySubtree(command.job_id, command.resource_id),
             .start_discovery => try self.startDiscovery(command.job_id, command.payload),
             .prioritize_discovery => try self.prioritizeDiscovery(command.job_id, command.payload),
             .resolve_conflict => try self.resolveConflict(
@@ -689,7 +700,14 @@ pub const Coordinator = struct {
                 (if (conflict.job_id == summary.id) conflict.id else 0)
             else
                 0;
-            if (next.state.isTerminal() and next.finished_at_ms == 0) next.finished_at_ms = wallClockMs();
+            next.conflict_orphaned = next.pending_conflict != 0 and
+                !self.service.isWindowOpen(next.origin_window_id);
+            if (next.pending_conflict != entry.record.pending_conflict and next.pending_conflict != 0)
+                std.log.info("Files job {d} waits on conflict {d}{s}", .{ summary.id, next.pending_conflict, if (next.conflict_orphaned) " (its window is gone)" else "" });
+            if (next.state.isTerminal() and next.finished_at_ms == 0) {
+                next.finished_at_ms = wallClockMs();
+                notify.jobEnded(self, next);
+            }
             // Retirement is automatic (architecture §6). It happens once the
             // executors are quiescent for the job and the ledger holds
             // nothing it owns; no consumer is waited for.
@@ -704,7 +722,8 @@ pub const Coordinator = struct {
             const structural = next.state != previous.state or
                 next.cancel_requested != previous.cancel_requested or
                 next.borrow_count != previous.borrow_count or
-                next.pending_conflict != previous.pending_conflict;
+                next.pending_conflict != previous.pending_conflict or
+                next.conflict_orphaned != previous.conflict_orphaned;
             const progressed = next.completed_bytes != previous.completed_bytes or
                 next.total_bytes != previous.total_bytes or
                 next.completed_items != previous.completed_items or

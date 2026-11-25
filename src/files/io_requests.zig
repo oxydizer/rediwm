@@ -32,6 +32,25 @@ pub const Request = union(enum) {
     canonical: struct { paths: []const []const u8 },
     /// File chooser checks on confirm (`app_chooser.collectChooser`).
     chooser: ChooserCheck,
+    /// A free name in `dir` for `name` ("name (1)"), for a conflict renamed.
+    unique_name: struct { dir: []const u8, name: []const u8 },
+    /// What the conflict dialog shows. Answered by the coordinator from the
+    /// Manager, in memory: never on a worker (`answeredByCoordinator`).
+    conflict_details: struct { conflict_id: u64 },
+};
+
+/// Requests about Manager state: the coordinator answers them itself.
+pub fn answeredByCoordinator(request: *const Request) bool {
+    return request.* == .conflict_details;
+}
+
+pub const ConflictDetails = struct {
+    conflict_id: u64,
+    job_id: u64,
+    /// Owned.
+    destination_path: []u8,
+    /// Both sides are folders: Merge is offered.
+    can_merge: bool,
 };
 
 pub const ChooserCheck = struct {
@@ -93,6 +112,9 @@ pub const ReplyData = union(enum) {
     kinds: []pins.Kind,
     canonical: []Canonical,
     chooser: ChooserResult,
+    unique_name: anyerror![]u8,
+    /// Null when the conflict is no longer at the head of the queue.
+    conflict: ?ConflictDetails,
 };
 
 pub const Reply = struct {
@@ -109,6 +131,8 @@ pub const Reply = struct {
                 for (entries) |entry| if (entry.path) |path| self.allocator.free(path);
                 self.allocator.free(entries);
             },
+            .unique_name => |name| if (name) |n| self.allocator.free(n) else |_| {},
+            .conflict => |details| if (details) |d| self.allocator.free(d.destination_path),
             .chooser => |result| {
                 for (result.paths) |path| self.allocator.free(path);
                 self.allocator.free(result.paths);
@@ -143,6 +167,8 @@ pub fn create(allocator: Allocator, request: Request) !Owned {
             .fallback = if (r.fallback) |p| try a.dupe(u8, p) else null,
             .files = try dupeAll(a, r.files),
         } },
+        .unique_name => |r| .{ .unique_name = .{ .dir = try a.dupe(u8, r.dir), .name = try a.dupe(u8, r.name) } },
+        .conflict_details => |r| .{ .conflict_details = r },
     };
     return owned;
 }
@@ -177,6 +203,9 @@ fn run(allocator: Allocator, io: std.Io, request: *const Request) ReplyData {
         } },
         .canonical => |r| .{ .canonical = canonicalAll(allocator, r.paths) },
         .chooser => |r| .{ .chooser = checkChooser(allocator, r) catch .{ .verdict = .inaccessible } },
+        .unique_name => |r| .{ .unique_name = ops.generateUniqueName(allocator, r.dir, r.name) },
+        // Never reaches a worker (`answeredByCoordinator`).
+        .conflict_details => .{ .conflict = null },
     };
 }
 

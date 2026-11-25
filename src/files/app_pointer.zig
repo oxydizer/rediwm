@@ -606,6 +606,19 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2.0;
         const dy = (@as(f64, @floatFromInt(self.h)) - dh) / 2.0;
 
+        if (dlg.kind == .quit_jobs) {
+            const button_w = (dw - 48) / 3;
+            const choices = [_]@import("app_quit.zig").Choice{ .keep, .stop, .cancel };
+            for (choices, 0..) |choice, i| {
+                const left = dx + 16 + @as(f64, @floatFromInt(i)) * (button_w + 8);
+                if (x >= left and x <= left + button_w and y >= dy + 84 and y <= dy + 112) {
+                    @import("app_quit.zig").choose(self, choice);
+                    return;
+                }
+            }
+            if (x < dx or x > dx + dw or y < dy or y > dy + dh) @import("app_quit.zig").choose(self, .cancel);
+            return;
+        }
         if (dlg.kind == .conflict) {
             if (self.managerConflictCanMerge()) {
                 const button_width = (dw - 56) / 4;
@@ -662,10 +675,9 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         }
         // Click outside dialog box closes
         if (x < dx or x > dx + dw or y < dy or y > dy + dh) {
-            if (dlg.kind == .conflict) {
-                self.resolveConflictDialog(.cancel);
-                return;
-            }
+            // A stray click must not cancel part of a transfer: a conflict
+            // is answered with its buttons or keys only.
+            if (dlg.kind == .conflict) return;
             self.closeDialog();
         }
         return;

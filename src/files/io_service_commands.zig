@@ -2,6 +2,7 @@
 //! Re-exported by io_service.zig.
 const std = @import("std");
 const io_requests = @import("io_requests.zig");
+const io_job_views = @import("io_job_views.zig");
 
 pub const WindowId = u64;
 pub const JobId = u64;
@@ -23,6 +24,14 @@ pub const CommandKind = enum {
     /// A metadata or small-mutation request (`io_requests.zig`). `submit_tag`
     /// names it; its reply goes to one of the window's reply slots.
     request,
+    /// Watch a level of a job's tree in a view slot (`io_job_views.zig`).
+    watch_view,
+    /// Stop the watch in view slot `submit_tag`.
+    unwatch_view,
+    /// Copy entry `resource_id` of job `job_id` next (a hovered ghost).
+    prioritize_entry,
+    /// Discover and copy folder `resource_id` of job `job_id` sooner.
+    promote_subtree,
 };
 
 pub const CommandClass = enum {
@@ -117,6 +126,7 @@ pub const OwnedPayload = struct {
         transfer: TransferRequest,
         deletion: DeletionRequest,
         request: io_requests.Owned,
+        watch: io_job_views.Watch,
         discovery: DiscoveryRequest,
         conflict_resolution: ConflictResolutionRequest,
     },
@@ -193,6 +203,17 @@ pub const OwnedPayload = struct {
         return payload;
     }
 
+    pub fn createWatch(allocator: std.mem.Allocator, watch: io_job_views.Watch) !*OwnedPayload {
+        if (watch.slot >= io_job_views.slots_per_window or watch.limit == 0 or watch.limit > io_job_views.max_rows)
+            return error.InvalidWatch;
+        const payload = try allocator.create(OwnedPayload);
+        errdefer allocator.destroy(payload);
+        var owned = watch;
+        owned.path = try allocator.dupe(u8, watch.path);
+        payload.* = .{ .allocator = allocator, .data = .{ .watch = owned } };
+        return payload;
+    }
+
     pub fn createDiscovery(
         allocator: std.mem.Allocator,
         root_entry_id: u64,
@@ -252,6 +273,7 @@ pub const OwnedPayload = struct {
             .transfer => |*request| request.deinit(allocator),
             .deletion => |*request| request.deinit(allocator),
             .request => |*request| request.deinit(),
+            .watch => |w| allocator.free(w.path),
             .discovery => |*request| request.deinit(allocator),
             .conflict_resolution => |*request| request.deinit(allocator),
         }
@@ -277,7 +299,7 @@ pub const Command = struct {
 
     pub fn class(self: Command) CommandClass {
         return switch (self.kind) {
-            .submit_job, .start_discovery, .prioritize_discovery, .request => .normal,
+            .submit_job, .start_discovery, .prioritize_discovery, .request, .watch_view, .unwatch_view, .prioritize_entry, .promote_subtree => .normal,
             .pause_job, .resume_job, .cancel_job, .resolve_conflict, .release_borrow, .dispose_resource => .control,
         };
     }

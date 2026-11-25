@@ -524,7 +524,9 @@ pub fn ejectDevice(self: *App, k: usize) void {
     const volume = &self.device_list.items[k];
     const mount = volume.mount orelse return;
     if (self.device_op != null) return;
-    if (self.job_state == .running) {
+    // Any running service job may be using the volume, whichever window
+    // started it.
+    if (self.job_state == .running or @import("app_jobs_card.zig").count(self) > 0) {
         self.setStatusNotice(tr("Finish the running file operation first"), true);
         return;
     }

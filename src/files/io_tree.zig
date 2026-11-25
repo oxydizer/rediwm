@@ -44,6 +44,12 @@ pub const Entry = struct {
     discovery: DiscoveryState = .not_applicable,
     /// Literal readlinkat() result. Never canonicalized or dereferenced.
     symlink_target: ?[]u8 = null,
+    /// For a directory: bytes done and total over its subtree, kept by the
+    /// Manager as operations report progress (job views, architecture §14).
+    subtree_completed_bytes: u64 = 0,
+    subtree_total_bytes: u64 = 0,
+    /// Files and links under a directory that have arrived.
+    subtree_arrived: u64 = 0,
 
     fn deinit(self: *Entry, allocator: Allocator) void {
         allocator.free(self.name);

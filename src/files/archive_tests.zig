@@ -337,19 +337,17 @@ test "archive relative symlinks survive publication and cannot escape staging" {
             .{ .name = "repo/alias", .target = "quickshell/DCommon" },
             .{ .name = "repo/dangling", .target = "missing" },
         });
-        var runner = try ops_mod.JobRunner.init(mem);
-        defer runner.deinit();
-        try runner.startArchive(source, root, null);
-        runner.thread.?.join();
-        runner.thread = null;
-        try std.testing.expectEqual(@as(usize, 1), runner.pollProgress().success_count);
-        const link = try std.fmt.allocPrintSentinel(mem, "{s}/repo/quickshell/DCommon", .{root}, 0);
+        var cancel: archive.Cancel = .init(false);
+        const staged = try archive.temporary(mem, root);
+        defer mem.free(staged);
+        try archive.extract(mem, source, staged, null, &cancel);
+        const link = try std.fmt.allocPrintSentinel(mem, "{s}/repo/quickshell/DCommon", .{staged}, 0);
         defer mem.free(link);
         var target: [128]u8 = undefined;
         const n = c.readlink(link, &target, target.len);
         try std.testing.expect(n > 0);
         try std.testing.expectEqualStrings("../dank-qml-common/DCommon", target[0..@intCast(n)]);
-        const alias = try std.fmt.allocPrint(mem, "{s}/repo/alias/item.txt", .{root});
+        const alias = try std.fmt.allocPrint(mem, "{s}/repo/alias/item.txt", .{staged});
         defer mem.free(alias);
         var content: [32]u8 = undefined;
         try std.testing.expectEqualStrings("payload", try readTestFile(alias, &content));
@@ -361,19 +359,11 @@ test "archive relative symlinks survive publication and cannot escape staging" {
             &.{ .{ .name = "repo/up", .target = ".." }, .{ .name = "repo/link", .target = "up/../outside" } },
             &.{ .{ .name = "a", .target = "b" }, .{ .name = "b", .target = "a" } },
         };
-        var cancel: archive.Cancel = .init(false);
         for (unsafe) |links| {
             try writeArchiveFixtureLinks(source, &.{"safe.txt"}, links);
             const stage = try archive.temporary(mem, root);
             defer mem.free(stage);
             try std.testing.expectError(error.UnsafeArchivePath, archive.extract(mem, source, stage, null, &cancel));
-            try runner.startArchive(source, root, null);
-            runner.thread.?.join();
-            runner.thread = null;
-            try std.testing.expectEqual(@as(usize, 1), runner.pollProgress().failed_count);
-            const safe = try std.fmt.allocPrintSentinel(mem, "{s}/safe.txt", .{root}, 0);
-            defer mem.free(safe);
-            try std.testing.expect(c.access(safe, c.F_OK) != 0);
         }
         // A link cannot turn an archived child path into a redirected write.
         try writeArchiveFixtureLinks(source, &.{"repo/link/item.txt"}, &.{.{ .name = "repo/link", .target = "../other" }});
@@ -417,37 +407,16 @@ test "archive index, staged extraction and member reads preserve destination bou
         try std.testing.expectError(error.Cancelled, archive.extract(mem, source, stage, null, &cancel));
         cancel.store(false, .release);
 
-        // An unsafe member prevents publication of even earlier valid members.
+        // An unsafe member fails the whole extraction; the service then
+        // discards the staging folder, so nothing is published.
         try writeArchiveFixture(source, &.{ "safe.txt", "../escaped.txt" });
-        var runner = try ops_mod.JobRunner.init(mem);
-        defer runner.deinit();
-        try runner.startArchive(source, root, null);
-        runner.thread.?.join();
-        runner.thread = null;
-        try std.testing.expectEqual(@as(usize, 1), runner.pollProgress().failed_count);
-        const safe = try std.fmt.allocPrintSentinel(mem, "{s}/safe.txt", .{root}, 0);
-        defer mem.free(safe);
-        try std.testing.expect(c.access(safe, c.F_OK) != 0);
+        const unsafe_stage = try archive.temporary(mem, root);
+        defer mem.free(unsafe_stage);
+        try std.testing.expectError(error.UnsafeArchivePath, archive.extract(mem, source, unsafe_stage, null, &cancel));
         for ([_][]const u8{ "/absolute", "//", "dir/../../escape", "a\\b" }) |name| {
             try std.testing.expectError(error.UnsafeArchivePath, archive.normalize(mem, name));
         }
 
-        // Extraction shares the transfer conflict policy, preserving existing data.
-        try writeArchiveFixture(source, &.{"same.txt"});
-        const same = try std.fmt.allocPrint(mem, "{s}/same.txt", .{root});
-        defer mem.free(same);
-        try writeTestFile(same, "original");
-        try runner.start(.extract, &.{source}, root, .skip);
-        runner.thread.?.join();
-        runner.thread = null;
-        try std.testing.expectEqual(@as(usize, 1), runner.pollProgress().skipped_count);
-        try std.testing.expectEqualStrings("original", try readTestFile(same, &content));
-        try runner.start(.extract, &.{source}, root, .rename);
-        runner.thread.?.join();
-        runner.thread = null;
-        const renamed = try std.fmt.allocPrint(mem, "{s}/same (1).txt", .{root});
-        defer mem.free(renamed);
-        try std.testing.expectEqualStrings("payload", try readTestFile(renamed, &content));
     }
 }
 

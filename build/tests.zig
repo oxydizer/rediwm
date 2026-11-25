@@ -30,12 +30,6 @@ pub const ZigTests = struct {
 /// (tests/*.py) with their `test-*` steps.
 pub fn addZig(ctx: Context, session: Session) ZigTests {
     const b = ctx.b;
-    const run_files_benchmarks = if (b.graph.environ_map.get(
-        "REDIWM_RUN_BENCHMARKS",
-    )) |value|
-        std.mem.eql(u8, value, "1")
-    else
-        false;
     const target = ctx.target;
     const optimize = ctx.optimize;
     const use_llvm = ctx.use_llvm;
@@ -385,16 +379,6 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     // Keep performance measurements out of the normal test suite. Reuse the
     // Files test module and its dependencies, but compile only the benchmark
     // test selected by its name.
-    const transfer_bench_tests = b.addTest(.{
-        .root_module = files_tests.root_module,
-        .filters = &.{"transfer benchmark"},
-    });
-    const run_transfer_bench = b.addRunArtifact(transfer_bench_tests);
-    b.step(
-        "bench-files-transfers",
-        "Benchmark transfer progress, tree aggregation and concurrent job polling",
-    ).dependOn(&run_transfer_bench.step);
-
     const archive_bench_tests = b.addTest(.{
         .root_module = files_tests.root_module,
         .filters = &.{"archive directory fd benchmark"},
@@ -404,44 +388,6 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
         "bench-files-archive",
         "Benchmark archive extraction directory traversal",
     ).dependOn(&run_archive_bench.step);
-
-    // Standalone executable for end-to-end measurements of the production
-    // JobRunner filesystem copy path.
-    const copy_bench_module = b.createModule(.{
-        .root_source_file = b.path("src/files/copy_bench.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    copy_bench_module.addImport("platform", ctx.platform_mod);
-    copy_bench_module.addImport("i18n", ctx.i18n_mod);
-    copy_bench_module.addImport("c", ctx.c.libc);
-    copy_bench_module.addImport("c_gfx", ctx.c.gfx);
-    copy_bench_module.addImport("c_archive", ctx.c.archive);
-    copy_bench_module.linkSystemLibrary("libarchive", .{});
-
-    const copy_bench_exe = b.addExecutable(.{
-        .name = "rediwm-copy-bench",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/files/copy_bench_main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    copy_bench_exe.root_module.addImport("copy_bench", copy_bench_module);
-    const run_copy_bench = b.addRunArtifact(copy_bench_exe);
-    run_copy_bench.has_side_effects = true;
-    b.step(
-        "bench-files-copy",
-        "Run the standalone production filesystem copy benchmark",
-    ).dependOn(&run_copy_bench.step);
-
-    if (run_files_benchmarks) {
-        test_step.dependOn(&run_copy_bench.step);
-    }
 
     const terminal_integration = b.addSystemCommand(&.{"env"});
     terminal_integration.addPrefixedDirectoryArg("REDIWM_TEST_BIN=", support.installed(.bin, ""));

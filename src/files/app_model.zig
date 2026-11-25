@@ -201,6 +201,8 @@ pub const ViewItem = struct {
     transfer_stub: bool = false,
     transfer_ghost: bool = false,
     transfer_entry_id: ?@import("io_tree.zig").EntryId = null,
+    /// The service job a ghost row comes from (`app_ghosts.zig`); 0 for none.
+    transfer_job_id: u64 = 0,
     transfer_state: ?@import("ops.zig").TransferEntryState = null,
     transfer_bytes: ?u64 = null,
     transfer_total_bytes: ?u64 = null,
@@ -259,6 +261,8 @@ pub const DialogKind = enum {
     torrent_source,
     torrent_destination,
     terminal_close,
+    /// Closing the last window while service jobs run (`app_quit.zig`).
+    quit_jobs,
     new_folder,
     new_file,
     new_branch,
@@ -277,6 +281,11 @@ pub const Dialog = struct {
     target_path: ?[]u8 = null,
     conflict_name: ?[]u8 = null,
     manager_conflict_id: ?u64 = null,
+    /// The conflict belongs to a service job (`app_transfers.zig`).
+    service_conflict: bool = false,
+    conflict_can_merge: bool = false,
+    /// Owned: where the conflicting item would go.
+    conflict_destination: ?[]u8 = null,
     deletion: deletion.State = .{},
     applications: ?open_with.State = null,
     properties: ?properties.State = null,

@@ -337,13 +337,8 @@ fn activate(self: *App, id: usize) void {
             const entries = self.torrents.items();
             if (row < entries.len) {
                 self.toggleTorrent(entries[row]);
-            } else if (self.job_runner) |runner| {
-                const progress = fileOperationProgress(self) orelse return;
-                if (progress.state == .paused) {
-                    runner.resumeJob();
-                } else if (progress.state == .running) {
-                    runner.pause();
-                }
+            } else if (fileOpAt(self, row)) |record| {
+                if (app_jobs.canPause(record)) jobs_card.send(self, if (record.state == .paused) .resume_job else .pause_job, record.id);
             }
         },
         26 => if (selectedTransferRow(self)) |row| {
@@ -352,8 +347,8 @@ fn activate(self: *App, id: usize) void {
                 _ = self.torrents.send(.{ .op = "remove", .id = entries[row].id });
                 self.transfer_view.selected[0] = 0;
                 self.transfer_view.row = null;
-            } else if (self.job_runner) |runner| {
-                runner.cancel();
+            } else if (fileOpAt(self, row)) |record| {
+                jobs_card.send(self, .cancel_job, record.id);
                 self.transfer_view.row = null;
             }
         },
@@ -470,13 +465,16 @@ pub fn leaveTransfers(self: *App) void {
 }
 
 const header = @import("header.zig");
+const io_service = @import("io_service.zig");
+const app_jobs = @import("app_jobs.zig");
+const jobs_card = @import("app_jobs_card.zig");
 const field = @import("ui").widgets.field;
 const Icon = @import("ui").layout.IconId;
 const ToolbarControl = struct { rect: Rect, label: []const u8, id: usize, icon: ?Icon = null, enabled: bool = true };
 
 fn selectedTransferRow(self: *App) ?usize {
     const row = self.transfer_view.row orelse return null;
-    const count = self.torrents.items().len + @as(usize, @intFromBool(fileOperationProgress(self) != null));
+    const count = self.torrents.items().len + fileOpCount(self);
     return if (row < count) row else null;
 }
 
@@ -492,17 +490,13 @@ fn toolbarControls(self: *App) [10]ToolbarControl {
 
     const entries = self.torrents.items();
     const row = selectedTransferRow(self);
-    const file_op = fileOperationProgress(self);
-    const selected_file_op = row != null and file_op != null and row.? == entries.len;
+    const file_op = if (row) |index| fileOpAt(self, index) else null;
+    const selected_file_op = file_op != null;
     const selected_torrent = if (row) |index| (if (index < entries.len) entries[index] else null) else null;
 
-    const can_pause = if (selected_file_op) blk: {
-        const progress = file_op.?;
-        break :blk (progress.kind == .copy or progress.kind == .move) and
-            (progress.state == .running or progress.state == .paused);
-    } else if (selected_torrent) |t| !t.pending else false;
-    const pause_label = if (selected_file_op)
-        (if (file_op.?.state == .paused) tr("Resume") else tr("Pause"))
+    const can_pause = if (file_op) |record| app_jobs.canPause(record) else if (selected_torrent) |t| !t.pending else false;
+    const pause_label = if (file_op) |record|
+        (if (record.state == .paused) tr("Resume") else tr("Pause"))
     else if (selected_torrent) |t|
         (if (t.paused) tr("Resume") else tr("Pause"))
     else
@@ -559,33 +553,29 @@ fn transferAt(self: *App, x: f64, y: f64) ?usize {
     if (offset < 0) return null;
     const row: usize = @intFromFloat(@floor(offset / @as(f64, @floatFromInt(self.rowHeight()))));
     if (@mod(offset, @as(f64, @floatFromInt(self.rowHeight()))) >= @as(f64, @floatFromInt(self.cardHeight()))) return null;
-    const count = self.torrents.items().len + @as(usize, @intFromBool(fileOperationProgress(self) != null));
+    const count = self.torrents.items().len + fileOpCount(self);
     return if (row < count) row else null;
 }
 
-fn fileOperationProgress(self: *App) ?ops_mod.ProgressInfo {
-    const runner = self.job_runner orelse return null;
-    const progress = runner.pollProgress();
-    return if (progress.state == .running or
-        progress.state == .paused or
-        progress.state == .waiting_conflict) progress else null;
+/// The running service jobs, of every window, after the torrents.
+const max_file_ops = 16;
+
+fn fileOps(self: *App, out: *[max_file_ops]io_service.JobRecord) []io_service.JobRecord {
+    return self.service.jobs.active(out);
 }
 
-fn fileOperationFraction(progress: ops_mod.ProgressInfo) f64 {
-    if (!progress.total_bytes_known) return 0;
-    if (progress.total_bytes > 0) {
-        return @min(
-            1.0,
-            @as(f64, @floatFromInt(progress.transferred_bytes)) /
-                @as(f64, @floatFromInt(progress.total_bytes)),
-        );
-    }
-    if (progress.total_items == 0) return 0;
-    return @min(
-        1.0,
-        @as(f64, @floatFromInt(progress.processed_items)) /
-            @as(f64, @floatFromInt(progress.total_items)),
-    );
+pub fn fileOpCount(self: *App) usize {
+    var out: [max_file_ops]io_service.JobRecord = undefined;
+    return fileOps(self, &out).len;
+}
+
+/// The service job on list row `row`, if that row is one.
+fn fileOpAt(self: *App, row: usize) ?io_service.JobRecord {
+    const torrents = self.torrents.items().len;
+    if (row < torrents) return null;
+    var out: [max_file_ops]io_service.JobRecord = undefined;
+    const ops_list = fileOps(self, &out);
+    return if (row - torrents < ops_list.len) ops_list[row - torrents] else null;
 }
 
 pub fn fileOperationRowRect(self: *App, index: usize) header.Rect {
@@ -605,7 +595,7 @@ fn renderFileOperationRow(
     self: *App,
     cr: *c.cairo_t,
     index: usize,
-    progress: ops_mod.ProgressInfo,
+    record: io_service.JobRecord,
 ) void {
     const row = fileOperationRowRect(self, index);
     const y = row.y;
@@ -619,49 +609,47 @@ fn renderFileOperationRow(
         }, self.transfer_view.row == index, 1, 1);
     }
 
-    const operation = switch (progress.kind) {
+    const operation = switch (record.kind) {
         .copy => tr("Copy"),
         .move => tr("Move"),
         .extract => tr("Extract"),
-        .open_archive_member => tr("Open"),
+        .delete => tr("Delete"),
+        .trash => tr("Move to Trash"),
+        .empty_trash => tr("Empty Trash"),
+        .other => tr("Working…"),
     };
-    const state = switch (progress.state) {
+    const state = if (record.pending_conflict != 0)
+        tr("Waiting for decision")
+    else switch (record.state) {
         .paused => tr("Paused"),
-        .waiting_conflict => tr("Waiting for decision"),
-        .running => if (progress.measuring) tr("Measuring…") else tr("Working…"),
+        .planning, .queued => tr("Preparing…"),
+        .finalizing => tr("Finishing…"),
+        .waiting => tr("Waiting for decision"),
         else => tr("Working…"),
     };
-    const current = if (progress.current_name.len > 0)
-        progress.current_name
+    var name_buf: [160]u8 = undefined;
+    const current = if (record.source_count > 1)
+        (i18n.fmt(&name_buf, tr("{name} and {count} more"), .{ .name = record.label(), .count = record.source_count - 1 }) catch record.label())
     else
-        tr("Preparing…");
+        record.label();
 
     var transferred_buf: [32]u8 = undefined;
     var total_buf: [32]u8 = undefined;
     var bytes_buf: [80]u8 = undefined;
-    const transferred: i64 = @intCast(@min(
-        progress.transferred_bytes,
-        @as(u64, std.math.maxInt(i64)),
-    ));
-    const total: i64 = @intCast(@min(
-        progress.total_bytes,
-        @as(u64, std.math.maxInt(i64)),
-    ));
-    const bytes_label = if (progress.total_bytes_known)
-        std.fmt.bufPrint(
-            &bytes_buf,
-            "{s} / {s}",
-            .{
-                draw.formatSize(transferred, &transferred_buf),
-                draw.formatSize(total, &total_buf),
-            },
-        ) catch ""
+    const bytes_label = if (record.total_bytes > 0)
+        std.fmt.bufPrint(&bytes_buf, "{s} / {s}", .{
+            draw.formatSize(@intCast(@min(record.completed_bytes, @as(u64, std.math.maxInt(i64)))), &transferred_buf),
+            draw.formatSize(@intCast(@min(record.total_bytes, @as(u64, std.math.maxInt(i64)))), &total_buf),
+        }) catch ""
+    else if (record.total_items > 0)
+        (i18n.fmt(&bytes_buf, tr("{done} of {total} items"), .{ .done = record.completed_items, .total = record.total_items }) catch "")
     else
         tr("Measuring…");
 
-    const fraction = fileOperationFraction(progress);
+    const known = app_jobs.fraction(record);
+    const fraction = known orelse 0;
     var percent_buf: [16]u8 = undefined;
-    const percent_label = if (progress.total_bytes_known)
+    const percent_label = if (known != null)
         std.fmt.bufPrint(&percent_buf, "{d}%", .{@as(u32, @intFromFloat(fraction * 100))}) catch ""
     else
         "—";
@@ -751,8 +739,9 @@ fn renderFileOperationRow(
 
 pub fn renderTransferList(self: *App, cr: *c.cairo_t) void {
     const entries = self.torrents.items();
-    const file_op = fileOperationProgress(self);
-    const row_count = entries.len + @as(usize, @intFromBool(file_op != null));
+    var ops_storage: [max_file_ops]io_service.JobRecord = undefined;
+    const file_ops = fileOps(self, &ops_storage);
+    const row_count = entries.len + file_ops.len;
     if (row_count == 0) {
         draw.setSource(cr, theme.global.window_fg);
         draw.drawEllipsis(cr, if (self.torrents.retry_at != null) tr("Connecting…") else tr("No transfers yet. Add a .torrent file or magnet link."), @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), @floatFromInt(@max(0, self.w - self.sidebarWidth() - 48)), ui.textSize(), false);
@@ -786,10 +775,8 @@ pub fn renderTransferList(self: *App, cr: *c.cairo_t) void {
             draw.drawEllipsis(cr, label, column.x + inset, y + self.listBaseline(), @max(0, column.w - inset - 4), ui.textSize(), false);
         }
     }
-    if (file_op) |progress| {
-        if (first <= entries.len and entries.len < last) {
-            renderFileOperationRow(self, cr, entries.len, progress);
-        }
+    for (file_ops, entries.len..) |record, index| {
+        if (index >= first and index < last) renderFileOperationRow(self, cr, index, record);
     }
 }
 
@@ -868,7 +855,7 @@ pub fn transferPaneKey(self: *App, sym: u32) void {
         }
         self.transfer_view.focus = index;
     } else if (sym == c.XKB_KEY_Up or sym == c.XKB_KEY_Down or sym == c.XKB_KEY_Home or sym == c.XKB_KEY_End or sym == c.XKB_KEY_Page_Up or sym == c.XKB_KEY_Page_Down) {
-        const count = self.torrents.items().len + @as(usize, @intFromBool(fileOperationProgress(self) != null));
+        const count = self.torrents.items().len + fileOpCount(self);
         if (count > 0) {
             const row = @min(self.transfer_view.row orelse 0, count - 1);
             const page: usize = @intCast(@max(1, @divTrunc(self.contentBottom() - self.viewTop(), self.rowHeight())));

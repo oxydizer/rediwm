@@ -547,6 +547,8 @@ pub const JobSnapshot = struct {
     }
 };
 
+pub const max_preferred = 8;
+
 const PreferredOperation = struct {
     job_id: JobId,
     operation_id: OperationId,
@@ -559,7 +561,10 @@ pub const Manager = struct {
     next_job_id: JobId = 1,
     next_operation_id: OperationId = 1,
     round_robin_cursor: usize = 0,
-    preferred_operation: ?PreferredOperation = null,
+    /// Files the user is waiting for (hovered ghosts), in hover order: a
+    /// soft queue. While one of them can run, other file copies wait.
+    preferred: [max_preferred]PreferredOperation = undefined,
+    preferred_len: usize = 0,
     discovery_queues: [3]DiscoveryQueue = .{ .{}, .{}, .{} },
     discovery_schedule_slot: usize = 0,
     conflicts: std.ArrayList(Conflict) = .empty,
@@ -648,9 +653,13 @@ pub const Manager = struct {
 
         self.removeDiscoveryQueueItemsForJob(job_id);
         self.removeConflictsForJob(job_id);
-        if (self.preferred_operation) |preferred| {
-            if (preferred.job_id == job_id) self.preferred_operation = null;
+        var kept: usize = 0;
+        for (self.preferred[0..self.preferred_len]) |preferred| {
+            if (preferred.job_id == job_id) continue;
+            self.preferred[kept] = preferred;
+            kept += 1;
         }
+        self.preferred_len = kept;
 
         var removed = self.jobs.orderedRemove(index);
         removed.deinit(self.allocator);
@@ -1542,6 +1551,16 @@ pub const Manager = struct {
 
     /// Read-only access; callers must retain EntryIds, not pointers into the
     /// backing array, across any subsequent TreeIndex mutation.
+    /// Where a job writes, once set.
+    pub fn destinationDirectory(self: *const Manager, job_id: JobId) ?[]const u8 {
+        return (self.findJobConst(job_id) orelse return null).destination_directory;
+    }
+
+    /// Bytes done and total of an entry: over the subtree for a directory.
+    pub fn entryBytes(self: *const Manager, job_id: JobId, entry_id: io_tree.EntryId) ?EntryBytes {
+        return entryProgress(self.findJobConst(job_id) orelse return null, entry_id);
+    }
+
     pub fn treeIndex(self: *const Manager, job_id: JobId) ?*const io_tree.TreeIndex {
         const job = self.findJobConst(job_id) orelse return null;
         return &job.tree;
@@ -2887,9 +2906,10 @@ pub const Manager = struct {
         }
     }
 
-    /// Requests a one-shot preference for a visible queued regular-file copy.
-    /// The preference survives pointer leave and waits until the operation
-    /// is eligible for dispatch.
+    /// Puts a visible queued regular-file copy in the soft queue of files the
+    /// user is waiting for. It goes next, and while it (or another queued
+    /// one) can run, other file copies wait at their next unit boundary.
+    /// The preference survives pointer leave and lasts until the copy ends.
     pub fn prioritizeEntryOperation(
         self: *Manager,
         job_id: JobId,
@@ -2908,57 +2928,63 @@ pub const Manager = struct {
         {
             return false;
         }
-
-        self.preferred_operation = .{
-            .job_id = job_id,
-            .operation_id = operation.id,
-        };
+        for (self.preferred[0..self.preferred_len]) |preferred| {
+            if (preferred.job_id == job_id and preferred.operation_id == operation.id) return true;
+        }
+        if (self.preferred_len == max_preferred) return false;
+        self.preferred[self.preferred_len] = .{ .job_id = job_id, .operation_id = operation.id };
+        self.preferred_len += 1;
         return true;
     }
 
-    /// Dispatches the preferred operation ahead of normal Job and kind
-    /// priority, without bypassing dependencies or pause/cancel gates.
-    fn dispatchPreferred(self: *Manager) ?WorkToken {
-        const preferred = self.preferred_operation orelse return null;
-
+    /// The preferred operation's state, or null once it is gone or ended.
+    fn preferredOperation(self: *Manager, preferred: PreferredOperation) ?struct { job: *Job, job_index: usize, index: usize } {
         for (self.jobs.items, 0..) |*job, job_index| {
             if (job.id != preferred.job_id) continue;
+            if (job.state.isTerminal()) return null;
+            const index = job.operation_indices.get(preferred.operation_id) orelse return null;
+            if (job.operations.items[index].state.isTerminal()) return null;
+            return .{ .job = job, .job_index = job_index, .index = index };
+        }
+        return null;
+    }
 
-            if (job.state.isTerminal()) {
-                self.preferred_operation = null;
-                return null;
+    /// Dispatches the first preferred operation that can run, in queue
+    /// order, ahead of normal Job and kind priority, without bypassing
+    /// dependencies or pause/cancel gates. Sets `hold` when a preferred copy
+    /// runs or can run, so other file copies wait.
+    fn dispatchPreferred(self: *Manager, hold: *bool) ?WorkToken {
+        hold.* = false;
+        var kept: usize = 0;
+        var token: ?WorkToken = null;
+        for (self.preferred[0..self.preferred_len]) |preferred| {
+            const found = self.preferredOperation(preferred) orelse continue;
+            self.preferred[kept] = preferred;
+            kept += 1;
+            const job = found.job;
+            const operation = &job.operations.items[found.index];
+            if (operation.state == .running) {
+                hold.* = true;
+                continue;
             }
-
-            const operation_index = job.operation_indices.get(
-                preferred.operation_id,
-            ) orelse {
-                self.preferred_operation = null;
-                return null;
-            };
-            const operation = &job.operations.items[operation_index];
-
-            if (operation.state == .running) return null;
-            if (operation.state != .pending) {
-                self.preferred_operation = null;
-                return null;
-            }
+            if (token != null or operation.state != .pending) continue;
             if ((job.state != .queued and job.state != .running) or
                 job.pause_requested or job.cancel_requested or
                 operation.unresolved_dependencies != 0 or
                 !dependenciesCompleted(job, operation))
             {
-                return null;
+                continue;
             }
-            if (!dequeueReadyIndex(job, operation_index)) return null;
-
-            // Consume the preference only when dispatch actually succeeds.
-            self.preferred_operation = null;
+            // Only a copy that is really queued holds the others back: one
+            // still waiting for discovery or a conflict must not stall them.
+            if (!dequeueReadyIndex(job, found.index)) continue;
+            hold.* = true;
 
             if (operation.generation == std.math.maxInt(u64)) {
                 transitionOperation(job, operation, .failed);
-                self.propagateUnmetDependencies(job, operation_index);
+                self.propagateUnmetDependencies(job, found.index);
                 self.recomputeJobState(job);
-                return null;
+                continue;
             }
 
             if (operation.kind == .copy_file) {
@@ -2971,16 +2997,15 @@ pub const Manager = struct {
             operation.generation += 1;
             transitionOperation(job, operation, .running);
             job.state = .running;
-            self.round_robin_cursor = (job_index + 1) % self.jobs.items.len;
-            return .{
+            self.round_robin_cursor = (found.job_index + 1) % self.jobs.items.len;
+            token = .{
                 .job_id = job.id,
                 .operation_id = operation.id,
                 .generation = operation.generation,
             };
         }
-
-        self.preferred_operation = null;
-        return null;
+        self.preferred_len = kept;
+        return token;
     }
 
     /// Independent Operations within a Job may execute concurrently.
@@ -2989,11 +3014,13 @@ pub const Manager = struct {
         const count = self.jobs.items.len;
         if (count == 0) return null;
 
-        if (self.dispatchPreferred()) |token| return token;
+        var hold = false;
+        if (self.dispatchPreferred(&hold)) |token| return token;
 
         // Directory creation outranks symlink creation, which outranks
-        // regular-file and all remaining operation kinds.
-        for (0..3) |priority| {
+        // regular-file and all remaining operation kinds. While a preferred
+        // copy runs or can run, the others wait: folders and links still go.
+        for (0..@as(usize, if (hold) 2 else 3)) |priority| {
             for (0..count) |offset| {
                 const index = (self.round_robin_cursor + offset) % count;
                 const job = &self.jobs.items[index];
@@ -3395,6 +3422,12 @@ fn transitionOperation(job: *Job, operation: *Operation, next_state: OperationSt
         if (!was_done and is_done) job.summary_completed_items += 1;
         if (was_done and !is_done) job.summary_completed_items -|= 1;
     }
+    // A file or link that arrives makes its folders real (ghost views).
+    if (operation.kind == .copy_file or operation.kind == .copy_symlink or operation.kind == .move_entry) {
+        const was_done = operation.state == .completed;
+        const is_done = next_state == .completed;
+        if (was_done != is_done) propagateArrived(job, operation.entry_id, is_done);
+    }
     operation.state = next_state;
     updateFlushingOperationCount(job, operation, was_flushing);
 }
@@ -3408,12 +3441,53 @@ fn countsAsItem(kind: OperationKind) bool {
 
 fn setOperationBytes(job: *Job, operation: *Operation, bytes: u64) void {
     job.summary_completed_bytes = (job.summary_completed_bytes -| operation.progress_bytes) +| bytes;
+    propagateToAncestors(job, operation.entry_id, operation.progress_bytes, bytes, .completed);
     operation.progress_bytes = bytes;
 }
 
 fn setOperationTotal(job: *Job, operation: *Operation, total: u64) void {
     job.summary_total_bytes = (job.summary_total_bytes -| operation.progress_total_bytes) +| total;
+    propagateToAncestors(job, operation.entry_id, operation.progress_total_bytes, total, .total);
     operation.progress_total_bytes = total;
+}
+
+/// Moves a directory's subtree sums by an operation's change, from the
+/// entry's parent up to its root: O(depth), no allocation.
+fn propagateToAncestors(job: *Job, entry_id: ?io_tree.EntryId, old: u64, new: u64, field: enum { completed, total }) void {
+    if (old == new) return;
+    const start = entry_id orelse return;
+    var parent = (job.tree.getConst(start) orelse return).parent_id;
+    while (parent) |id| {
+        const entry = job.tree.get(id) orelse return;
+        const sum = switch (field) {
+            .completed => &entry.subtree_completed_bytes,
+            .total => &entry.subtree_total_bytes,
+        };
+        sum.* = (sum.* -| old) +| new;
+        parent = entry.parent_id;
+    }
+}
+
+pub const EntryBytes = struct { completed_bytes: u64, total_bytes: u64, arrived: u64 = 0 };
+
+fn propagateArrived(job: *Job, entry_id: ?io_tree.EntryId, arrived: bool) void {
+    const start = entry_id orelse return;
+    var parent = (job.tree.getConst(start) orelse return).parent_id;
+    while (parent) |id| {
+        const entry = job.tree.get(id) orelse return;
+        if (arrived) entry.subtree_arrived +|= 1 else entry.subtree_arrived -|= 1;
+        parent = entry.parent_id;
+    }
+}
+
+/// A directory's bytes done and total over its subtree; for anything else,
+/// its own operation's.
+fn entryProgress(job: *const Job, entry_id: io_tree.EntryId) ?EntryBytes {
+    const entry = job.tree.getConst(entry_id) orelse return null;
+    if (entry.kind == .directory) return .{ .completed_bytes = entry.subtree_completed_bytes, .total_bytes = entry.subtree_total_bytes, .arrived = entry.subtree_arrived };
+    const index = job.entry_operation_indices.get(entry_id) orelse return .{ .completed_bytes = 0, .total_bytes = entry.metadata.size };
+    const operation = &job.operations.items[index];
+    return .{ .completed_bytes = operation.progress_bytes, .total_bytes = operation.progress_total_bytes };
 }
 
 fn isFlushingOperation(operation: *const Operation) bool {
@@ -3737,14 +3811,15 @@ test "terminal job retirement repairs indexes and clears scheduler references" {
     try std.testing.expect(manager.completeWork(token, .completed));
     try std.testing.expectEqual(JobState.completed, manager.jobState(retired_job).?);
 
-    manager.preferred_operation = .{
+    manager.preferred[0] = .{
         .job_id = retired_job,
         .operation_id = operation_id,
     };
+    manager.preferred_len = 1;
     try std.testing.expect(manager.retireTerminalJob(retired_job));
 
     try std.testing.expectEqual(@as(?JobState, null), manager.jobState(retired_job));
-    try std.testing.expect(manager.preferred_operation == null);
+    try std.testing.expectEqual(@as(usize, 0), manager.preferred_len);
     try std.testing.expect(manager.findJob(first_job) != null);
     try std.testing.expect(manager.findJob(last_job) != null);
     try std.testing.expectEqual(@as(?usize, 0), manager.job_indices.get(first_job));

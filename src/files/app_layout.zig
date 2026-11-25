@@ -228,15 +228,8 @@ pub fn cellWidth(self: *App) i32 {
 
 pub fn contentHeight(self: *App) i32 {
     const count: i32 = if (self.transfer_view.active) blk: {
-        const has_file_operation = if (self.job_runner) |runner| blk2: {
-            const state = runner.pollProgress().state;
-            break :blk2 state == .running or
-                state == .paused or
-                state == .waiting_conflict;
-        } else false;
-
         break :blk @as(i32, @intCast(self.torrents.items().len)) +
-            @as(i32, @intFromBool(has_file_operation));
+            @as(i32, @intCast(@import("app_torrents.zig").fileOpCount(self)));
     } else @intCast(self.items.items.len);
     return 2 * self.itemInset() + @divTrunc(count + self.columns() - 1, self.columns()) * self.rowHeight();
 }

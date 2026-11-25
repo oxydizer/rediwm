@@ -10,6 +10,7 @@ const git = @import("git.zig");
 const ops_mod = @import("ops.zig");
 const icons = @import("../icon_cache.zig");
 const app_requests = @import("app_requests.zig");
+const app_transfers = @import("app_transfers.zig");
 const deletion = @import("../delete_dialog.zig");
 const open_with = @import("open_with.zig");
 const properties = @import("properties.zig");
@@ -33,6 +34,8 @@ pub fn conflictShortcut(sym: u32, alt: bool, can_merge: bool) ?ConflictAction {
 }
 
 pub fn closeDialog(self: *App) void {
+    if (self.dialog) |open| if (open.service_conflict)
+        std.log.info("Files conflict dialog {d} closed", .{open.manager_conflict_id orelse 0});
     self.text_dragging = false;
     _ = self.dialog_surface.pointerMotion(null);
     self.edit_revision += 1;
@@ -44,6 +47,7 @@ pub fn closeDialog(self: *App) void {
         dlg.edit.text.deinit(self.allocator);
         if (dlg.target_path) |tp| self.allocator.free(tp);
         if (dlg.conflict_name) |cn| self.allocator.free(cn);
+        if (dlg.conflict_destination) |path| self.allocator.free(path);
         self.dialog = null;
         self.open_with_archive_paths = false;
         self.invalidate();
@@ -341,8 +345,8 @@ pub fn openConflictDialog(self: *App, conflict_name: []const u8) void {
     self.invalidate();
 }
 
-/// Opens the shared conflict UI for the current Manager FIFO head.
-/// Unlike the legacy JobRunner dialog, this never replaces another modal.
+/// Opens the shared conflict UI for the window Manager's FIFO head (archive
+/// jobs, until S4). It never replaces another modal.
 pub fn openManagerConflictDialog(
     self: *App,
     conflict_id: u64,
@@ -358,10 +362,26 @@ pub fn openManagerConflictDialog(
     self.invalidate();
 }
 
-/// Merge is available only for the current Manager FIFO directory conflict.
-/// The legacy JobRunner dialog deliberately retains its original actions.
+/// A service job's conflict, the head of the queue: `destination` is where
+/// the conflicting item would go.
+pub fn openServiceConflictDialog(self: *App, conflict_id: u64, destination: []const u8, can_merge: bool) void {
+    if (self.dialog != null) return;
+    self.dialog = Dialog{
+        .kind = .conflict,
+        .title = tr("File Conflict"),
+        .conflict_name = self.allocator.dupe(u8, std.fs.path.basename(destination)) catch null,
+        .manager_conflict_id = conflict_id,
+        .service_conflict = true,
+        .conflict_can_merge = can_merge,
+        .conflict_destination = self.allocator.dupe(u8, destination) catch null,
+    };
+    self.invalidate();
+}
+
+/// Merge is offered for directory-onto-directory conflicts only.
 pub fn managerConflictCanMerge(self: *const App) bool {
     const dlg = self.dialog orelse return false;
+    if (dlg.service_conflict) return dlg.conflict_can_merge;
     const conflict_id = dlg.manager_conflict_id orelse return false;
     const manager = if (self.io_manager) |value| value else return false;
     const conflict = manager.nextConflict() orelse return false;
@@ -410,24 +430,24 @@ fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) 
     self.transfer_rows_dirty = true;
 }
 
-/// Resolves either a Manager-owned conflict or the legacy JobRunner conflict.
+/// Resolves a service conflict, or one of the window Manager's own (archives).
 /// A failed Manager action leaves the dialog open for another attempt.
 pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
     const dlg = self.dialog orelse return;
     if (dlg.kind != .conflict) return;
 
-    if (dlg.manager_conflict_id) |conflict_id| {
+    if (dlg.service_conflict) {
+        if (dlg.manager_conflict_id) |conflict_id| app_transfers.resolveConflict(self, conflict_id, dlg.conflict_destination orelse "", switch (action) {
+            .skip => .skip,
+            .merge => .merge,
+            .rename => .rename,
+            .cancel => .cancel,
+        });
+    } else if (dlg.manager_conflict_id) |conflict_id| {
         resolveManagerConflict(self, conflict_id, action) catch {
             self.setStatusNotice(tr("Could not resolve file conflict"), true);
             return;
         };
-    } else if (self.job_runner) |runner| {
-        runner.resolveConflict(switch (action) {
-            .skip => .skip,
-            .merge => return,
-            .rename => .rename,
-            .cancel => .cancel,
-        });
     }
 
     self.closeDialog();
@@ -470,6 +490,7 @@ pub fn confirmDialog(self: *App) void {
         .conflict => {
             self.resolveConflictDialog(.skip);
         },
+        .quit_jobs => @import("app_quit.zig").choose(self, .keep),
     }
 }
 
@@ -496,6 +517,11 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
     }
     if (dlg.kind == .trash_confirm) {
         self.deleteAction(self.dialog.?.deletion.key(sym));
+        return;
+    }
+    if (dlg.kind == .quit_jobs) {
+        if (sym == c.XKB_KEY_Escape) @import("app_quit.zig").choose(self, .cancel);
+        if (sym == c.XKB_KEY_Return or sym == c.XKB_KEY_KP_Enter) @import("app_quit.zig").choose(self, .keep);
         return;
     }
     if (dlg.kind == .conflict) {

@@ -188,11 +188,11 @@ pub fn pollFill(self: *Client, fds: *[poll_slots]c.struct_pollfd) void {
     fds[4].fd = if (self.app.dirsize_pool) |p| p.done_fd else -1;
     fds[5].fd = self.app.thumbWakeFd();
     // Slots 6..13 belong to the clipboard sends (at most eight).
+    // Slot 18 is free: it held the retired JobRunner wake fd.
     fds[14].fd = self.app.devicesWakeFd();
     fds[15].fd = if (self.drop_receiving) |receive| receive.fd else -1;
     fds[16].fd = self.app.children.fd;
     fds[17].fd = self.app.extract_picker_fd orelse -1;
-    fds[18].fd = if (self.app.job_runner) |runner| runner.wake_fd else -1;
     if (self.app.terminal.session) |session| {
         fds[19] = .{ .fd = terminal_c.ft_pty(session), .events = @intCast(c.POLLIN | @as(c_int, if (terminal_c.ft_wants_write(session)) c.POLLOUT else 0)), .revents = 0 };
         fds[20] = .{ .fd = terminal_c.ft_channel(session), .events = @intCast(c.POLLIN | @as(c_int, if (terminal_c.ft_wants_request(session)) c.POLLOUT else 0)), .revents = 0 };
@@ -221,7 +221,6 @@ pub fn pollDrain(self: *Client, fds: *const [poll_slots]c.struct_pollfd) void {
     if (fds[14].revents & c.POLLIN != 0) self.app.drainDevices();
     if (fds[23].revents & c.POLLIN != 0) self.app.drainAudio();
     if (fds[16].revents != 0) while (self.app.children.next() != null) {};
-    if (fds[18].revents != 0) if (self.app.job_runner) |runner| runner.drain();
     if (fds[17].revents != 0) self.app.extractionFolderReady();
     if (fds[1].revents != 0) self.previewReturned();
     if (self.receiving != null and (fds[2].revents != 0 or app_mod.nowMs() - self.receiving.?.started > transfer.timeout_ms)) self.receiveClipboard();

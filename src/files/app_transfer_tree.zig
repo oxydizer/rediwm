@@ -47,32 +47,6 @@ pub const State = struct {
         self.dirty = true;
     }
 
-    /// Replaces the cached projection from one consistent manifest snapshot.
-    pub fn rebuild(self: *State, runner: *ops.JobRunner) !void {
-        var profiled_nodes = self.treeSize();
-        const profile_started = ui_profile.start();
-        defer ui_profile.finish(profile_started, "sidebar_tree_rebuild", profiled_nodes);
-
-        const snapshot_started = ui_profile.start();
-        var snapshot = try runner.snapshotTransferManifest(self.allocator);
-        ui_profile.finish(snapshot_started, "sidebar_manifest_snapshot", snapshot.entries.items.len);
-        defer snapshot.deinit();
-
-        const build_started = ui_profile.start();
-        var next = try projection.build(self.allocator, snapshot.entries.items);
-        profiled_nodes = next.nodes.items.len;
-        ui_profile.finish(build_started, "sidebar_tree_projection", next.nodes.items.len);
-        errdefer next.deinit();
-
-        try self.aggregate_cache.ensureTotalCapacity(self.allocator, next.nodes.items.len);
-        try self.child_counts.ensureTotalCapacity(self.allocator, next.nodes.items.len);
-        try self.aggregate_queue.ensureTotalCapacity(self.allocator, next.nodes.items.len);
-
-        if (self.tree) |*old| old.deinit();
-        self.tree = next;
-        self.dirty = false;
-    }
-
     /// Projects the Manager-owned incremental tree into the existing
     /// destination hierarchy used by the Files listing and transfer UI.
     pub fn rebuildManager(

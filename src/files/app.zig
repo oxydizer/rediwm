@@ -157,6 +157,9 @@ pub const App = struct {
     io_runtime: ?*io_runtime_mod.Runtime = null,
     /// This window's link to the process-wide I/O service (`app_service.zig`).
     service: app_service.Link = .{},
+    /// The user chose what happens to running jobs when this, the last
+    /// window, closes (`app_quit.zig`).
+    quit_confirmed: bool = false,
     io_manager: ?*io_manager_mod.Manager = null,
     discovery_executor: ?*io_discovery_executor_mod.Executor = null,
     operation_executor: ?*io_operation_executor_mod.Runtime = null,
@@ -356,7 +359,6 @@ pub const App = struct {
     // Operations & Jobs
     dialog: ?Dialog = null,
     open_with_archive_paths: bool = false,
-    job_runner: ?*ops_mod.JobRunner = null,
     active_io_copy_job: ?io_manager_mod.JobId = null,
     active_io_copy_destination: ?[]u8 = null,
     active_io_copy_is_directory: bool = false,
@@ -368,21 +370,13 @@ pub const App = struct {
     active_io_copy_is_archive_open_with: bool = false,
     active_io_copy_archive_member_opened: bool = false,
     active_io_copy_item_count: usize = 0,
-    job_was_running: bool = false,
     archive_preview: bool = false,
-    archive_open_navigation: u32 = 0,
     extract_picker_fd: ?c_int = null,
     extract_picker_source: ?[]u8 = null,
     extract_picker_members: std.ArrayList([]const u8) = .empty,
     extract_picker_bytes: std.ArrayList(u8) = .empty,
     job_cut_revision: ?usize = null,
-    job_progress: usize = std.math.maxInt(usize),
     job_transferred_bytes: u64 = 0,
-    job_measuring: bool = false,
-    job_current_file_path: [4096]u8 = undefined,
-    job_current_file_path_len: usize = 0,
-    job_rate_sample_bytes: u64 = 0,
-    job_rate_sample_at: i64 = 0,
     job_bytes_per_second: u64 = 0,
     job_state: ops_mod.JobState = .idle,
     transfer_rows_dirty: bool = false,
@@ -444,7 +438,6 @@ pub const App = struct {
             .history = hist,
             .home_dir = home_dir,
             .items_arena = std.heap.ArenaAllocator.init(allocator),
-            .job_runner = ops_mod.JobRunner.init(allocator) catch null,
             .transfer_tree_state = app_transfer_tree.State.init(allocator),
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
@@ -503,6 +496,8 @@ pub const App = struct {
         if (self.archive_drag_export) |*drag_export| drag_export.deinit();
         self.discovery_jobs.deinit(self.allocator);
         app_requests.deinitPending(self);
+        self.service.transfers.deinit(self.allocator);
+        self.service.ghosts.deinit(self.allocator);
         self.service.deinit();
         self.detached_io_jobs.deinit(self.allocator);
         self.torrents.deinit();
@@ -526,7 +521,6 @@ pub const App = struct {
         if (self.preview_return_fd) |fd| _ = c.close(fd);
         if (self.editor_path) |path| self.allocator.free(path);
         if (self.active_io_copy_destination) |path| self.allocator.free(path);
-        if (self.job_runner) |runner| runner.deinit();
         self.transfer_tree_state.deinit();
         self.clearFolderSizes();
         self.folder_sizes.deinit();
@@ -794,6 +788,9 @@ pub const App = struct {
 
     // app_service.zig
     pub const submitDeletion = app_service.submitDeletion;
+    pub const requestClose = @import("app_quit.zig").requestClose;
+    pub const submitTransfer = @import("app_transfers.zig").submitTransfer;
+    pub const openServiceConflictDialog = app_dialogs.openServiceConflictDialog;
     pub const serviceUpdated = app_service.serviceUpdated;
     pub const stepService = app_service.stepService;
     pub const serviceTimeout = app_service.serviceTimeout;

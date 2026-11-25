@@ -66,6 +66,8 @@ pub const RoutedCommand = commands.RoutedCommand;
 pub const Request = io_requests.Request;
 pub const Reply = io_requests.Reply;
 const io_requests = @import("io_requests.zig");
+pub const io_job_views = @import("io_job_views.zig");
+pub const ViewSnapshot = io_job_views.Snapshot;
 
 fn Ring(comptime T: type, comptime capacity: usize) type {
     return struct {
@@ -128,10 +130,16 @@ const WindowSlot = struct {
     /// still in flight. Together at most `reply_slots_per_window`.
     replies: Ring(*Reply, reply_slots_per_window) = .{},
     reserved_replies: usize = 0,
+    /// The newest snapshot of each watched view not yet taken.
+    views: [io_job_views.slots_per_window]?*ViewSnapshot = @splat(null),
 
     fn freeReplies(self: *WindowSlot) void {
         while (self.replies.pop()) |reply| reply.destroy();
         self.reserved_replies = 0;
+        for (&self.views) |*view| if (view.*) |snapshot| {
+            snapshot.destroy();
+            view.* = null;
+        };
     }
 
     /// Called under the Service mutex on a closing slot. Clears the guarded
@@ -361,6 +369,32 @@ pub const Service = struct {
         if (slot.reserved_replies > 0) slot.reserved_replies -= 1;
     }
 
+    /// Called by the coordinator: the newest snapshot of a watched view
+    /// replaces one the window has not taken (latest wins), or is freed
+    /// when the window is gone. False in that case.
+    pub fn deliverView(self: *Service, window_id: WindowId, snapshot: *ViewSnapshot) bool {
+        self.lock();
+        defer self.unlock();
+        const slot = self.findSlot(window_id) orelse {
+            snapshot.destroy();
+            return false;
+        };
+        const view = &slot.views[snapshot.slot];
+        if (view.*) |old| old.destroy();
+        view.* = snapshot;
+        signalWake(self.update_wake_fd);
+        return true;
+    }
+
+    fn takeView(self: *Service, window_id: WindowId, view_slot: u8) !?*ViewSnapshot {
+        if (!self.tryLock()) return error.ServiceBusy;
+        defer self.unlock();
+        const slot = self.findSlot(window_id) orelse return error.WindowClosed;
+        const snapshot = slot.views[view_slot];
+        slot.views[view_slot] = null;
+        return snapshot;
+    }
+
     fn takeReply(self: *Service, window_id: WindowId) !?*Reply {
         if (!self.tryLock()) return error.ServiceBusy;
         defer self.unlock();
@@ -486,6 +520,15 @@ pub const Service = struct {
             overflowed.* = true;
         }
         return self.closed_windows.pop();
+    }
+
+    /// Lock-free: how many windows are registered and not closing.
+    pub fn openWindowCount(self: *const Service) usize {
+        var count: usize = 0;
+        for (&self.windows) |*slot| {
+            if (slotState(slot.word.load(.acquire)) == .active) count += 1;
+        }
+        return count;
     }
 
     /// Lock-free: whether any window is registered and not closing.
@@ -634,6 +677,12 @@ pub const Handle = struct {
     /// owns it (`Reply.destroy`). Fails fast with `ServiceBusy`.
     pub fn takeReply(self: Handle) !?*Reply {
         return self.service.takeReply(self.window_id);
+    }
+
+    /// The newest snapshot of view slot `view_slot`, or null when none
+    /// arrived since the last take. The caller owns it (`destroy`).
+    pub fn takeView(self: Handle, view_slot: u8) !?*ViewSnapshot {
+        return self.service.takeView(self.window_id, view_slot);
     }
 
     /// Copies a live job's speed history, oldest first.

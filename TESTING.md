@@ -8,11 +8,10 @@ zig build test
 python3 tests/<name>.py
 ```
 
-The long-running Files benchmarks are skipped by default. To include the
-transfer and end-to-end copy benchmarks in the full test run, use:
+The long-running Files archive benchmark is skipped by default. Run it with:
 
 ```sh
-REDIWM_RUN_BENCHMARKS=1 zig build test
+REDIWM_RUN_BENCHMARKS=1 zig build bench-files-archive
 ```
 
 `zig build test-wlroots` checks the complete exported wlroots API against the

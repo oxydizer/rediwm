@@ -447,8 +447,8 @@ main thread, and it happens after the UI is gone.
 
 **Window teardown while other windows live.** Destroying one window must not wait
 on anything. `Handle.close` is atomic (§3). Today `Client.destroy` joins the
-window's Runtime worker pools (`io_runtime.deinit`), the `JobRunner` thread
-(`App.deinit`) and its listing worker (`worker.deinit`), all on the UI thread. A
+window's Runtime worker pools (`io_runtime.deinit`) and its listing worker
+(`worker.deinit`), all on the UI thread (the `JobRunner` thread went in S3b). A
 worker stuck on a hung mount therefore freezes every window. The first two go away
 with the per-window Runtime and `JobRunner` in S3. Per-window helper threads that
 remain (listing worker, folder-size, thumbnails, Trash totals) are signalled to stop
@@ -530,7 +530,7 @@ existing code (C4) is recorded, never a new violation.
 | # | Call site | Blocking work | Removed in |
 | --- | --- | --- | --- |
 | U1 | `app_fileops.startManagerFileCopy`, `startManagerFileMove`, `startManagerDirectoryTransfer` | `lstat`, `readlink` per source, `stat` of the destination and of source parents | S3: App submits through `Handle`, prepare runs on a worker (S2) |
-| U2 | `App.executeTransfer` fallback to `JobRunner`; `app_listing` polling | JobRunner start and polling on the UI thread | S3 (needs phase 2) |
+| ~~U2~~ | `App.executeTransfer` fallback to `JobRunner`; `app_listing` polling | JobRunner start and polling on the UI thread | **Removed in S3b**: JobRunner is deleted; transfers are service jobs |
 | U3 | `app_io.stepOperations`, `stepDiscovery`, `processDetachedIoJobs` | Per-window Runtime: draining completions, reconciliation, dispatch on the UI thread | S3 |
 | ~~U4~~ | `app_fileops.executeDeletion` → `ops.deleteItems`, `ops.trashItems`, `ops.emptyTrash`; `app_trash.trashDropped` → `ops.trashItems` | Spawns `rm -r` / `gio trash` and **waits for it** | **Removed in S3a**: `delete`, `trash` and `empty_trash` jobs (`io_deletion.zig`, `io_coordinator_deletions.zig`) |
 | ~~U5~~ | `app_fileops.deleteFromTrash` → `trash.deleteMany` → `ops.deleteRecursive` | Recursive delete | **Removed in S3a**: a `delete` job (request kind `delete_from_trash`) |
@@ -544,7 +544,7 @@ existing code (C4) is recorded, never a new violation.
 | U13 | `app_io.openArchivePublicationCursor`, `stepArchivePublications` (`Cursor.open`, `nextBatch`) | `openat`, `getdents` on staging | S4 (publication cursor becomes service-owned) |
 | U14 | `app_io` → `executor.discardArchiveStaging` | `deleteRecursive` of staging | S4 |
 | U15 | `clipboard.StagingLease.deinit` (clipboard replace, `App.deinit`, extraction cleanup, `client_clipboard`) | `deleteRecursive` of a transferred-out staging lease | S4: disposal handed to an operation worker |
-| U16 | `Client.destroy` → `io_runtime.deinit`, `App.deinit` → `JobRunner.deinit`, `worker.deinit` | Thread joins on the UI thread | S3 (Runtime and JobRunner removed; reaper for the rest) |
+| U16 | `Client.destroy` → `io_runtime.deinit`, `worker.deinit` | Thread joins on the UI thread | S3 (JobRunner gone in S3b; Runtime in S3c; reaper for the rest) |
 | U17 | `client_lifecycle.closeIoHandle` | Busy-wait on `ServiceBusy` | **Before S1** (atomic close, §3) |
 
 `app_audio` checks the existence of a socket with `access` in the runtime

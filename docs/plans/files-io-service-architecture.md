@@ -362,13 +362,18 @@ or worker resource; and the coordinator exemption table is empty.
   U9 to U12 are removed; U8 keeps only the conflict rename, which goes with
   the Transfers UI in S3b.
 * S3b. Prerequisite: the Coordinator accepts mixed file and directory selections
-  (today it rejects them with `MixedTransferSourceKinds`), so JobRunner's fallback
-  can go. This is roadmap phase 2. Then the App submits transfers through its
+  (done in phase 2a), so JobRunner's fallback can go. **Done:** JobRunner, its
+  tests and benchmarks are deleted. This is roadmap phase 2. Then the App submits transfers through its
   `Handle` (U1, U2), and the Transfers UI renders from job records through the
   source-agnostic presentation layer of §13, which torrent rows use too.
 * S3b also: closing the last window while service jobs run asks first (keep them
   running in the background, or cancel them), and jobs that end while headless send
   a desktop notification. Moved here from S2.
+* S3b also: **job views**, for what job records cannot carry. Records hold job
+  totals. Ghost rows, per-item progress rings, the Transfers tree and browsing
+  inside a running transfer need per-entry state, which today the window reads
+  straight from its own Manager. With the Manager on the coordinator, a window
+  *subscribes* to what it shows and the coordinator pushes it (§14).
 * S3c. `Client.io_runtime` and `App.io_runtime` are removed (U3). This is when the
   per-window Runtime stops existing. Window teardown joins nothing on the UI thread.
   The helper threads that remain go to the reaper (U16).
@@ -534,3 +539,59 @@ on top of the layer, not a service stage.
 paths and output buffers are bounded. A shell that crashes or restarts
 resubscribes and gets a new snapshot.
 
+
+## 14. Job views: per-entry state for what a window shows
+
+A job record says how a job is doing. A window also shows *which* items are
+moving: ghost rows in the destination folder, a ring per item, the Transfers
+tree, and a running transfer opened like a folder. That is per-entry state of
+the job's tree, which lives in the Manager on the coordinator thread. Windows
+never read the Manager (§4), so the coordinator pushes it.
+
+**Subscribe to a folder.** Ghosts show the future state of the filesystem,
+so they belong to a folder, not to the window that started a job: any window
+showing a folder that jobs write into shows their ghosts, and a ghost folder
+can be entered to see its ghost files. A window sends `watch_view` with a view
+slot (0 to 3), the folder's path and a window of rows (offset, at most 512).
+Each pass the coordinator finds the jobs writing into that folder: those whose
+destination is the folder (their roots land there) or an ancestor of it (the
+folder is inside their tree, found by name). The **view snapshot** lists their
+entries there, each with its job and entry id, name, kind, state (pending,
+running, done, failed, skipped, cancelled) and bytes done and total, plus the
+count in all. `unwatch_view` drops it; closing the window drops all of its views
+(the close sweep, §6). A snapshot carries the watch's generation, so a window
+ignores one for a folder it has left.
+
+**Interest is priority.** Watching a folder inside a job's tree asks the
+coordinator to discover that folder first, as navigating into it did. Hovering
+a ghost file sends `prioritize_entry` (copy it next); hovering a ghost folder
+sends `promote_subtree`. Both name the job and entry from the snapshot row.
+
+**When it is written.** With the record of its job: at once on structural
+change (a level gained or lost entries, an entry changed state), and at most
+every 50 ms for progress. A paused job or one waiting on a conflict writes
+nothing. Only watched levels are serialised, so the cost per pass is bounded
+by the subscribed rows, never by the size of the job.
+
+**Delivery.** A snapshot is an owned buffer, like a reply (§8): the coordinator
+builds it off the Service mutex, then swaps it into the window's view slot
+under the mutex and signals the update wake. Latest wins: a snapshot the window
+has not taken yet is freed when a newer one replaces it, so a slow window holds
+at most one per slot and never blocks the coordinator. The window takes it with
+`Handle.takeView` (fail fast, `ServiceBusy` retried next turn).
+
+**Directory progress is incremental.** A folder's bytes done and total are the
+sums over its subtree. The Manager keeps them per directory entry and updates
+them on each progress report and each discovered entry, walking up the parent
+chain (O(depth)). The window no longer aggregates a projected copy of the whole
+tree on every rebuild, which today costs O(entries) on the UI thread.
+
+**What stays with records.** Job state, totals, rate history, the pending
+conflict id and the offered resource stay in the job table. Conflict details
+for the dialog (names, kinds, sizes and dates of both sides) are a request the
+coordinator answers from memory, since they are needed once per conflict.
+
+**Limits.** 4 view slots per window (ghosts use slot 0), 512 rows per
+snapshot, names bounded by the filesystem's 255 bytes. A folder resolves
+against at most 8 jobs at once. Memory per window is bounded by four snapshots in
+flight and four held.

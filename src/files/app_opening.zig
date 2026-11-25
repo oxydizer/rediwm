@@ -190,13 +190,6 @@ fn startArchiveExtraction(
         return error.Busy;
     }
 
-    if (self.job_runner) |runner| {
-        const state = runner.pollProgress().state;
-        if (state == .running or state == .paused or state == .waiting_conflict) {
-            return error.Busy;
-        }
-    }
-
     try self.startOperations();
     const manager = if (self.io_manager) |value| value else
         return error.OperationManagerUnavailable;
@@ -255,14 +248,6 @@ pub fn openArchiveMember(self: *App, path: []const u8, preview: bool) void {
         self.setStatusNotice(tr("A file operation is already running"), true);
         return;
     }
-    if (self.job_runner) |runner| {
-        const state = runner.pollProgress().state;
-        if (state == .running or state == .paused or state == .waiting_conflict) {
-            self.setStatusNotice(tr("A file operation is already running"), true);
-            return;
-        }
-    }
-
     self.startOperations() catch {
         self.setStatusNotice(tr("Could not open archive member"), true);
         return;
@@ -311,8 +296,6 @@ pub fn openArchiveMember(self: *App, path: []const u8, preview: bool) void {
     self.active_io_copy_archive_member_opened = false;
     self.active_io_copy_item_count = 1;
     self.archive_preview = preview;
-    self.archive_open_navigation = self.navigation_count;
-    self.job_was_running = false;
     self.job_cut_revision = null;
     self.setStatusNotice("Opening archive member", false);
     self.invalidate();

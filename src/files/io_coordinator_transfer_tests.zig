@@ -1,4 +1,4 @@
-//! Coordinator transfers that the JobRunner fallback used to cover: mixed
+//! Coordinator transfers that the retired JobRunner fallback used to cover: mixed
 //! selections, copies onto the source itself, moves onto itself, overlapping
 //! moves and unsupported file types (roadmap phase 2).
 const std = @import("std");

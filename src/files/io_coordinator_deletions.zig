@@ -105,6 +105,7 @@ pub fn pumpDeletions(self: *Coordinator) void {
         self.service.updateJobRecord(record) catch |err| {
             std.log.err("Files deletion record {d} update failed: {s}", .{ record.id, @errorName(err) });
         };
+        @import("io_coordinator_notify.zig").jobEnded(self, record);
         self.service.retireJobRecord(record.id) catch |err| {
             std.log.err("Files deletion record {d} retirement failed: {s}", .{ record.id, @errorName(err) });
         };

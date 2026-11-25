@@ -5,7 +5,6 @@ const app_mod = @import("files/app.zig");
 const ops_mod = @import("files/ops.zig");
 const clipboard_mod = @import("files/clipboard.zig");
 const dirsize_mod = @import("files/dirsize.zig");
-const transfer_bench_mod = @import("files/transfer_bench.zig");
 const io_manager_tests = @import("files/io_manager_tests.zig");
 const io_service_tests = @import("files/io_service_tests.zig");
 const io_thread_guard = @import("files/io_thread_guard.zig");
@@ -18,6 +17,7 @@ const io_coordinator_transfer_tests = @import("files/io_coordinator_transfer_tes
 const io_coordinator_shutdown_tests = @import("files/io_coordinator_shutdown_tests.zig");
 const io_deletion_tests = @import("files/io_deletion_tests.zig");
 const io_request_tests = @import("files/io_request_tests.zig");
+const io_job_view_tests = @import("files/io_job_view_tests.zig");
 const io_workers_tests = @import("files/io_workers_tests.zig");
 const io_executor_tests = @import("files/io_executor_tests.zig");
 const io_copy_tests = @import("files/io_copy_tests.zig");
@@ -32,7 +32,6 @@ const c = @import("files/c.zig").api;
 const linux = std.os.linux;
 
 test {
-    _ = transfer_bench_mod;
     _ = io_manager_tests;
     _ = io_service_tests;
     _ = io_thread_guard;
@@ -45,6 +44,7 @@ test {
     _ = io_coordinator_shutdown_tests;
     _ = io_deletion_tests;
     _ = io_request_tests;
+    _ = io_job_view_tests;
     _ = io_workers_tests;
     _ = io_executor_tests;
     _ = io_copy_tests;
