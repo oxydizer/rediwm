@@ -512,9 +512,7 @@ fn legacyHeight(self: *App) i32 {
             }
         }
     }
-    const runner = self.job_runner orelse return 0;
-    const state = runner.pollProgress().state;
-    return if (state == .running or state == .paused or state == .waiting_conflict) 60 else 0;
+    return 0;
 }
 
 pub fn fileOpsSidebarHeight(self: *App) i32 {
@@ -544,13 +542,6 @@ pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
     }
     if (self.active_io_copy_job != null) {
         if (fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
-            return std.math.maxInt(usize) - 2003;
-        }
-    } else if (self.job_runner) |runner| {
-        const progress = runner.pollProgress();
-        const can_pause = (progress.kind == .copy or progress.kind == .move) and
-            (progress.state == .running or progress.state == .paused);
-        if (can_pause and fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
             return std.math.maxInt(usize) - 2003;
         }
     }
@@ -599,27 +590,7 @@ pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
             self.focus = .file_view;
         }
         self.invalidate();
-        return true;
     }
-    const runner = self.job_runner orelse return true;
-    const progress = runner.pollProgress();
-    const area = fileOpsBox(self);
-    if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
-        runner.cancel();
-    } else if ((progress.kind == .copy or progress.kind == .move) and
-        (progress.state == .running or progress.state == .paused) and
-        fileOpsRectContains(fileOpsPauseRect(area), x, y))
-    {
-        if (progress.state == .paused) {
-            runner.resumeJob();
-        } else if (progress.state == .running) {
-            runner.pause();
-        }
-    } else {
-        self.navigate(runner.dest_dir);
-        self.focus = .file_view;
-    }
-    self.invalidate();
     return true;
 }
 
@@ -677,50 +648,7 @@ fn renderLegacyRow(self: *App, cr: *c.cairo_t) void {
             .close,
             fileOpsRectContains(cancel_rect, self.mouse_x, self.mouse_y),
         );
-        return;
     }
-    const runner = self.job_runner orelse return;
-    const progress = runner.pollProgress();
-    if (progress.state != .running and progress.state != .paused and progress.state != .waiting_conflict) return;
-    const area = fileOpsBox(self);
-    if (area.w < 120) return;
-
-    @import("app_draw.zig").drawSidebarTransferSurface(cr, area);
-
-    const palette = ui_theme.shellPalette();
-    const fraction: ?f64 = if (progress.total_bytes_known and progress.total_bytes > 0)
-        @min(1.0, @as(f64, @floatFromInt(progress.transferred_bytes)) / @as(f64, @floatFromInt(progress.total_bytes)))
-    else
-        null;
-
-    @import("app_draw.zig").drawTransferProgressRow(
-        cr,
-        area,
-        if (progress.current_name.len > 0) progress.current_name else tr("Preparing…"),
-        fraction,
-        ui_theme.global.sidebarForeground(),
-        palette.accent,
-        shell_ui.statusSize(),
-    );
-
-    const can_pause = (progress.kind == .copy or progress.kind == .move) and
-        (progress.state == .running or progress.state == .paused);
-    if (can_pause) {
-        const rect = fileOpsPauseRect(area);
-        sidebar_controls.render(
-            cr,
-            rect,
-            if (progress.state == .paused) .play else .pause,
-            fileOpsRectContains(rect, self.mouse_x, self.mouse_y),
-        );
-    }
-    const cancel_rect = fileOpsCancelRect(area);
-    sidebar_controls.render(
-        cr,
-        cancel_rect,
-        .close,
-        fileOpsRectContains(cancel_rect, self.mouse_x, self.mouse_y),
-    );
 }
 
 pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {
@@ -730,7 +658,8 @@ pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {
 pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
     if (self.hoverKey() != std.math.maxInt(usize) - 2002) return;
 
-    const title, const status = if (self.active_io_copy_job) |job_id| blk: {
+    const job_id = self.active_io_copy_job orelse return;
+    const title, const status = blk: {
         const manager = self.io_manager orelse break :blk .{ tr("File transfer"), tr("In progress") };
         const state = manager.jobState(job_id) orelse break :blk .{ tr("File transfer"), tr("In progress") };
         const title_text = if (self.active_io_copy_is_archive_member)
@@ -752,21 +681,6 @@ pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
             .completed_with_errors => tr("Completed with errors"),
             .failed => tr("Failed"),
             .cancelled => tr("Cancelled"),
-        };
-        break :blk .{ title_text, status_text };
-    } else blk: {
-        const title_text, const running_status = if (self.job_runner) |runner| switch (runner.kind) {
-            .copy => .{ tr("Copying files"), tr("Copying") },
-            .move => .{ tr("Moving files"), tr("Moving") },
-            .extract => .{ tr("Extracting files"), tr("Extracting") },
-            .open_archive_member => .{ tr("Extracting archive member"), tr("Extracting") },
-        } else .{ tr("File transfer"), tr("In progress") };
-        const status_text = switch (self.job_state) {
-            .running => running_status,
-            .paused => tr("Paused"),
-            .waiting_conflict => tr("Waiting for confirmation"),
-            .finished => tr("Complete"),
-            .idle => tr("Ready"),
         };
         break :blk .{ title_text, status_text };
     };

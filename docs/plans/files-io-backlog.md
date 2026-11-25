@@ -41,6 +41,14 @@ folder.
   now logged (`Files conflict dialog N closed`, `Files closes conflict N: no
   job waits on it any more`, `Files answers conflict N: ...`).
 
+* **Cause of the closing dialog found and fixed in S3b.** The user's log showed
+  "shows conflict 1" then "conflict dialog 1 closed" on every click, with no
+  answer in between. The JobRunner poll in `App.sync` closed any conflict
+  dialog unless the runner itself was waiting on a conflict; the runner was
+  idle, so every tick after the dialog opened closed it. The poll went with
+  JobRunner. Check again whether the job progresses once Merge can be
+  answered: the 0% may simply have been the job waiting on its conflict.
+
 **Start:** run with `2>&1 | tee files.log` and read the `Files job N waits on
 conflict M`, `Files window asks about conflict M` and `Files shows conflict`
 lines. No "waits" line: the coordinator never saw a conflict (look at the

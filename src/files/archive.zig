@@ -370,7 +370,7 @@ fn resolveLink(mem: Allocator, links: *const Links, path: []const u8, resolved: 
 }
 
 /// Destination must be a private, newly created staging directory. Publication
-/// into the user's folder is handled by JobRunner's no-overwrite transfer path.
+/// into the user's folder is handled by the service's no-overwrite transfer path.
 pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member: ?[]const u8, cancel: *const Cancel) !void {
     return extractSelected(mem, path, destination, null, member, cancel, null, directory_fd_cache_max);
 }

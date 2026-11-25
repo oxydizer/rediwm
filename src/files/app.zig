@@ -359,7 +359,6 @@ pub const App = struct {
     // Operations & Jobs
     dialog: ?Dialog = null,
     open_with_archive_paths: bool = false,
-    job_runner: ?*ops_mod.JobRunner = null,
     active_io_copy_job: ?io_manager_mod.JobId = null,
     active_io_copy_destination: ?[]u8 = null,
     active_io_copy_is_directory: bool = false,
@@ -371,21 +370,13 @@ pub const App = struct {
     active_io_copy_is_archive_open_with: bool = false,
     active_io_copy_archive_member_opened: bool = false,
     active_io_copy_item_count: usize = 0,
-    job_was_running: bool = false,
     archive_preview: bool = false,
-    archive_open_navigation: u32 = 0,
     extract_picker_fd: ?c_int = null,
     extract_picker_source: ?[]u8 = null,
     extract_picker_members: std.ArrayList([]const u8) = .empty,
     extract_picker_bytes: std.ArrayList(u8) = .empty,
     job_cut_revision: ?usize = null,
-    job_progress: usize = std.math.maxInt(usize),
     job_transferred_bytes: u64 = 0,
-    job_measuring: bool = false,
-    job_current_file_path: [4096]u8 = undefined,
-    job_current_file_path_len: usize = 0,
-    job_rate_sample_bytes: u64 = 0,
-    job_rate_sample_at: i64 = 0,
     job_bytes_per_second: u64 = 0,
     job_state: ops_mod.JobState = .idle,
     transfer_rows_dirty: bool = false,
@@ -447,7 +438,6 @@ pub const App = struct {
             .history = hist,
             .home_dir = home_dir,
             .items_arena = std.heap.ArenaAllocator.init(allocator),
-            .job_runner = ops_mod.JobRunner.init(allocator) catch null,
             .transfer_tree_state = app_transfer_tree.State.init(allocator),
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
@@ -531,7 +521,6 @@ pub const App = struct {
         if (self.preview_return_fd) |fd| _ = c.close(fd);
         if (self.editor_path) |path| self.allocator.free(path);
         if (self.active_io_copy_destination) |path| self.allocator.free(path);
-        if (self.job_runner) |runner| runner.deinit();
         self.transfer_tree_state.deinit();
         self.clearFolderSizes();
         self.folder_sizes.deinit();

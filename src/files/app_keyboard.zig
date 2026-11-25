@@ -256,15 +256,6 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
             self.runHeader(.search);
             return;
         }
-        if (self.job_runner) |runner| {
-            const prog = runner.pollProgress();
-            if (prog.state == .running or prog.state == .waiting_conflict) {
-                runner.cancel();
-                self.setStatusNotice(@import("i18n").tr("Cancelling operation..."), false);
-                self.invalidate();
-                return;
-            }
-        }
         if (self.active_io_copy_job) |job_id| {
             if (self.io_manager) |manager| {
                 if (manager.jobState(job_id)) |state| {

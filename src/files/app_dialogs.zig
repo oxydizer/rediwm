@@ -345,8 +345,8 @@ pub fn openConflictDialog(self: *App, conflict_name: []const u8) void {
     self.invalidate();
 }
 
-/// Opens the shared conflict UI for the current Manager FIFO head.
-/// Unlike the legacy JobRunner dialog, this never replaces another modal.
+/// Opens the shared conflict UI for the window Manager's FIFO head (archive
+/// jobs, until S4). It never replaces another modal.
 pub fn openManagerConflictDialog(
     self: *App,
     conflict_id: u64,
@@ -378,8 +378,7 @@ pub fn openServiceConflictDialog(self: *App, conflict_id: u64, destination: []co
     self.invalidate();
 }
 
-/// Merge is available only for the current Manager FIFO directory conflict.
-/// The legacy JobRunner dialog deliberately retains its original actions.
+/// Merge is offered for directory-onto-directory conflicts only.
 pub fn managerConflictCanMerge(self: *const App) bool {
     const dlg = self.dialog orelse return false;
     if (dlg.service_conflict) return dlg.conflict_can_merge;
@@ -431,7 +430,7 @@ fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) 
     self.transfer_rows_dirty = true;
 }
 
-/// Resolves either a Manager-owned conflict or the legacy JobRunner conflict.
+/// Resolves a service conflict, or one of the window Manager's own (archives).
 /// A failed Manager action leaves the dialog open for another attempt.
 pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
     const dlg = self.dialog orelse return;
@@ -449,13 +448,6 @@ pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
             self.setStatusNotice(tr("Could not resolve file conflict"), true);
             return;
         };
-    } else if (self.job_runner) |runner| {
-        runner.resolveConflict(switch (action) {
-            .skip => .skip,
-            .merge => return,
-            .rename => .rename,
-            .cancel => .cancel,
-        });
     }
 
     self.closeDialog();

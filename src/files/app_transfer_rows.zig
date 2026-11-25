@@ -44,23 +44,7 @@ pub fn appendTransferRows(
         }
         const tree = if (self.transfer_tree_state.tree) |*value| value else return;
         appendTreeRows(self, mem, tree, old);
-        return;
     }
-
-    if (self.job_state != .running and self.job_state != .paused and
-        self.job_state != .waiting_conflict) return;
-
-    const runner = self.job_runner orelse return;
-    const profile_started = ui_profile.start();
-    defer ui_profile.finish(profile_started, "append_transfer_rows", self.items.items.len);
-
-    // The sidebar and file listing share one projection of the transfer
-    // manifest. Rebuild it only when transfer state has invalidated the cache.
-    if (self.transfer_tree_state.dirty) {
-        self.transfer_tree_state.rebuild(runner) catch return;
-    }
-    const tree = if (self.transfer_tree_state.tree) |*value| value else return;
-    appendTreeRows(self, mem, tree, old);
 }
 
 /// Appends only direct children of the displayed folder. Existing filesystem

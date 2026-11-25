@@ -1285,7 +1285,6 @@ test "archive publication scans roots, discovers descendants and drains the barr
     const job = app.active_io_copy_job orelse
         return error.ArchiveExtractionDidNotStart;
     try std.testing.expect(app.active_io_copy_is_archive);
-    try std.testing.expect(!app.job_was_running);
     try std.testing.expectEqualStrings("Extracting archive", app.status_notice.?);
 
     while (true) {

@@ -362,8 +362,8 @@ or worker resource; and the coordinator exemption table is empty.
   U9 to U12 are removed; U8 keeps only the conflict rename, which goes with
   the Transfers UI in S3b.
 * S3b. Prerequisite: the Coordinator accepts mixed file and directory selections
-  (today it rejects them with `MixedTransferSourceKinds`), so JobRunner's fallback
-  can go. This is roadmap phase 2. Then the App submits transfers through its
+  (done in phase 2a), so JobRunner's fallback can go. **Done:** JobRunner, its
+  tests and benchmarks are deleted. This is roadmap phase 2. Then the App submits transfers through its
   `Handle` (U1, U2), and the Transfers UI renders from job records through the
   source-agnostic presentation layer of §13, which torrent rows use too.
 * S3b also: closing the last window while service jobs run asks first (keep them

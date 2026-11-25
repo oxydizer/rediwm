@@ -564,7 +564,7 @@ fn fileOps(self: *App, out: *[max_file_ops]io_service.JobRecord) []io_service.Jo
     return self.service.jobs.active(out);
 }
 
-fn fileOpCount(self: *App) usize {
+pub fn fileOpCount(self: *App) usize {
     var out: [max_file_ops]io_service.JobRecord = undefined;
     return fileOps(self, &out).len;
 }

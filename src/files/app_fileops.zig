@@ -23,11 +23,6 @@ fn startArchiveExport(self: *App, purpose: App.ArchiveExportPurpose) !void {
         }
     }
     if (self.active_io_copy_job != null) return error.Busy;
-    if (self.job_runner) |runner| {
-        const state = runner.pollProgress().state;
-        if (state == .running or state == .paused or state == .waiting_conflict)
-            return error.Busy;
-    }
 
     const archive_len = self.history.archive_len;
     const archive_path = self.history.current[0..archive_len];

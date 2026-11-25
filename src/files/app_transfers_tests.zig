@@ -169,6 +169,9 @@ test "a conflict opens the dialog, and Skip answers it through the service" {
     try std.testing.expect(s.app.executeTransfer(.copy, &.{a}, destination, false));
     try s.until(conflictShown);
     try std.testing.expectEqualStrings("a.txt", s.app.dialog.?.conflict_name.?);
+    // It stays up across further ticks until answered.
+    for (0..5) |_| s.app.stepService();
+    try std.testing.expect(conflictShown(&s.app));
     try std.testing.expect(!s.app.managerConflictCanMerge());
     s.app.resolveConflictDialog(.skip);
     try std.testing.expect(s.app.dialog == null);

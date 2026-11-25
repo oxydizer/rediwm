@@ -676,25 +676,22 @@ test "sidebar scrollbar pages, drags outside and resets on resize" {
     try std.testing.expect(app.sidebarScrollbar() == null);
 }
 
-test "Transfers scroll extent includes an active file-operation row" {
+test "Transfers scroll extent includes a row per running service job" {
     var app = try testApp();
     defer app.deinit();
 
-    app.job_runner = try ops_mod.JobRunner.init(app.allocator);
     app.transfer_view.active = true;
     const idle_height = app.contentHeight();
-    const runner = app.job_runner.?;
 
-    runner.state = .running;
-    try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
+    for ([_]@import("io_service.zig").JobState{ .running, .paused, .waiting }) |state| {
+        app.service.jobs.apply(.{ .id = 1, .kind = .copy, .state = state });
+        try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
+    }
+    app.service.jobs.apply(.{ .id = 2, .kind = .move, .state = .queued });
+    try std.testing.expectEqual(idle_height + 2 * app.rowHeight(), app.contentHeight());
 
-    runner.state = .paused;
-    try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
-
-    runner.state = .waiting_conflict;
-    try std.testing.expectEqual(idle_height + app.rowHeight(), app.contentHeight());
-
-    runner.state = .finished;
+    app.service.jobs.apply(.{ .id = 1, .kind = .copy, .state = .completed });
+    app.service.jobs.apply(.{ .id = 2, .kind = .move, .state = .cancelled });
     try std.testing.expectEqual(idle_height, app.contentHeight());
 }
 
