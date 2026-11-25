@@ -24,7 +24,7 @@ const Fixture = struct {
     fn start(self: *Fixture) !void {
         self.temp = try support.makeTempDir(&self.temp_buffer);
         try self.service.init();
-        try self.coordinator.init(allocator, &self.service);
+        try self.coordinator.init(allocator, std.testing.io, &self.service);
         self.window = try self.service.registerWindow();
         self.view = support.View.init(self.window, &self.service);
     }

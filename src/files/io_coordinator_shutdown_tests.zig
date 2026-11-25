@@ -30,7 +30,7 @@ test "a copy accepted before shutdown finishes instead of being cancelled" {
     try service.init();
     defer service.deinit();
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
     var window = try service.registerWindow();
 
     // Park the copy so shutdown certainly begins while it is running.
@@ -71,7 +71,7 @@ test "draining cancels a job waiting on a conflict, even with a window open" {
     try service.init();
     defer service.deinit();
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
     var window = try service.registerWindow();
     defer window.close();
     var view = support.View.init(window, &service);
@@ -102,7 +102,7 @@ test "with no window open, a conflict cancels its job" {
     try service.init();
     defer service.deinit();
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
     defer coordinator.deinit();
 
     // An external subscriber watches; it cannot answer conflicts.
@@ -142,7 +142,7 @@ test "an abort cancels ordinary jobs too" {
     try service.init();
     defer service.deinit();
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
     var panel = try service.registerExternal();
     defer panel.close();
     var window = try service.registerWindow();
@@ -195,7 +195,7 @@ test "a cross-filesystem move accepted before the last window closed finishes, s
     try service.init();
     defer service.deinit();
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
     var window = try service.registerWindow();
 
     const gate = io_operation_executor.test_gate;

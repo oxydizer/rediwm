@@ -3,6 +3,8 @@
 //! pool of its own.
 //!
 //! * `prepare_transfer` inspects a submit's destination and sources.
+//! * `request` runs a window's metadata or small-mutation request
+//!   (`io_requests.zig`) and returns its reply.
 //! * `delete_tree` destroys a resource the coordinator's executors own, such
 //!   as archive staging, once its ledger entry has moved to a worker.
 //!
@@ -17,6 +19,7 @@ const io_transfer_plan = @import("io_transfer_plan.zig");
 const io_resource_ledger = @import("io_resource_ledger.zig");
 const io_workers = @import("io_workers.zig");
 const ops = @import("ops.zig");
+const io_requests = @import("io_requests.zig");
 
 pub const JobId = io_service.JobId;
 
@@ -35,6 +38,12 @@ pub const Task = union(enum) {
         handle: io_resource_ledger.Handle,
         path: []u8,
     },
+    request: struct {
+        window_id: io_service.WindowId,
+        tag: u64,
+        /// The command's payload, moved out of it. Always `.request`.
+        payload: *io_service.OwnedPayload,
+    },
 };
 
 pub const Result = union(enum) {
@@ -48,6 +57,11 @@ pub const Result = union(enum) {
         path: []u8,
         failed: ?anyerror,
     },
+    replied: struct {
+        window_id: io_service.WindowId,
+        /// Null when the reply could not be allocated.
+        reply: ?*io_requests.Reply,
+    },
 
     /// Frees what the result owns. The caller has already applied it, or is
     /// discarding it at shutdown.
@@ -58,6 +72,9 @@ pub const Result = union(enum) {
                 prepared.payload.deinit();
             },
             .deleted => |deleted| allocator.free(deleted.path),
+            // A delivered reply belongs to the Service; `discard` frees one
+            // that never was.
+            .replied => {},
         }
     }
 };
@@ -67,6 +84,7 @@ pub const Pool = io_workers.WorkerPool(Task, Result);
 /// What `discard` needs at shutdown: results of tasks nobody collected.
 pub const Context = struct {
     allocator: Allocator,
+    io: std.Io,
     /// Called for a `deleted` result that is discarded, so its ledger entry
     /// does not outlive the resource.
     on_discard_delete: ?*const fn (?*anyopaque, io_resource_ledger.Handle) void = null,
@@ -89,6 +107,13 @@ fn execute(raw_context: ?*anyopaque, task: Task) Result {
                 else => error.UnexpectedTransferPayload,
             },
         } },
+        .request => |request| blk: {
+            defer request.payload.deinit();
+            break :blk .{ .replied = .{
+                .window_id = request.window_id,
+                .reply = io_requests.execute(context.allocator, context.io, request.tag, &request.payload.data.request.request),
+            } };
+        },
         .delete_tree => |delete| .{ .deleted = .{
             .handle = delete.handle,
             .path = delete.path,
@@ -128,5 +153,6 @@ fn discard(raw_context: ?*anyopaque, result_value: Result) void {
     if (result == .deleted) {
         if (context.on_discard_delete) |callback| callback(context.owner, result.deleted.handle);
     }
+    if (result == .replied) if (result.replied.reply) |reply| reply.destroy();
     result.deinit(context.allocator);
 }

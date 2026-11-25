@@ -199,6 +199,7 @@ pub fn pollTimeout(self: *Client) c_int {
     if (self.app.scanNoticeDeadline()) |at| deadline = earlier(deadline, at);
     if (self.app.transferHoverPriorityDeadline()) |at| deadline = earlier(deadline, at);
     if (self.app.audioDeadline()) |at| deadline = earlier(deadline, at);
+    if (self.app.serviceTimeout()) |wait| deadline = earlier(deadline, app_mod.nowMs() + wait);
     if (self.app.scroll_appearance.deadline) |at| deadline = earlier(deadline, at);
     if (self.app.horizontal_appearance.deadline) |at| deadline = earlier(deadline, at);
     if (self.app.sidebar_scroll_appearance.deadline) |at| deadline = earlier(deadline, at);

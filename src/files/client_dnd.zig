@@ -155,18 +155,7 @@ pub fn startDropReceive(self: *Client, offer: *Offer, slot: ?usize, target: []co
     offer.proxy.receive("text/uri-list", fds[1]);
 }
 
-pub fn canonicalPath(path: []const u8) ![]u8 {
-    io_thread_guard.blocking("client_dnd.canonicalPath");
-    const terminated = try a.dupeSentinel(u8, path, 0);
-    defer a.free(terminated);
-    var buffer: [4096]u8 = undefined;
-    const resolved = c.realpath(terminated, &buffer) orelse return error.InvalidPath;
-    return a.dupe(u8, std.mem.span(resolved));
-}
-
 pub fn receiveDrop(self: *Client) void {
-    const io_guard_0 = io_thread_guard.exempt(.u12_path_resolution);
-    defer io_guard_0.end();
     const receive = if (self.drop_receiving) |*r| r else return;
     if (app_mod.nowMs() - receive.started > transfer.timeout_ms) {
         self.app.setStatusNotice(@import("i18n").tr("The drop timed out"), true);
@@ -194,28 +183,18 @@ pub fn receiveDrop(self: *Client) void {
     } else if (self.drop_slot) |slot| {
         self.app.pinDropped(slot, decoded.paths);
     } else {
-        const destination = canonicalPath(receive.directory) catch {
-            self.app.setStatusNotice(@import("i18n").tr("The destination folder is unavailable"), true);
-            return;
-        };
-        defer a.free(destination);
-        var paths: std.ArrayList([]const u8) = .empty;
-        defer paths.deinit(a);
-        for (decoded.paths) |path| {
-            const resolved = canonicalPath(path) catch continue;
-            defer a.free(resolved);
-            if (@import("ops.zig").isDescendantOrSame(resolved, destination)) {
-                self.app.setStatusNotice(@import("i18n").tr("Cannot drop a folder into itself"), true);
-                return;
-            }
-            const parent = std.fs.path.dirname(path) orelse continue;
-            const resolved_parent = canonicalPath(parent) catch continue;
-            defer a.free(resolved_parent);
-            if (self.drop_move and std.mem.eql(u8, resolved_parent, destination)) continue;
-            paths.append(a, path) catch return;
+        // The service resolves the destination, each source and each
+        // source's folder; `app_requests` finishes the drop.
+        const count = decoded.paths.len;
+        const all = a.alloc([]const u8, 1 + 2 * count) catch return;
+        defer a.free(all);
+        all[0] = receive.directory;
+        for (decoded.paths, 0..) |path, i| {
+            all[1 + i] = path;
+            all[1 + count + i] = std.fs.path.dirname(path) orelse path;
         }
-        if (paths.items.len == 0) return;
-        _ = self.app.executeTransfer(if (self.drop_move) .move else .copy, paths.items, destination, false);
+        const owned = @import("app_requests.zig").dupeAll(a, all) catch return;
+        _ = @import("app_requests.zig").send(&self.app, .{ .canonical = .{ .paths = all } }, .{ .drop = .{ .paths = owned, .move = self.drop_move } });
     }
 }
 

@@ -32,6 +32,7 @@ pub fn beginDraining(self: *Coordinator) void {
 
 pub fn abortAll(self: *Coordinator) void {
     self.aborting = true;
+    self.cancelAllDeletions();
     const manager = &self.runtime.manager;
     for (0..manager.jobCount()) |index| {
         const summary = manager.jobSummaryAt(index);
@@ -66,11 +67,13 @@ pub fn cancelUnanswerableConflicts(self: *Coordinator) void {
 }
 
 /// Draining is done when no job is left (finished jobs retire on their
-/// own once their executors and resources are released), nothing is
-/// being prepared or cleaned up, and no accepted command is queued.
+/// own once their executors and resources are released; deletions are
+/// ordinary work and finish), nothing is being prepared or cleaned up, and
+/// no accepted command is queued.
 pub fn isIdle(self: *Coordinator) bool {
     return self.runtime.manager.jobCount() == 0 and
         self.preparing.count() == 0 and
+        self.deletions.count() == 0 and
         self.task_backlog.items.len == 0 and
         self.tasks.isIdle() and
         !self.service.hasQueuedCommands();

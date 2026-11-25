@@ -9,6 +9,7 @@ const c = @import("c.zig").api;
 const git = @import("git.zig");
 const ops_mod = @import("ops.zig");
 const icons = @import("../icon_cache.zig");
+const app_requests = @import("app_requests.zig");
 const deletion = @import("../delete_dialog.zig");
 const open_with = @import("open_with.zig");
 const properties = @import("properties.zig");
@@ -49,16 +50,10 @@ pub fn closeDialog(self: *App) void {
     }
 }
 
+/// The dialog opens when the service has read the item (`app_requests`).
 pub fn openProperties(self: *App, path: []const u8, preview: ?icons.Entry) void {
-    const io_guard_2 = io_thread_guard.exempt(.u9_properties);
-    defer io_guard_2.end();
-    const state = properties.State.init(self.allocator, path, preview) catch {
-        self.setStatusNotice(tr("Could not read file properties"), true);
-        return;
-    };
-    self.closeDialog();
-    self.dialog = .{ .kind = .properties, .title = tr("Properties"), .properties = state };
-    self.invalidate();
+    if (app_requests.waiting(self, .properties)) return;
+    _ = app_requests.send(self, .{ .properties = .{ .path = path } }, .{ .properties = .{ .preview = preview } });
 }
 
 pub fn openSelectedProperties(self: *App) void {
@@ -439,8 +434,6 @@ pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
 }
 
 pub fn confirmDialog(self: *App) void {
-    const io_guard_0 = io_thread_guard.exempt(.u8_small_mutations);
-    defer io_guard_0.end();
     const dlg = self.dialog orelse return;
     switch (dlg.kind) {
         .transfers => {},
@@ -450,22 +443,8 @@ pub fn confirmDialog(self: *App) void {
         .properties, .trash_properties => {},
         .new_folder => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
-            ops_mod.createFolder(self.allocator, self.history.current, name) catch |err| {
-                const msg = switch (err) {
-                    error.PathAlreadyExists => tr("Folder already exists"),
-                    error.AccessDenied => tr("Permission denied"),
-                    error.EmptyName => tr("Name cannot be empty"),
-                    error.InvalidCharacter => tr("Invalid characters in name"),
-                    error.ReservedName => tr("Reserved folder name"),
-                    else => tr("Failed to create folder"),
-                };
-                self.setStatusNotice(msg, true);
-                self.closeDialog();
-                return;
-            };
+            _ = app_requests.send(self, .{ .create_folder = .{ .dir = self.history.current, .name = name } }, .create_folder);
             self.closeDialog();
-            self.setStatusNotice(tr("Folder created"), false);
-            self.refresh();
         },
         .new_branch => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
@@ -475,41 +454,14 @@ pub fn confirmDialog(self: *App) void {
         },
         .new_file => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
-            ops_mod.createFile(self.allocator, self.history.current, name) catch |err| {
-                const msg = switch (err) {
-                    error.PathAlreadyExists => tr("File already exists"),
-                    error.AccessDenied => tr("Permission denied"),
-                    error.EmptyName => tr("Name cannot be empty"),
-                    error.InvalidCharacter => tr("Invalid characters in name"),
-                    error.ReservedName => tr("Reserved file name"),
-                    else => tr("Failed to create file"),
-                };
-                self.setStatusNotice(msg, true);
-                self.closeDialog();
-                return;
-            };
+            _ = app_requests.send(self, .{ .create_file = .{ .dir = self.history.current, .name = name } }, .create_file);
             self.closeDialog();
-            self.setStatusNotice(tr("File created"), false);
-            self.refresh();
         },
         .rename => {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
             const target = dlg.target_path orelse "";
-            ops_mod.renameItem(self.allocator, target, name) catch |err| {
-                const msg = switch (err) {
-                    error.PathAlreadyExists => tr("Target name already exists"),
-                    error.AccessDenied => tr("Permission denied"),
-                    error.EmptyName => tr("Name cannot be empty"),
-                    error.InvalidCharacter => tr("Invalid characters in name"),
-                    else => tr("Failed to rename"),
-                };
-                self.setStatusNotice(msg, true);
-                self.closeDialog();
-                return;
-            };
+            _ = app_requests.send(self, .{ .rename = .{ .target = target, .name = name } }, .rename);
             self.closeDialog();
-            self.setStatusNotice(tr("Renamed successfully"), false);
-            self.refresh();
         },
         .trash_confirm => {
             self.executeDeletion();

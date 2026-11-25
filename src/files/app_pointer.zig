@@ -79,27 +79,10 @@ pub fn permissionHit(self: *App, x: f64, y: f64) ?PermissionHit {
 }
 
 pub fn toggleInlinePermission(self: *App, hit: PermissionHit) void {
-    const io_guard_1 = io_thread_guard.exempt(.u9_properties);
-    defer io_guard_1.end();
     if (hit.index >= self.items.items.len or hit.bit >= 9) return;
     const path = self.items.items[hit.index].path;
-    const mode = properties.togglePathPermission(path, hit.bit) catch |err| {
-        const tr = @import("i18n").tr;
-        const message = switch (err) {
-            error.NotOwner => tr("Only the owner can change permissions"),
-            error.Symlink => tr("Symbolic link permissions cannot be changed"),
-            error.OpenFailed => tr("Could not open file to change permissions"),
-            error.StatFailed => tr("Could not read file permissions"),
-            error.ChmodFailed => tr("Could not apply permission changes"),
-            else => tr("Could not change permissions"),
-        };
-        self.setStatusNotice(message, true);
-        return;
-    };
-
-    // Update the visible snapshot in place. Selection and scroll stay intact.
-    self.items.items[hit.index].mode = mode;
-    self.invalidate();
+    const owned = self.allocator.dupe(u8, path) catch return;
+    _ = @import("app_requests.zig").send(self, .{ .toggle_permission = .{ .path = path, .bit = @intCast(hit.bit) } }, .{ .toggle_permission = .{ .path = owned } });
 }
 
 // Input handlers
@@ -462,8 +445,6 @@ pub fn renderSelectionBand(self: *App, cr: *c.cairo_t) void {
 /// listing, or a place in the sidebar. Files, archives' insides and the
 /// transfer view are left alone.
 fn openFolderTab(self: *App) void {
-    const io_guard_0 = io_thread_guard.exempt(.u11_places);
-    defer io_guard_0.end();
     if (self.dialog != null or self.menu != null or self.chooser != null or self.history.archive_len > 0) return;
     if (self.itemAt(self.mouse_x, self.mouse_y)) |idx| {
         const item = self.items.items[idx];
@@ -475,7 +456,10 @@ fn openFolderTab(self: *App) void {
         if (self.deviceAt(place)) |volume| {
             if (volume.mount) |mount| self.openTab(mount, false);
         } else if (self.placePath(place, &buf)) |path| {
-            if (recent.isLocation(path) or @import("pins.zig").kindOf(path) == .dir) self.openTab(path, false);
+            // Only a folder opens; the service looks.
+            if (recent.isLocation(path)) return self.openTab(path, false);
+            const owned = self.allocator.dupe(u8, path) catch return;
+            _ = @import("app_requests.zig").send(self, .{ .path_kinds = .{ .paths = &.{path} } }, .{ .folder_tab = .{ .path = owned } });
         }
     }
 }

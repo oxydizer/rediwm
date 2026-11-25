@@ -9,6 +9,8 @@ const io_transfer_plan = @import("io_transfer_plan.zig");
 const io_service_tasks = @import("io_service_tasks.zig");
 const resources = @import("io_coordinator_resources.zig");
 const lifecycle = @import("io_coordinator_lifecycle.zig");
+const deletions = @import("io_coordinator_deletions.zig");
+const io_deletion = @import("io_deletion.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
@@ -55,7 +57,7 @@ fn monotonicMs() i64 {
     return @as(i64, @intCast(ts.tv_sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
 }
 
-fn wallClockMs() i64 {
+pub fn wallClockMs() i64 {
     var ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_REALTIME, &ts);
     return @as(i64, @intCast(ts.tv_sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
@@ -73,26 +75,19 @@ fn recordState(state: io_manager.JobState) io_service.JobState {
     return @enumFromInt(@intFromEnum(state));
 }
 
-pub const RejectionCode = enum(u8) {
-    unsupported_command = 1,
-    unknown_job = 2,
-    invalid_job_state = 3,
-    job_not_terminal = 4,
-    missing_payload = 5,
-    invalid_destination = 6,
-    invalid_source = 7,
-    unsupported_source = 8,
-    destination_inside_source = 9,
-    overlapping_move_roots = 10,
-    mounted_directory_move = 11,
-    nothing_to_transfer = 12,
-    other = 255,
-};
+const codes = @import("io_coordinator_codes.zig");
+pub const RejectionCode = codes.RejectionCode;
+pub const rejectionCode = codes.rejectionCode;
 
 pub const Coordinator = struct {
     allocator: Allocator,
     service: *io_service.Service,
     runtime: *io_runtime.Runtime,
+    /// Delete, trash and empty-trash jobs (`io_coordinator_deletions.zig`).
+    deletion_pool: *io_deletion.Pool = undefined,
+    deletion_context: io_deletion.Context = undefined,
+    deletions: std.AutoHashMapUnmanaged(JobId, deletions.Deletion) = .empty,
+    next_deletion_id: JobId = deletions.id_base,
     thread: ?std.Thread = null,
     published: std.AutoHashMapUnmanaged(JobId, Published) = .empty,
     next_failed_submit_id: JobId = failed_submit_id_base,
@@ -117,6 +112,7 @@ pub const Coordinator = struct {
     pub fn init(
         self: *Coordinator,
         allocator: Allocator,
+        io: std.Io,
         service: *io_service.Service,
     ) !void {
         self.* = .{
@@ -137,11 +133,15 @@ pub const Coordinator = struct {
 
         self.task_context = .{
             .allocator = allocator,
+            .io = io,
             .on_discard_delete = discardDeleteResult,
             .owner = self,
         };
         self.tasks = try io_service_tasks.create(&self.task_context);
         errdefer self.tasks.deinit();
+        self.deletion_context = .{ .allocator = allocator, .io = io };
+        self.deletion_pool = try io_deletion.create(&self.deletion_context);
+        errdefer self.deletion_pool.deinit();
 
         self.runtime = runtime;
         self.thread = try std.Thread.spawn(.{}, threadMain, .{self});
@@ -156,6 +156,9 @@ pub const Coordinator = struct {
         if (self.thread) |thread| thread.join();
         self.published.deinit(self.allocator);
         self.preparing.deinit(self.allocator);
+        var remaining = self.deletions.valueIterator();
+        while (remaining.next()) |entry| self.allocator.destroy(entry.control);
+        self.deletions.deinit(self.allocator);
         var held = self.window_held.valueIterator();
         while (held.next()) |entry| self.allocator.free(entry.path);
         self.window_held.deinit(self.allocator);
@@ -170,6 +173,7 @@ pub const Coordinator = struct {
             // entries the Runtime still owns.
             self.tasks.deinit();
             self.discardTaskBacklog();
+            self.deletion_pool.deinit();
             self.runtime.deinit();
             self.allocator.destroy(self.runtime);
         }
@@ -182,6 +186,7 @@ pub const Coordinator = struct {
 
             self.sweepClosedWindows();
             self.pumpTasks();
+            self.pumpDeletions();
             self.pumpExecutors();
 
             // Decisions the coordinator makes on its own come before
@@ -192,7 +197,9 @@ pub const Coordinator = struct {
             }
             if (!self.service.anyWindowOpen() or self.draining) self.cancelUnanswerableConflicts();
 
-            const deadline = self.publishRecords(monotonicMs());
+            const now = monotonicMs();
+            var deadline = self.publishRecords(now);
+            if (self.publishDeletions(now)) |at| deadline = earliest(deadline, at);
             self.retireReadyJobs();
             if (self.draining and self.isIdle()) break;
             // While draining, re-check progress at least every 50 ms: the
@@ -206,6 +213,11 @@ pub const Coordinator = struct {
     const abortAll = lifecycle.abortAll;
     const cancelUnanswerableConflicts = lifecycle.cancelUnanswerableConflicts;
     const isIdle = lifecycle.isIdle;
+    const submitDeletion = deletions.submitDeletion;
+    const cancelDeletion = deletions.cancelDeletion;
+    pub const cancelAllDeletions = deletions.cancelAllDeletions;
+    const pumpDeletions = deletions.pumpDeletions;
+    const publishDeletions = deletions.publishDeletions;
 
     /// Waits for a command, a completion, or `deadline` (monotonic ms) when
     /// throttled progress or a speed sample is still due.
@@ -236,6 +248,11 @@ pub const Coordinator = struct {
             },
             .{
                 .fd = self.tasks.wakeFd(),
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+            .{
+                .fd = self.deletion_pool.wakeFd(),
                 .events = std.posix.POLL.IN,
                 .revents = 0,
             },
@@ -291,6 +308,7 @@ pub const Coordinator = struct {
         var routed = routed_value;
         defer routed.command.deinitPayload();
         if (routed.command.kind == .submit_job) return self.handleSubmit(&routed);
+        if (routed.command.kind == .request) return self.handleRequest(&routed);
         // There is no reply channel: a command that cannot apply changes
         // nothing; the job table shows what did happen (threading §5).
         self.applyCommand(routed) catch |err| {
@@ -315,6 +333,7 @@ pub const Coordinator = struct {
         };
         const payload = routed.command.payload orelse
             return self.failSubmit(&record, error.MissingTransferPayload);
+        if (payload.data == .deletion) return self.submitDeletion(routed, record);
         const request = switch (payload.data) {
             .transfer => |*request| request,
             else => return self.failSubmit(&record, error.UnexpectedTransferPayload),
@@ -349,8 +368,18 @@ pub const Coordinator = struct {
         self.submitTask(.{ .prepare_transfer = .{ .job_id = job_id, .payload = payload } });
     }
 
+    /// Moves a request to a service task. A request that cannot run gives
+    /// back its reply slot, so the window is never left one short.
+    fn handleRequest(self: *Coordinator, routed: *io_service.RoutedCommand) void {
+        const payload = routed.command.payload orelse
+            return self.service.cancelReplyReservation(routed.window_id);
+        if (payload.data != .request) return self.service.cancelReplyReservation(routed.window_id);
+        routed.command.payload = null;
+        self.submitTask(.{ .request = .{ .window_id = routed.window_id, .tag = routed.command.submit_tag, .payload = payload } });
+    }
+
     /// A submit that failed before any Manager job existed.
-    fn failSubmit(self: *Coordinator, record: *io_service.JobRecord, err: anyerror) void {
+    pub fn failSubmit(self: *Coordinator, record: *io_service.JobRecord, err: anyerror) void {
         record.id = self.next_failed_submit_id;
         self.next_failed_submit_id += 1;
         record.state = .failed;
@@ -391,6 +420,10 @@ pub const Coordinator = struct {
                     self.allocator.free(delete.path);
                     self.finishCleanup(delete.handle);
                 },
+                .request => |request| {
+                    request.payload.deinit();
+                    self.service.cancelReplyReservation(request.window_id);
+                },
             }
         };
     }
@@ -409,6 +442,10 @@ pub const Coordinator = struct {
                     );
                     self.finishCleanup(deleted.handle);
                 },
+                .replied => |replied| if (replied.reply) |reply|
+                    self.service.deliverReply(replied.window_id, reply)
+                else
+                    self.service.cancelReplyReservation(replied.window_id),
             }
         }
         while (self.task_backlog.items.len > 0) {
@@ -449,6 +486,7 @@ pub const Coordinator = struct {
                 self.allocator.free(delete.path);
                 self.finishCleanup(delete.handle);
             },
+            .request => |request| request.payload.deinit(),
         };
         self.task_backlog.clearRetainingCapacity();
     }
@@ -461,7 +499,7 @@ pub const Coordinator = struct {
         switch (command.kind) {
             .pause_job => try self.runtime.manager.pauseJob(command.job_id),
             .resume_job => try self.runtime.manager.resumeJob(command.job_id),
-            .cancel_job => if (self.preparing.getPtr(command.job_id)) |preparing| {
+            .cancel_job => if (self.cancelDeletion(command.job_id)) {} else if (self.preparing.getPtr(command.job_id)) |preparing| {
                 // Still being prepared: the plan is discarded on return.
                 preparing.cancelled = true;
                 if (self.published.getPtr(command.job_id)) |entry| {
@@ -470,6 +508,7 @@ pub const Coordinator = struct {
                 }
             } else try self.runtime.cancelJob(command.job_id),
             .submit_job => unreachable, // handleSubmit
+            .request => unreachable, // handleRequest
             .start_discovery => try self.startDiscovery(command.job_id, command.payload),
             .prioritize_discovery => try self.prioritizeDiscovery(command.job_id, command.payload),
             .resolve_conflict => try self.resolveConflict(
@@ -733,36 +772,3 @@ fn applySummary(record: *io_service.JobRecord, summary: io_manager.JobSummary) v
     record.completed_items = summary.completed_items;
     record.total_items = summary.total_items;
 }
-
-fn rejectionCode(err: anyerror) RejectionCode {
-    return if (err == error.UnsupportedCommand)
-        .unsupported_command
-    else if (err == error.MissingTransferPayload or
-        err == error.MissingDiscoveryPayload or
-        err == error.MissingConflictResolutionPayload)
-        .missing_payload
-    else if (err == error.UnknownJob)
-        .unknown_job
-    else if (err == error.InvalidJobState)
-        .invalid_job_state
-    else if (err == error.JobNotTerminal)
-        .job_not_terminal
-    else if (err == error.InvalidTransferDestination)
-        .invalid_destination
-    else if (err == error.InvalidTransferSource or err == error.EmptyTransfer)
-        .invalid_source
-    else if (err == error.UnsupportedTransferSource)
-        .unsupported_source
-    else if (err == error.TransferDestinationInsideSource)
-        .destination_inside_source
-    else if (err == error.OverlappingMoveRoots)
-        .overlapping_move_roots
-    else if (err == error.MountedDirectoryMoveUnsupported)
-        .mounted_directory_move
-    else if (err == error.TransferSourceEqualsDestination)
-        .nothing_to_transfer
-    else
-        .other;
-}
-
-

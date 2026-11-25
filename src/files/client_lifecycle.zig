@@ -69,6 +69,8 @@ pub fn create(
         .io_handle = io_handle,
     };
     self.ime = .{ .app = &self.app };
+    self.app.service.handle = io_handle;
+    self.app.requestPinKinds();
     if (launch.chooser) |options| try self.app.configureChooser(options);
     if (launch.selected_file) |path| self.app.selectOnLoad(path);
     self.app.startDevices();
@@ -147,6 +149,7 @@ pub fn step(self: *Client) !void {
     self.app.sync();
     self.app.stepDiscovery();
     self.app.stepOperations();
+    self.app.stepService();
     self.stepArchiveDrag();
     self.app.stepThumbs();
     client_tabs.sync(self);

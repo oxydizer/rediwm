@@ -252,7 +252,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     errdefer if (!coordinator_ready) service.deinit();
 
     var coordinator: io_coordinator_mod.Coordinator = undefined;
-    try coordinator.init(a, &service);
+    try coordinator.init(a, init.io, &service);
     coordinator_ready = true;
     defer {
         coordinator.deinit();
@@ -362,7 +362,8 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             return error.DisplayFailed;
         }
 
-        var fds: [1 + max_windows * Client.poll_slots]c.struct_pollfd = undefined;
+        // The last slot is the I/O service's update wake, shared by every window.
+        var fds: [1 + max_windows * Client.poll_slots + 1]c.struct_pollfd = undefined;
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         var timeout: c_int = -1;
         for (windows.items, 0..) |window, i| {
@@ -371,7 +372,9 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             if (wait >= 0) timeout = if (timeout < 0) wait else @min(timeout, wait);
         }
 
-        const result = c.poll(&fds, @intCast(1 + windows.items.len * Client.poll_slots), timeout);
+        const service_slot = 1 + windows.items.len * Client.poll_slots;
+        fds[service_slot] = .{ .fd = service.updateWakeFd(), .events = c.POLLIN, .revents = 0 };
+        const result = c.poll(&fds, @intCast(service_slot + 1), timeout);
         if (result > 0 and (fds[0].revents & c.POLLIN != 0)) {
             if (display.readEvents() != .SUCCESS) return error.DisplayFailed;
         } else {
@@ -380,6 +383,10 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
 
         if ((fds[0].revents & (c.POLLERR | c.POLLHUP)) != 0) return error.DisplayFailed;
         for (windows.items, 0..) |window, i| window.pollDrain(fds[1 + i * Client.poll_slots ..][0..Client.poll_slots]);
+        if (fds[service_slot].revents & c.POLLIN != 0) {
+            _ = service.drainUpdateWake();
+            for (windows.items) |window| window.app.serviceUpdated();
+        }
         if (display.dispatchPending() != .SUCCESS) return error.DisplayFailed;
         // After dispatch: a release read by this poll ends the repeat first.
         for (windows.items) |window| window.repeatDue();

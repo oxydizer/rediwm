@@ -55,12 +55,17 @@ pub const CommandClass = commands.CommandClass;
 pub const TransferMode = commands.TransferMode;
 pub const TransferSource = commands.TransferSource;
 pub const TransferRequest = commands.TransferRequest;
+pub const DeletionKind = commands.DeletionKind;
+pub const DeletionRequest = commands.DeletionRequest;
 pub const DiscoveryRequest = commands.DiscoveryRequest;
 pub const ConflictAction = commands.ConflictAction;
 pub const ConflictResolutionRequest = commands.ConflictResolutionRequest;
 pub const OwnedPayload = commands.OwnedPayload;
 pub const Command = commands.Command;
 pub const RoutedCommand = commands.RoutedCommand;
+pub const Request = io_requests.Request;
+pub const Reply = io_requests.Reply;
+const io_requests = @import("io_requests.zig");
 
 fn Ring(comptime T: type, comptime capacity: usize) type {
     return struct {
@@ -119,6 +124,15 @@ const WindowSlot = struct {
     word: std.atomic.Value(u64) = .init(0),
     normal_commands: Ring(Command, command_capacity_per_window) = .{},
     control_commands: Ring(Command, control_capacity_per_window) = .{},
+    /// Replies waiting for the window, and slots reserved for requests
+    /// still in flight. Together at most `reply_slots_per_window`.
+    replies: Ring(*Reply, reply_slots_per_window) = .{},
+    reserved_replies: usize = 0,
+
+    fn freeReplies(self: *WindowSlot) void {
+        while (self.replies.pop()) |reply| reply.destroy();
+        self.reserved_replies = 0;
+    }
 
     /// Called under the Service mutex on a closing slot. Clears the guarded
     /// fields first, then publishes the slot as free with release ordering,
@@ -127,6 +141,7 @@ const WindowSlot = struct {
         std.debug.assert(slotState(self.word.load(.acquire)) == .closing);
         self.normal_commands = .{};
         self.control_commands = .{};
+        self.freeReplies();
         self.word.store(0, .release);
     }
 };
@@ -137,7 +152,7 @@ pub const Service = struct {
     mutex: c.pthread_mutex_t = undefined,
     command_wake_fd: std.posix.fd_t = -1,
     update_wake_fd: std.posix.fd_t = -1,
-    windows: [max_windows]WindowSlot = std.mem.zeroes([max_windows]WindowSlot),
+    windows: [max_windows]WindowSlot = @splat(.{}),
     next_window_id: std.atomic.Value(WindowId) = .init(1),
     next_drain_slot: usize = 0,
     pending_normal_commands: usize = 0,
@@ -308,6 +323,12 @@ pub const Service = struct {
                     const index = self.ensureConsumer(slot, window_id);
                     try self.table.reserveSubmit(index);
                 }
+                // An accepted request always has a slot for its reply.
+                if (command.kind == .request) {
+                    if (slot.reserved_replies + slot.replies.count >= reply_slots_per_window)
+                        return error.RepliesFull;
+                    slot.reserved_replies += 1;
+                }
                 std.debug.assert(slot.normal_commands.push(command.*));
                 self.pending_normal_commands += 1;
             },
@@ -316,6 +337,35 @@ pub const Service = struct {
         // the caller's Command remains unchanged and retains ownership.
         command.payload = null;
         signalWake(self.command_wake_fd);
+    }
+
+    // ---- request replies ----
+
+    /// Called by the coordinator: hands a reply to its window's reserved
+    /// slot, or frees it when the window is gone.
+    pub fn deliverReply(self: *Service, window_id: WindowId, reply: *Reply) void {
+        self.lock();
+        defer self.unlock();
+        const slot = self.findSlot(window_id) orelse return reply.destroy();
+        std.debug.assert(slot.reserved_replies > 0);
+        slot.reserved_replies -= 1;
+        std.debug.assert(slot.replies.push(reply));
+        signalWake(self.update_wake_fd);
+    }
+
+    /// Called by the coordinator for a request that will never reply.
+    pub fn cancelReplyReservation(self: *Service, window_id: WindowId) void {
+        self.lock();
+        defer self.unlock();
+        const slot = self.findSlot(window_id) orelse return;
+        if (slot.reserved_replies > 0) slot.reserved_replies -= 1;
+    }
+
+    fn takeReply(self: *Service, window_id: WindowId) !?*Reply {
+        if (!self.tryLock()) return error.ServiceBusy;
+        defer self.unlock();
+        const slot = self.findSlot(window_id) orelse return error.WindowClosed;
+        return slot.replies.pop();
     }
 
     // ---- job table: consumers ----
@@ -578,6 +628,12 @@ pub const Handle = struct {
     /// event-loop iteration (threading §3).
     pub fn fetchChanges(self: Handle, out: []JobRecord) !FetchResult {
         return self.service.fetchChanges(self.window_id, out);
+    }
+
+    /// The next reply to one of this window's requests, or null. The caller
+    /// owns it (`Reply.destroy`). Fails fast with `ServiceBusy`.
+    pub fn takeReply(self: Handle) !?*Reply {
+        return self.service.takeReply(self.window_id);
     }
 
     /// Copies a live job's speed history, oldest first.

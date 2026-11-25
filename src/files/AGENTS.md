@@ -14,7 +14,9 @@ are free functions taking `self: *App` in `app_*.zig`, grouped by concern:
 `app_fileops`, `app_chooser`, `app_layout` (geometry), `app_folder_size`,
 `app_places` (sidebar rows, pins, devices), `app_sidebar_paint`,
 `app_git_sidebar`, `app_scroll`, `app_opening`, `app_pointer`,
-`app_keyboard`, `app_menu`, `app_paint`, `app_items`, `app_trash`. Shared enums and
+`app_keyboard`, `app_menu`, `app_paint`, `app_items`, `app_trash`,
+`app_service` and `app_requests` (the window's side of the I/O service:
+deletion jobs, and requests whose replies finish an action later). Shared enums and
 records are in `app_model.zig`, drawing helpers in `app_draw.zig`, tests in
 `app_tests.zig` (with `app_*_tests.zig` by area). A new method goes in its
 group file plus an alias line in `App`; a file that calls a sibling's
@@ -28,7 +30,9 @@ The process can hold several windows (`main.zig` `open_windows`, at most
 `max_windows`) on one Wayland connection, so the compositor sees one client and
 a folder tab can move between them. `client_lifecycle.zig` makes, steps, polls
 and destroys a window: each has its own `Client`, `App`, listing worker and I/O
-runtime and shares only the display. The seat reports every surface of the
+runtime and shares the display and the process's I/O service. Anything that
+touches a user path (stat, realpath, mkdir, rename, chmod, restore, delete) goes
+to the service as a job or a request; the window never waits for it. The seat reports every surface of the
 connection, so pointer, keyboard, text-input and drag events are filtered by
 surface (keys by `focused`). `app_tabs.zig` `take` and `adopt` move a tab, with
 its history, between windows; tear-off and drop requests reach the event loop as
@@ -103,9 +107,11 @@ composition silently stops after a window switch.
 
 ## Trash
 
-* **Moving in stays on `gio trash`** (`ops.trashItems`, which knows the
-  per-volume rules) and so does Empty Trash (`gio trash --empty`, followed by
-  `trash.sweepOrphans`). Everything else on the home trash is native in
+* **Moving in stays on `gio trash`** (which knows the per-volume rules) and
+  so does Empty Trash (`gio trash --empty`, followed by `trash.sweepOrphans`).
+  Both, Delete and deleting from the Trash view are I/O service jobs
+  (`io_deletion.zig` on its workers, `app_service.zig` in the window): the
+  window never waits for `rm` or `gio`. Everything else on the home trash is native in
   `trash.zig`: restore, permanent delete, `.trashinfo` parsing and the
   `directorysizes` line. Tests build fixture trash directories, no `gio`.
 * **Home trash only.** Per-volume trashes (`$topdir/.Trash-$uid`) are neither
@@ -250,7 +256,7 @@ control bytes are refused because terminal paste would alter them.
   through symlinks. Pins take their gap from `pin_drop`.
 * Ctrl-click deselection waits for release so Ctrl-drag keeps the selection.
 * The sidebar's Trash row (`trashDropAt`, `trash_drop` outline) takes
-  *move* only, like the dock's Trash: `trashDropped` runs `ops.trashItems`
+  *move* only, like the dock's Trash: `trashDropped` starts a `trash` job
   with no dialog and skips what is in the Trash already. Copy-only sources
   (Files' Trash view, most browsers) are refused. `tests/files_drag.py --trash`.
 

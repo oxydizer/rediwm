@@ -28,24 +28,9 @@ pub const Exemption = enum {
     u2_job_runner,
     /// Per-window Runtime pumping on the UI thread (S3).
     u3_window_runtime,
-    /// Delete / move to Trash / Empty Trash child processes (S3).
-    u4_delete_trash_spawn,
-    /// Permanent delete inside the Trash (S3).
-    u5_trash_delete,
-    /// Trash/info orphan sweep after Empty Trash (S3).
-    u6_trash_sweep,
-    /// Trash restore (S3).
-    u7_trash_restore,
-    /// New folder, new file, rename, unique-name generation (S3).
+    /// Unique-name generation for a conflict renamed through the window's
+    /// own Runtime (S3b, with the Transfers UI).
     u8_small_mutations,
-    /// Properties open and permission toggles (S3).
-    u9_properties,
-    /// File chooser path checks (S3).
-    u10_chooser,
-    /// Places: create directory, pin kind checks (S3).
-    u11_places,
-    /// Terminal and drop path canonicalisation (S3).
-    u12_path_resolution,
     /// Archive publication cursor open and reads (S4).
     u13_archive_publication,
     /// Archive staging discard (S4).

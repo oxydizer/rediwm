@@ -31,7 +31,7 @@ test "coordinator rejects transfer submissions without a payload" {
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(std.testing.allocator, &service);
+    try coordinator.init(std.testing.allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     var window_view = support.View.init(window, &service);
@@ -76,7 +76,7 @@ test "coordinator shows conflicts to every window, and any window resolves them"
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var owner_window = try service.registerWindow();
     var owner_window_view = support.View.init(owner_window, &service);
@@ -111,7 +111,7 @@ test "coordinator ignores invalid discovery commands without disturbing anything
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(std.testing.allocator, &service);
+    try coordinator.init(std.testing.allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     var window_view = support.View.init(window, &service);
@@ -164,7 +164,7 @@ test "coordinator accepts discovery prioritization for a submitted directory job
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     var window_view = support.View.init(window, &service);
@@ -212,7 +212,7 @@ test "coordinator copies a regular-file transfer" {
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     defer window.close();
@@ -249,7 +249,7 @@ test "coordinator publishes a job record with planned totals and final progress"
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     var window_view = support.View.init(window, &service);
@@ -299,7 +299,7 @@ test "coordinator copies a symlink without dereferencing its target" {
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     defer window.close();
@@ -338,7 +338,7 @@ test "coordinator moves a same-filesystem regular file" {
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     defer window.close();
@@ -396,7 +396,7 @@ test "coordinator discovers and copies a directory tree" {
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     defer window.close();
@@ -450,7 +450,7 @@ test "coordinator moves a same-filesystem directory tree" {
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     defer window.close();
@@ -479,7 +479,7 @@ test "coordinator rejects an invalid transfer source" {
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     var window_view = support.View.init(window, &service);
@@ -542,7 +542,7 @@ test "a hung worker does not stall the coordinator, other jobs or window calls" 
     defer service.deinit();
 
     var coordinator: io_coordinator.Coordinator = undefined;
-    try coordinator.init(allocator, &service);
+    try coordinator.init(allocator, std.testing.io, &service);
 
     var window = try service.registerWindow();
     var window_view = support.View.init(window, &service);
