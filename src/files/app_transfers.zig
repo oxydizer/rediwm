@@ -35,11 +35,24 @@ pub const Transfer = struct {
     }
 };
 
+/// "Apply to all": a job's answer for its later conflicts, one for a folder
+/// onto a folder (where Merge is offered) and one for everything else.
+pub const Standing = struct {
+    job_id: u64 = 0,
+    folders: ?io_service.ConflictAction = null,
+    others: ?io_service.ConflictAction = null,
+
+    fn answer(self: Standing, can_merge: bool) ?io_service.ConflictAction {
+        return if (can_merge) self.folders else self.others;
+    }
+};
+
 pub const List = struct {
     items: [max_transfers]Transfer = undefined,
     len: usize = 0,
     /// The last conflict this window asked about, so it asks once.
     conflict_asked: u64 = 0,
+    standing: [max_transfers]Standing = @splat(.{}),
 
     pub fn deinit(self: *List, allocator: std.mem.Allocator) void {
         for (self.items[0..self.len]) |*item| item.deinit(allocator);
@@ -254,6 +267,11 @@ pub fn showConflict(self: *App, details: ?io_requests.ConflictDetails) void {
         self.service.transfers.conflict_asked = 0;
         return;
     };
+    if (standingFor(self, conflict.job_id)) |entry| if (entry.answer(conflict.can_merge)) |action| {
+        std.log.info("Files answers conflict {d} as before: {s}", .{ conflict.conflict_id, @tagName(action) });
+        resolveConflict(self, conflict.conflict_id, conflict.destination_path, action);
+        return;
+    };
     std.log.info("Files shows conflict {d} of job {d}", .{ conflict.conflict_id, conflict.job_id });
     if (self.dialog) |open| std.log.info("Files cannot show it yet: a {s} dialog is open", .{@tagName(open.kind)});
     if (self.dialog != null) {
@@ -261,7 +279,31 @@ pub fn showConflict(self: *App, details: ?io_requests.ConflictDetails) void {
         self.service.transfers.conflict_asked = 0;
         return;
     }
-    self.openServiceConflictDialog(conflict.conflict_id, conflict.destination_path, conflict.can_merge);
+    self.openServiceConflictDialog(conflict.conflict_id, conflict.job_id, conflict.destination_path, conflict.can_merge);
+}
+
+fn standingFor(self: *App, job_id: u64) ?*Standing {
+    for (&self.service.transfers.standing) |*entry| if (entry.job_id == job_id) return entry;
+    return null;
+}
+
+/// Remembers `action` for the rest of `job_id`'s conflicts. Skip and Rename
+/// suit both kinds, so they also settle the other kind unless it has its own
+/// answer; Merge only suits folders.
+pub fn standFor(self: *App, job_id: u64, can_merge: bool, action: io_service.ConflictAction) void {
+    const entry = standingFor(self, job_id) orelse for (&self.service.transfers.standing) |*slot| {
+        // A free slot, or one whose job is over.
+        const over = if (self.service.jobs.find(slot.job_id)) |record| record.state.isTerminal() else true;
+        if (slot.job_id == 0 or over) {
+            slot.* = .{ .job_id = job_id };
+            break slot;
+        }
+    } else return;
+    if (can_merge) entry.folders = action else entry.others = action;
+    if (action != .merge) {
+        if (can_merge and entry.others == null) entry.others = action;
+        if (!can_merge and entry.folders == null) entry.folders = action;
+    }
 }
 
 /// Answers the conflict in the dialog through the service. Rename first

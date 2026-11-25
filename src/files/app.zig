@@ -770,6 +770,9 @@ pub const App = struct {
     pub const openManagerConflictDialog = app_dialogs.openManagerConflictDialog;
     pub const managerConflictCanMerge = app_dialogs.managerConflictCanMerge;
     pub const resolveConflictDialog = app_dialogs.resolveConflictDialog;
+    pub const smallDialogHeight = app_dialogs.smallDialogHeight;
+    pub const applyAllRect = app_dialogs.applyAllRect;
+    pub const toggleApplyAll = app_dialogs.toggleApplyAll;
     pub const confirmDialog = app_dialogs.confirmDialog;
     pub const handleDialogKey = app_dialogs.handleDialogKey;
 

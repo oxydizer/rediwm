@@ -269,6 +269,55 @@ test "copying a folder again into the same place asks, and Merge finishes it" {
     try std.testing.expect(!conflictShown(&s.app));
 }
 
+test "Apply to all answers the job's later conflicts the same way" {
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try support.makeTempDir(&temp_buffer);
+    defer ops.deleteRecursive(allocator, temp) catch {};
+    const folder = try support.join(allocator, temp, "Season");
+    defer allocator.free(folder);
+    const destination = try support.join(allocator, temp, "Backup");
+    defer allocator.free(destination);
+    const copied = try support.join(allocator, temp, "Backup/Season");
+    defer allocator.free(copied);
+    try support.makeDirectory(folder);
+    try support.makeDirectory(destination);
+    try support.makeDirectory(copied);
+    var name_buf: [32]u8 = undefined;
+    for (0..4) |i| {
+        const name = try std.fmt.bufPrint(&name_buf, "Season/e{d}.mkv", .{i});
+        const path = try support.join(allocator, temp, name);
+        defer allocator.free(path);
+        try support.writeFile(path, "episode");
+        // Every one is there already, as another file.
+        const there = try std.fmt.bufPrint(&name_buf, "Backup/Season/e{d}.mkv", .{i});
+        const taken = try support.join(allocator, temp, there);
+        defer allocator.free(taken);
+        try support.writeFile(taken, "another cut");
+    }
+
+    var s: ServiceApp = .{};
+    try s.start();
+    defer s.stop();
+
+    try std.testing.expect(s.app.executeTransfer(.copy, &.{folder}, destination, false));
+    try s.until(mergeOffered);
+    s.app.resolveConflictDialog(.merge);
+    try s.until(conflictShown);
+    s.app.toggleApplyAll();
+    s.app.resolveConflictDialog(.skip);
+    // The other three are skipped without asking.
+    try s.until(idle);
+    try std.testing.expect(!conflictShown(&s.app));
+    for (0..4) |i| {
+        const there = try std.fmt.bufPrint(&name_buf, "Backup/Season/e{d}.mkv", .{i});
+        const taken = try support.join(allocator, temp, there);
+        defer allocator.free(taken);
+        const kept = try support.readFile(allocator, taken);
+        defer allocator.free(kept);
+        try std.testing.expectEqualStrings("another cut", kept);
+    }
+}
+
 test "closing the last window while a job runs asks, and Cancel keeps it open" {
     var s: ServiceApp = .{};
     try s.start();

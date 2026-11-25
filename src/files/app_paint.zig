@@ -646,7 +646,7 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
 
     // Modal box
     const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
-    const dh: f64 = 130;
+    const dh = self.smallDialogHeight();
     const dx = (w_f - dw) / 2.0;
     const dy = (h_f - dh) / 2.0;
 
@@ -689,6 +689,17 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
             self.renderConflictButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip"), 'S', 1);
             self.renderConflictButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename"), 'R', 2);
             self.renderConflictButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel"), 'C', 3);
+        }
+        if (dlg.service_conflict) {
+            const r = self.applyAllRect();
+            if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) })) |begun| {
+                var layer = begun;
+                ui_checkbox.paint(&layer.renderer, layer.local(), tr("Apply to all"), .{
+                    .checked = dlg.conflict_apply_all,
+                    .focused = r.contains(self.mouse_x, self.mouse_y),
+                });
+                layer.finish();
+            }
         }
     } else {
         self.renderEditor(cr, &self.dialog.?.edit, self.editorRect(), true, false);
