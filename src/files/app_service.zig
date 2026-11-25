@@ -110,6 +110,7 @@ pub fn stepService(self: *App) void {
         std.log.warn("Files service command refused: {s}", .{@errorName(err)});
     };
     app_ghosts.updateWatches(self);
+    app_transfers.checkConflicts(self);
     if (!link.dirty and !link.reader.pending) return;
     link.dirty = false;
     var records: [16]io_service.JobRecord = undefined;

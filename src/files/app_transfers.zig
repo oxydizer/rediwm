@@ -135,17 +135,45 @@ pub fn onRecord(self: *App, record: io_service.JobRecord) bool {
     return true;
 }
 
-/// Asks about the first unanswered conflict of this window's transfers once
-/// no dialog is open.
+/// Asks about the conflict at the head of the queue once no dialog is
+/// open: a job of this window's, or one whose window has closed. Called
+/// every step, so a dialog that closes lets the question through.
 pub fn checkConflicts(self: *App) void {
     const list = &self.service.transfers;
+    const model = &self.service.jobs;
+    closeStaleConflict(self);
     if (self.dialog != null) return;
-    for (list.items[0..list.len]) |transfer| {
-        const conflict = transfer.pending_conflict;
+    const handle = self.service.handle orelse return;
+    for (model.records[0..model.len]) |record| {
+        const conflict = record.pending_conflict;
         if (conflict == 0 or conflict == list.conflict_asked) continue;
-        if (app_requests.send(self, .{ .conflict_details = .{ .conflict_id = conflict } }, .conflict))
-            list.conflict_asked = conflict;
+        if (record.origin_window_id != handle.window_id and !record.conflict_orphaned) continue;
+        askConflict(self, conflict);
         return;
+    }
+}
+
+/// Asks the service what the dialog for `conflict` shows (a card row
+/// waiting for an answer, clicked, asks too).
+pub fn askConflict(self: *App, conflict: u64) void {
+    if (app_requests.send(self, .{ .conflict_details = .{ .conflict_id = conflict } }, .conflict))
+        self.service.transfers.conflict_asked = conflict;
+}
+
+/// A conflict dialog whose conflict another window answered, or that the
+/// job's end took away, closes.
+fn closeStaleConflict(self: *App) void {
+    const dialog = self.dialog orelse return;
+    if (!dialog.service_conflict) return;
+    const id = dialog.manager_conflict_id orelse return;
+    const model = &self.service.jobs;
+    for (model.records[0..model.len]) |record| {
+        if (record.pending_conflict == id) return;
+    }
+    // Not yet published: the record may still be on its way.
+    if (self.service.transfers.conflict_asked == id and !self.service.dirty) {
+        self.closeDialog();
+        self.service.transfers.conflict_asked = 0;
     }
 }
 

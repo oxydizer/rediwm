@@ -695,6 +695,8 @@ pub const Coordinator = struct {
                 (if (conflict.job_id == summary.id) conflict.id else 0)
             else
                 0;
+            next.conflict_orphaned = next.pending_conflict != 0 and
+                !self.service.isWindowOpen(next.origin_window_id);
             if (next.state.isTerminal() and next.finished_at_ms == 0) next.finished_at_ms = wallClockMs();
             // Retirement is automatic (architecture §6). It happens once the
             // executors are quiescent for the job and the ledger holds
@@ -710,7 +712,8 @@ pub const Coordinator = struct {
             const structural = next.state != previous.state or
                 next.cancel_requested != previous.cancel_requested or
                 next.borrow_count != previous.borrow_count or
-                next.pending_conflict != previous.pending_conflict;
+                next.pending_conflict != previous.pending_conflict or
+                next.conflict_orphaned != previous.conflict_orphaned;
             const progressed = next.completed_bytes != previous.completed_bytes or
                 next.total_bytes != previous.total_bytes or
                 next.completed_items != previous.completed_items or

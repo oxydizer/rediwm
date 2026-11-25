@@ -174,7 +174,9 @@ fn appendRow(self: *App, mem: std.mem.Allocator, old: *const std.StringHashMap(V
         if (!std.mem.eql(u8, item.name, name)) continue;
         // A real file still pending is usually waiting on a conflict: it
         // becomes a ghost only once its copy has started.
-        if (if (is_dir) ghost else state == .copying) {
+        // A folder that is on disk is real, whatever this job has brought
+        // into it yet: it keeps a ring, never fades.
+        if (!is_dir and state == .copying) {
             item.transfer_ghost = true;
             item.transfer_state = state;
             item.transfer_job_id = row.job_id;
@@ -261,4 +263,33 @@ test "a watched transfer's rows appear as ghosts with their progress, and finish
     try std.testing.expectEqualStrings("b.txt", file.name);
     try std.testing.expectEqual(@as(?u64, 40), file.transfer_total_bytes);
     try std.testing.expectEqual(@import("ops.zig").TransferEntryState.pending, file.transfer_state.?);
+}
+
+test "a folder already on disk keeps its ring but is never a ghost" {
+    const allocator = std.testing.allocator;
+    var app = try @import("app_tests.zig").testApp();
+    defer app.deinit();
+    try app.history.navigate("/destination");
+    const before = app.items.items.len;
+    try app.items.append(allocator, .{ .name = "folder", .path = "/destination/folder", .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 0, .icon_name = "folder" });
+    defer app.items.shrinkRetainingCapacity(before);
+
+    var rows = [_]views.Row{.{ .job_id = 9, .entry_id = 1, .name_start = 0, .name_len = 6, .kind = .directory, .state = .pending, .completed_bytes = 0, .total_bytes = 50 }};
+    var names = "folder".*;
+    var snapshot: views.Snapshot = .{ .allocator = allocator, .slot = 0, .offset = 0, .total_children = 1, .rows = &rows, .names = &names };
+    app.service.ghosts.snapshot = &snapshot;
+    defer app.service.ghosts.snapshot = null;
+
+    rows[0].state = .running;
+    rows[0].completed_bytes = 10;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var old = std.StringHashMap(ViewItem).init(allocator);
+    defer old.deinit();
+    appendRows(&app, arena.allocator(), &old);
+    try std.testing.expectEqual(before + 1, app.items.items.len);
+    const folder = app.items.items[before];
+    try std.testing.expect(!folder.transfer_ghost);
+    try std.testing.expectEqual(@as(?f64, 0.2), folder.transfer_progress);
+    try std.testing.expectEqual(@as(u64, 9), folder.transfer_job_id);
 }

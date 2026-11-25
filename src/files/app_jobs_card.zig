@@ -99,7 +99,10 @@ pub fn click(self: *App, top: f64, x: f64, y: f64) bool {
     switch (found.part) {
         .cancel => send(self, .cancel_job, found.record.id),
         .pause => send(self, if (found.record.state == .paused) .resume_job else .pause_job, found.record.id),
-        .body => if (@import("app_transfers.zig").destinationOf(self, found.record.id)) |destination| {
+        // A job waiting for an answer: ask here.
+        .body => if (found.record.pending_conflict != 0) {
+            @import("app_transfers.zig").askConflict(self, found.record.pending_conflict);
+        } else if (@import("app_transfers.zig").destinationOf(self, found.record.id)) |destination| {
             self.navigate(destination);
             self.focus = .file_view;
         },
@@ -124,6 +127,7 @@ fn send(self: *App, kind: io_service.CommandKind, job_id: io_service.JobId) void
 /// "photo.jpg", or "photo.jpg and 3 more".
 fn title(buf: []u8, record: *const io_service.JobRecord) []const u8 {
     const name = if (record.kind == .empty_trash) tr("Emptying Trash") else record.label();
+    if (record.pending_conflict != 0) return i18n.fmt(buf, tr("{name}: needs an answer"), .{ .name = name }) catch name;
     if (record.source_count <= 1 or record.kind == .empty_trash) return name;
     return i18n.fmt(buf, tr("{name} and {count} more"), .{ .name = name, .count = record.source_count - 1 }) catch name;
 }

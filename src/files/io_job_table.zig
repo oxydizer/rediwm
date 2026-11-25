@@ -70,6 +70,8 @@ pub const Record = struct {
     finished_at_ms: i64 = 0,
     /// 0 when no conflict of this job is at the head of the queue.
     pending_conflict: u64 = 0,
+    /// The pending conflict's job lost its window: any window may ask.
+    conflict_orphaned: bool = false,
     /// 0 when the job offers no resource (finished extraction staging).
     offered_resource: u64 = 0,
     /// Service-wide sequence at the record's last change.
