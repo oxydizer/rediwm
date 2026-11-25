@@ -297,7 +297,7 @@ def run():
                 trash_properties()
                 key(ESC)
                 time.sleep(.3)
-                assert windows()[0]["title"] == "plain — RediWM Files", "Escape in Trash Properties navigated away"
+                assert windows()[0]["title"] == "plain — RediWM Files", "Escape in Trash Properties navigated away: " + windows()[0]["title"]
                 trash_properties()
                 key(TAB)
                 key(ENTER)  # Open
