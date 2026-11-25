@@ -791,6 +791,7 @@ pub fn rebuildView(self: *App) void {
         }
         self.appendTransferRows(mem, &selected_paths);
         self.appendDiscoveryRows(mem, &selected_paths);
+        @import("app_ghosts.zig").appendRows(self, mem, &selected_paths);
         // Transfer placeholders and synthetic snapshots have no worker key.
         // Give those rows keys from the same locale before sorting so every
         // comparison uses one collation, including mixed real/stub folders.

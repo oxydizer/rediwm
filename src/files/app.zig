@@ -504,6 +504,7 @@ pub const App = struct {
         self.discovery_jobs.deinit(self.allocator);
         app_requests.deinitPending(self);
         self.service.transfers.deinit(self.allocator);
+        self.service.ghosts.deinit();
         self.service.deinit();
         self.detached_io_jobs.deinit(self.allocator);
         self.torrents.deinit();

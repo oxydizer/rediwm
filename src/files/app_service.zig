@@ -12,6 +12,8 @@ const io_window_link = @import("io_window_link.zig");
 const io_coordinator = @import("io_coordinator.zig");
 const app_requests = @import("app_requests.zig");
 const app_transfers = @import("app_transfers.zig");
+const jobs_card = @import("app_jobs_card.zig");
+const app_ghosts = @import("app_ghosts.zig");
 
 /// A window cannot have more submits in flight than it has outcome slots.
 pub const max_deletions = io_service.outcome_slots_per_window;
@@ -32,6 +34,10 @@ pub const Link = struct {
     deletion_count: usize = 0,
     /// Requests waiting for their reply: at most one per reply slot.
     requests: [io_service.reply_slots_per_window]app_requests.Entry = undefined,
+    /// Every service job, for the Transfers card (`app_jobs.zig`).
+    jobs: @import("app_jobs.zig").Model = .{},
+    /// Ghost rows of transfers into the folder shown (`app_ghosts.zig`).
+    ghosts: app_ghosts.State = .{},
     /// Copies and moves this window submitted (`app_transfers.zig`).
     transfers: app_transfers.List = .{},
     request_count: usize = 0,
@@ -103,6 +109,7 @@ pub fn stepService(self: *App) void {
     link.outbox.flush(handle) catch |err| {
         std.log.warn("Files service command refused: {s}", .{@errorName(err)});
     };
+    app_ghosts.updateWatches(self);
     if (!link.dirty and !link.reader.pending) return;
     link.dirty = false;
     var records: [16]io_service.JobRecord = undefined;
@@ -112,6 +119,11 @@ pub fn stepService(self: *App) void {
         return;
     };
     const fetched = link.last_fetch orelse return;
+    const rows_before = jobs_card.count(self);
+    const revision = link.jobs.revision;
+    if (fetched.resync) link.jobs.clear();
+    for (records[0..fetched.count]) |record| link.jobs.apply(record);
+    if (link.jobs.revision != revision) jobs_card.changed(self, rows_before);
     for (records[0..fetched.count]) |record| {
         if (record.origin_window_id != handle.window_id) continue;
         if (app_transfers.onRecord(self, record)) continue;
@@ -120,6 +132,8 @@ pub fn stepService(self: *App) void {
         finishDeletion(self, deletion.kind, record);
     }
     app_requests.takeReplies(self);
+    app_ghosts.updateWatches(self);
+    app_ghosts.takeViews(self);
     app_transfers.checkConflicts(self);
 }
 

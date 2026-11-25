@@ -113,6 +113,13 @@ fn freeAll(allocator: std.mem.Allocator, paths: [][]u8) void {
     allocator.free(paths);
 }
 
+/// Where a transfer of this window goes, by job id.
+pub fn destinationOf(self: *App, job_id: io_service.JobId) ?[]const u8 {
+    const list = &self.service.transfers;
+    for (list.items[0..list.len]) |transfer| if (transfer.job_id == job_id) return transfer.destination;
+    return null;
+}
+
 /// A record of one of this window's jobs changed. Whether it was a transfer.
 pub fn onRecord(self: *App, record: io_service.JobRecord) bool {
     const list = &self.service.transfers;

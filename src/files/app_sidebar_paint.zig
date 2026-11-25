@@ -26,6 +26,7 @@ const fontMetrics = @import("app_draw.zig").fontMetrics;
 const sidebar_controls = @import("app_sidebar_controls.zig");
 const deviceLabel = App.deviceLabel;
 const transferTip = @import("app_transfer_tip.zig");
+const jobs_card = @import("app_jobs_card.zig");
 
 /// A quiet surface separating the sidebar's four functional sections.
 fn drawSidebarCard(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64) void {
@@ -502,7 +503,8 @@ fn fileOpsRectContains(rect: shell_ui.Rect, x: f64, y: f64) bool {
     return sidebar_controls.contains(rect, x, y);
 }
 
-pub fn fileOpsSidebarHeight(self: *App) i32 {
+/// The row of a job the window still runs itself: 60 px, or nothing.
+fn legacyHeight(self: *App) i32 {
     if (self.active_io_copy_job) |job_id| {
         if (self.io_manager) |manager| {
             if (manager.jobState(job_id)) |state| {
@@ -515,16 +517,27 @@ pub fn fileOpsSidebarHeight(self: *App) i32 {
     return if (state == .running or state == .paused or state == .waiting_conflict) 60 else 0;
 }
 
+pub fn fileOpsSidebarHeight(self: *App) i32 {
+    return legacyHeight(self) + jobs_card.height(self);
+}
+
+/// Where the service jobs' rows start: below the legacy row, if any.
+fn serviceTop(self: *App) f64 {
+    return fileOpsBox(self).y + @as(f64, @floatFromInt(legacyHeight(self)));
+}
+
 pub fn fileOpsSidebarHit(self: *App, x: f64, y: f64) bool {
     if (self.fileOpsSidebarHeight() == 0 or self.chooser != null or self.dialog != null) return false;
     if (self.sidebarWidth() == 0 or y < @as(f64, @floatFromInt(self.contentTop())) or
         y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return false;
     const area = fileOpsBox(self);
-    return x >= area.x and x < area.x + area.w and y >= area.y and y < area.y + area.h;
+    const bottom = area.y + @as(f64, @floatFromInt(self.fileOpsSidebarHeight())) - 8;
+    return x >= area.x and x < area.x + area.w and y >= area.y and y < bottom;
 }
 
 pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
     if (!self.fileOpsSidebarHit(x, y)) return 0;
+    if (y >= serviceTop(self)) return jobs_card.hover(self, serviceTop(self), x, y);
     const area = fileOpsBox(self);
     if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
         return std.math.maxInt(usize) - 2004;
@@ -546,6 +559,7 @@ pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
 
 pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
     if (!self.fileOpsSidebarHit(x, y)) return false;
+    if (y >= serviceTop(self)) return jobs_card.click(self, serviceTop(self), x, y);
     if (self.active_io_copy_job) |job_id| {
         const manager = if (self.io_manager) |value| value else return true;
         const area = fileOpsBox(self);
@@ -610,6 +624,11 @@ pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
 }
 
 pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
+    jobs_card.render(self, cr, serviceTop(self));
+    renderLegacyRow(self, cr);
+}
+
+fn renderLegacyRow(self: *App, cr: *c.cairo_t) void {
     if (self.active_io_copy_job) |job_id| {
         const manager = if (self.io_manager) |value| value else return;
         const state = manager.jobState(job_id) orelse return;
