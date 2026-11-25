@@ -2,6 +2,7 @@ const std = @import("std");
 const io_coordinator = @import("io_coordinator.zig");
 const io_service = @import("io_service.zig");
 const io_manager = @import("io_manager.zig");
+const io_operation_executor = @import("io_operation_executor.zig");
 
 // The Service fails fast with `ServiceBusy` while the coordinator thread holds
 // its mutex; callers retry later instead of waiting. These helpers do that for
@@ -847,4 +848,101 @@ test "coordinator rejects an invalid transfer source" {
         }
         break :blk count;
     });
+}
+
+fn waitForJobState(window: io_service.Handle, service: *io_service.Service, job_id: u64, state: io_manager.JobState) !void {
+    for (0..1000) |_| {
+        if (waitReadable(service.updateWakeFd(), 10)) _ = service.drainUpdateWake();
+        while (try receive(window)) |update| {
+            if (update.kind == .job_state and update.job_id == job_id and
+                update.state_code == @intFromEnum(state)) return;
+        }
+    }
+    return error.Timeout;
+}
+
+test "a hung worker does not stall the coordinator, other jobs or window calls" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+
+    const hung_source = try join(allocator, temp, "hung.bin");
+    defer allocator.free(hung_source);
+    defer cleanup(hung_source, false);
+    const other_source = try join(allocator, temp, "other.bin");
+    defer allocator.free(other_source);
+    defer cleanup(other_source, false);
+    const hung_dir = try join(allocator, temp, "hung-destination");
+    defer allocator.free(hung_dir);
+    defer cleanup(hung_dir, true);
+    const hung_destination = try join(allocator, hung_dir, "hung.bin");
+    defer allocator.free(hung_destination);
+    defer cleanup(hung_destination, false);
+    const other_dir = try join(allocator, temp, "other-destination");
+    defer allocator.free(other_dir);
+    defer cleanup(other_dir, true);
+    const other_destination = try join(allocator, other_dir, "other.bin");
+    defer allocator.free(other_destination);
+    defer cleanup(other_destination, false);
+
+    try writeFile(hung_source, "parked like a hung mount");
+    try writeFile(other_source, "copied while the other worker is parked");
+    try makeDirectory(hung_dir);
+    try makeDirectory(other_dir);
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, &service);
+
+    var window = try service.registerWindow();
+    defer window.close();
+    defer coordinator.deinit();
+    // Runs before coordinator.deinit joins the workers, even on failure.
+    const gate = io_operation_executor.test_gate;
+    defer gate.release();
+
+    // Job 1's copy unit parks on its worker, as on a hung mount.
+    gate.arm();
+    try submitTransfer(allocator, window, .copy, hung_dir, hung_source);
+    for (0..1000) |_| {
+        if (gate.parked.load(.acquire)) break;
+        waitBriefly();
+    } else return error.Timeout;
+
+    // The coordinator keeps dispatching and reconciling: job 2 completes on
+    // the other operation worker while job 1 is still parked.
+    try submitTransfer(allocator, window, .copy, other_dir, other_source);
+    try waitForContents(other_destination, "copied while the other worker is parked");
+    try waitForJobState(window, &service, 2, .completed);
+
+    // Window-side calls do not wait on the parked work.
+    var second = try service.registerWindow();
+    second.close();
+    _ = try receive(window);
+
+    // Cancellation is applied while the unit is still parked. Control
+    // commands run in order, so the rejection of a cancel for an unknown job
+    // queued right behind it proves the real one was applied.
+    try send(window, .{ .kind = .cancel_job, .job_id = 1 });
+    try send(window, .{ .kind = .cancel_job, .job_id = 999 });
+    try waitForRejection999(window, &service);
+    try std.testing.expect(gate.parked.load(.acquire));
+
+    // The job reaches `cancelled` only once the parked unit has returned.
+    gate.release();
+    try waitForJobState(window, &service, 1, .cancelled);
+}
+
+fn waitForRejection999(window: io_service.Handle, service: *io_service.Service) !void {
+    for (0..1000) |_| {
+        if (waitReadable(service.updateWakeFd(), 10)) _ = service.drainUpdateWake();
+        while (try receive(window)) |update| {
+            if (update.kind == .command_rejected and update.job_id == 999) return;
+        }
+    }
+    return error.Timeout;
 }

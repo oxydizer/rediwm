@@ -1,6 +1,7 @@
 //! Connects Manager-owned operations to their filesystem handlers through
 //! the generic bounded Executor.
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_manager = @import("io_manager.zig");
@@ -709,6 +710,7 @@ fn execute(
     item: io_executor.WorkItem,
 ) io_executor.WorkCompletion {
     const context: *Context = @ptrCast(@alignCast(raw_context.?));
+    if (builtin.is_test and item.operation_kind == .copy_file) test_gate.maybePark();
     return switch (item.operation_kind) {
         .create_directory => io_directory.execute(context.allocator, item),
         .copy_file => io_copy.execute(context.allocator, item),
@@ -720,6 +722,32 @@ fn execute(
         else => failWork(item),
     };
 }
+
+/// Test-only stand-in for a hung mount: when armed, the next regular-file copy
+/// unit parks on its worker until the test releases it. Compiled out of
+/// non-test builds.
+pub const test_gate = if (builtin.is_test) struct {
+    pub var armed: std.atomic.Value(bool) = .init(false);
+    pub var parked: std.atomic.Value(bool) = .init(false);
+    pub var released: std.atomic.Value(bool) = .init(false);
+
+    pub fn arm() void {
+        parked.store(false, .release);
+        released.store(false, .release);
+        armed.store(true, .release);
+    }
+
+    pub fn release() void {
+        armed.store(false, .release);
+        released.store(true, .release);
+    }
+
+    fn maybePark() void {
+        if (armed.cmpxchgStrong(true, false, .acq_rel, .monotonic) != null) return;
+        parked.store(true, .release);
+        while (!released.load(.acquire)) _ = std.posix.system.poll(&.{}, 0, 1);
+    }
+} else struct {};
 
 fn executeDirectoryFinalization(
     allocator: Allocator,
