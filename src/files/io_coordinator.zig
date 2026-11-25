@@ -12,6 +12,7 @@ const lifecycle = @import("io_coordinator_lifecycle.zig");
 const deletions = @import("io_coordinator_deletions.zig");
 const job_views = @import("io_coordinator_views.zig");
 const coordinator_requests = @import("io_coordinator_requests.zig");
+const notify = @import("io_coordinator_notify.zig");
 const io_deletion = @import("io_deletion.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
@@ -92,6 +93,8 @@ pub const Coordinator = struct {
     next_deletion_id: JobId = deletions.id_base,
     /// Levels of job trees that windows watch, by window and view slot.
     watching: std.AutoHashMapUnmanaged(u64, job_views.Watching) = .empty,
+    /// Desktop notifications for jobs that end with no window open.
+    notifier: notify.Notifier = undefined,
     thread: ?std.Thread = null,
     published: std.AutoHashMapUnmanaged(JobId, Published) = .empty,
     next_failed_submit_id: JobId = failed_submit_id_base,
@@ -144,6 +147,7 @@ pub const Coordinator = struct {
         self.tasks = try io_service_tasks.create(&self.task_context);
         errdefer self.tasks.deinit();
         self.deletion_context = .{ .allocator = allocator, .io = io };
+        self.notifier = .{ .io = io };
         self.deletion_pool = try io_deletion.create(&self.deletion_context);
         errdefer self.deletion_pool.deinit();
 
@@ -179,6 +183,7 @@ pub const Coordinator = struct {
             self.tasks.deinit();
             self.discardTaskBacklog();
             self.deletion_pool.deinit();
+            self.notifier.deinit();
             self.runtime.deinit();
             self.allocator.destroy(self.runtime);
         }
@@ -699,7 +704,10 @@ pub const Coordinator = struct {
                 !self.service.isWindowOpen(next.origin_window_id);
             if (next.pending_conflict != entry.record.pending_conflict and next.pending_conflict != 0)
                 std.log.info("Files job {d} waits on conflict {d}{s}", .{ summary.id, next.pending_conflict, if (next.conflict_orphaned) " (its window is gone)" else "" });
-            if (next.state.isTerminal() and next.finished_at_ms == 0) next.finished_at_ms = wallClockMs();
+            if (next.state.isTerminal() and next.finished_at_ms == 0) {
+                next.finished_at_ms = wallClockMs();
+                notify.jobEnded(self, next);
+            }
             // Retirement is automatic (architecture §6). It happens once the
             // executors are quiescent for the job and the ledger holds
             // nothing it owns; no consumer is waited for.
