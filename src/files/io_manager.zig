@@ -1542,6 +1542,11 @@ pub const Manager = struct {
 
     /// Read-only access; callers must retain EntryIds, not pointers into the
     /// backing array, across any subsequent TreeIndex mutation.
+    /// Bytes done and total of an entry: over the subtree for a directory.
+    pub fn entryBytes(self: *const Manager, job_id: JobId, entry_id: io_tree.EntryId) ?EntryBytes {
+        return entryProgress(self.findJobConst(job_id) orelse return null, entry_id);
+    }
+
     pub fn treeIndex(self: *const Manager, job_id: JobId) ?*const io_tree.TreeIndex {
         const job = self.findJobConst(job_id) orelse return null;
         return &job.tree;
@@ -3408,12 +3413,43 @@ fn countsAsItem(kind: OperationKind) bool {
 
 fn setOperationBytes(job: *Job, operation: *Operation, bytes: u64) void {
     job.summary_completed_bytes = (job.summary_completed_bytes -| operation.progress_bytes) +| bytes;
+    propagateToAncestors(job, operation.entry_id, operation.progress_bytes, bytes, .completed);
     operation.progress_bytes = bytes;
 }
 
 fn setOperationTotal(job: *Job, operation: *Operation, total: u64) void {
     job.summary_total_bytes = (job.summary_total_bytes -| operation.progress_total_bytes) +| total;
+    propagateToAncestors(job, operation.entry_id, operation.progress_total_bytes, total, .total);
     operation.progress_total_bytes = total;
+}
+
+/// Moves a directory's subtree sums by an operation's change, from the
+/// entry's parent up to its root: O(depth), no allocation.
+fn propagateToAncestors(job: *Job, entry_id: ?io_tree.EntryId, old: u64, new: u64, field: enum { completed, total }) void {
+    if (old == new) return;
+    const start = entry_id orelse return;
+    var parent = (job.tree.getConst(start) orelse return).parent_id;
+    while (parent) |id| {
+        const entry = job.tree.get(id) orelse return;
+        const sum = switch (field) {
+            .completed => &entry.subtree_completed_bytes,
+            .total => &entry.subtree_total_bytes,
+        };
+        sum.* = (sum.* -| old) +| new;
+        parent = entry.parent_id;
+    }
+}
+
+pub const EntryBytes = struct { completed_bytes: u64, total_bytes: u64 };
+
+/// A directory's bytes done and total over its subtree; for anything else,
+/// its own operation's.
+fn entryProgress(job: *const Job, entry_id: io_tree.EntryId) ?EntryBytes {
+    const entry = job.tree.getConst(entry_id) orelse return null;
+    if (entry.kind == .directory) return .{ .completed_bytes = entry.subtree_completed_bytes, .total_bytes = entry.subtree_total_bytes };
+    const index = job.entry_operation_indices.get(entry_id) orelse return .{ .completed_bytes = 0, .total_bytes = entry.metadata.size };
+    const operation = &job.operations.items[index];
+    return .{ .completed_bytes = operation.progress_bytes, .total_bytes = operation.progress_total_bytes };
 }
 
 fn isFlushingOperation(operation: *const Operation) bool {
