@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "xdg-shell-client-protocol.h"
+#include "xdg-system-bell-v1-client-protocol.h"
 #include "xdg-toplevel-tag-v1-client-protocol.h"
 #include "content-type-v1-client-protocol.h"
 #include "tearing-control-v1-client-protocol.h"
@@ -357,6 +358,7 @@ static int run_security_context(const char *socket_path, const char *engine, con
 
 // ---- supplementary standard protocols ------------------------------------
 static struct xdg_wm_base *xdg;
+static struct xdg_system_bell_v1 *bell;
 static struct xdg_toplevel_tag_manager_v1 *tags;
 static struct wp_content_type_manager_v1 *content_manager;
 static struct wp_tearing_control_manager_v1 *tearing_manager;
@@ -453,6 +455,7 @@ static bool bind_extra(struct wl_registry *r, uint32_t name, const char *iface) 
   if (!extras_mode) return false;
 #define BIND(member, type) if (strcmp(iface, #type) == 0) { member = wl_registry_bind(r, name, &type##_interface, 1);
   BIND(xdg, xdg_wm_base) xdg_wm_base_add_listener(xdg, &xdg_listener, NULL); }
+  else BIND(bell, xdg_system_bell_v1) }
   else BIND(tags, xdg_toplevel_tag_manager_v1) }
   else BIND(content_manager, wp_content_type_manager_v1) }
   else BIND(tearing_manager, wp_tearing_control_manager_v1) }
@@ -531,6 +534,17 @@ static int run_extras(void) {
   char line[80];
   while (fgets(line, sizeof(line), stdin)) {
     if (strncmp(line, "exit", 4) == 0) break;
+    if (!strcmp(line, "bell-surface\n") || !strcmp(line, "bell-burst\n")) {
+      assert(bell);
+      if (!strcmp(line, "bell-surface\n")) {
+        xdg_system_bell_v1_ring(bell, surface);
+      } else {
+        for (int i = 0; i < 16; i++) xdg_system_bell_v1_ring(bell, NULL);
+      }
+      assert(wl_display_roundtrip(display) >= 0);
+      puts("rang"); fflush(stdout);
+      continue;
+    }
     xdg_toplevel_tag_manager_v1_set_toplevel_tag(tags, top, "main");
     wp_content_type_v1_set_content_type(content, WP_CONTENT_TYPE_V1_TYPE_GAME);
     wp_tearing_control_v1_set_presentation_hint(tearing, WP_TEARING_CONTROL_V1_PRESENTATION_HINT_VSYNC);
@@ -538,6 +552,7 @@ static int run_extras(void) {
     assert(wl_display_roundtrip(display) >= 0);
     puts("extras-updated"); fflush(stdout);
   }
+  if (bell) xdg_system_bell_v1_destroy(bell);
   xdg_toplevel_destroy(top); xdg_surface_destroy(xs); wl_surface_destroy(surface);
   assert(wl_display_roundtrip(display) >= 0);
   return 0;

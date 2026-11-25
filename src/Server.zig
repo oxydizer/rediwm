@@ -155,6 +155,7 @@ layer_surfaces: wl.list.Head(@import("LayerSurface.zig"), .link) = undefined,
 input: Input,
 activation: @import("input/activation.zig") = .{},
 extra_protocols: ?*@import("extra_protocols.zig").Protocols = null,
+last_system_bell_ms: ?i64 = null,
 /// wp_fifo_v1 (`fifo.zig`); null in the greeter.
 fifo: ?*@import("fifo.zig").Manager = null,
 launch_feedback: @import("launch_feedback.zig") = .{},

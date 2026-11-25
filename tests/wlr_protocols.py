@@ -29,7 +29,7 @@ def compile_fixture(tmp):
         sources.append(str(tmp / f"{name}-protocol.c"))
     for name, relative in [("xdg-shell", "stable/xdg-shell/xdg-shell.xml")] + [
             (name + "-v1", f"staging/{name}/{name}-v1.xml") for name in
-            ("xdg-toplevel-tag", "content-type", "tearing-control", "color-management",
+            ("xdg-toplevel-tag", "xdg-system-bell", "content-type", "tearing-control", "color-management",
              "color-representation", "ext-workspace")]:
         for mode, suffix in (("client-header", "client-protocol.h"), ("private-code", "protocol.c")):
             subprocess.run(["wayland-scanner", mode, str(system / relative), str(tmp / f"{name}-{suffix}")], check=True)
@@ -48,9 +48,9 @@ def locked(ipc):
 
 
 class Session:
-    def __init__(self, tmp, outputs="1", config="[compositor]\nxwayland = false\n", scale="1"):
+    def __init__(self, tmp, outputs="1", config="[compositor]\nxwayland = false\n", scale="1", env_extra=None):
         self.tmp = tmp
-        self.process, self.log = spawn_compositor(tmp, scale=scale, outputs=outputs, config_content=config)
+        self.process, self.log = spawn_compositor(tmp, scale=scale, outputs=outputs, config_content=config, env_extra=env_extra)
         self.ipc = IPCClient(tmp, timeout=15).connect()
         self.ipc.wait_for("wallpaper_presented", timeout_ms=10000)
         self.env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=wayland_display_name(tmp))
@@ -274,6 +274,7 @@ def extra_protocols(tmp):
         globals_ = [line.split() for line in registry.splitlines() if line and line != "done"]
         versions = {name: int(version) for name, version in globals_}
         assert versions["xdg_wm_base"] == 7 and versions["zwlr_layer_shell_v1"] == 5, versions
+        assert versions["xdg_system_bell_v1"] == 1, versions
         if "zwp_linux_dmabuf_v1" in versions:
             assert versions["zwp_linux_dmabuf_v1"] == 5, versions
         for interface in ("ext_workspace_manager_v1", "wp_color_manager_v1",
@@ -342,8 +343,65 @@ def extra_protocols(tmp):
     print("PASS: workspace, tags, content hints, tearing hints and renderer colour negotiation")
 
 
+def system_bell(tmp):
+    theme = tmp / "sounds/bell-test/stereo"
+    theme.mkdir(parents=True)
+    sound = theme / "bell.wav"
+    sound.touch()
+    calls = tmp / "playbacks"
+    calls.touch()
+    player = tmp / "paplay"
+    player.write_text('#!/bin/sh\nprintf "%s\\n" "$4" >> "$XDG_RUNTIME_DIR/playbacks"\n')
+    player.chmod(0o700)
+    config = '[compositor]\nxwayland = false\nsound_theme = "bell-test"\n'
+    s = Session(tmp, config=config, env_extra={"XDG_DATA_HOME": str(tmp), "PATH": f"{tmp}:{os.environ['PATH']}"})
+    try:
+        fixture = str(tmp / "fixture")
+        child = s.spawn(fixture, "extras", stdin=subprocess.PIPE)
+        expect_line(child, "extras-ready")
+
+        def ring(command, total):
+            child.stdin.write(command + "\n")
+            child.stdin.flush()
+            expect_line(child, "rang")
+            wait_for(lambda: len(calls.read_text().splitlines()) >= total, f"{command}: expected {total} playbacks")
+            # Catch extra launches in the burst and start the next check outside the cooldown.
+            time.sleep(0.35)
+            assert calls.read_text().splitlines() == [str(sound)] * total, (command, calls.read_text())
+
+        ring("bell-surface", 1)
+        ring("bell-burst", 2)
+        for setting in ('sound_disabled_events = ["bell"]', 'sound_enabled = false'):
+            (tmp / "rediwm-config.toml").write_text(config + setting + "\n")
+            s.ipc.reload_config()
+            ring("bell-surface", 2)
+        (tmp / "rediwm-config.toml").write_text(config)
+        s.ipc.reload_config()
+        marker = theme / "bell.disabled"
+        marker.touch()
+        ring("bell-surface", 2)
+        marker.unlink()
+
+        lock = s.spawn(fixture, "lock", stdin=subprocess.PIPE)
+        expect_line(lock, "locked")
+        ring("bell-burst", 2)
+        lock.stdin.write("unlock\n")
+        lock.stdin.flush()
+        expect_line(lock, "unlocked")
+        ring("bell-surface", 3)
+        child.stdin.write("exit\n")
+        child.stdin.flush()
+        assert child.wait(timeout=5) == 0
+        result = s.ipc.action("play_sound", {"event": "bell"})
+        assert result["event"] == "bell" and result["pid"] > 0, result
+        wait_for(lambda: calls.read_text().splitlines() == [str(sound)] * 4, "IPC sound did not play")
+    finally:
+        s.close()
+    print("PASS: xdg-system-bell playback, burst coalescing, mute and session lock")
+
+
 def run():
-    for case in (extra_protocols, output_management, foreign_toplevel, screencopy_and_virtual_pointer, session_lock):
+    for case in (system_bell, extra_protocols, output_management, foreign_toplevel, screencopy_and_virtual_pointer, session_lock):
         with tempfile.TemporaryDirectory(prefix="rediwm-wlr-protocols-") as directory:
             tmp = Path(directory)
             compile_fixture(tmp)

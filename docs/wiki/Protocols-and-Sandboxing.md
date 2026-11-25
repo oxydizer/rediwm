@@ -17,6 +17,7 @@ reserve space on a specific output edge, including from a corner.
 | Input | `text-input-v1`, `text-input-v3`, `input-method-v2`, `relative-pointer-v1`, `pointer-constraints-v1`, `keyboard-shortcuts-inhibit-v1`, `pointer-gestures-v1`, `cursor-shape-v1` | fcitx5, IBus, games, virt-manager |
 | Workspace | `ext-workspace-v1` | one canvas workspace shared by all outputs |
 | Window metadata | `xdg-toplevel-tag-v1`, `content-type-v1`, `xdg-activation-v1` | window rules, content hints, activation |
+| Sound | `xdg-system-bell-v1` | applications can ring the desktop sound theme’s `bell` |
 | Colour | `color-management-v1`, `color-representation-v1` | named RGB descriptions and YCbCr coefficients/ranges |
 | Surface effects | `ext-background-effect-v1`, `alpha-modifier-v1` | Regional background blur and per-surface fades |
 | Output gamma | `wlr-gamma-control-v1` | wlsunset, gammastep |
@@ -25,6 +26,8 @@ reserve space on a specific output edge, including from a corner.
 
 ## Things worth knowing
 
+- System bell requests share a 250 ms cooldown across clients. The bell stays
+  silent while the session is locked or a polkit authentication prompt is open.
 - Clients can blur a region behind a surface when the renderer advertises the
   blur capability. A surface's alpha multiplier combines with window opacity.
   Both requests take effect on the surface commit.

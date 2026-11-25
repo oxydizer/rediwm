@@ -21,6 +21,7 @@
 #include "surface_feedback.h"
 #include <wlr/types/wlr_tearing_control_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/types/wlr_xdg_system_bell_v1.h>
 #include <wlr/types/wlr_xdg_toplevel_tag_v1.h>
 
 struct rediwm_protocols {
@@ -35,12 +36,19 @@ struct rediwm_protocols {
   void (*activate_workspace)(void *, unsigned);
   bool workspace_mode;
   struct wl_listener tag, description, lease_request, layout_add;
+  struct wl_listener system_bell;
   struct wl_list outputs;
   struct rediwm_scene_outputs *scene; // set once the outputs follow the color manager
   void *data;
   bool (*blocked)(void *);
   void (*changed)(void *, struct wlr_surface *);
+  void (*ring)(void *);
 };
+static void system_bell_ring(struct wl_listener *listener, void *data) {
+  (void)data; // Audible feedback is the same with or without an associated surface.
+  struct rediwm_protocols *p = wl_container_of(listener, p, system_bell);
+  if (!p->blocked(p->data)) p->ring(p->data);
+}
 struct metadata { struct wlr_addon addon; struct wl_listener top_destroy; char *tag, *description; };
 static void metadata_destroy(struct wlr_addon *addon) {
   struct metadata *m = wl_container_of(addon, m, addon);
@@ -229,6 +237,7 @@ void rediwm_protocols_destroy(struct rediwm_protocols *p) {
   struct workspace_output *o, *tmp;
   wl_list_for_each_safe(o, tmp, &p->outputs, link) output_removed(&o->destroy, NULL);
   wl_list_remove(&p->tag.link); wl_list_remove(&p->description.link);
+  wl_list_remove(&p->system_bell.link);
   wl_list_remove(&p->lease_request.link); wl_list_remove(&p->layout_add.link);
   // The outputs go before the display: detach the colour manager they follow.
   if (p->scene) {
@@ -242,10 +251,11 @@ void rediwm_protocols_destroy(struct rediwm_protocols *p) {
 struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
     struct wlr_backend *backend, struct wlr_renderer *renderer, struct rediwm_scene_outputs *scene,
     struct wlr_output_layout *layout, void *data, bool (*blocked)(void *),
-    void (*changed)(void *, struct wlr_surface *)) {
+    void (*changed)(void *, struct wlr_surface *), void (*ring)(void *)) {
   struct rediwm_protocols *p = calloc(1, sizeof(*p));
   if (!p) return NULL;
-  p->data = data; p->blocked = blocked; p->changed = changed;
+  p->data = data; p->blocked = blocked; p->changed = changed; p->ring = ring;
+  wl_list_init(&p->system_bell.link);
   wl_list_init(&p->workspace_commit.link);
   wl_list_init(&p->outputs); wl_list_init(&p->tag.link); wl_list_init(&p->description.link);
   wl_list_init(&p->lease_request.link); wl_list_init(&p->layout_add.link);
@@ -253,7 +263,10 @@ struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
   p->content = wlr_content_type_manager_v1_create(display, 1);
   p->tearing = wlr_tearing_control_manager_v1_create(display, 1);
   struct wlr_xdg_toplevel_tag_manager_v1 *tags = wlr_xdg_toplevel_tag_manager_v1_create(display, 1);
-  if (!p->content || !p->tearing || !tags) goto fail;
+  struct wlr_xdg_system_bell_v1 *bell = wlr_xdg_system_bell_v1_create(display, 1);
+  if (!p->content || !p->tearing || !tags || !bell) goto fail;
+  p->system_bell.notify = system_bell_ring;
+  wl_signal_add(&bell->events.ring, &p->system_bell);
   p->tag.notify = on_tag; wl_signal_add(&tags->events.set_tag, &p->tag);
   p->description.notify = on_description; wl_signal_add(&tags->events.set_description, &p->description);
   const enum wp_color_representation_surface_v1_alpha_mode alpha =

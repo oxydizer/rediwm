@@ -219,7 +219,7 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `wallpaper` | unset | file in `~/.local/share/rediwm/wallpapers`, or a path |
 | `lid_close` | `"display_off"` | `display_off`, `lock`, `suspend`, `power_off`, `ignore` |
 | `lock_on_suspend` | `true` | |
-| `sound_theme`, `sound_enabled`, `sound_disabled_events` | `"freedesktop"`, `true`, `[]` | event sounds, used by `play_sound` |
+| `sound_theme`, `sound_enabled`, `sound_disabled_events` | `"freedesktop"`, `true`, `[]` | event sounds for `play_sound` and the Wayland system bell. Set `sound_disabled_events = ["bell"]` to mute the bell alone. |
 
 Drag lift uses a gentle spring around the grab point and returns smoothly on
 release. Its timing can be adjusted with `[animations.window_drag]`.
