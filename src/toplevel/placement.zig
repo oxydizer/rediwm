@@ -52,7 +52,12 @@ pub fn forcedGeometry(toplevel: *const Toplevel) ?RestoreGeometry {
 
 pub fn applyForcedGeometry(toplevel: *Toplevel) c_int {
     const forced = toplevel.forcedGeometry() orelse return 0;
-    if (toplevel.auto_target != null and !toplevel.maximized and !toplevel.fullscreen) {
+    if (toplevel.minimized and toplevel.backend == .xdg) {
+        // The size went out with the change that armed this timer; repeating
+        // it would configure a minimized window, which Wine reads as a restore
+        // (a game leaves fullscreen and then minimizes itself on focus loss).
+        toplevel.setPosition(forced.x, forced.y);
+    } else if (toplevel.auto_target != null and !toplevel.maximized and !toplevel.fullscreen) {
         // Automatic frames must not inherit a size-animation endpoint computed
         // with the old maximized/fullscreen decorations before the xdg ack.
         toplevel.finishSizeAnimation();

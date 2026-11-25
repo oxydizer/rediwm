@@ -179,7 +179,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     }
 
     toplevel.server.world.workspaces.mapped(toplevel);
-    const want_focus = (if (inherited_placeholder != null) ph_had_focus else (toplevel.open_rules.focus orelse true)) and @import("../workspaces.zig").visible(toplevel);
+    const want_focus = (if (inherited_placeholder != null) ph_had_focus else (toplevel.open_rules.focus orelse !mapsBehindGame(toplevel))) and @import("../workspaces.zig").visible(toplevel);
     if (want_focus) {
         toplevel.needs_attention = false;
         toplevel.server.world.toplevels.prepend(toplevel);
@@ -263,6 +263,30 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     if (want_focus and toplevel.server.config.compositor.focus_zoom == .camera) {
         if (target_out) |output| toplevel.server.world.navigateTo(toplevel, output);
     }
+}
+
+/// A game in front keeps the keyboard when another program's window maps, as
+/// under KWin, Mutter and sway; the newcomer waits behind it, asking for
+/// attention. Wine makes whichever of its windows gets our keyboard enter the
+/// Win32 foreground, and a D3D game that loses that while fullscreen
+/// minimizes itself: explorer's tray window or a launcher showing up would
+/// throw the game off the screen. The game's own windows still take focus:
+/// Wine sets no xdg parent, so a game's message box is known only by its
+/// process.
+fn mapsBehindGame(toplevel: *Toplevel) bool {
+    const front = @import("../output/game.zig").inFront(toplevel.server) orelse return false;
+    if (front == toplevel) return false;
+    if (toplevel.clientPid()) |pid| if (front.clientPid()) |front_pid| {
+        if (pid > 0 and pid == front_pid) return false;
+    };
+    var owner = toplevel.owner();
+    var depth: usize = 0;
+    while (owner) |candidate| : (depth += 1) {
+        if (candidate == front) return false;
+        if (depth == 32) break;
+        owner = candidate.owner();
+    }
+    return true;
 }
 
 pub fn handleUnmapped(toplevel: *Toplevel) void {

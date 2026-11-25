@@ -35,6 +35,8 @@ pub fn tick(bar: *Taskbar, now_ms: i64) bool {
         // pending dirt is kept and renders once the bar is revealed again.
         return revealing;
     }
+    // A fullscreen window on this output keeps the bar hidden.
+    bar.tree.node.setEnabled(!bar.fullscreen_hidden);
 
     var causes = bar.paint_causes;
     bar.paint_causes = 0;

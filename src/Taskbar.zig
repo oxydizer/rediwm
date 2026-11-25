@@ -184,6 +184,9 @@ reveal: Anim = .{ .from = 1, .to = 1, .property = .opacity },
 shown: bool = false,
 pointer_near: bool = false,
 parked: bool = false,
+/// The focused window is fullscreen on this output
+/// (`updateTaskbarFullscreenVisibility`); the tree stays off like a parked one.
+fullscreen_hidden: bool = false,
 reveal_timer: ?*wl.EventSource = null,
 timer_target: ?bool = null,
 

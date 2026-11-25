@@ -91,6 +91,72 @@ def run():
                         stop_process(client)
                     stop_process(compositor)
                     log.close()
+        fullscreen_keeps_focus(tmp)
+
+
+def fullscreen_keeps_focus(tmp):
+    """A window of another program mapping over a fullscreen game waits behind
+    it, asking for attention (Wine would hand that window the Win32 foreground
+    and the game would minimize itself); the game's own dialog still takes
+    focus, and the taskbar stays hidden while frames run."""
+    runtime = tmp / "fullscreen-focus"
+    runtime.mkdir(mode=0o700)
+    config = '[compositor]\nxwayland = false\n[animations]\nenabled = false\n'
+    compositor, log = spawn_compositor(runtime, config_content=config,
+                                      env_extra={"XDG_CACHE_HOME": str(runtime / "cache")})
+    clients = []
+    try:
+        with IPCClient(runtime) as ipc:
+            ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+            base = dict(os.environ, XDG_RUNTIME_DIR=str(runtime), WAYLAND_DISPLAY=wayland_display_name(runtime))
+
+            def start(app_id, **extra):
+                out = (runtime / f"{app_id}.log").open("w")
+                clients.append(subprocess.Popen([str(tmp / "client"), "--app-id", app_id],
+                                                env=dict(base, **extra), stdout=out, stderr=out))
+
+            def window(app_id, title=None):
+                return next((w for w in ipc.get_windows()
+                             if w["app_id"] == app_id and (title is None or w["title"] == title)), None)
+
+            marker = runtime / "confirm-close"
+            marker.touch()
+            start("rediwm.game", REDIWM_TEST_INITIAL_STATE="fullscreen", REDIWM_TEST_CLOSE_MARKER=str(marker))
+            game = wait_for(lambda: (w := window("rediwm.game")) and w["is_focused"] and w["placement"] == "fullscreen" and w,
+                            "the game did not map fullscreen and focused")
+            ipc.wait_for("window_geometry_settled", window_id=game["id"])
+            output = ipc.get_outputs()[0]
+            bottom = (output["logical_width"] // 2, output["logical_height"] - 4)
+
+            def game_on_top():
+                ipc.wait_for_frame()
+                hit = ipc.hit_test(*bottom)
+                return hit.get("target_type") == "window" and hit.get("window_id") == game["id"]
+
+            # The taskbar ticks every frame and used to switch itself back on.
+            wait_for(game_on_top, lambda: f"taskbar over the fullscreen game: {ipc.hit_test(*bottom)}", timeout=3)
+
+            start("rediwm.other")
+            other = wait_for(lambda: window("rediwm.other"), "the other window did not map")
+            wait_for(lambda: window("rediwm.game")["is_focused"], "the game lost focus to another program's window", timeout=2)
+            other = window("rediwm.other")
+            assert not other["is_focused"] and other["is_urgent"], other
+            assert game_on_top(), ipc.hit_test(*bottom)
+            print("PASS: fullscreen-keeps-focus", flush=True)
+
+            # Its own transient still takes focus.
+            ipc.close_window(game["id"])
+            wait_for(lambda: (w := window("rediwm.game", "Confirm close")) and w["is_focused"],
+                     lambda: f"the game's own dialog did not take focus: {ipc.get_windows()}")
+            print("PASS: fullscreen-own-dialog-focus", flush=True)
+    except Exception:
+        print((runtime / "compositor.log").read_text(errors="replace")[-4000:])
+        raise
+    finally:
+        for client in clients:
+            stop_process(client)
+        stop_process(compositor)
+        log.close()
 
 
 if __name__ == "__main__":

@@ -240,8 +240,8 @@ gamma = 2.0
             r1, g1, b1 = h1_last["sample_1"]
             assert abs(r1 - 1.0) < 0.01, f"Expected r=1.0, got {r1}"
             assert r1 > g1 > b1, f"Expected r > g > b at 4000K, got r={r1}, g={g1}, b={b1}"
-            assert 0.95 < g1 < 0.99, f"Unexpected g1 at 4000K: {g1}"
-            assert 0.70 < b1 < 0.75, f"Unexpected b1 at 4000K: {b1}"
+            assert abs(g1 - 0.836) < 0.001, f"Unexpected g1 at 4000K: {g1}"
+            assert abs(b1 - 0.626) < 0.001, f"Unexpected b1 at 4000K: {b1}"
 
             # HEADLESS-2: neutral whitepoint (r == g == b == 1.0) and gamma 2.0 midpoint (0.5^(1/2) ≈ 0.707)
             h2_commits = [e for e in commits if e.get("output") == "HEADLESS-2"]

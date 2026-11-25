@@ -47,24 +47,18 @@ pub fn whitepoint(kelvin: u32) [3]f64 {
     const Z = (1.0 - x - y) / y;
 
     // XYZ to linear sRGB (D65-adapted matrix)
-    const r_lin = std.math.clamp(3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z, 0.0, 1.0);
-    const g_lin = std.math.clamp(-0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z, 0.0, 1.0);
-    const b_lin = std.math.clamp(0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z, 0.0, 1.0);
+    const r_lin = @max(0.0, 3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z);
+    const g_lin = @max(0.0, -0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z);
+    const b_lin = @max(0.0, 0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z);
 
-    // Encode with 2.2 power
-    var r_enc = std.math.pow(f64, r_lin, 1.0 / 2.2);
-    var g_enc = std.math.pow(f64, g_lin, 1.0 / 2.2);
-    var b_enc = std.math.pow(f64, b_lin, 1.0 / 2.2);
-
-    // Normalize so the largest channel is 1.0
-    const max_c = @max(r_enc, @max(g_enc, b_enc));
-    if (max_c > 0.0) {
-        r_enc /= max_c;
-        g_enc /= max_c;
-        b_enc /= max_c;
-    }
-
-    return .{ r_enc, g_enc, b_enc };
+    // Y = 1 can put a channel above unity. Scale all three together to
+    // preserve the white point's chromaticity before encoding the LUT gains.
+    const peak = @max(r_lin, g_lin, b_lin);
+    return .{
+        std.math.pow(f64, r_lin / peak, 1.0 / 2.2),
+        std.math.pow(f64, g_lin / peak, 1.0 / 2.2),
+        std.math.pow(f64, b_lin / peak, 1.0 / 2.2),
+    };
 }
 
 /// Fills 1D look-up tables (r, g, b) of matching length with entries
@@ -138,17 +132,17 @@ test "whitepoint: 6500 K is neutral and channels monotonic" {
     // Pinned reference values
     const wp4000 = whitepoint(4000);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), wp4000[0], 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.970), wp4000[1], 0.005);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.727), wp4000[2], 0.005);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.836), wp4000[1], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.626), wp4000[2], 0.001);
 
     const wp2500 = whitepoint(2500);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), wp2500[0], 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.888), wp2500[1], 0.005);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.410), wp2500[2], 0.005);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.639), wp2500[1], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.295), wp2500[2], 0.001);
 
     const wp10000 = whitepoint(10000);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.916), wp10000[0], 0.005);
-    try std.testing.expectApproxEqAbs(@as(f64, 1.0), wp10000[1], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.785), wp10000[0], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.862), wp10000[1], 0.001);
     try std.testing.expectEqual(@as(f64, 1.0), wp10000[2]);
 }
 
