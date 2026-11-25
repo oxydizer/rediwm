@@ -37,8 +37,10 @@
   glib,
   cups,
   libxcb,
+  ffmpeg,
   libdrm,
   libGL,
+  libva,
   xwayland,
   xdg-utils,
   shared-mime-info,
@@ -129,8 +131,10 @@ stdenv.mkDerivation {
     glib
     cups
     libxcb
+    ffmpeg
     libdrm
     libGL
+    libva
   ]
   ++ wlroots.buildInputs; # wlroots.pc's Requires.private is needed for C headers too.
 
