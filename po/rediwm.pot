@@ -640,6 +640,10 @@ msgstr ""
 msgid "Audio settings"
 msgstr ""
 
+#: src/video/osd.zig
+msgid "Audio track"
+msgstr ""
+
 #: src/control_center/sections/sound.zig
 msgid "Audio unavailable"
 msgstr ""
@@ -4754,6 +4758,10 @@ msgstr ""
 
 #: src/start_menu/menu_tree.zig
 msgid "No applications found"
+msgstr ""
+
+#: src/video/subtitle_menu.zig
+msgid "No audio"
 msgstr ""
 
 #: src/control_center/tree.zig

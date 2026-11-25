@@ -8,7 +8,7 @@ const Picture = @import("queue.zig").Picture;
 const Converter = @import("audio.zig").Converter;
 
 pub fn run(pipe: *p.Pipeline, kind: p.Kind) void {
-    var worker: Worker = .{ .pipe = pipe, .kind = kind, .stream = if (kind == .video) pipe.media.video else pipe.media.audio.? };
+    var worker: Worker = .{ .pipe = pipe, .kind = kind, .stream = if (kind == .video) pipe.media.video else pipe.audio.? };
     defer c.avcodec_free_context(&worker.codec);
     defer worker.converter.deinit();
     while (true) {
@@ -20,8 +20,14 @@ pub fn run(pipe: *p.Pipeline, kind: p.Kind) void {
         worker.target = pipe.target;
         worker.mode = pipe.seek_mode;
         const device = if (kind == .video) pipe.device else null;
+        const audio_stream = pipe.audio;
         pipe.unlock();
         if (stop) return;
+        // Another audio track needs its own codec context.
+        if (kind == .audio) if (audio_stream) |next| {
+            if (next.index != worker.stream.index) c.avcodec_free_context(&worker.codec);
+            worker.stream = next;
+        };
         if (skip) continue;
         worker.process(device) catch |err| pipe.fail(worker.gen, err, device != null);
     }

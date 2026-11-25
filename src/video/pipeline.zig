@@ -9,6 +9,7 @@ const wake = @import("platform").wake;
 const q = @import("queue.zig");
 const audio = @import("audio.zig");
 const Media = @import("media.zig").Media;
+const Stream = @import("media.zig").Stream;
 const hw = @import("hw.zig");
 const decode = @import("decode.zig");
 const Device = audio.Device;
@@ -29,6 +30,9 @@ pub const Pipeline = struct {
     target: i64,
     preview_only: bool,
     seek_mode: SeekMode = .exact,
+    /// The audio stream being decoded; changes under the lock, and workers
+    /// take it at the start of each generation (a seek always follows).
+    audio: ?Stream,
     video: q.Packets = .{},
     audio_packets: q.Packets = .{},
     pictures: q.Ring(q.Picture, 6) = .{},
@@ -46,15 +50,16 @@ pub const Pipeline = struct {
         errdefer _ = std.c.close(main_fd);
         const space_fd = wake.create() orelse return error.EventFdFailed;
         errdefer _ = std.c.close(space_fd);
-        self.* = .{ .media = media, .device = device, .main_fd = main_fd, .space_fd = space_fd, .target = target, .preview_only = paused };
+        const audio_stream: ?Stream = if (media.default_track) |i| media.tracks[i] else null;
+        self.* = .{ .media = media, .audio = audio_stream, .device = device, .main_fd = main_fd, .space_fd = space_fd, .target = target, .preview_only = paused };
         if (libc.pthread_mutex_init(&self.mutex, null) != 0) return error.MutexFailed;
         errdefer _ = libc.pthread_mutex_destroy(&self.mutex);
         if (libc.pthread_cond_init(&self.cond, null) != 0) return error.CondFailed;
         errdefer _ = libc.pthread_cond_destroy(&self.cond);
-        const shared = if (media.audio != null and previous != null) previous.?.output else null;
+        const shared = if (audio_stream != null and previous != null) previous.?.output else null;
         if (shared != null) {
             self.output = shared;
-        } else if (media.audio != null) {
+        } else if (audio_stream != null) {
             self.output = Device.rv_audio_open(space_fd, main_fd);
             if (self.output) |out| {
                 out.rv_audio_reset();
@@ -132,6 +137,14 @@ pub const Pipeline = struct {
         signal(self.space_fd);
     }
 
+    /// Pick another audio stream. The caller seeks afterwards, which starts a
+    /// generation whose workers use it.
+    pub fn selectAudio(self: *Pipeline, stream: Stream) void {
+        self.lock();
+        defer self.unlock();
+        self.audio = stream;
+    }
+
     pub fn lock(self: *Pipeline) void {
         _ = libc.pthread_mutex_lock(&self.mutex);
     }
@@ -163,15 +176,16 @@ pub const Pipeline = struct {
             const target = if (self.seek_mode == .previous) @max(0, self.target -| tick) else self.target;
             const stop = self.stop;
             const with_audio = self.output != null and !self.preview_only;
+            const audio_stream = self.audio;
             self.unlock();
             if (stop) return;
-            self.readGeneration(gen, previous != 0 or target > 0, target, with_audio) catch |err| self.fail(gen, err, false);
+            self.readGeneration(gen, previous != 0 or target > 0, target, with_audio, audio_stream) catch |err| self.fail(gen, err, false);
             previous = gen;
         }
     }
 
-    fn readGeneration(self: *Pipeline, gen: u64, needs_seek: bool, target: i64, with_audio: bool) !void {
-        if (needs_seek) try self.media.seek(target);
+    fn readGeneration(self: *Pipeline, gen: u64, needs_seek: bool, target: i64, with_audio: bool, audio_stream: ?Stream) !void {
+        if (needs_seek) try self.media.seek(target, audio_stream);
         while (true) {
             self.lock();
             const live = self.active(gen);
@@ -192,8 +206,8 @@ pub const Pipeline = struct {
             }
             if (result < 0) return error.DemuxFailed;
             const video = pkt.stream_index == self.media.video.index;
-            if (!video and (!with_audio or pkt.stream_index != self.media.audio.?.index)) continue;
-            const stream = if (video) self.media.video else self.media.audio.?;
+            if (!video and (!with_audio or pkt.stream_index != audio_stream.?.index)) continue;
+            const stream = if (video) self.media.video else audio_stream.?;
             const duration = @max(0, c.av_rescale_q(pkt.duration, stream.base, @import("media.zig").ns_base));
             const queue = self.packets(if (video) .video else .audio);
             self.lock();
