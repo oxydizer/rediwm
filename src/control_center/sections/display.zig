@@ -547,13 +547,12 @@ fn buildHdr(out: *Section, maybe_output: ?*Output) void {
         out.hdr_rows[out.hdr_row_count] = rowWidget(&out.sdr_white_row_children);
         out.hdr_row_count += 1;
     }
-    // Untried on real HDR displays so far: say so, and say
-    // when the driver would not take the signal.
+    // Report driver refusal, or explain the remaining experimental status.
     out.hdr_rows[out.hdr_row_count] = .{ .kind = .{ .text = .{
         .content = if (mode == .on and hdr.refused(output))
             i18n.tr("This display or its driver did not accept HDR in this mode, so it stays SDR.")
         else
-            i18n.tr("HDR is experimental: it has not been tried on a real HDR display yet."),
+            i18n.tr("HDR is experimental: signal activation has been verified on one real HDR display. Rendering accuracy and broader compatibility remain under testing."),
         .font_size = 12,
         .color = panel.palette().dim,
     } } };
