@@ -1,25 +1,41 @@
 # Files I/O Manager roadmap
 
 Status: in progress. The I/O Manager is replacing `JobRunner` as the sole
-execution and coordination architecture for Files filesystem operations.
+execution and coordination architecture for Files filesystem operations, and is
+moving behind one process-owned I/O service.
 
 ## Architecture direction
 
-The Manager is moving behind a standalone, session-managed Files I/O service
-so filesystem operations outlive Files windows and remain isolated from both
-the Files UI and the RediWM shell.
+The Manager, Runtime, resource ledger and executors are owned by one
+coordinator thread in the Files process. Windows are clients of a service that
+sits in front of it. They submit commands and read a table of job records, and
+they never touch the Manager. Filesystem work therefore outlives windows, worker
+capacity is shared, and the UI thread does no I/O orchestration.
 
-See [Files I/O Service Architecture](files-io-service-architecture.md) for
-the process boundaries, ownership model, IPC direction, lifecycle and
-supervision, failure guarantees, persistence and recovery strategy, open
-implementation decisions and staged migration plan. The initial IPC
-contract is agreed but not yet implemented.
+The service is an in-process thread. An out-of-process service with its own
+socket protocol and journal was considered and deferred until a concrete need
+appears. See:
 
-Service extraction is a prerequisite to continuing the remaining Manager
-roadmap phases. In particular, per-window Runtime ownership must be replaced
-by one service-owned Manager, Runtime, resource ledger and bounded worker
-capacity. The architecture document distinguishes agreed contract behaviour
-from operation-specific implementation details that remain to be established.
+* [Service Architecture](files-io-service-architecture.md) for ownership, the
+  command and job-table interface, job lifecycle and the migration stages S0
+  to S5.
+* [Threading and Ownership](files-io-threading-and-ownership.md) for threads,
+  locking, wake protocol, the coordinator loop, shutdown and the required tests.
+* [files-io-ipc-contract-deferred.md](files-io-ipc-contract-deferred.md) for
+  the earlier out-of-process contract, kept for reference.
+
+The phases below are the Manager's own correctness, safety and performance work.
+They run alongside the service stages and are not blocked by them, except where
+the table below says otherwise.
+
+### How the phases and service stages fit
+
+| Service stage | Relation to the phases |
+| --- | --- |
+| S1 job table, S2 lifecycle | Independent of the phases. S1 adds the Manager's O(1) per-job summary and dirty set, which also serves phase 6. S2 moves submit-time preparation and blocking resource cleanup off the coordinator |
+| S3 windows move onto the service | **Needs phase 2.** The coordinator rejects mixed file and directory selections today, and `JobRunner` work is invisible to the service, so the fallback must go first |
+| S4 archive lifecycle | Builds on phase 1. The archive publication cursor becomes service-owned |
+| S5 limits and validation | Overlaps phase 5 (shutdown ordering, allocation failure), phase 6 (measured scheduling) and phase 7 (capacity calibration). UI responsiveness is not deferred to S5: it is an acceptance criterion of every stage (threading §1, §13) |
 
 ## Goal
 
@@ -31,7 +47,7 @@ retirement.
 
 The architecture separates three responsibilities:
 
-* **Manager:** main-thread job and operation state, dependencies, scheduling,
+* **Manager:** coordinator-thread job and operation state, dependencies, scheduling,
   dispatch decisions and user-visible snapshots.
 * **Executors:** bounded worker execution, operation continuations, discovery
   and filesystem-specific work. Workers are shared capacity, not owned by
@@ -61,13 +77,22 @@ Completed and verified:
 The last verified concurrency milestone passed the full test suite:
 449 Files tests passed, 4 skipped, and all 553 tests passed overall.
 
+The I/O service core and coordinator thread exist (`io_service.zig`,
+`io_coordinator.zig`): bounded command admission, owned payloads, wake
+descriptors, copy and move of files, symlinks and directories, discovery,
+conflict and resource-release commands, and per-job state and progress
+publication. The process owns them. Windows do not use them yet: each still owns
+its own Runtime until stage S3.
+
 `JobRunner` is **not yet removed**. It remains the fallback for transfers the
 Manager path does not accept, notably mixed selections and unsupported entry
 types. Legacy progress, manifest and transfer UI paths also remain.
 
 ## Phase 1 — Per-job resource ledger
 
-**First priority.**
+**Foundation in place** (`io_resource_ledger.zig`, owned by `io_runtime.Runtime`,
+with executor-owned release). Remaining families move across as their
+owners migrate; the archive publication cursor is stage S4.
 
 Create `src/files/io_resource_ledger.zig` and make `io_runtime.Runtime` its
 owner. The ledger records which resources remain owned by each job and
@@ -96,6 +121,8 @@ supports explicit ownership transfer and release.
 * Archive cancellation state and staging directories.
 * Archive publication cursors and staging ownership across the Runtime/App
   boundary.
+* Window-owned resources (a `window(id)` owner) and borrows, so that closing a
+  window reclaims only what it owns (architecture §6, service stage S2).
 * Any other resource family found during the ownership audit.
 
 ### Teardown contract
@@ -108,7 +135,10 @@ supports explicit ownership transfer and release.
 
 Never close or free a resource that an in-flight worker may still access.
 Preserve explicit handoff semantics for clipboard, drag and Open With staging
-leases: once transferred, those resources belong to their receiving owner.
+leases: once transferred, those resources belong to their receiving window,
+which is recorded as their owner. The window disposes of them through the
+service, and an operation worker destroys them. They are never deleted on the
+UI thread.
 
 ### Validation
 
@@ -128,6 +158,9 @@ of all existing cleanup paths in one change.
 Once the ledger foundation is established, finish migrating the remaining
 user-facing transfer functionality to the I/O Manager. There must be no
 production transfer fallback to `JobRunner`.
+
+This phase is the prerequisite for service stage S3. Mixed selections are the
+first item, since the coordinator rejects them today.
 
 ### Remaining migration work
 
@@ -161,7 +194,7 @@ do not migrate them a second time.
 ## Phase 3 — Deterministic Manager simulation
 
 Build a deterministic simulation harness for the Manager state machine.
-The Manager is main-thread state, so its transitions can be exercised
+The Manager is single-threaded state owned by the coordinator, so its transitions can be exercised
 without relying on real worker timing or filesystem scheduling.
 
 The fake executor should provide scripted and seeded-random completions,
@@ -228,6 +261,10 @@ Candidate areas:
 * Double-close paths, swallowed cleanup errors and stale temporary names.
 * Source growth/shrinkage and unsupported special files.
 * Bind-mount and directory traversal loops.
+* Safety on abnormal exit: partial output never under a final name, and staging
+  under a known directory that a later start can sweep. This replaces the need
+  for a journal while the service is in-process.
+* Blocking metadata calls and recursive cleanup off the coordinator thread (service stage S2).
 
 Prefer focused regression tests for each confirmed issue.
 
@@ -299,7 +336,8 @@ the public API unless a concrete caller benefit justifies changing it.
 
 ## Working rules
 
-* Work in the phase order above; the resource ledger comes first.
+* Work phases in order, interleaved with the service stages as the table above
+  says. The ledger foundation comes first and is in place.
 * Keep each implementation unit focused, tested and independently
   reviewable.
 * Commit and push after each meaningful unit is completed and verified.
@@ -319,3 +357,5 @@ the public API unless a concrete caller benefit justifies changing it.
 * Optimising scheduling based only on theoretical complexity without
   measurement.
 * Running benchmarks as part of the normal build.
+* Building an out-of-process service, wire protocol or journal before a trigger
+  in the architecture document is reached.
