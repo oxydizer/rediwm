@@ -51,6 +51,7 @@ PRIVILEGED_GLOBALS = {
 
 CORE_GLOBALS = {
     "wl_compositor",
+    "wl_fixes",
     "wl_shm",
     "xdg_wm_base",
     "zxdg_exporter_v1",

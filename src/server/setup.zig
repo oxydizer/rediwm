@@ -361,6 +361,7 @@ fn initServices(server: *Server) CompositorError!void {
 fn initProtocols(server: *Server) CompositorError!void {
     const wl_server = server.wl_server;
     const greeter = server.greeter_mode;
+    _ = wlr.createFixes(wl_server, 1) orelse return error.FixesCreateFailed;
     server.renderer.initShm(wl_server) catch return error.ShmInitFailed;
     // wlroots' combined display initializer would also register a v4 DMA-BUF global.
     if (server.renderer.getTextureFormats(@backingInt(wlr.BufferCap.dmabuf)) != null and server.renderer.getDrmFd() >= 0) {

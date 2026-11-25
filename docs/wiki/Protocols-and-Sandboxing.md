@@ -8,6 +8,7 @@ reserve space on a specific output edge, including from a corner.
 
 | Area | Protocols | Works with |
 | --- | --- | --- |
+| Core Wayland | `wl_fixes` v1 | clients can release a `wl_registry` on the server while keeping their connection open |
 | Displays | `wlr-output-management-v1`, `xdg-output-v1` | wlr-randr, kanshi, nwg-displays |
 | Window lists | `wlr-foreign-toplevel-management-v1`, `ext-foreign-toplevel-list-v1` | docks, waybar, rofi/fuzzel, wlrctl |
 | Window parenting | `xdg-foreign-unstable-v1`, `xdg-foreign-unstable-v2` | a dialog in another process can use an exported window as its parent. Handles work across both versions. |

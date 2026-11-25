@@ -35,6 +35,7 @@
 
 static struct wl_display *display;
 static struct wl_compositor *compositor;
+static uint32_t fixes_name;
 static struct wl_shm *shm;
 static struct wl_output *outputs[MAX_OUTPUTS];
 static int output_count;
@@ -68,6 +69,8 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
   if (bind_extra(registry, name, interface)) return;
   if (strcmp(interface, wl_compositor_interface.name) == 0) {
     compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
+  } else if (strcmp(interface, wl_fixes_interface.name) == 0) {
+    fixes_name = name;
   } else if (strcmp(interface, wl_shm_interface.name) == 0) {
     shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
   } else if (strcmp(interface, wl_output_interface.name) == 0 && output_count < MAX_OUTPUTS) {
@@ -582,6 +585,21 @@ int main(int argc, char **argv) {
   struct wl_registry *registry = wl_display_get_registry(display);
   wl_registry_add_listener(registry, &registry_listener, NULL);
   wl_display_roundtrip(display);
+  if (!strcmp(argv[1], "release-registry")) {
+    assert(fixes_name && compositor);
+    struct wl_fixes *fixes = wl_registry_bind(registry, fixes_name, &wl_fixes_interface, 1);
+    printf("%u\n", wl_proxy_get_id((struct wl_proxy *)registry));
+    wl_fixes_destroy_registry(fixes, registry);
+    wl_registry_destroy(registry);
+    wl_fixes_destroy(fixes);
+    // Globals bound through the released registry remain usable.
+    struct wl_region *region = wl_compositor_create_region(compositor);
+    wl_region_add(region, 0, 0, 1, 1);
+    wl_region_destroy(region);
+    assert(wl_display_roundtrip(display) >= 0);
+    wl_display_disconnect(display);
+    return 0;
+  }
   if (foreign_version) return run_xdg_foreign(argc == 4 ? argv[3] : NULL);
   if (workspace_test_mode) {
     assert(workspace_manager);

@@ -47,6 +47,7 @@
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_fixes.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>

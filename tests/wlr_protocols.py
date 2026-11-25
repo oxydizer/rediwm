@@ -275,6 +275,12 @@ def extra_protocols(tmp):
         registry = s.run(fixture, "dump-registry", "--versions").stdout
         globals_ = [line.split() for line in registry.splitlines() if line and line != "done"]
         versions = {name: int(version) for name, version in globals_}
+        assert versions["wl_fixes"] == 1, versions
+        # delete_id acknowledges the server released this particular registry.
+        released = subprocess.run([fixture, "release-registry"], env=dict(s.env, WAYLAND_DEBUG="client"),
+                                  capture_output=True, text=True, check=True, timeout=15)
+        registry_id = int(released.stdout.strip())
+        assert f".delete_id({registry_id})" in released.stderr, released.stderr
         assert versions["xdg_wm_base"] == 7 and versions["zwlr_layer_shell_v1"] == 5, versions
         assert versions["xdg_system_bell_v1"] == 1, versions
         if "zwp_linux_dmabuf_v1" in versions:

@@ -77,6 +77,7 @@ pub const CompositorError = error{
     KdeDecorationCreateFailed,
     TitlebarTabsCreateFailed,
     CompositorCreateFailed,
+    FixesCreateFailed,
     SubcompositorCreateFailed,
     DataDeviceManagerCreateFailed,
     DataControlManagerCreateFailed,

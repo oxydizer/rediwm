@@ -1,4 +1,6 @@
 //! Header-backed wlroots API for RediWM. See AGENTS.md in this directory.
+const c = @import("c.zig").c;
+const wl = @import("wayland").server.wl;
 const output_power = @import("output_power.zig").Types(Output);
 pub const OutputPowerManagerV1 = output_power.OutputPowerManagerV1;
 pub const OutputPowerV1 = output_power.OutputPowerV1;
@@ -55,6 +57,7 @@ pub const Buffer = @import("buffer.zig").Buffer;
 pub const gamma_control = @import("gamma_control.zig");
 pub const ColorTransform = @import("c.zig").c.wlr_color_transform;
 pub const Compositor = @import("compositor.zig").Compositor;
+pub const createFixes = @import("abi.zig").bind(fn (*wl.Server, u32) callconv(.c) ?*c.wlr_fixes, c.wlr_fixes_create);
 pub const Cursor = @import("cursor.zig").Cursor;
 pub const CursorShapeManagerV1 = @import("cursor_shape_v1.zig").CursorShapeManagerV1;
 pub const DataControlManagerV1 = @import("data_control_v1.zig").DataControlManagerV1;
@@ -161,7 +164,6 @@ pub const XcursorTheme = @import("xcursor.zig").XcursorTheme;
 pub const XcursorManagerTheme = @import("xcursor_manager.zig").XcursorManagerTheme;
 
 comptime {
-    const c = @import("c.zig").c;
     if (c.WLR_VERSION_MAJOR != 0 or c.WLR_VERSION_MINOR != 20)
         @compileError("RediWM requires wlroots 0.20 headers");
 }
