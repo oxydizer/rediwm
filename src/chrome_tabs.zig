@@ -61,12 +61,9 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
             pixels[index] = c.over(C.fromPremultiplied(pixels[index])).argb();
         };
         if (t.active) fillBox(C, pixels, width, height, scale, clip_left, clip_right, rect.x + 8 * density, band - 2 * density, rect.x + rect.w - 8 * density, band, theme.shellPalette().accent);
-        const size = @min(20 * density, rect.h - 6);
-        var left = rect.x + 6 * density;
-        if (icon) |image| {
-            renderer.drawImageCover(left, rect.y + (rect.h - size) / 2, size, size, 0, .{ .pixels = image.pixels, .width = image.size, .height = image.size });
-        } else renderer.drawIcon(left, rect.y + (rect.h - size) / 2, size, size, .{ .id = .generic, .color = theme.global.window_fg });
-        left += size + 6 * density;
+        // Tabs carry no icon: the title gets the room. The application's icon
+        // stays on the leading button.
+        const left = rect.x + 12 * density;
         var close = g.close(i);
         close.x += rect.x - g.tab(i).x;
         renderer.drawText(left, rect.y, @max(0, close.x - left - 3), rect.h, .{

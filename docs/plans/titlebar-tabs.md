@@ -92,9 +92,10 @@ Semantics:
 * Bounds, checked on the compositor: at most `window_tabs.max_tabs` (128) tabs;
   titles and icon names are cut at 256 / 128 bytes and must be valid UTF-8
   (invalid ones are replaced, not fatal); ids unique per commit.
-* `icon_name` is accepted and ignored for now: every tab shows the app's own
-  icon, as the compositor's strip does today. Per-tab icons resolve through
-  `icon_service` later.
+* `icon_name` is accepted and ignored: tabs show no icon, because icons cost
+  title room in a narrow strip. The app's icon is on the leading button.
+  Decided after Files and the Editor used the strip; per-tab icons are not
+  planned.
 * The compositor never changes the selected tab on its own. A click sends
   `select`; the strip updates when the app commits. One frame of latency, no
   divergence. Hover and the drag preview are local to the compositor.
