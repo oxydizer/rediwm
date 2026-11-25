@@ -57,7 +57,6 @@ pub const CommandKind = enum {
     resume_job,
     cancel_job,
     resolve_conflict,
-    retire_job,
     release_resource,
 };
 
@@ -246,7 +245,7 @@ pub const Command = struct {
     pub fn class(self: Command) CommandClass {
         return switch (self.kind) {
             .submit_job, .start_discovery, .prioritize_discovery => .normal,
-            .pause_job, .resume_job, .cancel_job, .resolve_conflict, .retire_job, .release_resource => .control,
+            .pause_job, .resume_job, .cancel_job, .resolve_conflict, .release_resource => .control,
         };
     }
 };

@@ -30,6 +30,7 @@ const Published = struct {
     record: io_service.JobRecord,
     last_progress_ms: i64 = 0,
     last_sample_ms: i64 = 0,
+    retirement_requested: bool = false,
 };
 
 /// Progress-only changes are written at most this often per job; state,
@@ -426,7 +427,6 @@ pub const Coordinator = struct {
                     self.service.updateJobRecord(entry.record) catch {};
                 }
             } else try self.runtime.cancelJob(command.job_id),
-            .retire_job => try self.runtime.requestJobRetirement(command.job_id),
             .submit_job => unreachable, // handleSubmit
             .start_discovery => try self.startDiscovery(command.job_id, command.payload),
             .prioritize_discovery => try self.prioritizeDiscovery(command.job_id, command.payload),
@@ -656,6 +656,15 @@ pub const Coordinator = struct {
             else
                 0;
             if (next.state.isTerminal() and next.finished_at_ms == 0) next.finished_at_ms = wallClockMs();
+            // Retirement is automatic (architecture §6). It happens once the
+            // executors are quiescent for the job and the ledger holds
+            // nothing it owns; no consumer is waited for.
+            if (next.state.isTerminal() and !entry.retirement_requested) {
+                self.runtime.requestJobRetirement(summary.id) catch |err| {
+                    std.log.err("Files job {d} retirement request failed: {s}", .{ summary.id, @errorName(err) });
+                };
+                entry.retirement_requested = true;
+            }
 
             const previous = entry.record;
             const structural = next.state != previous.state or

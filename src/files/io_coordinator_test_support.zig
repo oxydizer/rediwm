@@ -389,3 +389,11 @@ pub const PlannedJob = struct {
         return !r.removed and r.state != .planning and r.state != .failed;
     }
 };
+
+/// A job whose record has retired (its final record).
+pub const Retired = struct {
+    id: io_service.JobId,
+    pub fn matches(self: Retired, r: io_service.JobRecord) bool {
+        return r.id == self.id and r.removed;
+    }
+};

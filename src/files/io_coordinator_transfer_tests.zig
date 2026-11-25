@@ -267,3 +267,23 @@ test "a submit whose preparation hangs does not delay other jobs or its own canc
     try std.testing.expect(!support.pathExists(copied_hung));
     try std.testing.expect(f.view.find(1).?.removed);
 }
+
+test "finished jobs retire on their own, so the live table never fills" {
+    var f: Fixture = .{};
+    try f.start();
+    defer f.stop();
+
+    const file = try f.path("note.txt");
+    defer allocator.free(file);
+    try support.writeFile(file, "copy me");
+
+    // More jobs than the live table holds, one after another. Each copy into
+    // the same folder gets a unique name; each finished job retires with no
+    // retire command, freeing its slot.
+    const jobs = io_service.max_live_jobs + 6;
+    for (1..jobs + 1) |id| {
+        try support.submitSources(allocator, f.window, .copy, f.temp, &.{file});
+        const final = try f.view.waitFor(support.Retired{ .id = id });
+        try std.testing.expectEqual(io_service.JobState.completed, final.state);
+    }
+}
