@@ -369,6 +369,11 @@ or worker resource; and the coordinator exemption table is empty.
 * S3b also: closing the last window while service jobs run asks first (keep them
   running in the background, or cancel them), and jobs that end while headless send
   a desktop notification. Moved here from S2.
+* S3b also: **job views**, for what job records cannot carry. Records hold job
+  totals. Ghost rows, per-item progress rings, the Transfers tree and browsing
+  inside a running transfer need per-entry state, which today the window reads
+  straight from its own Manager. With the Manager on the coordinator, a window
+  *subscribes* to what it shows and the coordinator pushes it (§14).
 * S3c. `Client.io_runtime` and `App.io_runtime` are removed (U3). This is when the
   per-window Runtime stops existing. Window teardown joins nothing on the UI thread.
   The helper threads that remain go to the reaper (U16).
@@ -534,3 +539,50 @@ on top of the layer, not a service stage.
 paths and output buffers are bounded. A shell that crashes or restarts
 resubscribes and gets a new snapshot.
 
+
+## 14. Job views: per-entry state for what a window shows
+
+A job record says how a job is doing. A window also shows *which* items are
+moving: ghost rows in the destination folder, a ring per item, the Transfers
+tree, and a running transfer opened like a folder. That is per-entry state of
+the job's tree, which lives in the Manager on the coordinator thread. Windows
+never read the Manager (§4), so the coordinator pushes it.
+
+**Subscribe to a level.** A window sends `watch_view` with a view slot (0 to
+3), a job id, a tree entry (0 for the job's roots) and a window of rows (offset
+and at most 512 entries). The coordinator remembers the subscription and
+writes a **view snapshot** for it: the level's children in tree order, each
+with its entry id, name, kind, state (pending, running, done, failed, skipped)
+and bytes done and total, plus the level's total child count. `unwatch_view`
+drops it; closing the window drops all of its views (the close sweep, §6).
+Four slots cover what a window shows at once: the ghosts in the folder it
+displays, a transfer it browses, and the expanded levels of the Transfers tree
+(more levels than slots are served most recently watched first).
+
+**When it is written.** With the record of its job: at once on structural
+change (a level gained or lost entries, an entry changed state), and at most
+every 50 ms for progress. A paused job or one waiting on a conflict writes
+nothing. Only watched levels are serialised, so the cost per pass is bounded
+by the subscribed rows, never by the size of the job.
+
+**Delivery.** A snapshot is an owned buffer, like a reply (§8): the coordinator
+builds it off the Service mutex, then swaps it into the window's view slot
+under the mutex and signals the update wake. Latest wins: a snapshot the window
+has not taken yet is freed when a newer one replaces it, so a slow window holds
+at most one per slot and never blocks the coordinator. The window takes it with
+`Handle.takeView` (fail fast, `ServiceBusy` retried next turn).
+
+**Directory progress is incremental.** A folder's bytes done and total are the
+sums over its subtree. The Manager keeps them per directory entry and updates
+them on each progress report and each discovered entry, walking up the parent
+chain (O(depth)). The window no longer aggregates a projected copy of the whole
+tree on every rebuild, which today costs O(entries) on the UI thread.
+
+**What stays with records.** Job state, totals, rate history, the pending
+conflict id and the offered resource stay in the job table. Conflict details
+for the dialog (names, kinds, sizes and dates of both sides) are a request the
+coordinator answers from memory, since they are needed once per conflict.
+
+**Limits.** 4 view slots per window, 512 rows per snapshot, names bounded by
+the filesystem's 255 bytes. Memory per window is bounded by four snapshots in
+flight and four held.
