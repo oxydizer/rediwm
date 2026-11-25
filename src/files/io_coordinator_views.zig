@@ -155,6 +155,7 @@ pub fn publishViews(self: *Coordinator, now: i64) ?i64 {
                 shape.update(std.mem.asBytes(&level.job_id));
                 shape.update(std.mem.asBytes(&entry_id));
                 shape.update(std.mem.asBytes(&row.state));
+                shape.update(std.mem.asBytes(&row.materialized));
                 bytes +%= row.completed_bytes +% row.total_bytes *% 31;
             }
         }
@@ -212,6 +213,7 @@ fn rowOf(manager: *const io_manager.Manager, level: Level, entry_id: io_tree.Ent
         },
         .state = state,
         .child_count = @intCast(@min(entry.children.items.len, std.math.maxInt(u32))),
+        .materialized = entry.kind == .directory and progress.arrived > 0,
         .completed_bytes = progress.completed_bytes,
         .total_bytes = progress.total_bytes,
     };

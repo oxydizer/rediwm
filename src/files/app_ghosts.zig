@@ -109,7 +109,7 @@ fn updateInPlace(self: *App, snapshot: *const views.Snapshot) void {
     for (snapshot.rows) |row| {
         const name = snapshot.name(row);
         for (self.items.items, 0..) |*item, index| {
-            if (!item.transfer_ghost or !std.mem.eql(u8, item.name, name)) continue;
+            if ((!item.transfer_ghost and item.transfer_job_id == 0) or !std.mem.eql(u8, item.name, name)) continue;
             applyProgress(item, row);
             damageItem(self, index);
             break;
@@ -163,7 +163,9 @@ pub fn appendRows(self: *App, mem: std.mem.Allocator, old: *const std.StringHash
 
 fn appendRow(self: *App, mem: std.mem.Allocator, old: *const std.StringHashMap(ViewItem), snapshot: *const views.Snapshot, row: views.Row) void {
     const state = transferState(row.state) orelse return;
-    const ghost = state == .pending or state == .copying;
+    // A folder becomes real once one file inside it has fully arrived; it
+    // keeps its ring while it fills.
+    const ghost = (state == .pending or state == .copying) and !row.materialized;
     const name = snapshot.name(row);
     const is_dir = row.kind == .directory;
     if (self.folders_only and !is_dir) return;
@@ -179,9 +181,17 @@ fn appendRow(self: *App, mem: std.mem.Allocator, old: *const std.StringHashMap(V
             item.transfer_entry_id = row.entry_id;
             item.missing = !item.is_dir;
             applyProgress(item, row);
+        } else if (is_dir and state == .copying) {
+            // Real, still filling: its ring stays, and hovering it still
+            // promotes what is left inside.
+            item.transfer_job_id = row.job_id;
+            item.transfer_entry_id = row.entry_id;
+            applyProgress(item, row);
         }
         return;
     }
+    // Real on disk already: the listing shows it (with its ring once it
+    // appears there). Nothing to add.
     if (!ghost) return;
     const path = std.fs.path.join(mem, &.{ self.history.current, name }) catch return;
     const previous = old.get(path);

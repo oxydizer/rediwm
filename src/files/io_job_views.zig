@@ -44,6 +44,9 @@ pub const Row = struct {
     state: RowState,
     /// Children known so far, for a folder.
     child_count: u32 = 0,
+    /// A folder with at least one file inside that has fully arrived: it is
+    /// real, no longer a ghost, though still filling.
+    materialized: bool = false,
     completed_bytes: u64,
     total_bytes: u64,
 };

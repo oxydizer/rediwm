@@ -48,6 +48,8 @@ pub const Entry = struct {
     /// Manager as operations report progress (job views, architecture §14).
     subtree_completed_bytes: u64 = 0,
     subtree_total_bytes: u64 = 0,
+    /// Files and links under a directory that have arrived.
+    subtree_arrived: u64 = 0,
 
     fn deinit(self: *Entry, allocator: Allocator) void {
         allocator.free(self.name);
