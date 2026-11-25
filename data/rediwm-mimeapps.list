@@ -1,0 +1,18 @@
+# Defaults for the RediWM session (XDG_CURRENT_DESKTOP=rediwm). A user's own
+# ~/.config/mimeapps.list still takes precedence.
+[Default Applications]
+video/mp4=rediwm-video.desktop
+video/x-m4v=rediwm-video.desktop
+video/matroska=rediwm-video.desktop
+video/x-matroska=rediwm-video.desktop
+video/webm=rediwm-video.desktop
+video/quicktime=rediwm-video.desktop
+video/x-msvideo=rediwm-video.desktop
+video/mpeg=rediwm-video.desktop
+video/mp2t=rediwm-video.desktop
+video/ogg=rediwm-video.desktop
+video/x-ogm+ogg=rediwm-video.desktop
+video/x-flv=rediwm-video.desktop
+video/3gpp=rediwm-video.desktop
+video/3gpp2=rediwm-video.desktop
+video/x-ms-wmv=rediwm-video.desktop
