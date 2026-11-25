@@ -63,56 +63,62 @@ pub const Anchor = struct {
         entry_id: tree.EntryId,
     ) !Cursor {
         io_thread_guard.blocking("Anchor.openCursorForEntry");
-        var components: std.ArrayList([]const u8) = .empty;
-        defer components.deinit(allocator);
-
-        var current_id = entry_id;
-        while (true) {
-            const entry = index.getConst(current_id) orelse
-                return error.UnknownEntry;
-            if (entry.kind != .directory) return error.EntryNotDirectory;
-
-            if (entry.parent_id) |parent_id| {
-                try components.append(allocator, entry.name);
-                current_id = parent_id;
-            } else {
-                if (!index.isRoot(current_id))
-                    return error.EntryOutsideRoot;
-                break;
-            }
-        }
-
-        const flags = c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC;
-        var current_fd = c.openat(self.fd, ".", flags);
-        if (current_fd < 0) return error.DirectoryOpenFailed;
-
-        var owns_fd = true;
-        errdefer if (owns_fd) {
-            _ = c.close(current_fd);
-        };
-
-        var remaining = components.items.len;
-        while (remaining > 0) {
-            remaining -= 1;
-            const name = try allocator.dupeSentinel(
-                u8,
-                components.items[remaining],
-                0,
-            );
-            defer allocator.free(name);
-
-            const next_fd = c.openat(current_fd, name, flags);
-            if (next_fd < 0) return error.DirectoryOpenFailed;
-
-            _ = c.close(current_fd);
-            current_fd = next_fd;
-        }
-
-        const cursor = try Cursor.fromOwnedFd(current_fd);
-        owns_fd = false;
-        return cursor;
+        const components = try relativeComponents(allocator, index, entry_id);
+        defer freeComponents(allocator, components);
+        return openCursorAt(self.fd, components);
     }
 };
+
+/// The names from a root down to `entry_id`, root excluded, outermost
+/// first. In memory only: no filesystem access, so the coordinator can build
+/// it and hand the open to a worker.
+pub fn relativeComponents(
+    allocator: Allocator,
+    index: *const tree.TreeIndex,
+    entry_id: tree.EntryId,
+) ![][:0]u8 {
+    var reversed: std.ArrayList([:0]u8) = .empty;
+    errdefer {
+        for (reversed.items) |name| allocator.free(name);
+        reversed.deinit(allocator);
+    }
+    var current_id = entry_id;
+    while (true) {
+        const entry = index.getConst(current_id) orelse return error.UnknownEntry;
+        if (entry.kind != .directory) return error.EntryNotDirectory;
+        if (entry.parent_id) |parent_id| {
+            try reversed.append(allocator, try allocator.dupeSentinel(u8, entry.name, 0));
+            current_id = parent_id;
+        } else {
+            if (!index.isRoot(current_id)) return error.EntryOutsideRoot;
+            break;
+        }
+    }
+    std.mem.reverse([:0]u8, reversed.items);
+    return reversed.toOwnedSlice(allocator);
+}
+
+pub fn freeComponents(allocator: Allocator, components: [][:0]u8) void {
+    for (components) |name| allocator.free(name);
+    allocator.free(components);
+}
+
+/// Opens the directory `components` below `anchor_fd`, each step with
+/// O_NOFOLLOW. Blocking: runs on a discovery worker.
+pub fn openCursorAt(anchor_fd: c_int, components: []const [:0]u8) !Cursor {
+    io_thread_guard.blocking("openCursorAt");
+    const flags = c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC;
+    var current_fd = c.openat(anchor_fd, ".", flags);
+    if (current_fd < 0) return error.DirectoryOpenFailed;
+    for (components) |name| {
+        const next_fd = c.openat(current_fd, name, flags);
+        _ = c.close(current_fd);
+        if (next_fd < 0) return error.DirectoryOpenFailed;
+        current_fd = next_fd;
+    }
+    // Takes ownership of the fd, and closes it itself on failure.
+    return Cursor.fromOwnedFd(current_fd);
+}
 
 pub const Cursor = struct {
     dir: *c.DIR,

@@ -567,7 +567,10 @@ test "stale discovery completion releases its cursor and root anchor after cance
 
     try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
     try waitForWake(&executor);
-    try std.testing.expectEqual(@as(usize, 1), executor.anchors.count());
+    // The worker opened the root anchor and the cursor; both are held by the
+    // undrained completion, not yet by the executor.
+    try std.testing.expectEqual(@as(usize, 0), executor.anchors.count());
+    try std.testing.expectEqual(@as(usize, 2), executor.ledger.jobResourceCount(job));
 
     // Leave the completion in the pool so the executor must reject its stale
     // token and release the returned cursor while reconciling it.
@@ -614,8 +617,10 @@ test "runtime retirement waits for cancelled discovery completion to drain" {
 
     // The worker has returned, but its completion still owns the Job until
     // the main thread drains and rejects the now-stale result.
+    // The cursor and the root anchor the worker opened are both held by that
+    // completion until it is drained.
     try runtime.cancelJob(job);
-    try std.testing.expectEqual(@as(usize, 1), runtime.resource_ledger.jobResourceCount(job));
+    try std.testing.expectEqual(@as(usize, 2), runtime.resource_ledger.jobResourceCount(job));
     try runtime.requestJobRetirement(job);
     try std.testing.expect(!runtime.isJobRetirementReady(job));
     try std.testing.expect(!runtime.retireJobIfReady(job));
@@ -630,4 +635,58 @@ test "runtime retirement waits for cancelled discovery completion to drain" {
     try std.testing.expect(runtime.isJobRetirementReady(job));
     try std.testing.expect(runtime.retireJobIfReady(job));
     try std.testing.expectEqual(@as(?io_manager.JobState, null), runtime.manager.jobState(job));
+}
+
+test "a root anchor lent to a worker cannot be released under it" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const root_path = try makeTempDir(&temp_buffer);
+    const child = try join(allocator, root_path, "child");
+    defer allocator.free(child);
+    const grandchild = try join(allocator, child, "file.txt");
+    defer allocator.free(grandchild);
+    defer {
+        _ = c.unlink(grandchild);
+        _ = c.rmdir(child);
+        _ = c.rmdir(root_path);
+    }
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(child, 0o700));
+    try createFile(grandchild);
+
+    var manager = io_manager.Manager.init(allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(null);
+    _ = try manager.addTreeRoot(job, "source", .directory, .{}, null);
+    try manager.startDiscovery(job, root_path);
+    try manager.queueJob(job);
+
+    var executor = try io_discovery_executor.Executor.init(allocator, 1, 1, 1);
+    defer executor.deinit();
+
+    // First unit: the worker opens the root anchor; draining adopts it and
+    // queues the discovered child directory.
+    try std.testing.expectEqual(@as(usize, 1), try executor.dispatchReady(&manager));
+    try waitForWake(&executor);
+    _ = try executor.drainCompletions(&manager);
+    while (executor.anchors.count() == 1 and try executor.dispatchReady(&manager) == 0) {
+        // Root batches of size 1: keep reading the root until the child unit
+        // is the one in flight.
+        try waitForWake(&executor);
+        _ = try executor.drainCompletions(&manager);
+    }
+    try std.testing.expectEqual(@as(usize, 1), executor.anchors.count());
+    var anchors = executor.anchors.valueIterator();
+    const anchor_handle = anchors.next().?.ledger_handle;
+
+    // A unit is in flight and may be using the anchor's fd.
+    try std.testing.expect(!executor.isJobQuiescent(job));
+    try std.testing.expectError(error.ResourceBusy, executor.releaseResource(anchor_handle));
+
+    // Once nothing is in flight, the anchor can go (or discovery finished
+    // and closed it already).
+    try waitForWake(&executor);
+    _ = try executor.drainCompletions(&manager);
+    try std.testing.expect(!executor.in_flight_by_job.contains(job));
+    if (executor.anchors.count() == 1) try executor.releaseResource(anchor_handle);
+    try std.testing.expectEqual(@as(usize, 0), executor.anchors.count());
 }

@@ -52,8 +52,6 @@ pub const Exemption = enum {
     u14_archive_discard,
     /// Transferred-out staging lease deletion (S4).
     u15_staging_lease,
-    /// Discovery dispatch opening root anchors and directory cursors (S2).
-    c4_discovery_anchor_open,
 };
 
 threadlocal var role: Role = .none;
