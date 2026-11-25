@@ -7,6 +7,7 @@ const std = @import("std");
 const io_thread_guard = @import("io_thread_guard.zig");
 const io_transfer_plan = @import("io_transfer_plan.zig");
 const io_service_tasks = @import("io_service_tasks.zig");
+const resources = @import("io_coordinator_resources.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
@@ -17,6 +18,11 @@ const io_resource_ledger = @import("io_resource_ledger.zig");
 const ops_mod = @import("ops.zig");
 
 const JobId = io_service.JobId;
+
+pub const WindowHeld = struct {
+    /// Owned.
+    path: []u8,
+};
 
 /// A submit whose plan is being prepared on a worker.
 const Preparing = struct {
@@ -96,6 +102,8 @@ pub const Coordinator = struct {
     task_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
     /// Jobs whose submit is being prepared on a worker.
     preparing: std.AutoHashMapUnmanaged(JobId, Preparing) = .empty,
+    /// What disposing a window-owned resource needs, by ledger handle id.
+    window_held: std.AutoHashMapUnmanaged(u64, WindowHeld) = .empty,
 
     /// Initialize at a stable address. The Runtime is allocated separately
     /// because its executors retain pointers into it and into its Manager.
@@ -139,6 +147,9 @@ pub const Coordinator = struct {
         if (self.thread) |thread| thread.join();
         self.published.deinit(self.allocator);
         self.preparing.deinit(self.allocator);
+        var held = self.window_held.valueIterator();
+        while (held.next()) |entry| self.allocator.free(entry.path);
+        self.window_held.deinit(self.allocator);
         self.task_backlog.deinit(self.allocator);
         self.* = undefined;
     }
@@ -160,6 +171,7 @@ pub const Coordinator = struct {
                 self.handleCommand(routed);
             }
 
+            self.sweepClosedWindows();
             self.pumpTasks();
             self.pumpExecutors();
             const deadline = self.publishRecords(monotonicMs());
@@ -339,7 +351,7 @@ pub const Coordinator = struct {
         self.service.retireJobRecord(job_id) catch {};
     }
 
-    fn submitTask(self: *Coordinator, task: io_service_tasks.Task) void {
+    pub fn submitTask(self: *Coordinator, task: io_service_tasks.Task) void {
         if (self.task_backlog.items.len == 0 and self.tasks.trySubmit(task)) return;
         self.task_backlog.append(self.allocator, task) catch {
             // Out of memory with a full pool: give the work up visibly.
@@ -358,7 +370,7 @@ pub const Coordinator = struct {
         };
     }
 
-    fn pumpTasks(self: *Coordinator) void {
+    pub fn pumpTasks(self: *Coordinator) void {
         _ = self.tasks.drainWake();
         while (self.tasks.tryPopResult()) |result_value| {
             var result = result_value;
@@ -391,8 +403,13 @@ pub const Coordinator = struct {
             return self.endPlanningJob(job_id, .failed, err);
     }
 
+    /// A worker finished destroying a resource it held: release its entry.
+    /// A failed delete is released too; it is under a known staging root
+    /// that a later start sweeps (roadmap phase 5).
     fn finishCleanup(self: *Coordinator, handle: io_resource_ledger.Handle) void {
-        if (self.runtime.operation_executor) |*executor| executor.finishStagingCleanup(handle);
+        self.runtime.resource_ledger.release(handle, .operation_worker) catch |err| {
+            std.log.err("Files cleanup release of resource {d} failed: {s}", .{ handle.id, @errorName(err) });
+        };
     }
 
     fn discardDeleteResult(raw: ?*anyopaque, handle: io_resource_ledger.Handle) void {
@@ -434,67 +451,20 @@ pub const Coordinator = struct {
                 routed.window_id,
                 command.payload,
             ),
-            .release_resource => try self.releaseResource(
+            .release_borrow => try self.runtime.resource_ledger.releaseBorrow(
+                .{ .id = command.resource_id },
                 routed.window_id,
-                command.job_id,
-                command.resource_id,
+            ),
+            .dispose_resource => try self.disposeWindowResource(
+                .{ .id = command.resource_id },
+                routed.window_id,
             ),
         }
     }
 
-    fn releaseResource(
-        self: *Coordinator,
-        window_id: io_service.WindowId,
-        job_id: JobId,
-        resource_id: io_service.ResourceId,
-    ) !void {
-        const handle = io_resource_ledger.Handle{ .id = resource_id };
-        const ledger = &self.runtime.resource_ledger;
-        const resource_job_id = ledger.jobIdOf(handle) orelse
-            return error.UnknownResource;
-        if (resource_job_id != job_id) return error.ResourceJobMismatch;
-
-        const owner = ledger.ownerOf(handle) orelse return error.UnknownResource;
-        const kind = ledger.kindOf(handle) orelse return error.UnknownResource;
-
-        // The origin check goes in S2, when a holder check replaces it.
-        if (self.runtime.manager.jobOriginWindow(job_id) != window_id)
-            return error.ResourceWindowMismatch;
-
-        switch (owner) {
-            .operation_worker, .discovery_worker => return error.ResourceBusy,
-            .app => return error.ResourceNotServiceOwned,
-            .operation_executor, .discovery_executor => {},
-        }
-
-        const state = self.runtime.manager.jobState(job_id) orelse
-            return error.UnknownJob;
-        if (!state.isTerminal()) return error.ResourceBusy;
-
-        switch (owner) {
-            .discovery_executor => {
-                if (kind != .discovery_anchor and kind != .discovery_cursor)
-                    return error.ResourceNotReleasable;
-                const executor = if (self.runtime.discovery_executor) |*value|
-                    value
-                else
-                    return error.ResourceOwnerUnavailable;
-                try executor.releaseResource(handle);
-            },
-            .operation_executor => {
-                if (kind != .archive_staging)
-                    return error.ResourceNotReleasable;
-                const executor = if (self.runtime.operation_executor) |*value|
-                    value
-                else
-                    return error.ResourceOwnerUnavailable;
-                // The recursive delete runs on a service worker (threading §8).
-                const path = try executor.takeStagingForCleanup(handle);
-                self.submitTask(.{ .delete_tree = .{ .handle = handle, .path = path } });
-            },
-            .operation_worker, .discovery_worker, .app => unreachable,
-        }
-    }
+    pub const handResourceToWindow = resources.handResourceToWindow;
+    pub const disposeWindowResource = resources.disposeWindowResource;
+    pub const sweepClosedWindows = resources.sweepClosedWindows;
 
     fn startDiscovery(
         self: *Coordinator,
@@ -547,9 +517,8 @@ pub const Coordinator = struct {
         if (conflict.id != request.conflict_id)
             return error.ConflictNotAtQueueHead;
 
-        // The origin check goes in S2: any window may resolve any conflict.
-        if (manager.jobOriginWindow(conflict.job_id) != window_id)
-            return error.ConflictWindowMismatch;
+        // Any window may resolve any conflict (architecture §4).
+        _ = window_id;
 
         switch (request.action) {
             .retry => try manager.resolveConflict(request.conflict_id),
@@ -651,6 +620,7 @@ pub const Coordinator = struct {
             const entry = self.published.getPtr(summary.id) orelse continue;
             var next = entry.record;
             applySummary(&next, summary);
+            next.borrow_count = @intCast(@min(self.runtime.resource_ledger.jobBorrowCount(summary.id), 255));
             next.pending_conflict = if (head) |conflict|
                 (if (conflict.job_id == summary.id) conflict.id else 0)
             else
@@ -669,6 +639,7 @@ pub const Coordinator = struct {
             const previous = entry.record;
             const structural = next.state != previous.state or
                 next.cancel_requested != previous.cancel_requested or
+                next.borrow_count != previous.borrow_count or
                 next.pending_conflict != previous.pending_conflict;
             const progressed = next.completed_bytes != previous.completed_bytes or
                 next.total_bytes != previous.total_bytes or
@@ -770,89 +741,3 @@ fn rejectionCode(err: anyerror) RejectionCode {
 }
 
 
-test "coordinator protects worker and App resources during release" {
-    const allocator = std.testing.allocator;
-
-    var service: io_service.Service = .{};
-    try service.init();
-    defer service.deinit();
-
-    var runtime = io_runtime.Runtime.init(allocator);
-    defer runtime.deinit();
-
-    var owner_window = try service.registerWindow();
-    defer owner_window.close();
-    var other_window = try service.registerWindow();
-    defer other_window.close();
-
-    const job_id = try runtime.manager.createJob(owner_window.window_id);
-    const app_resource = try runtime.resource_ledger.register(
-        job_id,
-        .archive_publication_cursor,
-        .app,
-    );
-    const worker_resource = try runtime.resource_ledger.register(
-        job_id,
-        .archive_cancellation,
-        .operation_worker,
-    );
-
-    var coordinator: Coordinator = .{
-        .allocator = allocator,
-        .service = &service,
-        .runtime = &runtime,
-    };
-
-    try std.testing.expectError(
-        error.ResourceWindowMismatch,
-        coordinator.releaseResource(
-            other_window.window_id,
-            job_id,
-            app_resource.id,
-        ),
-    );
-    try std.testing.expectError(
-        error.ResourceNotServiceOwned,
-        coordinator.releaseResource(
-            owner_window.window_id,
-            job_id,
-            app_resource.id,
-        ),
-    );
-    try std.testing.expectError(
-        error.ResourceBusy,
-        coordinator.releaseResource(
-            owner_window.window_id,
-            job_id,
-            worker_resource.id,
-        ),
-    );
-    try std.testing.expectError(
-        error.UnknownResource,
-        coordinator.releaseResource(
-            owner_window.window_id,
-            job_id,
-            std.math.maxInt(io_service.ResourceId),
-        ),
-    );
-    try std.testing.expectError(
-        error.ResourceJobMismatch,
-        coordinator.releaseResource(
-            owner_window.window_id,
-            job_id + 1,
-            app_resource.id,
-        ),
-    );
-
-    try std.testing.expectEqual(
-        io_resource_ledger.Owner.app,
-        runtime.resource_ledger.ownerOf(app_resource).?,
-    );
-    try std.testing.expectEqual(
-        io_resource_ledger.Owner.operation_worker,
-        runtime.resource_ledger.ownerOf(worker_resource).?,
-    );
-
-    try runtime.resource_ledger.release(app_resource, .app);
-    try runtime.resource_ledger.release(worker_resource, .operation_worker);
-}

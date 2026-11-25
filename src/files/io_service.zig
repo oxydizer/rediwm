@@ -57,7 +57,11 @@ pub const CommandKind = enum {
     resume_job,
     cancel_job,
     resolve_conflict,
-    release_resource,
+    /// Drops a borrow this window holds (`resource_id`).
+    release_borrow,
+    /// Gives a window-owned resource (`resource_id`) back to its executor,
+    /// which destroys it on a worker.
+    dispose_resource,
 };
 
 pub const CommandClass = enum {
@@ -245,7 +249,7 @@ pub const Command = struct {
     pub fn class(self: Command) CommandClass {
         return switch (self.kind) {
             .submit_job, .start_discovery, .prioritize_discovery => .normal,
-            .pause_job, .resume_job, .cancel_job, .resolve_conflict, .release_resource => .control,
+            .pause_job, .resume_job, .cancel_job, .resolve_conflict, .release_borrow, .dispose_resource => .control,
         };
     }
 };
@@ -337,6 +341,11 @@ pub const Service = struct {
     /// Consumers 0..max_windows-1 are the window slots, in slot order; the
     /// rest are external subscribers. Guarded by the mutex.
     table: io_job_table.Table(max_windows + max_external_consumers) = .{},
+    /// Windows whose slot was recycled since the coordinator last asked, so
+    /// it can drop their borrows and dispose what they own. Guarded by the
+    /// mutex. On overflow the coordinator sweeps every holder instead.
+    closed_windows: Ring(WindowId, max_windows) = .{},
+    closed_overflow: bool = false,
     external_ids: [max_external_consumers]u64 = @splat(0),
     stopping: std.atomic.Value(bool) = .init(false),
 
@@ -608,7 +617,32 @@ pub const Service = struct {
         if (slot.normal_commands.count != 0 or slot.control_commands.count != 0)
             return;
         self.table.detach(self.slotIndex(slot));
+        if (!self.closed_windows.push(slotId(slot.word.load(.acquire)))) self.closed_overflow = true;
         slot.reset();
+        signalWake(self.command_wake_fd);
+    }
+
+    /// Called by the coordinator: the next window closed since its last
+    /// call, or null. `overflowed` is set when some were not recorded and
+    /// every holder must be checked with `isWindowOpen`.
+    pub fn takeClosedWindow(self: *Service, overflowed: *bool) ?WindowId {
+        self.lock();
+        defer self.unlock();
+        if (self.closed_overflow) {
+            self.closed_overflow = false;
+            overflowed.* = true;
+        }
+        return self.closed_windows.pop();
+    }
+
+    /// Lock-free: whether `window_id` is registered and not closing.
+    pub fn isWindowOpen(self: *const Service, window_id: WindowId) bool {
+        if (window_id == 0 or window_id > max_window_id) return false;
+        const active = packSlot(window_id, .active);
+        for (&self.windows) |*slot| {
+            if (slot.word.load(.acquire) == active) return true;
+        }
+        return false;
     }
 
     fn slotIndex(self: *const Service, slot: *const WindowSlot) usize {
