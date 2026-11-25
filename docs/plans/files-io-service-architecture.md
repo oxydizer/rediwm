@@ -317,7 +317,12 @@ loses none of its own outcomes or pending conflicts, does not delay retirement a
 does not block other windows' submits; a lagging foreign window resyncs to exactly
 the live set; and the coordinator no longer calls `snapshotJobs` on its loop (C3).
 
-**S2, lifecycle and coordinator hygiene.**
+**S2, lifecycle and coordinator hygiene. Done** (`24cf07c`..`8d7b934` on `io/s2`),
+except the last-window confirmation and headless notifications, which moved to S3:
+both need windows that submit through the service and read the job table, which
+starts in S3. The coordinator exemption list is empty.
+
+**S2 as planned:**
 * Draining shutdown (threading §10); headless drain after the last window.
 * Closing the last window while ordinary jobs run asks first: keep them running
   in the background, or cancel them. Archive extractions are listed as being
@@ -347,6 +352,9 @@ or worker resource; and the coordinator exemption table is empty.
   can go. This is roadmap phase 2. Then the App submits transfers through its
   `Handle` (U1, U2), and the Transfers UI renders from job records through the
   source-agnostic presentation layer of §13, which torrent rows use too.
+* S3b also: closing the last window while service jobs run asks first (keep them
+  running in the background, or cancel them), and jobs that end while headless send
+  a desktop notification. Moved here from S2.
 * S3c. `Client.io_runtime` and `App.io_runtime` are removed (U3). This is when the
   per-window Runtime stops existing. Window teardown joins nothing on the UI thread.
   The helper threads that remain go to the reaper (U16).

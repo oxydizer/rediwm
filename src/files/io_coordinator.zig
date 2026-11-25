@@ -8,6 +8,7 @@ const io_thread_guard = @import("io_thread_guard.zig");
 const io_transfer_plan = @import("io_transfer_plan.zig");
 const io_service_tasks = @import("io_service_tasks.zig");
 const resources = @import("io_coordinator_resources.zig");
+const lifecycle = @import("io_coordinator_lifecycle.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
@@ -200,74 +201,11 @@ pub const Coordinator = struct {
         }
     }
 
-    /// A second quit request, or an explicit abort: cancels every job,
-    /// ordinary ones included. Callable from any thread.
-    pub fn requestAbort(self: *Coordinator) void {
-        self.abort_requested.store(true, .release);
-        self.service.beginShutdown();
-    }
-
-    fn beginDraining(self: *Coordinator) void {
-        self.draining = true;
-        const manager = &self.runtime.manager;
-        for (0..manager.jobCount()) |index| {
-            const summary = manager.jobSummaryAt(index);
-            if (summary.state.isTerminal()) continue;
-            // Archive extraction is cancelled cooperatively and its staging
-            // cleaned. A paused job cannot finish with no one to resume it.
-            if (manager.jobHasArchiveOperation(summary.id) or summary.state == .paused) {
-                self.cancelForShutdown(summary.id);
-            }
-        }
-        var preparing = self.preparing.valueIterator();
-        while (preparing.next()) |entry| entry.cancelled = true;
-    }
-
-    fn abortAll(self: *Coordinator) void {
-        self.aborting = true;
-        const manager = &self.runtime.manager;
-        for (0..manager.jobCount()) |index| {
-            const summary = manager.jobSummaryAt(index);
-            if (!summary.state.isTerminal()) {
-                std.log.warn("Files is aborting job {d}", .{summary.id});
-                self.cancelForShutdown(summary.id);
-            }
-        }
-        var preparing = self.preparing.valueIterator();
-        while (preparing.next()) |entry| entry.cancelled = true;
-    }
-
-    fn cancelForShutdown(self: *Coordinator, job_id: JobId) void {
-        self.runtime.cancelJob(job_id) catch |err| {
-            std.log.err("Files could not cancel job {d} at shutdown: {s}", .{ job_id, @errorName(err) });
-        };
-    }
-
-    /// With no window to answer, a conflict cancels its job. It can never
-    /// overwrite data unasked, nor leave the process waiting forever.
-    fn cancelUnanswerableConflicts(self: *Coordinator) void {
-        const manager = &self.runtime.manager;
-        var last: ?io_manager.ConflictId = null;
-        while (manager.nextConflict()) |conflict| {
-            if (last == conflict.id) break; // could not be cancelled; retry next pass
-            last = conflict.id;
-            manager.cancelConflict(conflict.id) catch |err| {
-                std.log.err("Files could not cancel unanswered conflict {d}: {s}", .{ conflict.id, @errorName(err) });
-                break;
-            };
-        }
-    }
-
-    /// Draining is done when no job is left (finished jobs retire on their
-    /// own once their executors and resources are released), nothing is
-    /// being prepared or cleaned up, and no accepted command is queued.
-    fn isIdle(self: *Coordinator) bool {
-        return self.runtime.manager.jobCount() == 0 and
-            self.preparing.count() == 0 and
-            self.task_backlog.items.len == 0 and
-            self.tasks.isIdle() and
-            !self.service.hasQueuedCommands();
-    }
+    pub const requestAbort = lifecycle.requestAbort;
+    const beginDraining = lifecycle.beginDraining;
+    const abortAll = lifecycle.abortAll;
+    const cancelUnanswerableConflicts = lifecycle.cancelUnanswerableConflicts;
+    const isIdle = lifecycle.isIdle;
 
     /// Waits for a command, a completion, or `deadline` (monotonic ms) when
     /// throttled progress or a speed sample is still due.

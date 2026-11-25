@@ -174,3 +174,46 @@ test "an abort cancels ordinary jobs too" {
     }
     try std.testing.expectEqual(io_service.JobState.cancelled, final.?.state);
 }
+
+test "a cross-filesystem move accepted before the last window closed finishes, source detached" {
+    // /dev/shm is a separate tmpfs here; skip where it is not.
+    var shm_template = "/dev/shm/rediwm_xfs_XXXXXX".*;
+    const shm_dir = @import("c.zig").api.mkdtemp(&shm_template) orelse return error.SkipZigTest;
+    const shm = std.mem.span(shm_dir);
+    defer ops.deleteRecursive(allocator, shm) catch {};
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try support.makeTempDir(&temp_buffer);
+    defer ops.deleteRecursive(allocator, temp) catch {};
+
+    const source = try support.join(allocator, shm, "moved.txt");
+    defer allocator.free(source);
+    const destination = try support.join(allocator, temp, "moved.txt");
+    defer allocator.free(destination);
+    try support.writeFile(source, "crosses filesystems");
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, &service);
+    var window = try service.registerWindow();
+
+    const gate = io_operation_executor.test_gate;
+    gate.arm();
+    defer gate.release();
+    try support.submitTransfer(allocator, window, .move, temp, source);
+    for (0..1000) |_| {
+        if (gate.parked.load(.acquire)) break;
+        support.waitBriefly();
+    } else return error.Timeout;
+
+    // The last window closes mid-copy; the drain finishes the copy and the
+    // detach of the source.
+    window.close();
+    const releaser = try std.Thread.spawn(.{}, releaseLater, .{50});
+    coordinator.deinit();
+    releaser.join();
+
+    try support.waitForContents(destination, "crosses filesystems");
+    try std.testing.expect(!support.pathExists(source));
+}
