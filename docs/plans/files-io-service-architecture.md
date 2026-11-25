@@ -294,7 +294,12 @@ hung-worker tests of threading §12 that cover that stage's paths pass.
 * Add the hung-worker test fixture: a worker unit that parks on a gate the test
   controls.
 
-**S1, job table.**
+**S1, job table. Done** (`1935a68`..`a2158cb` on `io/before-s1`): `io_job_table`,
+the Service integration, `io_window_link` (outbox and reader), O(1) Manager
+summaries, record publication, external consumer slots. Deviation: no dirty set
+(threading §6).
+
+**S1 as planned:**
 * Replace the per-window update rings, coalescing and resync marker with the live
   table, outcome slots, tombstone ring and cursor fetch (§5, threading §6).
 * UI-side `trySend` and `fetchChanges` stay fail-fast. Add the window outbox and

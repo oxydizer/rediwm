@@ -175,7 +175,8 @@ Rules:
   pass, windows are served round-robin and control commands first within a window.
 * Commands are idempotent in effect. Cancelling twice, or pausing a finished job, is
   harmless. A command that cannot apply changes nothing and is logged. There is no
-  per-command reply channel: the window learns what happened from the job table.
+  per-command reply channel: the window learns what happened from the job table. A cancel that has been applied but is still waiting for running work shows as
+  `cancel_requested` in the job's record.
 
 A submit that fails validation does not reply with an error. It produces a job
 record that goes straight to `failed` with an `error_code`. The window correlates it
@@ -277,12 +278,17 @@ terminal state or a conflict notification.
 * **Progress** is rate-limited at the source: at most one update per job per
   `progress_interval` (about 50 ms), with the final value always published. The
   event-loop wake is rate-limited naturally.
-* The coordinator does not rebuild the table from a full snapshot. The Manager keeps
-  an O(1) per-job summary (state, aggregate bytes, rate, head conflict) and a **dirty
-  set** of jobs changed since the last publication. Each pass visits the dirty set
-  only. `snapshotJobs` stays available for tests and diagnostics, and it is not
-  called in the loop. The cost of a pass is proportional to what changed, not to the
-  total number of operations.
+* The coordinator does not rebuild the table from a full snapshot. Each job keeps
+  running totals (planned and completed bytes, items, job-level throughput), updated
+  where operation progress and state change, and `Manager.jobSummary` reads them
+  without visiting any operation. Each pass compares every live job's summary with
+  the record it last wrote. Live jobs are bounded by the table (64), so that walk is
+  cheap; the cost that mattered, walking operations, is gone. A per-job dirty set was
+  planned here and dropped: at this bound it would add a way to miss an update
+  without lowering the cost. `snapshotJobs` stays for tests and diagnostics and is not
+  called by the coordinator.
+* A job is sampled for its speed history only while it is `running` or `finalizing`,
+  so a paused job, or one waiting on a conflict, causes no wakeups.
 
 ## 7. The coordinator loop
 

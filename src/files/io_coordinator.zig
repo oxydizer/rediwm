@@ -555,7 +555,9 @@ pub const Coordinator = struct {
                 deadline = earliest(deadline, entry.last_progress_ms + progress_interval_ms);
             }
 
-            if (!next.state.isTerminal()) {
+            // Only moving jobs are sampled: a paused job or one waiting on a
+            // conflict must not wake the coordinator every second.
+            if (next.state == .running or next.state == .finalizing) {
                 if (now - entry.last_sample_ms >= rate_sample_interval_ms) {
                     self.service.appendRateSample(summary.id, summary.rate_bytes_per_second);
                     entry.last_sample_ms = now;
