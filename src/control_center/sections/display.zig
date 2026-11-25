@@ -552,7 +552,7 @@ fn buildHdr(out: *Section, maybe_output: ?*Output) void {
         .content = if (mode == .on and hdr.refused(output))
             i18n.tr("This display or its driver did not accept HDR in this mode, so it stays SDR.")
         else
-            i18n.tr("HDR is experimental: signal activation has been verified on one real HDR display. Rendering accuracy and broader compatibility remain under testing."),
+            i18n.tr("HDR is experimental."),
         .font_size = 12,
         .color = panel.palette().dim,
     } } };
