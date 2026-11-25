@@ -111,7 +111,7 @@ pub fn click(self: *App, top: f64, x: f64, y: f64) bool {
     return true;
 }
 
-fn send(self: *App, kind: io_service.CommandKind, job_id: io_service.JobId) void {
+pub fn send(self: *App, kind: io_service.CommandKind, job_id: io_service.JobId) void {
     const link = &self.service;
     const handle = link.handle orelse return;
     var command: io_service.Command = .{ .kind = kind, .job_id = job_id };

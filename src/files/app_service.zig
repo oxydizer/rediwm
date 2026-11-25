@@ -124,7 +124,11 @@ pub fn stepService(self: *App) void {
     const revision = link.jobs.revision;
     if (fetched.resync) link.jobs.clear();
     for (records[0..fetched.count]) |record| link.jobs.apply(record);
-    if (link.jobs.revision != revision) jobs_card.changed(self, rows_before);
+    if (link.jobs.revision != revision) {
+        jobs_card.changed(self, rows_before);
+        // The Transfers view lists every job with its progress.
+        if (self.transfer_view.active) self.invalidate();
+    }
     for (records[0..fetched.count]) |record| {
         if (record.origin_window_id != handle.window_id) continue;
         if (app_transfers.onRecord(self, record)) continue;
