@@ -34,6 +34,13 @@ folder.
 * Differences from the test: a cross-filesystem destination (USB drive), two
   windows, jobs from earlier in the session, hovering.
 
+* Later run: clicking the Transfers panel showed the conflict dialog for a
+  moment, again on every click. So the dialog does open; something closes it
+  at once. A click outside a conflict dialog used to answer Cancel; it no
+  longer does (`app_pointer.zig`). Every close of a service conflict dialog is
+  now logged (`Files conflict dialog N closed`, `Files closes conflict N: no
+  job waits on it any more`, `Files answers conflict N: ...`).
+
 **Start:** run with `2>&1 | tee files.log` and read the `Files job N waits on
 conflict M`, `Files window asks about conflict M` and `Files shows conflict`
 lines. No "waits" line: the coordinator never saw a conflict (look at the

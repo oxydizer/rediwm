@@ -174,6 +174,7 @@ fn closeStaleConflict(self: *App) void {
     }
     // Not yet published: the record may still be on its way.
     if (self.service.transfers.conflict_asked == id and !self.service.dirty) {
+        std.log.info("Files closes conflict {d}: no job waits on it any more", .{id});
         self.closeDialog();
         self.service.transfers.conflict_asked = 0;
     }
@@ -254,6 +255,7 @@ pub fn showConflict(self: *App, details: ?io_requests.ConflictDetails) void {
         return;
     };
     std.log.info("Files shows conflict {d} of job {d}", .{ conflict.conflict_id, conflict.job_id });
+    if (self.dialog) |open| std.log.info("Files cannot show it yet: a {s} dialog is open", .{@tagName(open.kind)});
     if (self.dialog != null) {
         // Asked again once the dialog closes.
         self.service.transfers.conflict_asked = 0;
@@ -265,6 +267,7 @@ pub fn showConflict(self: *App, details: ?io_requests.ConflictDetails) void {
 /// Answers the conflict in the dialog through the service. Rename first
 /// asks the service for a free name.
 pub fn resolveConflict(self: *App, conflict_id: u64, destination: []const u8, action: io_service.ConflictAction) void {
+    std.log.info("Files answers conflict {d}: {s}", .{ conflict_id, @tagName(action) });
     if (action == .rename) {
         const dir = std.fs.path.dirname(destination) orelse return;
         const owned = self.allocator.dupe(u8, dir) catch return;

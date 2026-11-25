@@ -34,6 +34,8 @@ pub fn conflictShortcut(sym: u32, alt: bool, can_merge: bool) ?ConflictAction {
 }
 
 pub fn closeDialog(self: *App) void {
+    if (self.dialog) |open| if (open.service_conflict)
+        std.log.info("Files conflict dialog {d} closed", .{open.manager_conflict_id orelse 0});
     self.text_dragging = false;
     _ = self.dialog_surface.pointerMotion(null);
     self.edit_revision += 1;

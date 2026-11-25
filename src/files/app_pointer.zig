@@ -675,10 +675,9 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         }
         // Click outside dialog box closes
         if (x < dx or x > dx + dw or y < dy or y > dy + dh) {
-            if (dlg.kind == .conflict) {
-                self.resolveConflictDialog(.cancel);
-                return;
-            }
+            // A stray click must not cancel part of a transfer: a conflict
+            // is answered with its buttons or keys only.
+            if (dlg.kind == .conflict) return;
             self.closeDialog();
         }
         return;
