@@ -8,6 +8,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
 const executor = @import("io_executor.zig");
+const existing_mod = @import("io_copy_existing.zig");
 
 pub const chunk_size: usize = 64 * 1024;
 const small_buffer_size: usize = 16 * 1024;
@@ -575,6 +576,7 @@ fn finishFlushing(
     scratch: *?executor.OwnedPayload,
 ) executor.WorkCompletion {
     var state = state_arg;
+    existing_mod.keepTimes(state.source_fd, state.destination_fd);
     if (!syncDescriptor(state.destination_fd) or
         !syncDescriptor(state.parent_fd))
     {
@@ -785,6 +787,30 @@ fn executeUnit(
         if (parent_fd < 0) {
             _ = c.close(source_fd);
             return completion(item, .failed, null, null);
+        }
+
+        // A name already taken is decided before a byte is written: the
+        // same file again is done, anything else is asked about now rather
+        // than after a whole copy has been made only to be refused.
+        if (!operation_paths.replacement) {
+            switch (existing_mod.check(parent_fd, operation_paths.destination_name, stat)) {
+                .none => {},
+                .same => {
+                    _ = c.close(source_fd);
+                    _ = c.close(parent_fd);
+                    const size: u64 = @intCast(stat.st_size);
+                    return completionWithProgress(item, .completed, null, size, size, .flushing);
+                },
+                .other => {
+                    _ = c.close(source_fd);
+                    _ = c.close(parent_fd);
+                    // The marker that never lets discard unlink the name.
+                    const marker = allocator.dupe(u8, &.{2}) catch {
+                        return completion(item, .failed, null, null);
+                    };
+                    return completion(item, .waiting, null, .{ .allocator = allocator, .bytes = marker });
+                },
+            }
         }
 
         var original_fd: c_int = -1;

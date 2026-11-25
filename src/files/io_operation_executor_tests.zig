@@ -1435,11 +1435,7 @@ test "Manager Runtime rebuilds prepared input after a renamed collision" {
     var runtime = try operation_executor.Runtime.init(allocator, &manager, 1, 4);
     defer runtime.deinit();
 
-    try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
-    try waitForOne(&runtime);
-    try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());
-    // The destination collision is detected when the staged file is
-    // published, so the initial copy must reach its flush unit first.
+    // A taken name is seen before anything is copied: the first unit waits.
     try std.testing.expectEqual(@as(usize, 1), try runtime.dispatchReady());
     try waitForOne(&runtime);
     try std.testing.expectEqual(@as(usize, 1), try runtime.drainCompletions());

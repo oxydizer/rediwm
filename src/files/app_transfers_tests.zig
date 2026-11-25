@@ -158,7 +158,7 @@ test "a conflict opens the dialog, and Skip answers it through the service" {
     defer allocator.free(destination);
     const taken = try support.join(allocator, temp, "destination/a.txt");
     defer allocator.free(taken);
-    try support.writeFile(a, "new");
+    try support.writeFile(a, "newer");
     try support.makeDirectory(destination);
     try support.writeFile(taken, "old");
 
@@ -191,7 +191,7 @@ test "Rename in the conflict dialog keeps both" {
     defer allocator.free(destination);
     const taken = try support.join(allocator, temp, "destination/a.txt");
     defer allocator.free(taken);
-    try support.writeFile(a, "new");
+    try support.writeFile(a, "newer");
     try support.makeDirectory(destination);
     try support.writeFile(taken, "old");
 
@@ -249,12 +249,24 @@ test "copying a folder again into the same place asks, and Merge finishes it" {
     try std.testing.expect(s.app.executeTransfer(.copy, &.{folder}, destination, false));
     try s.until(mergeOffered);
     s.app.resolveConflictDialog(.merge);
-    // Each file is there too: skip them.
-    for (0..20) |_| {
-        s.until(conflictShown) catch break;
-        s.app.resolveConflictDialog(.skip);
-    }
+    // Each file there is the one the first copy made (same size and time):
+    // nothing more is asked and nothing is written again.
     try s.until(idle);
+    try std.testing.expect(!conflictShown(&s.app));
+
+    // One episode changed since: only that one is asked about.
+    const changed = try support.join(allocator, temp, "Backup/Season/e3.mkv");
+    defer allocator.free(changed);
+    try ops.deleteRecursive(allocator, changed);
+    try support.writeFile(changed, "an older cut");
+    try std.testing.expect(s.app.executeTransfer(.copy, &.{folder}, destination, false));
+    try s.until(mergeOffered);
+    s.app.resolveConflictDialog(.merge);
+    try s.until(conflictShown);
+    try std.testing.expectEqualStrings("e3.mkv", s.app.dialog.?.conflict_name.?);
+    s.app.resolveConflictDialog(.skip);
+    try s.until(idle);
+    try std.testing.expect(!conflictShown(&s.app));
 }
 
 test "closing the last window while a job runs asks, and Cancel keeps it open" {
