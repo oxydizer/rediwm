@@ -23,11 +23,15 @@ reserve space on a specific output edge, including from a corner.
 | Colour | `color-management-v1`, `color-representation-v1` | named RGB descriptions and YCbCr coefficients/ranges |
 | Surface effects | `ext-background-effect-v1`, `alpha-modifier-v1` | Regional background blur and per-surface fades |
 | Output gamma | `wlr-gamma-control-v1` | wlsunset, gammastep |
-| Presentation | `tearing-control-v1`, `drm-lease-v1` | opt-in fullscreen tearing, VR headsets |
+| Presentation | `commit-timing-v1`, `fifo-v1`, `tearing-control-v1`, `drm-lease-v1` | timed video frames, refresh-paced updates, opt-in fullscreen tearing, VR headsets |
 | Rendering | `fractional-scale-v1`, `viewporter`, `single-pixel-buffer-v1`, `linux-dmabuf-v1` (v5 on renderers with DMA-BUF import), `linux-drm-syncobj-v1`, `presentation-time` | |
 
 ## Things worth knowing
 
+- A commit timestamp specifies the earliest presentation time for that surface update.
+  On a single fixed-refresh DRM output RediWM can prepare an update for an upcoming
+  refresh using recent hardware presentation feedback. When the output timing is
+  uncertain it waits for the timestamp itself. Later commits stay ordered.
 - System bell requests share a 250 ms cooldown across clients. The bell stays
   silent while the session is locked or a polkit authentication prompt is open.
 - Clients can blur a region behind a surface when the renderer advertises the

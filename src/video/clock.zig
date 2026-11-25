@@ -22,6 +22,8 @@ pub const Clock = struct {
 };
 
 pub const Pacing = struct {
+    timer: ?*wp.CommitTimerV1 = null,
+    submitted_until: i64 = 0,
     presentation: ?*wp.Presentation = null,
     pending: ?*wp.PresentationFeedback = null,
     monotonic: bool = false,
@@ -39,9 +41,28 @@ pub const Pacing = struct {
 
     // Null means this picture can reach the upcoming refresh. The player
     // consumes all such pictures and attaches only the newest.
-    pub fn waitUntil(self: Pacing, pts: i64, media: i64, t: i64) ?i64 {
-        const due = self.deadline(t +| (pts -| media));
+    pub fn waitUntil(self: Pacing, pts: i64, media: i64, t: i64, use_timer: bool) ?i64 {
+        const target = t +| (pts -| media);
+        const due = if (use_timer) self.submitAt(target) else self.deadline(target);
         return if (due > t) due else null;
+    }
+
+    pub fn timed(self: Pacing) bool {
+        return self.timer != null and self.monotonic;
+    }
+
+    /// One future picture at a time. Bound its lead even on a slow output:
+    /// an already submitted timestamp cannot be cancelled by a seek.
+    fn submitAt(self: Pacing, target: i64) i64 {
+        const period = if (self.refresh > 0) self.refresh else std.time.ns_per_s / 60;
+        return @max(self.submitted_until, target -| @min(period, 20 * std.time.ns_per_ms));
+    }
+
+    pub fn timestamp(self: *Pacing, target: i64) void {
+        const ns: u64 = @intCast(@max(0, target));
+        const sec = ns / std.time.ns_per_s;
+        self.timer.?.setTimestamp(@intCast(sec >> 32), @truncate(sec), @intCast(ns % std.time.ns_per_s));
+        self.submitted_until = target;
     }
 
     pub fn request(self: *Pacing, surface: *wl.Surface) void {
@@ -87,7 +108,16 @@ test "pause freezes media time, resume rebases and deadlines target refresh" {
     const pacing: Pacing = .{ .phase = 15, .refresh = 10, .lead = 10 };
     try std.testing.expectEqual(15, pacing.deadline(25));
     try std.testing.expectEqual(25, pacing.deadline(26));
-    try std.testing.expectEqual(null, pacing.waitUntil(1005, 1000, 25));
-    try std.testing.expectEqual(null, pacing.waitUntil(1010, 1000, 25));
-    try std.testing.expectEqual(35, pacing.waitUntil(1011, 1000, 25).?);
+    try std.testing.expectEqual(null, pacing.waitUntil(1005, 1000, 25, false));
+    try std.testing.expectEqual(null, pacing.waitUntil(1010, 1000, 25, false));
+    try std.testing.expectEqual(35, pacing.waitUntil(1011, 1000, 25, false).?);
+}
+
+test "timed playback bounds future commitments and control latency" {
+    const ms = std.time.ns_per_ms;
+    var pacing: Pacing = .{ .refresh = 16 * ms, .submitted_until = 100 * ms };
+    try std.testing.expectEqual(100 * ms, pacing.submitAt(105 * ms));
+    try std.testing.expectEqual(124 * ms, pacing.submitAt(140 * ms));
+    pacing.refresh = 100 * ms;
+    try std.testing.expectEqual(120 * ms, pacing.submitAt(140 * ms));
 }

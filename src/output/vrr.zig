@@ -73,7 +73,14 @@ pub fn prepare(output: *Output) bool {
     state.pending = null;
     if (state.refused or (configured == .auto and state.needs_modeset)) return false;
     const want = wanted(output) and (supported(output) or active(output));
-    const step = state.debounce.step(want, active(output), stats.nowNs());
+    const now = stats.nowNs();
+    if (want and !active(output) and now < output.timed_vsync_until) {
+        // The current frame was prepared against a fixed vblank. A content
+        // hint in the very commit we released may have just requested VRR.
+        arm(output, output.timed_vsync_until);
+        return false;
+    }
+    const step = state.debounce.step(want, active(output), now);
     if (step.wake_ns) |due| arm(output, due);
     state.pending = step.apply;
     return state.pending != null;
@@ -114,6 +121,7 @@ pub fn apply(output: *Output, state: *wlr.Output.State) void {
 /// A frame state was committed.
 pub fn committed(output: *Output, state: *const wlr.Output.State) void {
     if (!state.committed.adaptive_sync_enabled) return;
+    output.commit_refresh = .{};
     if (state.adaptive_sync_enabled and !active(output)) {
         output.vrr.refused = true;
         log.warn("output '{s}': adaptive sync was requested but stays off in this mode", .{output.wlr_output.name});

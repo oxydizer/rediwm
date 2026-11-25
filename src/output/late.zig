@@ -107,4 +107,5 @@ pub fn notePresent(output: *Output, event: *const wlr.Output.event.Present) void
 /// A mode change or similar: the old timeline says nothing about the new one.
 pub fn reset(output: *Output) void {
     output.late.invalidate();
+    output.commit_refresh = .{};
 }

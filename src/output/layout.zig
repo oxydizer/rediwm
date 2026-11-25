@@ -236,6 +236,7 @@ pub fn setDisplayScale(output: *Output, scale: f32) bool {
 
 /// Apply saved mode, scale and placement. Defer modesets until an output wakes.
 pub fn applyConfig(output: *Output) void {
+    output.commit_refresh = .{};
     const out = output.wlr_output;
     const saved = configured(output.server, out);
     const want_enabled = (if (saved) |config| config.enabled else true) and !lidHides(output);

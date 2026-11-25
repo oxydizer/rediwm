@@ -520,12 +520,18 @@ const Player = struct {
         }
 
         const pos = self.position(t);
+        const timed = !self.paused and !self.preview and self.window.pacing.timed();
+        var revisit = false;
         pipe.lock();
         while (pipe.pictures.first()) |next| {
             if (self.paused) {
                 if (!self.preview or self.pending != null) break;
-            } else if (self.window.pacing.waitUntil(next.pts, pos, t)) |due| {
+            } else if (self.window.pacing.waitUntil(next.pts, pos, t, timed)) |due| {
                 deadline = @min(deadline orelse due, due);
+                break;
+            } else if (timed and self.pending != null and next.pts > pos) {
+                // Show the due picture before consuming a future one.
+                revisit = true;
                 break;
             }
             if (self.pending) |old| {
@@ -538,7 +544,8 @@ const Player = struct {
         const exhausted = pipe.video_eof and pipe.pictures.count == 0;
         pipe.unlock();
         if (self.pending) |pic| {
-            if (!try self.present(pic.frame)) return deadline;
+            if (!try self.present(pic.frame, if (timed) t +| (pic.pts -| pos) else null)) return deadline;
+            if (revisit) deadline = earlier(deadline, @max(t, self.window.pacing.submitted_until));
             self.last_pts = pic.pts;
             if (self.stepping) {
                 self.clock.set(pic.pts, t, false);
@@ -562,7 +569,7 @@ const Player = struct {
         self.seek(self.position(clocks.now()), true);
     }
 
-    fn present(self: *Player, frame: *c.AVFrame) !bool {
+    fn present(self: *Player, frame: *c.AVFrame, target: ?i64) !bool {
         const window = self.window;
         const shown: window_mod.Frame = if (frame.format == c.AV_PIX_FMT_VAAPI) blk: {
             const cache = if (self.cache) |*cache| cache else return error.NoHardwareDevice;
@@ -581,7 +588,7 @@ const Player = struct {
             };
         } else try self.pool.show(window.shm.?, window.ten_bit, frame) orelse return false;
         if (!self.paused) window.pacing.request(window.video);
-        window.show(shown);
+        window.show(shown, target);
         return true;
     }
 };

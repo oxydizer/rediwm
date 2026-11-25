@@ -17,6 +17,13 @@ URI-list source, checks the fullscreen cursor and inspects the player’s idle i
 Use `WLR_RENDER_DRM_DEVICE` to select each GPU on a hybrid system.
 `python3 tests/video.py` runs the silent subset with the installed player.
 
+`python3 tests/fifo.py` checks commit-timing-v1 deadlines against presentation
+feedback, ordered timed and untimed commits, timer destruction, and synchronized
+subsurfaces. The video integration suite also compares the player's requested and
+actual presentation times. Headless runs exercise the deadline fallback. Testing
+the fixed-refresh prediction requires a physical DRM output with hardware vblank
+timestamps.
+
 The long-running Files benchmarks are skipped by default. To include the
 transfer and end-to-end copy benchmarks in the full test run, use:
 

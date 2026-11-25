@@ -47,6 +47,7 @@ pub const Window = struct {
     root_hint: ?*wp.ContentTypeV1 = null,
     video_hint: ?*wp.ContentTypeV1 = null,
     pacing: Pacing = .{},
+    commit_timing: ?*wp.CommitTimingManagerV1 = null,
     wm_base: ?*xdg.WmBase = null,
     decoration_manager: ?*zxdg.DecorationManagerV1 = null,
     viewporter: ?*wp.Viewporter = null,
@@ -108,6 +109,7 @@ pub const Window = struct {
         self.video = try compositor.createSurface();
         self.subsurface = try self.subcompositor.?.getSubsurface(self.video, self.root);
         self.subsurface.setDesync();
+        if (self.commit_timing) |manager| self.pacing.timer = manager.getTimer(self.video) catch null;
         self.video_viewport = try self.viewporter.?.getViewport(self.video);
         // Input goes to the root; the video never takes it.
         const empty = try compositor.createRegion();
@@ -173,6 +175,8 @@ pub const Window = struct {
         if (self.decoration) |decoration| decoration.destroy();
         self.input.deinit();
         if (self.pacing.pending) |fb| fb.destroy();
+        if (self.pacing.timer) |timer| timer.destroy();
+        if (self.commit_timing) |manager| manager.destroy();
         if (self.pacing.presentation) |mgr| mgr.destroy();
         self.toplevel.destroy();
         self.xdg_surface.destroy();
@@ -198,7 +202,7 @@ pub const Window = struct {
     }
 
     /// Shows `frame` in the video subsurface.
-    pub fn show(self: *Window, frame: Frame) void {
+    pub fn show(self: *Window, frame: Frame, target: ?i64) void {
         if (!self.configured) return;
         const video = self.video;
         video.attach(frame.buffer, 0, 0);
@@ -209,6 +213,7 @@ pub const Window = struct {
         }
         self.setEncoding(frame.coefficients, frame.range);
         self.shown = frame;
+        if (target) |ns| self.pacing.timestamp(ns);
         video.commit();
     }
 
@@ -289,6 +294,8 @@ pub const Window = struct {
                 } else if (std.mem.eql(u8, iface, "wp_presentation")) {
                     self.pacing.presentation = registry.bind(g.name, wp.Presentation, @min(g.version, 2)) catch return;
                     self.pacing.presentation.?.setListener(*Pacing, Pacing.clockId, &self.pacing);
+                } else if (std.mem.eql(u8, iface, "wp_commit_timing_manager_v1")) {
+                    self.commit_timing = registry.bind(g.name, wp.CommitTimingManagerV1, 1) catch null;
                 } else if (std.mem.eql(u8, iface, "wl_subcompositor")) {
                     self.subcompositor = registry.bind(g.name, wl.Subcompositor, 1) catch null;
                 } else if (std.mem.eql(u8, iface, "xdg_wm_base")) {

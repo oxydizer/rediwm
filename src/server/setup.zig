@@ -240,6 +240,11 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
         server.fifo = null;
         fifo.destroy();
     };
+    if (!greeter) server.commit_timing = @import("../commit_timing.zig").create(server) catch return error.CommitTimingCreateFailed;
+    errdefer if (server.commit_timing) |timing| {
+        server.commit_timing = null;
+        timing.destroy();
+    };
     server.activation.init(server) catch return error.ActivationManagerCreateFailed;
     errdefer server.activation.deinit();
     server.launch_feedback.init(server);

@@ -95,6 +95,7 @@ pub const CompositorError = error{
     PointerConstraintsCreateFailed,
     PointerWarpCreateFailed,
     FifoManagerCreateFailed,
+    CommitTimingCreateFailed,
     ShortcutsInhibitCreateFailed,
 };
 
@@ -159,6 +160,7 @@ extra_protocols: ?*@import("extra_protocols.zig").Protocols = null,
 last_system_bell_ms: ?i64 = null,
 /// wp_fifo_v1 (`fifo.zig`); null in the greeter.
 fifo: ?*@import("fifo.zig").Manager = null,
+commit_timing: ?*@import("commit_timing.zig") = null,
 launch_feedback: @import("launch_feedback.zig") = .{},
 window_tabs: @import("window_tabs.zig") = .{},
 text_input: ?*@import("input/text_input.zig") = null,

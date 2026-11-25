@@ -98,6 +98,7 @@ layer_work_area: ?wlr.Box = null,
 vblank_timer: ?*wl.EventSource = null,
 vblank_armed: bool = false,
 vblank_target_ns: u64 = 0,
+vblank_scene_serial: u64 = 0,
 /// A frame event arrived while `vblank_timer` was armed; replay it then.
 frame_wanted: bool = false,
 /// Last known vblank: a page-flip frame event or a fired `vblank_timer`.
@@ -107,6 +108,9 @@ flip_pending: bool = false,
 /// refresh after a skipped commit. fifo-v1 barriers clear on these, never on
 /// frame callbacks (late render sends those before it renders).
 latch_seq: u64 = 0,
+commit_refresh: @import("commit_refresh.zig") = .{},
+/// Keep a predicted fixed-refresh frame synchronous until its content is due.
+timed_vsync_until: u64 = 0,
 /// Late rendering (`output/late.zig`): the decision model, the timer that
 /// starts a deferred frame, whether one is waiting (frame events are ignored
 /// meanwhile), the plan `runFrame` takes when it runs, and whether the last
@@ -389,6 +393,7 @@ pub fn setIdleBlanked(output: *Output, requested: bool) bool {
     const blanked = requested or output.lid_blanked;
     if (output.user_disabled) return false;
     if (output.idle_blanked == blanked) return true;
+    output.commit_refresh = .{};
     output.idle_blanked = blanked;
     var state = wlr.Output.State.init();
     defer state.finish();

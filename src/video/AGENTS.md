@@ -54,6 +54,12 @@ the plan and its decisions are in `docs/plans/video-player.md`.
 * **Idle makes no wakeups.** Play and seek use one-shot timerfd deadlines
   and worker eventfds. Pause and EOF stop audio and disarm the timer.
   `zig build test-video-integration` measures all player threads.
+* **Timed playback** uses `wp_commit_timer_v1` on the desynchronized video
+  surface when presentation feedback names CLOCK_MONOTONIC. The timestamp
+  is the picture's media PTS mapped through the current playhead. Queue at
+  most one future frame with at most one refresh (capped at 20 ms) of lead.
+  Preview, step and UI commits remain immediate. Other compositors use the
+  feedback-based pacing in `clock.zig`.
 
 * **Controls are a desynchronized ARGB subsurface.** Its empty input region
   sends pointer events to the root. `osd.zig` translates them into widget

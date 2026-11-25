@@ -46,7 +46,8 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
 
     vrr.apply(output, state);
     const had_transform = state.committed.color_transform;
-    state.tearing_page_flip = state.committed.buffer and output.tearingAllowed() and tearing.frameCanTear(output, state);
+    state.tearing_page_flip = state.committed.buffer and output.tearingAllowed() and
+        (output.timed_vsync_until == 0 or stats.nowNs() >= output.timed_vsync_until) and tearing.frameCanTear(output, state);
     if (state.tearing_page_flip and !output.wlr_output.testState(state)) {
         state.tearing_page_flip = false;
         tearing.refused(output);
@@ -62,7 +63,7 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
         tearing.committed(output, state);
         vrr.committed(output, state);
         // A torn flip is not a refresh boundary (fifo-v1 D3).
-        if (state.committed.buffer and !state.tearing_page_flip) latched(output);
+        if (state.committed.buffer and !state.tearing_page_flip) latched(output, true);
     }
     if (had_transform) {
         if (success) {
@@ -128,6 +129,7 @@ pub fn deferFrameDone(output: *Output) void {
     };
     output.vblank_armed = true;
     output.vblank_target_ns = target;
+    output.vblank_scene_serial = output.server.nodes.serial;
 }
 
 /// A client surface committed with frame callbacks waiting (node_surface.c).
@@ -161,16 +163,20 @@ fn callbacksIdle(output: *Output) void {
 }
 
 /// The output has latched what it shows for the coming refresh.
-fn latched(output: *Output) void {
+fn latched(output: *Output, content_current: bool) void {
     output.latch_seq +%= 1;
-    if (output.server.fifo) |fifo| fifo.latched(output.wlr_output, output.latch_seq);
+    if (output.server.fifo) |fifo| fifo.latched(output.wlr_output, output.latch_seq, content_current);
 }
 
 pub fn handleVblank(output: *Output) c_int {
     output.vblank_armed = false;
     output.last_vblank_ns = output.vblank_target_ns;
-    // A skipped commit's refresh: the unchanged picture was latched again.
-    latched(output);
+    // A timed surface can acquire new pixels during a skipped frame's wait.
+    // That synthetic refresh only repeated the old picture: the new FIFO
+    // barrier must wait for a frame that can actually sample those pixels.
+    const scene = output.server.scene_outputs.get(output.wlr_output);
+    latched(output, output.server.nodes.serial == output.vblank_scene_serial and
+        (scene == null or !scene.?.hasPendingDamage()));
     sendFrameDone(output);
     if (output.frame_wanted) {
         output.frame_wanted = false;
@@ -209,6 +215,7 @@ pub fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
 
 pub fn runFrame(output: *Output) void {
     const frame_started = stats.nowNs();
+    if (output.server.commit_timing) |timing| timing.beforeFrame(output, frame_started);
     const late_plan = late.takePlan(output);
     // Stage timing costs a clock read per boundary (and two per animation
     // sample); only pay it while someone is reading the stats.
@@ -468,6 +475,7 @@ pub fn handleRequestState(
 pub fn handlePresent(listener: *wl.Listener(*wlr.Output.event.Present), event: *wlr.Output.event.Present) void {
     const output: *Output = @fieldParentPtr("present", listener);
     trace.presented(event);
+    if (vrr.active(output)) output.commit_refresh = .{} else output.commit_refresh.presented(event);
     late.notePresent(output, event);
     if (event.presented and output.greeter_commit_seq == event.commit_seq) {
         output.greeter_presented = true;

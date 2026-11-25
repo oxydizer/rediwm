@@ -67,6 +67,7 @@ def controls(ipc, env, tmp, fixture):
         at(2.9)
         ipc.key_down_up(52)
         at(3)
+        assert ".set_timestamp(" not in log.read_text(), "paused frame steps should be immediate"
         box = ipc.get_window_debug(win)["client_box"]
         x, y, w, h = [round(box[k]) for k in ("x", "y", "width", "height")]
         # A stopped video is flat. Painting the controls changes only the

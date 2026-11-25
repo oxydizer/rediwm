@@ -38,6 +38,7 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.addSystemProtocol("unstable/relative-pointer/relative-pointer-unstable-v1.xml");
     scanner.addSystemProtocol("staging/pointer-warp/pointer-warp-v1.xml");
     scanner.addSystemProtocol("staging/fifo/fifo-v1.xml");
+    scanner.addSystemProtocol("staging/commit-timing/commit-timing-v1.xml");
     scanner.addSystemProtocol("stable/presentation-time/presentation-time.xml");
     scanner.addSystemProtocol("staging/color-representation/color-representation-v1.xml");
     scanner.addSystemProtocol("staging/content-type/content-type-v1.xml");
@@ -73,6 +74,7 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.generate("zwp_relative_pointer_manager_v1", 1);
     scanner.generate("wp_pointer_warp_v1", 1);
     scanner.generate("wp_fifo_manager_v1", 1);
+    scanner.generate("wp_commit_timing_manager_v1", 1);
     scanner.generate("wp_presentation", 2);
     scanner.generate("wp_color_representation_manager_v1", 1);
     scanner.generate("wp_content_type_manager_v1", 1);

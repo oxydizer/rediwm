@@ -28,6 +28,7 @@ PROTOCOLS = (
     ("xdg-shell", "stable/xdg-shell/xdg-shell.xml"),
     ("presentation-time", "stable/presentation-time/presentation-time.xml"),
     ("fifo-v1", "staging/fifo/fifo-v1.xml"),
+    ("commit-timing-v1", "staging/commit-timing/commit-timing-v1.xml"),
     ("linux-dmabuf-v1", "stable/linux-dmabuf/linux-dmabuf-v1.xml"),
     ("linux-drm-syncobj-v1", "staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml"),
 )
@@ -86,18 +87,20 @@ def vkcube_case(tmp, env, ipc, refresh_hz):
         vk = subprocess.Popen(["vkcube", "--wsi", "wayland"], env=dict(env, WAYLAND_DEBUG="1"),
                               stdout=subprocess.DEVNULL, stderr=output)
     try:
-        def waits():
-            return log_path.read_text(errors="replace").count(".wait_barrier(")
+        def submissions():
+            # Mesa can send a second barrier-only commit for the same image
+            # when commit timing is advertised.
+            return log_path.read_text(errors="replace").count(".attach(wl_buffer")
 
         def rate(seconds):
-            start, began = waits(), time.monotonic()
+            start, began = submissions(), time.monotonic()
             time.sleep(seconds)
-            return (waits() - start) / (time.monotonic() - began)
+            return (submissions() - start) / (time.monotonic() - began)
 
         win = wait_for(lambda: next((w for w in ipc.get_windows() if w["app_id"] != "rediwm.fifo-fixture"), None),
                        "vkcube did not map", timeout=30)
         time.sleep(0.5)
-        if waits() == 0:
+        if ".wait_barrier(" not in log_path.read_text(errors="replace"):
             print("SKIP: vkcube's Vulkan driver does not use wp_fifo_v1")
             return
         ipc.reset_perf()
@@ -176,6 +179,16 @@ def run():
 
                 def fifo_stats():
                     return dict(ipc.get_perf().get("fifo") or {})
+
+                presented, discarded, other = parse(command("timing"))
+                first, second = map(int, next(line for line in other if line.startswith("targets ")).split()[1:])
+                assert not discarded and first <= presented["first"][1] < second, (presented, discarded)
+                assert second <= presented["second"][1] < presented["untimed"][1], presented
+                presented, discarded, other = parse(command("timing-sub"))
+                target = int(next(line for line in other if line.startswith("target ")).split()[1])
+                assert not discarded and presented["parent"][1] == presented["child"][1] >= target, presented
+                assert "survivor" in presented, presented
+                print("commit timing: ordered timestamps, timer lifetime, FIFO and atomic subsurface presentation")
 
                 # Control: without barriers a burst collapses into one refresh.
                 presented, discarded, _ = parse(command("plain 6"))
@@ -275,7 +288,11 @@ def run():
 
             for mode, expected in (("already-exists", "error wp_fifo_manager_v1 0"),
                                    ("surface-destroyed", "error wp_fifo_v1 0"),
-                                   ("recreate", "error none 0")):
+                                   ("recreate", "error none 0"),
+                                   ("timing-duplicate", "error wp_commit_timing_manager_v1 0"),
+                                   ("timing-nsec", "error wp_commit_timer_v1 0"),
+                                   ("timing-pending", "error wp_commit_timer_v1 1"),
+                                   ("timing-orphan", "error wp_commit_timer_v1 2")):
                 result = subprocess.run([str(tmp / "client"), mode], env=env, capture_output=True,
                                         text=True, timeout=10)
                 assert result.returncode == 0 and expected in result.stdout, (mode, result.stdout, result.stderr)

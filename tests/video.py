@@ -55,6 +55,32 @@ def make_clip(directory, name, size, rate, pix_fmt, matrix, rng, tags, encoder):
     return path
 
 
+def timed_presentations(trace):
+    """Return actual minus requested presentation time for matched movie commits, in ns."""
+    video = re.search(r"\.get_timer\(new id wp_commit_timer_v1[@#]\d+, wl_surface([@#]\d+)\)", trace)[1]
+    targets = {}
+    feedback = target = None
+    errors = []
+    for line in trace.splitlines():
+        if match := re.search(r"\.feedback\(wl_surface" + video + r", new id wp_presentation_feedback[@#](\d+)\)", line):
+            feedback = match[1]
+        elif match := re.search(r"\.set_timestamp\((\d+), (\d+), (\d+)\)", line):
+            hi, lo, ns = map(int, match.groups())
+            target = ((hi << 32) | lo) * 1_000_000_000 + ns
+        elif f"wl_surface{video}.commit()" in line:
+            if feedback is not None and target is not None:
+                targets[feedback] = target
+            feedback = target = None
+        elif match := re.search(r"wp_presentation_feedback[@#](\d+)\.presented\((\d+), (\d+), (\d+),", line):
+            due = targets.pop(match[1], None)
+            if due is not None:
+                hi, lo, ns = map(int, match.groups()[1:])
+                errors.append(((hi << 32) | lo) * 1_000_000_000 + ns - due)
+        elif match := re.search(r"wp_presentation_feedback[@#](\d+)\.discarded\(", line):
+            targets.pop(match[1], None)
+    return errors
+
+
 def reference(clip, at, path):
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(at), "-i", str(clip), "-frames:v", "1",
                     "-vf", "scale=in_color_matrix=auto:in_range=auto:out_range=pc,format=rgb24", str(path)], check=True)
@@ -336,7 +362,7 @@ def main():
                 with playing(ipc, dict(env, LIBVA_DRIVER_NAME="no-such-driver"), tmp, PLAYER,
                              ["--paused", "--start", 1, clip]) as (win, _, _):
                     pixels(ipc, win, tmp, clip, 1, "no-vaapi")
-                with playing(ipc, env, tmp, PLAYER, [clip]) as (win, _, log):
+                with playing(ipc, dict(env, WAYLAND_DEBUG="client"), tmp, PLAYER, [clip]) as (win, _, log):
                     time.sleep(1.0)
                     def imports():
                         return Path(compositor_log.name).read_text().count("Created GL FBO")
@@ -347,6 +373,9 @@ def main():
                     assert sum(ImageStat.Stat(ImageChops.difference(a, b)).mean) > 3
                     if "(VAAPI)" in log.read_text() and "switching to software" not in log.read_text():
                         assert imports() == before, "new dmabuf imports after warmup"
+                errors = timed_presentations(log.read_text())
+                assert len(errors) >= 5 and min(errors) >= 0, errors
+                print(f"Video commit timing: {len(errors)} matched presentations, none early")
                 check_controls(ipc, env, tmp, fixture)
                 from video_controls import controls
                 controls(ipc, env, tmp, fixture)
