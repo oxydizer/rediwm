@@ -7,6 +7,16 @@ const platform = @import("platform");
 const c = @import("c.zig").api;
 const Allocator = std.mem.Allocator;
 
+/// A task a worker is running: its `stallKey` (0 when the Task type has
+/// none) and when the worker took it, in monotonic milliseconds.
+pub const Running = struct { key: u64, since_ms: i64 };
+
+pub fn monotonicMs() i64 {
+    var ts: c.struct_timespec = undefined;
+    _ = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
+    return @as(i64, @intCast(ts.tv_sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
+}
+
 /// Creates a pool for copied Task and Result values.
 ///
 /// `execute` runs on a worker thread. Its context must remain valid until
@@ -19,6 +29,10 @@ const Allocator = std.mem.Allocator;
 pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
     return struct {
         const Self = @This();
+        const keyed = switch (@typeInfo(Task)) {
+            .@"struct", .@"union" => @hasDecl(Task, "stallKey"),
+            else => false,
+        };
 
         allocator: Allocator,
         tasks: []Task,
@@ -35,6 +49,8 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
         condition: c.pthread_cond_t = undefined,
         event_fd: std.posix.fd_t,
         threads: []std.Thread,
+        /// Per worker, under `mutex`: the task it runs, if any.
+        running: []?Running,
         execute: *const fn (?*anyopaque, Task) Result,
         discard_result: *const fn (?*anyopaque, Result) void,
         context: ?*anyopaque,
@@ -62,6 +78,9 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             errdefer allocator.free(results);
             const threads = try allocator.alloc(std.Thread, worker_count);
             errdefer allocator.free(threads);
+            const running = try allocator.alloc(?Running, worker_count);
+            errdefer allocator.free(running);
+            @memset(running, null);
             const event_fd = platform.wake.create() orelse return error.EventFdFailed;
             errdefer _ = c.close(event_fd);
 
@@ -71,6 +90,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
                 .results = results,
                 .event_fd = event_fd,
                 .threads = threads,
+                .running = running,
                 .execute = execute,
                 .discard_result = discard_result,
                 .context = context,
@@ -94,7 +114,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             }
 
             while (spawned < worker_count) : (spawned += 1) {
-                threads[spawned] = try std.Thread.spawn(.{}, workerMain, .{self});
+                threads[spawned] = try std.Thread.spawn(.{}, workerMain, .{ self, spawned });
             }
 
             return self;
@@ -128,6 +148,29 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             self.result_count -= 1;
             self.outstanding -= 1;
             return result;
+        }
+
+        /// Copies the tasks workers are running now into `out`; returns how
+        /// many. A task that runs long without returning is stuck in a
+        /// syscall (worker-pools §4.2): work yields in bounded units.
+        pub fn runningTasks(self: *Self, out: []Running) usize {
+            self.lock();
+            defer self.unlock();
+            var count: usize = 0;
+            for (self.running) |slot| {
+                const task = slot orelse continue;
+                if (count == out.len) break;
+                out[count] = task;
+                count += 1;
+            }
+            return count;
+        }
+
+        /// Accepted tasks no worker has taken yet.
+        pub fn queuedCount(self: *Self) usize {
+            self.lock();
+            defer self.unlock();
+            return self.task_count;
         }
 
         /// No accepted task is queued, running, or waiting to be collected.
@@ -189,6 +232,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             _ = c.pthread_cond_destroy(&self.condition);
             _ = c.pthread_mutex_destroy(&self.mutex);
             self.allocator.free(self.threads);
+            self.allocator.free(self.running);
             self.allocator.free(self.results);
             self.allocator.free(self.tasks);
             self.allocator.destroy(self);
@@ -202,7 +246,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             _ = c.pthread_mutex_unlock(&self.mutex);
         }
 
-        fn workerMain(self: *Self) void {
+        fn workerMain(self: *Self, index: usize) void {
             while (true) {
                 self.lock();
                 while (self.task_count == 0 and !self.stopping) {
@@ -216,6 +260,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
                 const task = self.tasks[self.task_head];
                 self.task_head = (self.task_head + 1) % self.tasks.len;
                 self.task_count -= 1;
+                self.running[index] = .{ .key = if (keyed) task.stallKey() else 0, .since_ms = monotonicMs() };
                 self.unlock();
 
                 const result = self.execute(self.context, task);
@@ -223,6 +268,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
                 // Every accepted task reserves a result slot until collection.
                 // Therefore this insertion cannot overflow.
                 self.lock();
+                self.running[index] = null;
                 self.results[self.result_tail] = result;
                 self.result_tail = (self.result_tail + 1) % self.results.len;
                 self.result_count += 1;

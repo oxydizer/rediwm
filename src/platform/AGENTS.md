@@ -5,7 +5,9 @@ The one place the OS shows: child handles (`child.zig`), directory watching
 unix socket (`peer.zig`), process attributes such as no core dumps and no new
 privileges (`process.zig`), descriptors that wake a poll loop (`wake.zig`),
 where the system's helper programs live (`tool.zig`), radio kill switches for
-airplane mode (`rfkill.zig`: Linux only, other systems report no radios), seccomp-BPF filters
+airplane mode (`rfkill.zig`: Linux only, other systems report no radios), the
+mount containing a path (`mounts.zig`: Linux reads `/proc/self/mountinfo`, other
+systems report no mount table), seccomp-BPF filters
 (`seccomp.zig`, for the PDF viewer and the theme helper), and
 `child.h`/`self_exe.h`/`peer.h`/`process.h` for C and C++, and `fs.zig`
 (rename without replacing, stat), and `dirwalk.zig` (reading a directory and

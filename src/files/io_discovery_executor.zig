@@ -59,6 +59,10 @@ const Task = struct {
     ledger_handle: LedgerHandle,
     cursor: ?io_discovery.Cursor = null,
     open: ?OpenRequest = null,
+
+    pub fn stallKey(self: Task) u64 {
+        return self.token.job_id;
+    }
 };
 
 const Completion = struct {
@@ -288,6 +292,14 @@ pub const Executor = struct {
 
     pub fn wakeFd(self: *Executor) std.posix.fd_t {
         return self.pool.wakeFd();
+    }
+
+    pub fn runningTasks(self: *Executor, out: []io_workers.Running) usize {
+        return self.pool.runningTasks(out);
+    }
+
+    pub fn queuedCount(self: *Executor) usize {
+        return self.pool.queuedCount();
     }
 
     pub fn drainWake(self: *Executor) u64 {

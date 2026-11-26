@@ -29,6 +29,9 @@
 //!   `running` submits one stalled copy, waits until it has copied bytes, then
 //!   stops the daemon, so it hangs inside the discovery and operation
 //!   executors. The folder should be large enough to take a few seconds.
+//! * `REDIWM_IO_BENCH_HOLD_S`: keep running at least this long even when the
+//!   other jobs are done, so a stalled job's `waiting_for` (reported after
+//!   30 s) shows in its line.
 const std = @import("std");
 const c = @import("c.zig").api;
 const io_coordinator = @import("io_coordinator.zig");
@@ -329,6 +332,8 @@ test "files io responsiveness benchmark" {
     var unanswered_probes: usize = 0;
     const limit_s: u64 = if (getenv("REDIWM_IO_BENCH_LIMIT_S")) |text| try std.fmt.parseInt(u64, text, 10) else 600 * @as(u64, scale);
     const deadline_ns = started + limit_s * std.time.ns_per_s;
+    const hold_s: u64 = if (getenv("REDIWM_IO_BENCH_HOLD_S")) |text| try std.fmt.parseInt(u64, text, 10) else 0;
+    const hold_ns = started + hold_s * std.time.ns_per_s;
     const probe_paths = [_][]const u8{fixture.root};
 
     while (true) {
@@ -336,7 +341,7 @@ test "files io responsiveness benchmark" {
         for (jobs.items) |*job| if (!job.stalled and !job.done()) {
             finished = false;
         };
-        if (finished or nowNs() > deadline_ns) break;
+        if ((finished and nowNs() >= hold_ns) or nowNs() > deadline_ns) break;
 
         _ = support.waitReadable(service.updateWakeFd(), frame_ms);
         const begin = nowNs();
@@ -428,7 +433,7 @@ test "files io responsiveness benchmark" {
         const end = if (job.ended_ns != 0) job.ended_ns else nowNs();
         const seconds = @as(f64, @floatFromInt(end - job.submitted_ns)) / 1e9;
         const mib = @as(f64, @floatFromInt(record.completed_bytes)) / (1024 * 1024);
-        std.debug.print("BENCH,job,{s},state,{s},seconds,{d:.2},MiB,{d:.1},MiB_per_s,{d:.1},items,{d}/{d}\n", .{
+        std.debug.print("BENCH,job,{s},state,{s},seconds,{d:.2},MiB,{d:.1},MiB_per_s,{d:.1},items,{d}/{d},waiting_for,{s}\n", .{
             job.name,
             @tagName(record.state),
             seconds,
@@ -436,6 +441,7 @@ test "files io responsiveness benchmark" {
             if (seconds > 0) mib / seconds else 0,
             record.completed_items,
             record.total_items,
+            record.waitingFor(),
         });
     }
 

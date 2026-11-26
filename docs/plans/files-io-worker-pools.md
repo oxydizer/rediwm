@@ -109,6 +109,20 @@ window shows it waiting for that mount ("Waiting for <mount>…"), with Cancel
 still offered. There is no later "dead" state: a thread stuck in a syscall
 cannot be stopped, so there is nothing further to do until it returns.
 
+**Reporting is done (step 3b, #76).** It needs no progress bookkeeping: work
+yields in bounded units (a copy chunk, a discovery batch, one prepare), so the
+pools record when each worker took its task (`WorkerPool.runningTasks`, keyed
+by job through the task type's `stallKey`) and a task running for 30 s is
+stuck. The coordinator checks each pass (`io_coordinator_stalls.zig`), wakes
+for the next possible report and, while tasks are queued, once a second. The
+record's `waiting_for` names the mount, found in `/proc/self/mountinfo`
+(`platform.mounts`, read once per stall, from memory). A copy touches its
+source and destination in one task, so which one hangs cannot be seen: a
+network or FUSE mount (device major 0) is named over a disk, else the source
+while planning and the destination after. Deletions are not reported (one
+task per job, legitimately long). Suspect marking and throttling (10 s) are
+step 3c.
+
 The domain is cleared when its stuck task returns or reports progress. Cancelling a job whose task is
 stuck in a suspect domain shows `cancel_requested` until the task returns, as
 today.

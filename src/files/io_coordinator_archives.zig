@@ -102,6 +102,7 @@ pub fn submitArchive(self: *Coordinator, routed: *io_service.RoutedCommand, reco
         self.runtime.cancelJob(job_id) catch {};
     };
     self.published.putAssumeCapacity(job_id, .{ .record = record });
+    self.published.getPtr(job_id).?.setPaths(self.allocator, request.source, request.destination);
     self.archives.putAssumeCapacity(job_id, .{
         .window_id = routed.window_id,
         .operation_id = operation_id,
