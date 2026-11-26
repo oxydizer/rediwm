@@ -45,8 +45,9 @@ already costs a healthy request up to 0.65 s when the other worker is busy.
 **Gap 2: the executors.** One copy whose mount dies *while it runs* holds both
 operation workers. For 30 s every other transfer in every window made no
 progress: the big copy and the extraction stayed `queued`, the small-file copy
-`running` at 0 bytes. Requests were unaffected. This is likely backlog item 2 (a
-second, unrelated copy to a USB drive that never progressed).
+`running` at 0 bytes. Requests were unaffected. (Backlog item 2, a stalled
+re-copy to a USB drive, looked like this but turned out to be a conflict dialog
+that was not shown.)
 
 **Also seen:** an extraction of 5 000 entries in 100 folders ends at
 `completed_items` 5 100 of `total_items` 5 000: folders are counted as done but
@@ -177,6 +178,11 @@ separate request pool: a request can hang on a dead mount too, so it would
 need the same stall handling, and priority in the shared lane gives what it
 would. Left over: two fresh stalls at once can hold both workers for up to
 `suspect_after` before a replacement starts; the bench's probe measures that.
+
+Done (#75) without a second queue in the pool: at most `worker_count` prepares
+are in the pool and the rest wait in the coordinator, so a request never queues
+behind a prepare that has not started. With both workers stuck in prepares a
+request still waits; that needs 4.3.
 
 ### 4.7 What stays
 

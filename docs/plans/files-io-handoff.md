@@ -67,8 +67,9 @@ longer have a Runtime, a Manager or an executor of their own.
    one PR per step from `feat/files-io-manager`:
    1. Staging lane (4.1): done in #73 (2 workers; staging is on the destination mount, not private).
    2. Per-job limit (4.4, first half): done in #74 (3 operation and discovery workers, at most 2 operation workers per job, even alone).
-   3. Stall detection, suspect domains, the mount table and the shared
-      filesystem table (4.2, 4.5), request priority (4.6).
+   3. Split in three: 3a request priority (4.6, #75); 3b stall detection and
+      reporting with the mount table (4.2); 3c suspect-domain throttling on
+      the shared filesystem table (4.2, 4.5).
    4. Elastic user-path lanes (4.3).
    5. Per-device limits and calibration (4.4, phase 7).
    Check each with the bench: `STALL_MODE=prepare` for the task-pool gap,
@@ -88,9 +89,8 @@ longer have a Runtime, a Manager or an executor of their own.
 4. **Backlog** (`files-io-backlog.md`), top first:
    1. Tabs as drop targets: needs titlebar-tabs protocol v3 in the compositor
       first (its own branch from master), then Files.
-   2. The stalled re-copy to a USB drive: probably the executor gap the bench
-      found (one stuck job holds both operation workers). Recheck after step
-      step 2 (#74), which should fix it; ask the user to confirm.
+   2. (Closed: the stalled re-copy to a USB drive was the conflict dialog not
+      showing, fixed with JobRunner's removal.)
    3. An extraction counts folders as done but not in its total (5 100 of
       5 000).
 5. **Smaller:** split `src/files/app_pointer.zig` (931 lines) and `worker.zig` (860),

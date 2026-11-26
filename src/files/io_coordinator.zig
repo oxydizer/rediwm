@@ -104,6 +104,9 @@ pub const Coordinator = struct {
     task_context: io_service_tasks.Context = undefined,
     /// Tasks the pool had no room for, submitted in order as room frees.
     task_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
+    /// Prepares that wait for room so requests go first (`submitTask`).
+    prepare_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
+    prepares_in_pool: usize = 0,
     /// The staging lane: scans and deletes of extraction staging.
     staging_tasks: *io_service_tasks.Pool = undefined,
     staging_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
@@ -184,6 +187,7 @@ pub const Coordinator = struct {
         self.window_held.deinit(self.allocator);
         self.task_backlog.deinit(self.allocator);
         self.staging_backlog.deinit(self.allocator);
+        self.prepare_backlog.deinit(self.allocator);
         self.* = undefined;
     }
 
