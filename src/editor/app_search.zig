@@ -50,6 +50,25 @@ fn visible(self: *App, control: Control) bool {
 pub fn editorLayout(self: *App) layout.Layout {
     const palette = theme.shellPalette();
     const scale: f32 = @floatFromInt(@max(self.scale, 1));
+    var gutter_width: f64 = 0;
+    if (self.line_numbers and self.tabs.items.len > 0) {
+        const doc = self.document();
+        if (self.line_count_revision != doc.revision) {
+            self.line_count = doc.linesBefore(doc.text.items.len) + 1;
+            self.line_count_revision = doc.revision;
+        }
+        var digits_buf: [32]u8 = undefined;
+        const digits = std.fmt.bufPrint(&digits_buf, "{d}", .{self.line_count}) catch "9999";
+        const reserved_digits = @max(4, digits.len);
+        var sample: [32]u8 = @splat('9');
+        const measured = ui_text.measureWidthF(
+            sample[0..reserved_digits],
+            .mono,
+            ui.textSize(),
+            scale,
+        ) catch 0;
+        gutter_width = @as(f64, @floatCast(measured)) + 8;
+    }
     const input: layout.Input = .{
         .width = @floatFromInt(self.w),
         .height = @floatFromInt(self.h),
@@ -68,6 +87,7 @@ pub fn editorLayout(self: *App) layout.Layout {
             .close = .{ .w = 0, .h = 0 },
             .replace = .{ .w = 0, .h = 0 },
             .replace_all = .{ .w = 0, .h = 0 },
+            .gutter_width = gutter_width,
         });
     }
 
@@ -125,6 +145,7 @@ pub fn editorLayout(self: *App) layout.Layout {
         .close = measureButton(close_options, palette, scale),
         .replace = measureButton(replace_options, palette, scale),
         .replace_all = measureButton(replace_all_options, palette, scale),
+        .gutter_width = gutter_width,
     });
 }
 

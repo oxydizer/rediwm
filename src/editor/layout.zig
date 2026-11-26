@@ -36,6 +36,7 @@ pub const Metrics = struct {
     viewport_bottom_gap: f64 = 8,
     viewport_leading_inset: f64 = 12,
     viewport_trailing_inset: f64 = 18,
+    gutter_width: f64 = 0,
 
     search_leading_inset: f64 = 12,
     search_trailing_inset: f64 = 12,
@@ -70,6 +71,7 @@ pub const Layout = struct {
     replacement: Rect = .{},
     replace: Rect = .{},
     replace_all: Rect = .{},
+    gutter: Rect = .{},
     viewport: Rect = .{},
     status: Rect = .{},
 
@@ -112,6 +114,10 @@ pub const Layout = struct {
             content_top,
             status_top - metrics.viewport_bottom_gap,
         );
+        const gutter_width = @min(
+            @max(0, metrics.gutter_width),
+            @max(0, width - metrics.viewport_leading_inset - metrics.viewport_trailing_inset),
+        );
 
         const left = @min(width, @max(0, metrics.search_leading_inset));
         const right = @max(left, width - @max(0, metrics.search_trailing_inset));
@@ -128,13 +134,22 @@ pub const Layout = struct {
                 .{ .x = 0, .y = search_top, .w = width, .h = search_height }
             else
                 .{},
+            .gutter = if (gutter_width > 0)
+                .{
+                    .x = 0,
+                    .y = content_top,
+                    .w = metrics.viewport_leading_inset + gutter_width,
+                    .h = @max(0, status_top - content_top),
+                }
+            else
+                .{},
             .viewport = .{
-                .x = metrics.viewport_leading_inset,
+                .x = metrics.viewport_leading_inset + gutter_width,
                 .y = content_top,
                 .w = @max(
                     0,
                     width - metrics.viewport_leading_inset -
-                        metrics.viewport_trailing_inset,
+                        metrics.viewport_trailing_inset - gutter_width,
                 ),
                 .h = @max(0, viewport_bottom - content_top),
             },
@@ -318,4 +333,33 @@ test "viewport and status stay inside short client areas" {
     try std.testing.expect(layout.status.y + layout.status.h <= 40);
     try std.testing.expect(layout.query.w >= 0);
     try std.testing.expect(layout.replacement.w >= 0);
+}
+
+test "line-number gutter reserves its width before shifting the text viewport" {
+    const metrics = testMetrics();
+    const plain = Layout.resolve(.{
+        .width = 900,
+        .height = 620,
+        .editor_owned_tabs = false,
+    }, metrics);
+    const numbered = Layout.resolve(.{
+        .width = 900,
+        .height = 620,
+        .editor_owned_tabs = false,
+    }, .{
+        .field = metrics.field,
+        .next = metrics.next,
+        .toggle = metrics.toggle,
+        .close = metrics.close,
+        .replace = metrics.replace,
+        .replace_all = metrics.replace_all,
+        .gutter_width = 52,
+    });
+
+    try std.testing.expectEqual(@as(f64, 12), numbered.gutter.x);
+    try std.testing.expectEqual(@as(f64, 52), numbered.gutter.w);
+    try std.testing.expectEqual(plain.viewport.x + 52, numbered.viewport.x);
+    try std.testing.expectEqual(plain.viewport.w - 52, numbered.viewport.w);
+    try std.testing.expectEqual(plain.viewport.y, numbered.gutter.y);
+    try std.testing.expectEqual(plain.viewport.h, numbered.gutter.h);
 }
