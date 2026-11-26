@@ -7,7 +7,8 @@ const button = @import("ui").widgets.button;
 const Rect = @import("ui").context_menu.Rect;
 const app = @import("app.zig");
 const App = app.App;
-const SearchControl = @import("app_search.zig").Control;
+const app_search = @import("app_search.zig");
+const SearchControl = app_search.Control;
 const ui_theme = @import("ui").theme;
 
 pub fn buttonProximity(self: *const App, box: Rect) button.ProximitySample {
@@ -72,10 +73,11 @@ fn nearestButton(self: *App, x: f64, y: f64) f32 {
         nearest = @min(nearest, sample.distance);
     }
     if (self.find_open) {
+        const resolved = self.editorLayout();
         // Search fields use the same proximity reach as their adjacent buttons.
         for ([_]SearchControl{ .query, .replacement }) |control| {
             if (control == .replacement and !self.replace_open) continue;
-            const box = self.searchBox(control);
+            const box = app_search.searchBoxInLayout(resolved, control);
             const sample = button.sampleProximity(
                 .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) },
                 @floatCast(x), @floatCast(y),
@@ -87,7 +89,7 @@ fn nearestButton(self: *App, x: f64, y: f64) f32 {
         const controls = [_]SearchControl{ .next, .toggle, .close, .replace, .replace_all };
         for (controls) |control| {
             if (!self.replace_open and (control == .replace or control == .replace_all)) continue;
-            const box = self.searchBox(control);
+            const box = app_search.searchBoxInLayout(resolved, control);
             const sample = button.sampleProximity(
                 .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) },
                 @floatCast(x), @floatCast(y),

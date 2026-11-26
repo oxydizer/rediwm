@@ -256,6 +256,7 @@ fn paintStrip(self: *App, cr: *c.cairo_t) void {
 
 pub fn render(self: *App, cr: *c.cairo_t) void {
     const t = theme.global;
+    const geometry = self.editorLayout();
     fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), t.app_bg);
     if (!self.strip_in_titlebar) paintStrip(self, cr);
     if (self.find_open) self.paintSearch(cr);
@@ -266,7 +267,13 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     const tab = self.current();
     const sel = tab.doc.selection();
     c.cairo_save(cr);
-    c.cairo_rectangle(cr, 12, self.viewTop(), @floatFromInt(self.w - 30), self.viewHeight());
+    c.cairo_rectangle(
+        cr,
+        geometry.viewport.x,
+        geometry.viewport.y,
+        geometry.viewport.w,
+        geometry.viewport.h,
+    );
     c.cairo_clip(cr);
     for (self.rows.items) |row| {
         const o = self.reflow.offset(row.line.seg.start, self.frame_ms).snapped(@floatFromInt(self.scale));
@@ -282,7 +289,14 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     if (!self.find_open) self.paintCaret(cr);
     c.cairo_restore(cr);
     if (self.scrollbarGeometry()) |bar| ui.drawScrollbar(cr, scrollbar.look(bar, self.bar_appearance, theme.global.scrollbar_width, theme.shellPalette()));
-    fill(cr, 0, @as(f64, @floatFromInt(self.h)) - status_h, @floatFromInt(self.w), status_h, t.app_bar);
+    fill(
+        cr,
+        geometry.status.x,
+        geometry.status.y,
+        geometry.status.w,
+        geometry.status.h,
+        t.app_bar,
+    );
     var info: [256]u8 = undefined;
     if (tab.status.revision != tab.doc.revision or tab.status.cursor != tab.doc.cursor) {
         const d = &tab.doc;
@@ -295,7 +309,14 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     }
     const text = if (self.notice_len > 0) self.notice[0..self.notice_len] else i18n.fmt(&info, tr("Line {line}, Column {column}    ·    UTF-8{bom}    ·    {ending}"), .{ .line = tab.status.line, .column = tab.status.column, .bom = if (tab.doc.bom) " BOM" else "", .ending = if (tab.doc.crlf) "CRLF" else "LF" }) catch "";
     ui.setSource(cr, t.window_fg);
-    ui.drawText(cr, text, 12, @floatFromInt(self.h - 8), ui.statusSize(), false);
+    ui.drawText(
+        cr,
+        text,
+        12,
+        geometry.status.y + geometry.status.h - 8,
+        ui.statusSize(),
+        false,
+    );
     if (self.menu_open) self.paintMenu(cr);
     if (self.close_tab != null) self.paintClose(cr);
 }
