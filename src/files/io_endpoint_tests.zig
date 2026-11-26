@@ -96,7 +96,7 @@ const Runtime = struct {
 
 fn startInstance(endpoint: *io_endpoint.Endpoint, paths: *const io_endpoint.Paths) !void {
     switch (io_endpoint.claim(allocator, paths, .{ .path = "/first" })) {
-        .instance => |fd| try endpoint.start(allocator, fd, paths.socket),
+        .instance => |fd| try endpoint.start(allocator, fd, paths.socket, null),
         else => return error.TestUnexpectedResult,
     }
 }

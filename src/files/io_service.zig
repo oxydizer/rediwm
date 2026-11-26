@@ -37,6 +37,8 @@ pub const outcome_slots_per_window = io_job_table.outcome_slots_per_window;
 pub const tombstone_capacity = io_job_table.tombstone_capacity;
 /// Subscribers that are not windows (the shell panel, stage S6).
 pub const max_external_consumers = 4;
+/// Control commands from every external subscriber waiting at once.
+pub const external_control_capacity = 16;
 /// Replies to metadata and small-mutation requests, reserved at admission.
 pub const reply_slots_per_window = 4;
 /// Borrows a window may hold on resources it does not own.
@@ -68,6 +70,7 @@ pub const ConflictAction = commands.ConflictAction;
 pub const ConflictResolutionRequest = commands.ConflictResolutionRequest;
 pub const OwnedPayload = commands.OwnedPayload;
 pub const Command = commands.Command;
+pub const ExternalHandle = @import("io_service_external.zig").ExternalHandle;
 pub const RoutedCommand = commands.RoutedCommand;
 pub const Request = io_requests.Request;
 pub const Reply = io_requests.Reply;
@@ -75,20 +78,20 @@ const io_requests = @import("io_requests.zig");
 pub const io_job_views = @import("io_job_views.zig");
 pub const ViewSnapshot = io_job_views.Snapshot;
 
-fn Ring(comptime T: type, comptime capacity: usize) type {
+pub fn Ring(comptime T: type, comptime capacity: usize) type {
     return struct {
         items: [capacity]T = undefined,
         head: usize = 0,
         count: usize = 0,
 
-        fn push(self: *@This(), value: T) bool {
+        pub fn push(self: *@This(), value: T) bool {
             if (self.count == capacity) return false;
             self.items[(self.head + self.count) % capacity] = value;
             self.count += 1;
             return true;
         }
 
-        fn pop(self: *@This()) ?T {
+        pub fn pop(self: *@This()) ?T {
             if (self.count == 0) return null;
             const value = self.items[self.head];
             self.head = (self.head + 1) % capacity;
@@ -110,7 +113,7 @@ fn Ring(comptime T: type, comptime capacity: usize) type {
 const SlotState = enum(u2) { free = 0, active = 1, closing = 2 };
 
 /// Window ids must leave room for the two state bits.
-const max_window_id: WindowId = (1 << 62) - 1;
+pub const max_window_id: WindowId = (1 << 62) - 1;
 
 fn packSlot(id: WindowId, state: SlotState) u64 {
     std.debug.assert(id <= max_window_id);
@@ -183,6 +186,11 @@ pub const Service = struct {
     closed_windows: Ring(WindowId, max_windows) = .{},
     closed_overflow: bool = false,
     external_ids: [max_external_consumers]u64 = @splat(0),
+    /// Signalled with every table change, for the endpoint thread (S6b).
+    external_wake_fd: std.posix.fd_t = -1,
+    /// Pause, resume and cancel from external subscribers. Guarded by the
+    /// mutex; taken before the windows' queues, being few and small.
+    external_controls: Ring(Command, external_control_capacity) = .{},
     stopping: std.atomic.Value(bool) = .init(false),
 
     /// Initialize in place: an initialized pthread mutex must not be copied.
@@ -204,6 +212,9 @@ pub const Service = struct {
         errdefer _ = std.posix.system.close(self.command_wake_fd);
 
         self.update_wake_fd = wake.create() orelse return error.WakeDescriptorCreateFailed;
+        errdefer _ = std.posix.system.close(self.update_wake_fd);
+
+        self.external_wake_fd = wake.create() orelse return error.WakeDescriptorCreateFailed;
     }
 
     pub fn deinit(self: *Service) void {
@@ -216,6 +227,7 @@ pub const Service = struct {
         std.debug.assert(c.pthread_mutex_destroy(&self.mutex) == 0);
         _ = std.posix.system.close(self.command_wake_fd);
         _ = std.posix.system.close(self.update_wake_fd);
+        _ = std.posix.system.close(self.external_wake_fd);
     }
 
     /// Shared process-wide wake descriptor for newly admitted commands.
@@ -315,6 +327,9 @@ pub const Service = struct {
 
     /// Caller holds the lock.
     fn popCommand(self: *Service) ?RoutedCommand {
+        // External controls carry no window: pause, resume and cancel act on
+        // the job alone.
+        if (self.external_controls.pop()) |command| return .{ .window_id = 0, .command = command };
         for (0..max_windows) |_| {
             const index = self.next_drain_slot;
             self.next_drain_slot = (self.next_drain_slot + 1) % max_windows;
@@ -462,22 +477,11 @@ pub const Service = struct {
         return self.table.copyRateHistory(job_id, out);
     }
 
-    /// Registers a subscriber that is not a window (stage S6). Called from
-    /// the endpoint thread, never the UI thread, so it may take the lock.
-    pub fn registerExternal(self: *Service) !ExternalHandle {
-        self.lock();
-        defer self.unlock();
-        if (self.stopping.load(.acquire)) return error.ServiceStopping;
-        for (&self.external_ids, 0..) |*slot_id, i| {
-            if (slot_id.* != 0) continue;
-            const id = self.next_window_id.fetchAdd(1, .monotonic);
-            if (id > max_window_id) return error.WindowIdExhausted;
-            slot_id.* = id;
-            self.table.attach(max_windows + i, id, false);
-            return .{ .service = self, .index = i, .id = id };
-        }
-        return error.TooManyConsumers;
-    }
+    const external = @import("io_service_external.zig");
+    pub const registerExternal = external.registerExternal;
+    pub const externalWakeFd = external.externalWakeFd;
+    pub const drainExternalWake = external.drainExternalWake;
+    pub const sendControl = external.sendControl;
 
     // ---- job table: writer (coordinator only) ----
 
@@ -488,6 +492,7 @@ pub const Service = struct {
         defer self.unlock();
         try self.table.create(record, from_reservation);
         signalWake(self.update_wake_fd);
+        signalWake(self.external_wake_fd);
     }
 
     pub fn updateJobRecord(self: *Service, record: JobRecord) !void {
@@ -495,6 +500,7 @@ pub const Service = struct {
         defer self.unlock();
         try self.table.update(record);
         signalWake(self.update_wake_fd);
+        signalWake(self.external_wake_fd);
     }
 
     pub fn retireJobRecord(self: *Service, job_id: JobId) !void {
@@ -502,12 +508,14 @@ pub const Service = struct {
         defer self.unlock();
         try self.table.retire(job_id);
         signalWake(self.update_wake_fd);
+        signalWake(self.external_wake_fd);
     }
 
     pub fn appendRateSample(self: *Service, job_id: JobId, bytes_per_second: u64) void {
         self.lock();
         defer self.unlock();
         self.table.appendRateSample(job_id, bytes_per_second);
+        signalWake(self.external_wake_fd);
     }
 
 
@@ -584,6 +592,7 @@ pub const Service = struct {
     pub fn hasQueuedCommands(self: *Service) bool {
         self.lock();
         defer self.unlock();
+        if (self.external_controls.count != 0) return true;
         for (&self.windows) |*slot| {
             if (slot.normal_commands.count != 0 or slot.control_commands.count != 0) return true;
         }
@@ -623,7 +632,7 @@ pub const Service = struct {
 
     /// Blocking acquisition: the coordinator, and the process owner after
     /// the UI is gone. Never on the UI thread (threading §3).
-    fn lock(self: *Service) void {
+    pub fn lock(self: *Service) void {
         assertNotHolding();
         const rc = c.pthread_mutex_lock(&self.mutex);
         if (rc != 0) std.debug.panic("Files service mutex lock failed: {d}", .{rc});
@@ -640,7 +649,7 @@ pub const Service = struct {
         return true;
     }
 
-    fn unlock(self: *Service) void {
+    pub fn unlock(self: *Service) void {
         holding_service_mutex = false;
         const rc = c.pthread_mutex_unlock(&self.mutex);
         if (rc != 0) std.debug.panic("Files service mutex unlock failed: {d}", .{rc});
@@ -651,7 +660,7 @@ pub const Service = struct {
             std.debug.panic("Files service mutex relocked by its holder", .{});
     }
 
-    fn signalWake(fd: std.posix.fd_t) void {
+    pub fn signalWake(fd: std.posix.fd_t) void {
         const one: u64 = 1;
         while (true) {
             const rc = std.posix.system.write(fd, std.mem.asBytes(&one), @sizeOf(u64));
@@ -671,7 +680,7 @@ pub const Service = struct {
     }
 };
 
-fn drainWake(fd: std.posix.fd_t) u64 {
+pub fn drainWake(fd: std.posix.fd_t) u64 {
     var count: u64 = 0;
     while (true) {
         var value: u64 = 0;
@@ -738,26 +747,3 @@ pub const Handle = struct {
     }
 };
 
-/// A subscriber that is not a window (stage S6). Used from the endpoint
-/// thread, which may block on the Service mutex.
-pub const ExternalHandle = struct {
-    service: *Service,
-    index: usize,
-    id: u64,
-
-    pub fn fetchChanges(self: ExternalHandle, out: []JobRecord) FetchResult {
-        self.service.lock();
-        defer self.service.unlock();
-        return self.service.table.fetch(max_windows + self.index, out);
-    }
-
-    pub fn close(self: *ExternalHandle) void {
-        const service = self.service;
-        const index = self.index;
-        self.* = undefined;
-        service.lock();
-        defer service.unlock();
-        service.table.detach(max_windows + index);
-        service.external_ids[index] = 0;
-    }
-};

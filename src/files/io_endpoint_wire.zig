@@ -21,6 +21,8 @@ pub const ErrorCode = enum {
     UNSUPPORTED_VERSION,
     UNKNOWN_COMMAND,
     INVALID_ARGUMENT,
+    JOB_NOT_FOUND,
+    INVALID_STATE,
     RESOURCE_LIMIT,
     SERVICE_BUSY,
     INTERNAL_ERROR,
@@ -38,8 +40,22 @@ pub const OpenWindow = struct {
     activation_token: ?[]const u8 = null,
 };
 
+pub const Control = @import("io_service_external.zig").Control;
+
 pub const Request = union(enum) {
     open_window: OpenWindow,
+    /// A snapshot of every job, then each change (contract §8).
+    subscribe,
+    /// `PauseJob`, `ResumeJob`, `CancelJob`.
+    control: struct { control: Control, job_id: u64 },
+};
+
+const JobParams = struct { job_id: u64 };
+
+const commands = [_]struct { name: []const u8, control: ?Control }{
+    .{ .name = "PauseJob", .control = .pause },
+    .{ .name = "ResumeJob", .control = .@"resume" },
+    .{ .name = "CancelJob", .control = .cancel },
 };
 
 /// A parsed request line. `id` and the request's strings point into the
@@ -109,6 +125,20 @@ pub fn parse(allocator: Allocator, line: []const u8) error{OutOfMemory}!ParseRes
         rejection.message = "Unsupported protocol version";
         return .{ .rejected = rejection };
     }
+    if (std.mem.eql(u8, envelope.command, "Subscribe")) {
+        keep = true;
+        return .{ .request = .{ .id = envelope.id, .request = .subscribe, .arena = arena } };
+    }
+    for (commands) |command| if (std.mem.eql(u8, envelope.command, command.name)) {
+        const params = std.json.parseFromValueLeaky(JobParams, a, envelope.params, .{ .ignore_unknown_fields = true }) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            rejection.code = .INVALID_ARGUMENT;
+            rejection.message = "Needs a job_id";
+            return .{ .rejected = rejection };
+        };
+        keep = true;
+        return .{ .request = .{ .id = envelope.id, .request = .{ .control = .{ .control = command.control.?, .job_id = params.job_id } }, .arena = arena } };
+    };
     if (!std.mem.eql(u8, envelope.command, "OpenWindow")) {
         rejection.code = .UNKNOWN_COMMAND;
         rejection.message = "Unknown command";
@@ -151,6 +181,70 @@ pub fn formatError(allocator: Allocator, id: []const u8, code: ErrorCode, messag
         .id = id,
         .@"error" = .{ .code = @tagName(code), .message = message },
     });
+}
+
+const JobRecord = @import("io_job_table.zig").Record;
+
+/// A job as subscribers see it. `rate_history` only in a snapshot: a change
+/// carries the current rate, and the panel appends it.
+const Job = struct {
+    id: u64,
+    kind: []const u8,
+    state: []const u8,
+    label: []const u8,
+    source_count: u32,
+    completed_bytes: u64,
+    total_bytes: u64,
+    rate_bytes_per_second: u64,
+    completed_items: u64,
+    total_items: u64,
+    started_at_ms: i64,
+    finished_at_ms: i64,
+    cancel_requested: bool,
+    /// A conflict waits for an answer, given in a Files window.
+    conflict: bool,
+    /// The mount a stuck task waits on, or empty.
+    waiting_for: []const u8,
+    error_code: u8,
+    /// Retired: the record is final and the job leaves the list.
+    removed: bool,
+    revision: u64,
+    rate_history: ?[]const u64 = null,
+
+    fn of(record: *const JobRecord, history: ?[]const u64) Job {
+        return .{
+            .id = record.id,
+            .kind = @tagName(record.kind),
+            .state = @tagName(record.state),
+            .label = record.label(),
+            .source_count = record.source_count,
+            .completed_bytes = record.completed_bytes,
+            .total_bytes = record.total_bytes,
+            .rate_bytes_per_second = record.rate_bytes_per_second,
+            .completed_items = record.completed_items,
+            .total_items = record.total_items,
+            .started_at_ms = record.started_at_ms,
+            .finished_at_ms = record.finished_at_ms,
+            .cancel_requested = record.cancel_requested,
+            .conflict = record.pending_conflict != 0,
+            .waiting_for = record.waitingFor(),
+            .error_code = record.error_code,
+            .removed = record.removed,
+            .revision = record.revision,
+            .rate_history = history,
+        };
+    }
+};
+
+pub const Event = enum { snapshot, jobs };
+
+/// `{"version":1,"event":"snapshot"|"jobs","sequence":N,"jobs":[…]}` and a
+/// newline. `histories[i]` goes with `records[i]` (snapshot only).
+pub fn formatEvent(allocator: Allocator, event: Event, sequence: u64, records: []const JobRecord, histories: ?[]const []const u64) ![]u8 {
+    const jobs = try allocator.alloc(Job, records.len);
+    defer allocator.free(jobs);
+    for (records, jobs, 0..) |*record, *job, i| job.* = .of(record, if (histories) |h| h[i] else null);
+    return formatLine(allocator, .{ .version = version, .event = @tagName(event), .sequence = sequence, .jobs = jobs });
 }
 
 /// A request line, for the launcher.
