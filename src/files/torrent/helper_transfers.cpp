@@ -222,11 +222,12 @@ static void start(Transfer &t, JsonObject *o) {
   t.limit = limit;
   configure(t, priorities, true);
 }
-/// Changes which files of a started transfer download. Files no longer
+/// Changes which files of a started (or starting) transfer download. Files no longer
 /// wanted keep what they have; newly wanted ones make a finished, stopped
 /// transfer download again. A transfer paused by the user stays paused.
 static void select(Transfer &t, JsonObject *o) {
-  if (t.pending)
+  // Still starting: the new choice replaces the one being applied.
+  if (t.pending && !t.configuring)
     return start(t, o);
   auto info = t.info();
   if (!info)

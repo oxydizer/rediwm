@@ -100,6 +100,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
     }
     if (self.transfer_view.active and self.transferPaneClick(x, y, button)) return;
     if (button == 0x110 and self.inlineTorrentClick(x, y)) return;
+    if (button == 0x110 and @import("app_torrent_browse.zig").checkClick(self, x, y)) return;
     if (button == 0x110 and @import("app_audio_bar.zig").click(self, x, y)) return;
     if (button == 0x110 and self.audioButtonClick(x, y)) return;
     if (button == 0x111) return secondaryClick(self, x, y);

@@ -226,7 +226,7 @@ pub fn selectedArchive(self: *App) ?[]const u8 {
 /// exported after materializing them through the selected-member extractor.
 pub fn hasSelectedArchiveMembers(self: *const App) bool {
     const archive_len = self.history.archive_len;
-    if (self.chooser != null or archive_len == 0 or self.history.current.len < archive_len)
+    if (self.chooser != null or archive_len == 0 or self.history.torrent or self.history.current.len < archive_len)
         return false;
 
     var count: usize = 0;

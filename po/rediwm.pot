@@ -3204,7 +3204,7 @@ msgstr ""
 msgid "Fcitx's current group has no input methods besides keyboards."
 msgstr ""
 
-#: src/files/torrents.zig
+#: src/files/app_torrent_browse.zig
 msgid "Fetching file list…"
 msgstr ""
 
@@ -6253,6 +6253,10 @@ msgstr ""
 msgid "Read only"
 msgstr ""
 
+#: src/files/app_torrent_browse.zig
+msgid "Reading torrent…"
+msgstr ""
+
 #: src/control_center/sections/firewall.zig
 msgid "Reading…"
 msgstr ""
@@ -7391,6 +7395,10 @@ msgstr ""
 msgid "Start using RediWM"
 msgstr ""
 
+#: src/files/app_torrent_browse.zig
+msgid "Starting download…"
+msgstr ""
+
 #: src/session/greeter.zig
 msgid "Starting session…"
 msgstr ""
@@ -7425,6 +7433,10 @@ msgstr ""
 
 #: src/control_center/sections/firewall_rules.zig
 msgid "Steam Remote Play"
+msgstr ""
+
+#: src/files/app_torrent_browse.zig
+msgid "Still downloading"
 msgstr ""
 
 #: src/control_center/sections/services.zig
@@ -8091,6 +8103,10 @@ msgstr ""
 msgid "This display or its driver did not accept HDR in this mode, so it stays SDR."
 msgstr ""
 
+#: src/files/app_torrent_browse.zig
+msgid "This download is no longer available"
+msgstr ""
+
 #: src/control_center/sections/printers_tools.zig
 msgid "This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."
 msgstr ""
@@ -8169,6 +8185,10 @@ msgstr ""
 
 #: src/control_center/sections/region.zig
 msgid "Thursday"
+msgstr ""
+
+#: src/files/app_torrent_browse.zig
+msgid "Tick the file to download it"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -9771,6 +9791,12 @@ msgid_plural "{count} file operations are still running."
 msgstr[0] ""
 msgstr[1] ""
 
+#: src/files/app_torrent_browse.zig
+msgid "{count} file · {size} · tick files to download them into {path}"
+msgid_plural "{count} files · {size} · tick files to download them into {path}"
+msgstr[0] ""
+msgstr[1] ""
+
 #: src/files/app_trash.zig
 msgid "{count} has no Trash information"
 msgid_plural "{count} have no Trash information"
@@ -9792,6 +9818,12 @@ msgstr[1] ""
 #: src/files/app_trash.zig
 msgid "{count} kept under a new name"
 msgstr ""
+
+#: src/files/app_torrent_browse.zig
+msgid "{count} of {total} file ticked · {done} of {size} · into {path}"
+msgid_plural "{count} of {total} files ticked · {done} of {size} · into {path}"
+msgstr[0] ""
+msgstr[1] ""
 
 #: src/transfers/popup_rows.zig
 msgid "{count} peers"

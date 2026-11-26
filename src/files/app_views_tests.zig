@@ -189,9 +189,7 @@ test "folder transfer rows match full paths, avoid duplicates and exclude stagin
     app.openTrashConfirmDialog();
     try std.testing.expectEqual(@as(usize, 0), app.clipboard_paths.items.len);
     try std.testing.expect(app.dialog == null);
-    app.activateItem(0);
-    try std.testing.expectEqual(@import("app_model.zig").DialogKind.transfers, app.dialog.?.kind);
-    app.closeDialog();
+    // Activating it opens its files as a folder (app_torrent_browse_tests).
 
     app.items.items[0].transfer_stub = false;
     app.items.items[0].missing = false;

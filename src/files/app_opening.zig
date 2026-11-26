@@ -28,6 +28,7 @@ pub fn previewSelected(self: *App) void {
     if (selected >= self.items.items.len) return;
     const item = self.items.items[selected];
     if (!item.selected or item.missing or item.is_broken) return;
+    if (@import("app_torrent_browse.zig").active(self)) return;
     if (self.history.archive_len > 0) {
         if (item.is_dir) self.navigate(item.path) else self.openArchiveMember(item.path, true);
         return;
@@ -333,9 +334,13 @@ pub fn extractionFolderReady(self: *App) void {
 pub fn activateItem(self: *App, idx: usize) void {
     if (idx >= self.items.items.len) return;
     const item = self.items.items[idx];
-    if (item.transfer_stub or std.ascii.endsWithIgnoreCase(item.name, ".torrent")) {
-        if (self.torrentForItem(idx)) |t| {
-            self.openTorrentDetails(t.id);
+    if (@import("app_torrent_browse.zig").activate(self, idx)) return;
+    // A torrent is a folder that has not materialized yet: it opens as one.
+    if (@import("app_torrents.zig").enabled and self.chooser == null and self.history.archive_len == 0) {
+        if (item.transfer_stub) {
+            if (self.torrentForItem(idx)) |t| if (self.browseTransfer(t.id)) return;
+        } else if (!item.is_dir and !item.missing and std.ascii.endsWithIgnoreCase(item.name, ".torrent")) {
+            self.browseTorrent(item.path);
             return;
         }
     }

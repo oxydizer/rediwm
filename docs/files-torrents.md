@@ -20,11 +20,27 @@ entry for the staged download; it opens transfer details and is excluded from
 copy, rename, trash and drag operations. Completion replaces it with the real
 published folder. No files are renamed to encode progress.
 
-Choose an existing destination folder, then choose files and start. Magnet
-links fetch metadata first; they do not download payload until confirmed.
-The first version has paged file selection, pause/resume, removal that keeps
-files, and two upload limits (128 KiB/s or 1 MiB/s). Seeding can stop at download
-completion, ratio 1 or ratio 2. The session upload ceiling is 1 MiB/s.
+## A torrent is a folder
+
+Opening a `.torrent` file enters it like a folder or an archive: its files
+are ghosts, each with a checkbox, and browsing starts inside the folder the
+torrent keeps its files in. Looking adds nothing (the helper reads the file,
+`inspect`). Ticking means downloading: the first tick adds the torrent and
+downloads what is ticked into the folder the `.torrent` file is in. A folder's
+checkbox ticks or unticks everything in it and shows a dash while only part of
+it is ticked. Space ticks the selected rows (or unticks them, when all are
+ticked); clicking a row selects it without ticking it. An unticked file is
+faint and shows its size; a ticked one fills with its progress; a finished
+one is a real file that opens. Unticking keeps what has arrived, and ticking
+more files of a finished download fetches them into its published folder.
+The status bar counts the ticks and the bytes they hold.
+
+A magnet asks for its destination folder, which then shows the download as a
+ghost folder; it reads "Fetching file list…" until the metadata arrives, then
+its files can be ticked the same way. The download's row in its destination
+folder, its circle and the shell panel's Choose files… all open the same
+folder view. Downloads start with ratio 1 seeding and a 1 MiB/s upload limit
+(the transfer dialog's choices). The session upload ceiling is 1 MiB/s.
 
 Downloads and seeding continue after the last Files window closes: Files stays
 up without a window while the helper downloads or seeds, mirroring each
@@ -75,7 +91,7 @@ Remove always keeps payloads, including partials. Use Show in folder to locate
 them before removing a transfer. Moving or editing files outside the transfer
 engine can interrupt seeding; pause/remove the transfer before reorganizing
 its data. This version does not include tracker editing, torrent creation,
-streaming previews, automatic move tracking or individual file-row progress.
+streaming previews or automatic move tracking.
 
 ## Validation
 

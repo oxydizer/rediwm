@@ -52,6 +52,9 @@ pub fn breadcrumbs(self: *App, target: ?*c.cairo_t, hit_x: ?f64) ?BreadcrumbHit 
         count += 1;
         start = end;
     }
+    if (self.history.torrent) for (0..count) |i| if (ends[i] == self.history.archive_len) {
+        labels[i] = @import("app_torrent_browse.zig").crumbLabel(self, labels[i]);
+    };
     var total: f64 = 0;
     for (labels[0..count], 0..) |label, i| {
         widths[i] = measureText(cr, label, shell_ui.textSize(), false) + 28 + @as(f64, if (ends[i] == self.history.archive_len) 22 else 0);

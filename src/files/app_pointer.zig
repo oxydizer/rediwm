@@ -128,6 +128,7 @@ pub fn hoverKey(self: *App) usize {
     if (self.sidebar_surface.hovered) |target| return @intCast(target.id);
     if (self.permissionHit(x, y)) |hit| return permissionHoverBase + hit.index * 9 + hit.bit;
     if (self.inlineTorrentHit(x, y)) |hit| return std.math.maxInt(usize) - 3000 - hit.index * 2 - @intFromBool(hit.toggle);
+    if (@import("app_torrent_browse.zig").checkHit(self, x, y)) |index| return std.math.maxInt(usize) - 6000 - index;
     if (self.audioButtonHit(x, y)) |index| return @import("app_audio.zig").audioHoverKey(index);
     if (self.item_surface.hovered) |target| {
         const i: usize = @intCast(target.id);

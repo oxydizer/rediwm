@@ -174,6 +174,8 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
     }
 
     if (!self.ctrl and !self.alt and sym == c.XKB_KEY_space) {
+        // Inside a torrent, Space ticks what is selected.
+        if (@import("app_torrent_browse.zig").toggleSelected(self)) return;
         if (self.focused_index) |index| if (self.torrentForItem(index)) |t| {
             self.toggleTorrent(t);
             return;

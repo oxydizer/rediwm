@@ -43,6 +43,7 @@ const app_sidebar_paint = @import("app_sidebar_paint.zig");
 const app_scroll = @import("app_scroll.zig");
 const app_torrents = @import("app_torrents.zig");
 const app_torrent_rows = @import("app_torrent_rows.zig");
+const app_torrent_browse = @import("app_torrent_browse.zig");
 const app_git_sidebar = @import("app_git_sidebar.zig");
 const app_opening = @import("app_opening.zig");
 const app_audio = @import("app_audio.zig");
@@ -195,6 +196,10 @@ pub const App = struct {
     /// Root of the virtual transfer-directory subtree currently being browsed.
     /// Null means the listing is backed by a real filesystem snapshot.
     transfer_browse_root: ?[]u8 = null,
+    /// The torrent shown as a folder (`app_torrent_browse.zig`).
+    torrent_browse: ?*app_torrent_browse.Browse = null,
+    /// Owned: a download to show once this window's connection lists it.
+    browse_pending: ?[]u8 = null,
     search: Editor = .{},
     search_visible: bool = false,
     menu: ?MenuKind = null,
@@ -449,6 +454,8 @@ pub const App = struct {
         self.extract_picker_bytes.deinit(self.allocator);
         if (self.trash_dir) |path| self.allocator.free(path);
         if (self.transfer_browse_root) |path| self.allocator.free(path);
+        if (self.torrent_browse) |b| b.destroy();
+        if (self.browse_pending) |id| self.allocator.free(id);
         self.filename.deinit(self.allocator);
         for (self.chooser_paths.items) |path| self.allocator.free(path);
         self.chooser_paths.deinit(self.allocator);
@@ -956,6 +963,8 @@ pub const App = struct {
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
 
+    pub const browseTorrent = app_torrent_browse.browseTorrent;
+    pub const browseTransfer = app_torrent_browse.browseTransfer;
     pub const startTorrents = app_torrents.startTorrents;
     pub const stepTorrents = app_torrents.stepTorrents;
     pub const torrentForItem = app_torrent_rows.torrentForItem;

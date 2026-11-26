@@ -319,7 +319,8 @@ control bytes are refused because terminal paste would alter them.
 
 ## BitTorrent transfers
 
-`app_torrents.zig` owns the sidebar, main-pane list, toolbar and detail dialog;
+`app_torrents.zig` owns the sidebar, main-pane list, toolbar and detail dialog
+(`enabled` turns torrents on or off as a whole);
 `app_torrent_rows.zig` owns folder-row matching, controls and hover details; `torrents.zig` is a bounded,
 nonblocking SOCK_SEQPACKET subscriber (poll slot 22). `torrent/helper.cpp`
 owns libtorrent and persistent resume data, and has no tray icon of its own;
@@ -342,6 +343,18 @@ See `docs/files-torrents.md` for dependencies, storage and lifecycle.
   start and once a window has. With no window, the process stays headless
   while the helper downloads or seeds (`Bridge.active`).
 
+* **A torrent is a folder.** `app_torrent_browse.zig` shows a torrent's
+  files as rows: the location is the `.torrent` path (a magnet's: its
+  destination folder plus the transfer id) with the folder inside after it,
+  and `History.torrent` marks that prefix the way `archive_len` marks an
+  archive's, so archive guards (no file operations, drags, folder sizes)
+  hold. Nothing is scanned: `inspect` lists a torrent file without adding
+  it, `files` a download's files with `wanted` and `done`, both replies to
+  the asking connection only (`torrents.Client.reply`). The tree logic is
+  `torrent_tree.zig`. A tick sends `select` (or `add` with `files`, the first
+  time); replies to `files` requests sent before a tick carry the old ticks
+  and are skipped for them (`Browse.stale`). Progress updates rows in place;
+  only a changed file list rebuilds them.
 * The socket is `files-transfers.sock`, deliberately outside `rediwm-*.sock`
   compositor discovery. Both ends check peer credentials; runtime/state are
   private. Use the system C++ compiler to match libtorrent's distro ABI.

@@ -677,4 +677,5 @@ test {
 
 test {
     _ = @import("app_archives_tests.zig");
+    _ = @import("app_torrent_browse_tests.zig");
 }

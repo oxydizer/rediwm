@@ -106,6 +106,12 @@ pub const Bridge = struct {
         _ = self.client.send(.{ .op = op, .id = entry.id() });
     }
 
+    /// The download job `job` mirrors, by its transfer id, while it is live.
+    pub fn transferOf(self: *const Bridge, job: JobId) ?[]const u8 {
+        for (&self.entries) |*e| if (e.used and !e.retired and e.job == job) return e.id();
+        return null;
+    }
+
     fn byJob(self: *Bridge, job: JobId) ?*Entry {
         for (&self.entries) |*e| if (e.used and e.job == job) return e;
         return null;

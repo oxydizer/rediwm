@@ -17,11 +17,13 @@ pub const View = struct {
 };
 
 pub const History = struct {
-    const Entry = struct { path: []const u8, archive_len: usize, view: View };
+    const Entry = struct { path: []const u8, archive_len: usize, torrent: bool, view: View };
     allocator: Allocator,
     current: []const u8,
     /// Prefix of current naming the archive; zero means a real directory.
     archive_len: usize = 0,
+    /// The prefix names a torrent (`app_torrent_browse.zig`), not an archive.
+    torrent: bool = false,
     view: View = .{},
     back_stack: std.ArrayList(Entry) = .empty,
     forward_stack: std.ArrayList(Entry) = .empty,
@@ -57,24 +59,33 @@ pub const History = struct {
         const archive_len = if (self.archive_len > 0 and new_path.len >= self.archive_len and
             std.mem.eql(u8, self.current[0..self.archive_len], new_path[0..self.archive_len]) and
             (new_path.len == self.archive_len or new_path[self.archive_len] == '/')) self.archive_len else 0;
-        return self.navigateLocation(new_path, archive_len);
+        return self.navigateTo(new_path, archive_len, archive_len > 0 and self.torrent);
     }
     pub fn navigateLocation(self: *History, new_path: []const u8, archive_len: usize) !void {
-        if (std.mem.eql(u8, self.current, new_path) and self.archive_len == archive_len) return;
+        return self.navigateTo(new_path, archive_len, false);
+    }
+    /// Into the torrent `path` names, at its top.
+    pub fn navigateTorrent(self: *History, path: []const u8) !void {
+        return self.navigateTo(path, path.len, true);
+    }
+    fn navigateTo(self: *History, new_path: []const u8, archive_len: usize, torrent: bool) !void {
+        if (std.mem.eql(u8, self.current, new_path) and self.archive_len == archive_len and self.torrent == torrent) return;
         const owned = try self.allocator.dupe(u8, new_path);
         errdefer self.allocator.free(owned);
-        try self.back_stack.append(self.allocator, .{ .path = self.current, .archive_len = self.archive_len, .view = self.view });
+        try self.back_stack.append(self.allocator, .{ .path = self.current, .archive_len = self.archive_len, .torrent = self.torrent, .view = self.view });
         self.clear(&self.forward_stack);
         self.current = owned;
         self.archive_len = archive_len;
+        self.torrent = torrent;
         self.view = .{};
     }
     fn step(self: *History, from: *std.ArrayList(Entry), to: *std.ArrayList(Entry)) !?[]const u8 {
         if (from.items.len == 0) return null;
-        try to.append(self.allocator, .{ .path = self.current, .archive_len = self.archive_len, .view = self.view });
+        try to.append(self.allocator, .{ .path = self.current, .archive_len = self.archive_len, .torrent = self.torrent, .view = self.view });
         const entry = from.pop().?;
         self.current = entry.path;
         self.archive_len = entry.archive_len;
+        self.torrent = entry.torrent;
         self.view = entry.view;
         return self.current;
     }

@@ -72,7 +72,11 @@ pub fn create(
     self.app.startAudio();
     if (launch.chooser == null) self.app.startTorrents();
     if (launch.transfers) self.app.openTransfers();
-    if (launch.torrent_source) |source| self.app.torrentSource(source);
+    if (launch.torrent_source) |source| {
+        // A torrent file opens as a folder; a magnet asks where it goes.
+        if (source.len > 0 and source[0] == '/') self.app.browseTorrent(source) else self.app.torrentSource(source);
+    }
+    if (launch.torrent_id) |id| self.app.browse_pending = self.app.allocator.dupe(u8, id) catch null;
 
     const registry = try display.getRegistry();
     self.registry = registry;
@@ -142,6 +146,8 @@ pub fn step(self: *Client) !void {
     self.openEditor();
     try self.handleClipboard();
     self.app.stepTorrents();
+    @import("app_torrent_browse.zig").stepPending(&self.app);
+    @import("app_torrent_browse.zig").step(&self.app);
     self.app.sync();
     self.app.stepService();
     self.stepArchiveDrag();

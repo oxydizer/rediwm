@@ -35,8 +35,8 @@ pub const View = struct {
         return std.mem.sliceTo(&self.selected, 0);
     }
 };
-/// Transfers are hidden for now: no sidebar entry, no helper started, no
-/// dialogs. Flip to bring the feature back; the rest of the code is intact.
+/// Torrents on or off as a whole: off, there is no sidebar entry, no helper
+/// started, no dialogs, and a torrent file is a plain file.
 pub const enabled = false;
 
 pub fn startTorrents(self: *App) void {
@@ -117,8 +117,11 @@ pub fn confirmTorrent(self: *App) void {
         defer self.allocator.free(source);
         self.torrentSource(source);
     } else if (self.torrents.send(.{ .op = "add", .source = dlg.target_path orelse "", .destination = value })) {
-        self.transfer_view.selected[0] = 0;
-        self.openTransfers();
+        // It shows up there as a folder that has not materialized yet.
+        const destination = self.allocator.dupe(u8, value) catch return;
+        defer self.allocator.free(destination);
+        self.closeDialog();
+        self.navigate(destination);
     } else self.setStatusNotice(self.torrents.message(), true);
 }
 pub fn torrentSidebarHeight(self: *App) i32 {
@@ -909,6 +912,8 @@ pub fn toggleTorrent(self: *App, t: Transfer) void {
 }
 
 pub fn openTorrentDetails(self: *App, id: []const u8) void {
+    // Its files, as a folder, are the details.
+    if (self.browseTransfer(id)) return;
     for (self.torrents.items(), 0..) |t, index| if (std.mem.eql(u8, t.id, id)) {
         self.closeDialog();
         openTransfer(self, index);

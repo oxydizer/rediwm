@@ -37,22 +37,59 @@ pub const Transfer = struct {
         return if (self.finished) tr("Downloaded · Seeding") else tr("Downloading");
     }
 };
-pub const Snapshot = struct { transfers: []const Transfer = &.{}, @"error": []const u8 = "" };
+/// One file of a torrent as `inspect` and `files` list it.
+pub const Entry = struct {
+    index: usize,
+    path: []const u8,
+    size: i64,
+    /// Bytes downloaded, by whole pieces.
+    done: i64 = 0,
+    /// Chosen to download (a started download only).
+    wanted: bool = false,
+};
+/// A torrent's file list: of a torrent file looked into (`inspect`, `id` is
+/// what the transfer would be), or of a transfer (`files`).
+pub const Listing = struct {
+    id: []const u8,
+    source: []const u8 = "",
+    name: []const u8 = "",
+    metadata: bool = true,
+    files: []const Entry = &.{},
+};
+/// What the helper sends: a snapshot for everyone (`transfers`), an error,
+/// or the reply to this connection's `inspect` or `files`.
+pub const Snapshot = struct {
+    transfers: ?[]const Transfer = null,
+    @"error": []const u8 = "",
+    inspect: ?Listing = null,
+    detail: ?Listing = null,
+};
 pub const Client = struct {
     rows_changed: bool = false,
     /// Bumped with every snapshot taken in.
     generation: u64 = 0,
     fd: c_int = -1,
     snapshot: ?std.json.Parsed(Snapshot) = null,
+    /// The latest `inspect` or `files` reply.
+    reply: ?std.json.Parsed(Snapshot) = null,
+    /// Bumped with every reply, and every error.
+    reply_generation: u64 = 0,
+    error_generation: u64 = 0,
     retry_at: ?i64 = null,
     attempts: u8 = 0,
     error_buf: [256]u8 = @splat(0),
     pub fn deinit(self: *Client) void {
         if (self.fd >= 0) _ = c.close(self.fd);
         if (self.snapshot) |*s| s.deinit();
+        if (self.reply) |*s| s.deinit();
     }
     pub fn items(self: *const Client) []const Transfer {
-        return if (self.snapshot) |s| s.value.transfers else &.{};
+        return if (self.snapshot) |s| s.value.transfers orelse &.{} else &.{};
+    }
+    /// The latest reply, an `inspect` or a `files` one.
+    pub fn listing(self: *const Client) ?Listing {
+        const r = self.reply orelse return null;
+        return r.value.inspect orelse r.value.detail;
     }
     pub fn message(self: *const Client) []const u8 {
         return std.mem.sliceTo(&self.error_buf, 0);
@@ -114,11 +151,30 @@ pub const Client = struct {
             };
             if (next.value.@"error".len > 0) {
                 self.fail(next.value.@"error");
+                self.error_generation +%= 1;
                 next.deinit();
                 continue;
             }
-            var valid = next.value.transfers.len <= 64;
-            for (next.value.transfers) |t| {
+            if (next.value.inspect orelse next.value.detail) |list| {
+                var fine = list.id.len <= 64 and list.files.len <= 512;
+                for (list.files) |f| fine = fine and f.index < 512;
+                if (!fine) {
+                    next.deinit();
+                    self.fail(tr("Invalid transfer metadata"));
+                    self.error_generation +%= 1;
+                    return;
+                }
+                if (self.reply) |*old| old.deinit();
+                self.reply = next;
+                self.reply_generation +%= 1;
+                continue;
+            }
+            const transfers = next.value.transfers orelse {
+                next.deinit();
+                continue;
+            };
+            var valid = transfers.len <= 64;
+            for (transfers) |t| {
                 valid = valid and t.id.len <= 64 and t.files.len <= 512;
                 for (t.files) |f| valid = valid and f.index < 512;
             }
@@ -127,7 +183,7 @@ pub const Client = struct {
                 self.fail(tr("Invalid transfer metadata"));
                 return;
             }
-            self.rows_changed = self.rows_changed or !sameRows(self.items(), next.value.transfers);
+            self.rows_changed = self.rows_changed or !sameRows(self.items(), transfers);
             if (self.snapshot) |*old| old.deinit();
             self.snapshot = next;
             self.generation +%= 1;
