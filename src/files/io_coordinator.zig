@@ -88,13 +88,14 @@ pub fn wallClockMs() i64 {
     return @as(i64, @intCast(ts.tv_sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
 }
 
-/// Manager and record states share names and order.
+/// Manager and record states share names and order; the record has more
+/// after them (`seeding`, a download's, not the Manager's).
 fn recordState(state: io_manager.JobState) io_service.JobState {
     comptime {
         const a = @typeInfo(io_manager.JobState).@"enum";
         const b = @typeInfo(io_service.JobState).@"enum";
-        std.debug.assert(a.field_names.len == b.field_names.len);
-        for (a.field_names, b.field_names, a.field_values, b.field_values) |x, y, xv, yv|
+        std.debug.assert(a.field_names.len <= b.field_names.len);
+        for (a.field_names, b.field_names[0..a.field_names.len], a.field_values, b.field_values[0..a.field_values.len]) |x, y, xv, yv|
             std.debug.assert(std.mem.eql(u8, x, y) and xv == yv);
     }
     return @enumFromInt(@intFromEnum(state));

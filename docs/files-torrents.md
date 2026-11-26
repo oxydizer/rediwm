@@ -26,9 +26,11 @@ The first version has paged file selection, pause/resume, removal that keeps
 files, and two upload limits (128 KiB/s or 1 MiB/s). Seeding can stop at download
 completion, ratio 1 or ratio 2. The session upload ceiling is 1 MiB/s.
 
-Downloads and seeding continue after the last Files window closes. The tray
-indicator opens Transfers; its menu offers Pause all and Stop seeding. It is
-hidden when all transfers are stopped. A completion notification is sent when
+Downloads and seeding continue after the last Files window closes: Files stays
+up without a window while the helper downloads or seeds, mirroring each
+torrent as a job, so the shell's Transfers panel shows them (with their speed,
+share ratio and Stop seeding) beside copies and extractions. The helper has no
+tray icon of its own. A completion notification is sent when
 a notification service is already running. Transfers recover when Files next
 starts after logout or a helper crash; there is no new login autostart service.
 
@@ -77,7 +79,7 @@ streaming previews, automatic move tracking or individual file-row progress.
 
 ## Validation
 
-`zig build test-files-torrents` runs real engine and headless UI/tray tests
+`zig build test-files-torrents` runs real engine and headless UI tests
 without contacting public peers, trackers or the user's session bus. Set
 `REDIWM_TEST_BIN_DIR` to an alternate build's `bin` directory to exercise it. The
 fixture network shim is never installed or linked into production binaries.

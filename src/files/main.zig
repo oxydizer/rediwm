@@ -9,6 +9,7 @@ const app_mod = @import("app.zig");
 const io_service_mod = @import("io_service.zig");
 const io_coordinator_mod = @import("io_coordinator.zig");
 const io_endpoint = @import("io_endpoint.zig");
+const io_torrent_bridge = @import("io_torrent_bridge.zig");
 const key_repeat = @import("ui").key_repeat;
 const shell_ui = @import("ui").cairo;
 const ui_theme = @import("ui").theme;
@@ -342,6 +343,15 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         for (windows.items) |window| window.destroy();
         windows.deinit(a);
     }
+
+    // Downloads as jobs, for every window and the shell's panel; a chooser
+    // has no part in them. Declared after the endpoint, so its defer retires
+    // the downloads before the endpoint stops serving them.
+    const runtime = init.minimal.environ.getPosix("XDG_RUNTIME_DIR");
+    var torrent_bridge: io_torrent_bridge.Bridge = .{ .service = &service };
+    defer torrent_bridge.deinit();
+    const downloads = chooser == null and @import("app_torrents.zig").enabled;
+    if (downloads) if (runtime) |dir| torrent_bridge.connect(dir);
     try windows.append(a, try Client.create(display, setup, .{
         .dir = target_dir,
         .selected_file = selected_file,
@@ -373,12 +383,24 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             if (window.finished()) ended = true;
             index += 1;
         }
+        if (downloads) {
+            // A window that reached the helper means it runs: follow it too.
+            if (!torrent_bridge.connected()) if (runtime) |dir| for (windows.items) |window| {
+                if (window.app.torrents.fd >= 0) {
+                    torrent_bridge.connect(dir);
+                    break;
+                }
+            };
+            torrent_bridge.step(@import("app_draw.zig").nowMs());
+        }
         if (windows.items.len == 0) {
             if (chooser != null) break;
             // No window, but work in hand: stay, headless, so a launch can
-            // still open a window here and show it (architecture §13).
+            // still open a window here and show it (architecture §13). A
+            // download or a seeding torrent is work too, so the shell's
+            // Transfers panel keeps seeing it with every window closed.
             const serving = if (endpoint) |e| e.serving() else false;
-            if (!serving or service.isWorkIdle()) {
+            if (!serving or (service.isWorkIdle() and !torrent_bridge.active())) {
                 // Stop serving first, then open what was accepted before that:
                 // those launchers were told yes and have exited.
                 if (endpoint) |e| e.stop();
@@ -448,9 +470,9 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             return error.DisplayFailed;
         }
 
-        // The last two slots are the I/O service's update wake, shared by every
-        // window, and the endpoint's open wake.
-        var fds: [1 + max_windows * Client.poll_slots + 2]c.struct_pollfd = undefined;
+        // The last three slots are the I/O service's update wake, shared by every
+        // window, the endpoint's open wake and the transfer helper.
+        var fds: [1 + max_windows * Client.poll_slots + 3]c.struct_pollfd = undefined;
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         var timeout: c_int = -1;
         for (windows.items, 0..) |window, i| {
@@ -464,7 +486,9 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         // Launches handed over by the endpoint; drained by `openRequested`.
         const endpoint_fd: c_int = if (endpoint) |e| (if (e.serving()) e.openWakeFd() else -1) else -1;
         fds[service_slot + 1] = .{ .fd = endpoint_fd, .events = c.POLLIN, .revents = 0 };
-        const result = c.poll(&fds, @intCast(service_slot + 2), timeout);
+        // The transfer helper's snapshots, for the torrent bridge.
+        fds[service_slot + 2] = .{ .fd = if (downloads) torrent_bridge.fd() else -1, .events = c.POLLIN, .revents = 0 };
+        const result = c.poll(&fds, @intCast(service_slot + 3), timeout);
         if (result > 0 and (fds[0].revents & c.POLLIN != 0)) {
             if (display.readEvents() != .SUCCESS) return error.DisplayFailed;
         } else {

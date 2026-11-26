@@ -210,6 +210,11 @@ const Job = struct {
     waiting_for: []const u8,
     /// Where a copy, move or extraction writes; empty when unknown.
     destination: []const u8,
+    upload_rate_bytes_per_second: u64,
+    uploaded_bytes: u64,
+    ratio_limit: u8,
+    peers: u32,
+    choose_files: bool,
     error_code: u8,
     /// Retired: the record is final and the job leaves the list.
     removed: bool,
@@ -234,6 +239,11 @@ const Job = struct {
             .conflict = record.pending_conflict != 0,
             .waiting_for = record.waitingFor(),
             .destination = record.destination(),
+            .upload_rate_bytes_per_second = record.upload_rate_bytes_per_second,
+            .uploaded_bytes = record.uploaded_bytes,
+            .ratio_limit = record.ratio_limit,
+            .peers = record.peers,
+            .choose_files = record.choose_files,
             .error_code = record.error_code,
             .removed = record.removed,
             .revision = record.revision,

@@ -15,7 +15,8 @@ pub const history_len = 60;
 pub const max_live = 64;
 pub const max_done = 32;
 
-pub const Kind = enum { copy, move, extract, delete, trash, empty_trash, other };
+/// `download` is a torrent: Files mirrors the transfer helper's downloads.
+pub const Kind = enum { copy, move, extract, delete, trash, empty_trash, other, download };
 
 pub const State = enum {
     planning,
@@ -28,6 +29,8 @@ pub const State = enum {
     completed_with_errors,
     failed,
     cancelled,
+    /// A finished download sharing what it has.
+    seeding,
 
     pub fn isTerminal(self: State) bool {
         return switch (self) {
@@ -114,11 +117,19 @@ pub const Job = struct {
     cancel_requested: bool = false,
     conflict: bool = false,
     error_code: u8 = 0,
+    /// Downloads: sharing speed, all shared, the ratio at which seeding
+    /// stops (0 never seeds), peers, and files still to be chosen.
+    upload_rate: u64 = 0,
+    uploaded_bytes: u64 = 0,
+    ratio_limit: u8 = 0,
+    peers: u32 = 0,
+    choose_files: bool = false,
     history: History = .{},
 
     /// Deletions count items; everything else counts bytes. Null until
     /// planning knows the total.
     pub fn fraction(self: *const Job) ?f32 {
+        if (self.state == .seeding) return 1;
         if (self.state == .completed or self.state == .completed_with_errors) return 1;
         if (countsItems(self.kind) or self.total_bytes == 0) {
             if (self.total_items == 0) return null;
@@ -136,9 +147,16 @@ pub const Job = struct {
         return (left + recent - 1) / recent;
     }
 
-    /// Asks for the user: a conflict waits in Files.
+    /// Asks for the user: a conflict waits in Files, or a download's files
+    /// are to be chosen.
     pub fn needsAttention(self: *const Job) bool {
-        return self.conflict;
+        return self.conflict or self.choose_files;
+    }
+
+    /// Shared over size, the share ratio; null before anything was shared.
+    pub fn ratio(self: *const Job) ?f32 {
+        if (self.total_bytes == 0) return null;
+        return @as(f32, @floatFromInt(self.uploaded_bytes)) / @as(f32, @floatFromInt(self.total_bytes));
     }
 };
 
@@ -162,8 +180,10 @@ fn recentRate(history: *const History, current: u64) u64 {
 
 /// What the tray icon shows.
 pub const Summary = struct {
-    /// Jobs that have not finished.
+    /// Jobs that have not finished. Seeding downloads have, and are apart.
     active: usize = 0,
+    seeding: usize = 0,
+    upload_rate: u64 = 0,
     paused: usize = 0,
     /// Every active job is paused.
     all_paused: bool = false,
@@ -181,6 +201,8 @@ pub const Model = struct {
     done: [max_done]Job = undefined,
     done_len: usize = 0,
     total: History = .{},
+    /// What seeding and downloading torrents share, apart from `total`.
+    upload: History = .{},
     /// The last event's sequence, to notice a gap.
     sequence: u64 = 0,
     /// Bumped on every change the panel or the icon shows.
@@ -211,7 +233,12 @@ pub const Model = struct {
         var fractions: f32 = 0;
         var fraction_count: usize = 0;
         for (self.live[0..self.live_len]) |*job| {
-            if (job.conflict) s.attention = true;
+            if (job.needsAttention()) s.attention = true;
+            s.upload_rate +|= job.upload_rate;
+            if (job.state == .seeding) {
+                s.seeding += 1;
+                continue;
+            }
             if (job.state.isTerminal()) continue;
             s.active += 1;
             s.rate +|= job.rate;
@@ -261,6 +288,7 @@ pub const Model = struct {
     fn applySnapshot(self: *Model, jobs: []const WireJob) void {
         self.live_len = 0;
         self.total = .{};
+        self.upload = .{};
         var longest: usize = 0;
         for (jobs) |*wire| {
             if (wire.removed or self.live_len == max_live) continue;
@@ -271,13 +299,19 @@ pub const Model = struct {
             self.live[self.live_len] = job;
             self.live_len += 1;
         }
-        // The total is the sum of the jobs' histories, aligned at the newest.
+        // The totals are the sums of the jobs' histories, aligned at the
+        // newest; a seeding job's history is what it shared.
         var sums: [history_len]u64 = @splat(0);
+        var shared: [history_len]u64 = @splat(0);
         for (self.live[0..self.live_len]) |*job| {
             const v = job.history.values();
-            for (v, 0..) |rate, i| sums[history_len - v.len + i] +|= rate;
+            const into = if (job.state == .seeding) &shared else &sums;
+            for (v, 0..) |rate, i| into[history_len - v.len + i] +|= rate;
         }
-        for (sums[history_len - longest ..]) |rate| self.total.push(rate);
+        for (sums[history_len - longest ..], shared[history_len - longest ..]) |rate, up| {
+            self.total.push(rate);
+            self.upload.push(up);
+        }
     }
 
     fn applyJob(self: *Model, wire: *const WireJob) void {
@@ -316,12 +350,15 @@ pub const Model = struct {
     pub fn tick(self: *Model) void {
         if (self.live_len == 0) return;
         var sum: u64 = 0;
+        var up: u64 = 0;
         for (self.live[0..self.live_len]) |*job| {
-            const rate = if (job.state == .running) job.rate else 0;
+            const rate = if (job.state == .running or job.state == .seeding) job.rate else 0;
             job.history.push(rate);
-            sum +|= rate;
+            if (job.state == .running) sum +|= rate;
+            up +|= job.upload_rate;
         }
         self.total.push(sum);
+        self.upload.push(up);
         self.revision +%= 1;
     }
 
@@ -331,6 +368,7 @@ pub const Model = struct {
         for (self.live[0..self.live_len]) |job| self.retire(job);
         self.live_len = 0;
         self.total = .{};
+        self.upload = .{};
         self.sequence = 0;
         self.revision +%= 1;
     }
@@ -359,6 +397,11 @@ fn fill(job: *Job, wire: *const WireJob) void {
     job.cancel_requested = wire.cancel_requested;
     job.conflict = wire.conflict;
     job.error_code = wire.error_code;
+    job.upload_rate = wire.upload_rate_bytes_per_second;
+    job.uploaded_bytes = wire.uploaded_bytes;
+    job.ratio_limit = wire.ratio_limit;
+    job.peers = wire.peers;
+    job.choose_files = wire.choose_files;
 }
 
 const WireJob = struct {
@@ -382,6 +425,11 @@ const WireJob = struct {
     removed: bool = false,
     revision: u64 = 0,
     rate_history: ?[]const u64 = null,
+    upload_rate_bytes_per_second: u64 = 0,
+    uploaded_bytes: u64 = 0,
+    ratio_limit: u8 = 0,
+    peers: u32 = 0,
+    choose_files: bool = false,
 };
 
 const WireLine = struct {

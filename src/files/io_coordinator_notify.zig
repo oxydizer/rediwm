@@ -74,6 +74,7 @@ pub fn jobEnded(self: *Coordinator, record: io_service.JobRecord) void {
             .trash => tr("Items moved to Trash"),
             .empty_trash => tr("Trash emptied"),
             .other => tr("File operation finished"),
+            .download => tr("Download finished"),
         },
         .completed_with_errors => tr("File operation finished with errors"),
         .cancelled => tr("File operation cancelled"),

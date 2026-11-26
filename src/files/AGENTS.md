@@ -322,12 +322,25 @@ control bytes are refused because terminal paste would alter them.
 `app_torrents.zig` owns the sidebar, main-pane list, toolbar and detail dialog;
 `app_torrent_rows.zig` owns folder-row matching, controls and hover details; `torrents.zig` is a bounded,
 nonblocking SOCK_SEQPACKET subscriber (poll slot 22). `torrent/helper.cpp`
-owns libtorrent, persistent resume data, StatusNotifierItem and its D-Bus menu;
-its parts are `helper_transfers`, `helper_peers` and `helper_tray.cpp`, sharing
+owns libtorrent and persistent resume data, and has no tray icon of its own;
+its parts are `helper_transfers`, `helper_peers` and `helper_session.cpp`, sharing
 `helper.hpp` (everything in `namespace helper`; new state shared between parts
 is an `inline` variable there, state of one part stays `static` in it).
 The helper survives Files closing; no torrent state belongs to a window.
 See `docs/files-torrents.md` for dependencies, storage and lifecycle.
+
+* **Downloads are jobs.** `io_torrent_bridge.zig` is the process's own
+  connection to the helper, on the UI thread (`main.zig`, the poll slot after
+  the endpoint's), mirroring each torrent into the job table as a `download`
+  with ids from `torrent_job_base`: fetching the list is `planning`, files to
+  choose `queued` with `choose_files`, a finished download that shares
+  `seeding`, a stopped one completes and retires. Windows' job models skip
+  downloads (they list torrents from their own connection); the endpoint's
+  subscribers, the shell's panel, see them. Pause, resume and cancel
+  (`remove`, keeping payload) of a download go to `Service.torrent_controls`
+  instead of the coordinator. It never starts the helper: it connects at
+  start and once a window has. With no window, the process stays headless
+  while the helper downloads or seeds (`Bridge.active`).
 
 * The socket is `files-transfers.sock`, deliberately outside `rediwm-*.sock`
   compositor discovery. Both ends check peer credentials; runtime/state are

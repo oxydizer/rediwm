@@ -46,6 +46,17 @@ pub fn sendControl(self: *Service, control: Control, job_id: JobId) error{ JobNo
     defer self.unlock();
     if (self.stopping.load(.acquire)) return error.ServiceStopping;
     const record = self.table.get(job_id) orelse return error.JobNotFound;
+    if (io_service.isTorrentJob(job_id)) {
+        // A failed download is still the helper's until it is removed.
+        const kind: io_service.CommandKind = switch (control) {
+            .pause => .pause_job,
+            .@"resume" => .resume_job,
+            .cancel => .cancel_job,
+        };
+        if (!self.torrent_controls.push(.{ .kind = kind, .job_id = job_id })) return error.QueueFull;
+        Service.signalWake(self.update_wake_fd);
+        return;
+    }
     if (record.state.isTerminal()) return error.InvalidState;
     const command: io_service.Command = .{
         .kind = switch (control) {
