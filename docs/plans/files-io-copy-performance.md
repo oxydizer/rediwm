@@ -66,7 +66,7 @@ measured against all four with `bench-files-io` (see its settings at the top of
   extraction 6.9 → 7.1 s (within noise).
 
 * **Measured on the user's disks** (2026-11-26, before #82 → after #83).
-  NVMe (btrfs): small files 104.6 → 3.1 s, extraction 57.1 → 48.5 s, large
+  SATA SSD (home, btrfs): small files 104.6 → 3.1 s, extraction 57.1 → 48.5 s, large
   copies 0.02 → 0.62 s (reflinks either way; the 0.62 s is the job's one
   `syncfs`, which also waits for the other jobs' writes on that filesystem).
   USB hard disk: large 53.2 → 36.5 s, small 74.0 → 45.3 s, extraction
@@ -81,7 +81,7 @@ measured against all four with `bench-files-io` (see its settings at the top of
 
 ## 4. Next
 
-1. **Measure on real disks** again after #84, and on the SATA SSD, which was
+1. **Measure on real disks** again after #84, and on the NVMe, which was
    not in the first run.
 2. **Fair turns by time, not by unit**, if the bound above proves too tight on
    real disks: let the round-robin account for a job's worker time.
