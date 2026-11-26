@@ -63,6 +63,7 @@ pub const CompositorError = error{
     RendererInitFailed,
     AllocatorCreateFailed,
     ShmInitFailed,
+    LinuxDmabufCreateFailed,
     SceneCreateFailed,
     OutputLayoutCreateFailed,
     XdgOutputManagerCreateFailed,
@@ -76,6 +77,7 @@ pub const CompositorError = error{
     KdeDecorationCreateFailed,
     TitlebarTabsCreateFailed,
     CompositorCreateFailed,
+    FixesCreateFailed,
     SubcompositorCreateFailed,
     DataDeviceManagerCreateFailed,
     DataControlManagerCreateFailed,
@@ -93,6 +95,7 @@ pub const CompositorError = error{
     PointerConstraintsCreateFailed,
     PointerWarpCreateFailed,
     FifoManagerCreateFailed,
+    CommitTimingCreateFailed,
     ShortcutsInhibitCreateFailed,
 };
 
@@ -131,7 +134,7 @@ background_tree: *sn.Tree,
 desktop_tree: *sn.Tree,
 world_desktop_tree: *sn.Tree,
 new_layer: wl.Listener(*wlr.LayerSurfaceV1) = .init(newLayer),
-wallpaper: ?*ImageBuffer = null,
+wallpaper: ?server_wallpaper.Wallpaper = null,
 world: World,
 taskbar_tree: *sn.Tree,
 // While > 0 `refreshTaskbars` only records the request; see `holdTaskbars`.
@@ -149,13 +152,17 @@ locker: ?*@import("session/lock.zig").Lock = null,
 /// `rediwm --greeter`: rediwm-dm's greeter, locked for its whole life.
 greeter_mode: bool = false,
 outputs: wl.list.Head(Output, .link) = undefined,
+/// Where outputs without a saved position go (`output/auto_place.zig`).
+auto_order: @import("output/auto_place.zig").Order = .{},
 layer_surfaces: wl.list.Head(@import("LayerSurface.zig"), .link) = undefined,
 
 input: Input,
 activation: @import("input/activation.zig") = .{},
 extra_protocols: ?*@import("extra_protocols.zig").Protocols = null,
+last_system_bell_ms: ?i64 = null,
 /// wp_fifo_v1 (`fifo.zig`); null in the greeter.
 fifo: ?*@import("fifo.zig").Manager = null,
+commit_timing: ?*@import("commit_timing.zig") = null,
 launch_feedback: @import("launch_feedback.zig") = .{},
 window_tabs: @import("window_tabs.zig") = .{},
 text_input: ?*@import("input/text_input.zig") = null,
@@ -246,6 +253,7 @@ foreign_toplevels: ?*wlr.ForeignToplevelManagerV1 = null,
 /// wlr-output-management; not advertised by the greeter.
 output_management: ?*@import("output_management.zig").Manager = null,
 /// wlr-output-power-management; not advertised by the greeter.
+set_gamma: wl.Listener(*@import("output/gamma.zig").Event) = .init(@import("output/gamma.zig").changed),
 output_power: ?*@import("output_power.zig").Manager = null,
 /// ext-session-lock; the greeter is itself a lock and never advertises it.
 session_lock: ?*@import("session/client_lock.zig").Manager = null,
@@ -259,6 +267,7 @@ polkit_dialog: ?*@import("polkit/dialog.zig").Dialog = null,
 tray: ?*@import("tray.zig").Tray = null,
 power: ?*power_mod.Manager = null,
 power_profiles: ?*power_profiles_mod.Manager = null,
+keyboard_backlight_watch: ?*@import("keyboard_backlight.zig") = null,
 /// Moves launched apps into their own systemd scopes; null in the greeter
 /// and nested sessions.
 app_scopes: ?*@import("session/app_scope.zig").Scopes = null,

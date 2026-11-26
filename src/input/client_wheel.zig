@@ -33,6 +33,8 @@ const Axis = struct {
     sent: i32 = 0,
     /// Logical pixels per value120 unit, from the notches being glided.
     px_per_v120: f64 = 15.0 / 120.0,
+    /// Direction metadata belonging to the current glide.
+    relative_direction: wl.Pointer.AxisRelativeDirection = .identical,
     /// Compared, never dereferenced: a glide ends when pointer focus leaves.
     surface: ?*wlr.Surface = null,
 
@@ -50,11 +52,11 @@ pub fn deinit(self: *ClientWheel) void {
 
 /// Forwards one detented wheel event (`delta_discrete` != 0) to the focused
 /// client, accelerated and/or glided as configured.
-pub fn forward(self: *ClientWheel, time_msec: u32, orientation: wl.Pointer.Axis, delta: f64, delta_discrete: i32) void {
+pub fn forward(self: *ClientWheel, time_msec: u32, orientation: wl.Pointer.Axis, delta: f64, delta_discrete: i32, relative_direction: wl.Pointer.AxisRelativeDirection) void {
     const input = self.owner();
     const seat = input.seat;
     const focused = seat.pointer_state.focused_surface orelse
-        return seat.pointerNotifyAxis(time_msec, orientation, delta, delta_discrete, .wheel, .identical);
+        return seat.pointerNotifyAxis(time_msec, orientation, delta, delta_discrete, .wheel, relative_direction);
     const cfg = input.server.config.input;
     const axis = &self.axes[@intCast(@intFromEnum(orientation))];
     const now_ms = anim.nowMs();
@@ -63,7 +65,7 @@ pub fn forward(self: *ClientWheel, time_msec: u32, orientation: wl.Pointer.Axis,
     _ = self.step(axis, orientation, now_ms);
 
     if (bindingModifierHeld(input)) {
-        return seat.pointerNotifyAxis(time_msec, orientation, delta, delta_discrete, .wheel, .identical);
+        return seat.pointerNotifyAxis(time_msec, orientation, delta, delta_discrete, .wheel, relative_direction);
     }
     const app = if (Toplevel.fromSurface(input.server, focused)) |toplevel| toplevel.appIdOrNull() else null;
     const notches = @as(f32, @floatFromInt(delta_discrete)) / 120;
@@ -76,7 +78,7 @@ pub fn forward(self: *ClientWheel, time_msec: u32, orientation: wl.Pointer.Axis,
     // Keep acceleration here, but do not smooth its input a second time.
     const files = if (app) |id| std.mem.eql(u8, id, "rediwm-files") else false;
     if (!cfg.smooth_scroll or files or listed(cfg.smooth_scroll_exclude, app)) {
-        return seat.pointerNotifyAxis(time_msec, orientation, @as(f64, @floatFromInt(v120)) * px_per_v120, v120, .wheel, .identical);
+        return seat.pointerNotifyAxis(time_msec, orientation, @as(f64, @floatFromInt(v120)) * px_per_v120, v120, .wheel, relative_direction);
     }
 
     const in_flight = axis.glide.active() and axis.surface == focused;
@@ -85,6 +87,7 @@ pub fn forward(self: *ClientWheel, time_msec: u32, orientation: wl.Pointer.Axis,
         axis.surface = focused;
     }
     axis.px_per_v120 = px_per_v120;
+    axis.relative_direction = relative_direction;
     const extra: f32 = @floatFromInt(v120);
     // Reversing mid-glide turns around from where the content is, without
     // the old momentum, as the shell panels do.
@@ -110,7 +113,7 @@ fn step(self: *ClientWheel, axis: *Axis, orientation: wl.Pointer.Axis, now_ms: i
     if (d != 0) {
         axis.sent = due;
         const time_msec: u32 = @truncate(@as(u64, @bitCast(now_ms)));
-        seat.pointerNotifyAxis(time_msec, orientation, @as(f64, @floatFromInt(d)) * axis.px_per_v120, d, .wheel, .identical);
+        seat.pointerNotifyAxis(time_msec, orientation, @as(f64, @floatFromInt(d)) * axis.px_per_v120, d, .wheel, axis.relative_direction);
         seat.pointerNotifyFrame();
     }
     if (done) axis.reset();

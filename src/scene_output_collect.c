@@ -2,6 +2,24 @@
 // above them, with their visible and opaque regions. Part of scene_output.c.
 #include "scene_output_internal.h"
 
+// The first output is being drawn. For every other output the same walk
+// measures visibility and occlusion for client enter/leave and damage.
+struct collect_output {
+    struct rediwm_scene_output *out;
+    struct wlr_box logical;
+    pixman_region32_t covered;
+};
+struct collector {
+    struct rediwm_output_renderer *renderer;
+    const struct output_view *view;
+    struct collect_output outputs[64];
+    size_t count;
+    struct rediwm_clip cover_of;
+    pixman_region32_t cover;
+    bool has_cover;
+    pixman_region32_t reads;
+};
+
 // What of a clipped item may be drawn without the shape and without blending: the
 // model's opaque cover, minus a margin around the edge where the ring is drawn.
 // Layout space, like the item's own opaque region.
@@ -25,38 +43,43 @@ static bool same_clip(const struct rediwm_clip *a, const struct rediwm_clip *b) 
         a->edges.y2 != b->edges.y2 || a->border != b->border) return false;
     return rediwm_clip_outline_equal(a, b);
 }
-bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *transport, void *data) {
+static bool collect_item(const struct rediwm_item *item, struct rediwm_node *transport, void *data) {
     struct collector *collector = data;
     struct rediwm_output_renderer *r = collector->renderer;
     if (!item->enabled) { return true; }
     struct rediwm_snap s = rediwm_edges_snap(item->edges);
     if (s.width <= 0 || s.height <= 0) { return true; }
     struct wlr_box box = {s.x, s.y, s.width, s.height}, intersection;
-    const bool here = wlr_box_intersection(&intersection, &box, &collector->view->logical);
-    // An item on another output only is not drawn for this one, but it still hides
-    // what is below it there, which the surface feedback below counts (stage 6).
-    bool elsewhere = false;
-    for (int i = 0; i < collector->others && !elsewhere; i++) {
-        struct wlr_box other;
-        elsewhere = wlr_box_intersection(&other, &box, &collector->other[i]);
-    }
-    if (!here && !elsewhere) { return true; }
-    // Visit top-to-bottom so fully occluded items never enter the render list
-    // and never allocate/copy content. The graph, not the view's visible region,
-    // supplies the bounds and paint order.
+    // An overhanging window may intersect a peer geometrically. Only its
+    // home draws it or adds it to the opaque cover for that output.
     pixman_region32_t visible;
-    pixman_region32_init_rect(&visible, box.x, box.y, box.width, box.height);
-    pixman_region32_subtract(&visible, &visible, &collector->covered);
-    // What a client surface shows of itself on every output is what it is told:
-    // this counts for an item that draws nothing as well (opacity 0), as it does
-    // for wlroots.
-    if (item->kind == REDIWM_ITEM_SURFACE)
-        rediwm_projection_feedback_note(r->projection, transport, &visible);
-    if (item->kind != REDIWM_ITEM_EFFECT)
-        rediwm_projection_note_visible(r->projection, transport, &visible);
-    if (here)
-        pixman_region32_intersect_rect(&visible, &visible, intersection.x, intersection.y,
-            intersection.width, intersection.height);
+    pixman_region32_init(&visible);
+    bool here = false, elsewhere = false;
+    uint64_t overlaps = 0;
+    for (size_t i = 0; i < collector->count; i++) {
+        struct collect_output *co = &collector->outputs[i];
+        struct wlr_box part;
+        if ((item->home_output && co->out->serial != item->home_output) ||
+                !wlr_box_intersection(&part, &box, &co->logical)) continue;
+        overlaps |= 1ull << i;
+        pixman_region32_t shown;
+        pixman_region32_init_rect(&shown, part.x, part.y, part.width, part.height);
+        pixman_region32_subtract(&shown, &shown, &co->covered);
+        rediwm_projection_note_output(r->projection, transport, co->out, &shown);
+        if (i == 0) {
+            here = true;
+            intersection = part;
+            // Transfer the region to the entry without another allocation.
+            visible = shown;
+        } else {
+            elsewhere |= pixman_region32_not_empty(&shown);
+            pixman_region32_fini(&shown);
+        }
+    }
+    const bool draw = here && (pixman_region32_not_empty(&visible) ||
+        pixman_region32_contains_rectangle(&collector->reads, &(pixman_box32_t){intersection.x, intersection.y,
+            intersection.x + intersection.width, intersection.y + intersection.height}) != PIXMAN_REGION_OUT);
+    if (!draw && !elsewhere) { pixman_region32_fini(&visible); return true; }
     struct rediwm_glass_info glass = {0};
     bool skip = false;
     if (item->kind == REDIWM_ITEM_RECT) {
@@ -64,7 +87,7 @@ bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *tr
     } else if (item->kind == REDIWM_ITEM_EFFECT) {
         // Glass is drawn here (stage 5c); without the blur program there is none,
         // and the surface's own tint shows, as glass.c's fallback did.
-        skip = !here || !r->has_backdrops || item->content.opacity == 0 ||
+        skip = !draw || !r->has_backdrops || item->content.opacity == 0 ||
             !rediwm_glass_effect_info(transport, &glass) || glass.opacity <= 0;
     } else if (item->kind == REDIWM_ITEM_RIBBON) {
         skip = item->content.opacity == 0 || item->ribbon->count < 4;
@@ -77,12 +100,6 @@ bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *tr
             (!b->buffer && !b->texture && !b->is_single_pixel_buffer);
     }
     if (skip) { pixman_region32_fini(&visible); return true; }
-    if (here && !pixman_region32_not_empty(&visible) &&
-        pixman_region32_contains_rectangle(&collector->reads, &(pixman_box32_t){intersection.x, intersection.y,
-            intersection.x + intersection.width, intersection.y + intersection.height}) == PIXMAN_REGION_OUT) {
-        pixman_region32_fini(&visible);
-        return true;
-    }
     struct entry *e = wl_array_add(&r->entries, sizeof(*e));
     if (!e) { pixman_region32_fini(&visible); return false; }
     *e = (struct entry){.item = *item, .transport = transport,
@@ -95,10 +112,15 @@ bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *tr
         e->glass = glass;
         e->sigma = glass.sigma * item->scale;
         const int pad = (int)ceil(3 * e->sigma);
-        e->padded = (struct wlr_box){box.x - pad, box.y - pad, box.width + 2 * pad, box.height + 2 * pad};
+        // A client viewport can be much larger than the output. Allocate blur
+        // storage only for the visible output and the samples around its edges.
+        const struct wlr_box extent = item->blur_region ? intersection : box;
+        e->padded = (struct wlr_box){extent.x - pad, extent.y - pad, extent.width + 2 * pad, extent.height + 2 * pad};
         pixman_region32_union_rect(&collector->reads, &collector->reads,
             e->padded.x, e->padded.y, e->padded.width, e->padded.height);
-        e->front = &glass.target->node;
+        // The shell uses its foreground texture for antialiased decoration edges.
+        // A client region is a mask behind the surface and needs no client texture.
+        e->front = item->blur_region ? NULL : &glass.target->node;
         return true;
     }
     bool full = item->kind == REDIWM_ITEM_RECT && item->content.color[3] == 1;
@@ -126,14 +148,42 @@ bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *tr
         }
         pixman_region32_intersect(&e->opaque, &e->opaque, &collector->cover);
     }
-    pixman_region32_union(&collector->covered, &collector->covered, &e->opaque);
-    if (!here) {
+    for (size_t i = 0; i < collector->count; i++) if (overlaps & (1ull << i)) {
+        pixman_region32_t *covered = &collector->outputs[i].covered;
+        pixman_region32_union(covered, covered, &e->opaque);
+    }
+    if (!draw) {
         // Only what it hides, for the feedback of what is below.
         pixman_region32_fini(&e->visible);
         pixman_region32_fini(&e->opaque);
         r->entries.size -= sizeof(*e);
     }
     return true;
+}
+bool scene_output_collect_frame(struct rediwm_output_renderer *r, struct rediwm_scene_output *out,
+        const struct output_view *v, pixman_region32_t *covered) {
+    struct collector collector = {.renderer = r, .view = v, .count = 1,
+        .outputs = {{.out = out, .logical = v->logical}}};
+    struct rediwm_scene_output *peer;
+    wl_list_for_each(peer, &out->outputs->outputs, link) {
+        if (peer == out || !peer->output->enabled) continue;
+        struct collect_output *co = &collector.outputs[collector.count++];
+        co->out = peer;
+        co->logical = (struct wlr_box){.x = peer->x, .y = peer->y};
+        wlr_output_effective_resolution(peer->output, &co->logical.width, &co->logical.height);
+    }
+    for (size_t i = 0; i < collector.count; i++) pixman_region32_init(&collector.outputs[i].covered);
+    pixman_region32_init(&collector.reads);
+    rediwm_projection_feedback_begin(r->projection);
+    bool ok = rediwm_projection_for_each_item(r->projection, true, collect_item, &collector);
+    if (ok) {
+        rediwm_projection_feedback_end(r->projection);
+        pixman_region32_copy(covered, &collector.outputs[0].covered);
+    }
+    if (collector.has_cover) pixman_region32_fini(&collector.cover);
+    pixman_region32_fini(&collector.reads);
+    for (size_t i = 0; i < collector.count; i++) pixman_region32_fini(&collector.outputs[i].covered);
+    return ok;
 }
 void scene_output_clear_entries(struct rediwm_output_renderer *r) {
     struct entry *e;

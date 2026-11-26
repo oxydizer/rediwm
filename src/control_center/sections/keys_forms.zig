@@ -62,8 +62,8 @@ pub fn build(self: *s.Section, cc: *panel.ControlCenter, a: s.A) !s.W {
         .trash => {
             try widgets.append(a, panel.sectionTitle(i18n.tr("Move this key to Trash?")));
             try widgets.append(a, s.text(item.?.fingerprint, false));
-            try widgets.append(a, try panel.paragraph(a, s.location(self, item.?).path, 420, panel.palette().app_text_size, true));
-            try widgets.append(a, try panel.paragraph(a, i18n.tr("This location and its matching .pub file will move to Trash. Other copies stay where they are. References in SSH configuration and servers may still need this key."), 420, panel.palette().app_text_size, true));
+            try widgets.append(a, try panel.paragraph(cc.toplevel.render_scale, a, s.location(self, item.?).path, 420, panel.palette().app_text_size, true));
+            try widgets.append(a, try panel.paragraph(cc.toplevel.render_scale, a, i18n.tr("This location and its matching .pub file will move to Trash. Other copies stay where they are. References in SSH configuration and servers may still need this key."), 420, panel.palette().app_text_size, true));
         },
         .none => {},
     }

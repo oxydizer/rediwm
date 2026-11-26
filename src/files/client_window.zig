@@ -198,3 +198,45 @@ pub fn xdgToplevelEvent(_: *xdg.Toplevel, event: xdg.Toplevel.Event, self: *Clie
         .configure_bounds, .wm_capabilities => {},
     }
 }
+
+/// A portal request names the requesting app's window: as "wayland:<handle>"
+/// it is imported through xdg-foreign and the chooser becomes its dialog, modal
+/// unless the app asked otherwise. An "x11:<xid>" window cannot parent a Wayland
+/// one, so that chooser stays a window of its own.
+pub fn attachToParent(self: *Client, options: @import("chooser.zig").Options) void {
+    const prefix = "wayland:";
+    if (!std.mem.startsWith(u8, options.parent_window, prefix)) return;
+    const handle = options.parent_window[prefix.len..];
+    // Real handles are short; a huge one would not fit a Wayland message.
+    if (handle.len == 0 or handle.len > 256) return;
+    const importer = self.importer orelse return;
+    const name = a.dupeSentinel(u8, handle, 0) catch return;
+    defer a.free(name);
+    const imported = importer.importToplevel(name) catch return;
+    imported.setListener(*Client, importedEvent, self);
+    imported.setParentOf(self.surface);
+    self.imported_parent = imported;
+    const manager = self.wm_dialog orelse return;
+    const dialog = manager.getXdgDialog(self.xdg_toplevel) catch return;
+    if (options.modal) dialog.setModal();
+    self.dialog = dialog;
+}
+
+/// Before the toplevel goes: the dialog object refers to it.
+pub fn detachParent(self: *Client) void {
+    if (self.dialog) |dialog| dialog.destroy();
+    self.dialog = null;
+    if (self.imported_parent) |imported| imported.destroy();
+    self.imported_parent = null;
+}
+
+/// The app's window closed or withdrew its handle; the chooser stays open on
+/// its own, and the portal request decides when it ends.
+fn importedEvent(imported: *zxdg.ImportedV2, event: zxdg.ImportedV2.Event, self: *Client) void {
+    switch (event) {
+        .destroyed => {
+            imported.destroy();
+            self.imported_parent = null;
+        },
+    }
+}

@@ -265,6 +265,7 @@ pub fn optionsOf(data: layout.ButtonData) Options {
         .label = data.label,
         .icon = data.icon,
         .icon_scale = data.icon_scale,
+        .radius = data.radius,
         .leading_icon = data.leading_icon,
         .trailing_icon = data.trailing_icon,
         .stacked = data.stacked,
@@ -681,21 +682,21 @@ pub fn paintContent(r: *Renderer, box: Rect, opts: Options, state: State) void {
         const line = m.font_size * 1.4;
         const top = box.y + (box.h - (icon + stack_gap + line)) / 2;
         if (opts.leading_icon) |id| r.drawIcon(box.x + (box.w - icon) / 2, top, icon, icon, .{ .id = id, .color = fg });
-        const tx = paint_mod.centeredTextX(box.x, box.w, parsed.label, m.font_size);
-        r.drawText(tx, top + icon + stack_gap, box.x + box.w - tx, line, label_style);
+        r.drawTextCentered(box.x, top + icon + stack_gap, box.w, line, label_style);
         return;
     }
     if (opts.leading_icon) |id| {
         // Icon and label centred as one group.
-        const label_w = paint_mod.labelWidth(parsed.label, m.font_size);
+        const label_w = r.textWidth(label_style);
         const group = m.icon + iconGap(m) + label_w;
         const left = box.x + (if (opts.alignment == .left) m.pad_x else @max(0, (box.w - group) / 2));
         r.drawIcon(left, box.y + (box.h - m.icon) / 2, m.icon, m.icon, .{ .id = id, .color = fg });
         const tx = left + m.icon + iconGap(m);
         r.drawText(tx, box.y, @max(0, box.x + box.w - tx - trailing_room), box.h, label_style);
+    } else if (opts.alignment == .left) {
+        r.drawText(box.x + m.pad_x, box.y, @max(0, box.w - m.pad_x - trailing_room), box.h, label_style);
     } else {
-        const tx = if (opts.alignment == .left) box.x + m.pad_x else paint_mod.centeredTextX(box.x, box.w, parsed.label, m.font_size);
-        r.drawText(tx, box.y, @max(0, box.x + box.w - tx - trailing_room), box.h, label_style);
+        r.drawTextCentered(box.x, box.y, box.w, box.h, label_style);
     }
     if (opts.trailing_icon) |id| {
         r.drawIcon(box.x + box.w - m.pad_x - m.icon, box.y + (box.h - m.icon) / 2, m.icon, m.icon, .{ .id = id, .color = fg });

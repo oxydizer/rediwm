@@ -333,6 +333,9 @@ pub fn buildRequest(allocator: std.mem.Allocator, command: Command) !std.ArrayLi
             if (p.primary) |value| try bw.print(",\"primary\":{s}", .{if (value) "true" else "false"});
             if (p.transform) |value| try bw.print(",\"transform\":\"{s}\"", .{protocol.outputTransformName(value)});
             if (p.adaptive_sync) |value| try bw.print(",\"adaptive_sync\":\"{s}\"", .{@tagName(value)});
+            if (p.hdr) |value| try bw.print(",\"hdr\":\"{s}\"", .{@tagName(value)});
+            if (p.sdr_white) |value| try bw.print(",\"sdr_white\":{d}", .{value});
+            if (p.scroll_direction) |value| try bw.print(",\"scroll_direction\":\"{s}\"", .{@tagName(value)});
             try bw.writeAll("}}\n");
         },
         .maximize => |p| {

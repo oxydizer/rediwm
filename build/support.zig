@@ -16,6 +16,8 @@ pub const CHeaders = struct {
     libinput: *std.Build.Module,
     png: *std.Build.Module,
     archive: *std.Build.Module,
+    /// FFmpeg, libva and libdrm (`c_av`), for rediwm-video.
+    av: *std.Build.Module,
 };
 
 pub const gfx_libs = [_][]const u8{ "cairo", "fontconfig", "freetype2", "harfbuzz", "xkbcommon" };
@@ -28,8 +30,12 @@ pub fn cHeaders(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.l
         .libinput = cHeader(b, target, optimize, b.path("src/c/libinput.h"), &.{ "libinput", "libudev" }),
         .png = cHeader(b, target, optimize, b.path("src/c/png.h"), &.{"libpng16"}),
         .archive = cHeader(b, target, optimize, b.path("src/c/archive.h"), &.{"libarchive"}),
+        .av = cHeader(b, target, optimize, b.path("src/c/av.h"), &av_libs),
     };
 }
+
+/// What rediwm-video links; `c_av` translates their headers.
+pub const av_libs = [_][]const u8{ "libavformat", "libavcodec", "libavutil", "libswscale", "libswresample", "libva", "libva-drm", "libdrm" };
 
 pub fn cHeader(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize, header: std.Build.LazyPath, libs: []const []const u8) *std.Build.Module {
     return b.createModule(.{ .root_source_file = cTranslation(b, target, optimize, header, libs).getOutput() });
@@ -90,14 +96,16 @@ pub fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) vo
     module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFiles(.{ .files = &.{ "src/node_surface.c", "src/node_subsurface_tree.c", "src/node_xdg_shell.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFiles(.{ .files = &.{ "src/scene_pass.c", "src/scene_pass_draw.c", "src/scene_pass_backdrop.c", "src/scene_pass_ribbon.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFiles(.{ .files = &.{ "src/scene_pass.c", "src/scene_pass_draw.c", "src/scene_pass_backdrop.c", "src/scene_pass_ribbon.c", "src/scene_pass_linear.c", "src/scene_pass_color.c", "src/scene_pass_yuv.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFiles(.{ .files = &scene_output_sources, .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/glass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     module.addCSourceFile(.{ .file = b.path("src/explicit_sync.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/switcher_preview.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/extra_protocols.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    @import("protocols.zig").addBackgroundEffect(b, module);
+    @import("protocols.zig").addCaptureSdr(b, module);
+    module.addCSourceFiles(.{ .files = &.{ "src/extra_protocols.c", "src/surface_feedback.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
 }
 
 // ui/ and text.zig for the Cairo clients (Files, Images, the share picker):
@@ -161,7 +169,7 @@ pub fn addShellUi(b: *std.Build, module: *std.Build.Module) void {
 pub fn addShellIcons(b: *std.Build, module: *std.Build.Module) void {
     module.addAnonymousImport("redi-logo", .{ .root_source_file = b.path("assets/redi-logo.svg") });
     module.addAnonymousImport("rediwm-settings-icon", .{ .root_source_file = b.path("assets/icons/rediwm-settings.png") });
-    inline for (.{ "git-branch", "home", "folder", "terminal", "settings", "keyboard", "edit", "mouse", "touchpad", "trackball", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "cpu", "ram", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares", "divide", "shield" }) |name| {
+    inline for (.{ "git-branch", "home", "folder", "terminal", "settings", "keyboard", "edit", "mouse", "touchpad", "trackball", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "cpu", "ram", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares", "divide", "shield", "desktop-canvas", "desktop-tiles", "desktop-scroll" }) |name| {
         module.addAnonymousImport("shell-icon-" ++ name, .{ .root_source_file = b.path("assets/icons/" ++ name ++ ".svg") });
     }
 }

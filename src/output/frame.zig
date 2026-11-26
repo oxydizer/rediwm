@@ -13,6 +13,7 @@ const trace = @import("frame_trace.zig");
 const late = @import("late.zig");
 const tearing = @import("tearing.zig");
 const vrr = @import("vrr.zig");
+const hdr = @import("hdr.zig");
 const wlr_color_transform_unref = Output.wlr_color_transform_unref;
 const log = std.log.scoped(.output);
 const CursorState = Output.CursorState;
@@ -23,6 +24,8 @@ const timestamp = Output.timestamp;
 pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
     if (output.color.pending) {
         var copy = state.*;
+        // The test borrows the rest of the state and owns only its LUT reference.
+        copy.color_transform = null;
         copy.setColorTransform(output.color.transform);
         if (output.wlr_output.testState(&copy)) {
             state.setColorTransform(output.color.transform);
@@ -30,6 +33,7 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
             output.color.status = .rejected;
             output.color.pending = false;
             output.color.consecutive_failures = 0;
+            if (output.color.external) |control| control.fail();
             if (!output.color.logged_rejected) {
                 output.color.logged_rejected = true;
                 log.warn("output '{s}' rejected color transform", .{output.wlr_output.name});
@@ -42,7 +46,8 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
 
     vrr.apply(output, state);
     const had_transform = state.committed.color_transform;
-    state.tearing_page_flip = state.committed.buffer and output.tearingAllowed() and tearing.frameCanTear(output, state);
+    state.tearing_page_flip = state.committed.buffer and output.tearingAllowed() and
+        (output.timed_vsync_until == 0 or stats.nowNs() >= output.timed_vsync_until) and tearing.frameCanTear(output, state);
     if (state.tearing_page_flip and !output.wlr_output.testState(state)) {
         state.tearing_page_flip = false;
         tearing.refused(output);
@@ -53,11 +58,12 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
         tearing.refused(output);
         success = output.wlr_output.commitState(state);
     }
+    hdr.committed(output, state, success);
     if (success) {
         tearing.committed(output, state);
         vrr.committed(output, state);
         // A torn flip is not a refresh boundary (fifo-v1 D3).
-        if (state.committed.buffer and !state.tearing_page_flip) latched(output);
+        if (state.committed.buffer and !state.tearing_page_flip) latched(output, true);
     }
     if (had_transform) {
         if (success) {
@@ -70,6 +76,7 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
                 if (output.color.consecutive_failures >= 3) {
                     output.color.status = .rejected;
                     output.color.pending = false;
+                    if (output.color.external) |control| control.fail();
                     if (!output.color.logged_rejected) {
                         output.color.logged_rejected = true;
                         log.warn("output '{s}' rejected color transform after 3 failures", .{output.wlr_output.name});
@@ -93,7 +100,8 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
 /// without scene damage is checked here: hardware cursor moves, output
 /// capture (which holds an attach-render lock) and gamma changes.
 pub fn commitIsRedundant(output: *Output, scene_output: *SceneOutput) bool {
-    if (output.vblank_timer == null or output.color.pending or output.vrr.pending != null) return false;
+    if (output.vblank_timer == null or output.color.pending or output.vrr.pending != null or
+        output.hdr.policy.pending != null) return false;
     const wlr_output = output.wlr_output;
     if (!wlr_output.enabled or wlr_output.attach_render_locks > 0) return false;
     if (scene_output.hasPendingDamage()) return false;
@@ -121,6 +129,7 @@ pub fn deferFrameDone(output: *Output) void {
     };
     output.vblank_armed = true;
     output.vblank_target_ns = target;
+    output.vblank_scene_serial = output.server.nodes.serial;
 }
 
 /// A client surface committed with frame callbacks waiting (node_surface.c).
@@ -154,16 +163,20 @@ fn callbacksIdle(output: *Output) void {
 }
 
 /// The output has latched what it shows for the coming refresh.
-fn latched(output: *Output) void {
+fn latched(output: *Output, content_current: bool) void {
     output.latch_seq +%= 1;
-    if (output.server.fifo) |fifo| fifo.latched(output.wlr_output, output.latch_seq);
+    if (output.server.fifo) |fifo| fifo.latched(output.wlr_output, output.latch_seq, content_current);
 }
 
 pub fn handleVblank(output: *Output) c_int {
     output.vblank_armed = false;
     output.last_vblank_ns = output.vblank_target_ns;
-    // A skipped commit's refresh: the unchanged picture was latched again.
-    latched(output);
+    // A timed surface can acquire new pixels during a skipped frame's wait.
+    // That synthetic refresh only repeated the old picture: the new FIFO
+    // barrier must wait for a frame that can actually sample those pixels.
+    const scene = output.server.scene_outputs.get(output.wlr_output);
+    latched(output, output.server.nodes.serial == output.vblank_scene_serial and
+        (scene == null or !scene.?.hasPendingDamage()));
     sendFrameDone(output);
     if (output.frame_wanted) {
         output.frame_wanted = false;
@@ -202,6 +215,7 @@ pub fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
 
 pub fn runFrame(output: *Output) void {
     const frame_started = stats.nowNs();
+    if (output.server.commit_timing) |timing| timing.beforeFrame(output, frame_started);
     const late_plan = late.takePlan(output);
     // Stage timing costs a clock read per boundary (and two per animation
     // sample); only pay it while someone is reading the stats.
@@ -293,6 +307,7 @@ pub fn runFrame(output: *Output) void {
     if (observing) stats.global_stats.projection_cpu.record(stats.nowNs() -% projection_started);
     output.server.world.flushCameraEvent();
     const mini_map_animating = output.server.world.mini_map.tick(output, now_ms);
+    const indicator_animating = output.strip_indicator.tick(output, now_ms);
     // GPU timestamps enclose the scene submission, glass included (the output
     // pass blurs it). Polling happens later; no glFinish or synchronous reads.
     const gpu_active = if (output.server.gpu_timer) |timer| timer.begin() else false;
@@ -302,7 +317,7 @@ pub fn runFrame(output: *Output) void {
     else
         false;
     glass.Engine.hold(output.server.glass_engine, output.server.input.heldGlass());
-    glass.Engine.holdAll(output.server.glass_engine, output.server.world.holdingGlass());
+    scene_output.holdGlass(output.server.world.holdingGlass(output));
     var captured = false;
     if (output.server.screenshot_mgr) |sm| {
         captured = sm.handleOutputFrame(output);
@@ -315,7 +330,10 @@ pub fn runFrame(output: *Output) void {
         var state = wlr.Output.State.init();
         defer state.finish();
         const vrr_change = vrr.prepare(output);
-        var should_commit = scene_output.needsFrame() or output.color.pending or vrr_change;
+        // Before the build: a switch of the HDR signal changes the render
+        // format, and the frame is encoded for it.
+        const hdr_change = hdr.prepare(output, &state);
+        var should_commit = scene_output.needsFrame() or output.color.pending or vrr_change or hdr_change;
         if (should_commit and commitIsRedundant(output, scene_output)) {
             // `needs_frame` is a latch only a commit clears; while set,
             // later cursor moves or capture requests could not schedule.
@@ -346,6 +364,7 @@ pub fn runFrame(output: *Output) void {
                     output.greeter_commit_seq = null;
                 }
             } else {
+                if (hdr.signal(output)) hdr.buildFailed(output);
                 committed = false;
             }
             if (committed) {
@@ -392,7 +411,7 @@ pub fn runFrame(output: *Output) void {
     // Keep repainting every refresh interval until the last hover/press/FLIP
     // animation settles; otherwise chrome and the bar only redraw when a
     // client does.
-    const keep_going = minimize_animating or ribbons_animating or mini_map_animating or switcher_animating or osd_animating or dock_animating or bar_animating or chrome_animating or cc_animating or sm_animating or pm_animating or taskbar_popup_animating or notif_animating or desktop_animating or lock_animating or polkit_animating or reveal_animating;
+    const keep_going = minimize_animating or ribbons_animating or mini_map_animating or indicator_animating or switcher_animating or osd_animating or dock_animating or bar_animating or chrome_animating or cc_animating or sm_animating or pm_animating or taskbar_popup_animating or notif_animating or desktop_animating or lock_animating or polkit_animating or reveal_animating;
     output.late_animating = keep_going;
     // A pinned clock is advanced explicitly by IPC, which schedules its own
     // frame. Global window/taskbar springs must not spin between those steps.
@@ -416,8 +435,7 @@ pub fn setDisplayMode(output: *Output, mode: @import("../output_modes.zig").Choi
     if (!output.wlr_output.testState(&state) or !output.wlr_output.commitState(&state)) return false;
     late.reset(output);
     syncLayout(output.server);
-    output.color.key = null;
-    output.server.night_light.retargetOutput(output);
+    @import("gamma.zig").refresh(output);
     if (output.server.idle) |im| im.recheckInhibitors();
     output.wlr_output.scheduleFrame();
     return true;
@@ -451,14 +469,14 @@ pub fn handleRequestState(
     late.reset(output);
     output.applyConfig();
     syncLayout(output.server);
-    output.color.key = null;
-    output.server.night_light.retargetOutput(output);
+    @import("gamma.zig").refresh(output);
     if (output.server.idle) |im| im.recheckInhibitors();
 }
 
 pub fn handlePresent(listener: *wl.Listener(*wlr.Output.event.Present), event: *wlr.Output.event.Present) void {
     const output: *Output = @fieldParentPtr("present", listener);
     trace.presented(event);
+    if (vrr.active(output)) output.commit_refresh = .{} else output.commit_refresh.presented(event);
     late.notePresent(output, event);
     if (event.presented and output.greeter_commit_seq == event.commit_seq) {
         output.greeter_presented = true;

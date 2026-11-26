@@ -100,10 +100,10 @@ pub fn allowsOverscroll(world: *const World) bool {
     return world.overview.active() or world.panning or world.pan_x.active() or world.pan_y.active();
 }
 
-/// True while the camera is being dragged or its springs/fling are in flight.
-/// Glass holds every backdrop for that interval and refreshes on the settle frame.
-pub fn holdingGlass(world: *const World) bool {
-    return (world.overview.active() and world.overview.spread.active()) or world.panning or world.pinching or world.pan_x.active() or world.pan_y.active() or world.zoom_anim.active();
+/// Hold backdrops while the camera moves or this output's strip glides.
+pub fn holdingGlass(world: *const World, output: *@import("../Output.zig")) bool {
+    return (world.overview.active() and world.overview.spread.active()) or world.panning or world.pinching or world.pan_x.active() or world.pan_y.active() or world.zoom_anim.active() or
+        @import("../scroll_tiling.zig").moving(world.server, output.workspace_id);
 }
 
 /// Analytic camera at `now_ms`, for IPC. Presentation still uses `world.camera`

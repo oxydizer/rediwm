@@ -179,7 +179,8 @@ pub const Action = union(enum) {
     move_cursor_relative: struct { dx: i32, dy: i32 },
     pointer_button: struct { button: u32, pressed: bool },
     click: struct { button: u32 = 0x110 },
-    scroll: struct { dx: f64, dy: f64 },
+    /// `finger`: touchpad scrolling, which a zero delta ends.
+    scroll: struct { dx: f64, dy: f64, finger: bool = false },
     pinch: struct {
         phase: GesturePhase,
         scale: f64 = 1,
@@ -235,7 +236,8 @@ pub const Action = union(enum) {
 
     // Phase 4 targeted actions
     set_desktop_mode: struct { mode: @import("config").loader.DesktopMode, persist: bool = true },
-    set_workspace_layout: struct { workspace: u8, automatic: bool },
+    /// A null layout follows the desktop mode.
+    set_workspace_layout: struct { workspace: u8, layout: ?@import("config").workspace_layout.Layout },
     switch_workspace: struct { workspace: u8 },
     move_to_workspace: struct { id: u64, workspace: u8 },
     set_window_gap: struct { gap: u32, persist: bool = true },

@@ -8,6 +8,7 @@
 // `fifo_client surface-destroyed` provoke the two protocol errors instead.
 #define _GNU_SOURCE
 #include "fifo-v1-client-protocol.h"
+#include "commit-timing-v1-client-protocol.h"
 #include "linux-dmabuf-v1-client-protocol.h"
 #include "linux-drm-syncobj-v1-client-protocol.h"
 #include "presentation-time-client-protocol.h"
@@ -36,6 +37,7 @@ static struct wl_shm *shm;
 static struct xdg_wm_base *wm;
 static struct wp_presentation *presentation;
 static struct wp_fifo_manager_v1 *fifo_manager;
+static struct wp_commit_timing_manager_v1 *timing;
 static struct zwp_linux_dmabuf_v1 *dmabuf;
 static struct wp_linux_drm_syncobj_manager_v1 *syncobj_manager;
 static clockid_t clock_id = CLOCK_MONOTONIC;
@@ -99,6 +101,8 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
     presentation = wl_registry_bind(registry, name, &wp_presentation_interface, 1);
   else if (strcmp(interface, wp_fifo_manager_v1_interface.name) == 0)
     fifo_manager = wl_registry_bind(registry, name, &wp_fifo_manager_v1_interface, 1);
+  else if (strcmp(interface, wp_commit_timing_manager_v1_interface.name) == 0)
+    timing = wl_registry_bind(registry, name, &wp_commit_timing_manager_v1_interface, 1);
   else if (strcmp(interface, zwp_linux_dmabuf_v1_interface.name) == 0 && version >= 3)
     dmabuf = wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, 3);
   else if (strcmp(interface, wp_linux_drm_syncobj_manager_v1_interface.name) == 0)
@@ -463,6 +467,8 @@ static int error_mode(const char *mode) {
 
 // ---- Commands --------------------------------------------------------------------
 
+#include "commit_timing_client.c"
+
 int main(int argc, char **argv) {
   display = wl_display_connect(NULL);
   assert(display);
@@ -477,6 +483,7 @@ int main(int argc, char **argv) {
   xdg_wm_base_add_listener(wm, &wm_listener, NULL);
   wp_presentation_add_listener(presentation, &presentation_listener, NULL);
   wl_display_roundtrip(display);
+  if (argc > 1 && !strncmp(argv[1], "timing-", 7)) return timing_error(argv[1]);
   if (argc > 1) return error_mode(argv[1]);
 
   struct window main_window, cover = {0}, extra;
@@ -488,7 +495,11 @@ int main(int argc, char **argv) {
   char line[128];
   while (fgets(line, sizeof(line), stdin)) {
     int n = 0;
-    if (sscanf(line, "burst %d", &n) == 1) {
+    if (!strcmp(line, "timing\n")) {
+      timing_case(&main_window);
+    } else if (!strcmp(line, "timing-sub\n")) {
+      timing_subsurface(&main_window);
+    } else if (sscanf(line, "burst %d", &n) == 1) {
       burst(&main_window, "b", n, true);
       report();
     } else if (sscanf(line, "plain %d", &n) == 1) {

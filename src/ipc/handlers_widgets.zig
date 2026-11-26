@@ -15,10 +15,10 @@ const findFocusedToplevel = @import("handlers_data.zig").findFocusedToplevel;
 
 fn widgetTextWidth(w: *const ui.layout.Widget, label: []const u8) f64 {
     return switch (w.kind) {
-        .text => |style| if (style.sensitive) 0 else ui.measure.textNatural(label, style.family, style.weight, style.font_size).w,
-        .button => |data| if (data.icon != null) 0 else ui.measure.textNatural(label, .sans, 600, ui.widgets.button.metrics(ui.widgets.button.optionsOf(data).size, ui.theme.global).font_size).w,
-        .select, .segmented => ui.measure.textNatural(label, .sans, 600, ui.theme.global.font_size).w,
-        else => ui.measure.textNatural(label, .sans, 400, ui.theme.global.font_size).w,
+        .text => |style| if (style.sensitive) 0 else ui.measure.textNaturalAtScale(label, style.family, style.weight, style.font_size, w.measured_scale).w,
+        .button => |data| if (data.icon != null) 0 else ui.measure.textNaturalAtScale(label, .sans, 600, ui.widgets.button.metrics(ui.widgets.button.optionsOf(data).size, ui.theme.global).font_size, w.measured_scale).w,
+        .select, .segmented => ui.measure.textNaturalAtScale(label, .sans, 600, ui.theme.global.font_size, w.measured_scale).w,
+        else => ui.measure.textNaturalAtScale(label, .sans, 400, ui.theme.global.font_size, w.measured_scale).w,
     };
 }
 
@@ -434,6 +434,26 @@ pub fn buildTaskbarWidgetTree(
             .label = try allocator.dupe(u8, label),
             .box = .{ .x = source_box.x - bar.box.x, .y = source_box.y - bar.box.y, .width = source_box.width, .height = source_box.height },
             .global_box = .{ .x = source_box.x, .y = source_box.y, .width = source_box.width, .height = source_box.height },
+            .visible = true,
+            .is_disabled = false,
+        });
+    }
+
+    if (bar.itemBox(.desktop_mode)) |mode_box| {
+        try widgets.append(allocator, .{
+            .id = widgets.items.len + 1,
+            .parent_index = 0,
+            .role = "button",
+            .name = "desktop_mode",
+            .path = "taskbar/desktop_mode",
+            .semantic_id = "tray_desktop_mode",
+            .label = switch (server.world.workspaces.mode) {
+                .canvas => "Canvas",
+                .workspaces => "Workspaces",
+                .scrolling => "Scrolling",
+            },
+            .box = .{ .x = mode_box.x - bar.box.x, .y = mode_box.y - bar.box.y, .width = mode_box.width, .height = mode_box.height },
+            .global_box = .{ .x = mode_box.x, .y = mode_box.y, .width = mode_box.width, .height = mode_box.height },
             .visible = true,
             .is_disabled = false,
         });

@@ -165,6 +165,10 @@ pub fn startDesktopService(server: *Server, step: usize) bool {
             }
         },
         5 => if (server.input_sources) |sources| sources.startServices(),
+        6 => {
+            if (@import("builtin").os.tag != .linux) return false;
+            server.keyboard_backlight_watch = @import("../keyboard_backlight.zig").create(server, @import("../main.zig").gpa) catch null;
+        },
         else => return false,
     }
     return true;

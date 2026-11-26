@@ -5,10 +5,11 @@
 #define WLR_USE_UNSTABLE
 #define WLR_PRIVATE private
 #include "node_surface.h"
+#include "surface_feedback.h"
+#include "background_effect.h"
 #include <assert.h>
 #include <math.h>
 #include <stdlib.h>
-#include <wlr/types/wlr_alpha_modifier_v1.h>
 #include <wlr/types/wlr_color_management_v1.h>
 #include <wlr/types/wlr_color_representation_v1.h>
 #include <wlr/types/wlr_compositor.h>
@@ -46,53 +47,6 @@ static struct wlr_output *get_surface_frame_pacing_output(struct wlr_surface *su
 
 struct wlr_output *rediwm_surface_frame_pacing_output(struct wlr_surface *surface) {
   return get_surface_frame_pacing_output(surface);
-}
-
-static int get_tf_preference(enum wlr_color_transfer_function tf) {
-  switch (tf) {
-  case WLR_COLOR_TRANSFER_FUNCTION_GAMMA22:
-    return 0;
-  case WLR_COLOR_TRANSFER_FUNCTION_ST2084_PQ:
-    return 1;
-  case WLR_COLOR_TRANSFER_FUNCTION_BT1886:
-  case WLR_COLOR_TRANSFER_FUNCTION_SRGB:
-  case WLR_COLOR_TRANSFER_FUNCTION_EXT_LINEAR:
-    return -1;
-  }
-  abort(); // unreachable
-}
-
-static int get_primaries_preference(enum wlr_color_named_primaries primaries) {
-  switch (primaries) {
-  case WLR_COLOR_NAMED_PRIMARIES_SRGB:
-    return 0;
-  case WLR_COLOR_NAMED_PRIMARIES_BT2020:
-    return 1;
-  }
-  abort(); // unreachable
-}
-
-static void get_surface_preferred_image_description(struct wlr_surface *surface,
-                                                    struct wlr_image_description_v1_data *out) {
-  struct wlr_output_image_description preferred = {
-      .transfer_function = WLR_COLOR_TRANSFER_FUNCTION_GAMMA22,
-      .primaries = WLR_COLOR_NAMED_PRIMARIES_SRGB,
-  };
-
-  struct wlr_surface_output *surface_output;
-  wl_list_for_each(surface_output, &surface->current_outputs, link) {
-    const struct wlr_output_image_description *img_desc = surface_output->output->image_description;
-    if (img_desc == NULL) continue;
-    if (get_tf_preference(preferred.transfer_function) < get_tf_preference(img_desc->transfer_function))
-      preferred.transfer_function = img_desc->transfer_function;
-    if (get_primaries_preference(preferred.primaries) < get_primaries_preference(img_desc->primaries))
-      preferred.primaries = img_desc->primaries;
-  }
-
-  *out = (struct wlr_image_description_v1_data){
-      .tf_named = wlr_color_manager_v1_transfer_function_from_wlr(preferred.transfer_function),
-      .primaries_named = wlr_color_manager_v1_primaries_from_wlr(preferred.primaries),
-  };
 }
 
 static void handle_scene_buffer_outputs_update(struct wl_listener *listener, void *data) {
@@ -147,12 +101,8 @@ static void handle_scene_buffer_outputs_update(struct wl_listener *listener, voi
   wlr_fractional_scale_v1_notify_scale(surface->surface, scale);
   wlr_surface_set_preferred_buffer_scale(surface->surface, ceil(scale));
 
-  if (scene && scene->color_manager_v1 != NULL) {
-    struct wlr_image_description_v1_data img_desc = {0};
-    get_surface_preferred_image_description(surface->surface, &img_desc);
-    wlr_color_manager_v1_set_surface_preferred_image_description(scene->color_manager_v1,
-                                                                 surface->surface, &img_desc);
-  }
+  if (scene && scene->color_manager_v1 && scene->feedback)
+    rediwm_color_feedback_set(scene->feedback, surface->surface, event->primary->output->image_description);
 }
 
 static void handle_scene_buffer_output_sample(struct wl_listener *listener, void *data) {
@@ -246,47 +196,18 @@ static void surface_reconfigure(struct rediwm_surface *scene_surface) {
     pixman_region32_intersect_rect(&opaque, &opaque, 0, 0, width, height);
   }
 
+  rediwm_background_effect_update(scene_surface, width, height);
   if (width <= 0 || height <= 0) {
     rediwm_buffer_set_buffer(scene_buffer, NULL);
     pixman_region32_fini(&opaque);
     return;
   }
 
-  float opacity = 1.0;
-  const struct wlr_alpha_modifier_surface_v1_state *alpha_modifier_state =
-      wlr_alpha_modifier_v1_get_surface_state(surface);
-  if (alpha_modifier_state != NULL) opacity = (float)alpha_modifier_state->multiplier;
-
-  enum wlr_color_transfer_function tf = WLR_COLOR_TRANSFER_FUNCTION_GAMMA22;
-  enum wlr_color_named_primaries primaries = WLR_COLOR_NAMED_PRIMARIES_SRGB;
-  const struct wlr_image_description_v1_data *img_desc =
-      wlr_surface_get_image_description_v1_data(surface);
-  if (img_desc != NULL) {
-    tf = wlr_color_manager_v1_transfer_function_to_wlr(img_desc->tf_named);
-    primaries = wlr_color_manager_v1_primaries_to_wlr(img_desc->primaries_named);
-  }
-
-  enum wlr_color_encoding color_encoding = WLR_COLOR_ENCODING_NONE;
-  enum wlr_color_range color_range = WLR_COLOR_RANGE_NONE;
-  const struct wlr_color_representation_v1_surface_state *color_repr =
-      wlr_color_representation_v1_get_surface_state(surface);
-  if (color_repr != NULL) {
-    if (color_repr->coefficients != 0)
-      color_encoding = wlr_color_representation_v1_color_encoding_to_wlr(color_repr->coefficients);
-    if (color_repr->range != 0)
-      color_range = wlr_color_representation_v1_color_range_to_wlr(color_repr->range);
-  }
-
   rediwm_buffer_set_opaque_region(scene_buffer, &opaque);
   rediwm_buffer_set_source_box(scene_buffer, &src_box);
   rediwm_buffer_set_dest_size(scene_buffer, width, height);
   rediwm_buffer_set_transform(scene_buffer, state->transform);
-  rediwm_buffer_set_opacity(scene_buffer, opacity);
-  // The colour description has no setters of its own: the buffer set below reports it.
-  scene_buffer->transfer_function = tf;
-  scene_buffer->primaries = primaries;
-  scene_buffer->color_encoding = color_encoding;
-  scene_buffer->color_range = color_range;
+  rediwm_buffer_sync_surface_color(scene_buffer, surface);
 
   // A commit that attached nothing and damaged nothing shows the same content. Setting
   // the buffer again would report the node changed and build a whole frame for a
@@ -335,6 +256,7 @@ static void handle_scene_surface_surface_commit(struct wl_listener *listener, vo
   (void)data;
   struct rediwm_surface *surface = wl_container_of(listener, surface, surface_commit);
 
+  rediwm_buffer_sync_surface_alpha(surface->buffer, surface->surface);
   surface_reconfigure(surface);
 
   // If the surface has requested a frame done event, honour that. The frame_callback_list
@@ -412,6 +334,7 @@ struct rediwm_surface *rediwm_surface_create(struct rediwm_tree *parent, struct 
   surface->surface_commit.notify = handle_scene_surface_surface_commit;
   wl_signal_add(&wlr_surface->events.commit, &surface->surface_commit);
 
+  rediwm_buffer_sync_surface_alpha(scene_buffer, wlr_surface);
   surface_reconfigure(surface);
 
   return surface;

@@ -51,8 +51,15 @@ pub fn dataEvent(_: *wl.DataDevice, event: wl.DataDevice.Event, self: *Client) v
         .enter => |ev| {
             // Every window's data device hears every drag that enters any
             // window of the connection; only the one under the drag takes it.
+            // The others keep their copy of the offer until it is inert:
+            // wlroots takes a version 3 drag offer destroyed before the drop
+            // finishes as a refusal and cancels the whole drag, so discarding
+            // it here ended every drag while two windows were open. After the
+            // leave (or once the next drag enters) the compositor has let go
+            // of it.
             if (ev.surface != self.surface) {
-                if (ev.id) |id| self.discardOffer(@ptrCast(@alignCast(id.getUserData())));
+                if (self.foreign_offer) |old| self.discardOffer(old);
+                self.foreign_offer = if (ev.id) |id| @ptrCast(@alignCast(id.getUserData())) else null;
                 return;
             }
             self.drag_here = true;
@@ -64,6 +71,8 @@ pub fn dataEvent(_: *wl.DataDevice, event: wl.DataDevice.Event, self: *Client) v
         },
         .motion => |ev| if (self.drag_here) self.dragOver(ev.x.toDouble(), ev.y.toDouble(), false),
         .leave => {
+            if (self.foreign_offer) |offer| self.discardOffer(offer);
+            self.foreign_offer = null;
             if (!self.drag_here) return;
             self.drag_here = false;
             self.app.dropLeave();

@@ -2,6 +2,7 @@
 """Real clipboard, activation and IME peers in an isolated headless session."""
 import os
 import json
+from functools import partial
 from pathlib import Path
 import subprocess
 import tempfile
@@ -18,6 +19,7 @@ def compile_client(tmp):
         ["pkg-config", "--variable=pkgdatadir", "wayland-protocols"], text=True).strip())
     protocols = {
         "xdg-activation-v1": system / "staging/xdg-activation/xdg-activation-v1.xml",
+        "text-input-unstable-v1": system / "unstable/text-input/text-input-unstable-v1.xml",
         "text-input-unstable-v3": system / "unstable/text-input/text-input-unstable-v3.xml",
         "input-method-unstable-v2": ROOT / "protocol/input-method-unstable-v2.xml",
         "virtual-keyboard-unstable-v1": ROOT / "protocol/virtual-keyboard-unstable-v1.xml",
@@ -37,6 +39,31 @@ def compile_client(tmp):
     subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", f"-I{tmp}",
                     str(ROOT / "tests/data_control_client.c"), str(tmp / f"{name}-protocol.c"),
                     "-lwayland-client", "-o", str(tmp / "data-control-client")], check=True)
+
+
+class Peer:
+    def __init__(self, tmp, env, clients, name, mode, *options):
+        self.path = tmp / f"{name}.log"
+        with self.path.open("w") as out:
+            self.process = subprocess.Popen([str(tmp / "protocol-client"), mode, *options], env=env,
+                                            stdin=subprocess.PIPE, stdout=out, stderr=out, text=True)
+        clients.append(self.process)
+        wait_for(lambda: "ready\n" in self.text(), f"{name} failed to start")
+
+    def text(self): return self.path.read_text()
+    def send(self, command):
+        old = self.text().count(f"ack {command}\n")
+        self.process.stdin.write(command + "\n")
+        self.process.stdin.flush()
+        wait_for(lambda: self.text().count(f"ack {command}\n") > old,
+                 lambda: f"no ack for {command}: {self.text()[-1500:]}")
+
+    def expect(self, text):
+        wait_for(lambda: text in self.text(), lambda: f"missing {text!r}: {self.text()[-1500:]}")
+
+    def token(self, command="token"):
+        self.send(command)
+        return [line.split()[1] for line in self.text().splitlines() if line.startswith("token ")][-1]
 
 
 def run():
@@ -59,31 +86,8 @@ def run():
             def window(name): return next((w for w in windows() if w["app_id"] == name), None)
             def focus(name): action('focus_window', {"id": window(name)["id"]})
 
-            class Peer:
-                def __init__(self, name, mode):
-                    self.path = tmp / f"{name}.log"
-                    with self.path.open("w") as out:
-                        self.process = subprocess.Popen([str(tmp / "protocol-client"), mode], env=env,
-                                                        stdin=subprocess.PIPE, stdout=out, stderr=out, text=True)
-                    clients.append(self.process)
-                    wait_for(lambda: "ready\n" in self.text(), f"{name} failed to start")
-
-                def text(self): return self.path.read_text()
-                def send(self, command):
-                    old = self.text().count(f"ack {command}\n")
-                    self.process.stdin.write(command + "\n")
-                    self.process.stdin.flush()
-                    wait_for(lambda: self.text().count(f"ack {command}\n") > old,
-                             lambda: f"no ack for {command}: {self.text()[-1500:]}")
-
-                def expect(self, text):
-                    wait_for(lambda: text in self.text(), lambda: f"missing {text!r}: {self.text()[-1500:]}")
-
-                def token(self, command="token"):
-                    self.send(command)
-                    return [line.split()[1] for line in self.text().splitlines() if line.startswith("token ")][-1]
-
-            app = Peer("app", "rediwm.protocol-app")
+            spawn_peer = partial(Peer, tmp, env, clients)
+            app = spawn_peer("app", "rediwm.protocol-app")
             wait_for(lambda: window("rediwm.protocol-app"), "app did not map")
             for interface in ("zwlr_data_control_manager_v1", "ext_data_control_manager_v1",
                               "xdg_activation_v1", "zwp_text_input_manager_v3",
@@ -138,7 +142,7 @@ def run():
                 legacy.terminate(); legacy.wait(timeout=5)
             print("PASS: globals, background clipboard and primary-selection transfers")
 
-            other = Peer("other", "rediwm.protocol-other")
+            other = spawn_peer("other", "rediwm.protocol-other")
             wait_for(lambda: window("rediwm.protocol-other"), "second app did not map")
             # Source gets a real seat serial, then passes the opaque token to a
             # different process. Activation restores a minimized target.
@@ -156,7 +160,7 @@ def run():
             print("PASS: cross-client activation, restore, single-use and invalid-token rejection")
 
             focus("rediwm.protocol-app")
-            ime = Peer("ime", "ime")
+            ime = spawn_peer("ime", "ime")
             ime.send("method")
             app.expect("text-enter\n")
             ime.expect("surround hello 3 1\n")
@@ -344,11 +348,11 @@ def run():
             app.send("sync")
             print("PASS: Russian shortcut fallback, text input, keymap reload and invalid-map preservation")
 
-            duplicate = Peer("duplicate", "ime")
+            duplicate = spawn_peer("duplicate", "ime")
             duplicate.send("method"); duplicate.expect("unavailable\n")
             ime.process.terminate(); ime.process.wait(timeout=5)
             app.send("sync")
-            replacement = Peer("replacement", "ime")
+            replacement = spawn_peer("replacement", "ime")
             replacement.send("method")
             replacement.expect("activate\n")
             app.send("destroy-input")

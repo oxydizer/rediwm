@@ -541,6 +541,9 @@ pub fn stringifyPerformanceStats(res: PerformanceStatsResult, writer: anytype) !
     if (res.glass_reblurs) |reblurs| {
         try writer.print("\"glass_reblurs\":{d},", .{reblurs});
     }
+    if (res.capture_sdr_copies) |copies| {
+        try writer.print("\"capture_sdr_copies\":{d},", .{copies});
+    }
     if (res.tearing_async_flips) |flips| {
         try writer.print("\"tearing_async_flips\":{d},", .{flips});
     }
@@ -882,6 +885,8 @@ pub fn stringifyOutput(out: OutputData, writer: anytype) !void {
     try writer.writeAll(",\"adaptive_sync\":");
     try writer.print("{f}", .{std.json.fmt(out.adaptive_sync, .{})});
     try writer.print(",\"adaptive_sync_supported\":{},\"adaptive_sync_wanted\":{},\"adaptive_sync_active\":{},\"adaptive_sync_needs_modeset\":{}", .{ out.adaptive_sync_supported, out.adaptive_sync_wanted, out.adaptive_sync_active, out.adaptive_sync_needs_modeset });
+    try writer.print(",\"hdr\":{f},\"hdr_supported\":{},\"hdr_active\":{},\"hdr_linear\":{},\"hdr_refused\":{},\"sdr_white\":{d}", .{ std.json.fmt(out.hdr, .{}), out.hdr_supported, out.hdr_active, out.hdr_linear, out.hdr_refused, out.sdr_white });
+    try writer.print(",\"scroll_direction\":{f},\"scroll_direction_resolved\":{f}", .{ std.json.fmt(out.scroll_direction, .{}), std.json.fmt(out.scroll_direction_resolved, .{}) });
     try writer.writeByte('}');
 }
 

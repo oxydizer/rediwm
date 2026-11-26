@@ -814,9 +814,9 @@ const Buffer = struct {
 pub fn run(init: std.process.Init, paths: []const [:0]const u8, selected: usize, return_focus: bool) !void {
     platform.process.ignoreBrokenPipes();
     const force_csd = init.minimal.environ.getPosix("REDIWM_IMAGES_FORCE_CSD") != null;
-    defer @import("../files/settings.zig").deinitTheme();
+    defer @import("app_kit").settings.deinitTheme();
     {
-        const Settings = @import("../files/settings.zig").Settings;
+        const Settings = @import("app_kit").settings.Settings;
         var settings = try Settings.init(init.gpa, init.minimal.environ);
         defer settings.deinit(init.gpa);
         if (settings.poll(init.gpa, init.io)) |t| {

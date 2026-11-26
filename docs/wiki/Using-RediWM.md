@@ -9,6 +9,7 @@
 | Super+T / E / B | terminal / Files / browser |
 | Super+Q, Super+F, Super+M | close, fullscreen, maximize |
 | Super+Shift+arrows | tile halves and quarters |
+| Super+Shift+W | switch between Canvas and your last tiled mode |
 | Super+arrows | slide to the neighbouring desktop |
 | Super+Ctrl+arrows | focus the window in that direction |
 | Alt+Tab | window switcher |
@@ -23,6 +24,65 @@
 
 Everything lives under `[keybinds]` in the config. Set a binding to `"noop"`
 to turn it off.
+
+Super+Shift+W (`toggle_desktop_mode`) saves the choice as `desktop_mode`.
+Switching back to Canvas restores window positions and zoom. Returning to
+Workspaces or Scrolling restores the tiled layout.
+Existing configs with their own `[keybinds]` get it unless the key is taken.
+The taskbar's **Desktop mode** item (off by default; turn it on in Settings →
+Appearance) shows the current mode. Left-click it to switch modes, or
+right-click it to choose **Canvas**, **Workspaces** or **Scrolling** from a menu. A checkmark
+shows which mode is active.
+
+### Scrolling
+
+Scrolling places each new window in a column to the right of the focused
+column. Each display shows its own workspace. Moving focus along one strip
+scrolls that display, and its windows and menus stop at the display edge.
+Floating windows stay in place.
+Settings → Desktop lets you change the initial column width, centring, and
+the layout of individual workspaces.
+
+On a portrait or rotated display the strip runs up and down instead: each
+column becomes a full-width row, and Up/Down take the role of Left/Right in
+the shortcuts below. Settings → Displays → **Scrolling direction** chooses
+Automatic (the display's longer side), Horizontal or Vertical for each display.
+
+If a display disconnects, its workspaces are available on a remaining display.
+Reconnecting it returns its strip and restores each display's workspace selection.
+
+| Shortcut | Action in a scrolling workspace |
+| --- | --- |
+| Super+Left / Right | Focus the previous or next column |
+| Super+Up / Down | Focus another window in the column |
+| Super+Shift+arrows | Reorder columns or windows within a column |
+| Super+Ctrl+arrows | Adjust column width or window height in 32 px steps |
+| Super+W | Cycle the focused column through the width presets |
+| Super+[ / ] | Join the adjacent column or leave a shared column on that side |
+| Super+V | Float the focused window or return it to the strip |
+
+With a touchpad or mouse:
+
+- A **three-finger swipe** along the strip scrolls it with your fingers,
+  wherever the pointer is. Past either end it gives a little and springs
+  back. When you lift your fingers it settles on the nearest column edge,
+  carrying on if you flicked, and focus moves to a column it shows.
+- **Two fingers** scroll the strip over empty space (the gaps between
+  columns); over a window they scroll the window, as everywhere else.
+- **Super+Shift+wheel** or **Super+horizontal wheel** steps focus through
+  the columns. Super+wheel still changes workspace.
+- **Super+right-drag** resizes: near a column's side it sets the column's
+  width, near its top or bottom the window's height within the column.
+  Escape puts it back, and Super+Z undoes it.
+- **Super+drag** moves a window. Near a column's side it gets a column of its
+  own there; over the middle it joins that column above or below the window
+  under the pointer. Hold it near the end of the display to scroll the strip.
+
+While a strip moves, a thin bar along the display's edge shows which stretch
+of it is on screen (it follows the mini-map setting). **Super+A** zooms the
+display out over its whole strip: click a window, or pick one with the arrow
+keys and Enter, and the strip goes there; Escape leaves it as it was. Columns
+opening or closing push their neighbours aside smoothly.
 
 ## Mouse
 

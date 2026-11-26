@@ -1,10 +1,13 @@
 // Real Wayland single-pixel buffers, isolated by the Python test's runtime dir.
 #define _GNU_SOURCE
+#include "alpha-modifier-client-protocol.h"
+#include "ext-background-effect-client-protocol.h"
 #include "single-pixel-buffer-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 #include <assert.h>
 #include <poll.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +22,11 @@ static struct wl_shm *shm;
 static struct xdg_wm_base *wm;
 static struct wp_viewporter *viewporter;
 static struct wp_single_pixel_buffer_manager_v1 *manager;
+static struct wp_alpha_modifier_v1 *alpha_manager;
+static struct wp_alpha_modifier_surface_v1 *alpha;
+static struct ext_background_effect_manager_v1 *effect_manager;
+static struct ext_background_effect_surface_v1 *effect;
+static struct wl_subsurface *sub;
 static struct wl_surface *surface, *child;
 static struct wp_viewport *viewport, *child_viewport;
 static struct wl_buffer *background, *color;
@@ -57,7 +65,7 @@ static void configure(void *data, struct xdg_surface *xdg, uint32_t serial) {
   attach(surface, background);
   if (!child) {
     child = wl_compositor_create_surface(compositor);
-    struct wl_subsurface *sub = wl_subcompositor_get_subsurface(subcompositor, child, surface);
+    sub = wl_subcompositor_get_subsurface(subcompositor, child, surface);
     wl_subsurface_set_position(sub, 40, 50);
     wl_subsurface_set_desync(sub);
     child_viewport = wp_viewporter_get_viewport(viewporter, child);
@@ -83,13 +91,24 @@ static void ping(void *data, struct xdg_wm_base *base, uint32_t serial) {
   xdg_wm_base_pong(base, serial);
 }
 static const struct xdg_wm_base_listener wm_listener = {ping};
+static void capabilities(void *data, struct ext_background_effect_manager_v1 *mgr, uint32_t flags) {
+  (void)data; (void)mgr;
+  printf("blur-capability %u\n", flags);
+}
+static const struct ext_background_effect_manager_v1_listener effect_listener = {capabilities};
+
 static void global(void *data, struct wl_registry *registry, uint32_t id, const char *interface, uint32_t version) {
   (void)data;
   if (!strcmp(interface, "wl_compositor"))
     compositor = wl_registry_bind(registry, id, &wl_compositor_interface, 4);
   else if (!strcmp(interface, "wl_subcompositor"))
     subcompositor = wl_registry_bind(registry, id, &wl_subcompositor_interface, 1);
-  else if (!strcmp(interface, "wl_shm"))
+  else if (!strcmp(interface, "wp_alpha_modifier_v1"))
+    alpha_manager = wl_registry_bind(registry, id, &wp_alpha_modifier_v1_interface, 1);
+  else if (!strcmp(interface, "ext_background_effect_manager_v1")) {
+    effect_manager = wl_registry_bind(registry, id, &ext_background_effect_manager_v1_interface, 1);
+    ext_background_effect_manager_v1_add_listener(effect_manager, &effect_listener, NULL);
+  } else if (!strcmp(interface, "wl_shm"))
     shm = wl_registry_bind(registry, id, &wl_shm_interface, 1);
   else if (!strcmp(interface, "xdg_wm_base")) {
     wm = wl_registry_bind(registry, id, &xdg_wm_base_interface, 1);
@@ -107,15 +126,15 @@ static void removed(void *data, struct wl_registry *registry, uint32_t id) {
 }
 static const struct wl_registry_listener registry_listener = {global, removed};
 
-static void use_shm(void) {
+static void use_shm(bool pattern) {
   int fd = memfd_create("single-pixel-shm", MFD_CLOEXEC);
   assert(fd >= 0 && ftruncate(fd, 16 * 16 * 4) == 0);
   uint32_t *pixels = mmap(NULL, 16 * 16 * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   assert(pixels != MAP_FAILED);
-  for (int i = 0; i < 16 * 16; i++) pixels[i] = 0xffff00ff;
+  for (int i = 0; i < 16 * 16; i++) pixels[i] = pattern ? (i % 16 < 8 ? 0xff0000ff : 0xffffffff) : 0xffff00ff;
   struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, 16 * 16 * 4);
   struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, 16, 16, 64, WL_SHM_FORMAT_ARGB8888);
-  attach(child, buffer);
+  attach(pattern ? surface : child, buffer);
   wl_buffer_destroy(buffer);
   wl_shm_pool_destroy(pool);
   munmap(pixels, 16 * 16 * 4);
@@ -150,13 +169,44 @@ int main(void) {
       if (!fgets(line, sizeof(line), stdin)) break;
       uint32_t r, g, b, a;
       int w, h;
+      bool parent_commit = true;
       if (sscanf(line, "color %u %u %u %u", &r, &g, &b, &a) == 4) {
         color = single(r, g, b, a);
         attach(child, color);
       } else if (sscanf(line, "resize %d %d", &w, &h) == 2) {
         wp_viewport_set_destination(child_viewport, w, h);
         wl_surface_commit(child);
-      } else if (!strcmp(line, "shm\n")) use_shm();
+      } else if (sscanf(line, "alpha %u", &a) == 1) {
+        if (!alpha) alpha = wp_alpha_modifier_v1_get_surface(alpha_manager, child);
+        wp_alpha_modifier_surface_v1_set_multiplier(alpha, a);
+      } else if (!strcmp(line, "alpha-release\n")) {
+        wp_alpha_modifier_surface_v1_destroy(alpha);
+        alpha = NULL;
+      } else if (!strcmp(line, "blur-bands\n") || !strcmp(line, "blur-full\n")) {
+        if (!effect) effect = ext_background_effect_manager_v1_get_background_effect(effect_manager, child);
+        struct wl_region *region = wl_compositor_create_region(compositor);
+        wl_region_add(region, -20, 0, 300, 100);
+        if (!strcmp(line, "blur-bands\n")) wl_region_subtract(region, 0, 35, 160, 30);
+        ext_background_effect_surface_v1_set_blur_region(effect, region);
+        wl_region_destroy(region);
+        wl_subsurface_set_sync(sub);
+        wl_surface_commit(child);
+        parent_commit = false;
+      } else if (!strcmp(line, "blur-null\n")) {
+        ext_background_effect_surface_v1_set_blur_region(effect, NULL);
+        wl_surface_commit(child);
+        parent_commit = false;
+      } else if (!strcmp(line, "blur-release\n")) {
+        ext_background_effect_surface_v1_destroy(effect);
+        effect = NULL;
+      } else if (!strcmp(line, "commit-child\n")) {
+        wl_surface_commit(child);
+        parent_commit = false;
+      } else if (!strcmp(line, "commit-parent\n")) {
+        // frame() commits the parent below.
+      } else if (!strcmp(line, "pattern\n")) use_shm(true);
+      else if (!strcmp(line, "shm\n")) use_shm(false);
+      else if (!strcmp(line, "background\n")) attach(surface, background);
       else if (!strcmp(line, "single\n")) attach(child, color);
       else if (!strcmp(line, "hide\n")) attach(child, NULL);
       else if (!strcmp(line, "destroy_buffer\n")) {
@@ -166,7 +216,7 @@ int main(void) {
         wp_single_pixel_buffer_manager_v1_destroy(manager);
         manager = NULL;
       } else abort();
-      frame();
+      if (parent_commit) frame();
       if (wl_display_roundtrip(display) < 0) break;
       printf("done %u\n", ++commands);
     }

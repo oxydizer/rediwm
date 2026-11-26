@@ -70,6 +70,7 @@ rediwm-msg output-config DP-1 --width 2560 --height 1440 --refresh-mhz 144000
 rediwm-msg output-config DP-2 --x -1920 --y 0
 rediwm-msg output-config DP-2 --disabled
 rediwm-msg output-config DP-1 --scale auto --position auto
+rediwm-msg output-config DP-1 --hdr on --sdr-white 250
 ```
 
 **Debug a window rule**

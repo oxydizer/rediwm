@@ -212,10 +212,13 @@ pub fn buildTree(cc: *ControlCenter) void {
                     arrangement_card.name = "displays";
                     cc.append(arrangement_card);
                 }
-                var display_card = card(&cc.display.row_storage);
+                var display_card = card(cc.display.shown_rows[0..cc.display.shown_row_count]);
                 display_card.name = "displays";
                 cc.append(display_card);
                 cc.append(cc.display.top_children[2]);
+                var hdr_card = card(cc.display.hdr_rows[0..cc.display.hdr_row_count]);
+                hdr_card.name = "displays";
+                cc.append(hdr_card);
                 cc.append(cc.display.xwayland_hint);
                 var nl_card = card(&cc.display.nl_group_children);
                 nl_card.name = "displays";

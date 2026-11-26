@@ -24,8 +24,9 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 | `rediwm-editor` | `src/editor_main.zig` | `editor/` (`app.zig` + `app_*.zig`, window in `main.zig` + `client_*.zig`) |
 | `rediwm-pdf` | `src/pdf_main.zig` | `pdf/` (sandboxed; window in `main.zig` + `client_*.zig`) |
 | `rediwm-player` | `src/player/main.c` | `player/`: background audio player in C (`engine.c` miniaudio, `mpris.c`, `tray.c`); Files' side is `files/player_link.*` and `files/app_audio.zig` |
+| `rediwm-video` | `src/video_main.zig` | `video/`: video player on FFmpeg (`c_av`, `src/c/av.h`); workers `pipeline.zig` and `decode.zig`, audio `audio.zig` and `audio_out.c`, VAAPI export `hw.zig`, presentation `player.zig`, `buffers.zig` and `software.zig`; build in `build/video.zig` |
 | `rediwm-monitor` | `src/system_monitor_main.zig` | `system_monitor/` |
-| `rediwm-calculator` | `src/calculator_main.zig` | `calculator/` |
+| `rediwm-calculator` | `src/calculator_main.zig` | `calculator/` (window from `app_kit/window.zig`) |
 | `rediwm-share-picker` | `src/share_picker_main.zig` | `share_picker/` |
 | `rediwm-session` | `src/session_main.zig` | login supervisor (`session/supervisor.zig`, `publication.zig`) |
 | `rediwm-dm` | `src/dm/main.zig` | display manager, runs as root (`dm/AGENTS.md`) |
@@ -72,7 +73,10 @@ seam for other operating systems.
 Also in `src/`: `Shell.zig` (xdg-shell and decorations), `TitlebarTabs.zig` (client-published
 titlebar tabs, `protocol/rediwm-titlebar-tabs-v1.xml`), `Popup.zig`,
 `LayerSurface.zig`, `Xwayland.zig` (+ `xwayland_*.zig`), `Switcher.zig`
-(Alt+Tab), `workspaces.zig`, `snap.zig`, `auto_tiling.zig`, `window_tabs.zig`,
+(Alt+Tab), `workspaces.zig`, `snap.zig`, `auto_tiling.zig` (workspace reflow),
+`scroll_layout.zig` (strip geometry), `scroll_tiling.zig` (focus and placement),
+`scroll_motion.zig` (swipes, two-finger and drag-edge scrolling of a strip),
+`window_tabs.zig`,
 `fifo.zig` (wp_fifo_v1 barriers, `docs/plans/fifo.md`).
 
 **Rendering** (read [rendering details](rendering.md) first): own scene nodes
@@ -102,14 +106,15 @@ and `effects/minimize_mesh.zig` (minimize snapshots and deformation),
 * **Settings** (`control_center/`, `AGENTS.md` there): the window is
   `ControlCenter.zig` (+ `tree`, `keys`, `relayout`, `paint.zig`); `panel.zig`
   has shared helpers; one `sections/*.zig` per page, the big ones split into
-  `appearance_*.zig`, `printers_*.zig` and `network_*.zig` (the Firewall card
+  `appearance_*.zig`, `display_*.zig`, `printers_*.zig` and `network_*.zig` (the Firewall card
   and sub-view are `firewall*.zig`, shown from the Network page).
 * **Session** (`session/`, `AGENTS.md` there): `lock.zig` (+ `lock_account`,
   `lock_events`, `lock_input`, `lock_view.zig`), `greeter.zig`, `idle.zig`,
   `power.zig` (+ `power_*.zig`), `login_manager.zig` (`login_manager/`: service
   logind/ConsoleKit2 protocol shared with the supervisor and polkit), portals (`settings_portal.zig`,
   `file_chooser.zig`), services.
-* The desktop icons (`desktop/`), `power_menu.zig`, `osd.zig`,
+* The desktop icons (`desktop/`; the compositor's own in `embedded.zig`, its canvas
+  and tiles in `embedded_tiles.zig`), `power_menu.zig`, `osd.zig`,
   `calendar.zig`, `battery_popup.zig`, `network/popup.zig`, `mini_map.zig`,
   `notifications/`, `tray.zig`, `polkit/` (authentication agent).
 

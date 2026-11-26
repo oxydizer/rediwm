@@ -16,6 +16,23 @@ const btn_left = Input.btn_left;
 const btn_right = Input.btn_right;
 const btn_middle = Input.btn_middle;
 
+fn openContextMenu(input: *Input) bool {
+    const x: i32 = @intFromFloat(input.cursor.x);
+    switch (scene_data.hitTest(input.server, input.cursor.x, input.cursor.y)) {
+        .taskbar => |hit| switch (hit.bar.hitTest(hit.sx, hit.sy)) {
+            .chip => |target| input.window_menu.open(hit.bar, target, x),
+            .tray => |i| {
+                if (i != @backingInt(Taskbar.TrayKind.desktop_mode)) return false;
+                input.window_menu.openDesktopMode(hit.bar);
+            },
+            else => return false,
+        },
+        .dock => |hit| return hit.dock.contextMenu(hit.sx, hit.sy, x),
+        else => return false,
+    }
+    return true;
+}
+
 pub fn cursorButton(
     listener: *wl.Listener(*wlr.Pointer.event.Button),
     event: *wlr.Pointer.event.Button,
@@ -108,27 +125,11 @@ pub fn processButton(
         }
         return;
     }
-    if (button == 0x111 and state == .pressed and input.cursor_mode == .passthrough and
-        input.active_buttons == 0 and input.seat.drag == null and !input.server.switcher.active())
+    if (button == btn_right and state == .pressed and input.cursor_mode == .passthrough and
+        input.active_buttons == 0 and input.seat.drag == null and !input.server.switcher.active() and openContextMenu(input))
     {
-        const picked = scene_data.hitTest(input.server, input.cursor.x, input.cursor.y);
-        if (picked == .taskbar) {
-            const hit = picked.taskbar;
-            switch (hit.bar.hitTest(hit.sx, hit.sy)) {
-                .chip => |target| {
-                    input.tray_buttons |= screenshot_bit;
-                    input.window_menu.open(hit.bar, target, @intFromFloat(input.cursor.x));
-                    return;
-                },
-                else => {},
-            }
-        } else if (picked == .dock) {
-            const hit = picked.dock;
-            if (hit.dock.contextMenu(hit.sx, hit.sy, @intFromFloat(input.cursor.x))) {
-                input.tray_buttons |= screenshot_bit;
-                return;
-            }
-        }
+        input.tray_buttons |= screenshot_bit;
+        return;
     }
     if (input.server.tray) |tray| {
         if (tray.menu_item != 0) {
@@ -190,6 +191,10 @@ pub fn processButton(
         }
     }
 
+    processGrabButton(input, device, button, state, time_msec);
+}
+
+fn processGrabButton(input: *Input, device: ?*wlr.InputDevice, button: u32, state: wl.Pointer.ButtonState, time_msec: u32) void {
     if (state == .pressed) {
         input.active_buttons += 1;
         input.presses +%= 1;
@@ -330,7 +335,8 @@ pub fn processClientButton(
             .dock => |res| _ = input.trash_drop.drop(res.dock, res.sx, res.sy, button),
             else => {},
         };
-        _ = input.seat.pointerNotifyButton(time_msec, button, state);
+        const routed = if (input.server.xwayland) |xw| xw.pointer_queue.release(xw, time_msec, button) else false;
+        if (!routed) _ = input.seat.pointerNotifyButton(time_msec, button, state);
         // A move grab ends here, and `grabbed_toplevel` must be dropped with the
         // mode: startPan() refuses to start while a toplevel is grabbed, so a
         // stale pointer left behind by a titlebar/Super drag kills every later pan
@@ -540,7 +546,17 @@ pub fn processClientButton(
         return;
     }
     if (hit == .surface) input.server.world.focusSurface(hit.surface.toplevel, hit.surface.surface);
-    _ = input.seat.pointerNotifyButton(time_msec, button, state);
+    const routed = if (input.server.xwayland) |xw| switch (hit) {
+        .surface => |h| if (h.toplevel.backend == .xwayland)
+            xw.pointer_queue.press(xw, h.toplevel, h.sx, h.sy, time_msec, button)
+        else
+            xw.pointer_queue.otherPress(xw, h.surface, h.sx, h.sy, time_msec, button),
+        .xwayland_unmanaged => |h| xw.pointer_queue.otherPress(xw, h.surface, h.sx, h.sy, time_msec, button),
+        .layer => |h| xw.pointer_queue.otherPress(xw, h.surface, h.sx, h.sy, time_msec, button),
+        .input_popup => |h| xw.pointer_queue.otherPress(xw, h.surface, h.sx, h.sy, time_msec, button),
+        else => false,
+    } else false;
+    if (!routed) _ = input.seat.pointerNotifyButton(time_msec, button, state);
     switch (hit) {
         .surface => |res| {
             const ws = res.toplevel.worldScale() / res.toplevel.surfaceScale();

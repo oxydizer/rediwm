@@ -197,6 +197,7 @@ pub const NightLight = struct {
 
     pub fn retargetOutput(self: *NightLight, output: *Output) void {
         const server = self.server orelse return;
+        if (output.color.external != null) return;
         if (output.user_disabled) {
             output.color.status = .disabled;
             return;
@@ -213,7 +214,15 @@ pub const NightLight = struct {
             }
         }
 
-        const target_temp: u16 = if (self.config.enabled and nl_enabled) self.current_temperature else 6500;
+        // On an HDR signal night light is part of the encode (output/hdr.zig):
+        // the gamma table, which would act on PQ, stays neutral.
+        const hdr = @import("../output/hdr.zig");
+        const hdr_signal = hdr.signal(output);
+        if (hdr_signal) {
+            hdr.sync(output);
+            gamma = 1.0;
+        }
+        const target_temp: u16 = if (self.config.enabled and nl_enabled and !hdr_signal) self.current_temperature else 6500;
         const is_neutral = (target_temp == 6500 and gamma == 1.0);
 
         const gamma_size = output.wlr_output.getGammaSize();
@@ -231,20 +240,14 @@ pub const NightLight = struct {
                 return;
             }
             if (gamma_size < 2) {
-                if (output.color.transform) |tr| {
-                    Output.wlr_color_transform_unref(tr);
-                    output.color.transform = null;
-                }
+                output.color.replaceTransform(null);
                 output.color.status = .neutral;
                 output.color.pending = false;
                 output.color.key = target_key;
                 return;
             }
             // Transitioning to neutral with gamma_size >= 2! Commit NULL transform to restore default.
-            if (output.color.transform) |tr| {
-                Output.wlr_color_transform_unref(tr);
-                output.color.transform = null;
-            }
+            output.color.replaceTransform(null);
             output.color.key = target_key;
             output.color.pending = true;
             output.color.consecutive_failures = 0;
@@ -290,10 +293,7 @@ pub const NightLight = struct {
             return;
         }
 
-        if (output.color.transform) |old_tr| {
-            Output.wlr_color_transform_unref(old_tr);
-        }
-        output.color.transform = new_transform;
+        output.color.replaceTransform(new_transform);
         output.color.key = target_key;
         output.color.pending = true;
         output.color.status = .pending;

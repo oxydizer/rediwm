@@ -109,6 +109,24 @@ static const char ribbon_fragment[] =
     "vec4 c=mix(color,bcolor,core*.22);"
     "gl_FragColor=vec4(c.rgb*c.a*a,c.a*a); }";
 
+// The linear twin: the same shader under another
+// name, whose sRGB, premultiplied result is decoded to linear light. Built inside
+// scene_pass_enter, when ribbons and linear passes are both on.
+bool scene_pass_ribbon_build_linear(struct rediwm_scene_renderer *r) {
+    if (!r->ribbon.id || r->ribbon_lin.id) return true;
+    static const char wrapper[] = "\n#undef main\n" GLSL_LIN
+        "void main(){ ribbon_main(); gl_FragColor=lin(gl_FragColor); }";
+    char *source = malloc(sizeof(ribbon_fragment) + sizeof(wrapper));
+    if (!source) return false;
+    memcpy(source, ribbon_fragment, sizeof(ribbon_fragment) - 1);
+    memcpy(source + sizeof(ribbon_fragment) - 1, wrapper, sizeof(wrapper));
+    const bool ok = scene_pass_program_init(&r->ribbon_lin, 16384, ribbon_vertex, "#define main ribbon_main\n", source);
+    free(source);
+    if (!ok) return false;
+    r->ribbon_lin_fade = glGetUniformLocation(r->ribbon_lin.id, "fade");
+    return true;
+}
+
 bool rediwm_scene_renderer_set_ribbons(struct rediwm_scene_renderer *r, bool enabled) {
     assert(!r->active);
     if (enabled == (r->ribbon.id != 0)) return true;
@@ -122,11 +140,15 @@ bool rediwm_scene_renderer_set_ribbons(struct rediwm_scene_renderer *r, bool ena
             glGenBuffers(1, &r->ribbon_vertices);
             ok = r->ribbon_vertices && glGetError() == GL_NO_ERROR;
         }
+        // A linear pass draws them only through the twin.
+        if (ok && r->has_linear) ok = scene_pass_ribbon_build_linear(r);
     }
     if (!enabled || !ok) {
         glDeleteProgram(r->ribbon.id);
+        glDeleteProgram(r->ribbon_lin.id);
         glDeleteBuffers(1, &r->ribbon_vertices);
         r->ribbon = (struct program){0};
+        r->ribbon_lin = (struct program){0};
         r->ribbon_vertices = 0;
     }
     scene_pass_leave(r, &state);
@@ -139,10 +161,12 @@ void rediwm_scene_pass_add_ribbon(struct wlr_render_pass *base, struct wlr_box b
     struct pass *p = owned_pass(base);
     struct rediwm_scene_renderer *r = p->renderer;
     if (p->failed || mesh->count < 4 || !pixman_region32_not_empty((pixman_region32_t *)clip)) return;
-    if (!r->ribbon.id || mesh->count > REDIWM_RIBBON_VERTICES) { p->failed = true; return; }
-    scene_pass_setup(p, &r->ribbon, box, WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
-    glUniform1i(r->ribbon.mode, mesh->edge);
-    glUniform1f(r->ribbon.alpha, opacity);
+    struct program *g = p->linear ? &r->ribbon_lin : &r->ribbon;
+    if (!g->id || mesh->count > REDIWM_RIBBON_VERTICES) { p->failed = true; return; }
+    scene_pass_setup(p, g, box, WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
+    if (p->failed) return;
+    glUniform1i(g->mode, mesh->edge);
+    glUniform1f(g->alpha, opacity);
     if (mesh->edge == 2) {
         if (!texture || !wlr_texture_is_gles2(texture)) { p->failed = true; return; }
         struct wlr_gles2_texture_attribs a;
@@ -152,11 +176,11 @@ void rediwm_scene_pass_add_ribbon(struct wlr_render_pass *base, struct wlr_box b
         glBindTexture(GL_TEXTURE_2D, a.tex);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glUniform1i(r->ribbon.sampler, 0);
+        glUniform1i(g->sampler, 0);
     }
-    glUniform2fv(r->ribbon_fade, 1, mesh->fade);
-    glUniform4f(r->ribbon.color, mesh->color[0], mesh->color[1], mesh->color[2], mesh->color[3] * opacity);
-    glUniform4f(r->ribbon.bcolor, mesh->core_color[0], mesh->core_color[1], mesh->core_color[2], mesh->core_color[3] * opacity);
+    glUniform2fv(p->linear ? r->ribbon_lin_fade : r->ribbon_fade, 1, mesh->fade);
+    glUniform4f(g->color, mesh->color[0], mesh->color[1], mesh->color[2], mesh->color[3] * opacity);
+    glUniform4f(g->bcolor, mesh->core_color[0], mesh->core_color[1], mesh->core_color[2], mesh->core_color[3] * opacity);
     glBindBuffer(GL_ARRAY_BUFFER, r->ribbon_vertices);
     float vertices[REDIWM_RIBBON_VERTICES][4];
     const void *data = mesh->vertices;

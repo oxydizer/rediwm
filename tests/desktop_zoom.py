@@ -48,7 +48,7 @@ def run():
         # Protocol deltas below deliberately use the non-inverted direction.
         # pan_speed = 1.0 keeps pan assertions below at raw screen-space motion
         # (see the default 2x pan_speed in config/loader.zig's InputConfig).
-        config_path.write_text("[input]\ninvert_scroll = false\npan_speed = 1.0\n")
+        config_path.write_text("[input]\npan_speed = 1.0\n")
         env["REDIWM_CONFIG"] = str(config_path)
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("REDIWM_SOCKET", None)

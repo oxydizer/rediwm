@@ -192,7 +192,7 @@ pub const Manager = struct {
 
     /// `output` latched (`Output.latch_seq` is now `latch`): clear the
     /// barriers of the surfaces it paces that were applied before it.
-    pub fn latched(self: *Manager, output: *wlr.Output, latch: u64) void {
+    pub fn latched(self: *Manager, output: *wlr.Output, latch: u64, content_current: bool) void {
         var any = false;
         var it = self.fifos.iterator(.forward);
         while (it.next()) |fifo| {
@@ -201,6 +201,10 @@ pub const Manager = struct {
             if (rediwm_surface_frame_pacing_output(surface) != output) continue;
             // Applied at this generation on this output: not latched yet.
             if (fifo.armed_output == output and fifo.armed_latch == latch) continue;
+            if (!content_current) {
+                output.scheduleFrame();
+                continue;
+            }
             const releases = fifo.barriers.waitingOnArmed();
             _ = fifo.barriers.clear();
             stats.global_stats.fifo.latched +%= 1;

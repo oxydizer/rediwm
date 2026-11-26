@@ -1,6 +1,7 @@
 //! Taskbar chip titles and part text.
 
 const std = @import("std");
+const gpa = @import("../main.zig").gpa;
 const Taskbar = @import("../Taskbar.zig");
 const sn = @import("../node.zig");
 const battery = @import("../taskbar/battery.zig");
@@ -68,14 +69,64 @@ pub fn drawChipTitle(pixels: []u32, width: i32, height: i32, rect: text.Rect, ti
     text.draw(pixels, width, height, rect, title, color, scale, .manrope, ui_theme.global.taskbar_title_size) catch {};
 }
 
-/// Text is clipped to `rect`, so repainting that rect's device columns first
-/// removes every pixel an earlier title touched.
-pub fn paintChipTitleColumns(paint: *const ChipPaint, pixels: []u32, width: i32, height: i32, origin_x: i32, rect: text.Rect, title: []const u8, color: text.Color, scale: f32) void {
-    // The same rounding text.drawOpts applies to its clip.
+/// The device columns of a title box: the same rounding text.drawOpts applies
+/// to its clip, so repainting them removes every pixel an earlier title touched.
+fn titleColumns(rect: text.Rect, width: i32, scale: f32) [2]usize {
     const x0: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(rect.x)) * scale));
     const x1: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(rect.x + rect.w)) * scale));
-    fillChipColumns(paint, pixels, width, height, origin_x, 0, @intCast(std.math.clamp(x0, 0, width)), @intCast(std.math.clamp(x1, 0, width)), scale);
+    const lo: usize = @intCast(std.math.clamp(x0, 0, width));
+    return .{ lo, @max(lo, @as(usize, @intCast(std.math.clamp(x1, 0, width)))) };
+}
+
+/// The chip's cached title-box background, painted again when the raster
+/// key, the memo (title aside) or the box changed.
+fn titleBackground(bar: *Taskbar, now_ms: i64, chip: *ChipState, key: ChipRasterKey, memo: ChipMemo, columns: [2]usize, height: i32, scale: f32) ?*const Taskbar.TitleBackground {
+    if (chip.title_background) |*bg| {
+        if (bg.x0 == columns[0] and bg.x1 == columns[1] and bg.height == height and
+            std.meta.eql(bg.key, key) and std.meta.eql(bg.memo, memo)) return bg;
+        gpa.free(bg.pixels);
+        chip.title_background = null;
+    }
+    const w = columns[1] - columns[0];
+    const pixels = gpa.alloc(u32, w * @as(usize, @intCast(height))) catch return null;
+    const paint = ChipPaint.init(bar, now_ms, chip);
+    // The columns as a raster of their own: origin moved right by x0 device
+    // pixels is the same as reading columns x0.. of the chip raster.
+    fillChipColumnsAt(&paint, pixels, @intCast(w), height, key.left, columns[0], scale);
+    chip.title_background = .{ .pixels = pixels, .key = key, .memo = memo, .x0 = columns[0], .x1 = columns[1], .height = height };
+    return &chip.title_background.?;
+}
+
+fn copyTitleBackground(pixels: []u32, width: i32, height: i32, columns: [2]usize, background: []const u32) void {
+    const stride: usize = @intCast(width);
+    const w = columns[1] - columns[0];
+    for (0..@intCast(height)) |row| {
+        @memcpy(pixels[row * stride + columns[0] ..][0..w], background[row * w ..][0..w]);
+    }
+}
+
+/// What a title-only repaint does to a copy of the previous raster: the title
+/// box's background put back as `titleBackground` keeps it, then the new title.
+pub fn paintChipTitleColumns(paint: *const ChipPaint, pixels: []u32, width: i32, height: i32, origin_x: i32, rect: text.Rect, title: []const u8, color: text.Color, scale: f32) !void {
+    const columns = titleColumns(rect, width, scale);
+    const background = try gpa.alloc(u32, (columns[1] - columns[0]) * @as(usize, @intCast(height)));
+    defer gpa.free(background);
+    fillChipColumnsAt(paint, background, @intCast(columns[1] - columns[0]), height, origin_x, columns[0], scale);
+    copyTitleBackground(pixels, width, height, columns, background);
     drawChipTitle(pixels, width, height, rect, title, color, scale);
+}
+
+/// `fillChipColumns` for columns `first..first + width` of a raster whose
+/// logical origin is (`origin_x`, 0), written to a raster `width` wide.
+fn fillChipColumnsAt(paint: *const ChipPaint, pixels: []u32, width: i32, height: i32, origin_x: i32, first: usize, scale: f32) void {
+    const stride: usize = @intCast(width);
+    for (0..@intCast(height)) |dy| {
+        const py = (@as(f32, @floatFromInt(dy)) + 0.5) / scale;
+        for (0..stride) |i| {
+            const px = @as(f32, @floatFromInt(origin_x)) + (@as(f32, @floatFromInt(first + i)) + 0.5) / scale;
+            pixels[dy * stride + i] = chipPixelArgb(paint, px, py, scale);
+        }
+    }
 }
 
 /// Terminals animate their titles several times a second. When nothing but
@@ -100,8 +151,15 @@ pub fn repaintChipTitle(bar: *Taskbar, now_ms: i64, chip: *ChipState, memo: Chip
     @memcpy(buf.pixels, previous.pixels);
     const cx: i32 = @intFromFloat(@round(chip.renderX(now_ms)));
     if (chipTitleRect(cx, bar.box.height, chip.width, key.left, 0)) |rect| {
-        const paint = ChipPaint.init(bar, now_ms, chip);
-        paintChipTitleColumns(&paint, buf.pixels, buf.width, buf.height, key.left, rect, chipTitle(chip.toplevel), chipTitleColor(bar, chip), scale);
+        var background_memo = memo;
+        background_memo.title_hash = 0;
+        const columns = titleColumns(rect, buf.width, scale);
+        const background = titleBackground(bar, now_ms, chip, key, background_memo, columns, buf.height, scale) orelse {
+            buf.base.drop();
+            return false;
+        };
+        copyTitleBackground(buf.pixels, buf.width, buf.height, columns, background.pixels);
+        drawChipTitle(buf.pixels, buf.width, buf.height, rect, chipTitle(chip.toplevel), chipTitleColor(bar, chip), scale);
     }
     node.node.setPosition(key.left, 0);
     node.setBuffer(&buf.base);

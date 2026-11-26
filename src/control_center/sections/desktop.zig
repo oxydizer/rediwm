@@ -154,10 +154,14 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     fixed_row.@"align" = .center;
     const mode_card = try card(a, &.{
         panel.sectionTitle(i18n.tr("Desktop mode")),
-        .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Canvas"), i18n.msg("Workspaces") }), .selected = @intFromEnum(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
-        text(if (cfg.desktop_mode == .workspaces) i18n.tr("Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating.") else i18n.tr("Pan and zoom the canvas. Switching back restores your canvas positions and zoom."), 12, true),
+        .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Canvas"), i18n.msg("Workspaces"), i18n.msg("Scrolling") }), .selected = @intFromEnum(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
+        text(switch (cfg.desktop_mode) {
+            .workspaces => i18n.tr("Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating."),
+            .scrolling => i18n.tr("New windows open as columns on a strip that scrolls. Super+arrows move along it; Super+W changes a column's width."),
+            .canvas => i18n.tr("Pan and zoom the canvas. Switching back restores your canvas positions and zoom."),
+        }, 12, true),
     });
-    if (cfg.desktop_mode == .workspaces) return workspaceTree(s, cc, a, mode_card);
+    if (cfg.desktop_mode.tiled()) return workspaceTree(s, cc, a, mode_card);
     var root = try container(a, .column, &.{
         mode_card,
         body,
@@ -265,8 +269,9 @@ fn change(owner: ?*anyopaque, id: usize) void {
 
 fn modeChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
-    if (index > 1) return;
-    const mode: @import("config").loader.DesktopMode = @enumFromInt(index);
+    const modes = std.enums.values(@import("config").loader.DesktopMode);
+    if (index >= modes.len) return;
+    const mode = modes[index];
     @import("../../config_runtime/workspace_controls.zig").mode(cc.server, mode, true) catch {
         cc.desktop.message = i18n.tr("Could not save desktop mode.");
         cc.refresh();
@@ -282,10 +287,15 @@ fn workspaceTree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, mo
     const labels = try a.alloc([]const u8, 32);
     for (labels, 0..) |*label, i| label.* = try i18n.allocPrint(a, i18n.tr("Workspace {n}"), .{ .n = i + 1 });
     const slot = manager.slots[id - 1];
+    const layout_index: usize = switch (manager.layoutOf(id)) {
+        .split => 0,
+        .scrolling => 1,
+        .floating => 2,
+    };
     const workspace_card = try card(a, &.{
         panel.sectionTitle(i18n.tr("Workspace layout")),
         try mapSelect(cc, a, i18n.tr("Workspace"), "workspace_select", labels, id - 1, false, workspaceSelected),
-        try mapSelect(cc, a, i18n.tr("Placement"), "workspace_layout", panel.translatedLabels(&.{ i18n.msg("Automatic tiling"), i18n.msg("Floating") }), if (slot.automatic) 0 else 1, false, layoutChanged),
+        try mapSelect(cc, a, i18n.tr("Placement"), "workspace_layout", panel.translatedLabels(&.{ i18n.msg("Automatic tiling"), i18n.msg("Scrolling"), i18n.msg("Floating") }), layout_index, false, layoutChanged),
         text(if (slot.output) |out| try i18n.allocPrint(a, i18n.tr("Output: {name}"), .{ .name = std.mem.span(out.wlr_output.name) }) else i18n.tr("Assigned to the current output when first used."), 12, true),
         text(i18n.tr("Layouts and split sizes are saved for your next session."), 12, true),
     });
@@ -329,7 +339,47 @@ fn workspaceTree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, mo
         try list.build(a, items, cc, floatingChanged, .{}),
         text(i18n.tr("Open an app to add it here. Advanced title, backend and glob matches use [[window_rules]] floating in your config."), 12, true),
     });
+    if (cc.server.config.compositor.desktop_mode == .scrolling)
+        return container(a, .column, &.{ mode_card, workspace_card, try scrollingCard(cc, a), spacing, rules, text(s.message, 12, true) });
     return container(a, .column, &.{ mode_card, workspace_card, spacing, rules, text(s.message, 12, true) });
+}
+
+const column_widths = [_]f32{ 1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0 };
+const column_width_labels = [_]i18n.Message{ i18n.msg("One third"), i18n.msg("Half"), i18n.msg("Two thirds"), i18n.msg("Full width") };
+const centers = [_]@import("config").types.ScrollCenter{ .never, .on_overflow, .always };
+const center_labels = [_]i18n.Message{ i18n.msg("Never"), i18n.msg("When wider than the screen"), i18n.msg("Always") };
+
+fn scrollingCard(cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
+    const cfg = cc.server.config.compositor;
+    var width_index: usize = 0;
+    for (column_widths, 0..) |width, i| if (@abs(width - cfg.scroll_column_width) < @abs(column_widths[width_index] - cfg.scroll_column_width)) {
+        width_index = i;
+    };
+    const center_index = std.mem.indexOfScalar(@import("config").types.ScrollCenter, &centers, cfg.scroll_center) orelse 1;
+    return card(a, &.{
+        panel.sectionTitle(i18n.tr("Scrolling")),
+        try mapSelect(cc, a, i18n.tr("New column width"), "scroll_column_width", panel.translatedLabels(&column_width_labels), width_index, false, columnWidthChanged),
+        try mapSelect(cc, a, i18n.tr("Centre the focused column"), "scroll_center", panel.translatedLabels(&center_labels), center_index, false, centerChanged),
+        text(i18n.tr("Super+W steps a column through the widths; Super+[ and Super+] move a window into the next column or out of its own."), 12, true),
+    });
+}
+fn columnWidthChanged(owner: ?*anyopaque, _: usize, index: usize) void {
+    if (index < column_widths.len) saveScrolling(owner, "scroll_column_width", column_widths[index]);
+}
+fn centerChanged(owner: ?*anyopaque, _: usize, index: usize) void {
+    if (index < centers.len) saveScrolling(owner, "scroll_center", centers[index]);
+}
+fn saveScrolling(owner: ?*anyopaque, comptime key: []const u8, value: @FieldType(@import("config").loader.CompositorConfig, key)) void {
+    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, key, value) catch {
+        cc.desktop.message = i18n.tr("Could not save. Check the configuration file and try again.");
+        cc.refresh();
+        return;
+    };
+    @field(cc.server.config.compositor, key) = value;
+    cc.server.world.workspaces.tiler.schedule(cc.server);
+    cc.desktop.message = "";
+    cc.refresh();
 }
 fn workspaceSelected(owner: ?*anyopaque, _: usize, index: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
@@ -339,8 +389,12 @@ fn workspaceSelected(owner: ?*anyopaque, _: usize, index: usize) void {
 }
 fn layoutChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
-    if (index > 1) return;
-    @import("../../config_runtime/workspace_controls.zig").automatic(cc.server, cc.desktop.selected_workspace, index == 0);
+    const layouts = [_]@import("config").workspace_layout.Layout{ .split, .scrolling, .floating };
+    if (index >= layouts.len) return;
+    // The mode's own layout follows the mode again; others stay as chosen.
+    const choice = layouts[index];
+    const manager = &cc.server.world.workspaces;
+    @import("../../config_runtime/workspace_controls.zig").layout(cc.server, cc.desktop.selected_workspace, if (choice == manager.defaultLayout()) null else choice);
 }
 fn gapChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));

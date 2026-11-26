@@ -17,7 +17,8 @@ link: wl.list.Link = undefined,
 commit: wl.Listener(*wlr.Surface) = .init(committed),
 destroy: wl.Listener(*wlr.LayerSurfaceV1) = .init(destroyed),
 output_destroy: wl.Listener(*wlr.Output) = .init(outputDestroyed),
-output_commit: wl.Listener(*wlr.Output.event.Commit) = .init(outputCommitted),
+was_mapped: bool = false,
+configured_size: ?[2]u32 = null,
 
 pub fn create(server: *Server, layer: *wlr.LayerSurfaceV1) !void {
     const output: *wlr.Output = layer.output orelse defaultOutput(server) orelse {
@@ -37,7 +38,6 @@ pub fn create(server: *Server, layer: *wlr.LayerSurfaceV1) !void {
     layer.surface.events.commit.add(&self.commit);
     layer.events.destroy.add(&self.destroy);
     output.events.destroy.add(&self.output_destroy);
-    output.events.commit.add(&self.output_commit);
 }
 
 fn defaultOutput(server: *Server) ?*wlr.Output {
@@ -61,7 +61,58 @@ pub fn localPoint(self: *Self, x: f64, y: f64) @import("geometry.zig").Vec2 {
     return @import("geometry.zig").toLocal(x, y, ox, oy);
 }
 
-pub fn arrange(self: *Self) void {
+/// Place exclusive panels first, from overlay to background and oldest first
+/// within a layer. Other surfaces see the space left by all mapped panels.
+pub fn arrangeOutput(output: *Output) bool {
+    const server = output.server;
+    if (server.shutting_down or (server.layer_surfaces.empty() and output.layer_work_area == null)) return false;
+    var full = output.cached_box;
+    if (!output.idle_blanked) server.output_layout.getBox(output.wlr_output, &full);
+    const base = output.shellUsableBox();
+    var usable = base;
+    const Layer = @import("wayland").server.zwlr.LayerShellV1.Layer;
+    for ([_]Layer{ .overlay, .top, .bottom, .background }) |layer| {
+        var it = server.layer_surfaces.iterator(.reverse);
+        while (it.next()) |self| {
+            if (self.layer.output != output.wlr_output or !self.layer.initialized or self.layer.current.layer != layer) continue;
+            if (self.reserves()) self.place(&full, &usable);
+        }
+    }
+    var it = server.layer_surfaces.iterator(.reverse);
+    while (it.next()) |self| {
+        if (self.layer.output == output.wlr_output and self.layer.initialized and !self.reserves()) self.place(&full, &usable);
+    }
+    const area: ?wlr.Box = if (std.meta.eql(usable, base)) null else usable;
+    if (std.meta.eql(area, output.layer_work_area)) return false;
+    output.layer_work_area = area;
+    // In workspace mode syncOutputs refits each workspace on its own output.
+    if (!server.world.workspaces.active) {
+        var tops = server.world.toplevels.iterator(.forward);
+        while (tops.next()) |top| {
+            if (top.fullscreen or (!top.maximized and top.tile == null) or top.currentOutput() != output) continue;
+            if (top.maximized) top.setMaximizedOn(output) else if (top.tile) |tile| top.setTiledOn(output, tile);
+        }
+    }
+    return true;
+}
+
+fn reserves(self: *Self) bool {
+    return self.layer.current.exclusive_zone > 0 and @as(u32, @bitCast(self.layer.getExclusiveEdge())) != 0;
+}
+
+fn layoutChanged(layer: *wlr.LayerSurfaceV1) void {
+    const output = Output.fromWlr(layer.output orelse return) orelse return;
+    if (!arrangeOutput(output)) return;
+    output.server.world.workspaces.syncOutputs(output.server);
+    if (output.server.desktop) |desktop| desktop.syncLayout();
+}
+
+// A preceding panel can leave less space than a stretched surface's margins.
+fn stretchedSize(extent: i32, leading: i32, trailing: i32) i32 {
+    return @intCast(std.math.clamp(@as(i64, extent) - leading - trailing, 1, std.math.maxInt(i32)));
+}
+
+fn place(self: *Self, full: *const wlr.Box, usable: *wlr.Box) void {
     const parent = switch (self.layer.current.layer) {
         .background, .bottom => self.server.desktop_tree,
         .top => self.server.taskbar_tree,
@@ -69,21 +120,6 @@ pub fn arrange(self: *Self) void {
         _ => self.server.desktop_tree,
     };
     self.tree.node.reparent(parent);
-    var full: wlr.Box = undefined;
-    const wlr_output = self.layer.output;
-    self.server.output_layout.getBox(wlr_output, &full);
-    const output = Output.fromWlr(wlr_output.?);
-    if (output) |out| if (out.idle_blanked) {
-        full = out.cached_box;
-    };
-    var usable = full;
-    if (output) |out| usable = out.usableBox();
-    self.place(&full, &usable);
-}
-/// Places the surface by its anchors and margins in `full` or `usable`, sends the
-/// configure, and takes its exclusive zone out of `usable` (wlr_scene_layer_surface_v1_configure).
-/// The values are the client's: all arithmetic wraps rather than traps.
-fn place(self: *Self, full: *const wlr.Box, usable: *wlr.Box) void {
     const state = &self.layer.current;
     // An exclusive zone of -1 takes the whole output, otherwise what is left.
     const bounds: wlr.Box = if (state.exclusive_zone == -1) full.* else usable.*;
@@ -93,7 +129,7 @@ fn place(self: *Self, full: *const wlr.Box, usable: *wlr.Box) void {
 
     if (box.width == 0) {
         box.x = bounds.x +% margin.left;
-        box.width = bounds.width -% (margin.left +% margin.right);
+        box.width = stretchedSize(bounds.width, margin.left, margin.right);
     } else if (anchor.left and anchor.right) {
         box.x = bounds.x +% @divTrunc(bounds.width, 2) -% @divTrunc(box.width, 2);
     } else if (anchor.left) {
@@ -106,7 +142,7 @@ fn place(self: *Self, full: *const wlr.Box, usable: *wlr.Box) void {
 
     if (box.height == 0) {
         box.y = bounds.y +% margin.top;
-        box.height = bounds.height -% (margin.top +% margin.bottom);
+        box.height = stretchedSize(bounds.height, margin.top, margin.bottom);
     } else if (anchor.top and anchor.bottom) {
         box.y = bounds.y +% @divTrunc(bounds.height, 2) -% @divTrunc(box.height, 2);
     } else if (anchor.top) {
@@ -118,37 +154,38 @@ fn place(self: *Self, full: *const wlr.Box, usable: *wlr.Box) void {
     }
 
     self.tree.node.setPosition(box.x, box.y);
-    _ = self.layer.configure(@bitCast(box.width), @bitCast(box.height));
+    const size = [2]u32{ @bitCast(box.width), @bitCast(box.height) };
+    if (self.configured_size == null or !std.meta.eql(self.configured_size.?, size)) {
+        _ = self.layer.configure(size[0], size[1]);
+        self.configured_size = size;
+    }
 
     if (self.layer.surface.mapped and state.exclusive_zone > 0) {
         const zone = state.exclusive_zone;
         const edge = self.layer.getExclusiveEdge();
-        if (edge.top) {
-            usable.y +%= zone +% margin.top;
-            usable.height -%= zone +% margin.top;
-        } else if (edge.bottom) {
-            usable.height -%= zone +% margin.bottom;
-        } else if (edge.left) {
-            usable.x +%= zone +% margin.left;
-            usable.width -%= zone +% margin.left;
-        } else if (edge.right) {
-            usable.width -%= zone +% margin.right;
+        if (edge.top or edge.bottom) {
+            const reserve = std.math.clamp(zone +| (if (edge.top) margin.top else margin.bottom), 0, @max(0, usable.height - 1));
+            if (edge.top) usable.y +|= reserve;
+            usable.height -= reserve;
+        } else if (edge.left or edge.right) {
+            const reserve = std.math.clamp(zone +| (if (edge.left) margin.left else margin.right), 0, @max(0, usable.width - 1));
+            if (edge.left) usable.x +|= reserve;
+            usable.width -= reserve;
         }
-        usable.width = @max(usable.width, 0);
-        usable.height = @max(usable.height, 0);
     }
 }
 
 fn committed(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
     const self: *Self = @fieldParentPtr("commit", listener);
-    if (self.layer.initial_commit or @as(u32, @bitCast(self.layer.current.committed)) != 0) self.arrange();
+    const mapped = self.layer.surface.mapped;
+    if (!self.layer.initialized) self.configured_size = null;
+    if (self.layer.initial_commit or mapped != self.was_mapped or @as(u32, @bitCast(self.layer.current.committed)) != 0) {
+        self.was_mapped = mapped;
+        layoutChanged(self.layer);
+    }
     if (self.layer.current.committed.keyboard_interactivity and self.layer.current.keyboard_interactive == .on_demand and self.server.input.seat.pointer_state.focused_surface == self.layer.surface) self.focus();
     if (self.layer.current.keyboard_interactive == .none and self.server.input.seat.keyboard_state.focused_surface == self.layer.surface) self.server.input.seat.keyboardClearFocus();
     if (self.server.idle) |im| im.recheckInhibitors();
-}
-fn outputCommitted(listener: *wl.Listener(*wlr.Output.event.Commit), event: *wlr.Output.event.Commit) void {
-    const self: *Self = @fieldParentPtr("output_commit", listener);
-    if (event.state.committed.mode or event.state.committed.scale or event.state.committed.transform) self.arrange();
 }
 fn outputDestroyed(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     const self: *Self = @fieldParentPtr("output_destroy", listener);
@@ -161,8 +198,8 @@ fn destroyed(listener: *wl.Listener(*wlr.LayerSurfaceV1), _: *wlr.LayerSurfaceV1
     self.commit.link.remove();
     self.destroy.link.remove();
     self.output_destroy.link.remove();
-    self.output_commit.link.remove();
     self.link.remove();
+    layoutChanged(self.layer);
     self.layer.data = null;
     gpa.destroy(self);
     if (server.idle) |im| im.recheckInhibitors();

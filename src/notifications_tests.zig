@@ -30,6 +30,7 @@ test "notifications unit: replaces_id, urgency, DND, lock suppression" {
     server.locker = null;
     server.environ = std.process.Environ.empty;
     server.config = undefined;
+    server.config.compositor = .{};
     server.config.notifications = .{ .dnd = false, .game_dnd = false, .default_timeout_ms = 5000 };
     server.config.notification_rules = &.{};
     server.ipc = null;
@@ -46,13 +47,12 @@ test "notifications unit: replaces_id, urgency, DND, lock suppression" {
     _ = wlr_out.commitState(&mode);
     _ = try output_layout.add(wlr_out, 0, 0);
 
-    var out: Output = undefined;
-    out.server = &server;
-    out.wlr_output = wlr_out;
-    out.user_disabled = false;
-    out.idle_blanked = false;
-    out.taskbar = null;
-    out.cached_box = .{ .x = 0, .y = 0, .width = 1280, .height = 720 };
+    var out: Output = .{
+        .server = &server,
+        .wlr_output = wlr_out,
+        .lock_view = undefined,
+        .cached_box = .{ .x = 0, .y = 0, .width = 1280, .height = 720 },
+    };
     wlr_out.data = &out;
     server.outputs.append(&out);
 

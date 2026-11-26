@@ -24,7 +24,7 @@ pub fn getNightLight(server: *Server, allocator: std.mem.Allocator) !protocol.Re
             }
         }
         const gamma_size = output.wlr_output.getGammaSize();
-        const status: protocol.NightLightOutputStatus = switch (output.color.status) {
+        const status: protocol.NightLightOutputStatus = if (output.color.external != null) .external else switch (output.color.status) {
             .neutral => .neutral,
             .pending => .pending,
             .applied => .applied,

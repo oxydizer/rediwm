@@ -128,6 +128,7 @@ pub const IconId = enum {
     skip_previous,
     skip_next,
     stop,
+    captions,
     view_grid,
     view_list,
     sort,
@@ -157,6 +158,11 @@ pub const IconId = enum {
     ram,
     /// Firewall: a shield with a check mark.
     shield,
+    /// The taskbar's desktop mode item: overlapping windows (Canvas), a
+    /// master-and-stack split (Workspaces) and columns running on (Scrolling).
+    desktop_canvas,
+    desktop_tiles,
+    desktop_scroll,
 };
 
 pub const ButtonState = enum { idle, hover, press, disabled };
@@ -255,6 +261,8 @@ pub const ButtonData = struct {
     /// than the usual text pill.
     icon: ?IconId = null,
     icon_scale: f32 = 0.5,
+    radius: ?f32 = null,
+    selected: bool = false,
     leading_icon: ?IconId = null,
     trailing_icon: ?IconId = null,
     stacked: bool = false,
@@ -544,6 +552,7 @@ pub const Widget = struct {
     justify: Justify = .start,
 
     // --- Computed by layout passes (do not set manually) ---
+    measured_scale: f32 = 1,
     computed_x: f32 = 0,
     computed_y: f32 = 0,
     computed_width: f32 = 0,

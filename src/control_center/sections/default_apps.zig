@@ -49,7 +49,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
             .{ .name = "default_" ++ @tagName(kind), .kind = .{ .select = .{ .labels = labels.items, .selected = selected_index, .notify_on_reselect = kind == .file_manager, .owner = cc, .on_change = if (kind == .file_manager) fileChanged else terminalChanged } }, .width = .{ .fixed = 240 } },
         }) };
     }
-    children[3] = try panel.paragraph(a, if (s.message.len > 0) s.message else i18n.tr("Used for desktop folders, app shortcuts and apps that run in a terminal."), @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100, 14, false);
+    children[3] = try panel.paragraph(cc.toplevel.render_scale, a, if (s.message.len > 0) s.message else i18n.tr("Used for desktop folders, app shortcuts and apps that run in a terminal."), @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100, 14, false);
     return .{ .kind = .container, .direction = .column, .gap = 12, .width = .{ .percent = 1 }, .children = children };
 }
 fn save(owner: ?*anyopaque, comptime kind: defaults.Kind, index: usize) void {

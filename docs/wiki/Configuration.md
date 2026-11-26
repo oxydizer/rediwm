@@ -144,10 +144,13 @@ The center group stays centered on the display when it fits, and shifts or
 narrows the window list to avoid the side groups.
 
 For example, `taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray",
-"right:battery", "~right:wifi", "~right:wired", "~right:input_source", "right:volume", "right:clock",
-"-right:power"]` is the default. The keyboard layout item (`input_source`) is
-described under "Keyboard layouts and input methods"; older lists gain it
-before Volume, automatic.
+"right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source",
+"right:volume", "right:clock", "-right:power"]` is the default. The keyboard layout item
+(`input_source`) is described under "Keyboard layouts and input methods"; older
+lists gain it before Volume, automatic. The desktop mode item (`desktop_mode`)
+switches between Canvas and the last tiled mode like Super+Shift+W and shows the current
+mode; it is off by default, and older lists gain it hidden before the keyboard
+layout.
 Wi-Fi and Ethernet are automatic (the `~` prefix): Wi-Fi shows only when the
 machine has a wireless adapter, and Ethernet only while a cable is connected;
 Wi-Fi opens the network menu, Ethernet opens Settings → Network. Turning an item
@@ -189,15 +192,19 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `taskbar_items` | Start and window list left, tray/status items right, Power hidden | ordered `section:item` entries; prefix with `-` to hide an item |
 | `focus_follows_mouse` | `false` | |
 | `canvas_columns`, `canvas_rows` | `3`, `3` | 1 to 10 |
-| `mini_map_enabled` | `true` | |
+| `mini_map_enabled` | `true` | also the position bar of a scrolling strip |
 | `mini_map_position` | `"bottom_right"` | `bottom_left`, `bottom_center`, `bottom_right` |
-| `mini_map_hide_ms` | `1500` | 500 to 10000 |
+| `mini_map_hide_ms` | `1500` | 500 to 10000; also how long the strip's position bar stays after it settles |
 | `desktop_icons_fixed` | `true` | |
 | `desktop_switch_ms` | `220` | Super+arrow slide, 100 to 3000 |
 | `zoom_steps` | `[1.0, 0.85, 0.70, 0.55, 0.40]` | |
 | `camera_zoom_min`, `camera_zoom_max` | `0.25`, `1.0` | |
 | `focus_zoom` | `"boost"` | `keep`, `boost`, `camera` |
-| `window_gap` | `0` | px between snapped windows |
+| `desktop_mode` | `"canvas"` | `canvas`, `workspaces` (split tiles), or `scrolling` (columns on a strip; its direction is per display, `[[outputs]] scroll_direction`) |
+| `scroll_column_width` | `0.5` | fraction of the viewport used for a new column, from 0.05 to 1 |
+| `scroll_column_widths` | `[0.333, 0.5, 0.667, 1.0]` | width presets for Super+W, up to eight fractions from 0.05 to 1 |
+| `scroll_center` | `"on_overflow"` | `never`, `on_overflow` (centre a column wider than the viewport), or `always` |
+| `window_gap` | `0` on Canvas, `8` in tiled modes | px between snapped windows, split tiles and columns |
 | `snap_to_edges` | `true` | |
 | `dodge_file_drags` | `true` | file manager slides aside while you drag a file out |
 | `drag_feedback` | `true` | softly lift a window during a move drag; suppressed by reduced motion |
@@ -219,7 +226,7 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `wallpaper` | unset | file in `~/.local/share/rediwm/wallpapers`, or a path |
 | `lid_close` | `"display_off"` | `display_off`, `lock`, `suspend`, `power_off`, `ignore` |
 | `lock_on_suspend` | `true` | |
-| `sound_theme`, `sound_enabled`, `sound_disabled_events` | `"freedesktop"`, `true`, `[]` | event sounds, used by `play_sound` |
+| `sound_theme`, `sound_enabled`, `sound_disabled_events` | `"freedesktop"`, `true`, `[]` | event sounds for `play_sound` and the Wayland system bell. Set `sound_disabled_events = ["bell"]` to mute the bell alone. |
 
 Drag lift uses a gentle spring around the grab point and returns smoothly on
 release. Its timing can be adjusted with `[animations.window_drag]`.
@@ -244,13 +251,44 @@ refresh_mhz = 60000    # omit for the highest at this size
 enabled = true
 primary = false
 transform = "normal"   # normal, 90, 180, 270, flipped variants
+adaptive_sync = "auto" # variable refresh: "auto" while a game fills it, "off", "always"
 night_light = false    # never tint this monitor
 gamma = 1.0            # 0.5 to 2.0
+hdr = "off"            # "on": HDR10 where the display supports it
+sdr_white = 203        # SDR brightness on an HDR output, nits (80 to 1000)
+scroll_direction = "auto" # scrolling strips: "auto", "horizontal", "vertical"
 ```
+
+`scroll_direction` sets which way a scrolling workspace runs on that display.
+`auto` follows the display's longer side after rotation: sideways on a
+landscape display, up and down on a portrait one. A workspace takes the
+direction of the display showing it, and keeps its columns and their widths
+when that changes.
 
 Omit coordinates for automatic left-to-right placement. Scale and placement
 apply live. `REDIWM_SCALE` overrides every output. Changes from Settings,
 `wlr-randr`, kanshi or `rediwm-msg output-config` are all saved here.
+
+HDR is experimental. Physical display qualification remains open. [Hardware checklist](../../TESTING.md#on-a-physical-hdr10-display)
+
+On a display whose EDID and driver take HDR10,
+`hdr = "on"` sends an HDR10 signal (PQ, BT.2020, 10 bits): the desktop and
+every app are drawn in linear light and SDR content is shown at `sdr_white`
+cd/m², capped at the peak the display's EDID suggests. Night light still works
+(in the conversion, not the gamma table); apps that set gamma ramps (gammastep,
+wlsunset) are refused on that output, and the cursor is drawn by the
+compositor. If the driver refuses the signal in a mode, the output stays SDR
+until the mode or the setting changes. Screenshots, grim, screen sharing and
+recorders get the output as SDR. Wayland clients can submit PQ/BT.2020
+content at absolute luminance. SDR outputs roll off its highlights. An app
+crossing displays receives the preferred description of the output showing
+most of its surface. X11 and untagged buffers use the desktop white level.
+On headless and nested outputs
+`hdr = "on"` only blends in linear light, still sent as SDR; on other displays
+it does nothing. Translucent edges and glass look slightly different in linear
+light. `rediwm-msg outputs` shows `hdr`, `hdr_supported`, `hdr_linear`,
+`hdr_active` (the signal is on), `hdr_refused` and `sdr_white`. Settings
+offers the switch only on displays that take HDR10.
 
 ## Power and battery
 

@@ -138,7 +138,7 @@ pub fn buildTaskbarSection(out: *Section, t: theme.Theme, pal: theme.Theme) Widg
         out.items_placeholder_body[zone] = .{
             .{ .kind = .container, .width = .{ .flex = 1 } },
             // Slack: a fractional raster scale hints wider than the logical measure.
-            .{ .kind = .{ .text = .{ .content = i18n.tr("Drag items here"), .font_size = theme.global.settings_description_size, .color = pal.dim } }, .min_width = @import("ui").measure.textNatural(i18n.tr("Drag items here"), .sans, 400, theme.global.settings_description_size).w + 6 },
+            .{ .kind = .{ .text = .{ .content = i18n.tr("Drag items here"), .font_size = theme.global.settings_description_size, .color = pal.dim } }, .min_width = @import("ui").measure.textNaturalAtScale(i18n.tr("Drag items here"), .sans, 400, theme.global.settings_description_size, out.cc.toplevel.render_scale).w + 6 },
             .{ .kind = .container, .width = .{ .flex = 1 } },
         };
         out.items_placeholder[zone] = .{.{ .kind = .container, .height = .{ .fixed = item_row_height }, .@"align" = .center, .children = &out.items_placeholder_body[zone] }};

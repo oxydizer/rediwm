@@ -131,3 +131,11 @@ pub const setTreeUnclipped = rediwm_projection_set_tree_unclipped;
 /// window sliding off the workspace it has left.
 extern fn rediwm_projection_set_tree_inert(target: *node.Node, inert: bool) bool;
 pub const setTreeInert = rediwm_projection_set_tree_inert;
+
+extern fn rediwm_projection_set_tree_output(target: *node.Node, output: ?*@import("scene_outputs.zig").SceneOutput) bool;
+/// Confine this group's pixels, damage, input and surface feedback to its
+/// workspace output. Canvas groups have no restriction.
+pub fn setTreeOutput(target: *node.Node, home: ?*@import("Output.zig")) bool {
+    const output = if (home) |out| out.server.scene_outputs.get(out.wlr_output) orelse return false else null;
+    return rediwm_projection_set_tree_output(target, output);
+}

@@ -25,6 +25,7 @@ pub const privileged_globals = std.StaticStringMap(Privilege).initComptime(&[_]K
     .{ "zwp_virtual_keyboard_manager_v1", .{ .group = .input } },
     .{ "zwlr_virtual_pointer_manager_v1", .{ .group = .input } },
     .{ "zwp_input_method_manager_v2", .{ .group = .input_method } },
+    .{ "zwlr_gamma_control_manager_v1", .{ .group = .outputs } },
     .{ "zwlr_output_manager_v1", .{ .group = .outputs } },
     .{ "zwlr_output_power_manager_v1", .{ .group = .outputs } },
     .{ "ext_session_lock_manager_v1", .{ .group = .lock } },
@@ -100,8 +101,8 @@ pub fn install(server: *Server) void {
     server.wl_server.setGlobalFilter(*Server, filter, server);
 }
 
-test "privileged table contains exactly the 20 specified interfaces" {
-    try std.testing.expectEqual(@as(usize, 20), privileged_globals.kvs.len);
+test "privileged table contains exactly the specified interfaces" {
+    try std.testing.expectEqual(@as(usize, 21), privileged_globals.kvs.len);
 
     // Verify groups for each
     try std.testing.expectEqual(SandboxGroup.capture, privileged("zwlr_screencopy_manager_v1").?.group.?);
@@ -115,6 +116,7 @@ test "privileged table contains exactly the 20 specified interfaces" {
     try std.testing.expectEqual(SandboxGroup.input, privileged("zwp_virtual_keyboard_manager_v1").?.group.?);
     try std.testing.expectEqual(SandboxGroup.input, privileged("zwlr_virtual_pointer_manager_v1").?.group.?);
     try std.testing.expectEqual(SandboxGroup.input_method, privileged("zwp_input_method_manager_v2").?.group.?);
+    try std.testing.expectEqual(SandboxGroup.outputs, privileged("zwlr_gamma_control_manager_v1").?.group.?);
     try std.testing.expectEqual(SandboxGroup.outputs, privileged("zwlr_output_manager_v1").?.group.?);
     try std.testing.expectEqual(SandboxGroup.lock, privileged("ext_session_lock_manager_v1").?.group.?);
     try std.testing.expectEqual(SandboxGroup.layer_shell, privileged("zwlr_layer_shell_v1").?.group.?);

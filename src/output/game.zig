@@ -1,10 +1,12 @@
 //! The window an output shows as a game: the keyboard-focused toplevel that
-//! fills it, fullscreen or borderless. Tearing follows it (and automatic
-//! adaptive sync will), so every caller agrees on one rule.
+//! fills it, fullscreen or borderless. Tearing, adaptive sync, game mode
+//! notifications and focus on map follow it, so every caller agrees on one rule.
 
 const wlr = @import("wlroots");
 const Output = @import("../Output.zig");
 const Toplevel = @import("../Toplevel.zig");
+const Server = @import("../Server.zig");
+const workspaces = @import("../workspaces.zig");
 
 pub fn window(output: *Output) ?*Toplevel {
     const server = output.server;
@@ -13,6 +15,18 @@ pub fn window(output: *Output) ?*Toplevel {
     if (!top.in_world or top.minimized or top.tab_hidden or top.currentOutput() != output) return null;
     if (top.isFullscreen() or coversOutput(top, output)) return top;
     return null;
+}
+
+/// The focused window while it is a game in front of the user: fullscreen (as
+/// asked, before the client acks) or a borderless window filling its output.
+pub fn inFront(server: *Server) ?*Toplevel {
+    const top = server.world.toplevels.first() orelse return null;
+    if (!top.in_world or top.minimized or top.tab_hidden or !workspaces.visible(top)) return null;
+    const keyboard = server.input.seat.keyboard_state.focused_surface orelse return null;
+    if (Toplevel.fromSurface(server, keyboard) != top) return null;
+    if (top.fullscreen) return top;
+    const output = top.currentOutput() orelse return null;
+    return if (window(output) == top) top else null;
 }
 
 /// Borderless windowed, the default of many games: an undecorated window the

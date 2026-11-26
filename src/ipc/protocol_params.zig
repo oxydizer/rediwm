@@ -2,12 +2,10 @@
 
 const std = @import("std");
 const commands = @import("commands.zig");
-const output_transform = @import("config").output_transform;
 const RectData = @import("protocol_data.zig").RectData;
 const MatchWindowRulesParams = @import("protocol_data.zig").MatchWindowRulesParams;
 const FractionCoord = @import("protocol_data.zig").FractionCoord;
 const EventFilter = @import("protocol_results.zig").EventFilter;
-const OutputConfigPatch = @import("protocol_results.zig").OutputConfigPatch;
 const LayoutTarget = @import("protocol_results.zig").LayoutTarget;
 const ServiceMode = @import("protocol_results.zig").ServiceMode;
 const ParseError = @import("protocol_parse.zig").ParseError;
@@ -25,6 +23,7 @@ const parseRect = @import("protocol_parse.zig").parseRect;
 const emptyAction = @import("protocol_parse.zig").emptyAction;
 const emptyRequest = @import("protocol_parse.zig").emptyRequest;
 const parseWaitCondition = @import("protocol_wait.zig").parseWaitCondition;
+const parseOutputConfigParams = @import("protocol_params_output.zig").parseOutputConfigParams;
 const Action = @import("protocol.zig").Action;
 const Request = @import("protocol.zig").Request;
 
@@ -82,12 +81,18 @@ pub fn parseSamplePixelsParams(allocator: std.mem.Allocator, obj: std.json.Objec
     if (obj.get("width")) |w_val| width = try parseU32(w_val);
     if (obj.get("height")) |h_val| height = try parseU32(h_val);
     if (width == 0 or width > 1024 or height == 0 or height > 1024) return error.InvalidRequest;
+    var raw = false;
+    if (obj.get("raw")) |value| {
+        if (value != .bool) return error.InvalidRequest;
+        raw = value.bool;
+    }
     return .{ .sample_pixels = .{
         .output = output,
         .x = try parseI32(x_val),
         .y = try parseI32(y_val),
         .width = width,
         .height = height,
+        .raw = raw,
     } };
 }
 
@@ -349,7 +354,12 @@ pub fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.Rou
             const p = params orelse return error.InvalidRequest;
             const dx_v = p.get("dx") orelse return error.InvalidRequest;
             const dy_v = p.get("dy") orelse return error.InvalidRequest;
-            return .{ .scroll = .{ .dx = try parseF64(dx_v), .dy = try parseF64(dy_v) } };
+            var finger = false;
+            if (p.get("finger")) |v| {
+                if (v != .bool) return error.InvalidRequest;
+                finger = v.bool;
+            }
+            return .{ .scroll = .{ .dx = try parseF64(dx_v), .dy = try parseF64(dy_v), .finger = finger } };
         },
         .pinch => {
             const p = params orelse return error.InvalidRequest;
@@ -566,46 +576,7 @@ pub fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.Rou
             return parseSamplePixelsParams(allocator, params orelse return error.InvalidRequest);
         },
 
-        .set_output_config => {
-            const p = params orelse return error.InvalidRequest;
-            const name = p.get("output") orelse return error.InvalidRequest;
-            if (name != .string or name.string.len == 0) return error.InvalidRequest;
-            var patch = OutputConfigPatch{ .output = try allocator.dupe(u8, name.string) };
-            inline for (.{ "width", "height", "refresh_mhz", "x", "y" }) |field| {
-                if (p.get(field)) |value| @field(patch, field) = try parseI32(value);
-            }
-            if (p.get("scale")) |value| {
-                if (value == .string and std.mem.eql(u8, value.string, "auto")) {
-                    patch.auto_scale = true;
-                } else {
-                    const scale = try parseF64(value);
-                    if (scale < 1 or scale > 3) return error.InvalidRequest;
-                    patch.scale = @floatCast(scale);
-                }
-            }
-            if (p.get("position")) |value| {
-                if (value != .string or !std.mem.eql(u8, value.string, "auto")) return error.InvalidRequest;
-                patch.auto_position = true;
-            }
-            if (p.get("enabled")) |value| {
-                if (value != .bool) return error.InvalidRequest;
-                patch.enabled = value.bool;
-            }
-            if (p.get("primary")) |value| {
-                if (value != .bool) return error.InvalidRequest;
-                patch.primary = value.bool;
-            }
-            if (p.get("transform")) |value| {
-                if (value != .string) return error.InvalidRequest;
-                patch.transform = output_transform.parseName(value.string) catch return error.InvalidRequest;
-            }
-            if (p.get("adaptive_sync")) |value| {
-                if (value != .string) return error.InvalidRequest;
-                patch.adaptive_sync = std.meta.stringToEnum(@import("config").output_config.AdaptiveSync, value.string) orelse return error.InvalidRequest;
-            }
-            patch.validate() catch return error.InvalidRequest;
-            return .{ .set_output_config = patch };
-        },
+        .set_output_config => return .{ .set_output_config = try parseOutputConfigParams(allocator, params) },
         .set_idle_config => {
             const p = params orelse return error.InvalidRequest;
             var enabled: ?bool = null;
@@ -693,9 +664,15 @@ pub fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.Rou
                 .switch_workspace => return .{ .switch_workspace = .{ .workspace = @intCast(id) } },
                 .move_to_workspace => return .{ .move_to_workspace = .{ .id = try parseU64(p.get("id") orelse return error.InvalidRequest), .workspace = @intCast(id) } },
                 else => {
-                    const automatic = p.get("automatic") orelse return error.InvalidRequest;
-                    if (automatic != .bool) return error.InvalidRequest;
-                    return .{ .set_workspace_layout = .{ .workspace = @intCast(id), .automatic = automatic.bool } };
+                    // `automatic` is the older form: true follows the desktop mode.
+                    if (p.get("automatic")) |automatic| {
+                        if (automatic != .bool) return error.InvalidRequest;
+                        return .{ .set_workspace_layout = .{ .workspace = @intCast(id), .layout = if (automatic.bool) null else .floating } };
+                    }
+                    const value = p.get("layout") orelse return error.InvalidRequest;
+                    if (value != .string) return error.InvalidRequest;
+                    const layout = if (std.mem.eql(u8, value.string, "default")) null else std.meta.stringToEnum(@import("config").workspace_layout.Layout, value.string) orelse return error.InvalidRequest;
+                    return .{ .set_workspace_layout = .{ .workspace = @intCast(id), .layout = layout } };
                 },
             }
         },

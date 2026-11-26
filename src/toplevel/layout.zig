@@ -15,6 +15,7 @@ pub fn setMaximizedOn(toplevel: *Toplevel, output: *Output) void {
     toplevel.clearZoomBoost();
     toplevel.finishZoomAnimation();
     toplevel.maximized = true;
+    defer toplevel.syncXdgEdges();
     switch (toplevel.backend) {
         .xdg => |*adapter| _ = adapter.xdg_toplevel.setMaximized(true),
         .xwayland => |*adapter| adapter.xsurface.setMaximized(true, true),
@@ -58,6 +59,7 @@ pub fn setFullscreenOn(toplevel: *Toplevel, output: *Output) void {
     toplevel.clearZoomBoost();
     toplevel.finishZoomAnimation();
     toplevel.fullscreen = true;
+    defer toplevel.syncXdgEdges();
     switch (toplevel.backend) {
         .xdg => |*adapter| _ = adapter.xdg_toplevel.setFullscreen(true),
         .xwayland => |*adapter| adapter.xsurface.setFullscreen(true),
@@ -99,6 +101,7 @@ pub fn setFullscreenOn(toplevel: *Toplevel, output: *Output) void {
 pub fn setMaximized(toplevel: *Toplevel, maximizing: bool) void {
     if (!maximizing) {
         toplevel.maximized = false;
+        defer toplevel.syncXdgEdges();
         switch (toplevel.backend) {
             .xdg => |*adapter| _ = adapter.xdg_toplevel.setMaximized(false),
             .xwayland => |*adapter| adapter.xsurface.setMaximized(false, false),
@@ -117,10 +120,7 @@ pub fn setMaximized(toplevel: *Toplevel, maximizing: bool) void {
         return;
     }
 
-    const geometry_box = toplevel.clientGeometry();
-    const center = toplevel.frameWorld(@floatFromInt(toplevel.borderWidth() + @divTrunc(geometry_box.width, 2)), @floatFromInt(toplevel.titlebarHeight() + @divTrunc(geometry_box.height, 2)));
-    const layout_center = toplevel.server.world.toLayout(center.x, center.y);
-    const output = Output.atLayout(toplevel.server, layout_center.x, layout_center.y) orelse toplevel.resolveTargetOutput() orelse return;
+    const output = toplevel.currentOutput() orelse return;
     toplevel.setMaximizedOn(output);
 }
 
@@ -173,7 +173,7 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
     @import("../auto_tiling.zig").setFloating(toplevel, true);
     toplevel.tile = tile;
     toplevel.tile_target = .{ .x = wx, .y = wy, .width = width, .height = height };
-    toplevel.sendTiled(tiling.tiledEdges(tile));
+    toplevel.syncXdgEdges();
     _ = toplevel.requestSizeAnimated(width, height);
     toplevel.setPositionAnimated(wx, wy);
     toplevel.scheduleForcedGeometry();
@@ -186,6 +186,7 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
 /// a window still opening takes its first tile at once.
 pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box, animate: bool) void {
     if (!toplevel.in_world or toplevel.fullscreen or toplevel.maximized) return;
+    defer toplevel.syncXdgEdges();
     const footer = if (toplevel.hasServerDecorations()) chrome.frameBorder() else 0;
     const target: RestoreGeometry = .{
         .x = rect.x,
@@ -194,7 +195,21 @@ pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box, animate: bool) void {
         .height = @max(1, rect.height - toplevel.titlebarHeight() - footer),
     };
     // An unchanged tile keeps a glide in flight (an earlier reflow, a restore).
-    if (toplevel.auto_target) |previous| if (std.meta.eql(previous, target)) return;
+    if (toplevel.auto_target) |previous| {
+        if (std.meta.eql(previous, target)) return;
+        // Only moved, as when a strip scrolls: the client hears nothing (X11
+        // gets its new position through commitPosition, as on a canvas pan).
+        if (previous.width == target.width and previous.height == target.height) {
+            toplevel.auto_target = target;
+            toplevel.pending_restore = null;
+            // Already a tile, so it glides even while its open animation's
+            // tail runs, as split tiles do: columns opening or closing beside
+            // a window that just opened push it aside smoothly.
+            if (animate) toplevel.setPositionAnimated(target.x, target.y) else toplevel.setPosition(target.x, target.y);
+            toplevel.notifyLayoutChanged();
+            return;
+        }
+    }
     const was_tiled = toplevel.auto_target != null;
     const glide = animate and (was_tiled or !toplevel.map_motion.active());
     if (!glide) toplevel.finishSizeAnimation();
@@ -202,7 +217,6 @@ pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box, animate: bool) void {
     toplevel.auto_target = target;
     toplevel.pending_restore = null;
     toplevel.clearZoomBoost();
-    if (!was_tiled) toplevel.sendTiled(.{ .top = true, .bottom = true, .left = true, .right = true });
     const moved = toplevel.x != target.x or toplevel.y != target.y;
     // X11 sends position and size together: commitPosition uses auto_target,
     // never the old client buffer size, and already configures a moved window.
@@ -217,7 +231,7 @@ pub fn clearAutoTile(toplevel: *Toplevel, restore_floating: bool) void {
     const saved = toplevel.auto_restore;
     toplevel.auto_target = null;
     toplevel.auto_restore = null;
-    if (toplevel.tile == null) toplevel.sendTiled(.{});
+    toplevel.syncXdgEdges();
     if (restore_floating and !toplevel.fullscreen and !toplevel.maximized) {
         if (saved) |geom| {
             var floating = geom;
@@ -287,6 +301,7 @@ pub fn snapTo(toplevel: *Toplevel, output: *Output, target: tiling.Target, float
 pub fn clearMaximized(toplevel: *Toplevel) void {
     if (!toplevel.maximized and !toplevel.isMaximized()) return;
     toplevel.maximized = false;
+    toplevel.syncXdgEdges();
     switch (toplevel.backend) {
         .xdg => |*adapter| _ = adapter.xdg_toplevel.setMaximized(false),
         .xwayland => |*adapter| adapter.xsurface.setMaximized(false, false),
@@ -302,16 +317,24 @@ pub fn dropTile(toplevel: *Toplevel) void {
     toplevel.tile = null;
     toplevel.tile_target = null;
     toplevel.tile_restore = null;
-    if (was_tiled) toplevel.sendTiled(.{});
+    if (was_tiled) toplevel.syncXdgEdges();
 }
 
-pub fn sendTiled(toplevel: *Toplevel, edges: wlr.Edges) void {
-    if (toplevel.backend_gone) return;
-    switch (toplevel.backend) {
-        // wlroots asserts an xdg_wm_base of version 2 or later (Shell.zig).
-        .xdg => |*adapter| _ = adapter.xdg_toplevel.setTiled(edges),
-        .xwayland, .placeholder, .shell => {},
+pub fn syncXdgEdges(toplevel: *Toplevel) void {
+    if (toplevel.backend != .xdg or toplevel.backend_gone) return;
+    const top = toplevel.backend.xdg.xdg_toplevel;
+    const all: wlr.Edges = .{ .top = true, .bottom = true, .left = true, .right = true };
+    const tiled: wlr.Edges = if (toplevel.tile) |tile| tiling.tiledEdges(tile) else if (toplevel.auto_target != null) all else .{};
+    var constrained = tiled;
+    if (toplevel.maximized or toplevel.fullscreen) {
+        constrained = all;
+    } else if (toplevel.auto_target != null and toplevel.workspace_id != 0 and toplevel.tile == null) {
+        const tree = &toplevel.server.world.workspaces.tiler.trees[toplevel.workspace_id - 1];
+        const edges = tree.outerEdges(@import("../auto_tiling.zig").key(toplevel));
+        constrained = .{ .top = edges.contains(.up), .bottom = edges.contains(.down), .left = edges.contains(.left), .right = edges.contains(.right) };
     }
+    if (!std.meta.eql(top.scheduled.tiled, tiled)) _ = top.setTiled(tiled);
+    if (!std.meta.eql(top.scheduled.constrained, constrained)) _ = top.setConstrained(constrained);
 }
 
 pub fn notifyLayoutChanged(toplevel: *Toplevel) void {
@@ -333,6 +356,7 @@ pub fn toggleFullscreen(toplevel: *Toplevel) void {
     const next = !toplevel.fullscreen;
     if (!next) {
         toplevel.fullscreen = false;
+        defer toplevel.syncXdgEdges();
         switch (toplevel.backend) {
             .xdg => |*adapter| _ = adapter.xdg_toplevel.setFullscreen(false),
             .xwayland => |*adapter| adapter.xsurface.setFullscreen(false),
@@ -352,9 +376,7 @@ pub fn toggleFullscreen(toplevel: *Toplevel) void {
         return;
     }
 
-    const center = toplevel.frameWorld(@floatFromInt(@divTrunc(toplevel.chrome_width, 2)), @floatFromInt(@divTrunc(toplevel.chrome_height, 2)));
-    const layout_center = toplevel.server.world.toLayout(center.x, center.y);
-    const output = Output.atLayout(toplevel.server, layout_center.x, layout_center.y) orelse toplevel.resolveTargetOutput() orelse return;
+    const output = toplevel.currentOutput() orelse return;
     toplevel.setFullscreenOn(output);
 }
 

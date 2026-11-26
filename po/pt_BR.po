@@ -826,10 +826,6 @@ msgstr "Restaurar ampliação da câmera"
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/files/app_paint.zig
-msgid "Cancel (C)"
-msgstr "Cancelar (C)"
-
 #: src/control_center/sections/bluetooth.zig
 msgid "Cancel Pairing"
 msgstr "Cancelar pareamento"
@@ -849,18 +845,6 @@ msgstr "Cancelar teste"
 #: src/files/volumes.zig
 msgid "Cancelled"
 msgstr "Cancelado"
-
-#: src/files/ops.zig
-msgid "Cancelled. Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Cancelado. Extraídos: {completed}. Ignorados: {skipped}. Com falha: {failed}. Restantes: {remaining}."
-
-#: src/files/ops.zig
-msgid "Cancelled. Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Cancelado. Transferidos: {completed}. Ignorados: {skipped}. Com falha: {failed}. Restantes: {remaining}."
-
-#: src/files/app_keyboard.zig
-msgid "Cancelling operation..."
-msgstr "Cancelando operação..."
 
 #: src/calculator/model.zig
 msgid "Cannot divide by zero"
@@ -1569,10 +1553,6 @@ msgid "Could not request authentication. Check that polkit is running."
 msgstr "Não foi possível solicitar autenticação. Verifique se o polkit está em execução."
 
 #: src/files/app_trash.zig
-msgid "Could not restore the items in Trash"
-msgstr "Não foi possível restaurar os itens da lixeira"
-
-#: src/files/app_trash.zig
 msgid "Could not restore the selected items"
 msgstr "Não foi possível restaurar os itens selecionados"
 
@@ -1809,10 +1789,6 @@ msgstr "Alternar para o espaço de trabalho existente anterior."
 #: src/battery_popup.zig
 msgid "Cycles"
 msgstr "Ciclos"
-
-#: src/files/app_sidebar_paint.zig
-msgid "DEVICES"
-msgstr "DISPOSITIVOS"
 
 #: src/control_center/sections/display.zig
 msgid "DISPLAY"
@@ -2414,14 +2390,6 @@ msgstr "Extrair"
 msgid "Extract to…"
 msgstr "Extrair para…"
 
-#: src/files/ops.zig
-msgid "Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Extraídos: {completed}. Ignorados: {skipped}. Com falha: {failed}. Restantes: {remaining}."
-
-#: src/files/app_paint.zig
-msgid "Extracting {current}/{total}: {name}... (Esc to cancel)"
-msgstr "Extraindo {current}/{total}: {name}... (Esc para cancelar)"
-
 #: src/files/archive.zig
 msgid "Extraction cancelled"
 msgstr "Extração cancelada"
@@ -2781,6 +2749,14 @@ msgstr "Grupo"
 #: src/control_center/sections/users.zig
 msgid "Groups"
 msgstr "Grupos"
+
+#: src/control_center/search_index.zig
+msgid "HDR"
+msgstr "HDR"
+
+#: src/control_center/sections/display.zig
+msgid "HDR is experimental."
+msgstr "O HDR é experimental."
 
 #: src/control_center/sections/network.zig
 msgid "Hardware blocked"
@@ -4190,10 +4166,6 @@ msgstr "Colar"
 msgid "Pause"
 msgstr "Pausar"
 
-#: src/files/app_torrents.zig
-msgid "Pause all"
-msgstr "Pausar todos"
-
 #: src/system_monitor/app.zig
 msgid "Pause updates"
 msgstr "Pausar atualizações"
@@ -4718,10 +4690,6 @@ msgstr "Remover · manter arquivos"
 msgid "Rename"
 msgstr "Renomear"
 
-#: src/files/app_paint.zig
-msgid "Rename (R)"
-msgstr "Renomear (R)"
-
 #: src/desktop/app_paint.zig
 msgid "Rename — Enter saves, Escape cancels"
 msgstr "Renomear — Enter salva, Escape cancela"
@@ -4947,6 +4915,10 @@ msgstr "Arredondado"
 #: src/system_monitor/app.zig
 msgid "Running"
 msgstr "Em execução"
+
+#: src/control_center/sections/display.zig
+msgid "SDR brightness"
+msgstr "Brilho SDR"
 
 #: src/control_center/sections/sound.zig
 msgid "SOUND"
@@ -5396,10 +5368,6 @@ msgstr "Ajustar à tela"
 msgid "Sized to fit your screen · move a slider to set your own"
 msgstr "Ajustado à sua tela · mova um controle deslizante para personalizar"
 
-#: src/files/app_paint.zig
-msgid "Skip (S)"
-msgstr "Ignorar (S)"
-
 #: src/control_center/sections/display.zig
 msgid "Sleep"
 msgstr "Suspender"
@@ -5575,10 +5543,6 @@ msgstr "Parar busca"
 #: src/control_center/sections/printers_details.zig
 msgid "Stop accepting jobs"
 msgstr "Parar de aceitar trabalhos"
-
-#: src/files/app_torrents.zig
-msgid "Stop seeding"
-msgstr "Parar de semear"
 
 #: src/printing/cups.zig
 msgid "Stopped"
@@ -6060,6 +6024,10 @@ msgstr "Esta conexão não tem uma verificação direta de presença."
 msgid "This display changes variable refresh only with a mode switch: choose Always or Off."
 msgstr "Esta tela só muda a taxa variável com uma troca de modo: escolha Sempre ou Desativado."
 
+#: src/control_center/sections/display.zig
+msgid "This display or its driver did not accept HDR in this mode, so it stays SDR."
+msgstr "Esta tela ou o driver dela não aceitou HDR neste modo, por isso ela continua em SDR."
+
 #: src/control_center/sections/printers_tools.zig
 msgid "This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."
 msgstr "Este driver não permite configurar a resolução sugerida na fila. Revise suas opções de qualidade ou driver."
@@ -6216,18 +6184,6 @@ msgstr "Transferir"
 msgid "Transfer request could not be sent. Please retry."
 msgstr "Não foi possível enviar a solicitação de transferência. Tente novamente."
 
-#: src/files/ops.zig
-msgid "Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Transferidos: {completed}. Ignorados: {skipped}. Com falha: {failed}. Restantes: {remaining}."
-
-#: src/files/app_paint.zig
-msgid "Transferring {current}/{total}: {name}... (Esc to cancel)"
-msgstr "Transferindo {current}/{total}: {name}... (Esc para cancelar)"
-
-#: src/files/app_paint.zig
-msgid "Transferring..."
-msgstr "Transferindo..."
-
 #: src/files/app.zig
 msgid "Transfers"
 msgstr "Transferências"
@@ -6239,10 +6195,6 @@ msgstr "Transferências foi desconectado. Reabra para reconectar."
 #: src/files/torrents.zig
 msgid "Transfers is disconnected. Reopen Transfers to reconnect."
 msgstr "Transferências está desconectado. Reabra para reconectar."
-
-#: src/files/app_torrents.zig
-msgid "Transfers needs attention"
-msgstr "Transferências precisa de atenção"
 
 #: src/control_center/sections/display.zig
 msgid "Transform"
@@ -6986,6 +6938,10 @@ msgid "hide automatically"
 msgstr "ocultar automaticamente"
 
 #: src/control_center/search_index.zig
+msgid "high dynamic range hdr10 sdr brightness nits"
+msgstr "alto alcance dinâmico hdr10 sdr brilho nits"
+
+#: src/control_center/search_index.zig
 msgid "hotkeys keybindings bindings terminal screenshot volume brightness workspaces"
 msgstr "atalhos teclado terminal captura volume brilho espaços trabalho"
 
@@ -7488,16 +7444,8 @@ msgid "{value} (supported {min}–{max})"
 msgstr "{value} (suportado: {min}–{max})"
 
 #: src/files/app_torrents.zig
-msgid "{value} active · {rate} KiB/s"
-msgstr "{value} ativos · {rate} KiB/s"
-
-#: src/files/app_torrents.zig
 msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
 msgstr "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
-
-#: src/files/app_torrent_rows.zig
-msgid "↓ {rate} KiB/s    ↑ {rate2} KiB/s"
-msgstr "↓ {rate} KiB/s    ↑ {rate2} KiB/s"
 
 #: src/control_center/sections/sound.zig
 msgctxt "balance"
@@ -8058,3 +8006,104 @@ msgstr "ssh segurança pública privada identidade impressão digital frase secr
 #: src/system_monitor/app_footer.zig
 msgid "GPU"
 msgstr "GPU"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Centre the focused column"
+msgstr "Centralizar a coluna em foco"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Consume or Expel Left"
+msgstr "Agrupar ou separar à esquerda"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Consume or Expel Right"
+msgstr "Agrupar ou separar à direita"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Cycle Column Width"
+msgstr "Alternar a largura da coluna"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Full width"
+msgstr "Largura total"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Half"
+msgstr "Metade"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "New column width"
+msgstr "Largura das novas colunas"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "New windows open as columns on a strip that scrolls. Super+arrows move along it; Super+W changes a column's width."
+msgstr "As novas janelas se abrem em colunas numa faixa com rolagem. Use Super+setas para percorrê-la e Super+W para mudar a largura de uma coluna."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "One third"
+msgstr "Um terço"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Scrolling"
+msgstr "Rolagem"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: join the column to the left, or leave a shared column."
+msgstr "No modo de rolagem, agrupe a janela na coluna à esquerda ou separe-a de uma coluna compartilhada."
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: join the column to the right, or leave a shared column."
+msgstr "No modo de rolagem, agrupe a janela na coluna à direita ou separe-a de uma coluna compartilhada."
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: step the focused column through the preset widths."
+msgstr "No modo de rolagem, aplique a próxima largura predefinida à coluna em foco."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Super+W steps a column through the widths; Super+[ and Super+] move a window into the next column or out of its own."
+msgstr "Super+W alterna entre as larguras de coluna. Super+[ e Super+] movem uma janela para a coluna vizinha ou a separam em uma coluna própria."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Two thirds"
+msgstr "Dois terços"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "When wider than the screen"
+msgstr "Quando for mais larga que a tela"
+
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Horizontal"
+msgstr "Horizontal"
+
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Vertical"
+msgstr "Vertical"
+
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Scrolling direction"
+msgstr "Direção da rolagem"
+
+#: src/control_center/search_index.zig
+#, fuzzy
+msgid "scrolling strip columns rows vertical horizontal portrait"
+msgstr "scrolling strip columns rows vertical horizontal portrait rolagem faixa colunas linhas retrato"

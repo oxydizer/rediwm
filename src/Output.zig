@@ -22,6 +22,7 @@ const output_frame = @import("output/frame.zig");
 const output_late = @import("output/late.zig");
 const output_tearing = @import("output/tearing.zig");
 const output_vrr = @import("output/vrr.zig");
+const auto_place = @import("output/auto_place.zig");
 
 pub const wlr_color_transform_init_lut_3x1d = wlr.color.transformInitLut3x1d;
 pub const wlr_color_transform_unref = wlr.color.transformUnref;
@@ -42,6 +43,7 @@ pub const ColorStatus = enum {
 };
 
 pub const OutputColor = struct {
+    external: ?*wlr.gamma_control.Control = null,
     transform: ?*wlr.ColorTransform = null,
     key: ?ColorKey = null,
     pending: bool = false,
@@ -50,11 +52,10 @@ pub const OutputColor = struct {
     logged_unsupported: bool = false,
     logged_rejected: bool = false,
 
-    pub fn deinit(self: *OutputColor) void {
-        if (self.transform) |tr| {
-            wlr_color_transform_unref(tr);
-            self.transform = null;
-        }
+    /// Takes ownership of the replacement transform.
+    pub fn replaceTransform(self: *OutputColor, transform: ?*wlr.ColorTransform) void {
+        if (self.transform) |old| wlr_color_transform_unref(old);
+        self.transform = transform;
     }
 };
 
@@ -71,6 +72,8 @@ wlr_output: *wlr.Output,
 wallpaper: ?*sn.Buffer = null,
 taskbar: ?*Taskbar = null,
 dock: @import("Dock.zig") = .{},
+/// Where a scrolling strip's view is, while it moves.
+strip_indicator: @import("strip_indicator.zig") = .{},
 osd: @import("osd.zig") = .{},
 start_menu: ?*StartMenu = null,
 calendar: ?*@import("calendar.zig").Calendar = null,
@@ -91,11 +94,14 @@ lid_blanked: bool = false,
 power_off: bool = false,
 user_disabled: bool = false,
 cached_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
+/// Set while mapped layer surfaces reserve part of the shell's work area.
+layer_work_area: ?wlr.Box = null,
 /// Paces frames whose output commit was skipped (see `commitIsRedundant`):
 /// no page flip is pending then, so this timer stands in for the vblank.
 vblank_timer: ?*wl.EventSource = null,
 vblank_armed: bool = false,
 vblank_target_ns: u64 = 0,
+vblank_scene_serial: u64 = 0,
 /// A frame event arrived while `vblank_timer` was armed; replay it then.
 frame_wanted: bool = false,
 /// Last known vblank: a page-flip frame event or a fired `vblank_timer`.
@@ -105,6 +111,9 @@ flip_pending: bool = false,
 /// refresh after a skipped commit. fifo-v1 barriers clear on these, never on
 /// frame callbacks (late render sends those before it renders).
 latch_seq: u64 = 0,
+commit_refresh: @import("commit_refresh.zig") = .{},
+/// Keep a predicted fixed-refresh frame synchronous until its content is due.
+timed_vsync_until: u64 = 0,
 /// Late rendering (`output/late.zig`): the decision model, the timer that
 /// starts a deferred frame, whether one is waiting (frame events are ignored
 /// meanwhile), the plan `runFrame` takes when it runs, and whether the last
@@ -122,6 +131,8 @@ callback_frame_seq: u64 = 0,
 tearing: output_tearing.State = .{},
 /// Adaptive sync for the `[[outputs]] adaptive_sync` mode (`output/vrr.zig`).
 vrr: output_vrr.State = .{},
+/// The HDR10 signal for `[[outputs]] hdr` (`output/hdr.zig`).
+hdr: @import("output/hdr.zig").State = .{},
 /// An ext-session-lock client waits for this output to commit a locked frame.
 lock_commit_pending: bool = false,
 /// Hardware cursor state as of the last commit. Atomic DRM applies cursor
@@ -134,6 +145,8 @@ frame: wl.Listener(*wlr.Output) = .init(handleFrame),
 present: wl.Listener(*wlr.Output.event.Present) = .init(handlePresent),
 request_state: wl.Listener(*wlr.Output.event.RequestState) = .init(handleRequestState),
 workspace_id: u8 = 0,
+/// Local workspace to resume if the borrowed workspace on screen goes home.
+borrowed_from_workspace: u8 = 0,
 destroy: wl.Listener(*wlr.Output) = .init(handleDestroy),
 
 pub fn isLogicallyEnabled(self: *const Output) bool {
@@ -267,24 +280,24 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     output.late_timer = server.wl_server.getEventLoop().addTimer(*Output, lateFire, output) catch null;
     errdefer if (output.late_timer) |timer| timer.remove();
 
+    // A returning output takes its old place among the automatic ones; the
+    // windows of outputs that move aside for it go along (once it is placed).
+    auto_place.note(server, wlr_output);
+    var carry = auto_place.Carry.begin(server);
+    defer carry.deinit();
     // Layout entry and scene output are addons on `wlr_output`. On error the
     // caller destroys that output, which is safer than a second explicit
     // destroy (that would double-free the addon).
     const layout_output = blk: {
-        const name = std.mem.span(wlr_output.name);
-        for (server.config.outputs) |placement| {
-            if (std.mem.eql(u8, placement.name, name) and (placement.x != null or placement.y != null)) {
-                break :blk try server.output_layout.add(wlr_output, placement.x orelse 0, placement.y orelse 0);
-            }
-        }
-        break :blk try server.output_layout.addAuto(wlr_output);
+        const at = auto_place.savedPosition(server, wlr_output) orelse auto_place.provisionalPosition(server);
+        break :blk try server.output_layout.add(wlr_output, at[0], at[1]);
     };
     _ = try server.scene_outputs.createOutput(wlr_output, layout_output);
 
     server.output_layout.getBox(wlr_output, &output.cached_box);
 
     if (server.wallpaper) |image| {
-        output.wallpaper = server.background_tree.createSceneBuffer(&image.base) catch |err| blk: {
+        output.wallpaper = server.background_tree.createSceneBuffer(image.buffer) catch |err| blk: {
             log.err("Output.create: could not create wallpaper node: {}", .{err});
             break :blk null;
         };
@@ -304,6 +317,10 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     wlr_output.events.request_state.add(&output.request_state);
     wlr_output.events.destroy.add(&output.destroy);
     server.outputs.append(output);
+    auto_place.arrange(server);
+    server.output_layout.getBox(wlr_output, &output.cached_box);
+    // Before restoring any window that waited for this output (applyConfig).
+    carry.finish(server);
     server.input.refreshOutputScales();
 
     // Apply the saved enable policy before publishing the added event so
@@ -369,23 +386,8 @@ pub fn dockAreaBox(output: *Output) wlr.Box {
     return box;
 }
 
-/// The output's usable area for compositor-driven placement (maximize, tiles,
-/// new windows, popups): `dockAreaBox` less the strip a docked (not
-/// auto-hiding) dock claims. Windows never open or maximize behind either.
-pub fn usableBox(output: *Output) wlr.Box {
-    var box = output.dockAreaBox();
-    const strip = @import("Dock.zig").reservedStrip(output.server, box);
-    if (strip == 0) return box;
-    switch (output.server.config.compositor.dock_position) {
-        .top => box.y += strip,
-        .left => box.x += strip,
-        .bottom, .right => {},
-    }
-    if (output.server.config.compositor.dock_position.vertical()) {
-        box.width = @max(1, box.width - strip);
-    } else box.height = @max(1, box.height - strip);
-    return box;
-}
+pub const shellUsableBox = output_layout.shellUsableBox;
+pub const usableBox = output_layout.usableBox;
 
 /// Place a taskbar popup on the inward side of the selected edge.
 pub fn taskbarPopupY(output: *Output, height: i32, gap: i32) i32 {
@@ -400,6 +402,7 @@ pub fn setIdleBlanked(output: *Output, requested: bool) bool {
     const blanked = requested or output.lid_blanked;
     if (output.user_disabled) return false;
     if (output.idle_blanked == blanked) return true;
+    output.commit_refresh = .{};
     output.idle_blanked = blanked;
     var state = wlr.Output.State.init();
     defer state.finish();
@@ -438,8 +441,7 @@ pub fn setIdleBlanked(output: *Output, requested: bool) bool {
         if (ok) {
             output.applyConfig();
             syncLayout(output.server);
-            output.color.key = null;
-            output.server.night_light.retargetOutput(output);
+            @import("output/gamma.zig").refresh(output);
             output.wlr_output.scheduleFrame();
         } else {
             output.idle_blanked = true;
@@ -553,6 +555,13 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     // Remove the layout entry now so remaining automatic positions have
     // settled before we cache their boxes and rebuild output-local UI.
     server.output_layout.remove(output.wlr_output);
+    {
+        // Automatic outputs right of it close the gap, windows and all.
+        var carry = auto_place.Carry.begin(server);
+        defer carry.deinit();
+        auto_place.arrange(server);
+        carry.finish(server);
+    }
 
     // Pre-empt capture teardown explicitly rather than rely on wlroots' own
     // source (see docs/screen-sharing.md's failure contract: "Output
@@ -582,6 +591,7 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     server.input.detachOutput(output);
     if (output.server.switcher.output == output) output.server.switcher.cancel();
     server.world.mini_map.outputRemoved(output);
+    output.strip_indicator.deinit();
     output.osd.deinit();
     output.lock_view.tree.node.destroy();
 
@@ -604,7 +614,7 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     };
     if (output.start_menu) |sm| sm.destroy();
     if (output.power_menu) |pm| pm.destroy();
-    output.color.deinit();
+    output.color.replaceTransform(null);
     if (output.vblank_timer) |timer| timer.remove();
     if (output.late_timer) |timer| timer.remove();
     if (output.callback_idle) |idle| idle.remove();

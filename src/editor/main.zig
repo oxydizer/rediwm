@@ -199,8 +199,8 @@ pub const Setup = struct { io: std.Io, environ: std.process.Environ, force_csd: 
 pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@import("instance.zig").Instance, initial_token: []const u8) !void {
     platform.process.ignoreBrokenPipes();
     const force_csd = init.minimal.environ.getPosix("REDIWM_EDITOR_FORCE_CSD") != null;
-    @import("../files/settings.zig").loadTheme(init.gpa, init.io, init.minimal.environ);
-    defer @import("../files/settings.zig").deinitTheme();
+    @import("app_kit").settings.loadTheme(init.gpa, init.io, init.minimal.environ);
+    defer @import("app_kit").settings.deinitTheme();
     // Use the same persisted caret and motion preferences as shell fields.
     if (@import("config").loader.loadDefault(init.gpa, init.io, init.minimal.environ)) |loaded| {
         var cfg = loaded;

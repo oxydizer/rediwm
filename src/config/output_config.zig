@@ -5,6 +5,20 @@ const output_transform = @import("output_transform.zig");
 /// output: on only while a game fills it, never, or always.
 pub const AdaptiveSync = enum { off, auto, always };
 
+/// HDR10 output, opt-in per output. An enum so `auto`
+/// can follow once tone mapping has been seen on several monitors (D4).
+pub const Hdr = enum { off, on };
+
+/// Which way a scrolling workspace's strip runs on this output. `auto`
+/// follows the longer side of the usable box, after the transform.
+pub const ScrollDirection = enum { auto, horizontal, vertical };
+
+/// SDR content brightness on an HDR output, in nits (cd/m²). The default is
+/// the BT.2408 reference white.
+pub const sdr_white_default: f32 = 203;
+pub const sdr_white_min: f32 = 80;
+pub const sdr_white_max: f32 = 1000;
+
 /// Omitted fields retain their saved value. Automatic settings explicitly clear overrides.
 pub const Patch = struct {
     output: []const u8 = "",
@@ -20,6 +34,9 @@ pub const Patch = struct {
     primary: ?bool = null,
     transform: ?output_transform.Transform = null,
     adaptive_sync: ?AdaptiveSync = null,
+    hdr: ?Hdr = null,
+    sdr_white: ?f32 = null,
+    scroll_direction: ?ScrollDirection = null,
 
     pub fn validate(p: Patch) !void {
         inline for (.{ "width", "height", "refresh_mhz" }) |field| {
@@ -28,6 +45,9 @@ pub const Patch = struct {
         if (p.scale) |scale| {
             if (!std.math.isFinite(scale) or scale < 1 or scale > 3 or p.auto_scale) return error.InvalidOutputConfig;
         }
+        if (p.sdr_white) |nits| {
+            if (!std.math.isFinite(nits) or nits < sdr_white_min or nits > sdr_white_max) return error.InvalidOutputConfig;
+        }
         if (p.auto_position and (p.x != null or p.y != null)) return error.InvalidOutputConfig;
         // Leave ample room for output extents and integer layout arithmetic.
         inline for (.{ "x", "y" }) |field| {
@@ -35,7 +55,8 @@ pub const Patch = struct {
         }
         if (p.width == null and p.height == null and p.refresh_mhz == null and
             p.x == null and p.y == null and p.scale == null and !p.auto_scale and !p.auto_position and
-            p.enabled == null and p.primary == null and p.transform == null and p.adaptive_sync == null)
+            p.enabled == null and p.primary == null and p.transform == null and p.adaptive_sync == null and
+            p.hdr == null and p.sdr_white == null and p.scroll_direction == null)
             return error.EmptyOutputConfig;
     }
 };

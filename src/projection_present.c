@@ -19,9 +19,10 @@ void projection_damage_shadow(struct leaf *l, bool show, struct rediwm_snap at) 
                                l->shadow_drawn.width, l->shadow_drawn.height);
   if (show) pixman_region32_union_rect(&region, &region, at.x, at.y, at.width, at.height);
   if (pixman_region32_not_empty(&region)) {
-    pixman_region32_union(&l->projection->pending, &l->projection->pending, &region);
+    pixman_region32_t *pending = damage_target(l->projection, l->shown_home);
+    if (pending) pixman_region32_union(pending, pending, &region);
     const pixman_box32_t *b = pixman_region32_extents(&region);
-    emit(l->projection, l->item.id, b->x1, b->y1, b->x2 - b->x1, b->y2 - b->y1);
+    emit(l, b->x1, b->y1, b->x2 - b->x1, b->y2 - b->y1);
   }
   pixman_region32_fini(&region);
   l->has_shadow_drawn = show;
@@ -66,7 +67,7 @@ static void damage_event_for_buffer(struct leaf *l, const pixman_region32_t *dam
   if (wlr_fbox_empty(&src)) src = (struct wlr_fbox){0, 0, buffer_width, buffer_height};
   const struct rediwm_snap whole =
       map_damage(item, pixman_region32_extents((pixman_region32_t *)damage), &src, snap);
-  emit(l->projection, item->id, whole.x, whole.y, whole.width, whole.height);
+  emit(l, whole.x, whole.y, whole.width, whole.height);
   int count = 0;
   const pixman_box32_t *rects = pixman_region32_rectangles((pixman_region32_t *)damage, &count);
   if (count > 16) {
@@ -80,12 +81,19 @@ static void damage_event_for_buffer(struct leaf *l, const pixman_region32_t *dam
 }
 // present(): graph -> damage. Reads items, never the source's geometry; rounds
 // and tells the screen and the damage events what changed.
-static void present_leaf(struct leaf *l) {
+// Returns the box the leaf was snapped to.
+static struct rediwm_snap present_leaf(struct leaf *l) {
   struct rediwm_item *item = &l->item;
   // Round in layout coordinates first. Rounding a scaled local offset would
   // change pixels at fractional zoom and when crossing negative origins.
   const struct rediwm_snap snap = rediwm_edges_snap(item->edges);
   const bool enabled = item->enabled && snap.width > 0 && snap.height > 0;
+  if (l->shown_home != item->home_output) {
+    forget_shown(l);
+    projection_damage_shadow(l, false, (struct rediwm_snap){0});
+    l->has_visible = false;
+    l->shown_home = item->home_output;
+  }
   // Damage events: a moved, resized, shown, hidden or restyled leaf changes its
   // old and its new box; otherwise only what a new buffer or commit damaged.
   // Only a leaf that puts pixels on screen has them: an input-only node (a
@@ -96,6 +104,8 @@ static void present_leaf(struct leaf *l) {
     paints = paints && item->content.color[3] > 0;
   } else if (item->kind == REDIWM_ITEM_RIBBON) {
     paints = paints && item->content.opacity > 0 && item->ribbon->count >= 4;
+  } else if (item->kind == REDIWM_ITEM_EFFECT && item->blur_region) {
+    paints = paints && item->content.opacity > 0;
   } else if (item->kind == REDIWM_ITEM_EFFECT || item->kind == REDIWM_ITEM_SHADOW) {
     paints = false;
   } else {
@@ -146,6 +156,7 @@ static void present_leaf(struct leaf *l) {
   l->full_damage = false;
   l->owned_damage = false;
   pixman_region32_clear(&l->damage);
+  return snap;
 }
 // Not in 0.20's public headers, but exported; see
 // rediwm_projection_present_owned.
@@ -216,16 +227,34 @@ void rediwm_projection_damage_buffer(struct rediwm_projection *p,
   l->owned_damage = true;
   l->dirty = true;
   mark_group(p, l->group);
-  schedule(p);
+  schedule(p, l->item.home_output);
 }
 static void damage_restacked(struct rediwm_projection *p);
-// Graph -> damage, then forget what the graph no longer reaches.
+// What pick_leaf can choose: enabled, pixels once rounded, neither an effect, a
+// ribbon nor inert.
+static bool pickable(const struct leaf *l, const struct rediwm_snap *s) {
+  const struct rediwm_item *item = &l->item;
+  return item->enabled && item->kind != REDIWM_ITEM_EFFECT && item->kind != REDIWM_ITEM_RIBBON &&
+      !l->inert && s->width > 0 && s->height > 0;
+}
+// Graph -> damage, then forget what the graph no longer reaches, and keep each
+// walked group's pick bounds.
 void projection_present(struct rediwm_projection *p, bool full) {
   struct group *g;
   wl_list_for_each(g, &p->paint, paint) {
     if (!full && !g->touched) continue;
     struct leaf *l, *next;
-    wl_list_for_each_safe(l, next, &g->items, paint) present_leaf(l);
+    int x1 = INT32_MAX, y1 = INT32_MAX, x2 = INT32_MIN, y2 = INT32_MIN;
+    wl_list_for_each_safe(l, next, &g->items, paint) {
+      const struct rediwm_snap s = present_leaf(l);
+      if (!pickable(l, &s)) continue;
+      if (s.x < x1) x1 = s.x;
+      if (s.y < y1) y1 = s.y;
+      if (s.x + s.width > x2) x2 = s.x + s.width;
+      if (s.y + s.height > y2) y2 = s.y + s.height;
+    }
+    g->pick_bounds = x2 > x1 ? (struct rediwm_snap){x1, y1, x2 - x1, y2 - y1} : (struct rediwm_snap){0};
+    g->has_pick_bounds = true;
   }
   struct leaf *l;
   wl_list_for_each(l, &p->leaves, link) if (!l->seen) {

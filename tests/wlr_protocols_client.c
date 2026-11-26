@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "xdg-shell-client-protocol.h"
+#include "xdg-system-bell-v1-client-protocol.h"
 #include "xdg-toplevel-tag-v1-client-protocol.h"
 #include "content-type-v1-client-protocol.h"
 #include "tearing-control-v1-client-protocol.h"
@@ -34,6 +35,7 @@
 
 static struct wl_display *display;
 static struct wl_compositor *compositor;
+static uint32_t fixes_name;
 static struct wl_shm *shm;
 static struct wl_output *outputs[MAX_OUTPUTS];
 static int output_count;
@@ -41,24 +43,42 @@ static struct zwlr_screencopy_manager_v1 *screencopy;
 static struct ext_session_lock_manager_v1 *lock_manager;
 static struct wp_security_context_manager_v1 *security_context_manager;
 static bool dump_registry_mode = false;
+static bool dump_versions = false;
 
 static bool bind_extra(struct wl_registry *, uint32_t, const char *);
+static bool bind_xdg_foreign(struct wl_registry *, uint32_t, const char *);
+static bool bind_xdg_dialog(struct wl_registry *, uint32_t, const char *);
+static int foreign_version;
+static bool dialog_mode;
 static bool extras_mode;
+static const char *hdr_output_name;
+static struct wl_output *hdr_output;
+static int hdr_output_event(const void *data, void *proxy, uint32_t opcode,
+                            const struct wl_message *message, union wl_argument *args) {
+  (void)data; (void)opcode;
+  if (!strcmp(message->name, "name") && !strcmp(args[0].s, hdr_output_name)) hdr_output = proxy;
+  return 0;
+}
 static void registry_global(void *data, struct wl_registry *registry, uint32_t name,
                             const char *interface, uint32_t version) {
   (void)data;
   (void)version;
   if (dump_registry_mode) {
-    printf("%s\n", interface);
+    if (dump_versions) printf("%s %u\n", interface, version);
+    else printf("%s\n", interface);
     return;
   }
   if (bind_extra(registry, name, interface)) return;
   if (strcmp(interface, wl_compositor_interface.name) == 0) {
     compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
+  } else if (strcmp(interface, wl_fixes_interface.name) == 0) {
+    fixes_name = name;
   } else if (strcmp(interface, wl_shm_interface.name) == 0) {
     shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
   } else if (strcmp(interface, wl_output_interface.name) == 0 && output_count < MAX_OUTPUTS) {
-    outputs[output_count++] = wl_registry_bind(registry, name, &wl_output_interface, 1);
+    struct wl_output *out = wl_registry_bind(registry, name, &wl_output_interface, hdr_output_name ? 4 : 1);
+    outputs[output_count++] = out;
+    if (hdr_output_name) wl_proxy_add_dispatcher((struct wl_proxy *)out, hdr_output_event, NULL, NULL);
   } else if (strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0) {
     screencopy = wl_registry_bind(registry, name, &zwlr_screencopy_manager_v1_interface, 3);
   } else if (strcmp(interface, ext_session_lock_manager_v1_interface.name) == 0) {
@@ -108,7 +128,7 @@ static void dispatch_until(const bool *done) {
 static struct {
   uint32_t format;
   int width, height, stride;
-  bool have_shm, finished;
+  bool have_shm, finished, released;
   uint32_t *pixels;
   struct wl_buffer *buffer;
 } copy;
@@ -142,7 +162,7 @@ static void frame_ready(void *data, struct zwlr_screencopy_frame_v1 *frame, uint
     const uint32_t *row = (const uint32_t *)((const uint8_t *)copy.pixels + (size_t)y * (size_t)copy.stride);
     for (int x = 0; x < copy.width; x++) nonzero += (row[x] & 0x00ffffff) != 0;
   }
-  printf("ready %d %d nonzero=%zu\n", copy.width, copy.height, nonzero);
+  printf("ready %d %d nonzero=%zu format=%u\n", copy.width, copy.height, nonzero, copy.format);
   copy.finished = true;
 }
 
@@ -184,6 +204,11 @@ static const struct zwlr_screencopy_frame_v1_listener frame_listener = {
     frame_buffer_done,
 };
 
+static void copy_buffer_released(void *data, struct wl_buffer *buffer) {
+  (void)data; (void)buffer; copy.released = true;
+}
+static const struct wl_buffer_listener copy_buffer_listener = { .release = copy_buffer_released };
+
 static int run_screencopy(void) {
   if (!screencopy || output_count == 0) {
     printf("unsupported\n");
@@ -195,8 +220,11 @@ static int run_screencopy(void) {
   dispatch_until(&buffer_done);
   assert(copy.have_shm);
   copy.buffer = create_buffer(copy.format, copy.width, copy.height, copy.stride, 0, (void **)&copy.pixels);
+  wl_buffer_add_listener(copy.buffer, &copy_buffer_listener, NULL);
   zwlr_screencopy_frame_v1_copy(frame, copy.buffer);
   dispatch_until(&copy.finished);
+  // The server releases the submitted buffer even if the client still owns its frame resource.
+  dispatch_until(&copy.released);
   fflush(stdout);
   return 0;
 }
@@ -337,6 +365,7 @@ static int run_security_context(const char *socket_path, const char *engine, con
 
 // ---- supplementary standard protocols ------------------------------------
 static struct xdg_wm_base *xdg;
+static struct xdg_system_bell_v1 *bell;
 static struct xdg_toplevel_tag_manager_v1 *tags;
 static struct wp_content_type_manager_v1 *content_manager;
 static struct wp_tearing_control_manager_v1 *tearing_manager;
@@ -345,6 +374,7 @@ static struct wp_color_representation_manager_v1 *representation_manager;
 static struct ext_workspace_manager_v1 *workspace_manager;
 static bool parametric_supported;
 static uint32_t supported_tf, supported_primaries;
+static int hdr_width, hdr_height;
 static bool configured, image_ready, color_done, representation_done;
 static unsigned workspace_count, group_count, workspace_outputs;
 static bool canvas_name, canvas_id, canvas_active;
@@ -429,13 +459,19 @@ static const struct wp_color_representation_manager_v1_listener representation_l
   .supported_alpha_mode = alpha_mode, .supported_coefficients_and_ranges = coeff_range, .done = representation_finished,
 };
 static bool bind_extra(struct wl_registry *r, uint32_t name, const char *iface) {
-  if (!extras_mode) return false;
+  if (!extras_mode && !foreign_version && !dialog_mode) return false;
 #define BIND(member, type) if (strcmp(iface, #type) == 0) { member = wl_registry_bind(r, name, &type##_interface, 1);
   BIND(xdg, xdg_wm_base) xdg_wm_base_add_listener(xdg, &xdg_listener, NULL); }
+  else if (foreign_version) return bind_xdg_foreign(r, name, iface);
+  else if (dialog_mode) return bind_xdg_dialog(r, name, iface);
+  else BIND(bell, xdg_system_bell_v1) }
   else BIND(tags, xdg_toplevel_tag_manager_v1) }
   else BIND(content_manager, wp_content_type_manager_v1) }
   else BIND(tearing_manager, wp_tearing_control_manager_v1) }
-  else BIND(color_manager, wp_color_manager_v1) wp_color_manager_v1_add_listener(color_manager, &color_listener, NULL); }
+  else if (!strcmp(iface, "wp_color_manager_v1")) {
+    color_manager = wl_registry_bind(r, name, &wp_color_manager_v1_interface, hdr_output_name ? 2 : 1);
+    wp_color_manager_v1_add_listener(color_manager, &color_listener, NULL);
+  }
   else BIND(representation_manager, wp_color_representation_manager_v1) wp_color_representation_manager_v1_add_listener(representation_manager, &representation_listener, NULL); }
   else BIND(workspace_manager, ext_workspace_manager_v1) ext_workspace_manager_v1_add_listener(workspace_manager, &workspace_listener, NULL); }
   else return false;
@@ -447,7 +483,7 @@ static void configured_surface(void *d, struct xdg_surface *s, uint32_t serial) 
 }
 static const struct xdg_surface_listener surface_listener = {.configure = configured_surface};
 static void top_configure(void *d, struct xdg_toplevel *t, int32_t w, int32_t h, struct wl_array *states) {
-  (void)d; (void)t; (void)w; (void)h; (void)states;
+  (void)d; (void)t; (void)states; hdr_width = w; hdr_height = h;
 }
 static void top_close(void *d, struct xdg_toplevel *t) { (void)d; (void)t; }
 static const struct xdg_toplevel_listener top_listener = {.configure = top_configure, .close = top_close};
@@ -457,7 +493,26 @@ static void image_failed(void *d, struct wp_image_description_v1 *i, uint32_t ca
 static void image_created(void *d, struct wp_image_description_v1 *i, uint32_t identity) {
   (void)d; (void)i; (void)identity; image_ready = true;
 }
-static const struct wp_image_description_v1_listener image_listener = {.failed = image_failed, .ready = image_created};
+static void image_created2(void *d, struct wp_image_description_v1 *i, uint32_t hi, uint32_t lo) {
+  (void)hi; image_created(d, i, lo);
+}
+static const struct wp_image_description_v1_listener image_listener = {
+  .failed = image_failed, .ready = image_created, .ready2 = image_created2,
+};
+static void describe(struct wp_color_management_surface_v1 *color, uint32_t tf, uint32_t primaries) {
+  struct wp_image_description_creator_params_v1 *params = wp_color_manager_v1_create_parametric_creator(color_manager);
+  wp_image_description_creator_params_v1_set_tf_named(params, tf);
+  wp_image_description_creator_params_v1_set_primaries_named(params, primaries);
+  image_ready = false;
+  struct wp_image_description_v1 *image = wp_image_description_creator_params_v1_create(params);
+  wp_image_description_v1_add_listener(image, &image_listener, NULL);
+  dispatch_until(&image_ready);
+  wp_color_management_surface_v1_set_image_description(color, image, WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
+  wp_image_description_v1_destroy(image);
+}
+#include "hdr_pattern.c"
+#include "xdg_foreign_client.c"
+#include "xdg_dialog_client.c"
 static int run_extras(void) {
   assert(xdg && tags && content_manager && tearing_manager && color_manager && representation_manager && workspace_manager);
   assert(wl_display_roundtrip(display) >= 0);
@@ -479,17 +534,8 @@ static int run_extras(void) {
   struct wp_color_representation_surface_v1 *representation = wp_color_representation_manager_v1_get_surface(representation_manager, surface);
   wp_color_representation_surface_v1_set_alpha_mode(representation, WP_COLOR_REPRESENTATION_SURFACE_V1_ALPHA_MODE_PREMULTIPLIED_ELECTRICAL);
   struct wp_color_management_surface_v1 *color = wp_color_manager_v1_get_surface(color_manager, surface);
-  if (parametric_supported) {
-  assert(supported_tf && supported_primaries);
-  struct wp_image_description_creator_params_v1 *params = wp_color_manager_v1_create_parametric_creator(color_manager);
-  wp_image_description_creator_params_v1_set_tf_named(params, supported_tf);
-  wp_image_description_creator_params_v1_set_primaries_named(params, supported_primaries);
-  struct wp_image_description_v1 *image = wp_image_description_creator_params_v1_create(params);
-  wp_image_description_v1_add_listener(image, &image_listener, NULL);
-  dispatch_until(&image_ready);
-  wp_color_management_surface_v1_set_image_description(color, image, WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
-  wp_image_description_v1_destroy(image);
-  }
+  assert(parametric_supported && supported_tf && supported_primaries);
+  describe(color, supported_tf, supported_primaries);
   wl_surface_commit(surface);
   dispatch_until(&configured);
   struct wl_buffer *buffer = create_buffer(WL_SHM_FORMAT_ARGB8888, 160, 100, 640, 0xff448866, NULL);
@@ -499,6 +545,17 @@ static int run_extras(void) {
   char line[80];
   while (fgets(line, sizeof(line), stdin)) {
     if (strncmp(line, "exit", 4) == 0) break;
+    if (!strcmp(line, "bell-surface\n") || !strcmp(line, "bell-burst\n")) {
+      assert(bell);
+      if (!strcmp(line, "bell-surface\n")) {
+        xdg_system_bell_v1_ring(bell, surface);
+      } else {
+        for (int i = 0; i < 16; i++) xdg_system_bell_v1_ring(bell, NULL);
+      }
+      assert(wl_display_roundtrip(display) >= 0);
+      puts("rang"); fflush(stdout);
+      continue;
+    }
     xdg_toplevel_tag_manager_v1_set_toplevel_tag(tags, top, "main");
     wp_content_type_v1_set_content_type(content, WP_CONTENT_TYPE_V1_TYPE_GAME);
     wp_tearing_control_v1_set_presentation_hint(tearing, WP_TEARING_CONTROL_V1_PRESENTATION_HINT_VSYNC);
@@ -506,6 +563,7 @@ static int run_extras(void) {
     assert(wl_display_roundtrip(display) >= 0);
     puts("extras-updated"); fflush(stdout);
   }
+  if (bell) xdg_system_bell_v1_destroy(bell);
   xdg_toplevel_destroy(top); xdg_surface_destroy(xs); wl_surface_destroy(surface);
   assert(wl_display_roundtrip(display) >= 0);
   return 0;
@@ -517,14 +575,38 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (strcmp(argv[1], "dump-registry") == 0) dump_registry_mode = true;
+  if (!strcmp(argv[1], "xdg-foreign")) {
+    if ((argc != 3 && argc != 4) || (strcmp(argv[2], "1") && strcmp(argv[2], "2"))) return 1;
+    foreign_version = atoi(argv[2]);
+  }
+  dialog_mode = !strcmp(argv[1], "xdg-dialog");
+  dump_versions = dump_registry_mode && argc > 2 && strcmp(argv[2], "--versions") == 0;
   workspace_test_mode = strcmp(argv[1], "workspaces") == 0;
   if (workspace_test_mode && argc > 2) activate_workspace_id = (unsigned)atoi(argv[2]);
-  extras_mode = strcmp(argv[1], "extras") == 0 || workspace_test_mode;
+  if (argc == 3 && !strcmp(argv[1], "hdr-pattern")) hdr_output_name = argv[2];
+  extras_mode = strcmp(argv[1], "extras") == 0 || workspace_test_mode || hdr_output_name;
   display = wl_display_connect(NULL);
   assert(display);
   struct wl_registry *registry = wl_display_get_registry(display);
   wl_registry_add_listener(registry, &registry_listener, NULL);
   wl_display_roundtrip(display);
+  if (!strcmp(argv[1], "release-registry")) {
+    assert(fixes_name && compositor);
+    struct wl_fixes *fixes = wl_registry_bind(registry, fixes_name, &wl_fixes_interface, 1);
+    printf("%u\n", wl_proxy_get_id((struct wl_proxy *)registry));
+    wl_fixes_destroy_registry(fixes, registry);
+    wl_registry_destroy(registry);
+    wl_fixes_destroy(fixes);
+    // Globals bound through the released registry remain usable.
+    struct wl_region *region = wl_compositor_create_region(compositor);
+    wl_region_add(region, 0, 0, 1, 1);
+    wl_region_destroy(region);
+    assert(wl_display_roundtrip(display) >= 0);
+    wl_display_disconnect(display);
+    return 0;
+  }
+  if (foreign_version) return run_xdg_foreign(argc == 4 ? argv[3] : NULL);
+  if (dialog_mode) return run_xdg_dialog(argc > 2 ? argv[2] : "plain");
   if (workspace_test_mode) {
     assert(workspace_manager);
     assert(wl_display_roundtrip(display) >= 0);
@@ -538,6 +620,7 @@ int main(int argc, char **argv) {
     wl_display_disconnect(display);
     return 0;
   }
+  if (hdr_output_name) return run_hdr_pattern();
   if (extras_mode) return run_extras();
   if (strcmp(argv[1], "screencopy") == 0) return run_screencopy();
   if (strcmp(argv[1], "lock") == 0) return run_lock();

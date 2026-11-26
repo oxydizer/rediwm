@@ -215,9 +215,22 @@ chrome, capture, or retained panel painting. General rules remain in
   come from `Server.sendFrameDone`, never `wlr_scene_output_send_frame_done`
   alone; the pass emits `output_sample` on the source buffer. A layer-shell
   surface below the world (background, bottom) is no longer occluded by windows
-  in wlroots' eyes: it keeps frame callbacks while covered. *Damage*: every
-  change reaches `p->pending` through `damage_box` and goes to the outputs once,
-  at the end of each sync. A change of what a leaf itself shows is cut to what
+  in wlroots' eyes: it keeps frame callbacks while covered. Workspace frames
+  get their home from `rediwm_projection_set_tree_output`. Each descendant's
+  resolved item inherits the output serial, including unclipped popups.
+  Collection tracks opaque coverage per output so a restricted leaf can
+  obscure a surface only on its home, even if output layout boxes overlap.
+  Xwayland also picks against a single X11 root stack. Pointer entry gives
+  the destination workspace's managed X windows priority in that stack,
+  preserving their scene order. The XWM connection carries restacks and the
+  Wayland connection carries seat events. Close the previous motion frame,
+  wait for the XWM marker before sending input to the new workspace, and use
+  the XI2 button receipt before changing the stack again. The compositor
+  continues dispatching while these acknowledgments are pending.
+  *Damage* is combined at sync end. Unrestricted changes use `p->pending`;
+  scoped changes use the output's `projection_damage`. Reassignment damages
+  the last shown bounds on the old home and the new bounds on the new home.
+  A change of what a leaf itself shows is cut to what
   was visible of it at the last build (`l->visible`); a move, restyle or removal
   damages the old box (cut) and the new one; a restack damages what moved
   (`damage_restacked`), shadow footprints included; a destroyed node applies at
@@ -227,6 +240,69 @@ chrome, capture, or retained panel painting. General rules remain in
   layout trees), never `wlr_scene_node_at` on the root. GLES2 lets go of a
   plain buffer once uploaded, so "has content" is a buffer, a texture or a
   single-pixel colour (`present_leaf`, `collect`).
+* **Linear passes** (`scene_pass_linear.c`):
+  an output with `[[outputs]] hdr = "on"` that `output/hdr.zig` lets blend in
+  linear light (headless, nested, or a display that takes HDR10; never the
+  greeter) is drawn through the `LINEAR` twins of the shaped programs into a
+  kept FP16 image (`rediwm_scene_output_set_linear`, set before every build by
+  `Server.buildOutputState`). Each frame draws only `pending_commit_damage`
+  into it and then `rediwm_scene_pass_encode`s the swapchain buffer's age
+  damage; scan-out or a failed frame makes the next one draw it whole. Every
+  colour a shader reads goes through `LIN()` (sRGB as displayed, gamma 2.2, to
+  linear BT.2020, 1.0 = SDR white): a new draw kind or colour uniform must too,
+  or it shows too bright or dark on such outputs only. Glass blurs in FP16; a
+  blur keeps the encoding it was taken in, so switching re-takes it. With no
+  linear output nothing of this is compiled or allocated, and the plain
+  programs compile to what they were (`LIN(c)` is `(c)`). The damage audit
+  skips linear frames. `tests/hdr_linear.py`; the pass gates are in
+  `scene_pass_test_linear.c`.
+* **The HDR10 signal** (phase 3, `output/hdr.zig`, `hdr_policy.zig`): on a DRM
+  output that takes PQ and BT.2020, `hdr.prepare` runs in `runFrame` *before*
+  the build: it test-commits a 10-bit render format (XRGB2101010, then
+  XBGR2101010) with the PQ/BT.2020 image description, puts both on the frame
+  state, and `hdr.sync` switches the pass's encode to PQ (`sdr_white` capped by
+  the EDID's suggested peak, `edid_hdr.zig`) for that same frame; the switch
+  counts in `commitIsRedundant`, and `hdr.committed` (from
+  `commitFrameState`) records the outcome. A refusal holds for the mode and
+  setting. While the signal is on, night light is the encode's matrix
+  (`night_light/color.zig` `hdrAdjust`) and the gamma table stays neutral,
+  client gamma ramps fail, and software cursors are locked (wlroots'
+  GLES2 cursor path ignores colour transforms). No headless test reaches this
+  path.
+* **Client colour** (`scene_pass_color.c`, `scene_pass_yuv.c`). Set the pass
+  source for both textures and single-pixel surface colours. The managed
+  shader decodes the straight sample and restores alpha before blending.
+  The pass destination supplies absolute PQ scaling and selects SDR highlight
+  roll-off. A change in desktop white or signal invalidates the retained
+  image and blurs. The EGLImage for a tagged video buffer includes the plane
+  modifiers, YCbCr matrix and range. Its lifetime follows the buffer addon.
+  Changes to only a colour description touch the node so projection damages
+  its previous pixels. Live previews follow the same committed metadata.
+  Preferred descriptions follow the primary visible output and its committed
+  colour serial. wlroots initialises late feedback objects to SDR, so
+  `surface_feedback.c` refreshes them before a preferred-description query.
+  `zig build test-hdr` and `tests/hdr_content.py` exercise these paths.
+* **Captures of linear outputs are SDR** (phase 5, `capture_sdr.c`): an
+  output whose frames come from the linear pass is captured from an sRGB
+  encode of its FP16 image (`rediwm_scene_output_sdr_copy`, once per build),
+  never from its committed buffer, which holds PQ under HDR. wlroots'
+  ext-image-copy-capture output sources get a wrapped `impl` when a session
+  starts (`Manager.handleNewSession`; resolve their output with
+  `CaptureSdr.sourceOutput`, `toOutput()` no longer sees them), and
+  `guardScreencopy` hands screencopy frames on such outputs to
+  `rediwm_capture_sdr_take_screencopy`, which replaces the frame's private
+  commit listener: both reach into wlroots 0.20 objects, so re-check them
+  after an update. The screenshot tool and IPC `sample_pixels` read the same
+  copy (`raw` reads the output's buffer). `capture_sdr_copies` in
+  `rediwm-msg perf` counts them; `tests/hdr_linear.py` checks every path on
+  a headless linear output, where both pictures are the same. wlroots
+  negotiates shm formats from scanout. For a 10-bit shm request, encode SDR
+  into a buffer matching the native swapchain format. An eight-bit FBO can
+  leave a packed ten-bit GL read untouched. Both SDR buffers are allocated
+  on demand and encoded once per build and depth. Screencopy substitutes
+  the SDR buffer in the commit event and leaves damage tracking and frame
+  cleanup to wlroots. `tests/hdr_linear.py --ten-bit-capture` checks both
+  capture protocols and the screencopy buffer release.
 * **The veil** (`rediwm_scene_output_set_veil`, driven by `reveal.zig`) is
   black drawn over every entry and under the software cursor: the session's
   fade in from black and the greeter's fade out. It exists only on DRM and

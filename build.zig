@@ -9,6 +9,7 @@ const Context = @import("build/context.zig").Context;
 const protocols = @import("build/protocols.zig");
 const apps = @import("build/apps.zig");
 const player_build = @import("build/player.zig");
+const video_build = @import("build/video.zig");
 const qt_style = @import("build/qt_style.zig");
 const data = @import("build/data.zig");
 const session_build = @import("build/session.zig");
@@ -59,6 +60,8 @@ pub fn build(b: *std.Build) void {
     wlr_facade.addImport("pixman", pixman);
     wlr_facade.addImport("xkbcommon", xkbcommon);
     wlr_facade.linkSystemLibrary("wlroots-0.20", .{});
+    wlr_facade.linkSystemLibrary("xcb", .{});
+    wlr_facade.linkSystemLibrary("xcb-xinput", .{});
     // Keyboard.setLayoutGroup calls xkbcommon directly (xkb_state_update_latched_locked).
     wlr_facade.linkSystemLibrary("xkbcommon", .{});
     const wlr_c = support.cTranslation(b, target, optimize, b.path("src/wlr/c.h"), &.{"wlroots-0.20"});
@@ -103,7 +106,9 @@ pub fn build(b: *std.Build) void {
         b.step("i18n-" ++ entry[0], entry[1]).dependOn(&run.step);
     }
     const border_glow_mod = b.createModule(.{ .root_source_file = b.path("src/border_glow.zig"), .target = target, .optimize = optimize });
-    const ui_mod = b.createModule(.{ .root_source_file = b.path("src/ui/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    // Public (addModule) so apps in other repositories can depend on this
+    // package; see docs/app-kit.md.
+    const ui_mod = b.addModule("ui", .{ .root_source_file = b.path("src/ui/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
     ui_mod.addImport("border_glow", border_glow_mod);
     ui_mod.addImport("i18n", i18n_mod);
     ui_mod.addImport("memory", memory_mod);
@@ -139,6 +144,17 @@ pub fn build(b: *std.Build) void {
     config_mod.addImport("i18n", i18n_mod);
     config_mod.addImport("xkbcommon", xkbcommon);
     config_mod.linkSystemLibrary("xkbcommon", .{});
+    // The standalone-app kit (window host, theme settings and reloads), public
+    // like `ui` for apps built outside this repository.
+    const app_kit_mod = b.addModule("app_kit", .{ .root_source_file = b.path("src/app_kit/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    app_kit_mod.addImport("ui", ui_mod);
+    app_kit_mod.addImport("i18n", i18n_mod);
+    app_kit_mod.addImport("config", config_mod);
+    app_kit_mod.addImport("platform", platform_mod);
+    app_kit_mod.addImport("memory", memory_mod);
+    app_kit_mod.addImport("wayland", wayland);
+    app_kit_mod.addImport("c_gfx", c_headers.gfx);
+    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon" }) |lib| app_kit_mod.linkSystemLibrary(lib, .{});
 
     const theme_helper = b.addExecutable(.{
         .name = "rediwm-theme",
@@ -251,6 +267,7 @@ pub fn build(b: *std.Build) void {
         .wlroots = wlroots,
         .i18n_mod = i18n_mod,
         .ui_mod = ui_mod,
+        .app_kit_mod = app_kit_mod,
         .dbus_mod = dbus_mod,
         .platform_mod = platform_mod,
         .config_mod = config_mod,
@@ -259,6 +276,7 @@ pub fn build(b: *std.Build) void {
     };
     const app = apps.add(ctx);
     player_build.add(ctx);
+    const video = video_build.add(ctx);
     qt_style.add(ctx);
     const files = app.files;
     const images = app.images;
@@ -274,7 +292,7 @@ pub fn build(b: *std.Build) void {
             .install_dir = .lib,
             .install_subdir = "rediwm",
         });
-        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor, monitor, calculator, theme_helper }) |exe|
+        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor, monitor, calculator, theme_helper, video }) |exe|
             exe.root_module.addRPathSpecial("$ORIGIN/../lib/rediwm");
     }
     data.add(ctx);
@@ -283,6 +301,7 @@ pub fn build(b: *std.Build) void {
     const session_supervisor = session.session_supervisor;
 
     const zig_tests = tests.addZig(ctx, session);
+    video_build.addTests(ctx, zig_tests.test_step);
     @import("build/keys.zig").add(ctx, zig_tests.test_step, &.{ compositor.root_module, zig_tests.ui_tests_module });
     @import("build/firewall.zig").add(ctx, zig_tests.test_step, &.{ compositor.root_module, zig_tests.ui_tests_module });
     @import("build/printing.zig").add(ctx);
@@ -298,6 +317,9 @@ pub fn build(b: *std.Build) void {
     const dbus_service = zig_tests.dbus_service;
     const polkit_service = zig_tests.polkit_service;
 
+    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, monitor.root_module, calculator.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
+        module.addImport("app_kit", app_kit_mod);
+    }
     // Hosts also rasterize app-specific content through their own C imports.
     inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
         inline for (.{ "cairo", "librsvg-2.0", "freetype2", "harfbuzz", "fontconfig" }) |lib| module.linkSystemLibrary(lib, .{});

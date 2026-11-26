@@ -118,22 +118,22 @@ pub fn build(self: *Section, cc: *panel.ControlCenter) void {
     self.items = &.{};
     self.root = @import("keys_ssh.zig").tree(self, cc, self.arena.allocator()) catch panel.outOfMemory();
     const width = @max(80, @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 80);
-    wrap(self.arena.allocator(), &self.root, width) catch {};
+    wrap(cc.toplevel.render_scale, self.arena.allocator(), &self.root, width) catch {};
 }
 /// Turns text wider than `width` into wrapped paragraphs (also used by the
 /// Firewall section).
-pub fn wrap(a: A, widget: *W, width: f32) !void {
+pub fn wrap(scale: f32, a: A, widget: *W, width: f32) !void {
     const inner = @max(40, width - widget.padding.left - widget.padding.right);
-    if (widget.kind == .text and ui.measure.textNatural(widget.kind.text.content, .sans, widget.kind.text.weight, widget.kind.text.font_size).w > inner) {
+    if (widget.kind == .text and ui.measure.textNaturalAtScale(widget.kind.text.content, widget.kind.text.family, widget.kind.text.weight, widget.kind.text.font_size, scale).w > inner) {
         const style = widget.kind.text;
         const name = widget.name;
-        widget.* = try panel.paragraph(a, style.content, inner, style.font_size, style.weight < 600);
+        widget.* = try panel.paragraph(scale, a, style.content, inner, style.font_size, style.weight < 600);
         widget.name = name;
         for (widget.children) |*child| child.kind.text.color = style.color;
         return;
     }
     const share = if (widget.direction == .row and widget.children.len > 0) (inner - widget.gap * @as(f32, @floatFromInt(widget.children.len - 1))) / @as(f32, @floatFromInt(widget.children.len)) else inner;
-    for (widget.children) |*child| try wrap(a, child, share);
+    for (widget.children) |*child| try wrap(scale, a, child, share);
 }
 pub fn start(self: *Section, cc: *panel.ControlCenter) !void {
     if (cc.server.greeter_mode) return error.Greeter;

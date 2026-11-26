@@ -82,8 +82,8 @@ struct rediwm_clip_spec {
   int width, height;
   // 0 for the rounded rectangle; otherwise 3 to REDIWM_POLY_MAX vertices of
   // `poly` (source units, from the tree's origin, inside the box) are the shape
-  // and `radii` is ignored. `reserved` keeps the struct free of padding, which
-  // it is compared byte for byte.
+  // and `radii` is ignored. `reserved` keeps the struct free of padding (the Zig
+  // mirror lays it out the same way); setters compare it field by field.
   int poly_count, reserved;
   // Top-left, top-right, bottom-right, bottom-left.
   double radii[4];
@@ -417,6 +417,7 @@ struct rediwm_item {
   // Stable for the leaf's life, never 0 for a projected leaf; 0 for the items of
   // nodes outside the projection. Damage events name leaves by it.
   uint64_t id;
+  uint64_t home_output; // scene output serial, or 0 for an unrestricted item
   // Every node from the leaf to the root of its group is enabled. Whether the
   // item has any pixels once rounded is the presenter's to add.
   bool enabled;
@@ -434,5 +435,6 @@ struct rediwm_item {
   union {
     const struct rediwm_shadow *shadow;
     const struct rediwm_ribbon *ribbon; // node-owned; normalized to edges
+    const struct rediwm_glass_region *blur_region; // client effects only
   }; // exclusive procedural kinds; ordinary items do not grow for optional effects
 };

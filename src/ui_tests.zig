@@ -10,6 +10,8 @@ test {
     _ = @import("calculator/model.zig");
     _ = @import("control_center/search_index.zig");
     _ = @import("auto_layout.zig");
+    _ = @import("scroll_layout.zig");
+    _ = @import("scroll_tiling.zig");
     _ = @import("desktop/app.zig");
     _ = @import("desktop/config.zig");
     _ = @import("desktop/dnd.zig");
@@ -23,6 +25,7 @@ test {
     _ = @import("ui").key_repeat;
     _ = @import("ui").hover_glide;
     _ = @import("input/ime_placement.zig");
+    _ = @import("input/text_input_v1.zig");
     _ = @import("lifecycle_tests.zig");
     _ = @import("ui").layout;
     _ = @import("ui").measure;
@@ -84,7 +87,11 @@ test {
     _ = @import("output/late_render_tests.zig");
     _ = @import("output/tearing_policy.zig");
     _ = @import("output/vrr_policy.zig");
+    _ = @import("output/hdr_policy.zig");
+    _ = @import("output/edid_hdr.zig");
+    _ = @import("output/auto_place.zig");
     _ = @import("fifo.zig");
+    _ = @import("commit_refresh.zig");
     _ = @import("config").keybinds;
     _ = @import("osd_paint.zig");
     _ = @import("osd.zig");

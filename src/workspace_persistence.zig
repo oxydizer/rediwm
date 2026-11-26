@@ -4,6 +4,7 @@ const Server = @import("Server.zig");
 const Top = @import("Toplevel.zig");
 const format = @import("config").workspace_layout;
 const layout = @import("auto_layout.zig");
+const scroll = @import("scroll_layout.zig");
 const gpa = @import("main.zig").gpa;
 
 fn geometry(g: Top.RestoreGeometry) format.Geometry {
@@ -24,6 +25,15 @@ pub fn nodes(a: std.mem.Allocator, list: *std.ArrayList(format.Node), node: *con
         try nodes(a, list, c.a);
         try nodes(a, list, c.b);
     }
+}
+pub fn columns(a: std.mem.Allocator, strip: *const @import("scroll_layout.zig").Strip) ![]const format.Column {
+    const result = try a.alloc(format.Column, strip.columns.items.len);
+    for (strip.columns.items, result) |column, *out| {
+        const members = try a.alloc(format.ColumnMember, column.cells.items.len);
+        for (column.cells.items, members) |cell, *m| m.* = .{ .id = cell.member.key.id, .group = cell.member.key.group, .weight = cell.weight };
+        out.* = .{ .width = column.width, .members = members };
+    }
+    return result;
 }
 pub fn save(server: *Server, path: []const u8, last_hash: ?*?u64) !void {
     if (server.greeter_mode or !server.world.workspaces.active) return;
@@ -74,14 +84,24 @@ pub fn save(server: *Server, path: []const u8, last_hash: ?*?u64) !void {
     }
     var workspaces: std.ArrayList(format.Workspace) = .empty;
     const manager = &server.world.workspaces;
-    for (manager.slots, 0..) |slot, index| if (slot.exists) {
+    for (&manager.slots, 0..) |*slot, index| if (slot.exists) {
         var flat: std.ArrayList(format.Node) = .empty;
         if (manager.tiler.trees[index].root) |root| try nodes(a, &flat, root);
         const focused = if (slot.focus) |id| server.findToplevelById(id) else null;
-        try workspaces.append(a, .{ .id = @intCast(index + 1), .automatic = slot.automatic, .nodes = flat.items, .output = if (slot.output) |out| std.mem.span(out.wlr_output.name) else "", .visible = if (slot.output) |out| out.workspace_id == index + 1 else false, .focus_order = if (focused) |top| top.workspace_order else null });
+        const output_name = if (slot.displaced) |*home| home.name() else if (slot.output) |out| std.mem.span(out.wlr_output.name) else "";
+        try workspaces.append(a, .{
+            .id = @intCast(index + 1),
+            .layout = slot.layout,
+            .nodes = flat.items,
+            .output = output_name,
+            .visible = if (slot.displaced) |home| home.shown else if (slot.output) |out| @import("workspaces.zig").nativeSelection(out) == index + 1 else false,
+            .focus_order = if (focused) |top| top.workspace_order else null,
+            .columns = try columns(a, &manager.tiler.strips[index]),
+            .view = manager.tiler.strips[index].view,
+        });
     };
-    const saved: format.Saved = .{ .windows = windows.items, .workspaces = workspaces.items, .camera = .{ .offset_x = manager.saved_camera.offset_x, .offset_y = manager.saved_camera.offset_y, .zoom_index = manager.saved_camera.zoom_index }, .bounds = .{ .max_x = manager.saved_bounds.max_x, .max_y = manager.saved_bounds.max_y, .origin_x = manager.saved_bounds.origin_x, .origin_y = manager.saved_bounds.origin_y, .width = manager.saved_bounds.width, .height = manager.saved_bounds.height } };
-    const bytes = try std.json.Stringify.valueAlloc(a, saved, .{});
+    const saved: format.Saved = .{ .mode = if (manager.last_tiled == .scrolling) .scrolling else .workspaces, .windows = windows.items, .workspaces = workspaces.items, .camera = .{ .offset_x = manager.saved_camera.offset_x, .offset_y = manager.saved_camera.offset_y, .zoom_index = manager.saved_camera.zoom_index }, .bounds = .{ .max_x = manager.saved_bounds.max_x, .max_y = manager.saved_bounds.max_y, .origin_x = manager.saved_bounds.origin_x, .origin_y = manager.saved_bounds.origin_y, .width = manager.saved_bounds.width, .height = manager.saved_bounds.height } };
+    const bytes = try format.stringify(a, saved);
     const hash = std.hash.Wyhash.hash(0, bytes);
     if (last_hash) |last| if (last.* == hash) return;
     if (std.fs.path.dirname(path)) |dir| try std.Io.Dir.cwd().createDirPath(server.io, dir);
@@ -150,26 +170,17 @@ pub const Restore = struct {
             if (self.touched[workspace.id - 1]) continue;
             const slot = &manager.slots[workspace.id - 1];
             slot.exists = true;
-            slot.automatic = workspace.automatic;
-            var out = server.getDefaultOutput();
-            outputs = server.outputs.iterator(.forward);
-            while (outputs.next()) |candidate| if (candidate.isLogicallyEnabled() and std.mem.eql(u8, std.mem.span(candidate.wlr_output.name), workspace.output)) {
-                out = candidate;
-                break;
-            };
+            slot.layout = workspace.layout;
+            const named = server.findOutputByName(workspace.output);
+            const home = if (named != null and named.?.isLogicallyEnabled()) named else null;
+            const out = home orelse server.getDefaultOutput();
+            slot.displaced = if (home == null) @import("workspaces.zig").Disconnected.init(workspace.output, workspace.visible) else null;
             slot.output = out;
             if (out) |output| {
                 slot.box = output.usableBox();
-                if (self.restore_output_selection and workspace.visible and output.workspace_id == 0) output.workspace_id = workspace.id;
+                if (self.restore_output_selection and slot.displaced == null and workspace.visible and output.workspace_id == 0) output.workspace_id = workspace.id;
             }
         }
-        outputs = server.outputs.iterator(.forward);
-        while (outputs.next()) |out| if (out.isLogicallyEnabled() and out.workspace_id == 0) {
-            for (&manager.slots, 0..) |*slot, index| if (slot.output == out) {
-                out.workspace_id = @intCast(index + 1);
-                break;
-            };
-        };
         manager.syncOutputs(server);
     }
     pub fn apply(self: *Restore, server: *Server, top: *Top) void {
@@ -226,6 +237,26 @@ pub const Restore = struct {
         top.maximize_restore = liveOptional(saved.maximize_restore);
         top.fullscreen_restore = liveOptional(saved.fullscreen_restore);
     }
+    /// Late maps from the snapshot may arrive after the workspace's remembered
+    /// window. Keep keyboard focus on that window when it is already present.
+    pub fn takesMapFocus(self: *const Restore, top: *Top) bool {
+        if (!self.initialized or top.workspace_id == 0 or self.touched[top.workspace_id - 1]) return true;
+        const saved = for (self.matches, self.parsed.value.windows) |id, window| {
+            if (id == top.id) break window;
+        } else return true;
+        for (self.parsed.value.workspaces) |workspace| {
+            if (workspace.id != saved.workspace) continue;
+            const focus = workspace.focus_order orelse break;
+            if (focus == saved.order) break;
+            for (self.matches, self.parsed.value.windows) |id, window| {
+                if (window.order != focus) continue;
+                const remembered = top.server.findToplevelById(id orelse break) orelse break;
+                return !@import("window_tabs.zig").visible(remembered);
+            }
+            break;
+        }
+        return true;
+    }
     pub fn finish(self: *Restore, server: *Server, top: *Top) void {
         if (!self.initialized) return;
         for (self.matches, self.parsed.value.windows, 0..) |id, saved, index| if (id == top.id) {
@@ -271,8 +302,12 @@ pub const Restore = struct {
             errdefer tree.deinit(gpa);
             const target = &server.world.workspaces.tiler.trees[workspace.id - 1];
             // New unmatched windows are admitted by the normal membership sync.
+            const strip = try self.buildStrip(server, workspace);
             target.deinit(gpa);
             target.* = tree;
+            const strip_target = &server.world.workspaces.tiler.strips[workspace.id - 1];
+            strip_target.deinit(gpa);
+            strip_target.* = strip;
             const slot = &server.world.workspaces.slots[workspace.id - 1];
             if (workspace.focus_order) |order| for (self.parsed.value.windows, self.matches) |saved, id| {
                 if (saved.order == order and id != null and server.findToplevelById(id.?) != null) slot.focus = id;
@@ -282,19 +317,43 @@ pub const Restore = struct {
         server.world.workspaces.tiler.schedule(server);
         server.world.workspaces.refresh(server);
     }
+    /// The live, tiling window a saved leaf or column member named.
+    fn liveMember(self: *Restore, server: *Server, key: u64, group: bool) ?*Top {
+        for (self.parsed.value.windows, self.matches) |window, id| {
+            if (id == null or (if (group) window.group else window.order) != key) continue;
+            const top = server.findToplevelById(id.?) orelse continue;
+            if (top.workspace_id != window.workspace or @import("auto_tiling.zig").isFloating(top)) continue;
+            return top;
+        }
+        return null;
+    }
+    fn buildStrip(self: *Restore, server: *Server, workspace: format.Workspace) !scroll.Strip {
+        var strip: scroll.Strip = .{ .view = workspace.view };
+        errdefer strip.deinit(gpa);
+        for (workspace.columns) |column| {
+            var cells: std.ArrayList(scroll.Cell) = .empty;
+            errdefer cells.deinit(gpa);
+            for (column.members) |saved| {
+                const top = self.liveMember(server, saved.id, saved.group) orelse continue;
+                const key = @import("auto_tiling.zig").key(top);
+                const known = strip.contains(key) or for (cells.items) |cell| {
+                    if (std.meta.eql(cell.member.key, key)) break true;
+                } else false;
+                if (!known) try cells.append(gpa, .{ .member = .{ .key = key, .order = top.workspace_order }, .weight = saved.weight });
+            }
+            if (cells.items.len == 0) continue;
+            try strip.columns.append(gpa, .{ .width = scroll.clampFraction(column.width), .cells = cells });
+        }
+        return strip;
+    }
     fn buildNode(self: *Restore, server: *Server, flat: []const format.Node, cursor: *usize) !?*layout.Node {
         const saved = flat[cursor.*];
         cursor.* += 1;
         if (saved.id) |key| {
-            for (self.parsed.value.windows, self.matches) |window, id| {
-                if (id == null or (if (saved.group) window.group else window.order) != key) continue;
-                const top = server.findToplevelById(id.?) orelse continue;
-                if (top.workspace_id != window.workspace or @import("auto_tiling.zig").isFloating(top)) continue;
-                const node = try gpa.create(layout.Node);
-                node.* = .{ .member = .{ .key = @import("auto_tiling.zig").key(top), .order = top.workspace_order } };
-                return node;
-            }
-            return null;
+            const top = self.liveMember(server, key, saved.group) orelse return null;
+            const node = try gpa.create(layout.Node);
+            node.* = .{ .member = .{ .key = @import("auto_tiling.zig").key(top), .order = top.workspace_order } };
+            return node;
         }
         const a = try self.buildNode(server, flat, cursor);
         errdefer {

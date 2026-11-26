@@ -147,7 +147,8 @@ const Phase = enum {
 
 fn isEmpty(p: Patch) bool {
     return p.enabled == null and p.width == null and p.height == null and p.refresh_mhz == null and
-        p.x == null and p.y == null and p.scale == null and p.transform == null and p.adaptive_sync == null;
+        p.x == null and p.y == null and p.scale == null and p.transform == null and p.adaptive_sync == null and
+        p.hdr == null and p.sdr_white == null;
 }
 
 fn findHead(config: *wlr.OutputConfigurationV1, output: *wlr.Output) ?*wlr.OutputConfigurationV1.Head {

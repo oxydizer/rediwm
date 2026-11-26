@@ -212,9 +212,9 @@ pub fn reconcile(bar: *Taskbar, now_ms: i64) bool {
     }
     // Whatever is left belongs to windows that closed or left the taskbar.
     if (bar.chips.items.len > 0) changed = true;
-    for (bar.chips.items) |chip| {
+    for (bar.chips.items) |*chip| {
         if (chip.buffer_node) |node| node.node.destroy();
-        if (chip.raster) |raster| raster.base.drop();
+        chip.releaseRasters();
         if (chip.icon) |e| bar.server.iconRelease(e.id);
     }
     bar.chips.deinit(gpa);

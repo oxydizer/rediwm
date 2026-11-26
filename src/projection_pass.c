@@ -21,10 +21,6 @@ static struct leaf *transport_leaf(struct rediwm_projection *p, struct rediwm_no
   struct leaf *l = node->leaf;
   return l && l->projection == p ? l : NULL;
 }
-static struct leaf *feedback_leaf(struct rediwm_projection *p, struct rediwm_node *node) {
-  struct leaf *l = transport_leaf(p, node);
-  return l && l->feedback ? l : NULL;
-}
 // What of an item nothing above hides, as the output pass last saw it (layout space).
 void rediwm_projection_note_visible(struct rediwm_projection *p, struct rediwm_node *node,
                                     const pixman_region32_t *visible) {
@@ -47,33 +43,28 @@ void rediwm_projection_feedback_begin(struct rediwm_projection *p) {
   wl_list_for_each(out, &p->outputs->outputs, link) {
     const unsigned i = out->index % FEEDBACK_OUTPUTS;
     if (p->shown_output[i].known &&
-        (p->shown_output[i].scale != out->output->scale ||
+        (p->shown_output[i].serial != out->serial ||
+         p->shown_output[i].scale != out->output->scale ||
+         p->shown_output[i].color_serial != out->color_serial ||
          p->shown_output[i].transform != out->output->transform ||
          p->shown_output[i].subpixel != out->output->subpixel))
       p->forced |= 1ull << i;
+    p->shown_output[i].serial = out->serial;
+    p->shown_output[i].color_serial = out->color_serial;
     p->shown_output[i].scale = out->output->scale;
     p->shown_output[i].transform = out->output->transform;
     p->shown_output[i].subpixel = out->output->subpixel;
     p->shown_output[i].known = true;
   }
 }
-// `visible` is what of the surface nothing above it hides, over the whole layout.
-void rediwm_projection_feedback_note(struct rediwm_projection *p, struct rediwm_node *node,
-                                     const pixman_region32_t *visible) {
-  struct leaf *l = feedback_leaf(p, node);
-  if (!l || !pixman_region32_not_empty((pixman_region32_t *)visible)) return;
-  struct rediwm_scene_output *out;
-  wl_list_for_each(out, &p->outputs->outputs, link) {
-    if (!out->output->enabled) continue;
-    struct wlr_box box = {.x = out->x, .y = out->y};
-    wlr_output_effective_resolution(out->output, &box.width, &box.height);
-    pixman_region32_t shown;
-    pixman_region32_init(&shown);
-    pixman_region32_intersect_rect(&shown, (pixman_region32_t *)visible, box.x, box.y, box.width,
-                                   box.height);
-    l->feedback->area[out->index % FEEDBACK_OUTPUTS] = region_area(&shown);
-    pixman_region32_fini(&shown);
-  }
+// The collector has already applied this output's bounds and occlusion.
+void rediwm_projection_note_output(struct rediwm_projection *p, struct rediwm_node *node,
+                                   struct rediwm_scene_output *out, const pixman_region32_t *visible) {
+  struct leaf *l = transport_leaf(p, node);
+  if (!l) return;
+  if (l->item.kind != REDIWM_ITEM_EFFECT || l->item.blur_region)
+    pixman_region32_union(&l->visible, &l->visible, visible);
+  if (l->feedback) l->feedback->area[out->index] = region_area(visible);
 }
 // The outputs and primary output of one surface from the last report of every
 // output, and the signals of what changed.
@@ -108,7 +99,7 @@ static void update_feedback(struct leaf *l) {
   f->primary = primary;
   if (before == active && before_primary == primary && !(active & l->projection->forced)) return;
   struct rediwm_scene_output *outputs[FEEDBACK_OUTPUTS];
-  struct rediwm_outputs_update_event event = {.active = outputs, .size = count};
+  struct rediwm_outputs_update_event event = {.active = outputs, .size = count, .primary = primary};
   size_t i = 0;
   wl_list_for_each(out, &scene->outputs, link)
       if (active & (1ull << (out->index % FEEDBACK_OUTPUTS))) outputs[i++] = out;
@@ -126,6 +117,7 @@ void rediwm_projection_send_frame_done(struct rediwm_projection *p, struct rediw
   struct feedback *f, *next;
   wl_list_for_each_safe(f, next, &p->feedback, link) {
     if (!f->active || !f->leaf->seen || !f->leaf->item.enabled) continue;
+    if (f->leaf->item.home_output && f->leaf->item.home_output != out->serial) continue;
     struct rediwm_frame_done_event event = {.output = out, .when = *now};
     wl_signal_emit_mutable(&rediwm_buffer_from_node(f->leaf->source)->events.frame_done, &event);
   }

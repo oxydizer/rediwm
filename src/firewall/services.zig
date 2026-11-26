@@ -9,7 +9,8 @@ pub const Port = struct { proto: model.Proto, port: []const u8 };
 
 pub const Service = struct {
     id: []const u8,
-    /// English; the page translates it through `i18n.tr`.
+    /// English; the page translates it through its own copy of these names
+    /// (`control_center/sections/firewall_rules.zig`), which must match.
     name: []const u8,
     ports: []const Port,
     /// Suggested scope: discovery and sharing belong on home networks.

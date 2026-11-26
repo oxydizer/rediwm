@@ -76,46 +76,52 @@ fn lookup(server: *Server, a: std.mem.Allocator, dirs: []const []const u8, theme
     return .{};
 }
 
+fn resolveEvent(server: *Server, a: std.mem.Allocator, dirs: []const []const u8, event: []const u8) !Match {
+    const theme = server.config.compositor.sound_theme;
+    var budget: usize = 32;
+    const match = try lookup(server, a, dirs, theme, event, 0, &budget);
+    if (match.path != null or match.disabled or std.mem.eql(u8, theme, "freedesktop")) return match;
+    return lookup(server, a, dirs, "freedesktop", event, 0, &budget);
+}
+
+fn eventEnabled(server: *Server, event: []const u8) bool {
+    const cfg = server.config.compositor;
+    if (!cfg.sound_enabled) return false;
+    for (cfg.sound_disabled_events) |disabled| {
+        if (std.mem.eql(u8, disabled, event)) return false;
+    }
+    return true;
+}
+
 pub fn inspect(server: *Server, a: std.mem.Allocator) !protocol.SoundsResult {
     const cfg = server.config.compositor;
     const dirs = try roots(server, a);
     const rows = try a.alloc(protocol.SoundEventData, events.len);
     for (events, rows) |event, *row| {
-        var budget: usize = 32;
-        var match = try lookup(server, a, dirs, cfg.sound_theme, event, 0, &budget);
-        if (match.path == null and !match.disabled and !std.mem.eql(u8, cfg.sound_theme, "freedesktop"))
-            match = try lookup(server, a, dirs, "freedesktop", event, 0, &budget);
-        var enabled = cfg.sound_enabled and !match.disabled;
-        for (cfg.sound_disabled_events) |disabled| if (std.mem.eql(u8, disabled, event)) {
-            enabled = false;
-        };
-        row.* = .{ .name = event, .enabled = enabled, .available = match.path != null, .path = match.path };
+        const match = try resolveEvent(server, a, dirs, event);
+        row.* = .{ .name = event, .enabled = eventEnabled(server, event) and !match.disabled, .available = match.path != null, .path = match.path };
     }
     return .{ .theme = cfg.sound_theme, .enabled = cfg.sound_enabled, .player_available = (try playerPath(server, a)) != null, .events = rows };
 }
 
-pub fn play(server: *Server, a: std.mem.Allocator, event: []const u8) !protocol.Response {
-    var known = false;
-    for (events) |name| if (std.mem.eql(u8, name, event)) {
-        known = true;
-    };
-    if (!known) return error.UnknownSoundEvent;
-    const state = try inspect(server, a);
+pub fn play(server: *Server, a: std.mem.Allocator, event: []const u8) !?std.posix.pid_t {
+    for (events) |name| {
+        if (std.mem.eql(u8, name, event)) break;
+    } else return error.UnknownSoundEvent;
     const player_path = try playerPath(server, a) orelse return error.SoundPlayerUnavailable;
-    for (state.events) |row| {
-        if (!std.mem.eql(u8, event, row.name)) continue;
-        if (!row.enabled) return error.SoundEventDisabled;
-        const path = row.path orelse return error.SoundEventUnavailable;
-        const manager = server.services orelse return error.SoundPlayerUnavailable;
-        var env = try server.environ.createMap(a);
-        defer env.deinit();
-        try server.applyChildEnv(&env);
-        const child = try std.process.spawn(server.io, .{
-            .argv = &.{ player_path, "--client-name=RediWM", "--property=media.role=event", "--", path },
-            .environ_map = &env,
-        });
-        if (child.id) |pid| try manager.trackChild(pid);
-        return .{ .ok = .{ .sound_playback = .{ .event = event, .pid = child.id } } };
-    }
-    return error.UnknownSoundEvent;
+    if (!eventEnabled(server, event)) return error.SoundEventDisabled;
+    const match = try resolveEvent(server, a, try roots(server, a), event);
+    if (match.disabled) return error.SoundEventDisabled;
+    const path = match.path orelse return error.SoundEventUnavailable;
+    const manager = server.services orelse return error.SoundPlayerUnavailable;
+    var env = try server.environ.createMap(a);
+    defer env.deinit();
+    try server.applyChildEnv(&env);
+    var child = try std.process.spawn(server.io, .{
+        .argv = &.{ player_path, "--client-name=RediWM", "--property=media.role=event", "--", path },
+        .environ_map = &env,
+    });
+    errdefer child.kill(server.io);
+    if (child.id) |pid| try manager.trackChild(pid);
+    return child.id;
 }

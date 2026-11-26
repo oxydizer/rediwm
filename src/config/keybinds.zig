@@ -17,7 +17,7 @@ const xkb = @import("xkbcommon");
 
 const log = std.log.scoped(.config);
 
-pub const TilingAction = enum { toggle_floating, toggle_split, toggle_workspace_tiling, swap_left, swap_right, swap_up, swap_down, resize_split_left, resize_split_right, resize_split_up, resize_split_down };
+pub const TilingAction = enum { toggle_floating, toggle_split, toggle_workspace_tiling, swap_left, swap_right, swap_up, swap_down, resize_split_left, resize_split_right, resize_split_up, resize_split_down, consume_left, consume_right, cycle_column_width };
 
 pub const Action = union(enum) {
     toggle_floating,
@@ -31,11 +31,22 @@ pub const Action = union(enum) {
     resize_split_right,
     resize_split_up,
     resize_split_down,
+    /// Scrolling: a window alone in its column joins the column on that side;
+    /// one sharing a column leaves it for a column of its own (niri's
+    /// consume-or-expel).
+    consume_left,
+    consume_right,
+    /// Scrolling: the focused column's next preset width.
+    cycle_column_width,
     noop,
     workspace: u8,
     move_to_workspace: u8,
     workspace_next,
     workspace_prev,
+    /// Canvas to the tiled mode used last (Workspaces or Scrolling) or back,
+    /// saved to `desktop_mode`. Both presets carry it, so the same key always
+    /// switches back.
+    toggle_desktop_mode,
     toggle_power_menu,
     volume_up,
     volume_down,

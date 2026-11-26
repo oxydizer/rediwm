@@ -4,6 +4,7 @@
 
 uint64_t rediwm_scene_output_reblurs; // read and reset by the performance stats
 struct attribution {
+    uint64_t output_serial;
     const struct output_view *view;
     struct entry *entries;
     size_t len;
@@ -13,6 +14,7 @@ struct attribution {
 struct seen_event { uint64_t leaf; struct wlr_box box; }; // device pixels
 static void note_event(const struct rediwm_damage_event *ev, void *data) {
     struct attribution *a = data;
+    if (ev->home_output && ev->home_output != a->output_serial) return;
     struct wlr_box box = device_box((struct wlr_box){ev->box.x, ev->box.y, ev->box.width, ev->box.height}, a->view);
     // wlroots widens a scaled buffer's damage for filtering; so does this.
     box = (struct wlr_box){box.x - 2, box.y - 2, box.width + 4, box.height + 4};
@@ -48,7 +50,7 @@ bool scene_output_decide_effects(struct rediwm_output_renderer *r, struct output
         struct rediwm_scene_output *out, const struct output_view *v, pixman_region32_t *changed) {
     struct entry *entries = r->entries.data;
     const size_t len = r->entries.size / sizeof(*entries);
-    struct attribution a = {.view = v, .entries = entries, .len = len};
+    struct attribution a = {.output_serial = out->serial, .view = v, .entries = entries, .len = len};
     wl_array_init(&a.events);
     pixman_region32_init(&a.explained);
     bool complete = os->started && rediwm_projection_damage_events(r->projection, &os->cursor, note_event, &a);
@@ -85,6 +87,7 @@ bool scene_output_decide_effects(struct rediwm_output_renderer *r, struct output
     pixman_region32_subtract(&unexplained, &out->pending_commit_damage, &a.explained);
     struct effect_cache *c;
     wl_list_for_each(c, &os->caches, link) c->seen = false;
+    out->glass_deferred = false;
     bool ok = true;
     for (size_t i = len; i > 0; i--) {
         struct entry *e = &entries[i - 1];
@@ -97,17 +100,18 @@ bool scene_output_decide_effects(struct rediwm_output_renderer *r, struct output
         const float sigma = e->sigma * v->scale;
         const bool same_size = c->valid && c->sigma == sigma && c->region.width == region.width &&
             c->region.height == region.height;
-        bool reblur = !same_size || !complete || (c->carried && !e->glass.held);
+        const bool held = e->glass.held || out->hold_glass;
+        bool reblur = !same_size || !complete || (c->carried && !held);
         if (!reblur && (c->region.x != region.x || c->region.y != region.y)) {
             // A held effect carries its last blur along; otherwise a move re-blurs.
-            if (e->glass.held) {
+            if (held) {
                 c->region = region;
                 c->carried = true;
             } else {
                 reblur = true;
             }
         }
-        if (!reblur && !e->glass.held) {
+        if (!reblur && !c->carried) {
             const long here = (long)(i - 1);
             struct seen_event *se;
             wl_array_for_each(se, &a.events) {
@@ -126,7 +130,14 @@ bool scene_output_decide_effects(struct rediwm_output_renderer *r, struct output
                     if (boxes_meet(&bb, &region)) reblur = true;
                 }
             }
+            // A stationary panel can see the strip moving below it. Keep the
+            // old blur now, and refresh once when the hold ends.
+            if (held && reblur) {
+                c->carried = true;
+                reblur = false;
+            }
         }
+        if (out->hold_glass && c->carried && !reblur) out->glass_deferred = true;
         e->reblur = reblur;
         if (reblur) {
             const struct wlr_box own = device_box(e->box, v);

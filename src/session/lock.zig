@@ -142,6 +142,7 @@ pub const Lock = struct {
         server.switcher.cancel();
         server.screenshot_selector.cancel();
         server.locker = self;
+        if (server.xwayland) |xw| xw.pointer_queue.reset(xw);
         self.refreshLayoutLabel();
         if (server.bluetooth) |bluetooth| bluetooth.closed();
         if (server.input.open_control_center) |cc| {

@@ -1,11 +1,18 @@
 // Stage 3 drawing backend. No output, scene traversal or geometry policy here.
 #include "scene_pass_internal.h"
+#include "scene_pass_color.h"
 
 // The parts: this file holds the renderer, its GL state and programs;
 // scene_pass_draw.c the pass and its draws (rects, textures, shapes, shadows,
 // dim); scene_pass_backdrop.c the glass backdrops. Shared types and helpers
 // are in scene_pass_internal.h.
 
+// The saved context is the renderer's own, bound without surfaces: entering and
+// leaving need no eglMakeCurrent.
+static bool scene_pass_is_own(const struct gl_state *s, EGLContext own) {
+    return s->context == own && s->previous_display == s->display &&
+        s->draw == EGL_NO_SURFACE && s->read == EGL_NO_SURFACE;
+}
 bool scene_pass_enter(struct rediwm_scene_renderer *r, struct gl_state *s) {
     struct wlr_egl *egl = wlr_gles2_renderer_get_egl(r->renderer);
     s->display = wlr_egl_get_display(egl);
@@ -13,8 +20,20 @@ bool scene_pass_enter(struct rediwm_scene_renderer *r, struct gl_state *s) {
     s->context = eglGetCurrentContext();
     s->draw = eglGetCurrentSurface(EGL_DRAW);
     s->read = eglGetCurrentSurface(EGL_READ);
-    if (!eglMakeCurrent(s->display, EGL_NO_SURFACE, EGL_NO_SURFACE,
-            wlr_egl_get_context(egl))) return false;
+    // With nothing current, leave the renderer's context bound afterwards. Every
+    // wlroots upload and pass saves the current context and restores it; restoring
+    // "none" unbinds, which makes Mesa flush and rebind on the next call (6% of a
+    // frame's instructions, kernel time on top). Bound, the restores are no-ops.
+    const EGLContext own = wlr_egl_get_context(egl);
+    if (s->context == EGL_NO_CONTEXT) {
+        s->previous_display = s->display;
+        s->context = own;
+        s->draw = s->read = EGL_NO_SURFACE;
+        if (!eglMakeCurrent(s->display, EGL_NO_SURFACE, EGL_NO_SURFACE, own)) return false;
+    } else if (!scene_pass_is_own(s, own) &&
+            !eglMakeCurrent(s->display, EGL_NO_SURFACE, EGL_NO_SURFACE, own)) {
+        return false;
+    }
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &s->fbo);
     glGetIntegerv(GL_CURRENT_PROGRAM, &s->program);
     glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &s->array_buffer);
@@ -68,6 +87,7 @@ void scene_pass_leave(struct rediwm_scene_renderer *r, struct gl_state *s) {
     glBlendEquationSeparate(s->equation_rgb, s->equation_alpha);
     (s->blend ? glEnable : glDisable)(GL_BLEND);
     (s->scissor ? glEnable : glDisable)(GL_SCISSOR_TEST);
+    if (scene_pass_is_own(s, wlr_egl_get_context(wlr_gles2_renderer_get_egl(r->renderer)))) return;
     if (s->previous_display != EGL_NO_DISPLAY)
         eglMakeCurrent(s->previous_display, s->draw, s->read, s->context);
     else
@@ -77,7 +97,7 @@ void scene_pass_leave(struct rediwm_scene_renderer *r, struct gl_state *s) {
 // Shaped draws (stage 4b): the same quad and texture coordinates, plus the
 // position relative to the shape's corner, evaluated in the vertex stage so the
 // fragment's distance function works on window-sized numbers, not on output ones.
-static const char shaped_vertex[] =
+const char scene_pass_shaped_vertex[] =
     "attribute vec2 position; uniform vec2 target, origin; uniform vec4 dst, coords[2];"
     "varying vec2 uv; varying vec2 local;"
     "void main(){ vec4 row=position.y<.5?coords[0]:coords[1];"
@@ -131,7 +151,12 @@ static const char shaped_vertex[] =
     "rad=clamp(rad,0.,min(size.x,size.y)*.5);" \
     "vec2 d=abs(q)-(size*.5-vec2(rad));" \
     "return length(max(d,0.))+min(max(d.x,d.y),0.)-rad; }" \
-    "float cov(float d){ return clamp(.5-d,0.,1.); }"
+    "float cov(float d){ return clamp(.5-d,0.,1.); }" \
+    /* Linear passes decode every colour they read */ \
+    /* and grade in linear light; elsewhere these are what the code said before. */ \
+    "\n#ifdef LINEAR\n" GLSL_LIN \
+    "\n#define LIN(c) lin(c)\n#define LUMA vec3(.2627,.678,.0593)\n#define DIMMED(b) pow(1.-(b),2.2)\n#define SAT(x) max(x,0.)\n" \
+    "#else\n#define LIN(c) (c)\n#define LUMA vec3(.213,.715,.072)\n#define DIMMED(b) (1.-(b))\n#define SAT(x) clamp(x,0.,1.)\n#endif\n"
 // A border is part of the same pass as its body. The ring is composited OVER the
 // body inside the shape and the result is scaled by the shape's coverage, which
 // is what the border rects of the legacy path do (a translucent border, as the
@@ -147,25 +172,25 @@ static const char shaped_vertex[] =
 // distance field, so corners match it as exactly as edges), kept out of the shape
 // when `hide` is set, which matters under translucent windows. One program for the
 // three because a program costs the driver 130-150 KiB however small it is.
-static const char shaped_fragment[] = SHAPED_HEAD
+const char scene_pass_shaped_fragment[] = SHAPED_HEAD GLSL_CLIENT_COLOR
     "uniform float alpha, opaque, mode, softness, hide; uniform vec2 offset, dim;"
     "uniform sampler2D front; uniform vec4 bmap, fmap; uniform float saturation, front_alpha, has_front, use_shape;"
     // A dimmed window (rediwm_scene_pass_set_dim): colour pulled toward its
     // luminance, then darker. Linear in the colour, so a premultiplied pixel and
     // its straight colour come out the same, and an undimmed one is not touched.
     "vec3 grade(vec3 c){ if(dim.x<=0.&&dim.y<=0.) return c;"
-    "float l=dot(c,vec3(.213,.715,.072)); return mix(vec3(l),c,1.-dim.y)*(1.-dim.x); }"
+    "float l=dot(c,LUMA); return mix(vec3(l),c,1.-dim.y)*DIMMED(dim.x); }"
     "void main(){"
     // 3: a backdrop composite (stage 5b). `tex` is the kept blur; the alpha is
     // chosen against the surface drawn over it, so the pair has the coverage.
     "if(mode>2.5){ vec3 rgb=texture2D(tex,(local+bmap.xy)*bmap.zw).rgb;"
-    "float l=dot(rgb,vec3(.213,.715,.072)); rgb=clamp(vec3(l)+(rgb-vec3(l))*saturation,0.,1.);rgb=grade(rgb);"
+    "float l=dot(rgb,LUMA); rgb=SAT(vec3(l)+(rgb-vec3(l))*saturation);rgb=grade(rgb);"
     "float c=cov(sdf(local,radii))*alpha;"
     "float f=has_front>.5?texture2D(front,(local+fmap.xy)*fmap.zw).a*front_alpha:0.;"
     "float a=f>=.99999?0.:clamp((c-f)/(1.-f),0.,1.); gl_FragColor=vec4(rgb*a,a); return; }"
     "if(mode>1.5){ float s=clamp(1.-sdf(local-offset,radii)/softness,0.,1.); s=s*s*(3.-2.*s);"
-    "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=color*s; return; }"
-    "vec4 c=color;"
+    "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=LIN(color)*s; return; }"
+    "vec4 c=SAMPLE(color);"
     "\n#ifdef POLY\n"
     // How much of this fragment a draw that fills only part of a polar image
     // (sector_rect) takes part in: the body and the ring over it alike.
@@ -180,7 +205,7 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "at=mix(mix(sector_coords[0].xy,sector_coords[0].zw,p.x),"
     "mix(sector_coords[1].xy,sector_coords[1].zw,p.x),p.y); }"
     "\n#endif\n"
-    "c=texture2D(tex,at); if(opaque>.5)c.a=1.; c*=alpha*content; }"
+    "c=texture2D(tex,at); if(opaque>.5)c.a=1.; c=SAMPLE(c); c*=alpha*content; }"
     // A colour standing for such a part (a single-pixel buffer) ends with the
     // image and the part too. One that stands for the whole image is unchanged.
     "\n#ifdef POLY\n"
@@ -192,12 +217,12 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "if(use_shape<.5){ gl_FragColor=vec4(grade(c.rgb),c.a); return; }"
     "float d=sdf(local,radii);"
     "float w=border>0.?1.-cov(d+border):0.;"
-    "vec4 o=c*(1.-bcolor.a*w)+bcolor*w;"
+    "vec4 o=c*(1.-bcolor.a*w)+LIN(bcolor)*w;"
     // The highlight (a smoothstep of the distance from its point), over the ring
     // and, when it has depth, fading inward past it.
     "if(glow.z>0.){ float g=clamp(1.-length(local-glow.xy)/glow.z,0.,1.); g=g*g*(3.-2.*g);"
     "float t=glow.w>0.?1.-smoothstep(0.,1.,(-d-border)/glow.w):w;"
-    "o=o*(1.-gcolor.a*g*t)+gcolor*(g*t); }"
+    "o=o*(1.-gcolor.a*g*t)+LIN(gcolor)*(g*t); }"
     "o.rgb=grade(o.rgb); gl_FragColor=o*cov(d);"
     "\n#ifdef POLY\n"
     "gl_FragColor*=part;"
@@ -262,6 +287,7 @@ bool scene_pass_program_init(struct program *p, unsigned bit, const char *vertex
     glDeleteShader(vs);
     glDeleteShader(fs);
     if (!p->id) return false;
+    p->source_color = glGetUniformLocation(p->id, "source_color");
     p->target = glGetUniformLocation(p->id, "target");
     p->dst = glGetUniformLocation(p->id, "dst");
     p->color = glGetUniformLocation(p->id, "color");
@@ -312,6 +338,7 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
     struct rediwm_scene_renderer *r = calloc(1, sizeof(*r));
     if (!r) return NULL;
     r->renderer = renderer;
+    wl_list_init(&r->yuv_images);
     r->has_external = wlr_gles2_renderer_check_ext(renderer, "GL_OES_EGL_image_external");
     r->gen_vertex_arrays = (PFNGLGENVERTEXARRAYSOESPROC)eglGetProcAddress("glGenVertexArraysOES");
     r->bind_vertex_array = (PFNGLBINDVERTEXARRAYOESPROC)eglGetProcAddress("glBindVertexArrayOES");
@@ -329,7 +356,7 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
     // Every draw goes through the shaped programs; one without a shape costs a
     // uniform branch. A GL program costs the driver 130-150 KiB however small,
     // so the plain ones are gone (stage 5, D4 of docs/plans/scene-graph-stage5.md).
-    bool ok = scene_pass_program_init(&r->shaped, 8, shaped_vertex, "uniform sampler2D tex;\n", shaped_fragment);
+    bool ok = scene_pass_program_init(&r->shaped, 8, scene_pass_shaped_vertex, "uniform sampler2D tex;\n", scene_pass_shaped_fragment);
     r->has_shapes = r->shapes_tried = ok;
     if (ok && r->has_vao) {
         r->gen_vertex_arrays(1, &r->vertex_array);
@@ -354,6 +381,7 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
 void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
     if (!r) return;
     assert(!r->active);
+    scene_pass_yuv_finish(r);
     struct gl_state state;
     if (scene_pass_enter(r, &state)) {
         if (r->vertex_array) r->delete_vertex_arrays(1, &r->vertex_array);
@@ -369,6 +397,8 @@ void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
         glDeleteFramebuffers(1, &r->prefix_fbo);
         glDeleteTextures(1, &r->small_tex);
         glDeleteFramebuffers(1, &r->small_fbo);
+        for (size_t i = 0; i < 8; i++) glDeleteProgram(r->client[i].id);
+        scene_pass_linear_destroy(r);
         scene_pass_leave(r, &state);
     }
     free(r);
@@ -388,7 +418,8 @@ bool rediwm_scene_renderer_enable_external(struct rediwm_scene_renderer *r) {
     if (!r->has_external) return r->external_ok = true;
     struct gl_state state;
     if (!scene_pass_enter(r, &state)) return false;
-    r->external_ok = scene_pass_program_init(&r->shaped_external, 16, shaped_vertex, ext_prefix, shaped_fragment);
+    r->external_ok = scene_pass_program_init(&r->shaped_external, 16, scene_pass_shaped_vertex, ext_prefix, scene_pass_shaped_fragment);
+    if (r->external_ok && r->has_linear) scene_pass_linear_build(r);
     scene_pass_leave(r, &state);
     return r->external_ok;
 }
@@ -401,15 +432,16 @@ bool rediwm_scene_renderer_enable_polygons(struct rediwm_scene_renderer *r) {
     if (!r->has_shapes) return false;
     struct gl_state state;
     if (!scene_pass_enter(r, &state)) return false;
-    r->has_polys = scene_pass_program_init(&r->shaped_poly, 64, shaped_vertex, "#define POLY 1\nuniform sampler2D tex;\n", shaped_fragment) &&
-        (!r->has_external || scene_pass_program_init(&r->shaped_poly_external, 128, shaped_vertex,
-            "#extension GL_OES_EGL_image_external : require\n#define POLY 1\nuniform samplerExternalOES tex;\n", shaped_fragment));
+    r->has_polys = scene_pass_program_init(&r->shaped_poly, 64, scene_pass_shaped_vertex, "#define POLY 1\nuniform sampler2D tex;\n", scene_pass_shaped_fragment) &&
+        (!r->has_external || scene_pass_program_init(&r->shaped_poly_external, 128, scene_pass_shaped_vertex,
+            "#extension GL_OES_EGL_image_external : require\n#define POLY 1\nuniform samplerExternalOES tex;\n", scene_pass_shaped_fragment));
     if (!r->has_polys) {
         wlr_log(WLR_ERROR, "scene pass: polygon programs failed to build, outlines are not drawn");
         glDeleteProgram(r->shaped_poly.id);
         glDeleteProgram(r->shaped_poly_external.id);
         r->shaped_poly.id = r->shaped_poly_external.id = 0;
     }
+    if (r->has_polys && r->has_linear) scene_pass_linear_build(r);
     scene_pass_leave(r, &state);
     return r->has_polys;
 }

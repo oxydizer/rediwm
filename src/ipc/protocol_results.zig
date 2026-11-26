@@ -88,6 +88,8 @@ pub const SamplePixelsParams = struct {
     y: i32,
     width: u32 = 1,
     height: u32 = 1,
+    /// The buffer the output sends (PQ on an HDR output), not the frame as sRGB.
+    raw: bool = false,
 };
 
 pub const SamplePixelsResult = struct {
@@ -158,6 +160,8 @@ pub const PerformanceStatsResult = struct {
     output_skipped_commits: ?u64 = null,
     /// Glass blurs re-taken by the output pass (stage 5c), all outputs.
     glass_reblurs: ?u64 = null,
+    /// Captures of linear (HDR) outputs taken from their sRGB encode, all outputs.
+    capture_sdr_copies: ?u64 = null,
     /// Asynchronous (tearing) flips, and those the driver refused, all outputs.
     tearing_async_flips: ?u64 = null,
     tearing_refused_flips: ?u64 = null,
@@ -287,6 +291,7 @@ pub const NightLightOutputStatus = enum {
     unsupported,
     rejected,
     disabled,
+    external,
 };
 
 pub const NightLightOutputData = struct {

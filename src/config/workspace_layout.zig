@@ -49,28 +49,53 @@ pub const Node = struct {
     axis: enum { horizontal, vertical } = .horizontal,
     ratio: f64 = 0.5,
 };
+/// A scrolling strip's column: its width as a fraction of the screen, and its
+/// members (stable insertion or tab-group IDs, as tree leaves) with their
+/// shares across it.
+pub const ColumnMember = struct { id: u64, group: bool = false, weight: f64 = 1 };
+pub const Column = struct { width: f64 = 0.5, members: []const ColumnMember = &.{} };
+/// How a workspace arranges its windows.
+pub const Layout = enum { floating, split, scrolling };
+/// The tiled desktop mode a session last used, for switching back from Canvas.
+pub const TiledMode = enum { workspaces, scrolling };
 pub const Workspace = struct {
     id: u8,
-    automatic: bool = true,
+    /// Version 2 only: false is a floating workspace.
+    automatic: ?bool = null,
+    /// The workspace's own choice; absent, it follows the desktop mode.
+    layout: ?Layout = null,
     output: []const u8 = "",
     visible: bool = false,
     focus_order: ?u64 = null,
     nodes: []const Node = &.{},
+    columns: []const Column = &.{},
+    /// Where the strip was scrolled to, from its leading edge.
+    view: f64 = 0,
 };
 pub const Camera = struct { offset_x: f64 = 0, offset_y: f64 = 0, zoom_index: usize = 0 };
 pub const Bounds = struct { max_x: f64 = 0, max_y: f64 = 0, origin_x: f64 = 0, origin_y: f64 = 0, width: f64 = 0, height: f64 = 0 };
 pub const Saved = struct {
-    version: u32 = 2,
+    version: u32 = 3,
+    mode: ?TiledMode = null,
     camera: Camera = .{},
     bounds: Bounds = .{},
     workspaces: []const Workspace,
     windows: []const Window,
 };
 pub fn parse(a: std.mem.Allocator, bytes: []const u8) !std.json.Parsed(Saved) {
-    const parsed = try std.json.parseFromSlice(Saved, a, bytes, .{ .allocate = .alloc_always });
+    var parsed = try std.json.parseFromSlice(Saved, a, bytes, .{ .allocate = .alloc_always });
     errdefer parsed.deinit();
-    const s = parsed.value;
-    if (s.version != 2) return error.UnsupportedLayoutVersion;
+    const s = &parsed.value;
+    if (s.version != 2 and s.version != 3) return error.UnsupportedLayoutVersion;
+    if (s.version == 2) {
+        // Version 2 knew only automatic tiling (now split) and floating.
+        const workspaces = try parsed.arena.allocator().dupe(Workspace, s.workspaces);
+        for (workspaces) |*w| {
+            if (w.automatic == false) w.layout = .floating;
+            w.automatic = null;
+        }
+        s.workspaces = workspaces;
+    }
     if (s.workspaces.len > 32 or s.windows.len > 4096) return error.InvalidLayout;
     if (!std.math.isFinite(s.camera.offset_x) or !std.math.isFinite(s.camera.offset_y)) return error.InvalidLayout;
     inline for (@typeInfo(Bounds).@"struct".field_names) |name| if (!std.math.isFinite(@field(s.bounds, name))) return error.InvalidLayout;
@@ -84,6 +109,7 @@ pub fn parse(a: std.mem.Allocator, bytes: []const u8) !std.json.Parsed(Saved) {
         var cursor: usize = 0;
         if (w.nodes.len > 0) try validateTree(w.nodes, &cursor, 0);
         if (cursor != w.nodes.len) return error.InvalidLayout;
+        try validateColumns(w);
     }
     for (s.windows, 0..) |w, i| {
         if (w.workspace == 0 or w.workspace > 32 or !seen[w.workspace - 1] or w.order == 0 or w.order == std.math.maxInt(u64) or !validGeometry(w.geometry)) return error.InvalidLayout;
@@ -103,6 +129,18 @@ pub fn parse(a: std.mem.Allocator, bytes: []const u8) !std.json.Parsed(Saved) {
     }
     return parsed;
 }
+fn validateColumns(w: Workspace) !void {
+    if (w.columns.len > 4096 or !std.math.isFinite(w.view) or w.view < 0 or w.view > (1 << 28)) return error.InvalidLayout;
+    for (w.columns, 0..) |column, c| {
+        if (!std.math.isFinite(column.width) or column.width < 0.05 or column.width > 1 or column.members.len == 0 or column.members.len > 4096) return error.InvalidLayout;
+        for (column.members, 0..) |m, i| {
+            if (m.id == 0 or !std.math.isFinite(m.weight) or m.weight < 0.05 or m.weight > 20) return error.InvalidLayout;
+            for (w.columns[0 .. c + 1], 0..) |earlier, e| for (earlier.members[0..if (e == c) i else earlier.members.len]) |prior| {
+                if (prior.id == m.id and prior.group == m.group) return error.InvalidLayout;
+            };
+        }
+    }
+}
 fn validGeometry(g: Geometry) bool {
     return g.width > 0 and g.height > 0 and g.width <= 65536 and g.height <= 65536 and @abs(@as(i64, g.x)) < (1 << 28) and @abs(@as(i64, g.y)) < (1 << 28);
 }
@@ -119,13 +157,42 @@ fn validateTree(nodes: []const Node, cursor: *usize, depth: usize) !void {
     try validateTree(nodes, cursor, depth + 1);
 }
 
+/// Writes a snapshot without the fields that are absent by default.
+pub fn stringify(a: std.mem.Allocator, saved: Saved) ![]u8 {
+    return std.json.Stringify.valueAlloc(a, saved, .{ .emit_null_optional_fields = false });
+}
+
 test "workspace saves reject unsupported versions and malformed trees" {
     const a = std.testing.allocator;
-    try std.testing.expectError(error.UnsupportedLayoutVersion, parse(a, "{\"version\":3,\"workspaces\":[],\"windows\":[]}"));
+    try std.testing.expectError(error.UnsupportedLayoutVersion, parse(a, "{\"version\":4,\"workspaces\":[],\"windows\":[]}"));
     try std.testing.expectError(error.InvalidLayout, parse(a, "{\"workspaces\":[{\"id\":1,\"nodes\":[{}]}],\"windows\":[]}"));
     var valid = try parse(a, "{\"workspaces\":[{\"id\":2,\"nodes\":[{}, {\"id\":1}, {\"id\":2}]}],\"windows\":[]}");
     defer valid.deinit();
     try std.testing.expectEqual(@as(usize, 3), valid.value.workspaces[0].nodes.len);
+}
+
+test "version 2 automatic maps to the mode's layout or floating" {
+    const a = std.testing.allocator;
+    var old = try parse(a, "{\"version\":2,\"workspaces\":[{\"id\":1,\"automatic\":false},{\"id\":2}],\"windows\":[]}");
+    defer old.deinit();
+    try std.testing.expectEqual(@as(?Layout, .floating), old.value.workspaces[0].layout);
+    try std.testing.expectEqual(@as(?Layout, null), old.value.workspaces[1].layout);
+    try std.testing.expectEqual(@as(?TiledMode, null), old.value.mode);
+    const bytes = try stringify(a, .{ .mode = .scrolling, .workspaces = &.{ .{ .id = 1, .layout = .scrolling }, .{ .id = 2 } }, .windows = &.{} });
+    defer a.free(bytes);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "automatic") == null);
+    var new = try parse(a, bytes);
+    defer new.deinit();
+    try std.testing.expectEqual(@as(u32, 3), new.value.version);
+    try std.testing.expectEqual(@as(?TiledMode, .scrolling), new.value.mode);
+    try std.testing.expectEqual(@as(?Layout, .scrolling), new.value.workspaces[0].layout);
+    try std.testing.expectEqual(@as(?Layout, null), new.value.workspaces[1].layout);
+    // Strips: widths in range, each member once.
+    var strip = try parse(a, "{\"version\":3,\"workspaces\":[{\"id\":1,\"view\":40,\"columns\":[{\"width\":0.5,\"members\":[{\"id\":1},{\"id\":2,\"weight\":2}]}]}],\"windows\":[]}");
+    defer strip.deinit();
+    try std.testing.expectEqual(@as(f64, 2), strip.value.workspaces[0].columns[0].members[1].weight);
+    try std.testing.expectError(error.InvalidLayout, parse(a, "{\"workspaces\":[{\"id\":1,\"columns\":[{\"width\":0.5,\"members\":[{\"id\":1}]},{\"members\":[{\"id\":1}]}]}],\"windows\":[]}"));
+    try std.testing.expectError(error.InvalidLayout, parse(a, "{\"workspaces\":[{\"id\":1,\"columns\":[{\"width\":1.5,\"members\":[{\"id\":1}]}]}],\"windows\":[]}"));
 }
 
 pub const LegacyWindow = struct {

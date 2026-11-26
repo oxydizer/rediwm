@@ -275,20 +275,20 @@ static void external_texture(struct rediwm_scene_renderer *r, struct wlr_allocat
 // client would send it. This covers the external program with real YUV; it does
 // not cover other drivers' conversion or any tiled/compressed modifier.
 static void external_yuv(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
-        struct wlr_buffer *expected) {
+        struct wlr_buffer *expected, bool deep) {
     enum { YW = 64, YH = 64 };
     if (!r->has_external) { puts("SKIP: external-OES unavailable"); return; }
     int drm_fd = wlr_renderer_get_drm_fd(r->renderer);
     struct gbm_device *gbm = drm_fd >= 0 ? gbm_create_device(drm_fd) : NULL;
-    struct gbm_bo *bo = gbm ? gbm_bo_create(gbm, YW, YH * 3 / 2, GBM_FORMAT_R8, GBM_BO_USE_LINEAR) : NULL;
+    struct gbm_bo *bo = gbm ? gbm_bo_create(gbm, deep ? YW * 2 : YW, YH * 3 / 2, GBM_FORMAT_R8, GBM_BO_USE_LINEAR) : NULL;
     if (!bo || gbm_bo_get_modifier(bo) != DRM_FORMAT_MOD_LINEAR) {
-        puts("SKIP: gbm cannot allocate a linear buffer for NV12");
+        printf("SKIP: gbm cannot allocate a linear buffer for %s\n", deep ? "P010" : "NV12");
         if (bo) gbm_bo_destroy(bo);
         if (gbm) gbm_device_destroy(gbm);
         return;
     }
     uint32_t stride = gbm_bo_get_stride(bo);
-    struct wlr_dmabuf_attributes dma = {.width = YW, .height = YH, .format = DRM_FORMAT_NV12,
+    struct wlr_dmabuf_attributes dma = {.width = YW, .height = YH, .format = deep ? DRM_FORMAT_P010 : DRM_FORMAT_NV12,
         .modifier = DRM_FORMAT_MOD_LINEAR, .n_planes = 2,
         .offset = {0, stride * YH}, .stride = {stride, stride}};
     assert(dma.offset[1] % 4096 == 0);
@@ -301,12 +301,23 @@ static void external_yuv(struct rediwm_scene_renderer *r, struct wlr_buffer *act
     assert(map != MAP_FAILED);
     struct dma_buf_sync sync = {.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE};
     ioctl(dma.fd[0], DMA_BUF_IOCTL_SYNC, &sync);
-    for (int y = 0; y < YH; y++) for (int x = 0; x < YW; x++)
-        map[dma.offset[0] + y * dma.stride[0] + x] = 16 + (x * 3 + y * 5) % 220;
+    for (int y = 0; y < YH; y++) for (int x = 0; x < YW; x++) {
+        uint8_t *row = map + y * dma.stride[0];
+        const uint8_t luma = 16 + (x * 3 + y * 5) % 220;
+        if (deep) ((uint16_t *)row)[x] = (uint16_t)luma << 8;
+        else row[x] = luma;
+    }
     for (int y = 0; y < YH / 2; y++) for (int x = 0; x < YW / 2; x++) {
-        uint8_t *uv = &map[dma.offset[1] + y * dma.stride[1] + 2 * x];
-        uv[0] = 32 + (x * 11 + y * 3) % 192;
-        uv[1] = 32 + (x * 5 + y * 13) % 192;
+        uint8_t *row = map + dma.offset[1] + y * dma.stride[1];
+        uint8_t u = 32 + (x * 11 + y * 3) % 192, v = 32 + (x * 5 + y * 13) % 192;
+        if (abs(x - 10) < 3 && abs(y - 10) < 3) { u = 96; v = 176; }
+        if (deep) {
+            ((uint16_t *)row)[2*x] = (uint16_t)u << 8;
+            ((uint16_t *)row)[2*x+1] = (uint16_t)v << 8;
+        } else {
+            row[2*x] = u;
+            row[2*x+1] = v;
+        }
     }
     sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
     ioctl(dma.fd[0], DMA_BUF_IOCTL_SYNC, &sync);
@@ -315,9 +326,10 @@ static void external_yuv(struct rediwm_scene_renderer *r, struct wlr_buffer *act
     struct wlr_gles2_texture_attribs a = {0};
     if (texture) wlr_gles2_texture_get_attribs(texture, &a);
     if (!texture || a.target != GL_TEXTURE_EXTERNAL_OES) {
-        puts(texture ? "SKIP: driver imports NV12 as GL_TEXTURE_2D" : "SKIP: renderer cannot import linear NV12");
+        printf("SKIP: no external sampler for %s\n", deep ? "P010" : "NV12");
     } else {
         assert(!a.has_alpha);
+        yuv_levels(r, actual, texture, &dma);
         float alpha = .81f;
         for (int tr = 0; tr < 8; tr++) for (int filter = 0; filter < 2; filter++) {
             struct wlr_render_texture_options o = {
@@ -343,7 +355,7 @@ static void external_yuv(struct rediwm_scene_renderer *r, struct wlr_buffer *act
         for (size_t i = 0; i < sizeof(pixels); i += 4)
             if (abs(pixels[i] - 28) > 8 || abs(pixels[i + 1] - 59) > 8 || abs(pixels[i + 2] - 94) > 8) drawn++;
         assert(drawn > 4000);
-        puts("PASS: external-only NV12 dmabuf matches wlroots across all transforms and filters");
+        printf("PASS: external-only %s matches wlroots across transforms and filters\n", deep ? "P010" : "NV12");
     }
     if (texture) wlr_texture_destroy(texture);
     wlr_dmabuf_attributes_finish(&dma);

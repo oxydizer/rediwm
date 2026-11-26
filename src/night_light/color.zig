@@ -47,24 +47,18 @@ pub fn whitepoint(kelvin: u32) [3]f64 {
     const Z = (1.0 - x - y) / y;
 
     // XYZ to linear sRGB (D65-adapted matrix)
-    const r_lin = std.math.clamp(3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z, 0.0, 1.0);
-    const g_lin = std.math.clamp(-0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z, 0.0, 1.0);
-    const b_lin = std.math.clamp(0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z, 0.0, 1.0);
+    const r_lin = @max(0.0, 3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z);
+    const g_lin = @max(0.0, -0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z);
+    const b_lin = @max(0.0, 0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z);
 
-    // Encode with 2.2 power
-    var r_enc = std.math.pow(f64, r_lin, 1.0 / 2.2);
-    var g_enc = std.math.pow(f64, g_lin, 1.0 / 2.2);
-    var b_enc = std.math.pow(f64, b_lin, 1.0 / 2.2);
-
-    // Normalize so the largest channel is 1.0
-    const max_c = @max(r_enc, @max(g_enc, b_enc));
-    if (max_c > 0.0) {
-        r_enc /= max_c;
-        g_enc /= max_c;
-        b_enc /= max_c;
-    }
-
-    return .{ r_enc, g_enc, b_enc };
+    // Y = 1 can put a channel above unity. Scale all three together to
+    // preserve the white point's chromaticity before encoding the LUT gains.
+    const peak = @max(r_lin, g_lin, b_lin);
+    return .{
+        std.math.pow(f64, r_lin / peak, 1.0 / 2.2),
+        std.math.pow(f64, g_lin / peak, 1.0 / 2.2),
+        std.math.pow(f64, b_lin / peak, 1.0 / 2.2),
+    };
 }
 
 /// Fills 1D look-up tables (r, g, b) of matching length with entries
@@ -83,6 +77,24 @@ pub fn fillLut(r: []u16, g: []u16, b: []u16, wp: [3]f64, gamma: f64) void {
         g[i] = @intFromFloat(@round(65535.0 * wp[1] * v_pow));
         b[i] = @intFromFloat(@round(65535.0 * wp[2] * v_pow));
     }
+}
+
+/// Night light on an HDR signal: the white point the gamma table would
+/// multiply encoded sRGB by (`whitepoint`), as the linear gain it
+/// amounts to under gamma 2.2, moved into BT.2020. Column-major; all zero at
+/// 6500 K (the identity).
+pub fn hdrAdjust(kelvin: u16) [9]f32 {
+    if (kelvin == 6500) return @splat(0);
+    const wp = whitepoint(kelvin);
+    const to2020 = [3][3]f64{ .{ 0.627404, 0.329283, 0.043313 }, .{ 0.069097, 0.919540, 0.011362 }, .{ 0.016391, 0.088013, 0.895595 } };
+    const to709 = [3][3]f64{ .{ 1.660491, -0.587641, -0.072850 }, .{ -0.124550, 1.132900, -0.008349 }, .{ -0.018151, -0.100579, 1.118730 } };
+    var out: [9]f32 = undefined;
+    for (0..3) |row| for (0..3) |col| {
+        var sum: f64 = 0;
+        for (0..3) |k| sum += to2020[row][k] * std.math.pow(f64, wp[k], 2.2) * to709[k][col];
+        out[col * 3 + row] = @floatCast(sum);
+    };
+    return out;
 }
 
 test "whitepoint: 6500 K is neutral and channels monotonic" {
@@ -120,17 +132,17 @@ test "whitepoint: 6500 K is neutral and channels monotonic" {
     // Pinned reference values
     const wp4000 = whitepoint(4000);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), wp4000[0], 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.970), wp4000[1], 0.005);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.727), wp4000[2], 0.005);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.836), wp4000[1], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.626), wp4000[2], 0.001);
 
     const wp2500 = whitepoint(2500);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), wp2500[0], 0.001);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.888), wp2500[1], 0.005);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.410), wp2500[2], 0.005);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.639), wp2500[1], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.295), wp2500[2], 0.001);
 
     const wp10000 = whitepoint(10000);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.916), wp10000[0], 0.005);
-    try std.testing.expectApproxEqAbs(@as(f64, 1.0), wp10000[1], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.785), wp10000[0], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.862), wp10000[1], 0.001);
     try std.testing.expectEqual(@as(f64, 1.0), wp10000[2]);
 }
 
@@ -167,4 +179,21 @@ test "LUT generation: sizes 2 and 4096, linear and gamma 2.0" {
     try std.testing.expectEqual(@as(u16, @intFromFloat(@round(65535.0 * wp[0]))), r4096[4095]);
     try std.testing.expectEqual(@as(u16, @intFromFloat(@round(65535.0 * wp[1]))), g4096[4095]);
     try std.testing.expectEqual(@as(u16, @intFromFloat(@round(65535.0 * wp[2]))), b4096[4095]);
+}
+
+test "night light's matrix keeps white's chromaticity of the gamma table and is the identity at 6500 K" {
+    try std.testing.expectEqual(@as([9]f32, @splat(0)), hdrAdjust(6500));
+    // 3400 K: the gamma table multiplies encoded sRGB by the white point, so
+    // linear sRGB white goes to wp^2.2; through the matrix (BT.2020 in and
+    // out) BT.2020 white must land on the same light.
+    const m = hdrAdjust(3400);
+    const wp = whitepoint(3400);
+    const to2020 = [3][3]f64{ .{ 0.627404, 0.329283, 0.043313 }, .{ 0.069097, 0.919540, 0.011362 }, .{ 0.016391, 0.088013, 0.895595 } };
+    for (0..3) |row| {
+        var want: f64 = 0;
+        for (0..3) |k| want += to2020[row][k] * std.math.pow(f64, wp[k], 2.2);
+        var got: f64 = 0;
+        for (0..3) |col| got += m[col * 3 + row];
+        try std.testing.expectApproxEqAbs(want, got, 2e-4);
+    }
 }

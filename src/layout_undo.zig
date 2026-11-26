@@ -38,7 +38,9 @@ fn captureOwned(server: *Server, ids: []const u8) !*Snapshot {
         const slot = &server.world.workspaces.slots[id - 1];
         var tree = try server.world.workspaces.tiler.trees[id - 1].clone(gpa);
         errdefer tree.deinit(gpa);
-        try snapshot.workspaces.append(gpa, .{ .id = id, .automatic = slot.automatic, .tree = tree });
+        var strip = try server.world.workspaces.tiler.strips[id - 1].clone(gpa);
+        errdefer strip.deinit(gpa);
+        try snapshot.workspaces.append(gpa, .{ .id = id, .layout = slot.layout, .tree = tree, .strip = strip });
     }
     var it = server.world.toplevels.iterator(.forward);
     while (it.next()) |top| {
@@ -84,6 +86,7 @@ fn includeOwned(server: *Server, snapshot: *Snapshot, id: u8) !void {
     for (extra.workspaces.items) |*workspace| {
         snapshot.workspaces.appendAssumeCapacity(workspace.*);
         workspace.tree = .{};
+        workspace.strip = .{};
     }
     snapshot.windows.appendSliceAssumeCapacity(extra.windows.items);
 }
@@ -134,7 +137,8 @@ pub fn replaced(server: *Server, old: u64, new: u64) void {
 fn changed(server: *Server, snapshot: *Snapshot) bool {
     for (snapshot.workspaces.items) |*saved| {
         const slot = &server.world.workspaces.slots[saved.id - 1];
-        if (slot.automatic != saved.automatic or !saved.tree.eql(&server.world.workspaces.tiler.trees[saved.id - 1])) return true;
+        if (!std.meta.eql(slot.layout, saved.layout) or !saved.tree.eql(&server.world.workspaces.tiler.trees[saved.id - 1])) return true;
+        if (!saved.strip.eql(&server.world.workspaces.tiler.strips[saved.id - 1])) return true;
     }
     for (snapshot.windows.items) |saved| {
         const top = find(server, saved) orelse continue;
@@ -197,15 +201,25 @@ pub fn apply(server: *Server, snapshot: *Snapshot) void {
     workspaces.cancelGestures(server);
     for (snapshot.workspaces.items) |*saved| {
         const slot = &manager.slots[saved.id - 1];
-        slot.automatic = saved.automatic;
+        slot.layout = saved.layout;
         for (snapshot.windows.items) |window| {
             if (window.workspace != saved.id) continue;
-            if (find(server, window)) |top| saved.tree.rename(window.key, tiling.key(top));
+            if (find(server, window)) |top| {
+                saved.tree.rename(window.key, tiling.key(top));
+                saved.strip.rename(window.key, tiling.key(top));
+            }
         }
         const tree = &manager.tiler.trees[saved.id - 1];
         tree.deinit(gpa);
         tree.* = saved.tree;
         saved.tree = .{};
+        // Scrolling is navigation, not an edit: the view stays where it is.
+        const strip = &manager.tiler.strips[saved.id - 1];
+        const view = strip.view;
+        strip.deinit(gpa);
+        strip.* = saved.strip;
+        strip.view = view;
+        saved.strip = .{};
     }
     for (snapshot.windows.items) |saved| {
         const top = find(server, saved) orelse continue;

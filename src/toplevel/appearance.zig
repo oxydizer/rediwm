@@ -79,9 +79,10 @@ pub fn dimAnimating(toplevel: *const Toplevel, now_ms: i64) bool {
 
 pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
     var opacity = std.math.clamp(toplevel.effectiveOpacity(now_ms) * toplevel.map_opacity.value(now_ms) * toplevel.switch_fade.value(now_ms), 0, 1);
+    toplevel.frame_tree.setSurfaceOpacity(opacity);
     toplevel.frame_tree.node.forEachBuffer(*f32, struct {
         fn iter(buffer: *sn.Buffer, _: c_int, _: c_int, value: *f32) void {
-            buffer.setOpacity(value.*);
+            if (buffer.surface == null) buffer.setOpacity(value.*);
         }
     }.iter, &opacity);
     const color = toplevel.borderColor().scale(opacity);

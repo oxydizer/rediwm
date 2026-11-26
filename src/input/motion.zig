@@ -247,6 +247,7 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
     defer input.updateGrabBorderGlow();
     input.positionDragIcon();
     input.drag_dodge.motion();
+    input.drag_tab_hover.motion();
     input.updateDockReveal();
     if (input.server.screenshot_selector.output != null) {
         input.server.screenshot_selector.motion(input.cursor.x, input.cursor.y);
@@ -378,11 +379,16 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             const world = input.server.world.camera.toWorld(input.server.world.bounds, input.cursor.x, input.cursor.y);
             const local_x = input.pointer_grab_local_x + (world.x - input.pointer_grab_world_x) / input.pointer_grab_world_scale;
             const local_y = input.pointer_grab_local_y + (world.y - input.pointer_grab_world_y) / input.pointer_grab_world_scale;
+            if (input.server.xwayland) |xw| if (xw.pointer_queue.grabMotion(xw, local_x, local_y, time_msec)) return;
             input.seat.pointerNotifyMotion(time_msec, local_x, local_y);
             return;
         }
     }
     const hit = scene_data.hitTest(input.server, input.cursor.x, input.cursor.y);
+    if (input.server.xwayland) |xw| switch (hit) {
+        .surface, .input_popup, .layer, .xwayland_unmanaged => {},
+        else => _ = xw.pointer_queue.leave(time_msec),
+    };
     input.updateBorderGlow(hit);
     if (hit != .toast) {
         input.clearToastHover();
@@ -418,8 +424,7 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.setHover(null, null);
             // Clear any compositor resize/menu cursor before a new client enter.
             if (input.seat.pointer_state.focused_surface != res.surface) input.setDefaultCursor();
-            input.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
-            input.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
+            otherClientMotion(input, res.surface, res.sx, res.sy, time_msec);
         },
         .toast => |res| {
             input.hovered_resize_edges = null;
@@ -531,8 +536,14 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             }
             // Clear any compositor resize/menu cursor before a new client enter.
             if (input.seat.pointer_state.focused_surface != res.surface) input.setDefaultCursor();
-            input.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
-            input.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
+            const routed = if (input.server.xwayland) |xw| switch (res.toplevel.backend) {
+                .xwayland => xw.pointer_queue.motion(xw, res.toplevel, res.sx, res.sy, time_msec),
+                else => xw.pointer_queue.otherMotion(xw, res.surface, res.sx, res.sy, time_msec),
+            } else false;
+            if (!routed) {
+                input.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
+                input.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
+            }
             const ws = res.toplevel.worldScale() / res.toplevel.surfaceScale();
             input.rememberPointerGrab(res.sx, res.sy, ws);
         },
@@ -542,8 +553,7 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.setHover(null, null);
             // Clear any compositor resize/menu cursor before a new client enter.
             if (input.seat.pointer_state.focused_surface != res.surface) input.setDefaultCursor();
-            input.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
-            input.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
+            otherClientMotion(input, res.surface, res.sx, res.sy, time_msec);
         },
         .xwayland_unmanaged => |res| {
             input.hovered_resize_edges = null;
@@ -551,8 +561,7 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.setHover(null, null);
             // Clear any compositor resize/menu cursor before a new client enter.
             if (input.seat.pointer_state.focused_surface != res.surface) input.setDefaultCursor();
-            input.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
-            input.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
+            otherClientMotion(input, res.surface, res.sx, res.sy, time_msec);
             input.rememberPointerGrab(res.sx, res.sy, 1.0 / input.server.xwaylandScale());
         },
         .desktop => |res| {
@@ -687,4 +696,10 @@ pub fn processResize(input: *Input) void {
             input.server.scheduleFrames();
         }
     }
+}
+
+fn otherClientMotion(input: *Input, surface: *wlr.Surface, sx: f64, sy: f64, time: u32) void {
+    if (input.server.xwayland) |xw| if (xw.pointer_queue.otherMotion(xw, surface, sx, sy, time)) return;
+    input.seat.pointerNotifyEnter(surface, sx, sy);
+    input.seat.pointerNotifyMotion(time, sx, sy);
 }

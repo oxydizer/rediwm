@@ -478,6 +478,7 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/projection_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_output_collect.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {
@@ -515,9 +516,17 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     const run_pass_spike_tests = b.addRunArtifact(pass_spike_tests);
     run_pass_spike_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
     b.step("test-pass-spike", "Run the owned-pass spike's pixel gates on a headless GLES2 renderer").dependOn(&run_pass_spike_tests.step);
+    addScenePassTests(ctx);
+    const run_glass_damage_tests = b.addRunArtifact(glass_tests);
+    b.step("test-glass-damage", "Same as test-glass (kept for scripts)").dependOn(&run_glass_damage_tests.step);
+    test_step.dependOn(&run_glass_damage_tests.step);
+}
+
+fn addScenePassTests(ctx: Context) void {
+    const b = ctx.b;
     const scene_pass_tests = b.addExecutable(.{
         .name = "scene-pass-tests",
-        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+        .root_module = b.createModule(.{ .target = ctx.target, .optimize = ctx.optimize, .link_libc = true }),
     });
     scene_pass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_pass_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1", "egl", "glesv2", "gbm" }) |lib| {
@@ -525,8 +534,13 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     }
     const run_scene_pass_tests = b.addRunArtifact(scene_pass_tests);
     run_scene_pass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
+    const run_hdr_tests = b.addRunArtifact(scene_pass_tests);
+    run_hdr_tests.addArg("--hdr");
+    run_hdr_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
+    if (b.graph.environ_map.get("WLR_RENDER_DRM_DEVICE")) |device| {
+        run_scene_pass_tests.setEnvironmentVariable("WLR_RENDER_DRM_DEVICE", device);
+        run_hdr_tests.setEnvironmentVariable("WLR_RENDER_DRM_DEVICE", device);
+    }
+    b.step("test-hdr", "Check client colour, HDR10 encoding and YCbCr pixels on a headless GPU").dependOn(&run_hdr_tests.step);
     b.step("test-scene-pass", "Compare the owned GLES2 pass with wlroots on a headless renderer").dependOn(&run_scene_pass_tests.step);
-    const run_glass_damage_tests = b.addRunArtifact(glass_tests);
-    b.step("test-glass-damage", "Same as test-glass (kept for scripts)").dependOn(&run_glass_damage_tests.step);
-    test_step.dependOn(&run_glass_damage_tests.step);
 }

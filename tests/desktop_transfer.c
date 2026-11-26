@@ -41,9 +41,33 @@ static void transfer_global(void *d,struct wl_registry *r,uint32_t id,const char
     else global(d,r,id,interface,version);
 }
 static const struct wl_registry_listener transfer_registry={transfer_global,removed};
-static void offered(void *d,struct wl_data_device *dev,struct wl_data_offer *offer){(void)d;(void)dev;wl_data_offer_destroy(offer);}
-static void selection(void *d,struct wl_data_device *dev,struct wl_data_offer *offer){(void)d;(void)dev;(void)offer;}
-static const struct wl_data_device_listener device_listener={.data_offer=offered,.selection=selection};
+/* A compositor may enter the source window itself before the drag moves
+ * to the player. Decline that offer and release it on leave or drop. */
+static struct wl_data_offer *hover_offer;
+static void offered(void *d, struct wl_data_device *dev, struct wl_data_offer *offer) {
+    (void)d; (void)dev; (void)offer; /* paired with enter or selection */
+}
+static void offer_enter(void *d, struct wl_data_device *dev, uint32_t serial,
+        struct wl_surface *target, wl_fixed_t x, wl_fixed_t y, struct wl_data_offer *offer) {
+    (void)d; (void)dev; (void)target; (void)x; (void)y;
+    hover_offer = offer;
+    if (offer) wl_data_offer_accept(offer, serial, NULL);
+}
+static void offer_end(void *d, struct wl_data_device *dev) {
+    (void)d; (void)dev;
+    if (hover_offer) wl_data_offer_destroy(hover_offer);
+    hover_offer = NULL;
+}
+static void offer_motion(void *d, struct wl_data_device *dev, uint32_t time, wl_fixed_t x, wl_fixed_t y) {
+    (void)d; (void)dev; (void)time; (void)x; (void)y;
+}
+static void selection(void *d, struct wl_data_device *dev, struct wl_data_offer *offer) {
+    (void)d; (void)dev;
+    if (offer) wl_data_offer_destroy(offer);
+}
+static const struct wl_data_device_listener device_listener = {
+    .data_offer = offered, .enter = offer_enter, .leave = offer_end, .motion = offer_motion, .drop = offer_end, .selection = selection,
+};
 int main(void){
     setbuf(stdout,NULL);payload=getenv("REDIWM_TEST_TRANSFER");assert(payload);
     display=wl_display_connect(NULL);assert(display);

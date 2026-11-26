@@ -37,6 +37,27 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *,
 // above every effect. Direct scan-out waits until it is 0. False only when the
 // state for a nonzero veil could not be allocated.
 bool rediwm_scene_output_set_veil(struct rediwm_output_renderer *, struct rediwm_scene_output *, float alpha);
+// Blend this output in linear light, encoded back to
+// sRGB for now. A change repaints the whole output and re-takes its glass. If the
+// renderer cannot, frames are built as before and a warning is logged once.
+// False only when the state for `on` could not be allocated.
+bool rediwm_scene_output_set_linear(struct rediwm_output_renderer *, struct rediwm_scene_output *, bool on);
+// The last frame built for this output blended in linear light.
+bool rediwm_scene_output_linear(struct rediwm_output_renderer *, struct rediwm_scene_output *);
+struct rediwm_pass_encode;
+// The last frame built for a linear output, encoded as sRGB (gamma 2.2, BT.709)
+// into a buffer of the output's size, for captures (capture_sdr.c): the same
+// picture whether the output sends sRGB or PQ. NULL when the output does not
+// blend linearly or its image is not whole. Valid until the next build; made at
+// most once per build per requested depth. The default copy is eight-bit.
+// A deep shm copy matches the output's ten-bit render format. Outside a pass.
+struct wlr_buffer *rediwm_scene_output_sdr_for_shm(struct rediwm_output_renderer *, struct rediwm_scene_output *, bool deep);
+struct wlr_buffer *rediwm_scene_output_sdr_copy(struct rediwm_output_renderer *, struct rediwm_scene_output *);
+// How a linear output's frames are encoded (scene_pass.h): sRGB, or PQ while its
+// commits carry an HDR10 image description. A change repaints the output.
+// False only when the state could not be allocated.
+bool rediwm_scene_output_set_encode(struct rediwm_output_renderer *, struct rediwm_scene_output *,
+    const struct rediwm_pass_encode *);
 bool rediwm_output_snapshot(struct rediwm_output_renderer *, struct rediwm_projection *,
     struct rediwm_scene_output *, struct rediwm_node *, struct wlr_box, float,
     struct wlr_buffer *, struct rediwm_read_fence *, struct rediwm_buffer *);

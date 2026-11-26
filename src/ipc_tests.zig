@@ -88,6 +88,34 @@ test "parse output transform configuration" {
     try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"set_output_config\",\"params\":{\"output\":\"DP-1\",\"transform\":\"sideways\"}}"));
 }
 
+test "parse sample_pixels raw" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const plain = try protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"sample_pixels\",\"params\":{\"x\":1,\"y\":2}}");
+    try std.testing.expect(!plain.action.sample_pixels.raw);
+    const raw = try protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"sample_pixels\",\"params\":{\"x\":1,\"y\":2,\"raw\":true}}");
+    try std.testing.expect(raw.action.sample_pixels.raw);
+    try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"sample_pixels\",\"params\":{\"x\":1,\"y\":2,\"raw\":\"yes\"}}"));
+}
+
+test "parse output HDR configuration" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const request = try protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"set_output_config\",\"params\":{\"output\":\"DP-1\",\"hdr\":\"on\",\"sdr_white\":250}}");
+    switch (request) {
+        .action => |action| switch (action) {
+            .set_output_config => |patch| try std.testing.expectEqual(@as(protocol.OutputConfigPatch, .{ .output = patch.output, .hdr = .on, .sdr_white = 250 }), patch),
+            else => return error.TestFailed,
+        },
+        else => return error.TestFailed,
+    }
+    inline for (.{ "\"hdr\":true", "\"hdr\":\"auto\"", "\"sdr_white\":79", "\"sdr_white\":1001", "\"sdr_white\":\"203\"" }) |param| {
+        try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(allocator, "{\"version\":1,\"command\":\"set_output_config\",\"params\":{\"output\":\"DP-1\"," ++ param ++ "}}"));
+    }
+}
+
 test {
     _ = @import("ipc/protocol_stringify_tests.zig");
 }
@@ -417,6 +445,8 @@ test "workspace controls validate IDs, spacing, patterns and mode" {
         .{ "switch_workspace", "{\"workspace\":0}" },
         .{ "move_to_workspace", "{\"id\":7,\"workspace\":33}" },
         .{ "set_workspace_layout", "{\"workspace\":2,\"automatic\":1}" },
+        .{ "set_workspace_layout", "{\"workspace\":2,\"layout\":\"spiral\"}" },
+        .{ "set_workspace_layout", "{\"workspace\":2}" },
         .{ "set_window_gap", "{\"gap\":513}" },
         .{ "set_floating_apps", "{\"apps\":[true]}" },
         .{ "set_desktop_mode", "{\"mode\":\"unknown\"}" },

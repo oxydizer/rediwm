@@ -197,11 +197,17 @@ def test_gtk_transient_dialog():
                     "raising the owner left the transient dialog behind it",
                 )
                 print("PASS: raising the owner keeps the transient dialog above it")
+                # GTK marks it _NET_WM_STATE_MODAL: the owner ignores input
+                # while it is open, so the keyboard goes to the dialog.
+                wait_for(
+                    lambda: (f := request(sock, reader, {'version': 1, 'command': 'focused_window'})["FocusedWindow"]) and f["id"] == dialog_id,
+                    "focusing the owner of a modal X11 dialog left the keyboard on the owner",
+                )
+                assert find("Dialog").get("is_modal") and find("Dialog")["parent_id"] == main_id, find("Dialog")
+                print("PASS: focusing the owner of a modal X11 dialog focuses the dialog")
 
-                # Put keyboard focus back on the dialog itself before closing
-                # it, so the owner-restore path below is actually exercised
-                # instead of trivially true because focus was left on the
-                # owner by the FocusWindow call above.
+                # Focus the dialog explicitly before closing it, so the
+                # owner-restore path below is exercised either way.
                 request(sock, reader, {"version": 1, "command": 'focus_window', "params": {"id": dialog_id}})
                 wait_for(
                     lambda: (f := request(sock, reader, {'version': 1, 'command': 'focused_window'})["FocusedWindow"]) and f["id"] == dialog_id,

@@ -66,7 +66,7 @@ pub fn translatedLabels(comptime messages: []const i18n.Message) []const []const
 pub fn sidebarWidth(cc: *const ControlCenter) f32 {
     if (cc.panel_box.width < 660) return 70;
     var width: f32 = 238;
-    for (page_labels) |message| width = @max(width, ui.measure.textNatural(message.get(), .sans, 600, 14).w + 94);
+    for (page_labels) |message| width = @max(width, ui.measure.textNaturalAtScale(message.get(), .sans, 600, 14, cc.toplevel.render_scale).w + 94);
     return @min(width, 340);
 }
 
@@ -111,7 +111,7 @@ pub fn label(value: []const u8, size: f32, dim: bool) Widget {
 
 /// Build description lines once, with a UTF-8 fallback for an unbroken word.
 /// Children belong to the host's rebuild arena, just like its other widgets.
-pub fn paragraph(a: std.mem.Allocator, value: []const u8, width: f32, size: f32, dim: bool) !Widget {
+pub fn paragraph(scale: f32, a: std.mem.Allocator, value: []const u8, width: f32, size: f32, dim: bool) !Widget {
     var lines: std.ArrayList(Widget) = .empty;
     var start: usize = 0;
     while (start < value.len) {
@@ -119,7 +119,7 @@ pub fn paragraph(a: std.mem.Allocator, value: []const u8, width: f32, size: f32,
         var last_space: ?usize = null;
         while (end < value.len) {
             const next = @min(value.len, end + (std.unicode.utf8ByteSequenceLength(value[end]) catch 1));
-            if (ui.measure.textNatural(value[start..next], .sans, if (dim) 400 else 600, size).w > @max(64, width) and end > start) break;
+            if (ui.measure.textNaturalAtScale(value[start..next], .sans, if (dim) 400 else 600, size, scale).w > @max(64, width) and end > start) break;
             if (value[end] == ' ') last_space = end;
             end = next;
         }

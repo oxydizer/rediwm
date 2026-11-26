@@ -28,6 +28,14 @@ pub fn outputsAdaptiveSyncEql(a: []const OutputConfig, b: []const OutputConfig) 
     return true;
 }
 
+pub fn outputsHdrEql(a: []const OutputConfig, b: []const OutputConfig) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |left, right| {
+        if (!std.mem.eql(u8, left.name, right.name) or left.hdr != right.hdr or left.sdr_white != right.sdr_white) return false;
+    }
+    return true;
+}
+
 pub fn outputsColorEql(a: []const OutputConfig, b: []const OutputConfig) bool {
     if (a.len != b.len) return false;
     for (a, b) |left, right| {

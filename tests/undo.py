@@ -81,7 +81,7 @@ def run():
         )
         config_path = tmp / "rediwm-config.toml"
         config_path.write_text(
-            "[input]\ninvert_scroll = false\npan_speed = 1.0\n\n[keybinds]\n\"super+z\" = \"undo\"\n"
+            "[input]\npan_speed = 1.0\n\n[keybinds]\n\"super+z\" = \"undo\"\n"
         )
         env["REDIWM_CONFIG"] = str(config_path)
         env.pop("WAYLAND_DISPLAY", None)

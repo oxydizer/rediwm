@@ -34,12 +34,12 @@ Done in this round:
    first tile while it opens. A settled frame animation now gives way to the
    size the client actually took once it has answered the configure
    (`size_wait`), so a client that cannot fit a tile is no longer clipped to
-   it. Workspace switches slide: the higher number arrives from the right,
-   along an axis no other display shares (else from below; with displays on
-   both axes, or with reduced motion, a cross-fade), at the `desktop_switch_ms`
+   it. During a workspace switch the higher number arrives from the right,
+   clipped to its output even on adjacent displays, at the `desktop_switch_ms`
    speed canvas desktop switches use. The leaving workspace's windows stay
    drawn but inert (`rediwm_projection_set_tree_inert`) until they are off
-   screen, so hidden workspaces still take no input. Input follows what is
+   screen, so hidden workspaces still take no input. Reduced motion uses a
+   cross-fade. Input follows what is
    drawn, so a click during a glide or slide lands where the window is shown.
 
 ## Remaining gaps
@@ -127,11 +127,6 @@ Follow-ups to item 2:
 * **Tile open/close.** New tiles take their first rectangle at once while the
   open animation plays; Hyprland's "popin" grows the window from its tile. A
   scale-from-tile variant of `window_open` would read better.
-* **Slide on several displays.** Side-by-side outputs slide vertically, a 2×2
-  arrangement cross-fades. Hyprland clips each workspace to its monitor
-  instead. Clipping needs a rectangular output clip intersected with each
-  window's rounded clip in the shaped pass, which the pass cannot express
-  today (one rounded clip per item).
 * **Split side under the cursor.** Hyprland's dwindle puts the new window on
   the side of the focused tile nearest the pointer; RediWM always uses the
   right/bottom half. Cheap to add as an option.

@@ -45,7 +45,17 @@ window_gap = {GAP}
                 ipc.wait_for("wallpaper_presented", timeout_ms=10000)
                 display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
                 env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display, REDIWM_TEST_DECORATION="server")
-                client = subprocess.Popen([str(tmp / "client")], env=env)
+                env["REDIWM_TEST_XDG_VERSION"] = "7"
+                client_log = tmp / "xdg-client.log"
+                with client_log.open("w") as out:
+                    client = subprocess.Popen([str(tmp / "client")], env=env, stdout=out)
+
+                def expect_edges(*edges):
+                    def matches():
+                        received = [line.split()[1:] for line in client_log.read_text().splitlines()
+                                    if line.startswith("constrained")]
+                        return received and set(received[-1]) == set(edges)
+                    wait_for(matches, f"xdg-shell v7 resize hints did not become {edges}")
                 win_id = wait_for(lambda: next(iter(ipc.get_windows()), None), "window did not map")["id"]
 
                 output = ipc.get_outputs()[0]
@@ -119,6 +129,7 @@ window_gap = {GAP}
                 top_right = (right[0], GAP, right[2], inner_h // 2)
 
                 floating = settled_frame()
+                expect_edges()
                 assert not floating["maximized"], floating
                 floating_size = floating["client"]
 
@@ -136,18 +147,21 @@ window_gap = {GAP}
                 ipc.click()
                 wait_for(lambda: frame()["maximized"], "titlebar double-click did not maximize")
                 expect_rect((0, 0, out_w, usable_h), "double-click maximize fills the usable area")
+                expect_edges("top", "bottom", "left", "right")
                 x, y = title_point()
                 ipc.move_cursor(x, y)
                 ipc.click()
                 ipc.click()
                 wait_for(lambda: not frame()["maximized"], "second double-click did not restore")
                 wait_for(lambda: frame()["client"] == floating_size, "double-click restore lost the size")
+                expect_edges()
                 print("PASS: titlebar double-click maximizes and restores", flush=True)
 
                 # 3. Dragging to the left edge tiles the left half.
                 before_drag = settled_frame()
                 drag_title(0, out_h // 2)
                 expect_rect(left, "drag to the left edge did not tile")
+                expect_edges("left", "top", "bottom")
                 print("PASS: drag to the left edge tiles the left half", flush=True)
 
                 # 4. Dragging a tile away restores its floating size under the pointer.
@@ -173,6 +187,7 @@ window_gap = {GAP}
                 # 6. Top-left corner selects a quarter; a drop in the middle does nothing.
                 drag_title(0, 4)
                 expect_rect(top_left, "drag to the top-left corner did not tile a quarter")
+                expect_edges("top", "left")
                 x, y = title_point()
                 drag_title(out_w // 2, out_h // 2)
                 wait_for(lambda: frame()["client"] == floating_size, "quarter did not float again")
@@ -196,6 +211,7 @@ window_gap = {GAP}
                     "Super+Shift+Right from the left half did not restore the window",
                 )
                 print("PASS: Super+Shift+arrows walk tiles and restore", flush=True)
+                expect_edges()
 
                 # 8. Undo puts a snapped window back where the drag started.
                 time.sleep(0.7)  # outside undo's 600 ms coalescing window

@@ -4,6 +4,9 @@
 #include "scene_pass_draw.c"
 #include "scene_pass_backdrop.c"
 #include "scene_pass_ribbon.c"
+#include "scene_pass_linear.c"
+#include "scene_pass_color.c"
+#include "scene_pass_yuv.c"
 #include "scene_graph.h"
 #include <math.h>
 #include <stdarg.h>
@@ -92,14 +95,17 @@ static struct wlr_texture *texture_create(struct wlr_renderer *renderer, bool op
 // `shaped` runs every case through the shaped programs, with a shape that covers
 // the whole buffer and has no corners: it must still equal wlroots exactly.
 
+#include "scene_pass_test_color.c"
 #include "scene_pass_test_parity.c"
 #include "scene_pass_test_shapes.c"
 #include "scene_pass_test_sector.c"
 #include "scene_pass_test_shading.c"
 #include "scene_pass_test_backdrop.c"
 #include "scene_pass_test_ribbon.c"
+#include "scene_pass_test_linear.c"
 
-int main(void) {
+int main(int argc, char **argv) {
+    const bool hdr_only = argc == 2 && strcmp(argv[1], "--hdr") == 0;
     wlr_log_init(WLR_ERROR, NULL);
     struct wl_display *display = wl_display_create();
     assert(display);
@@ -114,6 +120,17 @@ int main(void) {
     assert(rediwm_scene_renderer_enable_external(r));
     assert(rediwm_scene_renderer_enable_external(r)); // idempotent
     struct wlr_buffer *actual = target(allocator), *expected = target(allocator);
+    if (hdr_only) {
+        linear_gates(r, allocator);
+        external_yuv(r, actual, expected, false);
+        external_yuv(r, actual, expected, true);
+        if (r->has_vao) {
+            r->has_vao = false;
+            linear_gates(r, allocator);
+            r->has_vao = true;
+        }
+        goto done;
+    }
     parity(r, actual, expected, false);
     shapes_fail_closed(r, actual);
     assert(rediwm_scene_renderer_enable_shapes(r));
@@ -121,9 +138,12 @@ int main(void) {
     parity(r, actual, expected, true);
     damage(r, actual, expected);
     state_restoration(r, actual);
+    // Before the ribbons: their gate fails since 475817c restyled the flames.
+    linear_gates(r, allocator);
+    external_yuv(r, actual, expected, false);
+    external_yuv(r, actual, expected, true);
     ribbon_gate(r, actual);
     external_texture(r, allocator, actual, expected);
-    external_yuv(r, actual, expected);
     synchronization(r, actual);
     shaped_gates(r, allocator);
     assert(rediwm_scene_renderer_enable_backdrops(r));
@@ -137,9 +157,11 @@ int main(void) {
         parity(r, actual, expected, false);
         parity(r, actual, expected, true);
         state_restoration(r, actual);
+        linear_gates(r, allocator);
         ribbon_gate(r, actual);
         r->has_vao = true;
     }
+done:
     rediwm_scene_renderer_destroy(r);
     wlr_buffer_drop(actual);
     wlr_buffer_drop(expected);

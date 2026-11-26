@@ -384,6 +384,7 @@ pub const isMaximized = toplevel_info.isMaximized;
 pub const isFullscreen = toplevel_info.isFullscreen;
 pub const isInitialized = toplevel_info.isInitialized;
 pub const parentWindow = toplevel_info.parentWindow;
+pub const isModal = toplevel_info.isModal;
 pub const sizeConstraints = toplevel_info.sizeConstraints;
 
 // toplevel/focus_close.zig
@@ -417,6 +418,7 @@ pub const moveToOutput = toplevel_position.moveToOutput;
 pub const moveFromUsableToOutput = toplevel_position.moveFromUsableToOutput;
 pub const rememberOutputDisconnect = toplevel_position.rememberOutputDisconnect;
 pub const markOutputDisconnectPosition = toplevel_position.markOutputDisconnectPosition;
+pub const hasOutputDisconnect = toplevel_position.hasOutputDisconnect;
 pub const clearOutputDisconnect = toplevel_position.clearOutputDisconnect;
 pub const restoreOutputDisconnect = toplevel_position.restoreOutputDisconnect;
 pub const setPositionAnimated = toplevel_position.setPositionAnimated;
@@ -593,7 +595,7 @@ pub const applyLayout = toplevel_layout.applyLayout;
 pub const snapTo = toplevel_layout.snapTo;
 pub const clearMaximized = toplevel_layout.clearMaximized;
 pub const dropTile = toplevel_layout.dropTile;
-pub const sendTiled = toplevel_layout.sendTiled;
+pub const syncXdgEdges = toplevel_layout.syncXdgEdges;
 pub const notifyLayoutChanged = toplevel_layout.notifyLayoutChanged;
 pub const setFullscreen = toplevel_layout.setFullscreen;
 pub const toggleFullscreen = toplevel_layout.toggleFullscreen;
@@ -601,6 +603,7 @@ pub const beginMove = toplevel_layout.beginMove;
 
 // toplevel/lifecycle.zig
 pub const handleIdentityChanged = toplevel_lifecycle.handleIdentityChanged;
+pub const handleModalChanged = toplevel_lifecycle.handleModalChanged;
 
 // toplevel/tabs.zig
 pub const tabStrip = toplevel_tabs.tabStrip;

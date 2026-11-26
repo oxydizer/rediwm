@@ -130,8 +130,10 @@ pub fn sendSnapshot(ipc: *ipc_server_mod.Server, client: *ipc_server_mod.Client)
 
     const focused_id: ?u64 = if (handlers.findFocusedToplevel(compositor)) |t| t.id else null;
 
-    const workspaces = try compositor.world.workspaces.data(compositor, ipc.allocator);
-    defer if (compositor.world.workspaces.active) ipc.allocator.free(workspaces);
+    // The workspace list owns per-workspace trees and columns.
+    var workspace_arena = std.heap.ArenaAllocator.init(ipc.allocator);
+    defer workspace_arena.deinit();
+    const workspaces = try compositor.world.workspaces.data(compositor, workspace_arena.allocator());
     const snap: protocol.StateSnapshot = .{
         .seq = ipc.seq,
         .windows = wins.items,

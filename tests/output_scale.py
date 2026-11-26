@@ -43,6 +43,28 @@ scale = {scale}
 '''
 
 
+def check_settings_label_layout(ipc, outputs):
+    """Moving an open window must remeasure its auto-sized text controls."""
+    wid = next(w['id'] for w in ipc.get_windows() if w['app_id'] == 'rediwm-settings')
+
+    def widths():
+        widgets = ipc.get_widget_tree('control_center')['widgets']
+        return tuple(next(w['box']['width'] for w in widgets if w.get('label') == label)
+                     for label in ('Audio settings', 'Display settings'))
+
+    def move(out):
+        ipc.action('move_window_to', {'id': wid, 'x': out['x'] + 40, 'y': out['y'] + 40})
+        ipc.wait_for_frame(output=out['name'])
+        ipc.wait_for_panel_settled('control_center')
+
+    move(outputs[1])
+    dense = widths()
+    move(outputs[0])
+    assert widths() != dense, 'Settings kept its fractional-scale text measurements at 1x'
+    move(outputs[1])
+    assert widths() == dense, 'Settings did not restore its fractional-scale text measurements'
+
+
 def run_case(binary, override='auto'):
     with tempfile.TemporaryDirectory(prefix='rediwm-output-scale-') as directory:
         tmp = Path(directory)
@@ -148,6 +170,8 @@ def run_case(binary, override='auto'):
                         assert raster['scale'] == 1.25 and raster['width'] > 0
                     else:
                         capture_output(outputs[1])
+                    if panel == 'control_center':
+                        check_settings_label_layout(ipc, outputs)
                     ipc.close_panel(panel)
 
                 # Reload a changed scale while blanked, then wake without

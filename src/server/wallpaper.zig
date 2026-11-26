@@ -3,6 +3,9 @@
 const std = @import("std");
 const Server = @import("../Server.zig");
 const wl = @import("wayland").server.wl;
+const wlr = @import("wlroots");
+const pixman = @import("pixman");
+const sn = @import("../node.zig");
 const ImageBuffer = @import("../ImageBuffer.zig");
 const ui_theme = @import("ui").theme;
 const wallpaper_load = @import("../wallpaper_load.zig");
@@ -27,6 +30,52 @@ pub fn themeColorArgb(color: [4]f32) u32 {
     return (a8 << 24) | (r8 << 16) | (g8 << 8) | b8;
 }
 
+/// The wallpaper on screen: uploaded once into a texture that every output's
+/// background and the lock screen share, with no pixels kept in memory (the
+/// decoded image was 6 MB for the default wallpaper and 33 MB for a 4K photo,
+/// plus a texture per node, 2026-11-25). Nothing reads it back on the CPU.
+pub const Wallpaper = struct {
+    /// A texture buffer (`sn.Buffer.textureBuffer`); this holds one lock.
+    buffer: *wlr.Buffer,
+    /// Without alpha: hides what is below, as the decoded image's format said.
+    opaque_image: bool,
+
+    pub fn width(w: Wallpaper) i32 {
+        return w.buffer.width;
+    }
+
+    pub fn height(w: Wallpaper) i32 {
+        return w.buffer.height;
+    }
+
+    /// Shows it on `node`, `width` x `height` (its destination size). A
+    /// texture buffer cannot tell whether it is opaque, so the node is told.
+    pub fn attach(w: Wallpaper, node: *sn.Buffer, dest_width: i32, dest_height: i32) void {
+        node.setBuffer(w.buffer);
+        node.setDestSize(dest_width, dest_height);
+        if (w.opaque_image and dest_width > 0 and dest_height > 0) {
+            var region: pixman.Region32 = undefined;
+            region.initRect(0, 0, @intCast(dest_width), @intCast(dest_height));
+            defer region.deinit();
+            node.setOpaqueRegion(&region);
+        } else node.setOpaqueRegion(null);
+    }
+
+    pub fn release(w: Wallpaper) void {
+        w.buffer.unlock();
+    }
+
+    /// Uploads `image` and drops it (freeing its pixels).
+    pub fn fromImage(server: *Server, image: *ImageBuffer) ?Wallpaper {
+        defer image.base.drop();
+        const buffer = sn.Buffer.textureBuffer(server.renderer, &image.base) orelse {
+            log.warn("wallpaper: could not upload a {d}x{d} image", .{ image.width, image.height });
+            return null;
+        };
+        return .{ .buffer = buffer, .opaque_image = image.format == ImageBuffer.drm_format_xrgb8888 };
+    }
+};
+
 pub fn applyDecodedWallpaper(server: *Server, decoded: png.Image) void {
     const image = ImageBuffer.createFromDecoded(decoded) catch |err| {
         log.warn("applyDecodedWallpaper: {}", .{err});
@@ -34,13 +83,18 @@ pub fn applyDecodedWallpaper(server: *Server, decoded: png.Image) void {
         startup.markWallpaperFailed();
         return;
     };
+    // The upload copies the pixels; dropping the image frees them.
+    const shown = Wallpaper.fromImage(server, image) orelse {
+        startup.markWallpaperFailed();
+        return;
+    };
     const old = server.wallpaper;
-    server.wallpaper = image;
+    server.wallpaper = shown;
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
-        output.replaceWallpaper(image);
+        output.replaceWallpaper(server.wallpaper.?);
     }
-    if (old) |prev| prev.base.drop();
+    if (old) |prev| prev.release();
 }
 
 pub fn handleCatalogWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {

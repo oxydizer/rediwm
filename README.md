@@ -142,7 +142,7 @@ Requires **Zig 0.17**, **wlroots 0.20**, and the development dependencies below.
 <details>
 <summary><b>📦 Full dependency list</b></summary>
 
-Wayland, wayland-protocols, xkbcommon, pixman, FreeType, HarfBuzz, Fontconfig, librsvg/GdkPixbuf, PangoCairo, libinput, PAM, libpulse, libpipewire-0.3, Poppler GLib, libarchive, libjpeg, libpng, libwebp and GNU Readline.
+Wayland, wayland-protocols, xkbcommon, libxcb (including xcb-xinput), pixman, FreeType, HarfBuzz, Fontconfig, librsvg/GdkPixbuf, PangoCairo, libinput, PAM, libpulse, libpipewire-0.3, Poppler GLib, libarchive, libjpeg, libpng, libwebp and GNU Readline.
 
 </details>
 

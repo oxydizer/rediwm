@@ -27,7 +27,10 @@ non-method helper imports it directly.
 
 The window is `Client.zig` (Wayland globals, seat, buffers), re-exported by
 `main.zig`, with its handlers in `client_window`, `client_input`,
-`client_dnd`, `client_clipboard` and `client_render.zig`.
+`client_dnd`, `client_clipboard` and `client_render.zig`. A chooser imports
+the portal's `wayland:` parent handle (xdg-foreign v2) and marks itself its
+modal dialog (xdg-dialog, portal `modal`) before the first commit
+(`attachToParent`); the imported object must live as long as the window.
 
 The process can hold several windows (`main.zig` `open_windows`, at most
 `max_windows`) on one Wayland connection, so the compositor sees one client and

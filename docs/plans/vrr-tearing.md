@@ -7,8 +7,8 @@ not started.
 Scope: adaptive sync (VRR: FreeSync, G-Sync Compatible, VESA Adaptive-Sync)
 per DRM output, making the tearing support we already have reliable, and a
 frame path that serves a fullscreen game on both. Out of scope: nested and
-headless sessions (no VRR, and headless presents synchronously), HDR
-(`hdr.md`), frame limiters (a client or MangoHud job), fifo-v1 and
+headless sessions (no VRR, and headless presents synchronously), HDR,
+frame limiters (a client or MangoHud job), fifo-v1 and
 commit-timing-v1 (not in installed wlroots 0.20; revisit when they land).
 
 "VSync" itself is the client's choice: Vulkan FIFO, MAILBOX or IMMEDIATE, GL

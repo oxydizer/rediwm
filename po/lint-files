@@ -1,5 +1,6 @@
 src/Dock.zig
 src/Server.zig
+src/app_kit/settings.zig
 src/battery_popup.zig
 src/calculator/app.zig
 src/calculator/client.zig
@@ -24,6 +25,7 @@ src/control_center/sections/bluetooth.zig
 src/control_center/sections/default_apps.zig
 src/control_center/sections/desktop.zig
 src/control_center/sections/display.zig
+src/control_center/sections/display_arrangement.zig
 src/control_center/sections/input.zig
 src/control_center/sections/network.zig
 src/control_center/sections/portals.zig
@@ -52,9 +54,12 @@ src/dock/pins.zig
 src/dock/pointer.zig
 src/dock/reveal.zig
 src/editor/app.zig
+src/editor/app_controls.zig
+src/editor/app_edit.zig
 src/editor/app_files.zig
 src/editor/app_input.zig
 src/editor/app_paint.zig
+src/editor/app_search.zig
 src/editor/app_view.zig
 src/editor/client_input.zig
 src/editor/client_render.zig
@@ -92,7 +97,6 @@ src/files/main.zig
 src/files/open_with.zig
 src/files/ops.zig
 src/files/properties.zig
-src/files/settings.zig
 src/files/torrents.zig
 src/files/volumes.zig
 src/files/worker.zig
@@ -145,6 +149,3 @@ src/system_monitor_main.zig
 src/taskbar/battery.zig
 src/taskbar/window_menu.zig
 src/toplevel/info.zig
-src/editor/app_controls.zig
-src/editor/app_search.zig
-src/editor/app_edit.zig
