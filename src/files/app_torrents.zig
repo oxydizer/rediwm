@@ -37,7 +37,7 @@ pub const View = struct {
 };
 /// Torrents on or off as a whole: off, there is no sidebar entry, no helper
 /// started, no dialogs, and a torrent file is a plain file.
-pub const enabled = false;
+pub const enabled = true;
 
 pub fn startTorrents(self: *App) void {
     if (!enabled) return;
