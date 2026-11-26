@@ -13,8 +13,12 @@ tab's folder.
 that a drag is over one. Titlebar tabs protocol v3: while a drag is over a tab,
 the compositor routes the drag to the window's surface and says which tab is
 under it, and the tab shows as a target. Files drops into that tab's folder
-through the same service path as any drop; resting the drag on a tab for about
-0.7 s switches to it, so a subfolder can be the target (spring-loading).
+through the same service path as any drop.
+
+**Decided (user, 2026-11-26):** a drag resting on a tab switches to that tab
+after a short delay; the drop then lands in the tab's view, on its folder or a
+folder shown in it, like any drop there. A drop on the tab itself is not
+needed.
 Compositor and protocol on a branch of their own from master (titlebar tabs land
 independently); Files adapts afterwards.
 
@@ -60,6 +64,11 @@ Manager and the job's state). "Waits" without "asks": the window never asked.
 "Asks" without "shows": the request or reply went missing.
 
 ## 3. An extraction counts more items done than it has
+
+**Closed (2026-11-26, PR #85):** the top-level entries of an extraction
+(`Manager.addArchivePublicationRoot`) were counted when done but never added
+to the total, nor their bytes. They now count like any entry: the bench ends
+at 5 100 of 5 100 (5 000 files and their 100 folders).
 
 **Seen (`bench-files-io`, `io/s5`):** extracting a zip of 5 000 entries in 100
 folders ends with `completed_items` 5 100 and `total_items` 5 000.
