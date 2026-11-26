@@ -1,12 +1,15 @@
 # Files I/O service: handoff
 
-State of the rediwm-files I/O migration as of 2026-11-26 (updated after #70), for picking the work up
+State of the rediwm-files I/O migration as of 2026-11-26 (after #71), for picking the work up
 in a fresh context. Read this first, then the docs it points to.
 
 ## Where things are
 
 * **Integration branch:** `feat/files-io-manager` on `oxydizer/rediwm`. Stage PRs
   target it; it goes to master later as a whole.
+* **Open PR:** #71 `io/s5` → `feat/files-io-manager`: the command quota,
+  `bench-files-io`, and the agreed worker-pools design. **The user approved
+  merging it**; merge, then start building the design.
 * **Merged this round:** #70 (U16, the reaper; S3 done), #69 (S3c, S4: archives through the service, with the
   toolbar Copy inside archives), #65 (S3b, JobRunner removed in `0a6e972`), #66 (a merge
   leaves identical files alone; "Apply to all" in the conflict dialog).
@@ -39,52 +42,59 @@ The window side lives in `app_service.zig`, `app_transfers.zig`,
 `app_archives.zig`, `app_requests.zig` and `app_jobs_card.zig`. Windows no
 longer have a Runtime, a Manager or an executor of their own.
 
-## What PR #69 changed (for review or follow-up)
+## What S5 has so far (#71)
 
-* Archives: a submit carries a purpose (`extract`, `member`, `export`);
-  `io_coordinator_archives.zig` steps them (scan the staging for extract,
-  close the publication barrier, hand member/export staging to the window via
-  `archive_handoff`, delete staging on a worker). Window side:
-  `app_archives.zig`.
-* `StagingLease.deinit` (`clipboard.zig`) no longer deletes; it calls back into
-  the service to dispose of the resource.
-* Removed: the per-window Runtime and Manager, `app_transfer_rows.zig`,
-  `app_transfer_tree.zig`, `transfer_tree.zig`, `TransferEntry` /
-  `TransferManifest`, the legacy sidebar job row and tooltip, Escape-to-cancel,
-  and every exemption in `io_thread_guard.zig`.
-* Task code moved out of `io_coordinator.zig` into `io_coordinator_tasks.zig`
-  (the line limit).
-* Tests: `app_archives_tests.zig` (extract of 301 entries, extract conflict
-  answered with Skip, member open and dispose, clipboard export, drag, Open
-  With) on the `ServiceApp` harness from `app_transfers_tests.zig`.
-
-**Ask the user to test:** extract into a folder with some of the files already
-there (conflict dialog), double-click a file inside an archive, copy-paste a
-folder out of an archive, drag a file out, Open With on a member, close a
-window right after each, and `python3 tests/files_controls.py --archive-only`.
+* `io_service.command_quota` (16): `Service.receiveCommands` takes up to that
+  many per coordinator pass under one lock (round-robin, control first); a full
+  batch skips the wait. Test in `io_service_tests.zig`.
+* The progress rate limit was already there (50 ms records and views, 250 ms
+  deletions).
+* `bench-files-io` (`src/files/io_bench_tests.zig`, step in `build/tests.zig`,
+  documented in `TESTING.md`). Findings in `files-io-worker-pools.md` §2: the UI
+  thread is fine; a dead mount stalls the task pool (two stalled prepares) and,
+  mid-copy, every other transfer (one job holds both operation workers).
+* `files-io-worker-pools.md`: the agreed design. Decisions (its §6):
+  `suspect_after` 10 s (internal, reroutes work), `report_after` 30 s
+  ("Waiting for <mount>…"), no "dead" state; one stall domain per `st_dev`,
+  device limit from the block device behind it, else the lane target; the
+  deletion pool stays its own lane on one shared filesystem table; requests
+  before prepares in the task lane, no request pool.
 
 ## Remaining work, in order
 
-3. **S5, limits and validation:** the command quota and `bench-files-io` are
-   done on `io/s5`; the progress rate limit was already there. The bench found
-   two gaps in the worker pools; `files-io-worker-pools.md` is the agreed
-   design (lanes, stall domains, elastic pools, per-job/per-device limits);
-   build it in the order of its §5. Calibration (phase 7) follows that.
+1. **Merge #71** (approved).
+2. **S5, the worker pools**, in the order of `files-io-worker-pools.md` §5,
+   one PR per step from `feat/files-io-manager`:
+   1. Service lane: staging scans and deletes on their own worker (4.1).
+   2. Per-job limit in the executors (4.4, first half).
+   3. Stall detection, suspect domains, the mount table and the shared
+      filesystem table (4.2, 4.5), request priority (4.6).
+   4. Elastic user-path lanes (4.3).
+   5. Per-device limits and calibration (4.4, phase 7).
+   Check each with the bench: `STALL_MODE=prepare` for the task-pool gap,
+   `running` for the executor gap; done when every other job finishes and the
+   probe stays at its unloaded value.
    Run the bench: `REDIWM_RUN_BENCHMARKS=1 REDIWM_IO_BENCH_DIR=<dir> zig build
    bench-files-io`; for a dead mount add `REDIWM_IO_BENCH_STALL=<folder on a
    FUSE mount>`, `REDIWM_IO_BENCH_STALL_PID=<its daemon>` and
-   `REDIWM_IO_BENCH_STALL_MODE=prepare|running` (bindfs works in the sandbox).
-4. **S6, endpoint and single instance:** one private endpoint per Files
+   `REDIWM_IO_BENCH_STALL_MODE=prepare|running`, and
+   `REDIWM_IO_BENCH_LIMIT_S=30` so a stalled run reports instead of waiting.
+   bindfs works in the sandbox: `bindfs <src> <mnt>`, `pgrep -f bindfs` for the
+   pid; `kill -CONT` it if a run is killed, or the mount stays hung.
+3. **S6, endpoint and single instance:** one private endpoint per Files
    process on its own thread; `open_window` (launching Files while one runs
    opens a window in it, headless included); `subscribe` and job control for
    the shell's tray panel. See the IPC contract doc.
-5. **Backlog** (`files-io-backlog.md`), top first:
+4. **Backlog** (`files-io-backlog.md`), top first:
    1. Tabs as drop targets: needs titlebar-tabs protocol v3 in the compositor
       first (its own branch from master), then Files.
-   2. The stalled re-copy to a USB drive: the likely cause (the conflict
-      dialog closing at once) was fixed when JobRunner went. Ask the user to
-      confirm; close the item if it no longer happens.
-6. **Smaller:** split `src/files/app_pointer.zig` (931 lines, over the limit);
+   2. The stalled re-copy to a USB drive: probably the executor gap the bench
+      found (one stuck job holds both operation workers). Recheck after step
+      2.2 above; ask the user to confirm.
+   3. An extraction counts folders as done but not in its total (5 100 of
+      5 000).
+5. **Smaller:** split `src/files/app_pointer.zig` (931 lines) and `worker.zig` (860),
+   both over the limit;
    perhaps a Replace answer in the file-conflict dialog; roadmap phases 1 and 3
    to 8 in `files-io-manager.md`.
 
@@ -116,8 +126,10 @@ window right after each, and `python3 tests/files_controls.py --archive-only`.
   zig build --system /home/claude/zigpkgs files -Doptimize=ReleaseSafe
   ```
   Zig 0.17. The one expected test failure is dirsize "unreadable folder" (the
-  sandbox runs as root). Last run on `io/reaper`: 517 passed, 4 skipped, that one
-  failure.
+  sandbox runs as root). Last run on `io/s5`: 518 passed, 5 skipped (the bench is
+  one), that one failure. A wrapper with both settings is handy:
+  `/home/claude/zb.sh` runs `zig build --system /home/claude/zigpkgs "$@"` with
+  `PKG_CONFIG_PATH` set.
 * **Code rules:** files at or under about 800 lines; App methods go in
   `app_*.zig` with an alias in `app.zig`; no test hooks in production code;
   the UI thread does no blocking I/O (`io_thread_guard.zig` has no exemptions
