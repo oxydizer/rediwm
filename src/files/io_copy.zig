@@ -11,6 +11,13 @@ const executor = @import("io_executor.zig");
 const existing_mod = @import("io_copy_existing.zig");
 
 pub const chunk_size: usize = 64 * 1024;
+/// A unit copies chunks until this many bytes or `unit_ns`, whichever comes
+/// first, then yields for fairness, cancellation and progress. Jobs take
+/// turns by unit, so a long unit takes a bigger share of the workers: at
+/// 10 ms an extraction beside two copies ran about 20 % slower; at 2 ms it
+/// ran as before.
+pub const unit_bytes: u64 = 1024 * 1024;
+const unit_ns: u64 = 2 * std.time.ns_per_ms;
 const small_buffer_size: usize = 16 * 1024;
 const large_buffer_size: usize = 256 * 1024;
 const max_buffer_size: usize = 1024 * 1024;
@@ -727,8 +734,9 @@ fn finishFlushing(
 
 /// Execute exactly one bounded transfer unit.
 ///
-/// A successful reflink proceeds to a separate flush unit. Otherwise each
-/// invocation copies one bounded transfer unit before yielding.
+/// A unit copies up to `unit_bytes` or `unit_ns` before yielding. A copied
+/// file is flushed in the same unit when its job syncs at its end, otherwise
+/// in a unit of its own (`toFlush`).
 pub fn execute(
     allocator: Allocator,
     item_arg: executor.WorkItem,
@@ -928,11 +936,12 @@ fn executeUnit(
         if (reflink_result == 0) {
             metrics.reflink_successes +|= 1;
             metrics.reflink_bytes +|= state.size;
-            return yieldForFlush(
+            return toFlush(
                 allocator,
                 item,
                 state,
                 owned_destination_name,
+                operation_paths,
                 &scratch_payload,
             );
         }
@@ -957,11 +966,12 @@ fn executeUnit(
         }
 
         if (state.size == 0) {
-            return yieldForFlush(
+            return toFlush(
                 allocator,
                 item,
                 state,
                 owned_destination_name,
+                operation_paths,
                 &scratch_payload,
             );
         }
@@ -981,148 +991,30 @@ fn executeUnit(
         );
     }
 
-    const remaining = state.size - state.offset;
-    if (remaining == 0) {
-        return yieldForFlush(
-            allocator,
-            item,
-            state,
-            owned_destination_name,
-            &scratch_payload,
-        );
-    }
-
-    const request_len: usize = @intCast(@min(remaining, chunk_size));
-    if (state.strategy == .copy_file_range) {
-        metrics.copy_file_range_calls +|= 1;
-        const range_started = if (item.profile_enabled) monotonicNowNs() else 0;
-        const copied = c.copy_file_range(
-            state.source_fd,
-            null,
-            state.destination_fd,
-            null,
-            request_len,
-            0,
-        );
-        if (item.profile_enabled)
-            metrics.copy_file_range_ns +|= monotonicNowNs() - range_started;
-        if (copied > 0) {
-            metrics.copy_file_range_bytes +|= @intCast(copied);
-            state.offset += @intCast(copied);
-        } else if (copied == 0) {
-            return failedWithScratch(
+    const unit_started = monotonicNowNs();
+    const unit_end = state.offset +| unit_bytes;
+    while (state.offset < state.size) {
+        switch (copyChunk(allocator, &state, &scratch_payload, metrics, item.profile_enabled)) {
+            .copied => {},
+            .interrupted => break,
+            .failed => return failedWithScratch(
                 item,
                 state,
                 owned_destination_name,
                 &scratch_payload,
-            );
-        } else {
-            const copy_errno = std.c._errno().*;
-            if (copy_errno == c.EINTR) {
-                // Yield without changing offsets; retry in the next unit.
-            } else if (isFallbackErrno(copy_errno)) {
-                metrics.copy_file_range_fallbacks +|= 1;
-                recordFallbackReason(metrics, copy_errno);
-                state.strategy = .buffered;
-            } else {
-                return failedWithScratch(
-                    item,
-                    state,
-                    owned_destination_name,
-                    &scratch_payload,
-                );
-            }
+            ),
         }
-    }
-
-    if (state.strategy == .buffered) {
-        const buffered_started = if (item.profile_enabled) monotonicNowNs() else 0;
-        defer if (item.profile_enabled) {
-            metrics.buffered_ns +|= monotonicNowNs() - buffered_started;
-        };
-
-        if (scratch_payload == null) {
-            scratch_payload = encodeContinuation(
-                allocator,
-                state,
-                bufferedBufferSize(state.size),
-            ) catch {
-                return failedWithScratch(
-                    item,
-                    state,
-                    owned_destination_name,
-                    &scratch_payload,
-                );
-            };
-        }
-        const buffer = scratch_payload.?.bytes.?[continuation_size..];
-        const wanted: usize = @intCast(@min(
-            state.size - state.offset,
-            @as(u64, buffer.len),
-        ));
-        metrics.buffered_read_calls +|= 1;
-        const count = c.read(state.source_fd, buffer.ptr, wanted);
-        if (count == 0) {
-            return failedWithScratch(
-                item,
-                state,
-                owned_destination_name,
-                &scratch_payload,
-            );
-        }
-        if (count < 0) {
-            if (std.c._errno().* == c.EINTR) {
-                writeContinuationHeader(scratch_payload.?.bytes.?[0..continuation_size], state);
-                const saved = scratch_payload.?.take();
-                scratch_payload = null;
-                return completionWithProgress(
-                    item,
-                    .yielded,
-                    saved,
-                    state.offset,
-                    state.size,
-                    .transferring,
-                );
-            }
-            return failedWithScratch(
-                item,
-                state,
-                owned_destination_name,
-                &scratch_payload,
-            );
-        }
-
-        const bytes_read: usize = @intCast(count);
-        metrics.buffered_read_bytes +|= @intCast(bytes_read);
-        var written: usize = 0;
-        while (written < bytes_read) {
-            metrics.buffered_write_calls +|= 1;
-            const result = c.write(
-                state.destination_fd,
-                buffer[written..].ptr,
-                bytes_read - written,
-            );
-            if (result < 0 and std.c._errno().* == c.EINTR) continue;
-            if (result <= 0) {
-                return failedWithScratch(
-                    item,
-                    state,
-                    owned_destination_name,
-                    &scratch_payload,
-                );
-            }
-            metrics.buffered_write_bytes +|= @intCast(result);
-            written += @intCast(result);
-        }
-        state.offset += bytes_read;
+        if (state.offset >= unit_end or
+            monotonicNowNs() - unit_started >= unit_ns) break;
     }
 
     if (state.offset == state.size) {
-        return yieldForFlush(
+        return toFlush(
             allocator,
             item,
             state,
             owned_destination_name,
+            operation_paths,
             &scratch_payload,
         );
     }
@@ -1147,6 +1039,110 @@ fn executeUnit(
         state.size,
         .transferring,
     );
+}
+
+/// Hand a fully copied file to its flush. A job that syncs once at its end
+/// publishes the file in this same unit (a rename, no sync); otherwise the
+/// flush is a unit of its own, since its syncs can take long.
+fn toFlush(
+    allocator: Allocator,
+    item: executor.WorkItem,
+    state: Continuation,
+    destination_name: [*:0]const u8,
+    operation_paths: anytype,
+    scratch: *?executor.OwnedPayload,
+) executor.WorkCompletion {
+    if (operation_paths.deferred_sync and !state.replacement) {
+        return finishFlushing(
+            allocator,
+            item,
+            state,
+            destination_name,
+            operation_paths.destination_name,
+            true,
+            scratch,
+        );
+    }
+    return yieldForFlush(allocator, item, state, destination_name, scratch);
+}
+
+const ChunkResult = enum { copied, interrupted, failed };
+
+/// Copy one chunk at the state's offset, switching to the buffered strategy
+/// when `copy_file_range` is not supported.
+fn copyChunk(
+    allocator: Allocator,
+    state: *Continuation,
+    scratch: *?executor.OwnedPayload,
+    metrics: *executor.CopyMetrics,
+    profile_enabled: bool,
+) ChunkResult {
+    const remaining = state.size - state.offset;
+    if (state.strategy == .copy_file_range) {
+        metrics.copy_file_range_calls +|= 1;
+        const range_started = if (profile_enabled) monotonicNowNs() else 0;
+        const copied = c.copy_file_range(
+            state.source_fd,
+            null,
+            state.destination_fd,
+            null,
+            @intCast(@min(remaining, chunk_size)),
+            0,
+        );
+        if (profile_enabled)
+            metrics.copy_file_range_ns +|= monotonicNowNs() - range_started;
+        if (copied > 0) {
+            metrics.copy_file_range_bytes +|= @intCast(copied);
+            state.offset += @intCast(copied);
+            return .copied;
+        }
+        if (copied == 0) return .failed;
+        const copy_errno = std.c._errno().*;
+        // Retried in the next unit, offsets unchanged.
+        if (copy_errno == c.EINTR) return .interrupted;
+        if (!isFallbackErrno(copy_errno)) return .failed;
+        metrics.copy_file_range_fallbacks +|= 1;
+        recordFallbackReason(metrics, copy_errno);
+        state.strategy = .buffered;
+    }
+
+    const buffered_started = if (profile_enabled) monotonicNowNs() else 0;
+    defer if (profile_enabled) {
+        metrics.buffered_ns +|= monotonicNowNs() - buffered_started;
+    };
+    if (scratch.* == null) {
+        scratch.* = encodeContinuation(
+            allocator,
+            state.*,
+            bufferedBufferSize(state.size),
+        ) catch return .failed;
+    }
+    const buffer = scratch.*.?.bytes.?[continuation_size..];
+    const wanted: usize = @intCast(@min(remaining, @as(u64, buffer.len)));
+    metrics.buffered_read_calls +|= 1;
+    const count = c.read(state.source_fd, buffer.ptr, wanted);
+    if (count == 0) return .failed;
+    if (count < 0) {
+        return if (std.c._errno().* == c.EINTR) .interrupted else .failed;
+    }
+
+    const bytes_read: usize = @intCast(count);
+    metrics.buffered_read_bytes +|= @intCast(bytes_read);
+    var written: usize = 0;
+    while (written < bytes_read) {
+        metrics.buffered_write_calls +|= 1;
+        const result = c.write(
+            state.destination_fd,
+            buffer[written..].ptr,
+            bytes_read - written,
+        );
+        if (result < 0 and std.c._errno().* == c.EINTR) continue;
+        if (result <= 0) return .failed;
+        metrics.buffered_write_bytes +|= @intCast(result);
+        written += @intCast(result);
+    }
+    state.offset += bytes_read;
+    return .copied;
 }
 
 const ReplacementMarker = struct {

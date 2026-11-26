@@ -52,20 +52,28 @@ measured against all four with `bench-files-io` (see its settings at the top of
   the ready queue at once, so it could run before the copies. It is now queued
   only once everything else is done.
 
+* **Fewer round trips per file** (PR #83). A unit is a round trip between a
+  worker and the coordinator. A small file took two (open and copy, then
+  flush); in a copy job that syncs at its end it now takes one, since
+  publishing is a rename without a sync. Replacements and moves still flush
+  in a unit of their own.
+* **Units bounded by size and time.** A unit copies 64 KiB chunks until 1 MiB
+  or 2 ms, whichever comes first, instead of one chunk: a 256 MiB file went
+  from 4 097 units to under a thousand. Jobs take turns by unit, so the time bound
+  is what keeps the share fair: at 10 ms an extraction beside the copies ran
+  about 20 % slower; at 2 ms it ran as before. Medians of four sandbox runs,
+  base → this change: large copies 3.65 → 3.0 s, small files 4.9 → 4.3 s,
+  extraction 6.9 → 7.1 s (within noise).
+
 ## 4. Next
 
 1. **Measure on real disks** (the user's NVMe, SATA SSD and USB hard disk): the
    bench with the folder on each, before and after the sync change.
-2. **Per-file round trips.** A file is several units, each a round trip between
-   a worker and the coordinator (open, copy, flush/publish). Count them per file
-   (`profile_enabled` metrics) and merge what can be merged.
-3. **Bounded units by size and time, not one 64 KiB chunk.** A large file now
-   takes one round trip per 64 KiB (8 192 for 512 MiB). Let a unit copy until
-   ~1 MiB or ~10 ms, whichever comes first, still yielding for fairness,
-   cancellation and progress.
-4. **One reusable buffer per job** for the buffered fallback: allocated when
+2. **Fair turns by time, not by unit**, if the bound above proves too tight on
+   real disks: let the round-robin account for a job's worker time.
+3. **One reusable buffer per job** for the buffered fallback: allocated when
    first needed, grown to the largest file's size class, capped at 1 MiB,
    released with the job; keep a fixed-64 KiB mode for comparison.
    `copy_file_range` and reflink paths unchanged.
-5. **Per-file allocations** in discovery and planning (path joins per entry),
+4. **Per-file allocations** in discovery and planning (path joins per entry),
    against the 20 600 allocations measured before.
