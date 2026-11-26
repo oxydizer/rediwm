@@ -62,6 +62,14 @@
   `applyVisualTransform`. Never fold it into `x`/`y`/`move_x` (it would grow
   the canvas, reach IPC and saved layouts, and outlive the drag). Anything
   that stops showing a window must `clearDodge` it (`detachInput` does).
+* **Strip gestures** (`scroll_motion.zig`): on a scrolling workspace a
+  three-finger swipe (whatever is under the pointer, unless shortcuts are
+  inhibited) and two fingers over empty strip move its view; the world's frame
+  tick places the windows. While fingers are down a reveal leaves the view
+  alone, so every path that ends a gesture must reach `scroll_motion.end`; a
+  finger scroll that goes quiet for 400 ms ends itself, since its stop event
+  can be routed elsewhere. Super+Shift+wheel and Super+horizontal wheel step
+  columns; plain Super+wheel still cycles workspaces.
 * **Touch/tablet** use their own protocol only when
   `directInputReachesClients()`; otherwise they emulate the pointer (send your
   own `pointerNotifyFrame`). Touchscreens map to `output_name` or the built-in

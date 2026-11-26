@@ -1,4 +1,21 @@
 #include "projection_internal.h"
+#include <wlr/types/wlr_output_layout.h>
+
+// Preserve layout order for overlapping outputs. A disabled connector may
+// still have a layout box covering an enabled one.
+static uint64_t pick_output_serial(struct rediwm_scene_outputs *outputs, double px, double py) {
+  if (!outputs->layout) return 0;
+  struct wlr_output_layout_output *lo;
+  wl_list_for_each(lo, &outputs->layout->outputs, link) {
+    if (!lo->output->enabled) continue;
+    struct wlr_box box = {.x = lo->x, .y = lo->y};
+    wlr_output_effective_resolution(lo->output, &box.width, &box.height);
+    if (!wlr_box_contains_point(&box, px, py)) continue;
+    struct rediwm_scene_output *out = rediwm_scene_outputs_get(outputs, lo->output);
+    if (out) return out->serial;
+  }
+  return 0;
+}
 
 // ---- Hit testing (stage 6 of docs/plans/scene-graph.md) --------------------------
 // The topmost node at a layout point, from the graph: the items from the top of the
@@ -8,6 +25,8 @@
 static bool pick_leaf(struct rediwm_projection *p, const struct group *only, double lx, double ly,
                  struct rediwm_hit *hit) {
   const double px = floor(lx), py = floor(ly);
+  bool checked_output = false;
+  uint64_t output_serial = 0;
   for (struct wl_list *gl = p->paint.prev; gl != &p->paint; gl = gl->prev) {
     struct group *g = wl_container_of(gl, g, paint);
     if (!g->enabled || (only && g != only)) continue;
@@ -24,6 +43,13 @@ static bool pick_leaf(struct rediwm_projection *p, const struct group *only, dou
       if (s.width <= 0 || s.height <= 0 || px < s.x || px >= s.x + s.width || py < s.y ||
           py >= s.y + s.height)
         continue;
+      if (item->home_output) {
+        if (!checked_output) {
+          output_serial = pick_output_serial(p->outputs, px, py);
+          checked_output = true;
+        }
+        if (item->home_output != output_serial) continue;
+      }
       double x = lx - s.x, y = ly - s.y;
       if (l->source->type == REDIWM_NODE_BUFFER) {
         x *= (double)item->width / s.width;

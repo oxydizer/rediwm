@@ -165,6 +165,7 @@ static bool probe_item(const struct rediwm_item *item, struct rediwm_node *trans
 #include "projection_test_ribbon.c"
 #include "projection_test_groups.c"
 #include "projection_test_sector.c"
+#include "projection_test_output.c"
 
 int main(void) {
   struct wl_display *display = wl_display_create();
@@ -327,6 +328,7 @@ int main(void) {
   test_dim(scene);
   test_graph_damage(scene, out);
   test_feedback(scene, backend, out, output);
+  test_home_output(scene, backend, out);
   test_opaque();
   rediwm_scene_outputs_destroy(scene);
   wlr_output_layout_destroy(layout);

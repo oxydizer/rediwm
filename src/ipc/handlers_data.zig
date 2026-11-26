@@ -208,6 +208,8 @@ pub fn makeOutputData(server: *Server, output: *Output) protocol.OutputData {
         .adaptive_sync_wanted = output_vrr.wanted(output),
         .adaptive_sync_active = output_vrr.active(output),
         .adaptive_sync_needs_modeset = output.vrr.needs_modeset,
+        .scroll_direction = @tagName(@import("../scroll_tiling.zig").setting(output)),
+        .scroll_direction_resolved = @tagName(@import("../scroll_tiling.zig").outputDirection(output)),
         .hdr = @tagName(output_hdr.mode(output)),
         .hdr_supported = output_hdr.supported(output),
         .hdr_active = output_hdr.active(output),

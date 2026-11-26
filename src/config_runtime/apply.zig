@@ -27,9 +27,10 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     const pack_changed = !std.mem.eql(u8, old.theme_base, new.theme_base) or
         !std.mem.eql(u8, if (old.theme_pack) |p| p.root else "", if (new.theme_pack) |p| p.root else "") or
         !std.mem.eql(u8, if (old.theme_pack) |p| p.bytes else "", if (new.theme_pack) |p| p.bytes else "");
-    server.world.workspaces.setMode(server, new.compositor.desktop_mode == .workspaces);
+    server.world.workspaces.setMode(server, new.compositor.desktop_mode);
     server.window_tabs.reconfigure(server);
-    if (old.compositor.window_gap != new.compositor.window_gap) server.world.workspaces.tiler.schedule(server);
+    if (old.compositor.window_gap != new.compositor.window_gap or old.compositor.scroll_center != new.compositor.scroll_center or
+        old.compositor.scroll_column_width != new.compositor.scroll_column_width) server.world.workspaces.tiler.schedule(server);
     if (!std.meta.eql(old.region, new.region)) applyRegion(server);
     if (!std.mem.eql(u8, old.compositor.default_file_manager, new.compositor.default_file_manager) or
         !std.mem.eql(u8, old.compositor.default_terminal, new.compositor.default_terminal))

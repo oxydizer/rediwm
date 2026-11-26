@@ -75,6 +75,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .displays, .title = i18n.msg("Variable refresh rate"), .target = "adaptive_sync", .keywords = i18n.msg("vrr freesync gsync adaptive sync game") },
     .{ .page = .displays, .title = i18n.msg("HDR"), .target = "hdr", .keywords = i18n.msg("high dynamic range hdr10 sdr brightness nits") },
     .{ .page = .displays, .title = i18n.msg("Rotation"), .target = "transform", .keywords = i18n.msg("orientation portrait landscape screen") },
+    .{ .page = .displays, .title = i18n.msg("Scrolling direction"), .target = "scroll_direction", .keywords = i18n.msg("scrolling strip columns rows vertical horizontal portrait") },
     .{ .page = .displays, .title = i18n.msg("Night light"), .target = "night_light", .keywords = i18n.msg("blue light warm screen") },
     .{ .page = .displays, .title = i18n.msg("Night light temperature"), .target = "night_light_temperature", .keywords = i18n.msg("warmth colour color") },
     .{ .page = .power, .title = i18n.msg("Lid close action"), .target = "lid_close", .keywords = i18n.msg("laptop suspend sleep power off shut down") },

@@ -374,26 +374,13 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
         v.width != output->width || v.height != output->height)
         rediwm_scene_output_damage_whole(out);
     r->projection = projection;
-    rediwm_projection_feedback_begin(projection);
-    struct collector collector = {.renderer = r, .view = &v};
-    struct rediwm_scene_output *other;
-    wl_list_for_each(other, &out->outputs->outputs, link) {
-        if (other == out || !other->output->enabled || collector.others == 15) continue;
-        struct wlr_box *box = &collector.other[collector.others++];
-        *box = (struct wlr_box){.x = other->x, .y = other->y};
-        wlr_output_effective_resolution(other->output, &box->width, &box->height);
-    }
-    pixman_region32_init(&collector.covered);
-    pixman_region32_init(&collector.reads);
-    bool collected = rediwm_projection_for_each_item(projection, true, scene_output_collect, &collector);
-    if (collector.has_cover) pixman_region32_fini(&collector.cover);
-    pixman_region32_fini(&collector.reads);
-    if (!collected) {
-        pixman_region32_fini(&collector.covered);
+    pixman_region32_t covered;
+    pixman_region32_init(&covered);
+    if (!scene_output_collect_frame(r, out, &v, &covered)) {
+        pixman_region32_fini(&covered);
         scene_output_clear_entries(r);
         return false;
     }
-    rediwm_projection_feedback_end(projection);
     struct entry *entries = r->entries.data;
     size_t len = r->entries.size / sizeof(*entries);
     // Effects decide before the damage is handed on: a re-blur changes the
@@ -406,7 +393,7 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     const float veil = veiled ? veiled->veil : 0;
     if (os && !scene_output_decide_effects(r, os, out, &v, &changed)) {
         pixman_region32_fini(&changed);
-        pixman_region32_fini(&collector.covered);
+        pixman_region32_fini(&covered);
         scene_output_clear_entries(r);
         return false;
     }
@@ -459,8 +446,8 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     else if (veiled->linear_valid) {
         pixman_region32_intersect_rect(&draw, &out->pending_commit_damage, 0, 0, v.width, v.height);
     } else pixman_region32_init_rect(&draw, 0, 0, v.width, v.height);
-    device_region(&collector.covered, &v, false);
-    pixman_region32_subtract(&background, &draw, &collector.covered);
+    device_region(&covered, &v, false);
+    pixman_region32_subtract(&background, &draw, &covered);
     if (floor(v.scale) != v.scale) {
         wlr_region_expand(&background, &background, 1);
         pixman_region32_intersect(&background, &background, &draw);
@@ -497,7 +484,7 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
 done:
     if (buffer) wlr_buffer_unlock(buffer);
     if (!ok) rediwm_scene_output_damage_whole(out);
-    pixman_region32_fini(&collector.covered);
+    pixman_region32_fini(&covered);
     if (ok && veiled) veiled->veil_changed = false;
     if (os) {
         // Outside the pass: drop the blurs of effects this output no longer shows;

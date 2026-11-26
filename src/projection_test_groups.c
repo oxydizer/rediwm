@@ -259,7 +259,16 @@ static void report(struct rediwm_projection *p, struct rediwm_node *node, int x,
   pixman_region32_init(&visible);
   if (w > 0) pixman_region32_union_rect(&visible, &visible, x, y, w, h);
   rediwm_projection_feedback_begin(p);
-  rediwm_projection_feedback_note(p, node, &visible);
+  struct rediwm_scene_output *out;
+  wl_list_for_each(out, &p->outputs->outputs, link) {
+    int width, height;
+    wlr_output_effective_resolution(out->output, &width, &height);
+    pixman_region32_t part;
+    pixman_region32_init(&part);
+    pixman_region32_intersect_rect(&part, &visible, out->x, out->y, width, height);
+    rediwm_projection_note_output(p, node, out, &part);
+    pixman_region32_fini(&part);
+  }
   rediwm_projection_feedback_end(p);
   pixman_region32_fini(&visible);
 }

@@ -22,7 +22,7 @@ struct rediwm_glass_info {
   float radius;     // logical px; a window's effect takes the window's shape instead
   // Unique for the effect's life (a node address can be reused).
   uint64_t serial;
-  // Keep the last blur while the effect moves (a dragged opaque titlebar, camera motion).
+  // Keep the last blur while this effect moves (a dragged opaque titlebar).
   bool held;
 };
 // False when `node`  is not a glass effect.

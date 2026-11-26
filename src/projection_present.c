@@ -19,9 +19,10 @@ void projection_damage_shadow(struct leaf *l, bool show, struct rediwm_snap at) 
                                l->shadow_drawn.width, l->shadow_drawn.height);
   if (show) pixman_region32_union_rect(&region, &region, at.x, at.y, at.width, at.height);
   if (pixman_region32_not_empty(&region)) {
-    pixman_region32_union(&l->projection->pending, &l->projection->pending, &region);
+    pixman_region32_t *pending = damage_target(l->projection, l->shown_home);
+    if (pending) pixman_region32_union(pending, pending, &region);
     const pixman_box32_t *b = pixman_region32_extents(&region);
-    emit(l->projection, l->item.id, b->x1, b->y1, b->x2 - b->x1, b->y2 - b->y1);
+    emit(l, b->x1, b->y1, b->x2 - b->x1, b->y2 - b->y1);
   }
   pixman_region32_fini(&region);
   l->has_shadow_drawn = show;
@@ -66,7 +67,7 @@ static void damage_event_for_buffer(struct leaf *l, const pixman_region32_t *dam
   if (wlr_fbox_empty(&src)) src = (struct wlr_fbox){0, 0, buffer_width, buffer_height};
   const struct rediwm_snap whole =
       map_damage(item, pixman_region32_extents((pixman_region32_t *)damage), &src, snap);
-  emit(l->projection, item->id, whole.x, whole.y, whole.width, whole.height);
+  emit(l, whole.x, whole.y, whole.width, whole.height);
   int count = 0;
   const pixman_box32_t *rects = pixman_region32_rectangles((pixman_region32_t *)damage, &count);
   if (count > 16) {
@@ -87,6 +88,12 @@ static struct rediwm_snap present_leaf(struct leaf *l) {
   // change pixels at fractional zoom and when crossing negative origins.
   const struct rediwm_snap snap = rediwm_edges_snap(item->edges);
   const bool enabled = item->enabled && snap.width > 0 && snap.height > 0;
+  if (l->shown_home != item->home_output) {
+    forget_shown(l);
+    projection_damage_shadow(l, false, (struct rediwm_snap){0});
+    l->has_visible = false;
+    l->shown_home = item->home_output;
+  }
   // Damage events: a moved, resized, shown, hidden or restyled leaf changes its
   // old and its new box; otherwise only what a new buffer or commit damaged.
   // Only a leaf that puts pixels on screen has them: an input-only node (a
@@ -220,7 +227,7 @@ void rediwm_projection_damage_buffer(struct rediwm_projection *p,
   l->owned_damage = true;
   l->dirty = true;
   mark_group(p, l->group);
-  schedule(p);
+  schedule(p, l->item.home_output);
 }
 static void damage_restacked(struct rediwm_projection *p);
 // What pick_leaf can choose: enabled, pixels once rounded, neither an effect, a

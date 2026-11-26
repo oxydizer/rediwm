@@ -12,7 +12,11 @@ const nowMs = Toplevel.nowMs;
 /// resolves pointer events against its own root window stack even when our
 /// scene hit test already selected the right surface.
 pub fn raise(toplevel: *Toplevel) void {
-    toplevel.frame_tree.node.raiseToTop();
+    // A scrolling workspace keeps its floating windows above the strip.
+    if (@import("../scroll_tiling.zig").raiseFloor(toplevel)) |floating|
+        toplevel.frame_tree.node.placeBelow(&floating.frame_tree.node)
+    else
+        toplevel.frame_tree.node.raiseToTop();
     toplevel.syncXwaylandStack();
 }
 
@@ -22,8 +26,12 @@ pub fn syncXwaylandStack(toplevel: *Toplevel) void {
         toplevel.backend.xwayland.xsurface.restack(null, .below);
         return;
     }
-    // Use the nearest managed X11 sibling above us. This also covers an
-    // initially unfocused window placed below a focused Wayland window.
+    // Within each workspace, use the nearest managed sibling above us in
+    // scene order. A window on another workspace stays below the entire
+    // pointer workspace, even if it has just opened or taken keyboard focus.
+    const preferred = if (toplevel.server.xwayland) |xw| xw.pointer_workspace else 0;
+    const local = preferred != 0 and toplevel.workspace_id == preferred;
+    var first_preferred: ?*@import("wlroots").XwaylandSurface = null;
     if (toplevel.frame_tree.node.parent) |parent| {
         var found_self = false;
         var it = parent.children.iterator(.forward);
@@ -32,16 +40,23 @@ pub fn syncXwaylandStack(toplevel: *Toplevel) void {
                 found_self = true;
                 continue;
             }
-            if (!found_self) continue;
             const data = scene_data.SceneData.fromNode(node) orelse continue;
             if (data.role != .toplevel) continue;
             const other = data.role.toplevel;
-            if (!other.in_world or other.minimized or !@import("../workspaces.zig").visible(other) or other.backend_gone or other.backend != .xwayland) continue;
+            if (!other.in_world or other.minimized or other.backend_gone or other.backend != .xwayland or !@import("../workspaces.zig").visible(other)) continue;
+            if (preferred != 0 and !@import("../window_tabs.zig").visible(other)) continue;
+            if (preferred != 0 and (other.workspace_id == preferred) != local) {
+                if (!local and first_preferred == null) first_preferred = other.backend.xwayland.xsurface;
+                continue;
+            }
+            if (!found_self) continue;
             toplevel.backend.xwayland.xsurface.restack(other.backend.xwayland.xsurface, .below);
             return;
         }
     }
-    toplevel.backend.xwayland.xsurface.restack(null, .above);
+    if (first_preferred) |above| {
+        toplevel.backend.xwayland.xsurface.restack(above, .below);
+    } else toplevel.backend.xwayland.xsurface.restack(null, .above);
 }
 
 pub fn setActivated(toplevel: *Toplevel, activated: bool) void {

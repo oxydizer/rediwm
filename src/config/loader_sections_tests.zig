@@ -59,6 +59,7 @@ test "outputs fields parse through the rule table" {
         \\gamma = 1.2
         \\hdr = "on"
         \\sdr_white = 250.5
+        \\scroll_direction = "vertical"
         \\
         \\[[outputs]]
         \\name = "DP-2"
@@ -82,13 +83,15 @@ test "outputs fields parse through the rule table" {
     // HDR is opt-in; the white level defaults to the BT.2408 reference white.
     try std.testing.expectEqual(.off, cfg.outputs[1].hdr);
     try std.testing.expectEqual(@as(f32, 203), cfg.outputs[1].sdr_white);
+    try std.testing.expectEqual(.vertical, o.scroll_direction);
+    try std.testing.expectEqual(.auto, cfg.outputs[1].scroll_direction);
 
     inline for (.{
         "width = 0",        "height = -1",        "refresh_mhz = 1.5", "x = 1.5",
         "scale = 0.9",      "scale = 3.1",        "scale = \"nan\"",   "scale = auto",
         "transform = 45",   "transform = \"45\"", "enabled = 1",       "name = DP-1",
         "unknown_key = 1",  "hdr = true",         "hdr = \"auto\"",    "sdr_white = 79",
-        "sdr_white = 1001",
+        "sdr_white = 1001", "scroll_direction = \"diagonal\"",
     }) |line| {
         try std.testing.expectError(error.InvalidConfig, parse(a, "[[outputs]]\n" ++ line ++ "\n", "err"));
     }
@@ -103,6 +106,7 @@ test "output patches validate the HDR white level" {
     try (Patch{ .hdr = .on }).validate();
     try (Patch{ .sdr_white = 80 }).validate();
     try (Patch{ .sdr_white = 1000 }).validate();
+    try (Patch{ .scroll_direction = .auto }).validate();
     try std.testing.expectError(error.InvalidOutputConfig, (Patch{ .sdr_white = 79.9 }).validate());
     try std.testing.expectError(error.InvalidOutputConfig, (Patch{ .sdr_white = std.math.nan(f32) }).validate());
     try std.testing.expectError(error.EmptyOutputConfig, (Patch{}).validate());

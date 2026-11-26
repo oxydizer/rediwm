@@ -22,6 +22,4 @@ pub const Engine = opaque {
     pub const attach = rediwm_glass_attach;
     extern fn rediwm_glass_hold(engine: ?*Engine, effect: ?*Effect) void;
     pub const hold = rediwm_glass_hold;
-    extern fn rediwm_glass_hold_all(engine: ?*Engine, hold: bool) void;
-    pub const holdAll = rediwm_glass_hold_all;
 };

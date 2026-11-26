@@ -50,6 +50,10 @@ pub fn parseOutputConfigParams(allocator: std.mem.Allocator, params: ?std.json.O
         patch.hdr = std.meta.stringToEnum(@import("config").output_config.Hdr, value.string) orelse return error.InvalidRequest;
     }
     if (p.get("sdr_white")) |value| patch.sdr_white = @floatCast(try parseF64(value));
+    if (p.get("scroll_direction")) |value| {
+        if (value != .string) return error.InvalidRequest;
+        patch.scroll_direction = std.meta.stringToEnum(@import("config").output_config.ScrollDirection, value.string) orelse return error.InvalidRequest;
+    }
     patch.validate() catch return error.InvalidRequest;
     return patch;
 }

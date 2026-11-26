@@ -39,7 +39,7 @@ def run(scale):
                 ipc.move_cursor(600, 400)
                 cases = (
                     ("blackout", (251, 227, 1), .15, (251, 227, 1), ""),
-                    ("redi-blue", (146, 169, 200), .15, (146, 169, 200), ""),
+                    ("redi-blue", (81, 153, 217), .15, (81, 153, 217), ""),
                     # Existing explicit desktop colours still take precedence.
                     ("rediwm-light", (14, 165, 160), .15, (14, 165, 160), ""),
                     ("gold", (218, 169, 110), .18, (220, 172, 115), ""),

@@ -104,13 +104,15 @@ fn handleSceneDestroy(listener: *wl.Listener(void)) void {
 }
 
 fn parentToplevel(self: *Unmanaged) ?*@import("Toplevel.zig") {
-    const parent = self.xsurface.parent orelse return null;
-    var it = self.server.world.toplevels.iterator(.forward);
-    while (it.next()) |toplevel| {
-        switch (toplevel.backend) {
-            .xwayland => |*adapter| if (adapter.xsurface == parent) return toplevel,
-            .xdg, .placeholder, .shell => {},
+    var ancestor = self.xsurface.parent;
+    // A submenu can be transient for another override-redirect window.
+    for (0..32) |_| {
+        const parent = ancestor orelse return null;
+        var it = self.server.world.toplevels.iterator(.forward);
+        while (it.next()) |toplevel| {
+            if (toplevel.backend == .xwayland and toplevel.backend.xwayland.xsurface == parent) return toplevel;
         }
+        ancestor = parent.parent;
     }
     return null;
 }
@@ -177,6 +179,7 @@ fn handleSetGeometry(listener: *wl.Listener(void)) void {
 fn handleSetParent(listener: *wl.Listener(void)) void {
     const self: *Unmanaged = @fieldParentPtr("set_parent", listener);
     self.syncPosition();
+    self.syncWorkspaceVisibility();
 }
 
 fn handleSetOverrideRedirect(listener: *wl.Listener(void)) void {
@@ -260,7 +263,10 @@ pub fn wantsKeyboard(self: *const Unmanaged) bool {
 
 pub fn syncWorkspaceVisibility(self: *Unmanaged) void {
     const mapped = if (self.xsurface.surface) |surface| surface.mapped else false;
-    const shown = if (parentToplevel(self)) |parent| @import("workspaces.zig").visible(parent) else true;
+    const parent = parentToplevel(self);
+    const home = if (parent) |p| @import("workspaces.zig").outputFor(p) else null;
+    const shown = @import("projection.zig").setTreeOutput(&self.tree.node, home) and
+        (if (parent) |p| @import("workspaces.zig").visible(p) else true);
     self.tree.node.setEnabled(mapped and shown);
     if (!shown) if (self.xsurface.surface) |surface| {
         if (self.server.input.seat.keyboard_state.focused_surface == surface) self.server.input.seat.keyboardNotifyClearFocus();

@@ -38,22 +38,26 @@ def hotplug(command_file, command):
     wait_for(lambda: not command_file.exists(), "hook ran " + command)
 
 
+def hotplug_environment(tmp):
+    flags = shlex.split(subprocess.check_output(
+        ["pkg-config", "--cflags", "--libs", "wlroots-0.20", "wayland-server"], text=True))
+    hook = tmp / "hotplug.so"
+    subprocess.run(["cc", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror",
+                    str(ROOT / "tests/output_reconnect_hook.c"), "-o", str(hook), *flags, "-ldl"], check=True)
+    return {"LD_PRELOAD": str(hook), "REDIWM_TEST_HOTPLUG": str(tmp / "hotplug")}
+
+
 def run_case(name, output_count, homes, drops, returns, maximize=(), primary=None):
     with tempfile.TemporaryDirectory(prefix="rediwm-output-reconnect-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        flags = shlex.split(subprocess.check_output(
-            ["pkg-config", "--cflags", "--libs", "wlroots-0.20", "wayland-server"], text=True))
-        hook = tmp / "hotplug.so"
-        subprocess.run(["cc", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror",
-                        str(ROOT / "tests/output_reconnect_hook.c"), "-o", str(hook), *flags, "-ldl"], check=True)
         commands = tmp / "hotplug"
         config = "[compositor]\nxwayland = false\n"
         if primary:
             config += f'[[outputs]]\nname = "{primary}"\nprimary = true\n'
         compositor, log = spawn_compositor(
             tmp, outputs=str(output_count), config_content=config,
-            env_extra={"LD_PRELOAD": str(hook), "REDIWM_TEST_HOTPLUG": str(commands),
+            env_extra={**hotplug_environment(tmp),
                        "XDG_CACHE_HOME": str(tmp / "cache")})
         clients = []
         try:

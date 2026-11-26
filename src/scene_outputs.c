@@ -76,11 +76,16 @@ void rediwm_scene_output_damage_whole(struct rediwm_scene_output *out) {
 }
 
 bool rediwm_scene_output_needs_frame(const struct rediwm_scene_output *out) {
-  return out->output->needs_frame || !pixman_region32_empty((pixman_region32_t *)&out->pending_commit_damage);
+  return out->output->needs_frame || rediwm_scene_output_has_pending_damage(out);
 }
 
 bool rediwm_scene_output_has_pending_damage(const struct rediwm_scene_output *out) {
-  return !pixman_region32_empty((pixman_region32_t *)&out->pending_commit_damage);
+  return (!out->hold_glass && out->glass_deferred) ||
+         !pixman_region32_empty((pixman_region32_t *)&out->pending_commit_damage);
+}
+
+void rediwm_scene_output_hold_glass(struct rediwm_scene_output *out, bool held) {
+  out->hold_glass = held;
 }
 
 bool rediwm_scene_output_direct_scanout(const struct rediwm_scene_output *out) {
@@ -275,6 +280,8 @@ struct rediwm_scene_output *rediwm_scene_output_create(struct rediwm_scene_outpu
     }
   }
 
+  out->serial = ++outputs->next_serial;
+  pixman_region32_init(&out->projection_damage);
   out->index = prev_index + 1;
   assert(out->index < 64);
   wl_list_insert(prev_link, &out->link);
@@ -307,6 +314,7 @@ void rediwm_scene_output_destroy(struct rediwm_scene_output *out) {
   wlr_addon_finish(&out->addon);
   wlr_damage_ring_finish(&out->damage_ring);
   pixman_region32_fini(&out->pending_commit_damage);
+  pixman_region32_fini(&out->projection_damage);
   wl_list_remove(&out->link);
   wl_list_remove(&out->output_commit.link);
   wl_list_remove(&out->output_damage.link);

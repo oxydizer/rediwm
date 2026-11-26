@@ -110,6 +110,7 @@ pub fn configure(io: std.Io, root: []const u8) void {
         .{ IconId.shield, "shield" },
         .{ IconId.desktop_canvas, "desktop-canvas" },
         .{ IconId.desktop_tiles, "desktop-tiles" },
+        .{ IconId.desktop_scroll, "desktop-scroll" },
     }) |pair| {
         loadOverride(io, root, pair[0], pair[1]);
     }
@@ -209,6 +210,7 @@ fn builtinSource(id: IconId) ?[]const u8 {
         .shield => @embedFile("shell-icon-shield"),
         .desktop_canvas => @embedFile("shell-icon-desktop-canvas"),
         .desktop_tiles => @embedFile("shell-icon-desktop-tiles"),
+        .desktop_scroll => @embedFile("shell-icon-desktop-scroll"),
         else => null,
     };
 }

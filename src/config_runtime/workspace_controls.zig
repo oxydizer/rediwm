@@ -7,18 +7,20 @@ const gpa = @import("../main.zig").gpa;
 pub fn mode(server: *Server, value: config.loader.DesktopMode, persist: bool) !void {
     if (persist) try config.setting_save.saveCompositor(gpa, server.io, server.config.path, "desktop_mode", value);
     server.config.compositor.desktop_mode = value;
-    server.world.workspaces.setMode(server, value == .workspaces);
+    server.world.workspaces.setMode(server, value);
 }
-/// The taskbar item and `toggle_desktop_mode`: the other mode, saved, since a
-/// reload applies `desktop_mode` from the file. A file that cannot be written
-/// (read-only, managed elsewhere) still switches, until the next reload.
-pub fn toggleMode(server: *Server) void {
+/// Taskbar and shortcut choices take effect even with a read-only config.
+pub fn chooseMode(server: *Server, value: config.loader.DesktopMode) void {
     if (server.greeter_mode) return;
-    const next: config.loader.DesktopMode = if (server.world.workspaces.active) .canvas else .workspaces;
-    mode(server, next, true) catch |err| {
+    mode(server, value, true) catch |err| {
         std.log.scoped(.config).warn("could not save desktop_mode: {}", .{err});
-        mode(server, next, false) catch unreachable;
+        mode(server, value, false) catch unreachable;
     };
+}
+/// Canvas, or back to the tiled mode used last, as it was left.
+pub fn toggleMode(server: *Server) void {
+    const manager = &server.world.workspaces;
+    chooseMode(server, if (manager.active) .canvas else manager.last_tiled);
 }
 pub fn gap(server: *Server, value: u32, persist: bool) !void {
     if (value > 512) return error.InvalidGap;
@@ -38,8 +40,10 @@ pub fn floatingApps(server: *Server, values: []const []const u8, persist: bool) 
     server.world.workspaces.tiler.schedule(server);
     if (server.input.open_control_center) |cc| cc.refresh();
 }
-pub fn automatic(server: *Server, id: u8, value: bool) void {
+/// A workspace's own layout; null follows the desktop mode again.
+pub fn layout(server: *Server, id: u8, value: ?config.workspace_layout.Layout) void {
     if (id == 0 or id > 32 or !server.world.workspaces.active) return;
+    if (server.input.tiling_grab) |grab| if (grab.workspace == id) server.input.finishTilingGrab(false);
     var transaction = @import("../layout_undo.zig").Transaction.begin(server, &.{id});
     defer transaction.finish();
     const slot = &server.world.workspaces.slots[id - 1];
@@ -48,7 +52,7 @@ pub fn automatic(server: *Server, id: u8, value: bool) void {
         slot.output = server.getDefaultOutput();
         if (slot.output) |out| slot.box = out.usableBox();
     }
-    slot.automatic = value;
+    slot.layout = value;
     server.world.workspaces.tiler.schedule(server);
     if (server.input.open_control_center) |cc| cc.refresh();
 }

@@ -42,7 +42,7 @@ static void destroy_group(struct group *g) {
 static void group_source_destroy(struct wl_listener *listener, void *data) {
   (void)data;
   struct group *g = wl_container_of(listener, g, destroy);
-  schedule(g->projection);
+  schedule(g->projection, 0);
   destroy_group(g);
 }
 static void group_source_addon_destroy(struct wlr_addon *addon) {
@@ -103,7 +103,7 @@ static void destroy_leaf(struct leaf *l) {
 static void source_destroy(struct wl_listener *listener, void *data) {
   (void)data;
   struct leaf *l = wl_container_of(listener, l, destroy);
-  schedule(l->projection);
+  schedule(l->projection, l->item.home_output);
   destroy_leaf(l);
 }
 static void source_addon_destroy(struct wlr_addon *addon) {
@@ -145,7 +145,7 @@ static void committed(struct wl_listener *listener, void *data) {
     l->full_damage = true;
   l->dirty = true;
   mark_group(l->projection, l->group);
-  schedule(l->projection);
+  schedule(l->projection, l->item.home_output);
 }
 struct leaf *projection_get_leaf(struct rediwm_projection *p, struct rediwm_node *source,
                              struct rediwm_node *own) {
@@ -202,9 +202,10 @@ static struct group *group_of(struct rediwm_node *node) {
 }
 static void scene_changed(void *data, struct rediwm_node *node, bool structural) {
   struct rediwm_projection *p = data;
-  if (structural || !node) mark_all(p);
-  else mark_group(p, group_of(node));
-  schedule(p);
+  struct group *g = structural || !node ? NULL : group_of(node);
+  mark_group(p, g);
+  const struct tree_props *props = g ? g->source->props : NULL;
+  schedule(p, props ? props->home_output : 0);
 }
 static void buffer_given(void *data, struct rediwm_buffer *b, const pixman_region32_t *damage) {
   rediwm_projection_damage_buffer(data, &b->node, damage);
@@ -232,7 +233,17 @@ struct rediwm_projection *rediwm_projection_create(struct rediwm_scene *own, str
   return p;
 }
 static void apply_damage(struct rediwm_projection *p) {
-  if (pixman_region32_not_empty(&p->pending)) rediwm_scene_damage_layout(p->outputs, &p->pending);
+  const bool shared = pixman_region32_not_empty(&p->pending);
+  if (!shared && !p->has_scoped_damage) return;
+  struct rediwm_scene_output *out;
+  wl_list_for_each(out, &p->outputs->outputs, link) {
+    if (p->has_scoped_damage && pixman_region32_not_empty(&out->projection_damage)) {
+      if (shared) pixman_region32_union(&out->projection_damage, &out->projection_damage, &p->pending);
+      rediwm_scene_damage_layout(out, &out->projection_damage);
+      pixman_region32_clear(&out->projection_damage);
+    } else if (shared) rediwm_scene_damage_layout(out, &p->pending);
+  }
+  p->has_scoped_damage = false;
   pixman_region32_clear(&p->pending);
 }
 #ifdef REDIWM_DAMAGE_AUDIT
@@ -256,7 +267,7 @@ static void audit_gate(struct rediwm_projection *p, double z, double cx, double 
   projection_resolve(p, z, cx, cy, ox, oy, fixed, true);
   for (i = 0; i < n; i++) {
     const struct rediwm_item *a = &before[i], *b = &who[i]->item;
-    if (a->enabled != b->enabled || a->kind != b->kind || memcmp(&a->edges, &b->edges, sizeof(a->edges)) ||
+    if (a->home_output != b->home_output || a->enabled != b->enabled || a->kind != b->kind || memcmp(&a->edges, &b->edges, sizeof(a->edges)) ||
         !rediwm_content_equal(&a->content, &b->content))
       wlr_log(WLR_ERROR, "gate audit: leaf %llu (kind %d) was stale: enabled %d->%d edges %.1f,%.1f %.1f,%.1f -> %.1f,%.1f %.1f,%.1f",
               (unsigned long long)who[i]->item.id, b->kind, a->enabled, b->enabled, a->edges.x1, a->edges.y1,
@@ -308,7 +319,7 @@ static void watched_commit(struct wl_listener *listener, void *data) {
   // surface node's to deliver.
   if (known) return;
   mark_all(p);
-  schedule(p);
+  schedule(p, 0);
 }
 static void watched_destroy(struct wl_listener *listener, void *data) {
   (void)data;

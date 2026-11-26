@@ -120,10 +120,7 @@ pub fn setMaximized(toplevel: *Toplevel, maximizing: bool) void {
         return;
     }
 
-    const geometry_box = toplevel.clientGeometry();
-    const center = toplevel.frameWorld(@floatFromInt(toplevel.borderWidth() + @divTrunc(geometry_box.width, 2)), @floatFromInt(toplevel.titlebarHeight() + @divTrunc(geometry_box.height, 2)));
-    const layout_center = toplevel.server.world.toLayout(center.x, center.y);
-    const output = Output.atLayout(toplevel.server, layout_center.x, layout_center.y) orelse toplevel.resolveTargetOutput() orelse return;
+    const output = toplevel.currentOutput() orelse return;
     toplevel.setMaximizedOn(output);
 }
 
@@ -198,7 +195,21 @@ pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box, animate: bool) void {
         .height = @max(1, rect.height - toplevel.titlebarHeight() - footer),
     };
     // An unchanged tile keeps a glide in flight (an earlier reflow, a restore).
-    if (toplevel.auto_target) |previous| if (std.meta.eql(previous, target)) return;
+    if (toplevel.auto_target) |previous| {
+        if (std.meta.eql(previous, target)) return;
+        // Only moved, as when a strip scrolls: the client hears nothing (X11
+        // gets its new position through commitPosition, as on a canvas pan).
+        if (previous.width == target.width and previous.height == target.height) {
+            toplevel.auto_target = target;
+            toplevel.pending_restore = null;
+            // Already a tile, so it glides even while its open animation's
+            // tail runs, as split tiles do: columns opening or closing beside
+            // a window that just opened push it aside smoothly.
+            if (animate) toplevel.setPositionAnimated(target.x, target.y) else toplevel.setPosition(target.x, target.y);
+            toplevel.notifyLayoutChanged();
+            return;
+        }
+    }
     const was_tiled = toplevel.auto_target != null;
     const glide = animate and (was_tiled or !toplevel.map_motion.active());
     if (!glide) toplevel.finishSizeAnimation();
@@ -365,9 +376,7 @@ pub fn toggleFullscreen(toplevel: *Toplevel) void {
         return;
     }
 
-    const center = toplevel.frameWorld(@floatFromInt(@divTrunc(toplevel.chrome_width, 2)), @floatFromInt(@divTrunc(toplevel.chrome_height, 2)));
-    const layout_center = toplevel.server.world.toLayout(center.x, center.y);
-    const output = Output.atLayout(toplevel.server, layout_center.x, layout_center.y) orelse toplevel.resolveTargetOutput() orelse return;
+    const output = toplevel.currentOutput() orelse return;
     toplevel.setFullscreenOn(output);
 }
 

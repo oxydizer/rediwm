@@ -61,6 +61,7 @@ pub const Dialog = struct {
             return;
         };
         server.polkit_dialog = dialog;
+        if (server.xwayland) |xw| xw.pointer_queue.reset(xw);
         @import("../extra_protocols.zig").rediwm_protocols_revoke(server.extra_protocols);
         // End active capture before any authentication pixels are presented.
         if (server.capture_mgr) |manager| manager.stopAll();

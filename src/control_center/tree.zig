@@ -211,7 +211,7 @@ pub fn buildTree(cc: *ControlCenter) void {
                     arrangement_card.name = "displays";
                     cc.append(arrangement_card);
                 }
-                var display_card = card(&cc.display.row_storage);
+                var display_card = card(cc.display.shown_rows[0..cc.display.shown_row_count]);
                 display_card.name = "displays";
                 cc.append(display_card);
                 cc.append(cc.display.top_children[2]);

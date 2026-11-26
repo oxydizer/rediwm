@@ -12,6 +12,49 @@ from ipc_client import IPCClient, spawn_compositor, stop_process
 from ui_driver import UIDriver
 
 
+def check_desktop_mode_menu(ipc, cfg):
+    for edge in ('top', 'bottom'):
+        cfg.write_text('[compositor]\nxwayland = false\ndesktop_mode = "canvas"\n'
+                       f'taskbar_position = "{edge}"\n'
+                       'taskbar_items = ["left:start","left:windows","center:desktop_mode",'
+                       '"right:tray","right:battery","~right:wifi","right:volume","right:clock"]\n'
+                       '[animations]\nenabled = false\n')
+        ipc.reload_config()
+        def mode_item():
+            return next((w for w in ipc.get_widget_tree('taskbar')['widgets']
+                         if w['name'] == 'desktop_mode'), None)
+        b = wait_for(mode_item, 'desktop mode item')['global_box']
+        x, y = round(b['x'] + b['width'] / 2), round(b['y'] + b['height'] / 2)
+        def open_menu():
+            ipc.click_at(x, y, button=0x111)
+            ipc.wait_for_frame()
+        def check_mode(mode):
+            assert mode_item()['label'] == mode
+            assert (ipc.get_workspaces()[0]['name'] == 'Canvas') == (mode == 'Canvas')
+            assert tomllib.loads(cfg.read_text())['compositor']['desktop_mode'] == mode.lower()
+
+        open_menu()
+        ipc.key_press('Escape')
+        check_mode('Canvas')
+        open_menu()
+        # Canvas, Workspaces and Scrolling, in that order from the top.
+        def row_y(index):
+            return b['y'] + b['height'] + 26 + 34 * index if edge == 'top' else b['y'] - 26 - 34 * (2 - index)
+        ipc.click_at(x, row_y(1))
+        check_mode('Workspaces')
+        open_menu()
+        ipc.click_at(x, row_y(1))
+        check_mode('Workspaces')  # choosing the checked row is idempotent
+        open_menu()
+        ipc.click_at(x, row_y(2))
+        check_mode('Scrolling')
+        assert ipc.get_workspaces()[0]['layout'] == 'scrolling', ipc.get_workspaces()
+        open_menu()
+        ipc.key_press('Down')
+        ipc.key_press('Return')
+        check_mode('Canvas')
+
+
 def run():
     scale = float(os.environ.get('REDIWM_TEST_SCALE', '1'))
     with tempfile.TemporaryDirectory(prefix='rediwm-taskbar-sections-') as directory:
@@ -243,6 +286,7 @@ def run():
                 assert not any(w['name'] == 'power' for w in bar()), 'legacy lists keep Power off'
                 row = chips()
                 assert 0 <= row[0]['x'] - (box('start')['x'] + box('start')['width']) <= 32, row
+                check_desktop_mode_menu(ipc, cfg)
                 cfg.write_text(saved)
             for client in clients:
                 stop_process(client)

@@ -72,6 +72,8 @@ wlr_output: *wlr.Output,
 wallpaper: ?*sn.Buffer = null,
 taskbar: ?*Taskbar = null,
 dock: @import("Dock.zig") = .{},
+/// Where a scrolling strip's view is, while it moves.
+strip_indicator: @import("strip_indicator.zig") = .{},
 osd: @import("osd.zig") = .{},
 start_menu: ?*StartMenu = null,
 calendar: ?*@import("calendar.zig").Calendar = null,
@@ -143,6 +145,8 @@ frame: wl.Listener(*wlr.Output) = .init(handleFrame),
 present: wl.Listener(*wlr.Output.event.Present) = .init(handlePresent),
 request_state: wl.Listener(*wlr.Output.event.RequestState) = .init(handleRequestState),
 workspace_id: u8 = 0,
+/// Local workspace to resume if the borrowed workspace on screen goes home.
+borrowed_from_workspace: u8 = 0,
 destroy: wl.Listener(*wlr.Output) = .init(handleDestroy),
 
 pub fn isLogicallyEnabled(self: *const Output) bool {
@@ -587,6 +591,7 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     server.input.detachOutput(output);
     if (output.server.switcher.output == output) output.server.switcher.cancel();
     server.world.mini_map.outputRemoved(output);
+    output.strip_indicator.deinit();
     output.osd.deinit();
     output.lock_view.tree.node.destroy();
 

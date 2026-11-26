@@ -8037,3 +8037,104 @@ msgstr "ssh sicherheit öffentlich privat identität fingerabdruck passphrase"
 #: src/system_monitor/app_footer.zig
 msgid "GPU"
 msgstr "GPU"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Centre the focused column"
+msgstr "Fokussierte Spalte zentrieren"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Consume or Expel Left"
+msgstr "Links einordnen oder ausgliedern"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Consume or Expel Right"
+msgstr "Rechts einordnen oder ausgliedern"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Cycle Column Width"
+msgstr "Spaltenbreite durchschalten"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Full width"
+msgstr "Volle Breite"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Half"
+msgstr "Hälfte"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "New column width"
+msgstr "Breite neuer Spalten"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "New windows open as columns on a strip that scrolls. Super+arrows move along it; Super+W changes a column's width."
+msgstr "Neue Fenster öffnen sich als Spalten auf einem verschiebbaren Streifen. Mit Super+Pfeiltasten bewegst du dich darauf, mit Super+W änderst du die Spaltenbreite."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "One third"
+msgstr "Ein Drittel"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Scrolling"
+msgstr "Scrollen"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: join the column to the left, or leave a shared column."
+msgstr "Im Scrollmodus das Fenster in die linke Spalte einordnen oder aus einer gemeinsamen Spalte lösen."
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: join the column to the right, or leave a shared column."
+msgstr "Im Scrollmodus das Fenster in die rechte Spalte einordnen oder aus einer gemeinsamen Spalte lösen."
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: step the focused column through the preset widths."
+msgstr "Im Scrollmodus für die fokussierte Spalte die nächste voreingestellte Breite wählen."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Super+W steps a column through the widths; Super+[ and Super+] move a window into the next column or out of its own."
+msgstr "Mit Super+W wechselst du zwischen den Spaltenbreiten. Mit Super+[ und Super+] verschiebst du ein Fenster in die Nachbarspalte oder löst es aus seiner Spalte."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Two thirds"
+msgstr "Zwei Drittel"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "When wider than the screen"
+msgstr "Wenn breiter als der Bildschirm"
+
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Horizontal"
+msgstr "Horizontal"
+
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Vertical"
+msgstr "Vertikal"
+
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Scrolling direction"
+msgstr "Bildlaufrichtung"
+
+#: src/control_center/search_index.zig
+#, fuzzy
+msgid "scrolling strip columns rows vertical horizontal portrait"
+msgstr "scrolling strip columns rows vertical horizontal portrait scrollen streifen spalten zeilen hochformat"

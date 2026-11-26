@@ -82,7 +82,7 @@ static void clip_rim(pixman_region32_t *out, const struct rediwm_clip *c, const 
   pixman_region32_union(out, out, &rim);
   pixman_region32_fini(&rim);
 }
-static void damage_clip_change(struct rediwm_projection *p, const struct rediwm_clip *before,
+static void damage_clip_change(struct rediwm_projection *p, uint64_t home, const struct rediwm_clip *before,
                                const struct rediwm_clip *after) {
   pixman_region32_t region;
   pixman_region32_init(&region);
@@ -95,7 +95,8 @@ static void damage_clip_change(struct rediwm_projection *p, const struct rediwm_
     if (before) clip_rim(&region, before, NULL);
     if (after) clip_rim(&region, after, NULL);
   }
-  pixman_region32_union(&p->pending, &p->pending, &region);
+  pixman_region32_t *pending = damage_target(p, home);
+  if (pending) pixman_region32_union(pending, pending, &region);
   pixman_region32_fini(&region);
 }
 // resolve(): source tree -> graph. Writes items, group origins, `seen` flags and
@@ -107,6 +108,7 @@ static void damage_clip_change(struct rediwm_projection *p, const struct rediwm_
 struct walk {
   double x, y;
   bool enabled, inert;
+  uint64_t home_output;
   float surface_opacity;
   struct rediwm_xform t;
   const struct rediwm_clip *clip;
@@ -125,19 +127,27 @@ static void apply_tree(struct rediwm_projection *p, struct tree_props *props, st
     w->clip = NULL;
     w->dim = NULL;
   }
+  if (props->home_output) w->home_output = props->home_output;
   if (props->inert) w->inert = true;
   if (props->has_dim) w->dim = &props->dim;
   if (props->has_clip) {
     *here = rediwm_clip_resolve(w->t, w->x, w->y, &props->clip);
     w->clip = here;
     // A hidden window damages nothing; showing it will.
-    if (w->enabled && (!props->has_applied || !clip_same_shape(&props->applied, here) ||
-                       !clip_same_glow(&props->applied, here)))
-      damage_clip_change(p, props->has_applied ? &props->applied : NULL, here);
+    if (w->enabled) {
+      if (props->has_applied && props->applied_home != w->home_output) {
+        damage_clip_change(p, props->applied_home, &props->applied, NULL);
+        damage_clip_change(p, w->home_output, NULL, here);
+      } else if (!props->has_applied || !clip_same_shape(&props->applied, here) ||
+                 !clip_same_glow(&props->applied, here)) {
+        damage_clip_change(p, w->home_output, props->has_applied ? &props->applied : NULL, here);
+      }
+    }
     props->applied = *here;
+    props->applied_home = w->home_output;
     props->has_applied = true;
   } else if (props->has_applied) {
-    if (w->enabled) damage_clip_change(p, &props->applied, NULL);
+    if (w->enabled) damage_clip_change(p, props->applied_home, &props->applied, NULL);
     props->has_applied = false;
   }
   if (props->has_shadow) {
@@ -164,6 +174,7 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
   wl_list_insert(g->items.prev, &l->paint);
   struct rediwm_item *item = &l->item;
   item->enabled = enabled;
+  item->home_output = w->home_output;
   item->scale = w->t.scale;
   item->content = (struct rediwm_content){0};
   // Only write what changes: rewriting a NULL over a NULL on every leaf of every
@@ -289,7 +300,9 @@ void projection_resolve(struct rediwm_projection *p, double z, double cx, double
     const bool world = layer == &p->world->node;
     // The world is resolved from its children, ignoring its own place and state; any
     // other layer is a tree like the rest and hides what it holds when disabled.
+    const struct tree_props *layer_props = layer->props;
     const struct walk base = {.x = world ? 0 : layer->x, .y = world ? 0 : layer->y,
+                              .home_output = layer_props ? layer_props->home_output : 0,
                               .surface_opacity = ((struct rediwm_tree *)layer)->surface_opacity,
                               .enabled = world || layer->enabled, .t = world ? camera : identity};
     struct rediwm_node *node;

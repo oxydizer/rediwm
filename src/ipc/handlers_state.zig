@@ -84,8 +84,10 @@ pub fn handleStateRequest(
             };
 
             var out_names = std.ArrayList([]const u8).empty;
+            const home = @import("../workspaces.zig").outputFor(toplevel);
             var out_it = server.outputs.iterator(.forward);
             while (out_it.next()) |out| {
+                if (home != null and out != home) continue;
                 var obox: wlr.Box = undefined;
                 server.output_layout.getBox(out.wlr_output, &obox);
                 if (obox.x < toplevel.x + toplevel.chrome_width and

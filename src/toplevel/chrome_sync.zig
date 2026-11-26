@@ -79,8 +79,10 @@ pub fn syncOutputScale(toplevel: *Toplevel) void {
         height = card.presented.height;
     }
     var scale: f32 = 0;
+    const home = @import("../workspaces.zig").outputFor(toplevel);
     var it = toplevel.server.outputs.iterator(.forward);
     while (it.next()) |out| {
+        if (home != null and out != home) continue;
         if (!out.isLogicallyEnabled()) continue;
         const b = out.cached_box;
         if (origin.x < @as(f64, @floatFromInt(b.x)) + @as(f64, @floatFromInt(b.width)) and

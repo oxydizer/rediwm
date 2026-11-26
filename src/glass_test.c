@@ -68,15 +68,10 @@ static void registry_checks(void)
 	struct rediwm_glass_info other_info;
 	assert(rediwm_glass_effect_info(&other->node->node, &other_info));
 	assert(other_info.serial != info.serial && other_info.sigma == 26 && other_info.saturation == 1.6f);
-	// Holds: one dragged effect, or every effect during camera motion.
+	// The dragged titlebar holds its own effect.
 	rediwm_glass_hold(engine, effect);
 	assert(rediwm_glass_effect_info(&effect->node->node, &info) && info.held);
 	assert(rediwm_glass_effect_info(&other->node->node, &other_info) && !other_info.held);
-	rediwm_glass_hold(engine, NULL);
-	rediwm_glass_hold_all(engine, true);
-	assert(rediwm_glass_effect_info(&other->node->node, &other_info) && other_info.held);
-	rediwm_glass_hold_all(engine, false);
-	rediwm_glass_hold(engine, effect);
 	// Removing the target removes its effect, and a held one is released.
 	rediwm_node_destroy(&target->node);
 	assert(engine->held == NULL);

@@ -245,7 +245,11 @@ next_session_generation: u64 = 1,
 hovered_resize_edges: ?resize.Edges = null,
 pan_session: ?PanSession = null,
 /// Who owns the in-flight pinch/swipe: a focused client, or the compositor camera.
-gesture: enum { none, client_pinch, client_swipe, compositor_pinch, compositor_swipe } = .none,
+gesture: enum { none, client_pinch, client_swipe, compositor_pinch, compositor_swipe, strip_swipe } = .none,
+/// The scrolling workspace a three-finger swipe moves (`strip_swipe`).
+swipe_strip: u8 = 0,
+/// The scrolling workspace two fingers scroll over empty strip, or 0.
+finger_strip: u8 = 0,
 /// Two-finger touchpad scroll over empty desktop, distinct from middle-drag.
 finger_pan: bool = false,
 zoom_scroll: @import("camera.zig").ZoomScroll = .{},
@@ -279,6 +283,7 @@ accel_curve: AccelCurve = undefined,
 // input/targets.zig
 pub const isAltHeld = input_targets.isAltHeld;
 pub const isSuperHeld = input_targets.isSuperHeld;
+pub const isShiftHeld = input_targets.isShiftHeld;
 pub const isPanModifierHeld = input_targets.isPanModifierHeld;
 pub const isDesktopZoomHeld = input_targets.isDesktopZoomHeld;
 pub const cursorOverTaskbar = input_targets.cursorOverTaskbar;
@@ -537,6 +542,7 @@ pub fn detachOutput(input: *Input, output: *Output) void {
 }
 
 pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
+    if (toplevel.backend == .xwayland) if (input.server.xwayland) |xw| xw.pointer_queue.forget(xw, toplevel.id);
     if (input.window_menu.references(toplevel)) input.window_menu.close();
     if (input.tab_drag == toplevel) {
         @import("input/tab_drop.zig").clear(input);

@@ -79,6 +79,7 @@ pub const themeEql = loader_compare.themeEql;
 pub const log = std.log.scoped(.config);
 
 pub const max_zoom_steps: u8 = 8;
+pub const max_column_widths: u8 = 8;
 pub const drag_scale_min: f32 = 1.0;
 pub const drag_scale_max: f32 = 1.10;
 pub const default_zoom_percents = [_]u8{ 100, 85, 70, 55 };
@@ -174,7 +175,17 @@ pub const RegionConfig = struct {
 
 pub const TaskbarItems = @import("taskbar_items.zig").Config;
 
-pub const DesktopMode = enum { canvas, workspaces };
+/// Canvas pans one shared view; the two tiled modes give each display its own
+/// workspaces, laid out as split tiles or a scrolling strip by default.
+pub const DesktopMode = enum {
+    canvas,
+    workspaces,
+    scrolling,
+
+    pub fn tiled(mode: DesktopMode) bool {
+        return mode != .canvas;
+    }
+};
 pub const dock_height_min: u32 = 48;
 pub const dock_height_max: u32 = 96;
 pub const dock_height_default: u32 = 68;
@@ -225,6 +236,13 @@ pub const CompositorConfig = struct {
     focus_zoom: types.FocusZoom = .boost,
     /// Explicit space around/between tiles. Unset uses the active mode's default.
     window_gap: ?u32 = null,
+    /// Scrolling: the column widths Super+W steps through, as fractions of
+    /// the screen, and a new column's width.
+    scroll_column_widths: [max_column_widths]f32 = .{ 1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0, 0, 0, 0, 0 },
+    scroll_column_width_count: u8 = 4,
+    scroll_column_width: f32 = 0.5,
+    /// Scrolling: when focus scrolls a column into view.
+    scroll_center: types.ScrollCenter = .on_overflow,
     /// Dragging a window to an open screen edge tiles or maximizes it.
     snap_to_edges: bool = true,
     /// Soft presentation-only lift while moving a window.
@@ -285,7 +303,7 @@ pub const CompositorConfig = struct {
     lock_on_suspend: bool = true,
 
     pub fn windowGap(self: CompositorConfig) u32 {
-        return self.window_gap orelse if (self.desktop_mode == .workspaces) 8 else 0;
+        return self.window_gap orelse if (self.desktop_mode.tiled()) 8 else 0;
     }
 };
 
@@ -313,6 +331,7 @@ pub const OutputConfig = struct {
     sdr_white: f32 = @import("output_config.zig").sdr_white_default,
     night_light: bool = true,
     gamma: f32 = 1.0,
+    scroll_direction: @import("output_config.zig").ScrollDirection = .auto,
 };
 
 pub const PolkitConfig = struct {
@@ -416,12 +435,12 @@ pub const Config = struct {
     }
 
     pub fn lookupKeybind(self: *const Config, mods: anytype, sym: xkb.Keysym) ?Action {
-        if (self.compositor.desktop_mode == .workspaces) return keybinds.lookupKey(self.workspace_keybinds, self.workspace_lookup, mods, sym);
+        if (self.compositor.desktop_mode.tiled()) return keybinds.lookupKey(self.workspace_keybinds, self.workspace_lookup, mods, sym);
         return keybinds.lookupKey(self.keybinds, self.lookup, mods, sym);
     }
 
     pub fn activeKeybinds(self: *const Config) []Keybind {
-        return if (self.compositor.desktop_mode == .workspaces) self.workspace_keybinds else self.keybinds;
+        return if (self.compositor.desktop_mode.tiled()) self.workspace_keybinds else self.keybinds;
     }
 
     pub fn sandboxAllowGroups(self: *const Config, app_id: ?[]const u8, engine: ?[]const u8) sandbox_allow.GroupSet {

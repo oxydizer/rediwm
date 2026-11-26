@@ -307,6 +307,7 @@ pub fn runFrame(output: *Output) void {
     if (observing) stats.global_stats.projection_cpu.record(stats.nowNs() -% projection_started);
     output.server.world.flushCameraEvent();
     const mini_map_animating = output.server.world.mini_map.tick(output, now_ms);
+    const indicator_animating = output.strip_indicator.tick(output, now_ms);
     // GPU timestamps enclose the scene submission, glass included (the output
     // pass blurs it). Polling happens later; no glFinish or synchronous reads.
     const gpu_active = if (output.server.gpu_timer) |timer| timer.begin() else false;
@@ -316,7 +317,7 @@ pub fn runFrame(output: *Output) void {
     else
         false;
     glass.Engine.hold(output.server.glass_engine, output.server.input.heldGlass());
-    glass.Engine.holdAll(output.server.glass_engine, output.server.world.holdingGlass());
+    scene_output.holdGlass(output.server.world.holdingGlass(output));
     var captured = false;
     if (output.server.screenshot_mgr) |sm| {
         captured = sm.handleOutputFrame(output);
@@ -410,7 +411,7 @@ pub fn runFrame(output: *Output) void {
     // Keep repainting every refresh interval until the last hover/press/FLIP
     // animation settles; otherwise chrome and the bar only redraw when a
     // client does.
-    const keep_going = minimize_animating or ribbons_animating or mini_map_animating or switcher_animating or osd_animating or dock_animating or bar_animating or chrome_animating or cc_animating or sm_animating or pm_animating or taskbar_popup_animating or notif_animating or desktop_animating or lock_animating or polkit_animating or reveal_animating;
+    const keep_going = minimize_animating or ribbons_animating or mini_map_animating or indicator_animating or switcher_animating or osd_animating or dock_animating or bar_animating or chrome_animating or cc_animating or sm_animating or pm_animating or taskbar_popup_animating or notif_animating or desktop_animating or lock_animating or polkit_animating or reveal_animating;
     output.late_animating = keep_going;
     // A pinned clock is advanced explicitly by IPC, which schedules its own
     // frame. Global window/taskbar springs must not spin between those steps.

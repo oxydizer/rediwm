@@ -354,7 +354,12 @@ pub fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.Rou
             const p = params orelse return error.InvalidRequest;
             const dx_v = p.get("dx") orelse return error.InvalidRequest;
             const dy_v = p.get("dy") orelse return error.InvalidRequest;
-            return .{ .scroll = .{ .dx = try parseF64(dx_v), .dy = try parseF64(dy_v) } };
+            var finger = false;
+            if (p.get("finger")) |v| {
+                if (v != .bool) return error.InvalidRequest;
+                finger = v.bool;
+            }
+            return .{ .scroll = .{ .dx = try parseF64(dx_v), .dy = try parseF64(dy_v), .finger = finger } };
         },
         .pinch => {
             const p = params orelse return error.InvalidRequest;
@@ -659,9 +664,15 @@ pub fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.Rou
                 .switch_workspace => return .{ .switch_workspace = .{ .workspace = @intCast(id) } },
                 .move_to_workspace => return .{ .move_to_workspace = .{ .id = try parseU64(p.get("id") orelse return error.InvalidRequest), .workspace = @intCast(id) } },
                 else => {
-                    const automatic = p.get("automatic") orelse return error.InvalidRequest;
-                    if (automatic != .bool) return error.InvalidRequest;
-                    return .{ .set_workspace_layout = .{ .workspace = @intCast(id), .automatic = automatic.bool } };
+                    // `automatic` is the older form: true follows the desktop mode.
+                    if (p.get("automatic")) |automatic| {
+                        if (automatic != .bool) return error.InvalidRequest;
+                        return .{ .set_workspace_layout = .{ .workspace = @intCast(id), .layout = if (automatic.bool) null else .floating } };
+                    }
+                    const value = p.get("layout") orelse return error.InvalidRequest;
+                    if (value != .string) return error.InvalidRequest;
+                    const layout = if (std.mem.eql(u8, value.string, "default")) null else std.meta.stringToEnum(@import("config").workspace_layout.Layout, value.string) orelse return error.InvalidRequest;
+                    return .{ .set_workspace_layout = .{ .workspace = @intCast(id), .layout = layout } };
                 },
             }
         },

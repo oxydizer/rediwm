@@ -203,7 +203,11 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
                 .wired => .ethernet,
                 .volume => if (bar.audio_muted) .volume_muted else .volume,
                 .power => .power,
-                .desktop_mode => if (bar.server.world.workspaces.active) .desktop_tiles else .desktop_canvas,
+                .desktop_mode => switch (bar.server.world.workspaces.mode) {
+                    .canvas => .desktop_canvas,
+                    .workspaces => .desktop_tiles,
+                    .scrolling => .desktop_scroll,
+                },
                 .input_source => unreachable,
             }, .color = .{ color.r, color.g, color.b, color.a } });
         }

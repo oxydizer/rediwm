@@ -79,7 +79,7 @@ pub fn resolveWindowPicker(output: *Output) ?PanelRoot {
 /// The taskbar's input source list: rows `source_<n>` and `input_settings`.
 pub fn resolveInputSources(output: *Output) ?PanelRoot {
     const menu = &output.server.input.window_menu;
-    if (menu.output != output or menu.node == null or !menu.sources) return null;
+    if (menu.output != output or menu.node == null or menu.tray_menu != .sources) return null;
     return .{ .root = &menu.picker_root, .box = menu.box };
 }
 

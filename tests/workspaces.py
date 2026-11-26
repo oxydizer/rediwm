@@ -219,8 +219,8 @@ desktop_switch_ms = 3000
                     canvas_icon = icon("canvas")
                     assert item["label"] == "Canvas", item
                     for target, label in (("workspaces", "Workspaces"), ("canvas", "Canvas")):
-                        b = mode_item()["global_box"]
-                        ipc.click_at(round(b["x"] + b["width"] / 2), round(b["y"] + b["height"] / 2))
+                        box = mode_item()["global_box"]
+                        ipc.click_at(round(box["x"] + box["width"] / 2), round(box["y"] + box["height"] / 2))
                         wait_for(lambda: (ipc.get_workspaces()[0]["name"] != "Canvas") == (target == "workspaces"), "taskbar item to " + target)
                         wait_for(lambda: f'desktop_mode = "{target}"' in cfg.read_text(), target + " saved by the item")
                         assert mode_item()["label"] == label, mode_item()
@@ -232,20 +232,27 @@ desktop_switch_ms = 3000
                     assert not ImageChops.difference(canvas_icon, icon("canvas-again")).getbbox(), "back to the Canvas icon"
                     mode(False)
                 ipc.action("reset_camera")
-                time.sleep(.4)
-                # Exercise the actual Desktop segmented control in both directions.
+                # The floating fixture overlaps the Canvas segment once Settings
+                # becomes a strip member. Put it away before testing the control.
+                ipc.minimize(b)
                 ipc.action("open_control_center")
-                time.sleep(.3)
+                ipc.wait_for_panel_settled("control_center")
+                settings = ipc.get_focused_window()["id"]
                 def widget_click(widget, fraction=.5):
-                    box = widget["box"]
-                    panel = ipc.get_shell_state()["control_center"]["box"]
-                    ipc.click_at(round(panel["x"] + box["x"] + box["width"] * fraction), round(panel["y"] + box["y"] + box["height"] / 2))
+                    box = widget["global_box"]
+                    ipc.click_at(round(box["x"] + box["width"] * fraction), round(box["y"] + box["height"] / 2))
                 widgets = ipc.get_widget_tree("control_center")["widgets"]
                 widget_click(next(w for w in widgets if w["label"] == "Desktop"))
-                for fraction, enabled in [(.75, True), (.25, False)]:
+                # Canvas, Workspaces and Scrolling share the control in thirds.
+                for fraction, layout in [(.5, "split"), (.85, "scrolling"), (.15, None)]:
+                    # A mode change queues a tiling reflow. After it runs, the
+                    # Settings frame and its responsive widget tree settle separately.
+                    ipc.wait_for_frame()
+                    ipc.wait_for("window_geometry_settled", window_id=settings, timeout_ms=10000)
+                    ipc.wait_for_panel_settled("control_center")
                     widget = next(w for w in ipc.get_widget_tree("control_center")["widgets"] if (w["path"] or "").endswith("/desktop_mode"))
                     widget_click(widget, fraction)
-                    wait_for(lambda: (ipc.get_workspaces()[0]["name"] != "Canvas") == enabled, "Settings mode control")
+                    wait_for(lambda: ipc.get_workspaces()[0].get("layout") == layout if layout else ipc.get_workspaces()[0]["name"] == "Canvas", f"Settings mode control ({layout or 'canvas'})")
                 assert '[keybinds]\n"Super+q" = "noop"' in (tmp / "rediwm-config.toml").read_text()
                 assert process.poll() is None
                 print(f"PASS: workspaces, visibility, preset, Settings and canvas restore ({outputs} outputs)", flush=True)
@@ -1195,7 +1202,7 @@ def persistence_controls():
                         chord("F9")
                         checkpoint = runtime / "layouts" / "checkpoint.toml"
                         wait_for(checkpoint.exists, "named workspace save")
-                        assert json.loads(checkpoint.read_text())["version"] == 2
+                        assert json.loads(checkpoint.read_text())["version"] == 3
                         ipc.action("set_workspace_layout", {"workspace": 1, "automatic": False})
                         wait_for(lambda: window(ids["First"])["placement"] == "floating", "floating layout")
                         chord("F10")
@@ -1230,7 +1237,8 @@ def persistence_controls():
                         snapshot = json.loads(saved_path.read_text())
                         assert len([w for w in snapshot["windows"] if w["app_id"] == "duplicate-app"]) == 2
                         assert [w["ordinal"] for w in snapshot["windows"] if w["app_id"] == "duplicate-app"] == [0, 1]
-                        assert next(w for w in snapshot["workspaces"] if w["id"] == 2)["automatic"] is False
+                        assert snapshot["version"] == 3
+                        assert next(w for w in snapshot["workspaces"] if w["id"] == 2)["layout"] == "floating"
                     else:
                         # Launch in reverse title order: membership is consumed once,
                         # and saved split order does not become the focus stack.

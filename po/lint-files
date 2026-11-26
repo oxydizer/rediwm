@@ -25,6 +25,7 @@ src/control_center/sections/bluetooth.zig
 src/control_center/sections/default_apps.zig
 src/control_center/sections/desktop.zig
 src/control_center/sections/display.zig
+src/control_center/sections/display_arrangement.zig
 src/control_center/sections/input.zig
 src/control_center/sections/network.zig
 src/control_center/sections/portals.zig

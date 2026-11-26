@@ -47,7 +47,7 @@ struct effect_cache {
     struct wlr_box region;         // device pixels the blur covers
     float sigma;                   // device pixels
     bool valid, seen;
-    // A hold moved the blur without re-taking it: re-take it once released.
+    // The blur or its backdrop changed during a hold: refresh on release.
     bool carried;
 };
 struct output_state {
@@ -127,28 +127,12 @@ static inline struct wlr_box device_box(struct wlr_box box, const struct output_
 static inline void device_region(pixman_region32_t *region, const struct output_view *v, bool expand) {
     output_view_region(region, v, expand);
 }
-struct collector {
-    struct rediwm_output_renderer *renderer;
-    const struct output_view *view;
-    // The logical boxes of the other enabled outputs.
-    struct wlr_box other[15];
-    int others;
-    pixman_region32_t covered;
-    // A window's items are contiguous and share one clip, so its cover is built
-    // once for the run rather than for each of its six or so items.
-    struct rediwm_clip cover_of;
-    pixman_region32_t cover;
-    bool has_cover;
-    // What the effects visited so far read (layout): items there are kept even
-    // where surfaces above hide them, for the blurs only (stage 5f).
-    pixman_region32_t reads;
-};
-
 // Shared between the parts (scene_output_*.c).
 void scene_output_render_ribbon(struct entry *, struct wlr_render_pass *,
     const struct output_view *, struct wlr_box, const pixman_region32_t *);
 extern uint64_t rediwm_scene_output_reblurs;
-bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *transport, void *data);
+bool scene_output_collect_frame(struct rediwm_output_renderer *, struct rediwm_scene_output *,
+    const struct output_view *, pixman_region32_t *covered);
 void scene_output_clear_entries(struct rediwm_output_renderer *r);
 bool scene_output_decide_effects(struct rediwm_output_renderer *r, struct output_state *os,
         struct rediwm_scene_output *out, const struct output_view *v, pixman_region32_t *changed);

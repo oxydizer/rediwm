@@ -122,10 +122,18 @@ pub const source =
     \\env = "none"                 # none | fcitx | ibus; daemon uses [[autostart]]
     \\
     \\[compositor]
-    \\# Optional automatically tiled workspaces; canvas remains the default.
-    \\# Workspace shortcuts are overridden separately in [keybinds.workspace].
-    \\# Super+Shift+W (toggle_desktop_mode) switches between the two.
-    \\desktop_mode = "canvas"
+    \\# Optional tiled workspaces; canvas remains the default. "workspaces" splits
+    \\# the screen between windows, "scrolling" puts them in columns on a strip
+    \\# that scrolls. Workspace shortcuts are overridden separately in
+    \\# [keybinds.workspace]. Super+Shift+W (toggle_desktop_mode) switches
+    \\# between Canvas and the tiled mode used last.
+    \\desktop_mode = "canvas"     # canvas | workspaces | scrolling
+    \\# Scrolling: the widths Super+W steps a column through (fractions of the
+    \\# screen), a new column's width, and when focus centres a column:
+    \\# never, on_overflow (one wider than the screen) or always.
+    \\scroll_column_widths = [0.333, 0.5, 0.667, 1.0]
+    \\scroll_column_width = 0.5
+    \\scroll_center = "on_overflow"
     \\floating_apps = []          # app ID glob patterns that float in workspaces
     \\# Let a fullscreen or borderless game that asks for it (VSync off) show
     \\# frames at once instead of at the next refresh. The picture may tear.
@@ -323,6 +331,7 @@ pub const source =
     \\# adaptive_sync = "auto"     # variable refresh: "auto" while a game fills it, "off", "always"
     \\# hdr = "off"                # "on": HDR10 where the display supports it (experimental)
     \\# sdr_white = 203            # SDR brightness on an HDR output, in nits (80 to 1000)
+    \\# scroll_direction = "auto"  # scrolling strips: "auto" (the longer side), "horizontal", "vertical"
     \\#
     \\# [[outputs]]
     \\# name = "DP-2"

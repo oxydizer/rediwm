@@ -49,6 +49,32 @@ interfaces, C headers or `src/platform/`. It proves compilation only.
 Run affected integration suites after building. Find suites and flags in
 [tests/](tests/) and build targets in [build/tests.zig](build/tests.zig).
 Compare failures with a clean HEAD worktree before calling them regressions.
+
+`python3 tests/scrolling.py` exercises keyboard scrolling, layer
+order, modal dialogs, and layout memory across a Canvas round trip and a
+restart. Repeat with `REDIWM_TEST_SCALE=1.5` for fractional-scale geometry.
+The `outputs` case uses two adjacent mixed-density displays to check that a
+column and its popups draw and receive input on their own output. It also
+checks surface enter and preferred scale, window transfers and monitor hotplug.
+The `direction` case puts a portrait display beside a landscape one: rows
+stacked down the portrait strip, arrow keys along and across it, the
+`scroll_direction` setting from IPC and Settings, and a strip that moves to the
+landscape display and back.
+The `gestures` case swipes and two-finger scrolls a strip (1:1 motion, the
+release snap and fling, the rubber band), steps columns with the wheel, resizes
+columns and windows by dragging, and drops windows between and into columns,
+including edge scrolling while dragging. `tests/scrolling_perf.py` adds the
+same swipe to its reveal/pan comparison. The `polish` case checks the strip
+overview (Super+A, Escape, picking a culled column), the position bar while
+the strip moves, and neighbours gliding when a column opens or closes.
+Run `python3 tests/scrolling.py x11` with GTK3 and Xwayland to check the first
+click and its client-local coordinates on each side of the monitor edge. The
+fixture also pauses its private Xwayland process to check queued clicks and
+windows disappearing during a handoff.
+Use `python3 tests/scrolling_perf.py` after a ReleaseSafe build to compare a
+keyboard reveal and a canvas pan over the same windows and distance, and to
+measure idle callbacks for culled and hidden windows.
+
 Integration dependencies: Python 3 + Pillow, C compiler, `wayland-scanner`,
 wayland-protocols and GLES2; D-Bus suites also need PyGObject,
 `dbus-run-session` and `busctl`. Check each suite for extra dependencies.

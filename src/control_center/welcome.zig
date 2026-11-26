@@ -70,7 +70,7 @@ fn group(a: A, direction: ui.layout.Direction, children: []const W) !W {
 }
 fn choice(cc: *panel.ControlCenter, a: A, tiling: bool) !W {
     const t = panel.palette();
-    const selected = (cc.server.config.compositor.desktop_mode == .workspaces) == tiling;
+    const selected = cc.server.config.compositor.desktop_mode.tiled() == tiling;
     var result = try group(a, .column, &.{
         .{ .kind = .container, .height = .{ .fixed = if (compact(cc)) 76 else 126 }, .underlay = .{ .owner = cc, .paint = if (tiling) paintTiles else paintStack } },
         text(if (tiling) i18n.tr("Tiling") else i18n.tr("Classic (stacking)"), 18, false),
@@ -266,7 +266,7 @@ fn apply(cc: *panel.ControlCenter) void {
             };
             return;
         },
-        .classic, .tiling => @import("../config_runtime/workspace_controls.zig").mode(cc.server, if (cc.welcome.action == .tiling) .workspaces else .canvas, true) catch |err| {
+        .classic, .tiling => @import("../config_runtime/workspace_controls.zig").mode(cc.server, if (cc.welcome.action == .tiling) cc.server.world.workspaces.last_tiled else .canvas, true) catch |err| {
             std.log.warn("could not save welcome layout: {}", .{err});
             cc.welcome.message = i18n.tr("Could not save your layout. Please try again.");
         },

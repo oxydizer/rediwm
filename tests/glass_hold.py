@@ -12,24 +12,27 @@ import subprocess
 import tempfile
 import time
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageStat
 
 from desktop_zoom import ROOT, build_client, wait_for
 from ipc_client import IPCClient, spawn_compositor, stop_process
+from scrolling import Session
 
 SCALE = 1.5
-TITLEBAR_HEIGHT = 55  # chrome.titlebar_height
 START, GRAB, DROP = (100, 60), (300, 80), (700, 330)
 
 
 def session(tmp, window_bg, drag, holds=False):
     """Drag from START to DROP, or place the window where a drag ended."""
     config = tmp / "config.toml"
-    config.write_text(f'[theme]\nwindow_bg = "{window_bg}"\n' if window_bg else "")
+    # Compare the same frame geometry during and after the grab.
+    config.write_text('[compositor]\ndrag_feedback = false\n' +
+                      (f'[theme]\nwindow_bg = "{window_bg}"\n' if window_bg else ""))
     runtime = Path(tempfile.mkdtemp(prefix="runtime-", dir=tmp))
     env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(runtime / "config"),
                XDG_CACHE_HOME=str(runtime / "cache"), XDG_DATA_HOME=str(runtime / "data"),
-               REDIWM_CONFIG=str(config), WLR_BACKENDS="headless", WLR_HEADLESS_OUTPUTS="1",
+               XDG_STATE_HOME=str(runtime / "state"), REDIWM_CONFIG=str(config), REDIWM_THEME=str(config),
+               REDIWM_IPC_AUTOMATION="1", WLR_BACKENDS="headless", WLR_HEADLESS_OUTPUTS="1",
                WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
                WLR_RENDERER_ALLOW_SOFTWARE="1", REDIWM_SCALE=str(SCALE),
                REDIWM_TEST_DECORATION="server", DBUS_SESSION_BUS_ADDRESS="")
@@ -94,8 +97,10 @@ def session(tmp, window_bg, drag, holds=False):
 
 
 def crop_titlebar(path, window):
-    box = [round(v * SCALE) for v in (window["x"], window["y"],
-                                      window["x"] + window["width"], window["y"] + TITLEBAR_HEIGHT)]
+    # Hover changes the window's outer ring during a grab. Sample glass
+    # inside the titlebar, clear of that ring and its rounded corners.
+    box = [round(v * SCALE) for v in (window["x"] + 16, window["y"] + 8,
+                                      window["x"] + window["width"] - 16, window["y"] + 32)]
     return Image.open(path).convert("RGB").crop(box)
 
 
@@ -112,7 +117,9 @@ def mixed_scale_idle():
     with tempfile.TemporaryDirectory(prefix="rediwm-glass-mixed-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        config = ('[compositor]\nxwayland = false\n[[outputs]]\nname = "HEADLESS-1"\nscale = 1\n'
+        # Mixer reconnects and clock ticks can repaint an otherwise idle bar.
+        config = ('[compositor]\nxwayland = false\ntaskbar_items = ["-volume", "-clock", "-network", "-battery"]\n'
+                  '[[outputs]]\nname = "HEADLESS-1"\nscale = 1\n'
                   '[[outputs]]\nname = "HEADLESS-2"\nscale = 1.5\n')
         process, log = spawn_compositor(
             tmp, scale="auto", outputs="2", config_content=config,
@@ -155,8 +162,47 @@ def log_text(tmp):
     return path.read_text()[-3000:] if path.exists() else ""
 
 
+def stationary_strip_backdrop():
+    """A stationary floating titlebar refreshes after a strip reveal."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-scroll-glass-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        s = Session(tmp, '[compositor]\nxwayland = false\ndesktop_mode = "scrolling"\n'
+                         'scroll_column_width = 1.0\n[theme]\nwindow_bg = "#10121580"\n'
+                         '[animations]\nreduced_motion = "off"\n')
+        try:
+            red = s.launch("red", REDIWM_TEST_EDGE="1")
+            blue = s.launch("blue")
+            panel = s.launch("floating")
+            s.ipc.action("tiling_action", {"action": "toggle_floating", "id": panel})
+            out = s.ipc.get_outputs()[0]
+            x, y = out["logical_width"] // 4, 2 * out["logical_height"] // 3
+            s.ipc.action("move_window_to", {"id": panel, "x": x, "y": y})
+            s.settled(panel)
+
+            def titlebar_sample(window):
+                path = tmp / f"panel-{window}.png"
+                s.ipc.focus_window(window)
+                # An overlapping window is safe to sample once its strip settles.
+                s.settled(panel)
+                s.ipc.screenshot(path=str(path))
+                scale = out["scale"]
+                with Image.open(path) as image:
+                    patch = image.crop(tuple(round(v * scale) for v in (x + 30, y + 8, x + 60, y + 18)))
+                    return ImageStat.Stat(patch).mean[:3]
+
+            r, _, b = titlebar_sample(red)
+            assert r > b + 10, ("initial red backdrop", r, b)
+            r, _, b = titlebar_sample(blue)
+            assert b > r + 10, ("settled blue backdrop", r, b)
+        finally:
+            s.stop()
+    print("PASS: stationary glass refreshes when the strip settles")
+
+
 def run():
     mixed_scale_idle()
+    stationary_strip_backdrop()
     with tempfile.TemporaryDirectory(prefix="rediwm-glass-hold-") as directory:
         tmp = Path(directory)
         build_client(tmp)

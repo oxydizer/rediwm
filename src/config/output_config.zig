@@ -9,6 +9,10 @@ pub const AdaptiveSync = enum { off, auto, always };
 /// can follow once tone mapping has been seen on several monitors (D4).
 pub const Hdr = enum { off, on };
 
+/// Which way a scrolling workspace's strip runs on this output. `auto`
+/// follows the longer side of the usable box, after the transform.
+pub const ScrollDirection = enum { auto, horizontal, vertical };
+
 /// SDR content brightness on an HDR output, in nits (cd/m²). The default is
 /// the BT.2408 reference white.
 pub const sdr_white_default: f32 = 203;
@@ -32,6 +36,7 @@ pub const Patch = struct {
     adaptive_sync: ?AdaptiveSync = null,
     hdr: ?Hdr = null,
     sdr_white: ?f32 = null,
+    scroll_direction: ?ScrollDirection = null,
 
     pub fn validate(p: Patch) !void {
         inline for (.{ "width", "height", "refresh_mhz" }) |field| {
@@ -51,7 +56,7 @@ pub const Patch = struct {
         if (p.width == null and p.height == null and p.refresh_mhz == null and
             p.x == null and p.y == null and p.scale == null and !p.auto_scale and !p.auto_position and
             p.enabled == null and p.primary == null and p.transform == null and p.adaptive_sync == null and
-            p.hdr == null and p.sdr_white == null)
+            p.hdr == null and p.sdr_white == null and p.scroll_direction == null)
             return error.EmptyOutputConfig;
     }
 };

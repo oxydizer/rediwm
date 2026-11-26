@@ -210,14 +210,25 @@ pub const OutputData = struct {
     hdr_refused: bool = false,
     /// `[[outputs]] sdr_white`: SDR brightness on an HDR output, in nits.
     sdr_white: f32 = 203,
+    /// `[[outputs]] scroll_direction`: "auto", "horizontal" or "vertical".
+    scroll_direction: []const u8 = "auto",
+    /// The direction a scrolling strip runs here, with "auto" resolved.
+    scroll_direction_resolved: []const u8 = "horizontal",
 };
 
 pub const WorkspaceData = struct {
     is_visible: bool = true,
     output: ?[]const u8 = null,
+    /// Whether the workspace tiles (split or scrolling); `layout` says how.
     automatic: bool = false,
+    layout: []const u8 = "floating",
     window_gap: u32 = 0,
     nodes: []const @import("config").workspace_layout.Node = &.{},
+    /// A scrolling strip: its columns, where it is scrolled to, and the
+    /// direction it scrolls on its display ("horizontal" or "vertical").
+    columns: []const @import("config").workspace_layout.Column = &.{},
+    view: f64 = 0,
+    direction: ?[]const u8 = null,
     id: u64,
     name: ?[]const u8 = null,
     is_focused: bool = false,

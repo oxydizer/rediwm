@@ -72,10 +72,14 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
         }
     }
 
+    const previous_width = toplevel.chrome_width;
+    const previous_height = toplevel.chrome_height;
     toplevel.syncChrome(true, nowMs()) catch |err| {
         log.err("handleCommit: could not update window decoration: {}", .{err});
     };
     if (toplevel.in_world) if (toplevel.server.layout_autosave) |autosave| {
+        if (toplevel.auto_target == null and
+            (toplevel.chrome_width != previous_width or toplevel.chrome_height != previous_height)) autosave.changed();
         autosave.mapped(toplevel);
         autosave.finishMapped(toplevel);
     };
@@ -179,7 +183,11 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     }
 
     toplevel.server.world.workspaces.mapped(toplevel);
-    const want_focus = (if (inherited_placeholder != null) ph_had_focus else (toplevel.open_rules.focus orelse !mapsBehindGame(toplevel))) and @import("../workspaces.zig").visible(toplevel);
+    const restore_focus = if (toplevel.server.layout_autosave) |autosave|
+        (if (autosave.workspace_restore) |*restore| restore.takesMapFocus(toplevel) else true)
+    else
+        true;
+    const want_focus = restore_focus and (if (inherited_placeholder != null) ph_had_focus else (toplevel.open_rules.focus orelse !mapsBehindGame(toplevel))) and @import("../workspaces.zig").visible(toplevel);
     if (want_focus) {
         toplevel.needs_attention = false;
         toplevel.server.world.toplevels.prepend(toplevel);

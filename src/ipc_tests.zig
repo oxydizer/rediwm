@@ -445,6 +445,8 @@ test "workspace controls validate IDs, spacing, patterns and mode" {
         .{ "switch_workspace", "{\"workspace\":0}" },
         .{ "move_to_workspace", "{\"id\":7,\"workspace\":33}" },
         .{ "set_workspace_layout", "{\"workspace\":2,\"automatic\":1}" },
+        .{ "set_workspace_layout", "{\"workspace\":2,\"layout\":\"spiral\"}" },
+        .{ "set_workspace_layout", "{\"workspace\":2}" },
         .{ "set_window_gap", "{\"gap\":513}" },
         .{ "set_floating_apps", "{\"apps\":[true]}" },
         .{ "set_desktop_mode", "{\"mode\":\"unknown\"}" },

@@ -6,6 +6,7 @@ const sn = @import("../node.zig");
 const Server = @import("../Server.zig");
 const Keyboard = @import("../Keyboard.zig");
 const Toplevel = @import("../Toplevel.zig");
+const Output = @import("../Output.zig");
 const gpa = @import("../main.zig").gpa;
 const Legacy = @import("text_input_v1.zig");
 const Self = @This();
@@ -479,10 +480,12 @@ pub fn updatePopups(self: *Self) void {
             var sy: i32 = 0;
             _ = node.coords(&sx, &sy);
             var scale: f64 = 1;
+            var home: ?*Output = null;
             var x: f64 = @floatFromInt(sx);
             var y: f64 = @floatFromInt(sy);
             if (Toplevel.fromSurface(self.server, surface)) |top| {
-                if (top.minimized or !top.in_world or top.backend != .xdg) break :visible false;
+                if (!top.in_world or !top.frame_tree.node.enabled or !@import("../window_tabs.zig").visible(top) or top.backend != .xdg) break :visible false;
+                home = @import("../workspaces.zig").outputFor(top);
                 scale = top.worldScale();
                 const origin = top.frameWorld(x - @as(f64, @floatFromInt(top.x)), y - @as(f64, @floatFromInt(top.y)));
                 const frame = self.server.world.toLayout(@floatFromInt(top.x), @floatFromInt(top.y));
@@ -491,6 +494,7 @@ pub fn updatePopups(self: *Self) void {
                 var on_output = false;
                 var outputs = self.server.outputs.iterator(.forward);
                 while (outputs.next()) |out| {
+                    if (home != null and out != home) continue;
                     if (!out.isAvailable()) continue;
                     var box: wlr.Box = undefined;
                     self.server.output_layout.getBox(out.wlr_output, &box);
@@ -510,7 +514,8 @@ pub fn updatePopups(self: *Self) void {
             const ry: i64 = @intFromFloat(@round(y + @as(f64, @floatFromInt(rect.y)) * scale));
             const rw: i64 = @intFromFloat(@round(@as(f64, @floatFromInt(@max(0, rect.width))) * scale));
             const rh: i64 = @intFromFloat(@round(@as(f64, @floatFromInt(@max(0, rect.height))) * scale));
-            const output = @import("../Output.zig").atLayout(self.server, @floatFromInt(wireCoordinate(rx)), @floatFromInt(wireCoordinate(ry))) orelse self.server.getDefaultOutput() orelse break :visible false;
+            const output = home orelse Output.atLayout(self.server, @floatFromInt(wireCoordinate(rx)), @floatFromInt(wireCoordinate(ry))) orelse self.server.getDefaultOutput() orelse break :visible false;
+            if (!@import("../projection.zig").setTreeOutput(&popup.tree.node, home)) break :visible false;
             const usable = output.usableBox();
             const pw = popup.popup.surface.current.width;
             const ph = popup.popup.surface.current.height;

@@ -276,6 +276,8 @@ pub fn parseCommand(cli: FlagParser, arg: []const u8) !void {
                     patch.hdr = std.meta.stringToEnum(@typeInfo(@TypeOf(patch.hdr)).optional.child, value) orelse return error.InvalidHdr;
                 } else if (std.mem.eql(u8, option, "--sdr-white")) {
                     patch.sdr_white = try std.fmt.parseFloat(f32, value);
+                } else if (std.mem.eql(u8, option, "--scroll-direction")) {
+                    patch.scroll_direction = std.meta.stringToEnum(@typeInfo(@TypeOf(patch.scroll_direction)).optional.child, value) orelse return error.InvalidScrollDirection;
                 } else {
                     var matched = false;
                     inline for (.{ "width", "height", "refresh_mhz", "x", "y" }, .{ "--width", "--height", "--refresh-mhz", "--x", "--y" }) |field, flag| {

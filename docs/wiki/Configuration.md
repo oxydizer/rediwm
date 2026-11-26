@@ -148,7 +148,7 @@ For example, `taskbar_items = ["left:start", "left:windows", "right:capture", "r
 "right:volume", "right:clock", "-right:power"]` is the default. The keyboard layout item
 (`input_source`) is described under "Keyboard layouts and input methods"; older
 lists gain it before Volume, automatic. The desktop mode item (`desktop_mode`)
-switches between Canvas and Workspaces like Super+Shift+W and shows the current
+switches between Canvas and the last tiled mode like Super+Shift+W and shows the current
 mode; it is off by default, and older lists gain it hidden before the keyboard
 layout.
 Wi-Fi and Ethernet are automatic (the `~` prefix): Wi-Fi shows only when the
@@ -192,15 +192,19 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `taskbar_items` | Start and window list left, tray/status items right, Power hidden | ordered `section:item` entries; prefix with `-` to hide an item |
 | `focus_follows_mouse` | `false` | |
 | `canvas_columns`, `canvas_rows` | `3`, `3` | 1 to 10 |
-| `mini_map_enabled` | `true` | |
+| `mini_map_enabled` | `true` | also the position bar of a scrolling strip |
 | `mini_map_position` | `"bottom_right"` | `bottom_left`, `bottom_center`, `bottom_right` |
-| `mini_map_hide_ms` | `1500` | 500 to 10000 |
+| `mini_map_hide_ms` | `1500` | 500 to 10000; also how long the strip's position bar stays after it settles |
 | `desktop_icons_fixed` | `true` | |
 | `desktop_switch_ms` | `220` | Super+arrow slide, 100 to 3000 |
 | `zoom_steps` | `[1.0, 0.85, 0.70, 0.55, 0.40]` | |
 | `camera_zoom_min`, `camera_zoom_max` | `0.25`, `1.0` | |
 | `focus_zoom` | `"boost"` | `keep`, `boost`, `camera` |
-| `window_gap` | `0` | px between snapped windows |
+| `desktop_mode` | `"canvas"` | `canvas`, `workspaces` (split tiles), or `scrolling` (columns on a strip; its direction is per display, `[[outputs]] scroll_direction`) |
+| `scroll_column_width` | `0.5` | fraction of the viewport used for a new column, from 0.05 to 1 |
+| `scroll_column_widths` | `[0.333, 0.5, 0.667, 1.0]` | width presets for Super+W, up to eight fractions from 0.05 to 1 |
+| `scroll_center` | `"on_overflow"` | `never`, `on_overflow` (centre a column wider than the viewport), or `always` |
+| `window_gap` | `0` on Canvas, `8` in tiled modes | px between snapped windows, split tiles and columns |
 | `snap_to_edges` | `true` | |
 | `dodge_file_drags` | `true` | file manager slides aside while you drag a file out |
 | `drag_feedback` | `true` | softly lift a window during a move drag; suppressed by reduced motion |
@@ -252,7 +256,14 @@ night_light = false    # never tint this monitor
 gamma = 1.0            # 0.5 to 2.0
 hdr = "off"            # "on": HDR10 where the display supports it
 sdr_white = 203        # SDR brightness on an HDR output, nits (80 to 1000)
+scroll_direction = "auto" # scrolling strips: "auto", "horizontal", "vertical"
 ```
+
+`scroll_direction` sets which way a scrolling workspace runs on that display.
+`auto` follows the display's longer side after rotation: sideways on a
+landscape display, up and down on a portrait one. A workspace takes the
+direction of the display showing it, and keeps its columns and their widths
+when that changes.
 
 Omit coordinates for automatic left-to-right placement. Scale and placement
 apply live. `REDIWM_SCALE` overrides every output. Changes from Settings,

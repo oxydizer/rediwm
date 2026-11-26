@@ -115,7 +115,7 @@ pub const tickCamera = world_camera.tickCamera;
 pub const rebindPan = world_camera.rebindPan;
 
 pub fn deinit(world: *World) void {
-    world.workspaces.tiler.deinit();
+    world.workspaces.deinit();
     world.mini_map.deinit();
     Projection.destroy(world.projection);
 }

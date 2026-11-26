@@ -13,7 +13,6 @@ const wl = wayland.server.wl;
 // Only bind enough to make binding wlr/xwayland.h possible
 // Consider full xcb bindings in the future if needed
 const xcb = struct {
-    const GenericEvent = opaque {};
     const Pixmap = u32;
     const Window = u32;
     const Atom = u32;
@@ -46,6 +45,34 @@ const XwaylandShellV1 = extern struct {
 };
 
 pub const Xwayland = extern struct {
+    // XWM connection and event types from the same headers as wlroots.
+    pub const Xcb = struct {
+        pub const Event = c.xcb_generic_event_t;
+        pub const ClientMessage = c.xcb_client_message_event_t;
+        pub const client_message = c.XCB_CLIENT_MESSAGE;
+        pub const cardinal = c.XCB_ATOM_CARDINAL;
+        pub const substructure_redirect = c.XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT;
+        pub const getSetup = c.xcb_get_setup;
+        pub const rootsIterator = c.xcb_setup_roots_iterator;
+        pub const sendEvent = c.xcb_send_event;
+        pub const fd = c.xcb_get_file_descriptor;
+        pub const flush = c.xcb_flush;
+        pub const hasError = c.xcb_connection_has_error;
+        pub const RawButton = c.xcb_input_raw_button_press_event_t;
+        pub const VersionCookie = c.xcb_input_xi_query_version_cookie_t;
+        pub const EventMask = c.xcb_input_event_mask_t;
+        pub const generic_event = c.XCB_GE_GENERIC;
+        pub const press = c.XCB_INPUT_RAW_BUTTON_PRESS;
+        pub const release = c.XCB_INPUT_RAW_BUTTON_RELEASE;
+        pub const all_master = c.XCB_INPUT_DEVICE_ALL_MASTER;
+        pub const raw_buttons = c.XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_PRESS | c.XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_RELEASE;
+        pub const input_id = &c.xcb_input_id;
+        pub const prefetchExtension = c.xcb_prefetch_extension_data;
+        pub const getExtension = c.xcb_get_extension_data;
+        pub const queryVersion = c.xcb_input_xi_query_version;
+        pub const versionReply = c.xcb_input_xi_query_version_reply;
+        pub const selectEvents = c.xcb_input_xi_select_events;
+    };
     pub const event = struct {
         pub const RemoveStartupInfo = extern struct {
             id: [*:0]const u8,
@@ -72,7 +99,7 @@ pub const Xwayland = extern struct {
         remove_startup_info: wl.Signal(*event.RemoveStartupInfo),
     },
 
-    user_event_handler: ?*const fn (*Xwayland, *xcb.GenericEvent) callconv(.c) bool,
+    user_event_handler: ?*const fn (*Xwayland, *Xcb.Event) callconv(.c) bool,
 
     data: ?*anyopaque,
 
@@ -94,6 +121,9 @@ pub const Xwayland = extern struct {
 
     const wlr_xwayland_set_seat = abi.bind(fn (xwayland: *Xwayland, seat: *wlr.Seat) callconv(.c) void, c.wlr_xwayland_set_seat);
     pub const setSeat = wlr_xwayland_set_seat;
+
+    const wlr_xwayland_get_xwm_connection = abi.bind(fn (xwayland: *Xwayland) callconv(.c) ?*c.xcb_connection_t, c.wlr_xwayland_get_xwm_connection);
+    pub const getXwmConnection = wlr_xwayland_get_xwm_connection;
 };
 
 pub const XwaylandSurface = extern struct {

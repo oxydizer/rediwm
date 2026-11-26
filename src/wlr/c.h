@@ -74,6 +74,7 @@
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/xwayland/shell.h>
 #include <wlr/xwayland/server.h>
+#include <xcb/xinput.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_input_device.h>

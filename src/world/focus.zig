@@ -266,6 +266,8 @@ pub fn peekTarget(world: *World) ?*Toplevel {
 pub fn tickHover(world: *World, now_ms: i64) bool {
     var animating = false;
     if (world.tickCamera(now_ms)) animating = true;
+    // Strips moved by hand place their windows before they are drawn.
+    if (@import("../scroll_motion.zig").tick(world.server, now_ms)) animating = true;
     const target = world.peekTarget();
     const focused = @import("../ipc/handlers.zig").findFocusedToplevel(world.server);
     var it = world.toplevels.iterator(.forward);

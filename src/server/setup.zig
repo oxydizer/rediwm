@@ -304,13 +304,10 @@ fn initServices(server: *Server) CompositorError!void {
         break :blk null;
     };
 
-    // Layout autosave (periodic save and the startup restore) is off for now:
-    // the restore moves windows seconds after login. Every user checks for
-    // null, so re-enabling is uncommenting this.
-    // if (!greeter) server.layout_autosave = layout_autosave_mod.Autosave.create(server) catch |err| blk: {
-    //     log.warn("init: could not create layout autosave: {}", .{err});
-    //     break :blk null;
-    // };
+    if (!greeter) server.layout_autosave = @import("../session/layout_autosave.zig").Autosave.create(server) catch |err| blk: {
+        log.warn("init: could not create workspace autosave: {}", .{err});
+        break :blk null;
+    };
 
     server.power_policy.init(server);
     errdefer server.power_policy.deinit();

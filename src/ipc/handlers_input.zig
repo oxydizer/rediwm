@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const wlr = @import("wlroots");
+const wl = @import("wayland").server.wl;
 const Server = @import("../Server.zig");
 const Output = @import("../Output.zig");
 const protocol = @import("protocol.zig");
@@ -94,11 +95,14 @@ pub fn handleInputAction(
         },
         .scroll => |p| {
             const now = VirtualInput.nowMs();
-            if (p.dy != 0) {
-                server.input.processAxis(now, .vertical_scroll, p.dy, 0, .continuous, .identical);
+            const source: wl.Pointer.AxisSource = if (p.finger) .finger else .continuous;
+            // Touchpad fingers lifting: a stop on both axes.
+            const stop = p.finger and p.dx == 0 and p.dy == 0;
+            if (p.dy != 0 or stop) {
+                server.input.processAxis(now, .vertical_scroll, p.dy, 0, source, .identical);
             }
-            if (p.dx != 0) {
-                server.input.processAxis(now, .horizontal_scroll, p.dx, 0, .continuous, .identical);
+            if (p.dx != 0 or stop) {
+                server.input.processAxis(now, .horizontal_scroll, p.dx, 0, source, .identical);
             }
             server.input.seat.pointerNotifyFrame();
             return .{ .ok = .handled };

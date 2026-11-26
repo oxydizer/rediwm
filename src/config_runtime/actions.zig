@@ -23,7 +23,7 @@ pub fn executeAction(server: *Server, action: Action) void {
         else => {},
     };
     switch (action) {
-        .toggle_floating, .toggle_split, .toggle_workspace_tiling, .swap_left, .swap_right, .swap_up, .swap_down, .resize_split_left, .resize_split_right, .resize_split_up, .resize_split_down => @import("../auto_tiling.zig").execute(server, focusedToplevel(server), std.meta.stringToEnum(keybinds.TilingAction, @tagName(action)).?),
+        .toggle_floating, .toggle_split, .toggle_workspace_tiling, .swap_left, .swap_right, .swap_up, .swap_down, .resize_split_left, .resize_split_right, .resize_split_up, .resize_split_down, .consume_left, .consume_right, .cycle_column_width => @import("../auto_tiling.zig").execute(server, focusedToplevel(server), std.meta.stringToEnum(keybinds.TilingAction, @tagName(action)).?),
         .noop => {},
         .workspace => |id| server.world.workspaces.switchTo(server, id),
         .move_to_workspace => |id| if (focusedToplevel(server)) |top| server.world.workspaces.moveTo(top, id),
@@ -295,6 +295,13 @@ const Dir = enum { left, right, up, down };
 
 fn focusDirection(server: *Server, dir: Dir) void {
     const focused = focusedToplevel(server) orelse return;
+    // A strip is navigated in its own order; culled columns have no place on screen.
+    if (@import("../scroll_tiling.zig").focus(server, focused, switch (dir) {
+        .left => .left,
+        .right => .right,
+        .up => .up,
+        .down => .down,
+    })) return;
     const fx = focused.x + @divTrunc(focused.chrome_width, 2);
     const fy = focused.y + @divTrunc(focused.chrome_height, 2);
     var best: ?*Toplevel = null;

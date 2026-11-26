@@ -8034,3 +8034,104 @@ msgstr "ssh seguridad pública privada identidad huella frase contraseña"
 #: src/system_monitor/app_footer.zig
 msgid "GPU"
 msgstr "GPU"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Centre the focused column"
+msgstr "Centrar la columna enfocada"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Consume or Expel Left"
+msgstr "Unir o separar hacia la izquierda"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Consume or Expel Right"
+msgstr "Unir o separar hacia la derecha"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Cycle Column Width"
+msgstr "Alternar el ancho de la columna"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Full width"
+msgstr "Todo el ancho"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Half"
+msgstr "La mitad"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "New column width"
+msgstr "Ancho de las columnas nuevas"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "New windows open as columns on a strip that scrolls. Super+arrows move along it; Super+W changes a column's width."
+msgstr "Las ventanas nuevas se abren en columnas sobre una banda desplazable. Usa Super+flechas para recorrerla y Super+W para cambiar el ancho de una columna."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "One third"
+msgstr "Un tercio"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Scrolling"
+msgstr "Desplazamiento"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: join the column to the left, or leave a shared column."
+msgstr "En modo de desplazamiento, une la ventana a la columna de la izquierda o sepárala de la columna compartida."
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: join the column to the right, or leave a shared column."
+msgstr "En modo de desplazamiento, une la ventana a la columna de la derecha o sepárala de la columna compartida."
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: step the focused column through the preset widths."
+msgstr "En modo de desplazamiento, cambia al siguiente ancho predefinido de la columna enfocada."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Super+W steps a column through the widths; Super+[ and Super+] move a window into the next column or out of its own."
+msgstr "Super+W alterna entre los anchos de columna. Super+[ y Super+] mueven una ventana a la columna contigua o la separan en una columna propia."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Two thirds"
+msgstr "Dos tercios"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "When wider than the screen"
+msgstr "Si supera el ancho de la pantalla"
+
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Horizontal"
+msgstr "Horizontal"
+
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Vertical"
+msgstr "Vertical"
+
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Scrolling direction"
+msgstr "Dirección de desplazamiento"
+
+#: src/control_center/search_index.zig
+#, fuzzy
+msgid "scrolling strip columns rows vertical horizontal portrait"
+msgstr "scrolling strip columns rows vertical horizontal portrait desplazamiento tira columnas filas retrato"

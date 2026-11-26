@@ -1,5 +1,4 @@
-//! The taskbar's window actions, and the input source list its keyboard
-//! layout item opens. Input owns one menu across all outputs.
+//! Window actions and taskbar item menus. Input owns one menu across all outputs.
 const i18n = @import("i18n");
 const std = @import("std");
 const wlr = @import("wlroots");
@@ -10,6 +9,7 @@ const Output = @import("../Output.zig");
 const Dock = @import("../Dock.zig");
 const Buffer = @import("../panel_buffer.zig").PanelBuffer;
 const ui = @import("ui");
+const DesktopMode = @import("config").loader.DesktopMode;
 const gpa = @import("../main.zig").gpa;
 
 pub const Menu = struct {
@@ -32,19 +32,19 @@ pub const Menu = struct {
     visible_rows: usize = 0,
     picker_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
     picker_root: ui.layout.Widget = .{ .kind = .container },
-    /// The input source list (`openSources`): one row per source, then Settings.
-    sources: bool = false,
-    source_count: usize = 0,
+    tray_menu: TrayMenu = .none,
     anchor_x: i32 = 0,
 
+    const TrayMenu = union(enum) { none, sources: usize, desktop_mode };
     const padding = 6;
     const row_height = 32;
     const separator = 7;
-    const Action = enum {
+    const Action = union(enum) {
         close,
         force_close,
         remove,
         unpin,
+        desktop_mode: DesktopMode,
 
         fn label(action: Action) []const u8 {
             return switch (action) {
@@ -52,11 +52,17 @@ pub const Menu = struct {
                 .force_close => i18n.tr("Force Close"),
                 .remove => i18n.tr("Remove from dock"),
                 .unpin => i18n.tr("Unpin from dock"),
+                .desktop_mode => |mode| switch (mode) {
+                    .canvas => i18n.tr("Canvas"),
+                    .workspaces => i18n.tr("Workspaces"),
+                    .scrolling => i18n.tr("Scrolling"),
+                },
             };
         }
     };
 
     fn actions(self: *const Menu) []const Action {
+        if (self.tray_menu == .desktop_mode) return &.{ .{ .desktop_mode = .canvas }, .{ .desktop_mode = .workspaces }, .{ .desktop_mode = .scrolling } };
         if (self.pinned) return if (self.target == null) &.{.unpin} else &.{ .close, .force_close, .unpin };
         // Only a shortcut can be removed; a running app always stays.
         if (self.shortcut != null and self.dock != null) return if (self.target == null) &.{.remove} else &.{ .close, .force_close, .remove };
@@ -65,27 +71,37 @@ pub const Menu = struct {
 
     pub fn open(self: *Menu, bar: *Taskbar, target: *Toplevel, x: i32) void {
         const output = Output.fromWlr(bar.wlr_output) orelse return;
-        self.openOn(output, bar, null, target, null, null, x, 0, &.{}, 0);
+        self.openOn(output, bar, null, target, null, null, x, 0, &.{}, .none);
+    }
+
+    pub fn openDesktopMode(self: *Menu, bar: *Taskbar) void {
+        const output = Output.fromWlr(bar.wlr_output) orelse return;
+        const box = bar.itemBox(.desktop_mode) orelse return;
+        self.openOn(output, bar, null, null, null, null, box.x + @divTrunc(box.width, 2), 0, &.{}, .desktop_mode);
+    }
+
+    pub fn desktopModeChanged(self: *Menu) void {
+        if (self.tray_menu == .desktop_mode) self.paint();
     }
 
     /// The input sources, anchored above (or below) the taskbar item at `x`.
     pub fn openSources(self: *Menu, bar: *Taskbar, x: i32) void {
         const sources = bar.server.input_sources orelse return;
         const output = Output.fromWlr(bar.wlr_output) orelse return;
-        if (self.sources and self.node != null and self.bar == bar) {
+        if (self.tray_menu == .sources and self.node != null and self.bar == bar) {
             self.close();
             return;
         }
-        self.openOn(output, bar, null, null, null, null, x - 140 + @divTrunc(Taskbar.trayHit(), 2), 0, &.{}, sources.sources().len);
+        self.openOn(output, bar, null, null, null, null, x + @divTrunc(Taskbar.trayHit(), 2), 0, &.{}, .{ .sources = sources.sources().len });
         self.anchor_x = x;
     }
 
     /// The list or the active source changed while it is open.
     pub fn sourcesChanged(self: *Menu) void {
-        if (!self.sources or self.node == null) return;
+        if (self.tray_menu != .sources or self.node == null) return;
         const bar = self.bar orelse return;
         const count = if (bar.server.input_sources) |s| s.sources().len else 0;
-        if (count != self.source_count) {
+        if (count != self.tray_menu.sources) {
             // A new height; open again in place, keeping the keyboard selection.
             const selected = self.selected;
             const x = self.anchor_x;
@@ -101,18 +117,16 @@ pub const Menu = struct {
     }
 
     pub fn openDock(self: *Menu, dock: *Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, pin: ?[]const u8, x: i32, y: i32) void {
-        self.openOn(dock.output orelse return, null, dock, target, shortcut, pin, x, y, &.{}, 0);
+        self.openOn(dock.output orelse return, null, dock, target, shortcut, pin, x, y, &.{}, .none);
     }
 
     pub fn openDockWindows(self: *Menu, dock: *Dock, ids: []const u64, shortcut: ?Dock.Shortcut, x: i32, y: i32) void {
-        self.openOn(dock.output orelse return, null, dock, null, shortcut, null, x, y, ids, 0);
+        self.openOn(dock.output orelse return, null, dock, null, shortcut, null, x, y, ids, .none);
     }
 
-    /// `sources` > 0 opens the input source list with that many sources.
-    fn openOn(self: *Menu, output: *Output, bar: ?*Taskbar, dock: ?*Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, pin: ?[]const u8, x: i32, pointer_y: i32, ids: []const u64, sources: usize) void {
+    fn openOn(self: *Menu, output: *Output, bar: ?*Taskbar, dock: ?*Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, pin: ?[]const u8, x: i32, pointer_y: i32, ids: []const u64, tray_menu: TrayMenu) void {
         self.close();
-        self.sources = sources > 0;
-        self.source_count = sources;
+        self.tray_menu = tray_menu;
         const server = output.server;
         const input = &server.input;
         if (input.open_start_menu) |other| if (Output.fromWlr(other.wlr_output)) |out| out.closeStartMenu();
@@ -122,7 +136,7 @@ pub const Menu = struct {
         if (input.open_calendar) |other| other.output.closeCalendar();
         if (server.tray) |tray| tray.closeMenu();
         const bounds = output.dockAreaBox();
-        const width = @min(if (ids.len > 0) @as(i32, 360) else if (self.sources) @as(i32, 280) else 216, bounds.width);
+        const width = @min(if (ids.len > 0) @as(i32, 360) else if (tray_menu == .sources) @as(i32, 280) else 216, bounds.width);
         self.node = server.overlay_tree.createSceneBuffer(null) catch return;
         if (ids.len > 0) self.window_ids = gpa.dupe(u64, ids) catch {
             self.close();
@@ -147,7 +161,7 @@ pub const Menu = struct {
         self.visible_rows = if (ids.len > 0) @min(self.itemCount(), capacity) else self.itemCount();
         const count: i32 = @intCast(self.visible_rows);
         const height = padding * 2 + self.rowHeight() * count + self.rowGap() * (count - 1);
-        var menu_x = if (ids.len > 0) x - @divTrunc(width, 2) else x;
+        var menu_x = if (ids.len > 0 or tray_menu != .none) x - @divTrunc(width, 2) else x;
         var y = output.taskbarPopupY(height, 4);
         if (dock) |d| switch (d.position) {
             .top => y = d.box.y + d.box.height + 4,
@@ -177,7 +191,7 @@ pub const Menu = struct {
     }
 
     pub fn close(self: *Menu) void {
-        const was_sources = self.sources and self.node != null;
+        const was_sources = self.tray_menu == .sources and self.node != null;
         const bar = self.bar;
         if (self.node) |node| node.node.destroy();
         gpa.free(self.window_ids);
@@ -203,11 +217,11 @@ pub const Menu = struct {
     }
 
     fn rowGap(self: *const Menu) i32 {
-        return if (self.window_ids.len > 0 or self.sources) 2 else separator;
+        return if (self.window_ids.len > 0 or self.tray_menu != .none) 2 else separator;
     }
 
     fn itemCount(self: *const Menu) usize {
-        if (self.sources) return self.source_count + 1;
+        if (self.tray_menu == .sources) return self.tray_menu.sources + 1;
         return if (self.window_ids.len > 0) self.window_ids.len else self.actions().len;
     }
 
@@ -300,9 +314,9 @@ pub const Menu = struct {
 
     fn activate(self: *Menu) void {
         const index = self.selected orelse return;
-        if (self.sources) {
+        if (self.tray_menu == .sources) {
             const output = self.output.?;
-            const count = self.source_count;
+            const count = self.tray_menu.sources;
             self.close();
             if (index < count) {
                 if (output.server.input_sources) |sources| _ = sources.select(index);
@@ -321,6 +335,7 @@ pub const Menu = struct {
             return;
         }
         const action = self.actions()[index];
+        const server = self.output.?.server;
         const target = self.target;
         const dock = self.dock;
         const shortcut = self.shortcut;
@@ -333,6 +348,7 @@ pub const Menu = struct {
             .force_close => if (target) |t| t.forceClose(),
             .remove => if (dock) |d| if (shortcut) |s| d.removeShortcut(s),
             .unpin => if (dock) |d| d.unpinApp(pin),
+            .desktop_mode => |mode| @import("../config_runtime/workspace_controls.zig").chooseMode(server, mode),
         }
     }
 
@@ -343,22 +359,26 @@ pub const Menu = struct {
         const buf = Buffer.create(self.box.width, self.box.height, scale) catch return;
         defer buf.base.drop();
         var renderer = ui.paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
-        const t = if (self.window_ids.len > 0) ui.theme.shellPalette() else ui.theme.global;
+        const picker = self.window_ids.len > 0 or self.tray_menu == .desktop_mode;
+        const t = if (picker) ui.theme.shellPalette() else ui.theme.global;
         renderer.palette = t;
         const width: f32 = @floatFromInt(self.box.width);
-        renderer.fillRect(0, 0, width, @floatFromInt(self.box.height), .{ .color = if (self.window_ids.len > 0) t.start_menu_bg else t.window_bg, .radius = 12, .border_width = 1, .border_color = t.border });
-        if (self.sources) self.paintSources(&renderer) else if (self.window_ids.len > 0) self.paintWindows(&renderer) else for (self.actions(), 0..) |action, i| {
+        renderer.fillRect(0, 0, width, @floatFromInt(self.box.height), .{ .color = if (picker) t.start_menu_bg else t.window_bg, .radius = 12, .border_width = 1, .border_color = t.border });
+        if (self.tray_menu == .sources) self.paintSources(&renderer) else if (self.window_ids.len > 0) self.paintWindows(&renderer) else for (self.actions(), 0..) |action, i| {
             const y: f32 = @floatFromInt(self.rowY(i));
-            if (i > 0) renderer.fillRect(12, y - 4, @max(0, width - 24), 1, .{ .color = t.border_soft });
+            const checked = action == .desktop_mode and action.desktop_mode == output.server.world.workspaces.mode;
+            if (i > 0 and self.tray_menu == .none) renderer.fillRect(12, y - 4, @max(0, width - 24), 1, .{ .color = t.border_soft });
             const row: ui.layout.Widget = .{
-                .kind = .{ .row = .{ .state = if (self.selected == i) .hover else .idle } },
+                .kind = .{ .row = .{ .state = if (self.selected == i) .hover else .idle, .selected = checked } },
                 .computed_x = padding,
                 .computed_y = y,
                 .computed_width = @max(0, width - 2 * padding),
                 .computed_height = row_height,
             };
             ui.paint.paint(&row, &renderer);
-            renderer.drawText(18, y, @max(0, width - 36), row_height, .{ .content = action.label(), .font_size = t.font_size, .color = if (action == .force_close) t.danger else t.window_fg });
+            const label_insets: f32 = if (action == .desktop_mode) 58 else 36;
+            renderer.drawText(18, y, @max(0, width - label_insets), row_height, .{ .content = action.label(), .font_size = t.font_size, .color = if (action == .force_close) t.danger else t.window_fg });
+            if (checked) renderer.drawIcon(width - 34, y + 8, 16, 16, .{ .id = .checkmark, .color = t.accent });
         }
         node.setBuffer(&buf.base);
         node.setDestSize(self.box.width, self.box.height);
@@ -377,7 +397,7 @@ pub const Menu = struct {
         const output = self.output.?;
         const manager = output.server.input_sources orelse return;
         const list = manager.sources();
-        const count = @min(list.len, self.source_count);
+        const count = @min(list.len, self.tray_menu.sources);
         const active = manager.activeIndex();
         const t = ui.theme.global;
         const width: f32 = @floatFromInt(self.box.width);

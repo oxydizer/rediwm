@@ -103,6 +103,12 @@ pub fn applyPending(cc: *ControlCenter) void {
             cc.relayout();
             cc.requestRepaint();
         }
+        if (display_section.pendingScrollDirection(&cc.display)) |direction| {
+            const output = @import("../Output.zig").fromWlr(cc.selectedDisplayOutput() orelse return) orelse return;
+            cc.applyOutputPatch(output, .{ .scroll_direction = direction });
+            cc.relayout();
+            cc.requestRepaint();
+        }
         if (display_section.pendingHdr(&cc.display)) |mode| {
             const output = @import("../Output.zig").fromWlr(cc.selectedDisplayOutput() orelse return) orelse return;
             cc.applyOutputPatch(output, .{ .hdr = mode });

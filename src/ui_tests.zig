@@ -10,6 +10,8 @@ test {
     _ = @import("calculator/model.zig");
     _ = @import("control_center/search_index.zig");
     _ = @import("auto_layout.zig");
+    _ = @import("scroll_layout.zig");
+    _ = @import("scroll_tiling.zig");
     _ = @import("desktop/app.zig");
     _ = @import("desktop/config.zig");
     _ = @import("desktop/dnd.zig");

@@ -509,6 +509,7 @@ pub fn addC(ctx: Context, test_step: *std.Build.Step) void {
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/projection_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_output_collect.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {

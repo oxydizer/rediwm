@@ -417,6 +417,7 @@ struct rediwm_item {
   // Stable for the leaf's life, never 0 for a projected leaf; 0 for the items of
   // nodes outside the projection. Damage events name leaves by it.
   uint64_t id;
+  uint64_t home_output; // scene output serial, or 0 for an unrestricted item
   // Every node from the leaf to the root of its group is enabled. Whether the
   // item has any pixels once rounded is the presenter's to add.
   bool enabled;

@@ -12,6 +12,7 @@ const Toplevel = @import("../Toplevel.zig");
 const chrome = @import("../chrome.zig");
 const resize = @import("../resize.zig");
 const scene_data = @import("../scene_data.zig");
+const scroll_motion = @import("../scroll_motion.zig");
 
 pub fn cursorAxis(
     listener: *wl.Listener(*wlr.Pointer.event.Axis),
@@ -42,6 +43,29 @@ pub fn cursorAxis(
         delta_discrete = notch.discrete;
     }
     input.processAxis(event.time_msec, event.orientation, delta, delta_discrete, event.source, relative_direction);
+}
+
+/// Two fingers over empty strip move it, as they pan the canvas; over a
+/// window they stay the client's. Lifting them (a zero delta) settles it.
+fn stripFinger(input: *Input, hit: scene_data.Hit, orientation: wl.Pointer.Axis, delta: f64, delta_discrete: i32) bool {
+    const server = input.server;
+    if (!server.world.workspaces.active) return false;
+    if (input.finger_strip == 0) {
+        if (hit != .none or delta == 0 or input.cursor_mode != .passthrough or input.resize_session != null) return false;
+        const id = scroll_motion.workspaceAt(server, input.cursor.x, input.cursor.y) orelse return false;
+        input.finger_strip = id;
+        scroll_motion.begin(server, id, .finger);
+    }
+    const id = input.finger_strip;
+    if (delta == 0 and delta_discrete == 0) {
+        input.finger_strip = 0;
+        scroll_motion.end(server, id, false);
+        return true;
+    }
+    const dx: f64 = if (orientation == .horizontal_scroll) delta else 0;
+    const dy: f64 = if (orientation == .vertical_scroll) delta else 0;
+    scroll_motion.scrollBy(server, id, scroll_motion.along(server, id, dx, dy) * server.config.input.pan_speed);
+    return true;
 }
 
 pub fn processAxis(
@@ -80,9 +104,15 @@ pub fn processAxis(
         }
     }
     if (input.server.world.workspaces.active and input.isSuperHeld()) {
-        if (orientation == .vertical_scroll) {
+        // On a strip, Super+Shift+wheel and Super+horizontal wheel step
+        // through its columns (or rows); Super+wheel still cycles workspaces.
+        const strip = scroll_motion.workspaceAt(input.server, input.cursor.x, input.cursor.y);
+        const columns = strip != null and (orientation == .horizontal_scroll or input.isShiftHeld());
+        if (orientation == .vertical_scroll or columns) {
             const steps = input.zoom_scroll.feed(delta_discrete, delta, @intCast(@intFromEnum(source)));
-            if (steps != 0) input.server.world.workspaces.cycle(input.server, steps > 0);
+            if (steps != 0) {
+                if (columns) @import("../scroll_tiling.zig").stepColumns(input.server, strip.?, steps) else input.server.world.workspaces.cycle(input.server, steps > 0);
+            }
         }
         return;
     }
@@ -140,6 +170,7 @@ pub fn processAxis(
     }
     input.zoom_scroll.reset();
     if (input.cursor_mode == .resize or input.cursor_mode == .pan) return;
+    if (source == .finger and stripFinger(input, scroll_hit, orientation, delta, delta_discrete)) return;
     // Two-finger touchpad motion over empty desktop is a camera pan, matching
     // the middle-drag rubber-band/fling model. Mouse wheels stay no-ops here.
     const desktop_finger = !input.server.world.workspaces.active and source == .finger and (scroll_hit == .none or input.finger_pan);

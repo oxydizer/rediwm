@@ -54,6 +54,7 @@ struct rediwm_projection {
     float scale;
     enum wl_output_transform transform;
     enum wl_output_subpixel subpixel;
+    uint64_t serial;
     uint64_t color_serial;
     bool known;
   } shown_output[64];
@@ -64,9 +65,9 @@ struct rediwm_projection {
   struct wl_listener new_surface;
   struct wl_list surfaces;
   uint64_t next_leaf_id;
-  // Layout-space damage the sync in progress collects, applied to every output
-  // when it ends (stage 6b).
+  // Unrestricted layout damage. Scoped damage accumulates on the home output.
   pixman_region32_t pending;
+  bool has_scoped_damage;
   struct rediwm_damage_event events[DAMAGE_EVENTS];
   uint64_t next_event; // sequence number of the next event; 0 is never used
 };
@@ -141,6 +142,7 @@ struct leaf {
   struct rediwm_snap shown;
   struct rediwm_content shown_content;
   bool has_shown;
+  uint64_t shown_home;
   // What of the leaf nothing above hid when the output pass last built, over the
   // whole layout: damage that changes only what the leaf shows is cut to it, as
   // wlroots cut it to a node's visible region. Not known until the first build.
@@ -175,8 +177,9 @@ struct leaf {
 //    one, and `unclipped` ends it as it ends the clip;
 //  * shadow: every leaf under the tree is the analytic shadow of this shape
 //    (REDIWM_ITEM_SHADOW), resolved like the clip;
-//  * inert: the subtree is shown but takes no input: the pick passes through it
-//    to what is below (a window sliding off a workspace it has left).
+//  * inert: the subtree is shown but takes no input (a leaving workspace);
+//  * home_output: the subtree is presented only on this output. Descendants
+//    inherit it independently of the window clip, including popups.
 struct dim {
   float brightness, saturation;
 };
@@ -185,6 +188,7 @@ struct tree_props {
   // Where an own node keeps its properties (`rediwm_node.props`), cleared with them.
   void **slot;
   bool has_zoom, has_scale, has_clip, unclipped, has_shadow, inert, has_dim;
+  uint64_t home_output;
   double zoom, scale;
   struct dim dim;
   struct rediwm_clip_spec clip;
@@ -192,6 +196,7 @@ struct tree_props {
   // The clip as the last resolve() saw it in layout space, to tell a changed
   // shape (to be damaged) from a moved window (whose leaves damage themselves).
   struct rediwm_clip applied;
+  uint64_t applied_home;
   bool has_applied;
 };
 extern const struct wlr_addon_interface projection_tree_props_impl;
@@ -216,11 +221,20 @@ static inline void mark_group(struct rediwm_projection *p, struct group *g) {
   g->dirty = true;
   p->any_dirty = true;
 }
-static inline void schedule(struct rediwm_projection *p) {
+static inline void schedule(struct rediwm_projection *p, uint64_t home) {
   struct rediwm_scene_output *out;
-  wl_list_for_each(out, &p->outputs->outputs, link) {
+  if (home) {
+    wl_list_for_each(out, &p->outputs->outputs, link) if (out->serial == home && out->output->enabled) {
       rediwm_trace_damage(out->output);
       wlr_output_schedule_frame(out->output);
+      return;
+    }
+    // A disappearing output can no longer run the sync that transfers its
+    // windows. Any remaining output can resolve and route their damage.
+  }
+  wl_list_for_each(out, &p->outputs->outputs, link) {
+    rediwm_trace_damage(out->output);
+    wlr_output_schedule_frame(out->output);
   }
 }
 // ---- Surface feedback (stage 6 of docs/plans/scene-graph.md) ---------------------
@@ -244,15 +258,27 @@ struct feedback {
   uint64_t active;
   struct rediwm_scene_output *primary;
 };
-static inline void emit(struct rediwm_projection *p, uint64_t leaf, int x, int y, int width, int height) {
+// Unrestricted changes feed the shared region. A restricted item names its
+// output by serial, so destruction and index reuse cannot redirect its damage.
+static inline pixman_region32_t *damage_target(struct rediwm_projection *p, uint64_t home) {
+  if (!home) return &p->pending;
+  struct rediwm_scene_output *out;
+  wl_list_for_each(out, &p->outputs->outputs, link) if (out->serial == home) {
+    p->has_scoped_damage = true;
+    return &out->projection_damage;
+  }
+  return NULL;
+}
+static inline void emit(struct leaf *l, int x, int y, int width, int height) {
   if (width <= 0 || height <= 0) return;
+  struct rediwm_projection *p = l->projection;
   if (!p->next_event) p->next_event = 1;
   p->events[p->next_event % DAMAGE_EVENTS] =
-      (struct rediwm_damage_event){.leaf = leaf, .box = {x, y, width, height}};
+      (struct rediwm_damage_event){.leaf = l->item.id, .home_output = l->shown_home, .box = {x, y, width, height}};
   p->next_event++;
 }
 static inline void emit_snap(struct leaf *l, struct rediwm_snap s) {
-  emit(l->projection, l->item.id, s.x, s.y, s.width, s.height);
+  emit(l, s.x, s.y, s.width, s.height);
 }
 // Layout-space damage for the screen, applied when the sync ends. `visible_only`
 // cuts it to what the leaf showed at the last build: a change of what the leaf
@@ -260,7 +286,8 @@ static inline void emit_snap(struct leaf *l, struct rediwm_snap s) {
 // stops covering it damages that region itself.
 static inline void damage_box(struct leaf *l, struct rediwm_snap s, bool visible_only) {
   if (s.width <= 0 || s.height <= 0) return;
-  pixman_region32_t *pending = &l->projection->pending;
+  pixman_region32_t *pending = damage_target(l->projection, l->shown_home);
+  if (!pending) return;
   if (visible_only && l->has_visible) {
     pixman_region32_t region;
     pixman_region32_init_rect(&region, s.x, s.y, s.width, s.height);

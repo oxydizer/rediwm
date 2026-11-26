@@ -136,7 +136,7 @@ def run():
             extra["WLR_RENDER_DRM_DEVICE"] = node
         compositor, log = spawn_compositor(
             tmp, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
-            config_content="[compositor]\nxwayland = false\n", env_extra=extra)
+            config_content="[compositor]\nxwayland = false\nscroll_column_width = 1.0\n", env_extra=extra)
         client = None
         client_log = tmp / "client.log"
         try:
@@ -226,17 +226,17 @@ def run():
                 print("fifo: synchronized subsurface exempt, desynchronized paced")
 
                 # Hidden surfaces: released at the 20 Hz fallback, never stuck.
-                def hidden_case(label):
+                def hidden_case(label, updates=10):
                     ipc.reset_perf()
                     started = time.monotonic()
-                    command("send 11")
-                    wait_for(lambda: fifo_stats().get("hidden", 0) >= 10,
+                    command(f"send {updates + 1}")
+                    wait_for(lambda: fifo_stats().get("hidden", 0) >= updates,
                              f"{label}: hidden updates were not released", timeout=10)
                     elapsed = time.monotonic() - started
                     stats = fifo_stats()
-                    assert 8 * HIDDEN_PERIOD <= elapsed <= 40 * HIDDEN_PERIOD, (label, elapsed, stats)
+                    assert updates * HIDDEN_PERIOD * 0.8 <= elapsed <= updates * HIDDEN_PERIOD * 4, (label, elapsed, stats)
                     assert stats["late"] == 0, (label, stats)
-                    print(f"fifo: {label} surface released 10 updates in {elapsed:.2f} s")
+                    print(f"fifo: {label} surface released {updates} updates in {elapsed:.2f} s")
 
                 ipc.minimize(win["id"])
                 wait_for(lambda: ipc.get_window_debug(win["id"])["minimized"], "fixture did not minimize")
@@ -255,6 +255,19 @@ def run():
                 ipc.wait_for("window_geometry_settled", window_id=cover["id"])
                 time.sleep(0.2)
                 hidden_case("covered")
+                # A window on the active strip leaves its frame-pacing output
+                # when scrolled away, then resumes at refresh rate on reveal.
+                ipc.action("set_desktop_mode", {"mode": "scrolling", "persist": False})
+                ipc.focus_window(cover["id"])
+                wait_for(lambda: ipc.get_workspaces()[0]["view"] > 0, "focus scrolls to the cover")
+                ipc.wait_for("window_geometry_settled", window_id=cover["id"])
+                assert not ipc.get_window_debug(win["id"])["outputs"]
+                hidden_case("scrolled off-screen", updates=40)
+                ipc.focus_window(win["id"])
+                ipc.wait_for("window_geometry_settled", window_id=win["id"])
+                presented, discarded, _ = parse(command("burst 3"))
+                assert_paced(presented, ["b0", "b1", "b2"], period_ns)
+                ipc.action("set_desktop_mode", {"mode": "canvas", "persist": False})
                 command("uncover")
                 presented, discarded, _ = parse(command("burst 3"))
                 assert_paced(presented, ["b0", "b1", "b2"], period_ns)

@@ -215,9 +215,22 @@ chrome, capture, or retained panel painting. General rules remain in
   come from `Server.sendFrameDone`, never `wlr_scene_output_send_frame_done`
   alone; the pass emits `output_sample` on the source buffer. A layer-shell
   surface below the world (background, bottom) is no longer occluded by windows
-  in wlroots' eyes: it keeps frame callbacks while covered. *Damage*: every
-  change reaches `p->pending` through `damage_box` and goes to the outputs once,
-  at the end of each sync. A change of what a leaf itself shows is cut to what
+  in wlroots' eyes: it keeps frame callbacks while covered. Workspace frames
+  get their home from `rediwm_projection_set_tree_output`. Each descendant's
+  resolved item inherits the output serial, including unclipped popups.
+  Collection tracks opaque coverage per output so a restricted leaf can
+  obscure a surface only on its home, even if output layout boxes overlap.
+  Xwayland also picks against a single X11 root stack. Pointer entry gives
+  the destination workspace's managed X windows priority in that stack,
+  preserving their scene order. The XWM connection carries restacks and the
+  Wayland connection carries seat events. Close the previous motion frame,
+  wait for the XWM marker before sending input to the new workspace, and use
+  the XI2 button receipt before changing the stack again. The compositor
+  continues dispatching while these acknowledgments are pending.
+  *Damage* is combined at sync end. Unrestricted changes use `p->pending`;
+  scoped changes use the output's `projection_damage`. Reassignment damages
+  the last shown bounds on the old home and the new bounds on the new home.
+  A change of what a leaf itself shows is cut to what
   was visible of it at the last build (`l->visible`); a move, restyle or removal
   damages the old box (cut) and the new one; a restack damages what moved
   (`damage_restacked`), shadow footprints included; a destroyed node applies at

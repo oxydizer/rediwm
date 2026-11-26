@@ -22,6 +22,9 @@ hovered: ?u64 = null,
 activate: ?u64 = null,
 boosted: ?u64 = null,
 output: ?*Output = null,
+/// A strip overview: the scrolling workspace whose whole strip the display
+/// zooms out over. Zero for the canvas spread.
+strip: u8 = 0,
 tree: ?*sn.Tree = null,
 edges: [4]*sn.Buffer = undefined,
 pointer_x: f64 = 0,
@@ -63,12 +66,16 @@ pub fn toggle(self: *Self, world: *World) void {
     }
     const server = world.server;
     const input = &server.input;
-    if (world.workspaces.active or server.locker != null or server.polkit_dialog != null or
+    if (server.locker != null or server.polkit_dialog != null or
         input.cursor_mode != .passthrough or input.active_buttons != 0 or input.seat.drag != null or
         input.seat.pointerHasGrab() or input.gesture != .none or input.desktop_grab or input.dock_drag.active()) return;
     const output = server.getDefaultOutput() orelse return;
     if (!output.isLogicallyEnabled() or output.idle_blanked) return;
+    // Workspaces have no canvas to spread; a scrolling one shows its strip.
+    const strip: u8 = if (world.workspaces.active) output.workspace_id else 0;
+    if (world.workspaces.active and (strip == 0 or !@import("../scroll_tiling.zig").scrolling(server, strip))) return;
     self.output = output;
+    self.strip = strip;
     if (output.usableBox().width <= 80 or output.usableBox().height <= 80) return;
     self.createOutline(server.overlay_tree) catch {
         self.output = null;
@@ -94,6 +101,12 @@ pub fn toggle(self: *Self, world: *World) void {
         if (top.zoom_boost.to > 0) self.boosted = top.id;
         top.setZoomBoost(false);
         if (self.selected == null and eligible(top)) self.selected = top.id;
+    }
+    // A strip overview starts on the focused window.
+    if (self.strip != 0) {
+        const focused = @import("../ipc/handlers.zig").findFocusedToplevel(server);
+        self.selected = if (focused) |f| (if (cards_mod.find(self, f.id) != null) f.id else null) else null;
+        if (self.selected == null) self.selected = self.cards.items[0].id;
     }
     server.switcher.cancel();
     server.screenshot_selector.cancel();
@@ -161,6 +174,15 @@ pub fn accept(self: *Self, world: *World) void {
     var target = self.saved orelse return;
     if (self.returning) return;
     const top = find(world, self.selected) orelse return self.dismiss(world);
+    // The strip jumps to the window; the zoom back carries it there.
+    if (self.strip != 0) {
+        @import("../scroll_tiling.zig").jumpTo(top);
+        self.activate = top.id;
+        self.returning = true;
+        self.spread.retargetTo(anim.nowMs(), 0, anim.curveFor(.camera_zoom));
+        self.transition(world, target);
+        return;
+    }
     const mode = world.server.config.compositor.focus_zoom;
     const floating = top.layout() == .floating and !top.isFullscreen();
     // Camera-focus windows live at different depths. Visiting one must use

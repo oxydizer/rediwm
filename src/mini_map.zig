@@ -58,7 +58,7 @@ pub fn show(self: *Self, server: *Server, x: f64, y: f64) void {
     const output = Output.atLayout(server, x, y) orelse server.getDefaultOutput() orelse return;
     if (!output.isAvailable() or output.idle_blanked) return;
     // Keep one output for an entire animated navigation sequence.
-    if (!self.visible or !server.world.holdingGlass()) self.output = output;
+    if (!self.visible or !server.world.holdingGlass(output)) self.output = output;
     self.visible = true;
     self.fade_start = null;
     self.disarm();
@@ -246,12 +246,12 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
     }
     const changed = self.last_camera == null or !std.meta.eql(self.last_camera.?, world.camera);
     self.last_camera = world.camera;
-    if (changed or world.holdingGlass() or self.hovered or self.dragging) {
+    if (changed or world.holdingGlass(output) or self.hovered or self.dragging) {
         self.disarm();
         self.fade_start = null;
     }
     // Arm on the last changed frame too: no extra frame is needed while idle.
-    if (!world.holdingGlass() and !self.hovered and !self.dragging and !self.armed and self.fade_start == null) {
+    if (!world.holdingGlass(output) and !self.hovered and !self.dragging and !self.armed and self.fade_start == null) {
         self.timer.?.timerUpdate(@intCast(cfg.mini_map_hide_ms)) catch {};
         self.armed = true;
     }

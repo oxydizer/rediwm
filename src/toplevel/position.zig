@@ -173,6 +173,9 @@ pub fn commitPosition(toplevel: *Toplevel, x: i32, y: i32, update_scene: bool) v
     if (moved) toplevel.server.scheduleFrames();
     toplevel.server.world.ensureToplevelInBounds(toplevel);
     if (moved) {
+        if (toplevel.in_world and toplevel.auto_target == null) {
+            if (toplevel.server.layout_autosave) |autosave| autosave.changed();
+        }
         if (!toplevel.isResizing() and !toplevel.backend_gone) {
             switch (toplevel.backend) {
                 .xwayland => |*adapter| {

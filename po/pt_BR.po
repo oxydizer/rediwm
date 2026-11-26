@@ -8034,3 +8034,104 @@ msgstr "ssh segurança pública privada identidade impressão digital frase secr
 #: src/system_monitor/app_footer.zig
 msgid "GPU"
 msgstr "GPU"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Centre the focused column"
+msgstr "Centralizar a coluna em foco"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Consume or Expel Left"
+msgstr "Agrupar ou separar à esquerda"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Consume or Expel Right"
+msgstr "Agrupar ou separar à direita"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Cycle Column Width"
+msgstr "Alternar a largura da coluna"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Full width"
+msgstr "Largura total"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Half"
+msgstr "Metade"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "New column width"
+msgstr "Largura das novas colunas"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "New windows open as columns on a strip that scrolls. Super+arrows move along it; Super+W changes a column's width."
+msgstr "As novas janelas se abrem em colunas numa faixa com rolagem. Use Super+setas para percorrê-la e Super+W para mudar a largura de uma coluna."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "One third"
+msgstr "Um terço"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Scrolling"
+msgstr "Rolagem"
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: join the column to the left, or leave a shared column."
+msgstr "No modo de rolagem, agrupe a janela na coluna à esquerda ou separe-a de uma coluna compartilhada."
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: join the column to the right, or leave a shared column."
+msgstr "No modo de rolagem, agrupe a janela na coluna à direita ou separe-a de uma coluna compartilhada."
+
+#: src/control_center/sections/shortcuts.zig
+#, fuzzy
+msgid "Scrolling: step the focused column through the preset widths."
+msgstr "No modo de rolagem, aplique a próxima largura predefinida à coluna em foco."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Super+W steps a column through the widths; Super+[ and Super+] move a window into the next column or out of its own."
+msgstr "Super+W alterna entre as larguras de coluna. Super+[ e Super+] movem uma janela para a coluna vizinha ou a separam em uma coluna própria."
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "Two thirds"
+msgstr "Dois terços"
+
+#: src/control_center/sections/desktop.zig
+#, fuzzy
+msgid "When wider than the screen"
+msgstr "Quando for mais larga que a tela"
+
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Horizontal"
+msgstr "Horizontal"
+
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Vertical"
+msgstr "Vertical"
+
+#: src/control_center/search_index.zig
+#: src/control_center/sections/display.zig
+#, fuzzy
+msgid "Scrolling direction"
+msgstr "Direção da rolagem"
+
+#: src/control_center/search_index.zig
+#, fuzzy
+msgid "scrolling strip columns rows vertical horizontal portrait"
+msgstr "scrolling strip columns rows vertical horizontal portrait rolagem faixa colunas linhas retrato"

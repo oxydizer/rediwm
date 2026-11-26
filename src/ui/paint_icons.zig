@@ -286,7 +286,7 @@ pub fn iconDistance(id: IconId, px: f32, py: f32, cx: f32, cy: f32, half: f32, t
             const base = @min(ring_open, arrow);
             break :blk if (id == .restart_shell) @min(base, sdCircle(px, py, cx, cy, half * 0.24)) else base;
         },
-        .git_branch, .home, .generic, .folder, .document, .terminal, .settings, .keyboard, .edit, .browser, .wifi, .ethernet, .globe, .mouse, .touchpad, .trackball, .display, .music, .headphones, .bluetooth, .battery, .notification, .eye, .eye_off, .refresh, .cut, .copy, .paste, .trash, .trash_can, .view_grid, .view_list, .sort, .filter, .zoom_in, .zoom_out, .rotate, .crop, .undo, .save, .fit, .print, .open, .usb_stick, .drive, .eject, .users, .squares, .shield, .desktop_canvas, .desktop_tiles => sdCircle(px, py, cx, cy, half * 0.6),
+        .git_branch, .home, .generic, .folder, .document, .terminal, .settings, .keyboard, .edit, .browser, .wifi, .ethernet, .globe, .mouse, .touchpad, .trackball, .display, .music, .headphones, .bluetooth, .battery, .notification, .eye, .eye_off, .refresh, .cut, .copy, .paste, .trash, .trash_can, .view_grid, .view_list, .sort, .filter, .zoom_in, .zoom_out, .rotate, .crop, .undo, .save, .fit, .print, .open, .usb_stick, .drive, .eject, .users, .squares, .shield, .desktop_canvas, .desktop_tiles, .desktop_scroll => sdCircle(px, py, cx, cy, half * 0.6),
     };
 }
 

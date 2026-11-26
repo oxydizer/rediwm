@@ -24,6 +24,11 @@ ready: bool = false,
 root_x: i32 = 0,
 root_y: i32 = 0,
 root_zoom: f64 = 1,
+/// X11 has one root stack for every display. Its pointer target must be in
+/// the workspace the compositor picked, even under a neighbouring overhang.
+pointer_workspace: u8 = 0,
+pointer_queue: @import("xwayland_pointer.zig") = .{},
+input_fence: @import("xwayland_input_fence.zig") = .{},
 stop_source: ?*wl.EventSource = null,
 
 on_ready: wl.Listener(void) = .init(handleReady),
@@ -84,6 +89,7 @@ pub fn create(server: *Server) ?*Xwayland {
 }
 
 pub fn destroy(xwayland: *Xwayland) void {
+    xwayland.input_fence.reset(xwayland);
     xwayland.cancelStop();
     xwayland.on_ready.link.remove();
     xwayland.on_destroy.link.remove();
@@ -96,6 +102,44 @@ pub fn destroy(xwayland: *Xwayland) void {
 
 pub fn displayName(xwayland: *const Xwayland) []const u8 {
     return std.mem.span(xwayland.wlr_xwayland.display_name);
+}
+
+/// Move the picked workspace's X11 windows together, bottom to top in their
+/// scene order. wlroots keeps override-redirect popups above managed windows.
+/// A zero id restores ordinary scene order on return to Canvas.
+pub fn preferWorkspace(self: *Xwayland, id: u8) void {
+    if (self.pointer_workspace == id) return;
+    if (id != 0) {
+        // Xwayland accumulates relative deltas until wl_pointer.frame. Finish
+        // the previous surface's motion before the next enter positions it.
+        self.server.input.seat.pointerNotifyFrame();
+    }
+    self.pointer_workspace = id;
+    var nodes = self.server.world.tree.children.iterator(.forward);
+    while (nodes.next()) |node| {
+        const data = @import("scene_data.zig").SceneData.fromNode(node) orelse continue;
+        if (data.role != .toplevel) continue;
+        const top = data.role.toplevel;
+        if (top.backend != .xwayland or top.backend_gone or !top.in_world or top.closing) continue;
+        if ((id != 0 and top.workspace_id != id) or !@import("window_tabs.zig").visible(top)) continue;
+        top.backend.xwayland.xsurface.restack(null, .above);
+    }
+}
+
+pub fn pointerFenceDone(self: *Xwayland, serial: u32) void {
+    self.pointer_queue.markerDone(self, serial);
+}
+
+pub fn pointerButtonDone(self: *Xwayland, code: u32, pressed: bool) void {
+    self.pointer_queue.buttonDone(self, code, pressed);
+}
+
+pub fn pointerFenceReset(self: *Xwayland) void {
+    self.pointer_queue.resumeNative(self);
+    // The XWM may be going away for good. A native button already sent to
+    // the seat gets its release through the ordinary input path.
+    self.pointer_queue.reset(self);
+    self.pointer_workspace = 0;
 }
 
 /// X11 pointer events are clipped to its nonnegative root rectangle. Keep
@@ -175,6 +219,7 @@ fn handleNewSurface(listener: *wl.Listener(*wlr.XwaylandSurface), xsurface: *wlr
 
 fn handleReady(listener: *wl.Listener(void)) void {
     const xwayland: *Xwayland = @fieldParentPtr("on_ready", listener);
+    xwayland.input_fence.start(xwayland);
     xwayland.ready = true;
     // wlroots' xwm_destroy clears the seat when a lazy Xwayland exits idle,
     // and the restarted xwm never gets it back: no X11 clipboard or DnD.
@@ -189,6 +234,7 @@ fn handleReady(listener: *wl.Listener(void)) void {
 
 fn handleDestroy(listener: *wl.Listener(void)) void {
     const xwayland: *Xwayland = @fieldParentPtr("on_destroy", listener);
+    xwayland.input_fence.reset(xwayland);
     xwayland.cancelStop();
     // The wlr_xwayland object is going away. Do not restart it: a crash loop
     // would pin the compositor. Native windows keep working.

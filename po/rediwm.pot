@@ -408,7 +408,7 @@ msgstr ""
 msgid "Alt+Shift"
 msgstr ""
 
-#: src/control_center/sections/display.zig
+#: src/control_center/sections/desktop.zig
 msgid "Always"
 msgstr ""
 
@@ -1204,6 +1204,10 @@ msgstr ""
 msgid "Centre"
 msgstr ""
 
+#: src/control_center/sections/desktop.zig
+msgid "Centre the focused column"
+msgstr ""
+
 #: src/desktop/app_actions.zig
 msgid "Change Wallpaper"
 msgstr ""
@@ -1686,6 +1690,14 @@ msgstr ""
 
 #: src/control_center/sections/firewall_cards.zig
 msgid "Connections the firewall refused in the last day."
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Consume or Expel Left"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Consume or Expel Right"
 msgstr ""
 
 #: src/session/lock_view.zig
@@ -2293,6 +2305,10 @@ msgstr[0] ""
 msgstr[1] ""
 
 #: src/control_center/sections/shortcuts.zig
+msgid "Cycle Column Width"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
 msgid "Cycle to the next existing workspace."
 msgstr ""
 
@@ -2432,7 +2448,7 @@ msgstr ""
 msgid "Desktop Switching"
 msgstr ""
 
-#: src/control_center/sections/display.zig
+#: src/control_center/sections/display_arrangement.zig
 msgid "Desktop icons appear on this display."
 msgstr ""
 
@@ -2664,7 +2680,7 @@ msgstr ""
 msgid "Drag an item to reorder it or move it to another section. Switch it off to hide it. Battery appears when available."
 msgstr ""
 
-#: src/control_center/sections/display.zig
+#: src/control_center/sections/display_arrangement.zig
 msgid "Drag displays to match your desk. Click one to edit it."
 msgstr ""
 
@@ -3436,6 +3452,10 @@ msgstr ""
 msgid "Full name"
 msgstr ""
 
+#: src/control_center/sections/desktop.zig
+msgid "Full width"
+msgstr ""
+
 #: src/video/osd.zig
 msgid "Fullscreen"
 msgstr ""
@@ -3512,6 +3532,10 @@ msgstr ""
 msgid "HTTPS proxy"
 msgstr ""
 
+#: src/control_center/sections/desktop.zig
+msgid "Half"
+msgstr ""
+
 #: src/control_center/sections/network.zig
 msgid "Hardware blocked"
 msgstr ""
@@ -3562,6 +3586,10 @@ msgstr ""
 
 #: src/control_center/sections/firewall_cards.zig
 msgid "Home or local networks"
+msgstr ""
+
+#: src/control_center/sections/display.zig
+msgid "Horizontal"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -4240,11 +4268,11 @@ msgstr ""
 msgid "MTU"
 msgstr ""
 
-#: src/control_center/sections/display.zig
+#: src/control_center/sections/display_arrangement.zig
 msgid "Main display"
 msgstr ""
 
-#: src/control_center/sections/display.zig
+#: src/control_center/sections/display_arrangement.zig
 msgid "Make main display"
 msgstr ""
 
@@ -4636,7 +4664,7 @@ msgstr ""
 msgid "Networks"
 msgstr ""
 
-#: src/control_center/sections/input_sources.zig
+#: src/control_center/sections/desktop.zig
 msgid "Never"
 msgstr ""
 
@@ -4680,6 +4708,10 @@ msgstr ""
 msgid "New branch"
 msgstr ""
 
+#: src/control_center/sections/desktop.zig
+msgid "New column width"
+msgstr ""
+
 #: src/control_center/sections/keys_ssh.zig
 msgid "New key…"
 msgstr ""
@@ -4698,6 +4730,10 @@ msgstr ""
 
 #: src/chrome_tabs.zig
 msgid "New tab"
+msgstr ""
+
+#: src/control_center/sections/desktop.zig
+msgid "New windows open as columns on a strip that scrolls. Super+arrows move along it; Super+W changes a column's width."
 msgstr ""
 
 #: src/files/app_menu.zig
@@ -5126,6 +5162,10 @@ msgstr ""
 
 #: src/control_center/sections/power.zig
 msgid "On battery"
+msgstr ""
+
+#: src/control_center/sections/desktop.zig
+msgid "One third"
 msgstr ""
 
 #: src/printing/options.zig
@@ -6591,6 +6631,26 @@ msgstr ""
 msgid "Scrollbar width"
 msgstr ""
 
+#: src/control_center/sections/desktop.zig
+msgid "Scrolling"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Scrolling direction"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Scrolling: join the column to the left, or leave a shared column."
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Scrolling: join the column to the right, or leave a shared column."
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Scrolling: step the focused column through the preset widths."
+msgstr ""
+
 #: src/start_menu/menu_tree.zig
 msgid "Search applications…"
 msgstr ""
@@ -6992,7 +7052,7 @@ msgid "Spotify local discovery"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Spread all canvas windows into a grid, including minimized windows."
+msgid "Spread all canvas windows into a grid, including minimized windows. On a scrolling workspace, show its whole strip."
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -7137,6 +7197,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Super+Q opens Terminal; Super+M opens Power. Arrows focus; numbers switch workspaces."
+msgstr ""
+
+#: src/control_center/sections/desktop.zig
+msgid "Super+W steps a column through the widths; Super+[ and Super+] move a window into the next column or out of its own."
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -8011,6 +8075,10 @@ msgstr ""
 msgid "Turns off Wi-Fi, Bluetooth and other radios."
 msgstr ""
 
+#: src/control_center/sections/desktop.zig
+msgid "Two thirds"
+msgstr ""
+
 #: src/printing/options.zig
 msgid "Two-sided printing"
 msgstr ""
@@ -8267,6 +8335,10 @@ msgstr ""
 msgid "Variable refresh rate"
 msgstr ""
 
+#: src/control_center/sections/display.zig
+msgid "Vertical"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "Vertical Pan"
 msgstr ""
@@ -8391,11 +8463,15 @@ msgstr ""
 msgid "When the lid is closed"
 msgstr ""
 
+#: src/control_center/sections/desktop.zig
+msgid "When wider than the screen"
+msgstr ""
+
 #: src/control_center/sections/firewall_rules.zig
 msgid "Where"
 msgstr ""
 
-#: src/control_center/sections/display.zig
+#: src/control_center/sections/display_arrangement.zig
 msgid "Where desktop icons appear."
 msgstr ""
 
@@ -9157,6 +9233,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "scrolling direction reverse invert mouse touchpad"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "scrolling strip columns rows vertical horizontal portrait"
 msgstr ""
 
 #: src/control_center/search_index.zig

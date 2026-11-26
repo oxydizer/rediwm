@@ -40,6 +40,7 @@ pub const FieldRule = union(enum) {
     output_scale,
     output_transform,
     zoom_steps,
+    column_widths,
     accel_profile,
     accel_point,
     /// A bare or quoted enum tag name.
@@ -146,6 +147,10 @@ pub const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(Composi
     .camera_zoom_max = .{ .float = .{ .min = 0, .max = 8, .exclusive_min = true } },
     .focus_zoom = .enumeration,
     .window_gap = .{ .uint = .{ .min = 0, .max = 512 } },
+    .scroll_column_widths = .column_widths,
+    .scroll_column_width_count = .derived,
+    .scroll_column_width = .{ .float = .{ .min = 0.05, .max = 1 } },
+    .scroll_center = .enumeration,
     .snap_to_edges = .boolean,
     .drag_feedback = .boolean,
     .drag_scale = .{ .float = .{ .min = drag_scale_min, .max = drag_scale_max } },
@@ -207,6 +212,7 @@ pub const output_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(OutputConfi
     .sdr_white = .{ .float = .{ .min = output_config.sdr_white_min, .max = output_config.sdr_white_max } },
     .night_light = .boolean,
     .gamma = .{ .float = .{ .min = 0.5, .max = 2.0 } },
+    .scroll_direction = .enumeration,
 };
 
 /// Describes the values `rule` accepts, for "<field> must be ..." errors.
@@ -227,6 +233,7 @@ pub fn ruleHint(comptime rule: FieldRule) []const u8 {
         .output_scale => "a number between 1 and 3, or quoted auto",
         .output_transform => "normal, 90, 180, 270, flipped, flipped_90, flipped_180, or flipped_270",
         .enumeration => "a documented name",
+        .column_widths => "an array of numbers from 0.05 to 1",
         .taskbar_items, .zoom_steps, .accel_profile, .accel_point, .derived => "valid",
     };
 }
@@ -273,6 +280,7 @@ pub fn applyField(target: anytype, allocator: Allocator, comptime rules: anytype
                     @field(target, field_name) = v;
                 },
                 .zoom_steps => try parseZoomSteps(target, value),
+                .column_widths => try parseColumnWidths(target, value),
                 .accel_profile => @field(target, field_name) = try parseAccelProfile(value),
                 .accel_point => @field(target, field_name) = try parseVec2(value),
                 .enumeration => @field(target, field_name) = try parseEnum(@FieldType(@TypeOf(target.*), field_name), value),
@@ -403,6 +411,26 @@ pub fn parseZoomSteps(c: *CompositorConfig, value: []const u8) !void {
     }
     if (count == 0) return error.InvalidValue;
     c.zoom_step_count = count;
+}
+
+pub fn parseColumnWidths(c: *CompositorConfig, value: []const u8) !void {
+    const trimmed = std.mem.trim(u8, value, " \t");
+    if (trimmed.len < 2 or trimmed[0] != '[' or trimmed[trimmed.len - 1] != ']') return error.InvalidValue;
+    const inner = std.mem.trim(u8, trimmed[1 .. trimmed.len - 1], " \t");
+    var widths: [@import("loader.zig").max_column_widths]f32 = @splat(0);
+    var count: u8 = 0;
+    var it = std.mem.splitScalar(u8, inner, ',');
+    while (it.next()) |part| {
+        if (std.mem.trim(u8, part, " \t").len == 0 and inner.len == 0) break;
+        if (count >= widths.len) return error.InvalidValue;
+        const n = try std.fmt.parseFloat(f32, std.mem.trim(u8, part, " \t"));
+        if (!std.math.isFinite(n) or n < 0.05 or n > 1) return error.InvalidValue;
+        widths[count] = n;
+        count += 1;
+    }
+    if (count == 0) return error.InvalidValue;
+    c.scroll_column_widths = widths;
+    c.scroll_column_width_count = count;
 }
 
 pub fn parseEnum(comptime T: type, value: []const u8) !T {

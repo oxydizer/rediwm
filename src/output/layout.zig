@@ -157,6 +157,8 @@ pub fn arrange(server: *Server, placements: []const Placement) !void {
     defer carried.deinit(gpa);
     var tops = server.world.toplevels.iterator(.forward);
     while (tops.next()) |toplevel| {
+        // Workspace geometry follows its assigned output in syncOutputs.
+        if (server.world.workspaces.active) break;
         if (!toplevel.in_world) continue;
         const center = toplevel.frameWorld(@floatFromInt(@divTrunc(toplevel.chrome_width, 2)), @floatFromInt(@divTrunc(toplevel.chrome_height, 2)));
         const layout_center = server.world.toLayout(center.x, center.y);
@@ -337,7 +339,7 @@ pub fn syncLayout(server: *Server) void {
         if (server.ipc) |ipc| events.onOutputChanged(ipc, output);
     }
     recomputeWorldBounds(server);
-    server.world.workspaces.setMode(server, server.config.compositor.desktop_mode == .workspaces);
+    server.world.workspaces.setMode(server, server.config.compositor.desktop_mode);
     server.world.workspaces.syncOutputs(server);
     if (server.desktop) |desktop| desktop.syncLayout();
     if (server.output_management) |om| om.publish();
@@ -346,6 +348,11 @@ pub fn syncLayout(server: *Server) void {
 
 pub fn evacuateWindows(output: *Output) void {
     const server = output.server;
+    // Tiled mode migrates whole workspaces once the output layout settles.
+    if (server.world.workspaces.active) {
+        output.user_disabled = true;
+        return;
+    }
     const Displaced = struct {
         toplevel: *@import("../Toplevel.zig"),
         source_box: wlr.Box,
@@ -381,7 +388,7 @@ pub fn evacuateWindows(output: *Output) void {
 }
 
 pub fn restoreReconnectedWindows(output: *Output) void {
-    if (!output.isAvailable()) return;
+    if (!output.isAvailable() or output.server.world.workspaces.active) return;
     var restored = false;
     var tops = output.server.world.toplevels.iterator(.forward);
     while (tops.next()) |toplevel| {

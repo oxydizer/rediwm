@@ -46,7 +46,7 @@ Hosts keep the fields, `init`/`deinit` and one
 the bodies are free functions taking the struct pointer. A new method goes in
 its group file plus an alias line. `ipc/protocol_*.zig`, `ipc/handlers_*.zig`,
 `config/loader_*.zig`, `control_center/sections/appearance_*.zig`,
-`printers_*.zig` and `msg/msg_*.zig`, `ui/paint_*.zig`, `ui/text_*.zig`,
+`display_*.zig`, `printers_*.zig` and `msg/msg_*.zig`, `ui/paint_*.zig`, `ui/text_*.zig`,
 `ui/theme_*.zig`, `ui/anim_*.zig`, `chrome_paint.zig` re-export their public
 declarations from the original file. `handleRequest`/`handleAction` dispatch
 groups of tags to `handlers_*.zig`, each a `switch` with `else => unreachable`.

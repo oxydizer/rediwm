@@ -23,10 +23,8 @@ static const struct { float sigma, saturation; } appearance[] = {
 struct glass_effect;
 struct glass_engine {
 	struct wl_list effects;
-	// A dragged opaque titlebar, or every effect during camera motion, keeps
-	// its last blur (stage 5, D2).
+	// A dragged opaque titlebar keeps its last blur (stage 5, D2).
 	struct glass_effect *held;
-	bool hold_all;
 	uint64_t next_serial;
 };
 struct glass_effect {
@@ -94,7 +92,7 @@ bool rediwm_glass_effect_info(struct rediwm_node *node, struct rediwm_glass_info
 	    .opacity = effect->opacity,
 	    .radius = effect->radius,
 	    .serial = effect->serial,
-	    .held = effect->engine->hold_all || effect->engine->held == effect,
+	    .held = effect->engine->held == effect,
 	};
 	return true;
 }
@@ -142,11 +140,6 @@ void rediwm_glass_hold(struct glass_engine *engine, struct glass_effect *effect)
 {
 	if (engine)
 		engine->held = effect;
-}
-void rediwm_glass_hold_all(struct glass_engine *engine, bool hold)
-{
-	if (engine)
-		engine->hold_all = hold;
 }
 void rediwm_glass_configure(struct glass_effect *effect, float radius, float opacity)
 {

@@ -174,3 +174,14 @@ bool rediwm_projection_set_tree_shadow(struct rediwm_node *node, const struct re
 bool rediwm_projection_set_tree_dim(struct rediwm_node *node, float brightness, float saturation) { props_changed = false; bool ok = set_tree_dim(&node->addons, &node->props, brightness, saturation); if (props_changed) rediwm_node_touch(node); return ok; }
 bool rediwm_projection_set_tree_unclipped(struct rediwm_node *node, bool unclipped) { props_changed = false; bool ok = set_tree_unclipped(&node->addons, &node->props, unclipped); if (props_changed) rediwm_node_touch(node); return ok; }
 bool rediwm_projection_set_tree_inert(struct rediwm_node *node, bool inert) { props_changed = false; bool ok = set_tree_inert(&node->addons, &node->props, inert); if (props_changed) rediwm_node_touch(node); return ok; }
+
+bool rediwm_projection_set_tree_output(struct rediwm_node *node, struct rediwm_scene_output *out) {
+  struct tree_props *props = out ? tree_props_get(&node->addons, &node->props) : node->props;
+  if (!props) return out == NULL;
+  const uint64_t home = out ? out->serial : 0;
+  if (props->home_output != home) {
+    props->home_output = home;
+    rediwm_node_touch(node);
+  }
+  return true;
+}

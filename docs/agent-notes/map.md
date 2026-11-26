@@ -73,7 +73,10 @@ seam for other operating systems.
 Also in `src/`: `Shell.zig` (xdg-shell and decorations), `TitlebarTabs.zig` (client-published
 titlebar tabs, `protocol/rediwm-titlebar-tabs-v1.xml`), `Popup.zig`,
 `LayerSurface.zig`, `Xwayland.zig` (+ `xwayland_*.zig`), `Switcher.zig`
-(Alt+Tab), `workspaces.zig`, `snap.zig`, `auto_tiling.zig`, `window_tabs.zig`,
+(Alt+Tab), `workspaces.zig`, `snap.zig`, `auto_tiling.zig` (workspace reflow),
+`scroll_layout.zig` (strip geometry), `scroll_tiling.zig` (focus and placement),
+`scroll_motion.zig` (swipes, two-finger and drag-edge scrolling of a strip),
+`window_tabs.zig`,
 `fifo.zig` (wp_fifo_v1 barriers, `docs/plans/fifo.md`).
 
 **Rendering** (read [rendering details](rendering.md) first): own scene nodes
@@ -103,7 +106,7 @@ and `effects/minimize_mesh.zig` (minimize snapshots and deformation),
 * **Settings** (`control_center/`, `AGENTS.md` there): the window is
   `ControlCenter.zig` (+ `tree`, `keys`, `relayout`, `paint.zig`); `panel.zig`
   has shared helpers; one `sections/*.zig` per page, the big ones split into
-  `appearance_*.zig`, `printers_*.zig` and `network_*.zig` (the Firewall card
+  `appearance_*.zig`, `display_*.zig`, `printers_*.zig` and `network_*.zig` (the Firewall card
   and sub-view are `firewall*.zig`, shown from the Network page).
 * **Session** (`session/`, `AGENTS.md` there): `lock.zig` (+ `lock_account`,
   `lock_events`, `lock_input`, `lock_view.zig`), `greeter.zig`, `idle.zig`,
