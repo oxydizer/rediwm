@@ -186,6 +186,16 @@ test "inline comments do not break values" {
     try std.testing.expect(!cfg.input.natural_scroll);
 }
 
+test "legacy global invert_scroll key is ignored" {
+    var cfg = try parse(std.testing.allocator,
+        \\[input]
+        \\invert_scroll = true
+        \\natural_scroll = false
+    , "legacy");
+    defer cfg.deinit();
+    try std.testing.expect(!cfg.input.natural_scroll);
+}
+
 test "accel config parses bezier and flat sections" {
     var bezier_cfg = try parse(std.testing.allocator,
         \\[input]

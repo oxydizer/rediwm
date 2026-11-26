@@ -98,11 +98,6 @@ pub const InputConfig = struct {
     /// (`input_sources.zig`); empty entries use the layout's language code.
     xkb_labels: []const u8 = "",
     natural_scroll: bool = true,
-    // Compositor-side flip applied to every scroll axis event regardless of
-    // device/backend support, unlike `natural_scroll` which only takes
-    // effect when libinput's per-device natural-scroll toggle is available
-    // (many plain mice report it unsupported). See `Input.processAxis`.
-    invert_scroll: bool = true,
     pointer_speed: f32 = -0.3,
     pointer_speed_touchpad: f32 = -0.3,
     accel_profile: AccelProfile = .bezier,

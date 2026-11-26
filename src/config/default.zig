@@ -67,8 +67,6 @@ pub const source =
     \\# ───────────────────────────────────────────────
     \\[input]
     \\natural_scroll    = true
-    \\invert_scroll     = true      # flips scroll direction in the compositor itself,
-    \\                              # so it works even on mice libinput won't natural-scroll
     \\pointer_speed         = -0.3      # -1.0 to 1.0
     \\pointer_speed_touchpad = -0.3      # -1.0 to 1.0
     \\accel_profile         = "bezier"   # flat | bezier
@@ -114,7 +112,7 @@ pub const source =
     \\# Omitted device fields inherit these defaults; delete a field to reset it.
     \\# Device fields: pointer_speed, natural_scroll, left_handed, tap_to_click,
     \\# tap_drag, disable_while_typing. The latter and speed inherit the *_touchpad
-    \\# defaults on touchpads. invert_scroll and pan_speed always remain global.
+    \\# defaults on touchpads. pan_speed always remains global.
     \\
     \\# ───────────────────────────────────────────────
     \\# Compositor behaviour

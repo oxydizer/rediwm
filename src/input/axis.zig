@@ -50,12 +50,8 @@ pub fn processAxis(
     if (input.server.polkit_dialog != null or input.server.screenshot_selector.output != null) return;
     if (input.server.world.mini_map.dragging) return;
     if (input.server.switcher.active()) return;
-    // Flip here, before zoom/UI/client branches, so `invert_scroll` behaves
-    // like `natural_scroll` would if libinput's device toggle applied to
-    // this device: a single, uniform reversal rather than one per consumer.
-    const invert = input.server.config.input.invert_scroll;
-    const delta: f64 = if (invert) -raw_delta else raw_delta;
-    const delta_discrete: i32 = if (invert) -raw_delta_discrete else raw_delta_discrete;
+    const delta = raw_delta;
+    const delta_discrete = raw_delta_discrete;
     if (input.server.world.overview.active()) {
         // Wheel zooms the preview under the pointer (wheel up enlarges).
         if (orientation == .vertical_scroll) {
