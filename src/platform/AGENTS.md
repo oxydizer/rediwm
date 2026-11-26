@@ -10,7 +10,7 @@ mount containing a path (`mounts.zig`: Linux reads `/proc/self/mountinfo`, other
 systems report no mount table), seccomp-BPF filters
 (`seccomp.zig`, for the PDF viewer and the theme helper), and
 `child.h`/`self_exe.h`/`peer.h`/`process.h` for C and C++, and `fs.zig`
-(rename without replacing, stat), and `dirwalk.zig` (reading a directory and
+(rename without replacing, stat, syncing a filesystem), and `dirwalk.zig` (reading a directory and
 examining its entries, for the Files folder-size walk). Std only, no compositor imports. Linux and
 FreeBSD: a part is one file with a `switch (builtin.os.tag)` per function
 (`peer`, `process`, `wake`, `watch`, `exe`, `fs`), or a facade over

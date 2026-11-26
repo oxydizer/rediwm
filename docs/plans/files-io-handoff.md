@@ -83,6 +83,9 @@ longer have a Runtime, a Manager or an executor of their own.
    `REDIWM_IO_BENCH_LIMIT_S=30` so a stalled run reports instead of waiting.
    bindfs works in the sandbox: `bindfs <src> <mnt>`, `pgrep -f bindfs` for the
    pid; `kill -CONT` it if a run is killed, or the mount stays hung.
+3. **Copy performance** (`files-io-copy-performance.md`): the user's earlier
+   findings (buffers, small-file overhead) and the next steps; sync once per
+   copy job is done (#81).
 3. **S6, endpoint and single instance:** one private endpoint per Files
    process on its own thread; `open_window` (launching Files while one runs
    opens a window in it, headless included); `subscribe` and job control for

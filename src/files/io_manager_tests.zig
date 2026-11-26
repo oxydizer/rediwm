@@ -178,6 +178,26 @@ test "a serial disk runs one operation at a time across jobs, a stuck one aside"
     try std.testing.expect(manager.completeWork(fourth, .completed));
 }
 
+test "a deferred-sync copy finishes with its finalizer, even with no folders" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+    const job = try manager.createJob(1);
+    _ = try manager.addOperation(job, .copy_file);
+    try manager.setDeferredSync(job);
+    try std.testing.expect(manager.jobDefersSync(job));
+    try manager.queueJob(job);
+
+    const copy = manager.dispatchNext().?;
+    try std.testing.expectEqual(io_manager.OperationKind.copy_file, manager.operationKind(copy).?);
+    try std.testing.expect(manager.completeWork(copy, .completed));
+    // The sync comes last: the job is finalizing, not completed.
+    const sync = manager.dispatchNext().?;
+    try std.testing.expectEqual(io_manager.OperationKind.finalize_directories, manager.operationKind(sync).?);
+    try std.testing.expectEqual(io_manager.JobState.finalizing, manager.jobState(job).?);
+    try std.testing.expect(manager.completeWork(sync, .completed));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job).?);
+}
+
 test "hovered copy operation gets one-shot priority over normal scheduling" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

@@ -461,6 +461,8 @@ fn prepare(
                     destination,
                     token,
                 )
+            else if (context.manager.jobDefersSync(token.job_id))
+                try io_copy.makeDeferredInput(context.allocator, source, destination, token)
             else
                 try io_copy.makeInput(context.allocator, source, destination, token);
         },
@@ -533,7 +535,12 @@ fn makeDirectoryFinalizationInput(
         };
         initialized += 1;
     }
-    return io_finalize.makeInput(context.allocator, owned_records);
+    // A copy job syncs its destination once here instead of every new file.
+    const sync_directory = if (context.manager.jobDefersSync(token.job_id))
+        context.manager.destinationDirectory(token.job_id)
+    else
+        null;
+    return io_finalize.makeInputWithSync(context.allocator, owned_records, sync_directory);
 }
 
 const ArchiveInput = struct {

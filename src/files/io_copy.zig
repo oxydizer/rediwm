@@ -53,6 +53,9 @@ const Continuation = struct {
 };
 
 const continuation_size = 36;
+/// The input's last byte: bit 0 replacement, bit 1 deferred sync.
+const flag_replacement: u8 = 1;
+const flag_deferred_sync: u8 = 2;
 const replacement_marker_header_size = 13;
 
 pub fn bufferedBufferSize(file_size: u64) usize {
@@ -88,6 +91,21 @@ pub fn makeInput(
         staging_name,
         false,
     );
+}
+
+/// As `makeInput`, for a copy job that syncs once at its end
+/// (`Manager.setDeferredSync`): the new file is not synced on its own. A
+/// replacement always is, so an overwrite never leaves a broken file.
+pub fn makeDeferredInput(
+    allocator: Allocator,
+    source_path: []const u8,
+    destination_path: []const u8,
+    token: executor.WorkToken,
+) !executor.OwnedPayload {
+    const input = try makeInput(allocator, source_path, destination_path, token);
+    const bytes = input.bytes.?;
+    bytes[bytes.len - 1] |= flag_deferred_sync;
+    return input;
 }
 
 /// Build replacement input with a unique staging basename in the destination
@@ -149,7 +167,7 @@ fn makeInputWithStagingName(
     if (staging_name) |name| {
         @memcpy(bytes[staging_start..][0..name.len], name);
         bytes[bytes.len - 2] = 0;
-        bytes[bytes.len - 1] = @intFromBool(replacement);
+        bytes[bytes.len - 1] = if (replacement) flag_replacement else 0;
     }
     return .{ .allocator = allocator, .bytes = bytes };
 }
@@ -160,6 +178,7 @@ fn paths(input: *const executor.OwnedPayload) !struct {
     destination_name: [*:0]const u8,
     staging_name: ?[*:0]const u8,
     replacement: bool,
+    deferred_sync: bool,
 } {
     const bytes = input.slice();
     const separator = std.mem.indexOfScalar(u8, bytes, 0) orelse return error.InvalidInput;
@@ -181,7 +200,7 @@ fn paths(input: *const executor.OwnedPayload) !struct {
         const name_end = std.mem.indexOfScalar(u8, staging_bytes, 0) orelse
             return error.InvalidInput;
         if (name_end == 0 or name_end + 2 != staging_bytes.len or
-            staging_bytes[name_end + 1] > 1)
+            staging_bytes[name_end + 1] > (flag_replacement | flag_deferred_sync))
             return error.InvalidInput;
         const name = staging_bytes[0..name_end];
         if (name.len == 0 or std.mem.indexOfScalar(u8, name, '/') != null) {
@@ -189,8 +208,8 @@ fn paths(input: *const executor.OwnedPayload) !struct {
         }
         break :blk @ptrCast(name.ptr);
     };
-    const replacement = staging_bytes.len != 0 and
-        staging_bytes[staging_bytes.len - 1] == 1;
+    const flags: u8 = if (staging_bytes.len != 0) staging_bytes[staging_bytes.len - 1] else 0;
+    const replacement = flags & flag_replacement != 0;
     const destination_separator = std.mem.lastIndexOfScalar(u8, destination_path, '/');
     const name = if (destination_separator) |index|
         destination_path[index + 1 ..]
@@ -207,6 +226,7 @@ fn paths(input: *const executor.OwnedPayload) !struct {
         .destination_name = @ptrCast(name.ptr),
         .staging_name = staging_name,
         .replacement = replacement,
+        .deferred_sync = !replacement and flags & flag_deferred_sync != 0,
     };
 }
 
@@ -573,12 +593,15 @@ fn finishFlushing(
     state_arg: Continuation,
     destination_name: [*:0]const u8,
     original_destination_name: [*:0]const u8,
+    deferred_sync: bool,
     scratch: *?executor.OwnedPayload,
 ) executor.WorkCompletion {
     var state = state_arg;
     existing_mod.keepTimes(state.source_fd, state.destination_fd);
-    if (!syncDescriptor(state.destination_fd) or
-        !syncDescriptor(state.parent_fd))
+    // A deferred job syncs its whole destination once, at its end
+    // (`io_finalize`): a new file is not synced on its own.
+    if (!deferred_sync and (!syncDescriptor(state.destination_fd) or
+        !syncDescriptor(state.parent_fd)))
     {
         return failedWithScratch(
             item,
@@ -677,7 +700,7 @@ fn finishFlushing(
         return failed(item, state, destination_name);
     }
 
-    if (!syncDescriptor(state.parent_fd)) {
+    if (!deferred_sync and !syncDescriptor(state.parent_fd)) {
         cleanupDestination(&state, original_destination_name);
         closeDescriptors(&state);
         return completion(item, .failed, null, null);
@@ -953,6 +976,7 @@ fn executeUnit(
             state,
             owned_destination_name,
             operation_paths.destination_name,
+            operation_paths.deferred_sync,
             &scratch_payload,
         );
     }
