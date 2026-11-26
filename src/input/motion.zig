@@ -247,6 +247,7 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
     defer input.updateGrabBorderGlow();
     input.positionDragIcon();
     input.drag_dodge.motion();
+    input.drag_tab_hover.motion();
     input.updateDockReveal();
     if (input.server.screenshot_selector.output != null) {
         input.server.screenshot_selector.motion(input.cursor.x, input.cursor.y);

@@ -70,6 +70,11 @@
   finger scroll that goes quiet for 400 ms ends itself, since its stop event
   can be routed elsewhere. Super+Shift+wheel and Super+horizontal wheel step
   columns; plain Super+wheel still cycles workspaces.
+* **Drag tab hover** (`drag_tab_hover.zig`): a pointer drag resting
+  `delay_ms` on a tab a client published sends that tab's `select`, as a
+  click does, so a drop can land in another tab's view. Deadline-only timer;
+  it keeps the window by id and re-checks the drag and tab when it fires.
+  Window tabs (grouped windows) are not switched.
 * **Touch/tablet** use their own protocol only when
   `directInputReachesClients()`; otherwise they emulate the pointer (send your
   own `pointerNotifyFrame`). Touchscreens map to `output_name` or the built-in
