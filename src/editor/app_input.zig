@@ -55,9 +55,11 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     if (self.dragging) {
         const t = self.current();
         if (y < self.viewTop()) self.port().scrollBy(-18) else if (y > self.viewTop() + self.viewHeight()) self.port().scrollBy(18);
-        const pos = self.indexAt(x - 16 + t.scroll_x, y - self.viewTop());
+        if (x < self.textOriginX()) return;
+        const text_x = x - self.textOriginX() + t.scroll_x;
+        const pos = self.indexAt(text_x, y - self.viewTop());
         if (self.drag_word) |initial| {
-            const range = t.doc.wordRange(self.port().characterAt(x - 16 + t.scroll_x, y - self.viewTop()));
+            const range = t.doc.wordRange(self.port().characterAt(text_x, y - self.viewTop()));
             const backwards = pos < initial[0];
             t.doc.anchor = if (backwards) initial[1] else initial[0];
             t.doc.cursor = if (backwards) range[0] else @max(initial[1], range[1]);
@@ -142,14 +144,16 @@ pub fn handleButton(self: *App, code: u32, pressed: bool) void {
             return;
         }
         const text_y = self.py - self.viewTop();
+        if (self.px < self.textOriginX()) return;
         self.find_open = false;
         const t = self.current();
-        const pos = self.indexAt(self.px - 16 + t.scroll_x, text_y);
+        const text_x = self.px - self.textOriginX() + t.scroll_x;
+        const pos = self.indexAt(text_x, text_y);
         const now = @import("ui").key_repeat.nowMs();
         const double = if (last_click) |last| last.tab == t.id and now - last.time <= input.multi_click_ms and
             @abs(self.px - last.x) <= input.multi_click_slop and @abs(self.py - last.y) <= input.multi_click_slop else false;
         if (double and !self.shift) {
-            const range = t.doc.wordRange(self.port().characterAt(self.px - 16 + t.scroll_x, text_y));
+            const range = t.doc.wordRange(self.port().characterAt(text_x, text_y));
             t.doc.anchor = range[0];
             t.doc.cursor = range[1];
             self.drag_word = range;

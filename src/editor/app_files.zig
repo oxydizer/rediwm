@@ -194,6 +194,10 @@ pub fn act(self: *App, action: Action) void {
             self.current().scroll_x = 0;
             self.port().clamp();
         },
+        .line_numbers => {
+            self.line_numbers = !self.line_numbers;
+            self.port().clamp();
+        },
     }
     self.dirty = true;
 }

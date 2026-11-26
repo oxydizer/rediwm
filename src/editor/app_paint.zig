@@ -5,6 +5,7 @@ const i18n = @import("i18n");
 const tr = i18n.tr;
 const c = @import("../files/c.zig").api;
 const ui = @import("ui").cairo;
+const ui_text = @import("ui").text;
 const theme = @import("ui").theme;
 const scrollbar = @import("ui").widgets.scrollbar;
 const button = @import("ui").widgets.button;
@@ -184,8 +185,8 @@ pub fn menuHit(self: *const App, x: f64, y: f64) ?usize {
 pub fn paintMenu(self: *App, cr: *c.cairo_t) void {
     menu.frame(cr, self.menuBox(), true);
     const IconId = @import("ui").layout.IconId;
-    const icons = [_]?IconId{ .plus, .plus, .open, .clock, .save, .save, .search, .search, if (self.wrap) .checkmark else null };
-    const hints = [_]?[]const u8{ "CTRL+N", "CTRL+SHIFT+N", "CTRL+O", null, "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", "CTRL+H", null };
+    const icons = [_]?IconId{ .plus, .plus, .open, .clock, .save, .save, .search, .search, if (self.wrap) .checkmark else null, if (self.line_numbers) .checkmark else null };
+    const hints = [_]?[]const u8{ "CTRL+N", "CTRL+SHIFT+N", "CTRL+O", null, "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", "CTRL+H", null, null };
     for (labels, 0..) |label, i| menu.row(cr, self.menuRow(i), .{
         .label = label.get(),
         .hint = hints[i],
@@ -266,6 +267,21 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     pt.visible(&self.rows);
     const tab = self.current();
     const sel = tab.doc.selection();
+    if (self.line_numbers and geometry.gutter.w > 0) {
+        fill(cr, geometry.gutter.x, geometry.gutter.y, geometry.gutter.w, geometry.gutter.h, t.app_bar);
+        if (self.rows.items.len > 0) {
+            var number = tab.doc.linesBefore(self.rows.items[0].line.seg.line) + 1;
+            var previous_line = self.rows.items[0].line.seg.line;
+            for (self.rows.items) |row| {
+                if (row.line.seg.line != previous_line) {
+                    number += 1;
+                    previous_line = row.line.seg.line;
+                }
+                const shift = self.reflow.offset(row.line.seg.start, self.frame_ms).snapped(@floatFromInt(self.scale));
+                self.paintLineNumber(cr, row, number, shift);
+            }
+        }
+    }
     c.cairo_save(cr);
     c.cairo_rectangle(
         cr,
@@ -331,13 +347,13 @@ pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]u
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
     const row_y = row.y + shift.dy;
-    c.cairo_translate(cr, 16 - tab.scroll_x + shift.dx, self.viewTop() + row_y);
+    c.cairo_translate(cr, self.textOriginX() - tab.scroll_x + shift.dx, self.viewTop() + row_y);
     const text_len = l.textLen();
     // The selection as indices into this layout, which holds the text
     // without its line break. With wrapping, a selected break is drawn as
     // highlight out to the right margin, as Pango does when the break is
     // in the layout; without it Pango stops at the end of the text.
-    const margin: f64 = @floatFromInt(self.w - 40);
+    const margin = @max(0, self.editorLayout().viewport.w - 10);
     const s0 = sel[0] -| seg.start;
     const s1 = @min(sel[1] -| seg.start, text_len);
     const covers_break = seg.terminated() and sel[0] <= seg.text_end and sel[1] > seg.text_end;
@@ -390,6 +406,20 @@ pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]u
             fill(cr, x, py + 2, ui.measureText(cr, self.preedit.items, ui.textSize(), false), 1, theme.shellPalette().accent);
         }
     }
+}
+
+pub fn paintLineNumber(self: *App, cr: *c.cairo_t, row: view.Row, number: usize, shift: reflow_mod.Offset) void {
+    const iter = p.pango_layout_get_iter(row.line.layout) orelse return;
+    defer p.pango_layout_iter_free(iter);
+    const baseline = @as(f64, @floatFromInt(p.pango_layout_iter_get_baseline(iter))) / 1024;
+    const y = self.viewTop() + row.y + shift.dy + baseline;
+    var buf: [32]u8 = undefined;
+    const label = std.fmt.bufPrint(&buf, "{d}", .{number}) catch return;
+    const width = ui_text.measureWidthF(label, .mono, ui.textSize(), @floatFromInt(@max(self.scale, 1))) catch 0;
+    var color = theme.global.window_fg;
+    color[3] *= 0.65;
+    ui.setSource(cr, color);
+    ui.drawTextFont(cr, label, self.editorLayout().gutter.x + self.editorLayout().gutter.w - 8 - width, y, ui.textSize(), .mono);
 }
 
 pub fn paintClose(self: *App, cr: *c.cairo_t) void {

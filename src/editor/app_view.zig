@@ -44,7 +44,12 @@ pub fn cursorName(self: *App) [*:0]const u8 {
     if (self.find_open) if (self.searchHit(self.px, self.py)) |control| {
         return if (control == .query or control == .replacement) "text" else "default";
     };
-    return if (self.px >= 0 and self.py >= self.viewTop() and self.py < @as(f64, @floatFromInt(self.h)) - status_h and self.px < @as(f64, @floatFromInt(self.w)) - 16) "text" else "default";
+    return if (self.px >= self.textOriginX() and self.py >= self.viewTop() and self.py < @as(f64, @floatFromInt(self.h)) - status_h and self.px < @as(f64, @floatFromInt(self.w)) - 16) "text" else "default";
+}
+
+/// Shared origin of the text area, after the optional line-number gutter.
+pub fn textOriginX(self: *App) f64 {
+    return self.editorLayout().viewport.x + 4;
 }
 
 /// The current tab's bar, along the right edge of the text view; null
@@ -69,7 +74,8 @@ pub fn seekScroll(self: *App, offset: f32) void {
 /// The current tab as something to scroll, lay out and hit-test.
 pub fn port(self: *App) view.Port {
     const t = self.current();
-    self.layouts.configure(theme.global.mono_font, ui.textSize(), if (self.wrap) self.w - 40 else null, self.scale);
+    const text_width = @max(1, @as(i32, @intFromFloat(self.editorLayout().viewport.w)) - 10);
+    self.layouts.configure(theme.global.mono_font, ui.textSize(), if (self.wrap) text_width else null, self.scale);
     return .{ .doc = &t.doc, .layouts = &self.layouts, .height = self.viewHeight(), .dy = &t.dy };
 }
 
@@ -131,7 +137,7 @@ pub fn caretRectNear(self: *App) p.Rectangle {
 
 pub fn inputRectangle(self: *App) p.Rectangle {
     const r = self.caretRect();
-    return .{ .x = @intFromFloat(@as(f64, @floatFromInt(r.x)) / 1024 + 16 - self.current().scroll_x), .y = @intFromFloat(@as(f64, @floatFromInt(r.y)) / 1024 + self.viewTop()), .width = 2, .height = @max(1, @divTrunc(r.height, 1024)) };
+    return .{ .x = @intFromFloat(@as(f64, @floatFromInt(r.x)) / 1024 + self.textOriginX() - self.current().scroll_x), .y = @intFromFloat(@as(f64, @floatFromInt(r.y)) / 1024 + self.viewTop()), .width = 2, .height = @max(1, @divTrunc(r.height, 1024)) };
 }
 
 pub fn reveal(self: *App) void {
@@ -143,7 +149,7 @@ pub fn reveal(self: *App) void {
     if (y < 0) pt.scrollBy(y) else if (y + h > pt.height) pt.scrollBy(y + h - pt.height);
     if (!self.wrap) {
         const x = @as(f64, @floatFromInt(r.x)) / 1024;
-        t.scroll_x = @max(0, @max(x - @as(f64, @floatFromInt(self.w)) + 48, @min(t.scroll_x, x)));
+        t.scroll_x = @max(0, @max(x - (self.editorLayout().viewport.w - 10) + 8, @min(t.scroll_x, x)));
     }
     self.changed();
 }
