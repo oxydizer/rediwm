@@ -58,6 +58,16 @@ pub const Task = union(enum) {
         /// Owned copy of the staging path.
         path: [:0]u8,
     },
+
+    /// The job a stuck task holds up (worker-pools §4.2); 0 for work no
+    /// job waits on (requests, cleanup).
+    pub fn stallKey(self: Task) u64 {
+        return switch (self) {
+            .prepare_transfer => |prepare| prepare.job_id,
+            .scan_staging => |scan| scan.token.job_id,
+            .delete_tree, .request => 0,
+        };
+    }
 };
 
 /// The top-level entries of a staging folder, in directory order.

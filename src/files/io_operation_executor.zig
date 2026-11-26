@@ -179,6 +179,14 @@ pub const Runtime = struct {
         self.* = undefined;
     }
 
+    pub fn runningTasks(self: *Runtime, out: []@import("io_workers.zig").Running) usize {
+        return self.executor.runningTasks(out);
+    }
+
+    pub fn queuedCount(self: *Runtime) usize {
+        return self.executor.queuedCount();
+    }
+
     pub fn wakeFd(self: *Runtime) std.posix.fd_t {
         return self.executor.wakeFd();
     }

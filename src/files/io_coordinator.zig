@@ -39,11 +39,27 @@ const Preparing = struct {
 
 /// The last record written for a job, and when progress and the speed
 /// history were last written.
-const Published = struct {
+pub const Published = struct {
     record: io_service.JobRecord,
     last_progress_ms: i64 = 0,
     last_sample_ms: i64 = 0,
     retirement_requested: bool = false,
+    /// The job's first source and its destination, owned: where a stuck
+    /// task may be waiting (`io_coordinator_stalls.zig`). Null when unknown.
+    source_path: ?[]u8 = null,
+    destination_path: ?[]u8 = null,
+
+    pub fn setPaths(self: *Published, allocator: std.mem.Allocator, source: ?[]const u8, destination: ?[]const u8) void {
+        if (source) |path| self.source_path = allocator.dupe(u8, path) catch null;
+        if (destination) |path| self.destination_path = allocator.dupe(u8, path) catch null;
+    }
+
+    pub fn freePaths(self: *Published, allocator: std.mem.Allocator) void {
+        if (self.source_path) |path| allocator.free(path);
+        if (self.destination_path) |path| allocator.free(path);
+        self.source_path = null;
+        self.destination_path = null;
+    }
 };
 
 /// Progress-only changes are written at most this often per job; state,
@@ -175,6 +191,8 @@ pub const Coordinator = struct {
     pub fn deinit(self: *Coordinator) void {
         self.service.beginShutdown();
         if (self.thread) |thread| thread.join();
+        var published = self.published.valueIterator();
+        while (published.next()) |entry| entry.freePaths(self.allocator);
         self.published.deinit(self.allocator);
         self.preparing.deinit(self.allocator);
         var remaining = self.deletions.valueIterator();
@@ -232,6 +250,7 @@ pub const Coordinator = struct {
             var deadline = self.publishRecords(now);
             if (self.publishDeletions(now)) |at| deadline = earliest(deadline, at);
             if (self.publishViews(now)) |at| deadline = earliest(deadline, at);
+            if (self.watchStalls(now)) |at| deadline = earliest(deadline, at);
             self.retireReadyJobs();
             if (self.draining and self.isIdle()) break;
             // While draining, re-check progress at least every 50 ms: the
@@ -254,6 +273,7 @@ pub const Coordinator = struct {
     const watchView = job_views.watchView;
     const unwatchView = job_views.unwatchView;
     const publishViews = job_views.publishViews;
+    const watchStalls = @import("io_coordinator_stalls.zig").watchStalls;
     const handleRequest = coordinator_requests.handleRequest;
     const submitArchive = archives.submitArchive;
     const pumpArchives = archives.pumpArchives;
@@ -409,6 +429,7 @@ pub const Coordinator = struct {
             return;
         };
         self.published.putAssumeCapacity(job_id, .{ .record = record });
+        self.published.getPtr(job_id).?.setPaths(self.allocator, if (request.sources.len > 0) request.sources[0].path else null, request.destination_path);
         self.preparing.putAssumeCapacity(job_id, .{ .mode = request.mode });
 
         // The task owns the payload from here on.
@@ -434,7 +455,8 @@ pub const Coordinator = struct {
     /// record as cancelled or failed.
     pub fn endPlanningJob(self: *Coordinator, job_id: JobId, state: io_service.JobState, err: ?anyerror) void {
         _ = self.runtime.manager.discardPlanningJob(job_id);
-        const entry = self.published.fetchRemove(job_id) orelse return;
+        var entry = self.published.fetchRemove(job_id) orelse return;
+        entry.value.freePaths(self.allocator);
         var record = entry.value.record;
         record.state = state;
         record.error_code = if (err) |e| @backingInt(rejectionCode(e)) else 0;
@@ -721,7 +743,9 @@ pub const Coordinator = struct {
 
             const job_id = candidate orelse return;
             if (!self.runtime.retireJobIfReady(job_id)) return;
-            if (self.published.fetchRemove(job_id)) |_| {
+            if (self.published.fetchRemove(job_id)) |removed| {
+                var gone = removed;
+                gone.value.freePaths(self.allocator);
                 self.service.retireJobRecord(job_id) catch |err| {
                     std.log.err("Files job record retirement for job {d} failed: {s}", .{ job_id, @errorName(err) });
                 };

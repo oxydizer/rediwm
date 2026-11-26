@@ -124,10 +124,12 @@ pub fn send(self: *App, kind: io_service.CommandKind, job_id: io_service.JobId) 
     };
 }
 
-/// "photo.jpg", or "photo.jpg and 3 more".
+/// "photo.jpg", or "photo.jpg and 3 more"; "photo.jpg: waiting for NAS…"
+/// while a task is stuck on a mount (`io_coordinator_stalls.zig`).
 fn title(buf: []u8, record: *const io_service.JobRecord) []const u8 {
     const name = if (record.kind == .empty_trash) tr("Emptying Trash") else record.label();
     if (record.pending_conflict != 0) return i18n.fmt(buf, tr("{name}: needs an answer"), .{ .name = name }) catch name;
+    if (record.waiting_for_len != 0) return i18n.fmt(buf, tr("{name}: waiting for {mount}…"), .{ .name = name, .mount = record.waitingFor() }) catch name;
     if (record.source_count <= 1 or record.kind == .empty_trash) return name;
     return i18n.fmt(buf, tr("{name} and {count} more"), .{ .name = name, .count = record.source_count - 1 }) catch name;
 }

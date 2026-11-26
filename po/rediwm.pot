@@ -9045,3 +9045,7 @@ msgstr ""
 msgctxt "polkit"
 msgid "Authentication is required to manage login accounts"
 msgstr ""
+
+#: src/files/app_jobs_card.zig
+msgid "{name}: waiting for {mount}…"
+msgstr ""

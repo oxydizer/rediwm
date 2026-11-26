@@ -17,6 +17,15 @@ pub const max_live_jobs = 64;
 pub const tombstone_capacity = 64;
 pub const outcome_slots_per_window = 16;
 pub const label_capacity = 96;
+pub const waiting_for_capacity = 48;
+
+/// The longest prefix of `text` within `capacity` bytes that ends on a
+/// UTF-8 boundary.
+fn utf8Prefix(text: []const u8, capacity: usize) usize {
+    var len = @min(text.len, capacity);
+    while (len > 0 and len < text.len and (text[len] & 0xC0) == 0x80) len -= 1;
+    return len;
+}
 /// Speed samples kept per live job: one per second, two minutes.
 pub const rate_history_len = 120;
 
@@ -74,11 +83,26 @@ pub const Record = struct {
     conflict_orphaned: bool = false,
     /// 0 when the job offers no resource (finished extraction staging).
     offered_resource: u64 = 0,
+    /// Non-empty while a task of the job has been stuck for `report_after`:
+    /// the name of the mount it waits on ("Waiting for <mount>…").
+    waiting_for_len: u8 = 0,
+    waiting_for_buf: [waiting_for_capacity]u8 = @splat(0),
     /// Service-wide sequence at the record's last change.
     revision: u64 = 0,
 
     pub fn label(self: *const Record) []const u8 {
         return self.label_buf[0..self.label_len];
+    }
+
+    pub fn waitingFor(self: *const Record) []const u8 {
+        return self.waiting_for_buf[0..self.waiting_for_len];
+    }
+
+    pub fn setWaitingFor(self: *Record, text: []const u8) void {
+        const len = utf8Prefix(text, waiting_for_capacity);
+        @memcpy(self.waiting_for_buf[0..len], text[0..len]);
+        @memset(self.waiting_for_buf[len..], 0);
+        self.waiting_for_len = @intCast(len);
     }
 
     /// Truncates at a UTF-8 boundary to fit the fixed buffer.

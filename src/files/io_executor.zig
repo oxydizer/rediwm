@@ -117,6 +117,10 @@ const WorkerPool = @import("io_workers.zig").WorkerPool;
 const PoolWorkItem = struct {
     item: WorkItem,
     ledger_handle: io_resource_ledger.Handle,
+
+    pub fn stallKey(self: PoolWorkItem) u64 {
+        return self.item.token.job_id;
+    }
 };
 
 const PoolCompletion = struct {
@@ -294,6 +298,14 @@ pub const Executor = struct {
         } else {
             count.* -= 1;
         }
+    }
+
+    pub fn runningTasks(self: *Executor, out: []@import("io_workers.zig").Running) usize {
+        return self.pool.runningTasks(out);
+    }
+
+    pub fn queuedCount(self: *Executor) usize {
+        return self.pool.queuedCount();
     }
 
     /// File descriptor to monitor for completed worker results.
