@@ -38,7 +38,8 @@ download as a ghost folder; it reads "Fetching file list…" until the metadata 
 its files can be ticked the same way. The download's row in its destination
 folder, its circle and the shell panel's Choose files… all open the same
 folder view. Downloads start with ratio 1 seeding and a 1 MiB/s upload limit.
-The session upload ceiling is 1 MiB/s.
+The session upload ceiling is 1 MiB/s. Peers come from trackers, the DHT and local peer
+discovery; UPnP and NAT-PMP stay off, so no router ports are opened.
 
 Downloads and seeding continue after the last Files window closes: Files stays
 up without a window while the helper downloads or seeds, mirroring each

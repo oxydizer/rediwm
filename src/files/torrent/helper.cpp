@@ -35,8 +35,11 @@ void create_engine() {
                        lt::alert_category::port_mapping);
   settings.set_int(lt::settings_pack::connections_limit, 100);
   settings.set_int(lt::settings_pack::upload_rate_limit, 1024 * 1024);
-  settings.set_bool(lt::settings_pack::enable_dht, false);
-  settings.set_bool(lt::settings_pack::enable_lsd, false);
+  // Peers from the DHT and the local network from the start: a magnet
+  // without live trackers has no other way to its file list, and a torrent
+  // added before the DHT ran would wait for the next announce round.
+  settings.set_bool(lt::settings_pack::enable_dht, true);
+  settings.set_bool(lt::settings_pack::enable_lsd, true);
   settings.set_bool(lt::settings_pack::enable_upnp, false);
   settings.set_bool(lt::settings_pack::enable_natpmp, false);
   session = std::make_unique<lt::session>(settings);
@@ -148,12 +151,6 @@ static gboolean tick(gpointer) {
   return G_SOURCE_CONTINUE;
 }
 void schedule() {
-  if (session && active()) {
-    lt::settings_pack settings;
-    settings.set_bool(lt::settings_pack::enable_dht, true);
-    settings.set_bool(lt::settings_pack::enable_lsd, true);
-    session->apply_settings(settings);
-  }
   if (!active() && saves.empty())
     sleep_engine();
   if (active() && !ticker)
