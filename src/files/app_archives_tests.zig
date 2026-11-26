@@ -189,6 +189,10 @@ test "copying archive members puts staged paths on the clipboard" {
     defer s.stop();
 
     try showArchive(&s.app, archive, "nested", true);
+    // The toolbar offers Copy like Ctrl+C and the menu; not Cut or Paste.
+    try std.testing.expect(s.app.toolbarButtonEnabled(.copy));
+    try std.testing.expect(!s.app.toolbarButtonEnabled(.cut));
+    try std.testing.expect(!s.app.toolbarButtonEnabled(.paste));
     s.app.copySelected();
     try s.until(idle);
     try std.testing.expectEqualStrings("Archive members copied to clipboard", s.app.status_notice.?);
