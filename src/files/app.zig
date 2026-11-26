@@ -822,14 +822,14 @@ pub const App = struct {
     /// (size, type) stacked to its right.
     pub const GridCard = struct {
         pub const padding_x: f64 = 10;
-        pub const icon_size: f64 = 44;
-        pub const height: i32 = 64;
+        pub const icon_size: f64 = 54;
+        pub const height: i32 = 72;
         /// Centres the icon in the card.
         pub const padding_top: f64 = (@as(f64, @floatFromInt(height)) - icon_size) / 2;
         /// Where the name and detail line start, from the card's left edge.
         pub const label_x: f64 = padding_x + icon_size + 12;
-        pub const name_baseline: f64 = 27;
-        pub const detail_baseline: f64 = 47;
+        pub const name_baseline: f64 = 31;
+        pub const detail_baseline: f64 = 51;
         /// Narrowest cell before the grid drops a column.
         pub const min_cell: i32 = 230;
     };

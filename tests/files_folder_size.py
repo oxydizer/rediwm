@@ -113,9 +113,9 @@ def run():
 
                 # Card 0 starts at x = 228 (sidebar 208 + 20), y = 132 (112 + 20).
                 # Its size line (sizeButtonRect) sits right of the icon, from
-                # (x + 62, y + 32), 22 px tall. So button 0 is around x = 300, y = 175.
+                # (x + 72, y + 36), 22 px tall. So button 0 is around x = 310, y = 179.
                 # Click the dash button of item 0 (big_folder)
-                click(300, 175)
+                click(310, 179)
                 time.sleep(.2)
 
                 # Clicking dash must NOT select big_folder (item 1 small_folder must still be active/selected)

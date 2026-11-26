@@ -32,7 +32,7 @@ def write_tone(path, seconds):
         w.writeframes(b"".join(struct.pack("<hh", 800, 800) for _ in range(22050 * seconds)))
 
 
-SONG_X, SONG_Y = 498, 164
+SONG_X, SONG_Y = 503, 168
 LIST_NAME_X, LIST_SONG_Y = 287, 210  # song.wav's name in list view
 
 

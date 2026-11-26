@@ -67,15 +67,16 @@ test "grid hit testing respects gutters, scrolling and responsive columns" {
     try std.testing.expectEqual(@as(i32, 3), app.columns());
     try std.testing.expectEqual(@as(?usize, 0), app.itemAt(250, 158));
     try std.testing.expectEqual(@as(?usize, 1), app.itemAt(490, 158));
-    // Cards are 64 px tall on a 72 px pitch from y = 132.
-    try std.testing.expectEqual(@as(?usize, 3), app.itemAt(250, 230));
+    // Cards are 72 px tall on an 80 px pitch from y = 132.
+    try std.testing.expectEqual(@as(?usize, 3), app.itemAt(250, 240));
     try std.testing.expectEqual(@as(?usize, null), app.itemAt(220, 158));
     try std.testing.expectEqual(@as(?usize, null), app.itemAt(450, 158));
-    try std.testing.expectEqual(@as(?usize, null), app.itemAt(250, 200));
-    app.scroll_y = 72;
+    try std.testing.expectEqual(@as(?usize, null), app.itemAt(250, 208));
+    app.scroll_y = 80;
     try std.testing.expectEqual(@as(?usize, 3), app.itemAt(250, 158));
+    app.scroll_y = 0;
     app.revealIndex(19);
-    try std.testing.expect(app.scroll_y > 72);
+    try std.testing.expect(app.scroll_y > 0);
     app.resize(360, 240);
     try std.testing.expectEqual(@as(i32, 0), app.sidebarWidth());
     try std.testing.expectEqual(@as(i32, 1), app.columns());
