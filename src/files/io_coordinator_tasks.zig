@@ -18,38 +18,63 @@ fn lane(self: *Coordinator, which: io_service_tasks.Lane) Lane {
     };
 }
 
+/// Requests go before prepares (worker-pools §4.6): a person waits on each
+/// request, while a prepare only delays a job already shown as planning. At
+/// most `worker_count` prepares are in the pool; the rest wait here, so a
+/// request never queues behind a prepare that has not started.
 pub fn submitTask(self: *Coordinator, task: io_service_tasks.Task) void {
+    if (task == .prepare_transfer) return submitPrepare(self, task);
     const into = lane(self, io_service_tasks.laneOf(task));
     if (into.backlog.items.len == 0 and into.pool.trySubmit(task)) return;
-    into.backlog.append(self.allocator, task) catch {
-        // Out of memory with a full pool: give the work up visibly.
-        std.log.err("Files service task dropped: out of memory", .{});
-        switch (task) {
-            .prepare_transfer => |prepare| {
-                prepare.payload.deinit();
-                _ = self.preparing.remove(prepare.job_id);
-                self.endPlanningJob(prepare.job_id, .failed, error.OutOfMemory);
-            },
-            .delete_tree => |delete| {
-                self.allocator.free(delete.path);
-                self.finishCleanup(delete.handle);
-            },
-            .request => |request| {
-                request.payload.deinit();
-                self.service.cancelReplyReservation(request.window_id);
-            },
-            .scan_staging => |scan| {
-                self.allocator.free(scan.path);
-                var failed: anyerror!io_service_tasks.Scan = error.OutOfMemory;
-                self.finishScan(scan.token, &failed);
-            },
-        }
-    };
+    into.backlog.append(self.allocator, task) catch dropTask(self, task);
+}
+
+fn submitPrepare(self: *Coordinator, task: io_service_tasks.Task) void {
+    if (self.prepare_backlog.items.len == 0 and self.task_backlog.items.len == 0 and
+        self.prepares_in_pool < io_service_tasks.worker_count and self.tasks.trySubmit(task))
+    {
+        self.prepares_in_pool += 1;
+        return;
+    }
+    self.prepare_backlog.append(self.allocator, task) catch dropTask(self, task);
+}
+
+/// Out of memory with a full pool: give the work up visibly.
+fn dropTask(self: *Coordinator, task: io_service_tasks.Task) void {
+    std.log.err("Files service task dropped: out of memory", .{});
+    switch (task) {
+        .prepare_transfer => |prepare| {
+            prepare.payload.deinit();
+            _ = self.preparing.remove(prepare.job_id);
+            self.endPlanningJob(prepare.job_id, .failed, error.OutOfMemory);
+        },
+        .delete_tree => |delete| {
+            self.allocator.free(delete.path);
+            self.finishCleanup(delete.handle);
+        },
+        .request => |request| {
+            request.payload.deinit();
+            self.service.cancelReplyReservation(request.window_id);
+        },
+        .scan_staging => |scan| {
+            self.allocator.free(scan.path);
+            var failed: anyerror!io_service_tasks.Scan = error.OutOfMemory;
+            self.finishScan(scan.token, &failed);
+        },
+    }
 }
 
 pub fn pumpTasks(self: *Coordinator) void {
     pumpLane(self, lane(self, .tasks));
     pumpLane(self, lane(self, .staging));
+    // Queued requests went first; prepares take what room is left.
+    while (self.prepare_backlog.items.len > 0 and self.task_backlog.items.len == 0 and
+        self.prepares_in_pool < io_service_tasks.worker_count)
+    {
+        if (!self.tasks.trySubmit(self.prepare_backlog.items[0])) break;
+        _ = self.prepare_backlog.orderedRemove(0);
+        self.prepares_in_pool += 1;
+    }
 }
 
 fn pumpLane(self: *Coordinator, from: Lane) void {
@@ -58,7 +83,10 @@ fn pumpLane(self: *Coordinator, from: Lane) void {
         var result = result_value;
         defer result.deinit(self.allocator);
         switch (result) {
-            .prepared => |*prepared| applyPrepared(self, prepared.job_id, &prepared.plan),
+            .prepared => |*prepared| {
+                self.prepares_in_pool -= 1;
+                applyPrepared(self, prepared.job_id, &prepared.plan);
+            },
             .deleted => |deleted| {
                 if (deleted.failed) |err| std.log.err(
                     "Files could not delete {s}: {s}",
@@ -84,8 +112,7 @@ fn pumpLane(self: *Coordinator, from: Lane) void {
 fn applyPrepared(self: *Coordinator, job_id: JobId, plan_result: *anyerror!io_transfer_plan.TransferPlan) void {
     const entry = self.preparing.fetchRemove(job_id) orelse return;
     if (entry.value.cancelled) return self.endPlanningJob(job_id, .cancelled, null);
-    const plan = if (plan_result.*) |*plan| plan else |err|
-        return self.endPlanningJob(job_id, .failed, err);
+    const plan = if (plan_result.*) |*plan| plan else |err| return self.endPlanningJob(job_id, .failed, err);
     self.applyTransferPlan(job_id, entry.value.mode, plan) catch |err|
         return self.endPlanningJob(job_id, .failed, err);
 }
@@ -106,6 +133,7 @@ pub fn discardDeleteResult(raw: ?*anyopaque, handle: io_resource_ledger.Handle) 
 
 pub fn discardTaskBacklog(self: *Coordinator) void {
     discardBacklog(self, &self.task_backlog);
+    discardBacklog(self, &self.prepare_backlog);
     discardBacklog(self, &self.staging_backlog);
 }
 
@@ -121,4 +149,3 @@ fn discardBacklog(self: *Coordinator, backlog: *std.ArrayList(io_service_tasks.T
     };
     backlog.clearRetainingCapacity();
 }
-

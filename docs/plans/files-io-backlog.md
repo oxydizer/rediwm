@@ -20,6 +20,10 @@ independently); Files adapts afterwards.
 
 ## 2. A copy into a folder already partly copied does not progress
 
+**Closed (user, 2026-11-26):** the conflict dialog was not shown; fixed with
+the removal of JobRunner. Not the executor gap the bench found
+(worker-pools §2), which #74 fixed separately. Kept below for the record.
+
 **Seen (nested session, `io/s3b` at a151ff9):** a folder copied once to a USB
 drive (4 files there), then copied again into the same place. No Merge prompt
 appeared and the job stayed at 0%. A second copy of another folder, with no

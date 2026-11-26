@@ -76,6 +76,7 @@ pub fn isIdle(self: *Coordinator) bool {
         self.deletions.count() == 0 and
         self.archives.count() == 0 and
         self.task_backlog.items.len == 0 and
+        self.prepare_backlog.items.len == 0 and
         self.tasks.isIdle() and
         self.staging_backlog.items.len == 0 and
         self.staging_tasks.isIdle() and
