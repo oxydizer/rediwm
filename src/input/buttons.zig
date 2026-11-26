@@ -367,6 +367,23 @@ pub fn processClientButton(
             },
         }
     }
+    if (input.open_transfers) |popup| {
+        const picked = scene_data.hitTest(input.server, input.cursor.x, input.cursor.y);
+        switch (picked) {
+            .transfers_popup => {},
+            .taskbar => |res| {
+                const own_anchor = switch (res.bar.hitTest(res.sx, res.sy)) {
+                    .tray => |i| i == @intFromEnum(@import("../Taskbar.zig").TrayKind.transfers),
+                    else => false,
+                };
+                if (!own_anchor) popup.output.closeTransfers();
+            },
+            else => {
+                popup.output.closeTransfers();
+                return;
+            },
+        }
+    }
     if (input.open_battery) |popup| {
         const picked = scene_data.hitTest(input.server, input.cursor.x, input.cursor.y);
         const inside = switch (picked) {
@@ -477,6 +494,10 @@ pub fn processClientButton(
             return;
         },
         .wifi_popup => |res| {
+            if (button == btn_left) res.popup.press(res.sx, res.sy);
+            return;
+        },
+        .transfers_popup => |res| {
             if (button == btn_left) res.popup.press(res.sx, res.sy);
             return;
         },

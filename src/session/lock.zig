@@ -180,6 +180,7 @@ pub const Lock = struct {
             out.closePowerMenu();
             out.closeBattery();
             out.closeWifi();
+            out.closeTransfers();
             out.lock_view.cover(out);
             out.lock_commit_pending = out.isAvailable();
         }

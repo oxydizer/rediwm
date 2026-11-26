@@ -79,7 +79,7 @@ fn newXdgDecoration(
     const toplevel = switch (data.role) {
         .toplevel => |t| t,
         .chrome => |t| t,
-        .wifi_popup, .battery_popup, .calendar, .taskbar, .dock, .control_center, .start_menu, .power_menu, .layer, .xwayland_unmanaged, .toast, .desktop, .mini_map => return,
+        .wifi_popup, .transfers_popup, .battery_popup, .calendar, .taskbar, .dock, .control_center, .start_menu, .power_menu, .layer, .xwayland_unmanaged, .toast, .desktop, .mini_map => return,
     };
     Decoration.create(decoration, toplevel) catch |err| {
         log.err("newXdgDecoration: could not track decoration: {}", .{err});

@@ -184,7 +184,7 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
         const alert = switch (kind) {
             .volume => bar.audio_muted,
             .wifi, .wired => bar.network_offline,
-            .power, .input_source, .desktop_mode => false,
+            .power, .input_source, .desktop_mode, .transfers => false,
         };
         const color = if (alert) blk: {
             var danger = Color.fromRgba(ui_theme.taskbar(.danger));
@@ -193,7 +193,12 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
         } else Color.lerp(Color.tray_icon(), Color.tray_icon_hover(), hover);
         const tx = bar.trayPositions()[i] - @as(f32, @floatFromInt(origin_x));
         const hit: f32 = @floatFromInt(trayHit());
-        if (kind == .input_source) {
+        if (kind == .transfers) {
+            var renderer = @import("ui").paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
+            const size = 24 * press;
+            const icon: [4]f32 = .{ color.r, color.g, color.b, color.a };
+            @import("../transfers/icon.zig").paint(&renderer, bar.server, tx + hit / 2 - size / 2, @as(f32, @floatFromInt(bar.box.height)) / 2 - size / 2 - @as(f32, @floatFromInt(origin_y)), size, icon);
+        } else if (kind == .input_source) {
             paintSourceLabel(bar, buf, tx, @as(f32, @floatFromInt(@divTrunc(bar.box.height - trayHit(), 2) - origin_y)), hit, press, color, scale);
         } else {
             const size = 20 * press;
@@ -208,7 +213,7 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
                     .workspaces => .desktop_tiles,
                     .scrolling => .desktop_scroll,
                 },
-                .input_source => unreachable,
+                .input_source, .transfers => unreachable,
             }, .color = .{ color.r, color.g, color.b, color.a } });
         }
     }

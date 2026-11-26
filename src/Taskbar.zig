@@ -166,7 +166,7 @@ chips: std.ArrayList(ChipState) = .empty,
 // Stable window IDs in taskbar presentation order. This is deliberately
 // independent of `world.toplevels`, which remains the focus/raise stack.
 chip_order: std.ArrayList(u64) = .empty,
-tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired }, .{ .kind = .input_source }, .{ .kind = .desktop_mode } },
+tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired }, .{ .kind = .input_source }, .{ .kind = .desktop_mode }, .{ .kind = .transfers } },
 // Touchpad scrolling over the input source item, gathered into steps.
 source_scroll: f32 = 0,
 capture_hover: Anim = .{},
@@ -239,7 +239,7 @@ pub const ChipPaint = taskbar_types.ChipPaint;
 pub const ChipFlat = taskbar_types.ChipFlat;
 
 // New kinds come last so the IPC tray indices of the others stay put.
-pub const TrayKind = enum { volume, wifi, power, wired, input_source, desktop_mode };
+pub const TrayKind = enum { volume, wifi, power, wired, input_source, desktop_mode, transfers };
 pub const tray_count = @typeInfo(TrayKind).@"enum".field_names.len;
 
 pub const AppKind = enum { file_explorer, notes, terminal, settings, text_doc, browser, other };
@@ -300,6 +300,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
         .network_presence = presence: {
             var presence: taskbar_items.Presence = if (server.network) |network| network.presence() else .{};
             presence.input_sources = if (server.input_sources) |sources| sources.switchable() else false;
+            presence.transfers = if (server.transfers) |client| client.model.present() else false;
             break :presence presence;
         },
         .clock_minute = @divFloor(c_time.time(null), 60),
@@ -385,6 +386,7 @@ pub fn applyNetwork(bar: *Taskbar, offline: bool) void {
 pub fn applyNetworkPresence(bar: *Taskbar, network: taskbar_items.Presence) void {
     var next = network;
     next.input_sources = bar.network_presence.input_sources;
+    next.transfers = bar.network_presence.transfers;
     if (std.meta.eql(next, bar.network_presence)) return;
     bar.network_presence = next;
     _ = bar.reconcile(nowMs());
@@ -410,6 +412,23 @@ pub fn applyInputSource(bar: *Taskbar, presence_changed: bool) void {
         bar.markDirty(paint_tray | paint_clock | paint_capture);
     } else {
         bar.tray_dirty[@backingInt(TrayKind.input_source)] = true;
+        bar.markDirty(paint_tray);
+    }
+    bar.wlr_output.scheduleFrame();
+}
+
+/// Files' transfers changed (`transfers/hooks.zig`). Only the icon repaints
+/// unless the item appears or goes, which moves its neighbours.
+pub fn applyTransfers(bar: *Taskbar, present: bool) void {
+    if (present != bar.network_presence.transfers) {
+        bar.network_presence.transfers = present;
+        _ = bar.reconcile(nowMs());
+        bar.tray_dirty = @splat(true);
+        bar.clock_dirty = true;
+        bar.capture_dirty = true;
+        bar.markDirty(paint_tray | paint_clock | paint_capture);
+    } else {
+        bar.tray_dirty[@backingInt(TrayKind.transfers)] = true;
         bar.markDirty(paint_tray);
     }
     bar.wlr_output.scheduleFrame();

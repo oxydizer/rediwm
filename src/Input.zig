@@ -177,6 +177,7 @@ window_menu: @import("taskbar/window_menu.zig").Menu = .{},
 open_calendar: ?*@import("calendar.zig").Calendar = null,
 open_battery: ?*@import("battery_popup.zig").Popup = null,
 open_wifi: ?*@import("network/popup.zig").Popup = null,
+open_transfers: ?*@import("transfers/popup.zig").Popup = null,
 screenshot_buttons: u32 = 0,
 polkit_buttons: u32 = 0,
 // The one open power menu, if any — gates keyboard grab and click-outside

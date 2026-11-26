@@ -112,6 +112,12 @@ pub fn handleInspectRequest(
                     result.local_x = popup.sx;
                     result.local_y = popup.sy;
                 },
+                .transfers_popup => |popup| {
+                    result.target_type = "transfers_popup";
+                    result.widget = popup.popup.widgetAt(popup.sx, popup.sy);
+                    result.local_x = popup.sx;
+                    result.local_y = popup.sy;
+                },
                 .battery_popup => |popup| {
                     result.target_type = "battery_popup";
                     result.local_x = popup.sx;

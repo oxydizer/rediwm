@@ -242,6 +242,7 @@ surface_hover = "rgba(255,255,255,0.08)"  border = "rgba(255,255,255,0.09)"
 border_soft = "rgba(255,255,255,0.06)"  border_hover = "rgba(255,255,255,0.22)"
 border_focus = "rgba(94,234,212,0.4)"  border_glow_enabled = true
 border_glow = "rgba(237,27,46,0.6)"  danger = "rgba(248,113,113,1)"  glass = "rgba(15,19,38,0.56)"
+success = unset  # finished work (a done transfer's check); unset is green
 glass_strong = "rgba(12,15,30,0.74)"  on_accent = "rgba(8,33,28,1)"  caret = unset
 selection = unset  selection_fg = unset  field_bg = "rgba(21,26,31,1)"
 field_border = "rgba(63,70,77,1)"  field_border_focus = unset  shadow = "rgba(0,0,0,0.35)"

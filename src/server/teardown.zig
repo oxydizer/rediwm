@@ -141,6 +141,10 @@ fn destroyServices(server: *Server) void {
         network.destroy();
         server.network = null;
     }
+    if (server.transfers) |client| {
+        client.destroy();
+        server.transfers = null;
+    }
     if (server.power_profiles) |pp| {
         pp.deinit();
         server.power_profiles = null;

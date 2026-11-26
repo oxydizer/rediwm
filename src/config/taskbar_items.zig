@@ -16,6 +16,8 @@ pub const Item = enum {
     input_source,
     /// Switches between Canvas and Workspaces; its icon shows the mode.
     desktop_mode,
+    /// File copies and other transfers: a progress ring and their panel.
+    transfers,
 
     pub fn label(item: Item) []const u8 {
         return switch (item) {
@@ -31,14 +33,16 @@ pub const Item = enum {
             .wired => "Ethernet",
             .input_source => "Keyboard layout",
             .desktop_mode => "Desktop mode",
+            .transfers => "Transfers",
         };
     }
 
     /// The network items can be automatic: shown while their hardware (a
     /// wireless adapter, a connected cable) is there. The input source item
-    /// shows while there is more than one source to switch between.
+    /// shows while there is more than one source to switch between, and
+    /// Transfers while there are transfers or finished ones to clear.
     pub fn canAutomate(item: Item) bool {
-        return item == .wifi or item == .wired or item == .input_source;
+        return item == .wifi or item == .wired or item == .input_source or item == .transfers;
     }
 };
 pub const count = @typeInfo(Item).@"enum".field_names.len;
@@ -49,15 +53,17 @@ pub const Presence = struct {
     wired: bool = false,
     /// More than one keyboard layout or input method to switch between.
     input_sources: bool = false,
+    /// Files reports transfers, or finished ones wait to be cleared.
+    transfers: bool = false,
 };
 
 pub const Config = struct {
-    order: [count]Item = .{ .start, .windows, .capture, .tray, .battery, .wifi, .wired, .desktop_mode, .input_source, .volume, .clock, .power },
-    visible: [count]bool = .{ true, true, true, true, true, true, true, false, true, true, true, false },
-    sections: [count]Section = .{ .right, .right, .right, .right, .left, .left, .right, .right, .right, .right, .right, .right },
+    order: [count]Item = .{ .start, .windows, .capture, .tray, .transfers, .battery, .wifi, .wired, .desktop_mode, .input_source, .volume, .clock, .power },
+    visible: [count]bool = .{ true, true, true, true, true, true, true, false, true, true, true, false, true },
+    sections: [count]Section = .{ .right, .right, .right, .right, .left, .left, .right, .right, .right, .right, .right, .right, .right },
     /// An automatic item follows `Presence` instead of `visible`. An explicit
     /// choice (a plain or `-` entry) clears it; it is written as `~`.
-    auto: [count]bool = .{ false, true, false, false, false, false, false, false, false, true, true, false },
+    auto: [count]bool = .{ false, true, false, false, false, false, false, false, false, true, true, false, true },
 
     /// One keyboard step: swap with the neighbour in the same section, or at
     /// a section's end step into the next section over (an empty one too).
@@ -124,6 +130,7 @@ pub const Config = struct {
             .wifi => presence.wifi,
             .wired => presence.wired,
             .input_source => presence.input_sources,
+            .transfers => presence.transfers,
             else => config.visible[id],
         };
     }
@@ -183,16 +190,16 @@ pub const Config = struct {
             index += 1;
         }
         if (legacy and index == 4) {
-            result.order = .{ .start, .windows, .tray, order[0], order[1], order[2], order[3], .power, .capture, .wired, .input_source, .desktop_mode };
+            result.order = .{ .start, .windows, .tray, order[0], order[1], order[2], order[3], .power, .capture, .wired, .input_source, .desktop_mode, .transfers };
         } else {
             // Older lists can omit Power, Screen capture, Ethernet, the
-            // keyboard layout and the desktop mode. Every other item remains
-            // required, so incomplete lists still fail closed.
+            // keyboard layout, the desktop mode and Transfers. Every other
+            // item remains required, so incomplete lists still fail closed.
             for (std.enums.values(Item)) |item| {
                 if (!optional(item) and !seen[@intFromEnum(item)]) return error.InvalidValue;
             }
             @memcpy(result.order[0..index], order[0..index]);
-            for ([_]Item{ .power, .capture, .wired, .input_source, .desktop_mode }) |item| {
+            for ([_]Item{ .power, .capture, .wired, .input_source, .desktop_mode, .transfers }) |item| {
                 if (seen[@intFromEnum(item)]) continue;
                 result.order[index] = item;
                 index += 1;
@@ -262,11 +269,30 @@ pub const Config = struct {
             }
             result.visible[@intFromEnum(Item.desktop_mode)] = false;
         }
+        if (!seen[@intFromEnum(Item.transfers)]) {
+            // Transfers joins right before the battery in its section,
+            // automatic: it shows only while there is something to show.
+            const zone = result.section(.battery);
+            var slot: usize = 0;
+            for (result.order) |item| {
+                if (item == .transfers) continue;
+                if (item == .battery) break;
+                if (result.section(item) == zone) slot += 1;
+            }
+            for (result.order, 0..) |item, i| {
+                if (item == .transfers) {
+                    _ = result.place(i, zone, slot);
+                    break;
+                }
+            }
+            result.visible[@intFromEnum(Item.transfers)] = true;
+            result.auto[@intFromEnum(Item.transfers)] = true;
+        }
         return result;
     }
 
     fn optional(item: Item) bool {
-        return item == .power or item == .capture or item == .wired or item == .input_source or item == .desktop_mode;
+        return item == .power or item == .capture or item == .wired or item == .input_source or item == .desktop_mode or item == .transfers;
     }
 
     pub fn serialize(config: Config, allocator: std.mem.Allocator) ![]u8 {
@@ -343,7 +369,7 @@ test "taskbar sections and hidden state round trip, migrate old lists and reject
     try std.testing.expectEqualDeep(config, previous);
     const previous_eight = try Config.parse("[\"left:start\", \"left:windows\", \"right:tray\", \"right:battery\", \"right:network\", \"right:volume\", \"right:clock\", \"-right:power\"]");
     try std.testing.expectEqualDeep(config, previous_eight);
-    try std.testing.expectEqual(Item.wired, config.order[6]);
+    try std.testing.expectEqual(Item.wired, config.order[7]);
     config.visible[@intFromEnum(Item.power)] = true;
     config.visible[@intFromEnum(Item.capture)] = false;
     config.setSection(.capture, .center);
@@ -366,13 +392,13 @@ test "taskbar sections and hidden state round trip, migrate old lists and reject
     try std.testing.expect(!legacy.shown(.power));
     // Drops land anywhere; keyboard steps cross into the next section at an edge.
     var moved: Config = .{};
-    try std.testing.expectEqual(@as(usize, 1), moved.place(10, .left, 1));
-    try std.testing.expectEqualSlices(Item, &.{ .start, .clock, .windows, .capture, .tray, .battery, .wifi, .wired, .desktop_mode, .input_source, .volume, .power }, &moved.order);
+    try std.testing.expectEqual(@as(usize, 1), moved.place(11, .left, 1));
+    try std.testing.expectEqualSlices(Item, &.{ .start, .clock, .windows, .capture, .tray, .transfers, .battery, .wifi, .wired, .desktop_mode, .input_source, .volume, .power }, &moved.order);
     try std.testing.expectEqual(Section.left, moved.section(.clock));
     moved.move(2, true);
     try std.testing.expectEqual(Section.center, moved.section(.windows));
-    try std.testing.expectEqual(@as(usize, 11), moved.place(2, .right, 11));
-    try std.testing.expectEqual(Item.windows, moved.order[11]);
+    try std.testing.expectEqual(@as(usize, 12), moved.place(2, .right, 12));
+    try std.testing.expectEqual(Item.windows, moved.order[12]);
     for ([_][]const u8{ "[]", "[\"battery\", \"network\", \"volume\", \"volume\"]", "[\"battery\", \"network\", \"volume\", \"chevron\"]", "[\"left:battery\", \"network\", \"volume\", \"clock\"]", "[\"~battery\", \"network\", \"volume\", \"clock\"]" }) |bad| {
         try std.testing.expectError(error.InvalidValue, Config.parse(bad));
     }
@@ -412,6 +438,22 @@ test "the desktop mode item joins old lists hidden, before the keyboard layout" 
     try std.testing.expectError(error.InvalidValue, Config.parse("[\"left:start\", \"left:windows\", \"right:tray\", \"right:battery\", \"right:wifi\", \"right:volume\", \"right:clock\", \"~right:desktop_mode\"]"));
 }
 
+test "Transfers joins old lists automatic, before the battery" {
+    const old = try Config.parse("[\"left:start\", \"left:windows\", \"right:tray\", \"center:battery\", \"~right:wifi\", \"right:volume\", \"right:clock\"]");
+    const at = std.mem.indexOfScalar(Item, &old.order, .transfers).?;
+    try std.testing.expectEqual(Item.battery, old.order[at + 1]);
+    try std.testing.expectEqual(Section.center, old.section(.transfers));
+    try std.testing.expect(!old.resolved(.transfers, .{}));
+    try std.testing.expect(old.resolved(.transfers, .{ .transfers = true }));
+    var config: Config = .{};
+    config.setVisible(.transfers, false);
+    try std.testing.expect(!config.resolved(.transfers, .{ .transfers = true }));
+    const encoded = try config.serialize(std.testing.allocator);
+    defer std.testing.allocator.free(encoded);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"-right:transfers\"") != null);
+    try std.testing.expectEqualDeep(config, try Config.parse(encoded));
+}
+
 test "wifi and ethernet follow the hardware until the user decides" {
     var config: Config = .{};
     try std.testing.expect(!config.resolved(.wifi, .{}));
@@ -441,7 +483,7 @@ test "wifi and ethernet follow the hardware until the user decides" {
 
 test "taskbar defaults windows left, supports centering and shrinks windows before fixed items" {
     var config: Config = .{};
-    const widths = [count]f32{ 0, 34, 34, 96, 42, 200, 0, 34, 120, 0, 0, 0 };
+    const widths = [count]f32{ 0, 34, 34, 96, 42, 200, 0, 34, 120, 0, 0, 0, 0 };
     const defaults = arrange(config, 4, 980, 500, widths, 6, 16);
     try std.testing.expectEqual(@as(?f32, 52), defaults.x[@intFromEnum(Item.windows)]);
     try std.testing.expect(defaults.x[@intFromEnum(Item.capture)].? + 120 <= defaults.x[@intFromEnum(Item.wifi)].?);
@@ -453,7 +495,7 @@ test "taskbar defaults windows left, supports centering and shrinks windows befo
     config.setSection(.wifi, .left);
     const moved = arrange(config, 4, 980, 500, widths, 6, 16);
     try std.testing.expectEqual(@as(?f32, 52), moved.x[@intFromEnum(Item.wifi)]);
-    const crowded = arrange(config, 4, 400, 200, .{ 0, 34, 34, 96, 42, 1000, 0, 34, 120, 0, 0, 0 }, 6, 16);
+    const crowded = arrange(config, 4, 400, 200, .{ 0, 34, 34, 96, 42, 1000, 0, 34, 120, 0, 0, 0, 0 }, 6, 16);
     try std.testing.expect(crowded.widths[@intFromEnum(Item.windows)] < 1000);
     try std.testing.expect(crowded.x[@intFromEnum(Item.clock)].? + 96 <= crowded.x[@intFromEnum(Item.volume)].? - 16);
     config.visible = @splat(false);

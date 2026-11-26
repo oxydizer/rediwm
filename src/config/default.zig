@@ -162,7 +162,7 @@ pub const source =
     \\taskbar_position = "bottom" # top or bottom
     \\taskbar_auto_hide = false # show the taskbar only when the pointer reaches its edge; false reserves its space
     \\taskbar_alignment = "center" # left, center or right; visible below 100% length
-    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source", "right:volume", "right:clock", "-right:power"]
+    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "~right:transfers", "right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source", "right:volume", "right:clock", "-right:power"]
     \\# A ~ prefix (~right:wifi, ~right:wired) shows the item only while a wireless adapter
     \\# exists, or a cable is connected, and ~right:input_source while there is more than
     \\# one keyboard layout or input method; a plain or - entry always shows or hides it.

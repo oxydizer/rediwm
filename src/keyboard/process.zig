@@ -309,6 +309,27 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         }
         return;
     }
+    if (keyboard.server.input.open_transfers) |popup| {
+        if (state == .pressed) {
+            if (event_keycode < keyboard.battery_consumed.len) keyboard.battery_consumed[event_keycode] = true;
+            for (xkb_state.keyGetSyms(keycode)) |sym| {
+                switch (sym) {
+                    xkb.Keysym.Escape => {
+                        popup.output.closeTransfers();
+                        return;
+                    },
+                    xkb.Keysym.Up, xkb.Keysym.ISO_Left_Tab => popup.navigate(true),
+                    xkb.Keysym.Down, xkb.Keysym.Tab => popup.navigate(false),
+                    xkb.Keysym.Return, xkb.Keysym.KP_Enter, xkb.Keysym.space => {
+                        popup.activate();
+                        return;
+                    },
+                    else => {},
+                }
+            }
+        }
+        return;
+    }
     if (keyboard.server.input.open_battery) |popup| {
         if (state == .pressed) {
             if (event_keycode < keyboard.battery_consumed.len) keyboard.battery_consumed[event_keycode] = true;

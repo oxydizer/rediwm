@@ -60,7 +60,8 @@ pub fn itemName(item: taskbar_items.Item, comptime suffix: []const u8) []const u
 /// row count changed, which needs a layout.
 pub fn syncItems(out: *Section, items: taskbar_items.Config, dragged: ?usize) bool {
     const pal = panel.palette();
-    const presence = if (out.cc.server.network) |manager| manager.presence() else taskbar_items.Presence{};
+    var presence = if (out.cc.server.network) |manager| manager.presence() else taskbar_items.Presence{};
+    presence.transfers = if (out.cc.server.transfers) |client| client.model.present() else false;
     for (&out.item_rows, &out.item_controls, items.order, 0..) |*row, *controls, item, i| {
         const lifted = dragged == i;
         row.name = itemName(item, "_row");

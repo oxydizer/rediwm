@@ -29,6 +29,7 @@ pub const SceneData = struct {
         calendar: *@import("calendar.zig").Calendar,
         battery_popup: *@import("battery_popup.zig").Popup,
         wifi_popup: *@import("network/popup.zig").Popup,
+        transfers_popup: *@import("transfers/popup.zig").Popup,
         /// Control center panel opened from the taskbar's R button.
         control_center: *ControlCenter,
         /// Start menu panel opened from the taskbar's start button.
@@ -72,6 +73,7 @@ pub const Hit = union(enum) {
     taskbar: TaskbarHit,
     dock: struct { dock: *@import("Dock.zig"), sx: f64, sy: f64 },
     wifi_popup: struct { popup: *@import("network/popup.zig").Popup, sx: f64, sy: f64 },
+    transfers_popup: struct { popup: *@import("transfers/popup.zig").Popup, sx: f64, sy: f64 },
     battery_popup: struct { popup: *@import("battery_popup.zig").Popup, sx: f64, sy: f64 },
     calendar: struct { calendar: *@import("calendar.zig").Calendar, sx: f64, sy: f64 },
     control_center: ControlCenterHit,
@@ -149,6 +151,10 @@ fn shellHit(data: *SceneData, lx: f64, ly: f64) Hit {
             .wifi_popup => |popup| blk: {
                 const local = toNodeLocal(&popup.buffer_node.node, lx, ly);
                 break :blk .{ .wifi_popup = .{ .popup = popup, .sx = local.x, .sy = local.y } };
+            },
+            .transfers_popup => |popup| blk: {
+                const local = toNodeLocal(&popup.buffer_node.node, lx, ly);
+                break :blk .{ .transfers_popup = .{ .popup = popup, .sx = local.x, .sy = local.y } };
             },
             .battery_popup => |popup| blk: {
                 const local = toNodeLocal(&popup.buffer_node.node, lx, ly);

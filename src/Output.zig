@@ -79,6 +79,7 @@ start_menu: ?*StartMenu = null,
 calendar: ?*@import("calendar.zig").Calendar = null,
 battery_popup: ?*@import("battery_popup.zig").Popup = null,
 wifi_popup: ?*@import("network/popup.zig").Popup = null,
+transfers_popup: ?*@import("transfers/popup.zig").Popup = null,
 power_menu: ?*PowerMenu = null,
 color: OutputColor = .{},
 frame_seq: u64 = 0,
@@ -471,6 +472,8 @@ pub const closeBattery = output_panels.closeBattery;
 pub const toggleBattery = output_panels.toggleBattery;
 pub const closeWifi = output_panels.closeWifi;
 pub const toggleWifi = output_panels.toggleWifi;
+pub const closeTransfers = output_panels.closeTransfers;
+pub const toggleTransfers = output_panels.toggleTransfers;
 
 pub fn syncTaskbar(output: *Output) void {
     if (output.calendar) |calendar| calendar.refresh();
@@ -601,6 +604,7 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     output.closeCalendar();
     output.closeBattery();
     output.closeWifi();
+    output.closeTransfers();
     if (output.server.polkit_dialog) |dialog| {
         if (dialog.output == output.wlr_output) dialog.cancel();
     }

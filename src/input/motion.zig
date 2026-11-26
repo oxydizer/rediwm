@@ -496,6 +496,14 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             res.popup.motion(res.sx, res.sy);
             input.seat.pointerClearFocus();
         },
+        .transfers_popup => |res| {
+            input.hovered_resize_edges = null;
+            input.clearTaskbarHover();
+            input.setHover(null, null);
+            input.setDefaultCursor();
+            res.popup.motion(res.sx, res.sy);
+            input.seat.pointerClearFocus();
+        },
         .calendar, .battery_popup => {
             input.hovered_resize_edges = null;
             input.clearTaskbarHover();
