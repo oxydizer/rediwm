@@ -66,7 +66,7 @@ longer have a Runtime, a Manager or an executor of their own.
 2. **S5, the worker pools**, in the order of `files-io-worker-pools.md` §5,
    one PR per step from `feat/files-io-manager`:
    1. Staging lane (4.1): done in #73 (2 workers; staging is on the destination mount, not private).
-   2. Per-job limit in the executors (4.4, first half).
+   2. Per-job limit (4.4, first half): done in #74 (3 operation and discovery workers, at most 2 operation workers per job, even alone).
    3. Stall detection, suspect domains, the mount table and the shared
       filesystem table (4.2, 4.5), request priority (4.6).
    4. Elastic user-path lanes (4.3).
@@ -90,7 +90,7 @@ longer have a Runtime, a Manager or an executor of their own.
       first (its own branch from master), then Files.
    2. The stalled re-copy to a USB drive: probably the executor gap the bench
       found (one stuck job holds both operation workers). Recheck after step
-      2.2 above; ask the user to confirm.
+      step 2 (#74), which should fix it; ask the user to confirm.
    3. An extraction counts folders as done but not in its total (5 100 of
       5 000).
 5. **Smaller:** split `src/files/app_pointer.zig` (931 lines) and `worker.zig` (860),

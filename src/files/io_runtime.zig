@@ -94,6 +94,14 @@ pub const Runtime = struct {
         }
     }
 
+    /// Three workers per executor, and one Job never holds more than two
+    /// operation workers, even alone: when its mount dies mid-copy, the third
+    /// is free for every other job (worker-pools §4.4). Discovery already runs
+    /// one batch per Job at a time.
+    pub const discovery_workers = 3;
+    pub const operation_workers = 3;
+    pub const operations_per_job = 2;
+
     pub fn ensureDiscoveryExecutor(
         self: *Runtime,
     ) !*io_discovery_executor.Executor {
@@ -101,8 +109,8 @@ pub const Runtime = struct {
             self.discovery_executor = try io_discovery_executor.Executor.initWithLedger(
                 self.allocator,
                 &self.resource_ledger,
-                2,
-                4,
+                discovery_workers,
+                discovery_workers * 2,
                 64,
             );
         }
@@ -117,9 +125,10 @@ pub const Runtime = struct {
                 self.allocator,
                 &self.manager,
                 &self.resource_ledger,
-                2,
-                4,
+                operation_workers,
+                operation_workers * 2,
             );
+            self.manager.max_running_per_job = operations_per_job;
         }
         return &self.operation_executor.?;
     }

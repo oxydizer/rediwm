@@ -127,14 +127,21 @@ fails.
 | --- | --- | --- |
 | tasks (prepares, requests) | 2 | 8 |
 | deletion | 2 | 6 |
-| discovery | 2 | 6 |
-| operations | 2 (calibrated, 4.4) | 8 |
+| discovery | 3 | 6 |
+| operations | 3 (calibrated, 4.4) | 8 |
 | staging | 2 | 6 |
 
 ### 4.4 Per-job and per-device limits in the executors
 
-* **Per job:** while more than one job is runnable, one job holds at most
-  `target - 1` workers of an executor. A single job still gets them all.
+* **Per job (done):** one job holds at most 2 operation workers, *even
+  alone*, and the operation and discovery executors have 3 workers. First
+  planned as `target - 1` only while several jobs are runnable, which does not
+  help the common case: a copy that starts alone takes every worker, then its
+  mount dies and hangs them all before the next job arrives (the bench's
+  `running` mode, likely backlog item 2). With the cap a lone job keeps the two
+  workers it had, and the third is free when its mount dies. Discovery already
+  runs one batch per job. Two dead mounts at once can still take all three:
+  that is for 4.2 and 4.3.
 * **Per device:** copies are limited per destination device (and source
   device), so two jobs onto one USB stick run one after the other instead of
   thrashing it. The limit starts at 1 for rotational or USB devices and at the
@@ -179,8 +186,8 @@ the ledger, and the rule that only the coordinator applies results.
 ## 5. Order of work
 
 1. Staging lane (4.1). Done.
-2. Per-job limit in the executors (first half of 4.4). Small; closes gap 2 for
-   two jobs on different filesystems as long as the pool target is ≥ 2.
+2. Per-job limit in the executors (first half of 4.4). Done: 3 workers, 2
+   per job; with the bench's mount dead mid-copy every other job completes.
 3. Stall detection and suspect domains (4.2), with the mount table.
 4. Elastic lanes (4.3).
 5. Per-device limits and their calibration (second half of 4.4, phase 7).
