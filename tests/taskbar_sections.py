@@ -130,14 +130,47 @@ def run():
                 toggle = ui.scroll_into_view('taskbar_power_visible')
                 ipc.click_at(*center(toggle['global_box']))
                 wait_for(lambda: any(w['name'] == 'power' for w in bar()), 'Power restored')
+                def well_end(zone):
+                    tree = ui.widgets()
+                    well = next(w for w in tree if w['name'] == f'taskbar_zone_{zones[zone]}')['box']
+                    rows = [w for w in tree if (w.get('name') or '').startswith('taskbar_') and w['name'].endswith('_row')
+                            and well['y'] <= w['box']['y'] and w['box']['y'] + w['box']['height'] <= well['y'] + well['height']]
+                    return max(rows, key=lambda w: w['box']['y'])['name'] if rows else f'taskbar_zone_{zones[zone]}'
+                def drop_y(well):
+                    return max(0, min(ipc.get_outputs()[0]['logical_height'] - 1, well['y'] + well['height'] - 3))
+                def reachable(well):
+                    return well['y'] <= drop_y(well) < well['y'] + well['height']
                 # Drag fixed controls and both primary groups into every section.
                 for name in ('clock', 'wifi', 'wired', 'volume', 'start', 'windows', 'tray', 'power', 'capture'):
                     for zone in (0, 1, 2):
                         if zone_of(name) == zone:
                             continue
-                        ui.scroll_into_view(f'taskbar_zone_{zones[zone]}')
-                        row = ui.scroll_into_view(f'taskbar_{name}_row')
-                        assert row['visible'] and not row['clipped'], row
+                        # Synthetic input stays on-screen, so a well too far
+                        # from the row to show with it is reached in hops: drag
+                        # the row to the farthest visible row toward it first.
+                        # A full well can be taller than the viewport: its end
+                        # (last row) is what the drop aims at.
+                        for _ in range(6):
+                            ui.scroll_into_view(well_end(zone))
+                            row = ui.scroll_into_view(f'taskbar_{name}_row')
+                            assert row['visible'] and not row['clipped'], row
+                            well = ui.find(f'taskbar_zone_{zones[zone]}')['global_box']
+                            if reachable(well):
+                                break
+                            up = well['y'] < row['global_box']['y']
+                            others = [w['global_box'] for w in ui.widgets() if (w.get('name') or '').startswith('taskbar_') and w['name'].endswith('_row')
+                                      and w['name'] != f'taskbar_{name}_row' and w['visible'] and not w.get('clipped')
+                                      and (w['global_box']['y'] < row['global_box']['y']) == up]
+                            assert others, f'no visible row to hop {name} toward {zones[zone]}'
+                            stop = min(others, key=lambda b: b['y']) if up else max(others, key=lambda b: b['y'])
+                            before_hop = cfg.read_text()
+                            ipc.move_cursor(*center(row['global_box']))
+                            ipc.pointer_button(0x110, True)
+                            ipc.move_cursor(*center(stop))
+                            ipc.pointer_button(0x110, False)
+                            wait_for(lambda: cfg.read_text() != before_hop, 'hop saved')
+                            ipc.wait_for_frame()
+                            ipc.wait_for_panel_settled('control_center')
                         ipc.move_cursor(*center(row['global_box']))
                         ipc.pointer_button(0x110, True)
                         # Rows reflow live under the pointer: re-aim until the well holds still.
@@ -148,9 +181,8 @@ def run():
                                 break
                             # The drag grab follows the pointer outside the
                             # viewport, but synthetic input must stay on-screen.
-                            height = ipc.get_outputs()[0]['logical_height']
-                            y = max(0, min(height - 1, well['y'] + well['height'] - 3))
-                            assert well['y'] <= y < well['y'] + well['height'], well
+                            y = drop_y(well)
+                            assert reachable(well), well
                             ipc.move_cursor(round(well['x'] + well['width'] / 2), y)
                             aimed = well
                         ipc.pointer_button(0x110, False)
@@ -176,9 +208,12 @@ def run():
                 assert (at(dragged, 'right:wifi') > at(dragged, 'right:volume')) != (at(before, 'right:wifi') > at(before, 'right:volume')), dragged
                 handle = ui.scroll_into_view('taskbar_wifi_order')
                 ipc.click_at(*center(handle['global_box']))
-                ipc.key(108, True)
-                ipc.key(108, False)
-                wait_for(lambda: tomllib.loads(cfg.read_text())['compositor']['taskbar_items'] != dragged, 'keyboard reorder')
+                # Down at the end of the last section has nowhere to go: step up there.
+                last = [e.lstrip('-~') for e in dragged if e.lstrip('-~').startswith('right:')][-1] == 'right:wifi'
+                if last: print('wifi is last in Right: keyboard step goes up', flush=True)
+                ipc.key(103 if last else 108, True)
+                ipc.key(103 if last else 108, False)
+                wait_for(lambda: tomllib.loads(cfg.read_text())['compositor']['taskbar_items'] != dragged, f'keyboard reorder {dragged}')
                 ipc.wait_for_panel_settled('control_center')
                 assert '# preserve me' in cfg.read_text()
                 # Hide and restore the window group without changing windows.

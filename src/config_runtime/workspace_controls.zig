@@ -9,6 +9,17 @@ pub fn mode(server: *Server, value: config.loader.DesktopMode, persist: bool) !v
     server.config.compositor.desktop_mode = value;
     server.world.workspaces.setMode(server, value == .workspaces);
 }
+/// The taskbar item and `toggle_desktop_mode`: the other mode, saved, since a
+/// reload applies `desktop_mode` from the file. A file that cannot be written
+/// (read-only, managed elsewhere) still switches, until the next reload.
+pub fn toggleMode(server: *Server) void {
+    if (server.greeter_mode) return;
+    const next: config.loader.DesktopMode = if (server.world.workspaces.active) .canvas else .workspaces;
+    mode(server, next, true) catch |err| {
+        std.log.scoped(.config).warn("could not save desktop_mode: {}", .{err});
+        mode(server, next, false) catch unreachable;
+    };
+}
 pub fn gap(server: *Server, value: u32, persist: bool) !void {
     if (value > 512) return error.InvalidGap;
     if (persist) try config.setting_save.saveCompositor(gpa, server.io, server.config.path, "window_gap", value);

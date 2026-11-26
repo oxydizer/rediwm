@@ -29,6 +29,7 @@ pub fn executeAction(server: *Server, action: Action) void {
         .move_to_workspace => |id| if (focusedToplevel(server)) |top| server.world.workspaces.moveTo(top, id),
         .workspace_next => server.world.workspaces.cycle(server, true),
         .workspace_prev => server.world.workspaces.cycle(server, false),
+        .toggle_desktop_mode => @import("workspace_controls.zig").toggleMode(server),
         .toggle_power_menu => if (server.getDefaultOutput()) |output| {
             if (output.power_menu != null) output.closePowerMenu() else output.openPowerMenu();
         },

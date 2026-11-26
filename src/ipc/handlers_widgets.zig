@@ -439,6 +439,22 @@ pub fn buildTaskbarWidgetTree(
         });
     }
 
+    if (bar.itemBox(.desktop_mode)) |mode_box| {
+        try widgets.append(allocator, .{
+            .id = widgets.items.len + 1,
+            .parent_index = 0,
+            .role = "button",
+            .name = "desktop_mode",
+            .path = "taskbar/desktop_mode",
+            .semantic_id = "tray_desktop_mode",
+            .label = if (server.world.workspaces.active) "Workspaces" else "Canvas",
+            .box = .{ .x = mode_box.x - bar.box.x, .y = mode_box.y - bar.box.y, .width = mode_box.width, .height = mode_box.height },
+            .global_box = .{ .x = mode_box.x, .y = mode_box.y, .width = mode_box.width, .height = mode_box.height },
+            .visible = true,
+            .is_disabled = false,
+        });
+    }
+
     if (bar.itemBox(.power)) |pbox| {
         try widgets.append(allocator, .{
             .id = widgets.items.len + 1,

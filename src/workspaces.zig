@@ -178,6 +178,8 @@ pub fn setMode(self: *Self, server: *Server, enabled: bool) void {
     var tops = server.world.toplevels.iterator(.forward);
     while (tops.next()) |top| if (top.in_world) top.syncChrome(false, Top.nowMs()) catch {};
     server.world.applyCamera();
+    var bars = server.outputs.iterator(.forward);
+    while (bars.next()) |output| if (output.taskbar) |bar| bar.applyDesktopMode();
     if (server.input.open_control_center) |cc| {
         cc.shortcuts.cancel();
         cc.refresh();

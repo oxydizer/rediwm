@@ -187,6 +187,50 @@ desktop_switch_ms = 3000
                 mode(True)
                 mode(False)
                 assert window(a)["zoom_percent"] == before["zoom_percent"]
+                # Super+Shift+W switches and saves both ways: this config's own
+                # [keybinds] inherits it, and the workspace preset keeps the key.
+                cfg = tmp / "rediwm-config.toml"
+                at_canvas = (window(a)["x"], window(a)["y"])
+                chord("w", shift=True)
+                wait_for(lambda: ipc.get_workspaces()[0]["name"] != "Canvas", "shortcut to workspaces")
+                wait_for(lambda: 'desktop_mode = "workspaces"' in cfg.read_text(), "workspaces saved")
+                chord("w", shift=True)
+                wait_for(lambda: ipc.get_workspaces()[0]["name"] == "Canvas", "shortcut to canvas")
+                wait_for(lambda: 'desktop_mode = "canvas"' in cfg.read_text(), "canvas saved")
+                assert (window(a)["x"], window(a)["y"]) == at_canvas, (at_canvas, window(a))
+                assert '[keybinds]\n"Super+q" = "noop"' in cfg.read_text()
+                # The taskbar item is opt-in; shown, its label and icon follow the
+                # mode and a click switches it.
+                def mode_item():
+                    return next((w for w in ipc.get_widget_tree("taskbar")["widgets"] if w["name"] == "desktop_mode"), None)
+                assert mode_item() is None, "the desktop mode item defaults off"
+                if outputs == 1:
+                    from PIL import Image, ImageChops
+                    scale = float(os.getenv("REDIWM_TEST_SCALE", "1"))
+                    cfg.write_text(canvas.replace('desktop_mode = "canvas"', 'desktop_mode = "canvas"\ntaskbar_items = ["left:start", "left:windows", "right:tray", "right:battery", "~right:wifi", "~right:wired", "right:desktop_mode", "~right:input_source", "right:volume", "right:clock"]'))
+                    item = wait_for(mode_item, "desktop mode item shown")
+                    ipc.wait_for_frame()
+                    def icon(name):
+                        path = tmp / f"desktop-mode-{name}.png"
+                        ipc.screenshot(str(path))
+                        b = mode_item()["global_box"]
+                        with Image.open(path) as image:
+                            return image.convert("RGB").crop(tuple(round(v * scale) for v in (b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"])))
+                    canvas_icon = icon("canvas")
+                    assert item["label"] == "Canvas", item
+                    for target, label in (("workspaces", "Workspaces"), ("canvas", "Canvas")):
+                        b = mode_item()["global_box"]
+                        ipc.click_at(round(b["x"] + b["width"] / 2), round(b["y"] + b["height"] / 2))
+                        wait_for(lambda: (ipc.get_workspaces()[0]["name"] != "Canvas") == (target == "workspaces"), "taskbar item to " + target)
+                        wait_for(lambda: f'desktop_mode = "{target}"' in cfg.read_text(), target + " saved by the item")
+                        assert mode_item()["label"] == label, mode_item()
+                        ipc.move_cursor(400, 300)
+                        ipc.wait_for_frame()
+                        time.sleep(.3)  # hover and press settle
+                        if target == "workspaces":
+                            assert ImageChops.difference(canvas_icon, icon(target)).getbbox(), "the item's icon shows the mode"
+                    assert not ImageChops.difference(canvas_icon, icon("canvas-again")).getbbox(), "back to the Canvas icon"
+                    mode(False)
                 ipc.action("reset_camera")
                 time.sleep(.4)
                 # Exercise the actual Desktop segmented control in both directions.

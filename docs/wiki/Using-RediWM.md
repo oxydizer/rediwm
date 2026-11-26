@@ -9,6 +9,7 @@
 | Super+T / E / B | terminal / Files / browser |
 | Super+Q, Super+F, Super+M | close, fullscreen, maximize |
 | Super+Shift+arrows | tile halves and quarters |
+| Super+Shift+W | switch between Canvas and Workspaces |
 | Super+arrows | slide to the neighbouring desktop |
 | Super+Ctrl+arrows | focus the window in that direction |
 | Alt+Tab | window switcher |
@@ -23,6 +24,12 @@
 
 Everything lives under `[keybinds]` in the config. Set a binding to `"noop"`
 to turn it off.
+
+Super+Shift+W (`toggle_desktop_mode`) works in both modes and saves the choice
+as `desktop_mode`; switching back to Canvas restores window positions and zoom.
+Existing configs with their own `[keybinds]` get it unless the key is taken.
+The taskbar's **Desktop mode** item (off by default; turn it on in Settings →
+Appearance) does the same on a click, and its icon shows the current mode.
 
 ## Mouse
 

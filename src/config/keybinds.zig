@@ -36,6 +36,9 @@ pub const Action = union(enum) {
     move_to_workspace: u8,
     workspace_next,
     workspace_prev,
+    /// Canvas to Workspaces or back, saved to `desktop_mode`. Both presets
+    /// carry it, so the same key always switches back.
+    toggle_desktop_mode,
     toggle_power_menu,
     volume_up,
     volume_down,

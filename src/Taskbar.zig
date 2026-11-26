@@ -166,7 +166,7 @@ chips: std.ArrayList(ChipState) = .empty,
 // Stable window IDs in taskbar presentation order. This is deliberately
 // independent of `world.toplevels`, which remains the focus/raise stack.
 chip_order: std.ArrayList(u64) = .empty,
-tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired }, .{ .kind = .input_source } },
+tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired }, .{ .kind = .input_source }, .{ .kind = .desktop_mode } },
 // Touchpad scrolling over the input source item, gathered into steps.
 source_scroll: f32 = 0,
 capture_hover: Anim = .{},
@@ -239,7 +239,7 @@ pub const ChipPaint = taskbar_types.ChipPaint;
 pub const ChipFlat = taskbar_types.ChipFlat;
 
 // New kinds come last so the IPC tray indices of the others stay put.
-pub const TrayKind = enum { volume, wifi, power, wired, input_source };
+pub const TrayKind = enum { volume, wifi, power, wired, input_source, desktop_mode };
 pub const tray_count = @typeInfo(TrayKind).@"enum".field_names.len;
 
 pub const AppKind = enum { file_explorer, notes, terminal, settings, text_doc, browser, other };
@@ -412,6 +412,14 @@ pub fn applyInputSource(bar: *Taskbar, presence_changed: bool) void {
         bar.tray_dirty[@backingInt(TrayKind.input_source)] = true;
         bar.markDirty(paint_tray);
     }
+    bar.wlr_output.scheduleFrame();
+}
+
+/// Canvas or Workspaces changed (`workspaces.setMode`): only the desktop
+/// mode item's icon shows it.
+pub fn applyDesktopMode(bar: *Taskbar) void {
+    bar.tray_dirty[@backingInt(TrayKind.desktop_mode)] = true;
+    bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
 }
 

@@ -144,10 +144,13 @@ The center group stays centered on the display when it fits, and shifts or
 narrows the window list to avoid the side groups.
 
 For example, `taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray",
-"right:battery", "~right:wifi", "~right:wired", "~right:input_source", "right:volume", "right:clock",
-"-right:power"]` is the default. The keyboard layout item (`input_source`) is
-described under "Keyboard layouts and input methods"; older lists gain it
-before Volume, automatic.
+"right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source",
+"right:volume", "right:clock", "-right:power"]` is the default. The keyboard layout item
+(`input_source`) is described under "Keyboard layouts and input methods"; older
+lists gain it before Volume, automatic. The desktop mode item (`desktop_mode`)
+switches between Canvas and Workspaces like Super+Shift+W and shows the current
+mode; it is off by default, and older lists gain it hidden before the keyboard
+layout.
 Wi-Fi and Ethernet are automatic (the `~` prefix): Wi-Fi shows only when the
 machine has a wireless adapter, and Ethernet only while a cable is connected;
 Wi-Fi opens the network menu, Ethernet opens Settings → Network. Turning an item

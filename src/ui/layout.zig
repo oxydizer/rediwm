@@ -158,6 +158,10 @@ pub const IconId = enum {
     ram,
     /// Firewall: a shield with a check mark.
     shield,
+    /// The taskbar's desktop mode item: overlapping windows (Canvas) and
+    /// a master-and-stack split (Workspaces).
+    desktop_canvas,
+    desktop_tiles,
 };
 
 pub const ButtonState = enum { idle, hover, press, disabled };

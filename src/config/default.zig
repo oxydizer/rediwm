@@ -124,6 +124,7 @@ pub const source =
     \\[compositor]
     \\# Optional automatically tiled workspaces; canvas remains the default.
     \\# Workspace shortcuts are overridden separately in [keybinds.workspace].
+    \\# Super+Shift+W (toggle_desktop_mode) switches between the two.
     \\desktop_mode = "canvas"
     \\floating_apps = []          # app ID glob patterns that float in workspaces
     \\# Let a fullscreen or borderless game that asks for it (VSync off) show
@@ -154,7 +155,7 @@ pub const source =
     \\taskbar_position = "bottom" # top or bottom
     \\taskbar_auto_hide = false # show the taskbar only when the pointer reaches its edge; false reserves its space
     \\taskbar_alignment = "center" # left, center or right; visible below 100% length
-    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "~right:input_source", "right:volume", "right:clock", "-right:power"]
+    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source", "right:volume", "right:clock", "-right:power"]
     \\# A ~ prefix (~right:wifi, ~right:wired) shows the item only while a wireless adapter
     \\# exists, or a cable is connected, and ~right:input_source while there is more than
     \\# one keyboard layout or input method; a plain or - entry always shows or hides it.
@@ -395,6 +396,8 @@ pub const source =
     \\"super+q"           = "close_window"
     \\"super+f"           = "toggle_fullscreen"
     \\"super+m"           = "toggle_maximize"
+    \\# Canvas <-> Workspaces; the workspace preset keeps this key too
+    \\"super+shift+w"     = "toggle_desktop_mode"
     \\# Halves and quarters; dragging a window to a screen edge snaps it too
     \\"super+shift+left"  = "tile_left"
     \\"super+shift+right" = "tile_right"

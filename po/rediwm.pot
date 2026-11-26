@@ -7184,6 +7184,14 @@ msgid "Swap the focused tile up."
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
+msgid "Switch Desktop Mode"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Switch between Canvas and Workspaces."
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next keyboard layout or input method."
 msgstr ""
 

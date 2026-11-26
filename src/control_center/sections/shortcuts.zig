@@ -98,7 +98,7 @@ pub const Section = struct {
 
 fn group(action: keys.Action) usize {
     return switch (action) {
-        .toggle_floating, .toggle_split, .toggle_workspace_tiling, .swap_left, .swap_right, .swap_up, .swap_down, .resize_split_left, .resize_split_right, .resize_split_up, .resize_split_down, .close_window, .toggle_fullscreen, .toggle_maximize, .tile_left, .tile_right, .tile_up, .tile_down => 0,
+        .toggle_floating, .toggle_split, .toggle_workspace_tiling, .swap_left, .swap_right, .swap_up, .swap_down, .resize_split_left, .resize_split_right, .resize_split_up, .resize_split_down, .toggle_desktop_mode, .close_window, .toggle_fullscreen, .toggle_maximize, .tile_left, .tile_right, .tile_up, .tile_down => 0,
         .toggle_overview, .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down, .focus_next, .focus_prev, .focus_left, .focus_right, .focus_up, .focus_down, .save_layout, .restore_layout, .undo => 1,
         .spawn, .toggle_start_menu, .input_source_next, .input_source_prev => 2,
         .screenshot_region, .screenshot_output => 3,
@@ -280,6 +280,7 @@ fn descriptionFor(action: keys.Action, buf: []u8) []const u8 {
         .power_profile_cycle => i18n.tr("Switch to the next power profile."),
         .input_source_next => i18n.tr("Switch to the next keyboard layout or input method."),
         .input_source_prev => i18n.tr("Switch to the previous keyboard layout or input method."),
+        .toggle_desktop_mode => i18n.tr("Switch between Canvas and Workspaces."),
         .quit => i18n.tr("Log out of the desktop session."),
         .poweroff, .poweroff_auto => i18n.tr("Shut down the computer."),
         .reboot, .reboot_auto => i18n.tr("Restart the computer."),
@@ -316,6 +317,7 @@ fn actionTitle(action: keys.Action) []const u8 {
         .move_to_workspace => i18n.tr("Move To Workspace"),
         .workspace_next => i18n.tr("Workspace Next"),
         .workspace_prev => i18n.tr("Workspace Prev"),
+        .toggle_desktop_mode => i18n.tr("Switch Desktop Mode"),
         .toggle_power_menu => i18n.tr("Toggle Power Menu"),
         .volume_up => i18n.tr("Volume Up"),
         .volume_down => i18n.tr("Volume Down"),
