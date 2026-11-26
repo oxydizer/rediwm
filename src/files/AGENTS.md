@@ -55,10 +55,9 @@ its history, between windows; tear-off and drop requests reach the event loop as
 instance per Wayland display. `run` first `claim`s
 `$XDG_RUNTIME_DIR/files-io-<hash of WAYLAND_DISPLAY>.sock` under its `.lock`
 file: if a process answers, the launch is sent as an NDJSON `OpenWindow`
-(folder, file to select, `--transfers`, `XDG_ACTIVATION_TOKEN`) and this
-process exits; else it binds the socket and serves it on the endpoint thread.
-A chooser (and a `--torrent` launch) never claims: it answers on its own
-stdout. The endpoint thread never touches the Service, a window or the
+(folder, file to select, `--torrent`, `XDG_ACTIVATION_TOKEN`)
+and this process exits; else it binds the socket and serves it on the endpoint
+thread. A chooser never claims: it answers on its own stdout. The endpoint thread never touches the Service, a window or the
 display; accepted launches go to the UI thread through a single-producer ring
 and a wake fd (`takeOpen`, `openRequested` in `main.zig`). With no window
 left, the process stays while the coordinator has work (`Service.isWorkIdle`,
@@ -319,7 +318,9 @@ control bytes are refused because terminal paste would alter them.
 
 ## BitTorrent transfers
 
-`app_torrents.zig` owns the sidebar, main-pane list, toolbar and detail dialog;
+`app_torrents.zig` owns the helper connection and adding a torrent or magnet
+(`enabled` turns torrents on or off as a whole); downloads show in the shell's
+Transfers panel, not in Files;
 `app_torrent_rows.zig` owns folder-row matching, controls and hover details; `torrents.zig` is a bounded,
 nonblocking SOCK_SEQPACKET subscriber (poll slot 22). `torrent/helper.cpp`
 owns libtorrent and persistent resume data, and has no tray icon of its own;
@@ -342,6 +343,18 @@ See `docs/files-torrents.md` for dependencies, storage and lifecycle.
   start and once a window has. With no window, the process stays headless
   while the helper downloads or seeds (`Bridge.active`).
 
+* **A torrent is a folder.** `app_torrent_browse.zig` shows a torrent's
+  files as rows: the location is the `.torrent` path (a magnet's: its
+  destination folder plus the transfer id) with the folder inside after it,
+  and `History.torrent` marks that prefix the way `archive_len` marks an
+  archive's, so archive guards (no file operations, drags, folder sizes)
+  hold. Nothing is scanned: `inspect` lists a torrent file without adding
+  it, `files` a download's files with `wanted` and `done`, both replies to
+  the asking connection only (`torrents.Client.reply`). The tree logic is
+  `torrent_tree.zig`. A tick sends `select` (or `add` with `files`, the first
+  time); replies to `files` requests sent before a tick carry the old ticks
+  and are skipped for them (`Browse.stale`). Progress updates rows in place;
+  only a changed file list rebuilds them.
 * The socket is `files-transfers.sock`, deliberately outside `rediwm-*.sock`
   compositor discovery. Both ends check peer credentials; runtime/state are
   private. Use the system C++ compiler to match libtorrent's distro ABI.
@@ -361,7 +374,8 @@ See `docs/files-torrents.md` for dependencies, storage and lifecycle.
 * Idle releases the engine after pending resume writes drain. UI subscribers
   can remain attached without torrent worker timers. Last subscriber leaving
   exits a stopped helper; active downloads/seeding keep it alive.
-* `zig build test-files-torrents` uses a private bus, temporary state and a
+* `zig build test-files-torrents` (the helper, then `tests/files_torrent_browse.py`
+  driving Files in a headless session) uses a private bus, temporary state and a
   noninstalled loopback network shim. Never fetch public torrents in tests.
 
 ## Audio toolbar

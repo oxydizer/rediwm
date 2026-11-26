@@ -42,7 +42,7 @@ fn sameFoldedText(a: []const u8, b: []const u8) bool {
 /// keeps timeout and cycling behavior deterministic in tests.
 pub fn typeSelectAt(self: *App, utf8: []const u8, now_ms: i64) bool {
     if (utf8.len == 0 or self.focus != .file_view or self.ctrl or self.alt or
-        self.transfer_view.active or self.items.items.len == 0)
+        self.items.items.len == 0)
     {
         return false;
     }
@@ -123,12 +123,6 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         self.terminalKey(sym, utf8);
         return;
     }
-    if (self.transfer_view.active) {
-        if (self.ctrl and (sym == c.XKB_KEY_l or sym == c.XKB_KEY_L)) self.leaveTransfers() else {
-            self.transferPaneKey(sym);
-            return;
-        }
-    }
     if (self.ctrl and self.tabs_visible) {
         if (sym == c.XKB_KEY_t or sym == c.XKB_KEY_T) {
             self.newTab();
@@ -174,6 +168,8 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
     }
 
     if (!self.ctrl and !self.alt and sym == c.XKB_KEY_space) {
+        // Inside a torrent, Space ticks what is selected.
+        if (@import("app_torrent_browse.zig").toggleSelected(self)) return;
         if (self.focused_index) |index| if (self.torrentForItem(index)) |t| {
             self.toggleTorrent(t);
             return;

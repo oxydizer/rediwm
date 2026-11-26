@@ -22,12 +22,12 @@ fn matchesPath(t: Transfer, path: []const u8) bool {
         (t.published and containsPath(t.destination, path));
 }
 pub fn torrentForItem(self: *App, index: usize) ?Transfer {
-    if (self.chooser != null or self.transfer_view.active or self.history.archive_len > 0 or index >= self.items.items.len) return null;
+    if (self.chooser != null or self.history.archive_len > 0 or index >= self.items.items.len) return null;
     for (self.torrents.items()) |t| if (matchesPath(t, self.items.items[index].path)) return t;
     return null;
 }
 pub fn hasFolderTransfers(self: *App) bool {
-    if (self.chooser != null or self.history.archive_len > 0 or self.transfer_view.active) return false;
+    if (self.chooser != null or self.history.archive_len > 0) return false;
     for (self.torrents.items()) |t| {
         if (std.mem.eql(u8, t.download_directory, self.history.current) or
             std.mem.eql(u8, std.fs.path.dirname(t.source) orelse "", self.history.current) or

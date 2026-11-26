@@ -25,6 +25,8 @@ pub fn startArchiveOpenWith(self: *App) !void {
 }
 
 pub fn copySelected(self: *App) void {
+    // A torrent's files are not here to copy (an arrived one opens).
+    if (self.history.torrent) return;
     if (self.history.archive_len > 0) {
         startArchiveExport(self, .clipboard) catch {
             self.setStatusNotice(

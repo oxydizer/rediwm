@@ -98,8 +98,8 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         self.invalidate();
         if (button == 0x110) return;
     }
-    if (self.transfer_view.active and self.transferPaneClick(x, y, button)) return;
     if (button == 0x110 and self.inlineTorrentClick(x, y)) return;
+    if (button == 0x110 and @import("app_torrent_browse.zig").checkClick(self, x, y)) return;
     if (button == 0x110 and @import("app_audio_bar.zig").click(self, x, y)) return;
     if (button == 0x110 and self.audioButtonClick(x, y)) return;
     if (button == 0x111) return secondaryClick(self, x, y);
@@ -145,10 +145,6 @@ fn releaseButton(self: *App, button: u32) void {
 }
 
 fn dialogClick(self: *App, dlg: Dialog, x: f64, y: f64) void {
-    if (dlg.kind == .transfers) {
-        self.transfersClick(x, y);
-        return;
-    }
     if (dlg.kind == .properties) {
         const action = self.dialog.?.properties.?.click(self.w, self.h, x, y);
         self.propertiesAction(action);
@@ -335,8 +331,6 @@ fn chromeClick(self: *App, button: u32, x: f64, y: f64) bool {
             return true;
         }
     }
-    if (self.fileOpsSidebarClick(x, y)) return true;
-    if (self.torrentSidebarClick(x, y)) return true;
     if (self.ejectAt(x, y)) |k| {
         self.ejectDevice(k);
         return true;

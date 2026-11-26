@@ -34,13 +34,14 @@ pub const OpenWindow = struct {
     path: []const u8,
     /// A file in it to select, absolute.
     select: ?[]const u8 = null,
-    /// Open the Transfers view.
-    transfers: bool = false,
     /// The launcher's XDG activation token, so the new window may take focus.
     activation_token: ?[]const u8 = null,
     /// A job whose window to raise (its conflict asks there); a new window
     /// at `path` when that window has closed.
     job_id: ?u64 = null,
+    /// A torrent to open: a `.torrent` file (absolute), shown as a folder,
+    /// or a magnet link, which asks where it goes.
+    torrent: ?[]const u8 = null,
 };
 
 pub const Control = @import("io_service_external.zig").Control;

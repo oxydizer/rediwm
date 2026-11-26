@@ -91,6 +91,79 @@ std::string snapshot() {
   json_builder_end_object(b);
   return encode(b);
 }
+std::string inspection(lt::torrent_info const &info, std::string const &id,
+                       std::string const &source) {
+  auto b = json_builder_new();
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "inspect");
+  json_builder_begin_object(b);
+  member(b, "id", id);
+  member(b, "source", source);
+  member(b, "name", display_name(info.name()));
+  json_builder_set_member_name(b, "files");
+  json_builder_begin_array(b);
+  for (auto index : info.files().file_range()) {
+    if (info.files().pad_file_at(index))
+      continue;
+    json_builder_begin_object(b);
+    number(b, "index", int(index));
+    member(b, "path", info.files().file_path(index));
+    number(b, "size", info.files().file_size(index));
+    json_builder_end_object(b);
+  }
+  json_builder_end_array(b);
+  json_builder_end_object(b);
+  json_builder_end_object(b);
+  auto data = encode(b);
+  if (data.size() > max_packet - 1024)
+    throw std::runtime_error("This torrent's file list is too long to show");
+  return data;
+}
+std::string detail(Transfer &t) {
+  auto info = t.info();
+  std::vector<int64_t> progress;
+  std::vector<lt::download_priority_t> priorities;
+  if (t.handle.is_valid()) {
+    if (info)
+      t.handle.file_progress(progress, lt::torrent_handle::piece_granularity);
+    priorities = t.configuring ? t.requested_priorities
+                               : t.handle.get_file_priorities();
+  } else {
+    progress = t.cached_progress;
+    priorities = t.cached_priorities;
+  }
+  auto b = json_builder_new();
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "detail");
+  json_builder_begin_object(b);
+  member(b, "id", t.id);
+  member(b, "name", info ? display_name(info->name()) : "");
+  boolean(b, "metadata", bool(info));
+  json_builder_set_member_name(b, "files");
+  json_builder_begin_array(b);
+  if (info && info->num_files() <= int(max_files))
+    for (auto index : info->files().file_range()) {
+      if (info->files().pad_file_at(index))
+        continue;
+      auto i = size_t(int(index));
+      json_builder_begin_object(b);
+      number(b, "index", int(index));
+      member(b, "path", info->files().file_path(index));
+      number(b, "size", info->files().file_size(index));
+      number(b, "done", i < progress.size() ? progress[i] : 0);
+      boolean(b, "wanted",
+              (!t.pending || t.configuring) && i < priorities.size() &&
+                  priorities[i] != lt::dont_download);
+      json_builder_end_object(b);
+    }
+  json_builder_end_array(b);
+  json_builder_end_object(b);
+  json_builder_end_object(b);
+  auto data = encode(b);
+  if (data.size() > max_packet - 1024)
+    throw std::runtime_error("This torrent's file list is too long to show");
+  return data;
+}
 static void send_error(int fd, std::string const &error) {
   auto b = json_builder_new();
   json_builder_begin_object(b);
@@ -123,18 +196,24 @@ static gboolean peer_ready(gint fd, GIOCondition condition, gpointer) {
   }
   auto parser = json_parser_new();
   GError *error = nullptr;
+  std::string reply;
   try {
     if (!json_parser_load_from_data(parser, data, n, &error))
       throw std::runtime_error("Invalid transfer request");
     auto root = json_parser_get_root(parser);
     if (!JSON_NODE_HOLDS_OBJECT(root))
       throw std::runtime_error("Invalid request");
-    command(json_node_get_object(root));
+    reply = command(json_node_get_object(root));
   } catch (std::exception const &e) {
     send_error(fd, e.what());
   }
   g_clear_error(&error);
   g_object_unref(parser);
+  if (!reply.empty()) {
+    // A reply changes nothing the others see.
+    (void)send(fd, reply.data(), reply.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+    return G_SOURCE_CONTINUE;
+  }
   publish();
   schedule();
   return G_SOURCE_CONTINUE;

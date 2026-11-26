@@ -55,7 +55,6 @@ fn folderName(self: *const App, path: []const u8) []const u8 {
 pub fn tabTitle(self: *const App, i: usize) []const u8 {
     const tab = self.tabs.items[i];
     if (tab.history) |history| return folderName(self, history.current);
-    if (self.transfer_view.active) return tr("Transfers");
     return folderName(self, self.history.current);
 }
 

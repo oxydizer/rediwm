@@ -37,7 +37,7 @@ pub fn updateWatches(self: *App) void {
     const link = &self.service;
     const handle = link.handle orelse return;
     const ghosts = &link.ghosts;
-    const wanted: ?[]const u8 = if (self.chooser == null and !self.transfer_view.active and
+    const wanted: ?[]const u8 = if (self.chooser == null and
         self.history.archive_len == 0 and !self.isRecent()) self.history.current else null;
     if (ghosts.path) |path| {
         if (wanted) |want| if (std.mem.eql(u8, path, want)) return;
@@ -155,7 +155,7 @@ fn transferState(state: views.RowState) ?@import("ops.zig").TransferEntryState {
 /// what is not there yet appears faded with its progress; what is there and
 /// still being written is marked as a ghost.
 pub fn appendRows(self: *App, mem: std.mem.Allocator, old: *const std.StringHashMap(ViewItem)) void {
-    if (self.chooser != null or self.transfer_view.active or
+    if (self.chooser != null or
         self.history.archive_len > 0 or self.isRecent() or self.changedOnly()) return;
     const snapshot = self.service.ghosts.snapshot orelse return;
     for (snapshot.rows) |row| appendRow(self, mem, old, snapshot, row);

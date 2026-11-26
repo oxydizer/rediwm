@@ -226,7 +226,7 @@ pub fn selectedArchive(self: *App) ?[]const u8 {
 /// exported after materializing them through the selected-member extractor.
 pub fn hasSelectedArchiveMembers(self: *const App) bool {
     const archive_len = self.history.archive_len;
-    if (self.chooser != null or archive_len == 0 or self.history.current.len < archive_len)
+    if (self.chooser != null or archive_len == 0 or self.history.torrent or self.history.current.len < archive_len)
         return false;
 
     var count: usize = 0;
@@ -243,7 +243,7 @@ pub fn hasSelectedArchiveMembers(self: *const App) bool {
 }
 
 pub fn selectedAppImage(self: *App) ?[]const u8 {
-    if (self.chooser != null or self.history.archive_len > 0 or self.transfer_view.active) return null;
+    if (self.chooser != null or self.history.archive_len > 0) return null;
     var selected: ?[]const u8 = null;
     for (self.items.items) |item| {
         if (!item.selected or item.transfer_ghost) continue;
@@ -316,7 +316,10 @@ pub fn placeActions(self: *App) []const PlaceAction {
 
 pub fn menuLabels(self: *App) []const []const u8 {
     const messages: []const i18n.Message = switch (self.menu orelse return &.{}) {
-        .new => &.{ i18n.msg("New Folder"), i18n.msg("New File") },
+        .new => if (@import("app_torrents.zig").enabled and self.chooser == null)
+            &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("New Torrent…") }
+        else
+            &.{ i18n.msg("New Folder"), i18n.msg("New File") },
         .sort => &.{ i18n.msg("Name: A to Z"), i18n.msg("Name: Z to A"), i18n.msg("Largest first"), i18n.msg("Smallest first"), i18n.msg("Newest first"), i18n.msg("Oldest first"), i18n.msg("Type: A to Z"), i18n.msg("Type: Z to A"), i18n.msg("Reset Folder View") },
         .filter => if (self.repository() != null)
             &.{ i18n.msg("Folders only"), i18n.msg("Show hidden files"), i18n.msg("Show changed files"), i18n.msg("Show full paths") }
@@ -338,7 +341,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
             .normal => &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Paste"), i18n.msg("Refresh") },
         },
         .chooser_filter => return self.chooser_filter_labels.items,
-        .app => &.{ i18n.msg("New Tab"), i18n.msg("New Window"), i18n.msg("Show hidden files"), i18n.msg("Folders first"), i18n.msg("Terminal"), i18n.msg("Transfers") },
+        .app => &.{ i18n.msg("New Tab"), i18n.msg("New Window"), i18n.msg("Show hidden files"), i18n.msg("Folders first"), i18n.msg("Terminal") },
     };
     for (messages, 0..) |message, i| self.menu_label_text[i] = message.get();
     return self.menu_label_text[0..messages.len];
@@ -419,7 +422,6 @@ pub fn runMenu(self: *App, row: usize) void {
                 self.recordFolderView();
             },
             4 => self.terminalToggle(),
-            5 => self.openTransfers(),
             else => {},
         },
         .chooser_filter => {
@@ -429,6 +431,7 @@ pub fn runMenu(self: *App, row: usize) void {
         .new => switch (row) {
             0 => self.openNewFolderDialog(),
             1 => self.openNewFileDialog(),
+            2 => @import("app_torrents.zig").newTorrent(self),
             else => {},
         },
         .sort => {

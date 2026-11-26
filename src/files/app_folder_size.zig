@@ -166,6 +166,8 @@ pub fn itemSizeDisplay(self: *App, item: ViewItem, buf: *[64]u8) ItemSizeDisplay
     if (item.is_symlink) {
         return .{ .text = "—", .is_running = false };
     }
+    // A torrent's folder knows its size.
+    if (self.history.torrent) return .{ .text = formatSize(item.bytes, buf), .is_running = false };
     if (self.folder_sizes.get(item.path)) |sz| {
         switch (sz) {
             .running => |job| {

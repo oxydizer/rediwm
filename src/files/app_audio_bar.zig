@@ -23,7 +23,7 @@ pub const State = struct {
 const tr = @import("i18n").tr;
 
 pub fn visible(self: *App) bool {
-    return self.chooser == null and !self.transfer_view.active and self.audio_link != null and self.audio_state.status != .none;
+    return self.chooser == null and self.audio_link != null and self.audio_state.status != .none;
 }
 
 pub fn extraHeight(self: *App) i32 {

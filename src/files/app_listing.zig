@@ -1,6 +1,7 @@
 //! Files listing: navigation, history moves, snapshot sync and the filtered, sorted view.
 
 const std = @import("std");
+const torrent_browse = @import("app_torrent_browse.zig");
 const ui_profile = @import("ui_profile.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
@@ -34,6 +35,11 @@ pub fn navigate(self: *App, new_path: []const u8) void {
 }
 
 pub fn refresh(self: *App) void {
+    // A torrent is not on disk: its rows come from the helper.
+    if (torrent_browse.active(self)) {
+        self.rebuildView();
+        return;
+    }
     // A virtual directory cannot be scanned by the filesystem worker.
     // Refresh its manifest projection instead while the transfer is active.
     if (self.transfer_browse_root != null and @import("app_ghosts.zig").active(self)) {
@@ -61,10 +67,6 @@ pub fn selectOnLoad(self: *App, path: []const u8) void {
 }
 
 pub fn back(self: *App) void {
-    if (self.transfer_view.active) {
-        self.leaveTransfers();
-        return;
-    }
     self.rememberView();
     if (self.history.back() catch null) |path| {
         self.applyHistoryNav(path);
@@ -132,8 +134,13 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
         self.transfer_browse_root = self.allocator.dupe(u8, path) catch null;
         transfer_browse = self.transfer_browse_root != null;
     }
+    // Inside a torrent, nothing is scanned either.
+    const torrent = torrent_browse.active(self);
+    if (torrent) {
+        clearTransferBrowse(self);
+        transfer_browse = true;
+    }
 
-    self.leaveTransfers();
     self.navigation_count +%= 1;
     self.overwrite_pending = false;
     if (self.chooser != null and self.chooser.?.mode == .open) self.setChooserName("");
@@ -172,6 +179,8 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
     self.location.anchor = self.location.cursor;
     self.location.scroll = 0;
 
+    torrent_browse.leave(self);
+    if (torrent) torrent_browse.enter(self);
     if (transfer_browse) {
         self.rebuildView();
         if (self.restore_view) self.restoreView();
@@ -232,29 +241,11 @@ pub fn sync(self: *App) void {
         self.clampScroll();
         self.invalidate();
     }
-    const file_ops_active = @import("app_jobs_card.zig").count(self) > 0;
-    const torrent_active = for (self.torrents.items()) |transfer| {
-        if (transfer.@"error".len == 0 and
-            !transfer.finished and
-            !(transfer.pending and transfer.metadata))
-        {
-            break true;
-        }
-    } else false;
-    const transfers_active = file_ops_active or torrent_active;
-    if (transfers_active and !self.transfers_were_active) {
-        self.sidebar_expanded[@intFromEnum(@import("app_model.zig").SidebarSection.transfers)] = true;
-        self.invalidate();
-    }
-    self.transfers_were_active = transfers_active;
-
     if (self.status_notice != null and nowMs() >= self.status_notice_until) {
         self.allocator.free(self.status_notice.?);
         self.status_notice = null;
         self.invalidate();
     }
-
-    if (self.transfer_view.active) return;
 
     // A background refresh must not reorder items or cancel a gesture
     // while the button is held. The worker retains its latest snapshot;
@@ -277,7 +268,7 @@ pub fn sync(self: *App) void {
     }
     // A worker result from before virtual navigation must never replace the
     // manifest-backed listing with a snapshot of another directory.
-    if (self.transfer_browse_root != null) {
+    if (self.transfer_browse_root != null or torrent_browse.active(self)) {
         snap.destroy();
         if (self.torrents.rows_changed or self.transfer_rows_dirty) {
             self.transfer_rows_dirty = false;
@@ -385,7 +376,11 @@ pub fn ordered(order_by: Order, a: ViewItem, b: ViewItem) bool {
 }
 
 pub fn rebuildView(self: *App) void {
-    const snap = self.snapshot orelse return;
+    const torrent = torrent_browse.active(self);
+    // A torrent's rows need no listing; a window opened straight into one
+    // may have none yet.
+    if (self.snapshot == null and !torrent) return;
+    const snap_opt = self.snapshot;
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "listing_rebuild", self.items.items.len);
 
@@ -410,12 +405,15 @@ pub fn rebuildView(self: *App) void {
     self.items_arena = std.heap.ArenaAllocator.init(self.allocator);
     const mem = self.items_arena.allocator();
     self.items = .empty;
-    self.error_message = if (self.transfer_browse_root != null) null else snap.err_msg;
+    self.error_message = if (self.transfer_browse_root != null or torrent) null else snap_opt.?.err_msg;
     self.focused_index = null;
     self.selection_anchor = null;
     self.last_click_index = null;
     if (self.error_message == null) {
-        if (self.transfer_browse_root == null) {
+        if (torrent) {
+            torrent_browse.appendRows(self, mem, &selected_paths);
+        } else if (self.transfer_browse_root == null) {
+            const snap = snap_opt.?;
             for (if (self.changedOnly()) snap.changed else snap.items) |it| {
             if (!self.matches(it)) continue;
             const previous = selected_paths.get(it.path);
@@ -457,7 +455,7 @@ pub fn rebuildView(self: *App) void {
             }
             self.appendTorrentRows(mem, &selected_paths);
         }
-        @import("app_ghosts.zig").appendRows(self, mem, &selected_paths);
+        if (!torrent) @import("app_ghosts.zig").appendRows(self, mem, &selected_paths);
         // Transfer placeholders and synthetic snapshots have no worker key.
         // Give those rows keys from the same locale before sorting so every
         // comparison uses one collation, including mixed real/stub folders.
@@ -466,7 +464,7 @@ pub fn rebuildView(self: *App) void {
         var missing_key = false;
         for (self.items.items) |*item| {
             if (item.sort_key != null) continue;
-            if (fallback_locale == null) fallback_locale = collation.Locale.init(snap.collation_name) orelse collation.Locale.init("C").?;
+            if (fallback_locale == null) fallback_locale = (if (snap_opt) |snap| collation.Locale.init(snap.collation_name) else null) orelse collation.Locale.init("C").?;
             item.sort_key = fallback_locale.?.key(mem, item.text()) catch null;
             missing_key = missing_key or item.sort_key == null;
         }
@@ -538,7 +536,7 @@ pub fn sortByColumn(self: *App, column: usize) void {
 }
 
 pub fn renderColumns(self: *App, cr: *c.cairo_t) void {
-    if (!self.list_view and !self.transfer_view.active) return;
+    if (!self.list_view) return;
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
     c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.contentTop()), @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter()), 30);
@@ -553,7 +551,7 @@ pub fn renderColumns(self: *App, cr: *c.cairo_t) void {
             c.cairo_rectangle(cr, rect.x + rect.w - 0.5, rect.y + 6, 1, rect.h - 12);
             c.cairo_fill(cr);
         }
-        const sorted = !self.transfer_view.active and self.sortColumn() == i and (self.repository() == null or i == 0);
+        const sorted = self.sortColumn() == i and (self.repository() == null or i == 0);
         const hovered = self.hoverKey() == 400 + i;
         if (sorted) {
             setSource(cr, ui_theme.global.surface);

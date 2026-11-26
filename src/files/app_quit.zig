@@ -6,7 +6,6 @@ const std = @import("std");
 const tr = @import("i18n").tr;
 const App = @import("app.zig").App;
 const io_service = @import("io_service.zig");
-const jobs_card = @import("app_jobs_card.zig");
 
 pub const Choice = enum { keep, stop, cancel };
 
@@ -27,7 +26,7 @@ pub fn choose(self: *App, choice: Choice) void {
         .keep => {},
         .stop => {
             var out: [io_service.max_live_jobs]io_service.JobRecord = undefined;
-            for (self.service.jobs.active(&out)) |record| jobs_card.send(self, .cancel_job, record.id);
+            for (self.service.jobs.active(&out)) |record| @import("app_service.zig").sendJobControl(self, .cancel_job, record.id);
         },
     }
     self.quit_confirmed = true;

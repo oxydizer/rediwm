@@ -12,7 +12,6 @@ const io_window_link = @import("io_window_link.zig");
 const io_coordinator = @import("io_coordinator.zig");
 const app_requests = @import("app_requests.zig");
 const app_transfers = @import("app_transfers.zig");
-const jobs_card = @import("app_jobs_card.zig");
 const app_ghosts = @import("app_ghosts.zig");
 
 /// A window cannot have more submits in flight than it has outcome slots.
@@ -134,15 +133,8 @@ pub fn stepService(self: *App) void {
         return;
     };
     const fetched = link.last_fetch orelse return;
-    const rows_before = jobs_card.count(self);
-    const revision = link.jobs.revision;
     if (fetched.resync) link.jobs.clear();
     for (records[0..fetched.count]) |record| link.jobs.apply(record);
-    if (link.jobs.revision != revision) {
-        jobs_card.changed(self, rows_before);
-        // The Transfers view lists every job with its progress.
-        if (self.transfer_view.active) self.invalidate();
-    }
     for (records[0..fetched.count]) |record| {
         if (record.origin_window_id != handle.window_id) continue;
         if (app_transfers.onRecord(self, record)) continue;
@@ -186,4 +178,24 @@ fn failNotice(self: *App, kind: io_service.DeletionKind, code: ?u8) void {
         .trash => tr("Could not move all items to Trash"),
         .empty_trash => tr("Could not empty Trash"),
     }, true);
+}
+
+/// Pauses, resumes or cancels job `job_id` (the quit dialog's cancel).
+pub fn sendJobControl(self: *App, kind: io_service.CommandKind, job_id: io_service.JobId) void {
+    const link = &self.service;
+    const handle = link.handle orelse return;
+    var command: io_service.Command = .{ .kind = kind, .job_id = job_id };
+    link.outbox.send(handle, &command) catch {
+        self.setStatusNotice(switch (kind) {
+            .cancel_job => tr("Could not cancel file transfer"),
+            .pause_job => tr("Could not pause file transfer"),
+            else => tr("Could not resume file transfer"),
+        }, true);
+    };
+}
+
+/// How many service jobs, of any window, are running.
+pub fn liveJobCount(self: *App) usize {
+    var out: [16]io_service.JobRecord = undefined;
+    return self.service.jobs.active(&out).len;
 }

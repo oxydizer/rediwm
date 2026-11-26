@@ -197,10 +197,6 @@ msgstr "Adicionar uma impressora"
 msgid "Add to applications"
 msgstr "Adicionar aos aplicativos"
 
-#: src/files/app_torrents.zig
-msgid "Add torrent…"
-msgstr "Adicionar torrent…"
-
 #: src/control_center/sections/users.zig
 msgid "Add user"
 msgstr "Adicionar usuário"
@@ -1082,10 +1078,6 @@ msgstr "Escolher outro aplicativo…"
 msgid "Choose files"
 msgstr "Escolher arquivos"
 
-#: src/files/torrents.zig
-msgid "Choose files to download"
-msgstr "Escolher arquivos para baixar"
-
 #: src/control_center/sections/appearance_sections.zig
 msgid "Choose file…"
 msgstr "Escolher arquivo…"
@@ -1209,10 +1201,6 @@ msgstr "Cor: {colour}"
 #: src/files/app_torrent_rows.zig
 msgid "Complete"
 msgstr "Concluído"
-
-#: src/files/torrents.zig
-msgid "Complete · Stopped"
-msgstr "Concluído · Parado"
 
 #: src/printing/cups.zig
 msgid "Completed"
@@ -2098,10 +2086,6 @@ msgstr "Baixar"
 msgid "Download to folder"
 msgstr "Baixar para pasta"
 
-#: src/files/torrents.zig
-msgid "Downloaded · Seeding"
-msgstr "Baixado · Semeando"
-
 #: src/files/app_torrent_rows.zig
 msgid "Downloading"
 msgstr "Baixando"
@@ -2109,10 +2093,6 @@ msgstr "Baixando"
 #: src/files/app.zig
 msgid "Downloads"
 msgstr "Downloads"
-
-#: src/files/app_torrents.zig
-msgid "Downloads continue after closing Files."
-msgstr "Os downloads continuam após fechar Arquivos."
 
 #: src/printing/options.zig
 msgid "Draft"
@@ -2682,10 +2662,6 @@ msgstr "Esquecer este dispositivo? Será necessário pareá-lo novamente para re
 msgid "Formats Preview"
 msgstr "Prévia dos formatos"
 
-#: src/files/app_torrents.zig
-msgid "Forward"
-msgstr "Avançar"
-
 #: src/control_center/sections/region.zig
 msgid "Friday"
 msgstr "Sexta-feira"
@@ -2737,10 +2713,6 @@ msgstr "Visualização do Git"
 #: src/control_center/sections/network.zig
 msgid "Good"
 msgstr "Bom"
-
-#: src/files/app_torrents.zig
-msgid "Grid"
-msgstr "Grade"
 
 #: src/files/properties.zig
 msgid "Group"
@@ -3161,10 +3133,6 @@ msgstr "Não é possível alterar as permissões de um link"
 #: src/control_center/sections/network.zig
 msgid "Link speed"
 msgstr "Velocidade do link"
-
-#: src/files/app_torrents.zig
-msgid "List"
-msgstr "Lista"
 
 #: src/control_center/sections/printers_tools.zig
 msgid "Loaded paper height"
@@ -3757,10 +3725,6 @@ msgstr "Nenhuma resolução compatível corresponde às duas medidas. Verifique 
 #: src/files/app_terminal.zig
 msgid "No terminal directory"
 msgstr "Nenhuma pasta de terminal"
-
-#: src/files/app_torrents.zig
-msgid "No transfers yet. Add a .torrent file or magnet link."
-msgstr "Ainda não há transferências. Adicione um arquivo .torrent ou um link magnet."
 
 #: src/control_center/sections/printers_add.zig
 msgid "No unambiguous automatic driver match. Choose a listed driver, check an IPP address, or explicitly choose a raw queue."
@@ -4470,10 +4434,6 @@ msgstr "Perfis"
 msgid "Profiles appear after pairing"
 msgstr "Os perfis aparecem após o pareamento"
 
-#: src/files/app_layout.zig
-msgid "Progress"
-msgstr "Progresso"
-
 #: src/files/app.zig
 msgid "Projects"
 msgstr "Projetos"
@@ -4681,10 +4641,6 @@ msgstr "Remover tema"
 #: src/control_center/sections/printers_details.zig
 msgid "Remove this printer"
 msgstr "Remover esta impressora"
-
-#: src/files/app_torrents.zig
-msgid "Remove · keep files"
-msgstr "Remover · manter arquivos"
 
 #: src/desktop/app_actions.zig
 msgid "Rename"
@@ -5164,18 +5120,6 @@ msgstr "Segurança"
 msgid "See your position while navigating. Drag the highlighted view to pan."
 msgstr "Veja sua posição ao navegar. Arraste a vista destacada para deslocar."
 
-#: src/files/app_torrents.zig
-msgid "Seed: ratio 1"
-msgstr "Semear: proporção 1"
-
-#: src/files/app_torrents.zig
-msgid "Seed: ratio 2"
-msgstr "Semear: proporção 2"
-
-#: src/files/app_torrents.zig
-msgid "Seed: stop at finish"
-msgstr "Semear: parar ao concluir"
-
 #: src/files/app_torrent_rows.zig
 msgid "Seeding"
 msgstr "Semeando"
@@ -5303,10 +5247,6 @@ msgstr "Mostrar caminhos completos"
 #: src/files/app_menu.zig
 msgid "Show hidden files"
 msgstr "Mostrar arquivos ocultos"
-
-#: src/files/app_torrents.zig
-msgid "Show in folder"
-msgstr "Mostrar na pasta"
 
 #: src/control_center/sections/appearance_rows.zig
 msgid "Show launch splash"
@@ -5475,10 +5415,6 @@ msgstr "Tamanho do ícone Iniciar"
 #: src/control_center/sections/appearance_sections.zig
 msgid "Start button logo"
 msgstr "Logotipo do botão Iniciar"
-
-#: src/files/app_torrents.zig
-msgid "Start download"
-msgstr "Iniciar download"
 
 #: src/control_center/sections/appearance_sections.zig
 msgid "Start menu"
@@ -6084,10 +6020,6 @@ msgstr "Este tipo de segurança precisa de uma ferramenta de configuração de r
 msgid "This setting is unavailable on this device or in the current mode."
 msgstr "Esta configuração está indisponível neste dispositivo ou no modo atual."
 
-#: src/files/app_torrents.zig
-msgid "This transfer is no longer available."
-msgstr "Esta transferência não está mais disponível."
-
 #: src/control_center/sections/region.zig
 msgid "Thursday"
 msgstr "Quinta-feira"
@@ -6176,10 +6108,6 @@ msgstr "Superior"
 msgid "Torrent file or magnet link"
 msgstr "Arquivo torrent ou link magnet"
 
-#: src/files/app_torrents.zig
-msgid "Transfer"
-msgstr "Transferir"
-
 #: src/files/torrents.zig
 msgid "Transfer request could not be sent. Please retry."
 msgstr "Não foi possível enviar a solicitação de transferência. Tente novamente."
@@ -6187,14 +6115,6 @@ msgstr "Não foi possível enviar a solicitação de transferência. Tente novam
 #: src/files/app.zig
 msgid "Transfers"
 msgstr "Transferências"
-
-#: src/files/torrents.zig
-msgid "Transfers disconnected. Reopen Transfers to reconnect."
-msgstr "Transferências foi desconectado. Reabra para reconectar."
-
-#: src/files/torrents.zig
-msgid "Transfers is disconnected. Reopen Transfers to reconnect."
-msgstr "Transferências está desconectado. Reabra para reconectar."
 
 #: src/control_center/sections/display.zig
 msgid "Transform"
@@ -6384,25 +6304,9 @@ msgstr "Imagem não suportada, decodificador ausente ou arquivo indisponível"
 msgid "Untitled"
 msgstr "Sem título"
 
-#: src/files/app_torrents.zig
-msgid "Up"
-msgstr "Subir"
-
 #: src/network/manager_actions.zig
 msgid "Updating Wi-Fi…"
 msgstr "Atualizando Wi-Fi…"
-
-#: src/files/app_layout.zig
-msgid "Upload"
-msgstr "Enviar"
-
-#: src/files/app_torrents.zig
-msgid "Upload: 1 MiB/s"
-msgstr "Envio: 1 MiB/s"
-
-#: src/files/app_torrents.zig
-msgid "Upload: 128 KiB/s"
-msgstr "Envio: 128 KiB/s"
 
 #: src/power_menu.zig
 msgid "Uptime unavailable"
@@ -7311,12 +7215,6 @@ msgid_plural "{count} selected items"
 msgstr[0] "{count} item selecionado"
 msgstr[1] "{count} itens selecionados"
 
-#: src/files/app_paint.zig
-msgid "{count} transfer · Downloads continue after closing Files."
-msgid_plural "{count} transfers · Downloads continue after closing Files."
-msgstr[0] "{count} transferência · Os downloads continuam após fechar Arquivos."
-msgstr[1] "{count} transferências · Os downloads continuam após fechar Arquivos."
-
 #: src/notifications/toast.zig
 msgid "{count}h ago"
 msgstr "há {count}h"
@@ -7421,10 +7319,6 @@ msgid_plural "{n} services, {enabled} enabled"
 msgstr[0] "{n} serviço; ativados: {enabled}"
 msgstr[1] "{n} serviços; ativados: {enabled}"
 
-#: src/files/app_torrents.zig
-msgid "{rate} KiB/s"
-msgstr "{rate} KiB/s"
-
 #: src/files/properties.zig
 msgid "{size} ({bytes} byte)"
 msgid_plural "{size} ({bytes} bytes)"
@@ -7435,17 +7329,9 @@ msgstr[1] "{size} ({bytes} bytes)"
 msgid "{size} Volume"
 msgstr "Volume de {size}"
 
-#: src/files/app_torrents.zig
-msgid "{size} selected · {path}"
-msgstr "{size} selecionados · {path}"
-
 #: src/control_center/sections/printers_details.zig
 msgid "{value} (supported {min}–{max})"
 msgstr "{value} (suportado: {min}–{max})"
-
-#: src/files/app_torrents.zig
-msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
-msgstr "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
 
 #: src/control_center/sections/sound.zig
 msgctxt "balance"

@@ -209,7 +209,6 @@ pub fn placeAt(self: *App, x: f64, y: f64) ?usize {
 /// Whether place `index` is the folder being shown; a device also when the
 /// folder is inside it.
 pub fn placeActive(self: *App, index: usize) bool {
-    if (self.transfer_view.active) return false;
     if (self.deviceAt(index)) |volume| {
         const mount = volume.mount orelse return false;
         return volumes_mod.contains(mount, self.history.current);
@@ -297,7 +296,6 @@ pub fn dropMotion(self: *App, x: f64, y: f64) bool {
 /// Content drops use the folder under the pointer, or the displayed folder
 /// on empty space. Archives, dialogs, and file choosers are not targets.
 pub fn dropDirectoryAt(self: *App, x: f64, y: f64) ?[]const u8 {
-    if (self.transfer_view.active) return null;
     if (self.chooser != null or self.dialog != null or self.menu != null or self.history.archive_len > 0) return null;
     if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter())) or
         y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.contentBottom()))) return null;
@@ -525,7 +523,7 @@ pub fn ejectDevice(self: *App, k: usize) void {
     if (self.device_op != null) return;
     // Any running service job may be using the volume, whichever window
     // started it.
-    if (@import("app_jobs_card.zig").count(self) > 0) {
+    if (@import("app_service.zig").liveJobCount(self) > 0) {
         self.setStatusNotice(tr("Finish the running file operation first"), true);
         return;
     }

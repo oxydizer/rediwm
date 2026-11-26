@@ -223,7 +223,8 @@ pub const Launch = struct {
     selected_file: ?[]const u8 = null,
     chooser: ?@import("chooser.zig").Options = null,
     torrent_source: ?[]const u8 = null,
-    transfers: bool = false,
+    /// A download to show as a folder (the shell panel's "Choose files…").
+    torrent_id: ?[]const u8 = null,
 };
 
 /// What the poll array has room for: the display plus a block per window.
@@ -233,7 +234,7 @@ pub const max_windows = 16;
 /// look windows up here to move a tab between them.
 pub var open_windows: std.ArrayList(*Client) = .empty;
 
-pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]const u8, chooser: ?@import("chooser.zig").Options, torrent_source: ?[]const u8, transfers: bool) !void {
+pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]const u8, chooser: ?@import("chooser.zig").Options, torrent_source: ?[]const u8) !void {
     platform.process.ignoreBrokenPipes();
     // This thread runs the event loop for every window (plan §1).
     @import("io_thread_guard.zig").markCurrent(.ui);
@@ -243,13 +244,13 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     // its own, and never the one others hand over to. Claimed first, so a
     // handed-over launch exits before doing anything else.
     var instance: ?struct { fd: c_int, paths: io_endpoint.Paths } = null;
-    if (chooser == null and torrent_source == null) claim: {
+    if (chooser == null) claim: {
         var paths = io_endpoint.Paths.fromEnviron(a, init.minimal.environ) catch break :claim;
         switch (io_endpoint.claim(a, &paths, .{
             .path = target_dir,
             .select = selected_file,
-            .transfers = transfers,
             .activation_token = init.minimal.environ.getPosix("XDG_ACTIVATION_TOKEN"),
+            .torrent = torrent_source,
         })) {
             .handed_over => {
                 paths.deinit(a);
@@ -357,7 +358,6 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         .selected_file = selected_file,
         .chooser = chooser,
         .torrent_source = torrent_source,
-        .transfers = transfers,
     }, &service));
 
     // A file chooser is one window and ends with its answer; it is printed
@@ -404,7 +404,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
                 // Stop serving first, then open what was accepted before that:
                 // those launchers were told yes and have exited.
                 if (endpoint) |e| e.stop();
-                if (openRequested(endpoint, windows, display, setup, &service) == 0) break;
+                if (openRequested(endpoint, windows, display, setup, &service, &torrent_bridge) == 0) break;
                 continue;
             }
         }
@@ -432,7 +432,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         }
 
         // Launches handed over by the endpoint.
-        if (openRequested(endpoint, windows, display, setup, &service) > 0) continue;
+        if (openRequested(endpoint, windows, display, setup, &service, &torrent_bridge) > 0) continue;
 
         // Tear-off: the tab leaves for a window of its own, where the compositor
         // is about to place it (it was told at the same moment as this program).
@@ -533,7 +533,7 @@ fn jobWindow(windows: []const *Client, job: u64) ?*Client {
 
 /// Opens a window for each launch the endpoint handed over. Returns how many
 /// it opened. A launch beyond `max_windows` is dropped with a notice.
-fn openRequested(endpoint: ?*io_endpoint.Endpoint, windows: *std.ArrayList(*Client), display: *wl.Display, setup: Setup, service: *io_service_mod.Service) usize {
+fn openRequested(endpoint: ?*io_endpoint.Endpoint, windows: *std.ArrayList(*Client), display: *wl.Display, setup: Setup, service: *io_service_mod.Service, bridge: *const io_torrent_bridge.Bridge) usize {
     const e = endpoint orelse return 0;
     var opened: usize = 0;
     while (e.takeOpen()) |taken| {
@@ -548,10 +548,13 @@ fn openRequested(endpoint: ?*io_endpoint.Endpoint, windows: *std.ArrayList(*Clie
             if (windows.items.len > 0) windows.items[0].app.setStatusNotice(@import("i18n").tr("Could not open new window"), true);
             continue;
         }
+        // A download's job opens its files as a folder.
+        const torrent_id = if (request.job_id) |job| bridge.transferOf(job) else null;
         const created = Client.create(display, setup, .{
             .dir = request.dir,
             .selected_file = request.select,
-            .transfers = request.transfers,
+            .torrent_id = torrent_id,
+            .torrent_source = request.torrent,
         }, service) catch |err| {
             std.log.warn("rediwm-files: cannot open a window: {}", .{err});
             continue;

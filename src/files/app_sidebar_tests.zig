@@ -22,47 +22,44 @@ test "sidebar accordion defaults to Places without changing Git branch expansion
     try std.testing.expect(app.sidebar_expanded[0]);
     try std.testing.expect(!app.sidebar_expanded[1]);
     try std.testing.expect(!app.sidebar_expanded[2]);
-    try std.testing.expect(!app.sidebar_expanded[3]);
     try std.testing.expect(app.git_expanded);
 }
 
 test "sidebar layout stacks every independently expanded visible body" {
-    const body_heights = [_]i32{ 80, 40, 64, 120 };
-    const visible = [_]bool{ true, true, false, true };
+    const body_heights = [_]i32{ 80, 40, 64 };
+    const visible = [_]bool{ true, true, true };
 
     const places_and_disks_expanded = app_model.SidebarLayout.init(
         100,
         body_heights,
         visible,
-        .{ true, true, true, false },
+        .{ true, true, false },
     );
     const places = places_and_disks_expanded.cards[@intFromEnum(app_model.SidebarSection.places)];
     const disks = places_and_disks_expanded.cards[@intFromEnum(app_model.SidebarSection.disks)];
     const git = places_and_disks_expanded.cards[@intFromEnum(app_model.SidebarSection.git)];
-    const transfers = places_and_disks_expanded.cards[@intFromEnum(app_model.SidebarSection.transfers)];
 
     try std.testing.expectEqual(@as(i32, 100), places.y);
     try std.testing.expectEqual(@as(i32, 112), places.height());
     try std.testing.expectEqual(@as(i32, 220), disks.y);
     try std.testing.expectEqual(@as(i32, 72), disks.height());
-    try std.testing.expect(!git.visible);
-    try std.testing.expectEqual(@as(i32, 300), transfers.y);
-    try std.testing.expectEqual(@as(i32, 32), transfers.height());
+    try std.testing.expectEqual(@as(i32, 300), git.y);
+    try std.testing.expectEqual(@as(i32, 32), git.height());
 
-    const only_transfers_expanded = app_model.SidebarLayout.init(
+    const only_git_expanded = app_model.SidebarLayout.init(
         100,
         body_heights,
         visible,
-        .{ false, false, false, true },
+        .{ false, false, true },
     );
-    const collapsed_places = only_transfers_expanded.cards[@intFromEnum(app_model.SidebarSection.places)];
-    const collapsed_disks = only_transfers_expanded.cards[@intFromEnum(app_model.SidebarSection.disks)];
-    const expanded_transfers = only_transfers_expanded.cards[@intFromEnum(app_model.SidebarSection.transfers)];
+    const collapsed_places = only_git_expanded.cards[@intFromEnum(app_model.SidebarSection.places)];
+    const collapsed_disks = only_git_expanded.cards[@intFromEnum(app_model.SidebarSection.disks)];
+    const expanded_git = only_git_expanded.cards[@intFromEnum(app_model.SidebarSection.git)];
 
     try std.testing.expectEqual(@as(i32, 32), collapsed_places.height());
     try std.testing.expectEqual(@as(i32, 140), collapsed_disks.y);
-    try std.testing.expectEqual(@as(i32, 180), expanded_transfers.y);
-    try std.testing.expectEqual(@as(i32, 152), expanded_transfers.height());
+    try std.testing.expectEqual(@as(i32, 180), expanded_git.y);
+    try std.testing.expectEqual(@as(i32, 96), expanded_git.height());
 }
 
 test "sidebar header clicks independently toggle sections" {
@@ -107,7 +104,7 @@ test "sidebar header clicks independently toggle sections" {
     try std.testing.expectEqual(@as(?app_model.SidebarSection, null), app.sidebarHeaderAt(-1, selected_y));
 }
 
-test "sidebar hides Drives and Transfers cards when they have no content" {
+test "sidebar hides the Drives card when it has no content" {
     var app = try testApp();
     defer app.deinit();
     app.w = 800;
@@ -116,7 +113,6 @@ test "sidebar hides Drives and Transfers cards when they have no content" {
     var layout = app.sidebarLayout();
     try std.testing.expect(layout.cards[@intFromEnum(app_model.SidebarSection.places)].visible);
     try std.testing.expect(!layout.cards[@intFromEnum(app_model.SidebarSection.disks)].visible);
-    try std.testing.expect(!layout.cards[@intFromEnum(app_model.SidebarSection.transfers)].visible);
 
     const volumes = [_]volumes_mod.Volume{
         .{ .id = "/b/sdb1", .label = "STICK", .mount = null, .size = 1 << 30, .kind = .stick },
@@ -124,7 +120,6 @@ test "sidebar hides Drives and Transfers cards when they have no content" {
     app.device_list.items = &volumes;
     layout = app.sidebarLayout();
     try std.testing.expect(layout.cards[@intFromEnum(app_model.SidebarSection.disks)].visible);
-    try std.testing.expect(!layout.cards[@intFromEnum(app_model.SidebarSection.transfers)].visible);
 }
 
 test "Drives card keeps bottom padding below its final device row" {

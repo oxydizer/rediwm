@@ -22,6 +22,7 @@ const io_endpoint_tests = @import("files/io_endpoint_tests.zig");
 const io_copy_bench_tests = @import("files/io_copy_bench_tests.zig");
 const io_endpoint_subscribe_tests = @import("files/io_endpoint_subscribe_tests.zig");
 const io_torrent_bridge = @import("files/io_torrent_bridge.zig");
+const torrent_tree = @import("files/torrent_tree.zig");
 const io_workers_tests = @import("files/io_workers_tests.zig");
 const io_executor_tests = @import("files/io_executor_tests.zig");
 const io_copy_tests = @import("files/io_copy_tests.zig");
@@ -54,6 +55,7 @@ test {
     _ = io_copy_bench_tests;
     _ = io_endpoint_subscribe_tests;
     _ = io_torrent_bridge;
+    _ = torrent_tree;
     _ = io_workers_tests;
     _ = io_executor_tests;
     _ = io_copy_tests;

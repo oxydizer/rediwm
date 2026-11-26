@@ -29,7 +29,6 @@ pub const PermissionHit = struct {
 
 fn permissionsAvailable(self: *App) bool {
     return self.list_view and
-        !self.transfer_view.active and
         self.repository() == null and
         self.chooser == null and
         self.dialog == null and
@@ -87,15 +86,6 @@ pub fn toggleInlinePermission(self: *App, hit: PermissionHit) void {
 
 // Input handlers
 pub fn hoverKey(self: *App) usize {
-    if (self.dialog) |dlg| if (dlg.kind == .transfers) return self.transfersHover();
-    if (self.dialog == null) {
-        const file_ops_hover = self.fileOpsSidebarHover(self.mouse_x, self.mouse_y);
-        if (file_ops_hover != 0) return file_ops_hover;
-    }
-    if (self.dialog == null) {
-        const torrent_hover = self.torrentSidebarHover(self.mouse_x, self.mouse_y);
-        if (torrent_hover != 0) return torrent_hover;
-    }
     const x = self.mouse_x;
     const y = self.mouse_y;
     if (self.dialog) |dlg| {
@@ -107,8 +97,6 @@ pub fn hoverKey(self: *App) usize {
         return 0;
     }
     if (self.menu != null) return 100 + (self.menuHit(x, y) orelse 99);
-    if (self.transfer_view.active and (y < @as(f64, @floatFromInt(self.contentTop())) or
-        (x >= @as(f64, @floatFromInt(self.sidebarWidth())) and y < @as(f64, @floatFromInt(self.contentBottom()))))) return self.transferPaneHover();
     if (self.terminalHit(x, y)) |index| return 900 + index;
     if (self.sidebar_resize != null or self.overSidebarDivider(x, y)) return 0;
     if (self.sidebarHeaderAt(x, y)) |section| return 940 + @as(usize, @backingInt(section));
@@ -128,6 +116,7 @@ pub fn hoverKey(self: *App) usize {
     if (self.sidebar_surface.hovered) |target| return @intCast(target.id);
     if (self.permissionHit(x, y)) |hit| return permissionHoverBase + hit.index * 9 + hit.bit;
     if (self.inlineTorrentHit(x, y)) |hit| return std.math.maxInt(usize) - 3000 - hit.index * 2 - @intFromBool(hit.toggle);
+    if (@import("app_torrent_browse.zig").checkHit(self, x, y)) |index| return std.math.maxInt(usize) - 6000 - index;
     if (self.audioButtonHit(x, y)) |index| return @import("app_audio.zig").audioHoverKey(index);
     if (self.item_surface.hovered) |target| {
         const i: usize = @intCast(target.id);

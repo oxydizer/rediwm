@@ -200,10 +200,6 @@ msgstr "Добавить принтер"
 msgid "Add to applications"
 msgstr "Добавить в приложения"
 
-#: src/files/app_torrents.zig
-msgid "Add torrent…"
-msgstr "Добавить торрент…"
-
 #: src/control_center/sections/users.zig
 msgid "Add user"
 msgstr "Добавить пользователя"
@@ -1085,10 +1081,6 @@ msgstr "Выбрать другое приложение…"
 msgid "Choose files"
 msgstr "Выбрать файлы"
 
-#: src/files/torrents.zig
-msgid "Choose files to download"
-msgstr "Выбрать файлы для загрузки"
-
 #: src/control_center/sections/appearance_sections.zig
 msgid "Choose file…"
 msgstr "Выбрать файл…"
@@ -1212,10 +1204,6 @@ msgstr "Цвет: {colour}"
 #: src/files/app_torrent_rows.zig
 msgid "Complete"
 msgstr "Завершено"
-
-#: src/files/torrents.zig
-msgid "Complete · Stopped"
-msgstr "Завершено · Остановлено"
 
 #: src/printing/cups.zig
 msgid "Completed"
@@ -2103,10 +2091,6 @@ msgstr "Загрузить"
 msgid "Download to folder"
 msgstr "Загрузить в папку"
 
-#: src/files/torrents.zig
-msgid "Downloaded · Seeding"
-msgstr "Загружено · Раздаётся"
-
 #: src/files/app_torrent_rows.zig
 msgid "Downloading"
 msgstr "Загрузка"
@@ -2114,10 +2098,6 @@ msgstr "Загрузка"
 #: src/files/app.zig
 msgid "Downloads"
 msgstr "Загрузки"
-
-#: src/files/app_torrents.zig
-msgid "Downloads continue after closing Files."
-msgstr "Загрузки продолжатся после закрытия «Файлов»."
 
 #: src/printing/options.zig
 msgid "Draft"
@@ -2687,10 +2667,6 @@ msgstr "Забыть это устройство? Для подключения 
 msgid "Formats Preview"
 msgstr "Предпросмотр форматов"
 
-#: src/files/app_torrents.zig
-msgid "Forward"
-msgstr "Вперёд"
-
 #: src/control_center/sections/region.zig
 msgid "Friday"
 msgstr "Пятница"
@@ -2742,10 +2718,6 @@ msgstr "Режим Git"
 #: src/control_center/sections/network.zig
 msgid "Good"
 msgstr "Хорошо"
-
-#: src/files/app_torrents.zig
-msgid "Grid"
-msgstr "Сетка"
 
 #: src/files/properties.zig
 msgid "Group"
@@ -3166,10 +3138,6 @@ msgstr "Права доступа к ссылке изменить нельзя"
 #: src/control_center/sections/network.zig
 msgid "Link speed"
 msgstr "Скорость соединения"
-
-#: src/files/app_torrents.zig
-msgid "List"
-msgstr "Список"
 
 #: src/control_center/sections/printers_tools.zig
 msgid "Loaded paper height"
@@ -3762,10 +3730,6 @@ msgstr "Ни одно поддерживаемое разрешение не с�
 #: src/files/app_terminal.zig
 msgid "No terminal directory"
 msgstr "Папка терминала не задана"
-
-#: src/files/app_torrents.zig
-msgid "No transfers yet. Add a .torrent file or magnet link."
-msgstr "Передач пока нет. Добавьте файл .torrent или magnet-ссылку."
 
 #: src/control_center/sections/printers_add.zig
 msgid "No unambiguous automatic driver match. Choose a listed driver, check an IPP address, or explicitly choose a raw queue."
@@ -4475,10 +4439,6 @@ msgstr "Профили"
 msgid "Profiles appear after pairing"
 msgstr "Профили появятся после сопряжения"
 
-#: src/files/app_layout.zig
-msgid "Progress"
-msgstr "Ход выполнения"
-
 #: src/files/app.zig
 msgid "Projects"
 msgstr "Проекты"
@@ -4686,10 +4646,6 @@ msgstr "Удалить тему"
 #: src/control_center/sections/printers_details.zig
 msgid "Remove this printer"
 msgstr "Удалить этот принтер"
-
-#: src/files/app_torrents.zig
-msgid "Remove · keep files"
-msgstr "Удалить · сохранить файлы"
 
 #: src/desktop/app_actions.zig
 msgid "Rename"
@@ -5170,18 +5126,6 @@ msgstr "Безопасность"
 msgid "See your position while navigating. Drag the highlighted view to pan."
 msgstr "Следите за своим положением при навигации. Перетащите выделенную область для перемещения."
 
-#: src/files/app_torrents.zig
-msgid "Seed: ratio 1"
-msgstr "Раздача: коэффициент 1"
-
-#: src/files/app_torrents.zig
-msgid "Seed: ratio 2"
-msgstr "Раздача: коэффициент 2"
-
-#: src/files/app_torrents.zig
-msgid "Seed: stop at finish"
-msgstr "Раздача: остановить после загрузки"
-
 #: src/files/app_torrent_rows.zig
 msgid "Seeding"
 msgstr "Раздаётся"
@@ -5309,10 +5253,6 @@ msgstr "Показывать полные пути"
 #: src/files/app_menu.zig
 msgid "Show hidden files"
 msgstr "Показывать скрытые файлы"
-
-#: src/files/app_torrents.zig
-msgid "Show in folder"
-msgstr "Показать в папке"
 
 #: src/control_center/sections/appearance_rows.zig
 msgid "Show launch splash"
@@ -5481,10 +5421,6 @@ msgstr "Размер значка кнопки запуска"
 #: src/control_center/sections/appearance_sections.zig
 msgid "Start button logo"
 msgstr "Логотип кнопки запуска"
-
-#: src/files/app_torrents.zig
-msgid "Start download"
-msgstr "Начать загрузку"
 
 #: src/control_center/sections/appearance_sections.zig
 msgid "Start menu"
@@ -6090,10 +6026,6 @@ msgstr "Для этого типа защиты нужна программа н
 msgid "This setting is unavailable on this device or in the current mode."
 msgstr "Этот параметр недоступен на данном устройстве или в текущем режиме."
 
-#: src/files/app_torrents.zig
-msgid "This transfer is no longer available."
-msgstr "Эта передача больше недоступна."
-
 #: src/control_center/sections/region.zig
 msgid "Thursday"
 msgstr "Четверг"
@@ -6182,10 +6114,6 @@ msgstr "Вверху"
 msgid "Torrent file or magnet link"
 msgstr "Файл торрента или magnet-ссылка"
 
-#: src/files/app_torrents.zig
-msgid "Transfer"
-msgstr "Передача"
-
 #: src/files/torrents.zig
 msgid "Transfer request could not be sent. Please retry."
 msgstr "Не удалось отправить запрос передачи. Повторите попытку."
@@ -6193,14 +6121,6 @@ msgstr "Не удалось отправить запрос передачи. П
 #: src/files/app.zig
 msgid "Transfers"
 msgstr "Передачи"
-
-#: src/files/torrents.zig
-msgid "Transfers disconnected. Reopen Transfers to reconnect."
-msgstr "Связь с «Передачами» потеряна. Откройте «Передачи» снова для подключения."
-
-#: src/files/torrents.zig
-msgid "Transfers is disconnected. Reopen Transfers to reconnect."
-msgstr "«Передачи» отключены. Откройте «Передачи» снова для подключения."
 
 #: src/control_center/sections/display.zig
 msgid "Transform"
@@ -6390,25 +6310,9 @@ msgstr "Изображение не поддерживается, декодер
 msgid "Untitled"
 msgstr "Без имени"
 
-#: src/files/app_torrents.zig
-msgid "Up"
-msgstr "Вверх"
-
 #: src/network/manager_actions.zig
 msgid "Updating Wi-Fi…"
 msgstr "Обновление Wi-Fi…"
-
-#: src/files/app_layout.zig
-msgid "Upload"
-msgstr "Отдача"
-
-#: src/files/app_torrents.zig
-msgid "Upload: 1 MiB/s"
-msgstr "Отдача: 1 МиБ/с"
-
-#: src/files/app_torrents.zig
-msgid "Upload: 128 KiB/s"
-msgstr "Отдача: 128 КиБ/с"
 
 #: src/power_menu.zig
 msgid "Uptime unavailable"
@@ -7322,13 +7226,6 @@ msgstr[0] "Выбран {count} объект"
 msgstr[1] "Выбрано {count} объекта"
 msgstr[2] "Выбрано {count} объектов"
 
-#: src/files/app_paint.zig
-msgid "{count} transfer · Downloads continue after closing Files."
-msgid_plural "{count} transfers · Downloads continue after closing Files."
-msgstr[0] "{count} передача · Загрузки продолжатся после закрытия «Файлов»."
-msgstr[1] "{count} передачи · Загрузки продолжатся после закрытия «Файлов»."
-msgstr[2] "{count} передач · Загрузки продолжатся после закрытия «Файлов»."
-
 #: src/notifications/toast.zig
 msgid "{count}h ago"
 msgstr "{count} ч назад"
@@ -7437,10 +7334,6 @@ msgstr[0] "{n} служба, включено: {enabled}"
 msgstr[1] "{n} службы, включено: {enabled}"
 msgstr[2] "{n} служб, включено: {enabled}"
 
-#: src/files/app_torrents.zig
-msgid "{rate} KiB/s"
-msgstr "{rate} КиБ/с"
-
 #: src/files/properties.zig
 msgid "{size} ({bytes} byte)"
 msgid_plural "{size} ({bytes} bytes)"
@@ -7452,17 +7345,9 @@ msgstr[2] "{size} ({bytes} байт)"
 msgid "{size} Volume"
 msgstr "Том {size}"
 
-#: src/files/app_torrents.zig
-msgid "{size} selected · {path}"
-msgstr "Выбрано {size} · {path}"
-
 #: src/control_center/sections/printers_details.zig
 msgid "{value} (supported {min}–{max})"
 msgstr "{value} (поддерживается {min}–{max})"
-
-#: src/files/app_torrents.zig
-msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
-msgstr "{value}% · ↓ {rate} КиБ/с · ↑ {rate3} КиБ/с"
 
 #: src/control_center/sections/sound.zig
 msgctxt "balance"

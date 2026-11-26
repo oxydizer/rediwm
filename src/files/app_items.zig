@@ -1,6 +1,7 @@
 //! Files item painting: grid and list rows, icons and thumbnails.
 
 const std = @import("std");
+const torrent_browse = @import("app_torrent_browse.zig");
 const App = @import("app.zig").App;
 const c = @import("c.zig").api;
 const thumbs_mod = @import("thumbs.zig");
@@ -136,15 +137,17 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 }, progress, accent);
             }
         }
-        const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) else GridCard.padding_x);
+        const check_inset = torrent_browse.listInset(self);
+        const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) + check_inset else GridCard.padding_x);
         setSource(cr, filenameForeground(item));
-        const name_width = if (self.list_view) @max(0, self.listColumn(0).w - 46 - self.inlineTorrentWidth(idx) - self.audioButtonWidth(idx)) else width - 2 * GridCard.padding_x;
+        const name_width = if (self.list_view) @max(0, self.listColumn(0).w - 46 - check_inset - self.inlineTorrentWidth(idx) - self.audioButtonWidth(idx)) else width - 2 * GridCard.padding_x;
         // A path that does not fit loses its head, so the file's own name stays readable.
         const name_y = y + (if (self.list_view) baseline else GridCard.name_baseline);
         if (item.label.len > 0) drawHeadEllipsis(cr, item.label, label_x, name_y, name_width, shell_ui.textSize(), false) else drawEllipsis(cr, item.name, label_x, name_y, name_width, shell_ui.textSize(), false);
         var buf: [64]u8 = undefined;
         var size_buf: [64]u8 = undefined;
-        const transfer_bytes = currentTransferBytes(item);
+        // An unticked file of a torrent shows its size, not the nothing it has.
+        const transfer_bytes = if (torrent_browse.active(self) and item.transfer_state == .pending) null else currentTransferBytes(item);
         const disp = if (item.transfer_stub)
             App.ItemSizeDisplay{ .text = formatSize((self.torrentForItem(idx) orelse continue).total, &size_buf), .is_running = false }
         else if (transfer_bytes) |bytes|
@@ -175,10 +178,11 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             const ty = self.listColumn(2);
             drawEllipsis(cr, if (item.transfer_stub) @import("i18n").tr("Download") else itemType(item), ty.x + 4, y + baseline, ty.w - 8, shell_ui.textSize(), false);
             const mt = self.listColumn(3);
-            const timestamp = if (item.transfer_stub) "—" else @import("app_kit").settings.dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
+            const virtual = item.transfer_stub or torrent_browse.active(self);
+            const timestamp = if (virtual) "—" else @import("app_kit").settings.dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
             drawEllipsis(cr, timestamp, mt.x + 4, y + baseline, mt.w - 8, shell_ui.textSize(), false);
             const permissions = self.listColumn(4);
-            if (item.transfer_stub or item.transfer_ghost) {
+            if (virtual or item.transfer_ghost) {
                 drawEllipsis(cr, "—", permissions.x + 4, y + baseline, permissions.w - 8, shell_ui.textSize(), false);
             } else {
                 const mode = formatPermissions(item.mode);
@@ -243,6 +247,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             }
         }
         self.renderInlineTorrent(cr, idx);
+        torrent_browse.renderCheck(self, cr, idx);
         self.renderAudioButton(cr, idx);
         if (cut) {
             c.cairo_pop_group_to_source(cr);
@@ -378,7 +383,7 @@ pub fn itemIconRect(self: *App, index: i32) header.Rect {
     const cols = self.columns();
     const size: f64 = if (self.list_view) 24 else GridCard.icon_size;
     return .{
-        .x = @as(f64, @floatFromInt(self.sidebarWidth() + self.itemLeftInset() + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) else GridCard.padding_x) - self.horizontalOffset(),
+        .x = @as(f64, @floatFromInt(self.sidebarWidth() + self.itemLeftInset() + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) + torrent_browse.listInset(self) else GridCard.padding_x) - self.horizontalOffset(),
         .y = @as(f64, @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight() - self.scroll_y)) + (if (self.list_view) @as(f64, @floatFromInt(self.cardHeight() - 24)) / 2 else GridCard.padding_top),
         .w = size,
         .h = size,

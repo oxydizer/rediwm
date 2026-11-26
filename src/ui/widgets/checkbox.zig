@@ -13,6 +13,9 @@ pub const gap: f32 = 10;
 pub const State = struct {
     icon: ?layout.ImageData = null,
     checked: bool = false,
+    /// Partly checked (a folder with only some of its files): a dash.
+    /// Drawn instead of the check mark; `checked` is ignored then.
+    mixed: bool = false,
     /// Keyboard focus: a ring on the square.
     focused: bool = false,
     disabled: bool = false,
@@ -23,16 +26,19 @@ pub fn paint(r: *Renderer, box: Rect, label: []const u8, state: State) void {
     const t = r.palette orelse theme.global;
     const y = box.y + (box.h - box_size) / 2;
     const ring = state.focused and !state.disabled;
-    var fill = if (state.checked) t.accent else t.surface;
+    const on = state.checked or state.mixed;
+    var fill = if (on) t.accent else t.surface;
     if (state.disabled) fill[3] *= 0.5;
     r.fillRect(box.x, y, box_size, box_size, .{
         .color = fill,
         .radius = t.checkbox_radius,
         .border_width = if (ring) 2 else 1,
-        .border_color = if (ring) t.controlFocusColor() else if (state.checked) t.accent else t.border_hover,
+        .border_color = if (ring) t.controlFocusColor() else if (on) t.accent else t.border_hover,
         .relief = if (state.disabled) .flat else t.checkbox_relief,
     });
-    if (state.checked) r.drawIcon(box.x, y, box_size, box_size, .{ .id = .checkmark, .color = t.on_accent });
+    if (state.mixed) {
+        r.fillRect(box.x + 4, y + box_size / 2 - 1, box_size - 8, 2, .{ .color = t.on_accent, .radius = 1 });
+    } else if (state.checked) r.drawIcon(box.x, y, box_size, box_size, .{ .id = .checkmark, .color = t.on_accent });
     var left = box.x + box_size + gap;
     if (state.icon) |icon| {
         if (icon.pixels) |pixels| {
