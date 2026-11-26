@@ -51,6 +51,8 @@ pub const Published = struct {
     destination_path: ?[]u8 = null,
     /// Held in the Manager: the job touches a suspect mount.
     held: bool = false,
+    /// Marked stalled in the Manager: a task of it is stuck.
+    stalled: bool = false,
 
     pub fn setPaths(self: *Published, allocator: std.mem.Allocator, source: ?[]const u8, destination: ?[]const u8) void {
         if (source) |path| self.source_path = allocator.dupe(u8, path) catch null;
@@ -123,6 +125,11 @@ pub const Coordinator = struct {
     task_context: io_service_tasks.Context = undefined,
     /// Tasks the pool had no room for, submitted in order as room frees.
     task_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
+    /// The disk behind each filesystem seen, null for none (network,
+    /// virtual), so sysfs is read once per filesystem (`io_coordinator_disks.zig`).
+    disks: std.AutoHashMapUnmanaged(u64, ?@import("platform").mounts.Disk) = .empty,
+    /// Operations at a time on a serial disk (0: no limit).
+    serial_limit: u32 = @import("io_coordinator_disks.zig").serial_limit,
     /// Suspect mounts and what waits on them (`io_coordinator_stalls.zig`).
     stalls: stalls_mod.State = .{},
     /// Prepares that wait for room so requests go first (`submitTask`).
@@ -212,6 +219,7 @@ pub const Coordinator = struct {
         self.staging_backlog.deinit(self.allocator);
         self.prepare_backlog.deinit(self.allocator);
         self.stalls.deinit(self.allocator);
+        self.disks.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -285,6 +293,7 @@ pub const Coordinator = struct {
     const unwatchView = job_views.unwatchView;
     const publishViews = job_views.publishViews;
     const watchStalls = stalls_mod.watchStalls;
+    const limitDisks = @import("io_coordinator_disks.zig").limitDisks;
     const handleRequest = coordinator_requests.handleRequest;
     const submitArchive = archives.submitArchive;
     const pumpArchives = archives.pumpArchives;
@@ -643,6 +652,7 @@ pub const Coordinator = struct {
             }
         }
 
+        self.limitDisks(job_id, plan);
         try manager.setDestinationDirectory(job_id, plan.destination_path);
         if (mode == .move)
             try manager.setDestinationDeviceId(job_id, plan.destination_device_id);

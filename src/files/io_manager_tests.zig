@@ -138,6 +138,46 @@ test "one Job never runs more than its limit, even alone" {
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_a).?);
 }
 
+test "a serial disk runs one operation at a time across jobs, a stuck one aside" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+    try manager.setDiskLimit(7, 1);
+
+    const job_a = try manager.createJob(1);
+    for (0..2) |_| _ = try manager.addOperation(job_a, .copy_file);
+    const job_b = try manager.createJob(2);
+    _ = try manager.addOperation(job_b, .copy_file);
+    const job_c = try manager.createJob(3);
+    _ = try manager.addOperation(job_c, .copy_file);
+    try std.testing.expect(manager.setJobDisks(job_a, &.{7}));
+    try std.testing.expect(manager.setJobDisks(job_b, &.{ 9, 7 }));
+    try manager.queueJob(job_a);
+    try manager.queueJob(job_b);
+    try manager.queueJob(job_c);
+
+    // One operation on disk 7; job C touches no limited disk and runs.
+    const first = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_a, first.job_id);
+    const second = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_c, second.job_id);
+    try std.testing.expectEqual(@as(?io_manager.WorkToken, null), manager.dispatchNext());
+
+    // A's operation is stuck: it no longer holds the disk, so B goes. A
+    // itself is held meanwhile, as its suspect mount makes it.
+    try std.testing.expect(manager.setJobStalled(job_a, true));
+    try std.testing.expect(manager.setJobHeld(job_a, true));
+    const third = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_b, third.job_id);
+    try std.testing.expect(manager.completeWork(third, .completed));
+    try std.testing.expect(manager.setJobStalled(job_a, false));
+    try std.testing.expect(manager.setJobHeld(job_a, false));
+    try std.testing.expect(manager.completeWork(first, .completed));
+    try std.testing.expect(manager.completeWork(second, .completed));
+    const fourth = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_a, fourth.job_id);
+    try std.testing.expect(manager.completeWork(fourth, .completed));
+}
+
 test "hovered copy operation gets one-shot priority over normal scheduling" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

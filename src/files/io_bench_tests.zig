@@ -29,6 +29,9 @@
 //!   `running` submits one stalled copy, waits until it has copied bytes, then
 //!   stops the daemon, so it hangs inside the discovery and operation
 //!   executors. The folder should be large enough to take a few seconds.
+//! * `REDIWM_IO_BENCH_SERIAL_LIMIT`: operations at a time on a spinning or
+//!   USB disk (default 1; 0 for no limit), to calibrate the limit on one
+//!   (worker-pools §4.4). Compare runs with the bench folder on that disk.
 //! * `REDIWM_IO_BENCH_LATE_STALL_S`: submit the second stalled copy this many
 //!   seconds after the others, once its mount is suspect (10 s), so it waits
 //!   for the mount instead of taking a worker.
@@ -267,6 +270,8 @@ test "files io responsiveness benchmark" {
     defer service.deinit();
     var coordinator: io_coordinator.Coordinator = undefined;
     try coordinator.init(allocator, std.testing.io, &service);
+    // Before any submit, which the coordinator reads through the service's lock.
+    if (getenv("REDIWM_IO_BENCH_SERIAL_LIMIT")) |text| coordinator.serial_limit = try std.fmt.parseInt(u32, text, 10);
     defer coordinator.deinit();
     var windows: [window_count]io_service.Handle = undefined;
     for (&windows) |*window| window.* = try service.registerWindow();
