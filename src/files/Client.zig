@@ -39,6 +39,9 @@ data_manager: ?*wl.DataDeviceManager = null,
 data_device: ?*wl.DataDevice = null,
 selection_offer: ?*Offer = null,
 drag_offer: ?*Offer = null,
+/// This window's copy of a drag over another window of the connection, kept
+/// until the drag leaves (`client_dnd.dataEvent`).
+foreign_offer: ?*Offer = null,
 /// The serial of the drag's last `enter`, which `accept` must quote.
 drag_enter_serial: u32 = 0,
 /// Whether the drag over the window was last told a drop here would work.
