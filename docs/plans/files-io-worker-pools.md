@@ -1,6 +1,7 @@
 # Files I/O worker pools: size, lanes and stalls
 
-**Status:** proposal (S5), for review. Nothing here is implemented yet.
+**Status:** agreed design (S5); every question in §6 is decided. Built in the
+order of §5.
 Measurements come from `bench-files-io` (`src/files/io_bench_tests.zig`).
 
 The I/O service started with two workers in every pool, one step on from
@@ -162,7 +163,6 @@ separate request pool: a request can hang on a dead mount too, so it would
 need the same stall handling, and priority in the shared lane gives what it
 would. Left over: two fresh stalls at once can hold both workers for up to
 `suspect_after` before a replacement starts; the bench's probe measures that.
-**Recommended, awaiting the user's decision.**
 
 ### 4.7 What stays
 
@@ -188,5 +188,4 @@ and the probe's round trip stays at its unloaded value.
 * Network and FUSE mounts: one stall domain per mount; the device limit follows
   the block device behind it, else the lane target (4.2, 4.4).
 * The deletion pool stays a lane of its own on the shared filesystem table (4.5).
-* Requests before prepares in the task lane, no separate pool (4.6):
-  recommended, awaiting a decision.
+* Requests before prepares in the task lane, no separate pool (4.6).

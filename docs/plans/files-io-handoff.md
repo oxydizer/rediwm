@@ -67,9 +67,9 @@ window right after each, and `python3 tests/files_controls.py --archive-only`.
 
 3. **S5, limits and validation:** the command quota and `bench-files-io` are
    done on `io/s5`; the progress rate limit was already there. The bench found
-   two gaps in the worker pools; `files-io-worker-pools.md` proposes lanes,
-   stall domains, elastic pools and per-job/per-device limits, and needs the
-   user's review before any of it is built. Calibration (phase 7) follows that.
+   two gaps in the worker pools; `files-io-worker-pools.md` is the agreed
+   design (lanes, stall domains, elastic pools, per-job/per-device limits);
+   build it in the order of its §5. Calibration (phase 7) follows that.
    Run the bench: `REDIWM_RUN_BENCHMARKS=1 REDIWM_IO_BENCH_DIR=<dir> zig build
    bench-files-io`; for a dead mount add `REDIWM_IO_BENCH_STALL=<folder on a
    FUSE mount>`, `REDIWM_IO_BENCH_STALL_PID=<its daemon>` and
