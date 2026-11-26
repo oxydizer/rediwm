@@ -518,11 +518,17 @@ pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect
         c.cairo_rectangle(cr, x + left, top, right - left, ink_h);
         c.cairo_fill(cr);
     }
-    const placeholder = search and text.len == 0 and preedit.len == 0;
+    const hint: ?[]const u8 = if (search)
+        tr("Search this folder")
+    else if (self.dialog != null and self.dialog.?.kind == .torrent_source and edit == &self.dialog.?.edit)
+        tr("Paste a magnet link")
+    else
+        null;
+    const placeholder = hint != null and text.len == 0 and preedit.len == 0;
     // Half-strength white, not the shell's blue-grey `faint`.
     setSource(cr, if (placeholder) withAlpha(t.fg, 0.5) else t.fg);
     if (preedit.len == 0) {
-        drawText(cr, if (placeholder) tr("Search this folder") else text, x, top + metrics.ascent, fieldFontSize(), false);
+        drawText(cr, if (placeholder) hint.? else text, x, top + metrics.ascent, fieldFontSize(), false);
     } else {
         // Compose at the caret: the preedit is not part of the text yet, so
         // the suffix is drawn after it and the composition is underlined.

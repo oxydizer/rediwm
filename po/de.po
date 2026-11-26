@@ -6119,14 +6119,6 @@ msgstr "Übertragungsanfrage konnte nicht gesendet werden. Versuche es erneut."
 msgid "Transfers"
 msgstr "Übertragungen"
 
-#: src/files/torrents.zig
-msgid "Transfers disconnected. Reopen Transfers to reconnect."
-msgstr "Übertragungen wurde getrennt. Öffne Übertragungen erneut zum Verbinden."
-
-#: src/files/torrents.zig
-msgid "Transfers is disconnected. Reopen Transfers to reconnect."
-msgstr "Übertragungen ist getrennt. Öffne Übertragungen erneut zum Verbinden."
-
 #: src/control_center/sections/display.zig
 msgid "Transform"
 msgstr "Transformation"

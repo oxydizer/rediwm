@@ -115,7 +115,7 @@ pub const Client = struct {
     }
     pub fn send(self: *Client, value: anytype) bool {
         if (self.fd < 0) {
-            self.fail(tr("Transfers is disconnected. Reopen Transfers to reconnect."));
+            self.fail(tr("Downloads are not reachable right now. Try again in a moment."));
             return false;
         }
         const bytes = std.json.Stringify.valueAlloc(std.heap.c_allocator, value, .{}) catch return false;
@@ -136,7 +136,7 @@ pub const Client = struct {
             if (n <= 0 or n >= buffer.len) {
                 _ = c.close(self.fd);
                 self.fd = -1;
-                self.fail(tr("Transfers disconnected. Reopen Transfers to reconnect."));
+                self.fail(tr("Downloads stopped answering. Open the folder again to reconnect."));
                 return;
             }
             const next = std.json.parseFromSlice(Snapshot, std.heap.c_allocator, buffer[0..@intCast(n)], .{ .allocate = .alloc_always, .ignore_unknown_fields = true, .max_value_len = 16384 }) catch {

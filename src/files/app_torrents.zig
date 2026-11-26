@@ -62,14 +62,35 @@ pub fn torrentSource(self: *App, source: ?[]const u8) void {
     self.dialog.?.edit.select_all = true;
     self.invalidate();
 }
+/// New Torrent…: a magnet link pasted here downloads into the folder shown.
+pub fn newTorrent(self: *App) void {
+    if (!enabled or self.chooser != null) return;
+    if (self.isRecent() or self.history.archive_len > 0 or self.trashReadOnly()) return;
+    self.startTorrents();
+    self.closeDialog();
+    self.dialog = .{ .kind = .torrent_source, .title = tr("New Torrent") };
+    self.invalidate();
+}
 pub fn confirmTorrent(self: *App) void {
     const dlg = self.dialog orelse return;
     const value = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
     if (value.len == 0) return;
     if (dlg.kind == .torrent_source) {
-        const source = self.allocator.dupe(u8, value) catch return;
-        defer self.allocator.free(source);
-        self.torrentSource(source);
+        // A torrent file's path opens it as a folder instead.
+        if (value[0] == '/' and std.ascii.endsWithIgnoreCase(value, ".torrent")) {
+            const path = self.allocator.dupe(u8, value) catch return;
+            defer self.allocator.free(path);
+            self.closeDialog();
+            self.browseTorrent(path);
+            return;
+        }
+        if (!std.mem.startsWith(u8, value, "magnet:?"))
+            return self.setStatusNotice(tr("Paste a magnet link (magnet:?…)"), true);
+        // It shows up here as a folder that has not materialized yet.
+        if (!self.torrents.send(.{ .op = "add", .source = value, .destination = self.history.current }))
+            return self.setStatusNotice(self.torrents.message(), true);
+        self.closeDialog();
+        self.setStatusNotice(tr("Fetching file list…"), false);
     } else if (self.torrents.send(.{ .op = "add", .source = dlg.target_path orelse "", .destination = value })) {
         // It shows up there as a folder that has not materialized yet.
         const destination = self.allocator.dupe(u8, value) catch return;

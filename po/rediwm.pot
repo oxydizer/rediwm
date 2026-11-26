@@ -2776,6 +2776,14 @@ msgstr ""
 msgid "Downloads"
 msgstr ""
 
+#: src/files/torrents.zig
+msgid "Downloads are not reachable right now. Try again in a moment."
+msgstr ""
+
+#: src/files/torrents.zig
+msgid "Downloads stopped answering. Open the folder again to reconnect."
+msgstr ""
+
 #: src/printing/options.zig
 msgid "Draft"
 msgstr ""
@@ -4868,6 +4876,14 @@ msgstr ""
 msgid "New Tab"
 msgstr ""
 
+#: src/files/app_torrents.zig
+msgid "New Torrent"
+msgstr ""
+
+#: src/files/app_menu.zig
+msgid "New Torrent…"
+msgstr ""
+
 #: src/editor/app.zig
 msgid "New Window"
 msgstr ""
@@ -5627,6 +5643,14 @@ msgstr ""
 
 #: src/desktop/app_actions.zig
 msgid "Paste"
+msgstr ""
+
+#: src/files/app_paint.zig
+msgid "Paste a magnet link"
+msgstr ""
+
+#: src/files/app_torrents.zig
+msgid "Paste a magnet link (magnet:?…)"
 msgstr ""
 
 #: src/files/app_audio.zig
@@ -8209,14 +8233,6 @@ msgstr ""
 
 #: src/transfers/popup.zig
 msgid "Transfers"
-msgstr ""
-
-#: src/files/torrents.zig
-msgid "Transfers disconnected. Reopen Transfers to reconnect."
-msgstr ""
-
-#: src/files/torrents.zig
-msgid "Transfers is disconnected. Reopen Transfers to reconnect."
 msgstr ""
 
 #: src/control_center/sections/display.zig

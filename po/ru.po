@@ -6122,14 +6122,6 @@ msgstr "Не удалось отправить запрос передачи. П
 msgid "Transfers"
 msgstr "Передачи"
 
-#: src/files/torrents.zig
-msgid "Transfers disconnected. Reopen Transfers to reconnect."
-msgstr "Связь с «Передачами» потеряна. Откройте «Передачи» снова для подключения."
-
-#: src/files/torrents.zig
-msgid "Transfers is disconnected. Reopen Transfers to reconnect."
-msgstr "«Передачи» отключены. Откройте «Передачи» снова для подключения."
-
 #: src/control_center/sections/display.zig
 msgid "Transform"
 msgstr "Преобразование"

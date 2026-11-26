@@ -31,8 +31,10 @@ one is a real file that opens. Unticking keeps what has arrived, and ticking
 more files of a finished download fetches them into its published folder.
 The status bar counts the ticks and the bytes they hold.
 
-A magnet asks for its destination folder, which then shows the download as a
-ghost folder; it reads "Fetching file list…" until the metadata arrives, then
+New → New Torrent… takes a pasted magnet link and downloads into the folder
+shown (a pasted `.torrent` path opens that file instead). A magnet opened from
+elsewhere asks for its destination folder. Either way the folder then shows the
+download as a ghost folder; it reads "Fetching file list…" until the metadata arrives, then
 its files can be ticked the same way. The download's row in its destination
 folder, its circle and the shell panel's Choose files… all open the same
 folder view. Downloads start with ratio 1 seeding and a 1 MiB/s upload limit.

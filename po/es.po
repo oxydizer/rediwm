@@ -6116,14 +6116,6 @@ msgstr "No se pudo enviar la solicitud de transferencia. Inténtalo de nuevo."
 msgid "Transfers"
 msgstr "Transferencias"
 
-#: src/files/torrents.zig
-msgid "Transfers disconnected. Reopen Transfers to reconnect."
-msgstr "Transferencias se desconectó. Vuelve a abrirlo para reconectar."
-
-#: src/files/torrents.zig
-msgid "Transfers is disconnected. Reopen Transfers to reconnect."
-msgstr "Transferencias está desconectado. Vuelve a abrirlo para reconectar."
-
 #: src/control_center/sections/display.zig
 msgid "Transform"
 msgstr "Transformar"

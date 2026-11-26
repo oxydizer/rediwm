@@ -272,3 +272,38 @@ test "a magnet fetches its file list first" {
     try std.testing.expectEqual(@as(usize, 1), app.items.items.len);
     try std.testing.expectEqualStrings("bundle", browse.crumbLabel(&app, "abc"));
 }
+
+test "New Torrent adds a pasted magnet to the folder shown" {
+    var app = try app_tests.testApp();
+    defer app.deinit();
+    var helper = try FakeHelper.init(&app);
+    defer helper.deinit();
+    @import("app_torrents.zig").newTorrent(&app);
+    try std.testing.expectEqual(@import("app_model.zig").DialogKind.torrent_source, app.dialog.?.kind);
+    if (std.c.getenv("REDIWM_FILES_SHOTS")) |dir| {
+        app.w = 760;
+        app.h = 420;
+        const surf = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, app.w, app.h).?;
+        defer c.cairo_surface_destroy(surf);
+        const cr = c.cairo_create(surf).?;
+        defer c.cairo_destroy(cr);
+        app.render(cr);
+        var path: [512]u8 = undefined;
+        if (std.fmt.bufPrintSentinel(&path, "{s}/new-torrent.png", .{std.mem.span(dir)}, 0)) |name| {
+            _ = c.cairo_surface_write_to_png(surf, name.ptr);
+        } else |_| {}
+    }
+    // Anything else is refused, and the dialog stays.
+    try app.dialog.?.edit.text.appendSlice(app.allocator, "https://example.org/x");
+    app.confirmTorrent();
+    try std.testing.expect(app.dialog != null);
+    try std.testing.expectError(error.NoRequest, helper.request());
+    app.dialog.?.edit.text.clearRetainingCapacity();
+    try app.dialog.?.edit.text.appendSlice(app.allocator, " magnet:?xt=urn:btih:abc\n");
+    app.confirmTorrent();
+    try std.testing.expect(app.dialog == null);
+    const added = try helper.expect("add");
+    defer added.deinit();
+    try std.testing.expectEqualStrings("magnet:?xt=urn:btih:abc", added.value.object.get("source").?.string);
+    try std.testing.expectEqualStrings("/tmp", added.value.object.get("destination").?.string);
+}

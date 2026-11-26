@@ -316,7 +316,10 @@ pub fn placeActions(self: *App) []const PlaceAction {
 
 pub fn menuLabels(self: *App) []const []const u8 {
     const messages: []const i18n.Message = switch (self.menu orelse return &.{}) {
-        .new => &.{ i18n.msg("New Folder"), i18n.msg("New File") },
+        .new => if (@import("app_torrents.zig").enabled and self.chooser == null)
+            &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("New Torrent…") }
+        else
+            &.{ i18n.msg("New Folder"), i18n.msg("New File") },
         .sort => &.{ i18n.msg("Name: A to Z"), i18n.msg("Name: Z to A"), i18n.msg("Largest first"), i18n.msg("Smallest first"), i18n.msg("Newest first"), i18n.msg("Oldest first"), i18n.msg("Type: A to Z"), i18n.msg("Type: Z to A"), i18n.msg("Reset Folder View") },
         .filter => if (self.repository() != null)
             &.{ i18n.msg("Folders only"), i18n.msg("Show hidden files"), i18n.msg("Show changed files"), i18n.msg("Show full paths") }
@@ -428,6 +431,7 @@ pub fn runMenu(self: *App, row: usize) void {
         .new => switch (row) {
             0 => self.openNewFolderDialog(),
             1 => self.openNewFileDialog(),
+            2 => @import("app_torrents.zig").newTorrent(self),
             else => {},
         },
         .sort => {
