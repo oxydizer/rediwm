@@ -285,3 +285,35 @@ test "stale successful directory completion removes only its empty directory" {
     const fd = c.open(destination_z, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
     try std.testing.expect(fd < 0);
 }
+
+test "a deferred-sync directory is created and keeps its merge flag" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupDirectory(temp);
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    defer cleanupDirectory(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+    defer cleanupDirectory(destination);
+    const source_z = try allocZ(allocator, source);
+    defer allocator.free(source_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(source_z, 0o700));
+    const destination_z = try allocZ(allocator, destination);
+    defer allocator.free(destination_z);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(destination_z, 0o700));
+
+    // An existing folder is merged only when the input says so.
+    var done = directory.execute(allocator, .{
+        .token = .{ .job_id = 1, .operation_id = 1, .generation = 1 },
+        .operation_kind = .create_directory,
+        .input = try directory.makeDeferredInput(allocator, source, destination, true),
+    });
+    defer {
+        directory.complete(null, done.token, done.outcome, done.result);
+        done.input.deinit();
+    }
+    try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
+}

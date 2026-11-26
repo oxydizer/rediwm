@@ -188,3 +188,27 @@ test "symlink input rejects empty, NUL-containing, and relative destinations" {
     try std.testing.expectError(error.InvalidPath, symlink.makeInput(allocator, "bad\x00target", "/tmp/link"));
     try std.testing.expectError(error.InvalidPath, symlink.makeInput(allocator, "target", "relative/link"));
 }
+
+test "a deferred-sync symlink is created with its target" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupDirectory(temp);
+    const path = try join(allocator, temp, "link");
+    defer allocator.free(path);
+    defer cleanupLink(path);
+
+    var done = symlink.execute(allocator, .{
+        .token = .{ .job_id = 1, .operation_id = 1, .generation = 1 },
+        .operation_kind = .copy_symlink,
+        .input = try symlink.makeDeferredInput(allocator, "../target", path),
+    });
+    defer {
+        symlink.complete(null, done.token, done.outcome, done.result);
+        done.input.deinit();
+    }
+    try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
+    const stored = try readLink(allocator, path);
+    defer allocator.free(stored);
+    try std.testing.expectEqualStrings("../target", stored);
+}

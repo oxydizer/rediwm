@@ -65,10 +65,24 @@ measured against all four with `bench-files-io` (see its settings at the top of
   base → this change: large copies 3.65 → 3.0 s, small files 4.9 → 4.3 s,
   extraction 6.9 → 7.1 s (within noise).
 
+* **Measured on the user's disks** (2026-11-26, before #82 → after #83).
+  NVMe (btrfs): small files 104.6 → 3.1 s, extraction 57.1 → 48.5 s, large
+  copies 0.02 → 0.62 s (reflinks either way; the 0.62 s is the job's one
+  `syncfs`, which also waits for the other jobs' writes on that filesystem).
+  USB hard disk: large 53.2 → 36.5 s, small 74.0 → 45.3 s, extraction
+  63.7 → 51.5 s. UI cost per frame unchanged, under 0.11 ms.
+* **Extraction, folders and links sync once too** (PR #84). An extraction
+  publishes its staged entries as copies, which were not in a deferred job,
+  so every entry was synced three times: about 10 ms an entry on btrfs. An
+  extraction job now defers its syncs like a copy job; and in any deferred
+  job a new folder or symlink no longer syncs its parent
+  (`io_directory`/`io_symlink.makeDeferredInput`). Sandbox: extraction
+  6.9 → about 4 s.
+
 ## 4. Next
 
-1. **Measure on real disks** (the user's NVMe, SATA SSD and USB hard disk): the
-   bench with the folder on each, before and after the sync change.
+1. **Measure on real disks** again after #84, and on the SATA SSD, which was
+   not in the first run.
 2. **Fair turns by time, not by unit**, if the bound above proves too tight on
    real disks: let the round-robin account for a job's worker time.
 3. **One reusable buffer per job** for the buffered fallback: allocated when
