@@ -30,7 +30,7 @@
 //!   stops the daemon, so it hangs inside the discovery and operation
 //!   executors. The folder should be large enough to take a few seconds.
 //! * `REDIWM_IO_BENCH_SERIAL_LIMIT`: operations at a time on a spinning or
-//!   USB disk (default 1; 0 for no limit), to calibrate the limit on one
+//!   USB disk (default 0, no limit), to calibrate the limit on one
 //!   (worker-pools §4.4). Compare runs with the bench folder on that disk.
 //! * `REDIWM_IO_BENCH_LATE_STALL_S`: submit the second stalled copy this many
 //!   seconds after the others, once its mount is suspect (10 s), so it waits

@@ -551,15 +551,6 @@ test "a hung worker does not stall the coordinator, other jobs or window calls" 
     // Runs before coordinator.deinit joins the workers, even on failure.
     const gate = io_operation_executor.test_gate;
     defer gate.release();
-    // On a rotational or USB test disk both jobs would share its limit of
-    // one operation (io_coordinator_disks.zig): this test is about workers,
-    // so the temporary folder counts as unlimited. Written before the first
-    // submit, which the coordinator reads through the service's lock.
-    var temp_stat: c.struct_stat = undefined;
-    var temp_z: [256:0]u8 = @splat(0);
-    @memcpy(temp_z[0..temp.len], temp);
-    if (c.stat(&temp_z, &temp_stat) == 0) try coordinator.disks.put(allocator, @intCast(temp_stat.st_dev), null);
-
     // Job 1's copy unit parks on its worker, as on a hung mount.
     gate.arm();
     try submitTransfer(allocator, window, .copy, hung_dir, hung_source);

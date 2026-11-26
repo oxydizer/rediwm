@@ -1,9 +1,11 @@
-//! Per-disk limits (docs/plans/files-io-worker-pools.md §4.4, step 5). A
-//! spinning disk or one on USB slows down when several copies write to it at
-//! once: two jobs onto one stick run one after the other instead of
-//! thrashing it. Such a disk gets a limit of `serial_limit` operations at a
+//! Per-disk limits (docs/plans/files-io-worker-pools.md §4.4, step 5): a
+//! spinning or USB disk may be limited to `serial_limit` operations at a
 //! time, across every job that reads or writes it; other disks (SSDs, NVMe,
-//! network mounts) are limited only by the lane. A partition, a btrfs
+//! network mounts) are limited only by the lane. **Off by default:** measured
+//! on a USB hard disk, a limit of 1 made the bench 21 % slower (96.9 s
+//! against 76.7 s). Writes land in the page cache and reach the disk in the
+//! kernel's order, so parallel copies do not thrash it, and one at a time
+//! leaves the disk idle between units and serialises the per-file syncs. A partition, a btrfs
 //! subvolume and a FUSE filesystem on a disk (ntfs-3g, exfat-fuse) all count
 //! against that disk.
 //!
@@ -16,14 +18,15 @@ const io_transfer_plan = @import("io_transfer_plan.zig");
 const io_manager = @import("io_manager.zig");
 const Coordinator = @import("io_coordinator.zig").Coordinator;
 
-/// Operations at a time on a serial disk. A starting value: calibrating it
-/// on real disks is roadmap phase 7 (`Coordinator.serial_limit`, which the
-/// bench sets from REDIWM_IO_BENCH_SERIAL_LIMIT; 0 there means no limit).
-pub const serial_limit = 1;
+/// Operations at a time on a serial disk; 0 is no limit, the default
+/// (`Coordinator.serial_limit`, which the bench sets from
+/// REDIWM_IO_BENCH_SERIAL_LIMIT to measure a drive).
+pub const serial_limit = 0;
 
 /// Tells the Manager which serial disks job `job_id` touches, and their
 /// limits. Best effort: a disk not found is not limited.
 pub fn limitDisks(self: *Coordinator, job_id: io_manager.JobId, plan: *const io_transfer_plan.TransferPlan) void {
+    if (self.serial_limit == 0) return;
     var disks: [io_manager.max_job_disks]u64 = undefined;
     var count: usize = 0;
     add(self, plan.destination_device_id, &disks, &count);
