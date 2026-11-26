@@ -97,9 +97,7 @@ longer have a Runtime, a Manager or an executor of their own.
    2. (Closed: the stalled re-copy to a USB drive was the conflict dialog not
       showing, fixed with JobRunner's removal.)
    3. (Closed: the extraction count, #85.)
-5. **Smaller:** split `src/files/app_pointer.zig` (931 lines) and `worker.zig` (860),
-   both over the limit;
-   perhaps a Replace answer in the file-conflict dialog; roadmap phases 1 and 3
+5. **Smaller:** (`app_pointer.zig` and `worker.zig` were split, #90;) perhaps a Replace answer in the file-conflict dialog; roadmap phases 1 and 3
    to 8 in `files-io-manager.md`.
 
 ## Working rules

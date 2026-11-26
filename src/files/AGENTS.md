@@ -14,7 +14,7 @@ are free functions taking `self: *App` in `app_*.zig`, grouped by concern:
 `app_fileops`, `app_chooser`, `app_layout` (geometry), `app_folder_size`,
 `app_places` (sidebar rows, pins, devices), `app_sidebar_paint`,
 `app_git_sidebar`, `app_scroll`, `app_opening`, `app_pointer`,
-`app_keyboard`, `app_menu`, `app_paint`, `app_items`, `app_trash`,
+`app_buttons` (presses and releases: dialog, menu, chrome, file view), `app_keyboard`, `app_menu`, `app_paint`, `app_items`, `app_trash`,
 `app_service` and `app_requests` (the window's side of the I/O service:
 deletion jobs, and requests whose replies finish an action later),
 `app_transfers` (copies and moves), `app_archives` (extracting, opening a
