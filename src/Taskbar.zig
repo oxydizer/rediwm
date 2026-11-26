@@ -166,7 +166,7 @@ chips: std.ArrayList(ChipState) = .empty,
 // Stable window IDs in taskbar presentation order. This is deliberately
 // independent of `world.toplevels`, which remains the focus/raise stack.
 chip_order: std.ArrayList(u64) = .empty,
-tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired }, .{ .kind = .input_source } },
+tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired }, .{ .kind = .input_source }, .{ .kind = .desktop_mode } },
 // Touchpad scrolling over the input source item, gathered into steps.
 source_scroll: f32 = 0,
 capture_hover: Anim = .{},
@@ -184,6 +184,9 @@ reveal: Anim = .{ .from = 1, .to = 1, .property = .opacity },
 shown: bool = false,
 pointer_near: bool = false,
 parked: bool = false,
+/// The focused window is fullscreen on this output
+/// (`updateTaskbarFullscreenVisibility`); the tree stays off like a parked one.
+fullscreen_hidden: bool = false,
 reveal_timer: ?*wl.EventSource = null,
 timer_target: ?bool = null,
 
@@ -231,11 +234,12 @@ pub const Color = taskbar_types.Color;
 pub const Fill = taskbar_types.Fill;
 pub const TileStyle = taskbar_types.TileStyle;
 pub const BarBuffer = taskbar_types.BarBuffer;
+pub const TitleBackground = taskbar_types.TitleBackground;
 pub const ChipPaint = taskbar_types.ChipPaint;
 pub const ChipFlat = taskbar_types.ChipFlat;
 
 // New kinds come last so the IPC tray indices of the others stay put.
-pub const TrayKind = enum { volume, wifi, power, wired, input_source };
+pub const TrayKind = enum { volume, wifi, power, wired, input_source, desktop_mode };
 pub const tray_count = @typeInfo(TrayKind).@"enum".field_names.len;
 
 pub const AppKind = enum { file_explorer, notes, terminal, settings, text_doc, browser, other };
@@ -332,8 +336,8 @@ pub fn destroy(bar: *Taskbar) void {
     if (bar.reveal_timer) |timer| timer.remove();
     if (bar.clock_locale) |locale| c_time.freelocale(locale);
     if (bar.start_logo) |e| bar.server.iconRelease(e.id);
-    for (bar.chips.items) |chip| {
-        if (chip.raster) |raster| raster.base.drop();
+    for (bar.chips.items) |*chip| {
+        chip.releaseRasters();
         if (chip.icon) |e| bar.server.iconRelease(e.id);
     }
     bar.chips.deinit(gpa);
@@ -408,6 +412,14 @@ pub fn applyInputSource(bar: *Taskbar, presence_changed: bool) void {
         bar.tray_dirty[@backingInt(TrayKind.input_source)] = true;
         bar.markDirty(paint_tray);
     }
+    bar.wlr_output.scheduleFrame();
+}
+
+/// Canvas or Workspaces changed (`workspaces.setMode`): only the desktop
+/// mode item's icon shows it.
+pub fn applyDesktopMode(bar: *Taskbar) void {
+    bar.tray_dirty[@backingInt(TrayKind.desktop_mode)] = true;
+    bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
 }
 

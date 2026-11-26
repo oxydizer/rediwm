@@ -184,7 +184,7 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
         const alert = switch (kind) {
             .volume => bar.audio_muted,
             .wifi, .wired => bar.network_offline,
-            .power, .input_source => false,
+            .power, .input_source, .desktop_mode => false,
         };
         const color = if (alert) blk: {
             var danger = Color.fromRgba(ui_theme.taskbar(.danger));
@@ -203,6 +203,11 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
                 .wired => .ethernet,
                 .volume => if (bar.audio_muted) .volume_muted else .volume,
                 .power => .power,
+                .desktop_mode => switch (bar.server.world.workspaces.mode) {
+                    .canvas => .desktop_canvas,
+                    .workspaces => .desktop_tiles,
+                    .scrolling => .desktop_scroll,
+                },
                 .input_source => unreachable,
             }, .color = .{ color.r, color.g, color.b, color.a } });
         }

@@ -10,7 +10,10 @@
   `tests/input_persistence.py` uses a noninstalled backend fixture; physical
   touchpad/mouse scroll feel and libinput DWT pairing still need manual checks.
 
-* **Text input/IME** (`text_input.zig`): `syncFocus` is the only enter path.
+* **Text input/IME** (`text_input.zig`, `text_input_v1.zig`): `syncFocus` is the only enter path.
+  A v1 field names its seat and surface in `activate`. Its setters work
+  without `commit_state`; when supplied, its serial belongs on v1 edits.
+  The v2 method's done serial independently rejects stale replies.
   IM grabs replace client delivery only (bindings, hardware keys and
   shell/lock UI win); an IM's own virtual keyboard bypasses its grab.
   While an overlay owns new input, modifier updates and the release of keys
@@ -59,6 +62,19 @@
   `applyVisualTransform`. Never fold it into `x`/`y`/`move_x` (it would grow
   the canvas, reach IPC and saved layouts, and outlive the drag). Anything
   that stops showing a window must `clearDodge` it (`detachInput` does).
+* **Strip gestures** (`scroll_motion.zig`): on a scrolling workspace a
+  three-finger swipe (whatever is under the pointer, unless shortcuts are
+  inhibited) and two fingers over empty strip move its view; the world's frame
+  tick places the windows. While fingers are down a reveal leaves the view
+  alone, so every path that ends a gesture must reach `scroll_motion.end`; a
+  finger scroll that goes quiet for 400 ms ends itself, since its stop event
+  can be routed elsewhere. Super+Shift+wheel and Super+horizontal wheel step
+  columns; plain Super+wheel still cycles workspaces.
+* **Drag tab hover** (`drag_tab_hover.zig`): a pointer drag resting
+  `delay_ms` on a tab a client published sends that tab's `select`, as a
+  click does, so a drop can land in another tab's view. Deadline-only timer;
+  it keeps the window by id and re-checks the drag and tab when it fires.
+  Window tabs (grouped windows) are not switched.
 * **Touch/tablet** use their own protocol only when
   `directInputReachesClients()`; otherwise they emulate the pointer (send your
   own `pointerNotifyFrame`). Touchscreens map to `output_name` or the built-in

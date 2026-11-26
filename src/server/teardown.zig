@@ -36,6 +36,10 @@ pub fn deinit(server: *Server) void {
     server.world.destroyClosing();
     server.night_light.deinit();
     server.power_policy.deinit();
+    if (server.keyboard_backlight_watch) |watch| {
+        watch.destroy();
+        server.keyboard_backlight_watch = null;
+    }
     server.brightness.deinit(server);
     server.keyboard_brightness.deinit(server);
     if (server.locker) |lock| {
@@ -71,6 +75,11 @@ pub fn deinit(server: *Server) void {
         s.stopOwnedHelpers(1000);
     }
     server.wl_server.destroyClients();
+    if (server.commit_timing) |timing| {
+        server.commit_timing = null;
+        timing.destroy();
+    }
+    if (!server.greeter_mode) server.set_gamma.link.remove();
     while (server.pending_launches.pop()) |pending| pending.destroy();
     server.pending_launches.deinit(@import("../main.zig").gpa);
     server.window_tabs.deinit();
@@ -218,7 +227,7 @@ fn destroyRenderer(server: *Server) void {
     server.allocator.destroy();
     if (server.gpu_timer) |timer| timer.destroy();
     server.renderer.destroy();
-    if (server.wallpaper) |image| image.base.drop();
+    if (server.wallpaper) |image| image.release();
     server.config.deinit();
     server.wl_server.destroy();
     log.info("compositor session teardown complete", .{});

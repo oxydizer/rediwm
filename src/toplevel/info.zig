@@ -280,6 +280,18 @@ pub fn parentWindow(toplevel: *Toplevel) ?*Toplevel {
     }
 }
 
+/// A dialog its client marked modal (xdg-dialog-v1, or X11's
+/// _NET_WM_STATE_MODAL): the client ignores its owner's input until it closes.
+/// The hint means nothing without a mapped owner.
+pub fn isModal(toplevel: *Toplevel) bool {
+    if (toplevel.parentWindow() == null) return false;
+    return switch (toplevel.backend) {
+        .xdg => |*adapter| @import("../extra_protocols.zig").modal(adapter.xdg_toplevel),
+        .xwayland => |*adapter| adapter.xsurface.modal,
+        .placeholder, .shell => false,
+    };
+}
+
 pub fn sizeConstraints(toplevel: *const Toplevel) resize.SizeConstraints {
     switch (toplevel.backend) {
         .xdg => |*adapter| {

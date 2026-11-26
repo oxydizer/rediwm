@@ -6,17 +6,22 @@ const std = @import("std");
 const Context = @import("context.zig").Context;
 const localizedData = @import("support.zig").localizedData;
 
-/// The player's executable. `test_null_device` builds the noninstalled test
-/// fixture, whose output is miniaudio's paced null device.
-pub fn executable(ctx: Context, name: []const u8, test_null_device: bool) *std.Build.Step.Compile {
+pub fn miniaudio(ctx: Context) *std.Build.Step.Compile {
     const b = ctx.b;
-    const miniaudio = b.addLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "miniaudio",
         .linkage = .static,
         .root_module = b.createModule(.{ .target = ctx.target, .optimize = ctx.optimize, .link_libc = true, .sanitize_c = .off }),
     });
-    miniaudio.root_module.addCSourceFile(.{ .file = b.path("src/player/miniaudio_impl.c"), .flags = &.{ "-std=c11", "-w" } });
+    lib.root_module.addCSourceFile(.{ .file = b.path("src/player/miniaudio_impl.c"), .flags = &.{ "-std=c11", "-w" } });
 
+    return lib;
+}
+
+/// The player's executable. `test_null_device` builds the noninstalled test
+/// fixture, whose output is miniaudio's paced null device.
+pub fn executable(ctx: Context, name: []const u8, test_null_device: bool) *std.Build.Step.Compile {
+    const b = ctx.b;
     const player = b.addExecutable(.{
         .name = name,
         .root_module = b.createModule(.{ .target = ctx.target, .optimize = ctx.optimize, .link_libc = true }),
@@ -27,7 +32,7 @@ pub fn executable(ctx: Context, name: []const u8, test_null_device: bool) *std.B
             .flags = if (test_null_device) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DRP_TEST_NULL_DEVICE" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" },
         });
     }
-    player.root_module.linkLibrary(miniaudio);
+    player.root_module.linkLibrary(miniaudio(ctx));
     player.root_module.linkSystemLibrary("gio-2.0", .{});
     player.root_module.linkSystemLibrary("gobject-2.0", .{});
     player.root_module.linkSystemLibrary("glib-2.0", .{});

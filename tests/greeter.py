@@ -93,8 +93,13 @@ def run(with_dm):
                 wayland_socket = next(p for p in tmp.iterdir() if p.name.startswith("wayland-") and not p.name.endswith(".lock"))
                 dump_env = dict(env, WAYLAND_DISPLAY=wayland_socket.name)
                 registry_res = subprocess.run([str(tmp / "fixture"), "dump-registry"], env=dump_env, capture_output=True, text=True, check=True)
-                for interface in ("wp_security_context_manager_v1", "ext_workspace_manager_v1",
-                                  "wp_drm_lease_device_v1", "xdg_toplevel_tag_manager_v1",
+                assert "wl_fixes" in registry_res.stdout.splitlines(), registry_res.stdout
+                for interface in ("wp_security_context_manager_v1", "ext_workspace_manager_v1", "zwp_text_input_manager_v1",
+                                  "wp_drm_lease_device_v1", "xdg_toplevel_tag_manager_v1", "xdg_system_bell_v1",
+                                  "zxdg_exporter_v1", "zxdg_importer_v1", "zxdg_exporter_v2", "zxdg_importer_v2",
+                                  "xdg_wm_dialog_v1",
+                                  "wp_commit_timing_manager_v1",
+                                  "ext_background_effect_manager_v1", "wp_alpha_modifier_v1", "zwlr_gamma_control_manager_v1",
                                   "wp_content_type_manager_v1", "wp_tearing_control_manager_v1",
                                   "wp_color_manager_v1", "wp_color_representation_manager_v1"):
                     assert interface not in registry_res.stdout, registry_res.stdout

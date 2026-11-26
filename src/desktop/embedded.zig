@@ -7,6 +7,14 @@
 //! buffer would re-upload the whole output on GLES2 for every hover frame and,
 //! without damage, repaint the whole output as well.
 //!
+//! The canvas exists only while the desktop paints: it is allocated zeroed on
+//! demand (untouched pages cost nothing), knows which tiles it holds, and is
+//! freed `canvas_idle_ms` after the last paint; a tile it no longer holds is
+//! repainted whole the next time damage reaches it. A tile with no visible
+//! pixel is transparent, so it is neither uploaded nor drawn (2026-11-25: a
+//! drag over the desktop drew 27 such tiles a frame, +27% instructions, and
+//! the canvas kept 16 MB at 2560x1600).
+//!
 //! The filesystem worker stays a thread. The compositor thread only paints,
 //! and wakes for worker results, deadlines and animation frames; an idle
 //! desktop arms no timer.
@@ -30,13 +38,14 @@ const clipboard = @import("../clipboard.zig");
 const DropTarget = @import("../desktop_drop.zig").Target;
 const dnd = @import("dnd.zig");
 const app_scope = @import("../session/app_scope.zig");
+const embedded_tiles = @import("embedded_tiles.zig");
 
 const log = std.log.scoped(.desktop);
 const a = std.heap.c_allocator;
 
 /// Logical tile edge. 240 × any scale in 1/120 steps (wp_fractional_scale's
 /// unit) is a whole number of device pixels, so tiles meet without seams.
-const tile_logical: i32 = 240;
+pub const tile_logical: i32 = 240;
 
 pub const Desktop = struct {
     server: *Server,
@@ -49,10 +58,15 @@ pub const Desktop = struct {
     /// Layout box and scale the canvas and tiles were built for.
     box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     scale: f32 = 0,
+    /// Zeroed by calloc, empty while the desktop is idle (see the file comment).
     canvas: []u32 = &.{},
     surface: ?*c.cairo_surface_t = null,
     canvas_width: i32 = 0,
     canvas_height: i32 = 0,
+    /// When an idle canvas is freed; null without a canvas.
+    canvas_release_at: ?i64 = null,
+    /// The timer is armed for `canvas_release_at` alone, not for the App.
+    timer_for_canvas: bool = false,
     tiles: std.ArrayList(Tile) = .empty,
     /// Every other available output shows only the desktop's own wallpaper.
     secondaries: std.ArrayList(Secondary) = .empty,
@@ -89,14 +103,25 @@ pub const Desktop = struct {
         revision: ?u64 = null,
     };
 
-    const Tile = struct {
+    pub const Tile = struct {
         node: *sn.Buffer,
         /// Device-pixel rectangle within the canvas.
         x: i32,
         y: i32,
         w: i32,
         h: i32,
+        /// Logical rectangle, for damage.
+        logical: grid.Rect,
+        /// The canvas holds this tile's current pixels.
+        valid: bool = false,
+        /// The tile has a visible pixel. An empty tile's node is transparent:
+        /// never drawn, still the desktop for input, its texture kept.
+        shown: bool = false,
+        /// The node has a texture.
+        textured: bool = false,
     };
+
+    pub const canvas_idle_ms = 3000;
 
     pub fn create(server: *Server) !*Desktop {
         var child_env = try server.environ.createMap(a);
@@ -138,9 +163,9 @@ pub const Desktop = struct {
         // wlroots releases them; none of them points back at this desktop.
         self.tree.node.destroy();
         self.overlay.node.destroy();
+        self.freeCanvas();
         self.tiles.deinit(a);
         self.secondaries.deinit(a);
-        self.freeCanvas();
         self.app.deinit();
         self.worker.stopAndJoin();
         self.takeChildren();
@@ -279,64 +304,15 @@ pub const Desktop = struct {
         }
     }
 
-    fn rebuild(self: *Desktop) !void {
-        self.freeCanvas();
-        self.clearTiles();
-        const width = geometry.devicePixels(self.box.width, self.scale);
-        const height = geometry.devicePixels(self.box.height, self.scale);
-        if (width > 16384 or height > 16384) return error.InvalidSize;
-        self.canvas = try a.alloc(u32, @intCast(width * height));
-        @memset(self.canvas, 0);
-        self.canvas_width = width;
-        self.canvas_height = height;
-        const surface = c.cairo_image_surface_create_for_data(@ptrCast(self.canvas.ptr), c.CAIRO_FORMAT_ARGB32, width, height, width * 4) orelse return error.CairoFailed;
-        self.surface = surface;
-        if (c.cairo_surface_status(surface) != c.CAIRO_STATUS_SUCCESS) return error.CairoFailed;
-
-        var ly: i32 = 0;
-        while (ly < self.box.height) : (ly += tile_logical) {
-            var lx: i32 = 0;
-            while (lx < self.box.width) : (lx += tile_logical) {
-                const lw = @min(tile_logical, self.box.width - lx);
-                const lh = @min(tile_logical, self.box.height - ly);
-                // Device edges come from the same rounding for every tile, so
-                // neighbours share them exactly.
-                const x0 = deviceEdge(lx, self.scale, width);
-                const y0 = deviceEdge(ly, self.scale, height);
-                const x1 = deviceEdge(lx + lw, self.scale, width);
-                const y1 = deviceEdge(ly + lh, self.scale, height);
-                if (x1 <= x0 or y1 <= y0) continue;
-                const node = try self.tree.createSceneBuffer(null);
-                self.scene_data.attach(&node.node);
-                node.node.setPosition(lx, ly);
-                node.setDestSize(lw, lh);
-                self.tiles.append(a, .{ .node = node, .x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0 }) catch |err| {
-                    node.node.destroy();
-                    return err;
-                };
-            }
-        }
-        self.app.invalidate();
-    }
-
-    fn deviceEdge(logical: i32, scale: f32, limit: i32) i32 {
-        const edge: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(logical)) * scale));
-        return std.math.clamp(edge, 0, limit);
-    }
-
-    fn freeCanvas(self: *Desktop) void {
-        if (self.surface) |surface| c.cairo_surface_destroy(surface);
-        self.surface = null;
-        a.free(self.canvas);
-        self.canvas = &.{};
-        self.canvas_width = 0;
-        self.canvas_height = 0;
-    }
-
-    fn clearTiles(self: *Desktop) void {
-        for (self.tiles.items) |tile| tile.node.node.destroy();
-        self.tiles.clearRetainingCapacity();
-    }
+    const rebuild = embedded_tiles.rebuild;
+    pub const ensureCanvas = embedded_tiles.ensureCanvas;
+    pub const freeCanvas = embedded_tiles.freeCanvas;
+    pub const clearTiles = embedded_tiles.clearTiles;
+    pub const paint = embedded_tiles.paint;
+    pub const publish = embedded_tiles.publish;
+    pub const tileEmpty = embedded_tiles.tileEmpty;
+    pub const deviceRect = embedded_tiles.deviceRect;
+    pub const touches = embedded_tiles.touches;
 
     /// Asks the desktop's output for a frame, where `frame` does the work.
     pub fn schedule(self: *Desktop) void {
@@ -369,35 +345,17 @@ pub const Desktop = struct {
     fn armDeadline(self: *Desktop) void {
         const timer = self.timer orelse return;
         const now = app_mod.nowMs();
-        const delay: c_int = if (self.animating) 0 else if (self.app.nextDeadline(now)) |at| @intCast(std.math.clamp(at - now, 1, 60_000)) else 0;
+        var next = self.app.nextDeadline(now);
+        self.timer_for_canvas = false;
+        if (self.canvas_release_at) |at| if (next == null or at < next.?) {
+            next = at;
+            self.timer_for_canvas = true;
+        };
+        const delay: c_int = if (self.animating) 0 else if (next) |at| @intCast(std.math.clamp(at - now, 1, 60_000)) else 0;
         timer.timerUpdate(delay) catch {};
     }
 
-    fn paint(self: *Desktop) void {
-        const surface = self.surface orelse return;
-        self.app.prepareDamage();
-        if (!self.app.damage.full and self.app.damage.len == 0) {
-            self.app.presented();
-            return;
-        }
-        const cr = c.cairo_create(surface) orelse return;
-        c.cairo_scale(cr, self.scale, self.scale);
-        const counters = &@import("../ipc/stats.zig").global_stats.desktop;
-        counters.paints +%= 1;
-        if (self.app.damage.full) {
-            counters.damage_pixels +%= @intCast(self.box.width * self.box.height);
-        } else for (self.app.damage.rects[0..self.app.damage.len]) |r| {
-            counters.damage_pixels +%= @intCast(@max(0, r.w) * @max(0, r.h));
-        }
-        self.app.paint(cr, &self.app.damage);
-        c.cairo_destroy(cr);
-        c.cairo_surface_flush(surface);
-        self.publish(&self.app.damage);
-        self.paintOverlay() catch |err| log.warn("desktop overlay: {}", .{err});
-        self.app.presented();
-    }
-
-    fn paintOverlay(self: *Desktop) !void {
+    pub fn paintOverlay(self: *Desktop) !void {
         const rect = self.app.overlayRect() orelse {
             self.overlay_rect = null;
             self.overlay.node.setEnabled(false);
@@ -450,55 +408,6 @@ pub const Desktop = struct {
         const prompt = self.app.promptRect() orelse return false;
         // Scene input coordinates use the destination size, not the raster.
         return prompt.contains(@as(f64, @floatFromInt(rect.x)) + sx.* * @as(f64, @floatFromInt(rect.w)) / @as(f64, @floatFromInt(node.dst_width)), @as(f64, @floatFromInt(rect.y)) + sy.* * @as(f64, @floatFromInt(rect.h)) / @as(f64, @floatFromInt(node.dst_height)));
-    }
-
-    /// Copies each damaged tile into a fresh buffer and hands projection the
-    /// tile-local device damage.
-    fn publish(self: *Desktop, damage: *const app_mod.Damage) void {
-        const projection = self.server.world.projection;
-        for (self.tiles.items) |tile| {
-            var region: pixman.Region32 = undefined;
-            region.init();
-            defer region.deinit();
-            if (!damage.full) {
-                for (damage.rects[0..damage.len]) |r| {
-                    const d = self.deviceRect(r);
-                    const x0 = @max(d.x, tile.x);
-                    const y0 = @max(d.y, tile.y);
-                    const x1 = @min(d.x + d.w, tile.x + tile.w);
-                    const y1 = @min(d.y + d.h, tile.y + tile.h);
-                    if (x1 <= x0 or y1 <= y0) continue;
-                    _ = region.unionRect(&region, x0 - tile.x, y0 - tile.y, @intCast(x1 - x0), @intCast(y1 - y0));
-                }
-                if (!region.notEmpty()) continue;
-            }
-            const buffer = TileBuffer.acquire(tile.w, tile.h) catch |err| {
-                log.warn("desktop tile buffer: {}", .{err});
-                continue;
-            };
-            const stride: usize = @intCast(self.canvas_width);
-            const w: usize = @intCast(tile.w);
-            for (0..@intCast(tile.h)) |row| {
-                const start = (@as(usize, @intCast(tile.y)) + row) * stride + @as(usize, @intCast(tile.x));
-                @memcpy(buffer.pixels[row * w ..][0..w], self.canvas[start..][0..w]);
-            }
-            const in_place = projection.presentOwned(tile.node, self.server.renderer, &buffer.base, if (damage.full) null else &region);
-            buffer.base.drop();
-            const counters = &@import("../ipc/stats.zig").global_stats.desktop;
-            counters.tile_presents +%= 1;
-            if (!in_place) counters.texture_uploads +%= 1;
-        }
-    }
-
-    /// The device pixels a logical damage rect can touch, as App.paintRect
-    /// snaps its clip.
-    fn deviceRect(self: *const Desktop, r: grid.Rect) grid.Rect {
-        const s: f64 = self.scale;
-        const x0: i32 = @intFromFloat(@floor(@as(f64, @floatFromInt(r.x)) * s));
-        const y0: i32 = @intFromFloat(@floor(@as(f64, @floatFromInt(r.y)) * s));
-        const x1: i32 = @intFromFloat(@ceil(@as(f64, @floatFromInt(r.x + r.w)) * s));
-        const y1: i32 = @intFromFloat(@ceil(@as(f64, @floatFromInt(r.y + r.h)) * s));
-        return .{ .x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0 };
     }
 
     /// Desktop-local logical coordinates for a layout point.
@@ -691,7 +600,13 @@ pub const Desktop = struct {
     }
 
     fn deadline(self: *Desktop) c_int {
-        self.schedule();
+        // Freeing the idle canvas needs no frame; every App deadline does.
+        if (!self.timer_for_canvas or self.animating or self.app.dirty) {
+            self.schedule();
+            return 0;
+        }
+        if (self.canvas_release_at) |at| if (at <= app_mod.nowMs()) self.freeCanvas();
+        self.armDeadline();
         return 0;
     }
 

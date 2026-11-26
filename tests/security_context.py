@@ -40,6 +40,7 @@ PRIVILEGED_GLOBALS = {
     "zwlr_virtual_pointer_manager_v1",
     "zwp_input_method_manager_v2",
     "zwlr_output_manager_v1",
+    "zwlr_gamma_control_manager_v1",
     "zwlr_output_power_manager_v1",
     "ext_session_lock_manager_v1",
     "zwlr_layer_shell_v1",
@@ -50,11 +51,20 @@ PRIVILEGED_GLOBALS = {
 
 CORE_GLOBALS = {
     "wl_compositor",
+    "wl_fixes",
+    "wp_commit_timing_manager_v1",
     "wl_shm",
     "xdg_wm_base",
+    "zxdg_exporter_v1",
+    "zxdg_importer_v1",
+    "zxdg_exporter_v2",
+    "zxdg_importer_v2",
+    "xdg_wm_dialog_v1",
     "wl_seat",
     "wl_output",
     "wl_subcompositor",
+    "ext_background_effect_manager_v1",
+    "wp_alpha_modifier_v1",
 }
 
 
@@ -116,6 +126,7 @@ def test_registry_and_guess_bind():
             # 3. Dump registry through sandboxed connection
             sandboxed_env = dict(session.env, WAYLAND_DISPLAY=str(sandboxed_sock))
             sandboxed_globals = dump_registry(tmp / "fixture", sandboxed_env)
+            assert {"zwp_text_input_manager_v1", "zwp_text_input_manager_v3"} <= sandboxed_globals
 
             # Core globals present
             for cg in CORE_GLOBALS:
@@ -219,7 +230,7 @@ xwayland = false
 
 [[sandbox_allow]]
 app_id = "org.example.AllowedApp"
-allow = ["clipboard"]
+allow = ["clipboard", "outputs"]
 """
     with tempfile.TemporaryDirectory(prefix="rediwm-sc-test-") as directory:
         tmp = Path(directory)
@@ -239,6 +250,8 @@ allow = ["clipboard"]
 
             sandboxed_env = dict(session.env, WAYLAND_DISPLAY=str(sandboxed_sock))
             globals_seen = dump_registry(tmp / "fixture", sandboxed_env)
+
+            assert "zwlr_gamma_control_manager_v1" in globals_seen, "outputs grant should include gamma control"
 
             # Clipboard group allowed
             assert "zwlr_data_control_manager_v1" in globals_seen, "data-control should be granted by clipboard group"

@@ -391,12 +391,12 @@ pub const App = struct {
             .items_arena = std.heap.ArenaAllocator.init(allocator),
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
-            .single_click_open = @import("settings.zig").singleClickOpen(),
-            .audio_player = @import("settings.zig").audioPlayer(),
+            .single_click_open = @import("app_kit").settings.singleClickOpen(),
+            .audio_player = @import("app_kit").settings.audioPlayer(),
         };
 
-        self.theme_cfg.override_root = @import("settings.zig").iconRoot();
-        const icon_base = @import("settings.zig").iconTheme();
+        self.theme_cfg.override_root = @import("app_kit").settings.iconRoot();
+        const icon_base = @import("app_kit").settings.iconTheme();
         if (icon_base.len > 0) self.theme_cfg.theme_name = icon_base;
         const data_home = environ.getPosix("XDG_DATA_HOME");
         self.trash_dir = if (data_home != null and std.fs.path.isAbsolute(data_home.?))
@@ -418,7 +418,7 @@ pub const App = struct {
             self.sort_mode = @fromBackingInt(@intCast(prefs.sort));
             self.default_sort = self.sort_mode;
         }
-        self.default_folders_first = @import("settings.zig").foldersFirst();
+        self.default_folders_first = @import("app_kit").settings.foldersFirst();
         self.folders_first = self.default_folders_first;
         self.pins_path = pins_mod.statePath(allocator, environ) catch null;
         if (self.pins_path) |path| self.pins = pins_mod.List.loadPaths(allocator, io, path);

@@ -216,7 +216,10 @@ pub fn handleAction(
             systemd.setMode(p.service, p.mode) catch |err| return .{ .err = @errorName(err) };
             return .{ .ok = .{ .service_mode = .{ .service = p.service, .mode = p.mode } } };
         },
-        .play_sound => |p| return @import("../audio/sounds.zig").play(server, allocator, p.event) catch |err| .{ .err = @errorName(err) },
+        .play_sound => |p| {
+            const pid = @import("../audio/sounds.zig").play(server, allocator, p.event) catch |err| return .{ .err = @errorName(err) };
+            return .{ .ok = .{ .sound_playback = .{ .event = p.event, .pid = pid } } };
+        },
         .theme_apply => |p| {
             @import("../config_runtime/theme_pack.zig").apply(server, p.id) catch |err| return .{ .err = @errorName(err) };
             return .{ .ok = .handled };

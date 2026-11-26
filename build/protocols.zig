@@ -13,6 +13,8 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.generate("ext_output_image_capture_source_manager_v1", 1);
     scanner.addSystemProtocol("staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml");
     scanner.generate("ext_image_copy_capture_manager_v1", 1);
+    scanner.addSystemProtocol("unstable/text-input/text-input-unstable-v1.xml");
+    scanner.generate("zwp_text_input_manager_v1", 1);
     scanner.addSystemProtocol("unstable/text-input/text-input-unstable-v3.xml");
     scanner.generate("zwp_text_input_manager_v3", 1);
     scanner.addSystemProtocol("staging/xdg-activation/xdg-activation-v1.xml");
@@ -20,7 +22,7 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.generate("wp_security_context_manager_v1", 1);
     scanner.generate("xdg_activation_v1", 1);
     scanner.addCustomProtocol(b.path("protocol/wlr-layer-shell-unstable-v1.xml"));
-    scanner.generate("zwlr_layer_shell_v1", 4);
+    scanner.generate("zwlr_layer_shell_v1", 5);
     scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
     scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
     scanner.addSystemProtocol("staging/ext-idle-notify/ext-idle-notify-v1.xml");
@@ -36,8 +38,16 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.addSystemProtocol("unstable/relative-pointer/relative-pointer-unstable-v1.xml");
     scanner.addSystemProtocol("staging/pointer-warp/pointer-warp-v1.xml");
     scanner.addSystemProtocol("staging/fifo/fifo-v1.xml");
+    scanner.addSystemProtocol("staging/commit-timing/commit-timing-v1.xml");
+    scanner.addSystemProtocol("stable/presentation-time/presentation-time.xml");
+    scanner.addSystemProtocol("staging/color-representation/color-representation-v1.xml");
+    scanner.addSystemProtocol("staging/content-type/content-type-v1.xml");
+    scanner.addSystemProtocol("staging/single-pixel-buffer/single-pixel-buffer-v1.xml");
     scanner.addSystemProtocol("staging/ext-session-lock/ext-session-lock-v1.xml");
     scanner.addCustomProtocol(b.path("protocol/wlr-output-power-management-unstable-v1.xml"));
+    // The file chooser becomes a dialog of the window that asked for it.
+    scanner.addSystemProtocol("unstable/xdg-foreign/xdg-foreign-unstable-v2.xml");
+    scanner.addSystemProtocol("staging/xdg-dialog/xdg-dialog-v1.xml");
 
     // These versions control generated Zig bindings only. They do not change
     // the wlroots ABI used by the compositor.
@@ -47,7 +57,7 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.generate("wl_output", 4);
     scanner.generate("wl_seat", 8);
     scanner.generate("wl_data_device_manager", 3);
-    scanner.generate("xdg_wm_base", 6);
+    scanner.generate("xdg_wm_base", 7);
     scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
     scanner.generate("wp_viewporter", 1);
     scanner.addSystemProtocol("staging/fractional-scale/fractional-scale-v1.xml");
@@ -67,8 +77,41 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.generate("zwp_relative_pointer_manager_v1", 1);
     scanner.generate("wp_pointer_warp_v1", 1);
     scanner.generate("wp_fifo_manager_v1", 1);
+    scanner.generate("wp_commit_timing_manager_v1", 1);
+    scanner.generate("wp_presentation", 2);
+    scanner.generate("wp_color_representation_manager_v1", 1);
+    scanner.generate("wp_content_type_manager_v1", 1);
+    scanner.generate("wp_single_pixel_buffer_manager_v1", 1);
     scanner.generate("ext_session_lock_manager_v1", 1);
     scanner.generate("zwlr_output_power_manager_v1", 1);
+    scanner.generate("zxdg_importer_v2", 1);
+    scanner.generate("xdg_wm_dialog_v1", 1);
 
     return b.createModule(.{ .root_source_file = scanner.result });
+}
+
+/// SDR captures of linear outputs (capture_sdr.c), which complete wlroots'
+/// screencopy frames themselves and need that protocol's server header.
+pub fn addCaptureSdr(b: *std.Build, target: *std.Build.Module) void {
+    const header = b.addSystemCommand(&.{ "wayland-scanner", "server-header" });
+    header.addFileArg(b.path("protocol/wlr-screencopy-unstable-v1.xml"));
+    target.addIncludePath(header.addOutputFileArg("wlr-screencopy-unstable-v1-protocol.h").dirname());
+    target.addCSourceFile(.{ .file = b.path("src/capture_sdr.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+}
+
+/// C bindings for the surface state and glass adapter in background_effect.c.
+pub fn addBackgroundEffect(b: *std.Build, target: *std.Build.Module) void {
+    const pkg_config = b.graph.environ_map.get("PKG_CONFIG") orelse "pkg-config";
+    const dir = b.run(&.{ pkg_config, "--variable=pkgdatadir", "wayland-protocols" });
+    const xml: std.Build.LazyPath = .{ .cwd_relative = b.pathJoin(&.{
+        std.mem.trim(u8, dir, &std.ascii.whitespace),
+        "staging/ext-background-effect/ext-background-effect-v1.xml",
+    }) };
+    const header = b.addSystemCommand(&.{ "wayland-scanner", "server-header" });
+    header.addFileArg(xml);
+    target.addIncludePath(header.addOutputFileArg("ext-background-effect-v1-protocol.h").dirname());
+    const code = b.addSystemCommand(&.{ "wayland-scanner", "private-code" });
+    code.addFileArg(xml);
+    target.addCSourceFile(.{ .file = code.addOutputFileArg("ext-background-effect-v1-protocol.c") });
+    target.addCSourceFile(.{ .file = b.path("src/background_effect.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
 }

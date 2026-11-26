@@ -54,6 +54,17 @@ zoom_raw: f64 = 1,
 vel_z: anim.VelocityTracker = .{},
 /// Last chip selected during the current Super hold; IDs survive window teardown safely.
 peek_window_id: ?u64 = null,
+/// What the last `syncPresentation` ran on; null when its result follows the clock.
+presented: ?PresentedKey = null,
+
+const PresentedKey = struct {
+    serial: u64,
+    zoom: f64,
+    offset_x: f64,
+    offset_y: f64,
+    origin_x: f64,
+    origin_y: f64,
+};
 
 pub fn init(world: *World, server: *Server, tree: *sn.Tree) !void {
     world.* = .{
@@ -69,6 +80,7 @@ const world_focus = @import("world/focus.zig");
 pub const focus = world_focus.focus;
 pub const focusSurface = world_focus.focusSurface;
 pub const raiseTransientChildren = world_focus.raiseTransientChildren;
+pub const modalHolder = world_focus.modalHolder;
 pub const cycleFocus = world_focus.cycleFocus;
 pub const cycleFocusPrev = world_focus.cycleFocusPrev;
 pub const peekTarget = world_focus.peekTarget;
@@ -103,7 +115,7 @@ pub const tickCamera = world_camera.tickCamera;
 pub const rebindPan = world_camera.rebindPan;
 
 pub fn deinit(world: *World) void {
-    world.workspaces.tiler.deinit();
+    world.workspaces.deinit();
     world.mini_map.deinit();
     Projection.destroy(world.projection);
 }
@@ -121,6 +133,32 @@ pub fn syncPresentation(world: *World) void {
     Projection.syncFixed(world.projection, world.camera.zoom(), world.camera.offset_x, world.camera.offset_y, world.bounds.origin_x, world.bounds.origin_y, if (world.server.config.compositor.desktop_icons_fixed) world.server.world_desktop_tree else null);
     if (world.server.text_input) |relay| relay.updatePopups();
     if (world.server.desktop) |desktop| desktop.syncOverlayPosition();
+    world.presented = if (world.presentationFollowsClock()) null else world.presentedKey();
+}
+/// `syncPresentation` for a hit test, skipped when no node and not the camera
+/// changed since the last one: pointer events outpace frames (a 1 kHz mouse),
+/// and a sync with nothing to do still walks every window (7% of a motion
+/// event, 2026-11-25). Input follows what was last presented either way.
+pub fn syncPresentationForInput(world: *World) void {
+    if (world.presented) |key| if (std.meta.eql(key, world.presentedKey())) return;
+    world.syncPresentation();
+}
+fn presentedKey(world: *const World) PresentedKey {
+    return .{
+        .serial = world.server.nodes.serial,
+        .zoom = world.camera.zoom(),
+        .offset_x = world.camera.offset_x,
+        .offset_y = world.camera.offset_y,
+        .origin_x = world.bounds.origin_x,
+        .origin_y = world.bounds.origin_y,
+    };
+}
+/// The overview and focus zoom sample their animations in `syncPresentation`.
+fn presentationFollowsClock(world: *World) bool {
+    if (world.overview.active() or world.server.config.compositor.focus_zoom == .camera) return true;
+    var it = world.toplevels.iterator(.forward);
+    while (it.next()) |toplevel| if (toplevel.zoom_boost_value != 0) return true;
+    return false;
 }
 pub fn toWorld(world: *const World, x: f64, y: f64) camera_mod.Vec {
     return world.camera.toWorld(world.bounds, x, y);

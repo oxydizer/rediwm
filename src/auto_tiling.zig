@@ -4,6 +4,7 @@ const wl = @import("wayland").server.wl;
 const Server = @import("Server.zig");
 const Top = @import("Toplevel.zig");
 const layout = @import("auto_layout.zig");
+const scroll = @import("scroll_layout.zig");
 const gpa = @import("main.zig").gpa;
 
 pub const State = struct {
@@ -60,7 +61,11 @@ pub fn observe(top: *Top) void {
                 shared = true;
                 break;
             };
-            if (!shared) top.server.world.workspaces.tiler.trees[next.workspace - 1].rename(old, key(top));
+            if (!shared) {
+                const manager = &top.server.world.workspaces.tiler;
+                manager.trees[next.workspace - 1].rename(old, key(top));
+                manager.strips[next.workspace - 1].rename(old, key(top));
+            }
         }
     }
     top.auto_seen = next;
@@ -97,6 +102,11 @@ pub fn unmapped(top: *Top) void {
 
 pub const Manager = struct {
     trees: [@import("workspaces.zig").count]layout.Tree = @splat(.{}),
+    /// Each workspace keeps both arrangements; its layout picks which one
+    /// places its windows, and the other waits as it was left.
+    strips: [@import("workspaces.zig").count]@import("scroll_layout.zig").Strip = @splat(.{}),
+    /// A strip's view moved by hand or settling (`scroll_motion.zig`).
+    motions: [@import("workspaces.zig").count]@import("scroll_motion.zig").Motion = @splat(.{}),
     idle: ?*wl.EventSource = null,
     applying: bool = false,
     /// The next flush places tiles at once instead of gliding: entering the
@@ -107,9 +117,12 @@ pub const Manager = struct {
         if (self.idle) |source| source.remove();
         self.idle = null;
         for (&self.trees) |*tree| tree.deinit(gpa);
+        for (&self.strips) |*strip| strip.deinit(gpa);
+        self.motions = @splat(.{});
     }
     pub fn schedule(self: *Manager, server: *Server) void {
         if (!server.world.workspaces.active or self.applying or self.idle != null) return;
+        if (server.layout_autosave) |autosave| autosave.changed();
         self.idle = server.wl_server.getEventLoop().addIdle(*Server, flush, server) catch null;
     }
     /// Resolve pending membership before a user operation takes a snapshot.
@@ -156,7 +169,7 @@ pub const Manager = struct {
                 var m: layout.Member = .{
                     .key = k,
                     .order = top.workspace_order,
-                    .active = server.world.workspaces.slots[index].automatic and !s.excluded and !s.suspended and !s.hidden,
+                    .active = server.world.workspaces.tiles(@intCast(index + 1)) and !s.excluded and !s.suspended and !s.hidden,
                     .min_width = @max(1, s.constraints.min_width) +| s.horizontal,
                     .min_height = @max(1, s.constraints.min_height) +| s.vertical,
                     .max_width = if (s.constraints.max_width > 0) s.constraints.max_width +| s.horizontal else 0,
@@ -188,31 +201,44 @@ pub const Manager = struct {
                 if ((member.max_width > 0 and member.min_width > member.max_width) or
                     (member.max_height > 0 and member.min_height > member.max_height)) member.active = false;
             }
-            const box = if (output) |out| out.usableBox() else @import("wlroots").Box{ .x = 0, .y = 0, .width = 0, .height = 0 };
+            const id: u8 = @intCast(index + 1);
+            const scrolling = server.world.workspaces.layoutOf(id) == .scrolling;
+            const strip = &self.strips[index];
+            if (scrolling) {
+                if (!try @import("scroll_tiling.zig").sync(server, id, members.items)) continue;
+            } else try syncTree(server, tree, id, output, tops.items, members.items);
             for (tops.items) |top| {
-                if (top.workspace_id != index + 1 or tree.contains(key(top))) continue;
-                const at = top.auto_reinsert orelse continue;
-                if (!tree.contains(at.anchor)) continue;
-                for (members.items) |m| if (std.meta.eql(m.key, key(top))) {
-                    try tree.insertAt(gpa, m, at);
-                    top.auto_reinsert = null;
-                    break;
-                };
-            }
-            try tree.sync(gpa, members.items, .{ .x = box.x, .y = box.y, .width = box.width, .height = box.height }, server.config.compositor.windowGap());
-            for (tops.items) |top| {
-                if (top.workspace_id != index + 1) continue;
+                if (top.workspace_id != id) continue;
                 const s = state(top);
                 // Used by the sync above, or moot for a window that floats.
                 top.auto_anchor = null;
                 if (!s.excluded and !s.suspended and !s.hidden) {
-                    if (tree.rectangle(key(top))) |rect| {
+                    if (if (scrolling) strip.rectangle(key(top)) else tree.rectangle(key(top))) |rect| {
+                        const x = top.x;
+                        const y = top.y;
                         top.setAutoTile(.{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height }, animate and @import("workspaces.zig").visible(top));
+                        if (scrolling) @import("scroll_tiling.zig").carryDialogs(top, top.x - x, top.y - y, animate);
                     } else top.clearAutoTile(true);
                 } else if (s.excluded) top.clearAutoTile(true);
                 top.auto_seen = state(top);
             }
+            if (scrolling and members.items.len > 0) @import("scroll_tiling.zig").restack(server, id);
         }
+    }
+    /// Reinserts windows coming back where they were, then syncs the tree.
+    fn syncTree(server: *Server, tree: *layout.Tree, id: u8, output: ?*@import("Output.zig"), tops: []const *Top, members: []const layout.Member) !void {
+        const box = if (output) |out| out.usableBox() else @import("wlroots").Box{ .x = 0, .y = 0, .width = 0, .height = 0 };
+        for (tops) |top| {
+            if (top.workspace_id != id or tree.contains(key(top))) continue;
+            const at = top.auto_reinsert orelse continue;
+            if (!tree.contains(at.anchor)) continue;
+            for (members) |m| if (std.meta.eql(m.key, key(top))) {
+                try tree.insertAt(gpa, m, at);
+                top.auto_reinsert = null;
+                break;
+            };
+        }
+        try tree.sync(gpa, members, .{ .x = box.x, .y = box.y, .width = box.width, .height = box.height }, server.config.compositor.windowGap());
     }
 };
 
@@ -238,8 +264,8 @@ pub fn execute(server: *Server, target: ?*Top, action: @import("config").keybind
         if (id == 0) return;
         var transaction = @import("layout_undo.zig").Transaction.begin(server, &.{id});
         defer transaction.finish();
-        const slot = &server.world.workspaces.slots[id - 1];
-        slot.automatic = !slot.automatic;
+        // Floating, or back to the desktop mode's layout.
+        server.world.workspaces.slots[id - 1].layout = if (server.world.workspaces.tiles(id)) .floating else null;
         if (server.input.open_control_center) |cc| cc.refresh();
         manager.schedule(server);
         return;
@@ -260,7 +286,12 @@ pub fn execute(server: *Server, target: ?*Top, action: @import("config").keybind
         setFloating(top, floating);
         if (floating) if (saved) |geometry| top.restoreGeometryNow(geometry);
     } else {
-        if (top.auto_target == null or !server.world.workspaces.slots[top.workspace_id - 1].automatic) return;
+        if (top.auto_target == null or !server.world.workspaces.tiles(top.workspace_id)) return;
+        if (server.world.workspaces.layoutOf(top.workspace_id) == .scrolling) {
+            if (!(@import("scroll_tiling.zig").execute(server, top, action) catch false)) return;
+            manager.schedule(server);
+            return;
+        }
         switch (action) {
             .toggle_split => {
                 if (tree.splitFor(key(top), null) == null) return;
@@ -282,6 +313,8 @@ pub fn execute(server: *Server, target: ?*Top, action: @import("config").keybind
                 const delta: f64 = if (action == .resize_split_left or action == .resize_split_up) -32 else 32;
                 tree.setRatio(key(top), split.axis, split.ratio + delta / @as(f64, @floatFromInt(split.span)));
             },
+            // Strip actions; a split workspace has no columns.
+            .consume_left, .consume_right, .cycle_column_width => return,
             else => unreachable,
         }
     }
@@ -293,15 +326,33 @@ pub const Drop = struct {
     anchor: ?layout.Key = null,
     axis: layout.Axis = .horizontal,
     before: bool = false,
+    /// Onto a scrolling strip: between its columns or into one.
+    strip: ?scroll.Drop = null,
 };
-pub const PreparedDrop = struct { tree: ?layout.Tree, rect: @import("wlroots").Box };
+pub const PreparedDrop = struct {
+    tree: ?layout.Tree,
+    strip: ?scroll.Strip = null,
+    rect: @import("wlroots").Box,
+
+    pub fn deinit(self: *PreparedDrop) void {
+        if (self.tree) |*tree| tree.deinit(gpa);
+        if (self.strip) |*strip| strip.deinit(gpa);
+        self.tree = null;
+        self.strip = null;
+    }
+};
 
 pub fn dropAt(top: *Top, x: f64, y: f64) ?Drop {
     const server = top.server;
     const output = @import("Output.zig").atLayout(server, x, y) orelse return null;
     const id = output.workspace_id;
     if (id == 0) return null;
-    if (!server.world.workspaces.slots[id - 1].automatic) return .{ .workspace = id };
+    if (server.world.workspaces.layoutOf(id) == .scrolling) {
+        const strip = &server.world.workspaces.tiler.strips[id - 1];
+        const place = strip.dropAt(@intFromFloat(x), @intFromFloat(y), if (id == top.workspace_id) key(top) else null) orelse return null;
+        return .{ .workspace = id, .strip = place };
+    }
+    if (!server.world.workspaces.tiles(id)) return .{ .workspace = id };
     if (id == top.workspace_id) if (server.world.workspaces.tiler.trees[id - 1].rectangle(key(top))) |box| {
         if (x >= @as(f64, @floatFromInt(box.x)) and y >= @as(f64, @floatFromInt(box.y)) and
             x < @as(f64, @floatFromInt(box.x + box.width)) and y < @as(f64, @floatFromInt(box.y + box.height))) return null;
@@ -334,7 +385,7 @@ pub fn prepareDrop(top: *Top, drop: Drop) !?PreparedDrop {
     const slot = &server.world.workspaces.slots[drop.workspace - 1];
     const output = slot.output orelse return null;
     const usable = output.usableBox();
-    if (!slot.automatic) {
+    if (!server.world.workspaces.tiles(drop.workspace)) {
         const saved = top.auto_restore orelse top.rememberGeometry();
         const width = saved.width + 2 * top.borderWidth();
         const height = saved.height + top.titlebarHeight() + top.footerHeight();
@@ -345,8 +396,12 @@ pub fn prepareDrop(top: *Top, drop: Drop) !?PreparedDrop {
             .height = height,
         } };
     }
-    const source = &server.world.workspaces.tiler.trees[top.workspace_id - 1];
-    const value = source.getMember(key(top)) orelse return null;
+    const manager = &server.world.workspaces.tiler;
+    const value = (if (server.world.workspaces.layoutOf(top.workspace_id) == .scrolling)
+        manager.strips[top.workspace_id - 1].getMember(key(top))
+    else
+        manager.trees[top.workspace_id - 1].getMember(key(top))) orelse return null;
+    if (drop.strip) |place| return prepareStripDrop(top, drop.workspace, value, place);
     var copy = try server.world.workspaces.tiler.trees[drop.workspace - 1].clone(gpa);
     var keep = false;
     defer if (!keep) copy.deinit(gpa);
@@ -367,6 +422,36 @@ pub fn prepareDrop(top: *Top, drop: Drop) !?PreparedDrop {
     return .{ .tree = copy, .rect = .{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height } };
 }
 
+/// A strip with `value` moved where `place` says, or null when that leaves
+/// it where it was or the column it joins cannot take it.
+fn prepareStripDrop(top: *Top, workspace: u8, value: layout.Member, place: scroll.Drop) !?PreparedDrop {
+    const manager = &top.server.world.workspaces.tiler;
+    const strip = &manager.strips[workspace - 1];
+    // A window alone in its column keeps that column's width.
+    var width: f64 = top.server.config.compositor.scroll_column_width;
+    if (top.server.world.workspaces.layoutOf(top.workspace_id) == .scrolling) {
+        const source = &manager.strips[top.workspace_id - 1];
+        if (source.columnCount(value.key) == 1) width = source.widthOf(value.key) orelse width;
+    }
+    var copy = try strip.clone(gpa);
+    var keep = false;
+    defer if (!keep) copy.deinit(gpa);
+    copy.remove(gpa, value.key);
+    var member = value;
+    member.anchor = null;
+    if (!try copy.insertDrop(gpa, member, place, width)) return null;
+    try copy.rearrange(gpa);
+    if (copy.eql(strip)) return null;
+    const at = copy.locate(value.key) orelse return null;
+    switch (place) {
+        .join => |j| if ((copy.locate(j.anchor) orelse return null).column != at.column) return null,
+        .column => {},
+    }
+    const rect = copy.rectangle(value.key) orelse return null;
+    keep = true;
+    return .{ .tree = null, .strip = copy, .rect = .{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height } };
+}
+
 pub fn commitDrop(top: *Top, drop: Drop, prepared: *PreparedDrop) void {
     const server = top.server;
     var transaction = @import("layout_undo.zig").Transaction.begin(server, &.{ top.workspace_id, drop.workspace });
@@ -376,6 +461,12 @@ pub fn commitDrop(top: *Top, drop: Drop, prepared: *PreparedDrop) void {
         target.deinit(gpa);
         target.* = tree;
         prepared.tree = null;
+    }
+    if (prepared.strip) |strip| {
+        const target = &server.world.workspaces.tiler.strips[drop.workspace - 1];
+        target.deinit(gpa);
+        target.* = strip;
+        prepared.strip = null;
     }
     if (drop.workspace != top.workspace_id) server.world.workspaces.moveTo(top, drop.workspace);
     server.world.workspaces.tiler.schedule(server);

@@ -23,6 +23,10 @@ The file manager. Space opens images, PDFs and text files.
   the device stays listed, dimmed. `REDIWM_FILES_DEVICES=0` disables it.
 - **Pins:** drop a folder on the PLACES sidebar to pin it. Stored one path per
   line in `$XDG_STATE_HOME/rediwm/files-places`.
+- **Open/Save dialogs:** apps that ask the file chooser portal get Files as
+  their dialog. It opens over the app's window, and clicking the app brings it
+  back to the front until you're done, unless the app asked for a non-modal
+  dialog. Dialogs for X11 apps open as windows of their own.
 - Drag a file out and the window slides aside (`dodge_file_drags`).
 - File and folder icons open with one click in list and icons view, with a hand
   cursor on hover. Names select; Ctrl/Shift clicks and dragging still work.

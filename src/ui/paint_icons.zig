@@ -57,6 +57,15 @@ pub fn iconDistance(id: IconId, px: f32, py: f32, cx: f32, cy: f32, half: f32, t
             sdBox(px, py, cx - half * 0.72, cy, half * 0.18, half * 0.9),
         ),
         .stop => sdRoundedBoxCentered(px, py, cx, cy, half * 0.75, half * 0.75, half * 0.15),
+        .captions => blk: {
+            const w = half * 1.55;
+            const frame = @abs(sdRoundedBoxCentered(px, py, cx, cy, w, w * 0.70, w * 0.16)) - t * 0.65;
+            // Two open rings form the CC mark inside the frame.
+            const dx = px - cx + (if (px < cx) w * 0.37 else -w * 0.37);
+            const dy = py - cy;
+            const ring = @abs(@sqrt(dx * dx + dy * dy) - w * 0.23) - t * 0.57;
+            break :blk @min(frame, @max(ring, dx - @abs(dy)));
+        },
         .pause => @min(sdBox(px, py, cx - half * 0.45, cy, half * 0.22, half), sdBox(px, py, cx + half * 0.45, cy, half * 0.22, half)),
         .minimize => sdSegment(px, py, cx - half, cy, cx + half, cy, t),
         .drag_handle => @min(
@@ -277,7 +286,7 @@ pub fn iconDistance(id: IconId, px: f32, py: f32, cx: f32, cy: f32, half: f32, t
             const base = @min(ring_open, arrow);
             break :blk if (id == .restart_shell) @min(base, sdCircle(px, py, cx, cy, half * 0.24)) else base;
         },
-        .git_branch, .home, .generic, .folder, .document, .terminal, .settings, .keyboard, .edit, .browser, .wifi, .ethernet, .globe, .mouse, .touchpad, .trackball, .display, .music, .headphones, .bluetooth, .battery, .notification, .eye, .eye_off, .refresh, .cut, .copy, .paste, .trash, .trash_can, .view_grid, .view_list, .sort, .filter, .zoom_in, .zoom_out, .rotate, .crop, .undo, .save, .fit, .print, .open, .usb_stick, .drive, .eject, .users, .squares, .shield => sdCircle(px, py, cx, cy, half * 0.6),
+        .git_branch, .home, .generic, .folder, .document, .terminal, .settings, .keyboard, .edit, .browser, .wifi, .ethernet, .globe, .mouse, .touchpad, .trackball, .display, .music, .headphones, .bluetooth, .battery, .notification, .eye, .eye_off, .refresh, .cut, .copy, .paste, .trash, .trash_can, .view_grid, .view_list, .sort, .filter, .zoom_in, .zoom_out, .rotate, .crop, .undo, .save, .fit, .print, .open, .usb_stick, .drive, .eject, .users, .squares, .shield, .desktop_canvas, .desktop_tiles, .desktop_scroll => sdCircle(px, py, cx, cy, half * 0.6),
     };
 }
 

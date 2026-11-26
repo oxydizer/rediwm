@@ -7,6 +7,7 @@ const Output = @import("../Output.zig");
 const Toplevel = @import("../Toplevel.zig");
 const output_tearing = @import("../output/tearing.zig");
 const output_vrr = @import("../output/vrr.zig");
+const output_hdr = @import("../output/hdr.zig");
 const stats = @import("stats.zig");
 const protocol = @import("protocol.zig");
 const ui = @import("ui");
@@ -150,6 +151,8 @@ pub fn makeWindowData(server: *Server, toplevel: *Toplevel) protocol.WindowData 
         .x11_class = toplevel.x11Class(),
         .x11_instance = toplevel.x11Instance(),
         .placeholder = if (toplevel.backend == .placeholder) true else null,
+        .parent_id = if (toplevel.owner()) |owner| owner.id else null,
+        .is_modal = toplevel.isModal(),
     };
 }
 
@@ -205,6 +208,14 @@ pub fn makeOutputData(server: *Server, output: *Output) protocol.OutputData {
         .adaptive_sync_wanted = output_vrr.wanted(output),
         .adaptive_sync_active = output_vrr.active(output),
         .adaptive_sync_needs_modeset = output.vrr.needs_modeset,
+        .scroll_direction = @tagName(@import("../scroll_tiling.zig").setting(output)),
+        .scroll_direction_resolved = @tagName(@import("../scroll_tiling.zig").outputDirection(output)),
+        .hdr = @tagName(output_hdr.mode(output)),
+        .hdr_supported = output_hdr.supported(output),
+        .hdr_active = output_hdr.active(output),
+        .hdr_linear = output_hdr.linear(output),
+        .hdr_refused = output_hdr.refused(output),
+        .sdr_white = output_hdr.sdrWhite(output),
         .direct_scanout = if (server.scene_outputs.get(output.wlr_output)) |scene_output| scene_output.directScanout() else false,
     };
 }

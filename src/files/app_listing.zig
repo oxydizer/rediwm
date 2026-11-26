@@ -215,8 +215,8 @@ pub fn sync(self: *App) void {
         self.setDefaultFoldersFirst(t.folders_first);
         self.open_on_release = null;
         t.apply();
-        self.theme_cfg.override_root = @import("settings.zig").iconRoot();
-        const base = @import("settings.zig").iconTheme();
+        self.theme_cfg.override_root = @import("app_kit").settings.iconRoot();
+        const base = @import("app_kit").settings.iconTheme();
         self.theme_cfg.theme_name = if (base.len > 0) base else if (std.c.getenv("REDIWM_ICON_THEME")) |name| std.mem.span(name) else "Adwaita";
         self.theme_cfg.generation += 1;
         theme.forgetParsedThemes(icons.gpa);

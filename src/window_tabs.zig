@@ -231,7 +231,7 @@ fn copyGeometry(from: *Top, to: *Top) void {
         },
         else => {},
     }
-    to.sendTiled(if (from.tile) |tile| @import("snap.zig").tiledEdges(tile) else if (from.auto_target != null) .{ .top = true, .bottom = true, .left = true, .right = true } else .{});
+    to.syncXdgEdges();
     const geom = from.forcedGeometry() orelse from.rememberGeometry();
     to.setPosition(geom.x, geom.y);
     _ = to.requestSize(geom.width, geom.height);

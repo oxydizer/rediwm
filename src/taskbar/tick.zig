@@ -25,14 +25,18 @@ const trayHit = Taskbar.trayHit;
 // Runs once per output frame while anything is unsettled. Returns whether
 // the caller should schedule another frame to keep the animation going.
 pub fn tick(bar: *Taskbar, now_ms: i64) bool {
+    const was_parked = bar.parked;
     const revealing = reveal.syncReveal(bar, now_ms);
+    if (bar.parked != was_parked) {
+        bar.server.updateTaskbarFullscreenVisibility();
+    }
     if (bar.parked) {
         // Away: the tree stays off, so nothing paints or takes hits; its
         // pending dirt is kept and renders once the bar is revealed again.
-        bar.tree.node.setEnabled(false);
         return revealing;
     }
-    bar.tree.node.setEnabled(true);
+    // A fullscreen window on this output keeps the bar hidden.
+    bar.tree.node.setEnabled(!bar.fullscreen_hidden);
 
     var causes = bar.paint_causes;
     bar.paint_causes = 0;
@@ -200,5 +204,5 @@ pub fn appendLive(
 
 pub fn trayPositions(bar: *Taskbar) [tray_count]f32 {
     const positions = bar.rightLayout().x;
-    return .{ positions[@intFromEnum(taskbar_items.Item.volume)] orelse 0, positions[@intFromEnum(taskbar_items.Item.wifi)] orelse 0, positions[@intFromEnum(taskbar_items.Item.power)] orelse 0, positions[@intFromEnum(taskbar_items.Item.wired)] orelse 0, positions[@intFromEnum(taskbar_items.Item.input_source)] orelse 0 };
+    return .{ positions[@intFromEnum(taskbar_items.Item.volume)] orelse 0, positions[@intFromEnum(taskbar_items.Item.wifi)] orelse 0, positions[@intFromEnum(taskbar_items.Item.power)] orelse 0, positions[@intFromEnum(taskbar_items.Item.wired)] orelse 0, positions[@intFromEnum(taskbar_items.Item.input_source)] orelse 0, positions[@intFromEnum(taskbar_items.Item.desktop_mode)] orelse 0 };
 }

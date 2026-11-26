@@ -29,7 +29,7 @@ new_xdg_popup: wl.Listener(*wlr.XdgPopup) = .init(newXdgPopup),
 new_xdg_decoration: wl.Listener(*wlr.XdgToplevelDecorationV1) = .init(newXdgDecoration),
 
 pub fn init(shell: *Shell, server: *Server) Server.CompositorError!void {
-    const xdg_shell = wlr.XdgShell.create(server.wl_server, 6) catch return error.XdgShellCreateFailed;
+    const xdg_shell = wlr.XdgShell.create(server.wl_server, 7) catch return error.XdgShellCreateFailed;
     const xdg_decoration_manager = wlr.XdgDecorationManagerV1.create(server.wl_server) catch return error.XdgDecorationCreateFailed;
     // Both globals are destroyed with the display; Server.init's errdefer
     // `wl_server.destroy()` covers a failure after this returns.

@@ -19,6 +19,7 @@ xdg_popup: *wlr.XdgPopup,
 server: *Server,
 
 commit: wl.Listener(*wlr.Surface) = .init(handleCommit),
+reposition: wl.Listener(void) = .init(handleReposition),
 destroy: wl.Listener(void) = .init(handleDestroy),
 
 pub fn create(server: *Server, xdg_popup: *wlr.XdgPopup) !void {
@@ -61,6 +62,7 @@ pub fn create(server: *Server, xdg_popup: *wlr.XdgPopup) !void {
     scene_data.setXdgSceneTree(xdg_surface, scene_tree);
 
     xdg_surface.surface.events.commit.add(&popup.commit);
+    xdg_popup.events.reposition.add(&popup.reposition);
     xdg_popup.events.destroy.add(&popup.destroy);
 }
 
@@ -128,9 +130,9 @@ fn windowConstraintBox(server: *Server, toplevel: *Toplevel, ox: i32, oy: i32) ?
     const rx: f64 = @floatFromInt(ox - frame_x);
     const ry: f64 = @floatFromInt(oy - frame_y);
 
-    // Where the root surface is on screen picks the output.
+    // A strip can place the root surface across the workspace's display edge.
     const origin = server.world.toLayout(fx + rx * scale, fy + ry * scale);
-    const out = Output.atLayout(server, origin.x, origin.y) orelse server.getDefaultOutput() orelse return null;
+    const out = @import("workspaces.zig").outputFor(toplevel) orelse Output.atLayout(server, origin.x, origin.y) orelse server.getDefaultOutput() orelse return null;
     const usable = out.usableBox();
     const lo = server.world.toWorld(@floatFromInt(usable.x), @floatFromInt(usable.y));
     const hi = server.world.toWorld(@floatFromInt(usable.x + usable.width), @floatFromInt(usable.y + usable.height));
@@ -175,7 +177,14 @@ fn handleDestroy(listener: *wl.Listener(void)) void {
     const popup: *Popup = @fieldParentPtr("destroy", listener);
 
     popup.commit.link.remove();
+    popup.reposition.link.remove();
     popup.destroy.link.remove();
 
     gpa.destroy(popup);
+}
+
+fn handleReposition(listener: *wl.Listener(void)) void {
+    const popup: *Popup = @fieldParentPtr("reposition", listener);
+    // wlroots has installed the client's new positioner for this configure.
+    if (popup.xdg_popup.base.initialized) unconstrainToOutput(popup.server, popup.xdg_popup);
 }

@@ -26,13 +26,14 @@ pub fn find(self: *Self, id: u64) ?*Card {
 pub fn prepare(self: *Self, world: *World) !void {
     var i: usize = 0;
     while (i < self.cards.items.len) {
-        if (Self.find(world, self.cards.items[i].id) == null) {
+        const gone = if (Self.find(world, self.cards.items[i].id)) |top| !onStrip(self, top) else true;
+        if (gone) {
             _ = self.cards.orderedRemove(i);
         } else i += 1;
     }
     var it = world.toplevels.iterator(.forward);
     while (it.next()) |top| {
-        if (!Self.eligible(top) or find(self, top.id) != null) continue;
+        if (!Self.eligible(top) or find(self, top.id) != null or !onStrip(self, top)) continue;
         try self.cards.append(gpa, .{ .id = top.id });
     }
     // Stable spatial order, including identical overlapping frames. Focusing
@@ -46,12 +47,28 @@ pub fn prepare(self: *Self, world: *World) !void {
             return left.id < right.id;
         }
     }.less);
+    if (self.strip != 0) {
+        // Each window where it sits on the strip, the strip scaled to fit.
+        const strip = &world.workspaces.tiler.strips[self.strip - 1];
+        const s = strip.overviewScale();
+        for (self.cards.items) |*card| {
+            const top = Self.find(world, card.id).?;
+            const at = strip.overviewPoint(@floatFromInt(top.x), @floatFromInt(top.y));
+            card.target = .{ .x = at[0], .y = at[1], .width = @as(f64, @floatFromInt(top.chrome_width)) * s, .height = @as(f64, @floatFromInt(top.chrome_height)) * s };
+        }
+        return;
+    }
     const area = self.output.?.usableBox();
     const bounds: layout.Rect = .{ .x = @floatFromInt(area.x), .y = @floatFromInt(area.y), .width = @floatFromInt(area.width), .height = @floatFromInt(area.height) };
     for (self.cards.items, 0..) |*card, index| {
         const top = Self.find(world, card.id).?;
         card.target = layout.place(self.cards.items.len, index, bounds, @floatFromInt(top.chrome_width), @floatFromInt(top.chrome_height));
     }
+}
+
+/// A strip overview shows the windows of its workspace, minimized ones aside.
+fn onStrip(self: *const Self, top: *const Top) bool {
+    return self.strip == 0 or (top.workspace_id == self.strip and !top.minimized);
 }
 
 /// Override the source frame's presentation only. The projection still draws

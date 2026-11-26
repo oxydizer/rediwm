@@ -3,6 +3,9 @@
 const wlr = @import("wlroots");
 const sn = @import("node.zig");
 
+extern fn rediwm_background_effect_create(display: *@import("wayland").server.wl.Server, engine: ?*Engine) bool;
+pub const createBackgroundEffect = rediwm_background_effect_create;
+
 pub const Kind = enum(c_int) { titlebar, taskbar, panel, sidebar };
 pub const Effect = opaque {
     extern fn rediwm_glass_detach(effect: ?*Effect) void;
@@ -19,6 +22,4 @@ pub const Engine = opaque {
     pub const attach = rediwm_glass_attach;
     extern fn rediwm_glass_hold(engine: ?*Engine, effect: ?*Effect) void;
     pub const hold = rediwm_glass_hold;
-    extern fn rediwm_glass_hold_all(engine: ?*Engine, hold: bool) void;
-    pub const holdAll = rediwm_glass_hold_all;
 };

@@ -46,9 +46,7 @@ pub fn listeners(cc: *panel.ControlCenter, a: Allocator, status: *const model.St
         labels.width = .{ .flex = 1 };
         var verdict = text(verdictLabel(l.verdict), 12, l.verdict != .everywhere);
         if (l.verdict == .everywhere) verdict.kind.text.color = panel.palette().danger;
-        // Measured text can come out a little narrower than drawn at
-        // fractional scales; a fixed column keeps the label whole.
-        verdict.width = .{ .fixed = @max(150, ui.measure.textNatural(verdictLabel(l.verdict), .sans, 400, 12).w + 12) };
+        verdict.width = .{ .fixed = @max(150, ui.measure.textNaturalAtScale(verdict.kind.text.content, .sans, verdict.kind.text.weight, 12, cc.toplevel.render_scale).w + 12) };
         var row: std.ArrayList(W) = .empty;
         try row.appendSlice(a, &.{ labels, verdict });
         if (edit and (l.verdict == .everywhere or l.verdict == .home)) {

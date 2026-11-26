@@ -89,6 +89,8 @@ fn create(top: *Top, preset: ribbon.Preset) !void {
     errdefer gpa.destroy(self);
     const tree = try server.nodes.tree.createSceneTree();
     errdefer tree.node.destroy();
+    // This frozen image lives in a layout layer outside the window's tree.
+    if (!@import("../projection.zig").setTreeOutput(&tree.node, @import("../workspaces.zig").outputFor(top))) return error.NoOutput;
     tree.node.placeBelow(&server.taskbar_tree.node);
     const node = mesh_scene.create(tree) orelse return error.OutOfMemory;
     node.node.setEnabled(false);

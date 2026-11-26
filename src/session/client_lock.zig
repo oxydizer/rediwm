@@ -220,9 +220,9 @@ pub const ClientLock = struct {
     }
 
     /// Scroll while locked; dropped unless a lock surface has the pointer.
-    pub fn axis(self: *ClientLock, time_msec: u32, orientation: wl.Pointer.Axis, delta: f64, discrete: i32, source: wl.Pointer.AxisSource) void {
+    pub fn axis(self: *ClientLock, time_msec: u32, orientation: wl.Pointer.Axis, delta: f64, discrete: i32, source: wl.Pointer.AxisSource, relative_direction: wl.Pointer.AxisRelativeDirection) void {
         if (!self.pointerMotion(time_msec)) return;
-        self.lock.server.input.seat.pointerNotifyAxis(time_msec, orientation, delta, discrete, source, .identical);
+        self.lock.server.input.seat.pointerNotifyAxis(time_msec, orientation, delta, discrete, source, relative_direction);
     }
 
     fn handleNewSurface(listener: *wl.Listener(*wlr.SessionLockSurfaceV1), lock_surface: *wlr.SessionLockSurfaceV1) void {

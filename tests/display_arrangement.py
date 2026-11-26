@@ -98,6 +98,9 @@ def run_two_outputs():
                 ui.wait_settled("control_center")
                 arrangement = wait(lambda: next((w for w in ui.widgets() if w["role"] == "arrangement"), None), "arrangement")
                 assert arrangement["visible"], arrangement
+                # Canvas has no scrolling strip, so no scrolling direction to choose.
+                assert any(w["label"] == "Variable refresh rate" for w in ui.widgets())
+                assert not any(w.get("name") == "scroll_direction" for w in ui.widgets())
                 found = tiles()
                 assert set(found) == {L, R}, found
                 # Drawn to scale, side by side, with the settings output selected.

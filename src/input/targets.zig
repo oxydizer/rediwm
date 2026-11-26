@@ -34,6 +34,15 @@ pub fn isSuperHeld(input: *Input) bool {
     return false;
 }
 
+/// Shift on any keyboard, with Super for column stepping on the wheel.
+pub fn isShiftHeld(input: *Input) bool {
+    var it = input.keyboards.iterator(.forward);
+    while (it.next()) |kbd| {
+        if (kbd.device.toKeyboard().getModifiers().shift) return true;
+    }
+    return false;
+}
+
 /// The `.super_key` pan trigger: `[input] pan_modifier` held on any keyboards.
 pub fn isPanModifierHeld(input: *Input) bool {
     if (input.server.world.workspaces.active or input.server.world.overview.active()) return false;

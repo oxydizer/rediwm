@@ -11,6 +11,14 @@
         "assets",
         "bg.png",
         "README.md",
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        // Read while configuring (catalogs, installed templates), so a
+        // package dependency on rediwm needs them too.
+        "data",
+        "po",
+        "third_party",
+        "tools",
     },
     .dependencies = .{
         .vterm = .{

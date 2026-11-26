@@ -335,7 +335,7 @@ pub fn createPlaceholder(
         const footer = chrome.frameBorder();
         const natural_w = init_w + 2 * chrome.frameBorder();
         const natural_h = init_h + toplevel.titlebarHeight() + footer;
-        const geom = pickInitialPlacement(server, out, open_rules, null, natural_w, natural_h);
+        const geom = pickInitialPlacement(server, out, open_rules, null, false, natural_w, natural_h);
         toplevel.setPosition(geom.x, geom.y);
         toplevel.placed = true;
     }

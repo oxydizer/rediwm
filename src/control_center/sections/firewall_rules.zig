@@ -17,10 +17,39 @@ const group = widgets.group;
 const card = widgets.card;
 const action = widgets.action;
 
+/// The catalog's service names as literals the extractor finds, in
+/// `fw.services.all` order (the firewall module, shared with the root helper,
+/// stays free of i18n). The check below keeps the two lists in step.
+const service_names = [_]i18n.Message{
+    i18n.msg("SSH (remote login)"),
+    i18n.msg("Web server (HTTP)"),
+    i18n.msg("Web server (HTTPS)"),
+    i18n.msg("Local network discovery (mDNS)"),
+    i18n.msg("KDE Connect / GSConnect"),
+    i18n.msg("Syncthing"),
+    i18n.msg("Steam Remote Play"),
+    i18n.msg("Windows file sharing (Samba)"),
+    i18n.msg("Printer sharing (IPP)"),
+    i18n.msg("Media sharing (DLNA)"),
+    i18n.msg("Spotify local discovery"),
+    i18n.msg("Files transfers (BitTorrent)"),
+    i18n.msg("Screen sharing (VNC)"),
+    i18n.msg("Remote desktop (RDP)"),
+    i18n.msg("WireGuard server"),
+    i18n.msg("NFS file sharing"),
+    i18n.msg("Minecraft server"),
+};
+
+comptime {
+    if (service_names.len != fw.services.all.len) @compileError("firewall service names out of step with services.all");
+    for (service_names, fw.services.all) |name, svc| {
+        if (!std.mem.eql(u8, name.source, svc.name)) @compileError("firewall service name out of step: " ++ svc.name);
+    }
+}
+
 /// A catalog service's name in the user's language.
 pub fn serviceName(index: usize) []const u8 {
-    inline for (fw.services.all, 0..) |svc, i| if (i == index) return i18n.tr(svc.name);
-    return "";
+    return if (index < service_names.len) service_names[index].get() else "";
 }
 
 fn catalogIndex(id: []const u8) ?usize {

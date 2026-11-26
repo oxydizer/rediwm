@@ -22,6 +22,7 @@ static struct wl_surface *ime_surface;
 static uint32_t input_serial, done_serial;
 static int forward_keys;
 static struct xkb_state *app_xkb;
+#include "text_input_v1_client.c"
 
 static void enable_input(void) {
   zwp_text_input_v3_enable(text_input);
@@ -152,7 +153,8 @@ static const struct wl_seat_listener app_seat_listener = {app_caps, seat_name};
 static void protocol_global(void *d, struct wl_registry *r, uint32_t id, const char *iface, uint32_t version) {
   printf("global %s %u\n",iface,version);
   if(!strcmp(iface,"xdg_activation_v1")) activation=wl_registry_bind(r,id,&xdg_activation_v1_interface,1);
-  else if(!strcmp(iface,"zwp_text_input_manager_v3")) text_manager=wl_registry_bind(r,id,&zwp_text_input_manager_v3_interface,1);
+  else if(!strcmp(iface,"zwp_text_input_manager_v3") && !legacy_only) text_manager=wl_registry_bind(r,id,&zwp_text_input_manager_v3_interface,1);
+  else if(!strcmp(iface,"zwp_text_input_manager_v1") && (legacy_only || mixed_inputs)) legacy_manager=wl_registry_bind(r,id,&zwp_text_input_manager_v1_interface,1);
   else if(!strcmp(iface,"zwp_input_method_manager_v2")) method_manager=wl_registry_bind(r,id,&zwp_input_method_manager_v2_interface,1);
   else if(!strcmp(iface,"zwp_virtual_keyboard_manager_v1")) virtual_manager=wl_registry_bind(r,id,&zwp_virtual_keyboard_manager_v1_interface,1);
   else if(!strcmp(iface,"wl_seat")) {
@@ -163,7 +165,11 @@ static void protocol_global(void *d, struct wl_registry *r, uint32_t id, const c
 static const struct wl_registry_listener protocol_registry = {protocol_global,removed};
 
 static void command(char *line) {
-  if(!strcmp(line,"layout-keyboard")) layout_keyboard();
+  if(!strncmp(line,"v1-",3)) legacy_command(line);
+  else if(!strcmp(line,"delete-only")) {
+    zwp_input_method_v2_delete_surrounding_text(method,2,1);
+    zwp_input_method_v2_commit(method,done_serial);
+  } else if(!strcmp(line,"layout-keyboard")) layout_keyboard();
   else if(!strcmp(line,"layout-shortcut") || !strcmp(line,"layout-text")) {
     zwp_virtual_keyboard_v1_modifiers(virtual_keyboard, !strcmp(line,"layout-shortcut") ? 64 : 0,0,0,1);
     zwp_virtual_keyboard_v1_key(virtual_keyboard,100,20,1);
@@ -245,18 +251,26 @@ static void command(char *line) {
 
 int main(int argc,char **argv) {
   setbuf(stdout,NULL);
+  legacy_only = argc > 2 && !strcmp(argv[2], "v1");
+  mixed_inputs = argc > 2 && !strcmp(argv[2], "both");
   display=wl_display_connect(NULL); assert(display);
   wl_registry_add_listener(wl_display_get_registry(display),&protocol_registry,NULL);
   assert(wl_display_roundtrip(display)>=0);
-  assert(activation && text_manager && method_manager && virtual_manager && seat);
+  assert(activation && (text_manager || legacy_manager) && method_manager && virtual_manager && seat);
   if(argc>1 && strcmp(argv[1],"ime")) {
     app_id=argv[1];
     surface=wl_compositor_create_surface(compositor);
     xdg=xdg_wm_base_get_xdg_surface(wm,surface); xdg_surface_add_listener(xdg,&xdg_listener,NULL);
     toplevel=xdg_surface_get_toplevel(xdg); xdg_toplevel_add_listener(toplevel,&top_listener,NULL);
     xdg_toplevel_set_title(toplevel,app_id); xdg_toplevel_set_app_id(toplevel,app_id);
-    text_input=zwp_text_input_manager_v3_get_text_input(text_manager,seat);
-    zwp_text_input_v3_add_listener(text_input,&text_listener,NULL);
+    if (legacy_manager) {
+      first_field = legacy_field("first");
+      if (legacy_only) zwp_text_input_v1_activate(first_field, seat, surface);
+    }
+    if (text_manager) {
+      text_input=zwp_text_input_manager_v3_get_text_input(text_manager,seat);
+      zwp_text_input_v3_add_listener(text_input,&text_listener,NULL);
+    }
     wl_surface_commit(surface);
   }
   puts("ready");

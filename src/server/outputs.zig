@@ -46,6 +46,8 @@ pub fn newOutput(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) v
     else
         Output.scaleForMode(server, wlr_output, preferred);
     state.setScale(output_scale);
+    // Rotated now, so the size others are placed around is final at once.
+    state.setTransform(Output.wlTransform(Output.configuredTransform(server, wlr_output)));
     if (saved) |mode| {
         mode.setState(&state);
     } else if (preferred) |mode| {

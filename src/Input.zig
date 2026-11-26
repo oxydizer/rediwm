@@ -30,6 +30,7 @@ const Touch = @import("input/touch.zig");
 const Tablet = @import("input/tablet.zig");
 const Lid = @import("input/lid.zig");
 const DragDodge = @import("input/drag_dodge.zig");
+const DragTabHover = @import("input/drag_tab_hover.zig");
 const cursor_theme = @import("cursor_theme.zig");
 const gpa = @import("main.zig").gpa;
 const input_targets = @import("input/targets.zig");
@@ -140,6 +141,8 @@ pointer_warp: PointerWarp = undefined,
 shortcuts_inhibit: ShortcutsInhibit = undefined,
 /// A file manager slides aside while a file is dragged out of it.
 drag_dodge: DragDodge = undefined,
+/// A drag resting on a titlebar tab switches to that tab.
+drag_tab_hover: DragTabHover = undefined,
 /// Touchscreens: wl_touch, or pointer emulation.
 touch: Touch = undefined,
 /// Drawing tablets: tablet-v2, or pointer emulation.
@@ -245,7 +248,11 @@ next_session_generation: u64 = 1,
 hovered_resize_edges: ?resize.Edges = null,
 pan_session: ?PanSession = null,
 /// Who owns the in-flight pinch/swipe: a focused client, or the compositor camera.
-gesture: enum { none, client_pinch, client_swipe, compositor_pinch, compositor_swipe } = .none,
+gesture: enum { none, client_pinch, client_swipe, compositor_pinch, compositor_swipe, strip_swipe } = .none,
+/// The scrolling workspace a three-finger swipe moves (`strip_swipe`).
+swipe_strip: u8 = 0,
+/// The scrolling workspace two fingers scroll over empty strip, or 0.
+finger_strip: u8 = 0,
 /// Two-finger touchpad scroll over empty desktop, distinct from middle-drag.
 finger_pan: bool = false,
 zoom_scroll: @import("camera.zig").ZoomScroll = .{},
@@ -279,6 +286,7 @@ accel_curve: AccelCurve = undefined,
 // input/targets.zig
 pub const isAltHeld = input_targets.isAltHeld;
 pub const isSuperHeld = input_targets.isSuperHeld;
+pub const isShiftHeld = input_targets.isShiftHeld;
 pub const isPanModifierHeld = input_targets.isPanModifierHeld;
 pub const isDesktopZoomHeld = input_targets.isDesktopZoomHeld;
 pub const cursorOverTaskbar = input_targets.cursorOverTaskbar;
@@ -403,6 +411,8 @@ pub fn init(input: *Input, server: *Server) Server.CompositorError!void {
     errdefer input.shortcuts_inhibit.deinit();
     input.drag_dodge.init(input);
     errdefer input.drag_dodge.deinit();
+    input.drag_tab_hover.init(input);
+    errdefer input.drag_tab_hover.deinit();
     input.touch.init(input);
     errdefer input.touch.deinit();
     input.tablet.init(input);
@@ -446,6 +456,7 @@ pub fn deinit(input: *Input) void {
     input.pointer_warp.deinit();
     input.shortcuts_inhibit.deinit();
     input.drag_dodge.deinit();
+    input.drag_tab_hover.deinit();
     input.trash_drop.deinit();
     input.lid.deinit();
     input.tablet.deinit();
@@ -537,6 +548,7 @@ pub fn detachOutput(input: *Input, output: *Output) void {
 }
 
 pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
+    if (toplevel.backend == .xwayland) if (input.server.xwayland) |xw| xw.pointer_queue.forget(xw, toplevel.id);
     if (input.window_menu.references(toplevel)) input.window_menu.close();
     if (input.tab_drag == toplevel) {
         @import("input/tab_drop.zig").clear(input);
@@ -552,6 +564,7 @@ pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
     if (input.hovered_toplevel == toplevel) input.hovered_toplevel = null;
     if (input.glow_toplevel == toplevel) input.glow_toplevel = null;
     input.drag_dodge.detach(toplevel);
+    input.drag_tab_hover.detach(toplevel);
     if (input.grabbed_toplevel == toplevel) input.clearGrab();
     if (input.resize_session) |session| {
         if (session.includes(toplevel)) input.cancelResize();

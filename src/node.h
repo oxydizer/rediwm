@@ -60,6 +60,7 @@ struct rediwm_node {
 struct rediwm_tree {
   struct rediwm_node node;
   struct wl_list children; // rediwm_node.link, bottom to top
+  float surface_opacity; // inherited by client surfaces, including newly mapped subsurfaces
 };
 
 struct rediwm_rect {
@@ -78,7 +79,8 @@ typedef bool (*rediwm_buffer_point_accepts_input)(struct rediwm_buffer *, double
 struct rediwm_buffer {
   struct rediwm_node node;
   rediwm_buffer_point_accepts_input point_accepts_input; // may be NULL
-  float opacity;
+  float opacity; // compositor opacity
+  float alpha_multiplier; // committed client alpha, also copied into frozen views
   enum wlr_scale_filter_mode filter_mode;
   struct wlr_fbox src_box;
   int dst_width, dst_height;
@@ -133,6 +135,9 @@ struct rediwm_scene {
   // A client surface shown on `output` committed with frame callbacks waiting. NULL
   // schedules a frame, which delivers them; the owner may deliver them without one.
   void (*frame_callbacks)(struct wlr_output *output);
+  // Bumped by every change reported through `changed`: an unchanged value means
+  // nothing the tree shows has changed (input skips re-syncing presentation).
+  uint64_t serial;
 };
 
 static inline struct rediwm_tree *rediwm_tree_from_node(struct rediwm_node *node) {
@@ -205,6 +210,7 @@ void rediwm_buffer_set_texture(struct rediwm_buffer *, struct wlr_texture *);
 struct wlr_buffer *rediwm_buffer_get_buffer(const struct rediwm_buffer *);
 void rediwm_buffer_set_dest_size(struct rediwm_buffer *, int width, int height);
 void rediwm_buffer_set_source_box(struct rediwm_buffer *, const struct wlr_fbox *);
+void rediwm_buffer_set_alpha_multiplier(struct rediwm_buffer *, float multiplier);
 void rediwm_buffer_set_opacity(struct rediwm_buffer *, float opacity);
 void rediwm_buffer_set_filter_mode(struct rediwm_buffer *, enum wlr_scale_filter_mode);
 void rediwm_buffer_set_transform(struct rediwm_buffer *, enum wl_output_transform);
@@ -212,6 +218,11 @@ void rediwm_buffer_set_transform(struct rediwm_buffer *, enum wl_output_transfor
 void rediwm_buffer_set_sector_rect(struct rediwm_buffer *, const float rect[4]);
 // A copy of the region, in buffer-local units; NULL clears it.
 void rediwm_buffer_set_opaque_region(struct rediwm_buffer *, const pixman_region32_t *);
+// `source` uploaded into a texture behind a buffer that holds no pixels of its
+// own: nodes showing it share the texture, and `source` may go right away. The
+// result carries one lock and is freed when the last is dropped; NULL when the
+// upload failed.
+struct wlr_buffer *rediwm_texture_buffer_create(struct wlr_renderer *, struct wlr_buffer *source);
 // The size the buffer node is shown at when nothing sets one: the destination, else
 // the buffer's own size with the transform applied.
 void rediwm_buffer_size(const struct rediwm_buffer *, int *width, int *height);

@@ -284,7 +284,7 @@ pub const VirtualInput = struct {
                     vi.keyboard.sendShiftModifier(s.active);
                 },
                 .axis => |a| {
-                    vi.server.input.processAxis(now, a.orientation, a.delta, 0, .continuous);
+                    vi.server.input.processAxis(now, a.orientation, a.delta, 0, .continuous, .identical);
                     vi.server.input.seat.pointerNotifyFrame();
                 },
             }

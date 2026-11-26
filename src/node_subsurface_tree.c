@@ -3,6 +3,7 @@
 #define WLR_USE_UNSTABLE
 #define WLR_PRIVATE private
 #include "node_surface.h"
+#include "glass.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <wlr/types/wlr_compositor.h>
@@ -114,6 +115,11 @@ static void subsurface_tree_reconfigure(struct rediwm_subsurface_tree *subsurfac
     if (has_clip) subsurface_tree_reconfigure_clip(child);
   }
 
+  if (subsurface_tree->scene_surface->glass) {
+    struct rediwm_node *glass = rediwm_glass_node(subsurface_tree->scene_surface->glass);
+    if (prev) rediwm_node_place_above(glass, prev);
+    prev = glass;
+  }
   if (prev != NULL) rediwm_node_place_above(&subsurface_tree->scene_surface->buffer->node, prev);
   prev = &subsurface_tree->scene_surface->buffer->node;
 

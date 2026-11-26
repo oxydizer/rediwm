@@ -5,6 +5,7 @@
 const i18n = @import("i18n");
 const std = @import("std");
 const wlr = @import("wlroots");
+const wl = @import("wayland").server.wl;
 const sn = @import("../node.zig");
 const pixman = @import("pixman");
 const gpa = @import("../main.zig").gpa;
@@ -87,6 +88,8 @@ nav_selection: anim.Anim = .{},
 nav_selected_row: f32 = 0,
 nav_hover: ui.hover_glide.Glide = .{},
 background: panel_paint.Background = .{},
+/// Fires `idle_release_ms` after the last paint (`releaseIdlePixels`).
+idle_timer: ?*wl.EventSource = null,
 /// Content size; x/y stay 0 (see `screenBox`).
 panel_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
 
@@ -226,6 +229,7 @@ fn createWindow(server: *Server, wlr_output: *wlr.Output, welcome: bool) !*Contr
     @memcpy(cc.selected_output_name[0..cc.selected_output_name_len], host_name[0..cc.selected_output_name_len]);
     cc.node_data = .{ .role = .{ .control_center = cc } };
     scene_data.SceneData.attach(&cc.node_data, &buffer_node.node);
+    cc.idle_timer = server.wl_server.getEventLoop().addTimer(*ControlCenter, idleTimer, cc) catch null;
 
     server.input.open_control_center = cc;
     if (!welcome) {
@@ -243,6 +247,8 @@ pub fn close(cc: *ControlCenter) void {
 }
 
 pub fn destroy(cc: *ControlCenter) void {
+    if (cc.idle_timer) |timer| timer.remove();
+    cc.idle_timer = null;
     // Dispatcher holds raw pointers into this tree. Drop them before the
     // allocation goes away so a later reopen's first motion doesn't
     // switch on a freed WidgetKind tag.
@@ -356,7 +362,8 @@ pub fn localPoint(cc: *const ControlCenter, lx: f64, ly: f64) struct { x: f64, y
 
 /// Nothing left to lay out, paint or glide.
 pub fn settled(cc: *const ControlCenter) bool {
-    return !cc.dirty and !cc.refresh_pending and !cc.layout_pending and !cc.scroll_gliding and !cc.bars.active and
+    return cc.root.measured_scale == cc.toplevel.render_scale and !cc.dirty and !cc.refresh_pending and
+        !cc.layout_pending and !cc.scroll_gliding and !cc.bars.active and
         cc.nav_selection.settled(anim.nowMs()) and !cc.nav_hover.animating(anim.nowMs());
 }
 
@@ -404,3 +411,9 @@ pub const paintNavHighlights = cc_paint.paintNavHighlights;
 pub const requestWidgetRepaint = cc_paint.requestWidgetRepaint;
 pub const requestRepaint = cc_paint.requestRepaint;
 pub const paintContent = cc_paint.paintContent;
+pub const releaseIdlePixels = cc_paint.releaseIdlePixels;
+
+fn idleTimer(cc: *ControlCenter) c_int {
+    cc.releaseIdlePixels();
+    return 0;
+}

@@ -22,6 +22,8 @@ def compile_fixture(tmp):
         ["pkg-config", "--variable=pkgdatadir", "wayland-protocols"], text=True).strip())
     sources = []
     for name, path in (("ext-session-lock-v1", system / "staging/ext-session-lock/ext-session-lock-v1.xml"),
+                       ("xdg-foreign-unstable-v1", system / "unstable/xdg-foreign/xdg-foreign-unstable-v1.xml"),
+                       ("xdg-foreign-unstable-v2", system / "unstable/xdg-foreign/xdg-foreign-unstable-v2.xml"),
                        ("wlr-screencopy-unstable-v1", ROOT / "protocol/wlr-screencopy-unstable-v1.xml"),
                        ("security-context-v1", system / "staging/security-context/security-context-v1.xml")):
         for mode, suffix in (("client-header", "client-protocol.h"), ("private-code", "protocol.c")):
@@ -29,7 +31,7 @@ def compile_fixture(tmp):
         sources.append(str(tmp / f"{name}-protocol.c"))
     for name, relative in [("xdg-shell", "stable/xdg-shell/xdg-shell.xml")] + [
             (name + "-v1", f"staging/{name}/{name}-v1.xml") for name in
-            ("xdg-toplevel-tag", "content-type", "tearing-control", "color-management",
+            ("xdg-toplevel-tag", "xdg-system-bell", "xdg-dialog", "content-type", "tearing-control", "color-management",
              "color-representation", "ext-workspace")]:
         for mode, suffix in (("client-header", "client-protocol.h"), ("private-code", "protocol.c")):
             subprocess.run(["wayland-scanner", mode, str(system / relative), str(tmp / f"{name}-{suffix}")], check=True)
@@ -48,9 +50,9 @@ def locked(ipc):
 
 
 class Session:
-    def __init__(self, tmp, outputs="1", config="[compositor]\nxwayland = false\n", scale="1"):
+    def __init__(self, tmp, outputs="1", config="[compositor]\nxwayland = false\n", scale="1", env_extra=None):
         self.tmp = tmp
-        self.process, self.log = spawn_compositor(tmp, scale=scale, outputs=outputs, config_content=config)
+        self.process, self.log = spawn_compositor(tmp, scale=scale, outputs=outputs, config_content=config, env_extra=env_extra)
         self.ipc = IPCClient(tmp, timeout=15).connect()
         self.ipc.wait_for("wallpaper_presented", timeout_ms=10000)
         self.env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=wayland_display_name(tmp))
@@ -87,16 +89,16 @@ class Session:
         assert "panic:" not in text and "reached unreachable" not in text, text[-4000:]
 
 
+def read_line(child, timeout=10):
+    assert select.select([child.stdout], [], [], timeout)[0], "timed out waiting for fixture output"
+    line = child.stdout.readline()
+    assert line, f"fixture exited before replying: {child.poll()}"
+    return line.strip()
+
+
 def expect_line(child, wanted, timeout=10):
-    """Next stdout line of a fixture, which must be `wanted`."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        ready, _, _ = select.select([child.stdout], [], [], 0.1)
-        if ready:
-            line = child.stdout.readline().strip()
-            assert line == wanted, (line, wanted)
-            return
-    raise AssertionError(f"fixture did not print {wanted!r}")
+    line = read_line(child, timeout)
+    assert line == wanted, (line, wanted)
 
 
 def output_management(tmp):
@@ -118,10 +120,25 @@ def output_management(tmp):
         # and the mode stays as configured.
         s.run("wlr-randr", "--output", "HEADLESS-1", "--adaptive-sync", "enabled", ok=False)
         assert s.output("HEADLESS-1")["adaptive_sync"] == "auto"
+        # Headless outputs persist HDR settings and keep an SDR signal.
+        out = s.output("HEADLESS-2")
+        assert (out["hdr"], out["hdr_supported"], out["hdr_active"], out["sdr_white"]) == ("off", False, False, 203), out
+        s.ipc.request(query="set_output_config", params={"output": "HEADLESS-2", "hdr": "on", "sdr_white": 250})
+        wait_for(lambda: (s.output("HEADLESS-2")["hdr"], s.output("HEADLESS-2")["sdr_white"]) == ("on", 250), "hdr not saved")
+        assert not s.output("HEADLESS-2")["hdr_active"]
+        for params in ({"sdr_white": 79}, {"sdr_white": 1001}, {"hdr": "auto"}):
+            try:
+                s.ipc.request(query="set_output_config", params={"output": "HEADLESS-2", **params})
+            except IPCError:
+                pass
+            else:
+                raise AssertionError(f"accepted {params}")
+        assert s.output("HEADLESS-2")["sdr_white"] == 250
 
         # Client changes persist like Settings changes.
         saved = (tmp / "rediwm-config.toml").read_text()
         assert 'name = "HEADLESS-1"' in saved and "x = 2000" in saved, saved
+        assert 'hdr = "on"' in saved and "sdr_white = 250" in saved, saved
 
         s.run("wlr-randr", "--output", "HEADLESS-2", "--off")
         wait_for(lambda: not s.output("HEADLESS-2")["enabled"], "output not disabled")
@@ -199,7 +216,8 @@ def session_lock(tmp):
         expect_line(lock, "locked")
         assert locked(s.ipc)
         # Everything else is refused while locked.
-        refused = s.spawn(fixture, "lock")
+        # Keep stdin open until the lock client receives the compositor's reply.
+        refused = s.spawn(fixture, "lock", stdin=subprocess.PIPE)
         expect_line(refused, "finished")
         copy = s.run(fixture, "screencopy", ok=None)
         assert copy.returncode == 3 and copy.stdout.strip() == "disconnected", (copy.returncode, copy.stdout)
@@ -241,7 +259,7 @@ def session_lock(tmp):
         except IPCError as exc:  # the release already meets the lock
             assert "SessionLocked" in str(exc), exc
         wait_for(lambda: locked(s.ipc), "built-in lock did not engage")
-        refused = s.spawn(fixture, "lock")
+        refused = s.spawn(fixture, "lock", stdin=subprocess.PIPE)
         expect_line(refused, "finished")
         assert locked(s.ipc)
     finally:
@@ -254,18 +272,30 @@ def extra_protocols(tmp):
     s = Session(tmp, outputs="2", config=config)
     try:
         fixture = str(tmp / "fixture")
-        registry = s.run(fixture, "dump-registry").stdout
+        registry = s.run(fixture, "dump-registry", "--versions").stdout
+        globals_ = [line.split() for line in registry.splitlines() if line and line != "done"]
+        versions = {name: int(version) for name, version in globals_}
+        assert versions["wl_fixes"] == 1, versions
+        # delete_id acknowledges the server released this particular registry.
+        released = subprocess.run([fixture, "release-registry"], env=dict(s.env, WAYLAND_DEBUG="client"),
+                                  capture_output=True, text=True, check=True, timeout=15)
+        registry_id = int(released.stdout.strip())
+        assert f".delete_id({registry_id})" in released.stderr, released.stderr
+        assert versions["xdg_wm_base"] == 7 and versions["zwlr_layer_shell_v1"] == 5, versions
+        assert versions["xdg_system_bell_v1"] == 1, versions
+        if "zwp_linux_dmabuf_v1" in versions:
+            assert versions["zwp_linux_dmabuf_v1"] == 5, versions
         for interface in ("ext_workspace_manager_v1", "wp_color_manager_v1",
                           "wp_color_representation_manager_v1", "xdg_toplevel_tag_manager_v1",
                           "wp_content_type_manager_v1", "wp_tearing_control_manager_v1",
-                          "xdg_activation_v1", "wp_fifo_manager_v1"):
-            assert interface in registry, interface
-        assert "wp_drm_lease_device_v1" not in registry, "headless backend must not offer DRM leases"
+                          "xdg_activation_v1", "wp_fifo_manager_v1", "wp_commit_timing_manager_v1"):
+            assert interface in versions, interface
+        assert "wp_drm_lease_device_v1" not in versions, "headless backend must not offer DRM leases"
         # Every global is advertised once. linux-dmabuf used to be created both
         # by wlr_renderer_init_wl_display and by setup.zig, and Mesa's WSI bound
         # both and leaked one. Only per-device globals repeat: one wl_output
         # per output (two here), and a seat per seat.
-        counts = Counter(line for line in registry.splitlines() if line and line != "done")
+        counts = Counter(name for name, _ in globals_)
         repeated = {name: n for name, n in counts.items() if n > 1 and name not in ("wl_output", "wl_seat")}
         assert not repeated, f"globals advertised more than once: {repeated}"
         assert counts["wl_output"] == 2, counts
@@ -321,8 +351,211 @@ def extra_protocols(tmp):
     print("PASS: workspace, tags, content hints, tearing hints and renderer colour negotiation")
 
 
+def system_bell(tmp):
+    theme = tmp / "sounds/bell-test/stereo"
+    theme.mkdir(parents=True)
+    sound = theme / "bell.wav"
+    sound.touch()
+    calls = tmp / "playbacks"
+    calls.touch()
+    player = tmp / "paplay"
+    player.write_text('#!/bin/sh\nprintf "%s\\n" "$4" >> "$XDG_RUNTIME_DIR/playbacks"\n')
+    player.chmod(0o700)
+    config = '[compositor]\nxwayland = false\nsound_theme = "bell-test"\n'
+    s = Session(tmp, config=config, env_extra={"XDG_DATA_HOME": str(tmp), "PATH": f"{tmp}:{os.environ['PATH']}"})
+    try:
+        fixture = str(tmp / "fixture")
+        child = s.spawn(fixture, "extras", stdin=subprocess.PIPE)
+        expect_line(child, "extras-ready")
+
+        def ring(command, total):
+            child.stdin.write(command + "\n")
+            child.stdin.flush()
+            expect_line(child, "rang")
+            wait_for(lambda: len(calls.read_text().splitlines()) >= total, f"{command}: expected {total} playbacks")
+            # Catch extra launches in the burst and start the next check outside the cooldown.
+            time.sleep(0.35)
+            assert calls.read_text().splitlines() == [str(sound)] * total, (command, calls.read_text())
+
+        ring("bell-surface", 1)
+        ring("bell-burst", 2)
+        for setting in ('sound_disabled_events = ["bell"]', 'sound_enabled = false'):
+            (tmp / "rediwm-config.toml").write_text(config + setting + "\n")
+            s.ipc.reload_config()
+            ring("bell-surface", 2)
+        (tmp / "rediwm-config.toml").write_text(config)
+        s.ipc.reload_config()
+        marker = theme / "bell.disabled"
+        marker.touch()
+        ring("bell-surface", 2)
+        marker.unlink()
+
+        lock = s.spawn(fixture, "lock", stdin=subprocess.PIPE)
+        expect_line(lock, "locked")
+        ring("bell-burst", 2)
+        lock.stdin.write("unlock\n")
+        lock.stdin.flush()
+        expect_line(lock, "unlocked")
+        ring("bell-surface", 3)
+        child.stdin.write("exit\n")
+        child.stdin.flush()
+        assert child.wait(timeout=5) == 0
+        result = s.ipc.action("play_sound", {"event": "bell"})
+        assert result["event"] == "bell" and result["pid"] > 0, result
+        wait_for(lambda: calls.read_text().splitlines() == [str(sound)] * 4, "IPC sound did not play")
+    finally:
+        s.close()
+    print("PASS: xdg-system-bell playback, burst coalescing, mute and session lock")
+
+
+def xdg_foreign(tmp):
+    s = Session(tmp, config='[compositor]\nxwayland = false\ndesktop_mode = "workspaces"\n')
+    try:
+        def launch(version, *args):
+            return s.spawn(str(tmp / "fixture"), "xdg-foreign", str(version), *args, stdin=subprocess.PIPE)
+
+        def advance(client):
+            client.stdin.write("\n")
+            client.stdin.flush()
+
+        def finish(client):
+            advance(client)
+            assert client.wait(timeout=5) == 0
+
+        for export_version, import_version in ((1, 1), (2, 2), (1, 2), (2, 1)):
+            parent = launch(export_version)
+            handle = read_line(parent)
+            assert handle
+            child = launch(import_version, handle)
+            expect_line(child, "parented")
+            child_id = s.window("rediwm.foreign-child")["id"]
+            parent_id = s.window("rediwm.foreign-parent")["id"]
+
+            # Moving the child to another workspace carries its actual owner with it.
+            s.ipc.action("move_to_workspace", {"id": child_id, "workspace": 2})
+            assert s.window("rediwm.foreign-parent")["workspace_id"] == 2
+            advance(parent)
+            expect_line(child, "revoked")
+            s.ipc.action("move_to_workspace", {"id": parent_id, "workspace": 1})
+            assert s.window("rediwm.foreign-child")["workspace_id"] == 2
+            finish(child)
+
+            stale = launch(import_version, handle)
+            expect_line(stale, "revoked")
+            finish(stale)
+            finish(parent)
+    finally:
+        s.close()
+    print("PASS: xdg-foreign v1/v2 parenting, cross-version handles and revocation")
+
+
+def xdg_dialog(tmp):
+    def launch(s, initial):
+        child = s.spawn(str(tmp / "fixture"), "xdg-dialog", initial, stdin=subprocess.PIPE)
+        expect_line(child, "mapped")
+        owner, dialog = wait_for(lambda: (s.window("rediwm.dialog-owner"), s.window("rediwm.dialog")),
+                                 "owner and dialog did not map", timeout=10)
+        for window in (owner, dialog):
+            s.ipc.wait_for("window_geometry_settled", window_id=window["id"])
+        return child, owner["id"], dialog["id"]
+
+    def send(child, command):
+        child.stdin.write(command + "\n")
+        child.stdin.flush()
+        expect_line(child, "ok")
+
+    def focused(s):
+        return next((w["app_id"] for w in s.ipc.get_windows() if w["is_focused"]), None)
+
+    def expect_focus(s, app_id, message):
+        wait_for(lambda: focused(s) == app_id, lambda: f"{message}: focus is on {focused(s)}")
+
+    def on_top(s, app_id):
+        # The dialog's middle, where it covers its owner.
+        dialog = s.window("rediwm.dialog")
+        hit = s.ipc.hit_test(dialog["x"] + dialog["width"] // 2, dialog["y"] + dialog["height"] // 2)
+        return hit.get("window_id") == s.window(app_id)["id"]
+
+    def middle(window):
+        return (window["x"] + window["width"] / 2, window["y"] + window["height"] / 2)
+
+    s = Session(tmp)
+    try:
+        child, owner_id, dialog_id = launch(s, "modal")
+        owner, dialog = s.window("rediwm.dialog-owner"), s.window("rediwm.dialog")
+        assert dialog["parent_id"] == owner_id and dialog.get("is_modal"), dialog
+        assert "parent_id" not in owner and "is_modal" not in owner, owner
+        assert all(abs(a - b) <= 2 for a, b in zip(middle(dialog), middle(owner))), (dialog, owner)
+        expect_focus(s, "rediwm.dialog", "a mapped modal dialog lacks the keyboard")
+
+        # Focusing the owner (a click, its chip, Alt-Tab) passes the keyboard to the dialog.
+        s.ipc.focus_window(owner_id)
+        expect_focus(s, "rediwm.dialog", "focusing the owner of a modal dialog")
+        assert on_top(s, "rediwm.dialog")
+
+        # Without the hint the owner takes the keyboard; its dialog stays above it.
+        send(child, "plain")
+        assert "is_modal" not in s.window("rediwm.dialog")
+        s.ipc.focus_window(owner_id)
+        expect_focus(s, "rediwm.dialog-owner", "focusing the owner of a plain dialog")
+        assert on_top(s, "rediwm.dialog")
+
+        # Turning modal while the owner has the keyboard takes it over.
+        send(child, "modal")
+        expect_focus(s, "rediwm.dialog", "a dialog turning modal under a focused owner")
+
+        # Minimizing the modal dialog minimizes its owner; both come back together.
+        s.ipc.minimize(dialog_id)
+        wait_for(lambda: s.window("rediwm.dialog-owner")["is_minimized"], "owner stayed up with its modal dialog minimized")
+        wait_for(lambda: not on_top(s, "rediwm.dialog"), "the dialog of a minimized owner is still shown")
+        assert focused(s) is None and not s.window("rediwm.dialog")["is_minimized"]
+        s.ipc.focus_window(owner_id)
+        expect_focus(s, "rediwm.dialog", "restoring the owner of a modal dialog")
+        assert not s.window("rediwm.dialog-owner")["is_minimized"] and on_top(s, "rediwm.dialog")
+        s.ipc.minimize(owner_id)
+        wait_for(lambda: not on_top(s, "rediwm.dialog"), "minimizing the owner left its dialog shown")
+        assert focused(s) is None
+        s.ipc.restore(owner_id)
+        expect_focus(s, "rediwm.dialog", "restoring the owner of a modal dialog")
+        assert on_top(s, "rediwm.dialog")
+
+        # Destroying the dialog object drops the hint.
+        send(child, "drop")
+        assert "is_modal" not in s.window("rediwm.dialog")
+        s.ipc.focus_window(owner_id)
+        expect_focus(s, "rediwm.dialog-owner", "focusing the owner after the hint was dropped")
+
+        send(child, "close")
+        wait_for(lambda: s.window("rediwm.dialog") is None, "dialog did not close")
+        expect_focus(s, "rediwm.dialog-owner", "closing the dialog")
+        child.stdin.write("quit\n")
+        child.stdin.flush()
+        assert child.wait(timeout=5) == 0
+    finally:
+        s.close()
+
+    # On a workspace, minimizing an owner whose dialog has the keyboard must not
+    # hand focus back to the hidden dialog: that would restore the owner.
+    (tmp / "workspaces").mkdir()
+    s = Session(tmp / "workspaces", config='[compositor]\nxwayland = false\ndesktop_mode = "workspaces"\n')
+    try:
+        child, owner_id, dialog_id = launch(s, "plain")
+        expect_focus(s, "rediwm.dialog", "a mapped dialog lacks the keyboard")
+        s.ipc.minimize(owner_id)
+        wait_for(lambda: s.window("rediwm.dialog-owner")["is_minimized"], "owner was not minimized")
+        time.sleep(0.3)
+        assert s.window("rediwm.dialog-owner")["is_minimized"], "minimizing the owner was undone"
+        assert focused(s) is None, focused(s)
+        child.stdin.write("quit\n")
+        child.stdin.flush()
+        assert child.wait(timeout=5) == 0
+    finally:
+        s.close()
+    print("PASS: xdg-dialog modal focus, placement, minimize and hint changes")
+
+
 def run():
-    for case in (extra_protocols, output_management, foreign_toplevel, screencopy_and_virtual_pointer, session_lock):
+    for case in (xdg_dialog, xdg_foreign, system_bell, extra_protocols, output_management, foreign_toplevel, screencopy_and_virtual_pointer, session_lock):
         with tempfile.TemporaryDirectory(prefix="rediwm-wlr-protocols-") as directory:
             tmp = Path(directory)
             compile_fixture(tmp)

@@ -10,6 +10,7 @@ just the position-equals-root-coordinates fallback path.
 Speaks line commands on stdin, one status line per event on stdout. Never
 touches the host DISPLAY; the test harness sets ours via the environment.
 """
+import os
 import sys
 
 import gi
@@ -40,9 +41,16 @@ def build_menu():
 
 
 def on_button_press(_widget, event):
+    if os.getenv("REDIWM_TEST_POINTER_LOG") and event.type == Gdk.EventType.BUTTON_PRESS:
+        emit(f"button {int(event.button)} {round(event.x)} {round(event.y)}")
     if event.button == 3:
         menu.popup_at_pointer(event)
         emit("popup")
+    return True
+
+
+def on_button_release(_widget, event):
+    emit(f"release {int(event.button)} {round(event.x)} {round(event.y)}")
     return True
 
 
@@ -66,6 +74,18 @@ def handle_command(line):
     elif line == "tooltip":
         Gtk.Tooltip.trigger_tooltip_query(Gdk.Display.get_default())
         emit("tooltip-query")
+    elif line.startswith("xwm-barrier "):
+        # Let GTK finish repainting after ConfigureNotify, including its opaque
+        # region property. Publish one final property on the same X connection
+        # so the harness can observe wlroots consuming everything before it.
+        title = line.split(" ", 1)[1]
+        clock = window.get_frame_clock()
+        def after_paint(clock):
+            clock.disconnect(handler)
+            window.get_window().set_utf8_property("_NET_WM_NAME", title)
+            Gdk.Display.get_default().flush()
+        handler = clock.connect("after-paint", after_paint)
+        window.queue_draw()
     elif line == "quit":
         Gtk.main_quit()
 
@@ -81,11 +101,15 @@ def on_stdin(fd, _condition):
 
 def main():
     global window, menu, combo, tooltip_button
-    window = Gtk.Window(title="GTK Xwayland Fixture")
+    window = Gtk.Window(title=os.getenv("REDIWM_TEST_TITLE", "GTK Xwayland Fixture"))
     window.set_wmclass("gtk-xwayland-fixture", "GtkXwaylandFixture")
     window.set_default_size(300, 200)
     window.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
     window.connect("button-press-event", on_button_press)
+    if os.getenv("REDIWM_TEST_POINTER_LOG"):
+        window.connect("enter-notify-event", lambda w, e: emit(f"enter {round(e.x)} {round(e.y)}"))
+        window.add_events(Gdk.EventMask.BUTTON_RELEASE_MASK)
+        window.connect("button-release-event", on_button_release)
     window.connect("configure-event", on_configure_event)
     window.connect("destroy", lambda *_a: Gtk.main_quit())
     fixed = Gtk.Fixed()

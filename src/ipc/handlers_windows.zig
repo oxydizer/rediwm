@@ -136,7 +136,7 @@ pub fn handleWindowAction(
         },
         .set_workspace_layout => |p| {
             if (!server.world.workspaces.active) return .{ .err = "WorkspaceModeRequired" };
-            @import("../config_runtime/workspace_controls.zig").automatic(server, p.workspace, p.automatic);
+            @import("../config_runtime/workspace_controls.zig").layout(server, p.workspace, p.layout);
             return .{ .ok = .handled };
         },
         .switch_workspace => |p| {

@@ -42,8 +42,8 @@ pub fn wallpaper(server: *Server, a: std.mem.Allocator) !protocol.Response {
         .displayed_path = server.wallpaper_displayed_path,
         .loading = server.wallpaper_loader != null,
         .failed = server.wallpaper_failed,
-        .width = if (server.wallpaper) |w| @intCast(w.base.width) else null,
-        .height = if (server.wallpaper) |w| @intCast(w.base.height) else null,
+        .width = if (server.wallpaper) |w| @intCast(w.width()) else null,
+        .height = if (server.wallpaper) |w| @intCast(w.height()) else null,
     } } };
 }
 

@@ -250,13 +250,13 @@ const ParseState = struct {
 
         if (state.seen_keybinds) {
             // Keep laptop controls, System Monitor, nested-session switching, the
-            // overview, input source shortcut and the way out of an inhibiting client
-            // available in existing configs too.
+            // overview, input source and desktop mode shortcuts and the way out of
+            // an inhibiting client available in existing configs too.
             // Explicit bindings (including noop) always take precedence.
             const defaults = try parseKeybindsOnly(cfg.arena.allocator(), default_file.source);
             for (defaults) |bind| {
                 const nested_switcher = bind.modifiers.ctrl and (bind.action == .focus_next or bind.action == .focus_prev);
-                if (!keybinds.isHardwareAction(bind.action) and !nested_switcher and bind.action != .restore_shortcuts and bind.action != .open_system_monitor and bind.action != .input_source_next and bind.action != .toggle_overview) continue;
+                if (!keybinds.isHardwareAction(bind.action) and !nested_switcher and bind.action != .restore_shortcuts and bind.action != .open_system_monitor and bind.action != .input_source_next and bind.action != .toggle_overview and bind.action != .toggle_desktop_mode) continue;
                 const key = keybinds.pack(bind.modifiers, bind.sym);
                 var overridden = false;
                 for (state.bind_list.items) |custom| {
@@ -510,7 +510,8 @@ pub fn applyWorkspaceKeybinds(cfg: *Config, overrides: std.ArrayListUnmanaged(Ke
     const defaults = try parseKeybindsOnly(a, @import("workspace_defaults.zig").source);
     const canvas = try parseKeybindsOnly(a, default_file.source);
     for ([_][]Keybind{ defaults, canvas }, 0..) |binds, source| for (binds) |bind| {
-        if (source == 1 and !keybinds.isHardwareAction(bind.action) and bind.action != .restore_shortcuts) continue;
+        // The desktop mode key comes along so the same key switches back.
+        if (source == 1 and !keybinds.isHardwareAction(bind.action) and bind.action != .restore_shortcuts and bind.action != .toggle_desktop_mode) continue;
         const key = keybinds.pack(bind.modifiers, bind.sym);
         const overridden = for (list.items) |custom| {
             if (keybinds.pack(custom.modifiers, custom.sym) == key) break true;

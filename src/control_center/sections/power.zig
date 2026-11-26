@@ -118,7 +118,7 @@ fn profileCard(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         s.values[@backingInt(Field.keyboard)] = values.items;
         try rows.append(a, try row(cc, a, i18n.tr("Keyboard backlight"), select(cc, "power_keyboard", .keyboard, labels, selected.?)));
     }
-    try rows.append(a, try panel.paragraph(a, i18n.tr("Brightness and power mode apply on login and when the power source changes. Manual changes last until the next source change."), @max(180, @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 140), 12, true));
+    try rows.append(a, try panel.paragraph(cc.toplevel.render_scale, a, i18n.tr("Brightness and power mode apply on login and when the power source changes. Manual changes last until the next source change."), @max(180, @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 140), 12, true));
     try rows.append(a, try number(s, cc, a, .dim, "power_dim", i18n.tr("Dim screen after"), p.dim_after_seconds, true));
     if (p.dim_after_seconds > 0) try rows.append(a, try number(s, cc, a, .dim_brightness, "power_dim_brightness", i18n.tr("Dim brightness"), p.dim_brightness, false));
     try rows.append(a, try number(s, cc, a, .blank, "power_blank", i18n.tr("Turn off screen after"), idle.blank_after_seconds, true));

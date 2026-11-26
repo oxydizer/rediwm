@@ -61,6 +61,8 @@ done
 [ -f /usr/local/share/applications/rediwm-transfers.desktop ] || die "the torrent handler is missing"
 [ -f /usr/local/share/applications/rediwm-calculator.desktop ] || die "the Calculator launcher is missing"
 [ -f /usr/local/share/icons/hicolor/scalable/apps/rediwm-calculator.svg ] || die "the Calculator icon is missing"
+[ -f /usr/local/share/icons/hicolor/256x256/apps/redi-video-icon.png ] || die "the Videos icon is missing"
+[ -f /usr/local/share/applications/rediwm-mimeapps.list ] || die "the RediWM default applications list is missing"
 [ -f /usr/share/wayland-sessions/rediwm-release-safe.desktop ] || die "the session entry is missing"
 [ -d /usr/local/lib/rediwm ] || die "the bundled libraries are missing"
 runuser -u tester -- test -r /usr/local/lib/rediwm/files-bash.so || die "the Files Bash integration is missing or unreadable"

@@ -337,7 +337,7 @@ pub fn togglePathPermission(path: []const u8, index: usize) !c.mode_t {
 }
 
 fn date(timestamp: ?i64, buf: []u8) []const u8 {
-    return @import("settings.zig").dateTime(timestamp orelse return tr("Unavailable"), buf);
+    return @import("app_kit").settings.dateTime(timestamp orelse return tr("Unavailable"), buf);
 }
 
 fn describe(a: std.mem.Allocator, path: [:0]const u8, mode: c.mode_t) ![]const u8 {

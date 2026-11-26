@@ -21,6 +21,7 @@ static struct wl_shm *shm;
 static struct wl_seat *seat;
 static struct xdg_wm_base *wm;
 static struct wl_surface *surface, *child, *popup_surface;
+static struct xdg_popup *popup;
 static struct xdg_surface *xdg, *popup_xdg;
 static struct xdg_toplevel *toplevel;
 static struct zxdg_decoration_manager_v1 *decoration_manager;
@@ -28,6 +29,7 @@ static struct zxdg_toplevel_decoration_v1 *decoration;
 static int width = 400, height = 260, frames;
 static int test_min_w, test_min_h, test_max_w, test_max_h;
 static int test_unmapped;
+static unsigned test_xdg_version = 2;
 static void released(void *data, struct wl_buffer *buffer) {
   (void)data;
   wl_buffer_destroy(buffer);
@@ -271,7 +273,18 @@ static void top_configure(void *data, struct xdg_toplevel *t, int32_t w,
                           int32_t h, struct wl_array *states) {
   (void)data;
   (void)t;
-  (void)states;
+  if (test_xdg_version >= 6) {
+    uint32_t *state;
+    int top = 0, bottom = 0, left = 0, right = 0;
+    wl_array_for_each(state, states) {
+      if (*state == XDG_TOPLEVEL_STATE_CONSTRAINED_TOP) top = 1;
+      if (*state == XDG_TOPLEVEL_STATE_CONSTRAINED_BOTTOM) bottom = 1;
+      if (*state == XDG_TOPLEVEL_STATE_CONSTRAINED_LEFT) left = 1;
+      if (*state == XDG_TOPLEVEL_STATE_CONSTRAINED_RIGHT) right = 1;
+    }
+    printf("constrained%s%s%s%s\n", top ? " top" : "", bottom ? " bottom" : "",
+           left ? " left" : "", right ? " right" : "");
+  }
   if (w > 0)
     width = w;
   if (h > 0)
@@ -306,7 +319,14 @@ static void confirm_close(void *data, struct xdg_toplevel *t) {
   wl_surface_destroy(confirm_surface);
   confirm_top = NULL;
 }
-static const struct xdg_toplevel_listener confirm_top_listener = { .configure = confirm_size, .close = confirm_close };
+static void bounds(void *data, struct xdg_toplevel *top, int32_t w, int32_t h) {
+  (void)data; (void)top; (void)w; (void)h;
+}
+static void capabilities(void *data, struct xdg_toplevel *top, struct wl_array *caps) {
+  (void)data; (void)top; (void)caps;
+}
+static const struct xdg_toplevel_listener confirm_top_listener = {
+    .configure = confirm_size, .close = confirm_close, .configure_bounds = bounds, .wm_capabilities = capabilities};
 static void show_confirm(void) {
   if (confirm_top) return;
   confirm_surface = wl_compositor_create_surface(compositor);
@@ -327,7 +347,7 @@ static void top_close(void *data, struct xdg_toplevel *t) {
   exit(0);
 }
 static const struct xdg_toplevel_listener top_listener = {
-    .configure = top_configure, .close = top_close};
+    .configure = top_configure, .close = top_close, .configure_bounds = bounds, .wm_capabilities = capabilities};
 static void popup_configure(void *data, struct xdg_popup *p, int32_t x,
                             int32_t y, int32_t w, int32_t h) {
   (void)data;
@@ -338,30 +358,36 @@ static void popup_done(void *data, struct xdg_popup *p) {
   (void)data;
   (void)p;
 }
+static void popup_repositioned(void *data, struct xdg_popup *p, uint32_t token) {
+  (void)data;
+  (void)p;
+  printf("repositioned %u\n", token);
+}
 static const struct xdg_popup_listener popup_listener = {
-    .configure = popup_configure, .popup_done = popup_done};
-static void open_popup(void) {
-  if (popup_surface)
-    return;
-  popup_surface = wl_compositor_create_surface(compositor);
-  popup_xdg = xdg_wm_base_get_xdg_surface(wm, popup_surface);
-  xdg_surface_add_listener(popup_xdg, &xdg_listener, NULL);
+    .configure = popup_configure, .popup_done = popup_done, .repositioned = popup_repositioned};
+static struct xdg_positioner *popup_positioner(int x, int y) {
   struct xdg_positioner *pos = xdg_wm_base_create_positioner(wm);
   xdg_positioner_set_size(pos, 100, 60);
-  xdg_positioner_set_anchor_rect(pos, 50, 40, 1, 1);
+  xdg_positioner_set_anchor_rect(pos, x, y, 1, 1);
   xdg_positioner_set_anchor(pos, XDG_POSITIONER_ANCHOR_TOP_LEFT);
   xdg_positioner_set_gravity(pos, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
-  // Like a browser context menu: keep the popup on screen by sliding, and
-  // let the anchor rect follow the click when REDIWM_TEST_POPUP_AT is "x,y".
+  // A browser context menu permits the compositor to slide it on screen.
   if (getenv("REDIWM_TEST_POPUP_SLIDE"))
     xdg_positioner_set_constraint_adjustment(
         pos, XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X |
                  XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
+  return pos;
+}
+static void open_popup(void) {
+  if (popup_surface) return;
+  popup_surface = wl_compositor_create_surface(compositor);
+  popup_xdg = xdg_wm_base_get_xdg_surface(wm, popup_surface);
+  xdg_surface_add_listener(popup_xdg, &xdg_listener, NULL);
+  int x = 50, y = 40;
   const char *at = getenv("REDIWM_TEST_POPUP_AT");
-  int at_x, at_y;
-  if (at && sscanf(at, "%d,%d", &at_x, &at_y) == 2)
-    xdg_positioner_set_anchor_rect(pos, at_x, at_y, 1, 1);
-  struct xdg_popup *popup = xdg_surface_get_popup(popup_xdg, xdg, pos);
+  if (at && sscanf(at, "%d,%d", &x, &y) != 2) abort();
+  struct xdg_positioner *pos = popup_positioner(x, y);
+  popup = xdg_surface_get_popup(popup_xdg, xdg, pos);
   xdg_popup_add_listener(popup, &popup_listener, NULL);
   xdg_positioner_destroy(pos);
   wl_surface_commit(popup_surface);
@@ -596,7 +622,8 @@ static void global(void *d, struct wl_registry *r, uint32_t id,
   else if (!strcmp(interface, "zxdg_decoration_manager_v1"))
     decoration_manager = wl_registry_bind(r, id, &zxdg_decoration_manager_v1_interface, 1);
   else if (!strcmp(interface, "xdg_wm_base")) {
-    wm = wl_registry_bind(r, id, &xdg_wm_base_interface, 2);
+    assert(version >= test_xdg_version);
+    wm = wl_registry_bind(r, id, &xdg_wm_base_interface, test_xdg_version);
     xdg_wm_base_add_listener(wm, &wm_listener, NULL);
   } else if (!strcmp(interface, "wl_seat")) {
     seat = wl_registry_bind(r, id, &wl_seat_interface, 5);
@@ -618,6 +645,7 @@ static void decoration_configure(void *data, struct zxdg_toplevel_decoration_v1 
 static const struct zxdg_toplevel_decoration_v1_listener decoration_listener = {decoration_configure};
 int main(int argc, char *argv[]) {
   setbuf(stdout, NULL);
+  if (getenv("REDIWM_TEST_XDG_VERSION")) test_xdg_version = atoi(getenv("REDIWM_TEST_XDG_VERSION"));
   edge_mode = getenv("REDIWM_TEST_EDGE") != NULL;
   perf_mode = getenv("REDIWM_TEST_PERF") != NULL;
   perf_damage = getenv("REDIWM_TEST_PERF_DAMAGE") != NULL;
@@ -683,6 +711,12 @@ int main(int argc, char *argv[]) {
       if (fds[1].revents) {
         char command[32];
         if (!fgets(command, sizeof(command), stdin)) break;
+        int x, y;
+        if (popup && test_xdg_version >= 3 && sscanf(command, "reposition %d %d", &x, &y) == 2) {
+          struct xdg_positioner *pos = popup_positioner(x, y);
+          xdg_popup_reposition(popup, pos, 1);
+          xdg_positioner_destroy(pos);
+        }
         if (!strcmp(command, "unmap\n")) {
           test_unmapped = 1;
           wl_surface_attach(surface, NULL, 0, 0);

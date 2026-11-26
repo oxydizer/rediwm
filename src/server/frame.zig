@@ -9,6 +9,7 @@ const scene_outputs_mod = @import("../scene_outputs.zig");
 /// All output builds, including capture between frames, use the owned pass and
 /// the same swapchain/damage history. Commits stay on Output.
 pub fn buildOutputState(server: *Server, output: *scene_outputs_mod.SceneOutput, state: *wlr.Output.State) bool {
+    @import("../output/hdr.zig").syncLinear(server, output);
     return server.output_renderer.buildState(server.world.projection, output, state);
 }
 

@@ -67,8 +67,6 @@ pub const source =
     \\# ───────────────────────────────────────────────
     \\[input]
     \\natural_scroll    = true
-    \\invert_scroll     = true      # flips scroll direction in the compositor itself,
-    \\                              # so it works even on mice libinput won't natural-scroll
     \\pointer_speed         = -0.3      # -1.0 to 1.0
     \\pointer_speed_touchpad = -0.3      # -1.0 to 1.0
     \\accel_profile         = "bezier"   # flat | bezier
@@ -114,7 +112,7 @@ pub const source =
     \\# Omitted device fields inherit these defaults; delete a field to reset it.
     \\# Device fields: pointer_speed, natural_scroll, left_handed, tap_to_click,
     \\# tap_drag, disable_while_typing. The latter and speed inherit the *_touchpad
-    \\# defaults on touchpads. invert_scroll and pan_speed always remain global.
+    \\# defaults on touchpads. Scroll direction is controlled per device.
     \\
     \\# ───────────────────────────────────────────────
     \\# Compositor behaviour
@@ -123,9 +121,18 @@ pub const source =
     \\env = "none"                 # none | fcitx | ibus; daemon uses [[autostart]]
     \\
     \\[compositor]
-    \\# Optional automatically tiled workspaces; canvas remains the default.
-    \\# Workspace shortcuts are overridden separately in [keybinds.workspace].
-    \\desktop_mode = "canvas"
+    \\# Optional tiled workspaces; canvas remains the default. "workspaces" splits
+    \\# the screen between windows, "scrolling" puts them in columns on a strip
+    \\# that scrolls. Workspace shortcuts are overridden separately in
+    \\# [keybinds.workspace]. Super+Shift+W (toggle_desktop_mode) switches
+    \\# between Canvas and the tiled mode used last.
+    \\desktop_mode = "canvas"     # canvas | workspaces | scrolling
+    \\# Scrolling: the widths Super+W steps a column through (fractions of the
+    \\# screen), a new column's width, and when focus centres a column:
+    \\# never, on_overflow (one wider than the screen) or always.
+    \\scroll_column_widths = [0.333, 0.5, 0.667, 1.0]
+    \\scroll_column_width = 0.5
+    \\scroll_center = "on_overflow"
     \\floating_apps = []          # app ID glob patterns that float in workspaces
     \\# Let a fullscreen or borderless game that asks for it (VSync off) show
     \\# frames at once instead of at the next refresh. The picture may tear.
@@ -155,7 +162,7 @@ pub const source =
     \\taskbar_position = "bottom" # top or bottom
     \\taskbar_auto_hide = false # show the taskbar only when the pointer reaches its edge; false reserves its space
     \\taskbar_alignment = "center" # left, center or right; visible below 100% length
-    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "~right:input_source", "right:volume", "right:clock", "-right:power"]
+    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "-right:desktop_mode", "~right:input_source", "right:volume", "right:clock", "-right:power"]
     \\# A ~ prefix (~right:wifi, ~right:wired) shows the item only while a wireless adapter
     \\# exists, or a cable is connected, and ~right:input_source while there is more than
     \\# one keyboard layout or input method; a plain or - entry always shows or hides it.
@@ -322,6 +329,9 @@ pub const source =
     \\# primary = true             # preferred fallback output
     \\# transform = "normal"       # normal, 90, 180, 270, or flipped variants
     \\# adaptive_sync = "auto"     # variable refresh: "auto" while a game fills it, "off", "always"
+    \\# hdr = "off"                # "on": HDR10 where the display supports it (experimental)
+    \\# sdr_white = 203            # SDR brightness on an HDR output, in nits (80 to 1000)
+    \\# scroll_direction = "auto"  # scrolling strips: "auto" (the longer side), "horizontal", "vertical"
     \\#
     \\# [[outputs]]
     \\# name = "DP-2"
@@ -395,6 +405,8 @@ pub const source =
     \\"super+q"           = "close_window"
     \\"super+f"           = "toggle_fullscreen"
     \\"super+m"           = "toggle_maximize"
+    \\# Canvas <-> Workspaces; the workspace preset keeps this key too
+    \\"super+shift+w"     = "toggle_desktop_mode"
     \\# Halves and quarters; dragging a window to a screen edge snaps it too
     \\"super+shift+left"  = "tile_left"
     \\"super+shift+right" = "tile_right"

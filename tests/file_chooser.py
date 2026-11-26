@@ -12,6 +12,7 @@ import time
 
 from ipc_client import IPCClient, ROOT, spawn_compositor, stop_process
 from files_browser import wait_for
+from xwayland_support import wayland_display_name
 from ui_driver import UIDriver
 
 BACKEND = "org.freedesktop.impl.portal.desktop.rediwm"
@@ -62,7 +63,7 @@ def run():
                     ipc.key_down_up(code)
                     if ctrl: ipc.key(29, False)
                     time.sleep(.12)
-                def start(method, options=None, connection=None):
+                def start(method, options=None, connection=None, parent=""):
                     nonlocal sequence
                     sequence += 1
                     handle = f"/org/freedesktop/portal/desktop/request/test/r{sequence}"
@@ -72,7 +73,7 @@ def run():
                     def call():
                         try:
                             reply = (connection or bus).call_sync(BACKEND, PATH, IFACE, method,
-                                GLib.Variant("(osssa{sv})", (handle, "org.test.Chooser", "", "Test file dialog", opts)),
+                                GLib.Variant("(osssa{sv})", (handle, "org.test.Chooser", parent, "Test file dialog", opts)),
                                 None, Gio.DBusCallFlags.NONE, 15000, None)
                             result.append(reply.unpack())
                         except Exception as error:
@@ -93,6 +94,42 @@ def run():
                 def click(window, x, y):
                     ipc.click_at(round(window["x"] + 1 + x), round(window["y"] + 61 + y))
                     time.sleep(.15)
+
+                # The app's exported window (xdg-foreign) parents the chooser,
+                # which is modal to it unless the app asks otherwise.
+                from wlr_protocols import compile_fixture
+                fixture = tmp / "fixture"
+                fixture.mkdir()
+                compile_fixture(fixture)
+                app_env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=wayland_display_name(tmp))
+                app = subprocess.Popen([str(fixture / "fixture"), "xdg-foreign", "2"], env=app_env,
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+                try:
+                    exported = app.stdout.readline().strip()
+                    assert exported, app.poll()
+                    app_id = wait_for(lambda: next((w["id"] for w in ipc.get_windows() if w["app_id"] == "rediwm.foreign-parent"), None), "app window")
+                    for modal in (True, False):
+                        request = start("OpenFile", {"modal": GLib.Variant("b", modal)}, parent=f"wayland:{exported}")
+                        chooser = windows()[0]
+                        assert chooser.get("parent_id") == app_id and chooser.get("is_modal", False) == modal, chooser
+                        ipc.focus_window(app_id)
+                        wait_for(lambda: windows()[0]["is_focused"] == modal, f"focusing the app's window (modal={modal})")
+                        if not modal:
+                            ipc.focus_window(chooser["id"])
+                        key(1)
+                        assert finish(request) == (1, {})
+                    # An X11 window cannot parent a Wayland one.
+                    request = start("OpenFile", parent="x11:2a00004")
+                    assert "parent_id" not in windows()[0], windows()[0]
+                    key(1)
+                    assert finish(request) == (1, {})
+                    app.stdin.write("\n\n")
+                    app.stdin.flush()
+                    assert app.wait(timeout=5) == 0
+                finally:
+                    if app.poll() is None:
+                        app.kill()
+                print("the requesting app's window parents the chooser, modal unless asked otherwise", flush=True)
 
                 filters = GLib.Variant("a(sa(us))", [("Text files", [(0, "*.txt")])])
                 request = start("OpenFile", {"filters": filters})

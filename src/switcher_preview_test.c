@@ -66,6 +66,7 @@ static struct wlr_client_buffer *new_client(void) {
 static void init_surface(struct wlr_surface *surface) {
   wl_signal_init(&surface->events.destroy);
   wl_signal_init(&surface->events.commit);
+  wlr_addon_set_init(&surface->addons);
   wl_list_init(&surface->current_outputs);
   pixman_region32_init_rect(&surface->buffer_damage, 0, 0, 40, 30);
   surface->buffer = new_client();

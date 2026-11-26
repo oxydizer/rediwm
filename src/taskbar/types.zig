@@ -69,10 +69,34 @@ pub const ChipState = struct {
     // it used: a change of title alone copies it and repaints only the title.
     raster: ?*BarBuffer = null,
     raster_key: ?ChipRasterKey = null,
+    // The title box's pixels without text, for title-only repaints.
+    title_background: ?TitleBackground = null,
 
     pub fn renderX(self: ChipState, now_ms: i64) f32 {
         return self.target_x + self.flip.value(now_ms);
     }
+
+    /// Frees what the chip holds besides its node and icon.
+    pub fn releaseRasters(self: *ChipState) void {
+        if (self.raster) |raster| raster.base.drop();
+        self.raster = null;
+        if (self.title_background) |bg| gpa.free(bg.pixels);
+        self.title_background = null;
+    }
+};
+
+/// The device columns `x0..x1` of a chip raster with the pill's pixels and no
+/// title: every title-only repaint starts from them instead of evaluating the
+/// pill's distance field for each pixel again (36% of a terminal title
+/// spinner's compositor instructions, 2026-11-25). Valid for the raster key and
+/// memo (title aside) it was taken for.
+pub const TitleBackground = struct {
+    pixels: []u32,
+    key: ChipRasterKey,
+    memo: ChipMemo,
+    x0: usize,
+    x1: usize,
+    height: i32,
 };
 
 // Inputs to a chip raster that `reconcile` can change, so a title change

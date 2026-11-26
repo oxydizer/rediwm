@@ -3,18 +3,21 @@
 const std = @import("std");
 const Output = @import("../Output.zig");
 const wlr = @import("wlroots");
-const ImageBuffer = @import("../ImageBuffer.zig");
+const Wallpaper = @import("../server/wallpaper.zig").Wallpaper;
 const log = std.log.scoped(.output);
 
 // Scales the wallpaper to cover the output, cropping the overhanging axis
 // so the image keeps its aspect ratio on any screen shape.
-pub fn replaceWallpaper(output: *Output, image: *ImageBuffer) void {
+pub fn replaceWallpaper(output: *Output, image: Wallpaper) void {
     if (output.wallpaper) |node| node.node.destroy();
-    output.wallpaper = output.server.background_tree.createSceneBuffer(&image.base) catch |err| blk: {
+    output.wallpaper = output.server.background_tree.createSceneBuffer(null) catch |err| blk: {
         log.err("replaceWallpaper: could not create wallpaper node: {}", .{err});
         break :blk null;
     };
-    if (output.wallpaper) |node| node.setFilterMode(.bilinear);
+    if (output.wallpaper) |node| {
+        node.setBuffer(image.buffer);
+        node.setFilterMode(.bilinear);
+    }
     output.syncWallpaper();
     output.wlr_output.scheduleFrame();
 }
@@ -28,10 +31,10 @@ pub fn syncWallpaper(output: *Output) void {
     if (box.width <= 0 or box.height <= 0) return;
 
     node.node.setPosition(box.x, box.y);
-    node.setDestSize(box.width, box.height);
+    image.attach(node, box.width, box.height);
 
-    const image_width: f64 = @floatFromInt(image.width);
-    const image_height: f64 = @floatFromInt(image.height);
+    const image_width: f64 = @floatFromInt(image.width());
+    const image_height: f64 = @floatFromInt(image.height());
     const dest_width: f64 = @floatFromInt(box.width);
     const dest_height: f64 = @floatFromInt(box.height);
     const scale = @max(dest_width / image_width, dest_height / image_height);

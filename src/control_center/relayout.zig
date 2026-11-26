@@ -103,6 +103,24 @@ pub fn applyPending(cc: *ControlCenter) void {
             cc.relayout();
             cc.requestRepaint();
         }
+        if (display_section.pendingScrollDirection(&cc.display)) |direction| {
+            const output = @import("../Output.zig").fromWlr(cc.selectedDisplayOutput() orelse return) orelse return;
+            cc.applyOutputPatch(output, .{ .scroll_direction = direction });
+            cc.relayout();
+            cc.requestRepaint();
+        }
+        if (display_section.pendingHdr(&cc.display)) |mode| {
+            const output = @import("../Output.zig").fromWlr(cc.selectedDisplayOutput() orelse return) orelse return;
+            cc.applyOutputPatch(output, .{ .hdr = mode });
+            cc.relayout();
+            cc.requestRepaint();
+        }
+        if (display_section.pendingSdrWhite(&cc.display)) |nits| {
+            const output = @import("../Output.zig").fromWlr(cc.selectedDisplayOutput() orelse return) orelse return;
+            cc.applyOutputPatch(output, .{ .sdr_white = nits });
+            cc.relayout();
+            cc.requestRepaint();
+        }
     }
     if (cc.pending_page) |page| {
         cc.pending_page = null;
@@ -161,7 +179,7 @@ pub fn layoutContent(cc: *ControlCenter) void {
         cc.body_children[1].kind.scroll_container = cc.search.saved_scroll;
         cc.search.restore_scroll = false;
     }
-    ui.measure.measure(&cc.root, width, height);
+    ui.measure.measureAtScale(&cc.root, width, height, cc.toplevel.render_scale);
     ui.arrange.arrange(&cc.root, 0, 0, width, height);
     if (!cc.search.empty() and ui.input.current.focused != &cc.search.field) {
         if (cc.page == .appearance) appearance_section.restoreItemFocus(&cc.appearance);

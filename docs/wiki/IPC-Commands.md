@@ -49,7 +49,7 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 | Command | CLI | What it does |
 | --- | --- | --- |
 | `outputs` | `outputs` | list outputs |
-| `set_output_config` | `output-config <out> ...` | mode, transform, position, scale, enable. Applied and saved |
+| `set_output_config` | `output-config <out> ...` | mode, transform, position, scale, variable refresh, HDR, scroll direction, enable. Applied and saved |
 | `workspaces` | `workspaces` | there's one, the canvas (`workspace_id = 1`) |
 | `get_camera` | none | position, bounds, zoom |
 | `set_camera` / `reset_camera` | none | `set_camera` takes integer `x`, `y` |
@@ -58,7 +58,9 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 
 `output-config` flags: `--width --height --refresh-mhz --x --y`,
 `--scale <1..3|auto>`, `--position auto`, `--transform <normal|90|180|270|flipped|flipped_90|flipped_180|flipped_270>`,
-`--enabled`/`--disabled`, `--primary`/`--no-primary`. `auto` clears the override.
+`--enabled`/`--disabled`, `--primary`/`--no-primary`, `--adaptive-sync <off|auto|always>`,
+`--hdr <off|on>`, `--sdr-white <80..1000>` (nits),
+`--scroll-direction <auto|horizontal|vertical>`. `auto` clears the override.
 
 ## Inspecting the shell and scene
 
@@ -95,7 +97,7 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 | **[auto]** `move_cursor_relative` | Action `move-cursor-relative --dx --dy` | |
 | **[auto]** `pointer_button` | Action `pointer-button --button --pressed` | Linux button codes |
 | **[auto]** `click` | Action `click [--button]` | left by default |
-| **[auto]** `scroll` | Action `scroll --dx --dy` | |
+| **[auto]** `scroll` | Action `scroll --dx --dy` | IPC `finger: true` sends touchpad scrolling; zero deltas lift the fingers |
 | **[auto]** `key` | Action `key --keycode --pressed` | Linux keycodes |
 | **[auto]** `key_press` | Action `key-press --key` | named key or chord |
 | **[auto]** `type_text` | Action `type-text --text` | |
@@ -113,7 +115,7 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 | --- | --- | --- |
 | **[auto]** `screenshot` | Action `screenshot` | `--output`, `--window`, `--mode`, `--include-cursor`, `--path`, `--save`. Raw params also take `crop` and `crop_space` (`logical` or `device`) |
 | **[auto]** `dump_buffer` | `dump-buffer <target>` | targets: `titlebar`, `skirt`, `start_menu`, `control_center`, `power_menu`, `taskbar`. `--id`, `--output` |
-| **[auto]** `sample_pixels` | `sample-pixels <x> <y> <w> <h>` | raw framebuffer pixels |
+| **[auto]** `sample_pixels` | `sample-pixels <x> <y> <w> <h>` | an output's pixels as sRGB; IPC param `raw: true` reads the buffer it sends (PQ on an HDR output) |
 | `stop_all_capture` | none | ends every screen capture session |
 
 Prefer `screenshot` and `dump_buffer` over host `grim` when debugging. Host

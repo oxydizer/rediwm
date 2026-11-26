@@ -132,7 +132,8 @@ pub fn copyCloseBuffer(buffer: *sn.Buffer, sx: c_int, sy: c_int, ctx: *CloseSnap
         dest.setSourceBox(&buffer.src_box);
     }
     dest.setTransform(buffer.transform);
-    dest.setOpacity(buffer.opacity);
+    dest.setOpacity(buffer.inheritedOpacity());
+    dest.setAlphaMultiplier(buffer.alpha_multiplier);
     dest.setFilterMode(buffer.filter_mode);
     ctx.count += 1;
 }

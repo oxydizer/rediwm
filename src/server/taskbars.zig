@@ -114,7 +114,7 @@ pub fn applyTaskbarPosition(server: *Server) void {
 // outputs keep their bar, since a fullscreen window elsewhere shouldn't
 // blank an unrelated monitor's taskbar.
 pub fn updateTaskbarFullscreenVisibility(server: *Server) void {
-    const focused = server.world.toplevels.first();
+    const focused = @import("../ipc/handlers.zig").findFocusedToplevel(server);
     // The raw compositor-side intent flag, not `isFullscreen()`: for xdg
     // surfaces that reads the client-acked `current.fullscreen`, which lags
     // a round trip behind the resize we already applied synchronously in
@@ -129,6 +129,8 @@ pub fn updateTaskbarFullscreenVisibility(server: *Server) void {
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
         const bar = output.taskbar orelse continue;
-        bar.tree.node.setEnabled(fullscreen_output != output);
+        // Remembered for the per-frame tick, which also enables the tree.
+        bar.fullscreen_hidden = fullscreen_output == output;
+        bar.tree.node.setEnabled(!bar.fullscreen_hidden and !bar.parked);
     }
 }

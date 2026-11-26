@@ -188,9 +188,12 @@ pub const View = struct {
         self.content_ready = false;
         out.greeter_presented = false;
         self.ui_node.setBuffer(null);
-        if (lock.greeter_wallpaper orelse out.server.wallpaper) |image| {
+        if (lock.greeter_wallpaper) |image| {
             self.wallpaper.setBuffer(&image.base);
             self.wallpaper.setDestSize(b.width, b.height);
+            self.wallpaper.setOpaqueRegion(null);
+        } else if (out.server.wallpaper) |image| {
+            image.attach(self.wallpaper, b.width, b.height);
         } else self.wallpaper.setBuffer(null);
         const buf = Buffer.create(b.width, b.height, scale) catch return false;
         defer buf.base.drop();

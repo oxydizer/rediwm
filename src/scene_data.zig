@@ -199,7 +199,7 @@ fn shellHit(data: *SceneData, lx: f64, ly: f64) Hit {
 }
 
 pub fn hitTest(server: *@import("Server.zig"), lx: f64, ly: f64) Hit {
-    server.world.syncPresentation();
+    server.world.syncPresentationForInput();
     const projection = server.world.projection;
     var hit = projection.nodeAt(lx, ly) orelse return .none;
 

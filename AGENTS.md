@@ -6,7 +6,7 @@ Area notes are in an `AGENTS.md` beside the code; read
 the one for the directory you work in: `src/files`, `src/editor`,
 `src/desktop`, `src/input`, `src/control_center`, `src/ui`, `src/session`,
 `src/dm`, `src/accounts_helper`, `src/firewall`, `src/printing`, `src/player`,
-`scripts`, `src/wlr`, `src/platform`.
+`src/video`, `scripts`, `src/wlr`, `src/platform`.
 
 ## Working rules
 
@@ -35,7 +35,8 @@ its methods in a lowercase directory: `Toplevel.zig` (`toplevel/`),
 `Keyboard.zig` (`keyboard/`). Other hosts keep them beside them under a
 prefix: `files/app.zig`, `pdf/app.zig`, `desktop/app.zig`, `images/app.zig`,
 `editor/app.zig` (`app_*.zig`); `files/Client.zig` and the `Client` in
-`editor/main.zig` and `pdf/main.zig` (`client_*.zig`);
+`editor/main.zig` and `pdf/main.zig` (`client_*.zig`); the `Desktop` in
+`desktop/embedded.zig` (`embedded_tiles.zig`);
 `control_center/ControlCenter.zig` (`tree`, `keys`, `relayout`, `paint.zig`);
 `start_menu/StartMenu.zig` (`menu_*.zig`); `session/lock.zig`, `power.zig`
 (`lock_*`, `power_*.zig`); `systemd.zig` (`systemd/`); `network/manager.zig`,
@@ -45,7 +46,7 @@ Hosts keep the fields, `init`/`deinit` and one
 the bodies are free functions taking the struct pointer. A new method goes in
 its group file plus an alias line. `ipc/protocol_*.zig`, `ipc/handlers_*.zig`,
 `config/loader_*.zig`, `control_center/sections/appearance_*.zig`,
-`printers_*.zig` and `msg/msg_*.zig`, `ui/paint_*.zig`, `ui/text_*.zig`,
+`display_*.zig`, `printers_*.zig` and `msg/msg_*.zig`, `ui/paint_*.zig`, `ui/text_*.zig`,
 `ui/theme_*.zig`, `ui/anim_*.zig`, `chrome_paint.zig` re-export their public
 declarations from the original file. `handleRequest`/`handleAction` dispatch
 groups of tags to `handlers_*.zig`, each a `switch` with `else => unreachable`.
@@ -92,7 +93,10 @@ panel painting. The key rules:
   (groups) whose nodes changed, and nothing when no group and not the camera did:
   a change the node setters cannot see must call `Node.touch`, and a node whose
   geometry depends on another group's (a glass effect) is walked every sync. The
-  `-Ddamage-audit` build logs any item the gate left stale.
+  `-Ddamage-audit` build logs any item the gate left stale. Every reported change
+  bumps `Scene.serial`; hit tests skip `World.syncPresentation` while it and the
+  camera are unchanged (`syncPresentationForInput`), and each group keeps pick
+  bounds from its last present.
 * **The world has no second tree:** its source tree stays disabled. Pick with
   `rediwm_projection_node_at`, send callbacks through `Server.sendFrameDone`,
   and emit feedback/`output_sample` on source buffers. GLES may release
@@ -120,6 +124,9 @@ panel painting. The key rules:
   explicitly. Shaped programs are opt-in; without them windows are square.
 * Restore owned GL state, especially `GL_ARRAY_BUFFER`, before wlroots draws.
   Draw borders with their bodies; blend NONE only in the opaque, ring-free core.
+  The renderer's EGL context stays current once a pass has run
+  (`scene_pass_enter`): never unbind it, or every wlroots upload goes back to
+  bind, flush and unbind.
 * **Glass belongs to the output pass.** Attribute changes through projection
   damage events; only painted leaves emit them. Input-only nodes must not
   invalidate glass. Retained blurs and holds are per effect and output.
@@ -147,6 +154,11 @@ panel painting. The key rules:
   `dockAreaBox` for the dock and taskbar popups, `usableBox` for windows.
   Read [dock details](docs/agent-notes/dock.md) before changing the dock,
   its painting, layout/reservation, OSD clearance, hover or auto-hide.
+* **Outputs without a saved position** are placed by `output/auto_place.zig`
+  in session order, never `addAuto`: a monitor that drops out (a wake from
+  sleep) comes back to its old place, and windows ride along with outputs
+  that move (`auto_place.Carry`). Windows moved off a lost output keep their
+  first home until moved (`rememberOutputDisconnect`); `tests/output_reconnect.py`.
 * **Tiles are compositor-owned geometry** like maximize (`snap.zig`,
   `forcedGeometry()`). `Toplevel.layout()` reads the `maximized` field, not
   `isMaximized()` (xdg acks later). Leaving a layout without moving goes
@@ -163,6 +175,12 @@ panel painting. The key rules:
   with `presentOwned`. No wl_surface: focused = first in `world.toplevels`,
   activated, no seat focus (`hasKeyboardFocus`). Never close one from a
   widget callback; details in `src/control_center/AGENTS.md`.
+* **Modal dialogs hold their owner** (`Toplevel.isModal`: xdg-dialog-v1 or
+  `_NET_WM_STATE_MODAL`, only with an owner). `focusSurface` passes focus to
+  `World.modalHolder` and raises the owners right beneath it; minimizing the
+  dialog minimizes the owner. A minimized owner's dialogs are hidden, not
+  minimized (`window_tabs.visible`): anything picking a window to focus must
+  check that, since focusing a hidden dialog restores its owner.
 * **Desktop keyboard focus is shell focus:** taking it clears seat focus; a
   surface gaining seat focus, or a `.shell` window, takes it back.
 * **Input** details are in `src/input/AGENTS.md`. Cross-cutting: every client
@@ -248,9 +266,14 @@ panel painting. The key rules:
   tokens (`app_*`, `shellPalette().accent`) and shell icons. Text is
   the effective `window_fg` (placeholder at half alpha) at `text_size`,
   `heading_size` or `status_size`, never hardcoded sizes. Load the theme with
-  `files/settings.zig` before the first frame (PDF: before its sandbox).
+  `app_kit.settings` before the first frame (PDF: before its sandbox).
   That loader resolves `Theme.forApp()` so `app_fg`, menu and field overrides
   can differ from compositor chrome; sidebar text uses `sidebarForeground()`.
+* **`app_kit`** (`src/app_kit/`, public like `ui`) is what standalone apps
+  are built from, here or in another repository ([app kit](docs/app-kit.md)):
+  settings and their watch, and `window.run`, the xdg-toplevel host
+  Calculator uses. Its App contract is in `window.zig`'s header; keep that,
+  `Options` and `mod.zig` compatible, since outside apps build against them.
 * Secrets live in `secret_input.Input` over caller-owned mlocked storage;
   hand-laid secret fields draw the caret with `CaretOverlay`.
 * **Dead keys:** `xkb_state_key_get_utf8` returns nothing for them, so any
@@ -323,6 +346,11 @@ panel painting. The key rules:
   `MALLOC_PERTURB_`: `0xa5…`), leaks print at exit in the compositor log. Free
   process-lifetime caches in `main.start`'s defers; state workers read during
   shutdown comes from `std.heap.c_allocator`. Never mix allocators.
+  The compositor fixes glibc's mmap threshold at 1 MiB and trim at 4 MiB
+  (`memory.tuneForLongRunning`), so freed window-sized rasters go back to the
+  system; per-frame rasters stay below it. Window-sized caches that sit idle
+  are released on a deadline (desktop canvas, Settings' repaint images), and
+  the wallpaper is only a texture (`server/wallpaper.zig` `Wallpaper`).
 * Cairo `ARGB32` is premultiplied `0xAARRGGBB`, like our buffers. `png.zig`
   reads only 8-bpc non-interlaced truecolour(+alpha). Read
   `/sys/class/power_supply/*/uevent` only on uevents and the minute tick.

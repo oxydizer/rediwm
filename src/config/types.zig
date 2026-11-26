@@ -96,6 +96,9 @@ pub const AccelCurve = struct {
 };
 
 pub const FocusZoom = enum { keep, boost, camera };
+/// When focus scrolls a strip (niri's names): never centre the column, centre
+/// one wider than the screen, or always centre it.
+pub const ScrollCenter = enum { never, on_overflow, always };
 pub const SwitcherStyle = enum { linear, circular };
 
 pub const MiniMapPosition = enum { bottom_right, bottom_center, bottom_left };

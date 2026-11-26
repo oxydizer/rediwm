@@ -293,7 +293,7 @@ test "title-only chip repaints exactly match complete chip rasters" {
                     fillChipColumns(&paint, expected, width, height, origin_x, 0, 0, @intCast(width), scale);
                     drawChipTitle(expected, width, height, rect, after, color, scale);
                     @memcpy(updated, previous);
-                    paintChipTitleColumns(&paint, updated, width, height, origin_x, rect, after, color, scale);
+                    try paintChipTitleColumns(&paint, updated, width, height, origin_x, rect, after, color, scale);
                     try std.testing.expectEqualSlices(u32, expected, updated);
                     if (std.mem.startsWith(u8, before, "Working ") and std.mem.startsWith(u8, after, "Working ")) {
                         // Changing spinner bounds must not move the unchanged words.

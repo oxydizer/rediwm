@@ -77,10 +77,11 @@ pub fn ignoreCloseInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
 }
 
 pub fn applyVisualTransform(toplevel: *Toplevel, now_ms: i64) void {
-    const zoom_scale = toplevel.worldScale();
-    if (toplevel.in_world and !toplevel.closing) {
-        toplevel.frame_tree.node.setEnabled(toplevel.switch_leaving or toplevel.server.world.overview.contains(toplevel.id) or (@import("../window_tabs.zig").visible(toplevel) and toplevel.cameraFocusOpacity() > 0));
+    if (!projection.setTreeOutput(&toplevel.frame_tree.node, @import("../workspaces.zig").outputFor(toplevel))) {
+        toplevel.frame_tree.node.setEnabled(false);
+        return;
     }
+    const zoom_scale = toplevel.worldScale();
     // Open keeps tree zoom at the logical window zoom so scene picking and
     // client-local coordinates stay 1:1 with the mapped frame (existing
     // tests and the "input keys off the logical map" rule). Close may scale
@@ -92,6 +93,11 @@ pub fn applyVisualTransform(toplevel: *Toplevel, now_ms: i64) void {
     const lift = toplevel.dragLiftOffset();
     const x = visualX(toplevel, now_ms) + animOffset(toplevel.dodge_x, now_ms) + animOffset(toplevel.switch_x, now_ms) - lift.x;
     const y = visualY(toplevel, now_ms) + animOffset(toplevel.dodge_y, now_ms) + animOffset(toplevel.switch_y, now_ms) - lift.y;
+    if (toplevel.in_world and !toplevel.closing) {
+        const shown = toplevel.switch_leaving or @import("../window_tabs.zig").visible(toplevel);
+        toplevel.frame_tree.node.setEnabled(toplevel.server.world.overview.contains(toplevel.id) or
+            (shown and !@import("../scroll_tiling.zig").culled(toplevel, x, y) and toplevel.cameraFocusOpacity() > 0));
+    }
     if (toplevel.server.world.overview.apply(toplevel, x, y, zoom_scale * factor * toplevel.drag_lift_value, now_ms)) return;
     if (!toplevel.closing) if (toplevel.launch_origin) |origin| {
         const grow = launchGrowth(toplevel, origin, x, y, zoom_scale * toplevel.drag_lift_value, toplevel.map_motion.value(now_ms));

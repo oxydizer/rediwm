@@ -76,6 +76,12 @@ preview_token: [4096:0]u8 = @splat(0),
 preview_token_len: usize = 0,
 editor_token_pending: bool = false,
 decoration_manager: ?*zxdg.DecorationManagerV1 = null,
+/// The chooser's parent: the requesting app's window, imported by handle, and
+/// the dialog object that marks the chooser modal to it (`attachToParent`).
+importer: ?*zxdg.ImporterV2 = null,
+wm_dialog: ?*xdg.WmDialogV1 = null,
+imported_parent: ?*zxdg.ImportedV2 = null,
+dialog: ?*xdg.DialogV1 = null,
 surface: *wl.Surface = undefined,
 xdg_surface: *xdg.Surface = undefined,
 xdg_toplevel: *xdg.Toplevel = undefined,
@@ -167,6 +173,10 @@ pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Cl
                 if (self.wm_base) |wm| wm.setListener(*Client, wmBaseEvent, self);
             } else if (std.mem.eql(u8, iface, "zxdg_decoration_manager_v1")) {
                 self.decoration_manager = registry.bind(g.name, zxdg.DecorationManagerV1, 1) catch null;
+            } else if (std.mem.eql(u8, iface, "zxdg_importer_v2")) {
+                self.importer = registry.bind(g.name, zxdg.ImporterV2, 1) catch null;
+            } else if (std.mem.eql(u8, iface, "xdg_wm_dialog_v1")) {
+                self.wm_dialog = registry.bind(g.name, xdg.WmDialogV1, 1) catch null;
             }
         },
         .global_remove => |ev| {
@@ -239,6 +249,8 @@ pub const wantsCsd = client_window.wantsCsd;
 pub const titlebarHeight = client_window.titlebarHeight;
 pub const decorationEvent = client_window.decorationEvent;
 pub const xdgToplevelEvent = client_window.xdgToplevelEvent;
+pub const attachToParent = client_window.attachToParent;
+pub const detachParent = client_window.detachParent;
 
 const client_input = @import("client_input.zig");
 pub const pointerEvent = client_input.pointerEvent;

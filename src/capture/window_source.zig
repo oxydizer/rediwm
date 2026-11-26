@@ -60,6 +60,7 @@ const PassShape = extern struct {
     glow_depth: f32 = 0,
     glow_color: [4]f32 = @splat(0),
 };
+extern fn rediwm_scene_pass_set_source(pass: *wlr.RenderPass, buffer: ?*const sn.Buffer) void;
 extern fn rediwm_scene_pass_add_texture_shaped(pass: *wlr.RenderPass, options: *const wlr.RenderPass.TextureOptions, shape: *const PassShape) void;
 
 pub const WindowCaptureSource = struct {
@@ -302,7 +303,7 @@ pub const WindowCaptureSource = struct {
         defer texture.destroy();
         if (surface) |client| explicit_sync.ReadFence.note(ctx.read_fence, client);
 
-        var alpha = scene_buffer.opacity;
+        var alpha = scene_buffer.inheritedOpacity() * scene_buffer.alpha_multiplier;
         var luminance_multiplier: f32 = 1.0;
         const options: wlr.RenderPass.TextureOptions = .{
             .texture = texture,
@@ -326,6 +327,8 @@ pub const WindowCaptureSource = struct {
             .wait_timeline = scene_buffer.wait_timeline,
             .wait_point = scene_buffer.wait_point,
         };
+        rediwm_scene_pass_set_source(ctx.pass, scene_buffer);
+        defer rediwm_scene_pass_set_source(ctx.pass, null);
         if (ctx.shape) |*shape| {
             rediwm_scene_pass_add_texture_shaped(ctx.pass, &options, shape);
         } else {

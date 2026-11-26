@@ -18,8 +18,9 @@ pub const LayoutSnapshot = struct {
 
     pub const Workspace = struct {
         id: u8,
-        automatic: bool,
+        layout: ?@import("config").workspace_layout.Layout,
         tree: @import("auto_layout.zig").Tree,
+        strip: @import("scroll_layout.zig").Strip = .{},
     };
     pub const Window = struct {
         id: u64,
@@ -37,7 +38,10 @@ pub const LayoutSnapshot = struct {
 
     pub fn destroy(self: *LayoutSnapshot) void {
         const allocator = self.allocator;
-        for (self.workspaces.items) |*workspace| workspace.tree.deinit(allocator);
+        for (self.workspaces.items) |*workspace| {
+            workspace.tree.deinit(allocator);
+            workspace.strip.deinit(allocator);
+        }
         self.workspaces.deinit(allocator);
         self.windows.deinit(allocator);
         allocator.destroy(self);
@@ -370,7 +374,7 @@ test "owned layout snapshots are freed on replacement, cancel, clear and suppres
             errdefer tree.deinit(allocator);
             try tree.insert(allocator, .{ .key = .{ .id = 1 } }, null, .horizontal);
             try tree.insert(allocator, .{ .key = .{ .id = 2 } }, null, .vertical);
-            try value.workspaces.append(allocator, .{ .id = 1, .automatic = true, .tree = tree });
+            try value.workspaces.append(allocator, .{ .id = 1, .layout = null, .tree = tree });
             return value;
         }
         fn run(allocator: std.mem.Allocator) !void {

@@ -184,7 +184,7 @@ static void render_effect(struct entry *e, struct wlr_render_pass *pass, const s
     // The surface over the effect: its alpha is made up to the coverage.
     struct entry *entries = r->entries.data;
     const size_t len = r->entries.size / sizeof(*entries);
-    for (size_t i = 0; i < len; i++) {
+    for (size_t i = 0; e->front && i < len; i++) {
         struct entry *f = &entries[i];
         if (f->transport != e->front || f->item.kind == REDIWM_ITEM_RECT) continue;
         struct rediwm_buffer *b = rediwm_buffer_from_node(f->transport);
@@ -201,9 +201,40 @@ static void render_effect(struct entry *e, struct wlr_render_pass *pass, const s
     rediwm_scene_pass_add_backdrop(pass, &shape, dst, &o);
     if (graded) rediwm_scene_pass_set_dim(pass, 0, 0);
 }
+// Scissor the backdrop to the resolved mask, including holes, on this output.
+static void clip_effect_region(const struct rediwm_glass_region *region, const struct output_view *v,
+                               pixman_region32_t *clip) {
+    // The draw quad already clips a single rectangle to these exact edges.
+    if (region->count == 1 || !pixman_region32_not_empty(clip)) return;
+    pixman_region32_t mask;
+    pixman_region32_init(&mask);
+    for (int i = 0; i < region->count; i++) {
+        const struct rediwm_snap s = rediwm_edges_snap(region->layout[i]);
+        struct wlr_box box = device_box((struct wlr_box){s.x, s.y, s.width, s.height}, v);
+        pixman_region32_union_rect(&mask, &mask, box.x, box.y, box.width, box.height);
+    }
+    pixman_region32_intersect(clip, clip, &mask);
+    pixman_region32_fini(&mask);
+}
 // `backdrop`: drawing into an effect's quarter-size image (stage 5f), where an
 // item counts with its whole box, not what is visible of it on screen, and
 // `damage` is the region the blur reads.
+// The layout region whose device pixels can meet `damage`, cut before converting:
+// scaling and expanding every rectangle of a complex visible region (the wallpaper
+// around the windows) cost 10% of a frame for a small repaint. A layout point p
+// lands within [floor((p - x) s) - 1, ceil((p - x) s) + 1]; the margin covers that.
+// Transformed outputs convert the whole region, as before.
+static void cut_to_damage(pixman_region32_t *layout, const struct output_view *v, pixman_region32_t *damage) {
+    if (v->transform != WL_OUTPUT_TRANSFORM_NORMAL || v->scale <= 0) return;
+    const pixman_box32_t *d = pixman_region32_extents(damage);
+    const double s = v->scale;
+    const int x1 = (int)floor((d->x1 - 3) / s) - 1 + v->logical.x;
+    const int y1 = (int)floor((d->y1 - 3) / s) - 1 + v->logical.y;
+    const int x2 = (int)ceil((d->x2 + 3) / s) + 1 + v->logical.x;
+    const int y2 = (int)ceil((d->y2 + 3) / s) + 1 + v->logical.y;
+    if (x2 <= x1 || y2 <= y1) return;
+    pixman_region32_intersect_rect(layout, layout, x1, y1, (unsigned)(x2 - x1), (unsigned)(y2 - y1));
+}
 bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e, struct rediwm_scene_output *out,
         struct wlr_render_pass *pass, const struct output_view *v, pixman_region32_t *damage, bool backdrop) {
     struct wlr_box dst = device_box(e->box, v);
@@ -213,15 +244,18 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
     pixman_region32_init(&blend);
     pixman_region32_init(&core);
     bool graded = false;
+    bool client_source = false;
     if (backdrop) pixman_region32_init_rect(&clip, dst.x, dst.y, dst.width, dst.height);
     else {
         pixman_region32_copy(&clip, &e->visible);
+        cut_to_damage(&clip, v, damage);
         device_region(&clip, v, true);
     }
     pixman_region32_intersect(&clip, &clip, damage);
     bool ok = true;
     if (e->item.kind == REDIWM_ITEM_EFFECT) {
         // A re-blur takes its blur even where the effect itself is hidden.
+        if (e->item.blur_region) clip_effect_region(e->item.blur_region, v, &clip);
         render_effect(e, pass, v, r, out, &clip, backdrop);
         goto done;
     }
@@ -289,13 +323,14 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
         else if (pixman_region32_not_empty(&clip)) rediwm_scene_pass_add_rect_shaped(pass, &rect, &shape);
     } else {
         struct rediwm_buffer *b = rediwm_buffer_from_node(e->transport);
+        client_source = c->transfer_function != 0 || c->primaries != 0 || c->color_encoding != 0;
+        if (client_source) rediwm_scene_pass_set_source(pass, b);
         if (b->is_single_pixel_buffer) {
             const uint32_t *color = b->single_pixel_buffer_color;
-            // Match wlroots' single-pixel path during parity, including its
-            // treatment of opacity (only alpha is multiplied there).
+            // Single-pixel colours and the draw call both use premultiplied RGBA.
+            const float factor = c->opacity / (float)UINT32_MAX;
             struct wlr_render_rect_options rect = {.box = dst,
-                .color = {(float)color[0] / (float)UINT32_MAX, (float)color[1] / (float)UINT32_MAX,
-                    (float)color[2] / (float)UINT32_MAX, (float)color[3] / (float)UINT32_MAX * c->opacity}};
+                .color = {color[0] * factor, color[1] * factor, color[2] * factor, color[3] * factor}};
             if (pixman_region32_not_empty(&core)) {
                 rect.clip = &core;
                 wlr_render_pass_add_rect(pass, &rect);
@@ -334,6 +369,7 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
 done:
     // What is drawn next (the next item, the software cursor) is not this item's.
     if (graded) rediwm_scene_pass_set_dim(pass, 0, 0);
+    if (client_source) rediwm_scene_pass_set_source(pass, NULL);
     pixman_region32_fini(&clip);
     pixman_region32_fini(&blend);
     pixman_region32_fini(&core);

@@ -52,7 +52,7 @@ test "config field parsing preserves ranges and derived zoom state" {
     inline for (.{ "-1.01", "1.01", "nan", "inf" }) |v| {
         try std.testing.expectError(error.InvalidValue, applyInputKey(&input, a, "pointer_speed_touchpad", v));
     }
-    inline for (.{ "natural_scroll", "invert_scroll", "left_handed", "tap_to_click", "tap_drag", "disable_while_typing" }) |key| {
+    inline for (.{ "natural_scroll", "left_handed", "tap_to_click", "tap_drag", "disable_while_typing" }) |key| {
         try applyInputKey(&input, a, key, "false");
         try std.testing.expect(!@field(input, key));
         try applyInputKey(&input, a, key, "true");
@@ -182,6 +182,14 @@ test "config field parsing preserves ranges and derived zoom state" {
     try std.testing.expect(c.focus_follows_mouse);
     try applyCompositorKey(&c, a, "xwayland", "false");
     try std.testing.expect(!c.xwayland);
+    try applyCompositorKey(&c, a, "scroll_column_widths", "[0.25, 0.75, 1]");
+    try std.testing.expectEqual(@as(u8, 3), c.scroll_column_width_count);
+    try std.testing.expectEqualSlices(f32, &.{ 0.25, 0.75, 1 }, c.scroll_column_widths[0..3]);
+    try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "scroll_column_widths", "[0.5, 1.5]"));
+    try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "scroll_column_widths", "[0.01]"));
+    try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "scroll_column_widths", "[]"));
+    try applyCompositorKey(&c, a, "scroll_center", "\"always\"");
+    try std.testing.expectEqual(@as(@TypeOf(c.scroll_center), .always), c.scroll_center);
     try applyCompositorKey(&c, a, "zoom_steps", "[1, 0.75]");
     try std.testing.expectEqual(@as(u8, 2), c.zoom_step_count);
     try std.testing.expectEqualSlices(f32, &.{ 1, 0.75 }, c.zoom_steps[0..2]);

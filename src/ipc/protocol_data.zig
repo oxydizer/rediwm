@@ -88,6 +88,10 @@ pub const WindowData = struct {
     placeholder: ?bool = null,
     tab_group: ?u64 = null,
     tab_active: bool = true,
+    /// The window this one is a dialog of.
+    parent_id: ?u64 = null,
+    /// A dialog that holds its owner's input (xdg-dialog-v1, _NET_WM_STATE_MODAL).
+    is_modal: bool = false,
 
     pub fn jsonStringify(self: WindowData, jws: anytype) !void {
         try jws.beginObject();
@@ -133,11 +137,15 @@ pub const WindowData = struct {
         try jws.write(self.x11_class);
         try jws.objectField("x11_instance");
         try jws.write(self.x11_instance);
-        inline for (.{ "tag", "description", "content_type" }) |field| {
+        inline for (.{ "tag", "description", "content_type", "parent_id" }) |field| {
             if (@field(self, field)) |value| {
                 try jws.objectField(field);
                 try jws.write(value);
             }
+        }
+        if (self.is_modal) {
+            try jws.objectField("is_modal");
+            try jws.write(true);
         }
         if (self.tab_group) |group| {
             try jws.objectField("tab_group");
@@ -190,14 +198,37 @@ pub const OutputData = struct {
     adaptive_sync_active: bool = false,
     /// The driver cannot switch it without a modeset, so "auto" leaves it.
     adaptive_sync_needs_modeset: bool = false,
+    /// `[[outputs]] hdr`: "off" or "on".
+    hdr: []const u8 = "off",
+    /// The display and driver can take an HDR10 (PQ, BT.2020) signal.
+    hdr_supported: bool = false,
+    /// The output has committed an HDR image description.
+    hdr_active: bool = false,
+    /// The last frame blended in linear light (FP16), the HDR pipeline.
+    hdr_linear: bool = false,
+    /// The driver would not take the HDR10 signal in this mode.
+    hdr_refused: bool = false,
+    /// `[[outputs]] sdr_white`: SDR brightness on an HDR output, in nits.
+    sdr_white: f32 = 203,
+    /// `[[outputs]] scroll_direction`: "auto", "horizontal" or "vertical".
+    scroll_direction: []const u8 = "auto",
+    /// The direction a scrolling strip runs here, with "auto" resolved.
+    scroll_direction_resolved: []const u8 = "horizontal",
 };
 
 pub const WorkspaceData = struct {
     is_visible: bool = true,
     output: ?[]const u8 = null,
+    /// Whether the workspace tiles (split or scrolling); `layout` says how.
     automatic: bool = false,
+    layout: []const u8 = "floating",
     window_gap: u32 = 0,
     nodes: []const @import("config").workspace_layout.Node = &.{},
+    /// A scrolling strip: its columns, where it is scrolled to, and the
+    /// direction it scrolls on its display ("horizontal" or "vertical").
+    columns: []const @import("config").workspace_layout.Column = &.{},
+    view: f64 = 0,
+    direction: ?[]const u8 = null,
     id: u64,
     name: ?[]const u8 = null,
     is_focused: bool = false,

@@ -7,6 +7,7 @@ const wlr = @import("wlroots");
 const Pointer = @import("../Pointer.zig");
 const resize = @import("../resize.zig");
 const scene_data = @import("../scene_data.zig");
+const scroll_motion = @import("../scroll_motion.zig");
 
 pub fn cursorFrame(listener: *wl.Listener(*wlr.Cursor), _: *wlr.Cursor) void {
     const input: *Input = @fieldParentPtr("cursor_frame", listener);
@@ -85,6 +86,23 @@ pub fn compositorOwnsSwipe(input: *Input, fingers: u32) bool {
     return scene_data.hitTest(input.server, input.cursor.x, input.cursor.y) == .none;
 }
 
+/// A three-finger swipe moves the scrolling strip under the pointer,
+/// whatever is under it, unless a client has taken the shortcuts.
+pub fn stripSwipe(input: *Input, fingers: u32) ?u8 {
+    if (fingers != 3 or !input.server.world.workspaces.active) return null;
+    if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return null;
+    if (input.shortcuts_inhibit.inhibiting()) return null;
+    if (input.cursor_mode != .passthrough or input.resize_session != null or input.tiling_grab != null) return null;
+    return scroll_motion.workspaceAt(input.server, input.cursor.x, input.cursor.y);
+}
+
+fn endStripSwipe(input: *Input, cancelled: bool) void {
+    const id = input.swipe_strip;
+    input.gesture = .none;
+    input.swipe_strip = 0;
+    scroll_motion.end(input.server, id, cancelled);
+}
+
 pub fn handlePinchBegin(input: *Input, time_msec: u32, fingers: u32) void {
     if (input.server.polkit_dialog != null or input.server.world.overview.active()) return;
     if (input.server.idle) |im| im.notifyActivity(.pointer);
@@ -93,6 +111,7 @@ pub fn handlePinchBegin(input: *Input, time_msec: u32, fingers: u32) void {
         input.gesture = .none;
         input.server.scheduleFrames();
     }
+    if (input.gesture == .strip_swipe) endStripSwipe(input, false);
     if (fingers >= 2 and compositorOwnsPinch(input)) {
         input.gesture = .compositor_pinch;
         input.server.world.beginPinch(input.cursor.x, input.cursor.y);
@@ -131,6 +150,13 @@ pub fn handleSwipeBegin(input: *Input, time_msec: u32, fingers: u32) void {
         input.server.world.endPinch(false);
         input.gesture = .none;
     }
+    if (input.gesture == .strip_swipe) endStripSwipe(input, false);
+    if (stripSwipe(input, fingers)) |id| {
+        input.gesture = .strip_swipe;
+        input.swipe_strip = id;
+        scroll_motion.begin(input.server, id, .swipe);
+        return;
+    }
     if (compositorOwnsSwipe(input, fingers)) {
         input.gesture = .compositor_swipe;
         input.server.world.beginPan();
@@ -148,10 +174,16 @@ pub fn handleSwipeUpdate(input: *Input, time_msec: u32, dx: f64, dy: f64) void {
         input.server.world.panBy(-dx * pan_speed / z, -dy * pan_speed / z);
         return;
     }
+    if (input.gesture == .strip_swipe) {
+        const id = input.swipe_strip;
+        scroll_motion.scrollBy(input.server, id, scroll_motion.along(input.server, id, dx, dy) * input.server.config.input.pan_speed);
+        return;
+    }
     input.pointer_gestures.sendSwipeUpdate(input.seat, time_msec, dx, dy);
 }
 
 pub fn handleSwipeEnd(input: *Input, time_msec: u32, cancelled: bool) void {
+    if (input.gesture == .strip_swipe) return endStripSwipe(input, cancelled);
     if (input.gesture == .compositor_swipe) {
         if (cancelled) input.server.world.cancelPan() else input.server.world.endPanGesture();
         input.gesture = .none;

@@ -8,6 +8,7 @@
 #include <wlr/util/box.h>
 #include <wlr/util/edges.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
+#include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
@@ -46,6 +47,7 @@
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_fixes.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -72,6 +74,7 @@
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/xwayland/shell.h>
 #include <wlr/xwayland/server.h>
+#include <xcb/xinput.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_input_device.h>

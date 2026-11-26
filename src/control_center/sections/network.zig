@@ -143,7 +143,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     const wifi_detail = if (connected_wifi) |net| try std.fmt.allocPrint(a, "{s} · {s}", .{ network.networkName(net), if (net.strength >= 80) @as([]const u8, i18n.tr("Excellent")) else if (net.strength >= 55) i18n.tr("Good") else i18n.tr("Weak") }) else i18n.tr("Wireless connections");
     const overview_width = @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100;
     var description_width: f32 = 0;
-    for ([_][]const u8{ internet_detail, eth_detail, wifi_detail }) |value| description_width = @max(description_width, ui.measure.textNatural(value, .sans, 400, 12).w);
+    for ([_][]const u8{ internet_detail, eth_detail, wifi_detail }) |value| description_width = @max(description_width, ui.measure.textNaturalAtScale(value, .sans, 400, 12, cc.toplevel.render_scale).w);
     const stacked = overview_width < 3 * (@min(description_width, 260) + 74);
     var overview = try card(a, &.{
         try summary(a, .globe, i18n.tr("Internet"), internet_state, internet_detail, online),
@@ -181,7 +181,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
 fn wrapped(cc: *panel.ControlCenter, a: Allocator, widget: W) !W {
     var w = widget;
     const width = @max(80, @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 80);
-    try @import("keys.zig").wrap(a, &w, width);
+    try @import("keys.zig").wrap(cc.toplevel.render_scale, a, &w, width);
     return w;
 }
 

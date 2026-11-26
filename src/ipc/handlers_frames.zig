@@ -102,12 +102,14 @@ pub fn handleFrameAction(
             const scene_output = server.scene_outputs.get(target_out.wlr_output) orelse return .{ .err = "NoSceneOutput" };
             var state = wlr.Output.State.init();
             defer state.finish();
-            if (!server.buildOutputState(scene_output, &state)) return .{ .err = "CaptureFailed: scene render failed" };
-            const buffer = state.buffer orelse return .{ .err = "CaptureFailed: missing frame buffer" };
+            const buffer = @import("../output/hdr.zig").captureBuffer(target_out, scene_output, &state, p.raw) orelse
+                return .{ .err = "CaptureFailed: missing frame buffer" };
             const texture = wlr.Texture.fromBuffer(server.renderer, buffer) orelse return .{ .err = "CaptureFailed: texture creation failed" };
             defer texture.destroy();
 
-            const format = texture.preferredReadFormat();
+            // GLES always supports RGBA/UNSIGNED_BYTE readback. Keep the IPC
+            // packing and allocation four bytes per pixel on 10-bit outputs too.
+            const format: u32 = 0x34324241; // DRM_FORMAT_ABGR8888
             const count = p.width * p.height;
             const pixels = try allocator.alloc(u32, count);
             const ok = texture.readPixels(&.{
@@ -184,6 +186,7 @@ pub fn handleFrameAction(
                 .desktop = stats.global_stats.desktop,
                 .output_skipped_commits = stats.global_stats.output_skipped_commits,
                 .glass_reblurs = @import("../scene_output.zig").reblurs.*,
+                .capture_sdr_copies = @import("../capture/sdr.zig").copies.*,
                 .tearing_async_flips = stats.global_stats.tearing_async_flips,
                 .tearing_refused_flips = stats.global_stats.tearing_refused_flips,
                 .fifo = stats.global_stats.fifo,
@@ -194,6 +197,7 @@ pub fn handleFrameAction(
             stats.global_stats.reset();
             @import("../panel_present.zig").reset();
             @import("../scene_output.zig").reblurs.* = 0;
+            @import("../capture/sdr.zig").copies.* = 0;
             return .{ .ok = .handled };
         },
 

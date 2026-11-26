@@ -50,10 +50,14 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     const backend = wlr.Backend.autocreate(wl_server.getEventLoop(), &session) catch return error.BackendCreateFailed;
     errdefer backend.destroy();
 
+    // glvnd loads its EGL vendors at the renderer's first EGL call.
+    const egl_limit = @import("../gl_vendor.zig").limitForRenderer(io, backend.getDrmFd(), session != null);
     const renderer = wlr.Renderer.autocreate(backend) catch {
+        egl_limit.end();
         log.err("init: no renderer (GLES2 is required; with several GPUs pick one with WLR_RENDER_DRM_DEVICE=/dev/dri/renderD*)", .{});
         return error.RendererInitFailed;
     };
+    egl_limit.end();
     errdefer renderer.destroy();
     // The output pass is GLES2 only (docs/plans/scene-graph.md, renderer policy).
     // A machine without a GPU runs Mesa's llvmpipe: WLR_RENDERER_ALLOW_SOFTWARE=1.
@@ -196,8 +200,7 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
     // measurements; every glass call already accepts a null engine. The greeter
     // has no glass and no clients, and each program it skips is a compile the
     // login screen would wait for (no shader cache there: main.zig).
-    server.glass_engine = if (greeter or environ.getPosix("REDIWM_NO_GLASS") != null) null else glass.Engine.create();
-    errdefer glass.Engine.destroy(server.glass_engine);
+    const want_glass = !greeter and environ.getPosix("REDIWM_NO_GLASS") == null;
     server.output_renderer = scene_output_mod.Renderer.create(renderer) orelse return error.RendererInitFailed;
     errdefer scene_output_mod.Renderer.destroy(server.output_renderer);
     @import("../effects/window_move.zig").configure(server);
@@ -211,11 +214,17 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
         @import("../chrome.zig").polygon_enabler = &enablePolygons;
         // Glass (stage 5c of docs/plans/scene-graph.md); without the blur program
         // each glass surface shows its own tint.
-        if (server.glass_engine != null and !server.output_renderer.enableBackdrops())
-            log.err("glass: blur program unavailable, glass surfaces show their tint", .{});
+        if (want_glass) {
+            if (server.output_renderer.enableBackdrops()) {
+                server.glass_engine = glass.Engine.create();
+            } else {
+                log.err("glass: blur program unavailable, glass surfaces show their tint", .{});
+            }
+        }
     } else {
         log.err("window frames: shaped programs unavailable, windows are drawn square", .{});
     }
+    errdefer glass.Engine.destroy(server.glass_engine);
     server.outputs.init();
     server.layer_surfaces.init();
     try server.world.init(server, world_tree);
@@ -230,6 +239,11 @@ fn initSession(server: *Server, world_tree: *sn.Tree) CompositorError!void {
     errdefer if (server.fifo) |fifo| {
         server.fifo = null;
         fifo.destroy();
+    };
+    if (!greeter) server.commit_timing = @import("../commit_timing.zig").create(server) catch return error.CommitTimingCreateFailed;
+    errdefer if (server.commit_timing) |timing| {
+        server.commit_timing = null;
+        timing.destroy();
     };
     server.activation.init(server) catch return error.ActivationManagerCreateFailed;
     errdefer server.activation.deinit();
@@ -290,13 +304,10 @@ fn initServices(server: *Server) CompositorError!void {
         break :blk null;
     };
 
-    // Layout autosave (periodic save and the startup restore) is off for now:
-    // the restore moves windows seconds after login. Every user checks for
-    // null, so re-enabling is uncommenting this.
-    // if (!greeter) server.layout_autosave = layout_autosave_mod.Autosave.create(server) catch |err| blk: {
-    //     log.warn("init: could not create layout autosave: {}", .{err});
-    //     break :blk null;
-    // };
+    if (!greeter) server.layout_autosave = @import("../session/layout_autosave.zig").Autosave.create(server) catch |err| blk: {
+        log.warn("init: could not create workspace autosave: {}", .{err});
+        break :blk null;
+    };
 
     server.power_policy.init(server);
     errdefer server.power_policy.deinit();
@@ -324,11 +335,13 @@ fn initServices(server: *Server) CompositorError!void {
         };
     }
 
-    server.wallpaper = ImageBuffer.createSolid(1, 1, themeColorArgb(ui_theme.global.bg)) catch |err| blk: {
+    server.wallpaper = if (ImageBuffer.createSolid(1, 1, themeColorArgb(ui_theme.global.bg))) |image|
+        server_wallpaper.Wallpaper.fromImage(server, image)
+    else |err| blk: {
         log.warn("init: failed to create solid wallpaper: {}", .{err});
         break :blk null;
     };
-    errdefer if (server.wallpaper) |image| image.base.drop();
+    errdefer if (server.wallpaper) |image| image.release();
 
     const loop = server.wl_server.getEventLoop();
     server.catalog_wake_source = loop.addFd(*Server, catalog.wakeFd(), .{ .readable = true }, handleCatalogWake, server) catch |err| blk: {
@@ -350,7 +363,12 @@ fn initServices(server: *Server) CompositorError!void {
 fn initProtocols(server: *Server) CompositorError!void {
     const wl_server = server.wl_server;
     const greeter = server.greeter_mode;
-    server.renderer.initServer(wl_server) catch return error.ShmInitFailed;
+    _ = wlr.createFixes(wl_server, 1) orelse return error.FixesCreateFailed;
+    server.renderer.initShm(wl_server) catch return error.ShmInitFailed;
+    // wlroots' combined display initializer would also register a v4 DMA-BUF global.
+    if (server.renderer.getTextureFormats(@backingInt(wlr.BufferCap.dmabuf)) != null and server.renderer.getDrmFd() >= 0) {
+        _ = wlr.LinuxDmabufV1.createWithRenderer(wl_server, 5, server.renderer) catch return error.LinuxDmabufCreateFailed;
+    }
 
     const compositor = wlr.Compositor.create(server.wl_server, 6, server.renderer) catch return error.CompositorCreateFailed;
     server.compositor = compositor;
@@ -363,9 +381,6 @@ fn initProtocols(server: *Server) CompositorError!void {
     _ = wlr.Viewporter.create(server.wl_server) catch return error.ViewporterCreateFailed;
     _ = wlr.FractionalScaleManagerV1.create(server.wl_server, 1) catch return error.FractionalScaleManagerCreateFailed;
     _ = wlr.SinglePixelBufferManagerV1.create(server.wl_server) catch return error.SinglePixelBufferManagerCreateFailed;
-    // linux-dmabuf v4 comes from `initServer` above (wlr_renderer_init_wl_display),
-    // only when the renderer imports dmabufs (not pixman). Creating it here too
-    // advertised a second global, and Mesa's WSI bound both and leaked one.
     // Explicit sync: the proprietary NVIDIA driver has no implicit sync, so
     // without it Xwayland and Vulkan clients flicker or show torn frames.
     // wlr_scene waits on acquire points and signals release points; the
@@ -386,6 +401,7 @@ fn initProtocols(server: *Server) CompositorError!void {
         break :blk null;
     };
     if (!greeter) {
+        if (!glass.createBackgroundEffect(wl_server, server.glass_engine)) return error.ExtraProtocolsCreateFailed;
         server.foreign_toplevels = wlr.ForeignToplevelManagerV1.create(server.wl_server) catch |err| blk: {
             log.warn("init: could not create wlr foreign-toplevel manager: {}", .{err});
             break :blk null;
@@ -411,9 +427,11 @@ fn initProtocols(server: *Server) CompositorError!void {
             mgr.events.commit.add(&server.security_context_commit);
         }
     }
+    if (!greeter) @import("../output/gamma.zig").init(server) catch return error.ExtraProtocolsCreateFailed;
+    errdefer if (!greeter) server.set_gamma.link.remove();
     _ = Xwayland.create(server);
 
-    const layer_shell = wlr.LayerShellV1.create(wl_server, 4) catch return error.CompositorCreateFailed;
+    const layer_shell = wlr.LayerShellV1.create(wl_server, 5) catch return error.CompositorCreateFailed;
     layer_shell.events.new_surface.add(&server.new_layer);
     server.backend.events.new_output.add(&server.new_output);
     if (server.session) |s| {

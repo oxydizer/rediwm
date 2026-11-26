@@ -55,4 +55,8 @@ pub const source =
     \\"Super+Ctrl+Right" = "resize_split_right"
     \\"Super+Ctrl+Up" = "resize_split_up"
     \\"Super+Ctrl+Down" = "resize_split_down"
+    \\"Super+w" = "cycle_column_width"
+    \\"Super+a" = "toggle_overview"
+    \\"Super+bracketleft" = "consume_left"
+    \\"Super+bracketright" = "consume_right"
 ;

@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from desktop_zoom import ROOT, wait_for
+from desktop_zoom import ROOT, build_client, wait_for
 from ipc_client import IPCClient, spawn_compositor, stop_process
 
 
@@ -24,12 +24,84 @@ def build_layer_client(tmp):
     return tmp / "layer-client"
 
 
+def check_exclusive_zones(tmp, ipc, env, layer_client):
+    build_client(tmp)
+    windows = {}
+    children = []
+
+    def frame(window_id):
+        box = ipc.get_window_debug(window_id)["chrome_box"]
+        return box["x"], box["y"], box["width"], box["height"]
+
+    def panel(version):
+        proc = subprocess.Popen([str(layer_client), str(version)], env=env, stdin=subprocess.PIPE, text=True)
+        children.append(proc)
+        return proc
+
+    try:
+        for index, output in enumerate(ipc.get_outputs()):
+            app_id = "layer.window." + output["name"]
+            # A v6 and a v7 client share the compositor through the same layout changes.
+            child_env = dict(env, REDIWM_TEST_XDG_VERSION=str(6 + index))
+            log = tmp / f"window-{index}.log"
+            with log.open("w") as out:
+                children.append(subprocess.Popen([str(tmp / "client"), "--app-id", app_id], env=child_env, stdout=out))
+            window = wait_for(lambda: next((w for w in ipc.get_windows() if w["app_id"] == app_id), None), "window map")
+            window_id = window["id"]
+            ipc.action("move_window_to", {"id": window_id, "x": output["x"] + 40, "y": output["y"] + 40})
+            ipc.wait_for("window_geometry_settled", window_id=window_id)
+            ipc.action("maximize_window", {"id": window_id})
+            wait_for(lambda: frame(window_id)[0] == output["x"] and frame(window_id)[2] == output["logical_width"],
+                     "maximize on selected output")
+            ipc.wait_for("window_geometry_settled", window_id=window_id)
+            windows[output["name"]] = (window_id, frame(window_id))
+            if index == 0:
+                hints = {line for line in log.read_text().splitlines() if line.startswith("constrained")}
+                assert hints == {"constrained"}, ("v6 resize hints", hints)
+
+        corner = panel(5)
+        mapped = wait_for(lambda: next((s for s in ipc.get_layer_surfaces() if s["mapped"]), None), "corner panel map")
+        affected = mapped["output"]
+        window_id, (x, y, w, h) = windows[affected]
+
+        def expect(left=0, top=0):
+            target = (x + left, y + top, w - left, h - top)
+            wait_for(lambda: frame(window_id) == target, f"panel reservation {target}")
+            for name, (other_id, original) in windows.items():
+                if name != affected:
+                    assert frame(other_id) == original, "panel changed another output"
+
+        def command(value):
+            corner.stdin.write(value + "\n")
+            corner.stdin.flush()
+
+        expect(top=43)
+        legacy = panel(4)
+        expect(top=86)
+        command("left")
+        expect(left=45, top=43)
+        command("unmap")
+        expect(top=43)
+        command("left")
+        expect(left=45, top=43)
+        stop_process(legacy)
+        expect(left=45)
+        stop_process(corner)
+        expect()
+        print("layer-shell: explicit and inferred edges, stacking, unmap, remap and output isolation")
+    finally:
+        for child in children:
+            if child.poll() is None:
+                stop_process(child)
+
+
 def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-layer-lifecycle-") as directory:
         tmp = Path(directory)
         layer_client = build_layer_client(tmp)
         compositor, log = spawn_compositor(
-            tmp, outputs="2", config_content="[compositor]\nxwayland = false\n",
+            tmp, outputs="2", scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"),
                        "XDG_DATA_HOME": str(tmp / "data"),
                        "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + str(tmp / "missing-bus"),
@@ -50,6 +122,7 @@ def run():
                     wait_for(lambda: not ipc.query('get_layer_surfaces')["surfaces"], "destroyed layer still listed")
                     assert compositor.poll() is None
                 print("layer lifecycle: disconnect/recreate leaves no stale layer entries")
+                check_exclusive_zones(tmp, ipc, env, layer_client)
 
                 # A disabled monitor must not be chosen over an enabled but
                 # sleeping one when the client leaves output selection to us.

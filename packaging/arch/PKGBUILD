@@ -12,6 +12,7 @@ depends=(
   'wayland'
   'wayland-protocols'
   'xkeyboard-config'
+  'libxcb'
   'pixman'
   'freetype2'
   'harfbuzz'

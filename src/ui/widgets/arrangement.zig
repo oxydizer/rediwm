@@ -249,32 +249,22 @@ fn paintTile(r: *Renderer, t: theme.Theme, box: Rect, item: Item, selected: bool
     }
     const text_w = @max(0, box.w - 8);
     // Step down before ellipsizing: a portrait screen's tile is narrow.
-    var name_size: f32 = 13;
+    var name: layout.TextStyle = .{ .content = item.label, .font_size = 13, .weight = 600, .color = t.fg };
     for ([_]f32{ 13, 11.5, 10 }) |size| {
-        name_size = size;
-        if (paint_mod.labelWidth(item.label, size) <= text_w) break;
+        name.font_size = size;
+        if (r.textWidth(name) <= text_w) break;
     }
-    const detail_size: f32 = 11.5;
+    const detail: layout.TextStyle = .{ .content = item.detail, .font_size = 11.5, .color = t.dim };
     const line_h: f32 = 18;
     const show_detail = item.detail.len > 0 and box.h >= 2 * line_h + 12 and
-        paint_mod.labelWidth(item.detail, detail_size) <= text_w;
+        r.textWidth(detail) <= text_w;
     const block_h = if (show_detail) 2 * line_h else line_h;
     const top = box.y + (box.h - block_h) / 2;
     const prev_clip = r.clip;
     defer r.clip = prev_clip;
     r.clip = paint_mod.intersectClip(prev_clip, .{ .x = box.x + 4, .y = box.y, .w = text_w, .h = box.h });
-    const name_x = paint_mod.centeredTextX(box.x + 4, text_w, item.label, name_size);
-    r.drawText(name_x, top, box.x + 4 + text_w - name_x, line_h, .{
-        .content = item.label,
-        .font_size = name_size,
-        .weight = 600,
-        .color = t.fg,
-    });
-    if (show_detail) r.drawText(paint_mod.centeredTextX(box.x, box.w, item.detail, detail_size), top + line_h, box.w, line_h, .{
-        .content = item.detail,
-        .font_size = detail_size,
-        .color = t.dim,
-    });
+    r.drawTextCentered(box.x + 4, top, text_w, line_h, name);
+    if (show_detail) r.drawTextCentered(box.x + 4, top + line_h, text_w, line_h, detail);
 }
 
 fn testItems() [2]Item {

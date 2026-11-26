@@ -72,10 +72,14 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
         }
     }
 
+    const previous_width = toplevel.chrome_width;
+    const previous_height = toplevel.chrome_height;
     toplevel.syncChrome(true, nowMs()) catch |err| {
         log.err("handleCommit: could not update window decoration: {}", .{err});
     };
     if (toplevel.in_world) if (toplevel.server.layout_autosave) |autosave| {
+        if (toplevel.auto_target == null and
+            (toplevel.chrome_width != previous_width or toplevel.chrome_height != previous_height)) autosave.changed();
         autosave.mapped(toplevel);
         autosave.finishMapped(toplevel);
     };
@@ -172,14 +176,18 @@ pub fn handleMapped(toplevel: *Toplevel) void {
         } else if (target_out) |output| {
             const frame_w = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(toplevel.chrome_width)) * toplevel.zoom())));
             const frame_h = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(toplevel.chrome_height)) * toplevel.zoom())));
-            const geom = pickInitialPlacement(toplevel.server, output, toplevel.open_rules, toplevel.parentWindow(), frame_w, frame_h);
+            const geom = pickInitialPlacement(toplevel.server, output, toplevel.open_rules, toplevel.parentWindow(), toplevel.isModal(), frame_w, frame_h);
             toplevel.setPosition(geom.x, geom.y);
             toplevel.placed = true;
         }
     }
 
     toplevel.server.world.workspaces.mapped(toplevel);
-    const want_focus = (if (inherited_placeholder != null) ph_had_focus else (toplevel.open_rules.focus orelse true)) and @import("../workspaces.zig").visible(toplevel);
+    const restore_focus = if (toplevel.server.layout_autosave) |autosave|
+        (if (autosave.workspace_restore) |*restore| restore.takesMapFocus(toplevel) else true)
+    else
+        true;
+    const want_focus = restore_focus and (if (inherited_placeholder != null) ph_had_focus else (toplevel.open_rules.focus orelse !mapsBehindGame(toplevel))) and @import("../workspaces.zig").visible(toplevel);
     if (want_focus) {
         toplevel.needs_attention = false;
         toplevel.server.world.toplevels.prepend(toplevel);
@@ -263,6 +271,30 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     if (want_focus and toplevel.server.config.compositor.focus_zoom == .camera) {
         if (target_out) |output| toplevel.server.world.navigateTo(toplevel, output);
     }
+}
+
+/// A game in front keeps the keyboard when another program's window maps, as
+/// under KWin, Mutter and sway; the newcomer waits behind it, asking for
+/// attention. Wine makes whichever of its windows gets our keyboard enter the
+/// Win32 foreground, and a D3D game that loses that while fullscreen
+/// minimizes itself: explorer's tray window or a launcher showing up would
+/// throw the game off the screen. The game's own windows still take focus:
+/// Wine sets no xdg parent, so a game's message box is known only by its
+/// process.
+fn mapsBehindGame(toplevel: *Toplevel) bool {
+    const front = @import("../output/game.zig").inFront(toplevel.server) orelse return false;
+    if (front == toplevel) return false;
+    if (toplevel.clientPid()) |pid| if (front.clientPid()) |front_pid| {
+        if (pid > 0 and pid == front_pid) return false;
+    };
+    var owner = toplevel.owner();
+    var depth: usize = 0;
+    while (owner) |candidate| : (depth += 1) {
+        if (candidate == front) return false;
+        if (depth == 32) break;
+        owner = candidate.owner();
+    }
+    return true;
 }
 
 pub fn handleUnmapped(toplevel: *Toplevel) void {
@@ -449,6 +481,20 @@ pub fn destroyNow(toplevel: *Toplevel) void {
     toplevel.frame_tree.node.destroy();
     toplevel.releaseIcon();
     gpa.destroy(toplevel);
+}
+
+/// The client set or unset its xdg-dialog-v1 modal hint. A dialog that turns
+/// modal while its owner has the keyboard takes it over, as it would have had
+/// the owner been focused after it.
+pub fn handleModalChanged(toplevel: *Toplevel) void {
+    if (!toplevel.in_world) return;
+    if (toplevel.isModal()) if (toplevel.owner()) |owner| {
+        if (toplevel.server.world.toplevels.first() == owner and owner.activated) toplevel.server.world.focus(owner);
+    };
+    if (toplevel.server.ipc) |ipc| {
+        events.onWindowChanged(ipc, toplevel);
+        ipc.wait_mgr.checkAll();
+    }
 }
 
 pub fn handleIdentityChanged(toplevel: *Toplevel) void {

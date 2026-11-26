@@ -6,6 +6,18 @@ extern var rediwm_scene_output_reblurs: u64;
 /// Glass blurs the output pass re-took (stage 5c), for the performance stats.
 pub const reblurs: *u64 = &rediwm_scene_output_reblurs;
 
+/// `struct rediwm_pass_encode` (scene_pass.h): how a linear output's frames
+/// reach its buffer.
+pub const Encode = extern struct {
+    /// HDR10 (PQ, BT.2020); else sRGB as displayed.
+    pq: bool = false,
+    tone_map: bool = false,
+    /// cd/m² of SDR white under PQ.
+    sdr_white: f32 = 0,
+    /// Linear BT.2020 adjustment, column-major; all zero is the identity.
+    adjust: [9]f32 = @splat(0),
+};
+
 pub const Renderer = opaque {
     extern fn rediwm_output_renderer_set_ribbons(renderer: *Renderer, enabled: bool) bool;
     pub const setRibbons = rediwm_output_renderer_set_ribbons;
@@ -27,4 +39,13 @@ pub const Renderer = opaque {
     pub const beginPass = rediwm_output_begin_pass;
     extern fn rediwm_scene_output_set_veil(renderer: *Renderer, output: *SceneOutput, alpha: f32) bool;
     pub const setVeil = rediwm_scene_output_set_veil;
+    extern fn rediwm_scene_output_set_linear(renderer: *Renderer, output: *SceneOutput, on: bool) bool;
+    pub const setLinear = rediwm_scene_output_set_linear;
+    extern fn rediwm_scene_output_linear(renderer: *Renderer, output: *SceneOutput) bool;
+    pub const linear = rediwm_scene_output_linear;
+    extern fn rediwm_scene_output_sdr_copy(renderer: *Renderer, output: *SceneOutput) ?*wlr.Buffer;
+    /// The last frame of a linear output as sRGB, for captures (null otherwise).
+    pub const sdrCopy = rediwm_scene_output_sdr_copy;
+    extern fn rediwm_scene_output_set_encode(renderer: *Renderer, output: *SceneOutput, encode: *const Encode) bool;
+    pub const setEncode = rediwm_scene_output_set_encode;
 };

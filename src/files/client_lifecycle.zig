@@ -115,6 +115,7 @@ pub fn create(
     // (and thus titlebar height) is known; this is just a safe pre-configure
     // default sized for the worst case (self-decorated).
     self.xdg_toplevel.setMinSize(if (launch.chooser != null) 600 else 360, 214 + self.app.footerHeight() + main.CSD_TITLEBAR_H);
+    if (launch.chooser) |options| self.attachToParent(options);
 
     // Prefer server-side decorations; the compositor may still tell us via
     // decorationEvent to self-decorate (e.g. it has no SSD implementation),
@@ -262,10 +263,15 @@ pub fn destroy(self: *Client) void {
     if (self.xkb_context) |context| c.xkb_context_unref(context);
 
     if (self.decoration) |dec| dec.destroy();
+    self.detachParent();
     self.xdg_toplevel.destroy();
     self.xdg_surface.destroy();
     if (self.wm_base) |wm| wm.destroy();
     self.wm_base = null;
+    if (self.importer) |importer| importer.destroy();
+    self.importer = null;
+    if (self.wm_dialog) |manager| manager.destroy();
+    self.wm_dialog = null;
     self.tabs.deinit();
     if (self.cursor_theme) |theme_ptr| theme_ptr.destroy();
     self.cursor_shape.deinit();

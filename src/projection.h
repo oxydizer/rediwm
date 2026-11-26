@@ -4,6 +4,7 @@
 struct rediwm_node;
 struct rediwm_buffer;
 struct rediwm_scene_outputs;
+struct rediwm_scene_output;
 struct rediwm_node;
 struct rediwm_tree;
 struct rediwm_scene;
@@ -37,6 +38,7 @@ void rediwm_projection_sync(struct rediwm_projection *, double, double, double,
 // item's `id`; a leaf that is gone or hidden reports its last box.
 struct rediwm_damage_event {
   uint64_t leaf;
+  uint64_t home_output;
   struct { int x, y, width, height; } box;
 };
 typedef void (*rediwm_damage_event_iterator)(const struct rediwm_damage_event *, void *);
@@ -86,6 +88,9 @@ bool rediwm_projection_set_tree_dim(struct rediwm_node *, float brightness, floa
 bool rediwm_projection_set_tree_unclipped(struct rediwm_node *, bool);
 // Shows the subtree but lets the pick pass through it to what is below.
 bool rediwm_projection_set_tree_inert(struct rediwm_node *, bool);
+// Confines a subtree (including unclipped descendants) to the given scene
+// output. NULL restores normal placement across outputs.
+bool rediwm_projection_set_tree_output(struct rediwm_node *, struct rediwm_scene_output *);
 // The same for a node inside a wlroots subtree (a client's popup).
 struct rediwm_shadow_spec;
 // Buffer-local damage for the next buffer set on a compositor-owned source
@@ -112,16 +117,12 @@ void rediwm_mirror_opaque(struct pixman_region32 *out, const struct pixman_regio
                           int source_width, int source_height, int width, int height);
 // Surface feedback (stage 6): each time the output pass builds, it reports how
 // much of every client surface nothing above hides, over the whole layout.
-// `begin` clears the last report, `note` reports one surface (a node of the
-// graph's items; anything but a client surface of the world is ignored) and
-// `end` works out and sends what changed: outputs entered and left, the primary
-// output.
-// What of an item nothing above hides, in layout space, as the pass saw it.
-struct rediwm_scene_output;
+// `begin` clears the last report, `note_output` records the layout-space
+// region visible on one output, and `end` sends updated surface feedback.
 void rediwm_projection_note_visible(struct rediwm_projection *, struct rediwm_node *,
                                     const struct pixman_region32 *visible);
 void rediwm_projection_feedback_begin(struct rediwm_projection *);
-void rediwm_projection_feedback_note(struct rediwm_projection *, struct rediwm_node *,
+void rediwm_projection_note_output(struct rediwm_projection *, struct rediwm_node *, struct rediwm_scene_output *,
                                      const struct pixman_region32 *visible);
 void rediwm_projection_feedback_end(struct rediwm_projection *);
 // Frame callbacks of the world's surfaces.

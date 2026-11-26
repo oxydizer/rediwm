@@ -15,7 +15,7 @@ pub fn launch(self: *App) !void {
     const args = if (entry) |e| try launcher.parseExec(a, e.exec, e) else try launcher.parseExec(a, self.environ.getPosix("TERMINAL") orelse "foot", null);
     if (args.len == 0) return error.EmptyCommand;
     // Theme flags use the same helper as compositor terminal launches.
-    const wrapped = try @import("config").terminal_theme.wrap(a, self.io, args, @import("ui").theme.global, @import("../settings.zig").terminalOpacity());
+    const wrapped = try @import("config").terminal_theme.wrap(a, self.io, args, @import("ui").theme.global, @import("app_kit").settings.terminalOpacity());
     var helper_buf: [4096]u8 = undefined;
     const helper = try self.terminalHelper("rediwm-files-terminal", &helper_buf);
     const argv = try a.alloc([]const u8, wrapped.len + 4);

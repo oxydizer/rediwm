@@ -181,8 +181,7 @@ pub fn isConditionMet(mgr: *WaitManager, cond: protocol.WaitCondition, now: i64)
         },
         .window_geometry_settled => |p| {
             const top = mgr.server.findToplevelById(p.id) orelse return false;
-            const now_ms = @import("ui").anim.nowMs();
-            return top.isGeometrySettled(now_ms);
+            return top.isGeometrySettled(now) and !@import("../scroll_tiling.zig").moving(mgr.server, top.workspace_id);
         },
         .output_frame => return false, // handled directly on frame
         .catalog_published => return @import("../startup.zig").marks.catalog_state == .published,

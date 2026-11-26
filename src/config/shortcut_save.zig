@@ -17,7 +17,7 @@ pub fn patch(a: std.mem.Allocator, original: []const u8, binds: []const keys.Key
 }
 
 pub fn patchMode(a: std.mem.Allocator, original: []const u8, binds: []const keys.Keybind, index: usize, replacement: keys.Keybind, mode: loader.DesktopMode) ![]u8 {
-    const section = if (mode == .workspaces) "[keybinds.workspace]" else "[keybinds]";
+    const section = if (mode.tiled()) "[keybinds.workspace]" else "[keybinds]";
     var defaults = try loader.parse(a, "[keybinds]\n", "shortcut-defaults");
     defaults.compositor.desktop_mode = mode;
     defer defaults.deinit();
@@ -153,13 +153,19 @@ test "moving Files restores ordinary keys and removes obsolete non-inherited noo
 }
 
 test "editing workspace defaults preserves canvas bindings and masks the previous key" {
+    inline for (.{ loader.DesktopMode.workspaces, loader.DesktopMode.scrolling }) |mode| {
+        try checkWorkspaceEdit(mode);
+    }
+}
+
+fn checkWorkspaceEdit(comptime mode: loader.DesktopMode) !void {
     const a = std.testing.allocator;
-    const original = "[compositor]\ndesktop_mode = \"workspaces\"\n[keybinds]\n\"Super+q\" = \"close_window\"\n";
+    const original = "[compositor]\ndesktop_mode = \"" ++ @tagName(mode) ++ "\"\n[keybinds]\n\"Super+q\" = \"close_window\"\n";
     var cfg = try loader.parse(a, original, "test");
     defer cfg.deinit();
     const binds = cfg.activeKeybinds();
     const key = try keys.parseKeybind("Super+F12");
-    const updated = try patchMode(a, original, binds, 0, .{ .sym = key.sym, .modifiers = key.modifiers, .action = binds[0].action }, .workspaces);
+    const updated = try patchMode(a, original, binds, 0, .{ .sym = key.sym, .modifiers = key.modifiers, .action = binds[0].action }, mode);
     defer a.free(updated);
     var parsed = try loader.parse(a, updated, "test");
     defer parsed.deinit();

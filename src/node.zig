@@ -110,6 +110,13 @@ pub const Node = extern struct {
 pub const Tree = extern struct {
     node: Node,
     children: wl.list.Head(Node, .link),
+    surface_opacity: f32,
+
+    pub fn setSurfaceOpacity(tree: *Tree, opacity: f32) void {
+        if (tree.surface_opacity == opacity) return;
+        tree.surface_opacity = opacity;
+        tree.node.touch();
+    }
 
     extern fn rediwm_tree_create(parent: *Tree) ?*Tree;
     pub fn createSceneTree(parent: *Tree) !*Tree {
@@ -166,6 +173,7 @@ pub const Buffer = extern struct {
     node: Node,
     point_accepts_input: ?*const fn (buffer: *Buffer, sx: *f64, sy: *f64) callconv(.c) bool,
     opacity: f32,
+    alpha_multiplier: f32,
     filter_mode: wlr.RenderPass.ScaleFilterMode,
     src_box: wlr.FBox,
     dst_width: c_int,
@@ -211,6 +219,18 @@ pub const Buffer = extern struct {
     pub const setSourceBox = rediwm_buffer_set_source_box;
     extern fn rediwm_buffer_set_opacity(buffer: *Buffer, opacity: f32) void;
     pub const setOpacity = rediwm_buffer_set_opacity;
+    extern fn rediwm_buffer_set_alpha_multiplier(buffer: *Buffer, multiplier: f32) void;
+    pub const setAlphaMultiplier = rediwm_buffer_set_alpha_multiplier;
+
+    /// Isolated capture and snapshots visit buffers outside the projection walk.
+    pub fn inheritedOpacity(buffer: *const Buffer) f32 {
+        var opacity = buffer.opacity;
+        if (buffer.surface != null) {
+            var parent = buffer.node.parent;
+            while (parent) |tree| : (parent = tree.node.parent) opacity *= tree.surface_opacity;
+        }
+        return opacity;
+    }
     extern fn rediwm_buffer_set_filter_mode(buffer: *Buffer, mode: wlr.RenderPass.ScaleFilterMode) void;
     pub const setFilterMode = rediwm_buffer_set_filter_mode;
     extern fn rediwm_buffer_set_transform(buffer: *Buffer, transform: wl.Output.Transform) void;
@@ -221,6 +241,10 @@ pub const Buffer = extern struct {
     pub const setSectorRect = rediwm_buffer_set_sector_rect;
     extern fn rediwm_buffer_set_opaque_region(buffer: *Buffer, region: ?*const pixman.Region32) void;
     pub const setOpaqueRegion = rediwm_buffer_set_opaque_region;
+    extern fn rediwm_texture_buffer_create(renderer: *wlr.Renderer, source: *wlr.Buffer) ?*wlr.Buffer;
+    /// `source` uploaded once into a texture that nodes share (node.h); `source`
+    /// may be dropped right after. Carries one lock.
+    pub const textureBuffer = rediwm_texture_buffer_create;
 
     pub fn fromNode(node: *Node) *Buffer {
         return @fieldParentPtr("node", node);
@@ -244,6 +268,8 @@ pub const Scene = extern struct {
     outputs: ?*anyopaque,
     /// A client surface committed with frame callbacks waiting (node.h).
     frame_callbacks: ?*const fn (output: *wlr.Output) callconv(.c) void,
+    /// Bumped by every reported change (node.h).
+    serial: u64,
 
     extern fn rediwm_scene_create(changed: ?*const fn (?*anyopaque, ?*Node, bool) callconv(.c) void, data: ?*anyopaque) ?*Scene;
     pub fn create() !*Scene {

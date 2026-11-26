@@ -30,12 +30,19 @@ struct rediwm_scene_output {
   struct wlr_addon addon;
   struct wlr_damage_ring damage_ring;
   int x, y; // in the layout
+  // Stable across position changes and unique even if a disconnected output's slot is reused.
+  uint64_t serial;
+  pixman_region32_t projection_damage; // scoped layout damage until the end of a sync
+  uint64_t color_serial; // incremented after a committed image description change
   int index; // below 64: a bit in the projection's masks
   struct {
     struct wl_signal destroy;
   } events;
   // What was damaged and not yet committed with a buffer.
   pixman_region32_t pending_commit_damage;
+  // A strip or camera pan holds every blur on this output. Any postponed
+  // refresh needs a final build even if geometry settled on the last frame.
+  bool hold_glass, glass_deferred;
   bool prev_scanout;
   // Tearing (scene_output_async.c): a game wants asynchronous flips, so the
   // swapchain should use only modifiers the primary plane flips asynchronously.
@@ -53,8 +60,10 @@ struct rediwm_scene_outputs {
   struct wl_list outputs; // rediwm_scene_output.link
   // Scanning a client buffer out directly; WLR_SCENE_DISABLE_DIRECT_SCANOUT turns it off.
   bool direct_scanout;
+  uint64_t next_serial;
   // For the preferred image description of surfaces; NULL until set.
   struct wlr_color_manager_v1 *color_manager_v1;
+  struct rediwm_color_feedback *feedback;
   struct wlr_output_layout *layout;
   struct wl_listener color_manager_destroy, layout_change, layout_destroy;
 };
@@ -63,6 +72,7 @@ struct rediwm_scene_outputs {
 struct rediwm_outputs_update_event {
   struct rediwm_scene_output **active;
   size_t size;
+  struct rediwm_scene_output *primary;
 };
 struct rediwm_output_sample_event {
   struct rediwm_scene_output *output;
@@ -93,6 +103,7 @@ void rediwm_scene_output_damage_whole(struct rediwm_scene_output *);
 // Whether anything asks for a frame: the output itself, or damage not yet committed.
 bool rediwm_scene_output_needs_frame(const struct rediwm_scene_output *);
 bool rediwm_scene_output_has_pending_damage(const struct rediwm_scene_output *);
+void rediwm_scene_output_hold_glass(struct rediwm_scene_output *, bool);
 // Whether the last built frame scanned a client buffer out directly.
 bool rediwm_scene_output_direct_scanout(const struct rediwm_scene_output *);
 // Whether the next frames should be drawn into buffers the display can flip

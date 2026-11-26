@@ -6,6 +6,7 @@ const wlr = @import("wlroots");
 const Server = @import("../Server.zig");
 const events = @import("../ipc/events.zig");
 const gpa = @import("../main.zig").gpa;
+const auto_place = @import("auto_place.zig");
 const log = std.log.scoped(.output);
 const Placement = Output.Placement;
 const lidHides = Output.lidHides;
@@ -21,6 +22,27 @@ const fromWlr = Output.fromWlr;
 const atLayout = Output.atLayout;
 const scaled = Output.scaled;
 const recomputeWorldBounds = Output.recomputeWorldBounds;
+
+/// The space left by the built-in taskbar and dock, before external panels.
+pub fn shellUsableBox(output: *Output) wlr.Box {
+    var box = output.dockAreaBox();
+    const strip = @import("../Dock.zig").reservedStrip(output.server, box);
+    if (strip == 0) return box;
+    switch (output.server.config.compositor.dock_position) {
+        .top => box.y += strip,
+        .left => box.x += strip,
+        .bottom, .right => {},
+    }
+    if (output.server.config.compositor.dock_position.vertical()) {
+        box.width = @max(1, box.width - strip);
+    } else box.height = @max(1, box.height - strip);
+    return box;
+}
+
+/// Window placement also respects the exclusive zones of mapped layer surfaces.
+pub fn usableBox(output: *Output) wlr.Box {
+    return output.layer_work_area orelse output.shellUsableBox();
+}
 
 /// Apply and persist one output patch, shared by IPC and Settings. Mode and scale
 /// are tested/committed together; a failed publication restores the previous state.
@@ -135,6 +157,8 @@ pub fn arrange(server: *Server, placements: []const Placement) !void {
     defer carried.deinit(gpa);
     var tops = server.world.toplevels.iterator(.forward);
     while (tops.next()) |toplevel| {
+        // Workspace geometry follows its assigned output in syncOutputs.
+        if (server.world.workspaces.active) break;
         if (!toplevel.in_world) continue;
         const center = toplevel.frameWorld(@floatFromInt(@divTrunc(toplevel.chrome_width, 2)), @floatFromInt(@divTrunc(toplevel.chrome_height, 2)));
         const layout_center = server.world.toLayout(center.x, center.y);
@@ -188,8 +212,7 @@ pub fn refreshConfiguration(output: *Output) void {
     output.server.input.refreshOutputScales();
     if (output.taskbar) |bar| bar.notifyToplevelsChanged();
     syncLayout(output.server);
-    output.color.key = null;
-    output.server.night_light.retargetOutput(output);
+    @import("gamma.zig").refresh(output);
     if (output.server.idle) |im| im.recheckInhibitors();
     output.wlr_output.scheduleFrame();
 }
@@ -216,6 +239,7 @@ pub fn setDisplayScale(output: *Output, scale: f32) bool {
 
 /// Apply saved mode, scale and placement. Defer modesets until an output wakes.
 pub fn applyConfig(output: *Output) void {
+    output.commit_refresh = .{};
     const out = output.wlr_output;
     const saved = configured(output.server, out);
     const want_enabled = (if (saved) |config| config.enabled else true) and !lidHides(output);
@@ -266,8 +290,7 @@ pub fn applyConfig(output: *Output) void {
                 if (!out.testState(&mode_state) or !out.commitState(&mode_state)) {
                     log.warn("output {s}: saved display mode rejected", .{out.name});
                 } else {
-                    output.color.key = null;
-                    output.server.night_light.retargetOutput(output);
+                    @import("gamma.zig").refresh(output);
                     out.scheduleFrame();
                 }
             }
@@ -286,20 +309,16 @@ pub fn applyConfig(output: *Output) void {
         return;
     }
     if (output.idle_blanked or output.user_disabled) return;
-    var placed = false;
-    for (output.server.config.outputs) |config| {
-        if (std.mem.eql(u8, config.name, std.mem.span(out.name)) and (config.x != null or config.y != null)) {
-            _ = output.server.output_layout.add(out, config.x orelse 0, config.y orelse 0) catch {};
-            placed = true;
-            break;
-        }
+    if (auto_place.savedPosition(output.server, out)) |at| {
+        _ = output.server.output_layout.add(out, at[0], at[1]) catch {};
     }
-    if (!placed) _ = output.server.output_layout.addAuto(out) catch {};
+    auto_place.arrange(output.server);
     restoreReconnectedWindows(output);
 }
 
 /// Automatic layout can move existing outputs when a neighbour changes size.
 pub fn syncLayout(server: *Server) void {
+    auto_place.arrange(server);
     server.world.mini_map.reconfigure();
     server.screenshot_selector.cancel();
     var it = server.outputs.iterator(.forward);
@@ -313,19 +332,14 @@ pub fn syncLayout(server: *Server) void {
         server.output_layout.getBox(output.wlr_output, &output.cached_box);
         output.syncWallpaper();
         output.syncTaskbar();
+        _ = @import("../LayerSurface.zig").arrangeOutput(output);
         output.syncStartMenu();
         output.syncPowerMenu();
         if (server.input.open_control_center) |cc| cc.refresh();
         if (server.ipc) |ipc| events.onOutputChanged(ipc, output);
     }
-    var layers = server.layer_surfaces.iterator(.forward);
-    while (layers.next()) |layer| {
-        if (!layer.layer.initialized) continue;
-        const out = fromWlr(layer.layer.output orelse continue) orelse continue;
-        if (!out.idle_blanked and !out.user_disabled) layer.arrange();
-    }
     recomputeWorldBounds(server);
-    server.world.workspaces.setMode(server, server.config.compositor.desktop_mode == .workspaces);
+    server.world.workspaces.setMode(server, server.config.compositor.desktop_mode);
     server.world.workspaces.syncOutputs(server);
     if (server.desktop) |desktop| desktop.syncLayout();
     if (server.output_management) |om| om.publish();
@@ -334,6 +348,11 @@ pub fn syncLayout(server: *Server) void {
 
 pub fn evacuateWindows(output: *Output) void {
     const server = output.server;
+    // Tiled mode migrates whole workspaces once the output layout settles.
+    if (server.world.workspaces.active) {
+        output.user_disabled = true;
+        return;
+    }
     const Displaced = struct {
         toplevel: *@import("../Toplevel.zig"),
         source_box: wlr.Box,
@@ -369,7 +388,7 @@ pub fn evacuateWindows(output: *Output) void {
 }
 
 pub fn restoreReconnectedWindows(output: *Output) void {
-    if (!output.isAvailable()) return;
+    if (!output.isAvailable() or output.server.world.workspaces.active) return;
     var restored = false;
     var tops = output.server.world.toplevels.iterator(.forward);
     while (tops.next()) |toplevel| {

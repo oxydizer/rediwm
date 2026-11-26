@@ -166,7 +166,7 @@ pub const Applications = struct {
         if (self.same_type) try self.appendList(g_app_info_get_all_for_type(self.content_type), default, false);
         self.recommended = self.entries.items.len;
         try self.appendList(g_app_info_get_all(), default, true);
-        var locale = collation.Locale.init(@import("settings.zig").formatsLocale()) orelse collation.Locale.init("C").?;
+        var locale = collation.Locale.init(@import("app_kit").settings.formatsLocale()) orelse collation.Locale.init("C").?;
         defer locale.deinit();
         for (self.entries.items) |*entry| entry.sort_key = try locale.key(a, entry.name);
         std.mem.sort(Entry, self.entries.items[self.recommended..], {}, struct {

@@ -23,6 +23,8 @@
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #endif
+#include <drm_fourcc.h>
+#include <wlr/render/allocator.h>
 #include <wlr/render/drm_syncobj.h>
 #include <wlr/render/swapchain.h>
 #include <wlr/render/wlr_texture.h>
@@ -45,7 +47,7 @@ struct effect_cache {
     struct wlr_box region;         // device pixels the blur covers
     float sigma;                   // device pixels
     bool valid, seen;
-    // A hold moved the blur without re-taking it: re-take it once released.
+    // The blur or its backdrop changed during a hold: refresh on release.
     bool carried;
 };
 struct output_state {
@@ -63,6 +65,25 @@ struct output_state {
     // changed since the last frame was built, so that change re-blurs no glass.
     float veil;
     bool veil_changed;
+    // rediwm_scene_output_set_linear: this output
+    // blends in linear light into `linear`, an FP16 image of its buffer kept
+    // between frames, and encodes into each swapchain buffer what that buffer
+    // lacks. `linear_valid`: the image holds the last frame everywhere, so only
+    // new damage is drawn into it.
+    bool linear_wanted, linear_valid, linear_failed;
+    struct rediwm_linear_target *linear;
+    // rediwm_scene_output_set_encode: how the linear image reaches the buffer
+    // (PQ for an HDR signal, night light there).
+    struct rediwm_pass_encode encode;
+    // rediwm_scene_output_sdr_copy: an sRGB encode of `linear` for captures,
+    // once per requested depth per build. Slot 1 is for 10-bit shm readers.
+    struct {
+        struct wlr_buffer *buffer;
+        uint32_t format;
+        bool current;
+    } sdr[2];
+    bool hdr_content;
+    int linear_width, linear_height;
 };
 struct entry {
     struct rediwm_item item;
@@ -106,28 +127,12 @@ static inline struct wlr_box device_box(struct wlr_box box, const struct output_
 static inline void device_region(pixman_region32_t *region, const struct output_view *v, bool expand) {
     output_view_region(region, v, expand);
 }
-struct collector {
-    struct rediwm_output_renderer *renderer;
-    const struct output_view *view;
-    // The logical boxes of the other enabled outputs.
-    struct wlr_box other[15];
-    int others;
-    pixman_region32_t covered;
-    // A window's items are contiguous and share one clip, so its cover is built
-    // once for the run rather than for each of its six or so items.
-    struct rediwm_clip cover_of;
-    pixman_region32_t cover;
-    bool has_cover;
-    // What the effects visited so far read (layout): items there are kept even
-    // where surfaces above hide them, for the blurs only (stage 5f).
-    pixman_region32_t reads;
-};
-
 // Shared between the parts (scene_output_*.c).
 void scene_output_render_ribbon(struct entry *, struct wlr_render_pass *,
     const struct output_view *, struct wlr_box, const pixman_region32_t *);
 extern uint64_t rediwm_scene_output_reblurs;
-bool scene_output_collect(const struct rediwm_item *item, struct rediwm_node *transport, void *data);
+bool scene_output_collect_frame(struct rediwm_output_renderer *, struct rediwm_scene_output *,
+    const struct output_view *, pixman_region32_t *covered);
 void scene_output_clear_entries(struct rediwm_output_renderer *r);
 bool scene_output_decide_effects(struct rediwm_output_renderer *r, struct output_state *os,
         struct rediwm_scene_output *out, const struct output_view *v, pixman_region32_t *changed);
