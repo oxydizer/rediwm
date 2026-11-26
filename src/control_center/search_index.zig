@@ -50,6 +50,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .services, .title = i18n.msg("Services"), .target = "", .keywords = i18n.msg("") },
     .{ .page = .general, .title = i18n.msg("Brightness"), .target = "@Brightness", .heading = i18n.msg("Brightness"), .keywords = i18n.msg("backlight screen light") },
     .{ .page = .general, .title = i18n.msg("Open files with a single click"), .target = "files_single_click_open", .keywords = i18n.msg("double click folders") },
+    .{ .page = .general, .title = i18n.msg("Folders first"), .target = "files_folders_first", .keywords = i18n.msg("files folders directories sort order before") },
     .{ .page = .general, .title = i18n.msg("Built-in audio player"), .target = "files_audio_player", .keywords = i18n.msg("music play sound mp3 flac wav files") },
     .{ .page = .region, .title = i18n.msg("Input sources"), .target = "input_sources", .keywords = i18n.msg("keyboard layout language input method ime fcitx switch") },
     .{ .page = .region, .title = i18n.msg("Layout switch keys"), .target = "input_source_switch_with", .keywords = i18n.msg("keyboard layout alt shift caps lock toggle") },

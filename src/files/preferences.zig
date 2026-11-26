@@ -1,4 +1,8 @@
 //! Files-specific preferences, kept separate from compositor configuration.
+//! `list` and `sort` are the defaults for folders without a view of their own
+//! (`folder_views.zig`). Byte 9 held a global folders-first switch, which is
+//! now per folder with its default in `files_folders_first`; it is still
+//! written as 1 so older builds read the file.
 const std = @import("std");
 
 pub const Preferences = struct {
@@ -9,8 +13,6 @@ pub const Preferences = struct {
     git_view: bool = true,
     /// Zero adopts one third of the available space on first opening.
     terminal_height: u32 = 0,
-    /// Directories listed ahead of files in every sort order.
-    folders_first: bool = true,
 
     pub fn path(a: std.mem.Allocator, env: std.process.Environ) ![]u8 {
         if (env.getPosix("XDG_STATE_HOME")) |base| {
@@ -39,7 +41,6 @@ pub const Preferences = struct {
             .unpinned_places = if (places or v3 or v4 or current) data[3] else 0,
             .git_view = if (v3 or v4 or current) data[4] == 1 else true,
             .terminal_height = height,
-            .folders_first = if (current) data[9] == 1 else true,
         };
     }
     pub fn save(self: Preferences, a: std.mem.Allocator, io: std.Io, file: []const u8) !void {
@@ -47,7 +48,7 @@ pub const Preferences = struct {
         const temporary = try std.fmt.allocPrint(a, "{s}.{d}.tmp", .{ file, @import("c.zig").api.getpid() });
         defer a.free(temporary);
         defer std.Io.Dir.cwd().deleteFile(io, temporary) catch {};
-        var data = [_]u8{ '5', @intFromBool(self.list), self.sort, self.unpinned_places, @intFromBool(self.git_view), 0, 0, 0, 0, @intFromBool(self.folders_first), '\n' };
+        var data = [_]u8{ '5', @intFromBool(self.list), self.sort, self.unpinned_places, @intFromBool(self.git_view), 0, 0, 0, 0, 1, '\n' };
         std.mem.writeInt(u32, data[5..9], @min(self.terminal_height, 4096), .little);
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = temporary, .data = &data });
         try std.Io.Dir.rename(.cwd(), temporary, .cwd(), file, io);

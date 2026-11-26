@@ -1,7 +1,8 @@
 //! Folder tabs. The active tab's folder lives in the `App` as always (`history`,
-//! `sort_mode`, the listing); a tab only keeps what it needs to be brought back:
-//! its `History` (current folder, back and forward stacks, and the scroll and
-//! selection each entry remembers) and its sort. Switching parks the active
+//! the listing); a tab only keeps what it needs to be brought back: its
+//! `History` (current folder, back and forward stacks, and the scroll and
+//! selection each entry remembers). The sort and grid/list choice belong to
+//! the folder (`app_folder_views.zig`), not the tab. Switching parks the active
 //! folder in its tab, takes the other tab's, and lists it again. No second
 //! listing, worker or watcher exists: only the active tab owns `items`.
 
@@ -11,7 +12,6 @@ const tr = i18n.tr;
 const app_mod = @import("app.zig");
 const App = app_mod.App;
 const history_mod = @import("history.zig");
-const Sort = @import("app_model.zig").Sort;
 const recent = @import("recent.zig");
 
 /// The most tabs the strip carries (the protocol's limit).
@@ -21,7 +21,6 @@ pub const FolderTab = struct {
     id: usize,
     /// Null for the active tab: its history is `App.history`.
     history: ?history_mod.History = null,
-    sort: Sort = .name,
 };
 
 /// The first tab exists as soon as anything asks about tabs.
@@ -70,7 +69,6 @@ fn park(self: *App) void {
     const tab = self.tabs.items[self.tab_selected];
     self.rememberView();
     tab.history = self.history;
-    tab.sort = self.sort_mode;
 }
 
 /// Takes tab `i`'s folder as the active one and lists it.
@@ -78,7 +76,6 @@ fn activate(self: *App, i: usize) void {
     const tab = self.tabs.items[i];
     self.history = tab.history.?;
     tab.history = null;
-    self.sort_mode = tab.sort;
     self.tab_selected = i;
     self.applyHistoryNav(self.history.current);
 }
@@ -115,7 +112,7 @@ pub fn openTab(self: *App, path: []const u8, activate_it: bool) void {
         history.deinit();
         return;
     };
-    tab.* = .{ .id = self.tab_next_id, .history = history, .sort = self.sort_mode };
+    tab.* = .{ .id = self.tab_next_id, .history = history };
     const at = self.tab_selected + 1;
     self.tabs.insert(self.allocator, at, tab) catch {
         history.deinit();
@@ -153,7 +150,6 @@ pub fn closeTab(self: *App, i: usize) void {
     const heir = self.tabs.items[at];
     self.history = heir.history.?;
     heir.history = null;
-    self.sort_mode = heir.sort;
     self.tab_selected = at;
     self.applyHistoryNav(self.history.current);
 }
@@ -179,7 +175,7 @@ pub fn discard(self: *App, tab: *FolderTab) void {
 }
 
 /// Removes the tab with `id` without freeing it; it carries its folder, its
-/// back and forward history and its sort. A window left with no tabs closes.
+/// back and forward history. A window left with no tabs closes.
 pub fn take(self: *App, id: usize) ?*FolderTab {
     ensureTabs(self);
     const i = findTab(self, id) orelse return null;

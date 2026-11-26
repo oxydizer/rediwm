@@ -62,6 +62,8 @@ pub fn create(
     };
     self.ime = .{ .app = &self.app };
     self.app.reaper = setup.reaper;
+    self.app.folder_views = setup.folder_views;
+    self.app.applyFolderView();
     self.app.service.handle = io_handle;
     self.app.requestPinKinds();
     if (launch.chooser) |options| try self.app.configureChooser(options);
