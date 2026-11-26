@@ -34,7 +34,7 @@ pub const graph_height: f32 = 108;
 pub const footer: f32 = 60;
 const slide_distance: f32 = 20;
 
-pub const Focus = enum { pause_all, row, pause, cancel, resolve, destination, done_row, show, open_files, clear_done };
+pub const Focus = enum { pause_all, row, pause, cancel, resolve, choose, stop_seeding, destination, done_row, show, open_files, clear_done };
 pub const Hit = struct { box: Rect, focus: Focus, id: u64 = 0 };
 
 pub const Popup = struct {
@@ -197,7 +197,7 @@ pub const Popup = struct {
                 const s = c.model.summary();
                 const resuming = s.all_paused;
                 for (c.model.liveJobs()) |job| {
-                    if (job.state.isTerminal()) continue;
+                    if (job.state.isTerminal() or job.state == .seeding or job.choose_files) continue;
                     if (resuming and job.state == .paused) c.control(.@"resume", job.id);
                     if (!resuming and job.state != .paused) c.control(.pause, job.id);
                 }
@@ -216,6 +216,15 @@ pub const Popup = struct {
                 c.openWindow(path, job.id, true);
                 return self.output.closeTransfers();
             },
+            // Files opens on the download's choices (its Transfers view).
+            .choose => {
+                const job = c.model.find(h.id) orelse return;
+                const path = if (job.destination.len > 0) job.destination.slice() else home();
+                c.openWindow(path, job.id, true);
+                return self.output.closeTransfers();
+            },
+            // Stopping a seeding download is pausing it: it then completes.
+            .stop_seeding => c.control(.pause, h.id),
             .destination => {
                 const job = c.model.find(h.id) orelse return;
                 if (job.destination.len == 0) return;
@@ -297,8 +306,10 @@ pub const Popup = struct {
         r.drawText(24, 14, 200, 38, .{ .content = title, .font_size = 21, .color = t.window_fg, .weight = 700 });
         const title_w = r.textWidth(.{ .content = title, .font_size = 21, .weight = 700, .color = t.window_fg });
         var count_buf: [64]u8 = undefined;
-        const count = if (s.active == 0)
+        const count = if (s.active == 0 and s.seeding == 0)
             i18n.tr("Idle")
+        else if (s.active == 0)
+            i18n.fmt(&count_buf, i18n.tr("{count} seeding"), .{ .count = s.seeding }) catch ""
         else
             i18n.fmt(&count_buf, i18n.tr("{count} active"), .{ .count = s.active }) catch "";
         r.drawText(24 + title_w + 10, 17, 140, 34, .{ .content = count, .font_size = 12, .color = t.window_dim, .family = .mono });

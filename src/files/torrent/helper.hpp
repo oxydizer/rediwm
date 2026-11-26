@@ -36,7 +36,6 @@ namespace helper {
 
 inline constexpr size_t max_packet = 192 * 1024;
 inline constexpr size_t max_files = 512, max_torrents = 64;
-inline constexpr char item_iface[] = "org.kde.StatusNotifierItem";
 struct Transfer {
   lt::torrent_handle handle;
   std::string id, source, destination, error, publication;
@@ -62,11 +61,9 @@ inline std::map<std::string, Transfer> transfers;
 inline std::map<int, Peer> peers;
 inline std::unique_ptr<lt::session> session;
 inline GDBusConnection *bus;
-inline std::string state_dir, executable;
+inline std::string state_dir;
 inline std::map<std::string, unsigned> saves;
-inline bool use_scopes = false, tray_upload = false;
-inline std::string tray_status = "Passive";
-inline std::string tray_title = "Transfers";
+inline bool use_scopes = false;
 
 // helper.cpp
 void create_engine();
@@ -88,8 +85,8 @@ std::string snapshot();
 gboolean accept_peer(gint fd, GIOCondition, gpointer);
 void publish();
 
-// helper_tray.cpp
+// helper_session.cpp
 void place_scope(pid_t pid, char const *app);
-void init_tray();
+GDBusConnection *session_bus();
 
 } // namespace helper

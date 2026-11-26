@@ -39,6 +39,16 @@ pub const tombstone_capacity = io_job_table.tombstone_capacity;
 pub const max_external_consumers = 4;
 /// Control commands from every external subscriber waiting at once.
 pub const external_control_capacity = 16;
+/// Job ids from here up are downloads (`io_torrent_bridge.zig`), far above
+/// anything the Manager hands out.
+pub const torrent_job_base: JobId = 1 << 48;
+
+pub fn isTorrentJob(id: JobId) bool {
+    return id >= torrent_job_base;
+}
+
+/// Pause, resume or cancel of a download, for the UI thread to send on.
+pub const TorrentControl = struct { kind: CommandKind, job_id: JobId };
 /// Replies to metadata and small-mutation requests, reserved at admission.
 pub const reply_slots_per_window = 4;
 /// Borrows a window may hold on resources it does not own.
@@ -191,6 +201,9 @@ pub const Service = struct {
     /// Pause, resume and cancel from external subscribers. Guarded by the
     /// mutex; taken before the windows' queues, being few and small.
     external_controls: Ring(Command, external_control_capacity) = .{},
+    /// Download controls from windows and subscribers: the coordinator has
+    /// no such jobs; the UI thread's bridge takes them (`takeTorrentControl`).
+    torrent_controls: Ring(TorrentControl, external_control_capacity) = .{},
     stopping: std.atomic.Value(bool) = .init(false),
 
     /// Initialize in place: an initialized pthread mutex must not be copied.
@@ -298,6 +311,13 @@ pub const Service = struct {
         return self.work_idle.load(.acquire);
     }
 
+    /// UI thread: the next download control, for the torrent bridge.
+    pub fn takeTorrentControl(self: *Service) ?TorrentControl {
+        self.lock();
+        defer self.unlock();
+        return self.torrent_controls.pop();
+    }
+
     pub fn isStopping(self: *Service) bool {
         return self.stopping.load(.acquire);
     }
@@ -369,7 +389,12 @@ pub const Service = struct {
         if (self.stopping.load(.acquire)) return error.ServiceStopping;
         const slot = self.findSlot(window_id) orelse return error.WindowClosed;
         switch (command.class()) {
-            .control => {
+            .control => if (isTorrentJob(command.job_id) and (command.kind == .pause_job or command.kind == .resume_job or command.kind == .cancel_job)) {
+                if (!self.torrent_controls.push(.{ .kind = command.kind, .job_id = command.job_id }))
+                    return error.ControlQueueFull;
+                signalWake(self.update_wake_fd);
+                return;
+            } else {
                 if (!slot.control_commands.push(command.*))
                     return error.ControlQueueFull;
             },
@@ -509,6 +534,13 @@ pub const Service = struct {
         try self.table.retire(job_id);
         signalWake(self.update_wake_fd);
         signalWake(self.external_wake_fd);
+    }
+
+    /// A live job's record, from any thread.
+    pub fn getJobRecord(self: *Service, job_id: JobId) ?JobRecord {
+        self.lock();
+        defer self.unlock();
+        return self.table.get(job_id);
     }
 
     pub fn appendRateSample(self: *Service, job_id: JobId, bytes_per_second: u64) void {

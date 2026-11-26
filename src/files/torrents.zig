@@ -24,6 +24,8 @@ pub const Transfer = struct {
     upload_rate: i64,
     total: i64,
     done: i64,
+    /// Everything shared since it was added, for the share ratio.
+    uploaded: i64 = 0,
     ratio: i32,
     limit: i32,
     @"error": []const u8,
@@ -38,6 +40,8 @@ pub const Transfer = struct {
 pub const Snapshot = struct { transfers: []const Transfer = &.{}, @"error": []const u8 = "" };
 pub const Client = struct {
     rows_changed: bool = false,
+    /// Bumped with every snapshot taken in.
+    generation: u64 = 0,
     fd: c_int = -1,
     snapshot: ?std.json.Parsed(Snapshot) = null,
     retry_at: ?i64 = null,
@@ -126,6 +130,7 @@ pub const Client = struct {
             self.rows_changed = self.rows_changed or !sameRows(self.items(), next.value.transfers);
             if (self.snapshot) |*old| old.deinit();
             self.snapshot = next;
+            self.generation +%= 1;
         }
     }
 };

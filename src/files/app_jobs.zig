@@ -12,7 +12,9 @@ pub const Model = struct {
     revision: u64 = 0,
 
     /// Applies a changed record: a retired job leaves, others are kept.
+    /// Downloads are not kept: the window lists torrents from the helper.
     pub fn apply(self: *Model, record: io_service.JobRecord) void {
+        if (record.kind == .download) return;
         for (self.records[0..self.len], 0..) |*known, i| {
             if (known.id != record.id) continue;
             if (record.removed) {

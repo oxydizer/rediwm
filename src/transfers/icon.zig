@@ -18,7 +18,8 @@ pub fn paintSummary(r: *ui_paint.Renderer, s: Summary, x: f32, y: f32, size: f32
     const t = theme.global;
     const unit = size / 24;
     if (s.active == 0) {
-        glyphs.strokes(r, x, y, size, &glyphs.arrow_down, 2, color);
+        // Only sharing: the arrow points the other way.
+        glyphs.strokes(r, x, y, size, if (s.seeding > 0) &glyphs.arrow_up else &glyphs.arrow_down, 2, color);
     } else {
         var track = color;
         track[3] *= 0.22;

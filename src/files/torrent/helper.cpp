@@ -4,10 +4,11 @@
 // The parts: this file holds the engine, its alerts and the main loop;
 // helper_transfers.cpp adds, configures, persists and restores transfers;
 // helper_peers.cpp publishes snapshots to the Files windows that subscribe
-// and takes their commands; helper_tray.cpp is the StatusNotifierItem and
-// its menu. helper.hpp has what they share.
+// and takes their commands; helper_session.cpp places app scopes and opens
+// the session bus for notifications. helper.hpp has what they share. There
+// is no tray icon: Files mirrors downloads as jobs, and the shell's Transfers
+// panel shows them.
 #include "helper.hpp"
-#include "../../platform/self_exe.h"
 
 namespace helper {
 
@@ -218,9 +219,9 @@ static gboolean alerts(gint, GIOCondition, gpointer) {
           t->handle.resume();
         persist(*t);
         request_save(*t);
-        if (bus)
+        if (auto session = session_bus())
           g_dbus_connection_call(
-              bus, "org.freedesktop.Notifications",
+              session, "org.freedesktop.Notifications",
               "/org/freedesktop/Notifications", "org.freedesktop.Notifications",
               "Notify",
               g_variant_new(
@@ -308,10 +309,6 @@ int main(int argc, char **argv) {
     if (lstat(state_dir.c_str(), &state_stat) || !S_ISDIR(state_stat.st_mode) ||
         state_stat.st_uid != getuid() || (state_stat.st_mode & 077))
       throw std::runtime_error("Transfer state directory is not private");
-    char self[4096];
-    if (rediwm_self_exe(self, sizeof self) < 0)
-      throw std::runtime_error("Cannot locate the Files executable");
-    executable = (fs::path(self).parent_path() / "rediwm-files").string();
     // Scope policy is supplied by the Files launcher, which uses the same
     // native/nested rules as its other user-app launches.
     use_scopes = argc > 1 && !strcmp(argv[1], "--scope");

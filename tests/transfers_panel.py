@@ -67,6 +67,8 @@ def wyhash(data, seed=0):
 assert format(wyhash(b"wayland-1"), "x") == "fe2e549a325d1f1a"
 
 MB = 1024 * 1024
+# Files' download job ids (`io_service.torrent_job_base`).
+TORRENT = 1 << 48
 
 
 def job(job_id, **fields):
@@ -92,6 +94,11 @@ def snapshot_jobs(home):
         job(4, label="backup.tar.zst", kind="extract", completed_bytes=40 * MB, total_bytes=900 * MB,
             waiting_for="USB Drive", destination="/run/media/u/USB Drive"),
         job(5, label="old-builds", kind="delete", completed_items=180, total_items=600, rate_history=[0] * 10),
+        job(TORRENT + 1, kind="download", state="seeding", label="archlinux-2026.10.01-x86_64.iso", completed_bytes=1229 * MB,
+            total_bytes=1229 * MB, rate_bytes_per_second=3 * MB, upload_rate_bytes_per_second=3 * MB,
+            uploaded_bytes=418 * MB, ratio_limit=1, destination=f"{home}/Downloads/ISOs"),
+        job(TORRENT + 2, kind="download", state="queued", label="Debian DVD set", choose_files=True,
+            destination=f"{home}/Downloads"),
     ]
 
 
@@ -217,13 +224,19 @@ def run(scale, theme=None):
                 hit = wait_for(lambda: (lambda h: h if h["target_type"] == "transfers_popup" else None)(ipc.hit_test(*point)), "the panel")
                 capture("panel")
 
-                def find(widget, near_y=None):
-                    """The first point (scanning the panel) whose hit is `widget`."""
+                def find(widget):
+                    """The first point (scanning the panel, scrolling down a
+                    screenful at a time) whose hit is `widget`."""
                     origin_x, origin_y = point[0] - hit["local_x"], point[1] - hit["local_y"]
-                    for y in range(int(origin_y), int(point[1]), 4):
-                        for x in range(int(origin_x), int(origin_x + 400), 6):
-                            if ipc.hit_test(x, y).get("widget") == widget:
-                                return x, y
+                    top = max(int(origin_y), 0)
+                    for _ in range(6):
+                        for y in range(top, int(point[1]), 4):
+                            for x in range(int(origin_x), int(origin_x + 400), 6):
+                                if ipc.hit_test(x, y).get("widget") == widget:
+                                    return x, y
+                        ipc.move_cursor(*point)
+                        ipc.scroll(0, -300)  # natural scrolling: negative pages down
+                        ipc.wait_for_frame()
                     raise AssertionError(f"no {widget} in the panel")
 
                 pause = find("pause")
@@ -241,6 +254,20 @@ def run(scale, theme=None):
                 assert opened[0]["job_id"] == 3 and opened[0]["path"] == f"{home}/Documents", opened
                 assert opened[0].get("activation_token"), opened
                 wait_for(lambda: ipc.hit_test(*point)["target_type"] != "transfers_popup", "the panel to close")
+
+                # Downloads: stop seeding, and choose a download's files in Files.
+                # The copies dealt with above end first, so the panel fits the
+                # output without scrolling.
+                fake.change([job(i, state="cancelled", removed=True) for i in (2, 3, 4)])
+                ipc.click_at(*icon)
+                time.sleep(0.35)
+                hit = wait_for(lambda: (lambda h: h if h["target_type"] == "transfers_popup" else None)(ipc.hit_test(*point)), "the panel for downloads")
+                ipc.click_at(*find("stop_seeding"))
+                wait_for(lambda: ("PauseJob", {"job_id": TORRENT + 1}) in fake.commands(), "PauseJob for the seeding download")
+                ipc.click_at(*find("choose"))
+                chosen = wait_for(lambda: [p for c, p in fake.commands() if c == "OpenWindow" and p.get("job_id") == TORRENT + 2], "OpenWindow for the download")
+                assert chosen[0]["transfers"] and chosen[0]["path"] == f"{home}/Downloads", chosen
+                wait_for(lambda: ipc.hit_test(*point)["target_type"] != "transfers_popup", "the panel to close again")
 
                 # Jobs finish and retire: done rows, a cleared icon.
                 fake.change([job(1, state="completed", completed_bytes=1229 * MB, total_bytes=1229 * MB, destination=f"{home}/Downloads/ISOs", label="archlinux-2026.11.01-x86_64.iso", removed=True),

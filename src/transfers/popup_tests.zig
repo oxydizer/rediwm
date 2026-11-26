@@ -16,7 +16,10 @@ const snapshot =
     \\{"id":2,"kind":"move","state":"paused","label":"Holiday photos","source_count":214,"completed_bytes":1610612736,"total_bytes":3865051136,"destination":"/home/u/Pictures","rate_history":[9437184,9437184,8388608,10485760,9437184,0,0,0,0,0]},
     \\{"id":3,"kind":"copy","state":"queued","label":"report-final.pdf","source_count":1,"total_bytes":4194304,"conflict":true,"destination":"/home/u/Documents"},
     \\{"id":4,"kind":"extract","state":"running","label":"backup.tar.zst","source_count":1,"completed_bytes":41943040,"total_bytes":943718400,"waiting_for":"USB Drive","destination":"/run/media/u/USB Drive"},
-    \\{"id":5,"kind":"delete","state":"running","label":"old-builds","source_count":1,"completed_items":180,"total_items":600}]}
+    \\{"id":5,"kind":"delete","state":"running","label":"old-builds","source_count":1,"completed_items":180,"total_items":600},
+    \\{"id":6,"kind":"download","state":"running","label":"blender-4.4-classroom-scenes","source_count":1,"completed_bytes":1610612736,"total_bytes":3865051136,"rate_bytes_per_second":9437184,"upload_rate_bytes_per_second":1048576,"peers":42,"destination":"/home/u/Downloads","rate_history":[8388608,9437184,9437184,10485760,9437184]},
+    \\{"id":7,"kind":"download","state":"seeding","label":"archlinux-2026.10.01-x86_64.iso","source_count":1,"completed_bytes":1288699904,"total_bytes":1288699904,"rate_bytes_per_second":3250585,"upload_rate_bytes_per_second":3250585,"uploaded_bytes":438157967,"ratio_limit":1,"destination":"/home/u/Downloads/ISOs","rate_history":[2097152,3145728,3250585,3670016,3250585]},
+    \\{"id":8,"kind":"download","state":"queued","label":"Debian DVD set","source_count":1,"choose_files":true,"destination":"/home/u/Downloads"}]}
 ;
 const finished =
     \\{"version":1,"event":"jobs","sequence":2,"jobs":[
@@ -69,6 +72,10 @@ test "transfers panel paints every row state with its controls" {
         try std.testing.expect(has(&popup, .resolve, 3) and !has(&popup, .pause, 3));
         try std.testing.expect(has(&popup, .pause, 2) and has(&popup, .pause_all, 0) and has(&popup, .open_files, 0));
         try std.testing.expect(!has(&popup, .clear_done, 0));
+        // A seeding download stops; one waiting for its files offers them.
+        try std.testing.expect(has(&popup, .stop_seeding, 7) and !has(&popup, .pause, 7) and !has(&popup, .cancel, 7));
+        try std.testing.expect(has(&popup, .choose, 8) and !has(&popup, .pause, 8) and has(&popup, .cancel, 8));
+        try std.testing.expect(has(&popup, .pause, 6) and has(&popup, .cancel, 6));
         if (scale == 1.5) try preview("panel", buf);
     }
     _ = try model.applyLine(std.testing.allocator, finished);
@@ -92,6 +99,7 @@ test "transfers panel icon states" {
         .{ .active = 2, .paused = 2, .all_paused = true, .fraction = 0.35 },
         .{ .active = 1, .fraction = 0.2, .attention = true },
         .{ .done = 1, .failed = 1 },
+        .{ .seeding = 1, .upload_rate = 1000 },
     };
     const scale: f32 = 4;
     const buf = try PanelBuffer.create(36 * states.len, 36, scale);

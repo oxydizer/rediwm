@@ -68,6 +68,7 @@ std::string snapshot() {
     number(b, "seeds", s.num_seeds);
     number(b, "total", s.total_wanted);
     number(b, "done", s.total_wanted_done);
+    number(b, "uploaded", s.all_time_upload);
     number(b, "ratio", t.ratio);
     number(b, "limit", t.limit);
     json_builder_set_member_name(b, "files");
@@ -177,39 +178,6 @@ void publish() {
   }
   for (auto fd : lost)
     drop_peer(fd); // A stalled reader never blocks the engine.
-  int active = 0, downloading = 0;
-  int64_t down = 0, up = 0;
-  for (auto &[id, t] : transfers) {
-    auto s = t.status();
-    if (!(s.flags & lt::torrent_flags::paused)) {
-      ++active;
-      if (!s.is_finished)
-        ++downloading;
-      down += s.download_payload_rate;
-      up += s.upload_payload_rate;
-    }
-  }
-  if (active && !bus)
-    init_tray();
-  auto status = active ? "Active" : "Passive";
-  tray_title = std::to_string(active) + " active · ↓ " +
-               std::to_string(down / 1024) + " KiB/s · ↑ " +
-               std::to_string(up / 1024) + " KiB/s";
-  const bool upload = active && !downloading;
-  const bool icon_changed = tray_upload != upload;
-  tray_upload = upload;
-  if (bus) {
-    if (icon_changed)
-      g_dbus_connection_emit_signal(bus, nullptr, "/StatusNotifierItem",
-                                    item_iface, "NewIcon", nullptr, nullptr);
-    if (tray_status != status)
-      g_dbus_connection_emit_signal(bus, nullptr, "/StatusNotifierItem",
-                                    item_iface, "NewStatus",
-                                    g_variant_new("(s)", status), nullptr);
-    g_dbus_connection_emit_signal(bus, nullptr, "/StatusNotifierItem",
-                                  item_iface, "NewToolTip", nullptr, nullptr);
-  }
-  tray_status = status;
 }
 
 } // namespace helper

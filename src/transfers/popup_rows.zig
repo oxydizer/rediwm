@@ -39,9 +39,18 @@ pub fn paintTotal(r: *paint.Renderer, model: *const model_mod.Model) void {
     const t = r.palette.?;
     const top = popup_mod.header;
     const s = model.summary();
-    var rate_buf: [32]u8 = undefined;
-    const rate = speed(&rate_buf, s.rate);
+    var rate_buf: [40]u8 = undefined;
+    var speed_buf: [32]u8 = undefined;
+    const rate = std.fmt.bufPrint(&rate_buf, "↓ {s}", .{speed(&speed_buf, s.rate)}) catch "";
     r.drawText(24, top + 10, 180, 26, .{ .content = rate, .font_size = 16, .weight = 700, .color = t.accent, .family = .mono });
+    // What torrents share, beside it, when they do.
+    const sharing = model.upload.peak() > 0 or s.upload_rate > 0;
+    if (sharing) {
+        var up_buf: [40]u8 = undefined;
+        const up = std.fmt.bufPrint(&up_buf, "↑ {s}", .{speed(&speed_buf, s.upload_rate)}) catch "";
+        const down_w = textWidth(r, rate, 16, .mono);
+        r.drawText(24 + down_w + 18, top + 13, 150, 22, .{ .content = up, .font_size = 13, .color = info(), .family = .mono });
+    }
     rightText(r, right, top + 13, i18n.tr("Last minute"), 11, t.window_dim, .sans);
     const area: Rect = .{ .x = 24, .y = top + 44, .w = width - 48, .h = 52 };
     r.fillRect(area.x - 6, area.y - 6, area.w + 12, area.h + 12, .{ .color = inset(t), .radius = 7 });
@@ -49,7 +58,7 @@ pub fn paintTotal(r: *paint.Renderer, model: *const model_mod.Model) void {
     grid[3] *= 0.18;
     glyphs.dashes(r, area.x, area.y, area.w, grid);
     glyphs.dashes(r, area.x, area.y + area.h / 2, area.w, grid);
-    const peak = model.total.peak();
+    const peak = @max(model.total.peak(), model.upload.peak());
     if (peak > 0) {
         var peak_buf: [48]u8 = undefined;
         var value_buf: [32]u8 = undefined;
@@ -57,6 +66,7 @@ pub fn paintTotal(r: *paint.Renderer, model: *const model_mod.Model) void {
         rightText(r, area.x + area.w - 2, area.y - 2, label, 10, t.window_dim, .mono);
     }
     glyphs.graph(r, .{ .x = area.x, .y = area.y, .w = area.w, .h = area.h, .slots = model_mod.history_len, .top = niceTop(peak), .line = t.accent }, model.total.values());
+    if (sharing) glyphs.graph(r, .{ .x = area.x, .y = area.y, .w = area.w, .h = area.h, .slots = model_mod.history_len, .top = niceTop(peak), .line = info(), .line_width = 1.3, .fill_alpha = 0.12 }, model.upload.values());
     r.fillRect(20, top + graph_bottom - 1, width - 40, 1, .{ .color = t.border });
 }
 
@@ -102,7 +112,14 @@ fn paintRow(popup: *Popup, r: *paint.Renderer, job: *const Job, y: f32, h: f32, 
     // Buttons first, so the label knows how much room is left.
     var buttons_left = right;
     const cancel_armed = popup.armed_cancel == job.id;
-    if (!job.state.isTerminal() and !job.cancel_requested) {
+    const seeding = job.state == .seeding;
+    // A failed download stays with the helper until it is removed.
+    const removable = job.kind == .download and job.state == .failed;
+    if (seeding) {
+        buttons_left -= 30;
+        const stop_box: Rect = .{ .x = buttons_left, .y = y + 6, .w = 30, .h = 30 };
+        button.paint(r, stop_box, .{ .variant = .ghost, .size = .sm, .icon = .stop, .label = i18n.tr("Stop seeding"), .icon_scale = 0.45 }, popup.addHit(stop_box, .stop_seeding, job.id));
+    } else if ((!job.state.isTerminal() or removable) and !job.cancel_requested) {
         const cancel_w: f32 = if (cancel_armed) 74 else 30;
         buttons_left -= cancel_w;
         const cancel_box: Rect = .{ .x = buttons_left, .y = y + 6, .w = cancel_w, .h = 30 };
@@ -115,7 +132,11 @@ fn paintRow(popup: *Popup, r: *paint.Renderer, job: *const Job, y: f32, h: f32, 
             buttons_left -= 84;
             const resolve_box: Rect = .{ .x = buttons_left, .y = y + 6, .w = 84, .h = 30 };
             button.paint(r, resolve_box, .{ .variant = .primary, .size = .sm, .label = i18n.tr("Resolve…") }, popup.addHit(resolve_box, .resolve, job.id));
-        } else if (job.state != .planning and job.state != .finalizing) {
+        } else if (job.choose_files) {
+            buttons_left -= 112;
+            const choose_box: Rect = .{ .x = buttons_left, .y = y + 6, .w = 112, .h = 30 };
+            button.paint(r, choose_box, .{ .variant = .primary, .size = .sm, .label = i18n.tr("Choose files…") }, popup.addHit(choose_box, .choose, job.id));
+        } else if (job.state != .planning and job.state != .finalizing and !job.state.isTerminal()) {
             buttons_left -= 30;
             const pause_box: Rect = .{ .x = buttons_left, .y = y + 6, .w = 30, .h = 30 };
             const paused = job.state == .paused;
@@ -127,12 +148,16 @@ fn paintRow(popup: *Popup, r: *paint.Renderer, job: *const Job, y: f32, h: f32, 
     // The stats line: never cut, so the speed sits apart on the right.
     var stats_buf: [160]u8 = undefined;
     const stats = statusLine(&stats_buf, job);
-    const attention = job.conflict or job.waiting_for.len > 0;
-    var speed_buf: [32]u8 = undefined;
-    const speed_text: []const u8 = if (job.state == .running and !model_mod.countsItems(job.kind) and job.rate > 0) speed(&speed_buf, job.rate) else "";
+    const attention = job.needsAttention() or job.waiting_for.len > 0;
+    var speed_buf: [40]u8 = undefined;
+    var rate_buf: [32]u8 = undefined;
+    const speed_text: []const u8 = if (seeding)
+        std.fmt.bufPrint(&speed_buf, "↑ {s}", .{speed(&rate_buf, job.upload_rate)}) catch ""
+    else if (job.state == .running and !model_mod.countsItems(job.kind) and job.rate > 0) speed(&speed_buf, job.rate) else "";
     const speed_w = if (speed_text.len > 0) textWidth(r, speed_text, mono_size, .mono) + 12 else 0;
     r.drawText(text_x, y + 34, right - text_x - speed_w, 20, .{ .content = stats, .font_size = mono_size, .color = if (attention) t.accent else t.window_dim, .family = .mono });
-    if (speed_text.len > 0) rightText(r, right, y + 34, speed_text, mono_size, t.window_fg, .mono);
+    if (speed_text.len > 0) rightText(r, right, y + 34, speed_text, mono_size, if (seeding) info() else t.window_fg, .mono);
+    if (seeding) return paintShare(popup, r, job, y, expanded);
     // Progress: a thin bar and its percentage.
     const bar_w = right - text_x - 44;
     r.fillRect(text_x, y + 60, bar_w, 4, .{ .color = inset(t), .radius = 2 });
@@ -150,12 +175,28 @@ fn paintRow(popup: *Popup, r: *paint.Renderer, job: *const Job, y: f32, h: f32, 
     if (expanded) paintDrawer(popup, r, job, y + row_height);
 }
 
+/// A seeding row's bar: the share ratio toward its limit, in the colour of
+/// what is shared.
+fn paintShare(popup: *Popup, r: *paint.Renderer, job: *const Job, y: f32, expanded: bool) void {
+    const t = r.palette.?;
+    const bar_w = right - text_x - 44;
+    r.fillRect(text_x, y + 60, bar_w, 4, .{ .color = inset(t), .radius = 2 });
+    const shared = job.ratio() orelse 0;
+    const goal: f32 = if (job.ratio_limit > 0) @floatFromInt(job.ratio_limit) else 1;
+    const f = @min(1, shared / goal);
+    if (f > 0) r.fillRect(text_x, y + 60, @max(4, bar_w * f), 4, .{ .color = info(), .radius = 2 });
+    var ratio_buf: [16]u8 = undefined;
+    rightText(r, right, y + 53, std.fmt.bufPrint(&ratio_buf, "{d:.2}", .{shared}) catch "", 11, t.window_dim, .mono);
+    if (expanded) paintDrawer(popup, r, job, y + row_height);
+}
+
 /// The expanded row's speed over the last minute and where it writes.
 fn paintDrawer(popup: *Popup, r: *paint.Renderer, job: *const Job, y: f32) void {
     const t = r.palette.?;
     const card: Rect = .{ .x = text_x - 6, .y = y, .w = right - text_x + 6, .h = 66 };
     r.fillRect(card.x, card.y, card.w, card.h, .{ .color = inset(t), .radius = 6, .border_width = 1, .border_color = t.border_soft });
-    r.drawText(card.x + 10, card.y + 6, 120, 16, .{ .content = i18n.tr("Speed"), .font_size = 10.5, .color = t.window_dim, .family = .mono });
+    const seeding = job.state == .seeding;
+    r.drawText(card.x + 10, card.y + 6, 120, 16, .{ .content = if (seeding) i18n.tr("Sharing") else i18n.tr("Speed"), .font_size = 10.5, .color = t.window_dim, .family = .mono });
     const history = &job.history;
     if (history.count > 0) {
         var avg_buf: [32]u8 = undefined;
@@ -168,7 +209,7 @@ fn paintDrawer(popup: *Popup, r: *paint.Renderer, job: *const Job, y: f32) void 
     var grid = t.window_dim;
     grid[3] *= 0.15;
     glyphs.dashes(r, area.x, area.y + area.h / 2, area.w, grid);
-    const color = if (job.state == .paused) t.faint else t.accent;
+    const color = if (job.state == .paused) t.faint else if (seeding) info() else t.accent;
     glyphs.graph(r, .{ .x = area.x, .y = area.y, .w = area.w, .h = area.h, .slots = model_mod.history_len, .top = niceTop(history.peak()), .line = color, .line_width = 1.3 }, history.values());
     if (job.destination.len == 0) return;
     var path_buf: [300]u8 = undefined;
@@ -214,6 +255,17 @@ fn jobLabel(buf: []u8, job: *const Job) []const u8 {
 /// What a running row says under its name.
 fn statusLine(buf: []u8, job: *const Job) []const u8 {
     if (job.conflict) return i18n.tr("A file already exists");
+    if (job.choose_files) return i18n.tr("Choose the files to download");
+    if (job.kind == .download) switch (job.state) {
+        .planning => return i18n.tr("Fetching file list…"),
+        .seeding => {
+            var ratio_buf: [16]u8 = undefined;
+            const shared = std.fmt.bufPrint(&ratio_buf, "{d:.2}", .{job.ratio() orelse 0}) catch "";
+            if (job.ratio_limit == 0) return i18n.fmt(buf, i18n.tr("Seeding · ratio {ratio}"), .{ .ratio = shared }) catch "";
+            return i18n.fmt(buf, i18n.tr("Seeding · ratio {ratio} of {limit}"), .{ .ratio = shared, .limit = job.ratio_limit }) catch "";
+        },
+        else => {},
+    };
     if (job.cancel_requested) return i18n.tr("Cancelling…");
     if (job.waiting_for.len > 0) return i18n.fmt(buf, i18n.tr("Waiting for {place}…"), .{ .place = job.waiting_for.slice() }) catch "";
     switch (job.state) {
@@ -235,10 +287,15 @@ fn statusLine(buf: []u8, job: *const Job) []const u8 {
         break :blk std.fmt.bufPrint(&amount_buf, "{s} / {s}", .{ model_mod.formatBytes(&done_buf, job.completed_bytes), model_mod.formatBytes(&total_buf, job.total_bytes) }) catch "";
     };
     if (job.state == .paused) return std.fmt.bufPrint(buf, "{s} · {s}", .{ amount, i18n.tr("Paused") }) catch amount;
-    if (job.etaSeconds()) |seconds| {
-        var eta_buf: [24]u8 = undefined;
-        return std.fmt.bufPrint(buf, "{s} · {s}", .{ amount, model_mod.formatDuration(&eta_buf, seconds) }) catch amount;
+    var eta_buf: [24]u8 = undefined;
+    const eta: []const u8 = if (job.etaSeconds()) |seconds| model_mod.formatDuration(&eta_buf, seconds) else "";
+    if (job.kind == .download and job.state == .running) {
+        var peers_buf: [32]u8 = undefined;
+        const peers = i18n.fmt(&peers_buf, i18n.tr("{count} peers"), .{ .count = job.peers }) catch "";
+        if (eta.len > 0) return std.fmt.bufPrint(buf, "{s} · {s} · {s}", .{ amount, eta, peers }) catch amount;
+        return std.fmt.bufPrint(buf, "{s} · {s}", .{ amount, peers }) catch amount;
     }
+    if (eta.len > 0) return std.fmt.bufPrint(buf, "{s} · {s}", .{ amount, eta }) catch amount;
     @memcpy(buf[0..amount.len], amount);
     return buf[0..amount.len];
 }
@@ -251,6 +308,7 @@ fn kindIcon(kind: model_mod.Kind) IconId {
         .delete => .trash,
         .trash, .empty_trash => .trash_can,
         .other => .generic,
+        .download => .globe,
     };
 }
 
@@ -262,6 +320,10 @@ fn speed(buf: []u8, rate: u64) []const u8 {
 /// A graph's ceiling a little above its peak, so the line never touches it.
 fn niceTop(peak: u64) u64 {
     return if (peak == 0) 1 else peak + peak / 5;
+}
+
+fn info() [4]f32 {
+    return theme.global.info orelse .{ 96.0 / 255.0, 165.0 / 255.0, 250.0 / 255.0, 1 };
 }
 
 fn success() [4]f32 {

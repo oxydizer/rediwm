@@ -91,6 +91,7 @@ fn segmentDistance(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) f32 {
 }
 
 pub const arrow_down = [_][4]f32{ .{ 12, 5, 12, 19 }, .{ 6, 13, 12, 19 }, .{ 18, 13, 12, 19 } };
+pub const arrow_up = [_][4]f32{ .{ 12, 19, 12, 5 }, .{ 6, 11, 12, 5 }, .{ 18, 11, 12, 5 } };
 /// The arrow inside the tray ring, smaller to clear it.
 pub const ring_arrow = [_][4]f32{ .{ 12, 7.5, 12, 16.5 }, .{ 8.5, 13, 12, 16.5 }, .{ 15.5, 13, 12, 16.5 } };
 pub const ring_pause = [_][4]f32{ .{ 10, 8.5, 10, 15.5 }, .{ 14, 8.5, 14, 15.5 } };

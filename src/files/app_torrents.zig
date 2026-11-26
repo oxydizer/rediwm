@@ -617,6 +617,7 @@ fn renderFileOperationRow(
         .trash => tr("Move to Trash"),
         .empty_trash => tr("Empty Trash"),
         .other => tr("Working…"),
+        .download => tr("Download"),
     };
     const state = if (record.pending_conflict != 0)
         tr("Waiting for decision")

@@ -1476,6 +1476,10 @@ msgstr ""
 msgid "Choose files to download"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Choose files…"
+msgstr ""
+
 #: src/control_center/sections/appearance_sections.zig
 msgid "Choose file…"
 msgstr ""
@@ -1490,6 +1494,10 @@ msgstr ""
 
 #: src/printing/cups.zig
 msgid "Choose the actual paper dimensions before printing this test."
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Choose the files to download"
 msgstr ""
 
 #: src/control_center/panel.zig
@@ -2766,6 +2774,10 @@ msgstr ""
 
 #: src/files/app_items.zig
 msgid "Download"
+msgstr ""
+
+#: src/files/io_coordinator_notify.zig
+msgid "Download finished"
 msgstr ""
 
 #: src/files/app_torrents.zig
@@ -6975,6 +6987,14 @@ msgstr ""
 msgid "Seeding"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Seeding · ratio {ratio}"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Seeding · ratio {ratio} of {limit}"
+msgstr ""
+
 #: src/files/app_chooser.zig
 msgid "Select"
 msgstr ""
@@ -7073,6 +7093,10 @@ msgstr ""
 
 #: src/control_center/sections/network_details.zig
 msgid "Shared"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Sharing"
 msgstr ""
 
 #: src/control_center/sections/appearance.zig
@@ -7421,6 +7445,10 @@ msgstr ""
 
 #: src/control_center/sections/power.zig
 msgid "Stop charging at"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Stop seeding"
 msgstr ""
 
 #: src/files/app_paint.zig
@@ -9765,8 +9793,16 @@ msgstr[1] ""
 msgid "{count} kept under a new name"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "{count} peers"
+msgstr ""
+
 #: src/control_center/sections/firewall_cards.zig
 msgid "{count} rules"
+msgstr ""
+
+#: src/transfers/popup.zig
+msgid "{count} seeding"
 msgstr ""
 
 #: src/files/open_with.zig

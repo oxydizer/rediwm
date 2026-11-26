@@ -94,3 +94,26 @@ test "formatting" {
     try std.testing.expectEqualStrings("~/ISOs", model.shortPath(&buf, "/home/u/ISOs", "/home/u"));
     try std.testing.expectEqualStrings("/home/uu/x", model.shortPath(&buf, "/home/uu/x", "/home/u"));
 }
+
+test "downloads: seeding is apart from the active count, and choosing asks for attention" {
+    var m: Model = .{};
+    _ = try m.applyLine(a,
+        \\{"version":1,"event":"snapshot","sequence":1,"jobs":[
+        \\{"id":281474976710656,"kind":"download","state":"seeding","label":"distro.iso","total_bytes":1000,"rate_bytes_per_second":300,"upload_rate_bytes_per_second":300,"uploaded_bytes":250,"ratio_limit":1,"rate_history":[100,200]},
+        \\{"id":281474976710657,"kind":"download","state":"running","label":"video","total_bytes":800,"completed_bytes":200,"rate_bytes_per_second":50,"upload_rate_bytes_per_second":10,"peers":12,"rate_history":[40]},
+        \\{"id":281474976710658,"kind":"download","state":"queued","label":"album","choose_files":true}]}
+    );
+    const s = m.summary();
+    try std.testing.expectEqual(@as(usize, 2), s.active);
+    try std.testing.expectEqual(@as(usize, 1), s.seeding);
+    try std.testing.expectEqual(@as(u64, 310), s.upload_rate);
+    try std.testing.expect(s.attention);
+    const seeding = m.liveJobs()[0];
+    try std.testing.expectEqual(model.Kind.download, seeding.kind);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.25), seeding.ratio().?, 0.001);
+    try std.testing.expectEqualSlices(u64, &.{ 0, 40 }, m.total.values());
+    try std.testing.expectEqualSlices(u64, &.{ 100, 200 }, m.upload.values());
+    m.tick();
+    try std.testing.expectEqual(@as(u64, 310), m.upload.values()[2]);
+    try std.testing.expectEqual(@as(u64, 50), m.total.values()[2]);
+}

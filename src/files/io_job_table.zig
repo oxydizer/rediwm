@@ -43,6 +43,8 @@ pub const State = enum(u8) {
     completed_with_errors,
     failed,
     cancelled,
+    /// A finished download sharing what it has: done, but still working.
+    seeding,
 
     pub fn isTerminal(self: State) bool {
         return switch (self) {
@@ -52,7 +54,9 @@ pub const State = enum(u8) {
     }
 };
 
-pub const Kind = enum(u8) { copy, move, extract, delete, trash, empty_trash, other };
+/// `download` is a torrent, mirrored from the transfer helper
+/// (`io_torrent_bridge.zig`); the rest are the Manager's jobs.
+pub const Kind = enum(u8) { copy, move, extract, delete, trash, empty_trash, other, download };
 
 /// A copied value: no pointers, no slices, so a copy is always valid.
 pub const Record = struct {
@@ -93,6 +97,14 @@ pub const Record = struct {
     /// deletions and when the path does not fit.
     destination_len: u16 = 0,
     destination_buf: [destination_capacity]u8 = @splat(0),
+    /// Downloads only: what is being shared, and the share-ratio limit
+    /// (uploaded / size) at which seeding stops; 0 never seeds.
+    upload_rate_bytes_per_second: u64 = 0,
+    uploaded_bytes: u64 = 0,
+    ratio_limit: u8 = 0,
+    peers: u32 = 0,
+    /// A download waits for its files to be chosen in a Files window.
+    choose_files: bool = false,
     /// Service-wide sequence at the record's last change.
     revision: u64 = 0,
 

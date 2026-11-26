@@ -81,9 +81,8 @@ pub fn add(ctx: Context) Apps {
             torrents.addArg("-U_FORTIFY_SOURCE");
             torrents.addArg("-D_FORTIFY_SOURCE=3");
         }
-        inline for (.{ "helper.cpp", "helper_transfers.cpp", "helper_peers.cpp", "helper_tray.cpp" }) |part| torrents.addFileArg(b.path("src/files/torrent/" ++ part));
+        inline for (.{ "helper.cpp", "helper_transfers.cpp", "helper_peers.cpp", "helper_session.cpp" }) |part| torrents.addFileArg(b.path("src/files/torrent/" ++ part));
         torrents.addFileInput(b.path("src/files/torrent/helper.hpp"));
-        torrents.addFileInput(b.path("src/platform/self_exe.h"));
         torrents.addFileInput(b.path("src/platform/peer.h"));
         torrents.addArg("-o");
         const torrent_binary = torrents.addOutputFileArg("rediwm-transfers");
