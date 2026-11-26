@@ -149,7 +149,7 @@ fn report(self: *Coordinator, job_id: u64, entry: *Published, stuck: bool, age: 
     var next = entry.record;
     if (stuck) {
         var buf: [256]u8 = undefined;
-        next.setWaitingFor(mountName(self.allocator, entry, &buf));
+        next.setWaitingFor(mountName(if (self.stalls.table) |*table| table else null, entry, &buf));
         if (age >= report_after_ms)
             std.log.warn("Files job {d} waits on {s}: a task has not returned for {d} s", .{ job_id, next.waitingFor(), @divTrunc(age, 1000) })
         else
@@ -279,12 +279,14 @@ fn planning(entry: *const Published) bool {
     return entry.record.state == .planning or entry.record.total_items == 0;
 }
 
-fn mountName(alloc: std.mem.Allocator, entry: *const Published, buf: []u8) []const u8 {
-    if (platform.mounts.Table.load(alloc)) |loaded| {
-        var table = loaded;
-        defer table.deinit();
+/// From the table read when the suspects last changed: a job is reported at
+/// `report_after_ms`, or held, both after its mount became suspect at
+/// `suspect_after_ms`, so the table is there. The coordinator reads no mount
+/// table per job. Without one, the folder's own name.
+fn mountName(table: ?*const platform.mounts.Table, entry: *const Published, buf: []u8) []const u8 {
+    if (table) |loaded| {
         var scratch: [2][4096]u8 = undefined;
-        if (domainOf(&table, entry, &scratch)) |mount| return copyName(displayName(mount.point), buf);
+        if (domainOf(loaded, entry, &scratch)) |mount| return copyName(displayName(mount.point), buf);
     }
     return fallbackName(entry, planning(entry), buf);
 }
