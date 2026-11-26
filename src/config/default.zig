@@ -112,8 +112,7 @@ pub const source =
     \\# Omitted device fields inherit these defaults; delete a field to reset it.
     \\# Device fields: pointer_speed, natural_scroll, left_handed, tap_to_click,
     \\# tap_drag, disable_while_typing. The latter and speed inherit the *_touchpad
-    \\# defaults on touchpads. Scroll direction is controlled per device;
-    \\# the legacy invert_scroll key is accepted but ignored.
+    \\# defaults on touchpads. Scroll direction is controlled per device.
     \\
     \\# ───────────────────────────────────────────────
     \\# Compositor behaviour

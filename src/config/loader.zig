@@ -100,9 +100,6 @@ pub const InputConfig = struct {
     /// (`input_sources.zig`); empty entries use the layout's language code.
     xkb_labels: []const u8 = "",
     natural_scroll: bool = true,
-    // Deprecated compatibility key. Scroll direction is controlled per
-    // device by `natural_scroll`; compositor-wide inversion is not applied.
-    invert_scroll: bool = false,
     pointer_speed: f32 = -0.3,
     pointer_speed_touchpad: f32 = -0.3,
     accel_profile: AccelProfile = .bezier,
@@ -497,6 +494,14 @@ pub fn load(path: []const u8, allocator: Allocator, io: Io, environ: std.process
         return err;
     };
     defer allocator.free(bytes);
+
+    if (try loader_edit.removeLegacyInputKey(allocator, bytes)) |cleaned| {
+        defer allocator.free(cleaned);
+        Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = cleaned }) catch |err| {
+            log.warn("could not remove obsolete [input].invert_scroll from '{s}': {}", .{ path, err });
+        };
+        return loadFromBytes(allocator, cleaned, path, environ, io);
+    }
     return loadFromBytes(allocator, bytes, path, environ, io);
 }
 

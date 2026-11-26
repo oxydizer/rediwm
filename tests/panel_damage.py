@@ -61,7 +61,7 @@ def settings_glide(scale):
                 moving = next(a for a in ipc.action('get_animations') if a["site"] == "control_center.selection")
                 assert 0 < moving["value"] < 2 and moving["target"] == 2, moving
                 # Live motion also settles immediately when disabled mid-glide.
-                (tmp / "rediwm-config.toml").write_text("[input]\ninvert_scroll = false\n[animations]\nenabled = false\n")
+                (tmp / "rediwm-config.toml").write_text("[input]\n[animations]\nenabled = false\n")
                 ipc.reload_config()
                 ipc.wait_for_frame()
                 ui.wait_settled("control_center")
@@ -118,7 +118,7 @@ def settings_resize(ipc, tmp, scale):
 def run(scale):
     with tempfile.TemporaryDirectory(prefix="rediwm-panel-damage-") as directory:
         tmp = Path(directory)
-        process, log = spawn_compositor(tmp, scale=scale, config_content="[input]\ninvert_scroll = false\n", env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
+        process, log = spawn_compositor(tmp, scale=scale, config_content="[input]\n", env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         try:
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.wait_for("catalog_published", timeout_ms=10000)

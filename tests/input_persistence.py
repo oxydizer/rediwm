@@ -445,7 +445,7 @@ def run_session(fixture, restart):
             fixture.click(ui, name, .9)
         saved = fixture.saved()["input"]
         assert saved["key_repeat_delay"] != 400 and saved["key_repeat_rate"] != 25
-        assert saved["invert_scroll"] is False and saved["tap_drag"] is False
+        assert "invert_scroll" not in saved and saved["tap_drag"] is False
 
 
 def run():

@@ -14,7 +14,7 @@ def run_case(name, *, zoom, window_x, pan_dx, popup_at, expect_slide):
     with tempfile.TemporaryDirectory(prefix="rediwm-popup-test-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        config = ('[input]\ninvert_scroll = false\npan_speed = 1.0\n'
+        config = ('[input]\npan_speed = 1.0\n'
                   '[compositor]\nxwayland = false\nfocus_zoom = "keep"\n'
                   '[animations]\nenabled = false\n')
         private = {key: str(tmp / key) for key in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME")}

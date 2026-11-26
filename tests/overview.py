@@ -61,7 +61,7 @@ def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-spread-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        base = ('[input]\ninvert_scroll = false\n'
+        base = ('[input]\n'
                 '[theme]\nswitcher_selected_border = "#ff00ff"\n'
                 '[keybinds]\n"super+t" = "noop"\n')
         isolated = {"DBUS_SESSION_BUS_ADDRESS": ""}

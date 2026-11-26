@@ -20,7 +20,7 @@ def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-focus-zoom-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        base = '[input]\ninvert_scroll = false\n[keybinds]\n"alt+tab" = "focus_next"\n"super+5" = "set_depth 4"\n'
+        base = '[input]\n[keybinds]\n"alt+tab" = "focus_next"\n"super+5" = "set_depth 4"\n'
         process, log = spawn_compositor(
             tmp, scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
             renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
