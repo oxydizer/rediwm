@@ -215,7 +215,7 @@ test "regular-file copy reports exact byte progress with each yielded unit" {
     const destination = try join(allocator, temp, "destination");
     defer allocator.free(destination);
 
-    const contents = try allocator.alloc(u8, copy.chunk_size * 2 + 17);
+    const contents = try allocator.alloc(u8, copy.unit_bytes * 2 + 17);
     defer allocator.free(contents);
     @memset(contents, 0x5a);
     try writeFile(source, contents);
@@ -232,7 +232,9 @@ test "regular-file copy reports exact byte progress with each yielded unit" {
     const result = copy.execute(allocator, item);
     try std.testing.expectEqual(executor.WorkResult.yielded, result.outcome);
     const progress = result.progress orelse return error.MissingCopyProgress;
-    try std.testing.expectEqual(@as(u64, copy.chunk_size), progress.bytes);
+    // A unit stops at `unit_bytes`, or sooner when its time runs out.
+    try std.testing.expect(progress.bytes >= copy.chunk_size);
+    try std.testing.expect(progress.bytes <= copy.unit_bytes);
     try std.testing.expectEqual(@as(u64, contents.len), progress.total_bytes);
     try std.testing.expectEqual(executor.CopyPhase.transferring, progress.phase);
     var destination_buffer: [16]u8 = undefined;
@@ -290,6 +292,37 @@ test "regular-file copy yields a flushing phase before completion" {
     copy.complete(null, completed.token, completed.outcome, completed.result);
     var owned_input = completed.input;
     owned_input.deinit();
+}
+
+test "a deferred-sync copy publishes a small file in its first unit" {
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanupTemp(allocator, temp, &.{"source", "destination"});
+
+    const source = try join(allocator, temp, "source");
+    defer allocator.free(source);
+    const destination = try join(allocator, temp, "destination");
+    defer allocator.free(destination);
+
+    try writeFile(source, "one round trip");
+    const done = copy.execute(allocator, .{
+        .token = .{ .job_id = 9, .operation_id = 6, .generation = 1 },
+        .operation_kind = .copy_file,
+        .input = try copy.makeDeferredInput(allocator, source, destination, .{
+            .job_id = 9,
+            .operation_id = 6,
+            .generation = 1,
+        }),
+    });
+    try std.testing.expectEqual(executor.WorkResult.completed, done.outcome);
+    copy.complete(null, done.token, done.outcome, done.result);
+    var owned_input = done.input;
+    owned_input.deinit();
+
+    var buffer: [32]u8 = undefined;
+    const count = try readFile(destination, &buffer);
+    try std.testing.expectEqualStrings("one round trip", buffer[0..count]);
 }
 
 test "existing destination is never overwritten" {
@@ -353,7 +386,7 @@ test "stale yielded copy closes descriptors and removes partial destination" {
     const destination = try join(allocator, temp, "destination");
     defer allocator.free(destination);
 
-    const contents = try allocator.alloc(u8, copy.chunk_size * 2);
+    const contents = try allocator.alloc(u8, copy.unit_bytes * 2);
     defer allocator.free(contents);
     @memset(contents, 0x5a);
     try writeFile(source, contents);
