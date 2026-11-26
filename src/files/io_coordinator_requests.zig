@@ -23,6 +23,7 @@ fn answerRequest(self: *Coordinator, window_id: io_service.WindowId, tag: u64, r
     const reply = self.allocator.create(io_requests.Reply) catch return self.service.cancelReplyReservation(window_id);
     reply.* = .{ .allocator = self.allocator, .tag = tag, .data = switch (request.*) {
         .conflict_details => |r| .{ .conflict = conflictDetails(self, r.conflict_id) },
+        .archive_handoff => |r| .{ .handoff = self.takeHandoff(window_id, r.job_id) },
         else => unreachable,
     } };
     self.service.deliverReply(window_id, reply);

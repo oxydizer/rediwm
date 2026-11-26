@@ -6,7 +6,6 @@ const xdg = @import("wayland").client.xdg;
 const zxdg = @import("wayland").client.zxdg;
 const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
-const io_runtime_mod = @import("io_runtime.zig");
 const io_service_mod = @import("io_service.zig");
 const io_coordinator_mod = @import("io_coordinator.zig");
 const key_repeat = @import("ui").key_repeat;
@@ -244,8 +243,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     // The Service and Coordinator outlive every window and the compositor
     // connection. On the way out the windows go first, then the connection,
     // then the coordinator drains accepted work headless (threading §10).
-    // Clients receive only their own non-owning Service handle; legacy App
-    // runtimes remain local until stage S3.
+    // Clients receive only their own non-owning Service handle.
     var service: io_service_mod.Service = .{};
     try service.init();
     var coordinator_ready = false;

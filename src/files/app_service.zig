@@ -40,6 +40,8 @@ pub const Link = struct {
     ghosts: app_ghosts.State = .{},
     /// Copies and moves this window submitted (`app_transfers.zig`).
     transfers: app_transfers.List = .{},
+    /// Archive jobs this window submitted (`app_archives.zig`).
+    archives: @import("app_archives.zig").List = .{},
     request_count: usize = 0,
     /// Tags of submits and requests alike.
     next_tag: u64 = 1,
@@ -97,6 +99,18 @@ pub fn submitDeletion(self: *App, kind: io_service.DeletionKind, paths: []const 
     }, false);
 }
 
+/// Gives a window-owned resource back to the service, which deletes it on a
+/// worker. A window without a handle has nothing of the service's to give.
+pub fn disposeResource(raw: *anyopaque, resource_id: u64) void {
+    const link: *Link = @ptrCast(@alignCast(raw));
+    const handle = link.handle orelse return;
+    var command: io_service.Command = .{ .kind = .dispose_resource, .resource_id = resource_id };
+    link.outbox.send(handle, &command) catch |err| {
+        // Not lost: the window's resources are disposed when it closes.
+        std.log.warn("Files could not give back resource {d}: {s}", .{ resource_id, @errorName(err) });
+    };
+}
+
 /// The service's update wake fired: read the table on the next step.
 pub fn serviceUpdated(self: *App) void {
     self.service.dirty = true;
@@ -132,6 +146,7 @@ pub fn stepService(self: *App) void {
     for (records[0..fetched.count]) |record| {
         if (record.origin_window_id != handle.window_id) continue;
         if (app_transfers.onRecord(self, record)) continue;
+        if (@import("app_archives.zig").onRecord(self, record)) continue;
         if (!record.state.isTerminal()) continue;
         const deletion = link.take(record.submit_tag) orelse continue;
         finishDeletion(self, deletion.kind, record);

@@ -74,6 +74,7 @@ pub fn isIdle(self: *Coordinator) bool {
     return self.runtime.manager.jobCount() == 0 and
         self.preparing.count() == 0 and
         self.deletions.count() == 0 and
+        self.archives.count() == 0 and
         self.task_backlog.items.len == 0 and
         self.tasks.isIdle() and
         !self.service.hasQueuedCommands();

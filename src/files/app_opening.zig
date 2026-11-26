@@ -180,125 +180,12 @@ pub fn browseArchive(self: *App, path: []const u8) void {
     self.applyHistoryNav(self.history.current);
 }
 
-fn startArchiveExtraction(
-    self: *App,
-    path: []const u8,
-    destination: []const u8,
-    member_paths: []const []const u8,
-) !void {
-    if (self.active_io_copy_job != null) {
-        return error.Busy;
-    }
-
-    try self.startOperations();
-    const manager = if (self.io_manager) |value| value else
-        return error.OperationManagerUnavailable;
-
-    try self.archive_publications.ensureUnusedCapacity(self.allocator, 1);
-
-    const owned_destination = try self.allocator.dupe(u8, destination);
-    errdefer self.allocator.free(owned_destination);
-
-    const job_id = try manager.createJob(null);
-    errdefer _ = manager.discardPlanningJob(job_id);
-
-    const operation_id = try manager.addArchiveOperation(
-        job_id,
-        .archive_extract,
-        .{
-            .source_path = path,
-            .staging_parent = destination,
-            .member_paths = member_paths,
-        },
-    );
-    try manager.setDestinationDirectory(job_id, destination);
-    try manager.queueJob(job_id);
-
-    self.archive_publications.appendAssumeCapacity(.{
-        .job_id = job_id,
-        .operation_id = operation_id,
-    });
-    self.active_io_copy_destination = owned_destination;
-    self.active_io_copy_job = job_id;
-    self.active_io_copy_is_directory = false;
-    self.active_io_copy_is_move = false;
-    self.active_io_copy_is_archive = true;
-    self.active_io_copy_item_count = 1;
-    self.job_cut_revision = null;
-    self.setStatusNotice("Extracting archive", false);
-    self.invalidate();
-}
-
 pub fn startExtraction(self: *App, path: []const u8, destination: []const u8) void {
-    startArchiveExtraction(self, path, destination, &.{}) catch |err| {
-        self.setStatusNotice(
-            if (err == error.Busy)
-                tr("A file operation is already running")
-            else
-                tr("Could not start extraction"),
-            true,
-        );
-    };
+    _ = @import("app_archives.zig").startExtraction(self, path, destination, &.{});
 }
 
 pub fn openArchiveMember(self: *App, path: []const u8, preview: bool) void {
-    const len = self.history.archive_len;
-    if (len == 0 or path.len <= len or path[len] != '/') return;
-    if (self.active_io_copy_job != null) {
-        self.setStatusNotice(tr("A file operation is already running"), true);
-        return;
-    }
-    self.startOperations() catch {
-        self.setStatusNotice(tr("Could not open archive member"), true);
-        return;
-    };
-    const manager = if (self.io_manager) |value| value else {
-        self.setStatusNotice(tr("Could not open archive member"), true);
-        return;
-    };
-    self.archive_member_extractions.ensureUnusedCapacity(self.allocator, 1) catch {
-        self.setStatusNotice(tr("Could not open archive member"), true);
-        return;
-    };
-    const job_id = manager.createJob(null) catch {
-        self.setStatusNotice(tr("Could not open archive member"), true);
-        return;
-    };
-    const operation_id = manager.addArchiveOperation(
-        job_id,
-        .archive_member_extract,
-        .{
-            .source_path = self.history.current[0..len],
-            .staging_parent = "/tmp",
-            .member_path = path[len + 1 ..],
-        },
-    ) catch {
-        _ = manager.discardPlanningJob(job_id);
-        self.setStatusNotice(tr("Could not open archive member"), true);
-        return;
-    };
-    manager.queueJob(job_id) catch {
-        _ = manager.discardPlanningJob(job_id);
-        self.setStatusNotice(tr("Could not open archive member"), true);
-        return;
-    };
-    self.archive_member_extractions.appendAssumeCapacity(.{
-        .job_id = job_id,
-        .operation_id = operation_id,
-        .preview = preview,
-        .navigation_count = self.navigation_count,
-    });
-    self.active_io_copy_job = job_id;
-    self.active_io_copy_is_directory = false;
-    self.active_io_copy_is_move = false;
-    self.active_io_copy_is_archive = false;
-    self.active_io_copy_is_archive_member = true;
-    self.active_io_copy_archive_member_opened = false;
-    self.active_io_copy_item_count = 1;
-    self.archive_preview = preview;
-    self.job_cut_revision = null;
-    self.setStatusNotice("Opening archive member", false);
-    self.invalidate();
+    @import("app_archives.zig").openMember(self, path, preview);
 }
 
 pub fn openExtracted(self: *App, path: []const u8, preview: bool) bool {
@@ -439,24 +326,7 @@ pub fn extractionFolderReady(self: *App) void {
     };
     defer parsed.deinit();
     if (parsed.value.paths.len == 1 and std.fs.path.isAbsolute(parsed.value.paths[0])) {
-        if (self.extract_picker_members.items.len > 0) {
-            startArchiveExtraction(
-                self,
-                self.extract_picker_source.?,
-                parsed.value.paths[0],
-                self.extract_picker_members.items,
-            ) catch |err| {
-                self.setStatusNotice(
-                    if (err == error.Busy)
-                        tr("A file operation is already running")
-                    else
-                        tr("Could not start extraction"),
-                    true,
-                );
-            };
-        } else {
-            self.startExtraction(self.extract_picker_source.?, parsed.value.paths[0]);
-        }
+        _ = @import("app_archives.zig").startExtraction(self, self.extract_picker_source.?, parsed.value.paths[0], self.extract_picker_members.items);
     }
 }
 

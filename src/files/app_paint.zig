@@ -216,7 +216,6 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     self.renderPermissionTip(cr);
     if (self.menu != null) self.renderMenu(cr);
     if (self.menu == null and self.dialog == null) {
-        self.renderFileOpsTip(cr);
         self.renderTorrentSidebarTip(cr);
     }
     if (!self.audio_bar.playlist_open and self.menu == null and self.dialog == null) self.renderTorrentTip(cr);

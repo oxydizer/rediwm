@@ -12,7 +12,7 @@ pub const Record = struct {
     symlink_target: ?[]u8 = null,
     entry_error: bool = false,
 
-    fn deinit(self: *Record, allocator: Allocator) void {
+    pub fn deinit(self: *Record, allocator: Allocator) void {
         allocator.free(self.name);
         if (self.symlink_target) |target| allocator.free(target);
     }

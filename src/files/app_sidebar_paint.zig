@@ -491,37 +491,12 @@ pub fn fileOpsBox(self: *App) shell_ui.Rect {
     };
 }
 
-fn fileOpsPauseRect(area: shell_ui.Rect) shell_ui.Rect {
-    return sidebar_controls.buttonRect(area, 54, 2);
-}
-
-fn fileOpsCancelRect(area: shell_ui.Rect) shell_ui.Rect {
-    return sidebar_controls.buttonRect(area, 26, 2);
-}
-
-fn fileOpsRectContains(rect: shell_ui.Rect, x: f64, y: f64) bool {
-    return sidebar_controls.contains(rect, x, y);
-}
-
-/// The row of a job the window still runs itself: 60 px, or nothing.
-fn legacyHeight(self: *App) i32 {
-    if (self.active_io_copy_job) |job_id| {
-        if (self.io_manager) |manager| {
-            if (manager.jobState(job_id)) |state| {
-                if (!state.isTerminal()) return 60;
-            }
-        }
-    }
-    return 0;
-}
-
 pub fn fileOpsSidebarHeight(self: *App) i32 {
-    return legacyHeight(self) + jobs_card.height(self);
+    return jobs_card.height(self);
 }
 
-/// Where the service jobs' rows start: below the legacy row, if any.
-fn serviceTop(self: *App) f64 {
-    return fileOpsBox(self).y + @as(f64, @floatFromInt(legacyHeight(self)));
+fn cardTop(self: *App) f64 {
+    return fileOpsBox(self).y;
 }
 
 pub fn fileOpsSidebarHit(self: *App, x: f64, y: f64) bool {
@@ -535,173 +510,19 @@ pub fn fileOpsSidebarHit(self: *App, x: f64, y: f64) bool {
 
 pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
     if (!self.fileOpsSidebarHit(x, y)) return 0;
-    if (y >= serviceTop(self)) return jobs_card.hover(self, serviceTop(self), x, y);
-    const area = fileOpsBox(self);
-    if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
-        return std.math.maxInt(usize) - 2004;
-    }
-    if (self.active_io_copy_job != null) {
-        if (fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
-            return std.math.maxInt(usize) - 2003;
-        }
-    }
-    return std.math.maxInt(usize) - 2002;
+    return jobs_card.hover(self, cardTop(self), x, y);
 }
 
 pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
     if (!self.fileOpsSidebarHit(x, y)) return false;
-    if (y >= serviceTop(self)) return jobs_card.click(self, serviceTop(self), x, y);
-    if (self.active_io_copy_job) |job_id| {
-        const manager = if (self.io_manager) |value| value else return true;
-        const area = fileOpsBox(self);
-        if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
-            if (self.io_runtime) |runtime| {
-                runtime.cancelJob(job_id) catch {
-                    self.setStatusNotice(tr("Could not cancel file transfer"), true);
-                };
-            } else if (self.operation_executor) |executor| {
-                executor.cancelJob(job_id) catch {
-                    self.setStatusNotice(tr("Could not cancel file transfer"), true);
-                };
-            } else {
-                manager.cancelJob(job_id) catch {
-                    self.setStatusNotice(tr("Could not cancel file transfer"), true);
-                };
-            }
-        } else if (fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
-            const state = manager.jobState(job_id) orelse return true;
-            if (self.operation_executor) |executor| {
-                if (state == .paused) {
-                    executor.resumeJob(job_id) catch {
-                        self.setStatusNotice(tr("Could not resume file transfer"), true);
-                    };
-                } else {
-                    executor.pauseJob(job_id) catch {
-                        self.setStatusNotice(tr("Could not pause file transfer"), true);
-                    };
-                }
-            } else if (state == .paused) {
-                manager.resumeJob(job_id) catch {};
-            } else {
-                manager.pauseJob(job_id) catch {};
-            }
-        } else if (self.active_io_copy_destination) |destination| {
-            self.navigate(destination);
-            self.focus = .file_view;
-        }
-        self.invalidate();
-    }
-    return true;
+    return jobs_card.click(self, cardTop(self), x, y);
 }
 
 pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
-    jobs_card.render(self, cr, serviceTop(self));
-    renderLegacyRow(self, cr);
-}
-
-fn renderLegacyRow(self: *App, cr: *c.cairo_t) void {
-    if (self.active_io_copy_job) |job_id| {
-        const manager = if (self.io_manager) |value| value else return;
-        const state = manager.jobState(job_id) orelse return;
-        if (state.isTerminal()) return;
-        const area = fileOpsBox(self);
-        if (area.w < 120) return;
-
-        @import("app_draw.zig").drawSidebarTransferSurface(cr, area);
-        const palette = ui_theme.shellPalette();
-        const tree = manager.treeIndex(job_id) orelse return;
-        const root_id = tree.root() orelse return;
-        const root = tree.getConst(root_id) orelse return;
-        if (self.transfer_tree_state.dirty) {
-            self.transfer_tree_state.rebuildManager(manager, job_id) catch return;
-        }
-        const projection = self.transfer_tree_state.tree orelse return;
-        const fraction: ?f64 = if (projection.roots.items.len > 0) blk: {
-            const aggregate = self.transfer_tree_state.aggregateProgress(projection.roots.items[0]);
-            break :blk if (aggregate.total_bytes > 0) aggregate.fraction() else null;
-        } else null;
-        @import("app_draw.zig").drawTransferProgressRow(
-            cr,
-            area,
-            root.name,
-            fraction,
-            ui_theme.global.sidebarForeground(),
-            palette.accent,
-            shell_ui.statusSize(),
-        );
-        const state_now = manager.jobState(job_id) orelse return;
-        if (state_now == .running or state_now == .queued or
-            state_now == .waiting or state_now == .paused)
-        {
-            const pause_rect = fileOpsPauseRect(area);
-            sidebar_controls.render(
-                cr,
-                pause_rect,
-                if (state_now == .paused) .play else .pause,
-                fileOpsRectContains(pause_rect, self.mouse_x, self.mouse_y),
-            );
-        }
-        const cancel_rect = fileOpsCancelRect(area);
-        sidebar_controls.render(
-            cr,
-            cancel_rect,
-            .close,
-            fileOpsRectContains(cancel_rect, self.mouse_x, self.mouse_y),
-        );
-    }
+    jobs_card.render(self, cr, cardTop(self));
 }
 
 pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {
     const bar = self.sidebarScrollbar() orelse return;
     shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.sidebar_scroll_appearance, self.scrollbar_width, ui_theme.shellPalette()));
-}
-pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
-    if (self.hoverKey() != std.math.maxInt(usize) - 2002) return;
-
-    const job_id = self.active_io_copy_job orelse return;
-    const title, const status = blk: {
-        const manager = self.io_manager orelse break :blk .{ tr("File transfer"), tr("In progress") };
-        const state = manager.jobState(job_id) orelse break :blk .{ tr("File transfer"), tr("In progress") };
-        const title_text = if (self.active_io_copy_is_archive_member)
-            tr("Extracting archive member")
-        else if (self.active_io_copy_is_archive)
-            tr("Extracting files")
-        else if (self.active_io_copy_is_move)
-            tr("Moving files")
-        else
-            tr("Copying files");
-        const status_text = switch (state) {
-            .planning => tr("Preparing"),
-            .queued => tr("Queued"),
-            .running => tr("In progress"),
-            .finalizing => tr("Restoring permissions"),
-            .paused => tr("Paused"),
-            .waiting => tr("Waiting for confirmation"),
-            .completed => tr("Complete"),
-            .completed_with_errors => tr("Completed with errors"),
-            .failed => tr("Failed"),
-            .cancelled => tr("Cancelled"),
-        };
-        break :blk .{ title_text, status_text };
-    };
-
-    var speed_buf: [96]u8 = undefined;
-    var speed_size_buf: [32]u8 = undefined;
-    var bytes_size_buf: [32]u8 = undefined;
-    const speed = i18n.fmt(&speed_buf, tr("{rate}/s"), .{
-        .rate = @import("app_draw.zig").formatSize(
-            @intCast(@min(self.job_bytes_per_second, @as(u64, std.math.maxInt(i64)))),
-            &speed_size_buf,
-        ),
-    }) catch "";
-    const transferred = @import("app_draw.zig").formatSize(
-        @intCast(@min(self.job_transferred_bytes, @as(u64, std.math.maxInt(i64)))),
-        &bytes_size_buf,
-    );
-    const details = [_]transferTip.Detail{
-        .{ .label = tr("Status"), .value = status },
-        .{ .label = tr("Speed"), .value = speed },
-        .{ .label = tr("Transferred"), .value = transferred },
-    };
-    transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, title, &details);
 }

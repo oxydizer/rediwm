@@ -57,7 +57,8 @@ clipboard_source: ?*ClipboardSource = null,
 drag_source: ?*ClipboardSource = null,
 drag_serial: u32 = 0,
 left_button_held: bool = false,
-pending_archive_drag_job: ?@import("io_manager.zig").JobId = null,
+/// The tag of the archive export a drag waits for (`app_archives.zig`).
+pending_archive_drag: ?u64 = null,
 pending_archive_drag_serial: u32 = 0,
 drag_icon: ?DragIcon = null,
 axis_source: wl.Pointer.AxisSource = .wheel,
@@ -123,9 +124,8 @@ focused: bool = false,
 /// connection hears every drag that enters any of them.
 drag_here: bool = false,
 registry: ?*wl.Registry = null,
-/// The window's own listing worker and I/O runtime (`client_lifecycle.zig`).
+/// The window's own listing worker (`client_lifecycle.zig`).
 worker: *@import("worker.zig").Worker = undefined,
-io_runtime: *@import("io_runtime.zig").Runtime = undefined,
 /// Non-owning capability for this window's process-wide Files I/O service.
 io_handle: @import("io_service.zig").Handle = undefined,
 app: app_mod.App,

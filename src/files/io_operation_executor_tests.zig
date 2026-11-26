@@ -6,6 +6,7 @@ const io_tree = @import("io_tree.zig");
 const io_discovery = @import("io_discovery.zig");
 const io_discovery_executor = @import("io_discovery_executor.zig");
 const operation_executor = @import("io_operation_executor.zig");
+const ops = @import("ops.zig");
 const io_resource_ledger = @import("io_resource_ledger.zig");
 const platform_fs = @import("platform").fs;
 
@@ -468,10 +469,15 @@ test "Manager Runtime extracts archives into owned staging leases" {
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("payload", contents);
 
-    try std.testing.expect(!try runtime.releaseArchiveStaging(staging_token));
+    // Staging stays with the executor until publication has drained.
+    try std.testing.expect(runtime.detachArchiveStaging(job, operation) == null);
     try manager.closeArchivePublication(staging_token);
     try std.testing.expectEqual(@as(?bool, true), manager.archivePublicationReady(staging_token));
-    try std.testing.expect(try runtime.releaseArchiveStaging(staging_token));
+    const detached = runtime.detachArchiveStaging(job, operation) orelse return error.MissingArchiveStaging;
+    // The caller destroys it (the coordinator hands it to a worker).
+    try ops.deleteRecursive(allocator, detached.path);
+    allocator.free(detached.path);
+    try runtime.context.ledger.release(detached.handle, .operation_executor);
 
     const staging_z = try allocZ(allocator, staging_path);
     defer allocator.free(staging_z);
@@ -588,14 +594,14 @@ test "Manager Runtime transfers archive staging ownership after publication barr
 
     const token = runtime.archiveStagingToken(job, operation) orelse
         return error.MissingArchiveStagingToken;
-    try std.testing.expect(runtime.takeArchiveStaging(token) == null);
+    try std.testing.expect(runtime.detachArchiveStaging(job, operation) == null);
 
     try manager.closeArchivePublication(token);
     try std.testing.expectEqual(@as(?bool, true), manager.archivePublicationReady(token));
 
-    var lease = runtime.takeArchiveStaging(token) orelse
+    const lease = runtime.detachArchiveStaging(job, operation) orelse
         return error.MissingTransferredArchiveStaging;
-    const staging_path = try allocator.dupe(u8, lease.path);
+    const staging_path = lease.path;
     defer allocator.free(staging_path);
     try std.testing.expect(runtime.archiveStagingPath(token) == null);
 
@@ -605,7 +611,9 @@ test "Manager Runtime transfers archive staging ownership after publication barr
     defer allocator.free(contents);
     try std.testing.expectEqualStrings("payload", contents);
 
-    lease.deinit();
+    // Whoever takes it out deletes it and releases its entry.
+    try ops.deleteRecursive(allocator, staging_path);
+    try runtime.context.ledger.release(lease.handle, .operation_executor);
     const staging_z = try allocZ(allocator, staging_path);
     defer allocator.free(staging_z);
     var staging_stat: c.struct_stat = undefined;

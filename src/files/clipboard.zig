@@ -1,18 +1,22 @@
 const std = @import("std");
-const io_thread_guard = @import("io_thread_guard.zig");
 const Allocator = std.mem.Allocator;
-const ops = @import("ops.zig");
 
-/// Owns a temporary directory whose real paths are advertised by a clipboard
-/// or drag source. The source keeps this lease until its Wayland lifetime ends.
+/// A temporary directory whose real paths are advertised by a clipboard or
+/// drag source, or opened in another program. The I/O service owns the
+/// folder; the window holds it as a resource (stage S4) and gives it back
+/// when its source's Wayland lifetime ends, and the service deletes it on a
+/// worker. Nothing here touches the filesystem.
 pub const StagingLease = struct {
     allocator: Allocator,
     path: []u8,
+    /// The window-owned service resource.
+    resource_id: u64,
+    /// Gives the resource back (`app_service.disposeResource`).
+    dispose: *const fn (context: *anyopaque, resource_id: u64) void,
+    context: *anyopaque,
 
     pub fn deinit(self: *StagingLease) void {
-        const io_guard_0 = io_thread_guard.exempt(.u15_staging_lease);
-        defer io_guard_0.end();
-        ops.deleteRecursive(self.allocator, self.path) catch {};
+        self.dispose(self.context, self.resource_id);
         self.allocator.free(self.path);
         self.* = undefined;
     }
@@ -25,20 +29,29 @@ pub fn takeStagingLease(owner: *?StagingLease) ?StagingLease {
     return lease;
 }
 
-test "taking a staging lease clears the previous owner" {
+test "taking a staging lease clears the previous owner, and its end gives the resource back" {
     const allocator = std.testing.allocator;
-    const path = try allocator.dupe(u8, "/tmp/clipboard-staging-test");
-    defer allocator.free(path);
-
+    const Disposed = struct {
+        var id: u64 = 0;
+        fn dispose(_: *anyopaque, resource_id: u64) void {
+            id = resource_id;
+        }
+    };
+    var context: u8 = 0;
     var app_lease: ?StagingLease = .{
         .allocator = allocator,
-        .path = path,
+        .path = try allocator.dupe(u8, "/tmp/clipboard-staging-test"),
+        .resource_id = 7,
+        .dispose = Disposed.dispose,
+        .context = &context,
     };
-    const source_lease = takeStagingLease(&app_lease);
+    var source_lease = takeStagingLease(&app_lease);
 
     try std.testing.expect(app_lease == null);
     try std.testing.expect(source_lease != null);
-    try std.testing.expectEqualStrings(path, source_lease.?.path);
+    try std.testing.expectEqualStrings("/tmp/clipboard-staging-test", source_lease.?.path);
+    source_lease.?.deinit();
+    try std.testing.expectEqual(@as(u64, 7), Disposed.id);
 }
 
 pub const ClipboardMode = enum {

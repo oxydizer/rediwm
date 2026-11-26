@@ -87,6 +87,34 @@ pub const DeletionRequest = struct {
     }
 };
 
+/// What an archive job is for (stage S4).
+pub const ArchivePurpose = enum {
+    /// Into `destination`, published through the usual conflicts and ghosts.
+    extract,
+    /// One member, `members[0]`, into private staging: the window opens it.
+    member,
+    /// The members named into private staging: the window puts them on the
+    /// clipboard, in a drag or before Open With.
+    @"export",
+};
+
+pub const ArchiveRequest = struct {
+    purpose: ArchivePurpose,
+    /// The archive file.
+    source: []u8,
+    /// Where an extraction goes; for the other purposes the staging parent.
+    destination: []u8,
+    /// Members, relative to the archive root. Empty extracts everything.
+    members: [][]u8,
+
+    fn deinit(self: *ArchiveRequest, allocator: std.mem.Allocator) void {
+        allocator.free(self.source);
+        allocator.free(self.destination);
+        for (self.members) |member| allocator.free(member);
+        allocator.free(self.members);
+    }
+};
+
 pub const DiscoveryRequest = struct {
     root_entry_id: u64,
     root_path: ?[]u8 = null,
@@ -125,6 +153,7 @@ pub const OwnedPayload = struct {
     data: union(enum) {
         transfer: TransferRequest,
         deletion: DeletionRequest,
+        archive: ArchiveRequest,
         request: io_requests.Owned,
         watch: io_job_views.Watch,
         discovery: DiscoveryRequest,
@@ -193,6 +222,39 @@ pub const OwnedPayload = struct {
             .allocator = allocator,
             .data = .{ .deletion = .{ .kind = kind, .paths = owned, .trash_dir = owned_dir } },
         };
+        return payload;
+    }
+
+    pub fn createArchive(
+        allocator: std.mem.Allocator,
+        purpose: ArchivePurpose,
+        source: []const u8,
+        destination: []const u8,
+        members: []const []const u8,
+    ) !*OwnedPayload {
+        if (purpose == .member and members.len != 1) return error.InvalidArchiveMemberPath;
+        const payload = try allocator.create(OwnedPayload);
+        errdefer allocator.destroy(payload);
+        const owned_source = try allocator.dupe(u8, source);
+        errdefer allocator.free(owned_source);
+        const owned_destination = try allocator.dupe(u8, destination);
+        errdefer allocator.free(owned_destination);
+        const owned = try allocator.alloc([]u8, members.len);
+        var initialized: usize = 0;
+        errdefer {
+            for (owned[0..initialized]) |member| allocator.free(member);
+            allocator.free(owned);
+        }
+        for (members, 0..) |member, index| {
+            owned[index] = try allocator.dupe(u8, member);
+            initialized += 1;
+        }
+        payload.* = .{ .allocator = allocator, .data = .{ .archive = .{
+            .purpose = purpose,
+            .source = owned_source,
+            .destination = owned_destination,
+            .members = owned,
+        } } };
         return payload;
     }
 
@@ -272,6 +334,7 @@ pub const OwnedPayload = struct {
         switch (self.data) {
             .transfer => |*request| request.deinit(allocator),
             .deletion => |*request| request.deinit(allocator),
+            .archive => |*request| request.deinit(allocator),
             .request => |*request| request.deinit(),
             .watch => |w| allocator.free(w.path),
             .discovery => |*request| request.deinit(allocator),

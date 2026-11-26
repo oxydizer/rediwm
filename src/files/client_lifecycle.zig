@@ -1,7 +1,8 @@
 //! A window's life on the process's one Wayland connection: creating it, one
 //! step of its loop, the descriptors it waits on, and taking it down. Every
-//! window is a `Client` with its own registry bindings, surface, `App`, listing
-//! worker and I/O runtime; the windows share the display and nothing else, so
+//! window is a `Client` with its own registry bindings, surface, `App` and
+//! listing worker; the windows share the display and the process's I/O
+//! service and nothing else, so
 //! the compositor sees one client, which is what lets a tab move between them.
 
 const std = @import("std");
@@ -9,7 +10,6 @@ const wl = @import("wayland").client.wl;
 const ClientCursor = @import("ui").client_cursor;
 const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
-const io_runtime_mod = @import("io_runtime.zig");
 const io_service_mod = @import("io_service.zig");
 const worker_mod = @import("worker.zig");
 const transfer = @import("transfer.zig");
@@ -40,20 +40,12 @@ pub fn create(
     const worker = try worker_mod.Worker.init(a, setup.io, setup.environ, launch.dir);
     errdefer worker.deinit();
 
-    // The runtime keeps its address for the window's life: the operation
-    // executor holds a pointer into it. Every window has its own.
-    const io_runtime = try a.create(io_runtime_mod.Runtime);
-    errdefer a.destroy(io_runtime);
-    io_runtime.* = io_runtime_mod.Runtime.init(a);
-    errdefer io_runtime.deinit();
-
     const app = try app_mod.App.init(
         a,
         setup.io,
         setup.environ,
         worker.theme_cfg,
         worker,
-        io_runtime,
         launch.dir,
         setup.home_dir,
     );
@@ -65,7 +57,6 @@ pub fn create(
         .app = app,
         .locale = @import("ui").compose.localeFromEnviron(setup.environ),
         .worker = worker,
-        .io_runtime = io_runtime,
         .io_handle = io_handle,
     };
     self.ime = .{ .app = &self.app };
@@ -147,8 +138,6 @@ pub fn step(self: *Client) !void {
     try self.handleClipboard();
     self.app.stepTorrents();
     self.app.sync();
-    self.app.stepDiscovery();
-    self.app.stepOperations();
     self.app.stepService();
     self.stepArchiveDrag();
     self.app.stepThumbs();
@@ -200,8 +189,7 @@ pub fn pollFill(self: *Client, fds: *[poll_slots]c.struct_pollfd) void {
     }
     fds[22].fd = self.app.torrents.fd;
     fds[23].fd = self.app.audioWakeFd();
-    fds[24].fd = self.app.discoveryWakeFd();
-    fds[25].fd = self.app.operationWakeFd();
+    // Slots 24 and 25 are free: they held the window Runtime's wake fds.
     for (self.sends.items, 0..) |send, i| fds[i + 6] = .{ .fd = send.fd, .events = c.POLLOUT, .revents = 0 };
 }
 
@@ -297,8 +285,6 @@ pub fn destroy(self: *Client) void {
     self.ime.deinit();
     // Never fails and never waits on the Service mutex.
     self.io_handle.close();
-    self.io_runtime.deinit();
-    a.destroy(self.io_runtime);
     self.worker.deinit();
     a.destroy(self);
 }

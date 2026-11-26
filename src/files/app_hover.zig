@@ -442,8 +442,9 @@ pub fn toolbarButtonVisible(self: *App, action: header.Action) bool {
 
 pub fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
     if (self.isRecent() and (action == .new or action == .paste)) return false;
+    // Inside an archive Copy exports the selected members (`copySelected`).
     if (self.history.archive_len > 0) switch (action) {
-        .new, .cut, .copy, .paste, .trash => return false,
+        .new, .cut, .paste, .trash => return false,
         else => {},
     };
     switch (self.trashRelation()) {

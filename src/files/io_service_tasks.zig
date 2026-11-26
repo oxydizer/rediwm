@@ -7,6 +7,8 @@
 //!   (`io_requests.zig`) and returns its reply.
 //! * `delete_tree` destroys a resource the coordinator's executors own, such
 //!   as archive staging, once its ledger entry has moved to a worker.
+//! * `scan_staging` lists the top level of an extraction's staging folder,
+//!   which the coordinator then publishes (stage S4).
 //!
 //! Each task carries an immutable, independently owned payload. Workers read
 //! no Manager state, keep no pointer into a Manager collection and perform no
@@ -20,6 +22,8 @@ const io_resource_ledger = @import("io_resource_ledger.zig");
 const io_workers = @import("io_workers.zig");
 const ops = @import("ops.zig");
 const io_requests = @import("io_requests.zig");
+const io_discovery = @import("io_discovery.zig");
+const io_manager = @import("io_manager.zig");
 
 pub const JobId = io_service.JobId;
 
@@ -44,6 +48,22 @@ pub const Task = union(enum) {
         /// The command's payload, moved out of it. Always `.request`.
         payload: *io_service.OwnedPayload,
     },
+    scan_staging: struct {
+        token: io_manager.WorkToken,
+        /// Owned copy of the staging path.
+        path: [:0]u8,
+    },
+};
+
+/// The top-level entries of a staging folder, in directory order.
+pub const Scan = struct {
+    allocator: Allocator,
+    records: std.ArrayList(io_discovery.Record) = .empty,
+
+    pub fn deinit(self: *Scan) void {
+        for (self.records.items) |*record| record.deinit(self.allocator);
+        self.records.deinit(self.allocator);
+    }
 };
 
 pub const Result = union(enum) {
@@ -62,6 +82,10 @@ pub const Result = union(enum) {
         /// Null when the reply could not be allocated.
         reply: ?*io_requests.Reply,
     },
+    scanned: struct {
+        token: io_manager.WorkToken,
+        scan: anyerror!Scan,
+    },
 
     /// Frees what the result owns. The caller has already applied it, or is
     /// discarding it at shutdown.
@@ -75,6 +99,7 @@ pub const Result = union(enum) {
             // A delivered reply belongs to the Service; `discard` frees one
             // that never was.
             .replied => {},
+            .scanned => |*scanned| if (scanned.scan) |*scan| scan.deinit() else |_| {},
         }
     }
 };
@@ -119,7 +144,27 @@ fn execute(raw_context: ?*anyopaque, task: Task) Result {
             .path = delete.path,
             .failed = if (ops.deleteRecursive(context.allocator, delete.path)) |_| null else |err| err,
         } },
+        .scan_staging => |scan| blk: {
+            defer context.allocator.free(scan.path);
+            break :blk .{ .scanned = .{ .token = scan.token, .scan = scanStaging(context.allocator, scan.path) } };
+        },
     };
+}
+
+fn scanStaging(allocator: Allocator, path: [:0]const u8) !Scan {
+    var cursor = try io_discovery.Cursor.open(path);
+    defer cursor.deinit();
+    var scan: Scan = .{ .allocator = allocator };
+    errdefer scan.deinit();
+    while (true) {
+        var batch = try cursor.nextBatch(allocator, 256);
+        defer batch.deinit();
+        try scan.records.ensureUnusedCapacity(allocator, batch.records.items.len);
+        // The records move into the scan; the batch keeps nothing.
+        for (batch.records.items) |record| scan.records.appendAssumeCapacity(record);
+        batch.records.clearRetainingCapacity();
+        if (batch.complete) return scan;
+    }
 }
 
 /// Test-only stand-in for a hung mount: when armed, the next prepare parks

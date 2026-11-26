@@ -366,23 +366,6 @@ pub fn openConflictDialog(self: *App, conflict_name: []const u8) void {
     self.invalidate();
 }
 
-/// Opens the shared conflict UI for the window Manager's FIFO head (archive
-/// jobs, until S4). It never replaces another modal.
-pub fn openManagerConflictDialog(
-    self: *App,
-    conflict_id: u64,
-    conflict_name: []const u8,
-) void {
-    if (self.dialog != null) return;
-    self.dialog = Dialog{
-        .kind = .conflict,
-        .title = tr("File Conflict"),
-        .conflict_name = self.allocator.dupe(u8, conflict_name) catch null,
-        .manager_conflict_id = conflict_id,
-    };
-    self.invalidate();
-}
-
 /// A service job's conflict, the head of the queue: `destination` is where
 /// the conflicting item would go.
 pub fn openServiceConflictDialog(self: *App, conflict_id: u64, job_id: u64, destination: []const u8, can_merge: bool) void {
@@ -403,57 +386,10 @@ pub fn openServiceConflictDialog(self: *App, conflict_id: u64, job_id: u64, dest
 /// Merge is offered for directory-onto-directory conflicts only.
 pub fn managerConflictCanMerge(self: *const App) bool {
     const dlg = self.dialog orelse return false;
-    if (dlg.service_conflict) return dlg.conflict_can_merge;
-    const conflict_id = dlg.manager_conflict_id orelse return false;
-    const manager = if (self.io_manager) |value| value else return false;
-    const conflict = manager.nextConflict() orelse return false;
-    return conflict.id == conflict_id and
-        conflict.source_kind == .directory and
-        conflict.destination_kind == .directory;
+    return dlg.service_conflict and dlg.conflict_can_merge;
 }
 
-fn resolveManagerConflict(self: *App, conflict_id: u64, action: ConflictAction) !void {
-    const io_guard_1 = io_thread_guard.exempt(.u8_small_mutations);
-    defer io_guard_1.end();
-    const manager = if (self.io_manager) |value| value else
-        return error.OperationManagerUnavailable;
-    const conflict = manager.nextConflict() orelse return error.ConflictNoLongerPending;
-    if (conflict.id != conflict_id) return error.ConflictNoLongerAtHead;
-
-    switch (action) {
-        .skip => try manager.skipConflict(conflict_id),
-        .merge => try manager.mergeConflict(conflict_id),
-        .cancel => if (self.io_runtime) |runtime| {
-            try runtime.cancelJob(conflict.job_id);
-        } else if (self.operation_executor) |executor| {
-            try executor.cancelJob(conflict.job_id);
-        } else {
-            try manager.cancelConflict(conflict_id);
-        },
-        .rename => {
-            const destination_parent = std.fs.path.dirname(conflict.destination_path) orelse
-                return error.InvalidDestinationPath;
-            const original_name = std.fs.path.basename(conflict.destination_path);
-            const unique_name = try ops_mod.generateUniqueName(
-                self.allocator,
-                destination_parent,
-                original_name,
-            );
-            defer self.allocator.free(unique_name);
-            const renamed_path = try std.fs.path.join(
-                self.allocator,
-                &.{ destination_parent, unique_name },
-            );
-            defer self.allocator.free(renamed_path);
-            try manager.renameConflict(conflict_id, renamed_path);
-        },
-    }
-    self.transfer_tree_state.markDirty();
-    self.transfer_rows_dirty = true;
-}
-
-/// Resolves a service conflict, or one of the window Manager's own (archives).
-/// A failed Manager action leaves the dialog open for another attempt.
+/// Answers the conflict dialog through the service.
 pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
     const dlg = self.dialog orelse return;
     if (dlg.kind != .conflict) return;
@@ -468,11 +404,6 @@ pub fn resolveConflictDialog(self: *App, action: ConflictAction) void {
         if (dlg.conflict_apply_all and action != .cancel)
             app_transfers.standFor(self, dlg.conflict_job_id, dlg.conflict_can_merge, answer);
         if (dlg.manager_conflict_id) |conflict_id| app_transfers.resolveConflict(self, conflict_id, dlg.conflict_destination orelse "", answer);
-    } else if (dlg.manager_conflict_id) |conflict_id| {
-        resolveManagerConflict(self, conflict_id, action) catch {
-            self.setStatusNotice(tr("Could not resolve file conflict"), true);
-            return;
-        };
     }
 
     self.closeDialog();

@@ -2,14 +2,12 @@
 
 const std = @import("std");
 const ops_mod = @import("ops.zig");
-const transfer_tree_mod = @import("transfer_tree.zig");
 const clipboard_mod = @import("clipboard.zig");
 const c = @import("c.zig").api;
 const files_tests = @import("../files_tests.zig");
 const makeTestDir = files_tests.makeTestDir;
 
 test {
-    _ = transfer_tree_mod;
 }
 
 pub fn writeTestFile(path: []const u8, content: []const u8) !void {
@@ -42,51 +40,6 @@ pub fn testFileExists(path: []const u8) bool {
     const path_z = std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0) catch return false;
     var st: c.struct_stat = undefined;
     return c.stat(path_z, &st) == 0;
-}
-
-test "transfer manifest owns entry paths and clears safely" {
-    const allocator = std.testing.allocator;
-    var manifest = ops_mod.TransferManifest.init(allocator);
-    defer manifest.deinit();
-
-    var source = [_]u8{ '/', 's', 'r', 'c' };
-    var relative = [_]u8{ 'f', 'i', 'l', 'e', '.', 't', 'x', 't' };
-    var destination = [_]u8{ '/', 'd', 's', 't' };
-
-    try manifest.append(
-        &source,
-        &relative,
-        &destination,
-        128,
-        .file,
-        0,
-    );
-
-    source[1] = 'x';
-    relative[0] = 'x';
-    destination[1] = 'x';
-
-    try std.testing.expectEqual(@as(usize, 1), manifest.entries.items.len);
-    const first = manifest.entries.items[0];
-    try std.testing.expectEqualStrings("/src", first.source_path);
-    try std.testing.expectEqualStrings("file.txt", first.relative_path);
-    try std.testing.expectEqualStrings("/dst", first.destination_path.?);
-    try std.testing.expectEqual(@as(u64, 128), first.size);
-    try std.testing.expectEqual(ops_mod.TransferEntryKind.file, first.kind);
-    try std.testing.expectEqual(ops_mod.TransferEntryState.pending, first.state);
-    try std.testing.expectEqual(@as(usize, 0), first.root_index);
-
-    try manifest.append("/src/folder", "folder", null, 0, .directory, 0);
-    try std.testing.expect(manifest.entries.items[1].destination_path == null);
-    try std.testing.expectEqual(ops_mod.TransferEntryKind.directory, manifest.entries.items[1].kind);
-
-    manifest.clearRetainingCapacity();
-    try std.testing.expectEqual(@as(usize, 0), manifest.entries.items.len);
-
-    try manifest.append("/another", "", null, 0, .symlink, 1);
-    try std.testing.expectEqual(@as(usize, 1), manifest.entries.items.len);
-    try std.testing.expectEqualStrings("/another", manifest.entries.items[0].source_path);
-    try std.testing.expectEqual(ops_mod.TransferEntryKind.symlink, manifest.entries.items[0].kind);
 }
 
 test "copyRecursive and copySymlink" {

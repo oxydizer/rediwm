@@ -6,89 +6,66 @@ const c = @import("c.zig").api;
 const nowMs = @import("app_draw.zig").nowMs;
 const app_tests = @import("app_tests.zig");
 const ops_mod = @import("ops.zig");
-const io_manager = @import("io_manager.zig");
+const io_service = @import("io_service.zig");
 const testApp = app_tests.testApp;
 const testItems = app_tests.testItems;
 
-fn attachEligibleCopyGhost(
-    app: anytype,
-    manager: *io_manager.Manager,
-    index: usize,
-) !void {
-    const job = try manager.createJob(null);
-    const current_entry = try manager.addTreeRoot(
-        job,
-        "current.bin",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    _ = try manager.addEntryOperation(job, current_entry, .copy_file);
-    const target_entry = try manager.addTreeRoot(
-        job,
-        "urgent.docx",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    _ = try manager.addEntryOperation(job, target_entry, .copy_file);
-    try manager.queueJob(job);
-    _ = manager.dispatchNext().?;
+/// A window linked to a service with no coordinator: what it sends stays
+/// queued for the test to read.
+const Linked = struct {
+    service: io_service.Service = .{},
+    handle: io_service.Handle = undefined,
 
-    app.io_manager = manager;
-    app.active_io_copy_job = job;
+    fn start(self: *Linked, app: anytype) !void {
+        try self.service.init();
+        self.handle = try self.service.registerWindow();
+        app.service.handle = self.handle;
+    }
+
+    fn stop(self: *Linked, app: anytype) void {
+        app.service.handle = null;
+        while (self.service.tryReceiveCommand()) |routed| {
+            var command = routed.command;
+            command.deinitPayload();
+        }
+        self.handle.close();
+        self.service.deinit();
+    }
+
+    /// The priority requests sent so far, as `job:entry`.
+    fn priorities(self: *Linked, out: []u64) usize {
+        var count: usize = 0;
+        while (self.service.tryReceiveCommand()) |routed| {
+            var command = routed.command;
+            defer command.deinitPayload();
+            if (command.kind != .prioritize_entry or count == out.len) continue;
+            out[count] = command.job_id * 1000 + command.resource_id;
+            count += 1;
+        }
+        return count;
+    }
+};
+
+const ghost_job = 7;
+const ghost_entry = 3;
+
+/// Item `index` becomes a queued ghost file of a service copy.
+fn attachEligibleCopyGhost(app: anytype, index: usize) void {
     app.items.items[index].transfer_ghost = true;
-    app.items.items[index].transfer_entry_id = target_entry;
+    app.items.items[index].transfer_job_id = ghost_job;
+    app.items.items[index].transfer_entry_id = ghost_entry;
     app.items.items[index].transfer_state = .pending;
     app.items.items[index].missing = true;
 }
 
-test "copy ghost hover waits for dwell and keeps its boost after pointer leave" {
-    var manager = io_manager.Manager.init(std.testing.allocator);
-    defer manager.deinit();
-
+test "copy ghost hover waits for dwell and asks the service once" {
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 1);
-
-    const job_a = try manager.createJob(null);
-    const current_entry = try manager.addTreeRoot(
-        job_a,
-        "current.bin",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    _ = try manager.addEntryOperation(
-        job_a,
-        current_entry,
-        .copy_file,
-    );
-    const entry_a = try manager.addTreeRoot(
-        job_a,
-        "urgent.docx",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    const operation_a = try manager.addEntryOperation(
-        job_a,
-        entry_a,
-        .copy_file,
-    );
-    const job_b = try manager.createJob(null);
-    _ = try manager.addOperation(job_b, .copy_file);
-    try manager.queueJob(job_a);
-    try manager.queueJob(job_b);
-
-    const first = manager.dispatchNext().?;
-    try std.testing.expectEqual(job_a, first.job_id);
-    app.io_manager = &manager;
-    app.active_io_copy_job = job_a;
-    app.items.items[0].transfer_ghost = true;
-    app.items.items[0].transfer_entry_id = entry_a;
-    app.items.items[0].transfer_state = .pending;
-    app.items.items[0].missing = true;
+    var linked: Linked = .{};
+    try linked.start(&app);
+    defer linked.stop(&app);
+    attachEligibleCopyGhost(&app, 0);
 
     const rect = app.itemIconRect(0);
     app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
@@ -97,56 +74,27 @@ test "copy ghost hover waits for dwell and keeps its boost after pointer leave" 
     // The dwell has not elapsed yet.
     app.stepTransferHoverPriority(deadline - 1);
     try std.testing.expectEqual(deadline, app.transferHoverPriorityDeadline().?);
+    var sent: [4]u64 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), linked.priorities(&sent));
 
-    // At the deadline the preference is requested exactly once.
+    // At the deadline the preference is requested exactly once; leaving
+    // afterwards does not take it back.
     app.stepTransferHoverPriority(deadline);
     try std.testing.expect(app.transferHoverPriorityDeadline() == null);
-
-    // Leaving after the request does not revoke the Manager preference.
+    app.stepTransferHoverPriority(deadline + 1000);
     app.handleMotion(-10, -10);
-    try std.testing.expect(manager.completeWork(first, .yielded));
-    const boosted = manager.dispatchNext().?;
-    try std.testing.expectEqual(job_a, boosted.job_id);
-    try std.testing.expectEqual(operation_a, boosted.operation_id);
+    try std.testing.expectEqual(@as(usize, 1), linked.priorities(&sent));
+    try std.testing.expectEqual(@as(u64, ghost_job * 1000 + ghost_entry), sent[0]);
 }
 
 test "leaving a copy ghost before the hover dwell cancels its preference" {
-    var manager = io_manager.Manager.init(std.testing.allocator);
-    defer manager.deinit();
-
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 1);
-
-    const job_a = try manager.createJob(null);
-    const current_entry = try manager.addTreeRoot(
-        job_a,
-        "current.bin",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    _ = try manager.addEntryOperation(job_a, current_entry, .copy_file);
-    const entry_a = try manager.addTreeRoot(
-        job_a,
-        "urgent.docx",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    _ = try manager.addEntryOperation(job_a, entry_a, .copy_file);
-    const job_b = try manager.createJob(null);
-    const operation_b = try manager.addOperation(job_b, .copy_file);
-    try manager.queueJob(job_a);
-    try manager.queueJob(job_b);
-
-    const first = manager.dispatchNext().?;
-    app.io_manager = &manager;
-    app.active_io_copy_job = job_a;
-    app.items.items[0].transfer_ghost = true;
-    app.items.items[0].transfer_entry_id = entry_a;
-    app.items.items[0].transfer_state = .pending;
-    app.items.items[0].missing = true;
+    var linked: Linked = .{};
+    try linked.start(&app);
+    defer linked.stop(&app);
+    attachEligibleCopyGhost(&app, 0);
 
     const rect = app.itemIconRect(0);
     app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
@@ -155,47 +103,18 @@ test "leaving a copy ghost before the hover dwell cancels its preference" {
     app.handleMotion(-10, -10);
     try std.testing.expect(app.transferHoverPriorityDeadline() == null);
     app.stepTransferHoverPriority(deadline);
-
-    try std.testing.expect(manager.completeWork(first, .yielded));
-    const normal = manager.dispatchNext().?;
-    try std.testing.expectEqual(job_b, normal.job_id);
-    try std.testing.expectEqual(operation_b, normal.operation_id);
+    var sent: [4]u64 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), linked.priorities(&sent));
 }
 
 test "pressing over a copy ghost cancels its pending hover priority" {
-    var manager = io_manager.Manager.init(std.testing.allocator);
-    defer manager.deinit();
-
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 1);
-
-    const job = try manager.createJob(null);
-    const current_entry = try manager.addTreeRoot(
-        job,
-        "current.bin",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    _ = try manager.addEntryOperation(job, current_entry, .copy_file);
-    const target_entry = try manager.addTreeRoot(
-        job,
-        "urgent.docx",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    _ = try manager.addEntryOperation(job, target_entry, .copy_file);
-    try manager.queueJob(job);
-    _ = manager.dispatchNext().?;
-
-    app.io_manager = &manager;
-    app.active_io_copy_job = job;
-    app.items.items[0].transfer_ghost = true;
-    app.items.items[0].transfer_entry_id = target_entry;
-    app.items.items[0].transfer_state = .pending;
-    app.items.items[0].missing = true;
+    var linked: Linked = .{};
+    try linked.start(&app);
+    defer linked.stop(&app);
+    attachEligibleCopyGhost(&app, 0);
 
     const rect = app.itemIconRect(0);
     app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
@@ -205,63 +124,31 @@ test "pressing over a copy ghost cancels its pending hover priority" {
     try std.testing.expect(app.transferHoverPriorityDeadline() == null);
     app.stepTransferHoverPriority(deadline);
     try std.testing.expect(app.transfer_hover_priority == null);
+    var sent: [4]u64 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), linked.priorities(&sent));
 }
 
-test "rejected copy ghost priority clears its pending hover request" {
-    var manager = io_manager.Manager.init(std.testing.allocator);
-    defer manager.deinit();
-
+test "a copy ghost priority that cannot be sent clears its pending hover request" {
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 1);
-
-    const job = try manager.createJob(null);
-    const current_entry = try manager.addTreeRoot(
-        job,
-        "current.bin",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    _ = try manager.addEntryOperation(job, current_entry, .copy_file);
-    const target_entry = try manager.addTreeRoot(
-        job,
-        "urgent.docx",
-        .regular_file,
-        .{ .size = 4096 },
-        null,
-    );
-    _ = try manager.addEntryOperation(job, target_entry, .copy_file);
-    try manager.queueJob(job);
-    _ = manager.dispatchNext().?;
-
-    app.io_manager = &manager;
-    app.active_io_copy_job = job;
-    app.items.items[0].transfer_ghost = true;
-    app.items.items[0].transfer_entry_id = target_entry;
-    app.items.items[0].transfer_state = .pending;
-    app.items.items[0].missing = true;
+    attachEligibleCopyGhost(&app, 0);
 
     const rect = app.itemIconRect(0);
     app.handleMotion(rect.x + rect.w / 2, rect.y + rect.h / 2);
     const deadline = app.transferHoverPriorityDeadline().?;
 
-    app.items.items[0].transfer_entry_id =
-        std.math.maxInt(@import("io_tree.zig").EntryId);
+    // No service to ask.
     app.stepTransferHoverPriority(deadline);
-
     try std.testing.expect(app.transfer_hover_priority == null);
     try std.testing.expect(app.transferHoverPriorityDeadline() == null);
 }
 
 test "file dragging across a copy ghost does not arm hover priority" {
-    var manager = io_manager.Manager.init(std.testing.allocator);
-    defer manager.deinit();
-
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 2);
-    try attachEligibleCopyGhost(&app, &manager, 1);
+    attachEligibleCopyGhost(&app, 1);
 
     const source = app.itemIconRect(0);
     const target = app.itemIconRect(1);
@@ -277,13 +164,10 @@ test "file dragging across a copy ghost does not arm hover priority" {
 }
 
 test "rubber-band selection across a copy ghost does not arm hover priority" {
-    var manager = io_manager.Manager.init(std.testing.allocator);
-    defer manager.deinit();
-
     var app = try testApp();
     defer app.deinit();
     try testItems(&app, 1);
-    try attachEligibleCopyGhost(&app, &manager, 0);
+    attachEligibleCopyGhost(&app, 0);
 
     const target = app.itemIconRect(0);
     const top: f64 = @floatFromInt(app.viewTop() + app.itemInset());
@@ -696,7 +580,6 @@ test "Transfers scroll extent includes a row per running service job" {
 }
 
 test "Transfers toolbar pauses, resumes and cancels a selected file operation" {
-    const io_service = @import("io_service.zig");
     var service: io_service.Service = .{};
     try service.init();
     defer service.deinit();

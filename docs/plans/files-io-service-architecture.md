@@ -197,7 +197,7 @@ someone else owns, and it delays that owner's cleanup.
 | --- | --- | --- | --- | --- |
 | Executor-owned | `operation_executor`, `discovery_executor` | Archive staging before hand-off, discovery anchors and retained cursors, archive cancellation state | The executor, on the coordinator for bounded cleanup and on a worker otherwise | Nothing, even for jobs that window submitted |
 | Held by an active operation | `operation_worker`, `discovery_worker` | In-flight discovery cursors, operation payloads and their descriptors | Nobody while the unit is in flight. The completion path transfers it back to the executor | Nothing. Cancellation does not free it either (threading §9) |
-| Window-owned | `window(window_id)` (new owner variant) | Clipboard, drag and Open With staging after hand-off; until S4, the archive publication cursor | The owning window *decides* when, by `dispose_resource`. That moves ownership back to the executor, which destroys it on a worker | Every resource owned by that window is moved to its executor for disposal |
+| Window-owned | `window(window_id)` (new owner variant) | Clipboard, drag, Open With and opened-member staging after hand-off | The owning window *decides* when, by `dispose_resource`. That moves ownership back to the executor, which destroys it on a worker | Every resource owned by that window is moved to its executor for disposal |
 | Borrowed | Owner unchanged, plus a borrow `{resource, window_id}` | A window reading a finished extraction it has not taken | The owner, after the last borrow is dropped and the job is terminal | Its borrows are dropped. The owner then cleans up as usual |
 
 Rules the ledger enforces:
@@ -225,10 +225,10 @@ Rules the ledger enforces:
   is processed (§4). The close-time sweep skips records that already have a
   pending dispose, so nothing is disposed twice.
 
-Today the archive publication cursor is registered as `.app`-owned in the ledger.
-S4 makes it service-owned. Until then it is the one window-owned resource whose
-physical work (open and read) still runs on the UI thread, and it is listed as an
-exemption (threading §13).
+Since S4 no window touches archive staging: a `scan_staging` service task lists an
+extraction's top level, the coordinator registers the publication roots, and
+staging is deleted on a worker or handed to the window that asked for it
+(`io_coordinator_archives.zig`).
 
 ## 7. Responsiveness
 
@@ -375,14 +375,18 @@ or worker resource; and the coordinator exemption table is empty.
   straight from its own Manager. With the Manager on the coordinator, a window
   *subscribes* to what it shows and the coordinator pushes it (§14).
 * S3c. `Client.io_runtime` and `App.io_runtime` are removed (U3). This is when the
-  per-window Runtime stops existing. Window teardown joins nothing on the UI thread.
-  The helper threads that remain go to the reaper (U16).
+  per-window Runtime stops existing. **Done together with S4**: archives were the
+  Runtime's last users. Still open: the helper threads that remain (listing worker,
+  folder sizes, thumbnails, Trash totals) go to a reaper (U16).
 
 *Done when:* no production code outside the coordinator touches `io_runtime`,
 `io_manager` or an executor, `JobRunner` is gone, and U1 to U12 and U16 are
 removed.
 
-**S4, archive lifecycle.**
+**S4, archive lifecycle.** **Done** (with S3c): archive submits carry a purpose
+(extract, member, export); the coordinator steps them (`io_coordinator_archives.zig`),
+and a window takes member and export staging with an `archive_handoff` request
+(`app_archives.zig`).
 * Staging, publication barrier and cancellation move to the service.
 * The publication cursor becomes service-owned (U13). Staging discard runs on a
   worker (U14).

@@ -13,6 +13,7 @@ const deletions = @import("io_coordinator_deletions.zig");
 const job_views = @import("io_coordinator_views.zig");
 const coordinator_requests = @import("io_coordinator_requests.zig");
 const notify = @import("io_coordinator_notify.zig");
+const archives = @import("io_coordinator_archives.zig");
 const io_deletion = @import("io_deletion.zig");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").api;
@@ -113,6 +114,10 @@ pub const Coordinator = struct {
     aborting: bool = false,
     /// What disposing a window-owned resource needs, by ledger handle id.
     window_held: std.AutoHashMapUnmanaged(u64, WindowHeld) = .empty,
+    /// Archive jobs until their staging is published, handed off or gone.
+    archives: std.AutoHashMapUnmanaged(JobId, archives.Archive) = .empty,
+    /// Member and export staging waiting for its window to take it.
+    handoffs: std.AutoHashMapUnmanaged(JobId, archives.Handoff) = .empty,
 
     /// Initialize at a stable address. The Runtime is allocated separately
     /// because its executors retain pointers into it and into its Manager.
@@ -168,6 +173,7 @@ pub const Coordinator = struct {
         while (remaining.next()) |entry| self.allocator.destroy(entry.control);
         self.deletions.deinit(self.allocator);
         job_views.deinitWatching(self);
+        archives.deinitArchives(self);
         var held = self.window_held.valueIterator();
         while (held.next()) |entry| self.allocator.free(entry.path);
         self.window_held.deinit(self.allocator);
@@ -198,6 +204,8 @@ pub const Coordinator = struct {
             self.pumpTasks();
             self.pumpDeletions();
             self.pumpExecutors();
+            // Archive steps can give the executors work: dispatch it now.
+            if (self.pumpArchives()) self.pumpExecutors();
 
             // Decisions the coordinator makes on its own come before
             // publication, so their results reach the table in this pass.
@@ -233,6 +241,11 @@ pub const Coordinator = struct {
     const unwatchView = job_views.unwatchView;
     const publishViews = job_views.publishViews;
     const handleRequest = coordinator_requests.handleRequest;
+    const submitArchive = archives.submitArchive;
+    const pumpArchives = archives.pumpArchives;
+    pub const finishScan = archives.finishScan;
+    pub const takeHandoff = archives.takeHandoff;
+    pub const dropWindowHandoffs = archives.dropWindowHandoffs;
 
     /// Waits for a command, a completion, or `deadline` (monotonic ms) when
     /// throttled progress or a speed sample is still due.
@@ -349,6 +362,7 @@ pub const Coordinator = struct {
         const payload = routed.command.payload orelse
             return self.failSubmit(&record, error.MissingTransferPayload);
         if (payload.data == .deletion) return self.submitDeletion(routed, record);
+        if (payload.data == .archive) return self.submitArchive(routed, record);
         const request = switch (payload.data) {
             .transfer => |*request| request,
             else => return self.failSubmit(&record, error.UnexpectedTransferPayload),
@@ -399,7 +413,7 @@ pub const Coordinator = struct {
 
     /// Ends a job that never left `planning`: discards it and retires its
     /// record as cancelled or failed.
-    fn endPlanningJob(self: *Coordinator, job_id: JobId, state: io_service.JobState, err: ?anyerror) void {
+    pub fn endPlanningJob(self: *Coordinator, job_id: JobId, state: io_service.JobState, err: ?anyerror) void {
         _ = self.runtime.manager.discardPlanningJob(job_id);
         const entry = self.published.fetchRemove(job_id) orelse return;
         var record = entry.value.record;
@@ -410,91 +424,12 @@ pub const Coordinator = struct {
         self.service.retireJobRecord(job_id) catch {};
     }
 
-    pub fn submitTask(self: *Coordinator, task: io_service_tasks.Task) void {
-        if (self.task_backlog.items.len == 0 and self.tasks.trySubmit(task)) return;
-        self.task_backlog.append(self.allocator, task) catch {
-            // Out of memory with a full pool: give the work up visibly.
-            std.log.err("Files service task dropped: out of memory", .{});
-            switch (task) {
-                .prepare_transfer => |prepare| {
-                    prepare.payload.deinit();
-                    _ = self.preparing.remove(prepare.job_id);
-                    self.endPlanningJob(prepare.job_id, .failed, error.OutOfMemory);
-                },
-                .delete_tree => |delete| {
-                    self.allocator.free(delete.path);
-                    self.finishCleanup(delete.handle);
-                },
-                .request => |request| {
-                    request.payload.deinit();
-                    self.service.cancelReplyReservation(request.window_id);
-                },
-            }
-        };
-    }
-
-    pub fn pumpTasks(self: *Coordinator) void {
-        _ = self.tasks.drainWake();
-        while (self.tasks.tryPopResult()) |result_value| {
-            var result = result_value;
-            defer result.deinit(self.allocator);
-            switch (result) {
-                .prepared => |*prepared| self.applyPrepared(prepared.job_id, &prepared.plan),
-                .deleted => |deleted| {
-                    if (deleted.failed) |err| std.log.err(
-                        "Files could not delete {s}: {s}",
-                        .{ deleted.path, @errorName(err) },
-                    );
-                    self.finishCleanup(deleted.handle);
-                },
-                .replied => |replied| if (replied.reply) |reply|
-                    self.service.deliverReply(replied.window_id, reply)
-                else
-                    self.service.cancelReplyReservation(replied.window_id),
-            }
-        }
-        while (self.task_backlog.items.len > 0) {
-            if (!self.tasks.trySubmit(self.task_backlog.items[0])) break;
-            _ = self.task_backlog.orderedRemove(0);
-        }
-    }
-
-    /// Applies a prepared plan to its planning job, unless the job was
-    /// cancelled meanwhile or the plan failed.
-    fn applyPrepared(self: *Coordinator, job_id: JobId, plan_result: *anyerror!io_transfer_plan.TransferPlan) void {
-        const entry = self.preparing.fetchRemove(job_id) orelse return;
-        if (entry.value.cancelled) return self.endPlanningJob(job_id, .cancelled, null);
-        const plan = if (plan_result.*) |*plan| plan else |err|
-            return self.endPlanningJob(job_id, .failed, err);
-        self.applyTransferPlan(job_id, entry.value.mode, plan) catch |err|
-            return self.endPlanningJob(job_id, .failed, err);
-    }
-
-    /// A worker finished destroying a resource it held: release its entry.
-    /// A failed delete is released too; it is under a known staging root
-    /// that a later start sweeps (roadmap phase 5).
-    fn finishCleanup(self: *Coordinator, handle: io_resource_ledger.Handle) void {
-        self.runtime.resource_ledger.release(handle, .operation_worker) catch |err| {
-            std.log.err("Files cleanup release of resource {d} failed: {s}", .{ handle.id, @errorName(err) });
-        };
-    }
-
-    fn discardDeleteResult(raw: ?*anyopaque, handle: io_resource_ledger.Handle) void {
-        const self: *Coordinator = @ptrCast(@alignCast(raw.?));
-        self.finishCleanup(handle);
-    }
-
-    fn discardTaskBacklog(self: *Coordinator) void {
-        for (self.task_backlog.items) |task| switch (task) {
-            .prepare_transfer => |prepare| prepare.payload.deinit(),
-            .delete_tree => |delete| {
-                self.allocator.free(delete.path);
-                self.finishCleanup(delete.handle);
-            },
-            .request => |request| request.payload.deinit(),
-        };
-        self.task_backlog.clearRetainingCapacity();
-    }
+    const coordinator_tasks = @import("io_coordinator_tasks.zig");
+    pub const submitTask = coordinator_tasks.submitTask;
+    pub const pumpTasks = coordinator_tasks.pumpTasks;
+    pub const finishCleanup = coordinator_tasks.finishCleanup;
+    const discardDeleteResult = coordinator_tasks.discardDeleteResult;
+    const discardTaskBacklog = coordinator_tasks.discardTaskBacklog;
 
     fn applyCommand(
         self: *Coordinator,
@@ -611,7 +546,7 @@ pub const Coordinator = struct {
     /// Turns a prepared plan into the roots and operations of a planning
     /// job and queues it. Touches only the Manager. On error the job stays in
     /// `planning` for the caller to discard.
-    fn applyTransferPlan(
+    pub fn applyTransferPlan(
         self: *Coordinator,
         job_id: JobId,
         mode: io_service.TransferMode,
