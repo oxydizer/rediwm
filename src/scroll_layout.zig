@@ -409,7 +409,9 @@ pub const Strip = struct {
             .always => view = centered,
             .on_overflow, .never => {
                 if (size > content) {
-                    view = if (center == .on_overflow) centered else start;
+                    // A column wider than the view that already fills it
+                    // stays where a gesture left it.
+                    if (!strip.columnCovers(at.column, view)) view = if (center == .on_overflow) centered else start;
                 } else if (start < view) {
                     view = start;
                 } else if (start + size > view + content) {
@@ -429,6 +431,17 @@ pub const Strip = struct {
     /// The next member in strip order: the nearest active member of the next
     /// column with one (by cross position), or the next one in the column.
     pub fn neighbor(strip: *const Strip, key: Key, step: Step) ?Key {
+        return strip.neighborWhere(key, step, {}, struct {
+            fn none(_: void, _: Key) bool {
+                return false;
+            }
+        }.none);
+    }
+
+    /// `neighbor`, also stopping at inactive members that `reachable`
+    /// accepts: a maximized window takes no room but can take focus. A
+    /// column's active members come first.
+    pub fn neighborWhere(strip: *const Strip, key: Key, step: Step, context: anytype, comptime reachable: fn (@TypeOf(context), Key) bool) ?Key {
         const at = strip.locate(key) orelse return null;
         const columns = strip.columns.items;
         switch (step) {
@@ -443,7 +456,7 @@ pub const Strip = struct {
                         i += 1;
                         if (i >= cells.len) return null;
                     }
-                    if (cells[i].member.active) return cells[i].member.key;
+                    if (cells[i].member.active or reachable(context, cells[i].member.key)) return cells[i].member.key;
                 }
             },
             .previous_column, .next_column => {
@@ -458,6 +471,7 @@ pub const Strip = struct {
                         if (c >= columns.len) return null;
                     }
                     if (strip.memberNear(c, source)) |found| return found;
+                    for (columns[c].cells.items) |cell| if (reachable(context, cell.member.key)) return cell.member.key;
                 }
             },
         }
@@ -668,6 +682,17 @@ pub const Strip = struct {
         const start: f64 = @floatFromInt(column.start);
         const end = start + @as(f64, @floatFromInt(column.size));
         return start >= view - 0.5 and end <= view + @as(f64, @floatFromInt(strip.content)) + 0.5;
+    }
+
+    /// Whether column `index` shows as much of itself as it can at `view`:
+    /// all of it, or, when wider than the viewport, across the whole viewport.
+    pub fn columnCovers(strip: *const Strip, index: usize, view: f64) bool {
+        if (strip.columnFits(index, view)) return true;
+        const column = strip.columns.items[index];
+        if (column.size <= strip.content) return false;
+        const start: f64 = @floatFromInt(column.start);
+        const end = start + @as(f64, @floatFromInt(column.size));
+        return start <= view + 0.5 and end >= view + @as(f64, @floatFromInt(strip.content)) - 0.5;
     }
 
     /// The view a gesture settles on near `projected`: a column's leading

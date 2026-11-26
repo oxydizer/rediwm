@@ -138,7 +138,9 @@ pub fn rememberFocus(self: *Self, top: *Top) void {
     if (!self.active or top.workspace_id == 0) return;
     const slot = &self.slots[top.workspace_id - 1];
     if (slot.focus == top.id) return;
+    const previous = slot.focus;
     slot.focus = top.id;
+    @import("scroll_tiling.zig").focusChanged(top, previous);
     if (top.server.layout_autosave) |autosave| autosave.changed();
 }
 

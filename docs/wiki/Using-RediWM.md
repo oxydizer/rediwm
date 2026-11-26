@@ -53,7 +53,7 @@ Reconnecting it returns its strip and restores each display's workspace selectio
 
 | Shortcut | Action in a scrolling workspace |
 | --- | --- |
-| Super+Left / Right | Focus the previous or next column |
+| Super+Left / Right | Focus the previous or next column; a maximized or fullscreen window keeps its place in that order |
 | Super+Up / Down | Focus another window in the column |
 | Super+Shift+arrows | Reorder columns or windows within a column |
 | Super+Ctrl+arrows | Adjust column width or window height in 32 px steps |

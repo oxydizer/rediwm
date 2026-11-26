@@ -252,8 +252,9 @@ Pointer and touchpad (stage 5):
     resolved direction.
   * `set_workspace_layout` takes a layout instead of `automatic: bool`.
 * **Maximize and fullscreen** work as now: the member is suspended and its
-  column keeps its place. Fullscreen and maximized windows are not strip
-  members, so they stack above floating windows as they do today.
+  column keeps its place, and Super+arrows still stop there. Fullscreen and
+  maximized windows are not strip members: a focused one stacks above
+  floating windows, an unfocused one behind the strip.
 * **Modal dialogs:** focusing a dialog whose owner is culled reveals the owner,
   and the dialog moves with its owner.
 * **Toplevel capture** of a culled window behaves as it does for a window on a

@@ -5,6 +5,7 @@ const scroll = @import("scroll_layout.zig");
 const Strip = scroll.Strip;
 const Member = scroll.Member;
 const Box = scroll.Box;
+const Key = scroll.Key;
 
 // 1000 wide with 10 px gaps: 980 between the outer gaps, so ½ is 485.
 const screen: Box = .{ .x = 100, .y = 50, .width = 1000, .height = 600 };
@@ -70,6 +71,13 @@ test "reveal scrolls the least, centres wide columns and stays in limits" {
     strip.extent += 1200 - 980;
     strip.reveal(members[2].key, .on_overflow);
     try testing.expectEqual(@as(f64, 990 + 600 - 490), strip.view);
+    // Once it fills the view it stays where a gesture left it.
+    strip.view = 1050;
+    try testing.expect(strip.columnCovers(2, 1050) and !strip.columnFits(2, 1050));
+    strip.reveal(members[2].key, .on_overflow);
+    try testing.expectEqual(@as(f64, 1050), strip.view);
+    strip.view = 0;
+    try testing.expect(!strip.columnCovers(2, 0));
     strip.reveal(members[2].key, .never);
     try testing.expectEqual(@as(f64, 990), strip.view);
     // A strip shorter than its viewport starts at the leading edge.
@@ -89,6 +97,17 @@ test "suspended members keep their place and take no room" {
     try testing.expectEqual(@as(?Box, null), strip.rectangle(members[1].key));
     try testing.expectEqual(strip.rectangle(members[0].key).?.x + 495, strip.rectangle(members[2].key).?.x);
     try testing.expectEqual(members[2].key, strip.neighbor(members[0].key, .next_column).?);
+    // Arrows may still stop there (a maximized window), and carry on from it.
+    const Only = struct {
+        key: Key,
+        fn reachable(only: @This(), key: Key) bool {
+            return std.meta.eql(only.key, key);
+        }
+    };
+    const maximized: Only = .{ .key = members[1].key };
+    try testing.expectEqual(members[1].key, strip.neighborWhere(members[0].key, .next_column, maximized, Only.reachable).?);
+    try testing.expectEqual(members[2].key, strip.neighborWhere(members[1].key, .next_column, maximized, Only.reachable).?);
+    try testing.expectEqual(members[0].key, strip.neighborWhere(members[1].key, .previous_column, maximized, Only.reachable).?);
     members[1].active = true;
     try strip.sync(testing.allocator, &members, screen, 10, .{});
     try testing.expectEqual(third, strip.rectangle(members[2].key).?);

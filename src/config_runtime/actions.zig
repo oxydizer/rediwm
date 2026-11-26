@@ -294,14 +294,16 @@ fn cameraZoomReset(server: *Server) void {
 const Dir = enum { left, right, up, down };
 
 fn focusDirection(server: *Server, dir: Dir) void {
-    const focused = focusedToplevel(server) orelse return;
-    // A strip is navigated in its own order; culled columns have no place on screen.
-    if (@import("../scroll_tiling.zig").focus(server, focused, switch (dir) {
+    const scroll_tiling = @import("../scroll_tiling.zig");
+    const arrow: scroll_tiling.Arrow = switch (dir) {
         .left => .left,
         .right => .right,
         .up => .up,
         .down => .down,
-    })) return;
+    };
+    const focused = focusedToplevel(server) orelse return scroll_tiling.focusUnfocused(server, arrow);
+    // A strip is navigated in its own order; culled columns have no place on screen.
+    if (scroll_tiling.focus(server, focused, arrow)) return;
     const fx = focused.x + @divTrunc(focused.chrome_width, 2);
     const fy = focused.y + @divTrunc(focused.chrome_height, 2);
     var best: ?*Toplevel = null;

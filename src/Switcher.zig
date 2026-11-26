@@ -144,7 +144,7 @@ fn takePointer(server: *Server) void {
 /// places where input may already be shutting down or locked.
 pub fn close(self: *Self, server: *Server) void {
     self.cancel();
-    server.input.processCursorMotion(0);
+    server.input.refreshPointer();
 }
 
 /// Circular style only: the key above Tab or Up/Down steps through the
@@ -478,7 +478,7 @@ pub fn accept(self: *Self, server: *Server) void {
     }
     // The chosen window may now be the one under the pointer. An animated
     // close does this when it settles (`circular.tick`).
-    if (!self.active()) server.input.processCursorMotion(0);
+    if (!self.active()) server.input.refreshPointer();
 }
 
 /// Ends the switcher the way the user asked for it to end: releasing the

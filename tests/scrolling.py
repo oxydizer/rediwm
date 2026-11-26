@@ -280,6 +280,11 @@ def keyboard_strip():
             s.settle_all()
             assert columns() == saved_columns, (columns(), saved_columns)
             assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == e
+
+            check_reveal_behind_maximized(s, a, c, e)
+            ipc.focus_window(e)
+            assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == e
+
             ipc.restore(e)
             wait_for(lambda: not s.window(e)["is_maximized"], "e acknowledges restore")
             s.settle_all()
@@ -303,6 +308,30 @@ def keyboard_strip():
         finally:
             s.stop()
     print("PASS: strip columns, view, keys, culling, move-only scrolls and the floating layer", flush=True)
+
+
+def check_reveal_behind_maximized(s, first, last, maximized):
+    """Keyboard reveals stay visible after a maximized window loses focus,
+    and arrows still stop at the maximized window's column (right of `last`)."""
+    s.ipc.focus_window(last)
+    assert s.workspace(1)["view"] > 0
+    s.chord("Left")
+    s.chord("Left")
+    s.settle_all()
+    assert s.ipc.get_focused_window()["id"] == first and s.workspace(1)["view"] == 0
+    x, y, width, height = s.frame(first)
+    assert s.ipc.hit_test(x + width // 2, y + height // 2).get("window_id") == first
+    assert s.window(maximized)["is_maximized"]
+
+    s.ipc.focus_window(last)
+    s.chord("Right")
+    s.settle_all()
+    assert s.ipc.get_focused_window()["id"] == maximized and s.window(maximized)["is_maximized"]
+    s.chord("Left")
+    s.settle_all()
+    assert s.ipc.get_focused_window()["id"] == last and s.shown(last)
+    s.ipc.focus_window(first)
+    s.settle_all()
 
 
 def check_dialog(s, first):

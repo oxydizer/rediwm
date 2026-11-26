@@ -1,5 +1,5 @@
-"""Stage 6 of the scrolling layout: the strip overview, the position
-indicator, and motion when a column opens or closes."""
+"""Strip overview, position indicator, column glides on open, close and
+Alt+Tab, and the focused column over a settling swipe."""
 from pathlib import Path
 import tempfile
 import time
@@ -25,12 +25,14 @@ def polish():
             check_motion(s, ids)
             check_indicator(s, ids)
             check_overview(s, ids)
+            check_switcher(s, ids, config)
+            check_settling(s, ids)
         except Exception:
             s.dump_log()
             raise
         finally:
             s.stop()
-    print("PASS: strip overview, position indicator, and gliding columns on open and close")
+    print("PASS: strip overview, position indicator, column glides on open, close and Alt+Tab, and focus over a settling swipe")
 
 
 def shot(s, name):
@@ -117,6 +119,62 @@ def check_overview(s, ids):
     wait_for(lambda: ipc.get_focused_window()["id"] == d, "the clicked column is focused")
     s.settle_all()
     assert s.shown(d) and s.workspace(1)["view"] > 0
+
+
+def check_switcher(s, ids, config):
+    """The accepted window takes focus and glides into view under a stationary pointer."""
+    ipc = s.ipc
+    first, _, neighbor, last = ids
+    for style in ("linear", "circular"):
+        settings = f'focus_follows_mouse = true\nswitcher_style = "{style}"\n'
+        (s.tmp / "rediwm-config.toml").write_text(config.replace("[compositor]\n", "[compositor]\n" + settings))
+        ipc.reload_config()
+        ipc.focus_window(last)
+        ipc.focus_window(first)
+        s.settle_all()
+        x, y, width, height = s.frame(first)
+        ipc.move_cursor(x + width // 2, y + height // 2)
+        assert not s.shown(last) and ipc.get_focused_window()["id"] == first
+
+        ipc.key(56, True)  # Left Alt
+        ipc.key_press("Tab")
+        assert ipc.get_focused_window()["id"] == first
+        ipc.key(56, False)
+        assert ipc.get_focused_window()["id"] == last, style
+        assert gliding(s, last), style
+        s.settle_all()
+        assert ipc.get_focused_window()["id"] == last and s.shown(last), style
+        x, y, width, height = s.frame(last)
+        assert ipc.hit_test(x + width // 2, y + height // 2).get("window_id") == last, style
+
+        x, y, width, height = s.frame(neighbor)
+        ipc.move_cursor(x + width // 2, y + height // 3)
+        assert ipc.get_focused_window()["id"] == neighbor, style
+
+
+
+def check_settling(s, ids):
+    """A focused column that outgrows the view a released swipe is settling
+    on is revealed instead: the swipe gives way."""
+    ipc = s.ipc
+    out = ipc.get_outputs()[0]
+    _, b, c, _ = ids
+    ipc.focus_window(c)
+    ipc.focus_window(b)
+    s.settle_all()
+    view = s.workspace(1)["view"]
+    assert view > 0 and s.shown(b) and s.shown(c)
+    # Back towards the start, held still and lifted: it settles on view 0,
+    # where B, now the right-hand column, still fits and keeps focus.
+    ipc.action("swipe", {"phase": "begin", "fingers": 3})
+    ipc.action("swipe", {"phase": "update", "dx": (view - 200) / 2, "dy": 0})
+    time.sleep(0.15)
+    ipc.action("swipe", {"phase": "end"})
+    s.chord("w")  # widens B while the view glides
+    s.settle_all()
+    x, _, width, _ = s.frame(b)
+    assert ipc.get_focused_window()["id"] == b
+    assert out["x"] <= x and x + width <= out["x"] + out["logical_width"], (s.frame(b), s.workspace(1)["view"])
 
 
 if __name__ == "__main__":

@@ -83,6 +83,43 @@ pub fn memberOf(top: *Top) ?*Top {
     return null;
 }
 
+/// A maximized or fullscreen window keeps its column while it covers the
+/// strip: the column takes no room, but arrows still stop there.
+fn waiting(top: *Top) bool {
+    if (top.minimized or !(top.maximized or top.fullscreen) or top.workspace_id == 0 or !scrolling(top.server, top.workspace_id)) return false;
+    return top.server.world.workspaces.tiler.strips[top.workspace_id - 1].contains(tiling.key(top));
+}
+
+/// The window whose strip slot `top` navigates from: its member, or the
+/// maximized or fullscreen window waiting in the strip that it belongs to.
+fn slotOf(top: *Top) ?*Top {
+    if (memberOf(top)) |member| return member;
+    var current = top;
+    for (0..32) |_| {
+        if (waiting(current)) return current;
+        current = current.parentWindow() orelse return null;
+    }
+    return null;
+}
+
+/// The slot of the window workspace `id` last focused.
+fn focusedSlot(server: *Server, id: u8) ?*Top {
+    const top = server.findToplevelById(server.world.workspaces.slots[id - 1].focus orelse return null) orelse return null;
+    if (top.workspace_id != id) return null;
+    return slotOf(top);
+}
+
+/// Strip keys arrows can stop at besides active members.
+const Reach = struct {
+    server: *Server,
+    id: u8,
+
+    fn reachable(reach: Reach, key: scroll.Key) bool {
+        const top = windowFor(reach.server, reach.id, key) orelse return false;
+        return waiting(top);
+    }
+};
+
 /// The key the view follows on workspace `id`: its focused window's column.
 /// Asks the strip, not the window: a window that just mapped has focus but
 /// no tile until this reflow places it.
@@ -105,25 +142,68 @@ pub fn sync(server: *Server, id: u8, members: []const scroll.Member) !bool {
     // cross extent would expel every stacked member and lose the saved view.
     if (box.width <= 0 or box.height <= 0) return false;
     try strip.sync(gpa, members, box, server.config.compositor.windowGap(), options(server, id));
-    // A gesture or a settling release owns the view.
-    if (scroll_motion.active(server, id)) {} else if (focusKey(server, id)) |key| strip.view = strip.revealView(key, center(server)) else strip.clampView();
+    if (focusKey(server, id)) |key| {
+        _ = showColumn(server, id, key);
+    } else if (scroll_motion.settlingTo(server, id)) |target| {
+        // The strip shrank under a settling release.
+        if (target > strip.maxView()) {
+            scroll_motion.stopSnap(server, id);
+            strip.view = strip.maxView();
+        }
+    } else if (!scroll_motion.holdsView(server, id)) strip.clampView();
     strip.place();
     return true;
+}
+
+/// Moves workspace `id`'s view to show the column holding `key`, unless a
+/// gesture holds the view or a settling release already ends with it in
+/// view (so a click mid-glide does not stop it between columns). A release
+/// heading elsewhere is cancelled and the reveal starts from its target,
+/// so the view still rests on a column edge. True when the view changed;
+/// the caller places the windows.
+fn showColumn(server: *Server, id: u8, key: scroll.Key) bool {
+    if (scroll_motion.holdsView(server, id)) return false;
+    const strip = &server.world.workspaces.tiler.strips[id - 1];
+    const at = strip.locate(key) orelse return false;
+    var changed = false;
+    if (scroll_motion.settlingTo(server, id)) |target| {
+        if (target <= strip.maxView() and strip.columnCovers(at.column, target)) return false;
+        scroll_motion.stopSnap(server, id);
+        strip.view = std.math.clamp(target, 0, strip.maxView());
+        changed = true;
+    }
+    const view = strip.revealView(key, center(server));
+    if (view != strip.view) {
+        strip.view = view;
+        changed = true;
+    }
+    return changed;
 }
 
 /// Focus scrolls the strip to show `top`'s column.
 pub fn reveal(top: *Top) void {
     const member = memberOf(top) orelse return;
     const server = top.server;
+    const id = member.workspace_id;
     const manager = &server.world.workspaces.tiler;
-    if (manager.applying or scroll_motion.holdsView(server, member.workspace_id)) return;
-    scroll_motion.stopSnap(server, member.workspace_id);
-    const strip = &manager.strips[member.workspace_id - 1];
-    const view = strip.revealView(tiling.key(member), center(server));
-    if (view == strip.view) return;
-    strip.view = view;
+    if (manager.applying) return;
+    if (!showColumn(server, id, tiling.key(member))) return;
+    manager.strips[id - 1].place();
+    place(server, id, !@import("ui").anim.reducedMotion());
+}
+
+/// Shows workspace `id`'s focused column when the view has left it: the
+/// end of every settling release, whatever changed while it moved.
+pub fn revealFocus(server: *Server, id: u8) void {
+    const manager = &server.world.workspaces.tiler;
+    if (manager.applying) return;
+    const key = focusKey(server, id) orelse return;
+    const strip = &manager.strips[id - 1];
+    const at = strip.locate(key) orelse return;
+    if (strip.columnCovers(at.column, strip.view)) return;
+    if (!showColumn(server, id, key)) return;
     strip.place();
-    place(server, member.workspace_id, !@import("ui").anim.reducedMotion());
+    place(server, id, !@import("ui").anim.reducedMotion());
 }
 
 /// The strip view jumps to show `top`'s column, windows placed there at
@@ -189,16 +269,27 @@ pub fn moving(server: *Server, id: u8) bool {
     return false;
 }
 
-const Layer = enum(u8) { strip, floating, maximized };
+const Layer = enum(u8) { background, strip, floating, foreground };
 
-fn layer(top: *Top) Layer {
-    if (isMember(top)) return .strip;
-    // A maximized or fullscreen owner's dialog stays in its layer.
+/// Dialogs stay in the same layer as their covering owner.
+fn coveringWindow(top: *Top) ?*Top {
     var current = top;
+    var cover: ?*Top = null;
     for (0..32) |_| {
-        if (current.maximized or current.fullscreen) return .maximized;
+        if (current.maximized or current.fullscreen) cover = current;
         current = current.parentWindow() orelse break;
     }
+    return cover;
+}
+
+fn focusedCover(server: *Server, focus_id: ?u64) ?*Top {
+    const top = server.findToplevelById(focus_id orelse return null) orelse return null;
+    return coveringWindow(top);
+}
+
+fn layer(top: *Top, foreground: ?*Top) Layer {
+    if (isMember(top)) return .strip;
+    if (coveringWindow(top)) |cover| return if (cover == foreground) .foreground else .background;
     return .floating;
 }
 
@@ -212,41 +303,40 @@ fn stackedWindow(node: *Node, id: u8) ?*Top {
 /// Raise a window to the top of its layer.
 pub fn raiseFloor(top: *Top) ?*Top {
     if (!scrolling(top.server, top.workspace_id)) return null;
-    const own_layer = layer(top);
-    if (own_layer == .maximized) return null;
+    const foreground = focusedCover(top.server, top.server.world.workspaces.slots[top.workspace_id - 1].focus);
+    const own_layer = layer(top, foreground);
+    if (own_layer == .foreground) return null;
     const parent = top.frame_tree.node.parent orelse return null;
     var it = parent.children.iterator(.forward);
     while (it.next()) |node| {
         const other = stackedWindow(node, top.workspace_id) orelse continue;
-        if (@backingInt(layer(other)) > @backingInt(own_layer)) return other;
+        if (@backingInt(layer(other, foreground)) > @backingInt(own_layer)) return other;
     }
     return null;
 }
 
-/// Mapping, floating an unfocused member, and switching layouts can change
-/// layers without a focus change. Keep relative order within each layer.
+/// An unfocused maximized or fullscreen window goes behind the strip so it
+/// cannot cover a newly revealed tile. Keep relative order within each layer.
 pub fn restack(server: *Server, id: u8) void {
-    var first_float: ?*Node = null;
-    var first_maximized: ?*Node = null;
+    const foreground = focusedCover(server, server.world.workspaces.slots[id - 1].focus);
+    var first: [std.enums.values(Layer).len]?*Node = @splat(null);
     var it = server.world.tree.children.iterator(.forward);
     while (it.next()) |node| {
         const top = stackedWindow(node, id) orelse continue;
-        const above = switch (layer(top)) {
-            .strip => first_float orelse first_maximized,
-            .floating => blk: {
-                if (first_float == null) first_float = node;
-                break :blk first_maximized;
-            },
-            .maximized => {
-                if (first_maximized == null) first_maximized = node;
-                continue;
-            },
-        };
-        if (above) |sibling| {
+        const index: usize = @backingInt(layer(top, foreground));
+        if (first[index] == null) first[index] = node;
+        for (first[index + 1 ..]) |above| {
+            const sibling = above orelse continue;
             node.placeBelow(sibling);
             top.syncXwaylandStack();
+            break;
         }
     }
+}
+
+pub fn focusChanged(top: *Top, previous: ?u64) void {
+    if (!scrolling(top.server, top.workspace_id)) return;
+    if (focusedCover(top.server, previous) != coveringWindow(top)) restack(top.server, top.workspace_id);
 }
 
 pub const Arrow = enum { left, right, up, down };
@@ -270,28 +360,54 @@ pub fn stepFor(dir: scroll.Direction, arrow: Arrow) scroll.Step {
     };
 }
 
-/// Strip-order focus: along the strip, or within a column.
+/// Strip-order focus: along the strip, or within a column, stopping at
+/// maximized and fullscreen windows too. At the end of the strip the key
+/// still brings the focused column into view.
 pub fn focus(server: *Server, top: *Top, arrow: Arrow) bool {
-    const member = memberOf(top) orelse return false;
-    const strip = &server.world.workspaces.tiler.strips[member.workspace_id - 1];
+    const from = slotOf(top) orelse return false;
+    const id = from.workspace_id;
+    const strip = &server.world.workspaces.tiler.strips[id - 1];
     const step = stepFor(strip.direction, arrow);
-    const next = strip.neighbor(tiling.key(member), step) orelse return true;
-    const target = windowFor(server, member.workspace_id, next) orelse return true;
+    const next = strip.neighborWhere(tiling.key(from), step, Reach{ .server = server, .id = id }, Reach.reachable) orelse {
+        revealFocus(server, id);
+        return true;
+    };
+    const target = windowFor(server, id, next) orelse return true;
     server.world.focus(target);
     return true;
+}
+
+/// Super+arrow with no window focused (the desktop took the keyboard): the
+/// strip under the pointer carries on from the window it focused last, or
+/// focuses the column in view.
+pub fn focusUnfocused(server: *Server, arrow: Arrow) void {
+    const output = server.getDefaultOutput() orelse return;
+    const id = output.workspace_id;
+    if (id == 0 or !scrolling(server, id)) return;
+    if (focusedSlot(server, id)) |slot| if (workspaces.visible(slot)) {
+        _ = focus(server, slot, arrow);
+        return;
+    };
+    const strip = &server.world.workspaces.tiler.strips[id - 1];
+    const snap = strip.snapView(strip.view, center(server)) orelse return;
+    const key = strip.memberNear(snap.column, null) orelse return;
+    server.world.focus(windowFor(server, id, key) orelse return);
 }
 
 /// Super+Shift+wheel and the horizontal wheel: focus `steps` columns along
 /// workspace `id`'s strip; the view follows.
 pub fn stepColumns(server: *Server, id: u8, steps: i32) void {
     const strip = &server.world.workspaces.tiler.strips[id - 1];
-    var key = focusKey(server, id) orelse for (strip.columns.items, 0..) |_, c| {
+    const focused = focusedSlot(server, id);
+    const start = if (focused) |slot| tiling.key(slot) else for (strip.columns.items, 0..) |_, c| {
         if (strip.memberNear(c, null)) |first| break first;
     } else return;
+    var key = start;
     var remaining = @abs(steps);
     while (remaining > 0) : (remaining -= 1) {
-        key = strip.neighbor(key, if (steps > 0) .next_column else .previous_column) orelse break;
+        key = strip.neighborWhere(key, if (steps > 0) .next_column else .previous_column, Reach{ .server = server, .id = id }, Reach.reachable) orelse break;
     }
+    if (focused != null and std.meta.eql(key, start)) return revealFocus(server, id);
     const top = windowFor(server, id, key) orelse return;
     server.world.focus(top);
 }

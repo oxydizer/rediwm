@@ -613,7 +613,7 @@ pub const layoutMotion = input_motion.layoutMotion;
 pub const warpCursor = input_motion.warpCursor;
 pub const updateDockReveal = input_motion.updateDockReveal;
 pub const processCursorMotion = input_motion.processCursorMotion;
-pub const passthroughMotion = input_motion.passthroughMotion;
+pub const refreshPointer = input_motion.refreshPointer;
 pub const processMove = input_motion.processMove;
 pub const processResize = input_motion.processResize;
 
