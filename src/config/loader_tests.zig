@@ -32,8 +32,73 @@ const IdleConfig = @import("loader.zig").IdleConfig;
 const desktopEnabled = @import("loader.zig").desktopEnabled;
 const isDesktopClient = @import("loader.zig").isDesktopClient;
 const default = @import("loader.zig").default;
+const load = @import("loader.zig").load;
 const loadFromBytes = @import("loader.zig").loadFromBytes;
 const parse = @import("loader.zig").parse;
+const removeLegacyInputKey = @import("loader_edit.zig").removeLegacyInputKey;
+
+test "legacy invert_scroll migration removes only the [input] key" {
+    const a = std.testing.allocator;
+    const original =
+        \\# keep this comment
+        \\[input]
+        \\natural_scroll = true
+        \\"invert_scroll" = false # obsolete setting
+        \\pointer_speed = 0.2
+        \\[compositor]
+        \\invert_scroll = true
+        \\[[input_device]]
+        \\id = "mouse"
+        \\invert_scroll = false
+    ;
+    const cleaned = (try removeLegacyInputKey(a, original)).?;
+    defer a.free(cleaned);
+
+    try std.testing.expectEqualStrings(
+        \\# keep this comment
+        \\[input]
+        \\natural_scroll = true
+        \\pointer_speed = 0.2
+        \\[compositor]
+        \\invert_scroll = true
+        \\[[input_device]]
+        \\id = "mouse"
+        \\invert_scroll = false
+    , cleaned);
+    try std.testing.expect((try removeLegacyInputKey(a, cleaned)) == null);
+}
+
+test "loading a config migrates the legacy [input].invert_scroll key on disk" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const original =
+        \\# preserve this comment
+        \\[input]
+        \\natural_scroll = true
+        \\invert_scroll = false
+        \\pointer_speed = 0.2
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = original });
+    const path = try tmp.dir.realPathFileAlloc(io, "config.toml", a);
+    defer a.free(path);
+
+    var cfg = try load(path, a, io, .empty);
+    defer cfg.deinit();
+    try std.testing.expect(cfg.input.natural_scroll);
+    try std.testing.expectEqual(@as(f32, 0.2), cfg.input.pointer_speed);
+
+    const saved = try tmp.dir.readFileAlloc(io, "config.toml", a, .limited(4096));
+    defer a.free(saved);
+    try std.testing.expectEqualStrings(
+        \\# preserve this comment
+        \\[input]
+        \\natural_scroll = true
+        \\pointer_speed = 0.2
+    , saved);
+}
 
 test "[taskbar_theme] holds only taskbar tokens and is rewritten without touching its neighbours" {
     const a = std.testing.allocator;

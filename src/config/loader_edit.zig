@@ -9,6 +9,43 @@ const log = @import("loader.zig").log;
 
 pub const resolvePath = @import("path.zig").resolvePath;
 
+/// Removes the obsolete `invert_scroll` setting from `[input]`, preserving
+/// every other line. Returns null when the legacy key is absent.
+pub fn removeLegacyInputKey(allocator: Allocator, original: []const u8) !?[]u8 {
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+
+    var section: []const u8 = "";
+    var removed = false;
+    var offset: usize = 0;
+    var lines = std.mem.splitScalar(u8, original, '\n');
+    while (lines.next()) |raw| {
+        const end = @min(original.len, offset + raw.len + 1);
+        const line = theme_mod.stripComment(std.mem.trim(u8, raw, " \t\r"));
+        if (std.mem.startsWith(u8, line, "[")) section = line;
+
+        const eq = std.mem.indexOfScalar(u8, line, '=');
+        const matches = std.mem.eql(u8, section, "[input]") and
+            if (eq) |i|
+                std.mem.eql(u8, std.mem.trim(u8, line[0..i], " \t\""), "invert_scroll")
+            else
+                false;
+
+        if (matches) {
+            removed = true;
+        } else {
+            try result.appendSlice(allocator, original[offset..end]);
+        }
+        offset = end;
+    }
+
+    if (!removed) {
+        result.deinit(allocator);
+        return null;
+    }
+    return try result.toOwnedSlice(allocator);
+}
+
 /// Rewrites the `[theme]` section of `path` in place, preserving every other
 /// section and any leading comments. Used by the control center so appearance
 /// edits don't clobber keybinds/input.

@@ -34,7 +34,7 @@ def run():
                 '<script>onscroll=()=>document.title="scroll:"+Math.round(scrollY)</script>'
             )
         compositor, compositor_log = start_compositor(
-            tmp, "[compositor]\nxwayland = false\n[input]\ninvert_scroll = false\n",
+            tmp, "[compositor]\nxwayland = false\n[input]\n",
             env_overrides={"WLR_RENDERER": renderer},
         )
         client = None
