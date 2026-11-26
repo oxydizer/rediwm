@@ -389,6 +389,19 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
         "Benchmark archive extraction directory traversal",
     ).dependOn(&run_archive_bench.step);
 
+    // S5's responsiveness check: the production service under heavy I/O,
+    // with this test's thread as three windows' event loop.
+    const io_bench_tests = b.addTest(.{
+        .root_module = files_tests.root_module,
+        .filters = &.{"files io responsiveness benchmark"},
+    });
+    const run_io_bench = b.addRunArtifact(io_bench_tests);
+    run_io_bench.has_side_effects = true;
+    b.step(
+        "bench-files-io",
+        "Measure UI-thread cost of the Files I/O service under heavy I/O (REDIWM_RUN_BENCHMARKS=1)",
+    ).dependOn(&run_io_bench.step);
+
     const terminal_integration = b.addSystemCommand(&.{"env"});
     terminal_integration.addPrefixedDirectoryArg("REDIWM_TEST_BIN=", support.installed(.bin, ""));
     terminal_integration.addArg("python3");
