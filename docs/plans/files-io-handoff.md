@@ -7,10 +7,7 @@ in a fresh context. Read this first, then the docs it points to.
 
 * **Integration branch:** `feat/files-io-manager` on `oxydizer/rediwm`. Stage PRs
   target it; it goes to master later as a whole.
-* **Open PR:** #70 `io/reaper` → `feat/files-io-manager`, "closing windows
-  hand helper threads to a reaper (U16, S3 done)". Merge only after the user
-  confirms.
-* **Merged this round:** #69 (S3c, S4: archives through the service, with the
+* **Merged this round:** #70 (U16, the reaper; S3 done), #69 (S3c, S4: archives through the service, with the
   toolbar Copy inside archives), #65 (S3b, JobRunner removed in `0a6e972`), #66 (a merge
   leaves identical files alone; "Apply to all" in the conflict dialog).
 
@@ -68,9 +65,6 @@ window right after each, and `python3 tests/files_controls.py --archive-only`.
 
 ## Remaining work, in order
 
-1. **Merge #70** once the user confirms (#69 is merged).
-2. **U16, the reaper:** done in #70 (`reaper.zig`; U16 struck, S3 marked
-   done).
 3. **S5, limits and validation:** per-pass command quotas, a time-based
    progress rate limit, capacity calibration, and a measured UI-latency check
    under heavy concurrent I/O (big copies, many small files, extraction, a
