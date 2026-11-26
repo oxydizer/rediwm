@@ -195,6 +195,29 @@ is back at 2 once the mount answers.
   seeks, and parallel requests help. Filesystems that share a disk (btrfs
   subvolumes) are separate stall domains but share its device limit.
 
+**Per-device limits are done (step 5, #80) and off by default.** Calibrated
+on the user's USB hard disk (`sdb`, rotational, 1.8 TB): with a limit of 1 the
+bench took 96.9 s (big copy 6.1 MiB/s, small files 96.9 s), with none 76.7 s
+(8.9 MiB/s, 76.7 s). Writes land in the page cache and reach the disk in the
+kernel's order, so parallel copies do not thrash it; one at a time leaves the
+disk idle between 64 KiB units and serialises the per-file syncs. The
+mechanism and `REDIWM_IO_BENCH_SERIAL_LIMIT` stay for drives that may differ.
+What follows describes it. When a
+copy's plan arrives, `io_coordinator_disks.zig` looks up the disk behind the
+destination's and each source's device once (`platform.mounts.diskOf`: the
+mountinfo line for the device, the block device it names for an anonymous
+one, then `/sys/dev/block`; a partition counts as its disk). A disk that spins
+(`queue/rotational`) or sits on USB is serial: at most `serial_limit` (1)
+operations run on it at once, across every job that touches it
+(`Manager.setDiskLimit`, `setJobDisks`). A virtio disk's rotational flag is
+ignored (it is a default, not a property of the backing store: in the sandbox,
+taking it at its word made the bench's three jobs 65 % slower). A stuck job
+(`stalled`, 10 s) does not count against a disk, so a copy from a dead NAS to a
+local HDD does not block the other copies to that HDD. Extractions carry no
+plan and are not limited. Calibration needs real spinning and USB disks:
+`REDIWM_IO_BENCH_SERIAL_LIMIT` (1, or 0 for none) with `REDIWM_IO_BENCH_DIR` on
+the disk compares the two.
+
 ### 4.5 One filesystem table, every lane
 
 The coordinator owns one table of filesystems: for each stall domain, whether it
@@ -237,6 +260,7 @@ the ledger, and the rule that only the coordinator applies results.
 3. Stall detection and suspect domains (4.2), with the mount table.
 4. Elastic lanes (4.3). Done.
 5. Per-device limits and their calibration (second half of 4.4, phase 7).
+   Done: limits measured slower on a USB HDD, so off by default.
 
 `bench-files-io` checks each step: `REDIWM_IO_BENCH_STALL_MODE=prepare` for gap
 1, `running` for gap 2. Done when, with a dead mount, every other job finishes

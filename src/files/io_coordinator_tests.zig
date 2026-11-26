@@ -551,7 +551,6 @@ test "a hung worker does not stall the coordinator, other jobs or window calls" 
     // Runs before coordinator.deinit joins the workers, even on failure.
     const gate = io_operation_executor.test_gate;
     defer gate.release();
-
     // Job 1's copy unit parks on its worker, as on a hung mount.
     gate.arm();
     try submitTransfer(allocator, window, .copy, hung_dir, hung_source);

@@ -414,7 +414,16 @@ fn currentProgressRate(operation: *const Operation, now: i64) u64 {
     return operation.progress_bytes_per_second;
 }
 
+/// The serial disks a job reads or writes, at most (worker-pools §4.4).
+pub const max_job_disks = 4;
+
 const Job = struct {
+    /// Disks with a limit that the job touches (`setJobDisks`).
+    disks: [max_job_disks]u64 = undefined,
+    disk_count: u8 = 0,
+    /// A task of the job is stuck (`io_coordinator_stalls.zig`): what it runs
+    /// is not using its disks, so it does not count against their limits.
+    stalled: bool = false,
     /// Starts nothing new while set: the job touches a mount under suspicion
     /// (worker-pools §4.2, `io_coordinator_stalls.zig`). Running work goes on.
     held: bool = false,
@@ -568,6 +577,10 @@ pub const Manager = struct {
     /// dies cannot hang every operation worker (worker-pools §4.4). The
     /// Runtime sets it below the operation worker count.
     max_running_per_job: usize = std.math.maxInt(usize),
+    /// How many operations may run at once on a disk, across every job that
+    /// touches it (`setDiskLimit`; worker-pools §4.4). Unlisted disks have no
+    /// limit of their own.
+    disk_limits: std.AutoHashMapUnmanaged(u64, u32) = .empty,
     /// Files the user is waiting for (hovered ghosts), in hover order: a
     /// soft queue. While one of them can run, other file copies wait.
     preferred: [max_preferred]PreferredOperation = undefined,
@@ -587,6 +600,7 @@ pub const Manager = struct {
         for (self.jobs.items) |*job| job.deinit(self.allocator);
         self.jobs.deinit(self.allocator);
         self.job_indices.deinit(self.allocator);
+        self.disk_limits.deinit(self.allocator);
         for (&self.discovery_queues) |*queue| queue.deinit(self.allocator);
         for (self.conflicts.items[self.conflict_head..]) |*conflict|
             conflict.deinit(self.allocator);
@@ -3017,7 +3031,46 @@ pub const Manager = struct {
     }
 
     fn atRunningLimit(self: *const Manager, job: *const Job) bool {
-        return job.held or job.operation_state_counts[@backingInt(OperationState.running)] >= self.max_running_per_job;
+        if (job.held or job.operation_state_counts[@backingInt(OperationState.running)] >= self.max_running_per_job) return true;
+        for (job.disks[0..job.disk_count]) |disk| {
+            const limit = self.disk_limits.get(disk) orelse continue;
+            if (self.runningOnDisk(disk) >= limit) return true;
+        }
+        return false;
+    }
+
+    /// Operations running in every job that touches `disk`.
+    fn runningOnDisk(self: *const Manager, disk: u64) usize {
+        var running: usize = 0;
+        for (self.jobs.items) |*other| {
+            if (other.stalled) continue;
+            if (std.mem.indexOfScalar(u64, other.disks[0..other.disk_count], disk) == null) continue;
+            running += other.operation_state_counts[@backingInt(OperationState.running)];
+        }
+        return running;
+    }
+
+    /// Marks a job whose task is stuck, or no longer. False for an unknown job.
+    pub fn setJobStalled(self: *Manager, job_id: JobId, stalled: bool) bool {
+        const job = self.findJob(job_id) orelse return false;
+        job.stalled = stalled;
+        return true;
+    }
+
+    /// At most `limit` operations run at once on `disk` (a whole disk's
+    /// device number, `platform.mounts.Disk.key`).
+    pub fn setDiskLimit(self: *Manager, disk: u64, limit: u32) !void {
+        try self.disk_limits.put(self.allocator, disk, limit);
+    }
+
+    /// The limited disks job `job_id` reads or writes; beyond
+    /// `max_job_disks` the rest are not limited.
+    pub fn setJobDisks(self: *Manager, job_id: JobId, disks: []const u64) bool {
+        const job = self.findJob(job_id) orelse return false;
+        const count = @min(disks.len, max_job_disks);
+        @memcpy(job.disks[0..count], disks[0..count]);
+        job.disk_count = @intCast(count);
+        return true;
     }
 
     /// Holds a job's new work back, or lets it go again. False for an

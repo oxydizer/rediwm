@@ -2,6 +2,7 @@
 //! ("Waiting for <mount>…"). Linux reads `/proc/self/mountinfo`, which the
 //! kernel answers from memory: it never waits on the mounts it lists, so a dead
 //! network mount cannot hang the reader. Other systems report no mount table.
+//! `diskOf` finds the disk behind a filesystem in `/sys` (also in memory).
 const std = @import("std");
 const builtin = @import("builtin");
 
@@ -52,6 +53,100 @@ pub const Table = struct {
 };
 
 pub const Borrowed = struct { point: []const u8, anonymous: bool };
+
+/// The disk a filesystem lives on, for limiting how much runs on it at once
+/// (worker-pools §4.4).
+pub const Disk = struct {
+    /// The whole disk's device number (`major << 32 | minor`): partitions,
+    /// btrfs subvolumes and a FUSE filesystem on the disk share it.
+    key: u64,
+    /// Spinning or attached over USB: parallel writes make it slower. A
+    /// virtio disk's rotational flag says nothing about what backs it, so it
+    /// is not taken as spinning.
+    serial: bool,
+};
+
+/// The disk behind the filesystem with device number `st_dev` (as `stat`
+/// returns it), or null for a network or virtual filesystem, or when the
+/// system has no such table (Linux reads `/proc/self/mountinfo` and `/sys`,
+/// both answered from memory).
+pub fn diskOf(st_dev: u64) ?Disk {
+    switch (builtin.os.tag) {
+        .linux => {},
+        else => return null,
+    }
+    const major = ((st_dev >> 8) & 0xfff) | ((st_dev >> 32) & ~@as(u64, 0xfff));
+    const minor = (st_dev & 0xff) | ((st_dev >> 12) & ~@as(u64, 0xff));
+    var block_major = major;
+    var block_minor = minor;
+    if (major == 0) {
+        // Anonymous: btrfs subvolume, FUSE filesystem or network mount. Its
+        // mountinfo line names the block device it sits on, if any.
+        const table = readMountinfo(std.heap.page_allocator) catch return null;
+        defer std.heap.page_allocator.free(table);
+        var want: [32]u8 = undefined;
+        const id = std.fmt.bufPrint(&want, "{d}:{d}", .{ major, minor }) catch return null;
+        const source = mountSource(table, id) orelse return null;
+        if (!std.mem.startsWith(u8, source, "/dev/")) return null;
+        var path: [4096]u8 = undefined;
+        const z = std.fmt.bufPrintSentinel(&path, "{s}", .{source}, 0) catch return null;
+        const linux = std.os.linux;
+        var info: linux.Statx = undefined;
+        if (linux.errno(linux.statx(linux.AT.FDCWD, z, 0, .{ .TYPE = true }, &info)) != .SUCCESS) return null;
+        block_major = info.rdev_major;
+        block_minor = info.rdev_minor;
+    }
+    var link: [64]u8 = undefined;
+    const sys = std.fmt.bufPrintSentinel(&link, "/sys/dev/block/{d}:{d}", .{ block_major, block_minor }, 0) catch return null;
+    var real_buf: [4096]u8 = undefined;
+    const real_z = std.c.realpath(sys, &real_buf) orelse return null;
+    var real: []const u8 = std.mem.span(real_z);
+    // A partition's directory sits inside its disk's.
+    var probe: [4200]u8 = undefined;
+    const partition = std.fmt.bufPrintSentinel(&probe, "{s}/partition", .{real}, 0) catch return null;
+    if (std.c.access(partition, 0) == 0) real = std.fs.path.dirname(real) orelse return null;
+
+    var text: [32]u8 = undefined;
+    const dev_text = readSmall(&probe, real, "dev", &text) orelse return null;
+    const colon = std.mem.indexOfScalar(u8, dev_text, ':') orelse return null;
+    const disk_major = std.fmt.parseInt(u64, dev_text[0..colon], 10) catch return null;
+    const disk_minor = std.fmt.parseInt(u64, dev_text[colon + 1 ..], 10) catch return null;
+    var rot: [8]u8 = undefined;
+    const rotational = if (readSmall(&probe, real, "queue/rotational", &rot)) |value| std.mem.eql(u8, value, "1") else false;
+    const usb = std.mem.indexOf(u8, real, "/usb") != null;
+    // A virtual machine's virtio disk reports rotational whatever backs it.
+    const virtio = std.mem.indexOf(u8, real, "/virtio") != null;
+    return .{ .key = disk_major << 32 | disk_minor, .serial = usb or (rotational and !virtio) };
+}
+
+/// The source of the mountinfo line whose device is `id` ("0:41").
+fn mountSource(mountinfo: []const u8, id: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, mountinfo, '\n');
+    while (lines.next()) |line| {
+        var fields = std.mem.splitScalar(u8, line, ' ');
+        _ = fields.next() orelse continue;
+        _ = fields.next() orelse continue;
+        const device = fields.next() orelse continue;
+        if (!std.mem.eql(u8, device, id)) continue;
+        const dash = std.mem.indexOf(u8, line, " - ") orelse return null;
+        var tail = std.mem.splitScalar(u8, line[dash + 3 ..], ' ');
+        _ = tail.next() orelse return null; // filesystem type
+        return tail.next();
+    }
+    return null;
+}
+
+/// A short sysfs attribute, trimmed.
+fn readSmall(path_buf: []u8, dir: []const u8, name: []const u8, out: []u8) ?[]const u8 {
+    const path = std.fmt.bufPrintSentinel(path_buf, "{s}/{s}", .{ dir, name }, 0) catch return null;
+    const system = std.posix.system;
+    const fd = system.open(path, .{ .CLOEXEC = true }, @as(std.posix.mode_t, 0));
+    if (fd < 0) return null;
+    defer _ = system.close(fd);
+    const rc = system.read(fd, out.ptr, out.len);
+    if (std.posix.errno(rc) != .SUCCESS) return null;
+    return std.mem.trim(u8, out[0..@intCast(rc)], " \n");
+}
 
 fn readMountinfo(allocator: std.mem.Allocator) ![]u8 {
     const system = std.posix.system;
@@ -157,4 +252,29 @@ test "the longest containing mount wins, at component boundaries, escapes undone
     const name = try unescape(std.testing.allocator, usb);
     defer std.testing.allocator.free(name);
     try std.testing.expectEqualStrings("/run/media/u/USB STICK", name);
+}
+
+test "the source of a mountinfo line" {
+    const table =
+        \\22 1 8:2 / / rw - ext4 /dev/sda2 rw
+        \\32 22 0:41 / /mnt/usb rw - fuseblk /dev/sdb1 rw
+        \\33 22 0:42 / /mnt/nas rw - nfs4 server:/share rw
+    ;
+    try std.testing.expectEqualStrings("/dev/sdb1", mountSource(table, "0:41").?);
+    try std.testing.expectEqualStrings("server:/share", mountSource(table, "0:42").?);
+    try std.testing.expect(mountSource(table, "0:9") == null);
+}
+
+/// `st_dev` as glibc encodes it, from a major and minor number.
+fn makedev(major: u64, minor: u64) u64 {
+    return ((major & 0xfffff000) << 32) | ((major & 0xfff) << 8) | ((minor & 0xffffff00) << 12) | (minor & 0xff);
+}
+
+test "the root filesystem's disk is found without failing" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    const info = @import("fs.zig").stat("/") orelse return error.SkipZigTest;
+    // Containers may have no block device behind `/`: then null.
+    if (diskOf(makedev(info.dev >> 32, info.dev & 0xffffffff))) |disk| try std.testing.expect(disk.key != 0);
+    // A network-like anonymous device with no line resolves to nothing.
+    try std.testing.expect(diskOf(makedev(0, 999_999)) == null);
 }

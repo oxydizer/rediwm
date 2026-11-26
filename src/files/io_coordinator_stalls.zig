@@ -125,6 +125,13 @@ pub fn watchStalls(self: *Coordinator, now: i64) ?i64 {
                 stuck_count += 1;
             }
         }
+        // A stuck job's work is not using its disks (§4.4).
+        const stalled = age >= suspect_after_ms;
+        if (stalled != entry.stalled) {
+            entry.stalled = stalled;
+            _ = self.runtime.manager.setJobStalled(job_id, stalled);
+            self.stalls.changed = true;
+        }
         report(self, job_id, entry, age >= report_after_ms or (entry.held and report_held), age);
     }
 
