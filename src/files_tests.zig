@@ -311,6 +311,7 @@ test {
     _ = @import("files/thumb_decode.zig");
     _ = @import("files/thumbs.zig");
     _ = @import("files/reaper.zig");
+    _ = @import("files/io_bench_tests.zig");
     _ = @import("files/volumes.zig");
     _ = @import("files/pins.zig");
     _ = @import("files/trash_tests.zig");

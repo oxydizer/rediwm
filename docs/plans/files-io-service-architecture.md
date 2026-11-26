@@ -399,13 +399,22 @@ and a window takes member and export staging with an `archive_handoff` request
 
 **S5, limits and validation.** Nothing becomes asynchronous here for the first
 time.
-* Per-pass command quotas.
-* Time-based progress rate limit.
+* Per-pass command quotas. **Done**: `command_quota` (16) commands per pass,
+  taken by `Service.receiveCommands`; when the quota is hit the next pass starts
+  without waiting.
+* Time-based progress rate limit. **Done** (already in place): job records and
+  job views publish progress at most every 50 ms, deletions every 250 ms, state
+  changes at once.
 * Calibrate capacities (live table, outcome slots, tombstones, queues) with phase 7.
 * A measured check that the UI thread stays responsive under heavy concurrent I/O:
   event-loop iteration latency under concurrent large copies, many-small-file
   copies, archive extraction and a stalled FUSE mount, across two or more windows.
-* Close any gap found by the measurement.
+  **Harness done:** `bench-files-io` (`io_bench_tests.zig`). The UI thread
+  stays responsive; two gaps are in the worker pools: a dead mount stalls the
+  service task pool (requests, extraction scans) and, while a copy runs, every
+  other transfer. See [worker pools](files-io-worker-pools.md).
+* Close any gap found by the measurement: the plan in
+  [worker pools](files-io-worker-pools.md), under review.
 
 **S6, external endpoint and single instance** (§13). Needs S3, so that every
 window renders from the job table.

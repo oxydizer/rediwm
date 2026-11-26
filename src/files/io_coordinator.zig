@@ -196,9 +196,11 @@ pub const Coordinator = struct {
 
         while (true) {
             _ = self.service.drainCommandWake();
-            while (self.service.tryReceiveCommand()) |routed| {
-                self.handleCommand(routed);
-            }
+            var batch: [io_service.command_quota]io_service.RoutedCommand = undefined;
+            const taken = self.service.receiveCommands(&batch);
+            for (batch[0..taken]) |routed| self.handleCommand(routed);
+            // The quota was hit: more may be queued, and their wake is drained.
+            const more_commands = taken == batch.len;
 
             self.sweepClosedWindows();
             self.pumpTasks();
@@ -223,6 +225,7 @@ pub const Coordinator = struct {
             if (self.draining and self.isIdle()) break;
             // While draining, re-check progress at least every 50 ms: the
             // phase is short, and some transitions raise no wake of their own.
+            if (more_commands) continue;
             self.waitForWork(if (self.draining) earliest(deadline, monotonicMs() + 50) else deadline);
         }
     }

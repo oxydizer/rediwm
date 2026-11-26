@@ -111,6 +111,42 @@ test "command draining is round-robin across windows" {
     try std.testing.expectEqual(second.window_id, service.tryReceiveCommand().?.window_id);
 }
 
+test "a pass takes at most command_quota commands, round-robin with control first" {
+    var service: service_mod.Service = .{};
+    try service.init();
+    defer service.deinit();
+    var windows: [3]service_mod.Handle = undefined;
+    for (&windows) |*window| window.* = try service.registerWindow();
+    defer for (&windows) |*window| window.close();
+
+    // Every queue full: 3 × (8 normal + 2 control) = 30 commands.
+    for (&windows) |*window| {
+        for (0..service_mod.command_capacity_per_window) |i| try window.trySend(normalCommand(i + 1));
+        for (0..service_mod.control_capacity_per_window) |i| try window.trySend(controlCommand(i + 1));
+    }
+    const total = windows.len * (service_mod.command_capacity_per_window + service_mod.control_capacity_per_window);
+    try std.testing.expect(total > service_mod.command_quota);
+
+    var batch: [service_mod.command_quota]service_mod.RoutedCommand = undefined;
+    const first = service.receiveCommands(&batch);
+    try std.testing.expectEqual(service_mod.command_quota, first);
+    for (batch[0..first], 0..) |routed, i| {
+        // Windows take turns, and each window's control commands go first.
+        try std.testing.expectEqual(windows[i % windows.len].window_id, routed.window_id);
+        const control = i < windows.len * service_mod.control_capacity_per_window;
+        try std.testing.expectEqual(control, routed.command.kind == .cancel_job);
+    }
+
+    var taken = first;
+    while (true) {
+        const n = service.receiveCommands(&batch);
+        if (n == 0) break;
+        try std.testing.expect(n <= service_mod.command_quota);
+        taken += n;
+    }
+    try std.testing.expectEqual(total, taken);
+}
+
 test "shutdown rejects admission while handles can unregister cleanly" {
     var service: service_mod.Service = .{};
     try service.init();

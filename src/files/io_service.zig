@@ -21,6 +21,10 @@ pub const max_windows = 16;
 pub const command_capacity_per_window = 8;
 pub const control_capacity_per_window = 2;
 pub const aggregate_command_capacity = 64;
+/// Commands the coordinator handles per loop pass before it reconciles
+/// completions and publishes (threading §5, §7). Below the aggregate capacity,
+/// so a full set of queues takes several passes, each with its completions.
+pub const command_quota = 16;
 
 // Job-table capacities for stage S1 (docs/plans/files-io-threading-and-ownership.md
 // §6). Starting values; roadmap phase 7 calibrates them.
@@ -278,7 +282,25 @@ pub const Service = struct {
     pub fn tryReceiveCommand(self: *Service) ?RoutedCommand {
         self.lock();
         defer self.unlock();
+        return self.popCommand();
+    }
 
+    /// Takes up to `out.len` commands under one lock, in the same order as
+    /// repeated `tryReceiveCommand` calls (round-robin over windows, control
+    /// first within a window). The coordinator passes `command_quota` slots,
+    /// so a window that keeps sending cannot hold it away from completions.
+    pub fn receiveCommands(self: *Service, out: []RoutedCommand) usize {
+        self.lock();
+        defer self.unlock();
+        var count: usize = 0;
+        while (count < out.len) : (count += 1) {
+            out[count] = self.popCommand() orelse break;
+        }
+        return count;
+    }
+
+    /// Caller holds the lock.
+    fn popCommand(self: *Service) ?RoutedCommand {
         for (0..max_windows) |_| {
             const index = self.next_drain_slot;
             self.next_drain_slot = (self.next_drain_slot + 1) % max_windows;

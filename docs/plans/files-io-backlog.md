@@ -54,3 +54,13 @@ conflict M`, `Files window asks about conflict M` and `Files shows conflict`
 lines. No "waits" line: the coordinator never saw a conflict (look at the
 Manager and the job's state). "Waits" without "asks": the window never asked.
 "Asks" without "shows": the request or reply went missing.
+
+## 3. An extraction counts more items done than it has
+
+**Seen (`bench-files-io`, `io/s5`):** extracting a zip of 5 000 entries in 100
+folders ends with `completed_items` 5 100 and `total_items` 5 000.
+
+**Known:** the 100 extra are the folders: they are counted when created but not
+in the planned total. A progress bar clamps, so nothing shows wrong today, but an
+"n of m" label would. Start from where the extraction's operations report items
+(`io_coordinator_archives.zig`, the archive operation in the operation executor).

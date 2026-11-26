@@ -14,6 +14,15 @@ The long-running Files archive benchmark is skipped by default. Run it with:
 REDIWM_RUN_BENCHMARKS=1 zig build bench-files-archive
 ```
 
+The Files I/O responsiveness measurement (S5) is opt-in the same way. It runs
+the production I/O service under heavy copies and an extraction and reports the
+UI thread's cost and each job's progress; its settings are at the top of
+`src/files/io_bench_tests.zig`:
+
+```sh
+REDIWM_RUN_BENCHMARKS=1 REDIWM_IO_BENCH_DIR=/path/on/target/fs zig build bench-files-io
+```
+
 `zig build test-wlroots` checks the complete exported wlroots API against the
 installed headers and tests embedded input-device lifecycles; it is included
 in `zig build test`.
