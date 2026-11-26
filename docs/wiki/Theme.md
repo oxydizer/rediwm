@@ -7,10 +7,11 @@ Appearance saves custom tokens along with its sliders and selectors.
 
 ## Theme packs and the picker
 
-The picker offers RediWM Dark, RediWM Light and Redi Blue. Redi Blue pairs
-slate-navy surfaces and dusty blue selections with a RediWM red close-button
-hover. Its title bars are 82% opaque and selected text has a 30% blue tint
-behind it. Light uses 75% window chrome opacity and teal selection accents.
+The picker offers RediWM Dark, RediWM Light and Redi Blue. Redi Blue uses deep
+navy surfaces, blue selection fills and brighter azure focus outlines. Window
+edges have a subtle hover glow, and the close button turns RediWM red on hover.
+Title bars are 82% opaque, and text selections use a 30% blue tint. Light uses
+75% window chrome opacity and teal selection accents.
 
 Redi-Mocha (Catppuccin Mocha palette, mauve accents, `wallpaper-mocha.png`) and
 Gold are installed but hidden from the picker (`picker_hidden` in
