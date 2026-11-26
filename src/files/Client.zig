@@ -252,6 +252,7 @@ pub const wantsCsd = client_window.wantsCsd;
 pub const titlebarHeight = client_window.titlebarHeight;
 pub const decorationEvent = client_window.decorationEvent;
 pub const xdgToplevelEvent = client_window.xdgToplevelEvent;
+pub const activateWith = client_window.activateWith;
 pub const attachToParent = client_window.attachToParent;
 pub const detachParent = client_window.detachParent;
 

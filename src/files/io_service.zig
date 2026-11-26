@@ -166,6 +166,10 @@ pub const Service = struct {
     mutex: c.pthread_mutex_t = undefined,
     command_wake_fd: std.posix.fd_t = -1,
     update_wake_fd: std.posix.fd_t = -1,
+    /// The coordinator has nothing in hand (stage S6): set by it each pass,
+    /// read by the UI thread to tell whether a process without windows still
+    /// has work, and so must stay reachable through its endpoint.
+    work_idle: std.atomic.Value(bool) = .init(true),
     windows: [max_windows]WindowSlot = @splat(.{}),
     next_window_id: std.atomic.Value(WindowId) = .init(1),
     next_drain_slot: usize = 0,
@@ -272,6 +276,16 @@ pub const Service = struct {
         signalWake(self.command_wake_fd);
     }
 
+    /// Coordinator: records whether it is idle; a change wakes the UI thread.
+    pub fn setWorkIdle(self: *Service, idle: bool) void {
+        if (self.work_idle.swap(idle, .acq_rel) != idle) signalWake(self.update_wake_fd);
+    }
+
+    /// UI thread: whether the coordinator had nothing in hand at its last pass.
+    pub fn isWorkIdle(self: *const Service) bool {
+        return self.work_idle.load(.acquire);
+    }
+
     pub fn isStopping(self: *Service) bool {
         return self.stopping.load(.acquire);
     }
@@ -368,6 +382,9 @@ pub const Service = struct {
         // The queue now owns the payload. On every admission error above,
         // the caller's Command remains unchanged and retains ownership.
         command.payload = null;
+        // Busy until the coordinator says otherwise: a window that sends a
+        // copy and closes at once must not leave a process that looks idle.
+        self.work_idle.store(false, .release);
         signalWake(self.command_wake_fd);
     }
 

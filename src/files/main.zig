@@ -8,6 +8,7 @@ const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
 const io_service_mod = @import("io_service.zig");
 const io_coordinator_mod = @import("io_coordinator.zig");
+const io_endpoint = @import("io_endpoint.zig");
 const key_repeat = @import("ui").key_repeat;
 const shell_ui = @import("ui").cairo;
 const ui_theme = @import("ui").theme;
@@ -236,6 +237,42 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     // This thread runs the event loop for every window (plan §1).
     @import("io_thread_guard.zig").markCurrent(.ui);
 
+    // One Files per display (S6): a launch while one runs becomes a window of
+    // it. A chooser answers on its own stdout, so it is always a process of
+    // its own, and never the one others hand over to.
+    const endpoint: ?*io_endpoint.Endpoint = if (chooser == null and torrent_source == null) blk: {
+        var paths = io_endpoint.Paths.fromEnviron(a, init.minimal.environ) catch break :blk null;
+        defer paths.deinit(a);
+        switch (io_endpoint.claim(a, &paths, .{
+            .path = target_dir,
+            .select = selected_file,
+            .transfers = transfers,
+            .activation_token = init.minimal.environ.getPosix("XDG_ACTIVATION_TOKEN"),
+        })) {
+            .handed_over => return,
+            .standalone => break :blk null,
+            .instance => |fd| {
+                const created = a.create(io_endpoint.Endpoint) catch {
+                    _ = c.close(fd);
+                    _ = c.unlink(paths.socket);
+                    break :blk null;
+                };
+                created.start(a, fd, paths.socket) catch |err| {
+                    std.log.warn("rediwm-files: cannot serve other launches: {}", .{err});
+                    _ = c.unlink(paths.socket);
+                    a.destroy(created);
+                    break :blk null;
+                };
+                break :blk created;
+            },
+        }
+    } else null;
+    // Before the coordinator drains: no launch may be told yes from now on.
+    defer if (endpoint) |e| {
+        e.deinit();
+        a.destroy(e);
+    };
+
     const home_dir = init.minimal.environ.getPosix("HOME") orelse "/";
     // Test-only escape hatch: skip decoration negotiation to exercise the
     // same fallback as a compositor without xdg-decoration support.
@@ -298,7 +335,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     // A file chooser is one window and ends with its answer; it is printed
     // from the window before it goes.
     var chooser_window: ?*Client = null;
-    outer: while (windows.items.len > 0) {
+    outer: while (true) {
         var index: usize = 0;
         var ended = false;
         while (index < windows.items.len) {
@@ -318,7 +355,19 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             if (window.finished()) ended = true;
             index += 1;
         }
-        if (windows.items.len == 0) break;
+        if (windows.items.len == 0) {
+            if (chooser != null) break;
+            // No window, but work in hand: stay, headless, so a launch can
+            // still open a window here and show it (architecture §13).
+            const serving = if (endpoint) |e| e.serving() else false;
+            if (!serving or service.isWorkIdle()) {
+                // Stop serving first, then open what was accepted before that:
+                // those launchers were told yes and have exited.
+                if (endpoint) |e| e.stop();
+                if (openRequested(endpoint, windows, display, setup, &service) == 0) break;
+                continue;
+            }
+        }
         if (ended) continue;
 
         // New Window: opened here, outside the loop above, so the list is not
@@ -341,6 +390,9 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             }
             break; // the list may have grown; one a turn is plenty
         }
+
+        // Launches handed over by the endpoint.
+        if (openRequested(endpoint, windows, display, setup, &service) > 0) continue;
 
         // Tear-off: the tab leaves for a window of its own, where the compositor
         // is about to place it (it was told at the same moment as this program).
@@ -378,8 +430,9 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             return error.DisplayFailed;
         }
 
-        // The last slot is the I/O service's update wake, shared by every window.
-        var fds: [1 + max_windows * Client.poll_slots + 1]c.struct_pollfd = undefined;
+        // The last two slots are the I/O service's update wake, shared by every
+        // window, and the endpoint's open wake.
+        var fds: [1 + max_windows * Client.poll_slots + 2]c.struct_pollfd = undefined;
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         var timeout: c_int = -1;
         for (windows.items, 0..) |window, i| {
@@ -390,7 +443,10 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
 
         const service_slot = 1 + windows.items.len * Client.poll_slots;
         fds[service_slot] = .{ .fd = service.updateWakeFd(), .events = c.POLLIN, .revents = 0 };
-        const result = c.poll(&fds, @intCast(service_slot + 1), timeout);
+        // Launches handed over by the endpoint; drained by `openRequested`.
+        const endpoint_fd: c_int = if (endpoint) |e| (if (e.serving()) e.openWakeFd() else -1) else -1;
+        fds[service_slot + 1] = .{ .fd = endpoint_fd, .events = c.POLLIN, .revents = 0 };
+        const result = c.poll(&fds, @intCast(service_slot + 2), timeout);
         if (result > 0 and (fds[0].revents & c.POLLIN != 0)) {
             if (display.readEvents() != .SUCCESS) return error.DisplayFailed;
         } else {
@@ -419,4 +475,34 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         defer a.free(bytes);
         try std.Io.File.stdout().writeStreamingAll(init.io, bytes);
     }
+}
+
+/// Opens a window for each launch the endpoint handed over. Returns how many
+/// it opened. A launch beyond `max_windows` is dropped with a notice.
+fn openRequested(endpoint: ?*io_endpoint.Endpoint, windows: *std.ArrayList(*Client), display: *wl.Display, setup: Setup, service: *io_service_mod.Service) usize {
+    const e = endpoint orelse return 0;
+    var opened: usize = 0;
+    while (e.takeOpen()) |taken| {
+        var request = taken;
+        defer request.deinit(a);
+        if (windows.items.len >= max_windows) {
+            if (windows.items.len > 0) windows.items[0].app.setStatusNotice(@import("i18n").tr("Could not open new window"), true);
+            continue;
+        }
+        const created = Client.create(display, setup, .{
+            .dir = request.dir,
+            .selected_file = request.select,
+            .transfers = request.transfers,
+        }, service) catch |err| {
+            std.log.warn("rediwm-files: cannot open a window: {}", .{err});
+            continue;
+        };
+        windows.append(a, created) catch {
+            created.destroy();
+            continue;
+        };
+        if (request.activation_token) |token| created.activateWith(token);
+        opened += 1;
+    }
+    return opened;
 }
