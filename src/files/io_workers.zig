@@ -11,6 +11,9 @@ const Allocator = std.mem.Allocator;
 /// none) and when the worker took it, in monotonic milliseconds.
 pub const Running = struct { key: u64, since_ms: i64 };
 
+/// An extra worker exits after this long without work (worker-pools §4.3).
+pub const idle_exit_ms: i64 = 30_000;
+
 pub fn monotonicMs() i64 {
     var ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
@@ -48,12 +51,23 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
         mutex: c.pthread_mutex_t = undefined,
         condition: c.pthread_cond_t = undefined,
         event_fd: std.posix.fd_t,
-        threads: []std.Thread,
-        /// Per worker, under `mutex`: the task it runs, if any.
+        /// One slot per possible worker (`cap`), under `mutex`.
+        threads: []?std.Thread,
+        slots: []Slot,
+        /// Per worker slot, under `mutex`: the task it runs, if any.
         running: []?Running,
+        /// Workers the pool keeps runnable; extra ones started by `grow`
+        /// exit after `idle_exit_ms` without work, down to this.
+        target: usize,
+        /// Live worker threads, under `mutex`.
+        alive: usize = 0,
+        /// The threshold of the last `grow`, under `mutex`.
+        stuck_after_ms: i64 = std.math.maxInt(i64),
         execute: *const fn (?*anyopaque, Task) Result,
         discard_result: *const fn (?*anyopaque, Result) void,
         context: ?*anyopaque,
+
+        const Slot = enum { empty, alive, exited };
 
         /// `worker_count` and `capacity` must both be greater than zero.
         /// Capacity bounds all accepted work, including results not yet
@@ -66,7 +80,21 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             execute: *const fn (?*anyopaque, Task) Result,
             discard_result: *const fn (?*anyopaque, Result) void,
         ) !*Self {
-            if (worker_count == 0) return error.InvalidWorkerCount;
+            return initElastic(allocator, worker_count, worker_count, capacity, context, execute, discard_result);
+        }
+
+        /// Starts `target` workers; `grow` may start more, up to `cap`,
+        /// while workers are stuck (worker-pools §4.3).
+        pub fn initElastic(
+            allocator: Allocator,
+            target: usize,
+            cap: usize,
+            capacity: usize,
+            context: ?*anyopaque,
+            execute: *const fn (?*anyopaque, Task) Result,
+            discard_result: *const fn (?*anyopaque, Result) void,
+        ) !*Self {
+            if (target == 0 or cap < target) return error.InvalidWorkerCount;
             if (capacity == 0) return error.InvalidCapacity;
 
             const self = try allocator.create(Self);
@@ -76,9 +104,13 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             errdefer allocator.free(tasks);
             const results = try allocator.alloc(Result, capacity);
             errdefer allocator.free(results);
-            const threads = try allocator.alloc(std.Thread, worker_count);
+            const threads = try allocator.alloc(?std.Thread, cap);
             errdefer allocator.free(threads);
-            const running = try allocator.alloc(?Running, worker_count);
+            @memset(threads, null);
+            const slots = try allocator.alloc(Slot, cap);
+            errdefer allocator.free(slots);
+            @memset(slots, .empty);
+            const running = try allocator.alloc(?Running, cap);
             errdefer allocator.free(running);
             @memset(running, null);
             const event_fd = platform.wake.create() orelse return error.EventFdFailed;
@@ -90,7 +122,9 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
                 .results = results,
                 .event_fd = event_fd,
                 .threads = threads,
+                .slots = slots,
                 .running = running,
+                .target = target,
                 .execute = execute,
                 .discard_result = discard_result,
                 .context = context,
@@ -110,14 +144,71 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
                 self.stopping = true;
                 _ = c.pthread_cond_broadcast(&self.condition);
                 self.unlock();
-                for (threads[0..spawned]) |thread| thread.join();
+                for (threads[0..spawned]) |thread| thread.?.join();
             }
 
-            while (spawned < worker_count) : (spawned += 1) {
+            while (spawned < target) : (spawned += 1) {
                 threads[spawned] = try std.Thread.spawn(.{}, workerMain, .{ self, spawned });
+                slots[spawned] = .alive;
+                self.alive += 1;
             }
 
             return self;
+        }
+
+        /// Starts workers for queued work while some are stuck: a worker that
+        /// has run one task for `stuck_after_ms` stops counting toward the
+        /// target, and a replacement starts while the pool is under its cap.
+        /// Also joins workers that exited idle (they have returned, so this
+        /// does not wait). Returns how many it started.
+        pub fn grow(self: *Self, stuck_after_ms: i64) usize {
+            var exited: [16]std.Thread = undefined;
+            var exited_count: usize = 0;
+            var started: usize = 0;
+            self.lock();
+            for (self.slots, 0..) |*slot, index| {
+                if (slot.* != .exited or exited_count == exited.len) continue;
+                exited[exited_count] = self.threads[index].?;
+                exited_count += 1;
+                self.threads[index] = null;
+                slot.* = .empty;
+            }
+            self.stuck_after_ms = stuck_after_ms;
+            if (!self.stopping and self.task_count > 0) {
+                var runnable = self.runnableLocked();
+                var wanted = @min(self.task_count, self.target -| runnable);
+                for (self.slots, 0..) |*slot, index| {
+                    if (wanted == 0) break;
+                    if (slot.* != .empty) continue;
+                    self.threads[index] = std.Thread.spawn(.{}, workerMain, .{ self, index }) catch break;
+                    slot.* = .alive;
+                    self.alive += 1;
+                    runnable += 1;
+                    wanted -= 1;
+                    started += 1;
+                }
+            }
+            self.unlock();
+            for (exited[0..exited_count]) |thread| thread.join();
+            return started;
+        }
+
+        /// Workers not stuck in a task, under `mutex`.
+        fn runnableLocked(self: *Self) usize {
+            const now = monotonicMs();
+            var stuck: usize = 0;
+            for (self.running) |slot| {
+                const task = slot orelse continue;
+                if (now - task.since_ms >= self.stuck_after_ms) stuck += 1;
+            }
+            return self.alive - stuck;
+        }
+
+        /// Live worker threads; for tests and the bench.
+        pub fn workerCount(self: *Self) usize {
+            self.lock();
+            defer self.unlock();
+            return self.alive;
         }
 
         /// Attempts to submit without blocking. False means the pool is
@@ -219,7 +310,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             _ = c.pthread_cond_broadcast(&self.condition);
             self.unlock();
 
-            for (self.threads) |thread| thread.join();
+            for (self.threads) |thread| if (thread) |t| t.join();
 
             while (self.result_count > 0) {
                 const result = self.results[self.result_head];
@@ -233,6 +324,7 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             _ = c.pthread_mutex_destroy(&self.mutex);
             self.allocator.free(self.threads);
             self.allocator.free(self.running);
+            self.allocator.free(self.slots);
             self.allocator.free(self.results);
             self.allocator.free(self.tasks);
             self.allocator.destroy(self);
@@ -249,8 +341,26 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
         fn workerMain(self: *Self, index: usize) void {
             while (true) {
                 self.lock();
+                var idle_since: ?i64 = null;
                 while (self.task_count == 0 and !self.stopping) {
-                    _ = c.pthread_cond_wait(&self.condition, &self.mutex);
+                    if (self.alive <= self.target) {
+                        idle_since = null;
+                        _ = c.pthread_cond_wait(&self.condition, &self.mutex);
+                        continue;
+                    }
+                    // An extra worker: leave once idle long enough.
+                    const since = idle_since orelse monotonicMs();
+                    idle_since = since;
+                    if (monotonicMs() - since >= idle_exit_ms) {
+                        self.slots[index] = .exited;
+                        self.alive -= 1;
+                        self.unlock();
+                        return;
+                    }
+                    var until: c.struct_timespec = undefined;
+                    _ = c.clock_gettime(c.CLOCK_REALTIME, &until);
+                    until.tv_sec += @intCast(@divTrunc(idle_exit_ms, 1000) + 1);
+                    _ = c.pthread_cond_timedwait(&self.condition, &self.mutex, &until);
                 }
                 if (self.stopping and self.task_count == 0) {
                     self.unlock();
@@ -272,9 +382,18 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
                 self.results[self.result_tail] = result;
                 self.result_tail = (self.result_tail + 1) % self.results.len;
                 self.result_count += 1;
+                // An extra worker nothing waits for leaves at once: the
+                // stall it stood in for is over, or others cover the queue.
+                const leave = self.alive > self.target and self.task_count == 0 and
+                    self.runnableLocked() > self.target;
+                if (leave) {
+                    self.slots[index] = .exited;
+                    self.alive -= 1;
+                }
                 self.unlock();
 
                 self.signalWake();
+                if (leave) return;
             }
         }
 
@@ -369,4 +488,48 @@ test "worker pool joins active work and discards accepted results on shutdown" {
 
     try std.testing.expectEqual(@as(usize, 2), context.executed);
     try std.testing.expectEqual(@as(usize, 2), context.discarded);
+}
+
+test "a stuck worker is replaced for queued work, up to the cap" {
+    const TestPool = WorkerPool(u8, u8);
+    const Gate = struct {
+        var open: std.atomic.Value(bool) = .init(false);
+        var parked: std.atomic.Value(u32) = .init(0);
+        fn execute(_: ?*anyopaque, task: u8) u8 {
+            if (task == 1) {
+                _ = parked.fetchAdd(1, .acq_rel);
+                while (!open.load(.acquire)) _ = std.posix.system.poll(&.{}, 0, 1);
+            }
+            return task;
+        }
+        fn discard(_: ?*anyopaque, _: u8) void {}
+    };
+    Gate.open.store(false, .release);
+    Gate.parked.store(0, .release);
+    const pool = try TestPool.initElastic(std.testing.allocator, 1, 2, 8, null, Gate.execute, Gate.discard);
+    defer pool.deinit();
+    defer Gate.open.store(true, .release);
+
+    // The one worker hangs; a second task waits behind it.
+    try std.testing.expect(pool.trySubmit(1));
+    while (Gate.parked.load(.acquire) == 0) _ = std.posix.system.poll(&.{}, 0, 1);
+    try std.testing.expect(pool.trySubmit(2));
+    try std.testing.expectEqual(@as(usize, 0), pool.grow(60_000)); // not stuck yet
+
+    // Stuck (threshold 0): a replacement starts and runs the second task.
+    try std.testing.expectEqual(@as(usize, 1), pool.grow(0));
+    try std.testing.expectEqual(@as(usize, 2), pool.workerCount());
+    for (0..2000) |_| {
+        if (pool.tryPopResult()) |result| {
+            try std.testing.expectEqual(@as(u8, 2), result);
+            break;
+        }
+        _ = std.posix.system.poll(&.{}, 0, 1);
+    } else return error.Timeout;
+
+    // At the cap, a second stuck worker gets no third.
+    try std.testing.expect(pool.trySubmit(1));
+    while (Gate.parked.load(.acquire) < 2) _ = std.posix.system.poll(&.{}, 0, 1);
+    try std.testing.expect(pool.trySubmit(3));
+    try std.testing.expectEqual(@as(usize, 0), pool.grow(0));
 }

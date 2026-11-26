@@ -25,6 +25,8 @@ pub const JobId = io_service.JobId;
 
 /// Two workers: one deletion stalled on a hung mount leaves the other free.
 pub const worker_count = 2;
+/// While workers are stuck, up to this many run (worker-pools §4.3).
+pub const worker_cap = 6;
 /// Deletion jobs are live jobs, so the live table bounds them.
 pub const capacity = io_service.max_live_jobs;
 /// Paths per `rm` or `gio` run: progress and cancellation granularity,
@@ -68,7 +70,7 @@ pub const Context = struct {
 };
 
 pub fn create(context: *Context) !*Pool {
-    return Pool.init(context.allocator, worker_count, capacity, context, execute, discard);
+    return Pool.initElastic(context.allocator, worker_count, worker_cap, capacity, context, execute, discard);
 }
 
 /// How many items the job counts in its progress.

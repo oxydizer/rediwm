@@ -204,9 +204,10 @@ pub const Executor = struct {
             .ledger = ledger,
         };
 
-        const pool = try Pool.init(
+        const pool = try Pool.initElastic(
             allocator,
             config.worker_count,
+            @max(config.worker_count, config.worker_cap),
             config.capacity,
             callback_context,
             executeWork,
@@ -306,6 +307,10 @@ pub const Executor = struct {
 
     pub fn queuedCount(self: *Executor) usize {
         return self.pool.queuedCount();
+    }
+
+    pub fn grow(self: *Executor, stuck_after_ms: i64) usize {
+        return self.pool.grow(stuck_after_ms);
     }
 
     /// File descriptor to monitor for completed worker results.
@@ -770,6 +775,8 @@ fn discardPayloads(
 pub const Config = struct {
     worker_count: usize,
     capacity: usize,
+    /// Most workers `grow` may run while some are stuck; 0 is `worker_count`.
+    worker_cap: usize = 0,
 };
 
 pub const Callbacks = struct {

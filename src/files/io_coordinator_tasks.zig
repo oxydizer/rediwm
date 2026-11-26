@@ -41,8 +41,10 @@ fn submitBacklogs(self: *Coordinator) void {
     submitBacklog(self, lane(self, .tasks));
     submitBacklog(self, lane(self, .staging));
     // Queued requests went first; prepares take what room is left.
+    if (self.prepare_backlog.items.len == 0) return;
+    const allowed = io_service_tasks.worker_count + stalls.stuckPrepares(self);
     var i: usize = 0;
-    while (i < self.prepare_backlog.items.len and self.prepares_in_pool < io_service_tasks.worker_count) {
+    while (i < self.prepare_backlog.items.len and self.prepares_in_pool < allowed) {
         const task = self.prepare_backlog.items[i];
         if (stalls.taskHeld(self, task)) {
             i += 1;

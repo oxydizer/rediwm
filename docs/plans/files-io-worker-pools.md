@@ -152,6 +152,18 @@ With 4.2, a dead mount costs at most one stuck worker per lane, so the cap is
 reached only by several dead mounts at once. At the cap, new work waits; nothing
 fails.
 
+**Done (step 4, #79)** in `WorkerPool` itself (`initElastic`, `grow`): every
+pass, the coordinator's stall watch asks each pool to grow. A pool with queued
+work and fewer runnable workers than its target (workers stuck past 10 s do not
+count) starts replacements, up to its cap, and joins workers that have left. An
+extra worker leaves as soon as it finishes a task while nothing is queued and
+the others cover the target, or after 30 s idle; under steady light work (the
+bench's probe) the idle timer alone never fired. The prepares allowed in the
+task pool rise by the number stuck, so new prepares start too. Bench,
+`STALL_MODE=prepare` (both task workers stuck): requests are answered again
+after the first 10 s (all 265 probes, the worst 9.8 s), the pool grows to 4 and
+is back at 2 once the mount answers.
+
 | Lane | Target | Cap |
 | --- | --- | --- |
 | tasks (prepares, requests) | 2 | 8 |
@@ -223,7 +235,7 @@ the ledger, and the rule that only the coordinator applies results.
 2. Per-job limit in the executors (first half of 4.4). Done: 3 workers, 2
    per job; with the bench's mount dead mid-copy every other job completes.
 3. Stall detection and suspect domains (4.2), with the mount table.
-4. Elastic lanes (4.3).
+4. Elastic lanes (4.3). Done.
 5. Per-device limits and their calibration (second half of 4.4, phase 7).
 
 `bench-files-io` checks each step: `REDIWM_IO_BENCH_STALL_MODE=prepare` for gap

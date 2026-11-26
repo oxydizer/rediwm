@@ -140,12 +140,15 @@ pub const Context = struct {
     owner: ?*anyopaque = null,
 };
 
+/// While workers are stuck, up to this many run (worker-pools §4.3).
+pub const worker_cap = 8;
+pub const staging_worker_cap = 6;
+
 pub fn create(context: *Context, lane: Lane) !*Pool {
-    const workers: usize = switch (lane) {
-        .tasks => worker_count,
-        .staging => staging_worker_count,
+    return switch (lane) {
+        .tasks => Pool.initElastic(context.allocator, worker_count, worker_cap, capacity, context, execute, discard),
+        .staging => Pool.initElastic(context.allocator, staging_worker_count, staging_worker_cap, capacity, context, execute, discard),
     };
-    return Pool.init(context.allocator, workers, capacity, context, execute, discard);
 }
 
 fn execute(raw_context: ?*anyopaque, task: Task) Result {
