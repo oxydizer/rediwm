@@ -495,6 +495,18 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     }
 }
 
+/// The open window that submitted `job`, if the job is still live.
+fn jobWindow(windows: []const *Client, job: u64) ?*Client {
+    for (windows) |client| {
+        const handle = client.app.service.handle orelse continue;
+        const model = &client.app.service.jobs;
+        for (model.records[0..model.len]) |record| {
+            if (record.id == job and record.origin_window_id == handle.window_id) return client;
+        }
+    }
+    return null;
+}
+
 /// Opens a window for each launch the endpoint handed over. Returns how many
 /// it opened. A launch beyond `max_windows` is dropped with a notice.
 fn openRequested(endpoint: ?*io_endpoint.Endpoint, windows: *std.ArrayList(*Client), display: *wl.Display, setup: Setup, service: *io_service_mod.Service) usize {
@@ -503,6 +515,11 @@ fn openRequested(endpoint: ?*io_endpoint.Endpoint, windows: *std.ArrayList(*Clie
     while (e.takeOpen()) |taken| {
         var request = taken;
         defer request.deinit(a);
+        if (request.job_id) |job| if (jobWindow(windows.items, job)) |owner| {
+            // Its conflict dialog asks there; raising it is enough.
+            if (request.activation_token) |token| owner.activateWith(token);
+            continue;
+        };
         if (windows.items.len >= max_windows) {
             if (windows.items.len > 0) windows.items[0].app.setStatusNotice(@import("i18n").tr("Could not open new window"), true);
             continue;

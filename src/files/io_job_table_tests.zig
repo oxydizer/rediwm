@@ -205,3 +205,12 @@ test "labels are truncated on a UTF-8 boundary" {
     try std.testing.expectEqual(@as(usize, table_mod.label_capacity - 1), r.label().len);
     try std.testing.expect(std.unicode.utf8ValidateSlice(r.label()));
 }
+
+test "a destination is kept whole or not at all" {
+    var kept: Record = .{};
+    kept.setDestination("/home/u/Downloads");
+    try std.testing.expectEqualStrings("/home/u/Downloads", kept.destination());
+    const long: [table_mod.destination_capacity + 1]u8 = @splat('a');
+    kept.setDestination(&long);
+    try std.testing.expectEqualStrings("", kept.destination());
+}

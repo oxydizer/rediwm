@@ -58,6 +58,8 @@ pub fn submitArchive(self: *Coordinator, routed: *io_service.RoutedCommand, reco
     record.kind = .extract;
     record.source_count = 1;
     record.setLabel(std.fs.path.basename(request.source));
+    // Member and export staging is private; only an extraction has a place.
+    if (request.purpose == .extract) record.setDestination(request.destination);
 
     const manager = &self.runtime.manager;
     const job_id = manager.createJob(routed.window_id) catch |err| return self.failSubmit(&record, err);

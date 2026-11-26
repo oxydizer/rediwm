@@ -18,6 +18,8 @@ pub const tombstone_capacity = 64;
 pub const outcome_slots_per_window = 16;
 pub const label_capacity = 96;
 pub const waiting_for_capacity = 48;
+/// A destination longer than this is not kept: a cut path names nothing.
+pub const destination_capacity = 256;
 
 /// The longest prefix of `text` within `capacity` bytes that ends on a
 /// UTF-8 boundary.
@@ -87,6 +89,10 @@ pub const Record = struct {
     /// the name of the mount it waits on ("Waiting for <mount>…").
     waiting_for_len: u8 = 0,
     waiting_for_buf: [waiting_for_capacity]u8 = @splat(0),
+    /// The folder a copy, move or extraction writes into; empty for
+    /// deletions and when the path does not fit.
+    destination_len: u16 = 0,
+    destination_buf: [destination_capacity]u8 = @splat(0),
     /// Service-wide sequence at the record's last change.
     revision: u64 = 0,
 
@@ -96,6 +102,17 @@ pub const Record = struct {
 
     pub fn waitingFor(self: *const Record) []const u8 {
         return self.waiting_for_buf[0..self.waiting_for_len];
+    }
+
+    pub fn destination(self: *const Record) []const u8 {
+        return self.destination_buf[0..self.destination_len];
+    }
+
+    /// Keeps `path` whole or not at all.
+    pub fn setDestination(self: *Record, path: []const u8) void {
+        const len = if (path.len <= destination_capacity) path.len else 0;
+        @memcpy(self.destination_buf[0..len], path[0..len]);
+        self.destination_len = @intCast(len);
     }
 
     pub fn setWaitingFor(self: *Record, text: []const u8) void {
