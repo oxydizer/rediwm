@@ -221,7 +221,7 @@ pub fn scrollbarGutter(self: *const App) i32 {
 }
 
 pub fn columns(self: *App) i32 {
-    return if (self.list_view) 1 else @max(1, @divTrunc(self.w - self.sidebarWidth() - self.itemLeftInset() - self.scrollbarGutter(), 210));
+    return if (self.list_view) 1 else @max(1, @divTrunc(self.w - self.sidebarWidth() - self.itemLeftInset() - self.scrollbarGutter(), GridCard.min_cell));
 }
 
 pub fn cellWidth(self: *App) i32 {
@@ -366,9 +366,9 @@ pub fn sizeButtonRect(self: *App, idx: usize) ?header.Rect {
     } else {
         const width: f64 = @floatFromInt(cell - 20);
         return .{
-            .x = x + GridCard.padding_x - 4,
+            .x = x + GridCard.label_x - 4,
             .y = y + GridCard.detail_baseline - 15,
-            .w = @max(32, width - 2 * (GridCard.padding_x - 4)),
+            .w = @max(32, width - GridCard.label_x - GridCard.padding_x + 8),
             .h = 22,
         };
     }

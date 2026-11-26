@@ -818,13 +818,20 @@ pub const App = struct {
     pub const gitColumnMinimums = app_layout.gitColumnMinimums;
     pub const sizeButtonRect = app_layout.sizeButtonRect;
 
+    /// A grid card: the icon on the left, the name and its detail line
+    /// (size, type) stacked to its right.
     pub const GridCard = struct {
         pub const padding_x: f64 = 10;
-        pub const padding_top: f64 = 8;
         pub const icon_size: f64 = 54;
-        pub const name_baseline: f64 = 78;
-        pub const detail_baseline: f64 = 101;
-        pub const height: i32 = 112;
+        pub const height: i32 = 72;
+        /// Centres the icon in the card.
+        pub const padding_top: f64 = (@as(f64, @floatFromInt(height)) - icon_size) / 2;
+        /// Where the name and detail line start, from the card's left edge.
+        pub const label_x: f64 = padding_x + icon_size + 12;
+        pub const name_baseline: f64 = 31;
+        pub const detail_baseline: f64 = 51;
+        /// Narrowest cell before the grid drops a column.
+        pub const min_cell: i32 = 230;
     };
     pub const column_labels = [_][]const u8{ "Name", "Size", "Type", "Modified", "Permissions" };
     // app_folder_size.zig

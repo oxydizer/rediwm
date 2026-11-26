@@ -534,6 +534,11 @@ pub fn listInset(self: *const App) f64 {
     return if (active(self) and self.list_view) 28 else 0;
 }
 
+/// What a grid card's name gives up for the checkbox in its corner.
+pub fn gridCheckRoom(self: *const App) f64 {
+    return if (active(self) and !self.list_view) checkbox.box_size + 8 else 0;
+}
+
 pub fn checkRect(self: *App, index: usize) ?header.Rect {
     if (!active(self) or index >= self.items.items.len) return null;
     const icon = self.itemIconRect(@intCast(index));
