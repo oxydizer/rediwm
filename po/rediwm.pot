@@ -299,6 +299,10 @@ msgstr ""
 msgid "Added {value} to Places"
 msgstr ""
 
+#: src/files/app_torrents.zig
+msgid "Adding download…"
+msgstr ""
+
 #: src/files/app_opening.zig
 msgid "Adding to applications…"
 msgstr ""

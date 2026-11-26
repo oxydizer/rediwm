@@ -85,7 +85,7 @@ pauses the transfer and preserves its partial data; rename the conflicting
 folder and Resume to retry. This staging scheme keeps incomplete files out of
 the normal folder view and thumbnail pipeline.
 
-Remove (cancel in the panel) always keeps payloads, including partials. Moving or editing files outside the transfer
+Remove (cancel in the panel) always keeps payloads, including partials. Adding the same torrent to the same folder again takes up its partial data. Moving or editing files outside the transfer
 engine can interrupt seeding; pause/remove the transfer before reorganizing
 its data. This version does not include tracker editing, torrent creation,
 streaming previews or automatic move tracking.

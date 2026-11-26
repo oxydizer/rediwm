@@ -30,6 +30,12 @@ pub fn startTorrents(self: *App) void {
     self.torrents.retry_at = draw.nowMs() + 100;
 }
 pub fn stepTorrents(self: *App) void {
+    // The helper answers this window's own requests with errors only:
+    // each one says why something it asked for did not happen.
+    if (self.torrents.error_generation != self.torrent_errors_seen) {
+        self.torrent_errors_seen = self.torrents.error_generation;
+        self.setStatusNotice(self.torrents.message(), true);
+    }
     const at = self.torrents.retry_at orelse return;
     if (draw.nowMs() < at) return;
     const runtime = self.environ.getPosix("XDG_RUNTIME_DIR") orelse return;
@@ -90,7 +96,7 @@ pub fn confirmTorrent(self: *App) void {
         if (!self.torrents.send(.{ .op = "add", .source = value, .destination = self.history.current }))
             return self.setStatusNotice(self.torrents.message(), true);
         self.closeDialog();
-        self.setStatusNotice(tr("Fetching file list…"), false);
+        self.setStatusNotice(tr("Adding download…"), false);
     } else if (self.torrents.send(.{ .op = "add", .source = dlg.target_path orelse "", .destination = value })) {
         // It shows up there as a folder that has not materialized yet.
         const destination = self.allocator.dupe(u8, value) catch return;

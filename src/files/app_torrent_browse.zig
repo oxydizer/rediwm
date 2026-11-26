@@ -235,11 +235,11 @@ pub fn step(self: *App) void {
             b.fail(client.message());
             self.rebuildView();
         } else if (b.adding) {
+            // `stepTorrents` shows why.
             b.adding = false;
             b.dirty = false;
-            self.setStatusNotice(client.message(), true);
             self.invalidate();
-        } else if (b.inflight > 0) self.setStatusNotice(client.message(), true);
+        }
     }
     if (client.reply_generation != b.seen_reply) {
         b.seen_reply = client.reply_generation;

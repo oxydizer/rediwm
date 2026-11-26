@@ -213,6 +213,12 @@ def run():
             rows=client.until(lambda r:r if r and r[0]['metadata'] else None,'magnet metadata',30)
             assert rows[0]['pending'] and rows[0]['done']==0, rows
             client.send(op='remove',id=rows[0]['id']); client.until(lambda r:not r,'remove magnet')
+            # Added again, it takes up its partial-download folder.
+            client.error = ''
+            client.send(op='add',source=lt.make_magnet_uri(lt.torrent_info(str(torrent_path))),destination=str(magnet_dest))
+            rows=client.until(lambda r:r if r else None,'magnet added again',30)
+            assert not client.error, client.error
+            client.send(op='remove',id=rows[0]['id']); client.until(lambda r:not r,'remove magnet again')
             client.close()
             helper.wait(timeout=12)
             print('PASS: inspection, file selection and reselection, real transfer, background lifetime, crash recovery, magnet metadata, seeding, persistence, pause/resume, removal and no-clobber publication')

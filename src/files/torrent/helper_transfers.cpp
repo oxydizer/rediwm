@@ -130,9 +130,15 @@ static std::string add(std::string const &source,
       throw std::runtime_error("Unsafe partial-download directory");
   } else if (mkdir(parent.c_str(), 0700))
     throw std::runtime_error("Cannot create partial-download directory");
-  if (mkdir(staging.c_str(), 0700))
-    throw std::runtime_error(
-        "Partial data already exists; choose another destination");
+  // A download removed earlier keeps its partial data there: adding it
+  // again picks up where it was (libtorrent checks what is there). Only a
+  // private directory of ours is taken over.
+  if (mkdir(staging.c_str(), 0700)) {
+    struct stat st{};
+    if (errno != EEXIST || lstat(staging.c_str(), &st) || !S_ISDIR(st.st_mode) ||
+        st.st_uid != getuid() || (st.st_mode & 077))
+      throw std::runtime_error("Cannot create partial-download directory");
+  }
   p.save_path = staging.string();
   p.flags &= ~lt::torrent_flags::auto_managed;
   p.flags |=
@@ -143,7 +149,8 @@ static std::string add(std::string const &source,
     p.flags &= ~lt::torrent_flags::paused;
   auto handle = session->add_torrent(p, ec);
   if (ec) {
-    fs::remove(staging);
+    std::error_code kept; // only when empty: partial data stays
+    fs::remove(staging, kept);
     throw std::runtime_error(ec.message());
   }
   Transfer t{handle, id, source, destination};

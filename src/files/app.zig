@@ -198,6 +198,8 @@ pub const App = struct {
     torrent_browse: ?*app_torrent_browse.Browse = null,
     /// Owned: a download to show once this window's connection lists it.
     browse_pending: ?[]u8 = null,
+    /// `torrents.error_generation` already shown.
+    torrent_errors_seen: u64 = 0,
     search: Editor = .{},
     search_visible: bool = false,
     menu: ?MenuKind = null,
