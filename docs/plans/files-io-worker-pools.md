@@ -152,7 +152,7 @@ With 4.2, a dead mount costs at most one stuck worker per lane, so the cap is
 reached only by several dead mounts at once. At the cap, new work waits; nothing
 fails.
 
-**Done (step 4, #78)** in `WorkerPool` itself (`initElastic`, `grow`): every
+**Done (step 4, #79)** in `WorkerPool` itself (`initElastic`, `grow`): every
 pass, the coordinator's stall watch asks each pool to grow. A pool with queued
 work and fewer runnable workers than its target (workers stuck past 10 s do not
 count) starts replacements, up to its cap, and joins workers that have left. An

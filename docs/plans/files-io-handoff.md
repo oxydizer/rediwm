@@ -70,7 +70,7 @@ longer have a Runtime, a Manager or an executor of their own.
    3. Split in three: 3a request priority (4.6, #75); 3b stall detection and
       reporting with the mount table (4.2, #76); 3c suspect-domain holds (4.2,
       #77; the deletion lane is not covered yet).
-   4. Elastic user-path lanes (4.3): done in #78.
+   4. Elastic user-path lanes (4.3): done in #79.
    5. Per-device limits and calibration (4.4, phase 7).
    Check each with the bench: `STALL_MODE=prepare` for the task-pool gap,
    `running` for the executor gap; done when every other job finishes and the
