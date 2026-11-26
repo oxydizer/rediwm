@@ -201,6 +201,7 @@ def run(scale, theme=None):
                 def capture(name):
                     ipc.wait_for_frame()
                     path = Path(f"/tmp/rediwm-transfers-{name}-{suffix}.png")
+                    path.unlink(missing_ok=True)  # The screenshot action never overwrites.
                     ipc.screenshot(str(path))
                     with Image.open(path) as image:
                         return image.convert("RGB").copy()
