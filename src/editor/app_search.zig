@@ -51,7 +51,7 @@ pub fn editorLayout(self: *App) layout.Layout {
     const palette = theme.shellPalette();
     const scale: f32 = @floatFromInt(@max(self.scale, 1));
     var gutter_width: f64 = 0;
-    if (self.line_numbers) {
+    if (self.line_numbers and self.tabs.items.len > 0) {
         const doc = self.document();
         if (self.line_count_revision != doc.revision) {
             self.line_count = doc.linesBefore(doc.text.items.len) + 1;

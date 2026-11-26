@@ -136,10 +136,10 @@ pub const Layout = struct {
                 .{},
             .gutter = if (gutter_width > 0)
                 .{
-                    .x = metrics.viewport_leading_inset,
+                    .x = 0,
                     .y = content_top,
-                    .w = gutter_width,
-                    .h = @max(0, viewport_bottom - content_top),
+                    .w = metrics.viewport_leading_inset + gutter_width,
+                    .h = @max(0, status_top - content_top),
                 }
             else
                 .{},
