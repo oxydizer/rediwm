@@ -66,6 +66,23 @@ cleared by every queued command and set by the coordinator each pass), so a
 launch opens a window that shows the running jobs; when idle it stops serving
 first, opens what was accepted before that, then ends.
 
+The same socket serves the shell's Transfers panel (S6b):
+* `Subscribe` makes the connection an external consumer of the job table
+  (`io_endpoint_subscribers.zig`, `Service.registerExternal`, at most
+  `max_external_consumers`). It gets a `snapshot` event (live jobs, each with
+  its 1 Hz speed history), then `jobs` events with each changed record by
+  cursor (`removed` marks a retirement). The endpoint polls
+  `Service.externalWakeFd`, which every table write signals.
+* A subscriber that stops reading stops its own cursor: nothing is fetched
+  past 64 KiB unsent. A resync from the table becomes a fresh snapshot. More
+  than 1 MiB unsent, or 30 s without taking any, disconnects it.
+* `PauseJob`, `ResumeJob` and `CancelJob` (`job_id`) go through
+  `Service.sendControl` into a small external control queue, taken before the
+  windows' queues, routed with window id 0. They answer `JOB_NOT_FOUND` or
+  `INVALID_STATE` (ended) at once; otherwise the record shows the outcome.
+* The endpoint thread reaches only the Service: never the Manager, a window
+  or the display.
+
 ## Folder views
 
 Grid or list, the sort and folders-first belong to the folder, not the window

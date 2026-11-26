@@ -88,9 +88,10 @@ longer have a Runtime, a Manager or an executor of their own.
    copy job is done (#82).
 3. **S6, endpoint and single instance:** S6a is done (PR #88): the endpoint
    thread and `OpenWindow`; launching Files while one runs opens a window in
-   it, headless included. S6b is next: `subscribe` and job control for the
-   shell's tray panel, through `Service.registerExternal`. See the IPC
-   contract doc.
+   it, headless included. S6b is done (PR #89): `Subscribe`, `PauseJob`,
+   `ResumeJob`, `CancelJob` for the shell's Transfers panel (Files
+   `AGENTS.md`, "One process per display"). Next on that line is the panel
+   itself in the compositor, then `OpenWindow` with a job id for a conflict.
 4. **Backlog** (`files-io-backlog.md`), top first:
    1. (Closed: a drag resting on a tab switches to it, #86.)
    2. (Closed: the stalled re-copy to a USB drive was the conflict dialog not

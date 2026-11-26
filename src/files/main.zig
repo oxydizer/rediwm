@@ -239,38 +239,30 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
 
     // One Files per display (S6): a launch while one runs becomes a window of
     // it. A chooser answers on its own stdout, so it is always a process of
-    // its own, and never the one others hand over to.
-    const endpoint: ?*io_endpoint.Endpoint = if (chooser == null and torrent_source == null) blk: {
-        var paths = io_endpoint.Paths.fromEnviron(a, init.minimal.environ) catch break :blk null;
-        defer paths.deinit(a);
+    // its own, and never the one others hand over to. Claimed first, so a
+    // handed-over launch exits before doing anything else.
+    var instance: ?struct { fd: c_int, paths: io_endpoint.Paths } = null;
+    if (chooser == null and torrent_source == null) claim: {
+        var paths = io_endpoint.Paths.fromEnviron(a, init.minimal.environ) catch break :claim;
         switch (io_endpoint.claim(a, &paths, .{
             .path = target_dir,
             .select = selected_file,
             .transfers = transfers,
             .activation_token = init.minimal.environ.getPosix("XDG_ACTIVATION_TOKEN"),
         })) {
-            .handed_over => return,
-            .standalone => break :blk null,
-            .instance => |fd| {
-                const created = a.create(io_endpoint.Endpoint) catch {
-                    _ = c.close(fd);
-                    _ = c.unlink(paths.socket);
-                    break :blk null;
-                };
-                created.start(a, fd, paths.socket) catch |err| {
-                    std.log.warn("rediwm-files: cannot serve other launches: {}", .{err});
-                    _ = c.unlink(paths.socket);
-                    a.destroy(created);
-                    break :blk null;
-                };
-                break :blk created;
+            .handed_over => {
+                paths.deinit(a);
+                return;
             },
+            .standalone => paths.deinit(a),
+            .instance => |fd| instance = .{ .fd = fd, .paths = paths },
         }
-    } else null;
-    // Before the coordinator drains: no launch may be told yes from now on.
-    defer if (endpoint) |e| {
-        e.deinit();
-        a.destroy(e);
+    }
+    // Until the endpoint takes it over: the socket goes if we fail first.
+    defer if (instance) |*held| {
+        _ = c.close(held.fd);
+        _ = c.unlink(held.paths.socket);
+        held.paths.deinit(a);
     };
 
     const home_dir = init.minimal.environ.getPosix("HOME") orelse "/";
@@ -297,6 +289,32 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         coordinator.deinit();
         service.deinit();
     }
+
+    // The endpoint serves launches and the shell panel's subscriptions. Its
+    // defer runs before the coordinator's drain: no launch is told yes, and
+    // no subscriber holds a table slot, once that starts.
+    const endpoint: ?*io_endpoint.Endpoint = if (instance) |*held| blk: {
+        defer {
+            held.paths.deinit(a);
+            instance = null;
+        }
+        const created = a.create(io_endpoint.Endpoint) catch {
+            _ = c.close(held.fd);
+            _ = c.unlink(held.paths.socket);
+            break :blk null;
+        };
+        created.start(a, held.fd, held.paths.socket, &service) catch |err| {
+            std.log.warn("rediwm-files: cannot serve other launches: {}", .{err});
+            _ = c.unlink(held.paths.socket);
+            a.destroy(created);
+            break :blk null;
+        };
+        break :blk created;
+    } else null;
+    defer if (endpoint) |e| {
+        e.deinit();
+        a.destroy(e);
+    };
 
     // Closing windows hand their helper threads here. It is finished after the
     // windows and the compositor connection are gone (threading §10, U16).

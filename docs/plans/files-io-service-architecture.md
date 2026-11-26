@@ -427,8 +427,11 @@ window renders from the job table.
 **S6a done (PR #88):** the endpoint (`io_endpoint.zig`) with `OpenWindow`;
 a launch while Files runs opens a window in it, and a process with no window
 but work in hand stays reachable. The socket name carries a hash of
-`WAYLAND_DISPLAY`, so a nested session has its own Files. **S6b next:**
-`subscribe`, job control and rate history for the shell panel.
+`WAYLAND_DISPLAY`, so a nested session has its own Files. **S6b done (PR
+#89):** `Subscribe` (snapshot with speed history, then changed records by
+cursor, resync as a new snapshot), `PauseJob`, `ResumeJob`, `CancelJob`.
+Left for the panel itself: `OpenWindow` with a job id for a pending conflict,
+and the torrent helper hiding its own tray icon when the panel is present.
 
 *Done when:* launching Files during a headless drain opens a window that shows the
 running transfers, and a test client subscribed to the endpoint sees every job

@@ -9,13 +9,18 @@
 //! file serialises the decision, as for the editor (`editor/instance.zig`).
 //!
 //! The endpoint thread owns the listening socket and every connection, all
-//! non-blocking; it never touches the Service, the Manager or a window. An
+//! non-blocking. It never touches the Manager, a window or the display. An
 //! accepted `OpenWindow` goes to the UI thread through a small ring and a
 //! wake descriptor (`takeOpen`, `openWakeFd`); the UI thread opens the window.
+//! Subscribers (`io_endpoint_subscribers.zig`) read the job table as external
+//! consumers of the Service, and `PauseJob`, `ResumeJob` and `CancelJob` go
+//! into its external control queue: the Service is all it reaches.
 const std = @import("std");
 const c = @import("c.zig").api;
 const platform = @import("platform");
 const wire = @import("io_endpoint_wire.zig");
+const io_service = @import("io_service.zig");
+const subscribers = @import("io_endpoint_subscribers.zig");
 
 const Allocator = std.mem.Allocator;
 const sys = std.posix.system;
@@ -27,7 +32,8 @@ pub const max_connections = 8;
 pub const max_pending = 8;
 /// Requests read from one connection per pass, so none starves the others.
 const requests_per_pass = 8;
-/// Unanswered bytes kept for a connection that does not read.
+/// Unanswered bytes kept for a connection that does not read (a subscriber
+/// has its own, larger bound: `subscribers.max_output`).
 const max_output = 16 * 1024;
 /// A connection that sends no complete request for this long is closed.
 const idle_timeout_ms = 10_000;
@@ -193,18 +199,27 @@ fn nowMs() i64 {
 const Connection = struct {
     fd: std.posix.fd_t = -1,
     lines: wire.Lines = .{},
-    output: [max_output]u8 = undefined,
-    output_len: usize = 0,
+    output: std.ArrayList(u8) = .empty,
     last_request_ms: i64 = 0,
+    /// When the client last took output, or had none waiting.
+    last_drain_ms: i64 = 0,
+    /// Set once it subscribed: it then stays, without a request timeout.
+    subscriber: ?subscribers.Subscriber = null,
 
     fn active(self: *const Connection) bool {
         return self.fd >= 0;
+    }
+
+    fn outputLimit(self: *const Connection) usize {
+        return if (self.subscriber != null) subscribers.max_output else max_output;
     }
 };
 
 /// The endpoint thread and what it hands the UI thread.
 pub const Endpoint = struct {
     allocator: Allocator,
+    /// Null in tests of the launch handover alone: no subscribing, no control.
+    service: ?*io_service.Service = null,
     listen_fd: std.posix.fd_t = -1,
     /// Removed again when the endpoint stops; null when not ours to remove.
     socket_path: ?[:0]u8 = null,
@@ -220,8 +235,8 @@ pub const Endpoint = struct {
 
     /// Serves `listen_fd` (from `claim`), which it now owns. `socket_path`
     /// is unlinked on `stop`.
-    pub fn start(self: *Endpoint, allocator: Allocator, listen_fd: std.posix.fd_t, socket_path: []const u8) !void {
-        self.* = .{ .allocator = allocator, .listen_fd = listen_fd };
+    pub fn start(self: *Endpoint, allocator: Allocator, listen_fd: std.posix.fd_t, socket_path: []const u8, service: ?*io_service.Service) !void {
+        self.* = .{ .allocator = allocator, .listen_fd = listen_fd, .service = service };
         errdefer {
             _ = sys.close(listen_fd);
             self.listen_fd = -1;
@@ -250,7 +265,7 @@ pub const Endpoint = struct {
         signal(self.stop_fd);
         thread.join();
         self.thread = null;
-        for (&self.connections) |*conn| if (conn.active()) closeConnection(conn);
+        for (&self.connections) |*conn| if (conn.active()) self.closeConnection(conn);
         _ = sys.close(self.listen_fd);
         self.listen_fd = -1;
     }
@@ -302,32 +317,53 @@ pub const Endpoint = struct {
     }
 
     fn threadMain(self: *Endpoint) void {
-        var fds: [2 + max_connections]c.struct_pollfd = undefined;
+        var fds: [3 + max_connections]c.struct_pollfd = undefined;
         while (true) {
             fds[0] = .{ .fd = self.stop_fd, .events = c.POLLIN, .revents = 0 };
             fds[1] = .{ .fd = self.listen_fd, .events = c.POLLIN, .revents = 0 };
+            // Table changes matter only while someone subscribes.
+            const subscribed = for (&self.connections) |*conn| {
+                if (conn.active() and conn.subscriber != null) break true;
+            } else false;
+            const table_fd = if (self.service) |service| (if (subscribed) service.externalWakeFd() else -1) else -1;
+            fds[2] = .{ .fd = table_fd, .events = c.POLLIN, .revents = 0 };
             const now = nowMs();
             var timeout: c_int = -1;
             for (&self.connections, 0..) |*conn, i| {
-                fds[2 + i] = .{ .fd = conn.fd, .events = 0, .revents = 0 };
+                fds[3 + i] = .{ .fd = conn.fd, .events = 0, .revents = 0 };
                 if (!conn.active()) continue;
-                fds[2 + i].events = @intCast(c.POLLIN | @as(c_int, if (conn.output_len > 0) c.POLLOUT else 0));
-                const left: c_int = @intCast(@max(0, conn.last_request_ms + idle_timeout_ms - now));
-                timeout = if (timeout < 0) left else @min(timeout, left);
+                fds[3 + i].events = @intCast(c.POLLIN | @as(c_int, if (conn.output.items.len > 0) c.POLLOUT else 0));
+                if (self.deadline(conn)) |at| {
+                    const left: c_int = @intCast(std.math.clamp(at - now, 0, std.math.maxInt(c_int)));
+                    timeout = if (timeout < 0) left else @min(timeout, left);
+                }
             }
             const rc = c.poll(&fds, fds.len, timeout);
             if (rc < 0 and std.posix.errno(rc) != .INTR) return;
             if (fds[0].revents != 0) return;
             if (fds[1].revents & c.POLLIN != 0) self.accept();
+            const table_changed = fds[2].revents & c.POLLIN != 0;
+            if (table_changed) _ = self.service.?.drainExternalWake();
             const after = nowMs();
             for (&self.connections, 0..) |*conn, i| {
                 if (!conn.active()) continue;
-                const revents = fds[2 + i].revents;
-                if (revents & c.POLLOUT != 0) flush(conn);
+                const revents = fds[3 + i].revents;
+                if (revents & c.POLLOUT != 0) self.flush(conn, after);
                 if (conn.active() and revents & (c.POLLIN | c.POLLHUP | c.POLLERR) != 0) self.serve(conn, after);
-                if (conn.active() and after - conn.last_request_ms >= idle_timeout_ms) closeConnection(conn);
+                // After a change, or once output drained below the low water.
+                if (conn.active() and conn.subscriber != null and (table_changed or revents & c.POLLOUT != 0)) self.pumpSubscriber(conn, after);
+                if (conn.active()) if (self.deadline(conn)) |at| if (after >= at) self.closeConnection(conn);
             }
         }
+    }
+
+    /// When the connection is closed if nothing happens: a request client
+    /// that sends nothing complete, a subscriber that takes no output.
+    fn deadline(self: *Endpoint, conn: *const Connection) ?i64 {
+        _ = self;
+        if (conn.subscriber == null) return conn.last_request_ms + idle_timeout_ms;
+        if (conn.output.items.len == 0) return null;
+        return conn.last_drain_ms + subscribers.stall_ms;
     }
 
     fn accept(self: *Endpoint) void {
@@ -342,7 +378,8 @@ pub const Endpoint = struct {
                 _ = sys.close(fd);
                 continue;
             }
-            slot.?.* = .{ .fd = fd, .last_request_ms = nowMs() };
+            const now = nowMs();
+            slot.?.* = .{ .fd = fd, .last_request_ms = now, .last_drain_ms = now };
         }
     }
 
@@ -351,10 +388,10 @@ pub const Endpoint = struct {
         const room = conn.lines.free();
         if (room.len > 0) {
             const n = c.recv(conn.fd, room.ptr, room.len, 0);
-            if (n == 0) return closeConnection(conn);
+            if (n == 0) return self.closeConnection(conn);
             if (n < 0) {
                 const err = std.posix.errno(n);
-                if (err != .AGAIN and err != .INTR) return closeConnection(conn);
+                if (err != .AGAIN and err != .INTR) return self.closeConnection(conn);
             } else conn.lines.commit(@intCast(n));
         }
         var line_buf: [wire.max_line]u8 = undefined;
@@ -363,17 +400,17 @@ pub const Endpoint = struct {
             const line = conn.lines.next(&line_buf) catch {
                 // No framing past an overlong line: answer and hang up.
                 self.reply(conn, "", .INVALID_REQUEST, "Request too long");
-                flush(conn);
-                return closeConnection(conn);
+                self.flush(conn, now);
+                return self.closeConnection(conn);
             } orelse break;
             conn.last_request_ms = now;
-            self.handle(conn, line);
+            self.handle(conn, line, now);
             if (!conn.active()) return;
         }
-        flush(conn);
+        self.flush(conn, now);
     }
 
-    fn handle(self: *Endpoint, conn: *Connection, line: []const u8) void {
+    fn handle(self: *Endpoint, conn: *Connection, line: []const u8, now: i64) void {
         var result = wire.parse(self.allocator, line) catch
             return self.reply(conn, "", .INTERNAL_ERROR, "Out of memory");
         switch (result) {
@@ -390,50 +427,83 @@ pub const Endpoint = struct {
                         }
                         self.replyOk(conn, parsed.id);
                     },
+                    .subscribe => {
+                        const service = self.service orelse
+                            return self.reply(conn, parsed.id, .INTERNAL_ERROR, "No job service");
+                        if (conn.subscriber != null)
+                            return self.reply(conn, parsed.id, .INVALID_STATE, "Already subscribed");
+                        conn.subscriber = subscribers.Subscriber.init(service) catch |err| return switch (err) {
+                            error.TooManyConsumers => self.reply(conn, parsed.id, .RESOURCE_LIMIT, "Too many subscribers"),
+                            else => self.reply(conn, parsed.id, .SERVICE_BUSY, "The job service is stopping"),
+                        };
+                        // The answer first, then the snapshot.
+                        self.replyOk(conn, parsed.id);
+                        if (conn.active()) self.pumpSubscriber(conn, now);
+                    },
+                    .control => |control| {
+                        const service = self.service orelse
+                            return self.reply(conn, parsed.id, .INTERNAL_ERROR, "No job service");
+                        service.sendControl(control.control, control.job_id) catch |err| return switch (err) {
+                            error.JobNotFound => self.reply(conn, parsed.id, .JOB_NOT_FOUND, "No such job"),
+                            error.InvalidState => self.reply(conn, parsed.id, .INVALID_STATE, "The job has ended"),
+                            error.QueueFull, error.ServiceStopping => self.reply(conn, parsed.id, .SERVICE_BUSY, "Try again"),
+                        };
+                        self.replyOk(conn, parsed.id);
+                    },
                 }
             },
         }
     }
 
+    fn pumpSubscriber(self: *Endpoint, conn: *Connection, now: i64) void {
+        if (!conn.subscriber.?.pump(self.allocator, &conn.output)) return self.closeConnection(conn);
+        self.flush(conn, now);
+    }
+
     fn replyOk(self: *Endpoint, conn: *Connection, id: []const u8) void {
-        const line = wire.formatOk(self.allocator, id) catch return closeConnection(conn);
+        const line = wire.formatOk(self.allocator, id) catch return self.closeConnection(conn);
         defer self.allocator.free(line);
-        queue(conn, line);
+        self.queue(conn, line);
     }
 
     fn reply(self: *Endpoint, conn: *Connection, id: []const u8, code: wire.ErrorCode, message: []const u8) void {
-        const line = wire.formatError(self.allocator, id, code, message) catch return closeConnection(conn);
+        const line = wire.formatError(self.allocator, id, code, message) catch return self.closeConnection(conn);
         defer self.allocator.free(line);
-        queue(conn, line);
+        self.queue(conn, line);
+    }
+
+    /// Appends an answer; a client that lets its output pile up is dropped
+    /// (contract §9.3), never waited for.
+    fn queue(self: *Endpoint, conn: *Connection, line: []const u8) void {
+        if (conn.output.items.len + line.len > conn.outputLimit()) return self.closeConnection(conn);
+        conn.output.appendSlice(self.allocator, line) catch return self.closeConnection(conn);
+    }
+
+    fn flush(self: *Endpoint, conn: *Connection, now: i64) void {
+        if (conn.output.items.len == 0) {
+            conn.last_drain_ms = now;
+            return;
+        }
+        while (conn.output.items.len > 0) {
+            const n = c.send(conn.fd, conn.output.items.ptr, conn.output.items.len, c.MSG_NOSIGNAL | c.MSG_DONTWAIT);
+            if (n < 0) {
+                const err = std.posix.errno(n);
+                if (err == .AGAIN or err == .INTR) return;
+                return self.closeConnection(conn);
+            }
+            if (n == 0) return;
+            conn.output.replaceRangeAssumeCapacity(0, @intCast(n), &.{});
+            conn.last_drain_ms = now;
+        }
+    }
+
+    fn closeConnection(self: *Endpoint, conn: *Connection) void {
+        if (conn.subscriber) |*subscriber| subscriber.deinit(self.allocator);
+        conn.output.deinit(self.allocator);
+        _ = sys.close(conn.fd);
+        conn.* = .{};
     }
 };
-
-/// Appends an answer; a client that lets its answers pile up is dropped
-/// (contract §9.3), never waited for.
-fn queue(conn: *Connection, line: []const u8) void {
-    if (conn.output_len + line.len > conn.output.len) return closeConnection(conn);
-    @memcpy(conn.output[conn.output_len..][0..line.len], line);
-    conn.output_len += line.len;
-}
-
-fn flush(conn: *Connection) void {
-    while (conn.output_len > 0) {
-        const n = c.send(conn.fd, &conn.output, conn.output_len, c.MSG_NOSIGNAL | c.MSG_DONTWAIT);
-        if (n < 0) {
-            const err = std.posix.errno(n);
-            if (err == .AGAIN or err == .INTR) return;
-            return closeConnection(conn);
-        }
-        const sent: usize = @intCast(n);
-        std.mem.copyForwards(u8, conn.output[0 .. conn.output_len - sent], conn.output[sent..conn.output_len]);
-        conn.output_len -= sent;
-    }
-}
-
-fn closeConnection(conn: *Connection) void {
-    _ = sys.close(conn.fd);
-    conn.* = .{};
-}
 
 fn signal(fd: std.posix.fd_t) void {
     const one: u64 = 1;
