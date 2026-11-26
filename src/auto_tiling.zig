@@ -32,7 +32,6 @@ pub fn isFloating(top: *const Top) bool {
 
 fn state(top: *Top) State {
     const c = top.sizeConstraints();
-    const fixed = c.min_width > 0 and c.min_height > 0 and c.min_width == c.max_width and c.min_height == c.max_height;
     return .{
         .workspace = top.workspace_id,
         .group = top.tab_group,
@@ -40,10 +39,16 @@ fn state(top: *Top) State {
         .horizontal = 2 * top.borderWidth(),
         // Fullscreen/maximize decoration suppression must not alter the saved tile.
         .vertical = top.titlebarHeight() + if (top.hasServerDecorations()) @import("chrome.zig").frameBorder() else @as(i32, 0),
-        .excluded = isFloating(top) or top.tile != null or top.currentIdentity().dialog or fixed,
+        .excluded = isFloating(top) or top.tile != null or floatsBySize(top, c) or top.currentIdentity().dialog,
         .suspended = top.minimized or top.fullscreen or top.maximized,
         .hidden = top.tab_hidden,
     };
+}
+
+fn floatsBySize(top: *const Top, c: @import("resize.zig").SizeConstraints) bool {
+    // A strip has room for fixed-size windows and respects both size limits.
+    if (@import("scroll_tiling.zig").scrolling(top.server, top.workspace_id)) return false;
+    return c.min_width > 0 and c.min_height > 0 and c.min_width == c.max_width and c.min_height == c.max_height;
 }
 
 pub fn observe(top: *Top) void {
@@ -277,9 +282,7 @@ pub fn execute(server: *Server, target: ?*Top, action: @import("config").keybind
     defer transaction.finish();
     const tree = &manager.trees[top.workspace_id - 1];
     if (action == .toggle_floating) {
-        // Dialogs and fixed-size utilities are floating exceptions, not tiles.
-        const c = top.sizeConstraints();
-        if (top.currentIdentity().dialog or (c.min_width > 0 and c.min_height > 0 and c.min_width == c.max_width and c.min_height == c.max_height)) return;
+        if (floatsBySize(top, top.sizeConstraints()) or top.currentIdentity().dialog) return;
         const floating = !isFloating(top) and top.tile == null;
         const saved = top.auto_restore;
         if (!floating) top.leaveLayout();

@@ -19,7 +19,7 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 |---|---|---|
 | `rediwm` | `src/main.zig` | the compositor; everything below unless listed |
 | `rediwm-msg` | `src/msg/main.zig` | `msg_parse` (arguments), `msg_request` (request line), `msg_reply` (output) |
-| `rediwm-files` | `src/files_main.zig` | `files/`: `App` in `app.zig` + `app_*.zig`, its window in `Client.zig` + `client_*.zig`; `files/terminal/` (PTY drawer, `rediwm-files-terminal`, `files-bash.so`), `files/torrent/helper.cpp` + `helper_*.cpp` (`rediwm-transfers`) |
+| `rediwm-files` | `src/files_main.zig` | `files/`: `App` in `app.zig` + `app_*.zig`, its window in `Client.zig` + `client_*.zig`; `files/terminal/` (PTY drawer, `rediwm-files-terminal`, `files-bash.so`; the engine and `paint.zig` are shared with RediTerm), `files/torrent/helper.cpp` + `helper_*.cpp` (`rediwm-transfers`) |
 | `rediwm-images` | `src/images_main.zig` | `images/` (`app.zig` + `app_*.zig`) |
 | `rediwm-editor` | `src/editor_main.zig` | `editor/` (`app.zig` + `app_*.zig`, window in `main.zig` + `client_*.zig`) |
 | `rediwm-pdf` | `src/pdf_main.zig` | `pdf/` (sandboxed; window in `main.zig` + `client_*.zig`) |
@@ -27,6 +27,7 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 | `rediwm-video` | `src/video_main.zig` | `video/`: video player on FFmpeg (`c_av`, `src/c/av.h`); workers `pipeline.zig` and `decode.zig`, audio `audio.zig` and `audio_out.c`, VAAPI export `hw.zig`, presentation `player.zig`, `buffers.zig` and `software.zig`; build in `build/video.zig` |
 | `rediwm-monitor` | `src/system_monitor_main.zig` | `system_monitor/` |
 | `rediwm-calculator` | `src/calculator_main.zig` | `calculator/` (window from `app_kit/window.zig`) |
+| `rediwm-terminal` | `src/rediterm_main.zig` | RediTerm: `rediterm/` (`app.zig`, `input.zig`) in the app kit's window, on the Files terminal engine (`files/terminal/`: `engine.c`, `paint.zig`) and its `rediwm-files-terminal` helper |
 | `rediwm-share-picker` | `src/share_picker_main.zig` | `share_picker/` |
 | `rediwm-session` | `src/session_main.zig` | login supervisor (`session/supervisor.zig`, `publication.zig`) |
 | `rediwm-dm` | `src/dm/main.zig` | display manager, runs as root (`dm/AGENTS.md`) |

@@ -39,8 +39,10 @@ static void place_scope(void) {
 
 int main(int argc, char **argv) {
     if (argc < 5) return 125;
-    /* scope, directory, shell/plugin (or --external + command argv) */
+    /* scope, directory, then shell + plugin, --external + a terminal's argv
+     * (no PTY of ours), or --command + argv to run on our PTY (RediTerm -e). */
     int external = !strcmp(argv[3], "--external");
+    int command = !strcmp(argv[3], "--command");
     if (!strcmp(argv[1], "1")) place_scope();
     if (chdir(argv[2])) { perror("Terminal directory"); return 125; }
     if (external) { execvp(argv[4], argv + 4); perror("External terminal"); return 127; }
@@ -55,6 +57,11 @@ int main(int argc, char **argv) {
     /* No inherited multiplexer identity, activation token, or stale dimensions. */
     unsetenv("TMUX"); unsetenv("STY"); unsetenv("COLUMNS"); unsetenv("LINES");
     unsetenv("XDG_ACTIVATION_TOKEN"); unsetenv("DESKTOP_STARTUP_ID");
+    if (command) {
+        close(3);
+        execvp(argv[4], argv + 4);
+        fprintf(stderr, "%s: %s\r\n", argv[4], strerror(errno)); return 127;
+    }
     const char *shell = argv[3];
     setenv("SHELL",shell,1);
     const char *base = strrchr(shell, '/'); base = base ? base + 1 : shell;

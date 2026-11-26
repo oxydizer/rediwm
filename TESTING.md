@@ -85,7 +85,8 @@ and rendering with blur disabled. `python3 tests/night_light.py` uses wlsunset
 or gammastep when installed to test gamma ownership, rejection and restoration
 against simulated per-output gamma tables.
 
-App checks include [calculator](tests/calculator.py), [editor](tests/editor.py),
+App checks include [calculator](tests/calculator.py), [RediTerm](tests/terminal.py),
+[editor](tests/editor.py),
 [editor visuals](tests/editor_visuals.py) and
 [Files input methods](tests/files_ime.py). Run `python3 tests/text_input_v1.py`
 for legacy fields, v3 coexistence, IME reconnect and lock isolation.

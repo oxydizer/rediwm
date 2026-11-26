@@ -15,7 +15,16 @@
 //!   keyRepeats(*App, u32, []const u8) bool, cursorName(*App) [*:0]const u8,
 //!   render(*App, *cairo_t)
 //! Optional: handleAxis(*App, dx: f64, dy: f64) for wheel and touchpad scrolling
-//! (surface units, positive dy is down).
+//! (surface units, positive dy is down);
+//!   themeChanged(*App) after a live theme reload (a frame follows anyway);
+//!   pollFds(*App, []c.struct_pollfd) usize to add up to 8 descriptors of the
+//!   App's own to the loop, pollReady(*App, []const c.struct_pollfd) called
+//!   with them (and their revents, zero on a timeout) after every poll, and
+//!   timeoutMs(*App, now_ms: i64) ?i64 for the App's next deadline;
+//!   pasteText(*App, []const u8) for a plain-text clipboard, with fields
+//!   clipboard_revision: u64 (bump it to publish clipboardText(*App) []const u8)
+//!   and paste_requested: bool (set it to get the selection in pasteText).
+//! getTitle is read every loop iteration and the title resent when it changes.
 //! Set `dirty` to get a frame; set `closed` to quit.
 const std = @import("std");
 const platform = @import("platform");
@@ -31,6 +40,10 @@ const shell_ui = ui.cairo;
 const ui_theme = ui.theme;
 const Outputs = @import("window_outputs.zig").Outputs;
 const Pool = @import("window_buffer.zig").Pool;
+const Clipboard = @import("window_clipboard.zig").Clipboard;
+const clipboard_slots = @import("window_clipboard.zig").slots;
+/// Descriptors an App may add through `pollFds`.
+pub const app_poll_slots = 8;
 const a = std.heap.c_allocator;
 
 // A window with no server-side decorations must draw its own titlebar so it
@@ -104,6 +117,12 @@ pub fn Host(comptime App: type) type {
         app: *App,
         close_button: ui.layout.Widget = .{ .kind = .{ .button = .{ .variant = .chrome, .icon = .close, .label = "" } } },
         chrome_input: ui.input.Dispatcher = .{},
+        clipboard: Clipboard = .{},
+        clipboard_revision: u64 = 0,
+        /// The title last sent, to resend only a changed one.
+        title: ?[:0]u8 = null,
+
+        const has_clipboard = @hasDecl(App, "pasteText");
 
         fn arrangeClose(self: *Client) void {
             self.close_button.kind.button.label = @import("i18n").tr("Close");
@@ -145,6 +164,8 @@ pub fn Host(comptime App: type) type {
                         if (self.wm_base) |wm| wm.setListener(*Client, wmBaseEvent, self);
                     } else if (std.mem.eql(u8, iface, "zxdg_decoration_manager_v1")) {
                         self.decoration_manager = registry.bind(g.name, zxdg.DecorationManagerV1, 1) catch null;
+                    } else if (has_clipboard and std.mem.eql(u8, iface, "wl_data_device_manager")) {
+                        self.clipboard.bind(registry, g.name, g.version);
                     }
                 },
                 .global_remove => |ev| self.outputs.remove(ev.name),
@@ -418,102 +439,11 @@ pub fn Host(comptime App: type) type {
             if (self.seat) |seat| self.xdg_toplevel.move(seat, self.input_serial);
         }
 
-        /// One press of evdev `key` through the current XKB state.
-        fn deliverKey(self: *Client, key: u32) void {
-            const state = self.xkb_state orelse return;
-            const sym = c.xkb_state_key_get_one_sym(state, key + 8);
-            var buf: [64]u8 = undefined;
-            const n = c.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
-            // Dead keys have no text of their own: sequences resolve here, and a
-            // shortcut modifier abandons a half-typed one.
-            if (!self.app.ctrl and !self.app.alt) {
-                var composed: [64]u8 = undefined;
-                if (self.compose.feed(self.locale, sym, &composed)) |text| {
-                    if (text.len > 0) self.app.handleKey(0, text);
-                    return;
-                }
-            } else self.compose.reset();
-            self.app.handleKey(sym, buf[0..@intCast(std.math.clamp(n, 0, 63))]);
-        }
-
-        fn appRepeats(self: *Client, key: u32) bool {
-            if (self.compose.consumed) return false;
-            const state = self.xkb_state orelse return false;
-            var buf: [64]u8 = undefined;
-            const n = c.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
-            return self.app.keyRepeats(c.xkb_state_key_get_one_sym(state, key + 8), buf[0..@intCast(std.math.clamp(n, 0, 63))]);
-        }
-
-        /// A due repeat of the held key, if the app still takes it where its
-        /// focus is now (a repeat may have opened a dialog or left a field).
-        fn repeatDue(self: *Client) void {
-            const key = self.key_repeat.due(key_repeat.nowMs()) orelse return;
-            if (!self.appRepeats(key)) return self.key_repeat.stop();
-            self.deliverKey(key);
-        }
-
-        fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) void {
-            switch (event) {
-                .enter => {
-                    self.app.focused = true;
-                    self.app.dirty = true;
-                },
-                .leave => {
-                    self.app.focused = false;
-                    self.key_repeat.stop();
-                    self.compose.reset();
-                    self.app.cancelDrag();
-                    self.app.ctrl = false;
-                    self.app.shift = false;
-                    self.app.alt = false;
-                    self.app.dirty = true;
-                },
-                .keymap => |ev| {
-                    defer _ = c.close(ev.fd);
-                    self.key_repeat.stop();
-                    if (ev.format != .xkb_v1 or ev.size == 0) return;
-                    const memory = c.mmap(null, ev.size, c.PROT_READ, c.MAP_PRIVATE, ev.fd, 0);
-                    if (memory == c.MAP_FAILED) return;
-                    defer _ = c.munmap(memory, ev.size);
-
-                    const bytes: [*]const u8 = @ptrCast(memory);
-                    if (bytes[ev.size - 1] != 0) return;
-
-                    if (self.xkb_context == null) self.xkb_context = c.xkb_context_new(c.XKB_CONTEXT_NO_FLAGS);
-                    const keymap = c.xkb_keymap_new_from_string(
-                        self.xkb_context,
-                        @ptrCast(memory),
-                        c.XKB_KEYMAP_FORMAT_TEXT_V1,
-                        c.XKB_KEYMAP_COMPILE_NO_FLAGS,
-                    ) orelse return;
-                    defer c.xkb_keymap_unref(keymap);
-
-                    if (self.xkb_state) |state| c.xkb_state_unref(state);
-                    self.xkb_state = c.xkb_state_new(keymap);
-                },
-                .modifiers => |ev| {
-                    if (self.xkb_state) |state| {
-                        _ = c.xkb_state_update_mask(state, ev.mods_depressed, ev.mods_latched, ev.mods_locked, 0, 0, ev.group);
-                        self.app.ctrl = c.xkb_state_mod_name_is_active(state, "Control", c.XKB_STATE_MODS_EFFECTIVE) > 0;
-                        self.app.shift = c.xkb_state_mod_name_is_active(state, "Shift", c.XKB_STATE_MODS_EFFECTIVE) > 0;
-                        self.app.alt = c.xkb_state_mod_name_is_active(state, "Mod1", c.XKB_STATE_MODS_EFFECTIVE) > 0 or
-                            c.xkb_state_mod_name_is_active(state, "Alt", c.XKB_STATE_MODS_EFFECTIVE) > 0;
-                    }
-                },
-                .key => |ev| {
-                    self.input_serial = ev.serial;
-                    if (ev.state == .pressed) {
-                        const state = self.xkb_state orelse return;
-                        self.deliverKey(ev.key);
-                        // Asked after the key, of the state it left: the repeats
-                        // go wherever this press put focus.
-                        const keymap_repeats = c.xkb_keymap_key_repeats(c.xkb_state_get_keymap(state), ev.key + 8) != 0;
-                        self.key_repeat.press(ev.key, keymap_repeats, self.appRepeats(ev.key), key_repeat.nowMs());
-                    } else self.key_repeat.release(ev.key);
-                },
-                .repeat_info => |ev| self.key_repeat.setInfo(ev.rate, ev.delay),
-            }
-        }
+        const keyboard_group = @import("window_keyboard.zig").Keyboard(Client);
+        pub const deliverKey = keyboard_group.deliverKey;
+        pub const appRepeats = keyboard_group.appRepeats;
+        pub const repeatDue = keyboard_group.repeatDue;
+        pub const keyboardEvent = keyboard_group.keyboardEvent;
 
         fn setCursor(self: *Client, name: [*:0]const u8) void {
             if (!self.inside) return;
@@ -594,7 +524,33 @@ pub fn Host(comptime App: type) type {
             }
         }
 
+        /// Resends the App's title when it changed; a drawn titlebar repaints.
+        fn syncTitle(self: *Client) void {
+            const title = std.mem.span(self.app.getTitle());
+            if (self.title) |old| if (std.mem.eql(u8, old, title)) return;
+            const copy = a.dupeSentinel(u8, title, 0) catch return;
+            if (self.title) |old| a.free(old);
+            self.title = copy;
+            self.xdg_toplevel.setTitle(copy);
+            if (self.wantsCsd()) self.app.dirty = true;
+        }
+
+        /// Publishes a bumped clipboard revision and starts a requested paste.
+        fn syncClipboard(self: *Client) void {
+            if (!has_clipboard) return;
+            if (self.app.clipboard_revision != self.clipboard_revision) {
+                self.clipboard_revision = self.app.clipboard_revision;
+                self.clipboard.publish(self.app.clipboardText(), self.input_serial) catch {};
+            }
+            if (self.app.paste_requested) {
+                self.app.paste_requested = false;
+                if (self.clipboard.paste() catch null) |own| self.app.pasteText(own);
+            }
+        }
+
         fn deinit(self: *Client) void {
+            if (self.title) |title| a.free(title);
+            self.clipboard.deinit();
             self.outputs.deinit();
             if (self.xkb_state) |state| c.xkb_state_unref(state);
             if (self.xkb_context) |context| c.xkb_context_unref(context);
@@ -665,7 +621,8 @@ pub fn Host(comptime App: type) type {
             self.xdg_toplevel.setListener(*Client, xdgToplevelEvent, &self);
 
             self.xdg_toplevel.setAppId(options.app_id);
-            self.xdg_toplevel.setTitle(self.app.getTitle());
+            self.syncTitle();
+            if (self.seat) |seat| self.clipboard.setup(seat);
             // Real min size is set from xdgToplevelEvent once the decoration mode
             // (and thus titlebar height) is known; this is just a safe pre-configure
             // default sized for the worst case (self-decorated).
@@ -695,10 +652,15 @@ pub fn Host(comptime App: type) type {
             }
 
             while (self.running) {
-                if (watch.poll()) self.app.dirty = true;
+                if (watch.poll()) {
+                    self.app.dirty = true;
+                    if (@hasDecl(App, "themeChanged")) self.app.themeChanged();
+                }
                 if (self.app.closed) self.close();
                 if (!self.running) break;
 
+                self.syncTitle();
+                self.syncClipboard();
                 try self.render();
 
                 while (!display.prepareRead()) {
@@ -720,24 +682,37 @@ pub fn Host(comptime App: type) type {
                     return error.DisplayFailed;
                 }
 
-                var fds = [_]c.struct_pollfd{
-                    .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 },
-                    .{ .fd = watch.fd(), .events = c.POLLIN, .revents = 0 },
-                };
+                // Display, theme watch, clipboard transfers, then the App's own.
+                var fds: [2 + clipboard_slots + app_poll_slots]c.struct_pollfd = undefined;
+                fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
+                fds[1] = .{ .fd = watch.fd(), .events = c.POLLIN, .revents = 0 };
+                self.clipboard.pollFds(fds[2..][0..clipboard_slots]);
+                const app_fds = fds[2 + clipboard_slots ..];
+                const app_count: usize = if (@hasDecl(App, "pollFds")) @min(self.app.pollFds(app_fds), app_fds.len) else 0;
+                for (app_fds[0..app_count]) |*fd| fd.revents = 0;
                 const now = key_repeat.nowMs();
-                var timeout: c_int = if (self.key_repeat.timeoutMs(now)) |wait| @intCast(@min(wait, 60_000)) else -1;
-                if (self.app.suspended) {
-                    self.key_repeat.stop();
-                    timeout = -1;
-                }
-                const result = c.poll(&fds, fds.len, timeout);
+                var wait: ?i64 = if (self.app.suspended) null else self.key_repeat.timeoutMs(now);
+                if (self.app.suspended) self.key_repeat.stop();
+                if (self.clipboard.timeoutMs(now)) |ms| wait = if (wait) |w| @min(w, ms) else ms;
+                if (@hasDecl(App, "timeoutMs")) if (self.app.timeoutMs(now)) |ms| {
+                    wait = if (wait) |w| @min(w, ms) else ms;
+                };
+                const timeout: c_int = if (wait) |ms| @intCast(std.math.clamp(ms, 0, 60_000)) else -1;
+                const result = c.poll(&fds, @intCast(2 + clipboard_slots + app_count), timeout);
                 if (result > 0 and (fds[0].revents & c.POLLIN != 0)) {
                     if (display.readEvents() != .SUCCESS) return error.DisplayFailed;
                 } else {
                     display.cancelRead();
                 }
                 if ((fds[0].revents & (c.POLLERR | c.POLLHUP)) != 0) return error.DisplayFailed;
+                // A finished paste lands before input that arrived with it.
+                if (self.clipboard.dispatch()) |value| {
+                    var received = value;
+                    defer received.deinit();
+                    if (has_clipboard) self.app.pasteText(received.bytes.items);
+                }
                 if (display.dispatchPending() != .SUCCESS) return error.DisplayFailed;
+                if (@hasDecl(App, "pollReady")) self.app.pollReady(app_fds[0..app_count]);
                 self.repeatDue();
             }
         }

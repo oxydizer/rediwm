@@ -173,9 +173,17 @@ pub fn setMode(self: *Self, server: *Server, mode: DesktopMode) void {
     if (self.changing or server.greeter_mode) return;
     if (self.mode == mode and self.active == mode.tiled()) return;
     if (self.active and mode.tiled()) {
-        if (server.input.tiling_grab != null) server.input.finishTilingGrab(false);
+        if (mode == .scrolling) {
+            cancelGestures(server);
+            finishTransitions(server);
+            server.undo.clear();
+        } else if (server.input.tiling_grab != null) server.input.finishTilingGrab(false);
         self.mode = mode;
         self.last_tiled = mode;
+        if (mode == .scrolling) {
+            @import("scroll_tiling.zig").arrangeExisting(server, false);
+            self.tiler.quiet = true;
+        }
         self.tiler.schedule(server);
         announceMode(server);
         return;
@@ -236,7 +244,6 @@ fn enter(self: *Self, server: *Server, mode: DesktopMode) void {
     if (memory) |*m| m.restoreWindows(server);
     self.active = true;
     self.mode = mode;
-    self.last_tiled = mode;
     server.world.camera = .{ .focus_zoom = 1 };
     server.world.snapCamera();
     if (memory) |*m| m.restoreFloating(server);
@@ -244,6 +251,8 @@ fn enter(self: *Self, server: *Server, mode: DesktopMode) void {
     while (it.next()) |top| self.mapped(top);
     if (memory) |*m| m.restoreDialogs(server);
     if (server.layout_autosave) |autosave| autosave.entered();
+    @import("scroll_tiling.zig").arrangeExisting(server, true);
+    self.last_tiled = mode;
 }
 
 fn leave(self: *Self, server: *Server) void {

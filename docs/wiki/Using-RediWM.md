@@ -36,8 +36,12 @@ shows which mode is active.
 
 ### Scrolling
 
-Scrolling places each new window in a column to the right of the focused
-column. Each display shows its own workspace. Moving focus along one strip
+Switching to Scrolling arranges open windows along the strip, including
+windows that were snapped, maximized, fullscreen or manually floated.
+Workspace layout overrides and floating app and window rules still apply.
+Returning from Canvas also restores the strip's floating choices.
+New windows open in a column to the right of the focused column.
+Each display shows its own workspace. Moving focus along one strip
 scrolls that display, and its windows and menus stop at the display edge.
 Floating windows stay in place.
 Settings → Desktop lets you change the initial column width, centring, and

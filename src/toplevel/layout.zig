@@ -265,6 +265,19 @@ pub fn untile(toplevel: *Toplevel) void {
 /// (a drag carrying it off, an interactive resize, undo).
 pub fn leaveLayout(toplevel: *Toplevel) void {
     @import("../auto_tiling.zig").setFloating(toplevel, true);
+    clearManualLayout(toplevel);
+}
+
+/// Release fullscreen, maximize and snap before the strip places the window.
+/// Keep its origin until then so the reflow carries its dialogs by the same distance.
+pub fn prepareAutoTile(toplevel: *Toplevel) void {
+    const saved = toplevel.auto_restore orelse toplevel.tile_restore orelse toplevel.maximize_restore orelse toplevel.fullscreen_restore;
+    if (toplevel.fullscreen) leaveFullscreen(toplevel, false);
+    clearManualLayout(toplevel);
+    toplevel.auto_restore = saved;
+}
+
+fn clearManualLayout(toplevel: *Toplevel) void {
     if (!toplevel.maximized and !toplevel.isMaximized() and toplevel.tile == null) return;
     toplevel.clearMaximized();
     toplevel.dropTile();
@@ -353,31 +366,29 @@ pub fn setFullscreen(toplevel: *Toplevel, fullscreen: bool) void {
 
 pub fn toggleFullscreen(toplevel: *Toplevel) void {
     // Use compositor intent: a second toggle may precede the client ack.
-    const next = !toplevel.fullscreen;
-    if (!next) {
-        toplevel.fullscreen = false;
-        defer toplevel.syncXdgEdges();
-        switch (toplevel.backend) {
-            .xdg => |*adapter| _ = adapter.xdg_toplevel.setFullscreen(false),
-            .xwayland => |*adapter| adapter.xsurface.setFullscreen(false),
-            .placeholder, .shell => {},
-        }
-        toplevel.fullscreen_target = null;
-        if (toplevel.fullscreen_restore) |saved| {
-            toplevel.fullscreen_restore = null;
-            toplevel.restoreGeometry(saved);
-        }
-        toplevel.syncForeign();
-        if (toplevel.server.ipc) |ipc| {
-            events.onWindowChanged(ipc, toplevel);
-            ipc.wait_mgr.checkAll();
-        }
-        toplevel.server.refreshTaskbars();
+    if (toplevel.fullscreen) {
+        leaveFullscreen(toplevel, true);
         return;
     }
 
     const output = toplevel.currentOutput() orelse return;
     toplevel.setFullscreenOn(output);
+}
+
+fn leaveFullscreen(toplevel: *Toplevel, restore: bool) void {
+    toplevel.fullscreen = false;
+    defer toplevel.syncXdgEdges();
+    switch (toplevel.backend) {
+        .xdg => |*adapter| _ = adapter.xdg_toplevel.setFullscreen(false),
+        .xwayland => |*adapter| adapter.xsurface.setFullscreen(false),
+        .placeholder, .shell => {},
+    }
+    toplevel.fullscreen_target = null;
+    const saved = toplevel.fullscreen_restore;
+    toplevel.fullscreen_restore = null;
+    if (restore) if (saved) |geometry| toplevel.restoreGeometry(geometry);
+    toplevel.notifyLayoutChanged();
+    toplevel.server.refreshTaskbars();
 }
 
 pub fn beginMove(toplevel: *Toplevel) void {

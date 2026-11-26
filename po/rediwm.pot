@@ -9755,6 +9755,11 @@ msgctxt "desktop:Comment"
 msgid "Simple arithmetic calculator"
 msgstr ""
 
+#: data/rediwm-terminal.desktop
+msgctxt "desktop:Comment"
+msgid "Use the command line"
+msgstr ""
+
 #: data/rediwm-theme.desktop
 msgctxt "desktop:Comment"
 msgid "Validate and install a RediWM theme pack"
@@ -9780,6 +9785,11 @@ msgctxt "desktop:GenericName"
 msgid "File Manager"
 msgstr ""
 
+#: data/rediwm-terminal.desktop
+msgctxt "desktop:GenericName"
+msgid "Terminal"
+msgstr ""
+
 #: data/rediwm-calculator.desktop
 msgctxt "desktop:Keywords"
 msgid "arithmetic;math;calculate;"
@@ -9793,6 +9803,11 @@ msgstr ""
 #: data/rediwm-monitor.desktop
 msgctxt "desktop:Keywords"
 msgid "process;task;CPU;memory;performance;"
+msgstr ""
+
+#: data/rediwm-terminal.desktop
+msgctxt "desktop:Keywords"
+msgid "shell;prompt;command;commandline;console;"
 msgstr ""
 
 #: data/rediwm-player.desktop
@@ -9823,6 +9838,11 @@ msgstr ""
 #: data/rediwm-pdf.desktop
 msgctxt "desktop:Name"
 msgid "PDF Viewer"
+msgstr ""
+
+#: data/rediwm-terminal.desktop
+msgctxt "desktop:Name"
+msgid "RediTerm"
 msgstr ""
 
 #: data/rediwm-release-safe.desktop

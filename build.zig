@@ -282,6 +282,7 @@ pub fn build(b: *std.Build) void {
     const images = app.images;
     const monitor = app.monitor;
     const calculator = app.calculator;
+    const rediterm = app.rediterm;
     const editor = app.editor;
     const pdf = app.pdf;
     const share_picker = app.share_picker;
@@ -292,7 +293,7 @@ pub fn build(b: *std.Build) void {
             .install_dir = .lib,
             .install_subdir = "rediwm",
         });
-        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor, monitor, calculator, theme_helper, video }) |exe|
+        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor, monitor, calculator, rediterm, theme_helper, video }) |exe|
             exe.root_module.addRPathSpecial("$ORIGIN/../lib/rediwm");
     }
     data.add(ctx);
@@ -317,14 +318,14 @@ pub fn build(b: *std.Build) void {
     const dbus_service = zig_tests.dbus_service;
     const polkit_service = zig_tests.polkit_service;
 
-    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, monitor.root_module, calculator.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
+    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, monitor.root_module, calculator.root_module, rediterm.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
         module.addImport("app_kit", app_kit_mod);
     }
     // Hosts also rasterize app-specific content through their own C imports.
-    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
+    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, rediterm.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
         inline for (.{ "cairo", "librsvg-2.0", "freetype2", "harfbuzz", "fontconfig" }) |lib| module.linkSystemLibrary(lib, .{});
     }
-    inline for (.{ compositor.root_module, ui_tests_module, files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, editor_tests.root_module, images_tests.root_module, pdf_tests.root_module, files_tests.root_module, ipc_tests_module, protocol_mod, session_supervisor.root_module, session_tests.root_module, share_picker_tests.root_module, dbus_tests.root_module }) |module| {
+    inline for (.{ compositor.root_module, ui_tests_module, files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, rediterm.root_module, editor_tests.root_module, images_tests.root_module, pdf_tests.root_module, files_tests.root_module, ipc_tests_module, protocol_mod, session_supervisor.root_module, session_tests.root_module, share_picker_tests.root_module, dbus_tests.root_module }) |module| {
         module.addImport("install_paths", layout.options);
         module.addImport("trace", trace_mod);
         module.addImport("ui", ui_mod);

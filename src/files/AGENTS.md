@@ -35,7 +35,14 @@ both the drawer and the app's single-line fields (search, location bar, dialog
 fields, chooser name); `app_terminal.zig` only owns the drawer's preedit.
 Support and limits are in `docs/files-terminal.md`;
 `zig build test-files-terminal` runs isolated PTY and headless fixtures. The
-pinned library is compiled only into Files/tests.
+pinned library is compiled only into Files, RediTerm and tests.
+
+RediTerm (`src/rediterm/`, `rediwm-terminal`) is the same engine in its own
+window: `paint.zig` (cells, cursor, palette, metrics, selection text) serves
+both, and `engine.c`/`child.c` changes reach both. It starts the shell without
+the Bash plugin (no following), or `-e` argv through `ft_start_command`
+(`child.c --command`); it shows the OSC 0/2 title (`ft_title`), which Files
+ignores. `tests/terminal.py`.
 
 * Poll slots 19–21 are PTY, integration socket and pidfd. Parsing/writes have a
   64 KiB budget per loop; POLLOUT is enabled only with queued work. Hidden

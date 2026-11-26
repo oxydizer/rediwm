@@ -83,9 +83,45 @@ test "terminal sessions and palette defaults remain independent" {
     const other = tc.ft_new(3, 10) orelse return error.OutOfMemory;
     defer tc.ft_free(other);
     feed(t, "hello");
-    tc.ft_palette(t, -1, 12, 34, 56);
+    tc.ft_palette(t, tc.FT_DEFAULT_FG, 12, 34, 56);
     try std.testing.expectEqualSlices(u8, &.{ 12, 34, 56 }, &(try cell(t, 0, 0)).fg);
     try std.testing.expectEqual(@as(u32, 0), (try cell(other, 0, 0)).chars[0]);
+}
+
+test "terminal color queries match the theme and the painted xterm palette" {
+    const t = tc.ft_new(3, 10) orelse return error.OutOfMemory;
+    defer tc.ft_free(t);
+    tc.ft_palette(t, tc.FT_DEFAULT_FG, 12, 34, 56);
+    tc.ft_palette(t, tc.FT_DEFAULT_BG, 1, 2, 3);
+    tc.ft_palette(t, tc.FT_CURSOR_COLOR, 255, 128, 0);
+    tc.ft_palette(t, 1, 190, 21, 42);
+
+    feed(t, "\x1b[31;48;5;17mA\x1b[38;5;232;48;5;255mB\x1b[0mC");
+    try std.testing.expectEqual([3]u8{ 190, 21, 42 }, (try cell(t, 0, 0)).fg);
+    try std.testing.expectEqual([3]u8{ 0, 0, 95 }, (try cell(t, 0, 0)).bg);
+    try std.testing.expectEqual([3]u8{ 8, 8, 8 }, (try cell(t, 0, 1)).fg);
+    try std.testing.expectEqual([3]u8{ 238, 238, 238 }, (try cell(t, 0, 1)).bg);
+    try std.testing.expectEqual([3]u8{ 1, 2, 3 }, (try cell(t, 0, 2)).bg);
+
+    var bytes: [256]u8 = undefined;
+    for ("\x1b]10;?;?;?\x1b") |byte| feed(t, &.{byte});
+    try std.testing.expectEqual(@as(usize, 0), tc.ft_take_output(t, &bytes, bytes.len));
+    feed(t, "\\\x1b]4;1;?;17;?;255;?\x07");
+    try std.testing.expectEqualStrings(
+        "\x1b]10;rgb:0c0c/2222/3838\x1b\\\x1b]11;rgb:0101/0202/0303\x1b\\" ++
+            "\x1b]12;rgb:ffff/8080/0000\x1b\\\x1b]4;1;rgb:bebe/1515/2a2a\x1b\\" ++
+            "\x1b]4;17;rgb:0000/0000/5f5f\x1b\\\x1b]4;255;rgb:eeee/eeee/eeee\x1b\\",
+        bytes[0..tc.ft_take_output(t, &bytes, bytes.len)],
+    );
+    feed(t, "\x1b]4;256;?;-1;?;1;#000000\x07\x1b]11;#ffffff\x07\x1b]10;??\x07");
+    try std.testing.expectEqual(@as(usize, 0), tc.ft_take_output(t, &bytes, bytes.len));
+    try std.testing.expectEqual([3]u8{ 190, 21, 42 }, (try cell(t, 0, 0)).fg);
+    try std.testing.expectEqual([3]u8{ 1, 2, 3 }, (try cell(t, 0, 2)).bg);
+
+    tc.ft_palette(t, tc.FT_DEFAULT_BG, 245, 246, 247);
+    feed(t, "\x1b]11;?\x07");
+    try std.testing.expectEqualStrings("\x1b]11;rgb:f5f5/f6f6/f7f7\x1b\\", bytes[0..tc.ft_take_output(t, &bytes, bytes.len)]);
+    try std.testing.expectEqual([3]u8{ 245, 246, 247 }, (try cell(t, 0, 2)).bg);
 }
 
 const FailingAllocator = struct {

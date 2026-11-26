@@ -588,6 +588,7 @@ pub const floatingGeometry = toplevel_layout.floatingGeometry;
 pub const setTiled = toplevel_layout.setTiled;
 pub const setTiledOn = toplevel_layout.setTiledOn;
 pub const setAutoTile = toplevel_layout.setAutoTile;
+pub const prepareAutoTile = toplevel_layout.prepareAutoTile;
 pub const clearAutoTile = toplevel_layout.clearAutoTile;
 pub const untile = toplevel_layout.untile;
 pub const leaveLayout = toplevel_layout.leaveLayout;

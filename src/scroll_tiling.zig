@@ -67,6 +67,30 @@ pub fn scrolling(server: *const Server, id: u8) bool {
     return server.world.workspaces.active and server.world.workspaces.layoutOf(id) == .scrolling;
 }
 
+/// Admit existing windows when their workspace starts scrolling. An explicit
+/// layout override was already in effect when switching between tiled modes.
+pub fn arrangeExisting(server: *Server, from_canvas: bool) void {
+    const manager = &server.world.workspaces;
+    var it = server.world.toplevels.iterator(.forward);
+    while (it.next()) |top| {
+        const id = top.workspace_id;
+        if (!scrolling(server, id) or top.currentIdentity().dialog) continue;
+        const override = manager.slots[id - 1].layout;
+        if (!from_canvas and override != null) continue;
+        // Returning from Canvas keeps the strip's floating choices. A snap
+        // carried over from Canvas itself is fitted by mapped() and opts out.
+        const returning = from_canvas and (override == .scrolling or manager.last_tiled == .scrolling);
+        if (!returning or top.tile != null) {
+            top.auto_float = false;
+            top.auto_float_override = null;
+        }
+        if (tiling.isFloating(top)) continue;
+        if (top.fullscreen and top.open_rules.fullscreen == true) continue;
+        if (top.maximized and top.open_rules.maximized == true) continue;
+        top.prepareAutoTile();
+    }
+}
+
 /// Whether the strip places `top`.
 pub fn isMember(top: *const Top) bool {
     return !top.minimized and !top.fullscreen and !top.maximized and top.auto_target != null and top.workspace_id != 0 and scrolling(top.server, top.workspace_id);

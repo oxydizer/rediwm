@@ -70,6 +70,13 @@ struct ft_terminal {
     uint64_t serial;
     struct ft_status status;
     const char *error;
+    /* OSC 0/2 window title, assembled from fragments; only RediTerm shows it. */
+    char title[256], title_next[256];
+    size_t title_len;
+    /* Enough for an OSC 4 query containing all 256 palette indices. */
+    char color_query[1536];
+    size_t color_query_len;
+    VTermColor cursor_color;
 };
 
 static int damage(VTermRect rect, void *user) { (void)rect; ((FT *)user)->changed=true; return 1; }
@@ -84,7 +91,19 @@ static int property(VTermProp prop, VTermValue *val, void *user) {
     case VTERM_PROP_REVERSE: t->reverse=val->boolean; break;
     case VTERM_PROP_ALTSCREEN: t->alternate=val->boolean; t->offset=0; break;
     case VTERM_PROP_MOUSE: t->mouse=val->number; break;
-    default: break; /* Titles, OSC 7/8/52: no desktop side effects. */
+    case VTERM_PROP_TITLE: {
+        /* Stored only; the host decides whether to show it. Control bytes
+         * become spaces and the text is cut at a fixed bound. */
+        VTermStringFragment frag=val->string;
+        if (frag.initial) t->title_len=0;
+        for (size_t i=0;i<frag.len && t->title_len<sizeof t->title_next-1;i++) {
+            unsigned char ch=(unsigned char)frag.str[i];
+            t->title_next[t->title_len++]=(char)(ch<32 || ch==127 ? ' ' : ch);
+        }
+        if (frag.final) { memcpy(t->title,t->title_next,t->title_len); t->title[t->title_len]=0; }
+        break;
+    }
+    default: break; /* Icon names, OSC 7/8/52: no desktop side effects. */
     }
     t->changed=true; return 1;
 }
@@ -173,6 +192,66 @@ static bool enqueue(FT *t, const char *bytes, size_t len) {
 }
 static void output(const char *bytes, size_t len, void *user) { (void)enqueue(user,bytes,len); }
 
+static VTermColor indexed_color(const FT *t, unsigned index) {
+    VTermColor color;
+    if (index<16) {
+        vterm_state_get_palette_color(t->state,(int)index,&color);
+    } else if (index<232) {
+        /* libvterm's built-in table differs from xterm-256color. */
+        static const uint8_t levels[]={0,95,135,175,215,255};
+        index-=16;
+        vterm_color_rgb(&color,levels[index/36],levels[index/6%6],levels[index%6]);
+    } else {
+        uint8_t gray=8+10*(index-232);
+        vterm_color_rgb(&color,gray,gray,gray);
+    }
+    return color;
+}
+
+static void color_reply(FT *t, int command, int index, VTermColor color) {
+    char prefix[16], reply[48];
+    if (index>=0) snprintf(prefix,sizeof prefix,"4;%d",index);
+    else snprintf(prefix,sizeof prefix,"%d",command);
+    int len=snprintf(reply,sizeof reply,"\033]%s;rgb:%04x/%04x/%04x\033\\",prefix,
+        color.rgb.red*257u,color.rgb.green*257u,color.rgb.blue*257u);
+    if (len>0 && (size_t)len<sizeof reply) (void)enqueue(t,reply,(size_t)len);
+}
+
+static int osc_color(int command, VTermStringFragment fragment, void *user) {
+    if (command!=4 && (command<10 || command>12)) return 0;
+    FT *t=user;
+    if (fragment.initial) t->color_query_len=0;
+    if (t->color_query_len>=sizeof t->color_query ||
+        fragment.len>=sizeof t->color_query-t->color_query_len) {
+        t->color_query_len=sizeof t->color_query;
+        return 1;
+    }
+    if (fragment.len) memcpy(t->color_query+t->color_query_len,fragment.str,fragment.len);
+    t->color_query_len+=fragment.len;
+    if (!fragment.final) return 1;
+
+    /* Report the theme's colors. OSC color setters do not change the theme. */
+    t->color_query[t->color_query_len]=0;
+    char *rest=t->color_query;
+    if (command==4) {
+        char *slot, *spec;
+        while ((slot=strsep(&rest,";")) && (spec=strsep(&rest,";"))) {
+            if (!*slot || strspn(slot,"0123456789")!=strlen(slot) || strcmp(spec,"?")) continue;
+            unsigned long index=strtoul(slot,NULL,10);
+            if (index<256) color_reply(t,4,(int)index,indexed_color(t,(unsigned)index));
+        }
+    } else {
+        VTermColor colors[3];
+        vterm_state_get_default_colors(t->state,&colors[0],&colors[1]);
+        colors[2]=t->cursor_color;
+        for (int slot=command; slot<=12 && rest; slot++) {
+            if (!strcmp(strsep(&rest,";"),"?")) color_reply(t,slot,-1,colors[slot-10]);
+        }
+    }
+    return 1;
+}
+static const VTermStateFallbacks fallbacks={.osc=osc_color};
+
 FT *ft_new(int rows, int cols) {
     return ft_new_alloc(rows,cols,NULL);
 }
@@ -185,6 +264,7 @@ FT *ft_new_alloc(int rows, int cols, const FT_Allocator *allocator) {
     memset(t,0,sizeof *t); t->allocator=a;
     t->master=t->channel=t->process=-1;
     t->rows=rows; t->cols=cols; t->cursor_visible=true; t->cursor_shape=1;
+    vterm_color_rgb(&t->cursor_color,255,255,255);
     if (setjmp(t->allocation_failure)) { allocation_failed(t); ft_free(t); return NULL; }
     t->vt=vterm_new_with_allocator(rows,cols,(VTermAllocatorFunctions *)&terminal_allocator,t);
     vterm_set_utf8(t->vt,1);
@@ -192,6 +272,7 @@ FT *ft_new_alloc(int rows, int cols, const FT_Allocator *allocator) {
     t->screen=vterm_obtain_screen(t->vt);
     vterm_output_set_callback(t->vt,output,t);
     vterm_screen_set_callbacks(t->screen,&callbacks,t);
+    vterm_screen_set_unrecognised_fallbacks(t->screen,&fallbacks,t);
     vterm_screen_enable_altscreen(t->screen,1);
     /* Physical rows remain stable in history. Screen/history resize clips and
      * pads, never silently reflows selections or joins unrelated commands. */
@@ -204,6 +285,38 @@ FT *ft_new_alloc(int rows, int cols, const FT_Allocator *allocator) {
 static bool valid_shell(const char *path) {
     struct stat st;
     return path && path[0]=='/' && !stat(path,&st) && S_ISREG(st.st_mode) && !access(path,X_OK);
+}
+/* Spawns the helper on a new PTY and integration channel. args[0] is the
+ * helper; the rest is its command line (see child.c). */
+static int spawn(FT *t, const char *helper, char *const args[]) {
+    int master=-1, slave=-1, pair[2]={-1,-1};
+    struct winsize size={.ws_row=(unsigned short)t->rows,.ws_col=(unsigned short)t->cols};
+    if (openpty(&master,&slave,NULL,NULL,&size)) goto failed;
+    if (fcntl(master,F_SETFD,FD_CLOEXEC) || fcntl(slave,F_SETFD,FD_CLOEXEC) ||
+        fcntl(master,F_SETFL,O_NONBLOCK) || socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC|SOCK_NONBLOCK,0,pair)) goto failed;
+#ifdef __linux__
+    int one=1;
+    if (setsockopt(pair[0],SOL_SOCKET,SO_PASSCRED,&one,sizeof one)) goto failed;
+#endif
+    posix_spawn_file_actions_t actions;
+    if (posix_spawn_file_actions_init(&actions)) goto failed;
+    int rc=0;
+    for (int fd=0;fd<3;fd++) if (posix_spawn_file_actions_adddup2(&actions,slave,fd)) rc=1;
+    if (posix_spawn_file_actions_adddup2(&actions,pair[1],3) ||
+        posix_spawn_file_actions_addclosefrom_np(&actions,4)) rc=1;
+    if (!rc) rc=posix_spawn(&t->pid,helper,&actions,NULL,args,environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (rc) { errno=rc; goto failed; }
+    close(slave); close(pair[1]); t->master=master; t->channel=pair[0];
+    t->process=rediwm_child_open(t->pid);
+    if (t->process<0) { ft_close(t,true); t->error="Could not watch terminal process"; return -1; }
+    t->changed=true; return 0;
+failed:
+    if (master>=0) close(master);
+    if (slave>=0) close(slave);
+    if (pair[0]>=0) close(pair[0]);
+    if (pair[1]>=0) close(pair[1]);
+    t->pid=0; t->error="Could not launch terminal"; return -1;
 }
 int ft_start(FT *t, const char *helper, const char *plugin, const char *directory, bool scope) {
     if (t->pid) return -1;
@@ -221,35 +334,26 @@ int ft_start(FT *t, const char *helper, const char *plugin, const char *director
         if (!getpwuid_r(getuid(),&account,account_buf,sizeof account_buf,&found) && found && valid_shell(found->pw_shell)) shell=found->pw_shell;
         else shell="/bin/sh";
     }
-    int master=-1, slave=-1, pair[2]={-1,-1};
-    struct winsize size={.ws_row=(unsigned short)t->rows,.ws_col=(unsigned short)t->cols};
-    if (openpty(&master,&slave,NULL,NULL,&size)) goto failed;
-    if (fcntl(master,F_SETFD,FD_CLOEXEC) || fcntl(slave,F_SETFD,FD_CLOEXEC) ||
-        fcntl(master,F_SETFL,O_NONBLOCK) || socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC|SOCK_NONBLOCK,0,pair)) goto failed;
-#ifdef __linux__
-    int one=1;
-    if (setsockopt(pair[0],SOL_SOCKET,SO_PASSCRED,&one,sizeof one)) goto failed;
-#endif
-    posix_spawn_file_actions_t actions;
-    if (posix_spawn_file_actions_init(&actions)) goto failed;
-    int rc=0;
-    for (int fd=0;fd<3;fd++) if (posix_spawn_file_actions_adddup2(&actions,slave,fd)) rc=1;
-    if (posix_spawn_file_actions_adddup2(&actions,pair[1],3) ||
-        posix_spawn_file_actions_addclosefrom_np(&actions,4)) rc=1;
     char *const args[]={(char *)helper,scope ? "1" : "0",(char *)directory,(char *)shell,(char *)plugin,NULL};
-    if (!rc) rc=posix_spawn(&t->pid,helper,&actions,NULL,args,environ);
-    posix_spawn_file_actions_destroy(&actions);
-    if (rc) { errno=rc; goto failed; }
-    close(slave); close(pair[1]); t->master=master; t->channel=pair[0];
-    t->process=rediwm_child_open(t->pid);
-    if (t->process<0) { ft_close(t,true); t->error="Could not watch terminal process"; return -1; }
-    t->changed=true; return 0;
-failed:
-    if (master>=0) close(master);
-    if (slave>=0) close(slave);
-    if (pair[0]>=0) close(pair[0]);
-    if (pair[1]>=0) close(pair[1]);
-    t->pid=0; t->error="Could not launch terminal"; return -1;
+    return spawn(t,helper,args);
+}
+int ft_start_command(FT *t, const char *helper, const char *directory, char *const argv[]) {
+    if (t->pid) return -1;
+#ifndef __linux__
+    (void)helper; (void)directory; (void)argv;
+    t->error="The terminal is not available on this system yet";
+    return -1;
+#endif
+    size_t count=0;
+    while (argv && argv[count]) count++;
+    if (!count || count>4096) { t->error="No command to run"; return -1; }
+    char **args=calloc(count+5,sizeof *args);
+    if (!args) { t->error="Could not launch terminal"; return -1; }
+    args[0]=(char *)helper; args[1]="0"; args[2]=(char *)directory; args[3]="--command";
+    memcpy(args+4,argv,count*sizeof *args);
+    int rc=spawn(t,helper,args);
+    free(args);
+    return rc;
 }
 void ft_resize(FT *t, int rows, int cols) {
     if (!t->vt) return;
@@ -410,11 +514,9 @@ void ft_palette(FT *t, int index, uint8_t r, uint8_t g, uint8_t b) {
     if (!t->vt) return;
     VTermColor color; vterm_color_rgb(&color,r,g,b);
     if (index>=0 && index<16) vterm_state_set_palette_color(t->state,index,&color);
-    else {
-        VTermColor fg,bg; vterm_state_get_default_colors(t->state,&fg,&bg);
-        if (index==-1) fg=color; else bg=color;
-        vterm_state_set_default_colors(t->state,&fg,&bg);
-    }
+    else if (index==FT_DEFAULT_FG) vterm_state_set_default_colors(t->state,&color,NULL);
+    else if (index==FT_DEFAULT_BG) vterm_state_set_default_colors(t->state,NULL,&color);
+    else if (index==FT_CURSOR_COLOR) t->cursor_color=color;
 }
 bool ft_cell(FT *t, int row, int col, FT_Cell *cell) {
     if (row<0 || row>=t->rows || col<0 || col>=t->cols) return false;
@@ -446,8 +548,8 @@ bool ft_cell_at(FT *t, int64_t line_number, int col, FT_Cell *cell) {
     vterm_state_get_default_colors(t->state,&default_fg,&default_bg);
     if (VTERM_COLOR_IS_DEFAULT_FG(&source.fg)) source.fg=default_fg;
     if (VTERM_COLOR_IS_DEFAULT_BG(&source.bg)) source.bg=default_bg;
-    vterm_screen_convert_color_to_rgb(t->screen,&source.fg);
-    vterm_screen_convert_color_to_rgb(t->screen,&source.bg);
+    if (VTERM_COLOR_IS_INDEXED(&source.fg)) source.fg=indexed_color(t,source.fg.indexed.idx);
+    if (VTERM_COLOR_IS_INDEXED(&source.bg)) source.bg=indexed_color(t,source.bg.indexed.idx);
     cell->fg[0]=source.fg.rgb.red; cell->fg[1]=source.fg.rgb.green; cell->fg[2]=source.fg.rgb.blue;
     cell->bg[0]=source.bg.rgb.red; cell->bg[1]=source.bg.rgb.green; cell->bg[2]=source.bg.rgb.blue;
     return true;
@@ -554,6 +656,8 @@ bool ft_cursor(const FT *t, int *row, int *col, int *shape) {
     *row=t->cursor.row; *col=t->cursor.col; *shape=t->cursor_shape;
     return t->cursor_visible && !t->offset;
 }
+const char *ft_title(const FT *t) { return t->title; }
+bool ft_alternate(const FT *t) { return t->alternate; }
 int ft_rows(const FT *t) { return t->rows; }
 int ft_cols(const FT *t) { return t->cols; }
 #ifdef FT_TEST

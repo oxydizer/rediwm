@@ -23,6 +23,8 @@ typedef struct {
 FT *ft_new_alloc(int rows, int cols, const FT_Allocator *allocator);
 void ft_free(FT *t);
 int ft_start(FT *t, const char *helper, const char *plugin, const char *directory, bool scope);
+/* Runs argv (NULL-terminated, searched in PATH) instead of the user's shell. */
+int ft_start_command(FT *t, const char *helper, const char *directory, char *const argv[]);
 void ft_resize(FT *t, int rows, int cols);
 void ft_feed(FT *t, const char *bytes, size_t len);
 int ft_pty(const FT *t);
@@ -41,6 +43,7 @@ void ft_close(FT *t, bool force);
 int ft_follow(FT *t, const char *directory);
 const struct ft_status *ft_status(const FT *t);
 bool ft_pending(const FT *t);
+enum { FT_DEFAULT_FG=-1, FT_DEFAULT_BG=-2, FT_CURSOR_COLOR=-3 };
 void ft_palette(FT *t, int index, uint8_t r, uint8_t g, uint8_t b);
 bool ft_cell(FT *t, int row, int col, FT_Cell *cell);
 int64_t ft_line(const FT *t);
@@ -57,6 +60,10 @@ void ft_mouse(FT *t, int row, int col, int button, bool pressed, int modifiers);
 int ft_mouse_mode(const FT *t);
 void ft_focus(FT *t, bool focused);
 bool ft_cursor(const FT *t, int *row, int *col, int *shape);
+/* Last complete OSC 0/2 title, control bytes replaced; "" until one arrives. */
+const char *ft_title(const FT *t);
+/* Whether the alternate screen (full-screen programs) is shown. */
+bool ft_alternate(const FT *t);
 int ft_rows(const FT *t);
 int ft_cols(const FT *t);
 #ifdef FT_TEST

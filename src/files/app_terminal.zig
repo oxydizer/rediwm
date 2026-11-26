@@ -213,12 +213,10 @@ pub fn terminalStep(self: *App, now: i64) void {
     }
     self.terminal.active = !self.terminal.glide.settled(now);
     if (self.terminal.session) |session| {
-        const size = ui.cairo.textSize();
-        const scale: f32 = @floatFromInt(self.scale);
-        self.terminal.cell_w = @max(1, ui.text.measureWidthF("M", .mono, size, scale) catch 9);
-        const metrics = ui.text.verticalMetrics(.mono, size, scale) catch null;
-        self.terminal.ascent = if (metrics) |m| m.ascent else size;
-        self.terminal.cell_h = @ceil(if (metrics) |m| m.ascent + m.descent + 2 else size + 5);
+        const metrics = @import("terminal/paint.zig").Metrics.measure(@floatFromInt(self.scale));
+        self.terminal.cell_w = metrics.cell_w;
+        self.terminal.ascent = metrics.ascent;
+        self.terminal.cell_h = metrics.cell_h;
         const body = self.terminalBody();
         // During a slide, use the final height and clip to the moving boundary;
         // no intermediate 0-row PTYs and no sequence of reflowing prompts.
@@ -305,34 +303,10 @@ pub fn terminalModifiers(self: *App) c_int {
 pub fn terminalCopy(self: *App) void {
     const session = self.terminal.session orelse return;
     const selection = self.terminal.selection orelse return;
-    const ends = selection.ordered();
-    var bytes: std.ArrayList(u8) = .empty;
-    defer bytes.deinit(self.allocator);
-    var line = @max(ends[0].line, tc.ft_line(session) - tc.ft_history(session));
-    const last_line = @min(ends[1].line, tc.ft_line(session) + tc.ft_rows(session) - 1);
-    while (line <= last_line) : (line += 1) {
-        const start = if (line == ends[0].line) ends[0].col else 0;
-        const end = if (line == ends[1].line) ends[1].col else tc.ft_cols(session);
-        const begin = bytes.items.len;
-        var col = start;
-        while (col < end) : (col += 1) {
-            var cell: tc.FT_Cell = undefined;
-            if (!tc.ft_cell_at(session, line, col, &cell) or cell.width == 0) continue;
-            if (cell.chars[0] == 0) bytes.append(self.allocator, ' ') catch return else for (cell.chars) |ch| {
-                if (ch == 0 or ch == std.math.maxInt(u32)) break;
-                var encoded: [4]u8 = undefined;
-                const len = std.unicode.utf8Encode(@intCast(ch), &encoded) catch continue;
-                bytes.appendSlice(self.allocator, encoded[0..len]) catch return;
-            }
-            if (bytes.items.len > 1024 * 1024 - 32) return;
-        }
-        if (!tc.ft_wrapped_at(session, line)) {
-            while (bytes.items.len > begin and bytes.items[bytes.items.len - 1] == ' ') _ = bytes.pop();
-            if (line < last_line) bytes.append(self.allocator, '\n') catch return;
-        }
-    }
+    const bytes = @import("terminal/paint.zig").selectionText(self.allocator, session, selection) catch return;
+    defer self.allocator.free(bytes);
     self.clipboard_text.clearRetainingCapacity();
-    self.clipboard_text.appendSlice(self.allocator, bytes.items) catch return;
+    self.clipboard_text.appendSlice(self.allocator, bytes) catch return;
     self.clearClipboard();
     self.clipboard_cut = false;
     self.clipboard_is_text = true;

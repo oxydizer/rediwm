@@ -160,6 +160,73 @@ def mode_memory():
     print("PASS: tiled layout kept across Canvas", flush=True)
 
 
+def mode_entry():
+    """An existing stack joins the strip except where settings opt out."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-scroll-entry-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        hints = tmp / "fixed.hints"
+        hints.write_text("240 160 240 160")
+        config = BASE.format(mode="canvas") + 'floating_apps = ["entry-app-float"]\n' + MOTION_OFF + '''
+[keybinds]
+"Super+F11" = "tile_left"
+[[window_rules]]
+app_id = "entry-rule-float"
+floating = true
+'''
+        s = Session(tmp, config)
+        try:
+            ipc = s.ipc
+            snapped = s.launch("entry-snapped")
+            s.chord("F11")
+            maximized = s.launch("entry-maximized")
+            ipc.maximize(maximized)
+            fullscreen = s.launch("entry-fullscreen")
+            ipc.fullscreen(fullscreen)
+            fixed = s.launch("entry-fixed", REDIWM_TEST_CONSTRAINTS=str(hints))
+            floats = [s.launch(name) for name in ("entry-app-float", "entry-rule-float")]
+            s.settle_all()
+            original = {snapped: "manual", maximized: "maximized", fullscreen: "fullscreen"}
+            assert all(s.window(id)["placement"] == value for id, value in original.items())
+
+            def check_strip():
+                ids = [snapped, maximized, fullscreen, fixed]
+                wait_for(lambda: all(s.window(id)["placement"] == "automatic" for id in ids), "existing windows join the strip")
+                s.settle_all()
+                frames = sorted((s.frame(id), id) for id in ids)
+                assert all(a[0] + a[2] <= b[0] for (a, _), (b, _) in zip(frames, frames[1:])), frames
+                assert all(s.window(id)["placement"] == "floating" for id in floats)
+                box = ipc.get_window_debug(fixed)["client_box"]
+                assert (box["width"], box["height"]) == (240, 160), box
+                ipc.focus_window(frames[0][1])
+                for _, id in frames[1:]:
+                    s.chord("Right")
+                    assert ipc.get_focused_window()["id"] == id
+                s.settle_all()
+                assert s.shown(frames[-1][1])
+
+            s.set_mode("scrolling")
+            check_strip()
+            s.set_mode("canvas")
+            s.settle_all()
+            assert all(s.window(id)["placement"] == value for id, value in original.items())
+
+            s.set_mode("workspaces")
+            floating_workspace = s.launch("entry-floating-workspace")
+            ipc.action("move_to_workspace", {"id": floating_workspace, "workspace": 2})
+            ipc.action("set_workspace_layout", {"workspace": 2, "layout": "floating"})
+            ipc.action("move_window_to", {"id": fixed, "x": 12, "y": 12})
+            s.set_mode("scrolling")
+            check_strip()
+            assert s.workspace(2)["layout"] == "floating" and s.window(floating_workspace)["placement"] == "floating"
+        except Exception:
+            s.dump_log()
+            raise
+        finally:
+            s.stop()
+    print("PASS: existing windows join the strip and configured floats stay out", flush=True)
+
+
 def keyboard_strip():
     """Columns, the view following focus, strip-order keys and culling."""
     with tempfile.TemporaryDirectory(prefix="rediwm-scrolling-") as directory:
@@ -424,6 +491,7 @@ def strip_restart():
 if __name__ == "__main__":
     only = sys.argv[1] if len(sys.argv) > 1 else None
     if only in (None, "memory"): mode_memory()
+    if only in (None, "entry"): mode_entry()
     if only in (None, "keyboard"): keyboard_strip()
     if only in (None, "restart"): strip_restart()
     if only in (None, "outputs"):

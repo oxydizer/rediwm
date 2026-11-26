@@ -22,6 +22,11 @@ the compositor doesn't decorate windows).
 The host drives an `App` you own. The fields and methods it needs are
 listed at the top of `src/app_kit/window.zig`. `src/calculator/app.zig` is a
 complete example. Set `dirty = true` to get a frame and `closed = true` to quit.
+Optional declarations add a plain-text clipboard (`pasteText`), the App's own
+descriptors and deadlines in the host's poll loop (`pollFds`, `pollReady`,
+`timeoutMs`) and a hook after live theme reloads (`themeChanged`); the title
+is resent whenever `getTitle` changes. RediTerm (`src/rediterm/app.zig`) uses
+all of them.
 
 ## Setting up the package
 
