@@ -374,7 +374,8 @@ See `docs/files-torrents.md` for dependencies, storage and lifecycle.
 * Idle releases the engine after pending resume writes drain. UI subscribers
   can remain attached without torrent worker timers. Last subscriber leaving
   exits a stopped helper; active downloads/seeding keep it alive.
-* `zig build test-files-torrents` uses a private bus, temporary state and a
+* `zig build test-files-torrents` (the helper, then `tests/files_torrent_browse.py`
+  driving Files in a headless session) uses a private bus, temporary state and a
   noninstalled loopback network shim. Never fetch public torrents in tests.
 
 ## Audio toolbar
