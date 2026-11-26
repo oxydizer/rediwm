@@ -12,9 +12,12 @@ const existing_mod = @import("io_copy_existing.zig");
 
 pub const chunk_size: usize = 64 * 1024;
 /// A unit copies chunks until this many bytes or `unit_ns`, whichever comes
-/// first, then yields for fairness, cancellation and progress.
+/// first, then yields for fairness, cancellation and progress. Jobs take
+/// turns by unit, so a long unit takes a bigger share of the workers: at
+/// 10 ms an extraction beside two copies ran about 20 % slower; at 2 ms it
+/// ran as before.
 pub const unit_bytes: u64 = 1024 * 1024;
-const unit_ns: u64 = 10 * std.time.ns_per_ms;
+const unit_ns: u64 = 2 * std.time.ns_per_ms;
 const small_buffer_size: usize = 16 * 1024;
 const large_buffer_size: usize = 256 * 1024;
 const max_buffer_size: usize = 1024 * 1024;
