@@ -211,6 +211,8 @@ pub const Setup = struct {
     force_csd: bool,
     /// Joins the helper threads of windows that close (`reaper.zig`).
     reaper: *@import("reaper.zig").Reaper,
+    /// Each folder's remembered view (`folder_views.zig`).
+    folder_views: *@import("folder_views.zig").Store,
 };
 
 /// What one window opens with. Only the first window has more than a folder.
@@ -265,12 +267,20 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     try reaper.start();
     defer reaper.deinit();
 
+    // Read once here; its own thread saves it, last after the windows close.
+    const folder_views = @import("folder_views.zig");
+    var views: folder_views.Store = undefined;
+    const views_path = folder_views.statePath(a, init.minimal.environ) catch null;
+    defer if (views_path) |p| a.free(p);
+    try views.start(init.io, views_path);
+    defer views.deinit();
+
     // One connection for every window: the compositor sees one client, which
     // is what lets a tab move from one of its windows to another.
     const display = try wl.Display.connect(null);
     defer display.disconnect();
 
-    const setup: Setup = .{ .io = init.io, .environ = init.minimal.environ, .home_dir = home_dir, .force_csd = force_csd, .reaper = &reaper };
+    const setup: Setup = .{ .io = init.io, .environ = init.minimal.environ, .home_dir = home_dir, .force_csd = force_csd, .reaper = &reaper, .folder_views = &views };
 
     const windows = &open_windows;
     defer {

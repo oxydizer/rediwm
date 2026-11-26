@@ -58,6 +58,7 @@ const pageClicked = panel.pageClicked;
 const deviceClicked = panel.deviceClicked;
 const brightnessChanged = panel.brightnessChanged;
 const filesSingleClickChanged = panel.filesSingleClickChanged;
+const filesFoldersFirstChanged = panel.filesFoldersFirstChanged;
 const filesAudioPlayerChanged = panel.filesAudioPlayerChanged;
 const ControlCenter = @This();
 
@@ -127,6 +128,8 @@ general_display: [2]Widget = undefined,
 general_display_text: [2]Widget = undefined,
 general_files: [2]Widget = undefined,
 general_files_text: [2]Widget = undefined,
+general_folders: [2]Widget = undefined,
+general_folders_text: [2]Widget = undefined,
 general_audio: [2]Widget = undefined,
 general_audio_text: [2]Widget = undefined,
 brightness_children: [2]Widget = undefined,

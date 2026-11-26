@@ -1,4 +1,4 @@
-//! Files Git and Transfers view tests.
+//! Files Git and Transfers view tests, and per-folder views.
 
 const std = @import("std");
 const App = @import("app.zig").App;
@@ -221,4 +221,44 @@ test "torrent ETA uses remaining selected bytes and is unknown while paused or s
     try std.testing.expectEqual(@as(?i64, 0), eta(transfer));
     transfer.pending = true;
     try std.testing.expect(eta(transfer) == null);
+}
+
+test "each folder keeps its own view and untouched folders follow the defaults" {
+    const folder_views = @import("folder_views.zig");
+    var app = try testApp();
+    defer app.deinit();
+    var store: folder_views.Store = undefined;
+    try store.start(std.testing.io, null);
+    defer store.deinit();
+    app.folder_views = &store;
+
+    app.applyFolderView();
+    app.list_view = true;
+    app.recordFolderView();
+    try std.testing.expectEqual(folder_views.View{ .list = true }, store.get("/tmp"));
+
+    try app.history.navigate("/tmp/a");
+    app.applyFolderView();
+    try std.testing.expect(!app.list_view and app.folders_first);
+    app.setSort(.size);
+    app.folders_first = false;
+    app.recordFolderView();
+
+    try app.history.navigate("/tmp");
+    app.applyFolderView();
+    try std.testing.expect(app.list_view and app.folders_first);
+    try std.testing.expectEqual(@import("app_model.zig").Sort.name, app.sort_mode);
+
+    // A new default reaches folders that never chose; a choice equal to the
+    // default is no longer kept, so the folder follows the default again.
+    app.default_folders_first = false;
+    app.applyFolderView();
+    try std.testing.expect(!app.folders_first);
+    try app.history.navigate("/tmp/a");
+    app.applyFolderView();
+    try std.testing.expect(!app.folders_first);
+    try std.testing.expectEqual(@import("app_model.zig").Sort.size, app.sort_mode);
+    app.recordFolderView();
+    try std.testing.expectEqual(folder_views.View{ .sort = 2 }, store.get("/tmp/a"));
+    try std.testing.expect(!app.folderViewIsDefault());
 }

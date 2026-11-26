@@ -16,6 +16,7 @@ const ops_mod = @import("ops.zig");
 const dirsize = @import("dirsize.zig");
 const thumbs_mod = @import("thumbs.zig");
 const reaper_mod = @import("reaper.zig");
+const folder_views_mod = @import("folder_views.zig");
 const thumb_decode = @import("thumb_decode.zig");
 const volumes_mod = @import("volumes.zig");
 const player_link = @import("player_link.zig");
@@ -30,6 +31,7 @@ const chooser_mod = @import("chooser.zig");
 const Editor = @import("editor.zig").Editor;
 const app_hover = @import("app_hover.zig");
 const app_listing = @import("app_listing.zig");
+const app_folder_views = @import("app_folder_views.zig");
 const app_dialogs = @import("app_dialogs.zig");
 const app_fileops = @import("app_fileops.zig");
 const app_trash = @import("app_trash.zig");
@@ -159,9 +161,19 @@ pub const App = struct {
     initial_selection: ?[]const u8 = null,
     error_message: ?[]const u8 = null,
     show_hidden: bool = false,
-    /// Directories ahead of files in every sort order (saved with the view).
+    /// Directories ahead of files in every sort order. This, `list_view` and
+    /// the sort are the current folder's view (`app_folder_views.zig`).
     folders_first: bool = true,
     list_view: bool = false,
+    /// What a folder without a remembered view gets: grid/list and sort from
+    /// `preferences.zig`, folders-first from `files_folders_first`.
+    default_list_view: bool = false,
+    default_sort: Sort = .name,
+    default_folders_first: bool = true,
+    /// Shared by every window (`main.run`); null in tests that build an App alone.
+    folder_views: ?*folder_views_mod.Store = null,
+    /// The store's generation this window last showed.
+    folder_views_seen: u64 = 0,
     non_git_list_view: ?bool = null,
     /// Each sidebar section expands independently. Places is open by default.
     sidebar_expanded: [4]bool = .{ true, false, false, false },
@@ -192,7 +204,7 @@ pub const App = struct {
     /// Set when a file menu opens in the Trash: whether Restore applies.
     trash_restorable: bool = false,
     file_menu_labels: [12][]const u8 = undefined,
-    menu_label_text: [8][]const u8 = undefined,
+    menu_label_text: [9][]const u8 = undefined,
     column_label_text: [5][]const u8 = undefined,
     place_menu_labels: [4][]const u8 = undefined,
     menu_place: usize = 0,
@@ -399,12 +411,15 @@ pub const App = struct {
         if (self.preferences_path) |path| {
             const prefs = Preferences.load(allocator, io, path);
             self.list_view = prefs.list;
+            self.default_list_view = prefs.list;
             self.unpinned_places = prefs.unpinned_places;
             self.git_view = prefs.git_view;
-            self.folders_first = prefs.folders_first;
             self.terminal.requested_height = @intCast(prefs.terminal_height);
             self.sort_mode = @fromBackingInt(@intCast(prefs.sort));
+            self.default_sort = self.sort_mode;
         }
+        self.default_folders_first = @import("settings.zig").foldersFirst();
+        self.folders_first = self.default_folders_first;
         self.pins_path = pins_mod.statePath(allocator, environ) catch null;
         if (self.pins_path) |path| self.pins = pins_mod.List.loadPaths(allocator, io, path);
         self.location.anchor = self.location.cursor;
@@ -579,7 +594,7 @@ pub const App = struct {
 
     pub fn savePreferences(self: *App) void {
         const path = self.preferences_path orelse return;
-        (Preferences{ .list = self.non_git_list_view orelse self.list_view, .sort = @backingInt(self.sort_mode), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height), .folders_first = self.folders_first }).save(self.allocator, self.io, path) catch {
+        (Preferences{ .list = self.default_list_view, .sort = @backingInt(self.default_sort), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height) }).save(self.allocator, self.io, path) catch {
             self.setStatusNotice(tr("Could not save view preferences"), true);
         };
     }
@@ -638,6 +653,14 @@ pub const App = struct {
     pub const replaceBlank = app_tabs.replaceBlank;
     pub const discardTab = app_tabs.discard;
     pub const tabStart = app_tabs.start;
+
+    // app_folder_views.zig
+    pub const applyFolderView = app_folder_views.applyFolderView;
+    pub const recordFolderView = app_folder_views.recordFolderView;
+    pub const folderViewIsDefault = app_folder_views.folderViewIsDefault;
+    pub const resetFolderView = app_folder_views.resetFolderView;
+    pub const syncFolderView = app_folder_views.syncFolderView;
+    pub const setDefaultFoldersFirst = app_folder_views.setDefaultFoldersFirst;
 
     // app_listing.zig
     pub const navigate = app_listing.navigate;

@@ -46,6 +46,18 @@ surface (keys by `focused`). `app_tabs.zig` `take` and `adopt` move a tab, with
 its history, between windows; tear-off and drop requests reach the event loop as
 `App.tear_tab` and the strip's `drop_on`; "New Window" is `App.new_window`.
 
+## Folder views
+
+Grid or list, the sort and folders-first belong to the folder, not the window
+or tab (`folder_views.zig`, `app_folder_views.zig`). Entering a folder
+(`applyHistoryNav`) applies its remembered view; changing one of the three
+calls `recordFolderView`, which keeps only what differs from the defaults
+(grid/list and sort from `preferences.zig`, folders-first from the compositor
+config's `files_folders_first`, set in Control Center). One store per process
+is shared by every window; a window shows another's change in `sync`. The
+store's own thread writes `$XDG_STATE_HOME/rediwm/files-folder-views`; the
+UI never waits for it. A repository's forced list view is not recorded.
+
 ## Terminal drawer
 
 `app_terminal.zig` owns the per-window controller; `terminal/` owns libvterm,

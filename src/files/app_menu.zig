@@ -57,7 +57,7 @@ pub fn runHeader(self: *App, action: header.Action) void {
         .grid, .list => {
             if (self.repository() != null) return;
             self.list_view = action == .list;
-            self.savePreferences();
+            self.recordFolderView();
             self.last_click_index = null;
             self.clampScroll();
             if (self.focused_index) |idx| self.revealIndex(idx);
@@ -115,7 +115,7 @@ pub fn menuSeparatorBefore(self: *App, row: usize) bool {
         },
         .background => row == 2,
         .sidebar => self.placeActions()[row] == .properties,
-        .sort => row == 2 or row == 4 or row == 6,
+        .sort => row == 2 or row == 4 or row == 6 or row == sort_options.len,
         .app => row == 2 or row == 4,
         else => false,
     };
@@ -178,6 +178,8 @@ pub fn backgroundMenu(self: *App) enum { normal, refresh_only, trash } {
 pub fn menuDisabled(self: *App, row: usize) bool {
     return switch (self.menu orelse return false) {
         .file => row < self.fileActions().len and self.fileActions()[row] == .restore and !self.trash_restorable,
+        // Grid or list, sort and folders-first back to the defaults.
+        .sort => row == sort_options.len and self.folderViewIsDefault(),
         else => false,
     };
 }
@@ -315,7 +317,7 @@ pub fn placeActions(self: *App) []const PlaceAction {
 pub fn menuLabels(self: *App) []const []const u8 {
     const messages: []const i18n.Message = switch (self.menu orelse return &.{}) {
         .new => &.{ i18n.msg("New Folder"), i18n.msg("New File") },
-        .sort => &.{ i18n.msg("Name: A to Z"), i18n.msg("Name: Z to A"), i18n.msg("Largest first"), i18n.msg("Smallest first"), i18n.msg("Newest first"), i18n.msg("Oldest first"), i18n.msg("Type: A to Z"), i18n.msg("Type: Z to A") },
+        .sort => &.{ i18n.msg("Name: A to Z"), i18n.msg("Name: Z to A"), i18n.msg("Largest first"), i18n.msg("Smallest first"), i18n.msg("Newest first"), i18n.msg("Oldest first"), i18n.msg("Type: A to Z"), i18n.msg("Type: Z to A"), i18n.msg("Reset Folder View") },
         .filter => if (self.repository() != null)
             &.{ i18n.msg("Folders only"), i18n.msg("Show hidden files"), i18n.msg("Show changed files"), i18n.msg("Show full paths") }
         else
@@ -414,7 +416,7 @@ pub fn runMenu(self: *App, row: usize) void {
             3 => {
                 self.folders_first = !self.folders_first;
                 self.rebuildView();
-                self.savePreferences();
+                self.recordFolderView();
             },
             4 => self.terminalToggle(),
             5 => self.openTransfers(),
@@ -430,9 +432,13 @@ pub fn runMenu(self: *App, row: usize) void {
             else => {},
         },
         .sort => {
-            if (row < sort_options.len) self.setSort(sort_options[row]);
+            if (row >= sort_options.len) {
+                self.resetFolderView();
+                return;
+            }
+            self.setSort(sort_options[row]);
             self.rebuildView();
-            self.savePreferences();
+            self.recordFolderView();
             self.scroll_y = 0;
             if (self.focused_index) |idx| self.revealIndex(idx);
             self.startSortFeedback(nowMs());
@@ -496,7 +502,7 @@ pub fn renderMenu(self: *App, cr: *c.cairo_t) void {
     context_menu.frame(cr, .{ .x = self.menu_x, .y = self.menu_y, .w = width, .h = height }, context);
     for (labels, 0..) |label, i| {
         const row = self.menuRowRect(i);
-        const checked = (self.menu == .sort and sort_options[i] == self.effectiveSort()) or
+        const checked = (self.menu == .sort and i < sort_options.len and sort_options[i] == self.effectiveSort()) or
             (self.menu == .app and ((i == 2 and self.show_hidden) or (i == 3 and self.folders_first))) or
             (self.menu == .filter and ((i == 0 and self.folders_only) or (i == 1 and self.show_hidden) or (i == 2 and self.changed_only) or (i == 3 and self.full_paths)));
         context_menu.row(cr, .{ .x = row.x, .y = row.y, .w = row.w, .h = row.h }, .{

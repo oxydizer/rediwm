@@ -3431,6 +3431,10 @@ msgstr ""
 msgid "In Files, show a play button on audio files and play them in the background player. A default application chosen in Open With still takes over."
 msgstr ""
 
+#: src/control_center/tree.zig
+msgid "In Files, list folders before files. A folder where you changed this in Files keeps its own choice."
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Inactive window opacity"
 msgstr ""
@@ -7447,6 +7451,10 @@ msgstr ""
 msgid "Type: Z to A"
 msgstr ""
 
+#: src/files/app_menu.zig
+msgid "Reset Folder View"
+msgstr ""
+
 #: src/control_center/sections/appearance_rows.zig
 msgid "UI font"
 msgstr ""
@@ -8342,6 +8350,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "music play sound mp3 flac wav files"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "files folders directories sort order before"
 msgstr ""
 
 #: src/control_center/search_index.zig

@@ -156,6 +156,7 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
     self.scroll_y = 0;
     self.selection_anchor = null;
     self.focused_index = null;
+    self.applyFolderView();
     if (transfer_browse) {
         self.loading = false;
         self.scan_notice_shown = false;
@@ -201,6 +202,7 @@ pub fn sync(self: *App) void {
         self.setStatusNotice(notice, false);
     }
     self.syncFolderSizes();
+    self.syncFolderView();
     if (self.dialog) |*dlg| if (dlg.trash_properties) |*props| if (props.poll()) self.invalidate();
     _ = c.pthread_mutex_lock(&self.worker.mutex);
     const animation_settings = self.worker.animation_settings;
@@ -210,6 +212,7 @@ pub fn sync(self: *App) void {
     if (new_theme) |t| {
         self.single_click_open = t.single_click_open;
         self.audio_player = t.audio_player;
+        self.setDefaultFoldersFirst(t.folders_first);
         self.open_on_release = null;
         t.apply();
         self.theme_cfg.override_root = @import("settings.zig").iconRoot();
@@ -530,7 +533,7 @@ pub fn sortByColumn(self: *App, column: usize) void {
     };
     self.setSort(mode);
     self.rebuildView();
-    self.savePreferences();
+    self.recordFolderView();
     self.startSortFeedback(nowMs());
 }
 
