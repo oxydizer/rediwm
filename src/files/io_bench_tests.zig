@@ -24,6 +24,11 @@
 //!   continued with SIGCONT before teardown, so the copy hangs as on a dead
 //!   network mount and the run still ends. Two windows copy from it, more
 //!   than the service task pool has workers.
+//! * `REDIWM_IO_BENCH_STALL_MODE`: `prepare` (default) stops the daemon before
+//!   the stalled copies are submitted, so they hang in their prepare task;
+//!   `running` submits one stalled copy, waits until it has copied bytes, then
+//!   stops the daemon, so it hangs inside the discovery and operation
+//!   executors. The folder should be large enough to take a few seconds.
 const std = @import("std");
 const c = @import("c.zig").api;
 const io_coordinator = @import("io_coordinator.zig");
@@ -276,11 +281,34 @@ test "files io responsiveness benchmark" {
     io_thread_guard.markCurrent(.ui);
     defer io_thread_guard.markCurrent(.none);
 
-    if (stall_path) |_| stallSignal(c.SIGSTOP);
+    const stall_running = if (getenv("REDIWM_IO_BENCH_STALL_MODE")) |mode| std.mem.eql(u8, mode, "running") else false;
     defer if (stall_path) |_| stallSignal(c.SIGCONT);
+    if (stall_path) |path| {
+        if (stall_running) {
+            // One stalled copy, started while the mount still answers.
+            _ = jobs.pop();
+            const job = &jobs.items[jobs.items.len - 1];
+            job.submitted_ns = nowNs();
+            try submitCopy(windows[job.window], job.tag, destinations[3], &.{path});
+            const give_up = nowNs() + 60 * std.time.ns_per_s;
+            while (nowNs() < give_up) {
+                _ = support.waitReadable(service.updateWakeFd(), frame_ms);
+                _ = service.drainUpdateWake();
+                var out: [16]io_service.JobRecord = undefined;
+                const result = windows[job.window].fetchChanges(&out) catch continue;
+                for (out[0..result.count]) |record| if (record.submit_tag == job.tag) {
+                    job.record = record;
+                };
+                if (job.record) |record| if (record.state == .running and record.completed_bytes > 0) break;
+            } else return error.StalledCopyNeverStarted;
+            std.debug.print("BENCH,stall,running,after_bytes,{d}\n", .{job.record.?.completed_bytes});
+        }
+        stallSignal(c.SIGSTOP);
+    }
 
     const started = nowNs();
     for (jobs.items) |*job| {
+        if (job.submitted_ns != 0) continue;
         job.submitted_ns = nowNs();
         const window = windows[job.window];
         switch (job.tag) {
