@@ -28,6 +28,7 @@ const app_drafts = @import("app_drafts.zig");
 const app_move = @import("app_move.zig");
 const app_recent = @import("app_recent.zig");
 const drafts = @import("drafts.zig");
+const editor_preferences = @import("preferences.zig");
 const a = std.heap.c_allocator;
 pub const top: f64 = 40;
 pub const status_h: f64 = 26;
@@ -162,6 +163,19 @@ pub const App = struct {
         var self: App = .{ .io = io };
         try self.newTab();
         return self;
+    }
+    pub fn loadPreferences(self: *App) void {
+        const file = editor_preferences.Preferences.path(a, self.environ) catch return;
+        defer a.free(file);
+        self.line_numbers = editor_preferences.Preferences.load(a, self.io, file).line_numbers;
+    }
+    pub fn savePreferences(self: *App) void {
+        const file = editor_preferences.Preferences.path(a, self.environ) catch return;
+        defer a.free(file);
+        const preferences: editor_preferences.Preferences = .{
+            .line_numbers = self.line_numbers,
+        };
+        preferences.save(a, self.io, file) catch {};
     }
     pub fn deinit(self: *App) void {
         self.deinitDrafts();

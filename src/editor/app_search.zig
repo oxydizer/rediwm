@@ -67,7 +67,7 @@ pub fn editorLayout(self: *App) layout.Layout {
             ui.textSize(),
             scale,
         ) catch 0;
-        gutter_width = @as(f64, @floatCast(measured)) + 16;
+        gutter_width = @as(f64, @floatCast(measured)) + 8;
     }
     const input: layout.Input = .{
         .width = @floatFromInt(self.w),

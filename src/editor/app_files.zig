@@ -196,6 +196,7 @@ pub fn act(self: *App, action: Action) void {
         },
         .line_numbers => {
             self.line_numbers = !self.line_numbers;
+            self.savePreferences();
             self.port().clamp();
         },
     }
