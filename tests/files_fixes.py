@@ -30,7 +30,7 @@ def run(scale="1"):
             (home / name).mkdir()
         env_extra = {"HOME": str(home), "XDG_STATE_HOME": str(tmp / "state"),
                      "XDG_CACHE_HOME": str(tmp / "cache"), "REDIWM_FILES_DEVICES": "0"}
-        comp, log = spawn_compositor(tmp, scale=scale, config_content="[compositor]\nxwayland = false\n[input]\ninvert_scroll = false\n", env_extra=env_extra)
+        comp, log = spawn_compositor(tmp, scale=scale, config_content="[compositor]\nxwayland = false\n[input]\n", env_extra=env_extra)
         processes = []
         logs = []
         try:

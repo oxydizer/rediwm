@@ -44,7 +44,7 @@ print(f'fixture,backlight,{value},{value}%,100')
             # A translucent window background: only the chrome may show it.
             (tmp / "theme.toml").write_text('[theme]\nwindow_bg = "rgba(16,18,21,0.5)"\napp_bg = "#101215"\n')
             env.update(PATH=str(helpers) + os.pathsep + os.environ["PATH"], SETTINGS_TEST_DIR=str(tmp), REDIWM_THEME=str(tmp / "theme.toml"))
-            process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content="[input]\ninvert_scroll = false\n", env_extra=env)
+            process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content="[input]\n", env_extra=env)
             try:
                 with IPCClient(tmp, timeout=15) as ipc:
                     ipc.wait_for("wallpaper_presented", timeout_ms=10000)
@@ -868,7 +868,7 @@ def systemd_services(scale):
             assert select.select([result.stdout], [], [], 10)[0], 'fake systemd startup'
             assert result.stdout.readline().strip() == 'ready'
             return result
-        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'gles2'), env_extra={'DBUS_SYSTEM_BUS_ADDRESS': os.environ['DBUS_SESSION_BUS_ADDRESS'], 'GIO_USE_VFS': 'local', 'LD_PRELOAD': str(hook), 'SYSTEMD_TEST_EDITOR': str(editor), 'SYSTEMD_TEST_ROOT': str(root), 'SYSTEMD_TEST_LOG': str(calls)}, config_content='[input]\ninvert_scroll = false\n')
+        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'gles2'), env_extra={'DBUS_SYSTEM_BUS_ADDRESS': os.environ['DBUS_SESSION_BUS_ADDRESS'], 'GIO_USE_VFS': 'local', 'LD_PRELOAD': str(hook), 'SYSTEMD_TEST_EDITOR': str(editor), 'SYSTEMD_TEST_ROOT': str(root), 'SYSTEMD_TEST_LOG': str(calls)}, config_content='[input]\n')
         try:
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.open_control_center()

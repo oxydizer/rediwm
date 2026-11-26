@@ -11,7 +11,7 @@ from ipc_client import IPCClient, spawn_compositor, stop_process
 def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-mini-map-") as directory:
         tmp = Path(directory)
-        base = '[input]\ninvert_scroll = false\n[animations]\nenabled = false\n[compositor]\nxwayland = false\n'
+        base = '[input]\n[animations]\nenabled = false\n[compositor]\nxwayland = false\n'
         process, log = spawn_compositor(tmp, scale=os.getenv('REDIWM_TEST_SCALE', '1'),
             renderer=os.getenv('REDIWM_TEST_RENDERER', 'gles2'), config_content=base,
             env_extra={'DBUS_SESSION_BUS_ADDRESS': '', 'XDG_CACHE_HOME': str(tmp/'cache'),

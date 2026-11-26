@@ -25,7 +25,6 @@ enabled = false
 [animations]
 enabled = false
 [input]
-invert_scroll = false
 ''', env_extra={'DBUS_SESSION_BUS_ADDRESS': '',
                 'XDG_CONFIG_HOME': str(tmp/'config'), 'XDG_CACHE_HOME': str(tmp/'cache')})
         try:
