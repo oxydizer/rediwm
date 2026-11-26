@@ -68,8 +68,8 @@ longer have a Runtime, a Manager or an executor of their own.
    1. Staging lane (4.1): done in #73 (2 workers; staging is on the destination mount, not private).
    2. Per-job limit (4.4, first half): done in #74 (3 operation and discovery workers, at most 2 operation workers per job, even alone).
    3. Split in three: 3a request priority (4.6, #75); 3b stall detection and
-      reporting with the mount table (4.2, #76); 3c suspect-domain throttling on
-      the shared filesystem table (4.2, 4.5).
+      reporting with the mount table (4.2, #76); 3c suspect-domain holds (4.2,
+      #77; the deletion lane is not covered yet).
    4. Elastic user-path lanes (4.3).
    5. Per-device limits and calibration (4.4, phase 7).
    Check each with the bench: `STALL_MODE=prepare` for the task-pool gap,
