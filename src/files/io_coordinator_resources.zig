@@ -111,12 +111,15 @@ test "only the holder disposes a window-owned resource, and closing a window dis
         .allocator = allocator,
         .service = &service,
         .runtime = &runtime,
-        .tasks = try io_service_tasks.create(&context),
+        .tasks = try io_service_tasks.create(&context, .tasks),
+        .staging_tasks = try io_service_tasks.create(&context, .staging),
     };
     defer {
         coordinator.tasks.deinit();
+        coordinator.staging_tasks.deinit();
         coordinator.published.deinit(allocator);
         coordinator.task_backlog.deinit(allocator);
+        coordinator.staging_backlog.deinit(allocator);
         coordinator.window_held.deinit(allocator);
     }
 

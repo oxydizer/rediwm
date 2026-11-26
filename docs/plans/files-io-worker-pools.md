@@ -67,13 +67,20 @@ not in the total. Backlog item, not a pool question.
 
 ### 4.1 Lanes by what the work touches
 
-* **Service lane** (1 worker): staging scans and staging deletes. Staging lives
-  in Files' own private directory, never on a user mount, so this lane cannot be
-  stalled by one. Extractions and cleanup no longer queue behind prepares.
+* **Staging lane** (2 workers, done): staging scans and staging deletes.
+  Staging is *not* in Files' private directory, as first assumed: an
+  extraction stages in its destination (`<destination>/.rediwm-extract-*`) so
+  that publishing is a rename, which only works within one filesystem. The lane
+  is therefore a user-path lane like the others, with two workers for the same
+  reason as the task pool, and comes under stall domains (4.2) once they exist.
+  What it buys now: extractions and cleanup no longer queue behind prepares
+  and requests.
 * **User-path lanes:** prepares and requests (the task pool as it is, minus the
   staging work), deletion, discovery, operations.
 
-Cheap, independent of the rest, and closes the extraction half of gap 1.
+Closes the extraction half of gap 1. Checked with the bench
+(`STALL_MODE=prepare`, two prepares stalled on a stopped bindfs mount): the
+extraction completes; requests stay unanswered until 4.6.
 
 ### 4.2 Stall domains
 
@@ -122,7 +129,7 @@ fails.
 | deletion | 2 | 6 |
 | discovery | 2 | 6 |
 | operations | 2 (calibrated, 4.4) | 8 |
-| service | 1 | 1 |
+| staging | 2 | 6 |
 
 ### 4.4 Per-job and per-device limits in the executors
 
@@ -171,7 +178,7 @@ the ledger, and the rule that only the coordinator applies results.
 
 ## 5. Order of work
 
-1. Service lane (4.1). Small, independent.
+1. Staging lane (4.1). Done.
 2. Per-job limit in the executors (first half of 4.4). Small; closes gap 2 for
    two jobs on different filesystems as long as the pool target is ≥ 2.
 3. Stall detection and suspect domains (4.2), with the mount table.

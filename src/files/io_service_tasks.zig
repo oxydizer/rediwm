@@ -1,6 +1,8 @@
 //! Service tasks: the blocking filesystem work the coordinator must not do
-//! itself (docs/plans/files-io-threading-and-ownership.md §8), run on a small
-//! pool of its own.
+//! itself (docs/plans/files-io-threading-and-ownership.md §8), run on small
+//! pools of its own, one per lane (`laneOf`, docs/plans/files-io-worker-pools.md
+//! §4.1): prepares and requests on the task lane, an extraction's staging work
+//! on the staging lane, so neither waits behind the other on a hung mount.
 //!
 //! * `prepare_transfer` inspects a submit's destination and sources.
 //! * `request` runs a window's metadata or small-mutation request
@@ -29,6 +31,9 @@ pub const JobId = io_service.JobId;
 
 /// Two workers: one hung mount stalling a task leaves the other free.
 pub const worker_count = 2;
+/// Staging sits in the extraction's destination (`.rediwm-extract-*`, so
+/// publishing is a rename), on a user mount: two for the same reason.
+pub const staging_worker_count = 2;
 /// Prepares are bounded by live jobs; cleanups queue behind them.
 pub const capacity = io_service.max_live_jobs * 2;
 
@@ -106,6 +111,15 @@ pub const Result = union(enum) {
 
 pub const Pool = io_workers.WorkerPool(Task, Result);
 
+pub const Lane = enum { tasks, staging };
+
+pub fn laneOf(task: Task) Lane {
+    return switch (task) {
+        .prepare_transfer, .request => .tasks,
+        .delete_tree, .scan_staging => .staging,
+    };
+}
+
 /// What `discard` needs at shutdown: results of tasks nobody collected.
 pub const Context = struct {
     allocator: Allocator,
@@ -116,8 +130,12 @@ pub const Context = struct {
     owner: ?*anyopaque = null,
 };
 
-pub fn create(context: *Context) !*Pool {
-    return Pool.init(context.allocator, worker_count, capacity, context, execute, discard);
+pub fn create(context: *Context, lane: Lane) !*Pool {
+    const workers: usize = switch (lane) {
+        .tasks => worker_count,
+        .staging => staging_worker_count,
+    };
+    return Pool.init(context.allocator, workers, capacity, context, execute, discard);
 }
 
 fn execute(raw_context: ?*anyopaque, task: Task) Result {

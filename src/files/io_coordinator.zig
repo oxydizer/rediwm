@@ -104,6 +104,9 @@ pub const Coordinator = struct {
     task_context: io_service_tasks.Context = undefined,
     /// Tasks the pool had no room for, submitted in order as room frees.
     task_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
+    /// The staging lane: scans and deletes of extraction staging.
+    staging_tasks: *io_service_tasks.Pool = undefined,
+    staging_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
     /// Jobs whose submit is being prepared on a worker.
     preparing: std.AutoHashMapUnmanaged(JobId, Preparing) = .empty,
     /// Set once shutdown has begun: no new submits; accepted ordinary work
@@ -149,8 +152,10 @@ pub const Coordinator = struct {
             .on_discard_delete = discardDeleteResult,
             .owner = self,
         };
-        self.tasks = try io_service_tasks.create(&self.task_context);
+        self.tasks = try io_service_tasks.create(&self.task_context, .tasks);
         errdefer self.tasks.deinit();
+        self.staging_tasks = try io_service_tasks.create(&self.task_context, .staging);
+        errdefer self.staging_tasks.deinit();
         self.deletion_context = .{ .allocator = allocator, .io = io };
         self.notifier = .{ .io = io };
         self.deletion_pool = try io_deletion.create(&self.deletion_context);
@@ -178,6 +183,7 @@ pub const Coordinator = struct {
         while (held.next()) |entry| self.allocator.free(entry.path);
         self.window_held.deinit(self.allocator);
         self.task_backlog.deinit(self.allocator);
+        self.staging_backlog.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -187,6 +193,7 @@ pub const Coordinator = struct {
             // Tasks first: finishing or discarding them may release ledger
             // entries the Runtime still owns.
             self.tasks.deinit();
+            self.staging_tasks.deinit();
             self.discardTaskBacklog();
             self.deletion_pool.deinit();
             self.notifier.deinit();
@@ -279,6 +286,11 @@ pub const Coordinator = struct {
             },
             .{
                 .fd = self.tasks.wakeFd(),
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+            .{
+                .fd = self.staging_tasks.wakeFd(),
                 .events = std.posix.POLL.IN,
                 .revents = 0,
             },

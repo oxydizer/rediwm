@@ -65,7 +65,7 @@ longer have a Runtime, a Manager or an executor of their own.
 1. **Merge #71** (approved).
 2. **S5, the worker pools**, in the order of `files-io-worker-pools.md` §5,
    one PR per step from `feat/files-io-manager`:
-   1. Service lane: staging scans and deletes on their own worker (4.1).
+   1. Staging lane (4.1): done in #73 (2 workers; staging is on the destination mount, not private).
    2. Per-job limit in the executors (4.4, first half).
    3. Stall detection, suspect domains, the mount table and the shared
       filesystem table (4.2, 4.5), request priority (4.6).
