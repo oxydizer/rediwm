@@ -446,13 +446,15 @@ connection while it finishes a copy. This join is the only blocking wait on the
 main thread, and it happens after the UI is gone.
 
 **Window teardown while other windows live.** Destroying one window must not wait
-on anything. `Handle.close` is atomic (§3). Today `Client.destroy` still joins the
-window's listing worker (`worker.deinit`) on the UI thread; the `JobRunner` thread
-went in S3b and the Runtime's worker pools in S3c. A worker stuck on a hung mount
-therefore still freezes every window. Per-window helper threads that
-remain (listing worker, folder-size, thumbnails, Trash totals) are signalled to stop
-and handed to a process-owned reaper that joins them off the UI thread. That reaper
-lands with S3, since S3 is when window teardown is rewritten.
+on anything. `Handle.close` is atomic (§3). The `JobRunner` thread went in S3b and
+the Runtime's worker pools in S3c. The per-window helper threads that remain
+(listing worker, folder sizes, thumbnails, Trash totals) are told to stop
+(`requestStop`, which never waits) and handed to the process-owned reaper
+(`reaper.zig`), whose one thread joins and frees them in the order they arrived.
+A helper stuck on a hung mount then holds its memory, not the UI. Order matters
+once: the Trash count writes the listing worker's `wake_main`, so a window hands
+its listing worker over last. `main.run` finishes the reaper after the windows and
+the compositor connection are gone, beside the coordinator's drain.
 
 ## 11. Window lifecycle contract
 
@@ -543,7 +545,7 @@ existing code (C4) is recorded, never a new violation.
 | ~~U13~~ | `app_io.openArchivePublicationCursor`, `stepArchivePublications` (`Cursor.open`, `nextBatch`) | `openat`, `getdents` on staging | **Removed in S4**: a `scan_staging` service task |
 | ~~U14~~ | `app_io` → `executor.discardArchiveStaging` | `deleteRecursive` of staging | **Removed in S4**: staging is deleted by a `delete_tree` task |
 | ~~U15~~ | `clipboard.StagingLease.deinit` (clipboard replace, `App.deinit`, extraction cleanup, `client_clipboard`) | `deleteRecursive` of a transferred-out staging lease | **Removed in S4**: the lease gives its window-owned resource back with `dispose_resource` |
-| U16 | `Client.destroy` → `worker.deinit` | Thread joins on the UI thread | Reaper (JobRunner went in S3b, the Runtime in S3c) |
+| ~~U16~~ | `Client.destroy` → `worker.deinit`; `App.deinit` → the folder-size pool, thumbnails; closing Trash Properties → the Trash count | Thread joins on the UI thread | **Removed in S3**: the helpers are stopped and handed to the process's reaper (`reaper.zig`), which joins them on its own thread |
 | U17 | `client_lifecycle.closeIoHandle` | Busy-wait on `ServiceBusy` | **Before S1** (atomic close, §3) |
 
 `app_audio` checks the existence of a socket with `access` in the runtime
@@ -571,6 +573,6 @@ decision, recorded here so it is not forgotten.
 
 The listing worker, folder size (`dirsize`), thumbnails and Trash totals run on
 their own threads. They meet the responsiveness invariant, but they are not on
-the service's workers. Moving them is **not** in S1 to S5. Their only UI-thread
-cost is the join at teardown (U16), which the reaper removes. If they should move
+the service's workers. Moving them is **not** in S1 to S5. Their join at
+teardown (U16) runs on the reaper, so they cost the UI thread nothing. If they should move
 onto the service, that is a separate decision.

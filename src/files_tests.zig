@@ -310,6 +310,7 @@ test {
     _ = @import("config").portals;
     _ = @import("files/thumb_decode.zig");
     _ = @import("files/thumbs.zig");
+    _ = @import("files/reaper.zig");
     _ = @import("files/volumes.zig");
     _ = @import("files/pins.zig");
     _ = @import("files/trash_tests.zig");

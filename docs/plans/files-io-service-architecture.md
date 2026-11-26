@@ -2,8 +2,8 @@
 
 **Status:** In progress. The service core (`io_service.zig`) and the
 coordinator thread (`io_coordinator.zig`) exist and are owned by the process
-(`main.run`). Windows still own their own Runtime; moving them onto the service
-is stage S3 below.
+(`main.run`). Windows talk to it only through their `Handle` (S3 and S4 are
+done); S5 and S6 remain.
 
 This document says what the I/O service is, who owns what, and how windows and
 jobs relate. How it runs concurrently (threads, locks, queues, shutdown) is in
@@ -343,7 +343,7 @@ step, after the last window closes; a job whose origin window closed can have it
 conflict resolved from another window; closing a window never releases an executor
 or worker resource; and the coordinator exemption table is empty.
 
-**S3, windows move onto the service** (the earlier stages 3 and 4, combined).
+**S3, windows move onto the service** (the earlier stages 3 and 4, combined). **Done.**
 * S3a. Delete, move to Trash, Empty Trash and Trash deletion as service jobs, and
   metadata and small mutations as requests (U4 to U12). No phase-2 dependency, so
   this can land first.
@@ -376,8 +376,9 @@ or worker resource; and the coordinator exemption table is empty.
   *subscribes* to what it shows and the coordinator pushes it (§14).
 * S3c. `Client.io_runtime` and `App.io_runtime` are removed (U3). This is when the
   per-window Runtime stops existing. **Done together with S4**: archives were the
-  Runtime's last users. Still open: the helper threads that remain (listing worker,
-  folder sizes, thumbnails, Trash totals) go to a reaper (U16).
+  Runtime's last users. The helper threads that remain (listing worker,
+  folder sizes, thumbnails, Trash totals) go to a reaper (U16). **Done**:
+  `reaper.zig`.
 
 *Done when:* no production code outside the coordinator touches `io_runtime`,
 `io_manager` or an executor, `JobRunner` is gone, and U1 to U12 and U16 are
