@@ -138,9 +138,9 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             }
         }
         const check_inset = torrent_browse.listInset(self);
-        const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) + check_inset else GridCard.padding_x);
+        const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) + check_inset else GridCard.label_x);
         setSource(cr, filenameForeground(item));
-        const name_width = if (self.list_view) @max(0, self.listColumn(0).w - 46 - check_inset - self.inlineTorrentWidth(idx) - self.audioButtonWidth(idx)) else width - 2 * GridCard.padding_x;
+        const name_width = if (self.list_view) @max(0, self.listColumn(0).w - 46 - check_inset - self.inlineTorrentWidth(idx) - self.audioButtonWidth(idx)) else gridLabelWidth(self, width);
         // A path that does not fit loses its head, so the file's own name stays readable.
         const name_y = y + (if (self.list_view) baseline else GridCard.name_baseline);
         if (item.label.len > 0) drawHeadEllipsis(cr, item.label, label_x, name_y, name_width, shell_ui.textSize(), false) else drawEllipsis(cr, item.name, label_x, name_y, name_width, shell_ui.textSize(), false);
@@ -224,7 +224,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
         } else {
             if (item.is_symlink) {
                 setSource(cr, ui_theme.global.window_fg);
-                drawText(cr, itemType(item), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
+                drawEllipsis(cr, itemType(item), label_x, y + GridCard.detail_baseline, name_width, shell_ui.textSize(), false);
             } else if (item.is_dir) {
                 if (disp.is_running) {
                     setSource(cr, ui_theme.global.window_fg);
@@ -243,7 +243,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 }
             } else {
                 setSource(cr, ui_theme.global.window_fg);
-                drawText(cr, formatSize(transfer_bytes orelse item.bytes, &buf), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
+                drawEllipsis(cr, formatSize(transfer_bytes orelse item.bytes, &buf), label_x, y + GridCard.detail_baseline, name_width, shell_ui.textSize(), false);
             }
         }
         self.renderInlineTorrent(cr, idx);
@@ -345,11 +345,17 @@ test "transfer ghost byte display falls back to refreshed Manager progress" {
     try std.testing.expectEqual(@as(?i64, 768), currentTransferBytes(item));
 }
 
+/// Room for a grid card's name and detail line, right of its icon; a torrent's
+/// checkbox takes the card's top right corner. `card_w` is the card's width.
+fn gridLabelWidth(self: *App, card_w: f64) f64 {
+    return @max(0, card_w - GridCard.label_x - GridCard.padding_x - torrent_browse.gridCheckRoom(self));
+}
+
 pub fn renderFilenameTip(self: *App, cr: *c.cairo_t) void {
     if (self.inlineTorrentHit(self.mouse_x, self.mouse_y) != null or self.audioButtonHit(self.mouse_x, self.mouse_y) != null) return;
     const index = self.itemAt(self.mouse_x, self.mouse_y) orelse return;
     const name = self.items.items[index].text();
-    const available: f64 = if (self.list_view) self.listColumn(0).w - 46 - self.inlineTorrentWidth(index) - self.audioButtonWidth(index) else @as(f64, @floatFromInt(self.cellWidth() - 62));
+    const available: f64 = if (self.list_view) self.listColumn(0).w - 46 - self.inlineTorrentWidth(index) - self.audioButtonWidth(index) else gridLabelWidth(self, @floatFromInt(self.cellWidth() - 20));
     if (measureText(cr, name, shell_ui.textSize(), false) <= available) return;
     const width = @min(@as(f64, @floatFromInt(self.w - 24)), @max(180, measureText(cr, name, shell_ui.textSize(), false) + 20));
     var lines: [32][]const u8 = undefined;

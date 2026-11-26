@@ -456,7 +456,7 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True, ct
                     time.sleep(.3)
                 # Folders sort first: the source file is second in a shared window.
                 sx = box["x"] + 250
-                sy = box["y"] + ((216 if same_window else 178) if list_view else (302 if same_window else 158))
+                sy = box["y"] + ((216 if same_window else 178) if list_view else (236 if same_window else 158))
                 tx = dest["x"] + 250
                 ty = dest["y"] + ((178 if list_view else 158) if folder else 350)
                 move(sx, sy)

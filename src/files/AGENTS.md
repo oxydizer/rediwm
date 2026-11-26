@@ -231,7 +231,7 @@ configuration is not checked).
 * **App side:** `stepThumbs` re-requests only when the visible rows or
   `view_revision` change; `drainThumbs` damages just the arrived icons through
   `addDamage`. `itemIconRect` is the single source of icon geometry for
-  painting and damage. Thumbnails are drawn in `drawItemIcon` (grid 54, list
+  painting and damage. Thumbnails are drawn in `drawItemIcon` (grid 44, list
   24, drag icon 32) from a bilinear-filtered 128 px raster.
 * **Shared freedesktop cache** (`$XDG_CACHE_HOME/thumbnails/normal|large`):
   the name is the MD5 of the GLib-escaped `file://` URI, validated by

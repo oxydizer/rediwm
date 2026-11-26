@@ -388,8 +388,9 @@ pub fn renameCard(self: *App) ?RenameCard {
             x = left + 8;
             y = icon.y + icon.h / 2 - h / 2;
         } else {
-            x = icon.x + icon.w / 2 - w / 2;
-            y = icon.y + 54;
+            // Over the name, which sits right of the icon.
+            x = icon.x + icon.w + 2;
+            y = icon.y + icon.h / 2 - h / 2;
         }
         break;
     };
