@@ -1056,8 +1056,8 @@ pub const App = struct {
     pub const handleScroll = app_scroll.handleScroll;
     pub const handleHorizontalScroll = app_scroll.handleHorizontalScroll;
 
-    // app_pointer.zig
-    pub const handleButton = app_pointer.handleButton;
+    // app_buttons.zig
+    pub const handleButton = @import("app_buttons.zig").handleButton;
 
     // app_terminal.zig
     pub const terminalHeight = app_terminal.terminalHeight;
