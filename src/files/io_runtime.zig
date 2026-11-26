@@ -101,16 +101,20 @@ pub const Runtime = struct {
     pub const discovery_workers = 3;
     pub const operation_workers = 3;
     pub const operations_per_job = 2;
+    /// While workers are stuck, up to this many run (worker-pools §4.3).
+    pub const discovery_worker_cap = 6;
+    pub const operation_worker_cap = 8;
 
     pub fn ensureDiscoveryExecutor(
         self: *Runtime,
     ) !*io_discovery_executor.Executor {
         if (self.discovery_executor == null) {
-            self.discovery_executor = try io_discovery_executor.Executor.initWithLedger(
+            self.discovery_executor = try io_discovery_executor.Executor.initWithLedgerElastic(
                 self.allocator,
                 &self.resource_ledger,
                 discovery_workers,
-                discovery_workers * 2,
+                discovery_worker_cap,
+                discovery_worker_cap * 2,
                 64,
             );
         }
@@ -121,12 +125,13 @@ pub const Runtime = struct {
         self: *Runtime,
     ) !*io_operation_executor.Runtime {
         if (self.operation_executor == null) {
-            self.operation_executor = try io_operation_executor.Runtime.initWithLedger(
+            self.operation_executor = try io_operation_executor.Runtime.initWithLedgerElastic(
                 self.allocator,
                 &self.manager,
                 &self.resource_ledger,
                 operation_workers,
-                operation_workers * 2,
+                operation_worker_cap,
+                operation_worker_cap * 2,
             );
             self.manager.max_running_per_job = operations_per_job;
         }

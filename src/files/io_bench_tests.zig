@@ -442,6 +442,14 @@ test "files io responsiveness benchmark" {
         if (pr.len > 0) pr[pr.len - 1] else 0,
         unanswered_probes,
     });
+    // Reading pool sizes from the test thread is safe: they lock.
+    std.debug.print("BENCH,workers,tasks,{d},staging,{d},deletion,{d},discovery,{d},operations,{d}\n", .{
+        coordinator.tasks.workerCount(),
+        coordinator.staging_tasks.workerCount(),
+        coordinator.deletion_pool.workerCount(),
+        if (coordinator.runtime.discovery_executor) |*e| e.pool.workerCount() else 0,
+        if (coordinator.runtime.operation_executor) |*e| e.executor.pool.workerCount() else 0,
+    });
     for (jobs.items) |job| {
         const record = job.record orelse io_service.JobRecord{};
         const end = if (job.ended_ns != 0) job.ended_ns else nowNs();

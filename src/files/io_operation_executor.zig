@@ -85,7 +85,7 @@ pub const Runtime = struct {
         worker_count: usize,
         capacity: usize,
     ) !Runtime {
-        return initInternal(allocator, manager, null, worker_count, capacity);
+        return initInternal(allocator, manager, null, worker_count, worker_count, capacity);
     }
 
     /// Uses the process Runtime's shared resource ledger. Standalone executor
@@ -97,7 +97,20 @@ pub const Runtime = struct {
         worker_count: usize,
         capacity: usize,
     ) !Runtime {
-        return initInternal(allocator, manager, ledger, worker_count, capacity);
+        return initInternal(allocator, manager, ledger, worker_count, worker_count, capacity);
+    }
+
+    /// As `initWithLedger`, with up to `worker_cap` workers while some are
+    /// stuck (worker-pools §4.3).
+    pub fn initWithLedgerElastic(
+        allocator: Allocator,
+        manager: *io_manager.Manager,
+        ledger: *io_resource_ledger.Ledger,
+        worker_count: usize,
+        worker_cap: usize,
+        capacity: usize,
+    ) !Runtime {
+        return initInternal(allocator, manager, ledger, worker_count, worker_cap, capacity);
     }
 
     fn initInternal(
@@ -105,6 +118,7 @@ pub const Runtime = struct {
         manager: *io_manager.Manager,
         shared_ledger: ?*io_resource_ledger.Ledger,
         worker_count: usize,
+        worker_cap: usize,
         capacity: usize,
     ) !Runtime {
         const owned_ledger = if (shared_ledger == null) blk: {
@@ -131,6 +145,7 @@ pub const Runtime = struct {
             .{
                 .worker_count = worker_count,
                 .capacity = capacity,
+                .worker_cap = worker_cap,
             },
             @ptrCast(context),
             .{
@@ -185,6 +200,10 @@ pub const Runtime = struct {
 
     pub fn queuedCount(self: *Runtime) usize {
         return self.executor.queuedCount();
+    }
+
+    pub fn grow(self: *Runtime, stuck_after_ms: i64) usize {
+        return self.executor.grow(stuck_after_ms);
     }
 
     pub fn wakeFd(self: *Runtime) std.posix.fd_t {

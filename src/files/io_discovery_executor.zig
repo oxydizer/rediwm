@@ -128,6 +128,19 @@ pub const Executor = struct {
         capacity: usize,
         batch_size: usize,
     ) !Executor {
+        return initWithLedgerElastic(allocator, ledger, worker_count, worker_count, capacity, batch_size);
+    }
+
+    /// As `initWithLedger`, with up to `worker_cap` workers while some are
+    /// stuck (worker-pools §4.3).
+    pub fn initWithLedgerElastic(
+        allocator: Allocator,
+        ledger: *Ledger,
+        worker_count: usize,
+        worker_cap: usize,
+        capacity: usize,
+        batch_size: usize,
+    ) !Executor {
         if (batch_size == 0) return error.InvalidBatchSize;
 
         const context = try allocator.create(Context);
@@ -138,9 +151,10 @@ pub const Executor = struct {
             .ledger = ledger,
         };
 
-        const pool = try Pool.init(
+        const pool = try Pool.initElastic(
             allocator,
             worker_count,
+            worker_cap,
             capacity,
             context,
             executeBatch,
@@ -296,6 +310,10 @@ pub const Executor = struct {
 
     pub fn runningTasks(self: *Executor, out: []io_workers.Running) usize {
         return self.pool.runningTasks(out);
+    }
+
+    pub fn grow(self: *Executor, stuck_after_ms: i64) usize {
+        return self.pool.grow(stuck_after_ms);
     }
 
     pub fn queuedCount(self: *Executor) usize {

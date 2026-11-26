@@ -34,8 +34,21 @@ pub const report_after_ms: i64 = 30_000;
 /// A task that started after a pass looked is seen this much later at most.
 const recheck_ms: i64 = 1_000;
 
-/// Every worker of every lane that runs a job's tasks.
+/// Every worker of every lane that runs a job's tasks, at their caps.
 const max_running = 32;
+
+/// Prepares a worker has run past `suspect_after_ms`: they no longer count
+/// against the prepares allowed in the pool, so others can start.
+pub fn stuckPrepares(self: *Coordinator) usize {
+    var running: [16]io_workers.Running = undefined;
+    const count = self.tasks.runningTasks(&running);
+    const now = io_workers.monotonicMs();
+    var stuck: usize = 0;
+    for (running[0..count]) |task| {
+        if (task.key != 0 and now - task.since_ms >= suspect_after_ms and self.preparing.contains(task.key)) stuck += 1;
+    }
+    return stuck;
+}
 
 /// The coordinator's view of suspect mounts.
 pub const State = struct {
@@ -60,6 +73,14 @@ pub const State = struct {
 /// Updates the suspects, the holds and each record's `waiting_for`. Returns
 /// when to look again, or null when nothing runs.
 pub fn watchStalls(self: *Coordinator, now: i64) ?i64 {
+    // Stuck workers stop counting: queued work gets fresh ones (§4.3).
+    var grown = self.tasks.grow(suspect_after_ms);
+    grown += self.staging_tasks.grow(suspect_after_ms);
+    grown += self.deletion_pool.grow(suspect_after_ms);
+    if (self.runtime.discovery_executor) |*executor| grown += executor.grow(suspect_after_ms);
+    if (self.runtime.operation_executor) |*executor| grown += executor.grow(suspect_after_ms);
+    if (grown > 0) std.log.info("Files started {d} worker(s) beside stuck ones", .{grown});
+
     var running: [max_running]io_workers.Running = undefined;
     var count: usize = 0;
     var queued: usize = 0;
