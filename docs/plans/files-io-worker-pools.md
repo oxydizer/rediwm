@@ -80,7 +80,9 @@ A **stall domain** is the filesystem a task waits on: `st_dev` where it is known
 (discovery records it for every entry, so operations have it), otherwise the
 mount that contains the path, from a mount table kept current by a watcher of
 `/proc/self/mountinfo` (through `src/platform/`). A copy belongs to its source's
-and its destination's domains.
+and its destination's domains. Network and FUSE mounts need nothing special:
+each has its own anonymous `st_dev` (major 0), so every NFS, SMB or sshfs mount
+is a domain of its own.
 
 A task that has gone `suspect_after` (10 s) without progress marks its domain
 **suspect**. Progress is bytes moved for an operation, so one large file on a
@@ -130,8 +132,39 @@ fails.
   thrashing it. The limit starts at 1 for rotational or USB devices and at the
   lane target otherwise (from `/sys/block/*/queue/rotational` and the transport,
   through `src/platform/`), and is what phase 7 calibrates.
+* **The device behind a filesystem** is the block device its mountinfo line
+  names. A FUSE filesystem on a disk (ntfs-3g, exfat-fuse on a USB drive) names
+  it too and gets that disk's limit; without one (NFS, SMB, sshfs) the limit is
+  the lane target, as for an SSD: a network mount is bound by round trips, not
+  seeks, and parallel requests help. Filesystems that share a disk (btrfs
+  subvolumes) are separate stall domains but share its device limit.
 
-### 4.5 What stays
+### 4.5 One filesystem table, every lane
+
+The coordinator owns one table of filesystems: for each stall domain, whether it
+is suspect, which tasks run in it, and the block device behind it (4.4). Every
+lane asks it before starting a task, so deletions and copies respect each
+other's stalls and device limits without sharing a pool.
+
+The deletion pool stays its own lane and is not folded into the operation
+executor. That executor is built around job trees (discovery, per-entry
+operations, the publication barrier, conflicts); deletions are service jobs
+without one (S3a), one task each with a count. The shared table gives them the
+limits and stall handling, which is what a merge would have bought. Revisit if
+deletions need per-entry progress or conflicts, which would need a tree anyway.
+
+### 4.6 Requests before prepares
+
+The task lane keeps two queues and a free worker takes a request before a
+prepare: a person waits on each request (Properties, rename, the chooser's
+Save, a drop), while a prepare only delays a job already shown as planning. No
+separate request pool: a request can hang on a dead mount too, so it would
+need the same stall handling, and priority in the shared lane gives what it
+would. Left over: two fresh stalls at once can hold both workers for up to
+`suspect_after` before a replacement starts; the bench's probe measures that.
+**Recommended, awaiting the user's decision.**
+
+### 4.7 What stays
 
 Bounded queues and their admission errors, the coordinator loop, the job table,
 the ledger, and the rule that only the coordinator applies results.
@@ -149,11 +182,11 @@ the ledger, and the rule that only the coordinator applies results.
 1, `running` for gap 2. Done when, with a dead mount, every other job finishes
 and the probe's round trip stays at its unloaded value.
 
-## 6. Open questions
+## 6. Decisions
 
-* Should requests get a lane of their own (they are small and a person waits on
-  each), or is the elastic task lane with suspect domains enough?
-* Per-device detection for network and FUSE filesystems, which have no block
-  device: one domain per mount, limit as for SSDs?
-* Is the deletion pool better folded into the operation executor once it has
-  per-device limits?
+* `suspect_after` 10 s, `report_after` 30 s, no "dead" state (4.2).
+* Network and FUSE mounts: one stall domain per mount; the device limit follows
+  the block device behind it, else the lane target (4.2, 4.4).
+* The deletion pool stays a lane of its own on the shared filesystem table (4.5).
+* Requests before prepares in the task lane, no separate pool (4.6):
+  recommended, awaiting a decision.
