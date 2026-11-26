@@ -1,6 +1,6 @@
 # Files I/O service: handoff
 
-State of the rediwm-files I/O migration as of 2026-11-26, for picking the work up
+State of the rediwm-files I/O migration as of 2026-11-26 (updated after #70), for picking the work up
 in a fresh context. Read this first, then the docs it points to.
 
 ## Where things are
@@ -10,6 +10,10 @@ in a fresh context. Read this first, then the docs it points to.
 * **Open PR:** #69 `io/s3c` → `feat/files-io-manager`, "Files: archives through
   the service; no window Runtime (S3c, S4)" (commit `016d5b4`). Waiting for the
   user to test. **Do not merge until the user confirms.**
+* **Open PR:** #70 `io/reaper` → `io/s3c` (stacked on #69), "closing windows
+  hand helper threads to a reaper (U16, S3 done)". Retarget it to
+  `feat/files-io-manager` once #69 merges. Same rule: merge only after the user
+  confirms.
 * **Merged this round:** #65 (S3b, JobRunner removed in `0a6e972`), #66 (a merge
   leaves identical files alone; "Apply to all" in the conflict dialog).
 
@@ -68,11 +72,9 @@ window right after each, and `python3 tests/files_controls.py --archive-only`.
 ## Remaining work, in order
 
 1. **Merge #69** once the user confirms.
-2. **U16, the reaper** (last item of S3). `Client.destroy` → `worker.deinit`
-   joins helper threads (listing worker, folder sizes, thumbnails, Trash
-   totals) on the UI thread. Hand them to a reaper thread that joins them
-   off the UI thread. Afterwards strike U16 in the threading doc and mark S3
-   done in the architecture doc ("done when" in S3 lists it).
+2. **U16, the reaper:** done in #70 (`reaper.zig`; U16 struck, S3 marked
+   done). Retarget #70 to `feat/files-io-manager` after #69, then merge it
+   once the user has tested it.
 3. **S5, limits and validation:** per-pass command quotas, a time-based
    progress rate limit, capacity calibration, and a measured UI-latency check
    under heavy concurrent I/O (big copies, many small files, extraction, a
@@ -98,13 +100,29 @@ window right after each, and `python3 tests/files_controls.py --archive-only`.
   (pull the PR branch, rebuild). Their main checkout must not be touched.
   Merge a PR only after they confirm (they may waive testing explicitly).
 * **Build here:** only Files builds in the sandbox; the compositor does not.
+  A fresh workspace needs setting up first (codeberg, leonerd.org.uk,
+  ziglang.org and gitlab.freedesktop.org are blocked; PyPI, apt, the Ubuntu
+  archive and `git clone` from GitHub work):
   ```
+  pip install --break-system-packages ziglang==0.17.1   # link its zig into PATH
+  apt-get install pkg-config libcairo2-dev libglib2.0-dev libwayland-dev \
+    libxkbcommon-dev libarchive-dev libjpeg-dev libpng-dev libwebp-dev \
+    libgdk-pixbuf-2.0-dev librsvg2-dev libpango1.0-dev libpoppler-glib-dev \
+    libpulse-dev libpipewire-0.3-dev libinput-dev libudev-dev libdrm-dev \
+    libegl-dev libgles-dev libpixman-1-dev libcups2-dev libpam0g-dev \
+    libreadline-dev libxcb1-dev libtorrent-rasterbar-dev libjson-glib-dev \
+    wayland-protocols shared-mime-info g++
+  # wayland-protocols 1.49 (Ubuntu pool, .deb) into /home/claude/wlp/root;
+  # set prefix= in its .pc to that root.
+  # Zig packages in /home/claude/zigpkgs/<hash>/: zig-wayland v0.7.0
+  # (git clone from github.com/ifreund), libvterm 0.3.3 (the Ubuntu pool's
+  # libvterm_0.3.3.orig.tar.gz, extracted). Then build with --system:
   export PKG_CONFIG_PATH=/home/claude/wlp/root/usr/share/pkgconfig
-  zig build test-files
-  zig build files -Doptimize=ReleaseSafe
+  zig build --system /home/claude/zigpkgs test-files
+  zig build --system /home/claude/zigpkgs files -Doptimize=ReleaseSafe
   ```
   Zig 0.17. The one expected test failure is dirsize "unreadable folder" (the
-  sandbox runs as root). Last run on `io/s3c`: 512 passed, 4 skipped, that one
+  sandbox runs as root). Last run on `io/reaper`: 517 passed, 4 skipped, that one
   failure.
 * **Code rules:** files at or under about 800 lines; App methods go in
   `app_*.zig` with an alias in `app.zig`; no test hooks in production code;
