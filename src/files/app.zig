@@ -521,7 +521,7 @@ pub const App = struct {
             return;
         }
         const cur = self.history.current;
-        const name = if (self.transfer_view.active) tr("Transfers") else if (self.isRecent()) tr("Recent") else if (self.trash_dir != null and std.mem.eql(u8, cur, self.trash_dir.?)) tr("Trash") else if (std.mem.eql(u8, cur, "/")) "/" else std.fs.path.basename(cur);
+        const name = if (self.transfer_view.active) tr("Transfers") else if (self.isRecent()) tr("Recent") else if (self.trash_dir != null and std.mem.eql(u8, cur, self.trash_dir.?)) tr("Trash") else if (std.mem.eql(u8, cur, "/")) "/" else if (self.history.torrent and cur.len == self.history.archive_len) app_torrent_browse.crumbLabel(self, std.fs.path.basename(cur)) else std.fs.path.basename(cur);
         _ = i18n.fmtZ(&self.title_z, tr("{name} — RediWM Files"), .{ .name = name }) catch {
             _ = i18n.fmtZ(&self.title_z, tr("RediWM Files"), .{}) catch unreachable;
         };

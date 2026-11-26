@@ -199,6 +199,7 @@ pub fn enter(self: *App) void {
         // The files come with the first reply.
         b.phase = if (t.metadata) .inspecting else .fetching;
         b.name = b.arena.allocator().dupe(u8, t.name) catch "";
+        self.updateTitle();
     } else if (!self.torrents.send(.{ .op = "inspect", .source = b.root })) {
         // Not connected yet: `step` asks once it is.
         b.requested_at = 0;
@@ -251,6 +252,11 @@ pub fn step(self: *App) void {
         return;
     };
     if (b.id_len == 0) b.setId(t.id);
+    // A magnet's name comes with its metadata.
+    if (t.metadata and t.name.len > 0 and !std.mem.eql(u8, b.name, t.name)) {
+        b.name = b.arena.allocator().dupe(u8, t.name) catch b.name;
+        self.updateTitle();
+    }
     if (b.adding) {
         b.adding = false;
         if (b.dirty) select(self, b);
@@ -266,7 +272,9 @@ pub fn step(self: *App) void {
         b.seen_generation = client.generation;
         // Snapshots come every second while it runs; a reply a second.
         if (b.inflight == 0 or draw.nowMs() - b.requested_at > 5000) {
+            // Lost replies are not coming: neither are their old ticks.
             b.inflight = 0;
+            b.stale = 0;
             request(self);
         }
     }
@@ -278,6 +286,7 @@ fn takeReply(self: *App, b: *Browse, reply: torrents.Snapshot) void {
         b.take(list, false) catch return;
         b.setId(list.id);
         b.phase = .ready;
+        self.updateTitle();
         // Added already, under another path: its ticks come with `files`.
         request(self);
         self.rebuildView();

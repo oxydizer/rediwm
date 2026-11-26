@@ -153,7 +153,7 @@ def run():
                 # Entering the torrent file looks into it; nothing is added.
                 key(HOME)
                 key(ENTER)
-                title('bundle.torrent')
+                title('bundle')
                 time.sleep(1)
                 shot('1-entered')
                 assert transfer() is None, 'looking into a torrent added it'
@@ -177,7 +177,7 @@ def run():
                 title('sub')
                 shot('4-inside-folder')
                 key(LEFT, ALT)
-                title('bundle.torrent')
+                title('bundle')
 
                 # Ticking a.bin later fetches it into the same place.
                 key(HOME)

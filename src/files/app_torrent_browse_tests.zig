@@ -119,3 +119,156 @@ test "a painted torrent folder" {
         }
     }
 }
+
+/// The helper's end of a window's connection.
+const FakeHelper = struct {
+    fds: [2]c_int,
+
+    fn init(app: *App) !FakeHelper {
+        var fds: [2]c_int = undefined;
+        if (c.socketpair(c.AF_UNIX, c.SOCK_SEQPACKET | c.SOCK_NONBLOCK, 0, &fds) != 0) return error.SocketPair;
+        app.torrents.fd = fds[0];
+        return .{ .fds = fds };
+    }
+
+    fn deinit(self: *FakeHelper) void {
+        _ = c.close(self.fds[1]);
+    }
+
+    /// The next request, parsed; the caller frees it.
+    fn request(self: *FakeHelper) !std.json.Parsed(std.json.Value) {
+        var buf: [65536]u8 = undefined;
+        const n = c.recv(self.fds[1], &buf, buf.len, c.MSG_DONTWAIT);
+        if (n <= 0) return error.NoRequest;
+        return std.json.parseFromSlice(std.json.Value, std.testing.allocator, buf[0..@intCast(n)], .{});
+    }
+
+    fn expect(self: *FakeHelper, op: []const u8) !std.json.Parsed(std.json.Value) {
+        const parsed = try self.request();
+        errdefer parsed.deinit();
+        try std.testing.expectEqualStrings(op, parsed.value.object.get("op").?.string);
+        return parsed;
+    }
+
+    fn send(self: *FakeHelper, app: *App, json: []const u8) void {
+        _ = c.send(self.fds[1], json.ptr, json.len, 0);
+        app.torrents.drain();
+        browse.step(app);
+    }
+};
+
+const transfer_json =
+    \\{"transfers":[{"id":"abc","name":"bundle","source":"/tmp/dl/bundle.torrent","download_directory":"/tmp/dl",
+    \\"destination":"/tmp/dl","storage":"/tmp/dl/.rediwm-partials/abc","pending":false,"metadata":true,"paused":false,
+    \\"finished":false,"published":false,"progress":0,"download_rate":0,"upload_rate":0,"total":0,"done":0,
+    \\"ratio":1,"limit":1048576,"error":"","files":[]}]}
+;
+
+test "a torrent file is looked into, its first tick adds it, later ticks select" {
+    var app = try app_tests.testApp();
+    defer app.deinit();
+    var helper = try FakeHelper.init(&app);
+    defer helper.deinit();
+    try app.history.navigateTorrent("/tmp/dl/bundle.torrent");
+    app.loading = false;
+    browse.enter(&app);
+    {
+        const asked = try helper.expect("inspect");
+        defer asked.deinit();
+        try std.testing.expectEqualStrings("/tmp/dl/bundle.torrent", asked.value.object.get("source").?.string);
+    }
+    try std.testing.expectEqualStrings("Reading torrent…", browse.emptyText(&app).?);
+    helper.send(&app,
+        \\{"inspect":{"id":"abc","source":"/tmp/dl/bundle.torrent","name":"bundle","files":[
+        \\{"index":0,"path":"bundle/a.bin","size":10},{"index":1,"path":"bundle/sub/b.bin","size":20},
+        \\{"index":2,"path":"bundle/sub/c.bin","size":30}]}}
+    );
+    try std.testing.expectEqual(@as(usize, 2), app.items.items.len);
+    try std.testing.expect(app.items.items[row(&app, "a.bin")].transfer_ghost);
+
+    // The first tick adds it, with what is ticked, into the file's folder.
+    try std.testing.expect(browse.toggleItem(&app, row(&app, "sub")));
+    {
+        const added = try helper.expect("add");
+        defer added.deinit();
+        try std.testing.expectEqualStrings("/tmp/dl", added.value.object.get("destination").?.string);
+        const indices = added.value.object.get("files").?.array.items;
+        try std.testing.expectEqual(@as(usize, 2), indices.len);
+        try std.testing.expectEqual(@as(i64, 1), indices[0].integer);
+        try std.testing.expectEqual(@as(i64, 2), indices[1].integer);
+    }
+    // Ticked before the helper lists it: kept, and sent once it does.
+    try std.testing.expect(browse.toggleItem(&app, row(&app, "a.bin")));
+    try std.testing.expectError(error.NoRequest, helper.request());
+    helper.send(&app, transfer_json);
+    {
+        const selected = try helper.expect("select");
+        defer selected.deinit();
+        try std.testing.expectEqual(@as(usize, 3), selected.value.object.get("files").?.array.items.len);
+        const asked = try helper.expect("files");
+        asked.deinit();
+    }
+    // A reply to a request from before the tick keeps the local ticks...
+    try std.testing.expect(browse.toggleItem(&app, row(&app, "a.bin")));
+    {
+        const selected = try helper.expect("select");
+        selected.deinit();
+        const asked = try helper.expect("files");
+        asked.deinit();
+    }
+    const detail_old =
+        \\{"detail":{"id":"abc","files":[{"index":0,"path":"bundle/a.bin","size":10,"done":0,"wanted":true},
+        \\{"index":1,"path":"bundle/sub/b.bin","size":20,"done":5,"wanted":true},
+        \\{"index":2,"path":"bundle/sub/c.bin","size":30,"done":30,"wanted":true}]}}
+    ;
+    helper.send(&app, detail_old);
+    try std.testing.expect(!app.torrent_browse.?.wanted.isSet(0));
+    // ...and the reply after it carries the helper's.
+    const detail_new =
+        \\{"detail":{"id":"abc","files":[{"index":0,"path":"bundle/a.bin","size":10,"done":0,"wanted":false},
+        \\{"index":1,"path":"bundle/sub/b.bin","size":20,"done":20,"wanted":true},
+        \\{"index":2,"path":"bundle/sub/c.bin","size":30,"done":30,"wanted":true}]}}
+    ;
+    helper.send(&app, detail_new);
+    const b = app.torrent_browse.?;
+    try std.testing.expect(!b.wanted.isSet(0) and b.wanted.isSet(1) and b.wanted.isSet(2));
+    // The folder has arrived: a real one now.
+    const sub = app.items.items[row(&app, "sub")];
+    try std.testing.expect(!sub.transfer_ghost and !sub.missing);
+    var buf: [512]u8 = undefined;
+    try std.testing.expect(std.mem.indexOf(u8, browse.statusText(&app, &buf).?, "2 of 3 files ticked") != null);
+}
+
+test "a magnet fetches its file list first" {
+    var app = try app_tests.testApp();
+    defer app.deinit();
+    var helper = try FakeHelper.init(&app);
+    defer helper.deinit();
+    const magnet =
+        \\{"transfers":[{"id":"abc","name":"Fetching file list…","source":"magnet:?xt=urn:btih:abc","download_directory":"/tmp/dl",
+        \\"destination":"/tmp/dl","storage":"/tmp/dl/.rediwm-partials/abc","pending":true,"metadata":false,"paused":false,
+        \\"finished":false,"published":false,"progress":0,"download_rate":0,"upload_rate":0,"total":0,"done":0,
+        \\"ratio":1,"limit":1048576,"error":"","files":[]}]}
+    ;
+    _ = c.send(helper.fds[1], magnet.ptr, magnet.len, 0);
+    app.torrents.drain();
+    try app.history.navigateTorrent("/tmp/dl/abc");
+    app.loading = false;
+    browse.enter(&app);
+    try std.testing.expectEqualStrings("Fetching file list…", browse.emptyText(&app).?);
+    try std.testing.expectError(error.NoRequest, helper.request());
+    // The metadata arrives: its files are asked for, and listed.
+    helper.send(&app,
+        \\{"transfers":[{"id":"abc","name":"bundle","source":"magnet:?xt=urn:btih:abc","download_directory":"/tmp/dl",
+        \\"destination":"/tmp/dl","storage":"/tmp/dl/.rediwm-partials/abc","pending":true,"metadata":true,"paused":true,
+        \\"finished":false,"published":false,"progress":0,"download_rate":0,"upload_rate":0,"total":0,"done":0,
+        \\"ratio":1,"limit":1048576,"error":"","files":[]}]}
+    );
+    const asked = try helper.expect("files");
+    asked.deinit();
+    helper.send(&app,
+        \\{"detail":{"id":"abc","files":[{"index":0,"path":"disk.iso","size":10,"done":0,"wanted":false}]}}
+    );
+    try std.testing.expectEqual(@as(usize, 1), app.items.items.len);
+    try std.testing.expectEqualStrings("bundle", browse.crumbLabel(&app, "abc"));
+}

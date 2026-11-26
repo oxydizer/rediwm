@@ -137,6 +137,7 @@ std::string detail(Transfer &t) {
   json_builder_set_member_name(b, "detail");
   json_builder_begin_object(b);
   member(b, "id", t.id);
+  member(b, "name", info ? display_name(info->name()) : "");
   boolean(b, "metadata", bool(info));
   json_builder_set_member_name(b, "files");
   json_builder_begin_array(b);
@@ -151,7 +152,7 @@ std::string detail(Transfer &t) {
       number(b, "size", info->files().file_size(index));
       number(b, "done", i < progress.size() ? progress[i] : 0);
       boolean(b, "wanted",
-              !t.pending && i < priorities.size() &&
+              (!t.pending || t.configuring) && i < priorities.size() &&
                   priorities[i] != lt::dont_download);
       json_builder_end_object(b);
     }
