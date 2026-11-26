@@ -148,9 +148,15 @@ class FakeFiles:
             return [(r["command"], r.get("params", {})) for r in self.requests]
 
     def close(self):
-        if self.conn:
-            self.conn.close()
-        self.server.close()
+        # The serving thread is blocked in recv on this socket: a bare close
+        # would leave the connection up. Shut it down so the panel sees Files go.
+        for sock in (self.conn, self.server):
+            if sock:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                sock.close()
         os.unlink(self.path)
 
 
@@ -245,8 +251,10 @@ def run(scale, theme=None):
                 # Files leaves: live jobs go, finished ones stay until cleared.
                 fake.close()
                 fake = None
+                wait_for(lambda: items()[1]["transfers"]["visible"], "finished jobs to keep the item")
                 time.sleep(0.3)
                 capture("disconnected")
+                hit = wait_for(lambda: (lambda h: h if h["target_type"] == "transfers_popup" else None)(ipc.hit_test(*point)), "the panel after Files left")
                 clear = find("clear_done")
                 ipc.click_at(*clear)
                 wait_for(lambda: not items()[1]["transfers"]["visible"], "the item to hide once cleared")
