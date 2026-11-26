@@ -421,6 +421,9 @@ const Job = struct {
     /// Disks with a limit that the job touches (`setJobDisks`).
     disks: [max_job_disks]u64 = undefined,
     disk_count: u8 = 0,
+    /// New files are not synced one by one; the finalizer syncs the
+    /// destination's filesystem once before the job completes.
+    defer_sync: bool = false,
     /// A task of the job is stuck (`io_coordinator_stalls.zig`): what it runs
     /// is not using its disks, so it does not count against their limits.
     stalled: bool = false,
@@ -1655,6 +1658,26 @@ pub const Manager = struct {
         job.directory_permission_records.appendAssumeCapacity(record);
     }
 
+    /// A copy job syncs once, at its end, instead of syncing every new file
+    /// (replacements still sync each one). Gives the job its finalizer, which
+    /// runs after everything else. Call while the job is planning.
+    pub fn setDeferredSync(self: *Manager, job_id: JobId) !void {
+        const job = self.findJob(job_id) orelse return error.UnknownJob;
+        if (job.state != .planning) return error.InvalidJobState;
+        if (job.directory_finalization_index == null) {
+            if (self.next_operation_id == std.math.maxInt(OperationId)) return error.IdExhausted;
+            // As for a finalizer added with a directory record.
+            try job.dependency_work_queue.ensureTotalCapacity(self.allocator, job.operations.items.len + 1);
+            _ = try self.addOperationInternal(job, .finalize_directories);
+        }
+        job.defer_sync = true;
+    }
+
+    pub fn jobDefersSync(self: *const Manager, job_id: JobId) bool {
+        const job = self.findJobConst(job_id) orelse return false;
+        return job.defer_sync;
+    }
+
     pub fn directoryPermissionRecords(
         self: *const Manager,
         job_id: JobId,
@@ -2419,7 +2442,9 @@ pub const Manager = struct {
             operation.ready_next = null;
             operation.ready_queued = false;
             job.operation_state_counts[@backingInt(operation.state)] += 1;
-            if (operation.unresolved_dependencies == 0) {
+            // The finalizer is queued by recomputeJobState once everything
+            // else is done, never at the start.
+            if (operation.unresolved_dependencies == 0 and operation.kind != .finalize_directories) {
                 enqueueReady(job, index);
             }
         }

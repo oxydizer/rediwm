@@ -654,6 +654,9 @@ pub const Coordinator = struct {
 
         self.limitDisks(job_id, plan);
         try manager.setDestinationDirectory(job_id, plan.destination_path);
+        // A copy syncs once at its end; a move keeps syncing each file, since
+        // its source goes away right after (the user's choice, 2026-11-26).
+        if (mode == .copy) try manager.setDeferredSync(job_id);
         if (mode == .move)
             try manager.setDestinationDeviceId(job_id, plan.destination_device_id);
 

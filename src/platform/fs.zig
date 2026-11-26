@@ -234,3 +234,17 @@ test "rename without replacing moves a file, and refuses an existing target" {
     try tmp.dir.createDir(t.io, "d", .default_dir);
     try t.expectError(error.PathAlreadyExists, renameNoReplace(d, e));
 }
+
+/// Writes everything cached for the filesystem that holds `fd` to its disk,
+/// and waits for it. Linux syncs that filesystem alone; FreeBSD has no such
+/// call and syncs every filesystem. False when the disk reported an error.
+pub fn syncFilesystem(fd: c_int) bool {
+    switch (builtin.os.tag) {
+        .linux => return linux.errno(linux.syncfs(fd)) == .SUCCESS,
+        .freebsd => {
+            std.c.sync();
+            return true;
+        },
+        else => unreachable,
+    }
+}

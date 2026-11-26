@@ -249,3 +249,18 @@ test "finalization refuses to chmod a replacement directory" {
     try std.testing.expectEqual(@as(usize, 1), stats.failed);
     try std.testing.expectEqual(replacement_mode, try modeOf(target));
 }
+
+test "finalization syncs a deferred copy's destination, and fails when it is gone" {
+    var buffer: [64]u8 = undefined;
+    const temp = try makeTempDir(&buffer);
+    defer removeDirectory(temp);
+
+    var input = try finalize.makeInputWithSync(std.testing.allocator, &.{}, temp);
+    defer input.deinit();
+    const stats = try finalize.execute(std.testing.allocator, &input);
+    try std.testing.expectEqual(@as(usize, 0), stats.failed);
+
+    var gone = try finalize.makeInputWithSync(std.testing.allocator, &.{}, "/nonexistent-rediwm-folder");
+    defer gone.deinit();
+    try std.testing.expectEqual(@as(usize, 1), (try finalize.execute(std.testing.allocator, &gone)).failed);
+}

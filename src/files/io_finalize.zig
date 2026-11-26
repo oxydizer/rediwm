@@ -1,4 +1,6 @@
-//! Identity-checked restoration of destination directory permissions.
+//! Identity-checked restoration of destination directory permissions, and the
+//! one sync of a copy job's destination filesystem that replaces per-file
+//! syncs (`Manager.setDeferredSync`).
 //!
 //! Inputs are owned snapshots of destination paths and expected identities.
 //! Directories are opened component-by-component without following symlinks,
@@ -72,9 +74,21 @@ pub fn makeInput(
     allocator: Allocator,
     records: []const Record,
 ) !io_executor.OwnedPayload {
-    if (records.len > std.math.maxInt(u32)) return error.TooManyRecords;
+    return makeInputWithSync(allocator, records, null);
+}
 
-    var total_size = input_header_size;
+/// As `makeInput`; afterwards the filesystem holding `sync_directory` is
+/// synced, so every file the job wrote is on the disk before it completes.
+pub fn makeInputWithSync(
+    allocator: Allocator,
+    records: []const Record,
+    sync_directory: ?[]const u8,
+) !io_executor.OwnedPayload {
+    if (records.len > std.math.maxInt(u32)) return error.TooManyRecords;
+    const sync_path = sync_directory orelse "";
+    if (sync_path.len > 0) _ = try pathDepth(sync_path);
+
+    var total_size = input_header_size + sync_path.len;
     for (records) |record| {
         if (record.mode > 0o777) return error.InvalidMode;
         _ = try pathDepth(record.path);
@@ -97,14 +111,18 @@ pub fn makeInput(
         @memcpy(bytes[cursor..][0..record.path.len], record.path);
         cursor += record.path.len;
     }
+    // The rest of the input, possibly empty, is the folder to sync.
+    @memcpy(bytes[cursor..][0..sync_path.len], sync_path);
 
     return .{ .allocator = allocator, .bytes = bytes };
 }
 
+const Parsed = struct { records: []ParsedRecord, sync_directory: []const u8 };
+
 fn parseInput(
     allocator: Allocator,
     input: *const io_executor.OwnedPayload,
-) ![]ParsedRecord {
+) !Parsed {
     const bytes = input.slice();
     if (bytes.len < input_header_size) return error.InvalidInput;
 
@@ -139,8 +157,9 @@ fn parseInput(
         cursor += path_len;
     }
 
-    if (cursor != bytes.len) return error.InvalidInput;
-    return records;
+    const sync_directory = bytes[cursor..];
+    if (sync_directory.len > 0) _ = pathDepth(sync_directory) catch return error.InvalidInput;
+    return .{ .records = records, .sync_directory = sync_directory };
 }
 
 fn deeperFirst(_: void, lhs: ParsedRecord, rhs: ParsedRecord) bool {
@@ -218,7 +237,8 @@ pub fn execute(
     allocator: Allocator,
     input: *const io_executor.OwnedPayload,
 ) !Stats {
-    const records = try parseInput(allocator, input);
+    const parsed = try parseInput(allocator, input);
+    const records = parsed.records;
     defer allocator.free(records);
 
     std.mem.sort(ParsedRecord, records, {}, deeperFirst);
@@ -231,5 +251,18 @@ pub fn execute(
             stats.failed += 1;
         }
     }
+    if (parsed.sync_directory.len > 0 and !syncDirectoryFilesystem(allocator, parsed.sync_directory))
+        stats.failed += 1;
     return stats;
+}
+
+/// Writes the destination's filesystem out once. Opened without following
+/// links in the path, like the directories above; read-only is enough.
+fn syncDirectoryFilesystem(allocator: Allocator, path: []const u8) bool {
+    const z = allocator.dupeSentinel(u8, path, 0) catch return false;
+    defer allocator.free(z);
+    const fd = c.open(z, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
+    if (fd < 0) return false;
+    defer _ = c.close(fd);
+    return @import("platform").fs.syncFilesystem(fd);
 }
