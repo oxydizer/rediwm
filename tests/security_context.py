@@ -59,6 +59,7 @@ CORE_GLOBALS = {
     "zxdg_importer_v1",
     "zxdg_exporter_v2",
     "zxdg_importer_v2",
+    "xdg_wm_dialog_v1",
     "wl_seat",
     "wl_output",
     "wl_subcompositor",

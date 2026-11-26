@@ -12,6 +12,7 @@ reserve space on a specific output edge, including from a corner.
 | Displays | `wlr-output-management-v1`, `xdg-output-v1` | wlr-randr, kanshi, nwg-displays |
 | Window lists | `wlr-foreign-toplevel-management-v1`, `ext-foreign-toplevel-list-v1` | docks, waybar, rofi/fuzzel, wlrctl |
 | Window parenting | `xdg-foreign-unstable-v1`, `xdg-foreign-unstable-v2` | a dialog in another process can use an exported window as its parent. Handles work across both versions. |
+| Dialogs | `xdg-dialog-v1` | modal dialogs from GTK 4, Qt 6 and SDL 3 |
 | Capture | `wlr-screencopy-v1`, `ext-image-copy-capture-v1` | grim, wf-recorder, OBS, xdg-desktop-portal-wlr |
 | Locking and idle | `ext-session-lock-v1`, `ext-idle-notify-v1`, `idle-inhibit-v1` | swaylock, gtklock, swayidle |
 | Remote input | `virtual-pointer-v1`, `virtual-keyboard-v1` | wayvnc, KDE Connect, wtype |
@@ -32,6 +33,13 @@ reserve space on a specific output edge, including from a corner.
   On a single fixed-refresh DRM output RediWM can prepare an update for an upcoming
   refresh using recent hardware presentation feedback. When the output timing is
   uncertain it waits for the timestamp itself. Later commits stay ordered.
+- **Modal dialogs** (`xdg-dialog-v1`, or `_NET_WM_STATE_MODAL` from X11 apps)
+  open over the middle of their window. Clicking, Alt-Tabbing to or choosing
+  that window on the taskbar brings the dialog forward with the keyboard, since
+  the app ignores the window until the dialog closes. Minimizing either one
+  minimizes the window, and its dialogs come back when it is restored. Clicks
+  still reach the window; the app decides what to do with them. Window IPC
+  reports `parent_id` for any dialog and `is_modal` for a modal one.
 - System bell requests share a 250 ms cooldown across clients. The bell stays
   silent while the session is locked or a polkit authentication prompt is open.
 - Clients can blur a region behind a surface when the renderer advertises the

@@ -175,6 +175,12 @@ panel painting. The key rules:
   with `presentOwned`. No wl_surface: focused = first in `world.toplevels`,
   activated, no seat focus (`hasKeyboardFocus`). Never close one from a
   widget callback; details in `src/control_center/AGENTS.md`.
+* **Modal dialogs hold their owner** (`Toplevel.isModal`: xdg-dialog-v1 or
+  `_NET_WM_STATE_MODAL`, only with an owner). `focusSurface` passes focus to
+  `World.modalHolder` and raises the owners right beneath it; minimizing the
+  dialog minimizes the owner. A minimized owner's dialogs are hidden, not
+  minimized (`window_tabs.visible`): anything picking a window to focus must
+  check that, since focusing a hidden dialog restores its owner.
 * **Desktop keyboard focus is shell focus:** taking it clears seat focus; a
   surface gaining seat focus, or a `.shell` window, takes it back.
 * **Input** details are in `src/input/AGENTS.md`. Cross-cutting: every client

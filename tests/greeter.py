@@ -97,6 +97,7 @@ def run(with_dm):
                 for interface in ("wp_security_context_manager_v1", "ext_workspace_manager_v1", "zwp_text_input_manager_v1",
                                   "wp_drm_lease_device_v1", "xdg_toplevel_tag_manager_v1", "xdg_system_bell_v1",
                                   "zxdg_exporter_v1", "zxdg_importer_v1", "zxdg_exporter_v2", "zxdg_importer_v2",
+                                  "xdg_wm_dialog_v1",
                                   "wp_commit_timing_manager_v1",
                                   "ext_background_effect_manager_v1", "wp_alpha_modifier_v1", "zwlr_gamma_control_manager_v1",
                                   "wp_content_type_manager_v1", "wp_tearing_control_manager_v1",

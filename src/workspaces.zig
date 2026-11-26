@@ -377,15 +377,17 @@ pub fn focusFallback(server: *Server, workspace: ?u8) void {
     const applying = server.undo.applying;
     server.undo.applying = true;
     defer server.undo.applying = applying;
+    // `window_tabs.visible` also rules out a dialog hidden with its minimized
+    // owner: focusing it would restore the owner.
     if (workspace) |id| if (server.world.workspaces.slots[id - 1].focus) |remembered| {
-        if (server.findToplevelById(remembered)) |top| if (top.workspace_id == id and visible(top) and !top.tab_hidden and !top.minimized) {
+        if (server.findToplevelById(remembered)) |top| if (top.workspace_id == id and @import("window_tabs.zig").visible(top)) {
             server.world.focus(top);
             return;
         };
     };
     var tops = server.world.toplevels.iterator(.forward);
     while (tops.next()) |top| {
-        if (!visible(top) or top.tab_hidden or top.minimized) continue;
+        if (!@import("window_tabs.zig").visible(top)) continue;
         if (workspace) |id| if (top.workspace_id != id) continue;
         server.world.focus(top);
         return;

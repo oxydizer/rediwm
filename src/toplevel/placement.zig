@@ -160,6 +160,7 @@ pub fn pickInitialPlacement(
     output: *Output,
     open_rules: window_rules.OpenRules,
     parent: ?*Toplevel,
+    modal: bool,
     w: i32,
     h: i32,
 ) RestoreGeometry {
@@ -180,8 +181,19 @@ pub fn pickInitialPlacement(
         rx = @intFromFloat(@round(pt.x));
         ry = @intFromFloat(@round(pt.y));
     } else if (parent) |p| {
-        rx = p.x + 30;
-        ry = p.y + 30;
+        if (modal) {
+            // Over the middle of the owner it holds, kept on the owner's screen.
+            const pw: i32 = @intFromFloat(@round(@as(f64, @floatFromInt(p.chrome_width)) * p.zoom()));
+            const ph: i32 = @intFromFloat(@round(@as(f64, @floatFromInt(p.chrome_height)) * p.zoom()));
+            const screen = (p.currentOutput() orelse output).usableBox();
+            const lo = server.world.toWorld(@floatFromInt(screen.x), @floatFromInt(screen.y));
+            const hi = server.world.toWorld(@floatFromInt(screen.x + screen.width), @floatFromInt(screen.y + screen.height));
+            rx = clampSpan(p.x + @divTrunc(pw - w, 2), lo.x, hi.x, w);
+            ry = clampSpan(p.y + @divTrunc(ph - h, 2), lo.y, hi.y, h);
+        } else {
+            rx = p.x + 30;
+            ry = p.y + 30;
+        }
     } else {
         const cascade = @mod(@as(i32, @intCast(server.world.toplevels.length())) * 30, 240);
         const pt = server.world.toWorld(@floatFromInt(usable.x + 50 + cascade), @floatFromInt(usable.y + 50 + cascade));
@@ -192,10 +204,18 @@ pub fn pickInitialPlacement(
     return .{ .x = rx, .y = ry, .width = w, .height = h };
 }
 
+/// `pos` moved so that `len` from it fits between `lo` and `hi`, or to `lo`
+/// when it cannot.
+fn clampSpan(pos: i32, lo: f64, hi: f64, len: i32) i32 {
+    const min: i32 = @intFromFloat(@round(lo));
+    const max: i32 = @max(min, @as(i32, @intFromFloat(@round(hi))) - len);
+    return std.math.clamp(pos, min, max);
+}
+
 pub fn setupInitialRestoreGeometry(toplevel: *Toplevel, output: *Output) void {
     const rw: i32 = @intCast(toplevel.open_rules.width orelse 640);
     const rh: i32 = @intCast(toplevel.open_rules.height orelse 480);
-    const geom = pickInitialPlacement(toplevel.server, output, toplevel.open_rules, toplevel.parentWindow(), rw, rh);
+    const geom = pickInitialPlacement(toplevel.server, output, toplevel.open_rules, toplevel.parentWindow(), toplevel.isModal(), rw, rh);
     if (toplevel.maximize_restore == null) toplevel.maximize_restore = geom;
     if (toplevel.fullscreen_restore == null) toplevel.fullscreen_restore = geom;
 }

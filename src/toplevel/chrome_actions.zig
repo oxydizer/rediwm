@@ -66,12 +66,22 @@ pub fn handleChromeClick(toplevel: *Toplevel, sx: f64, sy: f64, button: u32) voi
 }
 
 // The client stays mapped while minimized. xdg-shell v6 reports suspended
-// so native clients can stop background work until restore.
+// so native clients can stop background work until restore. Dialogs are not
+// minimized with their owner but hidden with it (`window_tabs.visible`), and
+// show again when it is restored.
 pub fn minimize(toplevel: *Toplevel) void {
     if (toplevel.tab_hidden) {
         if (@import("../window_tabs.zig").active(toplevel.server, toplevel.tab_group)) |active_tab| active_tab.minimize();
         return;
     }
+    // A modal dialog goes with the owner it holds: minimized alone, it would
+    // leave behind an owner that ignores input.
+    var owner = toplevel;
+    for (0..8) |_| {
+        if (!owner.isModal()) break;
+        owner = owner.owner() orelse break;
+    }
+    if (owner != toplevel and !owner.isModal()) return owner.minimize();
     // X11 clients can ask for this while withdrawn; the stack reorder below
     // needs the window to be in it.
     if (toplevel.minimized or !toplevel.in_world) return;
@@ -90,11 +100,16 @@ pub fn minimize(toplevel: *Toplevel) void {
     toplevel.frame_tree.node.setEnabled(false);
 
     const server = toplevel.server;
-    const held_focus = server.world.toplevels.first() == toplevel and toplevel.activated;
+    // One of its dialogs may hold the focus; it is hidden with the owner.
+    const front = server.world.toplevels.first();
+    const held_focus = if (front) |f| f.activated and (f == toplevel or isDialogOf(f, toplevel)) else false;
     if (server.input.seat.keyboard_state.focused_surface) |focused| {
-        if (fromSurface(server, focused) == toplevel) server.input.seat.keyboardNotifyClearFocus();
+        if (fromSurface(server, focused)) |holder| {
+            if (holder == toplevel or isDialogOf(holder, toplevel)) server.input.seat.keyboardNotifyClearFocus();
+        }
     }
     toplevel.setActivated(false);
+    if (held_focus and front.? != toplevel) front.?.setActivated(false);
     switch (toplevel.backend) {
         .xwayland => |*adapter| {
             adapter.xsurface.setMinimized(true);
@@ -119,7 +134,7 @@ pub fn minimize(toplevel: *Toplevel) void {
         im.recheckInhibitors();
     }
 
-    if (toplevel.tab_group != 0) @import("../window_tabs.zig").refreshVisibility(server);
+    if (toplevel.tab_group != 0 or hasDialogs(toplevel)) @import("../window_tabs.zig").refreshVisibility(server);
     if (server.world.workspaces.active) {
         @import("../workspaces.zig").focusFallback(server, toplevel.workspace_id);
     } else if (held_focus) {
@@ -150,9 +165,29 @@ fn setXdgSuspended(adapter: *xdg, suspended: bool) void {
     _ = adapter.xdg_toplevel.setSuspended(suspended);
 }
 
+/// Whether `candidate` is a dialog of `owner`, directly or through other dialogs.
+fn isDialogOf(candidate: *Toplevel, owner: *Toplevel) bool {
+    var current = candidate;
+    for (0..32) |_| {
+        current = current.owner() orelse return false;
+        if (current == owner) return true;
+    }
+    return false;
+}
+
+fn hasDialogs(owner: *Toplevel) bool {
+    var it = owner.server.world.toplevels.iterator(.forward);
+    while (it.next()) |candidate| {
+        if (candidate != owner and candidate.in_world and candidate.owner() == owner) return true;
+    }
+    return false;
+}
+
+/// Restoring an owner shows its dialogs again, and focusing it passes the
+/// keyboard to a modal one (`World.focusSurface`).
 pub fn restore(toplevel: *Toplevel) void {
     toplevel.server.window_tabs.select(toplevel);
-    defer if (toplevel.tab_group != 0) @import("../window_tabs.zig").refreshVisibility(toplevel.server);
+    defer if (toplevel.tab_group != 0 or hasDialogs(toplevel)) @import("../window_tabs.zig").refreshVisibility(toplevel.server);
     if (!toplevel.minimized or !toplevel.in_world) return;
     @import("../effects/window_minimize.zig").cancelFor(toplevel.server, toplevel.id);
     toplevel.minimized = false;

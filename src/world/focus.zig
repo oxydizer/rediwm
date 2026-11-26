@@ -31,14 +31,23 @@ pub fn isSurfaceOrOwnPopupOf(surface: *wlr.Surface, toplevel_surface: *wlr.Surfa
 }
 
 /// Raise `toplevel` and give keyboard focus to `surface` (a popup or
-/// subsurface, or the window's own surface when null).
-pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) void {
+/// subsurface, or the window's own surface when null). A window held by a
+/// modal dialog passes both to the dialog.
+pub fn focusSurface(world: *World, requested: *Toplevel, requested_surface: ?*wlr.Surface) void {
     if (world.server.locker != null or world.server.polkit_dialog != null) return;
     world.overview.cancel(world);
     // Only windows in the stack can be raised; the reorder below needs the link.
-    if (!toplevel.in_world) return;
-    world.workspaces.reveal(toplevel);
-    if (!@import("../workspaces.zig").visible(toplevel)) return;
+    if (!requested.in_world) return;
+    world.workspaces.reveal(requested);
+    if (!@import("../workspaces.zig").visible(requested)) return;
+    // The client ignores the owner's input while its modal dialog is open, so a
+    // click, chip or Alt-Tab on the owner brings the dialog forward instead.
+    const toplevel = modalHolder(world, requested);
+    const surface = if (toplevel == requested) requested_surface else null;
+    if (toplevel != requested) {
+        world.workspaces.reveal(toplevel);
+        if (!@import("../workspaces.zig").visible(toplevel)) return;
+    }
     world.workspaces.rememberFocus(toplevel);
     world.server.window_tabs.focusMember(toplevel);
     var boosted = world.toplevels.iterator(.forward);
@@ -46,6 +55,7 @@ pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) 
         if (previous != toplevel) previous.setZoomBoost(false);
     }
     toplevel.setUrgent(false);
+    if (requested != toplevel) requested.setUrgent(false);
     const seat = world.server.input.seat;
     const enter = surface orelse toplevel.surface();
     if (seat.keyboard_state.focused_surface) |previous_surface| {
@@ -81,8 +91,7 @@ pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) 
         if (previous != toplevel and previous.backend == .shell) previous.setActivated(false);
     }
 
-    toplevel.raise();
-    world.raiseTransientChildren(toplevel);
+    raiseWithOwners(world, toplevel);
     toplevel.link.remove();
     world.toplevels.prepend(toplevel);
 
@@ -126,6 +135,50 @@ pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) 
     };
     @import("../Keyboard.zig").enter(world.server, next);
     world.server.refreshTaskbars();
+}
+
+/// The modal dialog that holds `owner`'s input, following dialogs of dialogs, or
+/// `owner` itself. Of several, the one focused last.
+pub fn modalHolder(world: *World, owner: *Toplevel) *Toplevel {
+    var holder = owner;
+    for (0..8) |_| holder = modalDialog(world, holder) orelse break;
+    return holder;
+}
+
+/// Runs on every pointer motion under focus-follows-mouse: windows without a
+/// parent, nearly all of them, are passed over before the owner lookup.
+fn modalDialog(world: *World, owner: *Toplevel) ?*Toplevel {
+    var it = world.toplevels.iterator(.forward);
+    while (it.next()) |candidate| {
+        if (candidate == owner or !candidate.in_world) continue;
+        const parented = switch (candidate.backend) {
+            .xdg => |*adapter| adapter.xdg_toplevel.parent != null,
+            .xwayland => |*adapter| adapter.xsurface.parent != null,
+            .placeholder, .shell => false,
+        };
+        if (parented and candidate.owner() == owner and candidate.isModal()) return candidate;
+    }
+    return null;
+}
+
+/// Raises `toplevel` above everything with its dialogs on top of it. A modal
+/// dialog first brings up the owners it holds, so it is never focused under
+/// one: while it has the keyboard, its owners sit right beneath it.
+fn raiseWithOwners(world: *World, toplevel: *Toplevel) void {
+    var owners: [8]*Toplevel = undefined;
+    var count: usize = 0;
+    var current = toplevel;
+    while (count < owners.len and current.isModal()) : (count += 1) {
+        current = current.owner() orelse break;
+        owners[count] = current;
+    }
+    while (count > 0) {
+        count -= 1;
+        owners[count].raise();
+        world.raiseTransientChildren(owners[count]);
+    }
+    toplevel.raise();
+    world.raiseTransientChildren(toplevel);
 }
 
 /// A transient dialog must stay above its owner even when the owner itself

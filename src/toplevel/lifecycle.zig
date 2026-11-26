@@ -172,7 +172,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
         } else if (target_out) |output| {
             const frame_w = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(toplevel.chrome_width)) * toplevel.zoom())));
             const frame_h = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(toplevel.chrome_height)) * toplevel.zoom())));
-            const geom = pickInitialPlacement(toplevel.server, output, toplevel.open_rules, toplevel.parentWindow(), frame_w, frame_h);
+            const geom = pickInitialPlacement(toplevel.server, output, toplevel.open_rules, toplevel.parentWindow(), toplevel.isModal(), frame_w, frame_h);
             toplevel.setPosition(geom.x, geom.y);
             toplevel.placed = true;
         }
@@ -473,6 +473,20 @@ pub fn destroyNow(toplevel: *Toplevel) void {
     toplevel.frame_tree.node.destroy();
     toplevel.releaseIcon();
     gpa.destroy(toplevel);
+}
+
+/// The client set or unset its xdg-dialog-v1 modal hint. A dialog that turns
+/// modal while its owner has the keyboard takes it over, as it would have had
+/// the owner been focused after it.
+pub fn handleModalChanged(toplevel: *Toplevel) void {
+    if (!toplevel.in_world) return;
+    if (toplevel.isModal()) if (toplevel.owner()) |owner| {
+        if (toplevel.server.world.toplevels.first() == owner and owner.activated) toplevel.server.world.focus(owner);
+    };
+    if (toplevel.server.ipc) |ipc| {
+        events.onWindowChanged(ipc, toplevel);
+        ipc.wait_mgr.checkAll();
+    }
 }
 
 pub fn handleIdentityChanged(toplevel: *Toplevel) void {

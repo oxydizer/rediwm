@@ -384,6 +384,7 @@ pub const isMaximized = toplevel_info.isMaximized;
 pub const isFullscreen = toplevel_info.isFullscreen;
 pub const isInitialized = toplevel_info.isInitialized;
 pub const parentWindow = toplevel_info.parentWindow;
+pub const isModal = toplevel_info.isModal;
 pub const sizeConstraints = toplevel_info.sizeConstraints;
 
 // toplevel/focus_close.zig
@@ -602,6 +603,7 @@ pub const beginMove = toplevel_layout.beginMove;
 
 // toplevel/lifecycle.zig
 pub const handleIdentityChanged = toplevel_lifecycle.handleIdentityChanged;
+pub const handleModalChanged = toplevel_lifecycle.handleModalChanged;
 
 // toplevel/tabs.zig
 pub const tabStrip = toplevel_tabs.tabStrip;

@@ -14,6 +14,7 @@ extern fn rediwm_protocols_create(
     *const fn (*Server) callconv(.c) bool,
     *const fn (*Server, *wlr.Surface) callconv(.c) void,
     *const fn (*Server) callconv(.c) void,
+    *const fn (*Server, *wlr.Surface) callconv(.c) void,
 ) ?*Protocols;
 pub extern fn rediwm_protocols_destroy(?*Protocols) void;
 pub extern fn rediwm_protocols_offer(?*Protocols, *wlr.Output) void;
@@ -22,8 +23,18 @@ pub extern fn rediwm_protocols_tearing(?*Protocols, ?*wlr.Surface) bool;
 extern fn rediwm_protocols_content(?*Protocols, ?*wlr.Surface) ?[*:0]const u8;
 extern fn rediwm_surface_tag(?*wlr.Surface, bool) ?[*:0]const u8;
 pub extern fn rediwm_surface_edge_is_srgb(*wlr.Surface) bool;
+extern fn rediwm_xdg_toplevel_modal(*wlr.XdgToplevel) bool;
 pub fn create(server: *Server) ?*Protocols {
-    return rediwm_protocols_create(server.wl_server, server.backend, server.renderer, server.scene_outputs, server.output_layout, server, blocked, changed, ring);
+    return rediwm_protocols_create(server.wl_server, server.backend, server.renderer, server.scene_outputs, server.output_layout, server, blocked, changed, ring, modalChanged);
+}
+/// The client's xdg-dialog-v1 modal hint; `Toplevel.isModal` adds the owner.
+pub fn modal(top: *wlr.XdgToplevel) bool {
+    return rediwm_xdg_toplevel_modal(top);
+}
+fn modalChanged(server: *Server, surface: *wlr.Surface) callconv(.c) void {
+    // An unmapped dialog is not in the stack yet; its hint is read when it maps.
+    const top = Toplevel.fromSurface(server, surface) orelse return;
+    if (top.surface() == surface) top.handleModalChanged();
 }
 fn blocked(server: *Server) callconv(.c) bool {
     return server.greeter_mode or server.locker != null or server.polkit_dialog != null or server.shutting_down;

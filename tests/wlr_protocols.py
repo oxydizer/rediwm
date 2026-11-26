@@ -31,7 +31,7 @@ def compile_fixture(tmp):
         sources.append(str(tmp / f"{name}-protocol.c"))
     for name, relative in [("xdg-shell", "stable/xdg-shell/xdg-shell.xml")] + [
             (name + "-v1", f"staging/{name}/{name}-v1.xml") for name in
-            ("xdg-toplevel-tag", "xdg-system-bell", "content-type", "tearing-control", "color-management",
+            ("xdg-toplevel-tag", "xdg-system-bell", "xdg-dialog", "content-type", "tearing-control", "color-management",
              "color-representation", "ext-workspace")]:
         for mode, suffix in (("client-header", "client-protocol.h"), ("private-code", "protocol.c")):
             subprocess.run(["wayland-scanner", mode, str(system / relative), str(tmp / f"{name}-{suffix}")], check=True)
@@ -449,8 +449,113 @@ def xdg_foreign(tmp):
     print("PASS: xdg-foreign v1/v2 parenting, cross-version handles and revocation")
 
 
+def xdg_dialog(tmp):
+    def launch(s, initial):
+        child = s.spawn(str(tmp / "fixture"), "xdg-dialog", initial, stdin=subprocess.PIPE)
+        expect_line(child, "mapped")
+        owner, dialog = wait_for(lambda: (s.window("rediwm.dialog-owner"), s.window("rediwm.dialog")),
+                                 "owner and dialog did not map", timeout=10)
+        for window in (owner, dialog):
+            s.ipc.wait_for("window_geometry_settled", window_id=window["id"])
+        return child, owner["id"], dialog["id"]
+
+    def send(child, command):
+        child.stdin.write(command + "\n")
+        child.stdin.flush()
+        expect_line(child, "ok")
+
+    def focused(s):
+        return next((w["app_id"] for w in s.ipc.get_windows() if w["is_focused"]), None)
+
+    def expect_focus(s, app_id, message):
+        wait_for(lambda: focused(s) == app_id, lambda: f"{message}: focus is on {focused(s)}")
+
+    def on_top(s, app_id):
+        # The dialog's middle, where it covers its owner.
+        dialog = s.window("rediwm.dialog")
+        hit = s.ipc.hit_test(dialog["x"] + dialog["width"] // 2, dialog["y"] + dialog["height"] // 2)
+        return hit.get("window_id") == s.window(app_id)["id"]
+
+    def middle(window):
+        return (window["x"] + window["width"] / 2, window["y"] + window["height"] / 2)
+
+    s = Session(tmp)
+    try:
+        child, owner_id, dialog_id = launch(s, "modal")
+        owner, dialog = s.window("rediwm.dialog-owner"), s.window("rediwm.dialog")
+        assert dialog["parent_id"] == owner_id and dialog.get("is_modal"), dialog
+        assert "parent_id" not in owner and "is_modal" not in owner, owner
+        assert all(abs(a - b) <= 2 for a, b in zip(middle(dialog), middle(owner))), (dialog, owner)
+        expect_focus(s, "rediwm.dialog", "a mapped modal dialog lacks the keyboard")
+
+        # Focusing the owner (a click, its chip, Alt-Tab) passes the keyboard to the dialog.
+        s.ipc.focus_window(owner_id)
+        expect_focus(s, "rediwm.dialog", "focusing the owner of a modal dialog")
+        assert on_top(s, "rediwm.dialog")
+
+        # Without the hint the owner takes the keyboard; its dialog stays above it.
+        send(child, "plain")
+        assert "is_modal" not in s.window("rediwm.dialog")
+        s.ipc.focus_window(owner_id)
+        expect_focus(s, "rediwm.dialog-owner", "focusing the owner of a plain dialog")
+        assert on_top(s, "rediwm.dialog")
+
+        # Turning modal while the owner has the keyboard takes it over.
+        send(child, "modal")
+        expect_focus(s, "rediwm.dialog", "a dialog turning modal under a focused owner")
+
+        # Minimizing the modal dialog minimizes its owner; both come back together.
+        s.ipc.minimize(dialog_id)
+        wait_for(lambda: s.window("rediwm.dialog-owner")["is_minimized"], "owner stayed up with its modal dialog minimized")
+        wait_for(lambda: not on_top(s, "rediwm.dialog"), "the dialog of a minimized owner is still shown")
+        assert focused(s) is None and not s.window("rediwm.dialog")["is_minimized"]
+        s.ipc.focus_window(owner_id)
+        expect_focus(s, "rediwm.dialog", "restoring the owner of a modal dialog")
+        assert not s.window("rediwm.dialog-owner")["is_minimized"] and on_top(s, "rediwm.dialog")
+        s.ipc.minimize(owner_id)
+        wait_for(lambda: not on_top(s, "rediwm.dialog"), "minimizing the owner left its dialog shown")
+        assert focused(s) is None
+        s.ipc.restore(owner_id)
+        expect_focus(s, "rediwm.dialog", "restoring the owner of a modal dialog")
+        assert on_top(s, "rediwm.dialog")
+
+        # Destroying the dialog object drops the hint.
+        send(child, "drop")
+        assert "is_modal" not in s.window("rediwm.dialog")
+        s.ipc.focus_window(owner_id)
+        expect_focus(s, "rediwm.dialog-owner", "focusing the owner after the hint was dropped")
+
+        send(child, "close")
+        wait_for(lambda: s.window("rediwm.dialog") is None, "dialog did not close")
+        expect_focus(s, "rediwm.dialog-owner", "closing the dialog")
+        child.stdin.write("quit\n")
+        child.stdin.flush()
+        assert child.wait(timeout=5) == 0
+    finally:
+        s.close()
+
+    # On a workspace, minimizing an owner whose dialog has the keyboard must not
+    # hand focus back to the hidden dialog: that would restore the owner.
+    (tmp / "workspaces").mkdir()
+    s = Session(tmp / "workspaces", config='[compositor]\nxwayland = false\ndesktop_mode = "workspaces"\n')
+    try:
+        child, owner_id, dialog_id = launch(s, "plain")
+        expect_focus(s, "rediwm.dialog", "a mapped dialog lacks the keyboard")
+        s.ipc.minimize(owner_id)
+        wait_for(lambda: s.window("rediwm.dialog-owner")["is_minimized"], "owner was not minimized")
+        time.sleep(0.3)
+        assert s.window("rediwm.dialog-owner")["is_minimized"], "minimizing the owner was undone"
+        assert focused(s) is None, focused(s)
+        child.stdin.write("quit\n")
+        child.stdin.flush()
+        assert child.wait(timeout=5) == 0
+    finally:
+        s.close()
+    print("PASS: xdg-dialog modal focus, placement, minimize and hint changes")
+
+
 def run():
-    for case in (xdg_foreign, system_bell, extra_protocols, output_management, foreign_toplevel, screencopy_and_virtual_pointer, session_lock):
+    for case in (xdg_dialog, xdg_foreign, system_bell, extra_protocols, output_management, foreign_toplevel, screencopy_and_virtual_pointer, session_lock):
         with tempfile.TemporaryDirectory(prefix="rediwm-wlr-protocols-") as directory:
             tmp = Path(directory)
             compile_fixture(tmp)

@@ -151,6 +151,8 @@ pub fn makeWindowData(server: *Server, toplevel: *Toplevel) protocol.WindowData 
         .x11_class = toplevel.x11Class(),
         .x11_instance = toplevel.x11Instance(),
         .placeholder = if (toplevel.backend == .placeholder) true else null,
+        .parent_id = if (toplevel.owner()) |owner| owner.id else null,
+        .is_modal = toplevel.isModal(),
     };
 }
 

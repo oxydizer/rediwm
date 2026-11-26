@@ -80,6 +80,7 @@ const world_focus = @import("world/focus.zig");
 pub const focus = world_focus.focus;
 pub const focusSurface = world_focus.focusSurface;
 pub const raiseTransientChildren = world_focus.raiseTransientChildren;
+pub const modalHolder = world_focus.modalHolder;
 pub const cycleFocus = world_focus.cycleFocus;
 pub const cycleFocusPrev = world_focus.cycleFocusPrev;
 pub const peekTarget = world_focus.peekTarget;

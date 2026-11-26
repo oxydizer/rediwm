@@ -88,6 +88,10 @@ pub const WindowData = struct {
     placeholder: ?bool = null,
     tab_group: ?u64 = null,
     tab_active: bool = true,
+    /// The window this one is a dialog of.
+    parent_id: ?u64 = null,
+    /// A dialog that holds its owner's input (xdg-dialog-v1, _NET_WM_STATE_MODAL).
+    is_modal: bool = false,
 
     pub fn jsonStringify(self: WindowData, jws: anytype) !void {
         try jws.beginObject();
@@ -133,11 +137,15 @@ pub const WindowData = struct {
         try jws.write(self.x11_class);
         try jws.objectField("x11_instance");
         try jws.write(self.x11_instance);
-        inline for (.{ "tag", "description", "content_type" }) |field| {
+        inline for (.{ "tag", "description", "content_type", "parent_id" }) |field| {
             if (@field(self, field)) |value| {
                 try jws.objectField(field);
                 try jws.write(value);
             }
+        }
+        if (self.is_modal) {
+            try jws.objectField("is_modal");
+            try jws.write(true);
         }
         if (self.tab_group) |group| {
             try jws.objectField("tab_group");
