@@ -82,21 +82,30 @@ mount that contains the path, from a mount table kept current by a watcher of
 `/proc/self/mountinfo` (through `src/platform/`). A copy belongs to its source's
 and its destination's domains.
 
-A task that has run longer than `stall_after` (about 2 s) without reporting
-progress marks its domain **suspect**. While a domain is suspect:
+A task that has gone `suspect_after` (10 s) without progress marks its domain
+**suspect**. Progress is bytes moved for an operation, so one large file on a
+slow stick is not stuck while its chunks arrive; for a task that only stats or
+lists, it is elapsed time. Cheap flash drives pause for 5–15 s during garbage
+collection, which 10 s rides out. Suspect is internal and cheap to get wrong: it
+only reroutes work (below), so it errs early. While a domain is suspect:
 
 * at most one task per lane runs in it (the stuck one); further tasks for that
   domain wait in their lane's queue, in order, and never take a fresh worker;
 * tasks for other domains are unaffected (4.3 gives them workers).
 
-The domain is cleared when its stuck task returns. Cancelling a job whose task is
+After `report_after` (30 s) without progress the job's record says so, and the
+window shows it waiting for that mount ("Waiting for <mount>…"), with Cancel
+still offered. There is no later "dead" state: a thread stuck in a syscall
+cannot be stopped, so there is nothing further to do until it returns.
+
+The domain is cleared when its stuck task returns or reports progress. Cancelling a job whose task is
 stuck in a suspect domain shows `cancel_requested` until the task returns, as
 today.
 
 ### 4.3 Elastic user-path lanes
 
 Each user-path lane has a **target** of runnable workers and a **hard cap** of
-threads. A worker stuck past `stall_after` stops counting toward the target, so
+threads. A worker stuck past `suspect_after` stops counting toward the target, so
 the lane may start a replacement while it is under the cap. Extra workers exit
 after being idle for a while (about 30 s), down to the target.
 
@@ -142,9 +151,6 @@ and the probe's round trip stays at its unloaded value.
 
 ## 6. Open questions
 
-* `stall_after`: 2 s is a guess. Too short marks a slow USB stick as dead; too
-  long keeps healthy work waiting. "No progress" for an operation is no bytes
-  moved; for a stat-only task it is simply elapsed time.
 * Should requests get a lane of their own (they are small and a person waits on
   each), or is the elastic task lane with suspect domains enough?
 * Per-device detection for network and FUSE filesystems, which have no block
