@@ -15,6 +15,7 @@ const app_tabs = @import("app_tabs.zig");
 const ops_mod = @import("ops.zig");
 const dirsize = @import("dirsize.zig");
 const thumbs_mod = @import("thumbs.zig");
+const reaper_mod = @import("reaper.zig");
 const thumb_decode = @import("thumb_decode.zig");
 const volumes_mod = @import("volumes.zig");
 const player_link = @import("player_link.zig");
@@ -216,6 +217,9 @@ pub const App = struct {
     navigation_count: u32 = 0,
     folder_sizes: std.StringHashMap(SizeState) = undefined,
     dirsize_pool: ?*dirsize.Pool = null,
+    /// The process's reaper: helper threads this window stops are joined
+    /// there, off the UI thread. Null in tests that build an App alone.
+    reaper: ?*reaper_mod.Reaper = null,
 
     // Image thumbnails, made on worker threads (see thumbs.zig). The service
     // is created when a folder first shows an image.
@@ -442,8 +446,8 @@ pub const App = struct {
         if (self.editor_path) |path| self.allocator.free(path);
         self.clearFolderSizes();
         self.folder_sizes.deinit();
-        if (self.dirsize_pool) |p| p.deinit();
-        if (self.thumbs) |t| t.deinit();
+        if (self.dirsize_pool) |p| reaper_mod.retire(self.reaper, p, dirsize.Pool.deinit);
+        if (self.thumbs) |t| reaper_mod.retire(self.reaper, t, thumbs_mod.Service.deinit);
         if (self.devices) |monitor| monitor.stop();
         self.device_list.deinit();
         if (self.device_op) |op| self.allocator.free(op.id);

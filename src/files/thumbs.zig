@@ -111,11 +111,17 @@ pub const Service = struct {
         return self;
     }
 
-    fn stopWorkers(self: *Service) void {
+    /// Asks the workers to stop and returns at once; a decode in progress
+    /// still finishes (`reaper.retire`).
+    pub fn requestStop(self: *Service) void {
         _ = c.pthread_mutex_lock(&self.mutex);
         self.stopping = true;
         _ = c.pthread_cond_broadcast(&self.cond);
         _ = c.pthread_mutex_unlock(&self.mutex);
+    }
+
+    fn stopWorkers(self: *Service) void {
+        self.requestStop();
         for (&self.threads) |*thread| {
             if (thread.*) |t| t.join();
             thread.* = null;

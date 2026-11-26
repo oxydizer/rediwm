@@ -33,7 +33,12 @@ The process can hold several windows (`main.zig` `open_windows`, at most
 `max_windows`) on one Wayland connection, so the compositor sees one client and
 a folder tab can move between them. `client_lifecycle.zig` makes, steps, polls
 and destroys a window: each has its own `Client`, `App` and listing worker and
-shares the display and the process's I/O service. Anything that
+shares the display, the process's I/O service and its reaper. A closing window
+never joins a thread: its listing worker, folder-size pool, thumbnail workers and
+Trash count are stopped and handed to `reaper.zig`, which joins them in order on
+its own thread (the listing worker goes last; the Trash count writes its wake
+fd). A new per-window helper thread gets a non-waiting `requestStop` and goes
+through `reaper.retire` too. Anything that
 touches a user path (stat, realpath, mkdir, rename, chmod, restore, delete) goes
 to the service as a job or a request; the window never waits for it. The seat reports every surface of the
 connection, so pointer, keyboard, text-input and drag events are filtered by

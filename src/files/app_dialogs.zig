@@ -64,7 +64,7 @@ pub fn closeDialog(self: *App) void {
         dlg.deletion.deinit();
         if (dlg.applications) |*apps| apps.deinit();
         if (dlg.properties) |*props| props.deinit();
-        if (dlg.trash_properties) |*props| props.deinit();
+        if (dlg.trash_properties) |*props| props.release(self.reaper);
         dlg.edit.text.deinit(self.allocator);
         if (dlg.target_path) |tp| self.allocator.free(tp);
         if (dlg.conflict_name) |cn| self.allocator.free(cn);

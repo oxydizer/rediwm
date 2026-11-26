@@ -12,6 +12,7 @@ const c = @import("c.zig").api;
 const app_mod = @import("app.zig");
 const io_service_mod = @import("io_service.zig");
 const worker_mod = @import("worker.zig");
+const reaper_mod = @import("reaper.zig");
 const transfer = @import("transfer.zig");
 const client_tabs = @import("client_tabs.zig");
 const terminal_c = @import("terminal/model.zig").c;
@@ -60,6 +61,7 @@ pub fn create(
         .io_handle = io_handle,
     };
     self.ime = .{ .app = &self.app };
+    self.app.reaper = setup.reaper;
     self.app.service.handle = io_handle;
     self.app.requestPinKinds();
     if (launch.chooser) |options| try self.app.configureChooser(options);
@@ -285,6 +287,8 @@ pub fn destroy(self: *Client) void {
     self.ime.deinit();
     // Never fails and never waits on the Service mutex.
     self.io_handle.close();
-    self.worker.deinit();
+    // Last: the Trash count may still write this worker's `wake_main`, and the
+    // reaper finishes in order (`reaper.zig`).
+    reaper_mod.retire(self.app.reaper, self.worker, worker_mod.Worker.deinit);
     a.destroy(self);
 }

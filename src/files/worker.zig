@@ -136,9 +136,14 @@ pub const Worker = struct {
         return self;
     }
 
-    pub fn deinit(self: *Worker) void {
+    /// Asks the thread to stop and returns at once (`reaper.retire`).
+    pub fn requestStop(self: *Worker) void {
         self.stop.store(true, .release);
         self.signal();
+    }
+
+    pub fn deinit(self: *Worker) void {
+        self.requestStop();
         if (self.thread) |t| t.join();
         self.collate.deinit();
         _ = c.close(self.wake);

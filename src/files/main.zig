@@ -209,6 +209,8 @@ pub const Setup = struct {
     environ: std.process.Environ,
     home_dir: []const u8,
     force_csd: bool,
+    /// Joins the helper threads of windows that close (`reaper.zig`).
+    reaper: *@import("reaper.zig").Reaper,
 };
 
 /// What one window opens with. Only the first window has more than a folder.
@@ -257,12 +259,18 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         service.deinit();
     }
 
+    // Closing windows hand their helper threads here. It is finished after the
+    // windows and the compositor connection are gone (threading §10, U16).
+    var reaper: @import("reaper.zig").Reaper = undefined;
+    try reaper.start();
+    defer reaper.deinit();
+
     // One connection for every window: the compositor sees one client, which
     // is what lets a tab move from one of its windows to another.
     const display = try wl.Display.connect(null);
     defer display.disconnect();
 
-    const setup: Setup = .{ .io = init.io, .environ = init.minimal.environ, .home_dir = home_dir, .force_csd = force_csd };
+    const setup: Setup = .{ .io = init.io, .environ = init.minimal.environ, .home_dir = home_dir, .force_csd = force_csd, .reaper = &reaper };
 
     const windows = &open_windows;
     defer {
