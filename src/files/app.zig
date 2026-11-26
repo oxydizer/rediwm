@@ -106,7 +106,6 @@ pub const App = struct {
     new_window: ?[]u8 = null,
     tear_tab: ?usize = null,
     torrents: @import("torrents.zig").Client = .{},
-    transfer_view: app_torrents.View = .{},
     children: platform.child.Set = .{},
     chooser: ?chooser_mod.Options = null,
     filename: Editor = .{},
@@ -177,8 +176,7 @@ pub const App = struct {
     folder_views_seen: u64 = 0,
     non_git_list_view: ?bool = null,
     /// Each sidebar section expands independently. Places is open by default.
-    sidebar_expanded: [4]bool = .{ true, false, false, false },
-    transfers_were_active: bool = false,
+    sidebar_expanded: [app_model.sidebar_sections]bool = .{ true, false, false },
     git_expanded: bool = true,
     /// The "Git View" checkbox: off shows a repository like any other folder.
     git_view: bool = true,
@@ -521,7 +519,7 @@ pub const App = struct {
             return;
         }
         const cur = self.history.current;
-        const name = if (self.transfer_view.active) tr("Transfers") else if (self.isRecent()) tr("Recent") else if (self.trash_dir != null and std.mem.eql(u8, cur, self.trash_dir.?)) tr("Trash") else if (std.mem.eql(u8, cur, "/")) "/" else if (self.history.torrent and cur.len == self.history.archive_len) app_torrent_browse.crumbLabel(self, std.fs.path.basename(cur)) else std.fs.path.basename(cur);
+        const name = if (self.isRecent()) tr("Recent") else if (self.trash_dir != null and std.mem.eql(u8, cur, self.trash_dir.?)) tr("Trash") else if (std.mem.eql(u8, cur, "/")) "/" else if (self.history.torrent and cur.len == self.history.archive_len) app_torrent_browse.crumbLabel(self, std.fs.path.basename(cur)) else std.fs.path.basename(cur);
         _ = i18n.fmtZ(&self.title_z, tr("{name} — RediWM Files"), .{ .name = name }) catch {
             _ = i18n.fmtZ(&self.title_z, tr("RediWM Files"), .{}) catch unreachable;
         };
@@ -607,7 +605,7 @@ pub const App = struct {
     }
 
     pub fn rememberView(self: *App) void {
-        if (self.loading or self.transfer_view.active) return;
+        if (self.loading) return;
         var view: history_mod.View = .{ .scroll = self.scroll_y };
         for (self.items.items, 0..) |item, i| {
             if (item.selected) {
@@ -954,11 +952,6 @@ pub const App = struct {
     pub const sidebarHeaderBounds = app_sidebar_paint.sidebarHeaderBounds;
     pub const sidebarBodyY = app_sidebar_paint.sidebarBodyY;
     pub const renderPinDrop = app_sidebar_paint.renderPinDrop;
-    pub const fileOpsSidebarHeight = app_sidebar_paint.fileOpsSidebarHeight;
-    pub const fileOpsSidebarHit = app_sidebar_paint.fileOpsSidebarHit;
-    pub const fileOpsSidebarHover = app_sidebar_paint.fileOpsSidebarHover;
-    pub const fileOpsSidebarClick = app_sidebar_paint.fileOpsSidebarClick;
-    pub const renderFileOpsSidebar = app_sidebar_paint.renderFileOpsSidebar;
 
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
@@ -975,27 +968,10 @@ pub const App = struct {
     pub const inlineTorrentHit = app_torrent_rows.inlineTorrentHit;
     pub const inlineTorrentClick = app_torrent_rows.inlineTorrentClick;
     pub const renderTorrentTip = app_torrent_rows.renderTorrentTip;
-    pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const toggleTorrent = app_torrents.toggleTorrent;
     pub const openTorrentDetails = app_torrents.openTorrentDetails;
-    pub const openTransfers = app_torrents.openTransfers;
-    pub const leaveTransfers = app_torrents.leaveTransfers;
-    pub const renderTransferToolbar = app_torrents.renderTransferToolbar;
-    pub const renderTransferList = app_torrents.renderTransferList;
-    pub const transferPaneClick = app_torrents.transferPaneClick;
-    pub const transferPaneKey = app_torrents.transferPaneKey;
-    pub const transferPaneHover = app_torrents.transferPaneHover;
     pub const torrentSource = app_torrents.torrentSource;
     pub const confirmTorrent = app_torrents.confirmTorrent;
-    pub const torrentSidebarHeight = app_torrents.torrentSidebarHeight;
-    pub const torrentSidebarHit = app_torrents.torrentSidebarHit;
-    pub const torrentSidebarHover = app_torrents.torrentSidebarHover;
-    pub const torrentSidebarClick = app_torrents.torrentSidebarClick;
-    pub const renderTorrentSidebar = app_torrents.renderTorrentSidebar;
-    pub const transfersHover = app_torrents.transfersHover;
-    pub const transfersClick = app_torrents.transfersClick;
-    pub const transfersKey = app_torrents.transfersKey;
-    pub const renderTransfers = app_torrents.renderTransfers;
 
     // app_git_sidebar.zig
     pub const gitSidebarHeight = app_git_sidebar.gitSidebarHeight;

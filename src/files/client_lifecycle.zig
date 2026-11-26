@@ -71,7 +71,6 @@ pub fn create(
     self.app.startDevices();
     self.app.startAudio();
     if (launch.chooser == null) self.app.startTorrents();
-    if (launch.transfers) self.app.openTransfers();
     if (launch.torrent_source) |source| {
         // A torrent file opens as a folder; a magnet asks where it goes.
         if (source.len > 0 and source[0] == '/') self.app.browseTorrent(source) else self.app.torrentSource(source);

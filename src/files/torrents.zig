@@ -30,12 +30,6 @@ pub const Transfer = struct {
     limit: i32,
     @"error": []const u8,
     files: []const File,
-    pub fn status(self: Transfer) []const u8 {
-        if (self.@"error".len > 0) return self.@"error";
-        if (self.pending) return if (self.metadata) tr("Choose files to download") else tr("Fetching file list…");
-        if (self.paused) return if (self.finished) tr("Complete · Stopped") else tr("Paused");
-        return if (self.finished) tr("Downloaded · Seeding") else tr("Downloading");
-    }
 };
 /// One file of a torrent as `inspect` and `files` list it.
 pub const Entry = struct {

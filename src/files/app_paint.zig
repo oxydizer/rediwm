@@ -41,10 +41,6 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
     c.cairo_move_to(cr, 0, @as(f64, @floatFromInt(self.contentTop())) - 0.5);
     c.cairo_line_to(cr, width, @as(f64, @floatFromInt(self.contentTop())) - 0.5);
     c.cairo_stroke(cr);
-    if (self.transfer_view.active) {
-        self.renderTransferToolbar(cr);
-        return;
-    }
     const in_repo = self.inRepository();
     for ([_]bool{ false, true }) |content| {
         if (content) self.renderToolbarHover(cr);
@@ -168,9 +164,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.viewTop()), w_f - @as(f64, @floatFromInt(self.sidebarWidth() + self.scrollbarGutter())), @as(f64, @floatFromInt(viewport_h)));
     c.cairo_clip(cr);
 
-    if (self.transfer_view.active) {
-        self.renderTransferList(cr);
-    } else {
+    {
         if (self.list_view) {
             const column = self.listColumn(if (self.repository() != null) 0 else self.sortColumn());
             setSource(cr, ui_theme.global.surface);
@@ -212,12 +206,9 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     if (self.chooser != null) self.renderChooser(cr) else self.renderStatusBar(cr, h_f);
     self.renderTerminal(cr);
 
-    if (!self.audio_bar.playlist_open and !self.transfer_view.active and self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
+    if (!self.audio_bar.playlist_open and self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
     self.renderPermissionTip(cr);
     if (self.menu != null) self.renderMenu(cr);
-    if (self.menu == null and self.dialog == null) {
-        self.renderTorrentSidebarTip(cr);
-    }
     if (!self.audio_bar.playlist_open and self.menu == null and self.dialog == null) self.renderTorrentTip(cr);
 
     @import("app_audio_playlist.zig").paint(self, cr);
@@ -571,11 +562,7 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
     var torrent_buf: [4400]u8 = undefined;
     var status_text: []const u8 = "";
 
-    if (self.transfer_view.active) {
-        setSource(cr, if (self.torrents.message().len > 0) ui_theme.global.danger else ui_theme.global.window_fg);
-        const count = self.torrents.items().len;
-        status_text = if (self.torrents.message().len > 0) self.torrents.message() else if (self.torrents.retry_at != null) tr("Connecting…") else i18n.fmt(&status_buf, i18n.trn("{count} transfer · Downloads continue after closing Files.", "{count} transfers · Downloads continue after closing Files.", count), .{ .count = count }) catch tr("Transfers");
-    } else if (self.status_notice != null and nowMs() < self.status_notice_until) {
+    if (self.status_notice != null and nowMs() < self.status_notice_until) {
         if (self.status_is_error) {
             setSource(cr, ui_theme.global.danger);
         } else {
@@ -615,10 +602,6 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
 
 pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
     const dlg = self.dialog orelse return;
-    if (dlg.kind == .transfers) {
-        self.renderTransfers(cr);
-        return;
-    }
     if (dlg.kind == .properties) {
         self.dialog.?.properties.?.draw(cr, self.w, self.h, self.mouse_x, self.mouse_y, self.theme_cfg, self.io);
         return;

@@ -159,17 +159,16 @@ pub const Client = struct {
 
     /// Opens Files at `path`, or raises the window of `job_id` when it is
     /// still open (its conflict asks there). The new window may take focus.
-    pub fn openWindow(self: *Client, path: []const u8, job_id: ?u64, transfers: bool) void {
+    pub fn openWindow(self: *Client, path: []const u8, job_id: ?u64) void {
         if (self.fd < 0) {
             // Files is not running: start it there.
-            const argv: []const []const u8 = if (transfers) &.{ "rediwm-files", "--transfers", path } else &.{ "rediwm-files", path };
+            const argv: []const []const u8 = &.{ "rediwm-files", path };
             return @import("../config_runtime/actions.zig").spawnArgv(self.server, argv);
         }
         const token = self.server.activation.createToken();
         if (token) |t| t.data = @ptrCast(&self.server.activation);
         const params = std.json.Stringify.valueAlloc(gpa, .{
             .path = path,
-            .transfers = transfers,
             .job_id = job_id,
             .activation_token = if (token) |t| std.mem.span(t.name()) else null,
         }, .{ .emit_null_optional_fields = false }) catch return;

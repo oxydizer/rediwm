@@ -213,14 +213,14 @@ pub const Popup = struct {
             .resolve => {
                 const job = c.model.find(h.id) orelse return;
                 const path = if (job.destination.len > 0) job.destination.slice() else home();
-                c.openWindow(path, job.id, true);
+                c.openWindow(path, job.id);
                 return self.output.closeTransfers();
             },
-            // Files opens on the download's choices (its Transfers view).
+            // Files opens the download as a folder, to tick its files.
             .choose => {
                 const job = c.model.find(h.id) orelse return;
                 const path = if (job.destination.len > 0) job.destination.slice() else home();
-                c.openWindow(path, job.id, true);
+                c.openWindow(path, job.id);
                 return self.output.closeTransfers();
             },
             // Stopping a seeding download is pausing it: it then completes.
@@ -228,17 +228,17 @@ pub const Popup = struct {
             .destination => {
                 const job = c.model.find(h.id) orelse return;
                 if (job.destination.len == 0) return;
-                c.openWindow(job.destination.slice(), null, false);
+                c.openWindow(job.destination.slice(), null);
                 return self.output.closeTransfers();
             },
             .done_row, .show => {
                 for (c.model.doneJobs()) |job| if (job.id == h.id and job.destination.len > 0) {
-                    c.openWindow(job.destination.slice(), null, false);
+                    c.openWindow(job.destination.slice(), null);
                     return self.output.closeTransfers();
                 };
             },
             .open_files => {
-                c.openWindow(home(), null, true);
+                c.openWindow(home(), null);
                 return self.output.closeTransfers();
             },
             // Clearing may hide the item, which closes this panel.

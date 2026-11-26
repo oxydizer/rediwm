@@ -55,7 +55,7 @@ its history, between windows; tear-off and drop requests reach the event loop as
 instance per Wayland display. `run` first `claim`s
 `$XDG_RUNTIME_DIR/files-io-<hash of WAYLAND_DISPLAY>.sock` under its `.lock`
 file: if a process answers, the launch is sent as an NDJSON `OpenWindow`
-(folder, file to select, `--transfers`, `--torrent`, `XDG_ACTIVATION_TOKEN`)
+(folder, file to select, `--torrent`, `XDG_ACTIVATION_TOKEN`)
 and this process exits; else it binds the socket and serves it on the endpoint
 thread. A chooser never claims: it answers on its own stdout. The endpoint thread never touches the Service, a window or the
 display; accepted launches go to the UI thread through a single-producer ring
@@ -318,8 +318,9 @@ control bytes are refused because terminal paste would alter them.
 
 ## BitTorrent transfers
 
-`app_torrents.zig` owns the sidebar, main-pane list, toolbar and detail dialog
-(`enabled` turns torrents on or off as a whole);
+`app_torrents.zig` owns the helper connection and adding a torrent or magnet
+(`enabled` turns torrents on or off as a whole); downloads show in the shell's
+Transfers panel, not in Files;
 `app_torrent_rows.zig` owns folder-row matching, controls and hover details; `torrents.zig` is a bounded,
 nonblocking SOCK_SEQPACKET subscriber (poll slot 22). `torrent/helper.cpp`
 owns libtorrent and persistent resume data, and has no tray icon of its own;

@@ -93,13 +93,14 @@ pub const FileAction = enum {
 };
 pub const Sort = enum { name, name_desc, size, modified, type, size_asc, modified_asc, type_desc };
 
-/// The four first-class sections in the Files sidebar, in display order.
+/// The first-class sections in the Files sidebar, in display order.
+/// (Transfers are the shell's Transfers panel.)
 pub const SidebarSection = enum(u2) {
     places,
     disks,
     git,
-    transfers,
 };
+pub const sidebar_sections = std.enums.values(SidebarSection).len;
 
 /// Shared geometry for one sidebar accordion card.
 pub const SidebarCardGeometry = struct {
@@ -120,20 +121,20 @@ pub const SidebarLayout = struct {
     pub const header_height: i32 = 32;
     pub const gap: i32 = 8;
 
-    cards: [4]SidebarCardGeometry,
+    cards: [sidebar_sections]SidebarCardGeometry,
 
     /// Positions visible cards in section order. Every expanded card
     /// receives its body height independently.
     pub fn init(
         top: i32,
-        body_heights: [4]i32,
-        visible: [4]bool,
-        expanded_sections: [4]bool,
+        body_heights: [sidebar_sections]i32,
+        visible: [sidebar_sections]bool,
+        expanded_sections: [sidebar_sections]bool,
     ) SidebarLayout {
         var result: SidebarLayout = .{ .cards = undefined };
         var y = top;
 
-        for (0..4) |i| {
+        for (0..sidebar_sections) |i| {
             const expanded = visible[i] and expanded_sections[i];
             const card: SidebarCardGeometry = .{
                 .y = y,
@@ -257,7 +258,6 @@ pub const Focus = enum {
 };
 
 pub const DialogKind = enum {
-    transfers,
     torrent_source,
     torrent_destination,
     terminal_close,

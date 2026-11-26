@@ -89,47 +89,6 @@ test "Git layout has two columns, scrollable sidebar and display-only deleted ro
     try std.testing.expect(app.editor_path == null);
 }
 
-test "Transfers uses list geometry and isolates file actions while preserving the folder view" {
-    var app = App{
-        .allocator = std.testing.allocator,
-        .io = undefined,
-        .environ = undefined,
-        .theme_cfg = undefined,
-        .worker = undefined,
-        .history = .{ .allocator = std.testing.allocator, .current = "/" },
-        .home_dir = "/",
-        .items_arena = undefined,
-    };
-    // These records are only counted. File actions must never read them
-    // while the transfer pane is active.
-    var files: [32]ViewItem = undefined;
-    var transfers: [32]@import("torrents.zig").Transfer = undefined;
-    app.items = .fromOwnedSlice(&files);
-    app.torrents.snapshot = .{ .arena = undefined, .value = .{ .transfers = &transfers } };
-    app.list_view = false;
-    app.transfer_view = .{ .active = true, .folder_scroll = 77, .folder_search_visible = true };
-    try std.testing.expectEqual(@as(i32, 1), app.columns());
-    try std.testing.expectEqual(@as(i32, 38), app.rowHeight());
-    try std.testing.expectEqualStrings("Status", app.columnLabels()[1]);
-    try std.testing.expect(app.scrollbarGeometry() != null);
-    try std.testing.expectEqual(@as(?usize, null), app.itemAt(260, 180));
-    try std.testing.expectEqual(@as(?[]const u8, null), app.dropDirectoryAt(260, 180));
-    app.handleKey(c.XKB_KEY_Delete, "");
-    app.ctrl = true;
-    app.handleKey(c.XKB_KEY_v, "v");
-    try std.testing.expect(!app.paste_requested);
-    try std.testing.expect(app.dialog == null);
-    app.ctrl = false;
-    app.transferPaneKey(c.XKB_KEY_End);
-    try std.testing.expectEqual(@as(?usize, 31), app.transfer_view.row);
-    try std.testing.expect(app.scroll_y > 0);
-    app.back();
-    try std.testing.expect(!app.transfer_view.active);
-    try std.testing.expect(!app.list_view);
-    try std.testing.expect(app.search_visible);
-    try std.testing.expectEqual(@as(i32, 77), app.scroll_y);
-}
-
 pub fn inlineTransferFixture() @import("torrents.zig").Transfer {
     return .{
         .id = "abc",

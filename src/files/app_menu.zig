@@ -243,7 +243,7 @@ pub fn hasSelectedArchiveMembers(self: *const App) bool {
 }
 
 pub fn selectedAppImage(self: *App) ?[]const u8 {
-    if (self.chooser != null or self.history.archive_len > 0 or self.transfer_view.active) return null;
+    if (self.chooser != null or self.history.archive_len > 0) return null;
     var selected: ?[]const u8 = null;
     for (self.items.items) |item| {
         if (!item.selected or item.transfer_ghost) continue;
@@ -338,7 +338,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
             .normal => &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Paste"), i18n.msg("Refresh") },
         },
         .chooser_filter => return self.chooser_filter_labels.items,
-        .app => &.{ i18n.msg("New Tab"), i18n.msg("New Window"), i18n.msg("Show hidden files"), i18n.msg("Folders first"), i18n.msg("Terminal"), i18n.msg("Transfers") },
+        .app => &.{ i18n.msg("New Tab"), i18n.msg("New Window"), i18n.msg("Show hidden files"), i18n.msg("Folders first"), i18n.msg("Terminal") },
     };
     for (messages, 0..) |message, i| self.menu_label_text[i] = message.get();
     return self.menu_label_text[0..messages.len];
@@ -419,7 +419,6 @@ pub fn runMenu(self: *App, row: usize) void {
                 self.recordFolderView();
             },
             4 => self.terminalToggle(),
-            5 => self.openTransfers(),
             else => {},
         },
         .chooser_filter => {

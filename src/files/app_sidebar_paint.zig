@@ -23,10 +23,7 @@ const roundedRect = @import("app_draw.zig").roundedRect;
 const drawEllipsis = @import("app_draw.zig").drawEllipsis;
 const drawText = @import("app_draw.zig").drawText;
 const fontMetrics = @import("app_draw.zig").fontMetrics;
-const sidebar_controls = @import("app_sidebar_controls.zig");
 const deviceLabel = App.deviceLabel;
-const transferTip = @import("app_transfer_tip.zig");
-const jobs_card = @import("app_jobs_card.zig");
 
 /// A quiet surface separating the sidebar's four functional sections.
 fn drawSidebarCard(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64) void {
@@ -137,16 +134,11 @@ pub fn sidebarLayout(self: *App) app_model.SidebarLayout {
         @intFromFloat(self.gitCardHeight())
     else
         0;
-    const torrent_height = self.torrentSidebarHeight();
-    const file_ops_height = self.fileOpsSidebarHeight();
-    const transfers_body = torrent_height +
-        (if (file_ops_height > 0) @as(i32, app_model.SidebarLayout.gap) + file_ops_height else 0);
-    const transfers_visible = torrent_height > 0 or file_ops_height > 0;
 
     return app_model.SidebarLayout.init(
         top,
-        .{ places_body, disks_body, git_body, transfers_body },
-        .{ true, self.device_list.items.len > 0, self.repository() != null, transfers_visible },
+        .{ places_body, disks_body, git_body },
+        .{ true, self.device_list.items.len > 0, self.repository() != null },
         self.sidebar_expanded,
     );
 }
@@ -211,7 +203,7 @@ pub fn sidebarBodyY(self: *App, section: app_model.SidebarSection, x: f64, y: f6
     const source_top: i32 = switch (section) {
         .places => self.contentTop() - self.sidebar_scroll,
         .disks => self.pinRowY(self.pins.items.items.len) + 24,
-        .git, .transfers => card.y + card.header_height,
+        .git => card.y + card.header_height,
     };
     return y - body_top + @as(f64, @floatFromInt(source_top));
 }
@@ -346,7 +338,6 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
         tr("PLACES"),
         tr("DRIVES"),
         "GIT",
-        tr("TRANSFERS"),
     };
     for (layout.cards, 0..) |card, i| {
         if (!card.visible) continue;
@@ -381,7 +372,7 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
                 .device => unreachable,
             };
             const alpha: f32 = if (pin != null and pin.?.kind == .missing) 0.5 else 1;
-            const active = !self.transfer_view.active and std.mem.eql(u8, path, self.history.current);
+            const active = std.mem.eql(u8, path, self.history.current);
             if (active) {
                 const row = self.placeRect(i);
                 shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
@@ -451,12 +442,6 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
 
     const git_card = layout.cards[@intFromEnum(app_model.SidebarSection.git)];
     if (git_card.expanded) self.renderGitSidebar(cr, content_width);
-
-    const transfers_card = layout.cards[@intFromEnum(app_model.SidebarSection.transfers)];
-    if (transfers_card.expanded) {
-        self.renderTorrentSidebar(cr);
-        self.renderFileOpsSidebar(cr);
-    }
 }
 
 /// The line a drag shows between pins: where a drop would put its pin.
@@ -481,46 +466,6 @@ pub fn sidebarExtent(self: *App) i32 {
     return bottom + self.sidebar_scroll + app_model.SidebarLayout.gap;
 }
 
-pub fn fileOpsBox(self: *App) shell_ui.Rect {
-    const card = self.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.transfers)];
-    return .{
-        .x = 12,
-        .y = @floatFromInt(card.y + card.header_height + self.torrentSidebarHeight() + app_model.SidebarLayout.gap),
-        .w = @floatCast(@max(0, self.sidebarContentWidth() - 24)),
-        .h = 52,
-    };
-}
-
-pub fn fileOpsSidebarHeight(self: *App) i32 {
-    return jobs_card.height(self);
-}
-
-fn cardTop(self: *App) f64 {
-    return fileOpsBox(self).y;
-}
-
-pub fn fileOpsSidebarHit(self: *App, x: f64, y: f64) bool {
-    if (self.fileOpsSidebarHeight() == 0 or self.chooser != null or self.dialog != null) return false;
-    if (self.sidebarWidth() == 0 or y < @as(f64, @floatFromInt(self.contentTop())) or
-        y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return false;
-    const area = fileOpsBox(self);
-    const bottom = area.y + @as(f64, @floatFromInt(self.fileOpsSidebarHeight())) - 8;
-    return x >= area.x and x < area.x + area.w and y >= area.y and y < bottom;
-}
-
-pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
-    if (!self.fileOpsSidebarHit(x, y)) return 0;
-    return jobs_card.hover(self, cardTop(self), x, y);
-}
-
-pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
-    if (!self.fileOpsSidebarHit(x, y)) return false;
-    return jobs_card.click(self, cardTop(self), x, y);
-}
-
-pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
-    jobs_card.render(self, cr, cardTop(self));
-}
 
 pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {
     const bar = self.sidebarScrollbar() orelse return;

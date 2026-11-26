@@ -267,10 +267,6 @@ msgstr ""
 msgid "Add to applications"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Add torrent…"
-msgstr ""
-
 #: src/control_center/sections/users.zig
 msgid "Add user"
 msgstr ""
@@ -812,7 +808,7 @@ msgstr ""
 msgid "Avg {average} · Peak {peak}"
 msgstr ""
 
-#: src/files/app_torrents.zig
+#: src/images/app.zig
 msgid "Back"
 msgstr ""
 
@@ -1472,10 +1468,6 @@ msgstr ""
 msgid "Choose files"
 msgstr ""
 
-#: src/files/torrents.zig
-msgid "Choose files to download"
-msgstr ""
-
 #: src/transfers/popup_rows.zig
 msgid "Choose files…"
 msgstr ""
@@ -1626,10 +1618,6 @@ msgstr ""
 
 #: src/files/app_torrent_rows.zig
 msgid "Complete"
-msgstr ""
-
-#: src/files/torrents.zig
-msgid "Complete · Stopped"
 msgstr ""
 
 #: src/printing/cups.zig
@@ -1858,7 +1846,7 @@ msgstr ""
 msgid "Could not apply this choice. Please try again."
 msgstr ""
 
-#: src/files/app_jobs_card.zig
+#: src/files/app_service.zig
 msgid "Could not cancel file transfer"
 msgstr ""
 
@@ -2022,7 +2010,7 @@ msgstr ""
 msgid "Could not open with this app. Choose another."
 msgstr ""
 
-#: src/files/app_jobs_card.zig
+#: src/files/app_service.zig
 msgid "Could not pause file transfer"
 msgstr ""
 
@@ -2130,7 +2118,7 @@ msgstr ""
 msgid "Could not restore the selected items"
 msgstr ""
 
-#: src/files/app_jobs_card.zig
+#: src/files/app_service.zig
 msgid "Could not resume file transfer"
 msgstr ""
 
@@ -2508,10 +2496,6 @@ msgstr ""
 msgid "Deferred"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Delete"
-msgstr ""
-
 #: src/files/app_model.zig
 msgid "Delete Permanently"
 msgstr ""
@@ -2784,20 +2768,12 @@ msgstr ""
 msgid "Download to folder"
 msgstr ""
 
-#: src/files/torrents.zig
-msgid "Downloaded · Seeding"
-msgstr ""
-
 #: src/files/app_torrent_rows.zig
 msgid "Downloading"
 msgstr ""
 
 #: src/files/app.zig
 msgid "Downloads"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Downloads continue after closing Files."
 msgstr ""
 
 #: src/printing/options.zig
@@ -2938,10 +2914,6 @@ msgstr ""
 
 #: src/desktop/app_actions.zig
 msgid "Empty Trash…"
-msgstr ""
-
-#: src/files/app_jobs_card.zig
-msgid "Emptying Trash"
 msgstr ""
 
 #: src/files/app_service.zig
@@ -3340,7 +3312,7 @@ msgstr ""
 msgid "Finished with errors"
 msgstr ""
 
-#: src/files/app_torrents.zig
+#: src/transfers/popup_rows.zig
 msgid "Finishing…"
 msgstr ""
 
@@ -3580,10 +3552,6 @@ msgstr ""
 msgid "Formats Preview"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Forward"
-msgstr ""
-
 #: src/control_center/sections/firewall.zig
 msgid "Forwarding"
 msgstr ""
@@ -3666,10 +3634,6 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "Good"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Grid"
 msgstr ""
 
 #: src/files/app_paint.zig
@@ -4292,10 +4256,6 @@ msgstr ""
 msgid "Link-local only"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "List"
-msgstr ""
-
 #: src/control_center/sections/firewall_cards.zig
 msgid "Listening programs"
 msgstr ""
@@ -4524,10 +4484,6 @@ msgstr ""
 msgid "Measured rectangle width"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Measuring…"
-msgstr ""
-
 #: src/control_center/sections/shortcuts.zig
 msgid "Media"
 msgstr ""
@@ -4666,10 +4622,6 @@ msgstr ""
 
 #: src/files/app_places.zig
 msgid "Mounting…"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Move"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -5194,10 +5146,6 @@ msgstr ""
 
 #: src/transfers/popup_rows.zig
 msgid "No transfers"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "No transfers yet. Add a .torrent file or magnet link."
 msgstr ""
 
 #: src/control_center/sections/printers_add.zig
@@ -5909,10 +5857,6 @@ msgstr ""
 msgid "Preparing files for drag…"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Preparing…"
-msgstr ""
-
 #: src/session/lock_account.zig
 msgid "Press Enter to log in"
 msgstr ""
@@ -6107,10 +6051,6 @@ msgstr ""
 
 #: src/control_center/sections/firewall_cards.zig
 msgid "Programs waiting for connections, and who can reach them through the firewall."
-msgstr ""
-
-#: src/files/app_layout.zig
-msgid "Progress"
 msgstr ""
 
 #: src/files/app.zig
@@ -6391,10 +6331,6 @@ msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Remove this printer"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Remove · keep files"
 msgstr ""
 
 #: src/control_center/sections/firewall_rules.zig
@@ -6975,18 +6911,6 @@ msgstr ""
 msgid "See your position while navigating. Drag the highlighted view to pan."
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Seed: ratio 1"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Seed: ratio 2"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Seed: stop at finish"
-msgstr ""
-
 #: src/files/app_torrent_rows.zig
 msgid "Seeding"
 msgstr ""
@@ -7149,10 +7073,6 @@ msgstr ""
 
 #: src/files/app_menu.zig
 msgid "Show hidden files"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Show in folder"
 msgstr ""
 
 #: src/control_center/sections/input_sources.zig
@@ -7327,7 +7247,7 @@ msgstr ""
 msgid "Spawn"
 msgstr ""
 
-#: src/files/app_torrents.zig
+#: src/printing/options.zig
 msgid "Speed"
 msgstr ""
 
@@ -7365,10 +7285,6 @@ msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
 msgid "Start button logo"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Start download"
 msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
@@ -7645,10 +7561,6 @@ msgstr ""
 
 #: src/system_monitor/app_footer.zig
 msgid "TEMP"
-msgstr ""
-
-#: src/files/app_sidebar_paint.zig
-msgid "TRANSFERS"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -8179,10 +8091,6 @@ msgstr ""
 msgid "This setting is unavailable on this device or in the current mode."
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "This transfer is no longer available."
-msgstr ""
-
 #: src/control_center/sections/region.zig
 msgid "Thursday"
 msgstr ""
@@ -8295,19 +8203,11 @@ msgstr ""
 msgid "Traffic passing through this computer, for virtual machines or sharing a connection."
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Transfer"
-msgstr ""
-
 #: src/files/torrents.zig
 msgid "Transfer request could not be sent. Please retry."
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Transferred"
-msgstr ""
-
-#: src/files/app.zig
+#: src/transfers/popup.zig
 msgid "Transfers"
 msgstr ""
 
@@ -8555,24 +8455,8 @@ msgstr ""
 msgid "Untitled"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "Up"
-msgstr ""
-
 #: src/network/manager_actions.zig
 msgid "Updating Wi-Fi…"
-msgstr ""
-
-#: src/files/app_layout.zig
-msgid "Upload"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Upload: 1 MiB/s"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Upload: 128 KiB/s"
 msgstr ""
 
 #: src/power_menu.zig
@@ -8717,10 +8601,6 @@ msgstr ""
 
 #: src/control_center/sections/firewall.zig
 msgid "Waiting for authentication…"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "Waiting for decision"
 msgstr ""
 
 #: src/control_center/sections/bluetooth.zig
@@ -9849,12 +9729,6 @@ msgid_plural "{count} selected items"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/files/app_paint.zig
-msgid "{count} transfer · Downloads continue after closing Files."
-msgid_plural "{count} transfers · Downloads continue after closing Files."
-msgstr[0] ""
-msgstr[1] ""
-
 #: src/notifications/toast.zig
 msgid "{count}h ago"
 msgstr ""
@@ -9869,7 +9743,7 @@ msgid_plural "{count}{more} items"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/files/app_torrents.zig
+#: src/transfers/popup_rows.zig
 msgid "{done} of {total} items"
 msgstr ""
 
@@ -9917,7 +9791,7 @@ msgstr ""
 msgid "{name} ({locale})"
 msgstr ""
 
-#: src/files/app_jobs_card.zig
+#: src/files/io_coordinator_notify.zig
 msgid "{name} and {count} more"
 msgstr ""
 
@@ -9969,14 +9843,6 @@ msgstr ""
 msgid "{name}: level unavailable"
 msgstr ""
 
-#: src/files/app_jobs_card.zig
-msgid "{name}: needs an answer"
-msgstr ""
-
-#: src/files/app_jobs_card.zig
-msgid "{name}: waiting for {mount}…"
-msgstr ""
-
 #: src/system_monitor/app_footer.zig
 msgid "{n} CPU"
 msgid_plural "{n} CPUs"
@@ -10019,10 +9885,6 @@ msgid_plural "{n} threads"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/files/app_torrents.zig
-msgid "{rate} KiB/s"
-msgstr ""
-
 #: src/control_center/sections/input_sources.zig
 msgid "{shown} of {total} layouts; type to narrow the list."
 msgstr ""
@@ -10037,24 +9899,12 @@ msgstr[1] ""
 msgid "{size} Volume"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "{size} selected · {path}"
-msgstr ""
-
 #: src/control_center/sections/printers_details.zig
 msgid "{value} (supported {min}–{max})"
 msgstr ""
 
-#: src/files/app_torrents.zig
-msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
-msgstr ""
-
 #: src/taskbar/battery.zig
 msgid "~{time} left"
-msgstr ""
-
-#: src/files/app_torrents.zig
-msgid "↑ {upload}/s · ↓ {download}/s"
 msgstr ""
 
 #: src/files/app_torrent_rows.zig

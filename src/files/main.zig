@@ -223,7 +223,6 @@ pub const Launch = struct {
     selected_file: ?[]const u8 = null,
     chooser: ?@import("chooser.zig").Options = null,
     torrent_source: ?[]const u8 = null,
-    transfers: bool = false,
     /// A download to show as a folder (the shell panel's "Choose files…").
     torrent_id: ?[]const u8 = null,
 };
@@ -235,7 +234,7 @@ pub const max_windows = 16;
 /// look windows up here to move a tab between them.
 pub var open_windows: std.ArrayList(*Client) = .empty;
 
-pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]const u8, chooser: ?@import("chooser.zig").Options, torrent_source: ?[]const u8, transfers: bool) !void {
+pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]const u8, chooser: ?@import("chooser.zig").Options, torrent_source: ?[]const u8) !void {
     platform.process.ignoreBrokenPipes();
     // This thread runs the event loop for every window (plan §1).
     @import("io_thread_guard.zig").markCurrent(.ui);
@@ -250,7 +249,6 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         switch (io_endpoint.claim(a, &paths, .{
             .path = target_dir,
             .select = selected_file,
-            .transfers = transfers,
             .activation_token = init.minimal.environ.getPosix("XDG_ACTIVATION_TOKEN"),
             .torrent = torrent_source,
         })) {
@@ -360,7 +358,6 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         .selected_file = selected_file,
         .chooser = chooser,
         .torrent_source = torrent_source,
-        .transfers = transfers,
     }, &service));
 
     // A file chooser is one window and ends with its answer; it is printed
@@ -556,7 +553,6 @@ fn openRequested(endpoint: ?*io_endpoint.Endpoint, windows: *std.ArrayList(*Clie
         const created = Client.create(display, setup, .{
             .dir = request.dir,
             .selected_file = request.select,
-            .transfers = request.transfers and torrent_id == null,
             .torrent_id = torrent_id,
             .torrent_source = request.torrent,
         }, service) catch |err| {

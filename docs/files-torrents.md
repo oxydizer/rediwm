@@ -3,20 +3,16 @@
 Files opens `.torrent` files directly. Magnet handlers use the installed
 `rediwm-transfers.desktop` entry, which invokes `rediwm-files --torrent URI`.
 It advertises support without replacing an existing default application.
-`rediwm-files --transfers` opens the transfer list. The Transfers section below
-removable devices opens the same interface and shows aggregate activity.
-Transfers appears in the main Files pane using the file-list rows and column
-headers. Add torrent, Pause all and Stop seeding appear in the toolbar beside
-the view icons. Open a row for file selection and per-transfer controls; Back
-or a sidebar place returns to browsing folders.
+Downloads, like copies, are followed in the shell's Transfers panel; Files has
+no list of its own.
 
 Folder listings also show transfer status beside the name, a circular progress
 indicator and a play/pause button. Hover the circle for percentage, download and
 upload speeds, connected peers, seeds, known peers and ETA. A stalled or paused
 download has no ETA until data is arriving again. Space toggles the focused
-transfer; clicking its circle opens details. A visible `.torrent` source gets
+transfer; clicking its circle opens its files. A visible `.torrent` source gets
 these controls too. Before publication, the destination folder shows a transfer
-entry for the staged download; it opens transfer details and is excluded from
+entry for the staged download; it opens as a folder and is excluded from
 copy, rename, trash and drag operations. Completion replaces it with the real
 published folder. No files are renamed to encode progress.
 
@@ -39,8 +35,8 @@ A magnet asks for its destination folder, which then shows the download as a
 ghost folder; it reads "Fetching file list…" until the metadata arrives, then
 its files can be ticked the same way. The download's row in its destination
 folder, its circle and the shell panel's Choose files… all open the same
-folder view. Downloads start with ratio 1 seeding and a 1 MiB/s upload limit
-(the transfer dialog's choices). The session upload ceiling is 1 MiB/s.
+folder view. Downloads start with ratio 1 seeding and a 1 MiB/s upload limit.
+The session upload ceiling is 1 MiB/s.
 
 Downloads and seeding continue after the last Files window closes: Files stays
 up without a window while the helper downloads or seeds, mirroring each
@@ -87,8 +83,7 @@ pauses the transfer and preserves its partial data; rename the conflicting
 folder and Resume to retry. This staging scheme keeps incomplete files out of
 the normal folder view and thumbnail pipeline.
 
-Remove always keeps payloads, including partials. Use Show in folder to locate
-them before removing a transfer. Moving or editing files outside the transfer
+Remove (cancel in the panel) always keeps payloads, including partials. Moving or editing files outside the transfer
 engine can interrupt seeding; pause/remove the transfer before reorganizing
 its data. This version does not include tracker editing, torrent creation,
 streaming previews or automatic move tracking.

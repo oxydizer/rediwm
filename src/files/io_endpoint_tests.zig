@@ -17,7 +17,8 @@ test "endpoint wire: an OpenWindow request parses" {
             const open = parsed.request.open_window;
             try std.testing.expectEqualStrings("/home/u", open.path);
             try std.testing.expectEqualStrings("/home/u/a.txt", open.select.?);
-            try std.testing.expect(open.transfers);
+            // "transfers" (an older shell's) is ignored like "extra".
+            try std.testing.expect(open.torrent == null);
             try std.testing.expectEqualStrings("tok", open.activation_token.?);
             try std.testing.expectEqual(@as(?u64, 42), open.job_id);
         },

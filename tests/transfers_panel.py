@@ -266,7 +266,7 @@ def run(scale, theme=None):
                 wait_for(lambda: ("PauseJob", {"job_id": TORRENT + 1}) in fake.commands(), "PauseJob for the seeding download")
                 ipc.click_at(*find("choose"))
                 chosen = wait_for(lambda: [p for c, p in fake.commands() if c == "OpenWindow" and p.get("job_id") == TORRENT + 2], "OpenWindow for the download")
-                assert chosen[0]["transfers"] and chosen[0]["path"] == f"{home}/Downloads", chosen
+                assert "transfers" not in chosen[0] and chosen[0]["path"] == f"{home}/Downloads", chosen
                 wait_for(lambda: ipc.hit_test(*point)["target_type"] != "transfers_popup", "the panel to close again")
 
                 # Jobs finish and retire: done rows, a cleared icon.

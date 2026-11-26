@@ -11,7 +11,7 @@ const properties = @import("properties.zig");
 const nowMs = @import("app_draw.zig").nowMs;
 
 pub fn maxHorizontalScroll(self: *App) f64 {
-    if (self.transfer_view.active or !self.list_view) return 0;
+    if (!self.list_view) return 0;
     var total: f64 = 0;
     for (self.listWidths()) |width| total += width;
     const overflow = total - @as(f64, @floatFromInt(self.cellWidth() - 20));

@@ -44,7 +44,6 @@ const handover_timeout_ms = 2_000;
 pub const OpenRequest = struct {
     dir: []u8,
     select: ?[]u8 = null,
-    transfers: bool = false,
     activation_token: ?[]u8 = null,
     job_id: ?u64 = null,
     torrent: ?[]u8 = null,
@@ -65,7 +64,7 @@ pub const OpenRequest = struct {
         const token = if (open.activation_token) |t| try allocator.dupe(u8, t) else null;
         errdefer if (token) |t| allocator.free(t);
         const torrent = if (open.torrent) |source| try allocator.dupe(u8, source) else null;
-        return .{ .dir = dir, .select = select, .transfers = open.transfers, .activation_token = token, .job_id = open.job_id, .torrent = torrent };
+        return .{ .dir = dir, .select = select, .activation_token = token, .job_id = open.job_id, .torrent = torrent };
     }
 };
 
