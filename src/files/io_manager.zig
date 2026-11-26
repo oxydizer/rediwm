@@ -1997,6 +1997,11 @@ pub const Manager = struct {
         const operation_id = try self.addOperationInternal(job, operation_kind);
         const registered_operation = &job.operations.items[operation_index];
         registered_operation.entry_id = root_id;
+        // Counted like any other entry, or a finished extraction reports
+        // more items done than it has (its top-level folders and files).
+        job.summary_total_items += 1;
+        if (operation_kind == .copy_file)
+            setOperationTotal(job, registered_operation, request.metadata.size);
         registered_operation.population_accounted = true;
         job.outstanding_population_count += 1;
         job.entry_operation_indices.putAssumeCapacity(root_id, operation_index);

@@ -84,8 +84,11 @@ measured against all four with `bench-files-io` (see its settings at the top of
 
 ## 4. Next
 
-1. **Profile the USB hard disk**, now the slowest by far (small files 20.7 s,
-   large copies 25.3 s for 512 MiB): what share is the disk itself.
+1. **USB hard disk:** it was on a USB 2.0 port (in the keyboard). On USB 3
+   (5 Gbit/s, `usb-storage`, no UAS): large copies 12.1 s, small files 12.1 s,
+   extraction 8.3 s, against 25.3, 20.7 and 14.2 s on USB 2.0. About
+   100 MB/s of mixed traffic on one hard disk: likely the disk now. A plain
+   `cp` and `sync` of the same files would confirm it.
 2. **Fair turns by time, not by unit**, if the bound above proves too tight on
    real disks: let the round-robin account for a job's worker time.
 3. **One reusable buffer per job** for the buffered fallback: allocated when

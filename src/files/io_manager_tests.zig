@@ -607,6 +607,11 @@ test "archive publication roots register multiple owned roots and schedule disco
     );
     @memset(file_source, 'y');
 
+    // Both roots count toward the totals, as they will toward what is done.
+    const summary = manager.jobSummary(job).?;
+    try std.testing.expectEqual(@as(u64, 2), summary.total_items);
+    try std.testing.expectEqual(@as(u64, 42), summary.total_bytes);
+
     const tree = manager.treeIndex(job).?;
     try std.testing.expectEqual(@as(usize, 2), tree.roots().len);
     try std.testing.expectEqualStrings(
