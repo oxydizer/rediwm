@@ -106,6 +106,38 @@ test "scheduler rotates fairly across Jobs and preserves per-Job FIFO" {
     try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_a).?);
 }
 
+test "one Job never runs more than its limit, even alone" {
+    var manager = io_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+    manager.max_running_per_job = 2;
+
+    // A lone Job with three independent copies starts two of them.
+    const job_a = try manager.createJob(1);
+    for (0..3) |_| _ = try manager.addOperation(job_a, .copy_file);
+    try manager.queueJob(job_a);
+    const a1 = manager.dispatchNext().?;
+    const a2 = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_a, a2.job_id);
+    try std.testing.expectEqual(@as(?io_manager.WorkToken, null), manager.dispatchNext());
+
+    // A Job that arrives while those two hang gets the free worker.
+    const job_b = try manager.createJob(2);
+    _ = try manager.addOperation(job_b, .copy_file);
+    try manager.queueJob(job_b);
+    const b1 = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_b, b1.job_id);
+    try std.testing.expect(manager.completeWork(b1, .completed));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_b).?);
+
+    // Once one of the two returns, the Job's third copy may start.
+    try std.testing.expect(manager.completeWork(a1, .completed));
+    const a3 = manager.dispatchNext().?;
+    try std.testing.expectEqual(job_a, a3.job_id);
+    try std.testing.expect(manager.completeWork(a2, .completed));
+    try std.testing.expect(manager.completeWork(a3, .completed));
+    try std.testing.expectEqual(io_manager.JobState.completed, manager.jobState(job_a).?);
+}
+
 test "hovered copy operation gets one-shot priority over normal scheduling" {
     var manager = io_manager.Manager.init(std.testing.allocator);
     defer manager.deinit();

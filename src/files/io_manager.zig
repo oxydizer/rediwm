@@ -561,6 +561,10 @@ pub const Manager = struct {
     next_job_id: JobId = 1,
     next_operation_id: OperationId = 1,
     round_robin_cursor: usize = 0,
+    /// Most operations one Job runs at once, even alone, so a Job whose mount
+    /// dies cannot hang every operation worker (worker-pools §4.4). The
+    /// Runtime sets it below the operation worker count.
+    max_running_per_job: usize = std.math.maxInt(usize),
     /// Files the user is waiting for (hovered ghosts), in hover order: a
     /// soft queue. While one of them can run, other file copies wait.
     preferred: [max_preferred]PreferredOperation = undefined,
@@ -2968,6 +2972,7 @@ pub const Manager = struct {
                 continue;
             }
             if (token != null or operation.state != .pending) continue;
+            if (self.atRunningLimit(job)) continue;
             if ((job.state != .queued and job.state != .running) or
                 job.pause_requested or job.cancel_requested or
                 operation.unresolved_dependencies != 0 or
@@ -3008,7 +3013,12 @@ pub const Manager = struct {
         return token;
     }
 
-    /// Independent Operations within a Job may execute concurrently.
+    fn atRunningLimit(self: *const Manager, job: *const Job) bool {
+        return job.operation_state_counts[@backingInt(OperationState.running)] >= self.max_running_per_job;
+    }
+
+    /// Independent Operations within a Job may execute concurrently, up to
+    /// `max_running_per_job`.
     /// The cursor rotates across Jobs after every successful dispatch.
     pub fn dispatchNext(self: *Manager) ?WorkToken {
         const count = self.jobs.items.len;
@@ -3028,6 +3038,7 @@ pub const Manager = struct {
                     job.state != .finalizing)
                     continue;
                 if (job.pause_requested or job.cancel_requested) continue;
+                if (self.atRunningLimit(job)) continue;
 
                 while (dequeueReadyPriority(job, priority)) |operation_index| {
                     const operation = &job.operations.items[operation_index];
