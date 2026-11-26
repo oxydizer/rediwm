@@ -256,6 +256,9 @@ def run(scale, theme=None):
                 wait_for(lambda: ipc.hit_test(*point)["target_type"] != "transfers_popup", "the panel to close")
 
                 # Downloads: stop seeding, and choose a download's files in Files.
+                # The copies dealt with above end first, so the panel fits the
+                # output without scrolling.
+                fake.change([job(i, state="cancelled", removed=True) for i in (2, 3, 4)])
                 ipc.click_at(*icon)
                 time.sleep(0.35)
                 hit = wait_for(lambda: (lambda h: h if h["target_type"] == "transfers_popup" else None)(ipc.hit_test(*point)), "the panel for downloads")
