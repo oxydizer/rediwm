@@ -12,6 +12,7 @@ pub const child = @import("child.zig");
 pub const dirwalk = @import("dirwalk.zig");
 pub const exe = @import("exe.zig");
 pub const fs = @import("fs.zig");
+pub const mounts = @import("mounts.zig");
 pub const peer = @import("peer.zig");
 pub const process = @import("process.zig");
 pub const wake = @import("wake.zig");
@@ -31,6 +32,7 @@ test {
     _ = dirwalk;
     _ = exe;
     _ = fs;
+    _ = mounts;
     _ = peer;
     _ = process;
     _ = rfkill;

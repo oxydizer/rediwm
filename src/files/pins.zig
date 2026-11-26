@@ -4,6 +4,7 @@
 //! file is the truth: Files re-reads it before every change, so two windows
 //! never overwrite each other's pins.
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const c = @import("c.zig").api;
 
 pub const max = 64;
@@ -25,6 +26,7 @@ pub const Pin = struct {
 pub const InsertError = error{ Invalid, Duplicate, Missing, Full, OutOfMemory };
 
 pub fn kindOf(path: []const u8) Kind {
+    io_thread_guard.blocking("pins.kindOf");
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     if (path.len >= buf.len) return .missing;
     @memcpy(buf[0..path.len], path);
@@ -68,11 +70,19 @@ pub const List = struct {
     }
 
     /// Pins `path` so it ends up at `slot` (clamped to the end).
+    /// Looks at the target itself: not on the UI thread, which uses
+    /// `insertKnown` with a kind the I/O service found.
     pub fn insert(self: *List, a: std.mem.Allocator, slot: usize, path: []const u8) InsertError!void {
         const clean = normalize(path) orelse return error.Invalid;
         if (self.find(clean) != null) return error.Duplicate;
         if (self.items.items.len >= max) return error.Full;
-        const kind = kindOf(clean);
+        return self.insertKnown(a, slot, clean, kindOf(clean));
+    }
+
+    pub fn insertKnown(self: *List, a: std.mem.Allocator, slot: usize, path: []const u8, kind: Kind) InsertError!void {
+        const clean = normalize(path) orelse return error.Invalid;
+        if (self.find(clean) != null) return error.Duplicate;
+        if (self.items.items.len >= max) return error.Full;
         if (kind == .missing) return error.Missing;
         const owned = try a.dupe(u8, clean);
         errdefer a.free(owned);
@@ -92,6 +102,15 @@ pub const List = struct {
     /// What the file holds; nothing for a missing or unreadable one, and
     /// lines that are not usable paths are dropped.
     pub fn load(a: std.mem.Allocator, io: std.Io, file: []const u8) List {
+        var list = loadPaths(a, io, file);
+        list.refresh();
+        return list;
+    }
+
+    /// The file's pins without looking at their targets: each is a folder
+    /// until the I/O service says what it is. Reading this small state
+    /// file stays on the UI thread (threading §13, application state).
+    pub fn loadPaths(a: std.mem.Allocator, io: std.Io, file: []const u8) List {
         var list: List = .{};
         const data = std.Io.Dir.cwd().readFileAlloc(io, file, a, .limited(file_limit)) catch return list;
         defer a.free(data);
@@ -101,7 +120,7 @@ pub const List = struct {
             const clean = normalize(line) orelse continue;
             if (list.find(clean) != null) continue;
             const owned = a.dupe(u8, clean) catch break;
-            list.items.append(a, .{ .path = owned, .kind = kindOf(owned) }) catch {
+            list.items.append(a, .{ .path = owned, .kind = .dir }) catch {
                 a.free(owned);
                 break;
             };

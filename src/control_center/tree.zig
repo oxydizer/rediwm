@@ -41,6 +41,7 @@ const pageClicked = panel.pageClicked;
 const deviceClicked = panel.deviceClicked;
 const brightnessChanged = panel.brightnessChanged;
 const filesSingleClickChanged = panel.filesSingleClickChanged;
+const filesFoldersFirstChanged = panel.filesFoldersFirstChanged;
 const filesAudioPlayerChanged = panel.filesAudioPlayerChanged;
 const ControlCenter = @import("ControlCenter.zig");
 const paintNavHighlights = ControlCenter.paintNavHighlights;
@@ -385,6 +386,18 @@ pub fn buildGeneral(cc: *ControlCenter) void {
     files_card.direction = .row;
     files_card.@"align" = .center;
     cc.append(files_card);
+    cc.general_folders_text = .{
+        label(i18n.tr("Folders first"), 14, false),
+        label(i18n.tr("In Files, list folders before files. A folder where you changed this in Files keeps its own choice."), 12, true),
+    };
+    cc.general_folders = .{
+        .{ .kind = .container, .direction = .column, .gap = 5, .width = .{ .flex = 1 }, .children = &cc.general_folders_text },
+        .{ .name = "files_folders_first", .kind = .{ .toggle = .{ .on = cc.server.config.compositor.files_folders_first, .owner = cc, .on_change = filesFoldersFirstChanged } } },
+    };
+    var folders_card = card(&cc.general_folders);
+    folders_card.direction = .row;
+    folders_card.@"align" = .center;
+    cc.append(folders_card);
     cc.general_audio_text = .{
         label(i18n.tr("Built-in audio player"), 14, false),
         label(i18n.tr("In Files, show a play button on audio files and play them in the background player. A default application chosen in Open With still takes over."), 12, true),

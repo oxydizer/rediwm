@@ -146,6 +146,8 @@ pub const Renderer = struct {
     width: i32, // device px
     height: i32, // device px
     scale: f32 = 1,
+    /// Current window modifier state, supplied by the application input host.
+    alt_pressed: bool = false,
     clip: ?ClipRect = null,
     // Repaint bounds must not change text layout or scroll-container geometry.
     damage_clip: ?ClipRect = null,
@@ -417,7 +419,21 @@ pub const Renderer = struct {
                 }
             }
         }
-        text_mod.drawOpts(r.pixels, r.width, r.height, style.content, toColor(style.color), r.scale, font, style.font_size, .{ .rect = rect, .sensitive = style.sensitive, .device_clip = r.textClip(r.effectiveClip()) }) catch |err| {
+        var text_options: text_mod.DrawOptions = .{
+            .rect = rect,
+            .sensitive = style.sensitive,
+            .device_clip = r.textClip(r.effectiveClip()),
+        };
+        if (r.alt_pressed) {
+            if (style.mnemonic_offset) |byte_offset| {
+                const pal = r.palette orelse theme.global;
+                text_options.accelerator = .{
+                    .byte_offset = byte_offset,
+                    .color = toColor(pal.accent),
+                };
+            }
+        }
+        text_mod.drawOpts(r.pixels, r.width, r.height, style.content, toColor(style.color), r.scale, font, style.font_size, text_options) catch |err| {
             log.err("drawText: could not rasterize label: {}", .{err});
         };
     }

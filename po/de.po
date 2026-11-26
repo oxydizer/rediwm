@@ -829,10 +829,6 @@ msgstr "Kamerazoom zurücksetzen"
 msgid "Cancel"
 msgstr "Abbrechen"
 
-#: src/files/app_paint.zig
-msgid "Cancel (C)"
-msgstr "Abbrechen (C)"
-
 #: src/control_center/sections/bluetooth.zig
 msgid "Cancel Pairing"
 msgstr "Kopplung abbrechen"
@@ -852,18 +848,6 @@ msgstr "Test abbrechen"
 #: src/files/volumes.zig
 msgid "Cancelled"
 msgstr "Abgebrochen"
-
-#: src/files/ops.zig
-msgid "Cancelled. Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Abgebrochen. Entpackt: {completed}. Übersprungen: {skipped}. Fehlgeschlagen: {failed}. Verbleibend: {remaining}."
-
-#: src/files/ops.zig
-msgid "Cancelled. Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Abgebrochen. Übertragen: {completed}. Übersprungen: {skipped}. Fehlgeschlagen: {failed}. Verbleibend: {remaining}."
-
-#: src/files/app_keyboard.zig
-msgid "Cancelling operation..."
-msgstr "Vorgang wird abgebrochen…"
 
 #: src/calculator/model.zig
 msgid "Cannot divide by zero"
@@ -1570,10 +1554,6 @@ msgstr "CUPS-Start konnte nicht angefordert werden."
 #: src/systemd/requests.zig
 msgid "Could not request authentication. Check that polkit is running."
 msgstr "Authentifizierung konnte nicht angefordert werden. Prüfe, ob polkit läuft."
-
-#: src/files/app_trash.zig
-msgid "Could not restore the items in Trash"
-msgstr "Die Objekte im Papierkorb konnten nicht wiederhergestellt werden"
 
 #: src/files/app_trash.zig
 msgid "Could not restore the selected items"
@@ -2412,10 +2392,6 @@ msgstr "Entpacken"
 #: src/files/app_model.zig
 msgid "Extract to…"
 msgstr "Entpacken nach…"
-
-#: src/files/ops.zig
-msgid "Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Entpackt: {completed}. Übersprungen: {skipped}. Fehlgeschlagen: {failed}. Verbleibend: {remaining}."
 
 #: src/files/archive.zig
 msgid "Extraction cancelled"
@@ -4717,10 +4693,6 @@ msgstr "Entfernen · Dateien behalten"
 msgid "Rename"
 msgstr "Umbenennen"
 
-#: src/files/app_paint.zig
-msgid "Rename (R)"
-msgstr "Umbenennen (R)"
-
 #: src/desktop/app_paint.zig
 msgid "Rename — Enter saves, Escape cancels"
 msgstr "Umbenennen — Eingabe speichert, Escape bricht ab"
@@ -5398,10 +5370,6 @@ msgstr "An Bildschirm anpassen"
 #: src/control_center/sections/appearance_sections.zig
 msgid "Sized to fit your screen · move a slider to set your own"
 msgstr "An deinen Bildschirm angepasst · verschiebe einen Regler für eigene Werte"
-
-#: src/files/app_paint.zig
-msgid "Skip (S)"
-msgstr "Überspringen (S)"
 
 #: src/control_center/sections/display.zig
 msgid "Sleep"
@@ -6219,10 +6187,6 @@ msgstr "Übertragung"
 msgid "Transfer request could not be sent. Please retry."
 msgstr "Übertragungsanfrage konnte nicht gesendet werden. Versuche es erneut."
 
-#: src/files/ops.zig
-msgid "Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Übertragen: {completed}. Übersprungen: {skipped}. Fehlgeschlagen: {failed}. Verbleibend: {remaining}."
-
 #: src/files/app.zig
 msgid "Transfers"
 msgstr "Übertragungen"
@@ -6699,6 +6663,14 @@ msgstr "Kabel- und Funkverbindungen."
 #: src/control_center/sections/network.zig
 msgid "Wireless connections"
 msgstr "Funkverbindungen"
+
+#: src/files/app_menu.zig
+msgid "New Tab"
+msgstr "Neuer Tab"
+
+#: src/files/app_menu.zig
+msgid "Folders first"
+msgstr "Ordner zuerst"
 
 #: src/editor/app.zig
 msgid "New Window"

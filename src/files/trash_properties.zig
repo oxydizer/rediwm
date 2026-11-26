@@ -18,6 +18,7 @@ const dialog = ui.widgets.dialog;
 const button = ui.widgets.button;
 const card = @import("properties_card.zig");
 const totals = @import("trash_totals.zig");
+const reaper_mod = @import("reaper.zig");
 const formatSize = @import("app_draw.zig").formatSize;
 const Rect = shell_ui.Rect;
 const a = std.heap.c_allocator;
@@ -73,7 +74,15 @@ pub const State = struct {
     }
 
     pub fn deinit(self: *State) void {
-        if (self.task) |task| task.destroy();
+        self.release(null);
+    }
+
+    /// Like `deinit`, but a count still running is finished on `reaper`
+    /// instead of joined here. The host's wake fd must stay open until it is:
+    /// Files hands its listing worker (which owns that fd) to the same reaper
+    /// later.
+    pub fn release(self: *State, reaper: ?*reaper_mod.Reaper) void {
+        if (self.task) |task| reaper_mod.retire(reaper, task, totals.Task.destroy);
         a.free(self.path);
         self.* = .{};
     }

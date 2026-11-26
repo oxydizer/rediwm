@@ -253,6 +253,9 @@ pub const CompositorConfig = struct {
     /// Files plays audio files in the built-in player (rediwm-player), with a
     /// play button on audio rows, unless an explicit default application is set.
     files_audio_player: bool = true,
+    /// Files lists folders ahead of files in folders whose view was not
+    /// changed in Files (`files/folder_views.zig`).
+    files_folders_first: bool = true,
     inactive_opacity: f32 = 1.0,
     /// Background alpha handed to Foot, kitty, Alacritty, Ghostty and WezTerm at launch (`config/terminal_theme.zig`).
     /// Unset keeps the `alpha` of the user's own Foot configuration.

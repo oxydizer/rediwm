@@ -9,9 +9,31 @@ const ops_mod = @import("ops.zig");
 const clipboard_mod = @import("clipboard.zig");
 const deletion = @import("../delete_dialog.zig");
 const trash = @import("trash.zig");
+const c = @import("c.zig").api;
+
+fn startArchiveExport(self: *App, purpose: App.ArchiveExportPurpose) !void {
+    _ = try @import("app_archives.zig").startExport(self, purpose);
+}
+
+/// The export's tag, for the drag to wait on.
+pub fn startArchiveDragExport(self: *App) !u64 {
+    return @import("app_archives.zig").startExport(self, .drag);
+}
+
+pub fn startArchiveOpenWith(self: *App) !void {
+    try startArchiveExport(self, .open_with);
+}
 
 pub fn copySelected(self: *App) void {
-    if (self.history.archive_len > 0) return;
+    if (self.history.archive_len > 0) {
+        startArchiveExport(self, .clipboard) catch {
+            self.setStatusNotice(
+                tr("Could not copy archive members"),
+                true,
+            );
+        };
+        return;
+    }
     if (!self.hasSelection()) return;
     self.clipboard_is_text = false;
     self.clearClipboard();
@@ -86,15 +108,9 @@ pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const 
         self.setStatusNotice(tr("Use Move to Trash to put items in Trash"), true);
         return false;
     };
-    const runner = self.job_runner orelse return false;
-    runner.start(kind, paths, directory, .ask) catch {
-        self.setStatusNotice(tr("Failed to start transfer job"), true);
-        return false;
-    };
-    self.job_cut_revision = if (clipboard and kind == .move and self.clipboard_cut) self.clipboard_revision else null;
-    self.job_was_running = true;
-    self.invalidate();
-    return true;
+    // The service checks sources and destination off this thread and runs
+    // the job; the window learns the end from the job's record.
+    return self.submitTransfer(kind, paths, directory, clipboard);
 }
 
 pub fn executePasteLocal(self: *App) void {
@@ -116,7 +132,6 @@ pub fn executePasteExternal(self: *App, mode: clipboard_mod.ClipboardMode, paths
         self.clipboard_cut = true;
         self.clipboard_is_text = false;
         self.clipboard_revision += 1;
-        self.job_cut_revision = self.clipboard_revision;
     }
 }
 
@@ -134,43 +149,17 @@ pub fn deleteAction(self: *App, action: deletion.Action) void {
     self.invalidate();
 }
 
+/// Starts the confirmed deletion as a service job; its end is reported
+/// when the job's record says so (`app_service.zig`).
 pub fn executeDeletion(self: *App) void {
     const state = &self.dialog.?.deletion;
     if (state.in_trash) return self.deleteFromTrash(state.paths.items);
-    const result = if (state.empty_trash) ops_mod.emptyTrash(self.io) else if (state.permanent) ops_mod.deleteItems(self.io, state.paths.items) else ops_mod.trashItems(self.io, state.paths.items);
-    result catch |err| {
-        self.setStatusNotice(if (state.empty_trash) tr("Could not empty Trash") else if (state.permanent) tr("Could not delete all items") else if (err == error.GioNotAvailable) tr("Trash unavailable (gio not installed)") else tr("Could not move all items to Trash"), true);
-        self.refresh();
-        return;
-    };
-    // gio empties Trash; sweep what it leaves, so no metadata outlives its item.
-    if (state.empty_trash) if (self.trash_dir) |dir| trash.sweepOrphans(self.allocator, dir);
-    self.setStatusNotice(if (state.empty_trash) tr("Trash emptied") else if (state.permanent) tr("Items permanently deleted") else tr("Items moved to Trash"), false);
-    self.refresh();
+    if (state.empty_trash) return self.submitDeletion(.empty_trash, &.{}, self.trash_dir);
+    self.submitDeletion(if (state.permanent) .delete else .trash, state.paths.items, null);
 }
 
 /// Permanently deletes entries of the Trash view with their metadata.
 pub fn deleteFromTrash(self: *App, paths: []const []const u8) void {
     const dir = self.trash_dir orelse return;
-    var names: std.ArrayList([]const u8) = .empty;
-    defer names.deinit(self.allocator);
-    var stray: usize = 0;
-    for (paths) |path| {
-        // Only top-level entries of the trash have metadata and may go this way.
-        const parent = std.fs.path.dirname(path) orelse "";
-        if (!std.mem.eql(u8, parent, dir)) {
-            stray += 1;
-            continue;
-        }
-        names.append(self.allocator, std.fs.path.basename(path)) catch {
-            stray += 1;
-        };
-    }
-    const removed = trash.deleteMany(self.allocator, dir, names.items);
-    if (removed.failed + stray > 0) {
-        self.setStatusNotice(tr("Could not delete all items"), true);
-    } else {
-        self.setStatusNotice(tr("Items permanently deleted"), false);
-    }
-    self.refresh();
+    self.submitDeletion(.delete_from_trash, paths, dir);
 }

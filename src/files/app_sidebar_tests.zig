@@ -127,6 +127,31 @@ test "sidebar hides Drives and Transfers cards when they have no content" {
     try std.testing.expect(!layout.cards[@intFromEnum(app_model.SidebarSection.transfers)].visible);
 }
 
+test "Drives card keeps bottom padding below its final device row" {
+    const volumes = [_]volumes_mod.Volume{
+        .{ .id = "/b/sdb1", .label = "STICK", .mount = null, .size = 1 << 30, .kind = .stick },
+    };
+
+    for ([_]i32{ 32, 40 }) |step| {
+        var app = try testApp();
+        defer app.deinit();
+        app.w = 800;
+        app.h = 1000;
+        app.place_px = step;
+        app.device_list.items = &volumes;
+        app.sidebar_expanded[@intFromEnum(app_model.SidebarSection.disks)] = true;
+
+        const card = app.sidebarLayout().cards[@intFromEnum(app_model.SidebarSection.disks)];
+        const body_top = card.y + card.header_height;
+        const source_top = app.pinRowY(app.pins.items.items.len) + 24;
+        const row = app.placeRect(app.deviceBase());
+        const row_bottom = row.y + row.h + body_top - source_top;
+        const card_bottom = body_top + card.body_height;
+
+        try std.testing.expect(card_bottom - row_bottom >= 8);
+    }
+}
+
 test "collapsing sidebar section while scrolled clamps the scroll offset" {
     var app = try testApp();
     defer app.deinit();

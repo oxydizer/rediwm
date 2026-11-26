@@ -111,6 +111,80 @@ pub const Options = struct {
     radius: ?f32 = null,
 };
 
+const ParsedMnemonic = struct {
+    label: []const u8,
+    byte_offset: ?usize = null,
+    storage: ?[]u8 = null,
+};
+
+/// Parse the first unescaped underscore as a mnemonic marker.
+/// A doubled underscore is displayed as one literal underscore.
+fn parseMnemonic(allocator: std.mem.Allocator, label: []const u8) !ParsedMnemonic {
+    if (std.mem.indexOfScalar(u8, label, '_') == null) {
+        return .{ .label = label };
+    }
+
+    const output = try allocator.alloc(u8, label.len);
+    var input_index: usize = 0;
+    var output_index: usize = 0;
+    var mnemonic_offset: ?usize = null;
+
+    while (input_index < label.len) {
+        if (label[input_index] == '_' and input_index + 1 < label.len) {
+            if (label[input_index + 1] == '_') {
+                output[output_index] = '_';
+                output_index += 1;
+                input_index += 2;
+                continue;
+            }
+            if (mnemonic_offset == null) {
+                mnemonic_offset = output_index;
+                input_index += 1;
+                continue;
+            }
+        }
+
+        output[output_index] = label[input_index];
+        output_index += 1;
+        input_index += 1;
+    }
+
+    return .{
+        .label = output[0..output_index],
+        .byte_offset = mnemonic_offset,
+        .storage = output,
+    };
+}
+
+test "button mnemonic parser handles markers, escapes, and UTF-8" {
+    const allocator = std.testing.allocator;
+
+    const marked = try parseMnemonic(allocator, "_Merge");
+    defer if (marked.storage) |storage| allocator.free(storage);
+    try std.testing.expectEqualStrings("Merge", marked.label);
+    try std.testing.expectEqual(@as(?usize, 0), marked.byte_offset);
+
+    const escaped = try parseMnemonic(allocator, "__Save");
+    defer if (escaped.storage) |storage| allocator.free(storage);
+    try std.testing.expectEqualStrings("_Save", escaped.label);
+    try std.testing.expectEqual(@as(?usize, null), escaped.byte_offset);
+
+    const unicode = try parseMnemonic(allocator, "_Éditer");
+    defer if (unicode.storage) |storage| allocator.free(storage);
+    try std.testing.expectEqualStrings("Éditer", unicode.label);
+    try std.testing.expectEqual(@as(?usize, 0), unicode.byte_offset);
+
+    const trailing = try parseMnemonic(allocator, "Save_");
+    defer if (trailing.storage) |storage| allocator.free(storage);
+    try std.testing.expectEqualStrings("Save_", trailing.label);
+    try std.testing.expectEqual(@as(?usize, null), trailing.byte_offset);
+
+    const later = try parseMnemonic(allocator, "_A_B");
+    defer if (later.storage) |storage| allocator.free(storage);
+    try std.testing.expectEqualStrings("A_B", later.label);
+    try std.testing.expectEqual(@as(?usize, 0), later.byte_offset);
+}
+
 pub const State = struct {
     pointer: ButtonState = .idle,
     /// Toggled on (a view mode, an active filter): an accent tint behind a
@@ -147,13 +221,31 @@ pub fn metrics(size: Size, t: theme.Theme) Metrics {
 pub fn naturalSize(opts: Options, t: theme.Theme, label_w: f32) struct { w: f32, h: f32 } {
     const m = metrics(opts.size, t);
     if (opts.icon != null) return .{ .w = m.height, .h = m.height };
+    var scratch: [256]u8 = undefined;
+    var fixed = std.heap.FixedBufferAllocator.init(&scratch);
+    var heap_allocated = false;
+    const parsed = parseMnemonic(fixed.allocator(), opts.label) catch blk: {
+        heap_allocated = true;
+        break :blk parseMnemonic(std.heap.page_allocator, opts.label) catch {
+            return .{ .w = label_w + m.pad_x * 2 + 2, .h = m.height };
+        };
+    };
+    defer {
+        if (heap_allocated) {
+            if (parsed.storage) |storage| std.heap.page_allocator.free(storage);
+        }
+    }
+    const measured_label_w = if (parsed.storage != null)
+        paint_mod.labelWidth(parsed.label, m.font_size)
+    else
+        label_w;
     if (opts.stacked) {
         const icon = stackedIcon(m);
-        return .{ .w = @max(label_w, icon) + m.pad_x * 2, .h = icon + stack_gap + m.font_size * 1.4 + m.pad_x };
+        return .{ .w = @max(measured_label_w, icon) + m.pad_x * 2, .h = icon + stack_gap + m.font_size * 1.4 + m.pad_x };
     }
     const leading: f32 = if (opts.leading_icon != null) m.icon + iconGap(m) else 0;
     const trailing: f32 = if (opts.trailing_icon != null) m.icon + m.pad_x / 2 else 0;
-    return .{ .w = label_w + m.pad_x * 2 + 2 + leading + trailing, .h = m.height };
+    return .{ .w = measured_label_w + m.pad_x * 2 + 2 + leading + trailing, .h = m.height };
 }
 
 const stack_gap: f32 = 6;
@@ -559,7 +651,29 @@ pub fn paintContent(r: *Renderer, box: Rect, opts: Options, state: State) void {
         r.drawIcon(box.x + (box.w - side) / 2, box.y + (box.h - side) / 2, side, side, .{ .id = id, .color = fg });
         return;
     }
-    const label_style: layout.TextStyle = .{ .content = opts.label, .font_size = m.font_size, .weight = 600, .color = fg };
+    var scratch: [256]u8 = undefined;
+    var fixed = std.heap.FixedBufferAllocator.init(&scratch);
+    var heap_allocated = false;
+    const parsed = parseMnemonic(fixed.allocator(), opts.label) catch blk: {
+        heap_allocated = true;
+        break :blk parseMnemonic(std.heap.page_allocator, opts.label) catch ParsedMnemonic{
+            .label = opts.label,
+            .byte_offset = null,
+            .storage = null,
+        };
+    };
+    defer {
+        if (heap_allocated) {
+            if (parsed.storage) |storage| std.heap.page_allocator.free(storage);
+        }
+    }
+    const label_style: layout.TextStyle = .{
+        .content = parsed.label,
+        .font_size = m.font_size,
+        .weight = 600,
+        .color = fg,
+        .mnemonic_offset = parsed.byte_offset,
+    };
     // A left-aligned label starts at the edge, so a long one would otherwise
     // run under the trailing glyph.
     const trailing_room: f32 = if (opts.alignment == .left and opts.trailing_icon != null) m.icon + m.pad_x + iconGap(m) else 0;

@@ -17,7 +17,7 @@ const Editor = @import("editor.zig").Editor;
 
 pub const DeviceOp = struct { id: []u8, unmount: bool, open: bool, navigation: u32 };
 
-pub const MenuKind = enum { new, sort, filter, file, background, sidebar, device, chooser_filter };
+pub const MenuKind = enum { new, sort, filter, file, background, sidebar, device, chooser_filter, app };
 pub const PlaceAction = enum {
     open,
     open_window,
@@ -200,7 +200,13 @@ pub const ViewItem = struct {
     git_lines: ?git.LineCounts = null,
     transfer_stub: bool = false,
     transfer_ghost: bool = false,
+    transfer_entry_id: ?@import("io_tree.zig").EntryId = null,
+    /// The service job a ghost row comes from (`app_ghosts.zig`); 0 for none.
+    transfer_job_id: u64 = 0,
     transfer_state: ?@import("ops.zig").TransferEntryState = null,
+    transfer_bytes: ?u64 = null,
+    transfer_total_bytes: ?u64 = null,
+    transfer_progress: ?f64 = null,
     missing: bool = false,
     name: []const u8,
     /// Path from the listed folder, shown instead of `name` in the Git view's
@@ -255,6 +261,8 @@ pub const DialogKind = enum {
     torrent_source,
     torrent_destination,
     terminal_close,
+    /// Closing the last window while service jobs run (`app_quit.zig`).
+    quit_jobs,
     new_folder,
     new_file,
     new_branch,
@@ -272,6 +280,16 @@ pub const Dialog = struct {
     title: []const u8,
     target_path: ?[]u8 = null,
     conflict_name: ?[]u8 = null,
+    manager_conflict_id: ?u64 = null,
+    /// The conflict belongs to a service job (`app_transfers.zig`).
+    service_conflict: bool = false,
+    conflict_can_merge: bool = false,
+    /// Owned: where the conflicting item would go.
+    conflict_destination: ?[]u8 = null,
+    /// The service job the conflict belongs to.
+    conflict_job_id: u64 = 0,
+    /// "Apply to all": the answer also settles the job's later conflicts.
+    conflict_apply_all: bool = false,
     deletion: deletion.State = .{},
     applications: ?open_with.State = null,
     properties: ?properties.State = null,

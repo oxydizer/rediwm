@@ -826,10 +826,6 @@ msgstr "Restablecer ampliación de cámara"
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/files/app_paint.zig
-msgid "Cancel (C)"
-msgstr "Cancelar (C)"
-
 #: src/control_center/sections/bluetooth.zig
 msgid "Cancel Pairing"
 msgstr "Cancelar emparejamiento"
@@ -849,18 +845,6 @@ msgstr "Cancelar prueba"
 #: src/files/volumes.zig
 msgid "Cancelled"
 msgstr "Cancelado"
-
-#: src/files/ops.zig
-msgid "Cancelled. Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Cancelado. Extraídos: {completed}. Omitidos: {skipped}. Fallidos: {failed}. Pendientes: {remaining}."
-
-#: src/files/ops.zig
-msgid "Cancelled. Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Cancelado. Transferidos: {completed}. Omitidos: {skipped}. Fallidos: {failed}. Pendientes: {remaining}."
-
-#: src/files/app_keyboard.zig
-msgid "Cancelling operation..."
-msgstr "Cancelando operación..."
 
 #: src/calculator/model.zig
 msgid "Cannot divide by zero"
@@ -1567,10 +1551,6 @@ msgstr "No se pudo solicitar el inicio de CUPS."
 #: src/systemd/requests.zig
 msgid "Could not request authentication. Check that polkit is running."
 msgstr "No se pudo solicitar autenticación. Comprueba que polkit esté en ejecución."
-
-#: src/files/app_trash.zig
-msgid "Could not restore the items in Trash"
-msgstr "No se pudieron restaurar los elementos de la papelera"
 
 #: src/files/app_trash.zig
 msgid "Could not restore the selected items"
@@ -2409,10 +2389,6 @@ msgstr "Extraer"
 #: src/files/app_model.zig
 msgid "Extract to…"
 msgstr "Extraer en…"
-
-#: src/files/ops.zig
-msgid "Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Extraídos: {completed}. Omitidos: {skipped}. Fallidos: {failed}. Pendientes: {remaining}."
 
 #: src/files/archive.zig
 msgid "Extraction cancelled"
@@ -4714,10 +4690,6 @@ msgstr "Eliminar · conservar archivos"
 msgid "Rename"
 msgstr "Renombrar"
 
-#: src/files/app_paint.zig
-msgid "Rename (R)"
-msgstr "Renombrar (R)"
-
 #: src/desktop/app_paint.zig
 msgid "Rename — Enter saves, Escape cancels"
 msgstr "Renombrar — Intro guarda, Escape cancela"
@@ -5395,10 +5367,6 @@ msgstr "Ajustar a la pantalla"
 #: src/control_center/sections/appearance_sections.zig
 msgid "Sized to fit your screen · move a slider to set your own"
 msgstr "Ajustado a tu pantalla · mueve un deslizador para personalizarlo"
-
-#: src/files/app_paint.zig
-msgid "Skip (S)"
-msgstr "Omitir (S)"
 
 #: src/control_center/sections/display.zig
 msgid "Sleep"
@@ -6216,10 +6184,6 @@ msgstr "Transferir"
 msgid "Transfer request could not be sent. Please retry."
 msgstr "No se pudo enviar la solicitud de transferencia. Inténtalo de nuevo."
 
-#: src/files/ops.zig
-msgid "Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Transferidos: {completed}. Omitidos: {skipped}. Fallidos: {failed}. Pendientes: {remaining}."
-
 #: src/files/app.zig
 msgid "Transfers"
 msgstr "Transferencias"
@@ -6696,6 +6660,14 @@ msgstr "Conexiones cableadas e inalámbricas."
 #: src/control_center/sections/network.zig
 msgid "Wireless connections"
 msgstr "Conexiones inalámbricas"
+
+#: src/files/app_menu.zig
+msgid "New Tab"
+msgstr "Nueva pestaña"
+
+#: src/files/app_menu.zig
+msgid "Folders first"
+msgstr "Carpetas primero"
 
 #: src/editor/app.zig
 msgid "New Window"

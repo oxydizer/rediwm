@@ -1,6 +1,7 @@
 //! Files sidebar rows: Places, pins and devices, their drops and actions.
 
 const std = @import("std");
+const io_thread_guard = @import("io_thread_guard.zig");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
@@ -10,6 +11,7 @@ const recent = @import("recent.zig");
 const volumes_mod = @import("volumes.zig");
 const header = @import("header.zig");
 const pins_mod = @import("pins.zig");
+const app_requests = @import("app_requests.zig");
 const places_start = App.places_start;
 const pin_base = App.pin_base;
 const Row = App.Row;
@@ -90,11 +92,11 @@ pub fn openPlace(self: *App, index: usize) void {
     }
     var buf: [4096]u8 = undefined;
     if (self.placePath(index, &buf)) |path| {
-        if (index == 1) std.Io.Dir.cwd().createDirPath(self.io, path) catch {
-            self.setStatusNotice(tr("Could not open Trash"), true);
-            return;
-        };
-        self.navigate(path);
+        // The Trash folder may not exist yet: the service makes it first.
+        if (index == 1) {
+            const owned = self.allocator.dupe(u8, path) catch return;
+            _ = app_requests.send(self, .{ .make_directory = .{ .path = path } }, .{ .open_trash = .{ .path = owned, .navigation = self.navigation_count } });
+        } else self.navigate(path);
     }
     self.focus = .file_view;
 }
@@ -106,14 +108,18 @@ pub fn openPlaceWindow(self: *App, index: usize) void {
         volume.mount orelse return
     else
         self.placePath(index, &buf) orelse return;
-    if (index == 1) std.Io.Dir.cwd().createDirPath(self.io, path) catch {
-        self.setStatusNotice(tr("Could not open Trash"), true);
-        return;
-    };
-    if (!recent.isLocation(path) and pins_mod.kindOf(path) != .dir) {
-        self.setStatusNotice(tr("Could not open folder"), true);
-        return;
-    }
+    if (recent.isLocation(path)) return self.openPlaceWindowNow(path);
+    // Only a folder opens: the service makes the Trash folder, or looks.
+    const owned = self.allocator.dupe(u8, path) catch return;
+    const request: @import("io_requests.zig").Request = if (index == 1)
+        .{ .make_directory = .{ .path = path } }
+    else
+        .{ .path_kinds = .{ .paths = &.{path} } };
+    _ = app_requests.send(self, request, .{ .place_window = .{ .path = owned } });
+}
+
+/// Opens a Files process on `path`, which was checked to be a folder.
+pub fn openPlaceWindowNow(self: *App, path: []const u8) void {
     var exe: [platform.exe.max_path]u8 = undefined;
     const executable: []const u8 = platform.exe.path(&exe) orelse "rediwm-files";
     var child = std.process.spawn(self.io, .{
@@ -128,24 +134,53 @@ pub fn openPlaceWindow(self: *App, index: usize) void {
     };
 }
 
+/// A new Files window on `path`. The event loop opens it in this process, beside
+/// this one, so that tabs can move between them.
+pub fn openWindowAt(self: *App, path: []const u8) void {
+    if (self.chooser != null or self.new_window != null) return;
+    self.new_window = self.allocator.dupe(u8, path) catch {
+        self.setStatusNotice(tr("Could not open new window"), true);
+        return;
+    };
+}
+
 /// A click on a pin: a folder is browsed, a file opened as a double-click
-/// would (a file chooser browses the folder holding it instead).
+/// would (a file chooser browses the folder holding it instead). The service
+/// looks at the target first: pins come and go with removable drives.
 pub fn openPin(self: *App, j: usize) void {
     if (j >= self.pins.items.items.len) return;
-    const pin = &self.pins.items.items[j];
-    pin.kind = pins_mod.kindOf(pin.path);
+    const path = self.pins.items.items[j].path;
     self.focus = .file_view;
-    switch (pin.kind) {
-        .dir => self.navigate(pin.path),
-        .file => if (self.chooser != null) {
-            self.navigate(std.fs.path.dirname(pin.path) orelse "/");
-        } else self.openFile(pin.path),
+    const owned = self.allocator.dupe(u8, path) catch return;
+    _ = app_requests.send(self, .{ .path_kinds = .{ .paths = &.{path} } }, .{ .open_pin = .{ .path = owned } });
+}
+
+pub fn openPinNow(self: *App, path: []const u8, kind: pins_mod.Kind) void {
+    switch (kind) {
+        .dir => self.navigate(path),
+        .file => {
+            if (self.chooser != null) {
+                self.navigate(std.fs.path.dirname(path) orelse "/");
+            } else {
+                _ = self.openFile(path);
+            }
+        },
         .missing => {
             var buf: [160]u8 = undefined;
-            self.setStatusNotice(i18n.fmt(&buf, tr("{name} is no longer there"), .{ .name = pin.name() }) catch tr("Not found"), true);
+            const name = std.fs.path.basename(path);
+            self.setStatusNotice(i18n.fmt(&buf, tr("{name} is no longer there"), .{ .name = if (name.len > 0) name else path }) catch tr("Not found"), true);
             self.invalidate();
         },
     }
+}
+
+/// Records what a pin's target is now. Whether it changed.
+pub fn setPinKind(self: *App, path: []const u8, kind: pins_mod.Kind) bool {
+    const index = self.pins.find(path) orelse return false;
+    const pin = &self.pins.items.items[index];
+    if (pin.kind == kind) return false;
+    pin.kind = kind;
+    return true;
 }
 
 pub fn placeAt(self: *App, x: f64, y: f64) ?usize {
@@ -196,7 +231,9 @@ pub fn deviceAt(self: *App, index: usize) ?*const volumes_mod.Volume {
 /// are connected or removed.
 pub fn deviceBlock(self: *App) i32 {
     const count: i32 = @intCast(self.device_list.items.len);
-    return if (count == 0) 64 else 44 + count * self.placeStep();
+    // Keep the final row's full hit target inside the card with breathing
+    // room below it, including the compact 32 px row pitch.
+    return if (count == 0) 64 else 60 + count * self.placeStep();
 }
 
 /// The eject button at a mounted device row's right edge.
@@ -262,7 +299,6 @@ pub fn dropMotion(self: *App, x: f64, y: f64) bool {
 pub fn dropDirectoryAt(self: *App, x: f64, y: f64) ?[]const u8 {
     if (self.transfer_view.active) return null;
     if (self.chooser != null or self.dialog != null or self.menu != null or self.history.archive_len > 0) return null;
-    if (self.job_state == .running or self.job_state == .waiting_conflict) return null;
     if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter())) or
         y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.contentBottom()))) return null;
     if (self.itemAt(x, y)) |idx| {
@@ -314,20 +350,34 @@ pub fn builtinPlacePath(self: *App, path: []const u8) bool {
 
 /// Pins what was dropped on gap `slot`, in order; what is already listed
 /// or gone is skipped.
+/// The service looks at the targets first; `pinDroppedKnown` adds them.
 pub fn pinDropped(self: *App, slot: usize, paths: []const []const u8) void {
+    var clean: std.ArrayList([]const u8) = .empty;
+    defer clean.deinit(self.allocator);
+    for (paths) |raw| {
+        const path = pins_mod.normalize(raw) orelse continue;
+        clean.append(self.allocator, path) catch return;
+    }
+    if (clean.items.len == 0) return self.setStatusNotice(tr("Nothing to add to Places"), true);
+    const owned = app_requests.dupeAll(self.allocator, clean.items) catch return;
+    _ = app_requests.send(self, .{ .path_kinds = .{ .paths = clean.items } }, .{ .pin_drop = .{ .slot = slot, .paths = owned } });
+}
+
+/// Pins what was dropped on gap `slot`, in order; what is already listed
+/// or gone is skipped. `kinds` are the targets' kinds, path by path.
+pub fn pinDroppedKnown(self: *App, slot: usize, paths: []const []const u8, kinds: []const pins_mod.Kind) void {
     self.reloadPins();
     var at = @min(slot, self.pins.items.items.len);
     var added: usize = 0;
     var listed = false;
     var full = false;
     var first: []const u8 = "";
-    for (paths) |raw| {
-        const path = pins_mod.normalize(raw) orelse continue;
+    for (paths, kinds) |path, kind| {
         if (self.builtinPlacePath(path)) {
             listed = true;
             continue;
         }
-        if (self.pins.insert(self.allocator, at, path)) {
+        if (self.pins.insertKnown(self.allocator, at, path, kind)) {
             if (added == 0) first = self.pins.items.items[at].name();
             at += 1;
             added += 1;
@@ -349,6 +399,7 @@ pub fn pinDropped(self: *App, slot: usize, paths: []const []const u8) void {
     } else {
         self.setStatusNotice(if (full) tr("Places is full") else if (listed) tr("Already in Places") else tr("Nothing to add to Places"), true);
     }
+    app_requests.requestPinKinds(self);
 }
 
 pub fn removePin(self: *App, j: usize) void {
@@ -369,9 +420,19 @@ pub fn savePins(self: *App) void {
 
 pub fn reloadPins(self: *App) void {
     const file = self.pins_path orelse return;
-    var fresh = pins_mod.List.load(self.allocator, self.io, file);
+    var fresh = loadPins(self, file);
     std.mem.swap(pins_mod.List, &self.pins, &fresh);
     fresh.deinit(self.allocator);
+}
+
+/// The pins file, with the kinds already known kept; the service is asked
+/// for the rest (`app_requests.requestPinKinds`).
+fn loadPins(self: *App, file: []const u8) pins_mod.List {
+    const fresh = pins_mod.List.loadPaths(self.allocator, self.io, file);
+    for (fresh.items.items) |*pin| {
+        if (self.pins.find(pin.path)) |i| pin.kind = self.pins.items.items[i].kind;
+    }
+    return fresh;
 }
 
 /// Rows moved: nothing indexed by one may outlive this.
@@ -388,7 +449,8 @@ pub fn refreshPins(self: *App) void {
     const file = self.pins_path orelse return;
     var before = self.pins;
     defer before.deinit(self.allocator);
-    self.pins = pins_mod.List.load(self.allocator, self.io, file);
+    self.pins = loadPins(self, file);
+    app_requests.requestPinKinds(self);
     const a = before.items.items;
     const b = self.pins.items.items;
     if (a.len == b.len) {
@@ -461,7 +523,9 @@ pub fn ejectDevice(self: *App, k: usize) void {
     const volume = &self.device_list.items[k];
     const mount = volume.mount orelse return;
     if (self.device_op != null) return;
-    if (self.job_state == .running) {
+    // Any running service job may be using the volume, whichever window
+    // started it.
+    if (@import("app_jobs_card.zig").count(self) > 0) {
         self.setStatusNotice(tr("Finish the running file operation first"), true);
         return;
     }

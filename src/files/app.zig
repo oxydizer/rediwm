@@ -7,10 +7,16 @@ const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const platform = @import("platform");
 const worker_mod = @import("worker.zig");
+const app_service = @import("app_service.zig");
+const app_requests = @import("app_requests.zig");
+const clipboard_mod = @import("clipboard.zig");
 const history_mod = @import("history.zig");
+const app_tabs = @import("app_tabs.zig");
 const ops_mod = @import("ops.zig");
 const dirsize = @import("dirsize.zig");
 const thumbs_mod = @import("thumbs.zig");
+const reaper_mod = @import("reaper.zig");
+const folder_views_mod = @import("folder_views.zig");
 const thumb_decode = @import("thumb_decode.zig");
 const volumes_mod = @import("volumes.zig");
 const player_link = @import("player_link.zig");
@@ -25,6 +31,7 @@ const chooser_mod = @import("chooser.zig");
 const Editor = @import("editor.zig").Editor;
 const app_hover = @import("app_hover.zig");
 const app_listing = @import("app_listing.zig");
+const app_folder_views = @import("app_folder_views.zig");
 const app_dialogs = @import("app_dialogs.zig");
 const app_fileops = @import("app_fileops.zig");
 const app_trash = @import("app_trash.zig");
@@ -36,8 +43,6 @@ const app_sidebar_paint = @import("app_sidebar_paint.zig");
 const app_scroll = @import("app_scroll.zig");
 const app_torrents = @import("app_torrents.zig");
 const app_torrent_rows = @import("app_torrent_rows.zig");
-const app_transfer_rows = @import("app_transfer_rows.zig");
-const app_transfer_tree = @import("app_transfer_tree.zig");
 const app_git_sidebar = @import("app_git_sidebar.zig");
 const app_opening = @import("app_opening.zig");
 const app_audio = @import("app_audio.zig");
@@ -73,8 +78,32 @@ pub const FontMetrics = app_draw.FontMetrics;
 pub const fontMetrics = app_draw.fontMetrics;
 pub const measureText = app_draw.measureText;
 pub const App = struct {
+    pub const ArchiveExportPurpose = @import("app_archives.zig").ExportUse;
+    pub const ArchiveDragExport = struct {
+        allocator: Allocator,
+        paths: std.ArrayList([]const u8),
+        staging_lease: ?clipboard_mod.StagingLease,
+
+        pub fn deinit(self: *ArchiveDragExport) void {
+            for (self.paths.items) |path| self.allocator.free(path);
+            self.paths.deinit(self.allocator);
+            if (self.staging_lease) |*lease| lease.deinit();
+            self.staging_lease = null;
+        }
+    };
+
     terminal: app_terminal.Drawer = .{},
     closed: bool = false,
+    /// Folder tabs (`app_tabs.zig`); empty until something asks, meaning one tab.
+    tabs: std.ArrayList(*app_tabs.FolderTab) = .empty,
+    tab_selected: usize = 0,
+    tab_next_id: usize = 1,
+    /// The compositor shows the strip: the tab keys are live.
+    tabs_visible: bool = false,
+    /// Requests for the event loop, which owns the windows: a folder for a new
+    /// window (owned), and the tab to tear off into one of its own.
+    new_window: ?[]u8 = null,
+    tear_tab: ?usize = null,
     torrents: @import("torrents.zig").Client = .{},
     transfer_view: app_torrents.View = .{},
     children: platform.child.Set = .{},
@@ -92,6 +121,13 @@ pub const App = struct {
     environ: std.process.Environ,
     theme_cfg: theme.Config,
     worker: *worker_mod.Worker,
+    /// This window's link to the process-wide I/O service (`app_service.zig`).
+    service: app_service.Link = .{},
+    /// The user chose what happens to running jobs when this, the last
+    /// window, closes (`app_quit.zig`).
+    quit_confirmed: bool = false,
+    archive_open_with_leases: std.ArrayList(clipboard_mod.StagingLease) = .empty,
+    archive_drag_export: ?ArchiveDragExport = null,
     history: history_mod.History,
     home_dir: []const u8,
 
@@ -125,7 +161,19 @@ pub const App = struct {
     initial_selection: ?[]const u8 = null,
     error_message: ?[]const u8 = null,
     show_hidden: bool = false,
+    /// Directories ahead of files in every sort order. This, `list_view` and
+    /// the sort are the current folder's view (`app_folder_views.zig`).
+    folders_first: bool = true,
     list_view: bool = false,
+    /// What a folder without a remembered view gets: grid/list and sort from
+    /// `preferences.zig`, folders-first from `files_folders_first`.
+    default_list_view: bool = false,
+    default_sort: Sort = .name,
+    default_folders_first: bool = true,
+    /// Shared by every window (`main.run`); null in tests that build an App alone.
+    folder_views: ?*folder_views_mod.Store = null,
+    /// The store's generation this window last showed.
+    folder_views_seen: u64 = 0,
     non_git_list_view: ?bool = null,
     /// Each sidebar section expands independently. Places is open by default.
     sidebar_expanded: [4]bool = .{ true, false, false, false },
@@ -156,7 +204,7 @@ pub const App = struct {
     /// Set when a file menu opens in the Trash: whether Restore applies.
     trash_restorable: bool = false,
     file_menu_labels: [12][]const u8 = undefined,
-    menu_label_text: [8][]const u8 = undefined,
+    menu_label_text: [9][]const u8 = undefined,
     column_label_text: [5][]const u8 = undefined,
     place_menu_labels: [4][]const u8 = undefined,
     menu_place: usize = 0,
@@ -181,6 +229,9 @@ pub const App = struct {
     navigation_count: u32 = 0,
     folder_sizes: std.StringHashMap(SizeState) = undefined,
     dirsize_pool: ?*dirsize.Pool = null,
+    /// The process's reaper: helper threads this window stops are joined
+    /// there, off the UI thread. Null in tests that build an App alone.
+    reaper: ?*reaper_mod.Reaper = null,
 
     // Image thumbnails, made on worker threads (see thumbs.zig). The service
     // is created when a folder first shows an image.
@@ -278,31 +329,19 @@ pub const App = struct {
     clipboard_is_text: bool = false,
     // Operations & Jobs
     dialog: ?Dialog = null,
-    job_runner: ?*ops_mod.JobRunner = null,
-    job_was_running: bool = false,
-    archive_preview: bool = false,
-    archive_open_navigation: u32 = 0,
+    open_with_archive_paths: bool = false,
     extract_picker_fd: ?c_int = null,
     extract_picker_source: ?[]u8 = null,
+    extract_picker_members: std.ArrayList([]const u8) = .empty,
     extract_picker_bytes: std.ArrayList(u8) = .empty,
-    job_cut_revision: ?usize = null,
-    job_progress: usize = std.math.maxInt(usize),
-    job_transferred_bytes: u64 = 0,
-    job_measuring: bool = false,
-    job_current_file_path: [4096]u8 = undefined,
-    job_current_file_path_len: usize = 0,
-    job_rate_sample_bytes: u64 = 0,
-    job_rate_sample_at: i64 = 0,
-    job_bytes_per_second: u64 = 0,
-    job_state: ops_mod.JobState = .idle,
     transfer_rows_dirty: bool = false,
-    transfer_tree_state: app_transfer_tree.State,
     status_notice: ?[]u8 = null,
     status_notice_until: i64 = 0,
     status_is_error: bool = false,
 
     // Clipboard
     clipboard_paths: std.ArrayList([]const u8) = .empty,
+    clipboard_staging_lease: ?clipboard_mod.StagingLease = null,
     clipboard_cut: bool = false,
     clipboard_revision: usize = 0,
     paste_requested: bool = false,
@@ -310,10 +349,15 @@ pub const App = struct {
     // Mouse & input
     mouse_x: f64 = 0,
     mouse_y: f64 = 0,
+    transfer_hover_priority: ?struct {
+        entry_id: @import("io_tree.zig").EntryId,
+        deadline_ms: i64,
+        requested: bool = false,
+    } = null,
     last_click_time: i64 = 0,
     last_click_index: ?usize = null,
     /// The item a single-click last opened, and when: the second click of a
-    /// double-click on its icon must not open it again.
+    /// double-click must not open it again.
     last_open_index: ?usize = null,
     last_open_time: i64 = 0,
     ctrl: bool = false,
@@ -345,8 +389,6 @@ pub const App = struct {
             .history = hist,
             .home_dir = home_dir,
             .items_arena = std.heap.ArenaAllocator.init(allocator),
-            .job_runner = ops_mod.JobRunner.init(allocator) catch null,
-            .transfer_tree_state = app_transfer_tree.State.init(allocator),
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
             .single_click_open = @import("app_kit").settings.singleClickOpen(),
@@ -369,24 +411,41 @@ pub const App = struct {
         if (self.preferences_path) |path| {
             const prefs = Preferences.load(allocator, io, path);
             self.list_view = prefs.list;
+            self.default_list_view = prefs.list;
             self.unpinned_places = prefs.unpinned_places;
             self.git_view = prefs.git_view;
             self.terminal.requested_height = @intCast(prefs.terminal_height);
-            self.sort_mode = @enumFromInt(prefs.sort);
+            self.sort_mode = @fromBackingInt(@intCast(prefs.sort));
+            self.default_sort = self.sort_mode;
         }
+        self.default_folders_first = @import("app_kit").settings.foldersFirst();
+        self.folders_first = self.default_folders_first;
         self.pins_path = pins_mod.statePath(allocator, environ) catch null;
-        if (self.pins_path) |path| self.pins = pins_mod.List.load(allocator, io, path);
+        if (self.pins_path) |path| self.pins = pins_mod.List.loadPaths(allocator, io, path);
         self.location.anchor = self.location.cursor;
         self.loading_since = nowMs();
         return self;
     }
 
     pub fn deinit(self: *App) void {
+        // Leases give their staging back through the service link: first.
+        if (self.archive_drag_export) |*drag_export| drag_export.deinit();
+        self.archive_drag_export = null;
+        for (self.archive_open_with_leases.items) |*lease| lease.deinit();
+        self.archive_open_with_leases.deinit(self.allocator);
+        self.clearClipboard();
+        self.service.archives.deinit(self.allocator);
+        app_requests.deinitPending(self);
+        self.service.transfers.deinit(self.allocator);
+        self.service.ghosts.deinit(self.allocator);
+        self.service.deinit();
         self.torrents.deinit();
+        if (self.new_window) |path| self.allocator.free(path);
         self.stopAudio();
         self.terminal.deinit(self.allocator);
         self.children.deinit(self.allocator);
         self.closeExtractPicker();
+        self.extract_picker_members.deinit(self.allocator);
         self.extract_picker_bytes.deinit(self.allocator);
         if (self.trash_dir) |path| self.allocator.free(path);
         if (self.transfer_browse_root) |path| self.allocator.free(path);
@@ -400,18 +459,15 @@ pub const App = struct {
         self.pins.deinit(self.allocator);
         if (self.preview_return_fd) |fd| _ = c.close(fd);
         if (self.editor_path) |path| self.allocator.free(path);
-        if (self.job_runner) |runner| runner.deinit();
-        self.transfer_tree_state.deinit();
         self.clearFolderSizes();
         self.folder_sizes.deinit();
-        if (self.dirsize_pool) |p| p.deinit();
-        if (self.thumbs) |t| t.deinit();
+        if (self.dirsize_pool) |p| reaper_mod.retire(self.reaper, p, dirsize.Pool.deinit);
+        if (self.thumbs) |t| reaper_mod.retire(self.reaper, t, thumbs_mod.Service.deinit);
         if (self.devices) |monitor| monitor.stop();
         self.device_list.deinit();
         if (self.device_op) |op| self.allocator.free(op.id);
         self.thumb_wants.deinit(self.allocator);
         self.thumb_arrived.deinit(self.allocator);
-        self.clearClipboard();
         self.clipboard_paths.deinit(self.allocator);
         self.closeDialog();
         if (self.status_notice) |sn| self.allocator.free(sn);
@@ -420,6 +476,7 @@ pub const App = struct {
         self.preedit.deinit(self.allocator);
         self.search.deinit(self.allocator);
         self.clipboard_text.deinit(self.allocator);
+        self.deinitTabs();
         self.history.deinit();
         self.items.deinit(self.allocator);
         self.items_arena.deinit();
@@ -429,6 +486,14 @@ pub const App = struct {
     pub fn clearClipboard(self: *App) void {
         for (self.clipboard_paths.items) |p| self.allocator.free(p);
         self.clipboard_paths.clearRetainingCapacity();
+        if (self.clipboard_staging_lease) |*lease| lease.deinit();
+        self.clipboard_staging_lease = null;
+    }
+
+    pub fn takeArchiveDragExport(self: *App) ?ArchiveDragExport {
+        const drag_export = self.archive_drag_export orelse return null;
+        self.archive_drag_export = null;
+        return drag_export;
     }
 
     pub fn getTitle(self: *App) [*:0]const u8 {
@@ -529,7 +594,7 @@ pub const App = struct {
 
     pub fn savePreferences(self: *App) void {
         const path = self.preferences_path orelse return;
-        (Preferences{ .list = self.non_git_list_view orelse self.list_view, .sort = @intFromEnum(self.sort_mode), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height) }).save(self.allocator, self.io, path) catch {
+        (Preferences{ .list = self.default_list_view, .sort = @backingInt(self.default_sort), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height) }).save(self.allocator, self.io, path) catch {
             self.setStatusNotice(tr("Could not save view preferences"), true);
         };
     }
@@ -568,6 +633,35 @@ pub const App = struct {
         self.restore_view = false;
     }
 
+    // app_tabs.zig
+    pub const ensureTabs = app_tabs.ensureTabs;
+    pub const deinitTabs = app_tabs.deinitTabs;
+    pub const tabTitle = app_tabs.tabTitle;
+    pub const tabIcon = app_tabs.tabIcon;
+    pub const findFolderTab = app_tabs.findTab;
+    pub const switchTab = app_tabs.switchTab;
+    pub const stepTabs = app_tabs.stepTabs;
+    pub const newTab = app_tabs.newTab;
+    pub const openTab = app_tabs.openTab;
+    pub const closeTab = app_tabs.closeTab;
+    pub const toggleAppMenu = app_menu.toggleAppMenu;
+    pub const openWindowAt = app_places.openWindowAt;
+    pub const moveTab = app_tabs.moveTab;
+    pub const movable = app_tabs.movable;
+    pub const takeTab = app_tabs.take;
+    pub const adoptTab = app_tabs.adopt;
+    pub const replaceBlank = app_tabs.replaceBlank;
+    pub const discardTab = app_tabs.discard;
+    pub const tabStart = app_tabs.start;
+
+    // app_folder_views.zig
+    pub const applyFolderView = app_folder_views.applyFolderView;
+    pub const recordFolderView = app_folder_views.recordFolderView;
+    pub const folderViewIsDefault = app_folder_views.folderViewIsDefault;
+    pub const resetFolderView = app_folder_views.resetFolderView;
+    pub const syncFolderView = app_folder_views.syncFolderView;
+    pub const setDefaultFoldersFirst = app_folder_views.setDefaultFoldersFirst;
+
     // app_listing.zig
     pub const navigate = app_listing.navigate;
     pub const refresh = app_listing.refresh;
@@ -604,6 +698,7 @@ pub const App = struct {
     pub const trashPropertiesAction = app_dialogs.trashPropertiesAction;
     pub const canOpenWith = app_dialogs.canOpenWith;
     pub const openWithDialog = app_dialogs.openWithDialog;
+    pub const openWithPaths = app_dialogs.openWithPaths;
     pub const openWithAction = app_dialogs.openWithAction;
     pub const openNewFolderDialog = app_dialogs.openNewFolderDialog;
     pub const openNewBranchDialog = app_dialogs.openNewBranchDialog;
@@ -614,11 +709,18 @@ pub const App = struct {
     pub const openTrashConfirmDialog = app_dialogs.openTrashConfirmDialog;
     pub const openTrashConfirmDialogWithMode = app_dialogs.openTrashConfirmDialogWithMode;
     pub const openConflictDialog = app_dialogs.openConflictDialog;
+    pub const managerConflictCanMerge = app_dialogs.managerConflictCanMerge;
+    pub const resolveConflictDialog = app_dialogs.resolveConflictDialog;
+    pub const smallDialogHeight = app_dialogs.smallDialogHeight;
+    pub const applyAllRect = app_dialogs.applyAllRect;
+    pub const toggleApplyAll = app_dialogs.toggleApplyAll;
     pub const confirmDialog = app_dialogs.confirmDialog;
     pub const handleDialogKey = app_dialogs.handleDialogKey;
 
     // app_fileops.zig
     pub const copySelected = app_fileops.copySelected;
+    pub const startArchiveDragExport = app_fileops.startArchiveDragExport;
+    pub const startArchiveOpenWith = app_fileops.startArchiveOpenWith;
     pub const cutSelected = app_fileops.cutSelected;
     pub const calculateSizeSelected = app_fileops.calculateSizeSelected;
     pub const executePaste = app_fileops.executePaste;
@@ -627,7 +729,21 @@ pub const App = struct {
     pub const executePasteExternal = app_fileops.executePasteExternal;
     pub const deleteAction = app_fileops.deleteAction;
     pub const executeDeletion = app_fileops.executeDeletion;
+
+    // app_service.zig
+    pub const submitDeletion = app_service.submitDeletion;
+    pub const requestClose = @import("app_quit.zig").requestClose;
+    pub const submitTransfer = @import("app_transfers.zig").submitTransfer;
+    pub const openServiceConflictDialog = app_dialogs.openServiceConflictDialog;
+    pub const serviceUpdated = app_service.serviceUpdated;
+    pub const stepService = app_service.stepService;
+    pub const serviceTimeout = app_service.serviceTimeout;
     pub const deleteFromTrash = app_fileops.deleteFromTrash;
+
+    // app_io.zig
+    const app_io = @import("app_io.zig");
+    pub const promoteDiscoverySubtreePath = app_io.promoteDiscoverySubtreePath;
+    pub const prioritizeTransferEntry = app_io.prioritizeTransferEntry;
 
     // app_trash.zig
     pub const trashRelation = app_trash.trashRelation;
@@ -650,6 +766,7 @@ pub const App = struct {
     pub const chooserKey = app_chooser.chooserKey;
     pub const acceptChooser = app_chooser.acceptChooser;
     pub const collectChooser = app_chooser.collectChooser;
+    pub const finishChooser = app_chooser.finishChooser;
     pub const renderChooser = app_chooser.renderChooser;
 
     pub const BreadcrumbHit = struct { path: []const u8, index: usize };
@@ -759,6 +876,7 @@ pub const App = struct {
     pub const placeVisible = app_places.placeVisible;
     pub const openPlace = app_places.openPlace;
     pub const openPlaceWindow = app_places.openPlaceWindow;
+    pub const openPlaceWindowNow = app_places.openPlaceWindowNow;
     pub const openPin = app_places.openPin;
     pub const placeAt = app_places.placeAt;
     pub const placeActive = app_places.placeActive;
@@ -781,6 +899,10 @@ pub const App = struct {
     pub const reloadPins = app_places.reloadPins;
     pub const pinsChanged = app_places.pinsChanged;
     pub const refreshPins = app_places.refreshPins;
+    pub const pinDroppedKnown = app_places.pinDroppedKnown;
+    pub const setPinKind = app_places.setPinKind;
+    pub const openPinNow = app_places.openPinNow;
+    pub const requestPinKinds = app_requests.requestPinKinds;
     pub const deviceLabel = app_places.deviceLabel;
     pub const startDevices = app_places.startDevices;
     pub const startAudio = app_audio.startAudio;
@@ -830,7 +952,6 @@ pub const App = struct {
     pub const fileOpsSidebarHover = app_sidebar_paint.fileOpsSidebarHover;
     pub const fileOpsSidebarClick = app_sidebar_paint.fileOpsSidebarClick;
     pub const renderFileOpsSidebar = app_sidebar_paint.renderFileOpsSidebar;
-pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
 
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
@@ -840,13 +961,12 @@ pub const renderFileOpsTip = app_sidebar_paint.renderFileOpsTip;
     pub const torrentForItem = app_torrent_rows.torrentForItem;
     pub const hasFolderTransfers = app_torrent_rows.hasFolderTransfers;
     pub const appendTorrentRows = app_torrent_rows.appendTorrentRows;
-    pub const appendTransferRows = app_transfer_rows.appendTransferRows;
     pub const inlineTorrentWidth = app_torrent_rows.inlineTorrentWidth;
     pub const renderInlineTorrent = app_torrent_rows.renderInlineTorrent;
     pub const inlineTorrentHit = app_torrent_rows.inlineTorrentHit;
     pub const inlineTorrentClick = app_torrent_rows.inlineTorrentClick;
     pub const renderTorrentTip = app_torrent_rows.renderTorrentTip;
-pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
+    pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const toggleTorrent = app_torrents.toggleTorrent;
     pub const openTorrentDetails = app_torrents.openTorrentDetails;
     pub const openTransfers = app_torrents.openTransfers;
@@ -918,6 +1038,8 @@ pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const toggleInlinePermission = app_pointer.toggleInlinePermission;
     pub const hoverKey = app_pointer.hoverKey;
     pub const handleMotion = app_pointer.handleMotion;
+    pub const transferHoverPriorityDeadline = app_pointer.transferHoverPriorityDeadline;
+    pub const stepTransferHoverPriority = app_pointer.stepTransferHoverPriority;
     pub const cancelDrag = app_pointer.cancelDrag;
     pub const bandRect = app_pointer.bandRect;
     pub const updateSelectionBand = app_pointer.updateSelectionBand;
@@ -934,8 +1056,8 @@ pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const handleScroll = app_scroll.handleScroll;
     pub const handleHorizontalScroll = app_scroll.handleHorizontalScroll;
 
-    // app_pointer.zig
-    pub const handleButton = app_pointer.handleButton;
+    // app_buttons.zig
+    pub const handleButton = @import("app_buttons.zig").handleButton;
 
     // app_terminal.zig
     pub const terminalHeight = app_terminal.terminalHeight;
@@ -996,6 +1118,7 @@ pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const menuHint = app_menu.menuHint;
     pub const hasSizeSelection = app_menu.hasSizeSelection;
     pub const selectedArchive = app_menu.selectedArchive;
+    pub const hasSelectedArchiveMembers = app_menu.hasSelectedArchiveMembers;
     pub const selectedAppImage = app_menu.selectedAppImage;
     pub const fileActions = app_menu.fileActions;
     pub const placeActions = app_menu.placeActions;
@@ -1015,6 +1138,7 @@ pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const render = app_paint.render;
     pub const renderPermissionTip = app_paint.renderPermissionTip;
     pub const renderButton = app_paint.renderButton;
+    pub const renderConflictButton = app_paint.renderConflictButton;
     pub const fieldFontSize = app_paint.fieldFontSize;
     pub const renderLocationBar = app_paint.renderLocationBar;
     pub const fieldOptions = app_paint.fieldOptions;
@@ -1022,7 +1146,7 @@ pub const renderTorrentSidebarTip = app_torrents.renderTorrentSidebarTip;
     pub const editorTextArea = app_paint.editorTextArea;
     pub const editorCaretRect = app_paint.editorCaretRect;
     pub const pointerCursor = app_paint.pointerCursor;
-    pub const singleClickIconAt = app_paint.singleClickIconAt;
+    pub const singleClickItemAt = app_paint.singleClickItemAt;
     pub const renameCard = app_paint.renameCard;
     pub const renderRenameCard = app_paint.renderRenameCard;
     pub const editorRect = app_paint.editorRect;

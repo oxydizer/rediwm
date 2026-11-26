@@ -105,10 +105,16 @@ pub const Task = struct {
         return self.result;
     }
 
+    /// Cancels a walk in progress and returns at once (`reaper.retire`). The
+    /// thread may still write the wake fd until `destroy` has joined it.
+    pub fn requestStop(self: *Task) void {
+        self.stop.store(true, .release);
+    }
+
     /// Cancels a walk in progress and waits for the thread, so the wake fd
     /// may be closed afterwards.
     pub fn destroy(self: *Task) void {
-        self.stop.store(true, .release);
+        self.requestStop();
         self.thread.join();
         a.free(self.path);
         a.destroy(self);

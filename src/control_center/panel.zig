@@ -290,6 +290,17 @@ pub fn filesSingleClickChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     cc.server.config.compositor.files_single_click_open = on;
 }
 
+pub fn filesFoldersFirstChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const cc: *ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, "files_folders_first", on) catch |err| {
+        std.log.warn("could not save Files folders-first setting: {}", .{err});
+        cc.default_apps.message = i18n.tr("Could not save the Files setting.");
+        cc.refresh();
+        return;
+    };
+    cc.server.config.compositor.files_folders_first = on;
+}
+
 pub fn filesAudioPlayerChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     const cc: *ControlCenter = @ptrCast(@alignCast(owner orelse return));
     @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, "files_audio_player", on) catch |err| {

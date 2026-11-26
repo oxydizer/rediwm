@@ -22,6 +22,7 @@ pub const ThemeUpdate = struct {
     io: std.Io,
     single_click_open: bool = true,
     audio_player: bool = true,
+    folders_first: bool = true,
     terminal_opacity: ?f32 = null,
 
     fn init(a: std.mem.Allocator, t: theme.Theme, prefs: config.RegionConfig, root: []const u8, icon_name: []const u8, io: std.Io) !ThemeUpdate {
@@ -156,6 +157,7 @@ pub const Settings = struct {
         var prefs: config.RegionConfig = .{};
         var single_click_open = true;
         var audio_player = true;
+        var folders_first = true;
         var terminal_opacity: ?f32 = null;
         self.animations = .{};
         self.region = .{};
@@ -175,6 +177,7 @@ pub const Settings = struct {
                     t = value.theme;
                     single_click_open = value.compositor.files_single_click_open;
                     audio_player = value.compositor.files_audio_player;
+                    folders_first = value.compositor.files_folders_first;
                     terminal_opacity = value.compositor.terminal_opacity;
                     if (value.theme_pack) |pack| root = arena.allocator().dupe(u8, pack.root) catch return null;
                     inline for (.{ "font", "mono_font", "start_button_icon" }) |field| @field(t, field) = arena.allocator().dupe(u8, @field(t, field)) catch return null;
@@ -194,6 +197,7 @@ pub const Settings = struct {
         var update = ThemeUpdate.init(a, t, prefs, root, icon_name, io) catch return null;
         update.single_click_open = single_click_open;
         update.audio_player = audio_player;
+        update.folders_first = folders_first;
         update.terminal_opacity = terminal_opacity;
         return update;
     }
@@ -365,6 +369,10 @@ pub fn iconTheme() []const u8 {
 
 pub fn audioPlayer() bool {
     return if (applied_theme) |t| t.audio_player else true;
+}
+
+pub fn foldersFirst() bool {
+    return if (applied_theme) |t| t.folders_first else true;
 }
 
 pub fn singleClickOpen() bool {

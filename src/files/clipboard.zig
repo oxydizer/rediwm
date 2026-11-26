@@ -1,6 +1,59 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+/// A temporary directory whose real paths are advertised by a clipboard or
+/// drag source, or opened in another program. The I/O service owns the
+/// folder; the window holds it as a resource (stage S4) and gives it back
+/// when its source's Wayland lifetime ends, and the service deletes it on a
+/// worker. Nothing here touches the filesystem.
+pub const StagingLease = struct {
+    allocator: Allocator,
+    path: []u8,
+    /// The window-owned service resource.
+    resource_id: u64,
+    /// Gives the resource back (`app_service.disposeResource`).
+    dispose: *const fn (context: *anyopaque, resource_id: u64) void,
+    context: *anyopaque,
+
+    pub fn deinit(self: *StagingLease) void {
+        self.dispose(self.context, self.resource_id);
+        self.allocator.free(self.path);
+        self.* = undefined;
+    }
+};
+
+/// Transfers a staging lease to a new owner, clearing the previous owner.
+pub fn takeStagingLease(owner: *?StagingLease) ?StagingLease {
+    const lease = owner.* orelse return null;
+    owner.* = null;
+    return lease;
+}
+
+test "taking a staging lease clears the previous owner, and its end gives the resource back" {
+    const allocator = std.testing.allocator;
+    const Disposed = struct {
+        var id: u64 = 0;
+        fn dispose(_: *anyopaque, resource_id: u64) void {
+            id = resource_id;
+        }
+    };
+    var context: u8 = 0;
+    var app_lease: ?StagingLease = .{
+        .allocator = allocator,
+        .path = try allocator.dupe(u8, "/tmp/clipboard-staging-test"),
+        .resource_id = 7,
+        .dispose = Disposed.dispose,
+        .context = &context,
+    };
+    var source_lease = takeStagingLease(&app_lease);
+
+    try std.testing.expect(app_lease == null);
+    try std.testing.expect(source_lease != null);
+    try std.testing.expectEqualStrings("/tmp/clipboard-staging-test", source_lease.?.path);
+    source_lease.?.deinit();
+    try std.testing.expectEqual(@as(u64, 7), Disposed.id);
+}
+
 pub const ClipboardMode = enum {
     copy,
     cut,

@@ -57,7 +57,7 @@ pub fn runHeader(self: *App, action: header.Action) void {
         .grid, .list => {
             if (self.repository() != null) return;
             self.list_view = action == .list;
-            self.savePreferences();
+            self.recordFolderView();
             self.last_click_index = null;
             self.clampScroll();
             if (self.focused_index) |idx| self.revealIndex(idx);
@@ -110,12 +110,13 @@ pub fn menuPadding(_: *App) usize {
 pub fn menuSeparatorBefore(self: *App, row: usize) bool {
     return switch (self.menu orelse return false) {
         .file => switch (self.fileActions()[row]) {
-            .cut, .extract, .restore, .properties => true,
+            .cut, .extract, .extract_to, .restore, .properties => true,
             else => false,
         },
         .background => row == 2,
         .sidebar => self.placeActions()[row] == .properties,
-        .sort => row == 2 or row == 4 or row == 6,
+        .sort => row == 2 or row == 4 or row == 6 or row == sort_options.len,
+        .app => row == 2 or row == 4,
         else => false,
     };
 }
@@ -177,6 +178,8 @@ pub fn backgroundMenu(self: *App) enum { normal, refresh_only, trash } {
 pub fn menuDisabled(self: *App, row: usize) bool {
     return switch (self.menu orelse return false) {
         .file => row < self.fileActions().len and self.fileActions()[row] == .restore and !self.trash_restorable,
+        // Grid or list, sort and folders-first back to the defaults.
+        .sort => row == sort_options.len and self.folderViewIsDefault(),
         else => false,
     };
 }
@@ -219,6 +222,26 @@ pub fn selectedArchive(self: *App) ?[]const u8 {
     return selected;
 }
 
+/// Archive members use virtual paths. Regular files and directories can be
+/// exported after materializing them through the selected-member extractor.
+pub fn hasSelectedArchiveMembers(self: *const App) bool {
+    const archive_len = self.history.archive_len;
+    if (self.chooser != null or archive_len == 0 or self.history.current.len < archive_len)
+        return false;
+
+    var count: usize = 0;
+    for (self.items.items) |item| {
+        if (!item.selected or item.transfer_ghost) continue;
+        if (item.transfer_stub or item.is_symlink or item.is_broken or item.missing)
+            return false;
+        if (item.path.len <= archive_len + 1 or item.path[archive_len] != '/' or
+            !std.mem.eql(u8, item.path[0..archive_len], self.history.current[0..archive_len]))
+            return false;
+        count += 1;
+    }
+    return count != 0;
+}
+
 pub fn selectedAppImage(self: *App) ?[]const u8 {
     if (self.chooser != null or self.history.archive_len > 0 or self.transfer_view.active) return null;
     var selected: ?[]const u8 = null;
@@ -240,7 +263,14 @@ pub fn fileActions(self: *App) []const FileAction {
     }
     if (!has_actionable_selection) return &.{};
     if (only_transfers) return &.{.open};
-    if (self.history.archive_len > 0) return &.{.open};
+    if (self.history.archive_len > 0) {
+        if (!self.hasSelectedArchiveMembers()) return &.{.open};
+        for (self.items.items) |item| {
+            if (item.selected and !item.transfer_ghost and item.is_dir)
+                return &.{ .open, .copy, .extract_to };
+        }
+        return &.{ .open, .open_with, .copy, .extract_to };
+    }
     // Entries here are already deleted: put back or remove for good, but never
     // cut, rename, paste or trash again. Folders inside a trashed folder have
     // no metadata, so they only open, copy and show properties.
@@ -287,7 +317,7 @@ pub fn placeActions(self: *App) []const PlaceAction {
 pub fn menuLabels(self: *App) []const []const u8 {
     const messages: []const i18n.Message = switch (self.menu orelse return &.{}) {
         .new => &.{ i18n.msg("New Folder"), i18n.msg("New File") },
-        .sort => &.{ i18n.msg("Name: A to Z"), i18n.msg("Name: Z to A"), i18n.msg("Largest first"), i18n.msg("Smallest first"), i18n.msg("Newest first"), i18n.msg("Oldest first"), i18n.msg("Type: A to Z"), i18n.msg("Type: Z to A") },
+        .sort => &.{ i18n.msg("Name: A to Z"), i18n.msg("Name: Z to A"), i18n.msg("Largest first"), i18n.msg("Smallest first"), i18n.msg("Newest first"), i18n.msg("Oldest first"), i18n.msg("Type: A to Z"), i18n.msg("Type: Z to A"), i18n.msg("Reset Folder View") },
         .filter => if (self.repository() != null)
             &.{ i18n.msg("Folders only"), i18n.msg("Show hidden files"), i18n.msg("Show changed files"), i18n.msg("Show full paths") }
         else
@@ -308,6 +338,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
             .normal => &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Paste"), i18n.msg("Refresh") },
         },
         .chooser_filter => return self.chooser_filter_labels.items,
+        .app => &.{ i18n.msg("New Tab"), i18n.msg("New Window"), i18n.msg("Show hidden files"), i18n.msg("Folders first"), i18n.msg("Terminal"), i18n.msg("Transfers") },
     };
     for (messages, 0..) |message, i| self.menu_label_text[i] = message.get();
     return self.menu_label_text[0..messages.len];
@@ -323,6 +354,17 @@ pub fn openMenu(self: *App, kind: MenuKind, x: f64, y: f64) void {
     self.menu_selected = 0;
     self.last_click_index = null;
     self.invalidate();
+}
+
+/// The application menu, opened from the titlebar's leading button at `x`; a
+/// second press on the button closes it.
+pub fn toggleAppMenu(self: *App, x: f64) void {
+    if (self.menu == .app) {
+        self.menu = null;
+        self.invalidate();
+        return;
+    }
+    self.openMenu(.app, x, 4);
 }
 
 pub fn menuHit(self: *App, x: f64, y: f64) ?usize {
@@ -367,6 +409,19 @@ pub fn runMenu(self: *App, row: usize) void {
             .mount => self.activateDevice(self.menu_place - self.deviceBase()),
             .eject => self.ejectDevice(self.menu_place - self.deviceBase()),
         },
+        .app => switch (row) {
+            0 => self.newTab(),
+            1 => self.openWindowAt(self.tabStart(self.tab_selected)),
+            2 => self.toggleHidden(),
+            3 => {
+                self.folders_first = !self.folders_first;
+                self.rebuildView();
+                self.recordFolderView();
+            },
+            4 => self.terminalToggle(),
+            5 => self.openTransfers(),
+            else => {},
+        },
         .chooser_filter => {
             if (row < self.chooser.?.filters.len) self.chooser.?.filter_index = row;
             self.rebuildView();
@@ -377,9 +432,13 @@ pub fn runMenu(self: *App, row: usize) void {
             else => {},
         },
         .sort => {
-            if (row < sort_options.len) self.setSort(sort_options[row]);
+            if (row >= sort_options.len) {
+                self.resetFolderView();
+                return;
+            }
+            self.setSort(sort_options[row]);
             self.rebuildView();
-            self.savePreferences();
+            self.recordFolderView();
             self.scroll_y = 0;
             if (self.focused_index) |idx| self.revealIndex(idx);
             self.startSortFeedback(nowMs());
@@ -443,7 +502,8 @@ pub fn renderMenu(self: *App, cr: *c.cairo_t) void {
     context_menu.frame(cr, .{ .x = self.menu_x, .y = self.menu_y, .w = width, .h = height }, context);
     for (labels, 0..) |label, i| {
         const row = self.menuRowRect(i);
-        const checked = (self.menu == .sort and sort_options[i] == self.effectiveSort()) or
+        const checked = (self.menu == .sort and i < sort_options.len and sort_options[i] == self.effectiveSort()) or
+            (self.menu == .app and ((i == 2 and self.show_hidden) or (i == 3 and self.folders_first))) or
             (self.menu == .filter and ((i == 0 and self.folders_only) or (i == 1 and self.show_hidden) or (i == 2 and self.changed_only) or (i == 3 and self.full_paths)));
         context_menu.row(cr, .{ .x = row.x, .y = row.y, .w = row.w, .h = row.h }, .{
             .label = label,

@@ -26,6 +26,7 @@ const fontMetrics = @import("app_draw.zig").fontMetrics;
 const sidebar_controls = @import("app_sidebar_controls.zig");
 const deviceLabel = App.deviceLabel;
 const transferTip = @import("app_transfer_tip.zig");
+const jobs_card = @import("app_jobs_card.zig");
 
 /// A quiet surface separating the sidebar's four functional sections.
 fn drawSidebarCard(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64) void {
@@ -490,22 +491,12 @@ pub fn fileOpsBox(self: *App) shell_ui.Rect {
     };
 }
 
-fn fileOpsPauseRect(area: shell_ui.Rect) shell_ui.Rect {
-    return sidebar_controls.buttonRect(area, 54, 2);
-}
-
-fn fileOpsCancelRect(area: shell_ui.Rect) shell_ui.Rect {
-    return sidebar_controls.buttonRect(area, 26, 2);
-}
-
-fn fileOpsRectContains(rect: shell_ui.Rect, x: f64, y: f64) bool {
-    return sidebar_controls.contains(rect, x, y);
-}
-
 pub fn fileOpsSidebarHeight(self: *App) i32 {
-    const runner = self.job_runner orelse return 0;
-    const state = runner.pollProgress().state;
-    return if (state == .running or state == .paused or state == .waiting_conflict) 60 else 0;
+    return jobs_card.height(self);
+}
+
+fn cardTop(self: *App) f64 {
+    return fileOpsBox(self).y;
 }
 
 pub fn fileOpsSidebarHit(self: *App, x: f64, y: f64) bool {
@@ -513,133 +504,25 @@ pub fn fileOpsSidebarHit(self: *App, x: f64, y: f64) bool {
     if (self.sidebarWidth() == 0 or y < @as(f64, @floatFromInt(self.contentTop())) or
         y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return false;
     const area = fileOpsBox(self);
-    return x >= area.x and x < area.x + area.w and y >= area.y and y < area.y + area.h;
+    const bottom = area.y + @as(f64, @floatFromInt(self.fileOpsSidebarHeight())) - 8;
+    return x >= area.x and x < area.x + area.w and y >= area.y and y < bottom;
 }
 
 pub fn fileOpsSidebarHover(self: *App, x: f64, y: f64) usize {
     if (!self.fileOpsSidebarHit(x, y)) return 0;
-    const area = fileOpsBox(self);
-    if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
-        return std.math.maxInt(usize) - 2004;
-    }
-    if (self.job_runner) |runner| {
-        const progress = runner.pollProgress();
-        const can_pause = (progress.kind == .copy or progress.kind == .move) and
-            (progress.state == .running or progress.state == .paused);
-        if (can_pause and fileOpsRectContains(fileOpsPauseRect(area), x, y)) {
-            return std.math.maxInt(usize) - 2003;
-        }
-    }
-    return std.math.maxInt(usize) - 2002;
+    return jobs_card.hover(self, cardTop(self), x, y);
 }
 
 pub fn fileOpsSidebarClick(self: *App, x: f64, y: f64) bool {
     if (!self.fileOpsSidebarHit(x, y)) return false;
-    const runner = self.job_runner orelse return true;
-    const progress = runner.pollProgress();
-    const area = fileOpsBox(self);
-    if (fileOpsRectContains(fileOpsCancelRect(area), x, y)) {
-        runner.cancel();
-    } else if ((progress.kind == .copy or progress.kind == .move) and
-        (progress.state == .running or progress.state == .paused) and
-        fileOpsRectContains(fileOpsPauseRect(area), x, y))
-    {
-        if (progress.state == .paused) {
-            runner.resumeJob();
-        } else if (progress.state == .running) {
-            runner.pause();
-        }
-    } else {
-        self.navigate(runner.dest_dir);
-        self.focus = .file_view;
-    }
-    self.invalidate();
-    return true;
+    return jobs_card.click(self, cardTop(self), x, y);
 }
 
 pub fn renderFileOpsSidebar(self: *App, cr: *c.cairo_t) void {
-    const runner = self.job_runner orelse return;
-    const progress = runner.pollProgress();
-    if (progress.state != .running and progress.state != .paused and progress.state != .waiting_conflict) return;
-    const area = fileOpsBox(self);
-    if (area.w < 120) return;
-
-    @import("app_draw.zig").drawSidebarTransferSurface(cr, area);
-
-    const palette = ui_theme.shellPalette();
-    const fraction: ?f64 = if (progress.total_bytes_known and progress.total_bytes > 0)
-        @min(1.0, @as(f64, @floatFromInt(progress.transferred_bytes)) / @as(f64, @floatFromInt(progress.total_bytes)))
-    else
-        null;
-
-    @import("app_draw.zig").drawTransferProgressRow(
-        cr,
-        area,
-        if (progress.current_name.len > 0) progress.current_name else tr("Preparing…"),
-        fraction,
-        ui_theme.global.sidebarForeground(),
-        palette.accent,
-        shell_ui.statusSize(),
-    );
-
-    const can_pause = (progress.kind == .copy or progress.kind == .move) and
-        (progress.state == .running or progress.state == .paused);
-    if (can_pause) {
-        const rect = fileOpsPauseRect(area);
-        sidebar_controls.render(
-            cr,
-            rect,
-            if (progress.state == .paused) .play else .pause,
-            fileOpsRectContains(rect, self.mouse_x, self.mouse_y),
-        );
-    }
-    const cancel_rect = fileOpsCancelRect(area);
-    sidebar_controls.render(
-        cr,
-        cancel_rect,
-        .close,
-        fileOpsRectContains(cancel_rect, self.mouse_x, self.mouse_y),
-    );
+    jobs_card.render(self, cr, cardTop(self));
 }
 
 pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {
     const bar = self.sidebarScrollbar() orelse return;
     shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.sidebar_scroll_appearance, self.scrollbar_width, ui_theme.shellPalette()));
-}
-pub fn renderFileOpsTip(self: *App, cr: *c.cairo_t) void {
-    if (self.hoverKey() != std.math.maxInt(usize) - 2002) return;
-
-    const title, const running_status = if (self.job_runner) |runner| switch (runner.kind) {
-        .copy => .{ tr("Copying files"), tr("Copying") },
-        .move => .{ tr("Moving files"), tr("Moving") },
-        .extract => .{ tr("Extracting files"), tr("Extracting") },
-        .open_archive_member => .{ tr("Extracting archive member"), tr("Extracting") },
-    } else .{ tr("File transfer"), tr("In progress") };
-    const status = switch (self.job_state) {
-        .running => running_status,
-        .paused => tr("Paused"),
-        .waiting_conflict => tr("Waiting for confirmation"),
-        .finished => tr("Complete"),
-        .idle => tr("Ready"),
-    };
-
-    var speed_buf: [96]u8 = undefined;
-    var speed_size_buf: [32]u8 = undefined;
-    var bytes_size_buf: [32]u8 = undefined;
-    const speed = i18n.fmt(&speed_buf, tr("{rate}/s"), .{
-        .rate = @import("app_draw.zig").formatSize(
-            @intCast(@min(self.job_bytes_per_second, @as(u64, std.math.maxInt(i64)))),
-            &speed_size_buf,
-        ),
-    }) catch "";
-    const transferred = @import("app_draw.zig").formatSize(
-        @intCast(@min(self.job_transferred_bytes, @as(u64, std.math.maxInt(i64)))),
-        &bytes_size_buf,
-    );
-    const details = [_]transferTip.Detail{
-        .{ .label = tr("Status"), .value = status },
-        .{ .label = tr("Speed"), .value = speed },
-        .{ .label = tr("Transferred"), .value = transferred },
-    };
-    transferTip.render(cr, self.w, self.h, self.mouse_x, self.mouse_y, title, &details);
 }

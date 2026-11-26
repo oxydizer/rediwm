@@ -216,7 +216,6 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     self.renderPermissionTip(cr);
     if (self.menu != null) self.renderMenu(cr);
     if (self.menu == null and self.dialog == null) {
-        self.renderFileOpsTip(cr);
         self.renderTorrentSidebarTip(cr);
     }
     if (!self.audio_bar.playlist_open and self.menu == null and self.dialog == null) self.renderTorrentTip(cr);
@@ -261,8 +260,57 @@ pub fn renderButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, 
     else
         false;
     var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+    layer.renderer.alt_pressed = self.alt;
     ui_button.paint(&layer.renderer, layer.local(), .{ .label = label_text }, .{ .pointer = if (!enabled) .disabled else if (hovered) .hover else .idle });
     layer.finish();
+}
+
+fn addMnemonicMarker(label: []const u8, accelerator: u8, buffer: []u8) []const u8 {
+    var output_index: usize = 0;
+    var marked = false;
+    for (label) |byte| {
+        if (!marked and byte < 0x80 and std.ascii.toUpper(byte) == accelerator) {
+            buffer[output_index] = '_';
+            output_index += 1;
+            marked = true;
+        }
+        if (byte == '_') {
+            buffer[output_index] = '_';
+            buffer[output_index + 1] = '_';
+            output_index += 2;
+        } else {
+            buffer[output_index] = byte;
+            output_index += 1;
+        }
+    }
+    return buffer[0..output_index];
+}
+
+pub fn renderConflictButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, label_text: []const u8, accelerator: u8, target_id: usize) void {
+    const doubled = @mulWithOverflow(label_text.len, 2);
+    if (doubled[1] != 0) {
+        self.renderButton(cr, x, y, w, h, label_text, true, target_id);
+        return;
+    }
+    const capacity = @addWithOverflow(doubled[0], 1);
+    if (capacity[1] != 0) {
+        self.renderButton(cr, x, y, w, h, label_text, true, target_id);
+        return;
+    }
+    var stack_buffer: [512]u8 = undefined;
+    const heap_allocated = capacity[0] > stack_buffer.len;
+    const marked_label: []u8 = if (!heap_allocated)
+        stack_buffer[0..capacity[0]]
+    else
+        std.heap.page_allocator.alloc(u8, capacity[0]) catch {
+            self.renderButton(cr, x, y, w, h, label_text, true, target_id);
+            return;
+        };
+    defer {
+        if (heap_allocated) std.heap.page_allocator.free(marked_label);
+    }
+    const label = addMnemonicMarker(label_text, accelerator, marked_label);
+    self.renderButton(cr, x, y, w, h, label, true, target_id);
 }
 
 // The field's text size. Everything positioned against the text — the
@@ -318,15 +366,14 @@ pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
     if (self.focus != .location_bar and !self.search_visible and header.field(self.w).contains(x, y)) return "pointer";
     if (self.permissionHit(x, y) != null) return "pointer";
     if (@import("app_audio_bar.zig").hit(self, x, y) != null or self.inlineTorrentHit(x, y) != null or self.audioButtonHit(x, y) != null) return "pointer";
-    if (self.singleClickIconAt(x, y) != null) return "pointer";
+    if (self.singleClickItemAt(x, y) != null) return "pointer";
     return if (header.field(self.w).contains(x, y)) "text" else "default";
 }
 
-pub fn singleClickIconAt(self: *App, x: f64, y: f64) ?usize {
+pub fn singleClickItemAt(self: *App, x: f64, y: f64) ?usize {
     if (!self.single_click_open or self.chooser != null or self.dialog != null or self.menu != null) return null;
     if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) return null;
-    const idx = self.itemAt(x, y) orelse return null;
-    return if (self.itemIconRect(@intCast(idx)).contains(x, y)) idx else null;
+    return self.itemAt(x, y);
 }
 
 /// The rename card, anchored to the item being renamed: the same inline
@@ -598,7 +645,7 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
 
     // Modal box
     const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
-    const dh: f64 = 130;
+    const dh = self.smallDialogHeight();
     const dx = (w_f - dw) / 2.0;
     const dy = (h_f - dh) / 2.0;
 
@@ -619,15 +666,40 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
         drawEllipsis(cr, tr("Closing ends this shell and its running jobs."), dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
         self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("Close"), true, 1);
         self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true, 2);
+    } else if (dlg.kind == .quit_jobs) {
+        drawEllipsis(cr, @import("app_quit.zig").message(self, &buf), dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
+        const button_w = (dw - 48) / 3;
+        self.renderButton(cr, dx + 16, dy + 84, button_w, 28, tr("Keep running"), true, 1);
+        self.renderButton(cr, dx + 24 + button_w, dy + 84, button_w, 28, tr("Stop them"), true, 2);
+        self.renderButton(cr, dx + 32 + 2 * button_w, dy + 84, button_w, 28, tr("Cancel"), true, 3);
     } else if (dlg.kind == .conflict) {
         const conflict_str = dlg.conflict_name orelse "";
         const conflict_msg = i18n.fmt(&buf, tr("File '{value}' already exists in destination."), .{ .value = conflict_str }) catch tr("Conflict");
         setSource(cr, t.fg);
         drawEllipsis(cr, conflict_msg, dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
 
-        self.renderButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip (S)"), true, 1);
-        self.renderButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename (R)"), true, 2);
-        self.renderButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel (C)"), true, 3);
+        if (self.managerConflictCanMerge()) {
+            const button_width = (dw - 56) / 4;
+            self.renderConflictButton(cr, dx + 16, dy + 84, button_width, 28, tr("Skip"), 'S', 1);
+            self.renderConflictButton(cr, dx + 24 + button_width, dy + 84, button_width, 28, tr("Merge"), 'M', 2);
+            self.renderConflictButton(cr, dx + 32 + 2 * button_width, dy + 84, button_width, 28, tr("Rename"), 'R', 3);
+            self.renderConflictButton(cr, dx + 40 + 3 * button_width, dy + 84, button_width, 28, tr("Cancel"), 'C', 4);
+        } else {
+            self.renderConflictButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip"), 'S', 1);
+            self.renderConflictButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename"), 'R', 2);
+            self.renderConflictButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel"), 'C', 3);
+        }
+        if (dlg.service_conflict) {
+            const r = self.applyAllRect();
+            if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) })) |begun| {
+                var layer = begun;
+                ui_checkbox.paint(&layer.renderer, layer.local(), tr("Apply to all"), .{
+                    .checked = dlg.conflict_apply_all,
+                    .focused = r.contains(self.mouse_x, self.mouse_y),
+                });
+                layer.finish();
+            }
+        }
     } else {
         self.renderEditor(cr, &self.dialog.?.edit, self.editorRect(), true, false);
 

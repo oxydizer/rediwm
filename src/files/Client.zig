@@ -39,6 +39,9 @@ data_manager: ?*wl.DataDeviceManager = null,
 data_device: ?*wl.DataDevice = null,
 selection_offer: ?*Offer = null,
 drag_offer: ?*Offer = null,
+/// This window's copy of a drag over another window of the connection, kept
+/// until the drag leaves (`client_dnd.dataEvent`).
+foreign_offer: ?*Offer = null,
 /// The serial of the drag's last `enter`, which `accept` must quote.
 drag_enter_serial: u32 = 0,
 /// Whether the drag over the window was last told a drop here would work.
@@ -56,6 +59,10 @@ drop_move: bool = false,
 clipboard_source: ?*ClipboardSource = null,
 drag_source: ?*ClipboardSource = null,
 drag_serial: u32 = 0,
+left_button_held: bool = false,
+/// The tag of the archive export a drag waits for (`app_archives.zig`).
+pending_archive_drag: ?u64 = null,
+pending_archive_drag_serial: u32 = 0,
 drag_icon: ?DragIcon = null,
 axis_source: wl.Pointer.AxisSource = .wheel,
 finger_navigation: @import("ui").trackpad_navigation.Gesture = .{},
@@ -86,6 +93,7 @@ decoration_mode: DecorationMode = .unknown,
 pointer_x: f64 = 0,
 pointer_y: f64 = 0,
 cursor_shape: ClientCursor = .{},
+tabs: @import("ui").client_tabs = .{},
 cursor_surface: *wl.Surface = undefined,
 cursor_theme: ?*wl.CursorTheme = null,
 cursor_serial: u32 = 0,
@@ -118,6 +126,17 @@ compose: @import("ui").compose.Compose = .{},
 ime: @import("ime.zig").Ime = undefined,
 /// LC_CTYPE of the session; picks the Compose table (´+c is ç in pt_BR).
 locale: []const u8 = "",
+/// Held while the window has keyboard focus. Keys arrive at every window's
+/// keyboard object, since the windows share one connection and seat.
+focused: bool = false,
+/// A drag is over this window. The data device of every window of the
+/// connection hears every drag that enters any of them.
+drag_here: bool = false,
+registry: ?*wl.Registry = null,
+/// The window's own listing worker (`client_lifecycle.zig`).
+worker: *@import("worker.zig").Worker = undefined,
+/// Non-owning capability for this window's process-wide Files I/O service.
+io_handle: @import("io_service.zig").Handle = undefined,
 app: app_mod.App,
 
 pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Client) void {
@@ -125,6 +144,7 @@ pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Cl
         .global => |g| {
             const iface = std.mem.span(g.interface);
             self.cursor_shape.bind(registry, g.name, iface, g.version);
+            self.tabs.bind(registry, g.name, iface, g.version);
             if (std.mem.eql(u8, iface, "zwp_text_input_manager_v3")) self.ime.manager = registry.bind(g.name, @import("wayland").client.zwp.TextInputManagerV3, 1) catch null;
             if (std.mem.eql(u8, iface, "wl_compositor")) {
                 self.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, 5)) catch null;
@@ -190,7 +210,9 @@ pub fn pollTimeout(self: *Client) c_int {
     };
     if (self.app.status_notice != null) deadline = earlier(deadline, self.app.status_notice_until);
     if (self.app.scanNoticeDeadline()) |at| deadline = earlier(deadline, at);
+    if (self.app.transferHoverPriorityDeadline()) |at| deadline = earlier(deadline, at);
     if (self.app.audioDeadline()) |at| deadline = earlier(deadline, at);
+    if (self.app.serviceTimeout()) |wait| deadline = earlier(deadline, app_mod.nowMs() + wait);
     if (self.app.scroll_appearance.deadline) |at| deadline = earlier(deadline, at);
     if (self.app.horizontal_appearance.deadline) |at| deadline = earlier(deadline, at);
     if (self.app.sidebar_scroll_appearance.deadline) |at| deadline = earlier(deadline, at);
@@ -207,6 +229,15 @@ fn earlier(current: ?i64, candidate: i64) i64 {
     return if (current) |value| @min(value, candidate) else candidate;
 }
 
+const client_lifecycle = @import("client_lifecycle.zig");
+pub const poll_slots = client_lifecycle.poll_slots;
+pub const create = client_lifecycle.create;
+pub const step = client_lifecycle.step;
+pub const finished = client_lifecycle.finished;
+pub const pollFill = client_lifecycle.pollFill;
+pub const pollDrain = client_lifecycle.pollDrain;
+pub const destroy = client_lifecycle.destroy;
+
 const client_window = @import("client_window.zig");
 pub const openEditor = client_window.openEditor;
 pub const previewReturned = client_window.previewReturned;
@@ -221,6 +252,7 @@ pub const wantsCsd = client_window.wantsCsd;
 pub const titlebarHeight = client_window.titlebarHeight;
 pub const decorationEvent = client_window.decorationEvent;
 pub const xdgToplevelEvent = client_window.xdgToplevelEvent;
+pub const activateWith = client_window.activateWith;
 pub const attachToParent = client_window.attachToParent;
 pub const detachParent = client_window.detachParent;
 
@@ -248,10 +280,13 @@ pub const finishDrop = client_dnd.finishDrop;
 pub const endDrop = client_dnd.endDrop;
 pub const clearDragIcon = client_dnd.clearDragIcon;
 pub const startFileDrag = client_dnd.startFileDrag;
+pub const stepArchiveDrag = client_dnd.stepArchiveDrag;
+pub const cancelPendingArchiveDrag = client_dnd.cancelPendingArchiveDrag;
 
 const client_clipboard = @import("client_clipboard.zig");
 pub const clipboardEvent = client_clipboard.clipboardEvent;
 pub const destroyClipboardSource = client_clipboard.destroyClipboardSource;
+pub const destroyDragSource = client_clipboard.destroyDragSource;
 pub const publishClipboard = client_clipboard.publishClipboard;
 pub const cancelReceive = client_clipboard.cancelReceive;
 pub const receiveClipboard = client_clipboard.receiveClipboard;

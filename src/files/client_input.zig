@@ -14,6 +14,9 @@ const Client = @import("Client.zig");
 pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void {
     switch (event) {
         .enter => |ev| {
+            // The seat reports every surface of this connection; only this
+            // window's own count (another window of the process has its own client).
+            if (ev.surface != self.surface) return;
             self.cursor_serial = ev.serial;
             self.input_serial = ev.serial;
             self.inside = true;
@@ -23,22 +26,35 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
             self.cursor_name = "";
             self.handlePointerMotion(ev.surface_x.toDouble(), ev.surface_y.toDouble());
         },
-        .leave => {
+        .leave => |ev| {
+            if (ev.surface != self.surface) return;
             self.inside = false;
+            self.left_button_held = false;
+            self.cancelPendingArchiveDrag();
             self.finger_navigation.reset();
             self.app.text_dragging = false;
             self.app.cancelDrag();
             self.app.handleMotion(-1, -1);
         },
         .motion => |ev| {
+            if (!self.inside) return;
             self.handlePointerMotion(ev.surface_x.toDouble(), ev.surface_y.toDouble());
         },
         .button => |ev| {
+            if (!self.inside) return;
             self.input_serial = ev.serial;
-            if (ev.button == 0x110 and ev.state == .pressed) self.drag_serial = ev.serial;
+            if (ev.button == 0x110) {
+                self.left_button_held = ev.state == .pressed;
+                if (ev.state == .pressed) {
+                    self.drag_serial = ev.serial;
+                } else {
+                    self.cancelPendingArchiveDrag();
+                }
+            }
             self.handlePointerButton(ev.button, ev.state == .pressed);
         },
         .axis => |ev| {
+            if (!self.inside) return;
             if (self.axis_source == .finger) {
                 self.finger_navigation.add(
                     ev.axis == .horizontal_scroll,
@@ -57,6 +73,7 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
             self.axis_source = ev.axis_source;
         },
         .axis_stop => |ev| {
+            if (!self.inside) return;
             if (self.axis_source == .finger) {
                 if (ev.axis == .horizontal_scroll) {
                     self.flushScroll();
@@ -76,12 +93,14 @@ pub fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void
             }
         },
         .axis_discrete => |ev| {
+            if (!self.inside) return;
             if (ev.axis == .vertical_scroll) self.axis_notches = (self.axis_notches orelse 0) + @as(f64, @floatFromInt(ev.discrete)) else self.horizontal_notches = (self.horizontal_notches orelse 0) + @as(f64, @floatFromInt(ev.discrete));
         },
         .axis_value120 => |ev| {
+            if (!self.inside) return;
             if (ev.axis == .vertical_scroll) self.axis_notches = (self.axis_notches orelse 0) + @as(f64, @floatFromInt(ev.value120)) / 120.0 else self.horizontal_notches = (self.horizontal_notches orelse 0) + @as(f64, @floatFromInt(ev.value120)) / 120.0;
         },
-        .frame => self.flushScroll(),
+        .frame => if (self.inside) self.flushScroll(),
     }
 }
 
@@ -234,11 +253,15 @@ pub fn repeatDue(self: *Client) void {
 
 pub fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) void {
     switch (event) {
-        .enter => {
+        .enter => |ev| {
+            if (ev.surface != self.surface) return;
+            self.focused = true;
             self.app.terminal.window_focused = true;
             self.app.refreshPins();
         },
-        .leave => {
+        .leave => |ev| {
+            if (ev.surface != self.surface) return;
+            self.focused = false;
             self.app.terminal.window_focused = false;
             self.key_repeat.stop();
             self.compose.reset();
@@ -276,8 +299,14 @@ pub fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) v
                 _ = c.xkb_state_update_mask(state, ev.mods_depressed, ev.mods_latched, ev.mods_locked, 0, 0, ev.group);
                 self.app.ctrl = c.xkb_state_mod_name_is_active(state, "Control", c.XKB_STATE_MODS_EFFECTIVE) > 0;
                 self.app.shift = c.xkb_state_mod_name_is_active(state, "Shift", c.XKB_STATE_MODS_EFFECTIVE) > 0;
-                self.app.alt = c.xkb_state_mod_name_is_active(state, "Mod1", c.XKB_STATE_MODS_EFFECTIVE) > 0 or
+                const alt = c.xkb_state_mod_name_is_active(state, "Mod1", c.XKB_STATE_MODS_EFFECTIVE) > 0 or
                     c.xkb_state_mod_name_is_active(state, "Alt", c.XKB_STATE_MODS_EFFECTIVE) > 0;
+                if (self.app.alt != alt) {
+                    self.app.alt = alt;
+                    if (self.app.dialog) |dlg| {
+                        if (dlg.kind == .conflict) self.app.invalidate();
+                    }
+                }
                 if (self.drag_offer != null) {
                     self.dragOver(
                         self.drag_x,
@@ -288,6 +317,8 @@ pub fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) v
             }
         },
         .key => |ev| {
+            // Keys arrive at every window's keyboard object; the focused one takes them.
+            if (!self.focused) return;
             self.input_serial = ev.serial;
             if (ev.state == .pressed) {
                 const state = self.xkb_state orelse return;

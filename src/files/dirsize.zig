@@ -160,13 +160,17 @@ pub const Pool = struct {
         return self;
     }
 
-    pub fn deinit(self: *Pool) void {
+    /// Asks the workers to stop and returns at once (`reaper.retire`).
+    pub fn requestStop(self: *Pool) void {
         self.stop.store(true, .release);
         _ = c.pthread_mutex_lock(&self.mutex);
         _ = c.pthread_cond_broadcast(&self.cond);
         _ = c.pthread_cond_broadcast(&self.cond_push);
         _ = c.pthread_mutex_unlock(&self.mutex);
+    }
 
+    pub fn deinit(self: *Pool) void {
+        self.requestStop();
         for (self.threads) |t| t.join();
         self.allocator.free(self.threads);
 

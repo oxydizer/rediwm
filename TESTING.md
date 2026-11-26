@@ -24,11 +24,19 @@ actual presentation times. Headless runs exercise the deadline fallback. Testing
 the fixed-refresh prediction requires a physical DRM output with hardware vblank
 timestamps.
 
-The long-running Files benchmarks are skipped by default. To include the
-transfer and end-to-end copy benchmarks in the full test run, use:
+The long-running Files archive benchmark is skipped by default. Run it with:
 
 ```sh
-REDIWM_RUN_BENCHMARKS=1 zig build test
+REDIWM_RUN_BENCHMARKS=1 zig build bench-files-archive
+```
+
+The Files I/O responsiveness measurement (S5) is opt-in the same way. It runs
+the production I/O service under heavy copies and an extraction and reports the
+UI thread's cost and each job's progress; its settings are at the top of
+`src/files/io_bench_tests.zig`:
+
+```sh
+REDIWM_RUN_BENCHMARKS=1 REDIWM_IO_BENCH_DIR=/path/on/target/fs zig build bench-files-io
 ```
 
 `zig build test-wlroots` checks the complete exported wlroots API against the

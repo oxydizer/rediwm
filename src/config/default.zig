@@ -187,6 +187,7 @@ pub const source =
     \\dodge_file_drags      = true   # a file manager slides aside while you drag a file out of it
     \\files_single_click_open = true # Files: one click on an icon opens the file or folder
     \\files_audio_player    = true # Files: play audio files in the built-in player, with a play button on each row
+    \\files_folders_first   = true # Files: folders before files, unless changed for a folder in Files
     \\switcher_style        = "linear" # linear or circular; circular stacks windows from the same app
     \\switcher_opacity      = 1.0   # 0.0-1.0, background only; previews stay opaque
     \\switcher_circle_bg    = false # circular style only: paint a disc behind it, using window chrome's opacity/darkness

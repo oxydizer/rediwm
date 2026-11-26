@@ -17,6 +17,9 @@ const Target = enum { none, terminal, editor };
 pub const Ime = struct {
     app: *App,
     manager: ?*zwp.TextInputManagerV3 = null,
+    /// The window's surface: with several windows on one connection the seat's
+    /// enter and leave events name the surface, and only its own count.
+    surface: ?*wl.Surface = null,
     input: ?*zwp.TextInputV3 = null,
     entered: bool = false,
     enabled: bool = false,
@@ -89,8 +92,12 @@ pub const Ime = struct {
     }
     fn event(input: *zwp.TextInputV3, ev: zwp.TextInputV3.Event, self: *Ime) void {
         switch (ev) {
-            .enter => self.entered = true,
-            .leave => {
+            .enter => |entered| {
+                if (entered.surface != self.surface) return;
+                self.entered = true;
+            },
+            .leave => |left| {
+                if (left.surface != self.surface) return;
                 // enable belongs to the surface from enter: disable it before
                 // dropping that surface, or the compositor still believes the
                 // input is enabled and a later enable/commit after re-entering

@@ -287,7 +287,6 @@ test "App folder size calculation and display lifecycle" {
         .items_arena = std.heap.ArenaAllocator.init(a),
         .snapshot = &snap,
         .folder_sizes = std.StringHashMap(app_mod.SizeState).init(a),
-        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(a),
     };
     defer app.deinit();
     defer app.snapshot = null;
@@ -348,7 +347,6 @@ test "App size sort: calculated folders sort by apparent size, uncalculated last
         .items_arena = std.heap.ArenaAllocator.init(a),
         .snapshot = &snap,
         .folder_sizes = std.StringHashMap(app_mod.SizeState).init(a),
-        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(a),
     };
     defer app.deinit();
     defer app.snapshot = null;
@@ -400,7 +398,6 @@ test "App clicking dash starts calculation without changing selection" {
         .items_arena = std.heap.ArenaAllocator.init(a),
         .snapshot = &snap,
         .folder_sizes = std.StringHashMap(app_mod.SizeState).init(a),
-        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(a),
     };
     defer app.deinit();
     defer app.snapshot = null;

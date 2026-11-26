@@ -236,9 +236,12 @@ pub fn updateDialogSurface(self: *App) void {
         const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2;
         const dy = (@as(f64, @floatFromInt(self.h)) - 130) / 2;
 
-        if (dlg.kind == .conflict) {
-            const button_w = (dw - 48) / 3;
-            for (0..3) |i| {
+        if (dlg.kind == .conflict or dlg.kind == .quit_jobs) {
+            // Merge makes the conflict dialog four buttons wide.
+            const buttons: usize = if (dlg.kind == .conflict and self.managerConflictCanMerge()) 4 else 3;
+            const gaps: f64 = @floatFromInt(8 * (buttons - 1) + 32);
+            const button_w = (dw - gaps) / @as(f64, @floatFromInt(buttons));
+            for (0..buttons) |i| {
                 const rect: header.Rect = .{
                     .x = dx + 16 + @as(f64, @floatFromInt(i)) * (button_w + 8),
                     .y = dy + 84,
@@ -439,8 +442,9 @@ pub fn toolbarButtonVisible(self: *App, action: header.Action) bool {
 
 pub fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
     if (self.isRecent() and (action == .new or action == .paste)) return false;
+    // Inside an archive Copy exports the selected members (`copySelected`).
     if (self.history.archive_len > 0) switch (action) {
-        .new, .cut, .copy, .paste, .trash => return false,
+        .new, .cut, .paste, .trash => return false,
         else => {},
     };
     switch (self.trashRelation()) {

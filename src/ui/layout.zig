@@ -211,6 +211,8 @@ pub const TextStyle = struct {
     /// tints toward the accent.
     pill: bool = false,
     glow: f32 = 0,
+    /// UTF-8 byte offset of the mnemonic character in the cleaned label.
+    mnemonic_offset: ?usize = null,
 };
 
 pub const IconStyle = struct {

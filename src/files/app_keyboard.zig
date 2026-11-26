@@ -24,7 +24,7 @@ pub fn keyRepeats(self: *const App, sym: u32, utf8: []const u8) bool {
         c.XKB_KEY_BackSpace, c.XKB_KEY_Delete, c.XKB_KEY_Left, c.XKB_KEY_Right => true,
         else => false,
     }, utf8);
-    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and dlg.kind != .terminal_close and typing;
+    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and dlg.kind != .terminal_close and dlg.kind != .quit_jobs and typing;
     if (self.menu != null) return vertical;
     if (self.focus == .search or self.focus == .location_bar or self.focus == .filename) return typing;
     return vertical or sym == c.XKB_KEY_Left or sym == c.XKB_KEY_Right or
@@ -126,6 +126,20 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
     if (self.transfer_view.active) {
         if (self.ctrl and (sym == c.XKB_KEY_l or sym == c.XKB_KEY_L)) self.leaveTransfers() else {
             self.transferPaneKey(sym);
+            return;
+        }
+    }
+    if (self.ctrl and self.tabs_visible) {
+        if (sym == c.XKB_KEY_t or sym == c.XKB_KEY_T) {
+            self.newTab();
+            return;
+        }
+        if (sym == c.XKB_KEY_w or sym == c.XKB_KEY_W) {
+            self.closeTab(self.tab_selected);
+            return;
+        }
+        if (sym == c.XKB_KEY_Tab or sym == c.XKB_KEY_ISO_Left_Tab) {
+            self.stepTabs(sym == c.XKB_KEY_Tab and !self.shift);
             return;
         }
     }
@@ -241,15 +255,6 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         if (self.search_visible) {
             self.runHeader(.search);
             return;
-        }
-        if (self.job_runner) |runner| {
-            const prog = runner.pollProgress();
-            if (prog.state == .running or prog.state == .waiting_conflict) {
-                runner.cancel();
-                self.setStatusNotice(@import("i18n").tr("Cancelling operation..."), false);
-                self.invalidate();
-                return;
-            }
         }
         for (self.items.items) |*it| it.selected = false;
         self.selection_anchor = null;

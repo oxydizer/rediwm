@@ -829,10 +829,6 @@ msgstr "Сбросить масштаб камеры"
 msgid "Cancel"
 msgstr "Отмена"
 
-#: src/files/app_paint.zig
-msgid "Cancel (C)"
-msgstr "Отмена (C)"
-
 #: src/control_center/sections/bluetooth.zig
 msgid "Cancel Pairing"
 msgstr "Отменить сопряжение"
@@ -852,18 +848,6 @@ msgstr "Отменить проверку"
 #: src/files/volumes.zig
 msgid "Cancelled"
 msgstr "Отменено"
-
-#: src/files/ops.zig
-msgid "Cancelled. Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Отменено. Извлечено: {completed}. Пропущено: {skipped}. Ошибок: {failed}. Осталось: {remaining}."
-
-#: src/files/ops.zig
-msgid "Cancelled. Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Отменено. Передано: {completed}. Пропущено: {skipped}. Ошибок: {failed}. Осталось: {remaining}."
-
-#: src/files/app_keyboard.zig
-msgid "Cancelling operation..."
-msgstr "Отмена операции…"
 
 #: src/calculator/model.zig
 msgid "Cannot divide by zero"
@@ -1571,10 +1555,6 @@ msgstr "Не удалось запросить запуск CUPS."
 #: src/systemd/requests.zig
 msgid "Could not request authentication. Check that polkit is running."
 msgstr "Не удалось запросить проверку подлинности. Убедитесь, что polkit запущена."
-
-#: src/files/app_trash.zig
-msgid "Could not restore the items in Trash"
-msgstr "Не удалось восстановить объекты из корзины"
 
 #: src/files/app_trash.zig
 msgid "Could not restore the selected items"
@@ -2414,10 +2394,6 @@ msgstr "Извлечь"
 #: src/files/app_model.zig
 msgid "Extract to…"
 msgstr "Извлечь в…"
-
-#: src/files/ops.zig
-msgid "Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Извлечено: {completed}. Пропущено: {skipped}. Ошибок: {failed}. Осталось: {remaining}."
 
 #: src/files/archive.zig
 msgid "Extraction cancelled"
@@ -4719,10 +4695,6 @@ msgstr "Удалить · сохранить файлы"
 msgid "Rename"
 msgstr "Переименовать"
 
-#: src/files/app_paint.zig
-msgid "Rename (R)"
-msgstr "Переименовать (R)"
-
 #: src/desktop/app_paint.zig
 msgid "Rename — Enter saves, Escape cancels"
 msgstr "Переименовать — Enter: сохранить, Escape: отмена"
@@ -5401,10 +5373,6 @@ msgstr "По размеру экрана"
 #: src/control_center/sections/appearance_sections.zig
 msgid "Sized to fit your screen · move a slider to set your own"
 msgstr "Подобрано под ваш экран · сдвиньте ползунок для изменения"
-
-#: src/files/app_paint.zig
-msgid "Skip (S)"
-msgstr "Пропустить (S)"
 
 #: src/control_center/sections/display.zig
 msgid "Sleep"
@@ -6222,10 +6190,6 @@ msgstr "Передача"
 msgid "Transfer request could not be sent. Please retry."
 msgstr "Не удалось отправить запрос передачи. Повторите попытку."
 
-#: src/files/ops.zig
-msgid "Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."
-msgstr "Передано: {completed}. Пропущено: {skipped}. Ошибок: {failed}. Осталось: {remaining}."
-
 #: src/files/app.zig
 msgid "Transfers"
 msgstr "Передачи"
@@ -6702,6 +6666,14 @@ msgstr "Проводные и беспроводные подключения."
 #: src/control_center/sections/network.zig
 msgid "Wireless connections"
 msgstr "Беспроводные подключения"
+
+#: src/files/app_menu.zig
+msgid "New Tab"
+msgstr "Новая вкладка"
+
+#: src/files/app_menu.zig
+msgid "Folders first"
+msgstr "Сначала папки"
 
 #: src/editor/app.zig
 msgid "New Window"

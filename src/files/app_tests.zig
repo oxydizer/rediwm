@@ -5,6 +5,11 @@ const App = @import("app.zig").App;
 const scrollbar = @import("ui").widgets.scrollbar;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
+const io_coordinator = @import("io_coordinator.zig");
+const io_service = @import("io_service.zig");
+const io_resource_ledger = @import("io_resource_ledger.zig");
+const app_model = @import("app_model.zig");
+const app_dialogs = @import("app_dialogs.zig");
 const worker_mod = @import("worker.zig");
 const history_mod = @import("history.zig");
 const recent = @import("recent.zig");
@@ -27,6 +32,21 @@ const nowMs = @import("app_draw.zig").nowMs;
 const clipDamage = @import("app_draw.zig").clipDamage;
 const measureText = @import("app_draw.zig").measureText;
 
+test "conflict shortcuts require Alt and respect available actions" {
+    const shortcut = app_dialogs.conflictShortcut;
+
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_s, false, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_m, false, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_r, false, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_c, false, true));
+
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, .skip), shortcut(c.XKB_KEY_s, true, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, .merge), shortcut(c.XKB_KEY_m, true, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, .rename), shortcut(c.XKB_KEY_r, true, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, .cancel), shortcut(c.XKB_KEY_c, true, true));
+    try std.testing.expectEqual(@as(?app_dialogs.ConflictAction, null), shortcut(c.XKB_KEY_m, true, false));
+}
+
 test "grid hit testing respects gutters, scrolling and responsive columns" {
     var app = App{
         .allocator = std.testing.allocator,
@@ -37,7 +57,6 @@ test "grid hit testing respects gutters, scrolling and responsive columns" {
         .history = .{ .allocator = std.testing.allocator, .current = "/" },
         .home_dir = "/",
         .items_arena = undefined,
-        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator),
     };
     app.w = 960;
     app.h = 640;
@@ -82,7 +101,6 @@ test "search and sorting preserve visible selection across snapshot rebuilds" {
         .items_arena = std.heap.ArenaAllocator.init(allocator),
         .snapshot = &snap,
         .folder_sizes = std.StringHashMap(SizeState).init(allocator),
-        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(allocator),
     };
     defer app.folder_sizes.deinit();
     defer app.items_arena.deinit();
@@ -93,15 +111,20 @@ test "search and sorting preserve visible selection across snapshot rebuilds" {
     app.items.items[1].selected = true;
     app.focused_index = 1;
     app.selection_anchor = 1;
+    app.last_click_index = 2;
+    app.last_click_time = 1234;
     app.sort_mode = .size;
     app.rebuildView();
     try std.testing.expectEqualStrings("zeta.txt", app.items.items[1].name);
     try std.testing.expectEqual(@as(?usize, 2), app.focused_index);
     try std.testing.expect(app.items.items[2].selected);
+    try std.testing.expectEqual(@as(?usize, 1), app.last_click_index);
+    try std.testing.expectEqual(@as(i64, 1234), app.last_click_time);
     try app.search.text.appendSlice(allocator, "ALPHA");
     app.rebuildView();
     try std.testing.expectEqual(@as(usize, 1), app.items.items.len);
     try std.testing.expect(app.items.items[0].selected);
+    try std.testing.expectEqual(@as(?usize, null), app.last_click_index);
     app.folders_only = true;
     app.rebuildView();
     try std.testing.expectEqual(@as(usize, 0), app.items.items.len);
@@ -121,7 +144,7 @@ test "search and sorting preserve visible selection across snapshot rebuilds" {
 
 test "Unicode folder filtering and sorting retain folder size and date rules" {
     const listing = @import("app_listing.zig");
-    var app: App = .{ .allocator = std.testing.allocator, .io = undefined, .environ = undefined, .theme_cfg = undefined, .worker = undefined, .history = .{ .allocator = std.testing.allocator, .current = "/" }, .home_dir = "/", .items_arena = undefined, .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator) };
+    var app: App = .{ .allocator = std.testing.allocator, .io = undefined, .environ = undefined, .theme_cfg = undefined, .worker = undefined, .history = .{ .allocator = std.testing.allocator, .current = "/" }, .home_dir = "/", .items_arena = undefined };
     defer app.search.text.deinit(app.allocator);
     const source: worker_mod.Item = .{ .name = "CÁMARA — Терминал", .path = "/name", .is_dir = false, .is_symlink = false, .is_broken = false, .bytes = 10, .mtime = 20, .icon_name = "" };
     for ([_][]const u8{ "camara", "Cámara", "терм", "ТЕРМ" }) |query| {
@@ -157,7 +180,6 @@ test "context menu stays inside the client and keyboard activation closes it" {
         .history = .{ .allocator = std.testing.allocator, .current = "/" },
         .home_dir = "/",
         .items_arena = undefined,
-        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator),
     };
     app.w = 360;
     for ([_]i32{ 240, 600 }) |height| {
@@ -194,7 +216,6 @@ pub fn testApp() !App {
         .home_dir = "/tmp",
         .items_arena = std.heap.ArenaAllocator.init(std.testing.allocator),
         .folder_sizes = std.StringHashMap(SizeState).init(std.testing.allocator),
-        .transfer_tree_state = @import("app_transfer_tree.zig").State.init(std.testing.allocator),
     };
 }
 
@@ -268,6 +289,60 @@ test "transfer ghosts have no file actions or folder-size affordance" {
     try std.testing.expect(app.fileActions().len > 0);
     app.openMenu(.file, 20, 20);
     try std.testing.expectEqual(@as(?MenuKind, .file), app.menu);
+}
+
+test "archive member context menu offers export for files and directory subtrees" {
+    var app = try testApp();
+    defer app.deinit();
+    try app.history.navigateLocation("/tmp/package.zip/nested", "/tmp/package.zip".len);
+
+    const mem = app.items_arena.allocator();
+    try app.items.append(app.allocator, .{
+        .name = try mem.dupe(u8, "payload.txt"),
+        .path = try mem.dupe(u8, "/tmp/package.zip/nested/payload.txt"),
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 7,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .selected = true,
+    });
+
+    try std.testing.expect(app.hasSelectedArchiveMembers());
+    try std.testing.expectEqualSlices(FileAction, &.{ .open, .open_with, .copy, .extract_to }, app.fileActions());
+
+    app.items.items[0].is_symlink = true;
+    try std.testing.expect(!app.hasSelectedArchiveMembers());
+    try std.testing.expectEqualSlices(FileAction, &.{.open}, app.fileActions());
+
+    app.items.items[0].is_symlink = false;
+    app.items.items[0].is_dir = true;
+    try std.testing.expect(app.hasSelectedArchiveMembers());
+    try std.testing.expectEqualSlices(
+        FileAction,
+        &.{ .open, .copy, .extract_to },
+        app.fileActions(),
+    );
+
+    const mem2 = app.items_arena.allocator();
+    try app.items.append(app.allocator, .{
+        .name = try mem2.dupe(u8, "other.txt"),
+        .path = try mem2.dupe(u8, "/tmp/package.zip/other.txt"),
+        .is_dir = false,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 5,
+        .mtime = 0,
+        .icon_name = "text-x-generic",
+        .selected = true,
+    });
+    try std.testing.expect(app.hasSelectedArchiveMembers());
+    try std.testing.expectEqualSlices(
+        FileAction,
+        &.{ .open, .copy, .extract_to },
+        app.fileActions(),
+    );
 }
 
 test "terminal drawer shares viewport geometry and preserves its preferred height" {
@@ -594,4 +669,12 @@ test {
 
 test {
     _ = @import("app_trash_tests.zig");
+}
+
+test {
+    _ = @import("app_transfers_tests.zig");
+}
+
+test {
+    _ = @import("app_archives_tests.zig");
 }
