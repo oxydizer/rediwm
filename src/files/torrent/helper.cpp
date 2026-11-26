@@ -91,6 +91,11 @@ static void sleep_engine() {
   for (auto &[id, t] : transfers) {
     t.cached = t.status();
     t.cached_info = t.info();
+    t.cached_progress.clear();
+    if (t.cached_info)
+      t.handle.file_progress(t.cached_progress,
+                             lt::torrent_handle::piece_granularity);
+    t.cached_priorities = t.handle.get_file_priorities();
     t.handle = {};
   }
   session->set_alert_notify({});

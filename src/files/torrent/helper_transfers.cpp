@@ -16,8 +16,11 @@ void finish_configuration(Transfer &t) {
   t.requested_priorities.clear();
   t.handle.set_upload_limit(t.limit);
   t.handle.unset_flags(lt::torrent_flags::upload_mode);
-  if (t.start_after_priority)
+  if (t.start_after_priority) {
     t.handle.resume();
+    // Peers now, not at the next interval (minutes for a finished one).
+    t.handle.force_reannounce(0, -1, lt::torrent_handle::ignore_min_interval);
+  }
   persist(t);
   request_save(t);
 }
@@ -84,7 +87,20 @@ void validate(lt::torrent_info const &info) {
         throw std::runtime_error("Unsafe torrent file path");
   }
 }
-static void add(std::string const &source, std::string const &destination) {
+/// A local torrent file's metadata, checked like a transfer's.
+static std::shared_ptr<lt::torrent_info> load(std::string const &source) {
+  if (source.empty() || source[0] != '/' || !fs::is_regular_file(source) ||
+      fs::file_size(source) > 8 * 1024 * 1024)
+    throw std::runtime_error("Choose a local torrent file (maximum 8 MiB)");
+  lt::error_code ec;
+  auto info = std::make_shared<lt::torrent_info>(source, ec);
+  if (ec)
+    throw std::runtime_error(ec.message());
+  validate(*info);
+  return info;
+}
+static std::string add(std::string const &source,
+                       std::string const &destination) {
   if (transfers.size() >= max_torrents)
     throw std::runtime_error("Transfer limit reached (64)");
   if (destination.empty() || destination[0] != '/' ||
@@ -92,20 +108,14 @@ static void add(std::string const &source, std::string const &destination) {
     throw std::runtime_error("Choose an existing absolute destination folder");
   lt::add_torrent_params p;
   lt::error_code ec;
-  if (source.rfind("magnet:?", 0) == 0)
+  if (source.rfind("magnet:?", 0) == 0) {
     p = lt::parse_magnet_uri(source, ec);
-  else {
-    if (source.empty() || source[0] != '/' || !fs::is_regular_file(source) ||
-        fs::file_size(source) > 8 * 1024 * 1024)
-      throw std::runtime_error("Choose a local torrent file (maximum 8 MiB)");
-    p.ti = std::make_shared<lt::torrent_info>(source, ec);
-    if (!ec) {
-      validate(*p.ti);
-      p.info_hashes = p.ti->info_hashes();
-    }
+    if (ec)
+      throw std::runtime_error(ec.message());
+  } else {
+    p.ti = load(source);
+    p.info_hashes = p.ti->info_hashes();
   }
-  if (ec)
-    throw std::runtime_error(ec.message());
   auto id = hash_id(p.info_hashes);
   if (transfers.count(id))
     throw std::runtime_error("This torrent is already in Transfers");
@@ -146,6 +156,7 @@ static void add(std::string const &source, std::string const &destination) {
   }
   persist(transfers.at(id));
   request_save(transfers.at(id));
+  return id;
 }
 static std::string string_member(JsonObject *o, char const *name) {
   auto node = json_object_get_member(o, name);
@@ -153,14 +164,117 @@ static std::string string_member(JsonObject *o, char const *name) {
     throw std::runtime_error("Missing string field");
   return json_node_get_string(node);
 }
-void command(JsonObject *o) {
+/// The priorities `files` asks for: those listed download, the rest not.
+static std::vector<lt::download_priority_t>
+chosen(JsonObject *o, lt::torrent_info const &info) {
+  auto node = json_object_get_member(o, "files");
+  if (!node || !JSON_NODE_HOLDS_ARRAY(node))
+    throw std::runtime_error("Choose at least one file");
+  auto arr = json_node_get_array(node);
+  std::vector<lt::download_priority_t> priorities(info.num_files(),
+                                                  lt::dont_download);
+  for (guint i = 0; i < json_array_get_length(arr); ++i) {
+    auto index = json_array_get_int_element(arr, i);
+    if (index < 0 || index >= info.num_files())
+      throw std::runtime_error("Invalid file index");
+    priorities[size_t(index)] = lt::default_priority;
+  }
+  return priorities;
+}
+static bool any_wanted(std::vector<lt::download_priority_t> const &p) {
+  for (auto v : p)
+    if (v != lt::dont_download)
+      return true;
+  return false;
+}
+/// Applies `priorities` to a transfer. File priorities become effective
+/// asynchronously, after disk work: until the matching alert it stays
+/// upload-only and paused, so unwanted files never briefly inherit the
+/// default priority. `run` resumes it then.
+static void configure(Transfer &t,
+                      std::vector<lt::download_priority_t> const &priorities,
+                      bool run) {
+  t.configuring = true;
+  t.start_after_priority = run;
+  t.requested_priorities = priorities;
+  t.handle.set_flags(lt::torrent_flags::upload_mode);
+  t.handle.pause();
+  if (t.handle.get_file_priorities() == priorities)
+    finish_configuration(t);
+  else
+    t.handle.prioritize_files(priorities);
+}
+/// Starts a pending transfer with the files in `o` and its seeding limits.
+static void start(Transfer &t, JsonObject *o) {
+  auto info = t.info();
+  if (!t.pending || !info || t.configuring)
+    throw std::runtime_error("Waiting for torrent metadata");
+  validate(*info);
+  auto priorities = chosen(o, *info);
+  if (!any_wanted(priorities))
+    throw std::runtime_error("Choose at least one file");
+  auto ratio = int(json_object_get_int_member_with_default(o, "ratio", 1));
+  auto limit =
+      int(json_object_get_int_member_with_default(o, "limit", 1048576));
+  if (ratio < 0 || ratio > 2 || limit < 16384 || limit > 10485760)
+    throw std::runtime_error("Invalid seeding limits");
+  t.ratio = ratio;
+  t.limit = limit;
+  configure(t, priorities, true);
+}
+/// Changes which files of a started transfer download. Files no longer
+/// wanted keep what they have; newly wanted ones make a finished, stopped
+/// transfer download again. A transfer paused by the user stays paused.
+static void select(Transfer &t, JsonObject *o) {
+  if (t.pending)
+    return start(t, o);
+  auto info = t.info();
+  if (!info)
+    throw std::runtime_error("Waiting for torrent metadata");
+  auto priorities = chosen(o, *info);
+  if (!any_wanted(priorities))
+    throw std::runtime_error(
+        "Keep at least one file, or remove the download");
+  auto s = t.status();
+  auto old = t.configuring ? t.requested_priorities
+                           : t.handle.get_file_priorities();
+  bool more = false;
+  for (size_t i = 0; i < priorities.size(); ++i)
+    more = more || (priorities[i] != lt::dont_download &&
+                    (i >= old.size() || old[i] == lt::dont_download));
+  bool paused = bool(s.flags & lt::torrent_flags::paused);
+  bool run = t.configuring ? t.start_after_priority
+                           : !paused || (more && s.is_finished);
+  t.resume_after_publish = false;
+  // A seed forgets peers that were seeds too, and never asks them again;
+  // the announce after configuring finds them afresh.
+  if (more && s.is_finished)
+    t.handle.clear_peers();
+  configure(t, priorities, run);
+}
+std::string command(JsonObject *o) {
   auto op = string_member(o, "op");
   if (op == "list")
-    return;
+    return {};
+  if (op == "inspect") {
+    auto source = string_member(o, "source");
+    auto info = load(source);
+    auto id = hash_id(info->info_hashes());
+    return inspection(*info, id, source);
+  }
+  if (op == "files") {
+    auto it = transfers.find(string_member(o, "id"));
+    if (it == transfers.end())
+      throw std::runtime_error("Transfer no longer exists");
+    return detail(it->second);
+  }
   wake_engine();
   if (op == "add") {
-    add(string_member(o, "source"), string_member(o, "destination"));
-    return;
+    auto id = add(string_member(o, "source"), string_member(o, "destination"));
+    // Files chosen with the torrent file start at once.
+    if (json_object_has_member(o, "files"))
+      start(transfers.at(id), o);
+    return {};
   }
   if (op == "pause_all" || op == "stop_seeding") {
     for (auto &[id, t] : transfers)
@@ -170,7 +284,7 @@ void command(JsonObject *o) {
         t.handle.pause();
         request_save(t);
       }
-    return;
+    return {};
   }
   auto id = string_member(o, "id");
   auto it = transfers.find(id);
@@ -183,7 +297,7 @@ void command(JsonObject *o) {
     fs::remove(state_dir + "/" + id + ".resume");
     saves.erase(id);
     transfers.erase(it);
-    return;
+    return {};
   }
   if (op == "pause") {
     t.resume_after_publish = false;
@@ -196,46 +310,16 @@ void command(JsonObject *o) {
     t.handle.clear_error();
     t.handle.resume();
   } else if (op == "start") {
-    auto info = t.info();
-    if (!t.pending || !info || t.configuring)
-      throw std::runtime_error("Waiting for torrent metadata");
-    validate(*info);
-    auto node = json_object_get_member(o, "files");
-    if (!node || !JSON_NODE_HOLDS_ARRAY(node))
-      throw std::runtime_error("Choose at least one file");
-    auto arr = json_node_get_array(node);
-    std::vector<lt::download_priority_t> priorities(info->num_files(),
-                                                    lt::dont_download);
-    bool any = false;
-    for (guint i = 0; i < json_array_get_length(arr); ++i) {
-      auto index = json_array_get_int_element(arr, i);
-      if (index < 0 || index >= info->num_files())
-        throw std::runtime_error("Invalid file index");
-      priorities[size_t(index)] = lt::default_priority;
-      any = true;
-    }
-    if (!any)
-      throw std::runtime_error("Choose at least one file");
-    t.ratio = int(json_object_get_int_member_with_default(o, "ratio", 1));
-    t.limit = int(json_object_get_int_member_with_default(o, "limit", 1048576));
-    if (t.ratio < 0 || t.ratio > 2 || t.limit < 16384 || t.limit > 10485760)
-      throw std::runtime_error("Invalid seeding limits");
-    // File priorities become effective asynchronously, after disk work. Keep
-    // upload-only/paused until the matching alert, so unselected files never
-    // briefly inherit the default download priority.
-    t.configuring = true;
-    t.start_after_priority = true;
-    t.requested_priorities = priorities;
-    t.handle.pause();
-    if (t.handle.get_file_priorities() == priorities)
-      finish_configuration(t);
-    else
-      t.handle.prioritize_files(priorities);
-    return;
+    start(t, o);
+    return {};
+  } else if (op == "select") {
+    select(t, o);
+    return {};
   } else
     throw std::runtime_error("Unknown command");
   persist(t);
   request_save(t);
+  return {};
 }
 
 void publish_storage(Transfer &t) {

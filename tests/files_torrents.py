@@ -33,6 +33,7 @@ class Client:
         self.socket.settimeout(.2)
         self.rows = []
         self.error = ''
+        self.replies = {}
     def send(self, **args):
         self.socket.send(json.dumps(args).encode())
     def read(self):
@@ -44,9 +45,14 @@ class Client:
         value = json.loads(data)
         if 'error' in value:
             self.error = value['error']
-        else:
+        elif 'transfers' in value:
             self.rows = value['transfers']
+        else:
+            self.replies.update(value)
         return self.rows
+    def reply(self, kind, timeout=10):
+        self.replies.pop(kind, None)
+        return wait(lambda: self.read() is not None and self.replies.get(kind), f'{kind} reply', timeout)
     def until(self, predicate, label, timeout=25):
         return wait(lambda: predicate(self.read()), label, timeout)
     def close(self):
@@ -61,7 +67,8 @@ def run():
         payload = os.urandom(512 * 1024)
         (seed_dir / 'bundle').mkdir()
         (seed_dir / 'bundle' / 'wanted.bin').write_bytes(payload)
-        (seed_dir / 'bundle' / 'skip.bin').write_bytes(os.urandom(512 * 1024))
+        extra = os.urandom(512 * 1024)
+        (seed_dir / 'bundle' / 'skip.bin').write_bytes(extra)
         seed = lt.session({'listen_interfaces': '127.0.0.1:0', 'enable_dht': False,
                            'enable_lsd': False, 'enable_upnp': False, 'enable_natpmp': False,
                            'enable_outgoing_utp': False, 'enable_incoming_utp': False,
@@ -108,6 +115,12 @@ def run():
             return process
         try:
             helper = launch(); client = Client(runtime)
+            # Looking into a torrent file adds nothing.
+            client.send(op='inspect', source=str(torrent_path))
+            inspected = client.reply('inspect')
+            assert sorted(f['path'] for f in inspected['files']) == ['bundle/skip.bin', 'bundle/wanted.bin'], inspected
+            assert inspected['name'] == 'bundle' and inspected['source'] == str(torrent_path)
+            time.sleep(.3); assert not client.read(), 'inspect added a transfer'
             client.send(op='add', source=str(torrent_path), destination=str(dest))
             rows = client.until(lambda r: r if r else None, 'metadata')
             row = rows[0]; tid = row['id']
@@ -138,6 +151,20 @@ def run():
             assert (Path(completed['destination'])/'bundle/wanted.bin').read_bytes() == payload
             assert not (Path(completed['destination'])/skipped).exists(), 'unselected file downloaded'
             assert not completed['paused'], 'seeding should continue'
+            client.send(op='files', id=tid)
+            files = {f['path']: f for f in client.reply('detail')['files']}
+            assert files['bundle/wanted.bin']['wanted'] and files['bundle/wanted.bin']['done'] == len(payload), files
+            assert not files[skipped]['wanted'], files
+            client.send(op='select', id=tid, files=[])
+            client.until(lambda _: 'Keep at least one' in client.error, 'empty selection rejected')
+            # Ticking another file of a finished download fetches it into place.
+            extra_index = next(f['index'] for f in files.values() if f['path'] == skipped)
+            client.send(op='select', id=tid, files=[wanted, extra_index])
+            target = Path(completed['destination'])/skipped
+            wait(lambda: target.exists() and target.read_bytes() == extra, 'newly ticked file downloads', 50)
+            client.send(op='files', id=tid)
+            files = {f['path']: f for f in client.reply('detail')['files']}
+            assert files[skipped]['wanted'] and files[skipped]['done'] == len(extra), files
             client.send(op='list')
             client.send(op='pause', id=tid)
             client.close()  # A queued command must survive an immediate window close.
@@ -188,7 +215,7 @@ def run():
             client.send(op='remove',id=rows[0]['id']); client.until(lambda r:not r,'remove magnet')
             client.close()
             helper.wait(timeout=12)
-            print('PASS: file selection, real transfer, background lifetime, crash recovery, magnet metadata, seeding, persistence, pause/resume, removal and no-clobber publication')
+            print('PASS: inspection, file selection and reselection, real transfer, background lifetime, crash recovery, magnet metadata, seeding, persistence, pause/resume, removal and no-clobber publication')
         except Exception:
             log.flush(); log.seek(0); print(log.read(), file=sys.stderr)
             print('\n'.join(a.message() for a in seed.pop_alerts() if 'peer' in a.what()), file=sys.stderr)
