@@ -7,6 +7,7 @@ const worker_mod = @import("worker.zig");
 const app_mod = @import("app.zig");
 const ops_mod = @import("ops.zig");
 const dirsize_mod = @import("dirsize.zig");
+const FileAction = @import("app_model.zig").FileAction;
 const c = @import("c.zig").api;
 const linux = std.os.linux;
 const files_tests = @import("../files_tests.zig");
@@ -367,7 +368,9 @@ test "App size sort: calculated folders sort by apparent size, uncalculated last
     try std.testing.expectEqualStrings("file.txt", app.items.items[3].name);
 }
 
-test "App clicking dash starts calculation without changing selection" {
+/// Clicks a folder's size dash twice: the first starts the calculation,
+/// the second cancels it; the selection stays on the file throughout.
+fn clickDash(list_view: bool) !void {
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);
@@ -402,7 +405,7 @@ test "App clicking dash starts calculation without changing selection" {
     defer app.deinit();
     defer app.snapshot = null;
 
-    app.list_view = true;
+    app.list_view = list_view;
     app.w = 960;
     app.h = 540;
     app.rebuildView();
@@ -432,4 +435,66 @@ test "App clicking dash starts calculation without changing selection" {
     app.handleButton(0x110, true);
     app.handleButton(0x110, false);
     try std.testing.expect(!app.hasRunningFolderSize());
+}
+
+test "App clicking dash starts calculation without changing selection" {
+    try clickDash(true);
+}
+
+test "App clicking the grid card's size dash starts calculation without changing selection" {
+    try clickDash(false);
+}
+
+test "App context menu Calculate size starts the selected folders" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+
+    const first = try std.fmt.allocPrint(a, "{s}/first", .{tmp});
+    defer a.free(first);
+    try ops_mod.createFolder(a, tmp, "first");
+    const second = try std.fmt.allocPrint(a, "{s}/second", .{tmp});
+    defer a.free(second);
+    try ops_mod.createFolder(a, tmp, "second");
+    const third = try std.fmt.allocPrint(a, "{s}/third", .{tmp});
+    defer a.free(third);
+    try ops_mod.createFolder(a, tmp, "third");
+
+    var source = [_]worker_mod.Item{
+        .{ .name = "first", .path = first, .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 1, .icon_name = "" },
+        .{ .name = "second", .path = second, .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 2, .icon_name = "" },
+        .{ .name = "third", .path = third, .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 3, .icon_name = "" },
+    };
+    var snap = worker_mod.Snapshot{ .arena = undefined, .request_id = 1, .dir = tmp, .items = &source };
+
+    var app = app_mod.App{
+        .allocator = a,
+        .io = std.testing.io,
+        .environ = undefined,
+        .theme_cfg = .{ .theme_name = "", .base_dirs = &.{} },
+        .worker = undefined,
+        .history = try history_mod.History.init(a, tmp),
+        .home_dir = tmp,
+        .items_arena = std.heap.ArenaAllocator.init(a),
+        .snapshot = &snap,
+        .folder_sizes = std.StringHashMap(app_mod.SizeState).init(a),
+    };
+    defer app.deinit();
+    defer app.snapshot = null;
+    app.rebuildView();
+
+    // Two of the three folders are selected.
+    app.items.items[0].selected = true;
+    app.items.items[2].selected = true;
+    app.menu = .file;
+    const row = std.mem.indexOfScalar(FileAction, app.fileActions(), .size).?;
+    try std.testing.expectEqualStrings("Calculate size", app.menuLabels()[row]);
+    app.runMenu(row);
+
+    try std.testing.expect(app.menu == null);
+    try std.testing.expect(app.folder_sizes.get(first) != null);
+    try std.testing.expect(app.folder_sizes.get(second) == null);
+    try std.testing.expect(app.folder_sizes.get(third) != null);
+    try std.testing.expect(app.hasRunningFolderSize());
 }

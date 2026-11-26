@@ -27,6 +27,9 @@ const measureText = @import("app_draw.zig").measureText;
 const formatPermissions = @import("app_draw.zig").formatPermissions;
 const itemType = App.itemType;
 
+/// Strength of the size, type and date text next to a name.
+const metadata_alpha: f32 = 0.6;
+
 /// Transfer ghost filenames stay subdued until the manifest confirms completion.
 fn filenameForeground(item: ViewItem) [4]f32 {
     if (item.transfer_ghost and !item.is_dir) {
@@ -155,13 +158,16 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
         else
             self.itemSizeDisplay(item, &size_buf);
         const is_size_hovered = (self.hoverKey() == 2_000_000 + idx);
+        // Sizes, types and dates are quieter than the name; the hovered dash
+        // and the clickable permission bits keep full strength.
+        const metadata = withAlpha(ui_theme.global.window_fg, metadata_alpha);
         if (self.list_view and self.repository() != null) {
             self.renderGitStatus(cr, item, y);
         } else if (self.list_view) {
             const sz = self.listColumn(1);
             if (disp.is_running) {
                 const text_w = @max(0.0, sz.w - 24);
-                setSource(cr, ui_theme.global.window_fg);
+                setSource(cr, metadata);
                 drawEllipsis(cr, disp.text, sz.x + 4, y + baseline, text_w, shell_ui.textSize(), false);
                 drawSpinner(cr, sz.x + sz.w - 10, y + baseline - 4, 4.5);
             } else if (item.is_dir and !item.is_symlink and is_size_hovered and std.mem.eql(u8, disp.text, "—")) {
@@ -171,10 +177,10 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 setSource(cr, ui_theme.global.window_fg);
                 drawEllipsis(cr, "—", sz.x + 8, y + baseline, sz.w - 12, shell_ui.textSize(), false);
             } else {
-                setSource(cr, ui_theme.global.window_fg);
+                setSource(cr, metadata);
                 drawEllipsis(cr, disp.text, sz.x + 4, y + baseline, sz.w - 8, shell_ui.textSize(), false);
             }
-            setSource(cr, ui_theme.global.window_fg);
+            setSource(cr, metadata);
             const ty = self.listColumn(2);
             drawEllipsis(cr, if (item.transfer_stub) @import("i18n").tr("Download") else itemType(item), ty.x + 4, y + baseline, ty.w - 8, shell_ui.textSize(), false);
             const mt = self.listColumn(3);
@@ -223,11 +229,11 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             // The transfer accessory occupies the grid card's detail line.
         } else {
             if (item.is_symlink) {
-                setSource(cr, ui_theme.global.window_fg);
+                setSource(cr, metadata);
                 drawEllipsis(cr, itemType(item), label_x, y + GridCard.detail_baseline, name_width, shell_ui.textSize(), false);
             } else if (item.is_dir) {
                 if (disp.is_running) {
-                    setSource(cr, ui_theme.global.window_fg);
+                    setSource(cr, metadata);
                     drawText(cr, disp.text, label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                     const tw = measureText(cr, disp.text, shell_ui.textSize(), false);
                     drawSpinner(cr, label_x + tw + 10, y + GridCard.detail_baseline - 4, 4.5);
@@ -238,11 +244,11 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                     setSource(cr, ui_theme.global.window_fg);
                     drawText(cr, "—", label_x + 2, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                 } else {
-                    setSource(cr, ui_theme.global.window_fg);
+                    setSource(cr, metadata);
                     drawText(cr, disp.text, label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                 }
             } else {
-                setSource(cr, ui_theme.global.window_fg);
+                setSource(cr, metadata);
                 drawEllipsis(cr, formatSize(transfer_bytes orelse item.bytes, &buf), label_x, y + GridCard.detail_baseline, name_width, shell_ui.textSize(), false);
             }
         }
