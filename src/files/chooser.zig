@@ -15,7 +15,11 @@ pub const Options = struct {
     accept_label: []const u8 = "",
     current_folder: []const u8 = "",
     current_name: []const u8 = "",
+    /// The requesting app's window as the portal names it: "wayland:<xdg-foreign
+    /// handle>", "x11:<xid>" or empty.
     parent_window: []const u8 = "",
+    /// The app ignores its window while the chooser is open (the portal's default).
+    modal: bool = true,
     filters: []const Filter = &.{},
     filter_index: usize = 0,
     choices: []const Choice = &.{},

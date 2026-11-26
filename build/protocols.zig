@@ -45,6 +45,9 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.addSystemProtocol("staging/single-pixel-buffer/single-pixel-buffer-v1.xml");
     scanner.addSystemProtocol("staging/ext-session-lock/ext-session-lock-v1.xml");
     scanner.addCustomProtocol(b.path("protocol/wlr-output-power-management-unstable-v1.xml"));
+    // The file chooser becomes a dialog of the window that asked for it.
+    scanner.addSystemProtocol("unstable/xdg-foreign/xdg-foreign-unstable-v2.xml");
+    scanner.addSystemProtocol("staging/xdg-dialog/xdg-dialog-v1.xml");
 
     // These versions control generated Zig bindings only. They do not change
     // the wlroots ABI used by the compositor.
@@ -81,6 +84,8 @@ pub fn module(b: *std.Build) *std.Build.Module {
     scanner.generate("wp_single_pixel_buffer_manager_v1", 1);
     scanner.generate("ext_session_lock_manager_v1", 1);
     scanner.generate("zwlr_output_power_manager_v1", 1);
+    scanner.generate("zxdg_importer_v2", 1);
+    scanner.generate("xdg_wm_dialog_v1", 1);
 
     return b.createModule(.{ .root_source_file = scanner.result });
 }

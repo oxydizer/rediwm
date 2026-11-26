@@ -37,6 +37,8 @@ pub fn options(a: Allocator, reader: *wire.Reader, save: bool, save_files: bool)
         const sig = try dict.variant();
         if (std.mem.eql(u8, key, "multiple") and std.mem.eql(u8, sig, "b")) {
             opts.multiple = (try dict.boolean()) and !save and !save_files;
+        } else if (std.mem.eql(u8, key, "modal") and std.mem.eql(u8, sig, "b")) {
+            opts.modal = try dict.boolean();
         } else if (std.mem.eql(u8, key, "directory") and std.mem.eql(u8, sig, "b")) {
             if (try dict.boolean()) {
                 if (!save) opts.mode = .folder;

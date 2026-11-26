@@ -296,6 +296,8 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     // (and thus titlebar height) is known; this is just a safe pre-configure
     // default sized for the worst case (self-decorated).
     self.xdg_toplevel.setMinSize(if (chooser != null) 600 else 360, 214 + self.app.footerHeight() + CSD_TITLEBAR_H);
+    if (chooser) |options| self.attachToParent(options);
+    defer self.detachParent();
 
     // Prefer server-side decorations; the compositor may still tell us via
     // decorationEvent to self-decorate (e.g. it has no SSD implementation),
