@@ -82,6 +82,12 @@ pub fn submitArchive(self: *Coordinator, routed: *io_service.RoutedCommand, reco
             std.debug.assert(manager.discardPlanningJob(job_id));
             return self.failSubmit(&record, err);
         };
+        // Published entries are new names: synced once at the job's end,
+        // like a copy's, not one by one.
+        if (request.purpose == .extract) manager.setDeferredSync(job_id) catch |err| {
+            std.debug.assert(manager.discardPlanningJob(job_id));
+            return self.failSubmit(&record, err);
+        };
         break :blk operation_id;
     };
     self.archives.ensureUnusedCapacity(self.allocator, 1) catch |err| {

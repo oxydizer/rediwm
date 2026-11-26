@@ -30,7 +30,12 @@ const Paths = struct {
     source: [*:0]const u8,
     destination: []const u8,
     merge_existing_directory: bool,
+    deferred_sync: bool,
 };
+
+/// The input's last byte: bit 0 merge, bit 1 deferred sync.
+const flag_merge: u8 = 1;
+const flag_deferred_sync: u8 = 2;
 
 /// Build immutable operation input.
 pub fn makeInput(
@@ -57,15 +62,28 @@ pub fn makeInput(
     const destination_start = source_path.len + 1;
     @memcpy(bytes[destination_start..][0..destination_path.len], destination_path);
     bytes[bytes.len - 2] = 0;
-    bytes[bytes.len - 1] = @intFromBool(merge_existing_directory);
+    bytes[bytes.len - 1] = if (merge_existing_directory) flag_merge else 0;
     return .{ .allocator = allocator, .bytes = bytes };
+}
+
+/// As `makeInput`, for a job that syncs its destination once at its end
+/// (`io_finalize`): the new folder's parent is not synced on its own.
+pub fn makeDeferredInput(
+    allocator: Allocator,
+    source_path: []const u8,
+    destination_path: []const u8,
+    merge_existing_directory: bool,
+) !executor.OwnedPayload {
+    const input = try makeInput(allocator, source_path, destination_path, merge_existing_directory);
+    input.bytes.?[input.bytes.?.len - 1] |= flag_deferred_sync;
+    return input;
 }
 
 fn parsePaths(input: *const executor.OwnedPayload) !Paths {
     const bytes = input.slice();
     const separator = std.mem.indexOfScalar(u8, bytes, 0) orelse return error.InvalidInput;
     if (separator == 0 or bytes.len < separator + 4 or
-        bytes[bytes.len - 2] != 0 or bytes[bytes.len - 1] > 1)
+        bytes[bytes.len - 2] != 0 or bytes[bytes.len - 1] > flag_merge | flag_deferred_sync)
     {
         return error.InvalidInput;
     }
@@ -78,7 +96,8 @@ fn parsePaths(input: *const executor.OwnedPayload) !Paths {
     return .{
         .source = @ptrCast(bytes.ptr),
         .destination = destination,
-        .merge_existing_directory = bytes[bytes.len - 1] == 1,
+        .merge_existing_directory = bytes[bytes.len - 1] & flag_merge != 0,
+        .deferred_sync = bytes[bytes.len - 1] & flag_deferred_sync != 0,
     };
 }
 
@@ -314,7 +333,7 @@ pub fn execute(
         _ = c.close(parent_fd);
         return completion(item, .failed, null);
     };
-    if (!syncDescriptor(parent_fd)) {
+    if (!operation_paths.deferred_sync and !syncDescriptor(parent_fd)) {
         removeCreatedDirectory(&result);
         var owned_result = result;
         owned_result.deinit();

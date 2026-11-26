@@ -447,8 +447,9 @@ fn prepare(
                 details.entry_id,
             );
             defer context.allocator.free(source);
+            const defers_sync = context.manager.jobDefersSync(token.job_id);
             break :blk if (details.kind == .create_directory)
-                try io_directory.makeInput(
+                try (if (defers_sync) &io_directory.makeDeferredInput else &io_directory.makeInput)(
                     context.allocator,
                     source,
                     destination,
@@ -461,7 +462,7 @@ fn prepare(
                     destination,
                     token,
                 )
-            else if (context.manager.jobDefersSync(token.job_id))
+            else if (defers_sync)
                 try io_copy.makeDeferredInput(context.allocator, source, destination, token)
             else
                 try io_copy.makeInput(context.allocator, source, destination, token);
@@ -473,7 +474,11 @@ fn prepare(
                 details.entry_id,
             );
             defer context.allocator.free(destination);
-            break :blk try io_symlink.makeInput(
+            const make = if (context.manager.jobDefersSync(token.job_id))
+                &io_symlink.makeDeferredInput
+            else
+                &io_symlink.makeInput;
+            break :blk try make(
                 context.allocator,
                 entry.symlink_target orelse return error.MissingSymlinkTarget,
                 destination,
@@ -535,7 +540,8 @@ fn makeDirectoryFinalizationInput(
         };
         initialized += 1;
     }
-    // A copy job syncs its destination once here instead of every new file.
+    // A copy or extraction syncs its destination once here instead of every
+    // new file, folder and link.
     const sync_directory = if (context.manager.jobDefersSync(token.job_id))
         context.manager.destinationDirectory(token.job_id)
     else

@@ -26,6 +26,7 @@ fn syncDescriptor(fd: c_int) bool {
 const Paths = struct {
     target: [*:0]const u8,
     destination: []const u8,
+    deferred_sync: bool,
 };
 
 /// Build immutable operation input. Targets remain literal byte strings.
@@ -44,24 +45,40 @@ pub fn makeInput(
 
     const bytes = try allocator.alloc(
         u8,
-        target.len + 1 + destination_path.len + 1,
+        target.len + 1 + destination_path.len + 2,
     );
     errdefer allocator.free(bytes);
     @memcpy(bytes[0..target.len], target);
     bytes[target.len] = 0;
     const destination_start = target.len + 1;
     @memcpy(bytes[destination_start..][0..destination_path.len], destination_path);
+    // The last byte is the deferred-sync flag.
+    bytes[bytes.len - 2] = 0;
     bytes[bytes.len - 1] = 0;
     return .{ .allocator = allocator, .bytes = bytes };
+}
+
+/// As `makeInput`, for a job that syncs its destination once at its end
+/// (`io_finalize`): the link's parent is not synced on its own.
+pub fn makeDeferredInput(
+    allocator: Allocator,
+    target: []const u8,
+    destination_path: []const u8,
+) !executor.OwnedPayload {
+    const input = try makeInput(allocator, target, destination_path);
+    input.bytes.?[input.bytes.?.len - 1] = 1;
+    return input;
 }
 
 fn parsePaths(input: *const executor.OwnedPayload) !Paths {
     const bytes = input.slice();
     const separator = std.mem.indexOfScalar(u8, bytes, 0) orelse return error.InvalidInput;
-    if (separator == 0 or bytes.len <= separator + 2 or bytes[bytes.len - 1] != 0) {
+    if (separator == 0 or bytes.len <= separator + 3 or
+        bytes[bytes.len - 2] != 0 or bytes[bytes.len - 1] > 1)
+    {
         return error.InvalidInput;
     }
-    const destination = bytes[separator + 1 .. bytes.len - 1];
+    const destination = bytes[separator + 1 .. bytes.len - 2];
     if (destination.len == 0 or destination[0] != '/' or
         std.mem.indexOfScalar(u8, destination, 0) != null)
     {
@@ -70,6 +87,7 @@ fn parsePaths(input: *const executor.OwnedPayload) !Paths {
     return .{
         .target = @ptrCast(bytes.ptr),
         .destination = destination,
+        .deferred_sync = bytes[bytes.len - 1] == 1,
     };
 }
 
@@ -216,7 +234,7 @@ pub fn execute(
         _ = c.close(parent_fd);
         return completion(item, .failed, null);
     };
-    if (!syncDescriptor(parent_fd)) {
+    if (!operation_paths.deferred_sync and !syncDescriptor(parent_fd)) {
         closeCreatedParent(&result, true);
         var owned_result = result;
         owned_result.deinit();
