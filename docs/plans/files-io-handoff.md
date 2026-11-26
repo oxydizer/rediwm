@@ -86,17 +86,16 @@ longer have a Runtime, a Manager or an executor of their own.
 3. **Copy performance** (`files-io-copy-performance.md`): the user's earlier
    findings (buffers, small-file overhead) and the next steps; sync once per
    copy job is done (#82).
-3. **S6, endpoint and single instance:** one private endpoint per Files
-   process on its own thread; `open_window` (launching Files while one runs
-   opens a window in it, headless included); `subscribe` and job control for
-   the shell's tray panel. See the IPC contract doc.
+3. **S6, endpoint and single instance:** S6a is done (PR #88): the endpoint
+   thread and `OpenWindow`; launching Files while one runs opens a window in
+   it, headless included. S6b is next: `subscribe` and job control for the
+   shell's tray panel, through `Service.registerExternal`. See the IPC
+   contract doc.
 4. **Backlog** (`files-io-backlog.md`), top first:
-   1. Tabs as drop targets: needs titlebar-tabs protocol v3 in the compositor
-      first (its own branch from master), then Files.
+   1. (Closed: a drag resting on a tab switches to it, #86.)
    2. (Closed: the stalled re-copy to a USB drive was the conflict dialog not
       showing, fixed with JobRunner's removal.)
-   3. An extraction counts folders as done but not in its total (5 100 of
-      5 000).
+   3. (Closed: the extraction count, #85.)
 5. **Smaller:** split `src/files/app_pointer.zig` (931 lines) and `worker.zig` (860),
    both over the limit;
    perhaps a Replace answer in the file-conflict dialog; roadmap phases 1 and 3

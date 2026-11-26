@@ -5,6 +5,9 @@ the bottom. Each says what was seen, what is known and where to start.
 
 ## 1. Tabs as drop targets (UI polish)
 
+**Closed (2026-11-26, PR #86):** a drag resting 0.6 s on a titlebar tab
+switches to it (`src/input/drag_tab_hover.zig`); the drop lands in its view.
+
 **Seen:** a folder dragged from the Videos tab onto the tab of a portable drive
 (another tab of the same window) does nothing. Expected: it is copied into that
 tab's folder.

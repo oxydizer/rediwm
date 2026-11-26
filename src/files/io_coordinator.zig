@@ -266,6 +266,7 @@ pub const Coordinator = struct {
             if (self.publishViews(now)) |at| deadline = earliest(deadline, at);
             if (self.watchStalls(now)) |at| deadline = earliest(deadline, at);
             self.retireReadyJobs();
+            self.service.setWorkIdle(self.isIdle());
             // A hold set or lifted: dispatch again before sleeping.
             if (self.stalls.changed) {
                 self.stalls.changed = false;

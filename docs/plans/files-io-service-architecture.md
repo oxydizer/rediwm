@@ -424,6 +424,12 @@ window renders from the job table.
   opens a window in that process instead of starting another one.
 * `subscribe` and job control for the shell's tray icon and panel.
 
+**S6a done (PR #88):** the endpoint (`io_endpoint.zig`) with `OpenWindow`;
+a launch while Files runs opens a window in it, and a process with no window
+but work in hand stays reachable. The socket name carries a hash of
+`WAYLAND_DISPLAY`, so a nested session has its own Files. **S6b next:**
+`subscribe`, job control and rate history for the shell panel.
+
 *Done when:* launching Files during a headless drain opens a window that shows the
 running transfers, and a test client subscribed to the endpoint sees every job
 from submission to its final record, pauses and resumes one, and recovers through

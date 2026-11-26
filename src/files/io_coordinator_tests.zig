@@ -222,6 +222,13 @@ test "coordinator copies a regular-file transfer" {
     try waitForContents(destination, "coordinator regular-file copy");
 
     try std.testing.expect(pathExists(source));
+    // Once the job is gone the coordinator reports itself idle: a process
+    // with no window left may then end (S6).
+    var waited: usize = 0;
+    while (!service.isWorkIdle()) : (waited += 1) {
+        if (waited == 200) return error.CoordinatorNeverIdle;
+        waitBriefly();
+    }
 }
 
 test "coordinator publishes a job record with planned totals and final progress" {
