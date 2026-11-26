@@ -50,6 +50,26 @@ fn visible(self: *App, control: Control) bool {
 pub fn editorLayout(self: *App) layout.Layout {
     const palette = theme.shellPalette();
     const scale: f32 = @floatFromInt(@max(self.scale, 1));
+    const input: layout.Input = .{
+        .width = @floatFromInt(self.w),
+        .height = @floatFromInt(self.h),
+        .editor_owned_tabs = !self.strip_in_titlebar,
+        .search = if (!self.find_open) .closed else if (self.replace_open) .replace else .find,
+    };
+    const field_height = @as(f64, @floatCast(field.metrics(.md, theme.global).height));
+
+    // Viewport queries are frequent while the search bar is closed. Its
+    // button dimensions are irrelevant in that state, so avoid shaping labels.
+    if (input.search == .closed) {
+        return layout.Layout.resolve(input, .{
+            .field = .{ .w = 0, .h = field_height },
+            .next = .{ .w = 0, .h = 0 },
+            .toggle = .{ .w = 0, .h = 0 },
+            .close = .{ .w = 0, .h = 0 },
+            .replace = .{ .w = 0, .h = 0 },
+            .replace_all = .{ .w = 0, .h = 0 },
+        });
+    }
 
     const next_options: button.Options = .{
         .label = tr("Next"),
@@ -95,15 +115,10 @@ pub fn editorLayout(self: *App) layout.Layout {
         }
     }.run;
 
-    return layout.Layout.resolve(.{
-        .width = @floatFromInt(self.w),
-        .height = @floatFromInt(self.h),
-        .editor_owned_tabs = !self.strip_in_titlebar,
-        .search = if (!self.find_open) .closed else if (self.replace_open) .replace else .find,
-    }, .{
+    return layout.Layout.resolve(input, .{
         .field = .{
             .w = 0,
-            .h = @floatCast(field.metrics(.md, theme.global).height),
+            .h = field_height,
         },
         .next = measureButton(next_options, palette, scale),
         .toggle = measureButton(toggle_options, palette, scale),
