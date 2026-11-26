@@ -245,13 +245,14 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     // its own, and never the one others hand over to. Claimed first, so a
     // handed-over launch exits before doing anything else.
     var instance: ?struct { fd: c_int, paths: io_endpoint.Paths } = null;
-    if (chooser == null and torrent_source == null) claim: {
+    if (chooser == null) claim: {
         var paths = io_endpoint.Paths.fromEnviron(a, init.minimal.environ) catch break :claim;
         switch (io_endpoint.claim(a, &paths, .{
             .path = target_dir,
             .select = selected_file,
             .transfers = transfers,
             .activation_token = init.minimal.environ.getPosix("XDG_ACTIVATION_TOKEN"),
+            .torrent = torrent_source,
         })) {
             .handed_over => {
                 paths.deinit(a);
@@ -557,6 +558,7 @@ fn openRequested(endpoint: ?*io_endpoint.Endpoint, windows: *std.ArrayList(*Clie
             .selected_file = request.select,
             .transfers = request.transfers and torrent_id == null,
             .torrent_id = torrent_id,
+            .torrent_source = request.torrent,
         }, service) catch |err| {
             std.log.warn("rediwm-files: cannot open a window: {}", .{err});
             continue;

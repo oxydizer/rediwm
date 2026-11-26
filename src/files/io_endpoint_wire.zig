@@ -41,6 +41,9 @@ pub const OpenWindow = struct {
     /// A job whose window to raise (its conflict asks there); a new window
     /// at `path` when that window has closed.
     job_id: ?u64 = null,
+    /// A torrent to open: a `.torrent` file (absolute), shown as a folder,
+    /// or a magnet link, which asks where it goes.
+    torrent: ?[]const u8 = null,
 };
 
 pub const Control = @import("io_service_external.zig").Control;

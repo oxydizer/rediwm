@@ -55,10 +55,9 @@ its history, between windows; tear-off and drop requests reach the event loop as
 instance per Wayland display. `run` first `claim`s
 `$XDG_RUNTIME_DIR/files-io-<hash of WAYLAND_DISPLAY>.sock` under its `.lock`
 file: if a process answers, the launch is sent as an NDJSON `OpenWindow`
-(folder, file to select, `--transfers`, `XDG_ACTIVATION_TOKEN`) and this
-process exits; else it binds the socket and serves it on the endpoint thread.
-A chooser (and a `--torrent` launch) never claims: it answers on its own
-stdout. The endpoint thread never touches the Service, a window or the
+(folder, file to select, `--transfers`, `--torrent`, `XDG_ACTIVATION_TOKEN`)
+and this process exits; else it binds the socket and serves it on the endpoint
+thread. A chooser never claims: it answers on its own stdout. The endpoint thread never touches the Service, a window or the
 display; accepted launches go to the UI thread through a single-producer ring
 and a wake fd (`takeOpen`, `openRequested` in `main.zig`). With no window
 left, the process stays while the coordinator has work (`Service.isWorkIdle`,
