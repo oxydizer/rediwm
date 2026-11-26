@@ -82,6 +82,24 @@ measured against all four with `bench-files-io` (see its settings at the top of
   disk 54.9 → 14.2 s; the copies beside it gained too (USB small files
   48.6 → 20.7 s), since the extraction's syncs no longer held the disk.
 
+* **One buffer per worker thread** (PR #91). The read/write fallback (used
+  when `copy_file_range` refuses: between filesystem types, so a btrfs to
+  exFAT/NTFS USB copy among others) allocated a buffer per file, carried in
+  its continuation and freed with it. A unit reads and writes within itself,
+  so the buffer now belongs to the worker thread (`io_copy.threadBuffer`):
+  grown to the largest size class asked for, at most 1 MiB, freed when the
+  thread leaves (`PoolWorkItem.threadExit`). Continuations are the 36-byte
+  header alone. Measured with `bench-files-copy` (new: `io_copy.execute`
+  alone, tmpfs to ext4, best of 3): 400 files of 1 MiB copy in 0.21–0.33 s
+  instead of 0.38–0.58 s, their read/write time 160–175 ms instead of 421 ms;
+  10 000 files of 4 KiB and 2 of 256 MiB unchanged. A 1 MiB buffer for every
+  file was no faster than the size classes, which stay (less memory per
+  thread).
+* **Per-file allocations: not worth changing.** A 4 KiB file costs about
+  174 µs on this path, 6 µs of it reading and writing; the rest is about a
+  dozen metadata calls (opens, the staging file, the publishing rename,
+  times). The few small allocations per file are well under 1 % of that.
+
 ## 4. Next
 
 1. **USB hard disk:** it was on a USB 2.0 port (in the keyboard). On USB 3
@@ -91,9 +109,7 @@ measured against all four with `bench-files-io` (see its settings at the top of
    `cp` and `sync` of the same files would confirm it.
 2. **Fair turns by time, not by unit**, if the bound above proves too tight on
    real disks: let the round-robin account for a job's worker time.
-3. **One reusable buffer per job** for the buffered fallback: allocated when
-   first needed, grown to the largest file's size class, capped at 1 MiB,
-   released with the job; keep a fixed-64 KiB mode for comparison.
-   `copy_file_range` and reflink paths unchanged.
-4. **Per-file allocations** in discovery and planning (path joins per entry),
-   against the 20 600 allocations measured before.
+3. **Per-file metadata calls**, if small files on real disks still need it:
+   the parent folder is opened by path for every file, and a clone and a
+   `copy_file_range` are tried on every file even after they failed for the
+   same pair of filesystems. Each is a call or two per file; measure first.

@@ -338,7 +338,17 @@ pub fn WorkerPool(comptime Task: type, comptime Result: type) type {
             _ = c.pthread_mutex_unlock(&self.mutex);
         }
 
+        fn hasThreadExit() bool {
+            return switch (@typeInfo(Task)) {
+                .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(Task, "threadExit"),
+                else => false,
+            };
+        }
+
         fn workerMain(self: *Self, index: usize) void {
+            // Per-thread state of the task kind (a copy buffer) leaves with
+            // the thread: elastic workers come and go.
+            defer if (comptime hasThreadExit()) Task.threadExit();
             while (true) {
                 self.lock();
                 var idle_since: ?i64 = null;

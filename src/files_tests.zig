@@ -19,6 +19,7 @@ const io_deletion_tests = @import("files/io_deletion_tests.zig");
 const io_request_tests = @import("files/io_request_tests.zig");
 const io_job_view_tests = @import("files/io_job_view_tests.zig");
 const io_endpoint_tests = @import("files/io_endpoint_tests.zig");
+const io_copy_bench_tests = @import("files/io_copy_bench_tests.zig");
 const io_endpoint_subscribe_tests = @import("files/io_endpoint_subscribe_tests.zig");
 const io_workers_tests = @import("files/io_workers_tests.zig");
 const io_executor_tests = @import("files/io_executor_tests.zig");
@@ -49,6 +50,7 @@ test {
     _ = io_request_tests;
     _ = io_job_view_tests;
     _ = io_endpoint_tests;
+    _ = io_copy_bench_tests;
     _ = io_endpoint_subscribe_tests;
     _ = io_workers_tests;
     _ = io_executor_tests;
