@@ -16,16 +16,42 @@ pub const Mount = struct {
 /// The mount that contains `path` (absolute, no `..`), or null when there is
 /// no mount table.
 pub fn mountOf(allocator: std.mem.Allocator, path: []const u8) !?Mount {
-    switch (builtin.os.tag) {
-        .linux => {
-            const table = readMountinfo(allocator) catch return null;
-            defer allocator.free(table);
-            const found = containingMount(table, path) orelse return null;
-            return .{ .point = try unescape(allocator, found.point), .anonymous = found.anonymous };
-        },
-        else => return null,
-    }
+    var table = Table.load(allocator) orelse return null;
+    defer table.deinit();
+    var scratch: [4096]u8 = undefined;
+    const found = table.find(path, &scratch) orelse return null;
+    return .{ .point = try allocator.dupe(u8, found.point), .anonymous = found.anonymous };
 }
+
+/// The mount table as read once, for matching many paths against it.
+pub const Table = struct {
+    allocator: std.mem.Allocator,
+    bytes: []u8,
+
+    /// Null when the system has no mount table or it cannot be read.
+    pub fn load(allocator: std.mem.Allocator) ?Table {
+        switch (builtin.os.tag) {
+            .linux => {
+                const bytes = readMountinfo(allocator) catch return null;
+                return .{ .allocator = allocator, .bytes = bytes };
+            },
+            else => return null,
+        }
+    }
+
+    pub fn deinit(self: *Table) void {
+        self.allocator.free(self.bytes);
+        self.* = undefined;
+    }
+
+    /// The mount containing `path`; `point` lives in `scratch`.
+    pub fn find(self: *const Table, path: []const u8, scratch: []u8) ?Borrowed {
+        const found = containingMount(self.bytes, path) orelse return null;
+        return .{ .point = unescapeInto(scratch, found.point) orelse return null, .anonymous = found.anonymous };
+    }
+};
+
+pub const Borrowed = struct { point: []const u8, anonymous: bool };
 
 fn readMountinfo(allocator: std.mem.Allocator) ![]u8 {
     const system = std.posix.system;
@@ -101,6 +127,16 @@ fn unescapeInto(out: []u8, text: []const u8) ?[]const u8 {
 fn unescape(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
     var scratch: [4096]u8 = undefined;
     return allocator.dupe(u8, unescapeInto(&scratch, text) orelse return error.NameTooLong);
+}
+
+test "a table finds what the one-shot lookup finds" {
+    const bytes = try std.testing.allocator.dupe(u8, "22 1 8:2 / / rw - ext4 /dev/sda2 rw\n30 22 0:40 / /mnt/nas rw - nfs4 s:/ rw\n");
+    var table: Table = .{ .allocator = std.testing.allocator, .bytes = bytes };
+    defer table.deinit();
+    var scratch: [64]u8 = undefined;
+    const nas = table.find("/mnt/nas/x", &scratch).?;
+    try std.testing.expectEqualStrings("/mnt/nas", nas.point);
+    try std.testing.expect(nas.anonymous);
 }
 
 test "the longest containing mount wins, at component boundaries, escapes undone" {

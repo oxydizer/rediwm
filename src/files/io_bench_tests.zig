@@ -29,6 +29,9 @@
 //!   `running` submits one stalled copy, waits until it has copied bytes, then
 //!   stops the daemon, so it hangs inside the discovery and operation
 //!   executors. The folder should be large enough to take a few seconds.
+//! * `REDIWM_IO_BENCH_LATE_STALL_S`: submit the second stalled copy this many
+//!   seconds after the others, once its mount is suspect (10 s), so it waits
+//!   for the mount instead of taking a worker.
 //! * `REDIWM_IO_BENCH_HOLD_S`: keep running at least this long even when the
 //!   other jobs are done, so a stalled job's `waiting_for` (reported after
 //!   30 s) shows in its line.
@@ -225,6 +228,18 @@ fn submitExtract(window: io_service.Handle, tag: u64, archive: []const u8, desti
     try sendOwned(window, &command);
 }
 
+fn submitJob(job: anytype, window: io_service.Handle, destinations: anytype, fixture: anytype, stall_path: ?[]const u8) !void {
+    job.submitted_ns = nowNs();
+    switch (job.tag) {
+        1 => try submitCopy(window, job.tag, destinations[0], &.{ fixture.big[0], fixture.big[1] }),
+        2 => try submitCopy(window, job.tag, destinations[1], &.{fixture.small}),
+        3 => try submitExtract(window, job.tag, fixture.archive, destinations[2]),
+        4 => try submitCopy(window, job.tag, destinations[3], &.{stall_path.?}),
+        5 => try submitCopy(window, job.tag, destinations[4], &.{stall_path.?}),
+        else => unreachable,
+    }
+}
+
 fn stallSignal(signal: c_int) void {
     const pid_text = getenv("REDIWM_IO_BENCH_STALL_PID") orelse return;
     const pid = std.fmt.parseInt(c.pid_t, pid_text, 10) catch return;
@@ -289,8 +304,9 @@ test "files io responsiveness benchmark" {
     if (stall_path) |path| {
         if (stall_running) {
             // One stalled copy, started while the mount still answers.
-            _ = jobs.pop();
-            const job = &jobs.items[jobs.items.len - 1];
+            // A second one comes only late, once its mount is suspect.
+            if (getenv("REDIWM_IO_BENCH_LATE_STALL_S") == null) _ = jobs.pop();
+            const job = &jobs.items[3];
             job.submitted_ns = nowNs();
             try submitCopy(windows[job.window], job.tag, destinations[3], &.{path});
             const give_up = nowNs() + 60 * std.time.ns_per_s;
@@ -310,18 +326,13 @@ test "files io responsiveness benchmark" {
     }
 
     const started = nowNs();
+    const late_stall_ns: ?u64 = if (getenv("REDIWM_IO_BENCH_LATE_STALL_S")) |text|
+        started + try std.fmt.parseInt(u64, text, 10) * std.time.ns_per_s
+    else
+        null;
     for (jobs.items) |*job| {
-        if (job.submitted_ns != 0) continue;
-        job.submitted_ns = nowNs();
-        const window = windows[job.window];
-        switch (job.tag) {
-            1 => try submitCopy(window, job.tag, destinations[0], &.{ fixture.big[0], fixture.big[1] }),
-            2 => try submitCopy(window, job.tag, destinations[1], &.{fixture.small}),
-            3 => try submitExtract(window, job.tag, fixture.archive, destinations[2]),
-            4 => try submitCopy(window, job.tag, destinations[3], &.{stall_path.?}),
-            5 => try submitCopy(window, job.tag, destinations[4], &.{stall_path.?}),
-            else => unreachable,
-        }
+        if (job.submitted_ns != 0 or (job.tag == 5 and late_stall_ns != null)) continue;
+        try submitJob(job, windows[job.window], &destinations, &fixture, stall_path);
     }
 
     var stats: Stats = .{};
@@ -342,6 +353,9 @@ test "files io responsiveness benchmark" {
             finished = false;
         };
         if ((finished and nowNs() >= hold_ns) or nowNs() > deadline_ns) break;
+        if (late_stall_ns) |at| if (nowNs() >= at) for (jobs.items) |*job| {
+            if (job.tag == 5 and job.submitted_ns == 0) try submitJob(job, windows[job.window], &destinations, &fixture, stall_path);
+        };
 
         _ = support.waitReadable(service.updateWakeFd(), frame_ms);
         const begin = nowNs();

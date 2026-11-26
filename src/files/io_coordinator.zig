@@ -6,6 +6,7 @@
 const std = @import("std");
 const io_thread_guard = @import("io_thread_guard.zig");
 const io_transfer_plan = @import("io_transfer_plan.zig");
+const stalls_mod = @import("io_coordinator_stalls.zig");
 const io_service_tasks = @import("io_service_tasks.zig");
 const resources = @import("io_coordinator_resources.zig");
 const lifecycle = @import("io_coordinator_lifecycle.zig");
@@ -48,6 +49,8 @@ pub const Published = struct {
     /// task may be waiting (`io_coordinator_stalls.zig`). Null when unknown.
     source_path: ?[]u8 = null,
     destination_path: ?[]u8 = null,
+    /// Held in the Manager: the job touches a suspect mount.
+    held: bool = false,
 
     pub fn setPaths(self: *Published, allocator: std.mem.Allocator, source: ?[]const u8, destination: ?[]const u8) void {
         if (source) |path| self.source_path = allocator.dupe(u8, path) catch null;
@@ -120,6 +123,8 @@ pub const Coordinator = struct {
     task_context: io_service_tasks.Context = undefined,
     /// Tasks the pool had no room for, submitted in order as room frees.
     task_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
+    /// Suspect mounts and what waits on them (`io_coordinator_stalls.zig`).
+    stalls: stalls_mod.State = .{},
     /// Prepares that wait for room so requests go first (`submitTask`).
     prepare_backlog: std.ArrayList(io_service_tasks.Task) = .empty,
     prepares_in_pool: usize = 0,
@@ -206,6 +211,7 @@ pub const Coordinator = struct {
         self.task_backlog.deinit(self.allocator);
         self.staging_backlog.deinit(self.allocator);
         self.prepare_backlog.deinit(self.allocator);
+        self.stalls.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -252,6 +258,11 @@ pub const Coordinator = struct {
             if (self.publishViews(now)) |at| deadline = earliest(deadline, at);
             if (self.watchStalls(now)) |at| deadline = earliest(deadline, at);
             self.retireReadyJobs();
+            // A hold set or lifted: dispatch again before sleeping.
+            if (self.stalls.changed) {
+                self.stalls.changed = false;
+                continue;
+            }
             if (self.draining and self.isIdle()) break;
             // While draining, re-check progress at least every 50 ms: the
             // phase is short, and some transitions raise no wake of their own.
@@ -273,7 +284,7 @@ pub const Coordinator = struct {
     const watchView = job_views.watchView;
     const unwatchView = job_views.unwatchView;
     const publishViews = job_views.publishViews;
-    const watchStalls = @import("io_coordinator_stalls.zig").watchStalls;
+    const watchStalls = stalls_mod.watchStalls;
     const handleRequest = coordinator_requests.handleRequest;
     const submitArchive = archives.submitArchive;
     const pumpArchives = archives.pumpArchives;

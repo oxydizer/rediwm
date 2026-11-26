@@ -7,6 +7,7 @@ const io_service_tasks = @import("io_service_tasks.zig");
 const io_resource_ledger = @import("io_resource_ledger.zig");
 const io_service = @import("io_service.zig");
 const Coordinator = @import("io_coordinator.zig").Coordinator;
+const stalls = @import("io_coordinator_stalls.zig");
 const JobId = io_service.JobId;
 
 const Lane = struct { pool: *io_service_tasks.Pool, backlog: *std.ArrayList(io_service_tasks.Task) };
@@ -18,25 +19,52 @@ fn lane(self: *Coordinator, which: io_service_tasks.Lane) Lane {
     };
 }
 
-/// Requests go before prepares (worker-pools §4.6): a person waits on each
-/// request, while a prepare only delays a job already shown as planning. At
-/// most `worker_count` prepares are in the pool; the rest wait here, so a
-/// request never queues behind a prepare that has not started.
+/// Every task enters its lane's backlog and goes to the pool from there
+/// (`submitBacklogs`), in order, except that:
+///
+/// * requests go before prepares (worker-pools §4.6): a person waits on each
+///   request, while a prepare only delays a job already shown as planning. At
+///   most `worker_count` prepares are in the pool; the rest wait here, so a
+///   request never queues behind a prepare that has not started;
+/// * a task for a suspect mount waits while the ones behind it pass
+///   (`io_coordinator_stalls.taskHeld`, §4.2).
 pub fn submitTask(self: *Coordinator, task: io_service_tasks.Task) void {
-    if (task == .prepare_transfer) return submitPrepare(self, task);
-    const into = lane(self, io_service_tasks.laneOf(task));
-    if (into.backlog.items.len == 0 and into.pool.trySubmit(task)) return;
-    into.backlog.append(self.allocator, task) catch dropTask(self, task);
+    const backlog = if (task == .prepare_transfer)
+        &self.prepare_backlog
+    else
+        lane(self, io_service_tasks.laneOf(task)).backlog;
+    backlog.append(self.allocator, task) catch return dropTask(self, task);
+    submitBacklogs(self);
 }
 
-fn submitPrepare(self: *Coordinator, task: io_service_tasks.Task) void {
-    if (self.prepare_backlog.items.len == 0 and self.task_backlog.items.len == 0 and
-        self.prepares_in_pool < io_service_tasks.worker_count and self.tasks.trySubmit(task))
-    {
+fn submitBacklogs(self: *Coordinator) void {
+    submitBacklog(self, lane(self, .tasks));
+    submitBacklog(self, lane(self, .staging));
+    // Queued requests went first; prepares take what room is left.
+    var i: usize = 0;
+    while (i < self.prepare_backlog.items.len and self.prepares_in_pool < io_service_tasks.worker_count) {
+        const task = self.prepare_backlog.items[i];
+        if (stalls.taskHeld(self, task)) {
+            i += 1;
+            continue;
+        }
+        if (!self.tasks.trySubmit(task)) break;
+        _ = self.prepare_backlog.orderedRemove(i);
         self.prepares_in_pool += 1;
-        return;
     }
-    self.prepare_backlog.append(self.allocator, task) catch dropTask(self, task);
+}
+
+fn submitBacklog(self: *Coordinator, into: Lane) void {
+    var i: usize = 0;
+    while (i < into.backlog.items.len) {
+        const task = into.backlog.items[i];
+        if (stalls.taskHeld(self, task)) {
+            i += 1;
+            continue;
+        }
+        if (!into.pool.trySubmit(task)) break;
+        _ = into.backlog.orderedRemove(i);
+    }
 }
 
 /// Out of memory with a full pool: give the work up visibly.
@@ -65,19 +93,12 @@ fn dropTask(self: *Coordinator, task: io_service_tasks.Task) void {
 }
 
 pub fn pumpTasks(self: *Coordinator) void {
-    pumpLane(self, lane(self, .tasks));
-    pumpLane(self, lane(self, .staging));
-    // Queued requests went first; prepares take what room is left.
-    while (self.prepare_backlog.items.len > 0 and self.task_backlog.items.len == 0 and
-        self.prepares_in_pool < io_service_tasks.worker_count)
-    {
-        if (!self.tasks.trySubmit(self.prepare_backlog.items[0])) break;
-        _ = self.prepare_backlog.orderedRemove(0);
-        self.prepares_in_pool += 1;
-    }
+    collect(self, lane(self, .tasks));
+    collect(self, lane(self, .staging));
+    submitBacklogs(self);
 }
 
-fn pumpLane(self: *Coordinator, from: Lane) void {
+fn collect(self: *Coordinator, from: Lane) void {
     _ = from.pool.drainWake();
     while (from.pool.tryPopResult()) |result_value| {
         var result = result_value;
@@ -100,10 +121,6 @@ fn pumpLane(self: *Coordinator, from: Lane) void {
                 self.service.cancelReplyReservation(replied.window_id),
             .scanned => |*scanned| self.finishScan(scanned.token, &scanned.scan),
         }
-    }
-    while (from.backlog.items.len > 0) {
-        if (!from.pool.trySubmit(from.backlog.items[0])) break;
-        _ = from.backlog.orderedRemove(0);
     }
 }
 

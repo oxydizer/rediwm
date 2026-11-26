@@ -43,6 +43,25 @@ pub const Request = union(enum) {
     archive_handoff: struct { job_id: u64 },
 };
 
+/// The path a request touches first, for holding it back while that mount is
+/// under suspicion (worker-pools §4.2); null when it touches none.
+pub fn primaryPath(request: *const Request) ?[]const u8 {
+    return switch (request.*) {
+        .restore => |r| r.trash_dir,
+        .create_folder => |r| r.dir,
+        .create_file => |r| r.dir,
+        .rename => |r| r.target,
+        .properties => |r| r.path,
+        .toggle_permission => |r| r.path,
+        .make_directory => |r| r.path,
+        .path_kinds => |r| if (r.paths.len > 0) r.paths[0] else null,
+        .canonical => |r| if (r.paths.len > 0) r.paths[0] else null,
+        .chooser => |r| r.named orelse r.parent,
+        .unique_name => |r| r.dir,
+        .conflict_details, .archive_handoff => null,
+    };
+}
+
 /// Requests about Manager state: the coordinator answers them itself.
 pub fn answeredByCoordinator(request: *const Request) bool {
     return request.* == .conflict_details or request.* == .archive_handoff;

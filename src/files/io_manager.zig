@@ -415,6 +415,9 @@ fn currentProgressRate(operation: *const Operation, now: i64) u64 {
 }
 
 const Job = struct {
+    /// Starts nothing new while set: the job touches a mount under suspicion
+    /// (worker-pools §4.2, `io_coordinator_stalls.zig`). Running work goes on.
+    held: bool = false,
     id: JobId,
     origin_window_id: ?WindowId,
     state: JobState = .planning,
@@ -1086,7 +1089,7 @@ pub const Manager = struct {
                 }
                 continue;
             }
-            if (!job.discovery_started or job.state == .paused or
+            if (!job.discovery_started or job.state == .paused or job.held or
                 job.discovery_in_flight != null)
             {
                 index += 1;
@@ -3014,7 +3017,15 @@ pub const Manager = struct {
     }
 
     fn atRunningLimit(self: *const Manager, job: *const Job) bool {
-        return job.operation_state_counts[@backingInt(OperationState.running)] >= self.max_running_per_job;
+        return job.held or job.operation_state_counts[@backingInt(OperationState.running)] >= self.max_running_per_job;
+    }
+
+    /// Holds a job's new work back, or lets it go again. False for an
+    /// unknown job.
+    pub fn setJobHeld(self: *Manager, job_id: JobId, held: bool) bool {
+        const job = self.findJob(job_id) orelse return false;
+        job.held = held;
+        return true;
     }
 
     /// Independent Operations within a Job may execute concurrently, up to

@@ -120,8 +120,22 @@ record's `waiting_for` names the mount, found in `/proc/self/mountinfo`
 source and destination in one task, so which one hangs cannot be seen: a
 network or FUSE mount (device major 0) is named over a disk, else the source
 while planning and the destination after. Deletions are not reported (one
-task per job, legitimately long). Suspect marking and throttling (10 s) are
-step 3c.
+task per job, legitimately long).
+
+**Suspect marking and holding are done (step 3c, #77).** A task running for
+10 s makes its job's mount suspect (same choice of mount as for the report).
+While any mount is suspect the coordinator keeps the mount table it read when
+the suspects changed, and holds back everything new that touches one: jobs
+whose source or destination is on it are held in the Manager (`Job.held`: no
+new operation or discovery batch; running work goes on), and prepares,
+requests and staging tasks for it stay in their backlog while those behind
+them pass. A held job's record says "waiting for" once the stall is 30 s old.
+When the stuck task returns the suspects clear, the holds lift and the
+coordinator dispatches again at once. Deletions are neither watched nor held
+yet: 4.5's shared table for that lane is left for when they get progress.
+Bench (`STALL_MODE=running`, `LATE_STALL_S=15`): the second copy from the dead
+mount stays in planning, held, instead of taking a worker; continued at 50 s,
+both copies complete.
 
 The domain is cleared when its stuck task returns or reports progress. Cancelling a job whose task is
 stuck in a suspect domain shows `cancel_requested` until the task returns, as
