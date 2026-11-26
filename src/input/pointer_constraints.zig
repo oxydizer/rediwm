@@ -107,7 +107,7 @@ fn candidate(self: *Self) ?*wlr.PointerConstraintV1 {
     // Shell panels take keys without moving seat focus. The cursor must be
     // free to reach them; clientMotion's sync releases it on first motion.
     if (input.open_start_menu != null or input.open_power_menu != null or
-        input.open_wifi != null or input.open_battery != null or input.open_calendar != null) return null;
+        input.open_wifi != null or input.open_transfers != null or input.open_battery != null or input.open_calendar != null) return null;
     const seat = input.seat;
     const surface = seat.pointer_state.focused_surface orelse return null;
     // Requiring keyboard focus too means Alt+Tab or a click elsewhere always

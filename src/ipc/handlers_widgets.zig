@@ -459,6 +459,23 @@ pub fn buildTaskbarWidgetTree(
         });
     }
 
+    if (bar.itemBox(.transfers)) |transfers_box| {
+        const summary = if (server.transfers) |client| client.model.summary() else @import("../transfers/model.zig").Summary{};
+        try widgets.append(allocator, .{
+            .id = widgets.items.len + 1,
+            .parent_index = 0,
+            .role = "button",
+            .name = "transfers",
+            .path = "taskbar/transfers",
+            .semantic_id = "tray_transfers",
+            .label = if (summary.active == 0) "Idle" else if (summary.all_paused) "Paused" else "Active",
+            .box = .{ .x = transfers_box.x - bar.box.x, .y = transfers_box.y - bar.box.y, .width = transfers_box.width, .height = transfers_box.height },
+            .global_box = .{ .x = transfers_box.x, .y = transfers_box.y, .width = transfers_box.width, .height = transfers_box.height },
+            .visible = true,
+            .is_disabled = false,
+        });
+    }
+
     if (bar.itemBox(.power)) |pbox| {
         try widgets.append(allocator, .{
             .id = widgets.items.len + 1,

@@ -93,7 +93,7 @@ pub fn currentShellTarget(keyboard: *Keyboard) ?ShellTarget {
     const input = &server.input;
     if (input.window_menu.node != null) return null;
     if (input.open_wifi) |popup| return .{ .wifi = popup };
-    if (input.open_battery != null or input.open_calendar != null or input.open_power_menu != null) return null;
+    if (input.open_transfers != null or input.open_battery != null or input.open_calendar != null or input.open_power_menu != null) return null;
     if (input.open_control_center) |cc| if (cc.hasKeyboardFocus() and input.open_start_menu == null) {
         if (cc.page == .shortcuts and cc.shortcuts.editing != null) return null;
         return .{ .control_center = cc };

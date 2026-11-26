@@ -38,6 +38,9 @@ pub const OpenWindow = struct {
     transfers: bool = false,
     /// The launcher's XDG activation token, so the new window may take focus.
     activation_token: ?[]const u8 = null,
+    /// A job whose window to raise (its conflict asks there); a new window
+    /// at `path` when that window has closed.
+    job_id: ?u64 = null,
 };
 
 pub const Control = @import("io_service_external.zig").Control;
@@ -205,6 +208,8 @@ const Job = struct {
     conflict: bool,
     /// The mount a stuck task waits on, or empty.
     waiting_for: []const u8,
+    /// Where a copy, move or extraction writes; empty when unknown.
+    destination: []const u8,
     error_code: u8,
     /// Retired: the record is final and the job leaves the list.
     removed: bool,
@@ -228,6 +233,7 @@ const Job = struct {
             .cancel_requested = record.cancel_requested,
             .conflict = record.pending_conflict != 0,
             .waiting_for = record.waitingFor(),
+            .destination = record.destination(),
             .error_code = record.error_code,
             .removed = record.removed,
             .revision = record.revision,

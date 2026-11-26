@@ -14,6 +14,7 @@ const log = std.log.scoped(.output);
 /// way. The single entry point for the start button's click handler.
 pub fn toggleStartMenu(output: *Output) void {
     if (output.server.input.open_wifi) |popup| popup.output.closeWifi();
+    if (output.server.input.open_transfers) |popup| popup.output.closeTransfers();
     if (output.server.input.open_battery) |popup| popup.output.closeBattery();
     if (output.server.input.open_calendar) |calendar| calendar.output.closeCalendar();
     if (output.start_menu) |sm| {
@@ -51,6 +52,7 @@ pub fn toggleAppLauncher(output: *Output) void {
 pub fn openMenu(output: *Output, mode: StartMenu.Mode) void {
     output.server.input.window_menu.close();
     if (output.server.input.open_wifi) |popup| popup.output.closeWifi();
+    if (output.server.input.open_transfers) |popup| popup.output.closeTransfers();
     if (output.server.input.open_battery) |popup| popup.output.closeBattery();
     if (output.server.input.open_calendar) |calendar| calendar.output.closeCalendar();
     if (output.server.input.open_start_menu) |other| {
@@ -108,6 +110,7 @@ pub fn syncStartMenu(output: *Output) void {
 /// existing one wherever it is. It keeps its page, position and size.
 pub fn toggleControlCenter(output: *Output) void {
     if (output.server.input.open_wifi) |popup| popup.output.closeWifi();
+    if (output.server.input.open_transfers) |popup| popup.output.closeTransfers();
     if (output.server.input.open_battery) |popup| popup.output.closeBattery();
     if (output.server.input.open_calendar) |calendar| calendar.output.closeCalendar();
     if (output.start_menu != null) output.closeStartMenu();
@@ -148,6 +151,7 @@ pub fn closeControlCenter(output: *Output) void {
 pub fn openPowerMenu(output: *Output) void {
     output.server.input.window_menu.close();
     if (output.server.input.open_wifi) |popup| popup.output.closeWifi();
+    if (output.server.input.open_transfers) |popup| popup.output.closeTransfers();
     if (output.server.input.open_battery) |popup| popup.output.closeBattery();
     if (output.server.input.open_calendar) |calendar| calendar.output.closeCalendar();
     if (output.power_menu != null) return;
@@ -186,6 +190,7 @@ pub fn closeCalendar(output: *Output) void {
 pub fn toggleCalendar(output: *Output) void {
     output.server.input.window_menu.close();
     if (output.server.input.open_wifi) |popup| popup.output.closeWifi();
+    if (output.server.input.open_transfers) |popup| popup.output.closeTransfers();
     if (output.server.input.open_battery) |popup| popup.output.closeBattery();
     if (output.calendar != null) {
         output.closeCalendar();
@@ -208,6 +213,7 @@ pub fn closeBattery(output: *Output) void {
 pub fn toggleBattery(output: *Output) void {
     output.server.input.window_menu.close();
     if (output.server.input.open_wifi) |popup| popup.output.closeWifi();
+    if (output.server.input.open_transfers) |popup| popup.output.closeTransfers();
     if (output.battery_popup != null) {
         output.closeBattery();
         return;
@@ -234,6 +240,7 @@ pub fn toggleWifi(output: *Output) void {
         return;
     }
     if (output.server.input.open_wifi) |other| other.output.closeWifi();
+    if (output.server.input.open_transfers) |other| other.output.closeTransfers();
     if (output.server.input.open_battery) |other| other.output.closeBattery();
     if (output.server.input.open_calendar) |other| other.output.closeCalendar();
     if (output.server.input.open_start_menu) |other| if (Output.fromWlr(other.wlr_output)) |out| out.closeStartMenu();
@@ -242,4 +249,28 @@ pub fn toggleWifi(output: *Output) void {
     output.wifi_popup = @import("../network/popup.zig").Popup.create(output) catch return;
     output.server.input.open_wifi = output.wifi_popup;
     if (output.server.network) |manager| manager.opened();
+}
+
+pub fn closeTransfers(output: *Output) void {
+    const popup = output.transfers_popup orelse return;
+    output.transfers_popup = null;
+    popup.destroy();
+    output.wlr_output.scheduleFrame();
+}
+
+pub fn toggleTransfers(output: *Output) void {
+    output.server.input.window_menu.close();
+    if (output.transfers_popup != null) {
+        output.closeTransfers();
+        return;
+    }
+    if (output.server.input.open_transfers) |other| other.output.closeTransfers();
+    if (output.server.input.open_wifi) |other| other.output.closeWifi();
+    if (output.server.input.open_battery) |other| other.output.closeBattery();
+    if (output.server.input.open_calendar) |other| other.output.closeCalendar();
+    if (output.server.input.open_start_menu) |other| if (Output.fromWlr(other.wlr_output)) |out| out.closeStartMenu();
+    if (output.server.input.open_power_menu) |other| if (Output.fromWlr(other.wlr_output)) |out| out.closePowerMenu();
+    if (output.server.tray) |tray| tray.closeMenu();
+    output.transfers_popup = @import("../transfers/popup.zig").Popup.create(output) catch return;
+    output.server.input.open_transfers = output.transfers_popup;
 }

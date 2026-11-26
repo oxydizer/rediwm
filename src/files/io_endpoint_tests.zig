@@ -7,7 +7,7 @@ const allocator = std.testing.allocator;
 
 test "endpoint wire: an OpenWindow request parses" {
     var result = try wire.parse(allocator,
-        \\{"version":1,"id":"7","command":"OpenWindow","params":{"path":"/home/u","select":"/home/u/a.txt","transfers":true,"activation_token":"tok","extra":1}}
+        \\{"version":1,"id":"7","command":"OpenWindow","params":{"path":"/home/u","select":"/home/u/a.txt","transfers":true,"activation_token":"tok","job_id":42,"extra":1}}
     );
     switch (result) {
         .rejected => return error.TestUnexpectedResult,
@@ -19,6 +19,7 @@ test "endpoint wire: an OpenWindow request parses" {
             try std.testing.expectEqualStrings("/home/u/a.txt", open.select.?);
             try std.testing.expect(open.transfers);
             try std.testing.expectEqualStrings("tok", open.activation_token.?);
+            try std.testing.expectEqual(@as(?u64, 42), open.job_id);
         },
     }
 }

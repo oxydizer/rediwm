@@ -132,6 +132,7 @@ pub const Menu = struct {
         if (input.open_start_menu) |other| if (Output.fromWlr(other.wlr_output)) |out| out.closeStartMenu();
         if (input.open_power_menu) |other| if (Output.fromWlr(other.wlr_output)) |out| out.closePowerMenu();
         if (input.open_wifi) |other| other.output.closeWifi();
+        if (input.open_transfers) |other| other.output.closeTransfers();
         if (input.open_battery) |other| other.output.closeBattery();
         if (input.open_calendar) |other| other.output.closeCalendar();
         if (server.tray) |tray| tray.closeMenu();

@@ -28,7 +28,7 @@ pub fn menuOpen(bar: *const Self) bool {
         if (sm.wlr_output == bar.wlr_output) return true;
     }
     if (Output.fromWlr(bar.wlr_output)) |output| {
-        if (output.calendar != null or output.battery_popup != null or output.wifi_popup != null) return true;
+        if (output.calendar != null or output.battery_popup != null or output.wifi_popup != null or output.transfers_popup != null) return true;
     }
     return false;
 }

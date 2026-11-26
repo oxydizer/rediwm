@@ -396,6 +396,8 @@ pub const Theme = struct {
     popup_card_border: ?[4]f32 = null,
     popup_card_radius: f32 = 12,
     popup_battery_ring: ?[4]f32 = null,
+    /// Finished work (a completed transfer's check and bar); unset is green.
+    success: ?[4]f32 = null,
     calendar_border: [4]f32 = .{ 1, 1, 1, 0.16 },
     osd_border: [4]f32 = .{ 1, 1, 1, 0.12 },
     screenshot_shade: [4]f32 = .{ 0, 0, 0, 0.36 },

@@ -10,6 +10,7 @@ const allocator = std.testing.allocator;
 fn record(id: u64, state: io_service.JobState) io_service.JobRecord {
     var value: io_service.JobRecord = .{ .id = id, .kind = .copy, .state = state, .total_bytes = 100 };
     value.setLabel("photo.jpg");
+    value.setDestination("/home/u/Pictures");
     return value;
 }
 
@@ -21,6 +22,7 @@ const Event = struct {
         id: u64,
         state: []const u8,
         label: []const u8,
+        destination: []const u8,
         removed: bool,
         rate_history: ?[]const u64 = null,
     },
@@ -78,6 +80,7 @@ test "subscriber: a snapshot with speed history, then changes, then the retireme
     try std.testing.expectEqualStrings("snapshot", parsed[0].value.event);
     try std.testing.expectEqual(@as(usize, 1), parsed[0].value.jobs.len);
     try std.testing.expectEqualStrings("photo.jpg", parsed[0].value.jobs[0].label);
+    try std.testing.expectEqualStrings("/home/u/Pictures", parsed[0].value.jobs[0].destination);
     try std.testing.expectEqualSlices(u64, &.{ 5000, 7000 }, parsed[0].value.jobs[0].rate_history.?);
     parsed[0].deinit();
     output.clearRetainingCapacity();

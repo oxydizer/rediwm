@@ -204,6 +204,10 @@ pub fn processAxis(
             if (orientation == .vertical_scroll) hit.popup.scrollWheel(ui_scroll.axisDeltaPx(delta, delta_discrete));
             return;
         },
+        .transfers_popup => |hit| {
+            if (orientation == .vertical_scroll) hit.popup.scrollWheel(ui_scroll.axisDeltaPx(delta, delta_discrete));
+            return;
+        },
         .mini_map => return,
         .control_center => |hit| {
             if (orientation == .vertical_scroll) {

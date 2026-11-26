@@ -272,6 +272,8 @@ keyboard_backlight_watch: ?*@import("keyboard_backlight.zig") = null,
 /// and nested sessions.
 app_scopes: ?*@import("session/app_scope.zig").Scopes = null,
 network: ?*@import("network/manager.zig").Manager = null,
+/// The Files transfers subscription behind the Transfers taskbar item.
+transfers: ?*@import("transfers/client.zig").Client = null,
 /// The system proxy (GSettings), read when the first child is spawned and
 /// replaced when Settings applies a new one.
 proxy: @import("network/proxy.zig").Config = .{},

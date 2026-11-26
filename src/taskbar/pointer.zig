@@ -234,6 +234,9 @@ pub fn pointerPress(bar: *Taskbar, sx: f64, sy: f64) void {
             if (@as(TrayKind, @enumFromInt(i)) == .power) {
                 if (Output.fromWlr(bar.wlr_output)) |out| out.openPowerMenu();
             }
+            if (@as(TrayKind, @enumFromInt(i)) == .transfers) {
+                if (Output.fromWlr(bar.wlr_output)) |out| out.toggleTransfers();
+            }
             if (@as(TrayKind, @enumFromInt(i)) == .desktop_mode) {
                 @import("../config_runtime/workspace_controls.zig").toggleMode(bar.server);
             }

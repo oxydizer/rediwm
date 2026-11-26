@@ -430,6 +430,7 @@ pub const Coordinator = struct {
         record.kind = if (request.mode == .move) .move else .copy;
         record.source_count = @intCast(@min(request.sources.len, std.math.maxInt(u32)));
         if (request.sources.len > 0) record.setLabel(std.fs.path.basename(request.sources[0].path));
+        record.setDestination(request.destination_path);
 
         const manager = &self.runtime.manager;
         const job_id = manager.createJob(routed.window_id) catch |err|

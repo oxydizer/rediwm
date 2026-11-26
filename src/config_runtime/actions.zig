@@ -111,6 +111,7 @@ fn openSystemMonitor(server: *Server) void {
         output.closeStartMenu();
         output.closePowerMenu();
         output.closeWifi();
+        output.closeTransfers();
         output.closeBattery();
         output.closeCalendar();
     }

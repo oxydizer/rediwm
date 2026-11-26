@@ -46,6 +46,7 @@ pub const OpenRequest = struct {
     select: ?[]u8 = null,
     transfers: bool = false,
     activation_token: ?[]u8 = null,
+    job_id: ?u64 = null,
 
     pub fn deinit(self: *OpenRequest, allocator: Allocator) void {
         allocator.free(self.dir);
@@ -60,7 +61,7 @@ pub const OpenRequest = struct {
         const select = if (open.select) |path| try allocator.dupe(u8, path) else null;
         errdefer if (select) |path| allocator.free(path);
         const token = if (open.activation_token) |t| try allocator.dupe(u8, t) else null;
-        return .{ .dir = dir, .select = select, .transfers = open.transfers, .activation_token = token };
+        return .{ .dir = dir, .select = select, .transfers = open.transfers, .activation_token = token, .job_id = open.job_id };
     }
 };
 

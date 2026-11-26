@@ -151,6 +151,15 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     const run_network_tests = b.addRunArtifact(network_tests);
     test_step.dependOn(&run_network_tests.step);
     b.step("test-network", "Test NetworkManager address and profile parsing").dependOn(&run_network_tests.step);
+    // The Transfers panel's job model, fed endpoint lines without a compositor.
+    const transfers_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/transfers/model.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) });
+    const run_transfers_tests = b.addRunArtifact(transfers_tests);
+    test_step.dependOn(&run_transfers_tests.step);
+    b.step("test-transfers", "Test the Transfers panel's job model").dependOn(&run_transfers_tests.step);
     const printers_integration = b.addSystemCommand(&.{"python3"});
     printers_integration.addFileArg(b.path("tests/printers.py"));
     printers_integration.step.dependOn(b.getInstallStep());
@@ -331,6 +340,8 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
     const run_lifecycle_tests = b.addRunArtifact(lifecycle_tests);
     b.step("test-lifecycle", "Check callback ownership under allocation failure").dependOn(&run_lifecycle_tests.step);
     test_step.dependOn(&run_ui_tests.step);
+    const panel_tests = b.addTest(.{ .root_module = ui_tests_module, .filters = &.{"transfers panel"} });
+    b.step("test-transfers-panel", "Paint the Transfers panel and icon off screen").dependOn(&b.addRunArtifact(panel_tests).step);
     const lock_tests = b.addTest(.{ .root_module = ui_tests_module, .filters = &.{ "lock ", "greeter " } });
     const run_lock_tests = b.addRunArtifact(lock_tests);
     const lock_step = b.step("test-lock", "Test lock isolation, password editing, rendering, PAM outcomes and the rediwm-dm greeter");

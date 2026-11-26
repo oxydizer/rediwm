@@ -139,6 +139,10 @@ msgstr ""
 msgid "A USB character device is not applicable to this connection."
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "A file already exists"
+msgstr ""
+
 #: src/control_center/sections/keys.zig
 msgid "A file already exists at that location. Choose another name."
 msgstr ""
@@ -804,6 +808,10 @@ msgstr ""
 msgid "Available Devices"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Avg {average} · Peak {peak}"
+msgstr ""
+
 #: src/files/app_torrents.zig
 msgid "Back"
 msgstr ""
@@ -1168,6 +1176,10 @@ msgstr ""
 msgid "Cancelled"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Cancelling…"
+msgstr ""
+
 #: src/calculator/model.zig
 msgid "Cannot divide by zero"
 msgstr ""
@@ -1516,6 +1528,10 @@ msgstr ""
 msgid "Clear Recent"
 msgstr ""
 
+#: src/transfers/popup.zig
+msgid "Clear finished ({count})"
+msgstr ""
+
 #: src/control_center/search.zig
 msgid "Clear search"
 msgstr ""
@@ -1749,6 +1765,10 @@ msgid "Copied {count} item"
 msgid_plural "Copied {count} items"
 msgstr[0] ""
 msgstr[1] ""
+
+#: src/transfers/popup_rows.zig
+msgid "Copies, moves and extractions in Files appear here."
+msgstr ""
 
 #: src/desktop/app_actions.zig
 msgid "Copy"
@@ -2058,7 +2078,7 @@ msgstr ""
 msgid "Could not read permissions"
 msgstr ""
 
-#: src/files/worker.zig
+#: src/files/worker_scan.zig
 msgid "Could not read recent files"
 msgstr ""
 
@@ -2300,6 +2320,10 @@ msgstr ""
 
 #: src/desktop/watcher.zig
 msgid "Could not {operation}: {error}"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Counting…"
 msgstr ""
 
 #: src/control_center/sections/printers_add.zig
@@ -3296,6 +3320,14 @@ msgstr ""
 msgid "Finish the running file operation first"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Finished"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Finished with errors"
+msgstr ""
+
 #: src/files/app_torrents.zig
 msgid "Finishing…"
 msgstr ""
@@ -3440,7 +3472,7 @@ msgstr ""
 msgid "Folder created"
 msgstr ""
 
-#: src/files/worker.zig
+#: src/files/worker_scan.zig
 msgid "Folder not found"
 msgstr ""
 
@@ -4150,6 +4182,10 @@ msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Last job"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Last minute"
 msgstr ""
 
 #: src/control_center/sections/bluetooth.zig
@@ -5144,6 +5180,10 @@ msgstr ""
 msgid "No terminal directory"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "No transfers"
+msgstr ""
+
 #: src/files/app_torrents.zig
 msgid "No transfers yet. Add a .torrent file or magnet link."
 msgstr ""
@@ -5184,7 +5224,7 @@ msgstr ""
 msgid "Normal"
 msgstr ""
 
-#: src/files/worker.zig
+#: src/files/worker_scan.zig
 msgid "Not a directory"
 msgstr ""
 
@@ -5359,6 +5399,10 @@ msgstr ""
 
 #: src/files/app.zig
 msgid "Open File"
+msgstr ""
+
+#: src/transfers/popup.zig
+msgid "Open Files"
 msgstr ""
 
 #: src/editor/app.zig
@@ -5629,12 +5673,20 @@ msgstr ""
 msgid "Pause"
 msgstr ""
 
+#: src/transfers/popup.zig
+msgid "Pause all"
+msgstr ""
+
 #: src/system_monitor/app.zig
 msgid "Pause updates"
 msgstr ""
 
 #: src/files/app_torrent_rows.zig
 msgid "Paused"
+msgstr ""
+
+#: src/transfers/popup_rows.zig
+msgid "Peak {speed}"
 msgstr ""
 
 #: src/printing/cups.zig
@@ -6145,6 +6197,10 @@ msgstr ""
 msgid "Queue: {name}"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Queued"
+msgstr ""
+
 #: src/start_menu/menu_cards.zig
 msgid "Quick Launch"
 msgstr ""
@@ -6461,6 +6517,10 @@ msgstr ""
 msgid "Resolve the reported printer problem before resuming the queue."
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Resolve…"
+msgstr ""
+
 #: src/session/lock_view.zig
 msgid "Response"
 msgstr ""
@@ -6537,6 +6597,10 @@ msgstr ""
 
 #: src/files/app_torrent_rows.zig
 msgid "Resume"
+msgstr ""
+
+#: src/transfers/popup.zig
+msgid "Resume all"
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -8615,6 +8679,10 @@ msgstr ""
 msgid "Waiting for the device…"
 msgstr ""
 
+#: src/transfers/popup_rows.zig
+msgid "Waiting for {place}…"
+msgstr ""
+
 #: src/polkit/dialog.zig
 msgid "Waiting…"
 msgstr ""
@@ -9660,6 +9728,10 @@ msgid "{columns} × {rows}  ·  {n} screen total"
 msgid_plural "{columns} × {rows}  ·  {n} screens total"
 msgstr[0] ""
 msgstr[1] ""
+
+#: src/transfers/popup.zig
+msgid "{count} active"
+msgstr ""
 
 #: src/files/app_trash.zig
 msgid "{count} could not be restored"

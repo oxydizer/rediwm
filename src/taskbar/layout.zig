@@ -142,6 +142,9 @@ pub fn relayout(bar: *Taskbar, output_box: wlr.Box) void {
     if (Output.fromWlr(bar.wlr_output)) |output| if (output.wifi_popup) |popup| {
         if (bar.itemBox(.wifi) == null) output.closeWifi() else popup.refresh();
     };
+    if (Output.fromWlr(bar.wlr_output)) |output| if (output.transfers_popup) |popup| {
+        if (bar.itemBox(.transfers) == null) output.closeTransfers() else popup.refresh();
+    };
     if (Output.fromWlr(bar.wlr_output)) |output| if (output.battery_popup) |popup| {
         if (bar.itemBox(.battery) == null) output.closeBattery() else popup.refresh();
     };
@@ -178,7 +181,7 @@ pub fn calculateLayout(bar: *Taskbar, window_count: usize) taskbar_items.Layout 
     const capture_width: f32 = if (bar.capturing()) @floatFromInt(bar.captureWidth()) else 0;
     const windows_width = if (window_count == 0) 0 else @as(f32, @floatFromInt(window_count)) * @max(@as(f32, @floatFromInt(chipSize())), ui_theme.global.chip_width) +
         @as(f32, @floatFromInt(window_count - 1)) * @as(f32, @floatFromInt(chipGap()));
-    return taskbar_items.arrange(items, @floatFromInt(startButtonLeft()), @floatFromInt(bar.box.width - rightPad()), @as(f32, @floatFromInt(bar.box.width)) / 2, .{ if (bar.battery_state.percent != null) battery_width else 0, @floatFromInt(trayHit()), @floatFromInt(trayHit()), bar.clockColumnWidth(), @floatFromInt(buttonSize()), windows_width, app_width, @floatFromInt(trayHit()), capture_width, @floatFromInt(trayHit()), @floatFromInt(trayHit()), @floatFromInt(trayHit()) }, tray_gap, clock_gap);
+    return taskbar_items.arrange(items, @floatFromInt(startButtonLeft()), @floatFromInt(bar.box.width - rightPad()), @as(f32, @floatFromInt(bar.box.width)) / 2, .{ if (bar.battery_state.percent != null) battery_width else 0, @floatFromInt(trayHit()), @floatFromInt(trayHit()), bar.clockColumnWidth(), @floatFromInt(buttonSize()), windows_width, app_width, @floatFromInt(trayHit()), capture_width, @floatFromInt(trayHit()), @floatFromInt(trayHit()), @floatFromInt(trayHit()), @floatFromInt(trayHit()) }, tray_gap, clock_gap);
 }
 
 pub fn itemBox(bar: *Taskbar, item: taskbar_items.Item) ?wlr.Box {
@@ -203,6 +206,7 @@ pub fn trayItem(index: usize) taskbar_items.Item {
         .wired => .wired,
         .input_source => .input_source,
         .desktop_mode => .desktop_mode,
+        .transfers => .transfers,
     };
 }
 
