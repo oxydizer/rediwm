@@ -7,6 +7,8 @@ const ui = @import("ui").cairo;
 const theme = @import("ui").theme;
 const field = @import("ui").widgets.field;
 const button = @import("ui").widgets.button;
+const layout = @import("layout.zig");
+const text = @import("../ui/text.zig");
 const Rect = @import("ui").context_menu.Rect;
 const Editor = @import("../files/editor.zig").Editor;
 const App = @import("app.zig").App;
@@ -42,17 +44,87 @@ fn visible(self: *App, control: Control) bool {
     };
 }
 
-pub fn searchBox(self: *App, control: Control) Rect {
-    const w: f64 = @floatFromInt(self.w);
-    return switch (control) {
-        .query => .{ .x = 12, .y = 43, .w = w - 282, .h = 32 },
-        .next => .{ .x = w - 262, .y = 43, .w = 86, .h = 32 },
-        .toggle => .{ .x = w - 170, .y = 43, .w = 116, .h = 32 },
-        .close => .{ .x = w - 46, .y = 43, .w = 34, .h = 32 },
-        .replacement => .{ .x = 12, .y = 83, .w = w - 282, .h = 32 },
-        .replace => .{ .x = w - 262, .y = 83, .w = 116, .h = 32 },
-        .replace_all => .{ .x = w - 140, .y = 83, .w = 128, .h = 32 },
+/// Resolve the editor's complete client geometry from shared widget metrics.
+/// Text widths use the same Manrope face, button size and output scale as the
+/// shared button painter.
+pub fn editorLayout(self: *App) layout.Layout {
+    const palette = theme.shellPalette();
+    const scale: f32 = @floatFromInt(@max(self.scale, 1));
+
+    const next_options: button.Options = .{
+        .label = tr("Next"),
+        .variant = .ghost,
+        .size = .sm,
     };
+    const toggle_options: button.Options = .{
+        .label = tr("Replace"),
+        .leading_icon = .chevron_down,
+        .variant = .ghost,
+        .size = .sm,
+    };
+    const close_options: button.Options = .{
+        .label = tr("Close"),
+        .icon = .close,
+        .variant = .ghost,
+        .size = .sm,
+    };
+    const replace_options: button.Options = .{
+        .label = tr("Replace"),
+        .variant = .ghost,
+        .size = .sm,
+    };
+    const replace_all_options: button.Options = .{
+        .label = tr("Replace All"),
+        .variant = .ghost,
+        .size = .sm,
+    };
+
+    const measureButton = struct {
+        fn run(options: button.Options, palette_value: @TypeOf(palette), output_scale: f32) layout.Size {
+            const label_width = text.measureWidthF(
+                options.label,
+                .manrope,
+                palette_value.button_font_size,
+                output_scale,
+            ) catch 0;
+            const size = button.naturalSize(options, palette_value, label_width);
+            return .{
+                .w = @floatCast(size.w),
+                .h = @floatCast(size.h),
+            };
+        }
+    }.run;
+
+    return layout.Layout.resolve(.{
+        .width = @floatFromInt(self.w),
+        .height = @floatFromInt(self.h),
+        .editor_owned_tabs = !self.strip_in_titlebar,
+        .search = if (!self.find_open) .closed else if (self.replace_open) .replace else .find,
+    }, .{
+        .field = .{
+            .w = 0,
+            .h = @floatCast(field.metrics(.md, theme.global).height),
+        },
+        .next = measureButton(next_options, palette, scale),
+        .toggle = measureButton(toggle_options, palette, scale),
+        .close = measureButton(close_options, palette, scale),
+        .replace = measureButton(replace_options, palette, scale),
+        .replace_all = measureButton(replace_all_options, palette, scale),
+    });
+}
+
+pub fn searchBox(self: *App, control: Control) Rect {
+    const resolved = self.editorLayout();
+    const box = switch (control) {
+        .query => resolved.query,
+        .next => resolved.next,
+        .toggle => resolved.toggle,
+        .close => resolved.close,
+        .replacement => resolved.replacement,
+        .replace => resolved.replace,
+        .replace_all => resolved.replace_all,
+    };
+    return .{ .x = box.x, .y = box.y, .w = box.w, .h = box.h };
 }
 
 pub fn searchHit(self: *App, x: f64, y: f64) ?Control {

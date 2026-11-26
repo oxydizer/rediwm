@@ -26,11 +26,11 @@ pub fn topInset(self: *const App) f64 {
 }
 
 pub fn viewTop(self: *App) f64 {
-    return self.topInset() + if (self.find_open) @as(f64, if (self.replace_open) 80 else 40) else 0;
+    return self.editorLayout().viewport.y;
 }
 
 pub fn viewHeight(self: *App) f64 {
-    return @max(1, @as(f64, @floatFromInt(self.h)) - self.viewTop() - status_h - 8);
+    return self.editorLayout().viewport.h;
 }
 
 pub fn cancelDrag(self: *App) void {

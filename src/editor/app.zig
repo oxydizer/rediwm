@@ -287,6 +287,7 @@ pub const App = struct {
     pub const resize = app_view.resize;
     pub const viewTop = app_view.viewTop;
     pub const topInset = app_view.topInset;
+    pub const editorLayout = app_search.editorLayout;
     pub const openMenuAt = app_paint.openMenuAt;
     pub const viewHeight = app_view.viewHeight;
     pub const cancelDrag = app_view.cancelDrag;
