@@ -77,12 +77,15 @@ measured against all four with `bench-files-io` (see its settings at the top of
   extraction job now defers its syncs like a copy job; and in any deferred
   job a new folder or symlink no longer syncs its parent
   (`io_directory`/`io_symlink.makeDeferredInput`). Sandbox: extraction
-  6.9 → about 4 s.
+  6.9 → about 4 s. On the user's disks, before → after #84: extraction on
+  the NVMe 80.3 → 0.95 s, on the SATA SSD 48.0 → 0.88 s, on the USB hard
+  disk 54.9 → 14.2 s; the copies beside it gained too (USB small files
+  48.6 → 20.7 s), since the extraction's syncs no longer held the disk.
 
 ## 4. Next
 
-1. **Measure on real disks** again after #84, and on the NVMe, which was
-   not in the first run.
+1. **Profile the USB hard disk**, now the slowest by far (small files 20.7 s,
+   large copies 25.3 s for 512 MiB): what share is the disk itself.
 2. **Fair turns by time, not by unit**, if the bound above proves too tight on
    real disks: let the round-robin account for a job's worker time.
 3. **One reusable buffer per job** for the buffered fallback: allocated when
