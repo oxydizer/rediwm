@@ -1,4 +1,4 @@
-//! Service tasks on the coordinator: handing blocking work to the task
+//! Service tasks on the coordinator: handing blocking work to its lane's
 //! pool and applying what comes back (threading §8). Methods of
 //! `Coordinator`, aliased there.
 const std = @import("std");
@@ -9,9 +9,19 @@ const io_service = @import("io_service.zig");
 const Coordinator = @import("io_coordinator.zig").Coordinator;
 const JobId = io_service.JobId;
 
+const Lane = struct { pool: *io_service_tasks.Pool, backlog: *std.ArrayList(io_service_tasks.Task) };
+
+fn lane(self: *Coordinator, which: io_service_tasks.Lane) Lane {
+    return switch (which) {
+        .tasks => .{ .pool = self.tasks, .backlog = &self.task_backlog },
+        .staging => .{ .pool = self.staging_tasks, .backlog = &self.staging_backlog },
+    };
+}
+
 pub fn submitTask(self: *Coordinator, task: io_service_tasks.Task) void {
-    if (self.task_backlog.items.len == 0 and self.tasks.trySubmit(task)) return;
-    self.task_backlog.append(self.allocator, task) catch {
+    const into = lane(self, io_service_tasks.laneOf(task));
+    if (into.backlog.items.len == 0 and into.pool.trySubmit(task)) return;
+    into.backlog.append(self.allocator, task) catch {
         // Out of memory with a full pool: give the work up visibly.
         std.log.err("Files service task dropped: out of memory", .{});
         switch (task) {
@@ -38,8 +48,13 @@ pub fn submitTask(self: *Coordinator, task: io_service_tasks.Task) void {
 }
 
 pub fn pumpTasks(self: *Coordinator) void {
-    _ = self.tasks.drainWake();
-    while (self.tasks.tryPopResult()) |result_value| {
+    pumpLane(self, lane(self, .tasks));
+    pumpLane(self, lane(self, .staging));
+}
+
+fn pumpLane(self: *Coordinator, from: Lane) void {
+    _ = from.pool.drainWake();
+    while (from.pool.tryPopResult()) |result_value| {
         var result = result_value;
         defer result.deinit(self.allocator);
         switch (result) {
@@ -58,9 +73,9 @@ pub fn pumpTasks(self: *Coordinator) void {
             .scanned => |*scanned| self.finishScan(scanned.token, &scanned.scan),
         }
     }
-    while (self.task_backlog.items.len > 0) {
-        if (!self.tasks.trySubmit(self.task_backlog.items[0])) break;
-        _ = self.task_backlog.orderedRemove(0);
+    while (from.backlog.items.len > 0) {
+        if (!from.pool.trySubmit(from.backlog.items[0])) break;
+        _ = from.backlog.orderedRemove(0);
     }
 }
 
@@ -90,7 +105,12 @@ pub fn discardDeleteResult(raw: ?*anyopaque, handle: io_resource_ledger.Handle) 
 }
 
 pub fn discardTaskBacklog(self: *Coordinator) void {
-    for (self.task_backlog.items) |task| switch (task) {
+    discardBacklog(self, &self.task_backlog);
+    discardBacklog(self, &self.staging_backlog);
+}
+
+fn discardBacklog(self: *Coordinator, backlog: *std.ArrayList(io_service_tasks.Task)) void {
+    for (backlog.items) |task| switch (task) {
         .prepare_transfer => |prepare| prepare.payload.deinit(),
         .delete_tree => |delete| {
             self.allocator.free(delete.path);
@@ -99,6 +119,6 @@ pub fn discardTaskBacklog(self: *Coordinator) void {
         .request => |request| request.payload.deinit(),
         .scan_staging => |scan| self.allocator.free(scan.path),
     };
-    self.task_backlog.clearRetainingCapacity();
+    backlog.clearRetainingCapacity();
 }
 
