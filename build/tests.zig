@@ -402,6 +402,18 @@ pub fn addZig(ctx: Context, session: Session) ZigTests {
         "Measure UI-thread cost of the Files I/O service under heavy I/O (REDIWM_RUN_BENCHMARKS=1)",
     ).dependOn(&run_io_bench.step);
 
+    // The copy path alone (io_copy.execute), without the service.
+    const copy_bench_tests = b.addTest(.{
+        .root_module = files_tests.root_module,
+        .filters = &.{"files copy path benchmark"},
+    });
+    const run_copy_bench = b.addRunArtifact(copy_bench_tests);
+    run_copy_bench.has_side_effects = true;
+    b.step(
+        "bench-files-copy",
+        "Measure the Files copy path per file set and strategy (REDIWM_RUN_BENCHMARKS=1)",
+    ).dependOn(&run_copy_bench.step);
+
     const terminal_integration = b.addSystemCommand(&.{"env"});
     terminal_integration.addPrefixedDirectoryArg("REDIWM_TEST_BIN=", support.installed(.bin, ""));
     terminal_integration.addArg("python3");

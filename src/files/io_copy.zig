@@ -65,6 +65,27 @@ const flag_replacement: u8 = 1;
 const flag_deferred_sync: u8 = 2;
 const replacement_marker_header_size = 13;
 
+/// The read/write fallback's buffer: one per worker thread, reused by every
+/// file it copies. A unit reads and writes within itself, so nothing in it
+/// outlives the unit; a file is no longer given a buffer of its own. It
+/// grows to the largest size class asked for, at most `max_buffer_size`, and
+/// goes with the thread (`releaseThreadBuffer`, from the worker pool).
+threadlocal var thread_buffer: []u8 = &.{};
+
+fn threadBuffer(size: usize) ?[]u8 {
+    if (thread_buffer.len < size) {
+        const grown = std.heap.c_allocator.alloc(u8, size) catch return null;
+        releaseThreadBuffer();
+        thread_buffer = grown;
+    }
+    return thread_buffer[0..size];
+}
+
+pub fn releaseThreadBuffer() void {
+    if (thread_buffer.len > 0) std.heap.c_allocator.free(thread_buffer);
+    thread_buffer = &.{};
+}
+
 pub fn bufferedBufferSize(file_size: u64) usize {
     if (file_size == 0) return 0;
     const target: usize = if (file_size <= 64 * 1024)
@@ -299,9 +320,8 @@ fn writeContinuationHeader(bytes: []u8, state: Continuation) void {
 fn encodeContinuation(
     allocator: Allocator,
     state: Continuation,
-    buffer_size: usize,
 ) !executor.OwnedPayload {
-    const bytes = try allocator.alloc(u8, continuation_size + buffer_size);
+    const bytes = try allocator.alloc(u8, continuation_size);
     writeContinuationHeader(bytes, state);
     return .{ .allocator = allocator, .bytes = bytes };
 }
@@ -323,13 +343,8 @@ fn decodeContinuation(payload: *const executor.OwnedPayload) !Continuation {
     const original_fd: c_int = @bitCast(readUnsigned(u32, bytes[31..35]));
     const offset = readUnsigned(u64, bytes[12..20]);
     const size = readUnsigned(u64, bytes[20..28]);
-    const expected_buffer_size: usize = if (strategy == .buffered)
-        bufferedBufferSize(size)
-    else
-        0;
-    if (bytes.len != continuation_size + expected_buffer_size) {
-        return error.InvalidContinuation;
-    }
+    // The header alone: buffers belong to worker threads (`threadBuffer`).
+    if (bytes.len != continuation_size) return error.InvalidContinuation;
     const replacement = bytes[35] == 1;
     if (source_fd < 0 or destination_fd < 0 or parent_fd < 0 or
         (replacement and original_fd < 0) or
@@ -557,33 +572,17 @@ fn failed(
     return completion(item, .failed, null, null);
 }
 
-fn failedWithScratch(
-    item: executor.WorkItem,
-    state: ?Continuation,
-    destination_name: [*:0]const u8,
-    scratch: *?executor.OwnedPayload,
-) executor.WorkCompletion {
-    if (scratch.*) |*payload| payload.deinit();
-    scratch.* = null;
-    return failed(item, state, destination_name);
-}
-
 fn yieldForFlush(
     allocator: Allocator,
     item: executor.WorkItem,
     state_arg: Continuation,
     destination_name: [*:0]const u8,
-    scratch: *?executor.OwnedPayload,
 ) executor.WorkCompletion {
     var state = state_arg;
     state.flushing = true;
-    const saved = if (scratch.*) |*payload| blk: {
-        writeContinuationHeader(payload.bytes.?[0..continuation_size], state);
-        break :blk payload.take();
-    } else encodeContinuation(allocator, state, 0) catch {
+    const saved = encodeContinuation(allocator, state) catch {
         return failed(item, state, destination_name);
     };
-    scratch.* = null;
     return completionWithProgress(
         item,
         .yielded,
@@ -601,7 +600,6 @@ fn finishFlushing(
     destination_name: [*:0]const u8,
     original_destination_name: [*:0]const u8,
     deferred_sync: bool,
-    scratch: *?executor.OwnedPayload,
 ) executor.WorkCompletion {
     var state = state_arg;
     existing_mod.keepTimes(state.source_fd, state.destination_fd);
@@ -610,16 +608,9 @@ fn finishFlushing(
     if (!deferred_sync and (!syncDescriptor(state.destination_fd) or
         !syncDescriptor(state.parent_fd)))
     {
-        return failedWithScratch(
-            item,
-            state,
-            destination_name,
-            scratch,
-        );
+        return failed(item, state, destination_name);
     }
 
-    if (scratch.*) |*payload| payload.deinit();
-    scratch.* = null;
 
     if (state.replacement) {
         const marker = makeReplacementMarker(
@@ -762,7 +753,6 @@ fn executeUnit(
     const owned_destination_name =
         operation_paths.staging_name orelse operation_paths.destination_name;
 
-    var scratch_payload: ?executor.OwnedPayload = null;
     var state: Continuation = undefined;
     var has_state = false;
 
@@ -772,13 +762,7 @@ fn executeUnit(
             item.continuation = null;
             return completion(item, .failed, null, null);
         };
-        // Buffered continuations carry their reusable scratch allocation.
-        // Transfer it with the descriptor state across worker dispatches.
-        if (state.strategy == .buffered) {
-            scratch_payload = saved.take();
-        } else {
-            saved.deinit();
-        }
+        saved.deinit();
         item.continuation = null;
         has_state = true;
     } else {
@@ -941,9 +925,7 @@ fn executeUnit(
                 item,
                 state,
                 owned_destination_name,
-                operation_paths,
-                &scratch_payload,
-            );
+                operation_paths);
         }
 
         const clone_errno = std.c._errno().*;
@@ -971,9 +953,7 @@ fn executeUnit(
                 item,
                 state,
                 owned_destination_name,
-                operation_paths,
-                &scratch_payload,
-            );
+                operation_paths);
         }
     }
 
@@ -986,23 +966,16 @@ fn executeUnit(
             state,
             owned_destination_name,
             operation_paths.destination_name,
-            operation_paths.deferred_sync,
-            &scratch_payload,
-        );
+            operation_paths.deferred_sync);
     }
 
     const unit_started = monotonicNowNs();
     const unit_end = state.offset +| unit_bytes;
     while (state.offset < state.size) {
-        switch (copyChunk(allocator, &state, &scratch_payload, metrics, item.profile_enabled)) {
+        switch (copyChunk(&state, metrics, item.profile_enabled)) {
             .copied => {},
             .interrupted => break,
-            .failed => return failedWithScratch(
-                item,
-                state,
-                owned_destination_name,
-                &scratch_payload,
-            ),
+            .failed => return failed(item, state, owned_destination_name),
         }
         if (state.offset >= unit_end or
             monotonicNowNs() - unit_started >= unit_ns) break;
@@ -1014,23 +987,12 @@ fn executeUnit(
             item,
             state,
             owned_destination_name,
-            operation_paths,
-            &scratch_payload,
-        );
+            operation_paths);
     }
 
-    const saved = if (scratch_payload) |*payload| blk: {
-        writeContinuationHeader(payload.bytes.?[0..continuation_size], state);
-        break :blk payload.take();
-    } else encodeContinuation(allocator, state, 0) catch {
-        return failedWithScratch(
-            item,
-            state,
-            owned_destination_name,
-            &scratch_payload,
-        );
+    const saved = encodeContinuation(allocator, state) catch {
+        return failed(item, state, owned_destination_name);
     };
-    scratch_payload = null;
     return completionWithProgress(
         item,
         .yielded,
@@ -1050,7 +1012,6 @@ fn toFlush(
     state: Continuation,
     destination_name: [*:0]const u8,
     operation_paths: anytype,
-    scratch: *?executor.OwnedPayload,
 ) executor.WorkCompletion {
     if (operation_paths.deferred_sync and !state.replacement) {
         return finishFlushing(
@@ -1060,10 +1021,9 @@ fn toFlush(
             destination_name,
             operation_paths.destination_name,
             true,
-            scratch,
         );
     }
-    return yieldForFlush(allocator, item, state, destination_name, scratch);
+    return yieldForFlush(allocator, item, state, destination_name);
 }
 
 const ChunkResult = enum { copied, interrupted, failed };
@@ -1071,9 +1031,7 @@ const ChunkResult = enum { copied, interrupted, failed };
 /// Copy one chunk at the state's offset, switching to the buffered strategy
 /// when `copy_file_range` is not supported.
 fn copyChunk(
-    allocator: Allocator,
     state: *Continuation,
-    scratch: *?executor.OwnedPayload,
     metrics: *executor.CopyMetrics,
     profile_enabled: bool,
 ) ChunkResult {
@@ -1110,14 +1068,7 @@ fn copyChunk(
     defer if (profile_enabled) {
         metrics.buffered_ns +|= monotonicNowNs() - buffered_started;
     };
-    if (scratch.* == null) {
-        scratch.* = encodeContinuation(
-            allocator,
-            state.*,
-            bufferedBufferSize(state.size),
-        ) catch return .failed;
-    }
-    const buffer = scratch.*.?.bytes.?[continuation_size..];
+    const buffer = threadBuffer(bufferedBufferSize(state.size)) orelse return .failed;
     const wanted: usize = @intCast(@min(remaining, @as(u64, buffer.len)));
     metrics.buffered_read_calls +|= 1;
     const count = c.read(state.source_fd, buffer.ptr, wanted);

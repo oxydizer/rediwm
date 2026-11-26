@@ -121,6 +121,11 @@ const PoolWorkItem = struct {
     pub fn stallKey(self: PoolWorkItem) u64 {
         return self.item.token.job_id;
     }
+
+    /// A worker thread is leaving: its copy buffer goes with it.
+    pub fn threadExit() void {
+        @import("io_copy.zig").releaseThreadBuffer();
+    }
 };
 
 const PoolCompletion = struct {
