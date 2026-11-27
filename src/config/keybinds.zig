@@ -131,6 +131,7 @@ pub const Keybind = struct {
     modifiers: ModifierMask = .{},
     sym: xkb.Keysym,
     action: Action,
+    inherited: bool = false,
 };
 
 pub fn parseAction(str: []const u8, allocator: Allocator) !Action {

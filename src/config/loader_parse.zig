@@ -499,6 +499,7 @@ pub fn parseKeybindsOnly(allocator: Allocator, bytes: []const u8) ![]Keybind {
             .modifiers = spec.modifiers,
             .sym = spec.sym,
             .action = action,
+            .inherited = true,
         });
     }
     return list.items;
