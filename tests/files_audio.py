@@ -32,8 +32,8 @@ def write_tone(path, seconds):
         w.writeframes(b"".join(struct.pack("<hh", 800, 800) for _ in range(22050 * seconds)))
 
 
-SONG_X, SONG_Y = 503, 168
-LIST_NAME_X, LIST_SONG_Y = 287, 210  # song.wav's name in list view
+SONG_X, SONG_Y = 503, 138
+LIST_NAME_X, LIST_SONG_Y = 287, 180  # song.wav's name in list view
 
 
 def run():
@@ -170,29 +170,29 @@ def run():
                     click(*found)
                     wait_for(lambda: status() == 's "Playing"', "third click did not resume")
                     # The toolbar follows playback and remains usable while paused.
-                    click(338, 82)
+                    click(338, 62)
                     wait_for(lambda: status() == 's "Paused"', "toolbar did not pause")
                     # Narrow inline bar: Previous, Play, Next, then the title and
-                    # time above the Settings slider (x 402-578), Stop, Playlist.
-                    click(500, 90)
+                    # time above the Settings slider (x 402–594), Stop, Playlist.
+                    click(500, 70)
                     wait_for(lambda: int(mpris("Position").split()[1]) > 10_000_000,
                              "toolbar seek did not move position")
                     # The shared scrollbar thumb also supports dragging outside
                     # its gutter, without resuming a paused track.
-                    move(500, 89)
+                    move(500, 69)
                     action("pointer_button", {"button": 272, "pressed": True})
                     move(400, 110)
                     action("pointer_button", {"button": 272, "pressed": False})
                     wait_for(lambda: int(mpris("Position").split()[1]) < 10_000_000,
                              "scrollbar drag did not seek backwards")
                     assert status() == 's "Paused"'
-                    click(500, 89)
+                    click(500, 69)
                     wait_for(lambda: int(mpris("Position").split()[1]) > 10_000_000,
                              "scrollbar click did not seek forwards")
                     shot("toolbar-paused")
                     # Previous restarts a track that has played past 3 s; the
                     # first track has nothing before it either way.
-                    click(304, 82)
+                    click(304, 62)
                     wait_for(lambda: int(mpris("Position").split()[1]) < 3_000_000,
                              "Previous did not restart the track")
                     assert "song.wav" in mpris("Metadata"), mpris("Metadata")
@@ -200,11 +200,11 @@ def run():
                     click(92, 28)  # Up to Home
                     shot("toolbar-other-folder")
                     assert status() == 's "Paused"'
-                    click(644, 82)
+                    click(660, 62)
                     shot("playlist-other-folder")
                     # Only supported audio appears: song.wav then z-second.wav.
                     # The popup retains Music even though Files now shows Home.
-                    click(430, 196)
+                    click(446, 176)
                     wait_for(lambda: "z-second.wav" in mpris("Metadata"),
                              "playlist did not play the second audio file from Music")
                     # Keyboard navigation reaches tracks below the visible rows.
@@ -215,16 +215,16 @@ def run():
                         action("key", {"keycode": 28, "pressed": pressed})
                     wait_for(lambda: "zz-09.wav" in mpris("Metadata"),
                              "playlist keyboard navigation did not reach last track")
-                    click(644, 82)  # dismiss playlist
+                    click(660, 62)  # dismiss playlist
                     # The last track has no Next; Previous early in a track
                     # goes back one, and Next returns.
-                    move(372, 82)
+                    move(372, 62)
                     assert cursor() != "pointer", "Next is enabled on the last track"
-                    click(304, 82)
+                    click(304, 62)
                     wait_for(lambda: "zz-08.wav" in mpris("Metadata"), "Previous did not go back a track")
-                    click(372, 82)
+                    click(372, 62)
                     wait_for(lambda: "zz-09.wav" in mpris("Metadata"), "Next did not advance a track")
-                    click(338, 82)
+                    click(338, 62)
                     wait_for(lambda: status() == 's "Paused"', "playlist track did not pause")
                     # A wide window fits the title and the time pill beside the slider.
                     action("set_window_size", {"id": win["id"], "width": 1200, "height": 540})
@@ -236,9 +236,9 @@ def run():
                     wait_for(lambda: box()["width"] == 560, "Files did not resize")
                     time.sleep(.5)
                     shot("toolbar-narrow")
-                    click(70, 176)
+                    click(70, 146)
                     wait_for(lambda: status() == 's "Playing"', "narrow toolbar did not resume")
-                    click(488, 176)
+                    click(488, 146)
                     wait_for(lambda: status() == "", "toolbar Stop did not exit player")
                     shot("toolbar-stopped")
                     action("set_window_size", {"id": win["id"], "width": 960, "height": 540})
@@ -247,11 +247,11 @@ def run():
                     click(28, 28)  # Back to Music
                     click(*found)
                     wait_for(lambda: status() == 's "Playing"', "play did not restart")
-                    click(338, 82)
+                    click(338, 62)
                     wait_for(lambda: status() == 's "Paused"', "toolbar did not pause restarted track")
-                    click(338, 82)
+                    click(338, 62)
                     wait_for(lambda: status() == 's "Playing"', "toolbar did not resume")
-                    click(726, 82)  # list view: the button sits right of the name
+                    click(734, 62)  # list view: the button sits right of the name
                     time.sleep(.6)
                     shot("list-playing")
                     # Closing Files leaves the player running.
@@ -298,7 +298,7 @@ def run():
                     win = open_files()
                     # Files remembers list view across launches. Switch back
                     # to grid so the preview click targets the song icon.
-                    click(691, 82)
+                    click(704, 62)
                     time.sleep(.6)
                     # An explicit default must not suppress built-in preview.
                     shot("explicit-default-view")
@@ -312,7 +312,7 @@ def run():
                              "explicit default suppressed the audio preview button")
                     assert "song.wav" in mpris("Metadata"), mpris("Metadata")
                     stop_player()
-                    click(726, 82)  # switch to list view
+                    click(734, 62)  # switch to list view
                     click(LIST_NAME_X, LIST_SONG_Y, times=2)
                     wait_for(marker.exists, "the explicit default application was not used")
                     assert marker.read_text() == str(music / "song.wav"), marker.read_text()

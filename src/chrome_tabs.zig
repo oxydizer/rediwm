@@ -28,7 +28,7 @@ pub const layoutHash = title_tabs.layoutHash;
 pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_width: i32, density: f32, scale: f32, strip: Strip, icon: ?icon_service.Entry, clip: ?chrome.Rect) void {
     if (strip.tabs.len == 0) return;
     const g = geometry(logical_width, density, strip);
-    const band: f32 = @floatFromInt((window_chrome.Metrics{ .density = density }).titlebarHeight());
+    const band: f32 = @floatFromInt((window_chrome.Metrics{ .density = density, .layout = strip.layout }).titlebarHeight());
     var renderer = ui.Renderer.init(pixels, width, height, scale);
     if (clip) |c| renderer.damage_clip = .{ .x = @floatFromInt(c.x), .y = @floatFromInt(c.y), .w = @floatFromInt(c.w), .h = @floatFromInt(c.h) };
     const clip_left: usize = if (clip) |c| @intFromFloat(@max(0, @round(@as(f32, @floatFromInt(c.x)) * scale))) else 0;
@@ -63,12 +63,12 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
         if (t.active) fillBox(C, pixels, width, height, scale, clip_left, clip_right, rect.x + 8 * density, band - 2 * density, rect.x + rect.w - 8 * density, band, theme.shellPalette().accent);
         // Tabs carry no icon: the title gets the room. The application's icon
         // stays on the leading button.
-        const left = rect.x + 12 * density;
+        const left = rect.x + if (strip.layout == .files_tabs) 10 else 12 * density;
         var close = g.close(i);
         close.x += rect.x - g.tab(i).x;
         renderer.drawText(left, rect.y, @max(0, close.x - left - 3), rect.h, .{
             .content = if (t.active and strip.notice != .none) (if (strip.notice == .opening) "Opening…" else "No new window; retry +") else t.title,
-            .font_size = theme.global.taskbar_title_size * density,
+            .font_size = if (strip.layout == .files_tabs) 12 else theme.global.taskbar_title_size * density,
             .color = if (t.active) theme.global.window_fg else theme.global.window_dim,
         });
         button.paint(&renderer, close, .{ .variant = .chrome, .size = .sm, .icon = .close, .icon_scale = 0.39, .label = i18n.tr("Close tab") }, .{ .pointer = if (strip.hover == key(.{ .close = t.id })) .hover else .idle });
