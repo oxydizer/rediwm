@@ -234,8 +234,9 @@ fn damageVisibleSizes(self: *App) void {
 }
 
 /// The size column of a folder: measured automatically on fast local disks,
-/// on a click elsewhere. "≈" is the last total while it is measured again;
-/// "≥" means part of it could not be read.
+/// on a click elsewhere. A first scan displays its evolving subtotal;
+/// "≈" identifies retained cached totals during revalidation or after
+/// stopping, and "≥" identifies a scan with unreadable directories.
 pub fn itemSizeDisplay(self: *App, item: ViewItem, buf: *[64]u8) ItemSizeDisplay {
     if (!item.is_dir) {
         return .{ .text = formatSize(item.bytes, buf), .is_running = false };

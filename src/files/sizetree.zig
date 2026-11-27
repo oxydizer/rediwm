@@ -19,6 +19,11 @@
 //! again when a window asks to `revalidate` it and its result is older than
 //! `revalidate_after_ms`, keeping its last total (shown as approximate) while
 //! the walk runs.
+//! A first scan publishes an evolving subtotal, not a complete measurement.
+//! Revalidation retains the previous total until individual directory reads
+//! replace their cached contributions, so that total can also change during
+//! the walk. A completed result describes the last successful scan, not
+//! necessarily the filesystem's current contents.
 const std = @import("std");
 const builtin = @import("builtin");
 const platform = @import("platform");
@@ -50,14 +55,15 @@ pub const Status = enum {
     /// Not measured automatically (a slow, removable or network disk), or
     /// stopped by the user; a click measures it.
     idle,
-    /// Being added up for the first time: `bytes` grows.
+    /// Initial scan in progress: `bytes` is an evolving subtotal.
     measuring,
-    /// Being measured again: `bytes` is the previous total.
+    /// Revalidation in progress: `bytes` retains and updates cached totals.
     revalidating,
-    /// The last total is available while this view has stopped measuring.
+    /// The last total remains available while measurement is stopped.
     stale,
-    /// Part of it could not be read: `bytes` is a lower bound.
+    /// At least one directory was unreadable: `bytes` is the known subtotal.
     partial,
+    /// Last completed scan; not guaranteed current without filesystem watching.
     exact,
 };
 
