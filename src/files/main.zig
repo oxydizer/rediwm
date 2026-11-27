@@ -343,6 +343,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     defer {
         for (windows.items) |window| window.destroy();
         windows.deinit(a);
+        @import("app_folder_size.zig").retireSharedService(&reaper);
     }
 
     // Downloads as jobs, for every window and the shell's panel; a chooser

@@ -36,6 +36,13 @@ pub fn sharedService() ?*sizetree.Service {
     return shared_service;
 }
 
+/// Retire the process-wide cache after every window has released its owner.
+pub fn retireSharedService(reaper: *@import("reaper.zig").Reaper) void {
+    const svc = shared_service orelse return;
+    shared_service = null;
+    @import("reaper.zig").retire(reaper, svc, sizetree.Service.destroy);
+}
+
 pub fn sizeService(self: *App) ?*sizetree.Service {
     if (self.size_service) |svc| return svc;
     // Tests give an App its own; none runs behind their backs.
