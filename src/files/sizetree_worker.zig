@@ -50,6 +50,7 @@ pub fn workerLoop(self: *Service) void {
                         retry = true;
                     }
                 }
+                self.maintainBudget();
             },
         }
         self.working -= 1;

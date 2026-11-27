@@ -4,6 +4,7 @@ const c = @import("c.zig").api;
 const dirwalk = @import("platform").dirwalk;
 const tree = @import("sizetree.zig");
 const demand = @import("sizetree_demand.zig");
+const eviction = @import("sizetree_eviction.zig");
 const Service = tree.Service;
 const Key = tree.Key;
 const no_id = tree.no_id;
@@ -21,6 +22,7 @@ pub const PathEntry = struct {
     automatic: [2]usize = .{ 0, 0 },
     explicit: [2]usize = .{ 0, 0 },
     auto_allowed: bool = true,
+    access_stamp: u64 = 0,
     resolution: ?u64 = null,
     queued: ?tree.Level = null,
     prev: ?*PathEntry = null,
@@ -154,11 +156,13 @@ pub fn resolved(svc: *Service, job: Job, key: ?Key, auto: bool) bool {
     });
     entry.auto_allowed = auto;
     demand.bind(svc, entry, id);
+    eviction.touch(svc, id, entry.access_stamp);
     const node = &svc.nodes.items[id];
     if (node.path_missing and !node.self_pending and !node.paused) {
         node.self_pending = true;
         svc.propagate(id, 0, 1, 0);
     }
     if (node.self_pending and !node.paused and !node.scanning) svc.enqueue(id, node.level);
+    svc.maintainBudget();
     return false;
 }

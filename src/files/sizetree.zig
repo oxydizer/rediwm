@@ -29,6 +29,7 @@ const schedule = @import("sizetree_schedule.zig");
 const reconcile = @import("sizetree_reconcile.zig");
 const demand = @import("sizetree_demand.zig");
 const resolution = @import("sizetree_resolution.zig");
+const eviction = @import("sizetree_eviction.zig");
 
 pub const revalidate_after_ms: i64 = 120_000;
 
@@ -113,6 +114,8 @@ const Node = struct {
     paused: bool = true,
     direct_demand: [2]usize = .{ 0, 0 },
     subtree_demand: usize = 0,
+    recency: u64 = 0,
+    eviction_index: usize = eviction.not_indexed,
     paths: ?*PathEntry = null,
     path_missing: bool = false,
     waiting_for_parent: bool = false,
@@ -152,6 +155,9 @@ pub const Service = struct {
     policy: AutoPolicy,
     /// Results older than this are measured again on a `revalidate` request.
     revalidate_ms: i64 = revalidate_after_ms,
+    live_node_budget: usize,
+    inactive_roots: std.ArrayList(Id) = .empty,
+    access_clock: u64 = 0,
 
     nodes: std.ArrayList(Node) = .empty,
     free_head: Id = no_id,
@@ -171,9 +177,14 @@ pub const Service = struct {
     generation: std.atomic.Value(u64) = .init(0),
 
     pub fn create(allocator: Allocator, threads: usize, policy: AutoPolicy) !*Service {
+        return createWithBudget(allocator, threads, policy, eviction.default_live_node_budget);
+    }
+
+    /// Soft limit on live directory nodes. Demanded trees may exceed it.
+    pub fn createWithBudget(allocator: Allocator, threads: usize, policy: AutoPolicy, live_node_budget: usize) !*Service {
         const self = try allocator.create(Service);
         errdefer allocator.destroy(self);
-        self.* = .{ .allocator = allocator, .policy = policy };
+        self.* = .{ .allocator = allocator, .policy = policy, .live_node_budget = live_node_budget };
         if (c.pthread_mutex_init(&self.mutex, null) != 0) return error.MutexInitFailed;
         errdefer _ = c.pthread_mutex_destroy(&self.mutex);
         if (c.pthread_cond_init(&self.cond, null) != 0) return error.CondInitFailed;
@@ -216,6 +227,7 @@ pub const Service = struct {
             node.children.deinit(a);
         };
         self.nodes.deinit(a);
+        self.inactive_roots.deinit(a);
         self.by_key.deinit(a);
         var it = self.paths.valueIterator();
         while (it.next()) |entry| {
@@ -273,8 +285,11 @@ pub const Service = struct {
         defer self.unlock();
         const entry = self.paths.get(path) orelse return .{};
         const is_stopped = if (owner) |view| demand.stopped(view, entry) else false;
-        if (entry.node == no_id)
-            return .{ .status = if (is_stopped) .idle else if (entry.resolution != null) .measuring else .unknown };
+        if (entry.node == no_id) {
+            if (is_stopped or !entry.auto_allowed) return .{ .status = .idle };
+            return .{ .status = if (entry.resolution != null) .measuring else .unknown };
+        }
+        eviction.touch(self, entry.node, eviction.nextAccess(self));
         const node = &self.nodes.items[entry.node];
         if (node.pending > 0) {
             const status: Status = if (is_stopped or node.paused)
@@ -294,6 +309,13 @@ pub const Service = struct {
         std.debug.assert(node.live and node.parent == no_id);
         return node.subtree_demand != 0;
     }
+
+    /// The inode index has exactly one entry per live node, including reused slots.
+    pub fn liveNodeCount(self: *const Service) usize {
+        return self.by_key.count();
+    }
+
+    pub const maintainBudget = eviction.maintain;
 
     /// Whether any directory is waiting or being read.
     pub fn busy(self: *Service) bool {
@@ -320,11 +342,22 @@ pub const Service = struct {
         const owned = try a.dupe(u8, name);
         errdefer a.free(owned);
         try self.by_key.ensureUnusedCapacity(a, 1);
-        if (self.free_head == no_id) try self.nodes.ensureUnusedCapacity(a, 1);
-        return self.newNodePrepared(key, owned, level);
+        if (self.free_head == no_id) try self.reserveNodeSlots(1);
+        const id = self.newNodePrepared(key, owned, level);
+        eviction.syncRoot(self, id);
+        return id;
     }
 
-    /// Takes ownership of the name after storage has been reserved.
+    pub fn reserveNodeSlots(self: *Service, extra: usize) !void {
+        const slots = self.nodes.items.len + extra;
+        // Every slot could become an inactive root. Reserve during fallible
+        // preparation so releasing demand and changing topology never allocate.
+        try self.inactive_roots.ensureTotalCapacity(self.allocator, slots);
+        try self.nodes.ensureTotalCapacity(self.allocator, slots);
+    }
+
+    /// Takes ownership of the name after reservation. The caller must attach
+    /// the node or register it as a root before running maintenance.
     pub fn newNodePrepared(self: *Service, key: Key, owned: []u8, level: Level) Id {
         const id: Id = if (self.free_head != no_id) blk: {
             const reused = self.free_head;
@@ -370,11 +403,15 @@ pub const Service = struct {
         children.appendAssumeCapacity(child);
         const node = &self.nodes.items[child];
         std.debug.assert(node.parent == no_id);
+        eviction.remove(self, child);
         node.parent = parent;
         node.child_index = index;
         node.path_missing = false;
         self.propagate(parent, node.total, node.pending, node.unreadable);
         demand.adjustAncestors(self, parent, 0, node.subtree_demand);
+        // A merged root inherits the most recent access to either tree.
+        if (node.recency != 0) eviction.touch(self, parent, node.recency);
+        node.recency = 0;
         demand.refresh(self, child);
     }
 
@@ -382,6 +419,7 @@ pub const Service = struct {
         const node = &self.nodes.items[child];
         const parent = node.parent;
         if (parent == no_id) return;
+        node.recency = self.nodes.items[eviction.rootOf(self, parent)].recency;
         const siblings = &self.nodes.items[parent].children;
         const index = node.child_index;
         std.debug.assert(siblings.items[index] == child);
@@ -390,12 +428,16 @@ pub const Service = struct {
         node.parent = no_id;
         self.propagate(parent, -node.total, -@as(i64, node.pending), -@as(i64, node.unreadable));
         demand.adjustAncestors(self, parent, node.subtree_demand, 0);
+        eviction.syncRoot(self, child);
     }
+
+    pub const Removal = enum { removed, evicted };
 
     /// Frees a detached subtree. A worker reading one of its directories
     /// finds the node gone (its generation changed) and drops the result.
-    pub fn freeSubtree(self: *Service, root: Id) void {
+    pub fn freeSubtree(self: *Service, root: Id, reason: Removal) void {
         std.debug.assert(self.nodes.items[root].parent == no_id);
+        eviction.remove(self, root);
         var id = root;
         while (id != no_id) {
             const node = &self.nodes.items[id];
@@ -406,16 +448,16 @@ pub const Service = struct {
                 continue;
             }
             const parent = node.parent;
-            self.freeOne(id);
+            self.freeOne(id, reason);
             id = parent;
         }
     }
 
-    fn freeOne(self: *Service, id: Id) void {
+    fn freeOne(self: *Service, id: Id, reason: Removal) void {
         const node = &self.nodes.items[id];
         if (!node.live) return;
         self.unqueue(id);
-        demand.invalidate(self, id);
+        demand.invalidate(self, id, reason);
         _ = self.by_key.remove(node.key);
         self.allocator.free(node.name);
         node.children.deinit(self.allocator);
@@ -601,4 +643,5 @@ test {
     _ = @import("sizetree_reconcile_tests.zig");
     _ = @import("sizetree_resolution_tests.zig");
     _ = @import("sizetree_demand_tests.zig");
+    _ = @import("sizetree_eviction_tests.zig");
 }

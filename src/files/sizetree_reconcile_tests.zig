@@ -3,6 +3,7 @@ const std = @import("std");
 const tree = @import("sizetree.zig");
 const Service = tree.Service;
 const demand = @import("sizetree_demand.zig");
+const eviction = @import("sizetree_eviction.zig");
 const Id = tree.Id;
 const no_id = tree.no_id;
 
@@ -17,6 +18,7 @@ fn key(ino: u64) tree.Key {
 fn checkTree(svc: *Service) !void {
     var live: usize = 0;
     var queued: usize = 0;
+    var inactive: usize = 0;
     for (svc.nodes.items, 0..) |node, index| {
         if (!node.live) continue;
         const id: Id = @intCast(index);
@@ -27,6 +29,12 @@ fn checkTree(svc: *Service) !void {
             const parent = svc.nodes.items[node.parent];
             try std.testing.expect(parent.live);
             try std.testing.expectEqual(id, parent.children.items[node.child_index]);
+        }
+        if (node.parent == no_id and !svc.rootHasDemand(id)) {
+            try std.testing.expectEqual(id, svc.inactive_roots.items[node.eviction_index]);
+            inactive += 1;
+        } else {
+            try std.testing.expectEqual(eviction.not_indexed, node.eviction_index);
         }
         var demands = node.direct_demand[0] + node.direct_demand[1];
         var total = node.own;
@@ -47,7 +55,8 @@ fn checkTree(svc: *Service) !void {
         try std.testing.expectEqual(pending, node.pending);
         try std.testing.expectEqual(unreadable, node.unreadable);
     }
-    try std.testing.expectEqual(live, svc.by_key.count());
+    try std.testing.expectEqual(live, svc.liveNodeCount());
+    try std.testing.expectEqual(inactive, svc.inactive_roots.items.len);
     var free_count: usize = 0;
     var free = svc.free_head;
     while (free != no_id) {
@@ -94,7 +103,7 @@ fn reconcileWithFailure(fail_offset: usize) !bool {
     const rescued = try svc.newNode(key(9), "rescued", .background);
     const spare = try svc.newNode(key(10), "/spare", .background);
     const spare_ref = svc.refOf(spare);
-    svc.freeSubtree(spare);
+    svc.freeSubtree(spare, .removed);
     try svc.attach(ancestor, root);
     try svc.attach(root, renamed);
     try svc.attach(root, removed);
@@ -203,8 +212,8 @@ test "sizetree scan preparation is atomic at every allocation failure" {
     while (offset < 100) : (offset += 1) {
         if (!try reconcileWithFailure(offset)) break;
     } else return error.FaultInjectionDidNotReachSuccess;
-    // Map and plan storage, names, node storage, key growth, and child growth.
-    try std.testing.expect(offset >= 38);
+    // Map and plan storage, names, heap and node storage, key and child growth.
+    try std.testing.expect(offset >= 39);
 }
 
 test "sizetree promotion, cancellation and rescan scheduling need no allocation" {

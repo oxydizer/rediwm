@@ -56,7 +56,7 @@ const Plan = struct {
         var free = svc.free_head;
         while (free != no_id and extra_slots != 0) : (extra_slots -= 1)
             free = svc.nodes.items[free].parent;
-        try svc.nodes.ensureUnusedCapacity(a, extra_slots);
+        try svc.reserveNodeSlots(extra_slots);
         if (new_count != 0) try svc.by_key.ensureUnusedCapacity(a, @intCast(new_count));
         try svc.nodes.items[id].children.ensureUnusedCapacity(a, attachments);
     }
@@ -93,7 +93,7 @@ const Plan = struct {
                 continue;
             }
             svc.detach(child);
-            svc.freeSubtree(child);
+            svc.freeSubtree(child, .removed);
         }
 
         for (self.changes.items) |change| {

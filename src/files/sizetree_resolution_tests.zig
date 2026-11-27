@@ -52,8 +52,8 @@ test "sizetree retries each path and resolution queue allocation failure" {
 }
 
 test "sizetree reschedules resolution on node allocation failure" {
-    // Node name, inode index, and node storage.
-    for (0..3) |offset| {
+    // Node name, inode index, inactive-root heap, and node storage.
+    for (0..4) |offset| {
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
         const a = failing.allocator();
         const svc = try Service.create(a, 0, auto);

@@ -7,6 +7,7 @@ const Level = tree.Level;
 const Entry = tree.PathEntry;
 const no_id = tree.no_id;
 const schedule = @import("sizetree_schedule.zig");
+const eviction = @import("sizetree_eviction.zig");
 
 const Record = struct {
     automatic: ?Level = null,
@@ -44,6 +45,7 @@ pub const Owner = struct {
         }
         if (self.records.count() == 0) self.records.clearRetainingCapacity();
         self.visible.clearRetainingCapacity();
+        svc.maintainBudget();
     }
 
     pub fn deinit(self: *Owner) void {
@@ -75,6 +77,7 @@ pub const Owner = struct {
                 self.prune(entry, record.*);
             }
         }
+        svc.maintainBudget();
     }
 
     fn removeAutomatic(self: *Owner, record: *Record) void {
@@ -164,7 +167,11 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
         record.automatic = level;
         record.seen = owner.epoch;
     }
+    // A fresh request can re-evaluate disk policy for an evicted binding.
+    if (entry.node == no_id) entry.auto_allowed = true;
     update(svc, entry, old, record.*);
+    entry.access_stamp = eviction.nextAccess(svc);
+    if (entry.node != no_id) eviction.touch(svc, entry.node, entry.access_stamp);
     if (pathLevel(entry) == null) return true;
     if (entry.node == no_id) {
         svc.queueResolution(entry);
@@ -186,6 +193,7 @@ pub fn stopPath(svc: *Service, owner: *Owner, path: []const u8) void {
     record.stopped = true;
     update(svc, entry, old, record.*);
     svc.bump();
+    svc.maintainBudget();
 }
 
 pub fn forgetPath(svc: *Service, owner: *Owner, path: []const u8) void {
@@ -199,6 +207,7 @@ pub fn forgetPath(svc: *Service, owner: *Owner, path: []const u8) void {
     record.explicit = null;
     update(svc, entry, old, record.*);
     owner.prune(entry, record.*);
+    svc.maintainBudget();
 }
 
 pub fn stopped(owner: *const Owner, entry: *Entry) bool {
@@ -211,6 +220,7 @@ pub fn adjustAncestors(svc: *Service, start: Id, removed: usize, added: usize) v
     while (id != no_id) {
         const node = &svc.nodes.items[id];
         node.subtree_demand = node.subtree_demand - removed + added;
+        if (node.parent == no_id) eviction.syncRoot(svc, id);
         id = node.parent;
     }
 }
@@ -284,10 +294,15 @@ pub fn unbind(entry: *Entry, svc: *Service) void {
 
 /// Used while freeing a detached subtree. Its aggregate has already been
 /// removed from surviving ancestors, and its nodes are about to be reset.
-pub fn invalidate(svc: *Service, id: Id) void {
+pub fn invalidate(svc: *Service, id: Id, reason: Service.Removal) void {
     while (svc.nodes.items[id].paths) |entry| {
+        std.debug.assert(reason != .evicted or pathLevel(entry) == null);
         unbind(entry, svc);
-        entry.auto_allowed = true;
-        if (pathLevel(entry) != null) svc.queueResolution(entry);
+        // A filesystem removal retries active paths. After eviction, wait
+        // for a fresh request so policy-denied paths remain idle.
+        if (reason == .removed) {
+            entry.auto_allowed = true;
+            if (pathLevel(entry) != null) svc.queueResolution(entry);
+        }
     }
 }
