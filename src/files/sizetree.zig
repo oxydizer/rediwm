@@ -25,6 +25,7 @@ const platform = @import("platform");
 const c = @import("c.zig").api;
 const Allocator = std.mem.Allocator;
 const dirwalk = platform.dirwalk;
+const worker = @import("sizetree_worker.zig");
 
 pub const revalidate_after_ms: i64 = 120_000;
 
@@ -72,7 +73,7 @@ pub const RequestOptions = struct {
     revalidate: bool = false,
 };
 
-const Key = struct { dev: u64, ino: u64 };
+pub const Key = struct { dev: u64, ino: u64 };
 const Id = u32;
 const no_id: Id = std.math.maxInt(Id);
 const Ref = struct { id: Id, gen: u32 };
@@ -81,6 +82,7 @@ const Node = struct {
     gen: u32 = 0,
     live: bool = false,
     key: Key = .{ .dev = 0, .ino = 0 },
+    /// Parent of a live node, or the next free slot after deletion.
     parent: Id = no_id,
     children: std.ArrayList(Id) = .empty,
     /// The base name under a parent; the full path for a root.
@@ -163,6 +165,10 @@ pub fn defaultAutoPolicy(dev_major: u32, dev_minor: u32) bool {
     return !disk.serial;
 }
 
+/// Tree, queue, and scan helpers exposed for the worker and tests are internal.
+/// Call them with the service mutex held, or from a test with no workers.
+/// The worker entry point and path resolution helpers manage their own
+/// locking and must be entered with the mutex unlocked.
 pub const Service = struct {
     allocator: Allocator,
     threads: []std.Thread = &.{},
@@ -174,7 +180,7 @@ pub const Service = struct {
     revalidate_ms: i64 = revalidate_after_ms,
 
     nodes: std.ArrayList(Node) = .empty,
-    free_ids: std.ArrayList(Id) = .empty,
+    free_head: Id = no_id,
     by_key: std.AutoHashMapUnmanaged(Key, Id) = .empty,
     paths: std.StringHashMapUnmanaged(PathEntry) = .empty,
     resolve: std.ArrayList([]const u8) = .empty,
@@ -236,7 +242,6 @@ pub const Service = struct {
             node.children.deinit(a);
         };
         self.nodes.deinit(a);
-        self.free_ids.deinit(a);
         self.by_key.deinit(a);
         var it = self.paths.keyIterator();
         while (it.next()) |k| a.free(k.*);
@@ -249,15 +254,15 @@ pub const Service = struct {
         a.destroy(self);
     }
 
-    fn lock(self: *Service) void {
+    pub fn lock(self: *Service) void {
         _ = c.pthread_mutex_lock(&self.mutex);
     }
 
-    fn unlock(self: *Service) void {
+    pub fn unlock(self: *Service) void {
         _ = c.pthread_mutex_unlock(&self.mutex);
     }
 
-    fn bump(self: *Service) void {
+    pub fn bump(self: *Service) void {
         _ = self.generation.fetchAdd(1, .release);
     }
 
@@ -364,22 +369,26 @@ pub const Service = struct {
 
     // ---- the tree ----
 
-    fn liveId(self: *Service, ref: Ref) ?Id {
+    pub fn liveId(self: *Service, ref: Ref) ?Id {
         if (ref.id >= self.nodes.items.len) return null;
         const node = &self.nodes.items[ref.id];
         return if (node.live and node.gen == ref.gen) ref.id else null;
     }
 
-    fn refOf(self: *Service, id: Id) Ref {
+    pub fn refOf(self: *Service, id: Id) Ref {
         return .{ .id = id, .gen = self.nodes.items[id].gen };
     }
 
-    fn newNode(self: *Service, key: Key, name: []const u8, level: Level) !Id {
+    pub fn newNode(self: *Service, key: Key, name: []const u8, level: Level) !Id {
         const a = self.allocator;
         const owned = try a.dupe(u8, name);
         errdefer a.free(owned);
         try self.by_key.ensureUnusedCapacity(a, 1);
-        const id: Id = if (self.free_ids.pop()) |reused| reused else blk: {
+        const id: Id = if (self.free_head != no_id) blk: {
+            const reused = self.free_head;
+            self.free_head = self.nodes.items[reused].parent;
+            break :blk reused;
+        } else blk: {
             try self.nodes.append(a, .{});
             break :blk @intCast(self.nodes.items.len - 1);
         };
@@ -408,7 +417,7 @@ pub const Service = struct {
         }
     }
 
-    fn attach(self: *Service, parent: Id, child: Id) !void {
+    pub fn attach(self: *Service, parent: Id, child: Id) !void {
         try self.nodes.items[parent].children.append(self.allocator, child);
         const node = &self.nodes.items[child];
         node.parent = parent;
@@ -428,15 +437,19 @@ pub const Service = struct {
     /// Frees a detached subtree. A worker reading one of its directories
     /// finds the node gone (its generation changed) and drops the result.
     fn freeSubtree(self: *Service, root: Id) void {
-        var stack: std.ArrayList(Id) = .empty;
-        defer stack.deinit(self.allocator);
-        stack.append(self.allocator, root) catch return self.freeOne(root);
-        while (stack.pop()) |id| {
+        std.debug.assert(self.nodes.items[root].parent == no_id);
+        var id = root;
+        while (id != no_id) {
             const node = &self.nodes.items[id];
-            for (node.children.items) |child| stack.append(self.allocator, child) catch {
-                self.nodes.items[child].parent = no_id;
-            };
+            // Consume each child link on the way down, then free the node
+            // and follow its parent link once all its children are gone.
+            if (node.children.pop()) |child| {
+                id = child;
+                continue;
+            }
+            const parent = node.parent;
             self.freeOne(id);
+            id = parent;
         }
     }
 
@@ -448,8 +461,8 @@ pub const Service = struct {
         self.allocator.free(node.name);
         node.children.deinit(self.allocator);
         const gen = node.gen;
-        node.* = .{ .gen = gen +% 1 };
-        self.free_ids.append(self.allocator, id) catch {};
+        node.* = .{ .gen = gen +% 1, .parent = self.free_head };
+        self.free_head = id;
     }
 
     fn setQueued(self: *Service, node: *Node, level: ?Level) void {
@@ -458,7 +471,7 @@ pub const Service = struct {
         node.queued = level;
     }
 
-    fn enqueue(self: *Service, id: Id, level: Level) !void {
+    pub fn enqueue(self: *Service, id: Id, level: Level) !void {
         const node = &self.nodes.items[id];
         if (node.paused) return;
         if (node.scanning) {
@@ -475,7 +488,7 @@ pub const Service = struct {
 
     /// Queues every directory below `root` still waiting to be read, raising
     /// its level if it was queued lower.
-    fn enqueueSubtree(self: *Service, root: Id, level: Level) !void {
+    pub fn enqueueSubtree(self: *Service, root: Id, level: Level) !void {
         var stack: std.ArrayList(Id) = .empty;
         defer stack.deinit(self.allocator);
         try stack.append(self.allocator, root);
@@ -508,7 +521,7 @@ pub const Service = struct {
         self.bump();
     }
 
-    fn dequeueSubtree(self: *Service, root: Id) void {
+    pub fn dequeueSubtree(self: *Service, root: Id) void {
         var stack: std.ArrayList(Id) = .empty;
         defer stack.deinit(self.allocator);
         stack.append(self.allocator, root) catch return;
@@ -558,7 +571,7 @@ pub const Service = struct {
         scan: struct { ref: Ref, key: Key },
     };
 
-    fn take(self: *Service, path_buf: []u8) ?struct { work: Work, path: ?[:0]const u8 } {
+    pub fn take(self: *Service, path_buf: []u8) ?struct { work: Work, path: ?[:0]const u8 } {
         while (!self.stop) {
             if (!self.prefer_scan and self.resolve_head < self.resolve.items.len) {
                 const key = self.resolve.items[self.resolve_head];
@@ -606,12 +619,12 @@ pub const Service = struct {
         return null;
     }
 
-    const Child = struct { key: Key, name: []u8 };
+    pub const Child = struct { key: Key, name: []u8 };
 
     /// The directory is not where its path says: renamed or removed since
     /// its parent was read. Its parent is read again, which renames or drops
     /// it; it stays waiting meanwhile.
-    fn lostScan(self: *Service, id: Id, path: []const u8) void {
+    pub fn lostScan(self: *Service, id: Id, path: []const u8) void {
         const node = &self.nodes.items[id];
         node.scanning = false;
         node.rescan = false;
@@ -651,7 +664,7 @@ pub const Service = struct {
 
     /// The directory could not be opened: it counts as unreadable and keeps
     /// what was known below it.
-    fn failScan(self: *Service, id: Id) void {
+    pub fn failScan(self: *Service, id: Id) void {
         const node = &self.nodes.items[id];
         node.scanning = false;
         node.rescan = false;
@@ -664,7 +677,7 @@ pub const Service = struct {
         self.bump();
     }
 
-    fn finishScan(self: *Service, id: Id, own: i64, found: []const Child, unreadable: bool) !void {
+    pub fn finishScan(self: *Service, id: Id, own: i64, found: []const Child, unreadable: bool) !void {
         const node = &self.nodes.items[id];
         node.scanning = false;
         const own_delta = own - node.own;
@@ -737,59 +750,9 @@ pub const Service = struct {
         return false;
     }
 
-    fn workerLoop(self: *Service) void {
-        var path_buf: [4096]u8 = undefined;
-        const dir_buf = std.heap.page_allocator.alignedAlloc(u8, .fromByteUnits(dirwalk.buffer_align), 65536) catch return;
-        defer std.heap.page_allocator.free(dir_buf);
-        var found: std.ArrayList(Child) = .empty;
-        defer found.deinit(self.allocator);
-        var names: std.ArrayList(u8) = .empty;
-        defer names.deinit(self.allocator);
+    pub const workerLoop = worker.workerLoop;
 
-        self.lock();
-        while (true) {
-            const job = self.take(&path_buf) orelse break;
-            self.working += 1;
-            switch (job.work) {
-                .resolve => |path| {
-                    self.unlock();
-                    self.resolvePath(path);
-                    self.allocator.free(path);
-                    self.lock();
-                },
-                .scan => |s| {
-                    // The path is in this worker's `path_buf`: read it unlocked.
-                    self.unlock();
-                    found.clearRetainingCapacity();
-                    names.clearRetainingCapacity();
-                    const result = readDirectory(self.allocator, job.path.?, s.key, dir_buf, &found, &names);
-                    // Names point into `names`, which may have moved.
-                    var offset: usize = 0;
-                    for (found.items) |*f| {
-                        const n = f.name.len;
-                        f.name = names.items[offset .. offset + n];
-                        offset += n;
-                    }
-                    self.lock();
-                    if (self.liveId(s.ref)) |id| {
-                        if (!result.opened) {
-                            if (result.missing) self.lostScan(id, job.path.?) else self.failScan(id);
-                        } else self.finishScan(id, result.own, found.items, result.unreadable) catch {
-                            const node = &self.nodes.items[id];
-                            node.scanning = false;
-                            node.rescan = true;
-                            self.enqueue(id, node.level) catch {};
-                        };
-                    }
-                },
-            }
-            self.working -= 1;
-            if (self.working == 0) self.bump();
-        }
-        self.unlock();
-    }
-
-    fn resolvePath(self: *Service, path: []const u8) void {
+    pub fn resolvePath(self: *Service, path: []const u8) void {
         var buf: [4096]u8 = undefined;
         const z = std.fmt.bufPrintSentinel(&buf, "{s}", .{path}, 0) catch return self.resolved(path, null, false);
         const fd = c.open(z.ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
@@ -811,7 +774,7 @@ pub const Service = struct {
         self.resolved(path, key, auto);
     }
 
-    fn resolved(self: *Service, path: []const u8, key: ?Key, auto: bool) void {
+    pub fn resolved(self: *Service, path: []const u8, key: ?Key, auto: bool) void {
         self.lock();
         defer self.unlock();
         defer self.bump();
@@ -836,241 +799,12 @@ pub const Service = struct {
     }
 };
 
-const ReadResult = struct { own: i64 = 0, unreadable: bool = false, opened: bool = true, missing: bool = false };
-
-/// Reads one directory: the apparent size of everything in it that is not a
-/// directory, and the directories on the same filesystem (mount points are
-/// not followed, nor are links).
-fn readDirectory(
-    a: Allocator,
-    path: [:0]const u8,
-    expected: Key,
-    buf: []align(dirwalk.buffer_align) u8,
-    found: *std.ArrayList(Service.Child),
-    names: *std.ArrayList(u8),
-) ReadResult {
-    var result: ReadResult = .{};
-    const fd = c.open(path.ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
-    if (fd < 0) {
-        const err = std.c._errno().*;
-        return .{ .unreadable = true, .opened = false, .missing = err == c.ENOENT or err == c.ENOTDIR or err == c.ELOOP };
-    }
-    defer _ = c.close(fd);
-    const identity = dirwalk.statFd(fd) orelse return .{ .unreadable = true, .opened = false };
-    if (identity.kind != .directory or identity.dev != expected.dev or identity.ino != expected.ino)
-        return .{ .opened = false, .missing = true };
-    var reader = dirwalk.Reader.init(fd, buf) catch return .{ .unreadable = true, .opened = false };
-    defer reader.deinit();
-    while (true) {
-        const name_ptr = (reader.next() catch {
-            result.unreadable = true;
-            break;
-        }) orelse break;
-        const entry = dirwalk.statAt(fd, name_ptr) orelse {
-            result.unreadable = true;
-            continue;
-        };
-        if (entry.kind == .directory) {
-            if (entry.mount_root or entry.dev != expected.dev) continue;
-            const name = std.mem.span(name_ptr);
-            const start = names.items.len;
-            names.appendSlice(a, name) catch {
-                result.unreadable = true;
-                continue;
-            };
-            found.append(a, .{ .key = .{ .dev = entry.dev, .ino = entry.ino }, .name = names.items[start..] }) catch {
-                names.shrinkRetainingCapacity(start);
-                result.unreadable = true;
-            };
-        } else if (entry.kind == .regular) {
-            result.own += @intCast(entry.size);
-        }
-    }
-    return result;
-}
-
 fn nowMs() i64 {
     var ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
     return @as(i64, ts.tv_sec) * 1000 + @divTrunc(@as(i64, ts.tv_nsec), 1_000_000);
 }
 
-fn testAutoPolicy(_: u32, _: u32) bool {
-    return true;
-}
-
-test "sizetree alternates resolution and scanning while preserving scan priority" {
-    const allocator = std.testing.allocator;
-    const svc = try Service.create(allocator, 0, testAutoPolicy);
-    defer svc.destroy();
-
-    const background = try svc.newNode(.{ .dev = 1, .ino = 1 }, "/background", .background);
-    const visible = try svc.newNode(.{ .dev = 1, .ino = 2 }, "/visible", .visible);
-    try svc.enqueue(background, .background);
-    try svc.enqueue(visible, .visible);
-
-    svc.request("/resolve1", .visible, .{});
-    svc.request("/resolve2", .visible, .{});
-    svc.request("/resolve3", .visible, .{});
-    svc.request("/resolve4", .visible, .{});
-
-    var path_buf: [4096]u8 = undefined;
-    const expected = [_][]const u8{
-        "/resolve1",
-        "/visible",
-        "/resolve2",
-        "/background",
-        "/resolve3",
-        "/resolve4",
-    };
-    for (expected, 0..) |path, i| {
-        const job = svc.take(&path_buf).?;
-        switch (job.work) {
-            .resolve => |owned| {
-                defer allocator.free(owned);
-                try std.testing.expect(i != 1 and i != 3);
-                try std.testing.expectEqualStrings(path, owned);
-            },
-            .scan => |scan| {
-                try std.testing.expect(i == 1 or i == 3);
-                try std.testing.expectEqualStrings(path, job.path.?);
-                try std.testing.expectEqual(if (i == 1) visible else background, scan.ref.id);
-            },
-        }
-    }
-    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
-    try std.testing.expectEqual(@as(usize, 0), svc.resolve.items.len);
-}
-
-test "sizetree pauses children discovered by an in-flight scan" {
-    const allocator = std.testing.allocator;
-    const svc = try Service.create(allocator, 0, testAutoPolicy);
-    defer svc.destroy();
-
-    const root = try svc.newNode(.{ .dev = 1, .ino = 1 }, "/root", .visible);
-    svc.nodes.items[root].scanning = true;
-
-    // Navigation away pauses the root while its worker is still reading it.
-    svc.dequeueSubtree(root);
-    try std.testing.expect(svc.nodes.items[root].paused);
-
-    const child_name = try allocator.dupe(u8, "child");
-    defer allocator.free(child_name);
-    const found = [_]Service.Child{
-        .{
-            .key = .{ .dev = 1, .ino = 2 },
-            .name = child_name,
-        },
-    };
-
-    // The in-flight scan completes and discovers a child after cancellation.
-    try svc.finishScan(root, 0, &found, false);
-
-    try std.testing.expectEqual(@as(usize, 1), svc.nodes.items[root].children.items.len);
-    const child = svc.nodes.items[root].children.items[0];
-    try std.testing.expect(svc.nodes.items[child].paused);
-    try std.testing.expect(svc.nodes.items[child].queued == null);
-    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
-
-    // A later request resumes pending work in the subtree.
-    try svc.enqueueSubtree(root, .visible);
-
-    try std.testing.expect(!svc.nodes.items[root].paused);
-    try std.testing.expect(!svc.nodes.items[child].paused);
-    try std.testing.expectEqual(@as(?Level, .visible), svc.nodes.items[child].queued);
-    try std.testing.expectEqual(@as(usize, 1), svc.queued_count);
-}
-
-test "sizetree pauses paths stopped or forgotten during resolution" {
-    const allocator = std.testing.allocator;
-    const svc = try Service.create(allocator, 0, testAutoPolicy);
-    defer svc.destroy();
-
-    svc.request("/stopped", .visible, .{});
-    svc.stopPath("/stopped");
-    svc.resolved("/stopped", .{ .dev = 1, .ino = 1 }, true);
-
-    const stopped_entry = svc.paths.get("/stopped").?;
-    const stopped_id = svc.liveId(stopped_entry.node.?).?;
-    try std.testing.expect(svc.nodes.items[stopped_id].paused);
-    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
-
-    svc.request("/forgotten", .visible, .{});
-    svc.forgetPath("/forgotten");
-    svc.resolved("/forgotten", .{ .dev = 1, .ino = 2 }, true);
-
-    const forgotten_entry = svc.paths.get("/forgotten").?;
-    const forgotten_id = svc.liveId(forgotten_entry.node.?).?;
-    try std.testing.expect(svc.nodes.items[forgotten_id].paused);
-    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
-}
-
-test "sizetree rejects a directory path replaced with another inode" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(base);
-    const original_path = try std.fmt.allocPrintSentinel(
-        std.testing.allocator,
-        "{s}/root",
-        .{base},
-        0,
-    );
-    defer std.testing.allocator.free(original_path);
-    const old_path = try std.fmt.allocPrintSentinel(
-        std.testing.allocator,
-        "{s}/root_old",
-        .{base},
-        0,
-    );
-    defer std.testing.allocator.free(old_path);
-    const setup = try std.fmt.allocPrintSentinel(
-        std.testing.allocator,
-        "mkdir {s} && printf old > {s}/file",
-        .{ original_path, original_path },
-        0,
-    );
-    defer std.testing.allocator.free(setup);
-    try std.testing.expectEqual(@as(c_int, 0), c.system(setup));
-
-    const fd = c.open(original_path, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
-    if (fd < 0) return error.TestSetupFailed;
-    const original = dirwalk.statFd(fd) orelse {
-        _ = c.close(fd);
-        return error.TestSetupFailed;
-    };
-    _ = c.close(fd);
-
-    try std.testing.expectEqual(@as(c_int, 0), c.rename(original_path, old_path));
-    const replacement = try std.fmt.allocPrintSentinel(
-        std.testing.allocator,
-        "mkdir {s} && printf replacement > {s}/file",
-        .{ original_path, original_path },
-        0,
-    );
-    defer std.testing.allocator.free(replacement);
-    try std.testing.expectEqual(@as(c_int, 0), c.system(replacement));
-
-    var found: std.ArrayList(Service.Child) = .empty;
-    defer found.deinit(std.testing.allocator);
-    var names: std.ArrayList(u8) = .empty;
-    defer names.deinit(std.testing.allocator);
-    const buf = try std.heap.page_allocator.alignedAlloc(
-        u8,
-        .fromByteUnits(dirwalk.buffer_align),
-        65536,
-    );
-    defer std.heap.page_allocator.free(buf);
-
-    const result = readDirectory(
-        std.testing.allocator,
-        original_path,
-        .{ .dev = original.dev, .ino = original.ino },
-        buf,
-        &found,
-        &names,
-    );
-    try std.testing.expect(!result.opened);
-    try std.testing.expect(result.missing);
-    try std.testing.expectEqual(@as(usize, 0), found.items.len);
+test {
+    _ = @import("sizetree_internal_tests.zig");
 }
