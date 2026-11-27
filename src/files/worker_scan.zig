@@ -79,6 +79,12 @@ pub fn fillArchive(self: *Worker, snap: *Snapshot, path: []const u8, archive_len
     snap.items = try items.toOwnedSlice(mem);
 }
 
+/// A real listing preserves the spelling of its directory, including a
+/// trailing separator at filesystem root.
+pub fn listingPath(allocator: Allocator, dir: []const u8, name: []const u8) ![:0]u8 {
+    return std.fmt.allocPrintSentinel(allocator, "{s}/{s}", .{ dir, name }, 0);
+}
+
 pub fn scan(self: *Worker, dir_path: []const u8, show_hidden: bool, req_id: u64) *Snapshot {
     const snap = std.heap.c_allocator.create(Snapshot) catch @panic("OOM");
     snap.* = .{
@@ -141,7 +147,7 @@ pub fn scan(self: *Worker, dir_path: []const u8, show_hidden: bool, req_id: u64)
 
     while (it.next(self.io) catch null) |entry| {
         if (!show_hidden and (std.mem.startsWith(u8, entry.name, ".") or isHiddenEntry(hidden_entries, entry.name))) continue;
-        const full_path = std.fmt.allocPrintSentinel(mem, "{s}/{s}", .{ dir_path, entry.name }, 0) catch continue;
+        const full_path = listingPath(mem, dir_path, entry.name) catch continue;
         var item = statItem(mem, &owners, &associations, entry.name, full_path) orelse continue;
         if (item.is_dir) item.icon_name = theme.folderName(mem, self.io, self.environ, item.path);
         list.append(mem, item) catch continue;

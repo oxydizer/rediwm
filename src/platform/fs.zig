@@ -1,5 +1,4 @@
-//! File operations that differ between systems. Linux has `renameat2`;
-//! FreeBSD has no rename that refuses to replace.
+//! File operations that differ between systems.
 const std = @import("std");
 const builtin = @import("builtin");
 const linux = std.os.linux;
@@ -141,6 +140,40 @@ fn classify(err: std.posix.E) RenameError {
         .XDEV => error.CrossDevice,
         else => error.Failed,
     };
+}
+
+const RenameAt = *const fn (c_int, [*:0]const u8, c_int, [*:0]const u8, c_uint) callconv(.c) c_int;
+
+fn freeBsdRenameAt() ?RenameAt {
+    // Older FreeBSD libc versions have no renameat2 symbol.
+    const c = std.c;
+    const handle = c.dlopen(null, .{ .LAZY = true }) orelse return null;
+    defer _ = c.dlclose(handle);
+    return @ptrCast(c.dlsym(handle, "renameat2") orelse return null);
+}
+
+/// Whether the OS exposes an atomic no-replace rename. Filesystems can
+/// still reject the operation.
+pub fn hasAtomicRenameNoReplace() bool {
+    return switch (builtin.os.tag) {
+        .linux => true,
+        .freebsd => freeBsdRenameAt() != null,
+        else => unreachable,
+    };
+}
+
+/// A no-replace rename with no check-then-rename or link/unlink fallback.
+pub fn renameNoReplaceAtomic(from: [*:0]const u8, to: [*:0]const u8) RenameError!void {
+    switch (builtin.os.tag) {
+        .linux => return renameNoReplace(from, to),
+        .freebsd => {
+            const rename_at = freeBsdRenameAt() orelse return error.Failed;
+            const rename_noreplace = 0x0001;
+            if (rename_at(std.c.AT.FDCWD, from, std.c.AT.FDCWD, to, rename_noreplace) != 0)
+                return classify(std.posix.errno(@as(c_int, -1)));
+        },
+        else => unreachable,
+    }
 }
 
 /// Renames `from` to `to` unless `to` exists, in which case nothing changes

@@ -10,6 +10,7 @@ pub const Receive = struct {
     text: bool,
     revision: usize,
     directory: []u8,
+    folder_navigation: ?u32 = null,
     started: i64,
     bytes: std.ArrayList(u8) = .empty,
 

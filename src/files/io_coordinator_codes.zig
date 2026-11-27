@@ -18,6 +18,9 @@ pub const RejectionCode = enum(u8) {
     trash_unavailable = 13,
     /// `rm`, `gio` or a Trash entry removal failed.
     deletion_failed = 14,
+    folder_exists = 15,
+    folder_create_failed = 16,
+    atomic_rename_unavailable = 17,
     other = 255,
 };
 
@@ -34,6 +37,12 @@ pub fn rejectionCode(err: anyerror) RejectionCode {
         .invalid_job_state
     else if (err == error.JobNotTerminal)
         .job_not_terminal
+    else if (err == error.PathAlreadyExists)
+        .folder_exists
+    else if (err == error.CreateFailed or err == error.AccessDenied)
+        .folder_create_failed
+    else if (err == error.AtomicRenameUnavailable)
+        .atomic_rename_unavailable
     else if (err == error.InvalidTransferDestination)
         .invalid_destination
     else if (err == error.InvalidTransferSource or err == error.EmptyTransfer)

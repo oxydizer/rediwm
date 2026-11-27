@@ -117,7 +117,7 @@ test "a cut and paste moves, and empties the cut clipboard" {
     try s.app.clipboard_paths.append(allocator, try allocator.dupe(u8, a));
     s.app.clipboard_cut = true;
     try s.app.history.navigate(destination);
-    s.app.executePasteLocal();
+    s.app.executePasteLocal(null);
     try s.until(idle);
     try std.testing.expectEqualStrings("Item moved", notice(&s.app));
     try std.testing.expect(!support.pathExists(a));
@@ -344,4 +344,61 @@ test "a window that is not the last closes without asking" {
     s.app.service.jobs.apply(.{ .id = 3, .kind = .copy, .state = .running, .started_at_ms = 1 });
     s.app.requestClose();
     try std.testing.expect(s.app.dialog == null and s.app.closed);
+}
+
+test "group completion refreshes and reveals the only selected row without navigating" {
+    if (!@import("platform").fs.hasAtomicRenameNoReplace()) return error.SkipZigTest;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try support.makeTempDir(&temp_buffer);
+    defer ops.deleteRecursive(allocator, temp) catch {};
+    const source = try support.join(allocator, temp, "photo.jpg");
+    defer allocator.free(source);
+    const destination = try support.join(allocator, temp, "zz-group");
+    defer allocator.free(destination);
+    try support.writeFile(source, "photo");
+    for (0..12) |index| {
+        const path = try std.fmt.allocPrint(allocator, "{s}/folder-{d}", .{ temp, index });
+        defer allocator.free(path);
+        try support.makeDirectory(path);
+    }
+
+    var s: ServiceApp = .{};
+    try s.start();
+    defer s.stop();
+    s.app.environ = std.process.Environ.empty;
+    s.app.list_view = true;
+    s.app.h = 260;
+    s.app.navigate(temp);
+    try s.until(struct {
+        fn ready(app: *App) bool {
+            if (app.worker.takeSnapshot()) |snap| @import("app_listing.zig").applySnapshot(app, snap);
+            return !app.loading;
+        }
+    }.ready);
+    s.app.items.items[0].selected = true;
+    s.app.items.items[1].selected = true;
+    const navigation = s.app.navigation_count;
+    const back_count = s.app.history.back_stack.items.len;
+    const forward_count = s.app.history.forward_stack.items.len;
+    try std.testing.expect(@import("app_transfers.zig").submitFolderMove(&s.app, &.{source}, destination, navigation));
+    try s.until(struct {
+        fn ready(app: *App) bool {
+            if (app.worker.takeSnapshot()) |snap| @import("app_listing.zig").applySnapshot(app, snap);
+            return app.service.transfers.len == 0 and !app.loading;
+        }
+    }.ready);
+
+    try std.testing.expectEqualStrings(temp, s.app.history.current);
+    try std.testing.expectEqual(navigation, s.app.navigation_count);
+    try std.testing.expectEqual(back_count, s.app.history.back_stack.items.len);
+    try std.testing.expectEqual(forward_count, s.app.history.forward_stack.items.len);
+    const focused = s.app.focused_index orelse return error.NoFocusedFolder;
+    try std.testing.expectEqualStrings(destination, s.app.items.items[focused].path);
+    try std.testing.expectEqual(@as(?usize, focused), s.app.selection_anchor);
+    for (s.app.items.items, 0..) |item, i| try std.testing.expectEqual(i == focused, item.selected);
+    try std.testing.expect(s.app.scroll_y > 0);
+}
+
+test {
+    _ = @import("app_paste_tests.zig");
 }

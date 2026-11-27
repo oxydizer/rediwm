@@ -87,6 +87,11 @@ pub fn dataEvent(_: *wl.DataDevice, event: wl.DataDevice.Event, self: *Client) v
             self.cancelReceive();
             if (self.selection_offer) |old| self.discardOffer(old);
             self.selection_offer = if (ev.id) |id| @ptrCast(@alignCast(id.getUserData())) else null;
+            const files = if (self.selection_offer) |offer| offer.uri or offer.gnome else false;
+            if (self.app.clipboard_offer_files != files) {
+                self.app.clipboard_offer_files = files;
+                if (self.app.menu == .file) self.app.invalidate();
+            }
         },
     }
 }
