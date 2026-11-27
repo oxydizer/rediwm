@@ -66,6 +66,27 @@ pub const Disk = struct {
     serial: bool,
 };
 
+/// Mountinfo identity of an already-open descriptor, when the kernel supplies it.
+pub fn idOfFd(fd: c_int) ?u64 {
+    if (builtin.os.tag != .linux) return null;
+    const linux = std.os.linux;
+    var info: linux.Statx = undefined;
+    const rc = linux.statx(fd, "", linux.AT.EMPTY_PATH | linux.AT.STATX_DONT_SYNC, .{ .MNT_ID = true }, &info);
+    if (linux.errno(rc) != .SUCCESS or !info.mask.MNT_ID) return null;
+    return info.mnt_id;
+}
+
+/// Use the mountinfo entry for the opened mount. A Btrfs subvolume's device
+/// number can differ from the one on this entry.
+pub fn diskOfMount(mount_id: u64) ?Disk {
+    var table = Table.load(std.heap.page_allocator) orelse return null;
+    defer table.deinit();
+    var want: [32]u8 = undefined;
+    const id = std.fmt.bufPrint(&want, "{d}", .{mount_id}) catch return null;
+    const block = mountBlockDevice(table.bytes, .{ .id = id }, sourceDevice) orelse return null;
+    return blockDisk(block.major, block.minor);
+}
+
 /// The disk behind the filesystem with device number `st_dev` (as `stat`
 /// returns it), or null for a network or virtual filesystem, or when the
 /// system has no such table (Linux reads `/proc/self/mountinfo` and `/sys`,
@@ -77,25 +98,29 @@ pub fn diskOf(st_dev: u64) ?Disk {
     }
     const major = ((st_dev >> 8) & 0xfff) | ((st_dev >> 32) & ~@as(u64, 0xfff));
     const minor = (st_dev & 0xff) | ((st_dev >> 12) & ~@as(u64, 0xff));
-    var block_major = major;
-    var block_minor = minor;
-    if (major == 0) {
-        // Anonymous: btrfs subvolume, FUSE filesystem or network mount. Its
-        // mountinfo line names the block device it sits on, if any.
-        const table = readMountinfo(std.heap.page_allocator) catch return null;
-        defer std.heap.page_allocator.free(table);
-        var want: [32]u8 = undefined;
-        const id = std.fmt.bufPrint(&want, "{d}:{d}", .{ major, minor }) catch return null;
-        const source = mountSource(table, id) orelse return null;
-        if (!std.mem.startsWith(u8, source, "/dev/")) return null;
-        var path: [4096]u8 = undefined;
-        const z = std.fmt.bufPrintSentinel(&path, "{s}", .{source}, 0) catch return null;
-        const linux = std.os.linux;
-        var info: linux.Statx = undefined;
-        if (linux.errno(linux.statx(linux.AT.FDCWD, z, 0, .{ .TYPE = true }, &info)) != .SUCCESS) return null;
-        block_major = info.rdev_major;
-        block_minor = info.rdev_minor;
-    }
+    if (major != 0) return blockDisk(major, minor);
+    var table = Table.load(std.heap.page_allocator) orelse return null;
+    defer table.deinit();
+    var want: [32]u8 = undefined;
+    const device = std.fmt.bufPrint(&want, "{d}:{d}", .{ major, minor }) catch return null;
+    const block = mountBlockDevice(table.bytes, .{ .device = device }, sourceDevice) orelse return null;
+    return blockDisk(block.major, block.minor);
+}
+
+const BlockDevice = struct { major: u64, minor: u64 };
+
+fn sourceDevice(source: []const u8) ?BlockDevice {
+    if (builtin.os.tag != .linux) return null;
+    var path: [4096]u8 = undefined;
+    const z = std.fmt.bufPrintSentinel(&path, "{s}", .{source}, 0) catch return null;
+    const linux = std.os.linux;
+    var info: linux.Statx = undefined;
+    if (linux.errno(linux.statx(linux.AT.FDCWD, z, 0, .{ .TYPE = true }, &info)) != .SUCCESS) return null;
+    if (!info.mask.TYPE or info.mode & linux.S.IFMT != linux.S.IFBLK) return null;
+    return .{ .major = info.rdev_major, .minor = info.rdev_minor };
+}
+
+fn blockDisk(block_major: u64, block_minor: u64) ?Disk {
     var link: [64]u8 = undefined;
     const sys = std.fmt.bufPrintSentinel(&link, "/sys/dev/block/{d}:{d}", .{ block_major, block_minor }, 0) catch return null;
     var real_buf: [4096]u8 = undefined;
@@ -113,25 +138,43 @@ pub fn diskOf(st_dev: u64) ?Disk {
     const disk_minor = std.fmt.parseInt(u64, dev_text[colon + 1 ..], 10) catch return null;
     var rot: [8]u8 = undefined;
     const rotational = if (readSmall(&probe, real, "queue/rotational", &rot)) |value| std.mem.eql(u8, value, "1") else false;
+    return .{ .key = disk_major << 32 | disk_minor, .serial = serialDisk(real, rotational) };
+}
+
+fn serialDisk(real: []const u8, rotational: bool) bool {
     const usb = std.mem.indexOf(u8, real, "/usb") != null;
     // A virtual machine's virtio disk reports rotational whatever backs it.
     const virtio = std.mem.indexOf(u8, real, "/virtio") != null;
-    return .{ .key = disk_major << 32 | disk_minor, .serial = usb or (rotational and !virtio) };
+    return usb or (rotational and !virtio);
 }
 
-/// The source of the mountinfo line whose device is `id` ("0:41").
-fn mountSource(mountinfo: []const u8, id: []const u8) ?[]const u8 {
+const MountMatch = union(enum) { id: []const u8, device: []const u8 };
+
+fn mountBlockDevice(mountinfo: []const u8, match: MountMatch, comptime probe: fn ([]const u8) ?BlockDevice) ?BlockDevice {
     var lines = std.mem.splitScalar(u8, mountinfo, '\n');
     while (lines.next()) |line| {
         var fields = std.mem.splitScalar(u8, line, ' ');
-        _ = fields.next() orelse continue;
+        const id = fields.next() orelse continue;
         _ = fields.next() orelse continue;
         const device = fields.next() orelse continue;
-        if (!std.mem.eql(u8, device, id)) continue;
+        const matches = switch (match) {
+            .id => |want| std.mem.eql(u8, id, want),
+            .device => |want| std.mem.eql(u8, device, want),
+        };
+        if (!matches) continue;
+        const colon = std.mem.indexOfScalar(u8, device, ':') orelse return null;
+        const major = std.fmt.parseInt(u64, device[0..colon], 10) catch return null;
+        if (major != 0) {
+            const minor = std.fmt.parseInt(u64, device[colon + 1 ..], 10) catch return null;
+            return .{ .major = major, .minor = minor };
+        }
+        // Anonymous Btrfs and FUSE mounts can still name a block device.
         const dash = std.mem.indexOf(u8, line, " - ") orelse return null;
         var tail = std.mem.splitScalar(u8, line[dash + 3 ..], ' ');
         _ = tail.next() orelse return null; // filesystem type
-        return tail.next();
+        const source = tail.next() orelse return null;
+        if (!std.mem.startsWith(u8, source, "/dev/")) return null;
+        return probe(source);
     }
     return null;
 }
@@ -254,15 +297,35 @@ test "the longest containing mount wins, at component boundaries, escapes undone
     try std.testing.expectEqualStrings("/run/media/u/USB STICK", name);
 }
 
-test "the source of a mountinfo line" {
+fn fixtureSource(source: []const u8) ?BlockDevice {
+    if (std.mem.eql(u8, source, "/dev/sda1")) return .{ .major = 8, .minor = 1 };
+    if (std.mem.eql(u8, source, "/dev/sdb1")) return .{ .major = 8, .minor = 17 };
+    return null;
+}
+
+test "mount identity locates a Btrfs disk when the descriptor device is absent from mountinfo" {
     const table =
         \\22 1 8:2 / / rw - ext4 /dev/sda2 rw
-        \\32 22 0:41 / /mnt/usb rw - fuseblk /dev/sdb1 rw
-        \\33 22 0:42 / /mnt/nas rw - nfs4 server:/share rw
+        \\223 22 0:60 / /mnt/other rw - btrfs /dev/sdb1 rw
+        \\224 22 0:60 /@home /home rw - btrfs /dev/sda1 rw
+        \\225 22 0:42 / /mnt/nas rw - nfs4 server:/share rw
+        \\226 22 0:43 / /mnt/unknown rw - btrfs /dev/missing rw
     ;
-    try std.testing.expectEqualStrings("/dev/sdb1", mountSource(table, "0:41").?);
-    try std.testing.expectEqualStrings("server:/share", mountSource(table, "0:42").?);
-    try std.testing.expect(mountSource(table, "0:9") == null);
+    try std.testing.expectEqual(null, mountBlockDevice(table, .{ .device = "0:61" }, fixtureSource));
+    try std.testing.expectEqual(BlockDevice{ .major = 8, .minor = 1 }, mountBlockDevice(table, .{ .id = "224" }, fixtureSource).?);
+    try std.testing.expectEqual(BlockDevice{ .major = 8, .minor = 17 }, mountBlockDevice(table, .{ .id = "223" }, fixtureSource).?);
+    try std.testing.expectEqual(BlockDevice{ .major = 8, .minor = 17 }, mountBlockDevice(table, .{ .device = "0:60" }, fixtureSource).?);
+    try std.testing.expectEqual(BlockDevice{ .major = 8, .minor = 2 }, mountBlockDevice(table, .{ .id = "22" }, fixtureSource).?);
+    for ([_][]const u8{ "225", "226", "227" }) |id|
+        try std.testing.expectEqual(null, mountBlockDevice(table, .{ .id = id }, fixtureSource));
+}
+
+test "rotational and USB disk paths are serial while SATA SSDs and virtio are not" {
+    const sata = "/sys/devices/pci0000:00/ata1/block/sda";
+    try std.testing.expect(!serialDisk(sata, false));
+    try std.testing.expect(serialDisk(sata, true));
+    try std.testing.expect(serialDisk("/sys/devices/pci0000:00/usb2/block/sdb", false));
+    try std.testing.expect(!serialDisk("/sys/devices/pci0000:00/virtio0/block/vda", true));
 }
 
 /// `st_dev` as glibc encodes it, from a major and minor number.

@@ -1,10 +1,13 @@
 //! Deterministic ownership, cancellation, and allocation tests for resolution.
 const std = @import("std");
+const c = @import("c.zig").api;
+const platform = @import("platform");
 const tree = @import("sizetree.zig");
+const DevicePolicyCache = @import("sizetree_resolution.zig").DevicePolicyCache;
 const Service = tree.Service;
 const Resolution = tree.Resolution;
 
-fn auto(_: u32, _: u32) bool {
+fn auto(_: u32, _: u32, _: ?u64) ?bool {
     return true;
 }
 
@@ -18,6 +21,61 @@ fn takeResolution(svc: *Service) !Resolution {
         .resolve => |job| job,
         .scan => error.UnexpectedScan,
     };
+}
+
+test "device policy memoization distinguishes mounts and leaves ambiguous results uncached" {
+    var cache: DevicePolicyCache = .{};
+    const home: DevicePolicyCache.Identity = .{ .dev = 61, .mount_id = 224 };
+    const other: DevicePolicyCache.Identity = .{ .dev = 61, .mount_id = 225 };
+    const legacy_anonymous: DevicePolicyCache.Identity = .{ .dev = 61, .mount_id = null };
+    const legacy_block: DevicePolicyCache.Identity = .{ .dev = 8 << 32 | 1, .mount_id = null };
+    const mounted_block: DevicePolicyCache.Identity = .{ .dev = legacy_block.dev, .mount_id = 224 };
+
+    cache.put(home, true);
+    try std.testing.expectEqual(@as(?bool, true), cache.get(home));
+    try std.testing.expectEqual(null, cache.get(other));
+    cache.put(other, null);
+    try std.testing.expectEqual(null, cache.get(other));
+    cache.put(other, false);
+    try std.testing.expectEqual(@as(?bool, false), cache.get(other));
+    try std.testing.expect(cache.get(home) != false);
+
+    cache.put(legacy_anonymous, true);
+    try std.testing.expectEqual(null, cache.get(legacy_anonymous));
+    cache.put(legacy_block, true);
+    try std.testing.expectEqual(@as(?bool, true), cache.get(legacy_block));
+    try std.testing.expectEqual(null, cache.get(mounted_block));
+}
+
+fn autoWithMount(_: u32, _: u32, mount_id: ?u64) ?bool {
+    return if (mount_id != null) true else null;
+}
+
+test "sizetree passes the opened directory mount identity to automatic policy" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a = std.testing.allocator;
+    const path = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    defer a.free(path);
+    var buf: [4096]u8 = undefined;
+    const z = try std.fmt.bufPrintSentinel(&buf, "{s}", .{path}, 0);
+    const fd = c.open(z.ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
+    if (fd < 0) return error.TestSetupFailed;
+    defer _ = c.close(fd);
+    const id = platform.mounts.idOfFd(fd) orelse return error.SkipZigTest;
+    const info = platform.dirwalk.statFd(fd) orelse return error.TestSetupFailed;
+
+    const svc = try Service.create(a, 0, autoWithMount);
+    defer svc.destroy();
+    var owner = svc.registerOwner();
+    defer owner.deinit();
+    svc.request(&owner, path, .visible, .{});
+    const job = try takeResolution(svc);
+    defer job.deinit(a);
+    try std.testing.expect(!svc.resolvePath(job));
+    try std.testing.expectEqual(@as(?bool, true), svc.auto.get(.{ .dev = info.dev, .mount_id = id }));
+    try std.testing.expectEqual(tree.Status.measuring, svc.lookup(path).status);
+    try std.testing.expectEqual(@as(usize, 1), svc.queued_count);
 }
 
 test "sizetree retries each path and resolution queue allocation failure" {

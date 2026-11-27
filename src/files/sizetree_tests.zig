@@ -11,10 +11,10 @@ fn nowNs() u64 {
 fn sh(cmd: [:0]const u8) void {
     std.debug.assert(c.system(cmd.ptr) == 0);
 }
-fn yes(_: u32, _: u32) bool {
+fn yes(_: u32, _: u32, _: ?u64) ?bool {
     return true;
 }
-fn no(_: u32, _: u32) bool {
+fn no(_: u32, _: u32, _: ?u64) ?bool {
     return false;
 }
 fn settle(s: *st.Service) void {

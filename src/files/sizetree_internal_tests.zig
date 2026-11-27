@@ -5,7 +5,7 @@ const Service = tree.Service;
 const Level = tree.Level;
 const demand = @import("sizetree_demand.zig");
 
-fn testAutoPolicy(_: u32, _: u32) bool {
+fn testAutoPolicy(_: u32, _: u32, _: ?u64) ?bool {
     return true;
 }
 

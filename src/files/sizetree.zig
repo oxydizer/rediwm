@@ -133,16 +133,20 @@ pub const Owner = demand.Owner;
 
 /// Whether a disk is measured without being asked: a local disk that is
 /// neither spinning nor attached over USB. Network and virtual filesystems
-/// are not. Overridable for tests.
-pub const AutoPolicy = *const fn (dev_major: u32, dev_minor: u32) bool;
+/// are not. Null means the backing disk could not be identified.
+pub const AutoPolicy = *const fn (dev_major: u32, dev_minor: u32, mount_id: ?u64) ?bool;
 
-pub fn defaultAutoPolicy(dev_major: u32, dev_minor: u32) bool {
-    if (builtin.os.tag != .linux) return false;
+pub fn defaultAutoPolicy(dev_major: u32, dev_minor: u32, mount_id: ?u64) ?bool {
+    if (builtin.os.tag != .linux) return null;
+    if (mount_id) |id| {
+        const disk = platform.mounts.diskOfMount(id) orelse return null;
+        return !disk.serial;
+    }
     const major: u64 = dev_major;
     const minor: u64 = dev_minor;
     // `stat`'s encoding of the device number (glibc `makedev`).
     const st_dev = ((major & 0xfff) << 8) | ((major & ~@as(u64, 0xfff)) << 32) | (minor & 0xff) | ((minor & ~@as(u64, 0xff)) << 12);
-    const disk = platform.mounts.diskOf(st_dev) orelse return false;
+    const disk = platform.mounts.diskOf(st_dev) orelse return null;
     return !disk.serial;
 }
 

@@ -7,7 +7,7 @@ const eviction = @import("sizetree_eviction.zig");
 const Id = tree.Id;
 const no_id = tree.no_id;
 
-fn auto(_: u32, _: u32) bool {
+fn auto(_: u32, _: u32, _: ?u64) ?bool {
     return true;
 }
 

@@ -37,12 +37,12 @@ pub fn countOpenFds() !usize {
     return if (count > 0) count - 1 else 0;
 }
 
-fn everyDisk(_: u32, _: u32) bool {
+fn everyDisk(_: u32, _: u32, _: ?u64) ?bool {
     return true;
 }
 
 /// Like a thumb drive: nothing is measured until clicked.
-fn noDisk(_: u32, _: u32) bool {
+fn noDisk(_: u32, _: u32, _: ?u64) ?bool {
     return false;
 }
 

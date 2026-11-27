@@ -11,7 +11,7 @@ const expect = std.testing.expect;
 const equal = std.testing.expectEqual;
 const peak = 1200;
 
-fn auto(_: u32, _: u32) bool {
+fn auto(_: u32, _: u32, _: ?u64) ?bool {
     return true;
 }
 
@@ -265,15 +265,16 @@ test "sizetree workers reuse large scratch on large reads and release it after s
 
 test "sizetree device policy memoization bounds storage and checks identity on collisions" {
     var cache: resolution.DevicePolicyCache = .{};
-    for (0..4096) |dev| {
-        cache.put(dev, dev % 2 == 0);
-        try equal(@as(?bool, dev % 2 == 0), cache.get(dev));
+    for (1..4097) |id| {
+        const mount: resolution.DevicePolicyCache.Identity = .{ .dev = 61, .mount_id = id };
+        cache.put(mount, id % 2 == 0);
+        try equal(@as(?bool, id % 2 == 0), cache.get(mount));
     }
     try equal(@as(usize, 256), cache.slots.len);
     var retained: usize = 0;
-    for (0..4096) |dev| {
-        if (cache.get(dev)) |allowed| {
-            try equal(dev % 2 == 0, allowed);
+    for (1..4097) |id| {
+        if (cache.get(.{ .dev = 61, .mount_id = id })) |allowed| {
+            try equal(id % 2 == 0, allowed);
             retained += 1;
         }
     }

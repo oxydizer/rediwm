@@ -1,7 +1,8 @@
 //! Path bindings and the allocation-free ready queue for path resolution.
 const std = @import("std");
 const c = @import("c.zig").api;
-const dirwalk = @import("platform").dirwalk;
+const platform = @import("platform");
+const dirwalk = platform.dirwalk;
 const tree = @import("sizetree.zig");
 const demand = @import("sizetree_demand.zig");
 const eviction = @import("sizetree_eviction.zig");
@@ -15,20 +16,32 @@ const no_id = tree.no_id;
 /// callback as before, outside the service mutex.
 pub const DevicePolicyCache = struct {
     pub const capacity = 256;
-    const Slot = struct { dev: u64, allowed: bool };
+    pub const Identity = struct {
+        dev: u64,
+        mount_id: ?u64,
+
+        fn cacheable(self: Identity) bool {
+            // A legacy anonymous device lookup can match the wrong mount.
+            return self.mount_id != null or self.dev >> 32 != 0;
+        }
+
+        fn index(self: Identity) usize {
+            return @intCast((std.hash.int(self.dev) ^ std.hash.int(self.mount_id orelse 0)) % capacity);
+        }
+    };
+    const Slot = struct { identity: Identity, allowed: bool };
     slots: [capacity]?Slot = @splat(null),
 
-    fn index(dev: u64) usize {
-        return @intCast(std.hash.int(dev) % capacity);
+    pub fn get(self: *const DevicePolicyCache, identity: Identity) ?bool {
+        if (!identity.cacheable()) return null;
+        const slot = self.slots[identity.index()] orelse return null;
+        return if (slot.identity.dev == identity.dev and slot.identity.mount_id == identity.mount_id) slot.allowed else null;
     }
 
-    pub fn get(self: *const DevicePolicyCache, dev: u64) ?bool {
-        const slot = self.slots[index(dev)] orelse return null;
-        return if (slot.dev == dev) slot.allowed else null;
-    }
-
-    pub fn put(self: *DevicePolicyCache, dev: u64, allowed: bool) void {
-        self.slots[index(dev)] = .{ .dev = dev, .allowed = allowed };
+    pub fn put(self: *DevicePolicyCache, identity: Identity, result: ?bool) void {
+        const allowed = result orelse return;
+        if (!identity.cacheable()) return;
+        self.slots[identity.index()] = .{ .identity = identity, .allowed = allowed };
     }
 };
 
@@ -153,17 +166,18 @@ pub fn resolvePath(svc: *Service, job: Job) bool {
     const info = dirwalk.statFd(fd) orelse return resolved(svc, job, null, false);
     if (info.kind != .directory) return resolved(svc, job, null, false);
     const key: Key = .{ .dev = info.dev, .ino = info.ino };
+    const identity: DevicePolicyCache.Identity = .{ .dev = info.dev, .mount_id = platform.mounts.idOfFd(fd) };
     svc.lock();
-    const known = svc.auto.get(key.dev);
+    const known = svc.auto.get(identity);
     const active = current(svc, job);
     svc.unlock();
     if (!active) return false;
     const auto = known orelse blk: {
-        const allowed = svc.policy(@intCast(key.dev >> 32), @truncate(key.dev));
+        const result = svc.policy(@intCast(info.dev >> 32), @truncate(info.dev), identity.mount_id);
         svc.lock();
-        if (current(svc, job)) svc.auto.put(key.dev, allowed);
+        if (current(svc, job)) svc.auto.put(identity, result);
         svc.unlock();
-        break :blk allowed;
+        break :blk result orelse false;
     };
     return resolved(svc, job, key, auto);
 }

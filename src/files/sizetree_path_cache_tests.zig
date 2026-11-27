@@ -6,7 +6,7 @@ const Service = tree.Service;
 const expect = std.testing.expect;
 const equal = std.testing.expectEqual;
 
-fn auto(_: u32, _: u32) bool {
+fn auto(_: u32, _: u32, _: ?u64) ?bool {
     return true;
 }
 
