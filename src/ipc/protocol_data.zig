@@ -384,6 +384,14 @@ pub const HitTestResult = struct {
 };
 
 pub const WindowDebugResult = struct {
+    pub const SurfaceColor = struct {
+        root: bool,
+        buffer_width: i32,
+        buffer_height: i32,
+        transfer: ?[]const u8,
+        primaries: ?[]const u8,
+    };
+
     id: u64,
     title: ?[]const u8 = null,
     app_id: ?[]const u8 = null,
@@ -412,6 +420,7 @@ pub const WindowDebugResult = struct {
     outputs: []const []const u8,
     skirt_fill: ?[4]f32 = null,
     edge_sample: []const u8 = "uninitialized",
+    surface_colors: []const SurfaceColor = &.{},
 };
 
 pub const OpenRulesData = struct {

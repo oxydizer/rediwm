@@ -53,6 +53,18 @@ static int run_hdr_pattern(void) {
       assert(wl_display_roundtrip(display) >= 0);
       wp_image_description_v1_destroy(desc);
       printf("preferred %u %u\n", named[0], named[1]);
+    } else if (!strcmp(command, "pq-child")) {
+      // A game swapchain on a subsurface, with its parent still untagged.
+      struct wl_surface *child = wl_compositor_create_surface(compositor);
+      wl_subcompositor_get_subsurface(subcompositor, child, surface);
+      struct wp_color_management_surface_v1 *child_color = wp_color_manager_v1_get_surface(color_manager, child);
+      describe(child_color, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020);
+      wl_surface_attach(child, buffer, 0, 0);
+      wl_surface_damage(child, 0, 0, hdr_width, hdr_height);
+      wl_surface_commit(child);
+      wl_surface_commit(surface);
+      assert(wl_display_roundtrip(display) >= 0);
+      puts(command);
     } else {
       uint32_t primaries = WP_COLOR_MANAGER_V1_PRIMARIES_SRGB;
       uint32_t tf;

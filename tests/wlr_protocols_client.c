@@ -35,6 +35,7 @@
 
 static struct wl_display *display;
 static struct wl_compositor *compositor;
+static struct wl_subcompositor *subcompositor;
 static uint32_t fixes_name;
 static struct wl_shm *shm;
 static struct wl_output *outputs[MAX_OUTPUTS];
@@ -71,6 +72,8 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
   if (bind_extra(registry, name, interface)) return;
   if (strcmp(interface, wl_compositor_interface.name) == 0) {
     compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
+  } else if (hdr_output_name && strcmp(interface, wl_subcompositor_interface.name) == 0) {
+    subcompositor = wl_registry_bind(registry, name, &wl_subcompositor_interface, 1);
   } else if (strcmp(interface, wl_fixes_interface.name) == 0) {
     fixes_name = name;
   } else if (strcmp(interface, wl_shm_interface.name) == 0) {
@@ -379,6 +382,7 @@ static bool configured, image_ready, color_done, representation_done;
 static unsigned workspace_count, group_count, workspace_outputs;
 static bool canvas_name, canvas_id, canvas_active;
 static bool workspace_test_mode;
+static bool classic_workspace_test;
 static unsigned activate_workspace_id;
 static struct ext_workspace_handle_v1 *activate_workspace;
 static void ping(void *data, struct xdg_wm_base *base, uint32_t serial) {
@@ -403,7 +407,7 @@ static void ws_state(void *data, struct ext_workspace_handle_v1 *w, uint32_t sta
   (void)data; (void)w; canvas_active = (state & EXT_WORKSPACE_HANDLE_V1_STATE_ACTIVE) != 0;
 }
 static void ws_caps(void *data, struct ext_workspace_handle_v1 *w, uint32_t caps) {
-  (void)data; (void)w; assert(caps == (workspace_test_mode ? EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE : 0));
+  (void)data; (void)w; assert(caps == (workspace_test_mode && !classic_workspace_test ? EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE : 0));
 }
 static void ws_removed(void *data, struct ext_workspace_handle_v1 *w) { (void)data; (void)w; }
 static const struct ext_workspace_handle_v1_listener ws_listener = {
@@ -582,7 +586,10 @@ int main(int argc, char **argv) {
   dialog_mode = !strcmp(argv[1], "xdg-dialog");
   dump_versions = dump_registry_mode && argc > 2 && strcmp(argv[2], "--versions") == 0;
   workspace_test_mode = strcmp(argv[1], "workspaces") == 0;
-  if (workspace_test_mode && argc > 2) activate_workspace_id = (unsigned)atoi(argv[2]);
+  if (workspace_test_mode && argc > 2) {
+    classic_workspace_test = strcmp(argv[2], "classic") == 0;
+    if (!classic_workspace_test) activate_workspace_id = (unsigned)atoi(argv[2]);
+  }
   if (argc == 3 && !strcmp(argv[1], "hdr-pattern")) hdr_output_name = argv[2];
   extras_mode = strcmp(argv[1], "extras") == 0 || workspace_test_mode || hdr_output_name;
   display = wl_display_connect(NULL);
@@ -610,6 +617,7 @@ int main(int argc, char **argv) {
   if (workspace_test_mode) {
     assert(workspace_manager);
     assert(wl_display_roundtrip(display) >= 0);
+    if (classic_workspace_test) assert(workspace_count == 1 && group_count == 1 && canvas_active);
     printf("groups %u outputs %u\n", group_count, workspace_outputs);
     if (activate_workspace_id) {
       assert(activate_workspace);

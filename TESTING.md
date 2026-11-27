@@ -332,6 +332,13 @@ picture mode alongside the results.
    including a window straddling the seam. Change HDR while it stays mapped.
    Compare fullscreen direct scanout with a composited frame and repeat
    with night light on. Check the software cursor and gamma-client refusal.
+   For a game with washed-out colors, record its Proton version and the
+   window's `id` and `backend` from `rediwm-msg --json windows`. With the
+   game's HDR mode enabled, run `rediwm-msg --json window-debug <id>` and
+   inspect `surface_colors` for the game-sized buffer, including subsurfaces.
+   HDR10 reports `st2084_pq` and `bt2020`. Null values identify an untagged
+   surface that RediWM treats as SDR. Record `rediwm-msg --json outputs`
+   alongside this to distinguish the game submission from the monitor signal.
 4. Check a screenshot, grim, window and monitor portal shares, and a recording
    in OBS or wf-recorder. Compare SDR highlights and skin tones on an SDR
    display. Lock and unlock during a share, then unplug and reconnect the

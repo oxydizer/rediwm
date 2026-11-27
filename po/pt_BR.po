@@ -903,8 +903,8 @@ msgid "Canvas size"
 msgstr "Tamanho da área de trabalho ampla"
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Canvas · RediWM preset"
-msgstr "Área de trabalho ampla · Predefinição do RediWM"
+msgid "Classic and Canvas · RediWM preset"
+msgstr "Clássico e Área de trabalho ampla · Predefinição do RediWM"
 
 #: src/session/lock_view.zig
 msgid "Caps Lock is on"
@@ -1143,8 +1143,8 @@ msgid "Choose your window layout"
 msgstr "Escolha a organização das janelas"
 
 #: src/control_center/welcome.zig
-msgid "Classic (stacking)"
-msgstr "Clássico (empilhamento)"
+msgid "Classic"
+msgstr "Clássico"
 
 #: src/control_center/search.zig
 msgid "Clear search"
@@ -4139,8 +4139,8 @@ msgid "Pan Up"
 msgstr "Deslocar para cima"
 
 #: src/control_center/sections/desktop.zig
-msgid "Pan and zoom the canvas. Switching back restores your canvas positions and zoom."
-msgstr "Desloque e amplie a área de trabalho ampla. Ao voltar, suas posições e ampliação serão restauradas."
+msgid "Pan and zoom the canvas."
+msgstr "Desloque e amplie a área de trabalho ampla."
 
 #: src/control_center/sections/input.zig
 msgid "Pan speed"
@@ -5637,8 +5637,8 @@ msgid "Swap the focused tile up."
 msgstr "Trocar a janela em mosaico em foco para cima."
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Switch between Canvas and the last tiled mode."
-msgstr "Alternar entre a área de trabalho ampla e o último modo de mosaico usado."
+msgid "Switch between the last stacking and tiled modes."
+msgstr "Alternar entre os últimos modos de sobreposição e de mosaico usados."
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
@@ -6886,8 +6886,8 @@ msgid "calendar monday sunday"
 msgstr "calendário segunda domingo"
 
 #: src/control_center/search_index.zig
-msgid "canvas tiling scrolling workspaces"
-msgstr "área de trabalho ampla mosaico rolagem espaços trabalho"
+msgid "classic stacking canvas tiling scrolling workspaces"
+msgstr "clássico sobreposição área de trabalho ampla mosaico rolagem espaços trabalho"
 
 #: src/control_center/search_index.zig
 msgid "chooser portal"

@@ -906,8 +906,8 @@ msgid "Canvas size"
 msgstr "Размер холста"
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Canvas · RediWM preset"
-msgstr "Холст · Предустановка RediWM"
+msgid "Classic and Canvas · RediWM preset"
+msgstr "Классический режим и холст · Предустановка RediWM"
 
 #: src/session/lock_view.zig
 msgid "Caps Lock is on"
@@ -1146,8 +1146,8 @@ msgid "Choose your window layout"
 msgstr "Выберите расположение окон"
 
 #: src/control_center/welcome.zig
-msgid "Classic (stacking)"
-msgstr "Классическое (с перекрытием)"
+msgid "Classic"
+msgstr "Классический"
 
 #: src/control_center/search.zig
 msgid "Clear search"
@@ -4144,8 +4144,8 @@ msgid "Pan Up"
 msgstr "Переместить вид вверх"
 
 #: src/control_center/sections/desktop.zig
-msgid "Pan and zoom the canvas. Switching back restores your canvas positions and zoom."
-msgstr "Перемещайте и масштабируйте холст. При возвращении восстанавливаются положения и масштаб."
+msgid "Pan and zoom the canvas."
+msgstr "Перемещайте и масштабируйте холст."
 
 #: src/control_center/sections/input.zig
 msgid "Pan speed"
@@ -5643,8 +5643,8 @@ msgid "Swap the focused tile up."
 msgstr "Поменять активное окно местами с окном сверху."
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Switch between Canvas and the last tiled mode."
-msgstr "Переключаться между холстом и последним режимом размещения окон."
+msgid "Switch between the last stacking and tiled modes."
+msgstr "Переключаться между последними использованными режимами перекрытия и мозаики."
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
@@ -6892,8 +6892,8 @@ msgid "calendar monday sunday"
 msgstr "календарь понедельник воскресенье"
 
 #: src/control_center/search_index.zig
-msgid "canvas tiling scrolling workspaces"
-msgstr "холст размещение окон прокрутка рабочие пространства"
+msgid "classic stacking canvas tiling scrolling workspaces"
+msgstr "классический перекрытие холст размещение окон прокрутка рабочие пространства"
 
 #: src/control_center/search_index.zig
 msgid "chooser portal"

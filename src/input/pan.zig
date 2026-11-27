@@ -8,7 +8,7 @@ const PanTrigger = Input.PanTrigger;
 const PanSession = Input.PanSession;
 
 pub fn startPan(input: *Input, trigger: PanTrigger, device: ?*wlr.InputDevice) void {
-    if (input.server.world.workspaces.active) return;
+    if (input.server.world.workspaces.mode != .canvas) return;
     if (input.server.world.mini_map.dragging) return;
     if (input.server.switcher.active()) return;
     // Don't start a new pan if this trigger is currently inhibited

@@ -83,6 +83,7 @@ pub fn endMove(input: *Input, apply_snap: bool) void {
         }
     }
     if (apply_snap) if (target) |t| if (output) |out| toplevel.snapTo(out, t, origin);
+    @import("../workspaces.zig").keepClassicWindowVisible(toplevel);
     const geom = toplevel.clientGeometry();
     if (!@import("../layout_undo.zig").commitGesture(input.server, null)) input.server.undo.commit(Server.undoNowMs(), .{
         .window = .{

@@ -17,10 +17,10 @@ pub fn chooseMode(server: *Server, value: config.loader.DesktopMode) void {
         mode(server, value, false) catch unreachable;
     };
 }
-/// Canvas, or back to the tiled mode used last, as it was left.
+/// Return to the last stacking or tiled mode.
 pub fn toggleMode(server: *Server) void {
     const manager = &server.world.workspaces;
-    chooseMode(server, if (manager.active) .canvas else manager.last_tiled);
+    chooseMode(server, if (manager.active) manager.last_stacking else manager.last_tiled);
 }
 pub fn gap(server: *Server, value: u32, persist: bool) !void {
     if (value > 512) return error.InvalidGap;

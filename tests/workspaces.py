@@ -72,8 +72,8 @@ desktop_switch_ms = 3000
                     wait_for(lambda: (ipc.get_workspaces()[0]["name"] != "Canvas") == workspaces, "mode reload")
                     ipc.wait_for_frame()
 
-                def protocol_workspaces(activate=None):
-                    return subprocess.check_output([str(tmp / "fixture"), "workspaces"] + ([str(activate)] if activate else []), env=env, text=True, timeout=15)
+                def protocol_workspaces(argument=None):
+                    return subprocess.check_output([str(tmp / "fixture"), "workspaces"] + ([str(argument)] if argument else []), env=env, text=True, timeout=15)
 
                 a = launch("workspace-a")
                 ipc.action("move_window_to", {"id": a, "x": 100, "y": 120})
@@ -199,6 +199,45 @@ desktop_switch_ms = 3000
                 wait_for(lambda: 'desktop_mode = "canvas"' in cfg.read_text(), "canvas saved")
                 assert (window(a)["x"], window(a)["y"]) == at_canvas, (at_canvas, window(a))
                 assert '[keybinds]\n"Super+q" = "noop"' in cfg.read_text()
+
+                # A fixed desktop still stacks and moves windows. Bring a
+                # window left on the canvas within reach at native scale.
+                if outputs == 1:
+                    out = ipc.get_outputs()[0]
+                    map_x = out["x"] + out["logical_width"] - 18
+                    map_y = out["y"] + out["logical_height"] - out["bottom_exclusion"] - 18
+                    ipc.move_cursor(out["x"] + 20, out["y"] + 20)
+                    cam = ipc.get_state()["camera"]
+                    ipc.action("set_camera", {"x": cam["x"], "y": cam["y"]})
+                    ipc.wait_for_frame()
+                    assert ipc.hit_test(map_x, map_y)["target_type"] == "mini_map"
+                ipc.action("move_window_to", {"id": a, "x": -5000, "y": 120})
+                if outputs == 1:
+                    ipc.action("fullscreen_window", {"id": b})
+                ipc.action("set_desktop_mode", {"mode": "classic"})
+                ipc.wait_for("window_geometry_settled", window_id=a)
+                assert ipc.get_workspaces()[0]["name"] == "Classic"
+                assert "workspace rediwm-classic" in protocol_workspaces("classic")
+                fixed_camera = dict(x=0, y=0, max_x=0, max_y=0, zoom_percent=100)
+                assert ipc.get_state()["camera"] == fixed_camera
+                assert window(a)["x"] > -5000 and window(a)["zoom_percent"] == 100, window(a)
+                if outputs == 1:
+                    assert ipc.hit_test(map_x, map_y)["target_type"] != "mini_map"
+                    full_box = dict(x=out["x"], y=out["y"], width=out["logical_width"], height=out["logical_height"])
+                    wait_for(lambda: ipc.get_window_debug(b)["chrome_box"] == full_box, "refit fullscreen in Classic")
+                    ipc.action("restore_window", {"id": b})
+                chord("Right")
+                chord("minus", shift=True)
+                assert ipc.get_state()["camera"] == fixed_camera
+                chord("w", shift=True)
+                wait_for(lambda: ipc.get_workspaces()[0].get("layout") == "split", "Classic to Tiling")
+                chord("w", shift=True)
+                wait_for(lambda: ipc.get_workspaces()[0]["name"] == "Classic", "Tiling back to Classic")
+                assert 'desktop_mode = "classic"' in cfg.read_text()
+                ipc.action("set_desktop_mode", {"mode": "canvas"})
+                assert window(a)["zoom_percent"] == before["zoom_percent"]
+                wait_for(lambda: ipc.get_workspaces()[0]["name"] == "Canvas", "return to Canvas")
+
                 # The taskbar item is opt-in; shown, its label and icon follow the
                 # mode and a click switches it.
                 def mode_item():
@@ -243,8 +282,7 @@ desktop_switch_ms = 3000
                     ipc.click_at(round(box["x"] + box["width"] * fraction), round(box["y"] + box["height"] / 2))
                 widgets = ipc.get_widget_tree("control_center")["widgets"]
                 widget_click(next(w for w in widgets if w["label"] == "Desktop"))
-                # Canvas, Tiling and Scrolling share the control in thirds.
-                for fraction, layout in [(.5, "split"), (.85, "scrolling"), (.15, None)]:
+                for fraction, name in [(0.625, "split"), (0.875, "scrolling"), (0.125, "Classic"), (0.375, "Canvas")]:
                     # A mode change queues a tiling reflow. After it runs, the
                     # Settings frame and its responsive widget tree settle separately.
                     ipc.wait_for_frame()
@@ -252,7 +290,11 @@ desktop_switch_ms = 3000
                     ipc.wait_for_panel_settled("control_center")
                     widget = next(w for w in ipc.get_widget_tree("control_center")["widgets"] if (w["path"] or "").endswith("/desktop_mode"))
                     widget_click(widget, fraction)
-                    wait_for(lambda: ipc.get_workspaces()[0].get("layout") == layout if layout else ipc.get_workspaces()[0]["name"] == "Canvas", f"Settings mode control ({layout or 'canvas'})")
+                    wait_for(lambda: name in (ipc.get_workspaces()[0].get("layout"), ipc.get_workspaces()[0]["name"]),
+                             f"Settings mode control ({name})")
+                    if name in ("Classic", "Canvas"):
+                        widgets = ipc.get_widget_tree("control_center")["widgets"]
+                        assert any(w["name"] == "mini_map_enabled" for w in widgets) == (name == "Canvas")
                 assert '[keybinds]\n"Super+q" = "noop"' in (tmp / "rediwm-config.toml").read_text()
                 assert process.poll() is None
                 print(f"PASS: workspaces, visibility, preset, Settings and canvas restore ({outputs} outputs)", flush=True)

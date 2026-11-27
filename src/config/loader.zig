@@ -172,9 +172,10 @@ pub const RegionConfig = struct {
 
 pub const TaskbarItems = @import("taskbar_items.zig").Config;
 
-/// Canvas pans one shared view; the two tiled modes give each display its own
-/// workspaces, laid out as split tiles or a scrolling strip by default.
+/// Classic and Canvas stack windows in one shared view. The tiled modes give
+/// each display workspaces laid out as split tiles or as a scrolling strip.
 pub const DesktopMode = enum {
+    classic,
     canvas,
     tiling,
     scrolling,
@@ -185,7 +186,7 @@ pub const DesktopMode = enum {
     }
 
     pub fn tiled(mode: DesktopMode) bool {
-        return mode != .canvas;
+        return mode == .tiling or mode == .scrolling;
     }
 };
 pub const dock_height_min: u32 = 48;

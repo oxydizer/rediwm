@@ -27,7 +27,7 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 | --- | --- | --- |
 | `windows` | `windows` | list toplevels |
 | `focused_window` | `focused-window` | |
-| `get_window_debug` | `window-debug <id>` | geometry, decoration, serials |
+| `get_window_debug` | `window-debug <id>` | geometry, decoration, serials and committed surface colors in JSON |
 | `get_window_rules` | `window-rules <id>` | matched rules and effective properties |
 | `match_window_rules` | `match-window-rules` | dry run: `app_id`, `title`, `x11_class`, `x11_instance`, `backend`, `dialog` |
 | `focus_window` | Action `focus-window --id` | |
@@ -50,7 +50,7 @@ Names are the wire names (`"command": "..."`). The CLI column is the
 | --- | --- | --- |
 | `outputs` | `outputs` | list outputs |
 | `set_output_config` | `output-config <out> ...` | mode, transform, position, scale, variable refresh, HDR, scroll direction, enable. Applied and saved |
-| `set_desktop_mode` | none | `mode` is `canvas`, `tiling` or `scrolling`. Set `persist` to `false` for a session-only change. The legacy value `workspaces` also selects Tiling. |
+| `set_desktop_mode` | none | `mode` is `classic`, `canvas`, `tiling` or `scrolling`. Set `persist` to `false` for a session-only change. The legacy value `workspaces` also selects Tiling. |
 | `workspaces` | `workspaces` | there's one, the canvas (`workspace_id = 1`) |
 | `get_camera` | none | position, bounds, zoom |
 | `set_camera` / `reset_camera` | none | `set_camera` takes integer `x`, `y` |

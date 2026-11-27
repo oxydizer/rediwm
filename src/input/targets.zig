@@ -45,7 +45,7 @@ pub fn isShiftHeld(input: *Input) bool {
 
 /// The `.super_key` pan trigger: `[input] pan_modifier` held on any keyboards.
 pub fn isPanModifierHeld(input: *Input) bool {
-    if (input.server.world.workspaces.active or input.server.world.overview.active()) return false;
+    if (input.server.world.workspaces.mode != .canvas or input.server.world.overview.active()) return false;
     return switch (input.server.config.input.pan_modifier) {
         .super => input.isSuperHeld(),
         .super_alt => input.isDesktopZoomHeld(),

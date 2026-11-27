@@ -17,11 +17,12 @@ pub fn zoom(toplevel: *const Toplevel) f64 {
 /// Client units to presented world units, including the temporary focus boost.
 /// The saved frame position, client size and zoom_index remain unchanged.
 pub fn worldScale(toplevel: *const Toplevel) f64 {
-    if (toplevel.server.world.workspaces.active) return 1;
+    if (toplevel.server.world.workspaces.mode != .canvas) return 1;
     return @import("../camera.zig").boostedScale(toplevel.zoom_scale, toplevel.server.world.camera.zoom(), toplevel.zoom_boost_value);
 }
 
 pub fn setZoomBoost(toplevel: *Toplevel, enabled: bool) void {
+    if (enabled and toplevel.server.world.workspaces.mode == .classic) return;
     const target: f32 = if (enabled and toplevel.layout() == .floating and !toplevel.isFullscreen()) 1 else 0;
     if (toplevel.zoom_boost.to == target) return;
     const now = nowMs();
@@ -58,7 +59,7 @@ pub fn takeZoomBoost(toplevel: *Toplevel) void {
 }
 
 pub fn cameraFocusOpacity(toplevel: *const Toplevel) f32 {
-    if (toplevel.server.world.workspaces.active) return 1;
+    if (toplevel.server.world.workspaces.mode != .canvas) return 1;
     if (toplevel.server.config.compositor.focus_zoom != .camera or toplevel.layout() != .floating or toplevel.isFullscreen()) return 1;
     // Windows passed by the camera fade away, and stop accepting input once
     // invisible. Reversing the zoom reveals the same retained scene again.
@@ -111,7 +112,7 @@ pub fn tickZoom(toplevel: *Toplevel, now_ms: i64) bool {
 }
 
 pub fn setZoom(toplevel: *Toplevel, index: usize, lx: f64, ly: f64) void {
-    if (toplevel.server.world.workspaces.active) return;
+    if (toplevel.server.world.workspaces.mode != .canvas) return;
     toplevel.takeZoomBoost();
     const next = @min(index, @import("../camera.zig").zoom_levels.len - 1);
     if (next == toplevel.zoom_index and toplevel.zoom_scale == @as(f64, @floatFromInt(@import("../camera.zig").zoom_levels[next])) / 100) return;
@@ -145,7 +146,7 @@ pub fn setZoom(toplevel: *Toplevel, index: usize, lx: f64, ly: f64) void {
 }
 
 pub fn setZoomAnimated(toplevel: *Toplevel, index: usize, lx: f64, ly: f64) void {
-    if (toplevel.server.world.workspaces.active) return;
+    if (toplevel.server.world.workspaces.mode != .canvas) return;
     defer @import("../osd.zig").showWindowZoom(toplevel, lx, ly);
     toplevel.takeZoomBoost();
     const next = @min(index, @import("../camera.zig").zoom_levels.len - 1);
@@ -225,7 +226,8 @@ pub fn positionDuringResize(toplevel: *Toplevel) void {
 pub fn setZoomOrigin(toplevel: *Toplevel, index: usize) void {
     const next = @min(index, @import("../camera.zig").zoom_levels.len - 1);
     const scale = @as(f64, @floatFromInt(@import("../camera.zig").zoom_levels[next])) / 100;
-    if (!@import("../projection.zig").setTreeZoom(&toplevel.frame_tree.node, scale)) {
+    const presented_scale = if (toplevel.server.world.workspaces.mode == .classic) 1 else scale;
+    if (!@import("../projection.zig").setTreeZoom(&toplevel.frame_tree.node, presented_scale)) {
         log.err("cannot allocate window zoom", .{});
         return;
     }

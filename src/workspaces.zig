@@ -48,11 +48,12 @@ pub const Workspace = struct {
 };
 tiler: @import("auto_tiling.zig").Manager = .{},
 active: bool = false,
-/// Canvas, or the tiled mode in use, which sets each workspace's default layout.
+/// The current desktop mode, which sets each workspace's default layout.
 mode: DesktopMode = .canvas,
-/// The tiled mode `toggle_desktop_mode` returns to from Canvas.
+/// The modes `toggle_desktop_mode` switches between.
 last_tiled: DesktopMode = .tiling,
-/// What the last tiled mode left behind while Canvas is on.
+last_stacking: DesktopMode = .canvas,
+/// What the last tiled mode left behind while a stacking mode is on.
 memory: ?Memory = null,
 changing: bool = false,
 slots: [count]Workspace = @splat(.{}),
@@ -103,6 +104,7 @@ pub fn nativeSelection(output: *const Output) u8 {
 pub fn mapped(self: *Self, top: *Top) void {
     if (!self.active) {
         if (top.canvas_state != null) restoreCanvas(top, true);
+        keepClassicWindowVisible(top);
         return;
     }
     if (top.workspace_generation != self.generation) {
@@ -166,9 +168,8 @@ pub fn cancelGestures(server: *Server) void {
     while (keyboards.next()) |keyboard| keyboard.cancelModeRepeats();
 }
 
-/// Switches between Canvas and the tiled modes. Tiling and Scrolling share
-/// the workspaces and differ only in their default layout, so moving between
-/// them just reflows; leaving for Canvas keeps the tiled layout in `memory`.
+/// The stacking modes share window positions. The tiled modes share workspaces
+/// and reflow when their default layout changes. Leaving them saves `memory`.
 pub fn setMode(self: *Self, server: *Server, mode: DesktopMode) void {
     if (self.changing or server.greeter_mode) return;
     if (self.mode == mode and self.active == mode.tiled()) return;
@@ -190,27 +191,75 @@ pub fn setMode(self: *Self, server: *Server, mode: DesktopMode) void {
     }
     self.changing = true;
     defer self.changing = false;
+    const workspace_change = self.active != mode.tiled();
     cancelGestures(server);
     finishTransitions(server);
     server.undo.clear();
     const applying = server.undo.applying;
     server.undo.applying = true;
     defer server.undo.applying = applying;
-    if (mode.tiled()) self.enter(server, mode) else self.leave(server);
+    if (self.mode == .canvas) self.saved_camera = server.world.camera;
+    if (mode.tiled()) {
+        self.enter(server, mode);
+    } else {
+        if (self.active) {
+            self.leave(server, mode);
+        } else {
+            self.switchStackingMode(server, mode);
+        }
+        if (mode == .classic) {
+            var tops = server.world.toplevels.iterator(.forward);
+            while (tops.next()) |top| {
+                top.clearZoomBoost();
+                keepClassicWindowVisible(top);
+            }
+        }
+    }
+    if (mode != .canvas) server.world.mini_map.hide();
+    Output.recomputeWorldBounds(server);
     self.tiler.quiet = true;
     self.tiler.schedule(server);
     self.refresh(server);
-    const output = server.getDefaultOutput();
-    focusFallback(server, if (self.active and output != null) output.?.workspace_id else null);
+    if (workspace_change) {
+        const output = server.getDefaultOutput();
+        focusFallback(server, if (self.active and output != null) output.?.workspace_id else null);
+    }
     var tops = server.world.toplevels.iterator(.forward);
     while (tops.next()) |top| if (top.in_world) top.syncChrome(false, Top.nowMs()) catch {};
-    server.world.applyCamera();
     announceMode(server);
+}
+
+fn setStackingMode(self: *Self, server: *Server, mode: DesktopMode) void {
+    self.mode = mode;
+    self.last_stacking = mode;
+    server.world.camera = if (mode == .canvas) self.saved_camera else .{};
+    server.world.snapCamera();
+}
+
+fn switchStackingMode(self: *Self, server: *Server, mode: DesktopMode) void {
+    var tops = server.world.toplevels.iterator(.forward);
+    while (tops.next()) |top| {
+        top.finishMoveAnimation();
+        top.finishZoomAnimation();
+    }
+    const previous_camera = server.world.camera;
+    const was_canvas = self.mode == .canvas;
+    self.setStackingMode(server, mode);
+    tops = server.world.toplevels.iterator(.forward);
+    while (tops.next()) |top| {
+        if (!top.in_world or (top.layout() == .floating and !top.fullscreen)) continue;
+        // Refit output-owned geometry on the display it occupied before the
+        // scale and camera changed.
+        const scale = if (was_canvas) top.zoom_scale else 1;
+        const x = @as(f64, @floatFromInt(top.x)) + @as(f64, @floatFromInt(top.chrome_width)) * scale / 2;
+        const y = @as(f64, @floatFromInt(top.y)) + @as(f64, @floatFromInt(top.chrome_height)) * scale / 2;
+        const center = previous_camera.toLayout(server.world.bounds, x, y);
+        if (Output.atLayout(server, center.x, center.y) orelse top.resolveTargetOutput()) |output| fit(top, output);
+    }
 }
 
 fn enter(self: *Self, server: *Server, mode: DesktopMode) void {
     self.generation += 1;
-    self.saved_camera = server.world.camera;
     self.saved_bounds = server.world.bounds;
     var memory = self.memory;
     self.memory = null;
@@ -255,7 +304,7 @@ fn enter(self: *Self, server: *Server, mode: DesktopMode) void {
     self.last_tiled = mode;
 }
 
-fn leave(self: *Self, server: *Server) void {
+fn leave(self: *Self, server: *Server, mode: DesktopMode) void {
     if (server.layout_autosave) |autosave| {
         autosave.saveNow();
         autosave.cancelWorkspaceRestore();
@@ -267,11 +316,8 @@ fn leave(self: *Self, server: *Server) void {
         break :blk null;
     };
     self.active = false;
-    self.mode = .canvas;
     self.tiler.deinit();
-    server.world.camera = self.saved_camera;
-    server.world.camera.zoom_index = @min(server.world.camera.zoom_index, camera.zoom_levels.len - 1);
-    server.world.snapCamera();
+    self.setStackingMode(server, mode);
     const topology_changed = self.saved_bounds.origin_x != server.world.bounds.origin_x or
         self.saved_bounds.origin_y != server.world.bounds.origin_y or
         self.saved_bounds.width != server.world.bounds.width or self.saved_bounds.height != server.world.bounds.height;
@@ -554,6 +600,27 @@ fn fit(top: *Top, output: *Output) void {
     top.finishMoveAnimation();
 }
 
+pub fn classicWindowReachable(top: *const Top, output: *Output) bool {
+    const usable = output.usableBox();
+    // Leave a grab area available even on windows that straddle two outputs.
+    const x: i64 = top.x;
+    const y: i64 = top.y;
+    const strip = @min(top.chrome_height, @max(top.titlebarHeight(), 24));
+    const overlap_x = @min(x + top.chrome_width, @as(i64, usable.x) + usable.width) - @max(x, usable.x);
+    const overlap_y = @min(y + strip, @as(i64, usable.y) + usable.height) - @max(y, usable.y);
+    return overlap_x >= @min(32, top.chrome_width) and overlap_y >= @min(12, strip);
+}
+
+pub fn keepClassicWindowVisible(top: *Top) void {
+    if (top.server.world.workspaces.mode != .classic or !top.in_world or
+        top.layout() != .floating or top.fullscreen or top.chrome_width <= 0 or top.chrome_height <= 0) return;
+    var outputs = top.server.outputs.iterator(.forward);
+    while (outputs.next()) |output| {
+        if (output.isAvailable() and classicWindowReachable(top, output)) return;
+    }
+    if (top.currentOutput()) |output| fit(top, output);
+}
+
 pub fn refresh(self: *Self, server: *Server) void {
     _ = self;
     var tops = server.world.toplevels.iterator(.forward);
@@ -581,6 +648,7 @@ pub fn refresh(self: *Self, server: *Server) void {
 }
 
 pub fn data(self: *Self, server: *Server, allocator: std.mem.Allocator) ![]const protocol.WorkspaceData {
+    if (self.mode == .classic) return &.{.{ .id = 1, .name = "Classic", .is_focused = true }};
     if (!self.active) return &.{.{ .id = 1, .name = "Canvas", .is_focused = true }};
     var list: std.ArrayList(protocol.WorkspaceData) = .empty;
     errdefer list.deinit(allocator);

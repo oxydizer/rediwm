@@ -136,7 +136,7 @@ const source_entries = [_]SourceEntry{
     .{ .page = .appearance, .title = i18n.msg("Dock active highlight"), .target = "dock_active_highlight", .keywords = i18n.msg("running apps indicator") },
     .{ .page = .appearance, .title = i18n.msg("Dock trash"), .target = "dock_show_trash", .keywords = i18n.msg("recycle bin") },
     .{ .page = .shortcuts, .title = i18n.msg("Keyboard shortcuts"), .target = "@Keyboard Shortcuts", .heading = i18n.msg("Keyboard Shortcuts"), .keywords = i18n.msg("hotkeys keybindings bindings terminal screenshot volume brightness workspaces") },
-    .{ .page = .desktop, .title = i18n.msg("Desktop mode"), .target = "desktop_mode", .keywords = i18n.msg("canvas tiling scrolling workspaces") },
+    .{ .page = .desktop, .title = i18n.msg("Desktop mode"), .target = "desktop_mode", .keywords = i18n.msg("classic stacking canvas tiling scrolling workspaces") },
     .{ .page = .desktop, .title = i18n.msg("Canvas size"), .target = "@Canvas Size", .heading = i18n.msg("Canvas Size"), .keywords = i18n.msg("rows columns panning area") },
     .{ .page = .desktop, .title = i18n.msg("Desktop switching"), .target = "@Desktop Switching", .heading = i18n.msg("Desktop Switching"), .keywords = i18n.msg("edge pan transitions") },
     .{ .page = .desktop, .title = i18n.msg("Mini map"), .target = "mini_map_enabled", .keywords = i18n.msg("minimap overview") },

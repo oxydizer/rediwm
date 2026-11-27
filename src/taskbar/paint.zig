@@ -204,6 +204,7 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
                 .volume => if (bar.audio_muted) .volume_muted else .volume,
                 .power => .power,
                 .desktop_mode => switch (bar.server.world.workspaces.mode) {
+                    .classic => .display,
                     .canvas => .desktop_canvas,
                     .tiling => .desktop_tiles,
                     .scrolling => .desktop_scroll,

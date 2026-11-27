@@ -448,6 +448,7 @@ pub fn buildTaskbarWidgetTree(
             .path = "taskbar/desktop_mode",
             .semantic_id = "tray_desktop_mode",
             .label = switch (server.world.workspaces.mode) {
+                .classic => "Classic",
                 .canvas => "Canvas",
                 .tiling => "Tiling",
                 .scrolling => "Scrolling",

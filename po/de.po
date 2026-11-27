@@ -906,8 +906,8 @@ msgid "Canvas size"
 msgstr "Leinwandgröße"
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Canvas · RediWM preset"
-msgstr "Leinwand · RediWM-Vorgabe"
+msgid "Classic and Canvas · RediWM preset"
+msgstr "Klassisch und Leinwand · RediWM-Vorgabe"
 
 #: src/session/lock_view.zig
 msgid "Caps Lock is on"
@@ -1146,8 +1146,8 @@ msgid "Choose your window layout"
 msgstr "Wähle deine Fensteranordnung"
 
 #: src/control_center/welcome.zig
-msgid "Classic (stacking)"
-msgstr "Klassisch (überlappend)"
+msgid "Classic"
+msgstr "Klassisch"
 
 #: src/control_center/search.zig
 msgid "Clear search"
@@ -4142,8 +4142,8 @@ msgid "Pan Up"
 msgstr "Nach oben schwenken"
 
 #: src/control_center/sections/desktop.zig
-msgid "Pan and zoom the canvas. Switching back restores your canvas positions and zoom."
-msgstr "Schwenke und zoome auf der Leinwand. Beim Zurückwechseln werden Positionen und Zoom wiederhergestellt."
+msgid "Pan and zoom the canvas."
+msgstr "Schwenke und zoome auf der Leinwand."
 
 #: src/control_center/sections/input.zig
 msgid "Pan speed"
@@ -5640,8 +5640,8 @@ msgid "Swap the focused tile up."
 msgstr "Die fokussierte Kachel nach oben tauschen."
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Switch between Canvas and the last tiled mode."
-msgstr "Zwischen Leinwand und dem zuletzt verwendeten Kachelmodus wechseln."
+msgid "Switch between the last stacking and tiled modes."
+msgstr "Zwischen dem zuletzt verwendeten überlappenden Modus und dem letzten Kachelmodus wechseln."
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
@@ -6889,8 +6889,8 @@ msgid "calendar monday sunday"
 msgstr "kalender montag sonntag"
 
 #: src/control_center/search_index.zig
-msgid "canvas tiling scrolling workspaces"
-msgstr "leinwand kachelung scrollen arbeitsbereiche"
+msgid "classic stacking canvas tiling scrolling workspaces"
+msgstr "klassisch überlappend leinwand kachelung scrollen arbeitsbereiche"
 
 #: src/control_center/search_index.zig
 msgid "chooser portal"

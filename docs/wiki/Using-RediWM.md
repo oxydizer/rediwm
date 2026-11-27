@@ -9,7 +9,7 @@
 | Super+T / E / B | terminal / Files / browser |
 | Super+Q, Super+F, Super+M | close, fullscreen, maximize |
 | Super+Shift+arrows | tile halves and quarters |
-| Super+Shift+W | switch between Canvas and your last tiled mode |
+| Super+Shift+W | switch between your last stacking and tiled modes |
 | Super+arrows | slide to the neighbouring desktop |
 | Super+Ctrl+arrows | focus the window in that direction |
 | Alt+Tab | window switcher |
@@ -25,13 +25,16 @@
 Everything lives under `[keybinds]` in the config. Set a binding to `"noop"`
 to turn it off.
 
+Choose **Classic** in Settings → Desktop for a fixed desktop with overlapping
+windows. Classic and Canvas share window positions. Classic brings windows
+that are out of reach onto a display and uses a fixed 100% scale.
 Super+Shift+W (`toggle_desktop_mode`) saves the choice as `desktop_mode`.
-Switching back to Canvas restores window positions and zoom. Returning to
-Tiling or Scrolling restores the tiled layout.
+Returning from a tiled mode restores the stacking layout. Returning to Tiling
+or Scrolling restores the tiled layout.
 Existing configs with their own `[keybinds]` get it unless the key is taken.
 The taskbar's **Desktop mode** item (off by default; turn it on in Settings →
 Appearance) shows the current mode. Left-click it to switch modes, or
-right-click it to choose **Canvas**, **Tiling** or **Scrolling** from a menu. A checkmark
+right-click it to choose **Classic**, **Canvas**, **Tiling** or **Scrolling** from a menu. A checkmark
 shows which mode is active.
 
 ### Scrolling

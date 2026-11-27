@@ -43,7 +43,7 @@ pub const Action = union(enum) {
     move_to_workspace: u8,
     workspace_next,
     workspace_prev,
-    /// Canvas to the tiled mode used last (Tiling or Scrolling) or back,
+    /// Switch between the stacking and tiled modes used last,
     /// saved to `desktop_mode`. Both presets carry it, so the same key always
     /// switches back.
     toggle_desktop_mode,

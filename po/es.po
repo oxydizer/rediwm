@@ -903,8 +903,8 @@ msgid "Canvas size"
 msgstr "Tamaño del lienzo"
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Canvas · RediWM preset"
-msgstr "Lienzo · Preajuste de RediWM"
+msgid "Classic and Canvas · RediWM preset"
+msgstr "Clásico y Lienzo · Preajuste de RediWM"
 
 #: src/session/lock_view.zig
 msgid "Caps Lock is on"
@@ -1143,8 +1143,8 @@ msgid "Choose your window layout"
 msgstr "Elige la disposición de las ventanas"
 
 #: src/control_center/welcome.zig
-msgid "Classic (stacking)"
-msgstr "Clásico (apilado)"
+msgid "Classic"
+msgstr "Clásico"
 
 #: src/control_center/search.zig
 msgid "Clear search"
@@ -4139,8 +4139,8 @@ msgid "Pan Up"
 msgstr "Desplazar arriba"
 
 #: src/control_center/sections/desktop.zig
-msgid "Pan and zoom the canvas. Switching back restores your canvas positions and zoom."
-msgstr "Desplaza y amplía el lienzo. Al volver se restauran sus posiciones y ampliación."
+msgid "Pan and zoom the canvas."
+msgstr "Desplaza y amplía el lienzo."
 
 #: src/control_center/sections/input.zig
 msgid "Pan speed"
@@ -5637,8 +5637,8 @@ msgid "Swap the focused tile up."
 msgstr "Intercambiar la ventana en mosaico enfocada hacia arriba."
 
 #: src/control_center/sections/shortcuts.zig
-msgid "Switch between Canvas and the last tiled mode."
-msgstr "Alternar entre el lienzo y el último modo de mosaico usado."
+msgid "Switch between the last stacking and tiled modes."
+msgstr "Alternar entre el último modo de ventanas superpuestas y el último modo de mosaico usados."
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
@@ -6886,8 +6886,8 @@ msgid "calendar monday sunday"
 msgstr "calendario lunes domingo"
 
 #: src/control_center/search_index.zig
-msgid "canvas tiling scrolling workspaces"
-msgstr "lienzo mosaico desplazamiento espacios trabajo"
+msgid "classic stacking canvas tiling scrolling workspaces"
+msgstr "clásico apilado lienzo mosaico desplazamiento espacios trabajo"
 
 #: src/control_center/search_index.zig
 msgid "chooser portal"

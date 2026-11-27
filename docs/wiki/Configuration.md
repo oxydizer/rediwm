@@ -148,7 +148,7 @@ For example, `taskbar_items = ["left:start", "left:windows", "right:capture", "r
 "right:volume", "right:clock", "-right:power"]` is the default. The keyboard layout item
 (`input_source`) is described under "Keyboard layouts and input methods"; older
 lists gain it before Volume, automatic. The desktop mode item (`desktop_mode`)
-switches between Canvas and the last tiled mode like Super+Shift+W and shows the current
+switches between the last stacking and tiled modes like Super+Shift+W and shows the current
 mode; it is off by default, and older lists gain it hidden before the keyboard
 layout.
 Wi-Fi and Ethernet are automatic (the `~` prefix): Wi-Fi shows only when the
@@ -200,7 +200,7 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `zoom_steps` | `[1.0, 0.85, 0.70, 0.55, 0.40]` | |
 | `camera_zoom_min`, `camera_zoom_max` | `0.25`, `1.0` | |
 | `focus_zoom` | `"boost"` | `keep`, `boost`, `camera` |
-| `desktop_mode` | `"canvas"` | `canvas`, `tiling` (split tiles), or `scrolling` (columns on a strip; its direction is per display, `[[outputs]] scroll_direction`). Existing configs can still use `workspaces` for `tiling`. |
+| `desktop_mode` | `"canvas"` | `classic` (stacking on a fixed desktop), `canvas` (stacking with pan and zoom), `tiling` (split tiles), or `scrolling` (columns on a strip with per-display `scroll_direction`). Existing configs can still use `workspaces` for `tiling`. |
 | `scroll_column_width` | `0.5` | fraction of the viewport used for a new column, from 0.05 to 1 |
 | `scroll_column_widths` | `[0.333, 0.5, 0.667, 1.0]` | width presets for Super+W, up to eight fractions from 0.05 to 1 |
 | `scroll_center` | `"on_overflow"` | `never`, `on_overflow` (centre a column wider than the viewport), or `always` |

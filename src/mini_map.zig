@@ -52,7 +52,7 @@ fn blocked(server: *Server) bool {
 }
 
 pub fn show(self: *Self, server: *Server, x: f64, y: f64) void {
-    if (server.world.workspaces.active or !server.config.compositor.mini_map_enabled or blocked(server)) return;
+    if (server.world.workspaces.mode != .canvas or !server.config.compositor.mini_map_enabled or blocked(server)) return;
     self.server = server;
     if (self.dragging) return;
     const output = Output.atLayout(server, x, y) orelse server.getDefaultOutput() orelse return;
@@ -188,7 +188,7 @@ pub fn release(self: *Self) void {
 pub fn tick(self: *Self, output: *Output, now: i64) bool {
     if (!self.visible or self.output != output) return false;
     const server = self.server.?;
-    if (blocked(server) or server.world.workspaces.active or !server.config.compositor.mini_map_enabled or !output.isAvailable() or output.idle_blanked) {
+    if (blocked(server) or server.world.workspaces.mode != .canvas or !server.config.compositor.mini_map_enabled or !output.isAvailable() or output.idle_blanked) {
         self.hide();
         return false;
     }

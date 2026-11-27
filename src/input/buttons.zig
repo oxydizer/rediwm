@@ -245,7 +245,7 @@ fn processGrabButton(input: *Input, device: ?*wlr.InputDevice, button: u32, stat
     }
 
     // Middle button: start/end pan
-    if (button == btn_middle and !input.server.world.workspaces.active and input.server.config.input.middle_button_pan) {
+    if (button == btn_middle and input.server.world.workspaces.mode == .canvas and input.server.config.input.middle_button_pan) {
         if (state == .pressed) {
             if (input.cursor_mode == .passthrough and input.resize_session == null and input.grabbed_toplevel == null) {
                 const inhibited = if (input.pan_session) |sess|

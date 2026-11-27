@@ -420,7 +420,7 @@ pub fn stringifyWindowDebug(res: WindowDebugResult, writer: anytype) !void {
     } else {
         try writer.writeAll("null");
     }
-    try writer.print(",\"edge_sample\":{f}", .{std.json.fmt(res.edge_sample, .{})});
+    try writer.print(",\"edge_sample\":{f},\"surface_colors\":{f}", .{ std.json.fmt(res.edge_sample, .{}), std.json.fmt(res.surface_colors, .{}) });
     try writer.writeByte('}');
 }
 
