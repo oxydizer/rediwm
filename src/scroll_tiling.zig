@@ -74,21 +74,36 @@ pub fn arrangeExisting(server: *Server, from_canvas: bool) void {
     var it = server.world.toplevels.iterator(.forward);
     while (it.next()) |top| {
         const id = top.workspace_id;
-        if (!scrolling(server, id) or top.currentIdentity().dialog) continue;
+        if (!scrolling(server, id)) continue;
         const override = manager.slots[id - 1].layout;
         if (!from_canvas and override != null) continue;
         // Returning from Canvas keeps the strip's floating choices. A snap
         // carried over from Canvas itself is fitted by mapped() and opts out.
         const returning = from_canvas and (override == .scrolling or manager.last_tiled == .scrolling);
-        if (!returning or top.tile != null) {
-            top.auto_float = false;
-            top.auto_float_override = null;
-        }
-        if (tiling.isFloating(top)) continue;
-        if (top.fullscreen and top.open_rules.fullscreen == true) continue;
-        if (top.maximized and top.open_rules.maximized == true) continue;
-        top.prepareAutoTile();
+        prepareExisting(top, returning and top.tile == null);
     }
+}
+
+/// Release manual snaps when changing one workspace to scrolling. Floating
+/// choices and covering windows already have a placement on that workspace.
+pub fn arrangeSnapped(server: *Server, id: u8) void {
+    var it = server.world.toplevels.iterator(.forward);
+    while (it.next()) |top| {
+        if (top.workspace_id != id or top.tile == null or top.fullscreen or top.maximized) continue;
+        prepareExisting(top, false);
+    }
+}
+
+fn prepareExisting(top: *Top, keep_floating: bool) void {
+    if (top.currentIdentity().dialog) return;
+    if (!keep_floating) {
+        top.auto_float = false;
+        top.auto_float_override = null;
+    }
+    if (tiling.isFloating(top)) return;
+    if (top.fullscreen and top.open_rules.fullscreen == true) return;
+    if (top.maximized and top.open_rules.maximized == true) return;
+    top.prepareAutoTile();
 }
 
 /// Whether the strip places `top`.
@@ -384,38 +399,37 @@ pub fn stepFor(dir: scroll.Direction, arrow: Arrow) scroll.Step {
     };
 }
 
-/// Strip-order focus: along the strip, or within a column, stopping at
-/// maximized and fullscreen windows too. At the end of the strip the key
-/// still brings the focused column into view.
-pub fn focus(server: *Server, top: *Top, arrow: Arrow) bool {
-    const from = slotOf(top) orelse return false;
-    const id = from.workspace_id;
-    const strip = &server.world.workspaces.tiler.strips[id - 1];
-    const step = stepFor(strip.direction, arrow);
-    const next = strip.neighborWhere(tiling.key(from), step, Reach{ .server = server, .id = id }, Reach.reachable) orelse {
-        revealFocus(server, id);
+/// Navigate the strip on the focused window's workspace. With no window
+/// focused, carry on from the last focus on the strip under the pointer.
+pub fn focus(server: *Server, top: ?*Top, arrow: Arrow) bool {
+    const id = if (top) |window| window.workspace_id else (server.getDefaultOutput() orelse return false).workspace_id;
+    if (!scrolling(server, id)) return false;
+    const tiler = &server.world.workspaces.tiler;
+    // A key can arrive after the layout changes and before its idle reflow.
+    if (tiler.idle != null) tiler.flushNow(server);
+
+    if (top) |window| {
+        focusFrom(server, slotOf(window) orelse return false, arrow);
+        return true;
+    }
+    if (focusedSlot(server, id)) |slot| if (workspaces.visible(slot)) {
+        focusFrom(server, slot, arrow);
         return true;
     };
-    const target = windowFor(server, id, next) orelse return true;
-    server.world.focus(target);
+    const strip = &tiler.strips[id - 1];
+    const snap = strip.snapView(strip.view, center(server)) orelse return true;
+    const key = strip.memberNear(snap.column, null) orelse return true;
+    server.world.focus(windowFor(server, id, key) orelse return true);
     return true;
 }
 
-/// Super+arrow with no window focused (the desktop took the keyboard): the
-/// strip under the pointer carries on from the window it focused last, or
-/// focuses the column in view.
-pub fn focusUnfocused(server: *Server, arrow: Arrow) void {
-    const output = server.getDefaultOutput() orelse return;
-    const id = output.workspace_id;
-    if (id == 0 or !scrolling(server, id)) return;
-    if (focusedSlot(server, id)) |slot| if (workspaces.visible(slot)) {
-        _ = focus(server, slot, arrow);
-        return;
-    };
+/// At the end of the strip the key still brings the focused column into view.
+fn focusFrom(server: *Server, from: *Top, arrow: Arrow) void {
+    const id = from.workspace_id;
     const strip = &server.world.workspaces.tiler.strips[id - 1];
-    const snap = strip.snapView(strip.view, center(server)) orelse return;
-    const key = strip.memberNear(snap.column, null) orelse return;
-    server.world.focus(windowFor(server, id, key) orelse return);
+    const step = stepFor(strip.direction, arrow);
+    const next = strip.neighborWhere(tiling.key(from), step, Reach{ .server = server, .id = id }, Reach.reachable) orelse return revealFocus(server, id);
+    server.world.focus(windowFor(server, id, next) orelse return);
 }
 
 /// Super+Shift+wheel and the horizontal wheel: focus `steps` columns along

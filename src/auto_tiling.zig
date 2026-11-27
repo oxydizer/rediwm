@@ -263,18 +263,13 @@ pub fn execute(server: *Server, target: ?*Top, action: @import("config").keybind
     if (!server.world.workspaces.active or server.locker != null or server.polkit_dialog != null) return;
     if (server.input.tiling_grab != null) server.input.finishTilingGrab(false);
     const manager = &server.world.workspaces.tiler;
-    manager.flushNow(server);
     if (action == .toggle_workspace_tiling) {
         const id = if (target) |top| top.workspace_id else (server.getDefaultOutput() orelse return).workspace_id;
-        if (id == 0) return;
-        var transaction = @import("layout_undo.zig").Transaction.begin(server, &.{id});
-        defer transaction.finish();
         // Floating, or back to the desktop mode's layout.
-        server.world.workspaces.slots[id - 1].layout = if (server.world.workspaces.tiles(id)) .floating else null;
-        if (server.input.open_control_center) |cc| cc.refresh();
-        manager.schedule(server);
+        @import("config_runtime/workspace_controls.zig").layout(server, id, if (server.world.workspaces.tiles(id)) .floating else null);
         return;
     }
+    manager.flushNow(server);
     const top = target orelse return;
     if (!top.in_world or top.workspace_id == 0 or top.minimized or top.fullscreen or top.maximized or top.tab_hidden) return;
     if (!@import("workspaces.zig").visible(top)) return;

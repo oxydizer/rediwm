@@ -46,13 +46,17 @@ pub fn layout(server: *Server, id: u8, value: ?config.workspace_layout.Layout) v
     if (server.input.tiling_grab) |grab| if (grab.workspace == id) server.input.finishTilingGrab(false);
     var transaction = @import("../layout_undo.zig").Transaction.begin(server, &.{id});
     defer transaction.finish();
-    const slot = &server.world.workspaces.slots[id - 1];
+    const manager = &server.world.workspaces;
+    const previous = manager.layoutOf(id);
+    const slot = &manager.slots[id - 1];
     if (!slot.exists) {
         slot.exists = true;
         slot.output = server.getDefaultOutput();
         if (slot.output) |out| slot.box = out.usableBox();
     }
     slot.layout = value;
-    server.world.workspaces.tiler.schedule(server);
+    if (previous != .scrolling and manager.layoutOf(id) == .scrolling)
+        @import("../scroll_tiling.zig").arrangeSnapped(server, id);
+    manager.tiler.schedule(server);
     if (server.input.open_control_center) |cc| cc.refresh();
 }

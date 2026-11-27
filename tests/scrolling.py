@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """The scrolling desktop mode, and the tiled layout kept across mode switches."""
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -225,6 +226,89 @@ floating = true
         finally:
             s.stop()
     print("PASS: existing windows join the strip and configured floats stay out", flush=True)
+
+
+def entry_keys():
+    with tempfile.TemporaryDirectory(prefix="rediwm-scroll-entry-keys-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        s = Session(tmp, BASE.format(mode="workspaces") + MOTION_OFF)
+        try:
+            s.launch("entry-first")
+            middle = s.launch("entry-middle")
+            last = s.launch("entry-last")
+            s.settle_all()
+            assert s.ipc.get_focused_window()["id"] == last
+
+            # Send the mode switch and Super+Left in one IPC dispatch, before
+            # the Wayland event loop can run the scheduled tiling reflow.
+            requests = [
+                ("set_desktop_mode", {"mode": "scrolling", "persist": False}),
+                ("key", {"keycode": 125, "pressed": True}),  # Super
+                ("key", {"keycode": 105, "pressed": True}),  # Left
+                ("key", {"keycode": 105, "pressed": False}),
+                ("key", {"keycode": 125, "pressed": False}),
+                ("focused_window", {}),
+            ]
+            lines = [json.dumps({"version": 1, "command": cmd, "params": params}) for cmd, params in requests]
+            replies = [s.ipc.send_raw("\n".join(lines))]
+            replies.extend(json.loads(s.ipc.reader.readline()) for _ in lines[1:])
+            assert all("Ok" in reply for reply in replies), replies
+            focused = replies[-1]["Ok"]["FocusedWindow"]
+            assert focused["id"] == middle, focused
+        except Exception:
+            s.dump_log()
+            raise
+        finally:
+            s.stop()
+    print("PASS: the first arrow after switching mode uses the new strip", flush=True)
+
+
+def workspace_entry():
+    with tempfile.TemporaryDirectory(prefix="rediwm-scroll-workspace-entry-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        config = BASE.format(mode="workspaces") + 'floating_apps = ["entry-float"]\n' + MOTION_OFF + '''
+[keybinds.workspace]
+"Super+F11" = "tile_left"
+'''
+        s = Session(tmp, config)
+        try:
+            floating = s.launch("entry-float")
+            ids = [s.launch(name) for name in ("entry-first", "entry-middle", "entry-last")]
+            for id in ids:
+                s.ipc.focus_window(id)
+                s.chord("F11")
+            s.settle_all()
+            snapped = [s.frame(id) for id in ids]
+            assert all(s.window(id)["placement"] == "manual" for id in ids)
+            assert snapped[0] == snapped[1] == snapped[2], snapped
+
+            def enter_scrolling():
+                s.ipc.action("set_workspace_layout", {"workspace": 1, "layout": "scrolling"})
+                s.ipc.wait_for_frame()
+                columns = [[m["id"] for m in c["members"]] for c in s.workspace(1)["columns"]]
+                assert columns == [[s.window(id)["workspace_order"]] for id in ids], columns
+                assert s.window(floating)["placement"] == "floating"
+
+            enter_scrolling()
+            s.chord("z")
+            s.settle_all()
+            assert s.workspace(1)["layout"] == "split"
+            assert all(s.window(id)["placement"] == "manual" for id in ids)
+            assert [s.frame(id) for id in ids] == snapped
+
+            s.ipc.focus_window(ids[-1])
+            enter_scrolling()
+            for id in reversed(ids[:-1]):
+                s.chord("Left")
+                assert s.ipc.get_focused_window()["id"] == id
+        except Exception:
+            s.dump_log()
+            raise
+        finally:
+            s.stop()
+    print("PASS: snapped windows join a scrolling workspace and undo restores their snaps", flush=True)
 
 
 def keyboard_strip():
@@ -492,6 +576,8 @@ if __name__ == "__main__":
     only = sys.argv[1] if len(sys.argv) > 1 else None
     if only in (None, "memory"): mode_memory()
     if only in (None, "entry"): mode_entry()
+    if only in (None, "entry-keys"): entry_keys()
+    if only in (None, "workspace-entry"): workspace_entry()
     if only in (None, "keyboard"): keyboard_strip()
     if only in (None, "restart"): strip_restart()
     if only in (None, "outputs"):

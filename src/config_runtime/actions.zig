@@ -301,9 +301,10 @@ fn focusDirection(server: *Server, dir: Dir) void {
         .up => .up,
         .down => .down,
     };
-    const focused = focusedToplevel(server) orelse return scroll_tiling.focusUnfocused(server, arrow);
+    const current = focusedToplevel(server);
     // A strip is navigated in its own order; culled columns have no place on screen.
-    if (scroll_tiling.focus(server, focused, arrow)) return;
+    if (scroll_tiling.focus(server, current, arrow)) return;
+    const focused = current orelse return;
     const fx = focused.x + @divTrunc(focused.chrome_width, 2);
     const fy = focused.y + @divTrunc(focused.chrome_height, 2);
     var best: ?*Toplevel = null;
