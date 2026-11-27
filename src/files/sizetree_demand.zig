@@ -9,6 +9,8 @@ const no_id = tree.no_id;
 const schedule = @import("sizetree_schedule.zig");
 const eviction = @import("sizetree_eviction.zig");
 const path_cache = @import("sizetree_path_cache.zig");
+const storage_reclaim = @import("sizetree_reclaim.zig");
+const c = @import("c.zig").api;
 
 const Record = struct {
     automatic: ?Level = null,
@@ -18,71 +20,38 @@ const Record = struct {
     stopped: bool = false,
 };
 
-/// One view owns this registration on its UI thread. The service only sees
-/// aggregate contributions, so workers never retain a pointer to the view.
-pub const Owner = struct {
-    service: *Service,
+/// The view can move its Owner. Workers borrow only this stable storage,
+/// under the service mutex and only while linked for reclamation.
+pub const Storage = struct {
     records: std.AutoHashMapUnmanaged(*Entry, Record) = .empty,
     visible: std.ArrayList(*Entry) = .empty,
-    epoch: u64 = 0,
+    shrink_link: std.DoublyLinkedList.Node = .{},
 
-    /// Navigation releases measurements but keeps this view's Stop choices.
-    pub fn clear(self: *Owner) void {
-        self.release(true);
+    fn scheduleReclaim(self: *Storage, svc: *Service) void {
+        const floor = storage_reclaim.local_floor;
+        if (!storage_reclaim.oversized(self.records.capacity(), self.records.count(), floor) and
+            !storage_reclaim.oversized(self.visible.capacity, self.visible.items.len, floor)) return;
+        const queue = &svc.reclamation.owners;
+        if (queue.first == &self.shrink_link or self.shrink_link.prev != null) return;
+        queue.append(&self.shrink_link);
+        _ = c.pthread_cond_signal(&svc.cond);
     }
 
-    fn release(self: *Owner, keep_stopped: bool) void {
-        const svc = self.service;
-        svc.lock();
-        defer svc.unlock();
-        var it = self.records.iterator();
-        while (it.next()) |item| {
-            if (keep_stopped and item.value_ptr.stopped) continue;
-            const entry = item.key_ptr.*;
-            update(svc, entry, item.value_ptr.*, .{});
-            entry.owners -= 1;
-            // Removing the current slot does not relocate any other slot.
-            self.records.removeByPtr(item.key_ptr);
-            path_cache.sync(svc, entry);
-        }
-        if (self.records.count() == 0) self.records.clearRetainingCapacity();
-        self.visible.clearRetainingCapacity();
-        svc.maintainBudget();
+    fn unlink(self: *Storage, svc: *Service) void {
+        const queue = &svc.reclamation.owners;
+        if (queue.first != &self.shrink_link and self.shrink_link.prev == null) return;
+        queue.remove(&self.shrink_link);
+        self.shrink_link = .{};
     }
 
-    pub fn deinit(self: *Owner) void {
-        self.release(false);
-        const a = self.service.allocator;
-        self.records.deinit(a);
-        self.visible.deinit(a);
-        self.* = undefined;
+    pub fn reclaim(self: *Storage, svc: *Service) !void {
+        const floor = storage_reclaim.local_floor;
+        try storage_reclaim.shrinkMap(svc.allocator, &self.records, floor);
+        try storage_reclaim.shrinkList(*Entry, svc.allocator, &self.visible, self.visible.items.len, floor);
+        self.unlink(svc);
     }
 
-    pub fn beginViewport(self: *Owner) void {
-        self.epoch += 1;
-    }
-
-    pub fn endViewport(self: *Owner) void {
-        const svc = self.service;
-        svc.lock();
-        defer svc.unlock();
-        var i: usize = 0;
-        while (i < self.visible.items.len) {
-            const entry = self.visible.items[i];
-            const record = self.records.getPtr(entry).?;
-            if (record.seen == self.epoch) {
-                i += 1;
-            } else {
-                const old = record.*;
-                self.removeAutomatic(record);
-                update(svc, entry, old, record.*);
-                self.prune(entry, record.*);
-            }
-        }
-        svc.maintainBudget();
-    }
-
-    fn removeAutomatic(self: *Owner, record: *Record) void {
+    fn removeAutomatic(self: *Storage, record: *Record) void {
         if (record.automatic == null) return;
         const index = record.auto_index;
         _ = self.visible.swapRemove(index);
@@ -91,12 +60,88 @@ pub const Owner = struct {
         record.automatic = null;
     }
 
-    fn prune(self: *Owner, entry: *Entry, record: Record) void {
+    fn prune(self: *Storage, svc: *Service, entry: *Entry, record: Record) void {
         if (record.automatic == null and record.explicit == null and !record.stopped) {
             _ = self.records.remove(entry);
             entry.owners -= 1;
-            path_cache.sync(self.service, entry);
+            path_cache.sync(svc, entry);
         }
+    }
+};
+
+/// One view owns this registration on its UI thread.
+pub const Owner = struct {
+    service: *Service,
+    storage: ?*Storage = null,
+    epoch: u64 = 0,
+
+    /// Navigation releases measurements but keeps this view's Stop choices.
+    pub fn clear(self: *Owner) void {
+        self.release(true);
+    }
+
+    fn release(self: *Owner, keep_stopped: bool) void {
+        const storage = self.storage orelse return;
+        const svc = self.service;
+        svc.lock();
+        defer svc.unlock();
+        var it = storage.records.iterator();
+        while (it.next()) |item| {
+            if (keep_stopped and item.value_ptr.stopped) continue;
+            const entry = item.key_ptr.*;
+            update(svc, entry, item.value_ptr.*, .{});
+            entry.owners -= 1;
+            // Removing the current slot does not relocate any other slot.
+            storage.records.removeByPtr(item.key_ptr);
+            path_cache.sync(svc, entry);
+        }
+        storage.visible.clearRetainingCapacity();
+        if (keep_stopped) {
+            if (storage.records.count() == 0 and
+                !storage_reclaim.oversized(storage.records.capacity(), 0, storage_reclaim.local_floor))
+                storage.records.clearRetainingCapacity();
+            storage.scheduleReclaim(svc);
+        } else {
+            storage.unlink(svc);
+        }
+        svc.maintainBudget();
+    }
+
+    pub fn deinit(self: *Owner) void {
+        self.release(false);
+        if (self.storage) |storage| {
+            const a = self.service.allocator;
+            storage.records.deinit(a);
+            storage.visible.deinit(a);
+            a.destroy(storage);
+        }
+        self.* = undefined;
+    }
+
+    pub fn beginViewport(self: *Owner) void {
+        self.epoch += 1;
+    }
+
+    pub fn endViewport(self: *Owner) void {
+        const storage = self.storage orelse return;
+        const svc = self.service;
+        svc.lock();
+        defer svc.unlock();
+        var i: usize = 0;
+        while (i < storage.visible.items.len) {
+            const entry = storage.visible.items[i];
+            const record = storage.records.getPtr(entry).?;
+            if (record.seen == self.epoch) {
+                i += 1;
+            } else {
+                const old = record.*;
+                storage.removeAutomatic(record);
+                update(svc, entry, old, record.*);
+                storage.prune(svc, entry, record.*);
+            }
+        }
+        svc.maintainBudget();
+        storage.scheduleReclaim(svc);
     }
 };
 
@@ -150,10 +195,16 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
     defer svc.unlock();
     // A new entry may be eligible if its owner registration fails.
     defer path_cache.maintain(svc);
+    const storage = owner.storage orelse blk: {
+        const storage = svc.allocator.create(Storage) catch return false;
+        storage.* = .{};
+        owner.storage = storage;
+        break :blk storage;
+    };
     const entry = svc.getOrCreatePath(path) catch return false;
-    const record = owner.records.getPtr(entry) orelse blk: {
-        if (!options.force) owner.visible.ensureUnusedCapacity(svc.allocator, 1) catch return false;
-        const new = owner.records.getOrPut(svc.allocator, entry) catch return false;
+    const record = storage.records.getPtr(entry) orelse blk: {
+        if (!options.force) storage.visible.ensureUnusedCapacity(svc.allocator, 1) catch return false;
+        const new = storage.records.getOrPut(svc.allocator, entry) catch return false;
         new.value_ptr.* = .{};
         entry.owners += 1;
         path_cache.sync(svc, entry);
@@ -166,9 +217,9 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
         record.explicit = level;
     } else {
         if (record.automatic == null) {
-            owner.visible.ensureUnusedCapacity(svc.allocator, 1) catch return false;
-            record.auto_index = owner.visible.items.len;
-            owner.visible.appendAssumeCapacity(entry);
+            storage.visible.ensureUnusedCapacity(svc.allocator, 1) catch return false;
+            record.auto_index = storage.visible.items.len;
+            storage.visible.appendAssumeCapacity(entry);
         }
         record.automatic = level;
         record.seen = owner.epoch;
@@ -188,35 +239,40 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
 
 pub fn stopPath(svc: *Service, owner: *Owner, path: []const u8) void {
     std.debug.assert(owner.service == svc);
+    const storage = owner.storage orelse return;
     svc.lock();
     defer svc.unlock();
     const entry = svc.paths.get(path) orelse return;
-    const record = owner.records.getPtr(entry) orelse return;
+    const record = storage.records.getPtr(entry) orelse return;
     const old = record.*;
-    owner.removeAutomatic(record);
+    storage.removeAutomatic(record);
     record.explicit = null;
     record.stopped = true;
     update(svc, entry, old, record.*);
     svc.bump();
     svc.maintainBudget();
+    storage.scheduleReclaim(svc);
 }
 
 pub fn forgetPath(svc: *Service, owner: *Owner, path: []const u8) void {
     std.debug.assert(owner.service == svc);
+    const storage = owner.storage orelse return;
     svc.lock();
     defer svc.unlock();
     const entry = svc.paths.get(path) orelse return;
-    const record = owner.records.getPtr(entry) orelse return;
+    const record = storage.records.getPtr(entry) orelse return;
     const old = record.*;
-    owner.removeAutomatic(record);
+    storage.removeAutomatic(record);
     record.explicit = null;
     update(svc, entry, old, record.*);
-    owner.prune(entry, record.*);
+    storage.prune(svc, entry, record.*);
     svc.maintainBudget();
+    storage.scheduleReclaim(svc);
 }
 
 pub fn stopped(owner: *const Owner, entry: *Entry) bool {
-    return if (owner.records.get(entry)) |record| record.stopped else false;
+    const storage = owner.storage orelse return false;
+    return if (storage.records.get(entry)) |record| record.stopped else false;
 }
 
 pub fn adjustAncestors(svc: *Service, start: Id, removed: usize, added: usize) void {

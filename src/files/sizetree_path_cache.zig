@@ -1,9 +1,11 @@
 //! Inactive path entries are evicted independently of their measured nodes.
 const std = @import("std");
+const c = @import("c.zig").api;
 const tree = @import("sizetree.zig");
 const demand = @import("sizetree_demand.zig");
 const eviction = @import("sizetree_eviction.zig");
 const lru = @import("sizetree_lru.zig");
+const reclaim = @import("sizetree_reclaim.zig");
 const Service = tree.Service;
 const Entry = tree.PathEntry;
 const Heap = lru.Heap(*Entry, void, indexOf, older);
@@ -59,4 +61,5 @@ pub fn maintain(svc: *Service) void {
         changed = true;
     }
     if (changed) svc.bump();
+    if (reclaim.sharedOversized(svc)) _ = c.pthread_cond_signal(&svc.cond);
 }

@@ -31,6 +31,7 @@ const demand = @import("sizetree_demand.zig");
 const resolution = @import("sizetree_resolution.zig");
 const eviction = @import("sizetree_eviction.zig");
 const path_cache = @import("sizetree_path_cache.zig");
+const reclaim = @import("sizetree_reclaim.zig");
 
 pub const revalidate_after_ms: i64 = 120_000;
 
@@ -83,16 +84,18 @@ pub const RequestOptions = struct {
 pub const Key = struct { dev: u64, ino: u64 };
 pub const Id = u32;
 pub const no_id: Id = std.math.maxInt(Id);
-const Ref = struct { id: Id, gen: u32 };
+const Ref = struct { id: Id, key: Key, gen: u64 };
 
-const Node = struct {
-    gen: u32 = 0,
+pub const Node = struct {
+    gen: u64 = 0,
     live: bool = false,
     key: Key = .{ .dev = 0, .ino = 0 },
     /// Parent of a live node, or the next free slot after deletion.
     parent: Id = no_id,
     children: std.ArrayList(Id) = .empty,
     child_index: usize = 0,
+    shrink_prev: Id = no_id,
+    shrink_next: Id = no_id,
     /// The base name under a parent; the full path for a root.
     name: []u8 = &.{},
     own: i64 = 0,
@@ -164,6 +167,7 @@ pub const Service = struct {
 
     nodes: std.ArrayList(Node) = .empty,
     free_head: Id = no_id,
+    next_node_generation: u64 = 0,
     by_key: std.AutoHashMapUnmanaged(Key, Id) = .empty,
     paths: std.StringHashMapUnmanaged(*PathEntry) = .empty,
     resolve_ready: [level_count]resolution.Queue = @splat(.{}),
@@ -172,7 +176,8 @@ pub const Service = struct {
     prefer_scan: bool = false,
     queues: [level_count]schedule.Queue = .{ .{}, .{} },
     /// Known per device: measured automatically or not.
-    auto: std.AutoHashMapUnmanaged(u64, bool) = .empty,
+    auto: resolution.DevicePolicyCache = .{},
+    reclamation: reclaim.State = .{},
     working: usize = 0,
     /// Nodes whose `queued` is set.
     queued_count: usize = 0,
@@ -253,7 +258,6 @@ pub const Service = struct {
             entry.*.release(a);
         }
         self.paths.deinit(a);
-        self.auto.deinit(a);
         _ = c.pthread_cond_destroy(&self.cond);
         _ = c.pthread_mutex_destroy(&self.mutex);
         a.destroy(self);
@@ -349,13 +353,17 @@ pub const Service = struct {
     // ---- the tree ----
 
     pub fn liveId(self: *Service, ref: Ref) ?Id {
-        if (ref.id >= self.nodes.items.len) return null;
-        const node = &self.nodes.items[ref.id];
-        return if (node.live and node.gen == ref.gen) ref.id else null;
+        if (ref.id < self.nodes.items.len and self.nodes.items[ref.id].gen == ref.gen) return ref.id;
+        // A worker can finish after compaction moved its node. The inode
+        // index finds its new slot and the generation rejects reincarnation.
+        const id = self.by_key.get(ref.key) orelse return null;
+        return if (self.nodes.items[id].gen == ref.gen) id else null;
     }
 
     pub fn refOf(self: *Service, id: Id) Ref {
-        return .{ .id = id, .gen = self.nodes.items[id].gen };
+        const node = &self.nodes.items[id];
+        std.debug.assert(node.live);
+        return .{ .id = id, .key = node.key, .gen = node.gen };
     }
 
     pub fn newNode(self: *Service, key: Key, name: []const u8, level: Level) !Id {
@@ -389,8 +397,8 @@ pub const Service = struct {
             break :blk @intCast(self.nodes.items.len - 1);
         };
         const node = &self.nodes.items[id];
-        const gen = node.gen +% 1;
-        node.* = .{ .gen = gen, .live = true, .key = key, .name = owned, .level = level, .self_pending = true, .pending = 1 };
+        self.next_node_generation += 1;
+        node.* = .{ .gen = self.next_node_generation, .live = true, .key = key, .name = owned, .level = level, .self_pending = true, .pending = 1 };
         self.by_key.putAssumeCapacity(key, id);
         return id;
     }
@@ -446,6 +454,7 @@ pub const Service = struct {
         std.debug.assert(siblings.items[index] == child);
         _ = siblings.swapRemove(index);
         if (index < siblings.items.len) self.nodes.items[siblings.items[index]].child_index = index;
+        reclaim.childrenRemoved(self, parent);
         node.parent = no_id;
         self.propagate(parent, -node.total, -@as(i64, node.pending), -@as(i64, node.unreadable));
         demand.adjustAncestors(self, parent, node.subtree_demand, 0);
@@ -478,12 +487,12 @@ pub const Service = struct {
         const node = &self.nodes.items[id];
         if (!node.live) return;
         self.unqueue(id);
+        reclaim.unlinkChildren(self, id);
         demand.invalidate(self, id, reason);
         _ = self.by_key.remove(node.key);
         self.allocator.free(node.name);
         node.children.deinit(self.allocator);
-        const gen = node.gen;
-        node.* = .{ .gen = gen +% 1, .parent = self.free_head };
+        node.* = .{ .parent = self.free_head };
         self.free_head = id;
     }
 
@@ -533,7 +542,7 @@ pub const Service = struct {
 
     const Work = union(enum) {
         resolve: Resolution,
-        scan: struct { ref: Ref, key: Key },
+        scan: struct { ref: Ref },
     };
 
     pub fn take(self: *Service, path_buf: []u8) ?struct { work: Work, path: ?[:0]const u8 } {
@@ -555,7 +564,7 @@ pub const Service = struct {
                     };
                     node.scanning = true;
                     self.prefer_scan = false;
-                    return .{ .work = .{ .scan = .{ .ref = ref, .key = node.key } }, .path = path };
+                    return .{ .work = .{ .scan = .{ .ref = ref } }, .path = path };
                 }
             }
             // No eligible scan remains. Allow resolution to proceed
@@ -564,7 +573,7 @@ pub const Service = struct {
                 self.prefer_scan = false;
                 continue;
             }
-            _ = c.pthread_cond_wait(&self.cond, &self.mutex);
+            return null;
         }
         return null;
     }
@@ -660,7 +669,7 @@ pub const Service = struct {
     pub const resolved = resolution.resolved;
 };
 
-fn nowMs() i64 {
+pub fn nowMs() i64 {
     var ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
     return @as(i64, ts.tv_sec) * 1000 + @divTrunc(@as(i64, ts.tv_nsec), 1_000_000);
@@ -673,4 +682,5 @@ test {
     _ = @import("sizetree_demand_tests.zig");
     _ = @import("sizetree_eviction_tests.zig");
     _ = @import("sizetree_path_cache_tests.zig");
+    _ = @import("sizetree_reclaim_tests.zig");
 }

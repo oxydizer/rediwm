@@ -11,6 +11,27 @@ const Service = tree.Service;
 const Key = tree.Key;
 const no_id = tree.no_id;
 
+/// A collision only drops a memoized answer. A miss runs the same policy
+/// callback as before, outside the service mutex.
+pub const DevicePolicyCache = struct {
+    pub const capacity = 256;
+    const Slot = struct { dev: u64, allowed: bool };
+    slots: [capacity]?Slot = @splat(null),
+
+    fn index(dev: u64) usize {
+        return @intCast(std.hash.int(dev) % capacity);
+    }
+
+    pub fn get(self: *const DevicePolicyCache, dev: u64) ?bool {
+        const slot = self.slots[index(dev)] orelse return null;
+        return if (slot.dev == dev) slot.allowed else null;
+    }
+
+    pub fn put(self: *DevicePolicyCache, dev: u64, allowed: bool) void {
+        self.slots[index(dev)] = .{ .dev = dev, .allowed = allowed };
+    }
+};
+
 pub const PathEntry = struct {
     path: []u8,
     // The map holds one reference. Dispatched jobs pin their path separately.
@@ -140,7 +161,7 @@ pub fn resolvePath(svc: *Service, job: Job) bool {
     const auto = known orelse blk: {
         const allowed = svc.policy(@intCast(key.dev >> 32), @truncate(key.dev));
         svc.lock();
-        if (current(svc, job)) svc.auto.put(svc.allocator, key.dev, allowed) catch {};
+        if (current(svc, job)) svc.auto.put(key.dev, allowed);
         svc.unlock();
         break :blk allowed;
     };

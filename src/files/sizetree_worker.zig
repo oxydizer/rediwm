@@ -3,22 +3,45 @@ const std = @import("std");
 const dirwalk = @import("platform").dirwalk;
 const c = @import("c.zig").api;
 const tree = @import("sizetree.zig");
+const reclaim = @import("sizetree_reclaim.zig");
 const Service = tree.Service;
 const Key = tree.Key;
 const Allocator = std.mem.Allocator;
+
+pub const Scratch = struct {
+    found: std.ArrayList(Service.Child) = .empty,
+    names: std.ArrayList(u8) = .empty,
+
+    pub fn deinit(self: *Scratch, a: Allocator) void {
+        self.found.deinit(a);
+        self.names.deinit(a);
+    }
+
+    // Keep the normal working set, and reuse large buffers across a run of
+    // large reads. A smaller read or an idle worker gives them back.
+    pub fn releaseExcess(self: *Scratch, a: Allocator, idle: bool) void {
+        if (reclaim.oversized(self.found.capacity, if (idle) 0 else self.found.items.len, 1024))
+            self.found.clearAndFree(a);
+        if (reclaim.oversized(self.names.capacity, if (idle) 0 else self.names.items.len, 64 * 1024))
+            self.names.clearAndFree(a);
+    }
+};
 
 pub fn workerLoop(self: *Service) void {
     var path_buf: [4096]u8 = undefined;
     const dir_buf = std.heap.page_allocator.alignedAlloc(u8, .fromByteUnits(dirwalk.buffer_align), 65536) catch return;
     defer std.heap.page_allocator.free(dir_buf);
-    var found: std.ArrayList(Service.Child) = .empty;
-    defer found.deinit(self.allocator);
-    var names: std.ArrayList(u8) = .empty;
-    defer names.deinit(self.allocator);
+    var scratch: Scratch = .{};
+    defer scratch.deinit(self.allocator);
 
     self.lock();
-    while (true) {
-        const job = self.take(&path_buf) orelse break;
+    while (!self.stop) {
+        reclaim.run(self);
+        const job = self.take(&path_buf) orelse {
+            scratch.releaseExcess(self.allocator, true);
+            reclaim.wait(self);
+            continue;
+        };
         self.working += 1;
         var retry = false;
         switch (job.work) {
@@ -31,16 +54,16 @@ pub fn workerLoop(self: *Service) void {
             .scan => |s| {
                 // The path is in this worker's `path_buf`: read it unlocked.
                 self.unlock();
-                found.clearRetainingCapacity();
-                names.clearRetainingCapacity();
-                const result = readDirectory(self.allocator, job.path.?, s.key, dir_buf, &found, &names);
+                scratch.found.clearRetainingCapacity();
+                scratch.names.clearRetainingCapacity();
+                const result = readDirectory(self.allocator, job.path.?, s.ref.key, dir_buf, &scratch.found, &scratch.names);
                 self.lock();
                 if (self.liveId(s.ref)) |id| {
                     if (result) |read| {
                         if (!read.opened) {
                             if (read.missing) self.lostScan(id, job.path.?) else self.failScan(id);
                         } else {
-                            self.finishScan(id, read.own, found.items, read.unreadable) catch {
+                            self.finishScan(id, read.own, scratch.found.items, read.unreadable) catch {
                                 self.retryScan(id);
                                 retry = true;
                             };
@@ -50,6 +73,7 @@ pub fn workerLoop(self: *Service) void {
                         retry = true;
                     }
                 }
+                scratch.releaseExcess(self.allocator, false);
                 self.maintainBudget();
             },
         }
