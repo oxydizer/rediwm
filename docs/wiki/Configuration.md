@@ -200,7 +200,7 @@ time and date (`clock_bold` and `clock_italic` in `[theme]`, or
 | `zoom_steps` | `[1.0, 0.85, 0.70, 0.55, 0.40]` | |
 | `camera_zoom_min`, `camera_zoom_max` | `0.25`, `1.0` | |
 | `focus_zoom` | `"boost"` | `keep`, `boost`, `camera` |
-| `desktop_mode` | `"canvas"` | `canvas`, `workspaces` (split tiles), or `scrolling` (columns on a strip; its direction is per display, `[[outputs]] scroll_direction`) |
+| `desktop_mode` | `"canvas"` | `canvas`, `tiling` (split tiles), or `scrolling` (columns on a strip; its direction is per display, `[[outputs]] scroll_direction`). Existing configs can still use `workspaces` for `tiling`. |
 | `scroll_column_width` | `0.5` | fraction of the viewport used for a new column, from 0.05 to 1 |
 | `scroll_column_widths` | `[0.333, 0.5, 0.667, 1.0]` | width presets for Super+W, up to eight fractions from 0.05 to 1 |
 | `scroll_center` | `"on_overflow"` | `never`, `on_overflow` (centre a column wider than the viewport), or `always` |

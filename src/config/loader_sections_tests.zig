@@ -363,7 +363,7 @@ test "workspace preset is independent, overrides include noop, and mode preserve
     const c = try keybinds.parseKeybind("Super+c");
     const two = try keybinds.parseKeybind("Super+2");
     try std.testing.expectEqualStrings("custom-canvas", cfg.lookupKeybind(q.modifiers, q.sym).?.spawn);
-    cfg.compositor.desktop_mode = .workspaces;
+    cfg.compositor.desktop_mode = .tiling;
     const monitor = try keybinds.parseKeybind("Ctrl+Alt+Delete");
     try std.testing.expectEqual(Action.open_system_monitor, cfg.lookupKeybind(monitor.modifiers, monitor.sym).?);
     try std.testing.expectEqualStrings("default-terminal", cfg.lookupKeybind(q.modifiers, q.sym).?.spawn);

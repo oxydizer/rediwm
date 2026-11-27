@@ -9,7 +9,7 @@ columns. All stages are done.
 
 ## Goal
 
-A third desktop mode beside Canvas and Workspaces. Windows tile into columns on
+A third desktop mode beside Canvas and Tiling. Windows tile into columns on
 an endless strip, each display shows a stretch of it, and focus moves along the
 strip with the view following, as in niri, PaperWM and Hyprland 0.54's
 scrolling layout. The strip scrolls sideways (columns) or up and down (rows).
@@ -58,8 +58,8 @@ What the canvas contributes is its feel and the code behind it:
 Scrolling is a workspace layout, offered as a desktop mode.
 
 * `desktop_mode = "scrolling"` turns on the workspace machinery, as
-  `workspaces` does, with scrolling as the default layout of every workspace.
-  Switching between Workspaces and Scrolling stays inside workspace mode. It
+  `tiling` does, with scrolling as the default layout of every workspace.
+  Switching between Tiling and Scrolling stays inside workspace mode. It
   takes no canvas snapshot; it only reflows. `workspaces.setMode(bool)` becomes
   `setMode(DesktopMode)`.
 * `Workspace.automatic: bool` becomes `layout: enum { floating, split,
@@ -382,7 +382,7 @@ return to while in Canvas.
 * The last tiled mode is recorded in the workspace save (`mode`). It is session
   state, not a setting, so no new config key. `toggle_desktop_mode` reads it
   and writes `desktop_mode` as it does today.
-* Plain Workspaces mode gets the same memory.
+* Tiling mode gets the same memory.
 
 **Check:** an integration case tiles and resizes, switches to Canvas, opens and
 closes a window there, switches back, and compares the layout over IPC.
@@ -404,7 +404,7 @@ asserts the stacking order over IPC.
 
 ```toml
 [compositor]
-desktop_mode = "scrolling"                     # canvas | workspaces | scrolling
+desktop_mode = "scrolling"                     # canvas | tiling | scrolling
 scroll_column_widths = [0.333, 0.5, 0.667, 1.0]
 scroll_column_width = 0.5                      # new columns
 scroll_center = "on_overflow"                  # never | on_overflow | always

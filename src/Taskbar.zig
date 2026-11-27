@@ -415,7 +415,7 @@ pub fn applyInputSource(bar: *Taskbar, presence_changed: bool) void {
     bar.wlr_output.scheduleFrame();
 }
 
-/// Canvas or Workspaces changed (`workspaces.setMode`): only the desktop
+/// The desktop mode changed (`workspaces.setMode`): only the desktop
 /// mode item's icon shows it.
 pub fn applyDesktopMode(bar: *Taskbar) void {
     bar.tray_dirty[@backingInt(TrayKind.desktop_mode)] = true;

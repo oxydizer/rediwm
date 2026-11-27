@@ -62,7 +62,7 @@ class Session:
 
     def set_mode(self, mode):
         self.ipc.action("set_desktop_mode", {"mode": mode, "persist": False})
-        layout = {"canvas": None, "workspaces": "split", "scrolling": "scrolling"}[mode]
+        layout = {"canvas": None, "tiling": "split", "scrolling": "scrolling"}[mode]
         wait_for(lambda: self.ipc.get_workspaces()[0]["name"] == "Canvas" if layout is None
                  else self.ipc.get_workspaces()[0]["layout"] == layout, "mode " + mode)
         self.ipc.wait_for_frame()
@@ -102,7 +102,7 @@ def mode_memory():
     with tempfile.TemporaryDirectory(prefix="rediwm-mode-memory-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        s = Session(tmp, BASE.format(mode="workspaces") + MOTION_OFF)
+        s = Session(tmp, BASE.format(mode="tiling") + MOTION_OFF)
         try:
             ipc = s.ipc
             a = s.launch("memory-a")
@@ -212,7 +212,7 @@ floating = true
             s.settle_all()
             assert all(s.window(id)["placement"] == value for id, value in original.items())
 
-            s.set_mode("workspaces")
+            s.set_mode("tiling")
             floating_workspace = s.launch("entry-floating-workspace")
             ipc.action("move_to_workspace", {"id": floating_workspace, "workspace": 2})
             ipc.action("set_workspace_layout", {"workspace": 2, "layout": "floating"})
@@ -232,7 +232,7 @@ def entry_keys():
     with tempfile.TemporaryDirectory(prefix="rediwm-scroll-entry-keys-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        s = Session(tmp, BASE.format(mode="workspaces") + MOTION_OFF)
+        s = Session(tmp, BASE.format(mode="tiling") + MOTION_OFF)
         try:
             s.launch("entry-first")
             middle = s.launch("entry-middle")
@@ -268,7 +268,7 @@ def workspace_entry():
     with tempfile.TemporaryDirectory(prefix="rediwm-scroll-workspace-entry-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        config = BASE.format(mode="workspaces") + 'floating_apps = ["entry-float"]\n' + MOTION_OFF + '''
+        config = BASE.format(mode="tiling") + 'floating_apps = ["entry-float"]\n' + MOTION_OFF + '''
 [keybinds.workspace]
 "Super+F11" = "tile_left"
 '''

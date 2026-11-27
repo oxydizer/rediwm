@@ -5643,6 +5643,10 @@ msgid "Swap the focused tile up."
 msgstr "Поменять активное окно местами с окном сверху."
 
 #: src/control_center/sections/shortcuts.zig
+msgid "Switch between Canvas and the last tiled mode."
+msgstr "Переключаться между холстом и последним режимом размещения окон."
+
+#: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
 msgstr "Выбрать следующий профиль питания."
 
@@ -6146,9 +6150,13 @@ msgstr "Закрепить справа"
 msgid "Tile Up"
 msgstr "Закрепить вверху"
 
-#: src/control_center/welcome.zig
+#: src/control_center/sections/desktop.zig
 msgid "Tiling"
 msgstr "Размещение окон"
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Tiling and Scrolling · Hyprland-style preset"
+msgstr "Размещение окон и прокрутка · Предустановка в стиле Hyprland"
 
 #: src/control_center/sections/region.zig
 msgid "Time"
@@ -6735,14 +6743,6 @@ msgstr "Расположение рабочих пространств"
 msgid "Workspace {n}"
 msgstr "Рабочее пространство {n}"
 
-#: src/control_center/sections/desktop.zig
-msgid "Workspaces"
-msgstr "Рабочие пространства"
-
-#: src/control_center/sections/shortcuts.zig
-msgid "Workspaces · Hyprland-style preset"
-msgstr "Рабочие пространства · Предустановка в стиле Hyprland"
-
 #: src/files/properties.zig
 msgid "Write"
 msgstr "Запись"
@@ -6892,8 +6892,8 @@ msgid "calendar monday sunday"
 msgstr "календарь понедельник воскресенье"
 
 #: src/control_center/search_index.zig
-msgid "canvas workspaces tiling"
-msgstr "холст рабочие пространства размещение"
+msgid "canvas tiling scrolling workspaces"
+msgstr "холст размещение окон прокрутка рабочие пространства"
 
 #: src/control_center/search_index.zig
 msgid "chooser portal"

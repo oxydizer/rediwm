@@ -51,7 +51,7 @@ active: bool = false,
 /// Canvas, or the tiled mode in use, which sets each workspace's default layout.
 mode: DesktopMode = .canvas,
 /// The tiled mode `toggle_desktop_mode` returns to from Canvas.
-last_tiled: DesktopMode = .workspaces,
+last_tiled: DesktopMode = .tiling,
 /// What the last tiled mode left behind while Canvas is on.
 memory: ?Memory = null,
 changing: bool = false,
@@ -166,7 +166,7 @@ pub fn cancelGestures(server: *Server) void {
     while (keyboards.next()) |keyboard| keyboard.cancelModeRepeats();
 }
 
-/// Switches between Canvas and the tiled modes. Workspaces and Scrolling share
+/// Switches between Canvas and the tiled modes. Tiling and Scrolling share
 /// the workspaces and differ only in their default layout, so moving between
 /// them just reflows; leaving for Canvas keeps the tiled layout in `memory`.
 pub fn setMode(self: *Self, server: *Server, mode: DesktopMode) void {

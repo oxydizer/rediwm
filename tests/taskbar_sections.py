@@ -37,14 +37,14 @@ def check_desktop_mode_menu(ipc, cfg):
         ipc.key_press('Escape')
         check_mode('Canvas')
         open_menu()
-        # Canvas, Workspaces and Scrolling, in that order from the top.
+        # Canvas, Tiling and Scrolling, in that order from the top.
         def row_y(index):
             return b['y'] + b['height'] + 26 + 34 * index if edge == 'top' else b['y'] - 26 - 34 * (2 - index)
         ipc.click_at(x, row_y(1))
-        check_mode('Workspaces')
+        check_mode('Tiling')
         open_menu()
         ipc.click_at(x, row_y(1))
-        check_mode('Workspaces')  # choosing the checked row is idempotent
+        check_mode('Tiling')  # choosing the checked row is idempotent
         open_menu()
         ipc.click_at(x, row_y(2))
         check_mode('Scrolling')

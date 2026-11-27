@@ -14,7 +14,7 @@ pub const Item = enum {
     capture,
     wired,
     input_source,
-    /// Switches between Canvas and Workspaces; its icon shows the mode.
+    /// Switches between Canvas and the last tiled mode and shows the current mode.
     desktop_mode,
 
     pub fn label(item: Item) []const u8 {

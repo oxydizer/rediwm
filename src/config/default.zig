@@ -121,12 +121,12 @@ pub const source =
     \\env = "none"                 # none | fcitx | ibus; daemon uses [[autostart]]
     \\
     \\[compositor]
-    \\# Optional tiled workspaces; canvas remains the default. "workspaces" splits
+    \\# Optional tiled workspaces; canvas remains the default. "tiling" splits
     \\# the screen between windows, "scrolling" puts them in columns on a strip
     \\# that scrolls. Workspace shortcuts are overridden separately in
     \\# [keybinds.workspace]. Super+Shift+W (toggle_desktop_mode) switches
     \\# between Canvas and the tiled mode used last.
-    \\desktop_mode = "canvas"     # canvas | workspaces | scrolling
+    \\desktop_mode = "canvas"     # canvas | tiling | scrolling
     \\# Scrolling: the widths Super+W steps a column through (fractions of the
     \\# screen), a new column's width, and when focus centres a column:
     \\# never, on_overflow (one wider than the screen) or always.
@@ -404,7 +404,7 @@ pub const source =
     \\"super+q"           = "close_window"
     \\"super+f"           = "toggle_fullscreen"
     \\"super+m"           = "toggle_maximize"
-    \\# Canvas <-> Workspaces; the workspace preset keeps this key too
+    \\# Canvas <-> last tiled mode; the workspace preset keeps this key too
     \\"super+shift+w"     = "toggle_desktop_mode"
     \\# Halves and quarters; dragging a window to a screen edge snaps it too
     \\"super+shift+left"  = "tile_left"

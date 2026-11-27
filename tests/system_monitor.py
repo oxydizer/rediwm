@@ -76,7 +76,7 @@ def run(scale, workspace):
         tmp = Path(directory)
         config = ('[compositor]\nxwayland = false\n'
                   'taskbar_items = ["battery", "volume", "wifi", "clock"]\n' +
-                  ('desktop_mode = "workspaces"\n' if workspace else '') +
+                  ('desktop_mode = "tiling"\n' if workspace else '') +
                   '[theme]\napp_bg = "#203040"\napp_item_hover = "#4a6076"\n'
                   'app_item_selected = "#62768a"\n')
         env = {"HOME": directory, "XDG_CONFIG_HOME": str(tmp / "config"),
@@ -138,7 +138,7 @@ def run(scale, workspace):
                         if artifacts := os.environ.get("REDIWM_TEST_ARTIFACT_DIR"):
                             destination = Path(artifacts)
                             destination.mkdir(parents=True, exist_ok=True)
-                            result.save(destination / f"monitor-{scale}-{'workspaces' if workspace else 'canvas'}-{name}.png")
+                            result.save(destination / f"monitor-{scale}-{'tiling' if workspace else 'canvas'}-{name}.png")
                         return result
 
                 def idle(label):
@@ -434,7 +434,7 @@ def run(scale, workspace):
                 ipc.close_window(window_id)
                 ipc.wait_for("window_closed", window_id=window_id)
                 wait_for(lambda: not Path(f"/proc/{monitor_pid}").exists(), "hidden monitor did not stop")
-                print(f"System Monitor: scale={scale} mode={'workspaces' if workspace else 'canvas'} passed", flush=True)
+                print(f"System Monitor: scale={scale} mode={'tiling' if workspace else 'canvas'} passed", flush=True)
         finally:
             for child in fixtures:
                 if child.poll() is None:

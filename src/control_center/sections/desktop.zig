@@ -154,9 +154,9 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     fixed_row.@"align" = .center;
     const mode_card = try card(a, &.{
         panel.sectionTitle(i18n.tr("Desktop mode")),
-        .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Canvas"), i18n.msg("Workspaces"), i18n.msg("Scrolling") }), .selected = @intFromEnum(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
+        .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Canvas"), i18n.msg("Tiling"), i18n.msg("Scrolling") }), .selected = @intFromEnum(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
         text(switch (cfg.desktop_mode) {
-            .workspaces => i18n.tr("Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating."),
+            .tiling => i18n.tr("Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating."),
             .scrolling => i18n.tr("New windows open as columns on a strip that scrolls. Super+arrows move along it; Super+W changes a column's width."),
             .canvas => i18n.tr("Pan and zoom the canvas. Switching back restores your canvas positions and zoom."),
         }, 12, true),

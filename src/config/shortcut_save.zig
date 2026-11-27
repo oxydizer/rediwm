@@ -153,7 +153,7 @@ test "moving Files restores ordinary keys and removes obsolete non-inherited noo
 }
 
 test "editing workspace defaults preserves canvas bindings and masks the previous key" {
-    inline for (.{ loader.DesktopMode.workspaces, loader.DesktopMode.scrolling }) |mode| {
+    inline for (.{ loader.DesktopMode.tiling, loader.DesktopMode.scrolling }) |mode| {
         try checkWorkspaceEdit(mode);
     }
 }

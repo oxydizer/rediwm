@@ -14,7 +14,7 @@ def run():
         original = '# preserved\n[input]\npointer_speed = 0.4\n[keybinds]\n"Super+q" = "close_window"\n"Super+f" = "toggle_fullscreen"\n'
         workspace_mode = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
         if workspace_mode:
-            original = '[compositor]\ndesktop_mode = "workspaces"\n' + original.replace('[keybinds]', '[keybinds.workspace]')
+            original = '[compositor]\ndesktop_mode = "tiling"\n' + original.replace('[keybinds]', '[keybinds.workspace]')
         process, log = spawn_compositor(tmp, config_content=original, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         try:
             with IPCClient(tmp, timeout=15) as ipc:

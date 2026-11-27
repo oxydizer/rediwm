@@ -572,7 +572,7 @@ def run_launcher():
                     f"Exec=/usr/bin/touch {tmp}/launched-{number}\nIcon=system-file-manager\n")
             env = {"XDG_DATA_HOME": str(tmp / "data"), "XDG_DATA_DIRS": str(tmp / "empty"), "XDG_CACHE_HOME": str(tmp / "cache"),
                    "DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_FILES_DEVICES": "0"}
-            config = ('[compositor]\ndesktop_mode = "workspaces"\n' if scale == '1.5' else '') + '[animations]\nenabled = false\n[theme]\nstart_menu_bg = "#102030"\n'
+            config = ('[compositor]\ndesktop_mode = "tiling"\n' if scale == '1.5' else '') + '[animations]\nenabled = false\n[theme]\nstart_menu_bg = "#102030"\n'
             process, log = spawn_compositor(tmp, scale=scale, outputs="2", config_content=config, env_extra=env)
             try:
                 with IPCClient(tmp) as client:

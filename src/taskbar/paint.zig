@@ -205,7 +205,7 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
                 .power => .power,
                 .desktop_mode => switch (bar.server.world.workspaces.mode) {
                     .canvas => .desktop_canvas,
-                    .workspaces => .desktop_tiles,
+                    .tiling => .desktop_tiles,
                     .scrolling => .desktop_scroll,
                 },
                 .input_source => unreachable,

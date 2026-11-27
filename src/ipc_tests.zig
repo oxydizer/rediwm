@@ -318,7 +318,7 @@ test "every v1 command parses" {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
         const a = arena.allocator();
-        const input = try std.fmt.allocPrint(a, "{{\"version\":1,\"command\":\"{s}\",\"params\":{s}}}", .{ comptime s.wire(), if (s.id == .set_desktop_mode) "{\"mode\":\"workspaces\"}" else if (s.id == .theme_apply) "{\"id\":\"rediwm-dark\"}" else params });
+        const input = try std.fmt.allocPrint(a, "{{\"version\":1,\"command\":\"{s}\",\"params\":{s}}}", .{ comptime s.wire(), if (s.id == .set_desktop_mode) "{\"mode\":\"tiling\"}" else if (s.id == .theme_apply) "{\"id\":\"rediwm-dark\"}" else params });
         const request = try protocol.parseRequest(a, input);
         try std.testing.expectEqualStrings(@tagName(s.id), requestCommandName(request));
     }
@@ -441,6 +441,11 @@ test "workspace controls validate IDs, spacing, patterns and mode" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
+    inline for (.{ "tiling", "workspaces" }) |mode| {
+        const input = "{\"version\":1,\"command\":\"set_desktop_mode\",\"params\":{\"mode\":\"" ++ mode ++ "\"}}";
+        const request = try protocol.parseRequest(a, input);
+        try std.testing.expect(request.action.set_desktop_mode.mode == .tiling);
+    }
     const cases = .{
         .{ "switch_workspace", "{\"workspace\":0}" },
         .{ "move_to_workspace", "{\"id\":7,\"workspace\":33}" },

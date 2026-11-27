@@ -100,7 +100,7 @@ pub fn save(server: *Server, path: []const u8, last_hash: ?*?u64) !void {
             .view = manager.tiler.strips[index].view,
         });
     };
-    const saved: format.Saved = .{ .mode = if (manager.last_tiled == .scrolling) .scrolling else .workspaces, .windows = windows.items, .workspaces = workspaces.items, .camera = .{ .offset_x = manager.saved_camera.offset_x, .offset_y = manager.saved_camera.offset_y, .zoom_index = manager.saved_camera.zoom_index }, .bounds = .{ .max_x = manager.saved_bounds.max_x, .max_y = manager.saved_bounds.max_y, .origin_x = manager.saved_bounds.origin_x, .origin_y = manager.saved_bounds.origin_y, .width = manager.saved_bounds.width, .height = manager.saved_bounds.height } };
+    const saved: format.Saved = .{ .mode = if (manager.last_tiled == .scrolling) .scrolling else .tiling, .windows = windows.items, .workspaces = workspaces.items, .camera = .{ .offset_x = manager.saved_camera.offset_x, .offset_y = manager.saved_camera.offset_y, .zoom_index = manager.saved_camera.zoom_index }, .bounds = .{ .max_x = manager.saved_bounds.max_x, .max_y = manager.saved_bounds.max_y, .origin_x = manager.saved_bounds.origin_x, .origin_y = manager.saved_bounds.origin_y, .width = manager.saved_bounds.width, .height = manager.saved_bounds.height } };
     const bytes = try format.stringify(a, saved);
     const hash = std.hash.Wyhash.hash(0, bytes);
     if (last_hash) |last| if (last.* == hash) return;

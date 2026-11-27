@@ -419,7 +419,7 @@ def ui_tests(tmp, home, env):
             assert Path(f'/proc/{shell}').exists(), 'minimize/restore replaced the session'
             # Switching workspaces keeps an open drawer's session alive through
             # the slide and the size changes on entering/leaving tiled mode.
-            ipc.action('set_desktop_mode', {'mode': 'workspaces', 'persist': False})
+            ipc.action('set_desktop_mode', {'mode': 'tiling', 'persist': False})
             ipc.wait_for('window_geometry_settled', window_id=ident)
             current_workspace = next(w['id'] for w in ipc.get_workspaces() if w['is_focused'])
             switched = home / 'workspace-output'

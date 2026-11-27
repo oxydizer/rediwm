@@ -68,7 +68,7 @@ desktop_switch_ms = 3000
 
                 def mode(workspaces):
                     (tmp / "rediwm-config.toml").write_text(canvas.replace('desktop_mode = "canvas"',
-                        'desktop_mode = "workspaces"' if workspaces else 'desktop_mode = "canvas"'))
+                        'desktop_mode = "tiling"' if workspaces else 'desktop_mode = "canvas"'))
                     wait_for(lambda: (ipc.get_workspaces()[0]["name"] != "Canvas") == workspaces, "mode reload")
                     ipc.wait_for_frame()
 
@@ -193,7 +193,7 @@ desktop_switch_ms = 3000
                 at_canvas = (window(a)["x"], window(a)["y"])
                 chord("w", shift=True)
                 wait_for(lambda: ipc.get_workspaces()[0]["name"] != "Canvas", "shortcut to workspaces")
-                wait_for(lambda: 'desktop_mode = "workspaces"' in cfg.read_text(), "workspaces saved")
+                wait_for(lambda: 'desktop_mode = "tiling"' in cfg.read_text(), "tiling saved")
                 chord("w", shift=True)
                 wait_for(lambda: ipc.get_workspaces()[0]["name"] == "Canvas", "shortcut to canvas")
                 wait_for(lambda: 'desktop_mode = "canvas"' in cfg.read_text(), "canvas saved")
@@ -218,16 +218,16 @@ desktop_switch_ms = 3000
                             return image.convert("RGB").crop(tuple(round(v * scale) for v in (b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"])))
                     canvas_icon = icon("canvas")
                     assert item["label"] == "Canvas", item
-                    for target, label in (("workspaces", "Workspaces"), ("canvas", "Canvas")):
+                    for target, label in (("tiling", "Tiling"), ("canvas", "Canvas")):
                         box = mode_item()["global_box"]
                         ipc.click_at(round(box["x"] + box["width"] / 2), round(box["y"] + box["height"] / 2))
-                        wait_for(lambda: (ipc.get_workspaces()[0]["name"] != "Canvas") == (target == "workspaces"), "taskbar item to " + target)
+                        wait_for(lambda: (ipc.get_workspaces()[0]["name"] != "Canvas") == (target == "tiling"), "taskbar item to " + target)
                         wait_for(lambda: f'desktop_mode = "{target}"' in cfg.read_text(), target + " saved by the item")
                         assert mode_item()["label"] == label, mode_item()
                         ipc.move_cursor(400, 300)
                         ipc.wait_for_frame()
                         time.sleep(.3)  # hover and press settle
-                        if target == "workspaces":
+                        if target == "tiling":
                             assert ImageChops.difference(canvas_icon, icon(target)).getbbox(), "the item's icon shows the mode"
                     assert not ImageChops.difference(canvas_icon, icon("canvas-again")).getbbox(), "back to the Canvas icon"
                     mode(False)
@@ -243,7 +243,7 @@ desktop_switch_ms = 3000
                     ipc.click_at(round(box["x"] + box["width"] * fraction), round(box["y"] + box["height"] / 2))
                 widgets = ipc.get_widget_tree("control_center")["widgets"]
                 widget_click(next(w for w in widgets if w["label"] == "Desktop"))
-                # Canvas, Workspaces and Scrolling share the control in thirds.
+                # Canvas, Tiling and Scrolling share the control in thirds.
                 for fraction, layout in [(.5, "split"), (.85, "scrolling"), (.15, None)]:
                     # A mode change queues a tiling reflow. After it runs, the
                     # Settings frame and its responsive widget tree settle separately.
@@ -279,7 +279,7 @@ def manual_controls():
         create_desktop_entry(apps, "controls-slow.desktop", "Tiling slow client",
             f"{slow_client} --app-id controls.slow --sleep-ms 700", "controls.slow")
         config = '''[compositor]
-desktop_mode = "workspaces"
+desktop_mode = "tiling"
 window_gap = 8
 placeholder_delay_ms = 120
 [keybinds.workspace]
@@ -666,7 +666,7 @@ def automatic_layout():
         tmp = Path(directory)
         build_client(tmp)
         config = '''[compositor]
-desktop_mode = "workspaces"
+desktop_mode = "tiling"
 window_gap = 8
 [keybinds.workspace]
 "Super+Shift+Left" = "tile_left"
@@ -862,7 +862,7 @@ def rollout_acceptance():
     with tempfile.TemporaryDirectory(prefix="rediwm-workspace-rollout-") as directory:
         tmp = Path(directory)
         compile_fixture(tmp)
-        base = '[compositor]\nxwayland = false\ndesktop_mode = "workspaces"\nwindow_gap = 8\n'
+        base = '[compositor]\nxwayland = false\ndesktop_mode = "tiling"\nwindow_gap = 8\n'
         outputs = int(os.getenv("REDIWM_TEST_OUTPUTS", "1"))
         def config(scale=1, x=0, y=0):
             value = base + f'[[outputs]]\nname = "HEADLESS-1"\nscale = {scale}\nx = {x}\ny = {y}\n'
@@ -1022,7 +1022,7 @@ def xwayland_routing():
     with tempfile.TemporaryDirectory(prefix="rediwm-workspace-x11-") as directory:
         tmp = Path(directory)
         outputs = int(os.getenv("REDIWM_TEST_OUTPUTS", "1"))
-        config = '[compositor]\ndesktop_mode = "workspaces"\n'
+        config = '[compositor]\ndesktop_mode = "tiling"\n'
         if outputs > 1 and os.getenv("REDIWM_TEST_NEGATIVE") == "1":
             config += '\n[[outputs]]\nname = "HEADLESS-1"\nx = 0\ny = 0\n[[outputs]]\nname = "HEADLESS-2"\nx = -1280\ny = -120\n'
         process, log = spawn_compositor(tmp, outputs=str(outputs), config_content=config,
@@ -1134,7 +1134,7 @@ def persistence_controls():
         for phase in (1, 2):
             runtime = tmp / f"run{phase}"
             runtime.mkdir()
-            content = config if phase == 1 else config.replace('desktop_mode = "canvas"', 'desktop_mode = "workspaces"')
+            content = config if phase == 1 else config.replace('desktop_mode = "canvas"', 'desktop_mode = "tiling"')
             process, log = spawn_compositor(runtime, outputs=outputs, config_content=content,
                 renderer=os.getenv("REDIWM_TEST_RENDERER", "gles2"), scale=os.getenv("REDIWM_TEST_SCALE", "1"),
                 env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_STATE_HOME": str(state), "XDG_DATA_HOME": str(tmp / "data"), "REDIWM_FILES_DEVICES": "0"})
@@ -1164,7 +1164,7 @@ def persistence_controls():
                         for index, (title, id) in enumerate(ids.items()):
                             ipc.action("move_window_to", {"id": id, "x": 90 + index * 200, "y": 100 + index * 80})
                             canvas_positions[title] = (window(id)["x"], window(id)["y"])
-                        ipc.action("set_desktop_mode", {"mode": "workspaces", "persist": True})
+                        ipc.action("set_desktop_mode", {"mode": "tiling", "persist": True})
                         for id in ids.values(): ipc.action("move_to_workspace", {"id": id, "workspace": 1})
                         wait_for(lambda: all(window(id)["placement"] == "automatic" for id in ids.values()), "initial tiles")
                         utility = launch("utility-editor", "Utility")

@@ -39,7 +39,7 @@ def run():
                   '[theme]\nchrome_round_buttons = false\n'
                   'window_bg = "#101215"\nshadow = "#00000000"\n')
         if os.getenv("REDIWM_TEST_WORKSPACES") == "1":
-            config = config.replace('[compositor]\n', '[compositor]\ndesktop_mode = "workspaces"\n', 1)
+            config = config.replace('[compositor]\n', '[compositor]\ndesktop_mode = "tiling"\n', 1)
         process, log = spawn_compositor(tmp, config_content=config,
             scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
             renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),

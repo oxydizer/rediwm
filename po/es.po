@@ -5637,6 +5637,10 @@ msgid "Swap the focused tile up."
 msgstr "Intercambiar la ventana en mosaico enfocada hacia arriba."
 
 #: src/control_center/sections/shortcuts.zig
+msgid "Switch between Canvas and the last tiled mode."
+msgstr "Alternar entre el lienzo y el último modo de mosaico usado."
+
+#: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
 msgstr "Cambiar al siguiente perfil de energía."
 
@@ -6140,9 +6144,13 @@ msgstr "Ajustar derecha"
 msgid "Tile Up"
 msgstr "Ajustar arriba"
 
-#: src/control_center/welcome.zig
+#: src/control_center/sections/desktop.zig
 msgid "Tiling"
 msgstr "Mosaico"
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Tiling and Scrolling · Hyprland-style preset"
+msgstr "Mosaico y desplazamiento · Preajuste al estilo de Hyprland"
 
 #: src/control_center/sections/region.zig
 msgid "Time"
@@ -6729,14 +6737,6 @@ msgstr "Disposición del espacio de trabajo"
 msgid "Workspace {n}"
 msgstr "Espacio de trabajo {n}"
 
-#: src/control_center/sections/desktop.zig
-msgid "Workspaces"
-msgstr "Espacios de trabajo"
-
-#: src/control_center/sections/shortcuts.zig
-msgid "Workspaces · Hyprland-style preset"
-msgstr "Espacios de trabajo · Preajuste al estilo de Hyprland"
-
 #: src/files/properties.zig
 msgid "Write"
 msgstr "Escribir"
@@ -6886,8 +6886,8 @@ msgid "calendar monday sunday"
 msgstr "calendario lunes domingo"
 
 #: src/control_center/search_index.zig
-msgid "canvas workspaces tiling"
-msgstr "lienzo espacios trabajo mosaico"
+msgid "canvas tiling scrolling workspaces"
+msgstr "lienzo mosaico desplazamiento espacios trabajo"
 
 #: src/control_center/search_index.zig
 msgid "chooser portal"

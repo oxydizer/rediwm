@@ -5640,6 +5640,10 @@ msgid "Swap the focused tile up."
 msgstr "Die fokussierte Kachel nach oben tauschen."
 
 #: src/control_center/sections/shortcuts.zig
+msgid "Switch between Canvas and the last tiled mode."
+msgstr "Zwischen Leinwand und dem zuletzt verwendeten Kachelmodus wechseln."
+
+#: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
 msgstr "Zum nächsten Energieprofil wechseln."
 
@@ -6143,9 +6147,13 @@ msgstr "Nach rechts einpassen"
 msgid "Tile Up"
 msgstr "Nach oben einpassen"
 
-#: src/control_center/welcome.zig
+#: src/control_center/sections/desktop.zig
 msgid "Tiling"
 msgstr "Kachelung"
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Tiling and Scrolling · Hyprland-style preset"
+msgstr "Kachelung und Scrollen · Hyprland-Vorgabe"
 
 #: src/control_center/sections/region.zig
 msgid "Time"
@@ -6732,14 +6740,6 @@ msgstr "Arbeitsbereichsanordnung"
 msgid "Workspace {n}"
 msgstr "Arbeitsbereich {n}"
 
-#: src/control_center/sections/desktop.zig
-msgid "Workspaces"
-msgstr "Arbeitsbereiche"
-
-#: src/control_center/sections/shortcuts.zig
-msgid "Workspaces · Hyprland-style preset"
-msgstr "Arbeitsbereiche · Hyprland-Vorgabe"
-
 #: src/files/properties.zig
 msgid "Write"
 msgstr "Schreiben"
@@ -6889,8 +6889,8 @@ msgid "calendar monday sunday"
 msgstr "kalender montag sonntag"
 
 #: src/control_center/search_index.zig
-msgid "canvas workspaces tiling"
-msgstr "leinwand arbeitsbereiche kachelung"
+msgid "canvas tiling scrolling workspaces"
+msgstr "leinwand kachelung scrollen arbeitsbereiche"
 
 #: src/control_center/search_index.zig
 msgid "chooser portal"

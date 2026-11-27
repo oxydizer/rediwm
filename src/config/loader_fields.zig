@@ -20,6 +20,7 @@ const dock_height_min = @import("loader.zig").dock_height_min;
 const dock_height_max = @import("loader.zig").dock_height_max;
 const dock_hover_zoom_max = @import("loader.zig").dock_hover_zoom_max;
 const CompositorConfig = @import("loader.zig").CompositorConfig;
+const DesktopMode = @import("loader.zig").DesktopMode;
 const OutputConfig = @import("loader.zig").OutputConfig;
 const PolkitConfig = @import("loader.zig").PolkitConfig;
 const IdleConfig = @import("loader.zig").IdleConfig;
@@ -438,6 +439,7 @@ pub fn parseEnum(comptime T: type, value: []const u8) !T {
         trimmed[1 .. trimmed.len - 1]
     else
         trimmed;
+    if (T == DesktopMode) return DesktopMode.fromName(s) orelse error.InvalidValue;
     return std.meta.stringToEnum(T, s) orelse error.InvalidValue;
 }
 

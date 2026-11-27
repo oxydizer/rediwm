@@ -27,11 +27,11 @@ to turn it off.
 
 Super+Shift+W (`toggle_desktop_mode`) saves the choice as `desktop_mode`.
 Switching back to Canvas restores window positions and zoom. Returning to
-Workspaces or Scrolling restores the tiled layout.
+Tiling or Scrolling restores the tiled layout.
 Existing configs with their own `[keybinds]` get it unless the key is taken.
 The taskbar's **Desktop mode** item (off by default; turn it on in Settings →
 Appearance) shows the current mode. Left-click it to switch modes, or
-right-click it to choose **Canvas**, **Workspaces** or **Scrolling** from a menu. A checkmark
+right-click it to choose **Canvas**, **Tiling** or **Scrolling** from a menu. A checkmark
 shows which mode is active.
 
 ### Scrolling
