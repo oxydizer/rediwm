@@ -547,7 +547,7 @@ pub const Service = struct {
 
     const Work = union(enum) {
         resolve: []u8,
-        scan: struct { ref: Ref, dev: u64 },
+        scan: struct { ref: Ref, key: Key },
     };
 
     fn take(self: *Service, path_buf: []u8) ?struct { work: Work, path: ?[:0]const u8 } {
@@ -582,7 +582,7 @@ pub const Service = struct {
                         continue;
                     };
                     node.scanning = true;
-                    return .{ .work = .{ .scan = .{ .ref = ref, .dev = node.key.dev } }, .path = path };
+                    return .{ .work = .{ .scan = .{ .ref = ref, .key = node.key } }, .path = path };
                 }
             }
             _ = c.pthread_cond_wait(&self.cond, &self.mutex);
@@ -595,13 +595,32 @@ pub const Service = struct {
     /// The directory is not where its path says: renamed or removed since
     /// its parent was read. Its parent is read again, which renames or drops
     /// it; it stays waiting meanwhile.
-    fn lostScan(self: *Service, id: Id) void {
+    fn lostScan(self: *Service, id: Id, path: []const u8) void {
         const node = &self.nodes.items[id];
         node.scanning = false;
         node.rescan = false;
         const parent = node.parent;
         const level = node.level;
-        if (parent == no_id) return self.failScan(id);
+        if (parent == no_id) {
+            if (self.paths.getPtr(path)) |entry| {
+                if (entry.node) |ref| {
+                    if (self.liveId(ref) == id) {
+                        entry.node = null;
+                        if (!entry.stopped and !entry.dropped) {
+                            entry.resolving = false;
+                            self.requestLocked(path, level, .{}) catch {
+                                entry.resolving = false;
+                                self.failScan(id);
+                                return;
+                            };
+                        }
+                        self.bump();
+                        return;
+                    }
+                }
+            }
+            return self.failScan(id);
+        }
         const up = &self.nodes.items[parent];
         if (up.scanning) {
             up.rescan = true;
@@ -725,7 +744,7 @@ pub const Service = struct {
                     self.unlock();
                     found.clearRetainingCapacity();
                     names.clearRetainingCapacity();
-                    const result = readDirectory(self.allocator, job.path.?, s.dev, dir_buf, &found, &names);
+                    const result = readDirectory(self.allocator, job.path.?, s.key, dir_buf, &found, &names);
                     // Names point into `names`, which may have moved.
                     var offset: usize = 0;
                     for (found.items) |*f| {
@@ -736,7 +755,7 @@ pub const Service = struct {
                     self.lock();
                     if (self.liveId(s.ref)) |id| {
                         if (!result.opened) {
-                            if (result.missing) self.lostScan(id) else self.failScan(id);
+                            if (result.missing) self.lostScan(id, job.path.?) else self.failScan(id);
                         } else self.finishScan(id, result.own, found.items, result.unreadable) catch {
                             const node = &self.nodes.items[id];
                             node.scanning = false;
@@ -804,7 +823,7 @@ const ReadResult = struct { own: i64 = 0, unreadable: bool = false, opened: bool
 fn readDirectory(
     a: Allocator,
     path: [:0]const u8,
-    dev: u64,
+    expected: Key,
     buf: []align(dirwalk.buffer_align) u8,
     found: *std.ArrayList(Service.Child),
     names: *std.ArrayList(u8),
@@ -816,6 +835,9 @@ fn readDirectory(
         return .{ .unreadable = true, .opened = false, .missing = err == c.ENOENT or err == c.ENOTDIR or err == c.ELOOP };
     }
     defer _ = c.close(fd);
+    const identity = dirwalk.statFd(fd) orelse return .{ .unreadable = true, .opened = false };
+    if (identity.kind != .directory or identity.dev != expected.dev or identity.ino != expected.ino)
+        return .{ .opened = false, .missing = true };
     var reader = dirwalk.Reader.init(fd, buf) catch return .{ .unreadable = true, .opened = false };
     defer reader.deinit();
     while (true) {
@@ -828,7 +850,7 @@ fn readDirectory(
             continue;
         };
         if (entry.kind == .directory) {
-            if (entry.mount_root or entry.dev != dev) continue;
+            if (entry.mount_root or entry.dev != expected.dev) continue;
             const name = std.mem.span(name_ptr);
             const start = names.items.len;
             names.appendSlice(a, name) catch {
@@ -850,4 +872,74 @@ fn nowMs() i64 {
     var ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
     return @as(i64, ts.tv_sec) * 1000 + @divTrunc(@as(i64, ts.tv_nsec), 1_000_000);
+}
+
+test "sizetree rejects a directory path replaced with another inode" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base);
+    const original_path = try std.fmt.allocPrintSentinel(
+        std.testing.allocator,
+        "{s}/root",
+        .{base},
+        0,
+    );
+    defer std.testing.allocator.free(original_path);
+    const old_path = try std.fmt.allocPrintSentinel(
+        std.testing.allocator,
+        "{s}/root_old",
+        .{base},
+        0,
+    );
+    defer std.testing.allocator.free(old_path);
+    const setup = try std.fmt.allocPrintSentinel(
+        std.testing.allocator,
+        "mkdir {s} && printf old > {s}/file",
+        .{ original_path, original_path },
+        0,
+    );
+    defer std.testing.allocator.free(setup);
+    try std.testing.expectEqual(@as(c_int, 0), c.system(setup));
+
+    const fd = c.open(original_path, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
+    if (fd < 0) return error.TestSetupFailed;
+    const original = dirwalk.statFd(fd) orelse {
+        _ = c.close(fd);
+        return error.TestSetupFailed;
+    };
+    _ = c.close(fd);
+
+    try std.testing.expectEqual(@as(c_int, 0), c.rename(original_path, old_path));
+    const replacement = try std.fmt.allocPrintSentinel(
+        std.testing.allocator,
+        "mkdir {s} && printf replacement > {s}/file",
+        .{ original_path, original_path },
+        0,
+    );
+    defer std.testing.allocator.free(replacement);
+    try std.testing.expectEqual(@as(c_int, 0), c.system(replacement));
+
+    var found: std.ArrayList(Service.Child) = .empty;
+    defer found.deinit(std.testing.allocator);
+    var names: std.ArrayList(u8) = .empty;
+    defer names.deinit(std.testing.allocator);
+    const buf = try std.heap.page_allocator.alignedAlloc(
+        u8,
+        .fromByteUnits(dirwalk.buffer_align),
+        65536,
+    );
+    defer std.heap.page_allocator.free(buf);
+
+    const result = readDirectory(
+        std.testing.allocator,
+        original_path,
+        .{ .dev = original.dev, .ino = original.ino },
+        buf,
+        &found,
+        &names,
+    );
+    try std.testing.expect(!result.opened);
+    try std.testing.expect(result.missing);
+    try std.testing.expectEqual(@as(usize, 0), found.items.len);
 }
