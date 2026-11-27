@@ -12,12 +12,29 @@ pub const InodeKey = struct {
     ino: u64,
 };
 
+/// What a walk adds up.
+///
+/// `bytes` is a folder's size as Files shows it: the apparent size (`st_size`)
+/// of every name below it. A hard link is counted at each of its names, like a
+/// reflinked copy, so a folder's size is its own files plus its subfolders'
+/// sizes, and it is the data a copy of the folder would write.
+///
+/// `allocated` (only with `Options.allocated`) is what the folder takes on
+/// disk: allocated blocks, each inode once, folders included, like `du -s`.
+/// It still counts reflinked extents once per file, and on Btrfs it does not
+/// reflect compression.
+pub const Options = struct {
+    allocated: bool = false,
+};
+
 pub const Job = struct {
     allocator: Allocator,
     dev_id: u64,
+    track_allocated: bool = false,
     ref_count: std.atomic.Value(usize) = .init(1),
     pending: std.atomic.Value(usize) = .init(0),
     bytes: std.atomic.Value(i64) = .init(0),
+    allocated: std.atomic.Value(i64) = .init(0),
     files: std.atomic.Value(usize) = .init(0),
     dirs: std.atomic.Value(usize) = .init(0),
     cancelled: std.atomic.Value(bool) = .init(false),
@@ -25,12 +42,13 @@ pub const Job = struct {
     hardlink_mutex: c.pthread_mutex_t = undefined,
     seen_hardlinks: std.AutoHashMap(InodeKey, void),
 
-    pub fn create(allocator: Allocator, dev_id: u64) !*Job {
+    pub fn create(allocator: Allocator, dev_id: u64, options: Options) !*Job {
         const self = try allocator.create(Job);
         errdefer allocator.destroy(self);
         self.* = .{
             .allocator = allocator,
             .dev_id = dev_id,
+            .track_allocated = options.allocated,
             .ref_count = .init(1),
             .pending = .init(0),
             .seen_hardlinks = std.AutoHashMap(InodeKey, void).init(allocator),
@@ -215,6 +233,10 @@ pub const Pool = struct {
     }
 
     pub fn startJob(self: *Pool, path: []const u8) !*Job {
+        return self.startJobWith(path, .{});
+    }
+
+    pub fn startJobWith(self: *Pool, path: []const u8, options: Options) !*Job {
         var path_buf: [4096]u8 = undefined;
         const path_z = try std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0);
 
@@ -222,7 +244,7 @@ pub const Pool = struct {
         if (root_fd < 0) {
             const err = std.c._errno().*;
             if (err == c.EACCES) {
-                const job = try Job.create(self.allocator, 0);
+                const job = try Job.create(self.allocator, 0, options);
                 job.partial.store(true, .release);
                 job.pending.store(0, .release);
                 self.notifyDone(job);
@@ -239,8 +261,9 @@ pub const Pool = struct {
         const root = dirwalk.statFd(root_fd) orelse return error.StatFailed;
         if (root.kind != .directory) return error.NotDirectory;
 
-        const job = try Job.create(self.allocator, root.dev);
+        const job = try Job.create(self.allocator, root.dev, options);
         errdefer job.unref();
+        if (options.allocated) job.allocated.store(blockBytes(root.blocks), .monotonic);
 
         job.pending.store(1, .release);
         job.ref();
@@ -317,13 +340,15 @@ fn walkDirectory(pool: *Pool, ctx: *WorkerContext, job: *Job, dir_fd: c_int, dep
     defer reader.deinit();
 
     var local_bytes: i64 = 0;
+    var local_allocated: i64 = 0;
     var local_files: usize = 0;
     var local_dirs: usize = 0;
     var local_count: usize = 0;
 
     defer {
-        if (local_bytes > 0 or local_files > 0 or local_dirs > 0) {
+        if (local_bytes > 0 or local_allocated > 0 or local_files > 0 or local_dirs > 0) {
             _ = job.bytes.fetchAdd(local_bytes, .monotonic);
+            _ = job.allocated.fetchAdd(local_allocated, .monotonic);
             _ = job.files.fetchAdd(local_files, .monotonic);
             _ = job.dirs.fetchAdd(local_dirs, .monotonic);
         }
@@ -351,6 +376,7 @@ fn walkDirectory(pool: *Pool, ctx: *WorkerContext, job: *Job, dir_fd: c_int, dep
                 continue;
             }
             local_dirs += 1;
+            if (job.track_allocated) local_allocated += blockBytes(entry.blocks);
 
             _ = job.pending.fetchAdd(1, .monotonic);
             job.ref();
@@ -363,37 +389,42 @@ fn walkDirectory(pool: *Pool, ctx: *WorkerContext, job: *Job, dir_fd: c_int, dep
                 job.unref();
             }
         } else {
-            if (entry.kind == .regular and entry.nlink > 1) {
-                const key = InodeKey{ .dev = entry.dev, .ino = entry.ino };
-                _ = c.pthread_mutex_lock(&job.hardlink_mutex);
-                const gop = job.seen_hardlinks.getOrPut(key) catch {
-                    _ = c.pthread_mutex_unlock(&job.hardlink_mutex);
-                    job.partial.store(true, .release);
-                    continue;
-                };
-                const already_seen = gop.found_existing;
-                _ = c.pthread_mutex_unlock(&job.hardlink_mutex);
-
-                if (!already_seen) {
-                    local_bytes += @intCast(entry.size);
-                    local_files += 1;
-                }
-            } else {
-                local_bytes += @intCast(entry.size);
-                local_files += 1;
-            }
+            local_bytes += @intCast(entry.size);
+            local_files += 1;
+            if (job.track_allocated and firstSighting(job, entry)) local_allocated += blockBytes(entry.blocks);
         }
 
         local_count += 1;
         if (local_count >= 4096) {
             _ = job.bytes.fetchAdd(local_bytes, .monotonic);
+            _ = job.allocated.fetchAdd(local_allocated, .monotonic);
             _ = job.files.fetchAdd(local_files, .monotonic);
             _ = job.dirs.fetchAdd(local_dirs, .monotonic);
             local_bytes = 0;
+            local_allocated = 0;
             local_files = 0;
             local_dirs = 0;
             local_count = 0;
             if (job.cancelled.load(.acquire)) return;
         }
     }
+}
+
+fn blockBytes(blocks: u64) i64 {
+    return @intCast(@min(blocks, std.math.maxInt(i64) / 512) * 512);
+}
+
+/// Whether the walk meets this inode for the first time; a file with several
+/// names takes its blocks once. Without memory to remember it, the job is
+/// marked partial and the file is not counted again.
+fn firstSighting(job: *Job, entry: dirwalk.Entry) bool {
+    if (entry.nlink <= 1) return true;
+    const key = InodeKey{ .dev = entry.dev, .ino = entry.ino };
+    _ = c.pthread_mutex_lock(&job.hardlink_mutex);
+    defer _ = c.pthread_mutex_unlock(&job.hardlink_mutex);
+    const gop = job.seen_hardlinks.getOrPut(key) catch {
+        job.partial.store(true, .release);
+        return false;
+    };
+    return !gop.found_existing;
 }

@@ -87,7 +87,7 @@ test "dirsize: nested folders give the right total" {
     try std.testing.expect(!job.cancelled.load(.acquire));
 }
 
-test "dirsize: a hardlink pair is counted once" {
+test "dirsize: a hardlink is counted at each name, its blocks once" {
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);
@@ -113,16 +113,47 @@ test "dirsize: a hardlink pair is counted once" {
     const pool = try dirsize_mod.Pool.init(a);
     defer pool.deinit();
 
-    const job = try pool.startJob(tmp);
+    const job = try pool.startJobWith(tmp, .{ .allocated = true });
     defer job.unref();
 
     while (!job.isDone()) {
         _ = c.usleep(1000);
     }
 
-    try std.testing.expectEqual(@as(i64, 21), job.bytes.load(.acquire));
-    try std.testing.expectEqual(@as(usize, 2), job.files.load(.acquire));
+    // Size: 16 + 16 + 5, every name counted, like a copy would write.
+    try std.testing.expectEqual(@as(i64, 37), job.bytes.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 3), job.files.load(.acquire));
     try std.testing.expectEqual(@as(usize, 0), job.dirs.load(.acquire));
+
+    // On disk: the folder plus two inodes, the linked one once.
+    var expected: i64 = 0;
+    for ([_][]const u8{ tmp, f1, f3 }) |path| {
+        const z = try a.dupeSentinel(u8, path, 0);
+        defer a.free(z);
+        var st: c.struct_stat = undefined;
+        try std.testing.expect(c.lstat(z, &st) == 0);
+        expected += @as(i64, @intCast(st.st_blocks)) * 512;
+    }
+    try std.testing.expectEqual(expected, job.allocated.load(.acquire));
+    try std.testing.expect(!job.partial.load(.acquire));
+}
+
+test "dirsize: on disk is only added up when asked for" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+    const f1 = try std.fmt.allocPrint(a, "{s}/file.txt", .{tmp});
+    defer a.free(f1);
+    try writeTestFile(f1, "payload");
+
+    const pool = try dirsize_mod.Pool.init(a);
+    defer pool.deinit();
+    const job = try pool.startJob(tmp);
+    defer job.unref();
+    while (!job.isDone()) _ = c.usleep(1000);
+    try std.testing.expectEqual(@as(i64, 7), job.bytes.load(.acquire));
+    try std.testing.expectEqual(@as(i64, 0), job.allocated.load(.acquire));
 }
 
 test "dirsize: a symlink loop is not followed" {

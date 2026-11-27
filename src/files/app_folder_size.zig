@@ -14,6 +14,16 @@ pub fn getOrInitDirsizePool(self: *App) !*dirsize.Pool {
     return p;
 }
 
+/// A folder's Properties adds up its Size and On disk while it is open; the
+/// dialog cancels the walk when it closes (`properties.State.deinit`).
+pub fn startPropertiesSizes(self: *App) void {
+    const dlg = if (self.dialog) |*d| d else return;
+    const props = if (dlg.properties) |*p| p else return;
+    if (!props.isDirectory() or props.sizes != null) return;
+    const pool = self.getOrInitDirsizePool() catch return;
+    props.sizes = pool.startJobWith(props.path, .{ .allocated = true }) catch null;
+}
+
 pub fn startFolderSize(self: *App, idx: usize) void {
     if (self.history.archive_len > 0) return;
     if (idx >= self.items.items.len) return;
@@ -113,6 +123,7 @@ pub fn clearFolderSizes(self: *App) void {
 }
 
 pub fn hasRunningFolderSize(self: *App) bool {
+    if (self.dialog) |*dlg| if (dlg.properties) |*props| if (props.sizesRunning()) return true;
     var it = self.folder_sizes.valueIterator();
     while (it.next()) |sz| {
         switch (sz.*) {
@@ -140,6 +151,7 @@ pub fn damagePathSize(self: *App, path: []const u8) void {
 }
 
 pub fn syncFolderSizes(self: *App) void {
+    if (self.dialog) |*dlg| if (dlg.properties) |*props| if (props.pollSizes()) self.invalidate();
     var it = self.folder_sizes.iterator();
     while (it.next()) |entry| {
         switch (entry.value_ptr.*) {

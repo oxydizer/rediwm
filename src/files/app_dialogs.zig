@@ -78,7 +78,12 @@ pub fn closeDialog(self: *App) void {
 /// The dialog opens when the service has read the item (`app_requests`).
 pub fn openProperties(self: *App, path: []const u8, preview: ?icons.Entry) void {
     if (app_requests.waiting(self, .properties)) return;
-    _ = app_requests.send(self, .{ .properties = .{ .path = path } }, .{ .properties = .{ .preview = preview } });
+    // `preview` is the icon cache's raster, borrowed: the request owns a copy.
+    const owned: ?icons.Entry = if (preview) |im|
+        if (self.allocator.dupe(u32, im.pixels)) |pixels| .{ .pixels = pixels, .size = im.size } else |_| null
+    else
+        null;
+    _ = app_requests.send(self, .{ .properties = .{ .path = path } }, .{ .properties = .{ .preview = owned } });
 }
 
 pub fn openSelectedProperties(self: *App) void {

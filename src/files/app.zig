@@ -844,6 +844,7 @@ pub const App = struct {
     pub const hasRunningFolderSize = app_folder_size.hasRunningFolderSize;
     pub const damagePathSize = app_folder_size.damagePathSize;
     pub const syncFolderSizes = app_folder_size.syncFolderSizes;
+    pub const startPropertiesSizes = app_folder_size.startPropertiesSizes;
     pub const itemSizeDisplay = app_folder_size.itemSizeDisplay;
 
     pub const ItemSizeDisplay = struct {

@@ -87,7 +87,7 @@ test "going to another folder cancels running folder sizes" {
     defer app.deinit();
     _ = try enter(&app);
     // A size still counting (as far as the window knows: it has not synced).
-    const job = try dirsize.Job.create(std.testing.allocator, 0);
+    const job = try dirsize.Job.create(std.testing.allocator, 0, .{});
     job.ref(); // ours, so the job outlives the window's cancel
     defer job.unref();
     try app.folder_sizes.put(try std.testing.allocator.dupe(u8, "/tmp/elsewhere"), .{ .running = job });

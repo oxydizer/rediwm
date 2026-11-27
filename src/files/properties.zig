@@ -15,6 +15,8 @@ const checkbox = @import("ui").widgets.checkbox;
 const icons = @import("../icon_cache.zig");
 const icon_theme = @import("../icon_theme.zig");
 const card = @import("properties_card.zig");
+const dirsize = @import("dirsize.zig");
+const formatSize = @import("app.zig").formatSize;
 const Rect = ui.Rect;
 const centeredTextX = @import("ui").paint.centeredTextX;
 
@@ -24,7 +26,7 @@ fn contentShift() f32 {
 }
 
 fn fullHeight() f32 {
-    return 520 + contentShift();
+    return 520 + card.field_step + contentShift();
 }
 
 pub const Geometry = struct {
@@ -49,7 +51,7 @@ pub const Geometry = struct {
         const col: f32 = @floatFromInt(index % 3);
         const row: f32 = @floatFromInt(index / 3);
         const step = (self.box.w - 126) / 3;
-        return .{ .x = 114 + (col + 0.5) * step - 9, .y = 386 + contentShift() + row * 34 - self.scroll, .w = 24, .h = 28 };
+        return .{ .x = 114 + (col + 0.5) * step - 9, .y = 412 + contentShift() + row * 34 - self.scroll, .w = 24, .h = 28 };
     }
 };
 
@@ -69,6 +71,11 @@ pub const State = struct {
     message: []const u8 = "",
     changed: bool = false,
     keyboard_focus: bool = false,
+    /// A folder's Size and On disk, added up while the dialog is open
+    /// (`dirsize.zig`); a file's come from `stat`.
+    sizes: ?*dirsize.Job = null,
+    /// The finished totals have been painted.
+    sizes_shown: bool = false,
 
     pub fn geometry(self: *const State, w: i32, h: i32) Geometry {
         var g = Geometry.init(w, h, self.scroll);
@@ -113,12 +120,55 @@ pub const State = struct {
     }
 
     pub fn deinit(self: *State) void {
+        if (self.sizes) |job| {
+            job.cancel();
+            job.unref();
+            self.sizes = null;
+        }
         _ = c.close(self.fd);
         self.allocator.free(self.path);
         self.allocator.free(self.description);
         self.allocator.free(self.owner);
         self.allocator.free(self.group);
         if (self.preview) |im| self.allocator.free(im.pixels);
+    }
+
+    /// Whether the folder's totals are still being added up.
+    pub fn sizesRunning(self: *const State) bool {
+        const job = self.sizes orelse return false;
+        return !job.isDone();
+    }
+
+    /// True when the totals changed since the last paint: while they run,
+    /// and once more when they finish.
+    pub fn pollSizes(self: *State) bool {
+        const job = self.sizes orelse return false;
+        if (!job.isDone()) return true;
+        if (self.sizes_shown) return false;
+        self.sizes_shown = true;
+        return true;
+    }
+
+    pub const Totals = struct {
+        bytes: i64,
+        allocated: i64,
+        state: TotalsState,
+    };
+
+    /// A file's own sizes, or a folder's as far as they are added up.
+    pub fn totals(self: *const State) Totals {
+        if (!self.isDirectory()) return .{
+            .bytes = @max(0, self.stat.st_size),
+            .allocated = @as(i64, @intCast(@max(0, self.stat.st_blocks))) * 512,
+            .state = .exact,
+        };
+        const job = self.sizes orelse return .{ .bytes = 0, .allocated = 0, .state = .unknown };
+        const done = job.isDone();
+        return .{
+            .bytes = job.bytes.load(.acquire),
+            .allocated = job.allocated.load(.acquire),
+            .state = if (!done) .running else if (job.partial.load(.acquire)) .partial else .exact,
+        };
     }
 
     pub fn isDirectory(self: *const State) bool {
@@ -225,37 +275,67 @@ pub const State = struct {
         });
         card.paintOpen(r, g.box.w, s, tr("Open"), self.keyboard_focus and self.focus == 1, hover == 2);
         var size_buf: [128]u8 = undefined;
-        var short_buf: [32]u8 = undefined;
-        const byte_count: u64 = @intCast(@max(0, self.stat.st_size));
-        const size = if (self.isDirectory()) "—" else i18n.fmt(&size_buf, i18n.trn("{size} ({bytes} byte)", "{size} ({bytes} bytes)", byte_count), .{ .size = @import("app.zig").formatSize(self.stat.st_size, &short_buf), .bytes = byte_count }) catch "—";
+        var disk_buf: [64]u8 = undefined;
+        const sum = self.totals();
+        const size = sizeText(&size_buf, sum.bytes, sum.state);
+        const on_disk = diskText(&disk_buf, sum.allocated, sum.state);
         var created_buf: [64]u8 = undefined;
         var modified_buf: [64]u8 = undefined;
-        const values = [_][]const u8{ size, date(self.created, &created_buf), date(self.stat.st_mtim.tv_sec, &modified_buf), std.fs.path.dirname(self.path) orelse "/", self.owner, self.group };
-        const labels = [_][]const u8{ tr("Size"), tr("Created"), tr("Modified"), tr("Location"), tr("Owner"), tr("Group") };
+        const values = [_][]const u8{ size, on_disk, date(self.created, &created_buf), date(self.stat.st_mtim.tv_sec, &modified_buf), std.fs.path.dirname(self.path) orelse "/", self.owner, self.group };
+        const labels = [_][]const u8{ tr("Size"), tr("On disk"), tr("Created"), tr("Modified"), tr("Location"), tr("Owner"), tr("Group") };
         card.paintFields(r, g.box.w, s, &labels, &values);
-        r.fillRect(24, 322 - s, g.box.w - 48, 1, .{ .color = theme.global.app_divider });
-        r.drawText(24, 334 - s, 160, 28, .{ .content = tr("Permissions"), .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
+        r.fillRect(24, 348 - s, g.box.w - 48, 1, .{ .color = theme.global.app_divider });
+        r.drawText(24, 360 - s, 160, 28, .{ .content = tr("Permissions"), .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
         var mode_buf: [8]u8 = undefined;
         const mode = std.fmt.bufPrint(&mode_buf, "{o:0>3}", .{self.stat.st_mode & 0o7777}) catch "";
         var tint = palette.accent;
         tint[3] *= 0.2;
-        r.fillRect(g.box.w - 86, 334 - s, 62, 28, .{ .color = tint, .radius = 8 });
-        r.drawText(centeredTextX(g.box.w - 86, 62, mode, ui.textSize()), 334 - s, 62, 28, .{ .content = mode, .font_size = ui.textSize(), .weight = 600, .color = palette.fg });
+        r.fillRect(g.box.w - 86, 360 - s, 62, 28, .{ .color = tint, .radius = 8 });
+        r.drawText(centeredTextX(g.box.w - 86, 62, mode, ui.textSize()), 360 - s, 62, 28, .{ .content = mode, .font_size = ui.textSize(), .weight = 600, .color = palette.fg });
         for ([_][]const u8{ tr("Owner"), tr("Group"), tr("Others") }, 0..) |label, i| {
             const cell = g.permission(i);
-            r.drawText(centeredTextX(cell.x - 30, 78, label, ui.headingSize()), 365 - s, 78, 22, .{ .content = label, .font_size = ui.headingSize(), .color = palette.fg });
+            r.drawText(centeredTextX(cell.x - 30, 78, label, ui.headingSize()), 391 - s, 78, 22, .{ .content = label, .font_size = ui.headingSize(), .color = palette.fg });
         }
         for ([_][]const u8{ tr("Read"), tr("Write"), tr("Execute") }, 0..) |label, row| {
-            r.drawText(24, 386 + @as(f32, @floatFromInt(row)) * 34 - s, 90, 28, .{ .content = label, .font_size = ui.textSize(), .color = palette.fg });
+            r.drawText(24, 412 + @as(f32, @floatFromInt(row)) * 34 - s, 90, 28, .{ .content = label, .font_size = ui.textSize(), .color = palette.fg });
         }
         for (0..9) |i| checkbox.paint(r, g.permission(i), "", .{ .checked = self.stat.st_mode & permissionBit(i) != 0, .focused = (self.keyboard_focus and self.focus == i + 2) or hover == i + 3, .disabled = !self.editable() });
         const message = if (self.message.len > 0) self.message else if (self.stat.st_mode & c.S_IFMT == c.S_IFLNK) tr("Link permissions cannot be changed") else if (!self.editable()) tr("Only the owner can change permissions") else "";
-        r.drawText(24, 488 - s, g.box.w - 48, 20, .{ .content = message, .font_size = ui.statusSize(), .color = palette.fg });
+        r.drawText(24, 514 - s, g.box.w - 48, 20, .{ .content = message, .font_size = ui.statusSize(), .color = palette.fg });
         const strip = scrollbar.gutter(theme.global.scrollbar_width);
-        if (scrollbar.Geometry.compute(.vertical, .{ .x = g.box.w - strip, .y = 54 + contentShift(), .w = strip, .h = g.box.h - 68 - contentShift() }, g.box.h - 58 - contentShift(), 520 - 58, g.scroll)) |bar|
+        if (scrollbar.Geometry.compute(.vertical, .{ .x = g.box.w - strip, .y = 54 + contentShift(), .w = strip, .h = g.box.h - 68 - contentShift() }, g.box.h - 58 - contentShift(), 546 - 58, g.scroll)) |bar|
             scrollbar.paint(r, scrollbar.look(bar, .{}, theme.global.scrollbar_width, palette));
     }
 };
+
+pub const TotalsState = enum { unknown, running, partial, exact };
+
+/// "1.2 MB (1,234,567 bytes)"; "1.2 MB…" while a folder is added up; "≥ 1.2 MB"
+/// when part of it could not be read.
+fn sizeText(buf: *[128]u8, bytes: i64, state: TotalsState) []const u8 {
+    var short_buf: [64]u8 = undefined;
+    const short = formatSize(bytes, &short_buf);
+    return switch (state) {
+        .unknown => "—",
+        .running => std.fmt.bufPrint(buf, "{s}…", .{short}) catch "—",
+        .partial => std.fmt.bufPrint(buf, "≥ {s}", .{short}) catch "—",
+        .exact => blk: {
+            const count: u64 = @intCast(@max(0, bytes));
+            break :blk i18n.fmt(buf, i18n.trn("{size} ({bytes} byte)", "{size} ({bytes} bytes)", count), .{ .size = short, .bytes = count }) catch "—";
+        },
+    };
+}
+
+fn diskText(buf: *[64]u8, bytes: i64, state: TotalsState) []const u8 {
+    var short_buf: [64]u8 = undefined;
+    const short = formatSize(bytes, &short_buf);
+    return switch (state) {
+        .unknown => "—",
+        .running => std.fmt.bufPrint(buf, "{s}…", .{short}) catch "—",
+        .partial => std.fmt.bufPrint(buf, "≥ {s}", .{short}) catch "—",
+        .exact => std.fmt.bufPrint(buf, "{s}", .{short}) catch "—",
+    };
+}
 
 pub fn permissionBit(index: usize) c.mode_t {
     return @as(c.mode_t, 1) << @as(std.math.Log2Int(c.mode_t), @intCast(8 - index));

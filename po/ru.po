@@ -2723,6 +2723,10 @@ msgstr "Хорошо"
 msgid "Group"
 msgstr "Группа"
 
+#: src/files/properties.zig
+msgid "On disk"
+msgstr "На диске"
+
 #: src/control_center/sections/users.zig
 msgid "Groups"
 msgstr "Группы"

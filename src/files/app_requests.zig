@@ -22,6 +22,8 @@ pub const Pending = union(enum) {
     create_folder,
     create_file,
     rename,
+    /// The window's own copy of the item's icon: the icon cache may evict
+    /// its raster before the reply arrives.
     properties: struct { preview: ?icons.Entry },
     toggle_permission: struct { path: []u8 },
     /// Opening the Trash place created its folder first.
@@ -60,6 +62,7 @@ pub const Pending = union(enum) {
             .drop => |p| freeAll(allocator, p.paths),
             .chooser => |p| if (p.named) |path| allocator.free(path),
             .conflict_rename => |p| allocator.free(p.dir),
+            .properties => |p| if (p.preview) |im| allocator.free(im.pixels),
             else => {},
         }
     }
@@ -263,9 +266,15 @@ fn finishProperties(self: *App, preview: ?icons.Entry, result: *anyerror!@import
     // The dialog takes the state; the reply must not free it.
     var taken = state.*;
     result.* = error.Taken;
-    taken.preview = preview;
+    // The dialog frees its preview when it closes, so it gets its own copy:
+    // the pending request keeps (and frees) the one it was sent with.
+    taken.preview = if (preview) |im|
+        if (taken.allocator.dupe(u32, im.pixels)) |pixels| .{ .pixels = pixels, .size = im.size } else |_| null
+    else
+        null;
     self.closeDialog();
     self.dialog = .{ .kind = .properties, .title = tr("Properties"), .properties = taken };
+    self.startPropertiesSizes();
     self.invalidate();
 }
 
