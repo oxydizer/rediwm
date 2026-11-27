@@ -84,6 +84,25 @@ def check_vertical_strip(s, tall):
     s.settle_all()
     fb, fa = s.frame(b), s.frame(a)
     assert fb[2] > fa[2] and fb[1] == fa[1], (fb, fa)
+
+    # A member can fill a vertical strip's entire display and still share
+    # its original row when it exits fullscreen.
+    stacked = rows()
+    full = tuple(tall[k] for k in ("x", "y", "logical_width", "logical_height"))
+    ipc.fullscreen(b)
+    wait_for(lambda: ipc.get_window_debug(b)["fullscreen"], "stacked member enters fullscreen")
+    s.settle_all()
+    assert s.frame(b) == full, (s.frame(b), full)
+    s.chord("Up")
+    s.settle_all()
+    assert ipc.get_focused_window()["id"] == c and s.frame(b)[1] > full[1]
+    s.chord("Down")
+    s.settle_all()
+    assert ipc.get_focused_window()["id"] == b and s.frame(b) == full
+    ipc.restore(b)
+    wait_for(lambda: not ipc.get_window_debug(b)["fullscreen"], "stacked member leaves fullscreen")
+    s.settle_all()
+    assert rows() == stacked and s.frame(b)[2:] == fb[2:] and s.frame(a)[2:] == fa[2:]
     return ws, (a, b, c)
 
 

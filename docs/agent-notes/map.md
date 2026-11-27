@@ -75,7 +75,8 @@ Also in `src/`: `Shell.zig` (xdg-shell and decorations), `TitlebarTabs.zig` (cli
 titlebar tabs, `protocol/rediwm-titlebar-tabs-v1.xml`), `Popup.zig`,
 `LayerSurface.zig`, `Xwayland.zig` (+ `xwayland_*.zig`), `Switcher.zig`
 (Alt+Tab), `workspaces.zig`, `snap.zig`, `auto_tiling.zig` (workspace reflow),
-`scroll_layout.zig` (strip geometry), `scroll_tiling.zig` (focus and placement),
+`scroll_layout.zig` and `scroll_layout_geometry.zig` (strip geometry),
+`scroll_tiling.zig` (focus and placement),
 `scroll_motion.zig` (swipes, two-finger and drag-edge scrolling of a strip),
 `window_tabs.zig`,
 `fifo.zig` (wp_fifo_v1 barriers, `docs/plans/fifo.md`).

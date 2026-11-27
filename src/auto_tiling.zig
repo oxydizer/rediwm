@@ -5,6 +5,7 @@ const Server = @import("Server.zig");
 const Top = @import("Toplevel.zig");
 const layout = @import("auto_layout.zig");
 const scroll = @import("scroll_layout.zig");
+const scrolling = @import("scroll_tiling.zig");
 const gpa = @import("main.zig").gpa;
 
 pub const State = struct {
@@ -15,6 +16,7 @@ pub const State = struct {
     vertical: i32,
     excluded: bool,
     suspended: bool,
+    cover: layout.Cover,
     hidden: bool,
 };
 
@@ -41,13 +43,14 @@ fn state(top: *Top) State {
         .vertical = top.titlebarHeight() + if (top.hasServerDecorations()) @import("chrome.zig").frameBorder() else @as(i32, 0),
         .excluded = isFloating(top) or top.tile != null or floatsBySize(top, c) or top.currentIdentity().dialog,
         .suspended = top.minimized or top.fullscreen or top.maximized,
+        .cover = if (top.fullscreen) .fullscreen else if (top.maximized) .maximized else .none,
         .hidden = top.tab_hidden,
     };
 }
 
 fn floatsBySize(top: *const Top, c: @import("resize.zig").SizeConstraints) bool {
     // A strip has room for fixed-size windows and respects both size limits.
-    if (@import("scroll_tiling.zig").scrolling(top.server, top.workspace_id)) return false;
+    if (scrolling.scrolling(top.server, top.workspace_id)) return false;
     return c.min_width > 0 and c.min_height > 0 and c.min_width == c.max_width and c.min_height == c.max_height;
 }
 
@@ -166,15 +169,20 @@ pub const Manager = struct {
         const animate = !self.quiet and !dragging;
         for (&self.trees, 0..) |*tree, index| {
             members.clearRetainingCapacity();
+            const id: u8 = @intCast(index + 1);
+            const is_scrolling = scrolling.scrolling(server, id);
             const output = server.world.workspaces.slots[index].output;
             for (tops.items) |top| {
-                if (top.workspace_id != index + 1) continue;
+                if (top.workspace_id != id) continue;
                 const s = state(top);
                 const k = key(top);
+                const active = server.world.workspaces.tiles(id) and !s.excluded and !s.hidden and
+                    (if (is_scrolling) !top.minimized else !s.suspended);
                 var m: layout.Member = .{
                     .key = k,
                     .order = top.workspace_order,
-                    .active = server.world.workspaces.tiles(@intCast(index + 1)) and !s.excluded and !s.suspended and !s.hidden,
+                    .active = active,
+                    .cover = if (is_scrolling and active) s.cover else .none,
                     .min_width = @max(1, s.constraints.min_width) +| s.horizontal,
                     .min_height = @max(1, s.constraints.min_height) +| s.vertical,
                     .max_width = if (s.constraints.max_width > 0) s.constraints.max_width +| s.horizontal else 0,
@@ -190,6 +198,7 @@ pub const Manager = struct {
                 for (members.items) |*existing| {
                     if (!std.meta.eql(existing.key, k)) continue;
                     existing.active = existing.active or m.active;
+                    if (m.cover != .none) existing.cover = m.cover;
                     existing.order = @min(existing.order, m.order);
                     existing.min_width = @max(existing.min_width, m.min_width);
                     existing.min_height = @max(existing.min_height, m.min_height);
@@ -203,31 +212,30 @@ pub const Manager = struct {
             for (members.items) |*member| {
                 // Conflicting limits in a tab group have no valid shared tile.
                 // Keep the group floating instead of violating a client's max.
-                if ((member.max_width > 0 and member.min_width > member.max_width) or
-                    (member.max_height > 0 and member.min_height > member.max_height)) member.active = false;
+                if (member.cover == .none and ((member.max_width > 0 and member.min_width > member.max_width) or
+                    (member.max_height > 0 and member.min_height > member.max_height))) member.active = false;
             }
-            const id: u8 = @intCast(index + 1);
-            const scrolling = server.world.workspaces.layoutOf(id) == .scrolling;
-            const strip = &self.strips[index];
-            if (scrolling) {
-                if (!try @import("scroll_tiling.zig").sync(server, id, members.items)) continue;
+            if (is_scrolling) {
+                if (!try scrolling.sync(server, id, members.items)) continue;
             } else try syncTree(server, tree, id, output, tops.items, members.items);
             for (tops.items) |top| {
                 if (top.workspace_id != id) continue;
                 const s = state(top);
                 // Used by the sync above, or moot for a window that floats.
                 top.auto_anchor = null;
-                if (!s.excluded and !s.suspended and !s.hidden) {
-                    if (if (scrolling) strip.rectangle(key(top)) else tree.rectangle(key(top))) |rect| {
-                        const x = top.x;
-                        const y = top.y;
+                if (is_scrolling and !s.excluded and !top.minimized and !s.hidden) {
+                    if (!scrolling.placeWindow(top, animate)) top.clearAutoTile(true);
+                } else if (!s.excluded and !s.suspended and !s.hidden) {
+                    if (tree.rectangle(key(top))) |rect| {
                         top.setAutoTile(.{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height }, animate and @import("workspaces.zig").visible(top));
-                        if (scrolling) @import("scroll_tiling.zig").carryDialogs(top, top.x - x, top.y - y, animate);
                     } else top.clearAutoTile(true);
                 } else if (s.excluded) top.clearAutoTile(true);
+                if (top.scroll_cover and !top.minimized and (!is_scrolling or s.excluded)) if (output) |out| {
+                    if (top.fullscreen) top.setFullscreenOn(out) else if (top.maximized) top.setMaximizedOn(out);
+                };
                 top.auto_seen = state(top);
             }
-            if (scrolling and members.items.len > 0) @import("scroll_tiling.zig").restack(server, id);
+            if (is_scrolling and members.items.len > 0) scrolling.restack(server, id);
         }
     }
     /// Reinserts windows coming back where they were, then syncs the tree.

@@ -8,6 +8,7 @@ const chrome = @import("../chrome.zig");
 const tiling = @import("../snap.zig");
 const events = @import("../ipc/events.zig");
 const xdg = @import("../xdg.zig");
+const scroll_tiling = @import("../scroll_tiling.zig");
 const ConfigureWait = Toplevel.ConfigureWait;
 const RestoreGeometry = Toplevel.RestoreGeometry;
 
@@ -15,6 +16,7 @@ pub fn setMaximizedOn(toplevel: *Toplevel, output: *Output) void {
     toplevel.clearZoomBoost();
     toplevel.finishZoomAnimation();
     toplevel.maximized = true;
+    const in_strip = queueScrollingCover(toplevel);
     defer toplevel.syncXdgEdges();
     switch (toplevel.backend) {
         .xdg => |*adapter| _ = adapter.xdg_toplevel.setMaximized(true),
@@ -22,6 +24,12 @@ pub fn setMaximizedOn(toplevel: *Toplevel, output: *Output) void {
         .placeholder, .shell => {},
     }
 
+    if (in_strip) {
+        if (toplevel.maximize_restore == null) toplevel.maximize_restore = toplevel.floatingGeometry();
+        toplevel.notifyLayoutChanged();
+        return;
+    }
+    toplevel.scroll_cover = false;
     const usable = output.usableBox();
     if (usable.width <= 0 or usable.height <= 0) return;
 
@@ -59,6 +67,7 @@ pub fn setFullscreenOn(toplevel: *Toplevel, output: *Output) void {
     toplevel.clearZoomBoost();
     toplevel.finishZoomAnimation();
     toplevel.fullscreen = true;
+    const in_strip = queueScrollingCover(toplevel);
     defer toplevel.syncXdgEdges();
     switch (toplevel.backend) {
         .xdg => |*adapter| _ = adapter.xdg_toplevel.setFullscreen(true),
@@ -66,6 +75,13 @@ pub fn setFullscreenOn(toplevel: *Toplevel, output: *Output) void {
         .placeholder, .shell => {},
     }
 
+    if (in_strip) {
+        if (toplevel.fullscreen_restore == null) toplevel.fullscreen_restore = toplevel.floatingGeometry();
+        toplevel.notifyLayoutChanged();
+        toplevel.server.refreshTaskbars();
+        return;
+    }
+    toplevel.scroll_cover = false;
     var box: wlr.Box = undefined;
     toplevel.server.output_layout.getBox(output.wlr_output, &box);
     if (box.width <= 0 or box.height <= 0) return;
@@ -100,7 +116,9 @@ pub fn setFullscreenOn(toplevel: *Toplevel, output: *Output) void {
 
 pub fn setMaximized(toplevel: *Toplevel, maximizing: bool) void {
     if (!maximizing) {
+        const was_maximized = toplevel.maximized;
         toplevel.maximized = false;
+        const in_strip = was_maximized and queueScrollingCover(toplevel);
         defer toplevel.syncXdgEdges();
         switch (toplevel.backend) {
             .xdg => |*adapter| _ = adapter.xdg_toplevel.setMaximized(false),
@@ -108,9 +126,12 @@ pub fn setMaximized(toplevel: *Toplevel, maximizing: bool) void {
             .placeholder, .shell => {},
         }
         toplevel.maximize_target = null;
-        if (toplevel.maximize_restore) |saved| {
-            toplevel.maximize_restore = null;
-            toplevel.restoreGeometry(saved);
+        const saved = toplevel.maximize_restore;
+        toplevel.maximize_restore = null;
+        if (in_strip) {
+            if (!toplevel.fullscreen) releaseScrollingCover(toplevel, saved);
+        } else if (saved) |geometry| {
+            toplevel.restoreGeometry(geometry);
         }
         toplevel.syncForeign();
         if (toplevel.server.ipc) |ipc| {
@@ -122,6 +143,46 @@ pub fn setMaximized(toplevel: *Toplevel, maximizing: bool) void {
 
     const output = toplevel.currentOutput() orelse return;
     toplevel.setMaximizedOn(output);
+}
+
+fn queueScrollingCover(toplevel: *Toplevel) bool {
+    if (toplevel.minimized or !scroll_tiling.managesCover(toplevel)) return false;
+    // Place the strip before wlroots sends the configure for the new state.
+    toplevel.server.world.workspaces.tiler.schedule(toplevel.server);
+    return true;
+}
+
+fn releaseScrollingCover(toplevel: *Toplevel, saved: ?RestoreGeometry) void {
+    toplevel.scroll_cover = false;
+    // Force a size configure even if the tile returns to its old rectangle.
+    toplevel.auto_target = null;
+    toplevel.auto_restore = toplevel.auto_restore orelse saved;
+}
+
+pub fn setScrollingCover(toplevel: *Toplevel, rect: wlr.Box, animate: bool) void {
+    const horizontal = if (toplevel.fullscreen) 0 else 2 * toplevel.borderWidth();
+    const vertical = if (toplevel.fullscreen) 0 else toplevel.titlebarHeight() + toplevel.footerHeight();
+    const target: RestoreGeometry = .{
+        .x = rect.x,
+        .y = rect.y,
+        .width = @max(1, rect.width - horizontal),
+        .height = @max(1, rect.height - vertical),
+    };
+    const geometry = if (toplevel.fullscreen) &toplevel.fullscreen_target else &toplevel.maximize_target;
+    const previous = geometry.*;
+    geometry.* = target;
+    toplevel.scroll_cover = true;
+    toplevel.pending_restore = null;
+    const resized = if (previous) |old| old.width != target.width or old.height != target.height else true;
+    const moved = toplevel.x != target.x or toplevel.y != target.y;
+    if (moved) {
+        if (animate) toplevel.setPositionAnimated(target.x, target.y) else toplevel.setPosition(target.x, target.y);
+    }
+    if (resized) {
+        const wait: ConfigureWait = if (toplevel.backend == .xwayland and moved) .x11_commit else toplevel.requestSize(target.width, target.height);
+        if (animate) toplevel.animateChromeSize(target.width, target.height, wait) else toplevel.finishSizeAnimation();
+    }
+    if (moved or resized) toplevel.notifyLayoutChanged();
 }
 
 /// Where the compositor has put the window: undo records this and keyboard
@@ -314,6 +375,7 @@ pub fn snapTo(toplevel: *Toplevel, output: *Output, target: tiling.Target, float
 pub fn clearMaximized(toplevel: *Toplevel) void {
     if (!toplevel.maximized and !toplevel.isMaximized()) return;
     toplevel.maximized = false;
+    if (toplevel.scroll_cover and !toplevel.fullscreen) releaseScrollingCover(toplevel, toplevel.maximize_restore);
     toplevel.syncXdgEdges();
     switch (toplevel.backend) {
         .xdg => |*adapter| _ = adapter.xdg_toplevel.setMaximized(false),
@@ -377,6 +439,7 @@ pub fn toggleFullscreen(toplevel: *Toplevel) void {
 
 fn leaveFullscreen(toplevel: *Toplevel, restore: bool) void {
     toplevel.fullscreen = false;
+    const in_strip = restore and queueScrollingCover(toplevel);
     defer toplevel.syncXdgEdges();
     switch (toplevel.backend) {
         .xdg => |*adapter| _ = adapter.xdg_toplevel.setFullscreen(false),
@@ -386,7 +449,15 @@ fn leaveFullscreen(toplevel: *Toplevel, restore: bool) void {
     toplevel.fullscreen_target = null;
     const saved = toplevel.fullscreen_restore;
     toplevel.fullscreen_restore = null;
-    if (restore) if (saved) |geometry| toplevel.restoreGeometry(geometry);
+    if (in_strip) {
+        if (toplevel.maximized) {
+            // The client size still reflects the fullscreen configure.
+            toplevel.maximize_target = null;
+        } else releaseScrollingCover(toplevel, saved);
+    } else {
+        toplevel.scroll_cover = false;
+        if (restore) if (saved) |geometry| toplevel.restoreGeometry(geometry);
+    }
     toplevel.notifyLayoutChanged();
     toplevel.server.refreshTaskbars();
 }

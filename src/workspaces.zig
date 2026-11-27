@@ -386,7 +386,8 @@ pub fn syncOutputs(self: *Self, server: *Server) void {
             while (tops.next()) |top| if (top.workspace_id == index + 1) {
                 // Reflow translates each strip member and carries its dialogs.
                 // Independently fitting either would clamp away their offset.
-                if (@import("scroll_tiling.zig").memberOf(top) != null and !top.fullscreen and !top.maximized) continue;
+                if (@import("scroll_tiling.zig").memberOf(top) != null and
+                    ((!top.fullscreen and !top.maximized) or top.scroll_cover)) continue;
                 _ = top.moveFromUsableToOutput(slot.box, output);
                 fit(top, output);
             };
@@ -502,7 +503,7 @@ fn transfer(self: *Self, top: *Top, id: u8, translate: bool) void {
         member.workspace_id = id;
         // Joins beside the destination's focused window, as a new one would.
         member.auto_anchor = slot.focus;
-        if (carry_strip and !member.maximized and !member.fullscreen) continue;
+        if (carry_strip and ((!member.maximized and !member.fullscreen) or member.scroll_cover)) continue;
         if (source) |out| {
             if (translate and out != destination) _ = member.moveFromUsableToOutput(out.usableBox(), destination);
         }

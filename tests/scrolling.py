@@ -415,7 +415,7 @@ def keyboard_strip():
             assert strip()["view"] > 0 and s.frame(d)[:2] == (fx, fy)
 
             # A newly mapped tile also starts underneath an existing float.
-            e = s.launch("strip-e")
+            e = s.launch("strip-e", stdin=subprocess.PIPE, REDIWM_TEST_COMMANDS="1")
             s.settle_all()
             ex, ey, _, _ = s.frame(e)
             ipc.action("move_window_to", {"id": d, "x": ex + 20, "y": ey + 40})
@@ -423,23 +423,38 @@ def keyboard_strip():
             assert ipc.get_focused_window()["id"] == e
             assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == d
 
-            # A suspended column keeps its slot; a maximized tile covers the
-            # float, and the float is above it again once restored.
+            # Client maximize and fullscreen requests expand the tile in
+            # place. They still move with the strip and fill the output
+            # again when approached from either side.
             saved_columns = columns()
-            ipc.maximize(e)
-            wait_for(lambda: s.window(e)["is_maximized"], "e acknowledges maximize")
-            s.settle_all()
-            assert columns() == saved_columns, (columns(), saved_columns)
-            assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == e
+            out = ipc.get_outputs()[0]
+            normal = s.frame(e)
+            usable = (out["x"], normal[1] - 8, out["logical_width"], normal[3] + 16)
+            full = tuple(out[k] for k in ("x", "y", "logical_width", "logical_height"))
 
-            check_reveal_behind_maximized(s, a, c, e)
+            def request(command, flag, expected):
+                stdin = s.clients["strip-e"].stdin
+                stdin.write((command + "\n").encode())
+                stdin.flush()
+                wait_for(lambda: ipc.get_window_debug(e)[flag] == expected, command)
+                s.settle_all()
+
+            request("maximize", "maximized", True)
+            for expected in (usable, full):
+                if expected == full:
+                    request("fullscreen", "fullscreen", True)
+                assert columns() == saved_columns
+                assert s.frame(e) == expected, (s.frame(e), expected)
+                assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == e
+                check_expanded_scrolls(s, a, c, e, expected)
+
+            request("unfullscreen", "fullscreen", False)
+            assert s.window(e)["is_maximized"] and s.frame(e) == usable
+            request("unmaximize", "maximized", False)
             ipc.focus_window(e)
-            assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == e
-
-            ipc.restore(e)
-            wait_for(lambda: not s.window(e)["is_maximized"], "e acknowledges restore")
             s.settle_all()
             assert columns() == saved_columns, (columns(), saved_columns)
+            assert s.frame(e) == normal, (s.frame(e), normal)
             assert ipc.hit_test(ex + 55, ey + 95).get("window_id") == d
 
             # Mapping on a different workspace leaves this one's view alone.
@@ -461,9 +476,8 @@ def keyboard_strip():
     print("PASS: strip columns, view, keys, culling, move-only scrolls and the floating layer", flush=True)
 
 
-def check_reveal_behind_maximized(s, first, last, maximized):
-    """Keyboard reveals stay visible after a maximized window loses focus,
-    and arrows still stop at the maximized window's column (right of `last`)."""
+def check_expanded_scrolls(s, first, last, expanded, expected):
+    """An expanded tile leaves view, then arrows can reveal it again."""
     s.ipc.focus_window(last)
     assert s.workspace(1)["view"] > 0
     s.chord("Left")
@@ -472,16 +486,32 @@ def check_reveal_behind_maximized(s, first, last, maximized):
     assert s.ipc.get_focused_window()["id"] == first and s.workspace(1)["view"] == 0
     x, y, width, height = s.frame(first)
     assert s.ipc.hit_test(x + width // 2, y + height // 2).get("window_id") == first
-    assert s.window(maximized)["is_maximized"]
+    assert not s.shown(expanded), s.frame(expanded)
+    wait_for(lambda: s.ipc.get_window_debug(expanded)["outputs"] == [], "expanded tile is culled")
 
     s.ipc.focus_window(last)
     s.chord("Right")
     s.settle_all()
-    assert s.ipc.get_focused_window()["id"] == maximized and s.window(maximized)["is_maximized"]
+    assert s.ipc.get_focused_window()["id"] == expanded and s.frame(expanded) == expected
+
+    # A held gesture moves the expanded window without a new configure.
+    s.ipc.move_cursor(expected[2] // 2, expected[3] // 2)
+    serial = s.ipc.get_window_debug(expanded)["configure_serial"]
+    s.ipc.action("swipe", {"phase": "begin", "fingers": 3})
+    s.ipc.action("swipe", {"phase": "update", "dx": 80, "dy": 0})
+    s.ipc.wait_for_frame()
+    x, y, w, h = expected
+    assert s.frame(expanded) == (x + 160, y, w, h), s.frame(expanded)
+    assert s.ipc.get_window_debug(expanded)["configure_serial"] == serial
+    s.ipc.action("swipe", {"phase": "end", "cancelled": True})
+    s.settle_all()
+    assert s.ipc.get_focused_window()["id"] == expanded and s.frame(expanded) == expected
+
     s.chord("Left")
     s.settle_all()
     assert s.ipc.get_focused_window()["id"] == last and s.shown(last)
-    s.ipc.focus_window(first)
+    assert s.frame(expanded)[0] > expected[0] and s.frame(expanded)[2:] == expected[2:]
+    s.ipc.focus_window(expanded)
     s.settle_all()
 
 

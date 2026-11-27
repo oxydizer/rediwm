@@ -105,8 +105,8 @@ A pure module, `scroll_layout.zig`, sits beside `auto_layout.zig` and shares its
   focused one, so nothing else resizes. It uses `Toplevel.auto_anchor`, as
   splitting does. A window moved to another workspace joins beside that
   workspace's focused window, as today.
-* **Suspended members** (minimized, maximized or fullscreen) keep their place
-  and take no width. When restored, they come back where they were.
+* **Minimized members** keep their place and take no width. Restoring them
+  returns them to their original column.
 * **No overflow:** the main axis is unbounded, so nothing floats for lack of
   space. If the members of a column cannot all fit across it, the newest one
   moves into a column of its own.
@@ -251,10 +251,10 @@ Pointer and touchpad (stage 5):
   * `WorkspaceData` gains `layout`, `columns`, `view` and the display's
     resolved direction.
   * `set_workspace_layout` takes a layout instead of `automatic: bool`.
-* **Maximize and fullscreen** work as now: the member is suspended and its
-  column keeps its place, and Super+arrows still stop there. Fullscreen and
-  maximized windows are not strip members: a focused one stacks above
-  floating windows, an unfocused one behind the strip.
+* **Maximize and fullscreen** expand a strip member in its column. Maximize
+  fills the usable area and fullscreen fills the display. The expanded
+  window moves with the strip and restores to its previous tile size.
+  A focused expanded window stacks above floating windows.
 * **Modal dialogs:** focusing a dialog whose owner is culled reveals the owner,
   and the dialog moves with its owner.
 * **Toplevel capture** of a culled window behaves as it does for a window on a

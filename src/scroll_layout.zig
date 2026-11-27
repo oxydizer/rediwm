@@ -9,6 +9,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const auto = @import("auto_layout.zig");
+const scroll_layout_geometry = @import("scroll_layout_geometry.zig");
 pub const Box = auto.Box;
 pub const Key = auto.Key;
 pub const Member = auto.Member;
@@ -34,6 +35,7 @@ pub const Options = struct {
     direction: Direction = .horizontal,
     /// A new column's width.
     width: f64 = 0.5,
+    fullscreen_box: ?Box = null,
 };
 
 pub const min_fraction = 0.05;
@@ -55,10 +57,12 @@ pub const Column = struct {
     /// column without an active member takes no room.
     start: i32 = 0,
     size: i32 = 0,
+    tile_size: i32 = 0,
+    cover: auto.Cover = .none,
     /// Added in the current `sync`; later arrivals queue behind it.
     fresh: bool = false,
 
-    fn deinit(column: *Column, allocator: Allocator) void {
+    pub fn deinit(column: *Column, allocator: Allocator) void {
         column.cells.deinit(allocator);
     }
     fn find(column: *const Column, key: Key) ?usize {
@@ -70,42 +74,47 @@ pub const Column = struct {
         for (column.cells.items) |cell| n += @intFromBool(cell.member.active);
         return n;
     }
+    pub fn stackCount(column: *const Column) usize {
+        var n: usize = 0;
+        for (column.cells.items) |cell| n += @intFromBool(cell.member.active and cell.member.cover == .none);
+        return n;
+    }
 };
 
-const Axes = struct {
+pub const Axes = struct {
     horizontal: bool,
 
-    fn of(direction: Direction) Axes {
+    pub fn of(direction: Direction) Axes {
         return .{ .horizontal = direction == .horizontal };
     }
-    fn main(axes: Axes, box: Box) i32 {
+    pub fn main(axes: Axes, box: Box) i32 {
         return if (axes.horizontal) box.x else box.y;
     }
-    fn cross(axes: Axes, box: Box) i32 {
+    pub fn cross(axes: Axes, box: Box) i32 {
         return if (axes.horizontal) box.y else box.x;
     }
-    fn mainLen(axes: Axes, box: Box) i32 {
+    pub fn mainLen(axes: Axes, box: Box) i32 {
         return if (axes.horizontal) box.width else box.height;
     }
-    fn crossLen(axes: Axes, box: Box) i32 {
+    pub fn crossLen(axes: Axes, box: Box) i32 {
         return if (axes.horizontal) box.height else box.width;
     }
-    fn make(axes: Axes, main_pos: i32, cross_pos: i32, main_len: i32, cross_len: i32) Box {
+    pub fn make(axes: Axes, main_pos: i32, cross_pos: i32, main_len: i32, cross_len: i32) Box {
         return if (axes.horizontal)
             .{ .x = main_pos, .y = cross_pos, .width = main_len, .height = cross_len }
         else
             .{ .x = cross_pos, .y = main_pos, .width = cross_len, .height = main_len };
     }
-    fn minMain(axes: Axes, m: Member) i32 {
+    pub fn minMain(axes: Axes, m: Member) i32 {
         return @max(1, if (axes.horizontal) m.min_width else m.min_height);
     }
-    fn minCross(axes: Axes, m: Member) i32 {
+    pub fn minCross(axes: Axes, m: Member) i32 {
         return @max(1, if (axes.horizontal) m.min_height else m.min_width);
     }
-    fn maxMain(axes: Axes, m: Member) i32 {
+    pub fn maxMain(axes: Axes, m: Member) i32 {
         return if (axes.horizontal) m.max_width else m.max_height;
     }
-    fn maxCross(axes: Axes, m: Member) i32 {
+    pub fn maxCross(axes: Axes, m: Member) i32 {
         return if (axes.horizontal) m.max_height else m.max_width;
     }
 };
@@ -116,6 +125,7 @@ pub const Strip = struct {
     /// From the last `arrange`: the viewport, the gap, the content extent
     /// between the outer gaps, and the strip's own length.
     viewport: Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
+    fullscreen_box: ?Box = null,
     direction: Direction = .horizontal,
     gap: i32 = 0,
     content: i32 = 0,
@@ -244,38 +254,16 @@ pub const Strip = struct {
             try strip.insertColumn(allocator, member, index, options.width);
             strip.columns.items[index].fresh = true;
         }
+        strip.fullscreen_box = options.fullscreen_box;
         strip.arrange(viewport, requested_gap, options.direction);
         try strip.expelOverflow(allocator);
     }
 
-    fn expelOverflow(strip: *Strip, allocator: Allocator) !void {
-        const axes = Axes.of(strip.direction);
-        var moved = false;
-        var c: usize = 0;
-        while (c < strip.columns.items.len) : (c += 1) {
-            while (true) {
-                const column = &strip.columns.items[c];
-                if (column.activeCount() < 2) break;
-                var needed: i32 = -strip.gap;
-                var newest: ?usize = null;
-                for (column.cells.items, 0..) |cell, i| if (cell.member.active) {
-                    needed +|= axes.minCross(cell.member) +| strip.gap;
-                    if (newest == null or cell.member.order > column.cells.items[newest.?].member.order) newest = i;
-                };
-                if (needed <= strip.crossExtent()) break;
-                const cell = column.cells.items[newest.?];
-                var lone: Column = .{ .width = column.width };
-                errdefer lone.deinit(allocator);
-                try lone.cells.append(allocator, .{ .member = cell.member });
-                try strip.columns.insert(allocator, c + 1, lone);
-                _ = strip.columns.items[c].cells.orderedRemove(newest.?);
-                moved = true;
-            }
-        }
-        if (moved) strip.arrange(strip.viewport, @intCast(strip.gap), strip.direction);
-    }
+    const expelOverflow = scroll_layout_geometry.expelOverflow;
+    pub const arrange = scroll_layout_geometry.arrange;
+    pub const place = scroll_layout_geometry.place;
 
-    fn crossExtent(strip: *const Strip) i32 {
+    pub fn crossExtent(strip: *const Strip) i32 {
         return @max(0, Axes.of(strip.direction).crossLen(strip.viewport) - 2 * strip.gap);
     }
 
@@ -288,101 +276,6 @@ pub const Strip = struct {
     fn fractionFor(strip: *const Strip, pixels: i32) f64 {
         const span: f64 = @floatFromInt(@max(1, strip.content + strip.gap));
         return clampFraction(@as(f64, @floatFromInt(pixels + strip.gap)) / span);
-    }
-
-    /// Measures every column and places every member at the current view.
-    /// A new main length (another display or resolution, or a transposed
-    /// strip) scales the view with the columns, whose widths are fractions
-    /// of it, so the same stretch of the strip stays in view.
-    pub fn arrange(strip: *Strip, viewport: Box, requested_gap: u32, direction: Direction) void {
-        const axes = Axes.of(direction);
-        const old_span = strip.content + strip.gap;
-        strip.viewport = viewport;
-        strip.direction = direction;
-        strip.gap = @intCast(@min(requested_gap, @as(u32, @intCast(@max(0, @divTrunc(@min(viewport.width, viewport.height) - 1, 2))))));
-        strip.content = @max(0, axes.mainLen(viewport) - 2 * strip.gap);
-        const span = strip.content + strip.gap;
-        if (old_span > 0 and span > 0 and span != old_span) {
-            const scaled = strip.view * @as(f64, @floatFromInt(span)) / @as(f64, @floatFromInt(old_span));
-            // Unrounded, so going back restores the view; snap the float noise.
-            strip.view = if (@abs(scaled - @round(scaled)) < 1e-6) @round(scaled) else scaled;
-        }
-        var pos: i32 = 0;
-        var any = false;
-        for (strip.columns.items) |*column| {
-            column.start = pos;
-            column.size = 0;
-            var widest: i32 = 0;
-            for (column.cells.items) |cell| if (cell.member.active) {
-                widest = @max(widest, axes.minMain(cell.member));
-            };
-            if (widest == 0) continue;
-            if (any) pos += strip.gap;
-            any = true;
-            column.start = pos;
-            column.size = @max(strip.widthPixels(column.width), widest);
-            pos += column.size;
-        }
-        strip.extent = pos;
-        strip.place();
-    }
-
-    /// Positions members from the measured columns and the current view.
-    pub fn place(strip: *Strip) void {
-        const axes = Axes.of(strip.direction);
-        const origin_main = axes.main(strip.viewport) + strip.gap - @as(i32, @intFromFloat(@round(strip.view)));
-        const origin_cross = axes.cross(strip.viewport) + strip.gap;
-        const across = strip.crossExtent();
-        for (strip.columns.items) |*column| {
-            const active = column.activeCount();
-            var weights: f64 = 0;
-            var remaining_min: i64 = 0;
-            for (column.cells.items) |*cell| {
-                cell.rect = null;
-                if (cell.member.active) {
-                    weights += cell.weight;
-                    remaining_min += axes.minCross(cell.member);
-                }
-            }
-            if (active == 0) continue;
-            const gaps: i32 = strip.gap * @as(i32, @intCast(active - 1));
-            const available = @max(0, across - gaps);
-            // `used` counts member sizes only; `offset` adds the gaps.
-            var used: i32 = 0;
-            var offset: i32 = 0;
-            var seen: usize = 0;
-            var used_weight: f64 = 0;
-            for (column.cells.items) |*cell| {
-                if (!cell.member.active) continue;
-                seen += 1;
-                used_weight += cell.weight;
-                // Cumulative rounding: the last member ends exactly at the edge.
-                const end: i32 = if (seen == active) available else @intFromFloat(@round(@as(f64, @floatFromInt(available)) * used_weight / weights));
-                const minimum = axes.minCross(cell.member);
-                remaining_min -= minimum;
-                // Leave enough room for later members' minimum sizes, even
-                // when a keyboard resize gives this member most of the weight.
-                const budget: i32 = @intCast(@max(0, available - used - remaining_min));
-                const size = @max(minimum, @min(end - used, budget));
-                used += size;
-                var main_len = column.size;
-                var main_at = origin_main + column.start;
-                const max_main = axes.maxMain(cell.member);
-                if (max_main > 0 and max_main < main_len) {
-                    main_len = @max(axes.minMain(cell.member), max_main);
-                    main_at += @divTrunc(column.size - main_len, 2);
-                }
-                var cross_len = size;
-                var cross_at = origin_cross + offset;
-                const max_cross = axes.maxCross(cell.member);
-                if (max_cross > 0 and max_cross < cross_len) {
-                    cross_len = @max(axes.minCross(cell.member), max_cross);
-                    cross_at += @divTrunc(size - cross_len, 2);
-                }
-                cell.rect = axes.make(main_at, cross_at, main_len, cross_len);
-                offset += size + strip.gap;
-            }
-        }
     }
 
     /// The view range: the leading edge, up to the end of the strip.
@@ -401,6 +294,7 @@ pub const Strip = struct {
         const column = strip.columns.items[at.column];
         if (column.size == 0) return strip.view;
         const start: f64 = @floatFromInt(column.start);
+        if (column.cover != .none) return start;
         const size: f64 = @floatFromInt(column.size);
         const content: f64 = @floatFromInt(strip.content);
         var view = strip.view;
@@ -431,17 +325,6 @@ pub const Strip = struct {
     /// The next member in strip order: the nearest active member of the next
     /// column with one (by cross position), or the next one in the column.
     pub fn neighbor(strip: *const Strip, key: Key, step: Step) ?Key {
-        return strip.neighborWhere(key, step, {}, struct {
-            fn none(_: void, _: Key) bool {
-                return false;
-            }
-        }.none);
-    }
-
-    /// `neighbor`, also stopping at inactive members that `reachable`
-    /// accepts: a maximized window takes no room but can take focus. A
-    /// column's active members come first.
-    pub fn neighborWhere(strip: *const Strip, key: Key, step: Step, context: anytype, comptime reachable: fn (@TypeOf(context), Key) bool) ?Key {
         const at = strip.locate(key) orelse return null;
         const columns = strip.columns.items;
         switch (step) {
@@ -456,7 +339,7 @@ pub const Strip = struct {
                         i += 1;
                         if (i >= cells.len) return null;
                     }
-                    if (cells[i].member.active or reachable(context, cells[i].member.key)) return cells[i].member.key;
+                    if (cells[i].member.active) return cells[i].member.key;
                 }
             },
             .previous_column, .next_column => {
@@ -471,25 +354,27 @@ pub const Strip = struct {
                         if (c >= columns.len) return null;
                     }
                     if (strip.memberNear(c, source)) |found| return found;
-                    for (columns[c].cells.items) |cell| if (reachable(context, cell.member.key)) return cell.member.key;
                 }
             },
         }
     }
 
-    /// The active member of column `c` nearest `source` across the strip,
-    /// or its first one without a source.
+    /// The active member of column `c` nearest `source` across the strip.
+    /// Enter through the expanded window when it covers the stack.
     pub fn memberNear(strip: *const Strip, c: usize, source: ?Box) ?Key {
         const axes = Axes.of(strip.direction);
         var best: ?Key = null;
+        var covered = false;
         var distance: u64 = std.math.maxInt(u64);
         for (strip.columns.items[c].cells.items) |cell| {
             if (!cell.member.active) continue;
             const rect = cell.rect orelse continue;
             const d: u64 = if (source) |s| @abs(crossCenter(axes, rect) - crossCenter(axes, s)) else 0;
-            if (d < distance) {
+            const cover = cell.member.cover != .none;
+            if ((cover and !covered) or (cover == covered and d < distance)) {
                 distance = d;
                 best = cell.member.key;
+                covered = cover;
             }
         }
         return best;
@@ -615,12 +500,12 @@ pub const Strip = struct {
         const at = strip.locate(key) orelse return;
         const column = &strip.columns.items[at.column];
         const cell = &column.cells.items[at.cell];
-        if (column.activeCount() < 2 or !cell.member.active) return;
+        if (column.stackCount() < 2 or !cell.member.active or cell.member.cover != .none) return;
         var total: f64 = 0;
         for (column.cells.items) |other| if (other.member.active) {
             total += other.weight;
         };
-        const gaps: i32 = strip.gap * @as(i32, @intCast(column.activeCount() - 1));
+        const gaps: i32 = strip.gap * @as(i32, @intCast(column.stackCount() - 1));
         const available: f64 = @floatFromInt(@max(2, strip.crossExtent() - gaps));
         const size = std.math.clamp(@as(f64, @floatFromInt(pixels)), 1, available - 1);
         const rest = total - cell.weight;
@@ -687,8 +572,9 @@ pub const Strip = struct {
     /// Whether column `index` shows as much of itself as it can at `view`:
     /// all of it, or, when wider than the viewport, across the whole viewport.
     pub fn columnCovers(strip: *const Strip, index: usize, view: f64) bool {
-        if (strip.columnFits(index, view)) return true;
         const column = strip.columns.items[index];
+        if (column.cover != .none) return @abs(@as(f64, @floatFromInt(column.start)) - view) <= 0.5;
+        if (strip.columnFits(index, view)) return true;
         if (column.size <= strip.content) return false;
         const start: f64 = @floatFromInt(column.start);
         const end = start + @as(f64, @floatFromInt(column.size));
@@ -711,7 +597,7 @@ pub const Strip = struct {
             const centered = start + size / 2 - content / 2;
             const edges = [2]f64{ start, start + size - content };
             const centres = [2]f64{ centered, centered };
-            const candidates = if (center == .always or (center == .on_overflow and size > content)) centres else edges;
+            const candidates = if (column.cover != .none) [2]f64{ start, start } else if (center == .always or (center == .on_overflow and size > content)) centres else edges;
             for (candidates) |raw| {
                 const view = std.math.clamp(raw, 0, limit);
                 const d = @abs(view - projected);
