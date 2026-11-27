@@ -22,10 +22,10 @@ pub fn workerLoop(self: *Service) void {
         self.working += 1;
         var retry = false;
         switch (job.work) {
-            .resolve => |path| {
+            .resolve => |resolution| {
                 self.unlock();
-                self.resolvePath(path);
-                self.allocator.free(path);
+                self.resolvePath(resolution);
+                resolution.deinit(self.allocator);
                 self.lock();
             },
             .scan => |s| {

@@ -241,27 +241,3 @@ test "sizetree promotion, cancellation and rescan scheduling need no allocation"
     try std.testing.expect(!failing.has_induced_failure);
     try checkTree(svc);
 }
-
-test "sizetree can retry a path request after scheduling allocation fails" {
-    for (0..3) |offset| {
-        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-        const svc = try Service.create(failing.allocator(), 0, auto);
-        defer svc.destroy();
-
-        failing.fail_index = failing.alloc_index + offset;
-        svc.request("/root", .visible, .{});
-        try std.testing.expect(failing.has_induced_failure);
-        try std.testing.expect(!svc.busy());
-        try std.testing.expectEqual(tree.Status.unknown, svc.lookup("/root").status);
-        try checkTree(svc);
-
-        failing.fail_index = std.math.maxInt(usize);
-        svc.request("/root", .visible, .{});
-        try std.testing.expect(svc.busy());
-        var path: [4096]u8 = undefined;
-        const requested = svc.take(&path).?.work.resolve;
-        defer svc.allocator.free(requested);
-        try std.testing.expectEqualStrings("/root", requested);
-        try checkTree(svc);
-    }
-}

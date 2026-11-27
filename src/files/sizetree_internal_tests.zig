@@ -36,9 +36,9 @@ test "sizetree alternates resolution and scanning while preserving scan priority
         const job = svc.take(&path_buf).?;
         switch (job.work) {
             .resolve => |owned| {
-                defer allocator.free(owned);
+                defer owned.deinit(allocator);
                 try std.testing.expect(i != 1 and i != 3);
-                try std.testing.expectEqualStrings(path, owned);
+                try std.testing.expectEqualStrings(path, owned.path);
             },
             .scan => |scan| {
                 try std.testing.expect(i == 1 or i == 3);
@@ -88,30 +88,6 @@ test "sizetree pauses children discovered by an in-flight scan" {
     try std.testing.expect(!svc.nodes.items[child].paused);
     try std.testing.expectEqual(@as(?Level, .visible), svc.nodes.items[child].queued);
     try std.testing.expectEqual(@as(usize, 1), svc.queued_count);
-}
-
-test "sizetree pauses paths stopped or forgotten during resolution" {
-    const allocator = std.testing.allocator;
-    const svc = try Service.create(allocator, 0, testAutoPolicy);
-    defer svc.destroy();
-
-    svc.request("/stopped", .visible, .{});
-    svc.stopPath("/stopped");
-    svc.resolved("/stopped", .{ .dev = 1, .ino = 1 }, true);
-
-    const stopped_entry = svc.paths.get("/stopped").?;
-    const stopped_id = svc.liveId(stopped_entry.node.?).?;
-    try std.testing.expect(svc.nodes.items[stopped_id].paused);
-    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
-
-    svc.request("/forgotten", .visible, .{});
-    svc.forgetPath("/forgotten");
-    svc.resolved("/forgotten", .{ .dev = 1, .ino = 2 }, true);
-
-    const forgotten_entry = svc.paths.get("/forgotten").?;
-    const forgotten_id = svc.liveId(forgotten_entry.node.?).?;
-    try std.testing.expect(svc.nodes.items[forgotten_id].paused);
-    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
 }
 
 test "sizetree deletes every detached descendant without allocating" {

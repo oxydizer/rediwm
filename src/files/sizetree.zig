@@ -114,7 +114,9 @@ const Node = struct {
 
 const PathEntry = struct {
     node: ?Ref = null,
-    resolving: bool = false,
+    /// Identity of the current queued or in-flight job. Cancellation clears
+    /// it without taking ownership of the job.
+    resolution: ?u64 = null,
     /// Not measured automatically: a slow disk, or stopped by the user.
     idle: bool = false,
     /// Stopped by the user; only a forced request starts it again.
@@ -123,6 +125,17 @@ const PathEntry = struct {
     dropped: bool = false,
     level: Level = .background,
     force: bool = false,
+};
+
+/// Owns its path independently of the path map. The queue transfers ownership
+/// to the worker at dispatch. Neither side borrows a map key across a call.
+pub const Resolution = struct {
+    path: []u8,
+    id: u64,
+
+    pub fn deinit(self: Resolution, a: Allocator) void {
+        a.free(self.path);
+    }
 };
 
 /// Whether a disk is measured without being asked: a local disk that is
@@ -158,7 +171,8 @@ pub const Service = struct {
     free_head: Id = no_id,
     by_key: std.AutoHashMapUnmanaged(Key, Id) = .empty,
     paths: std.StringHashMapUnmanaged(PathEntry) = .empty,
-    resolve: std.ArrayList([]const u8) = .empty,
+    resolve: std.ArrayList(Resolution) = .empty,
+    next_resolution: u64 = 0,
     resolve_head: usize = 0,
     /// Give scans the next turn after dispatching a resolution.
     prefer_scan: bool = false,
@@ -221,6 +235,7 @@ pub const Service = struct {
         var it = self.paths.keyIterator();
         while (it.next()) |k| a.free(k.*);
         self.paths.deinit(a);
+        for (self.resolve.items[self.resolve_head..]) |job| job.deinit(a);
         self.resolve.deinit(a);
         self.auto.deinit(a);
         _ = c.pthread_cond_destroy(&self.cond);
@@ -273,11 +288,7 @@ pub const Service = struct {
         const node_id = if (entry.node) |ref| self.liveId(ref) else null;
         if (node_id == null) {
             entry.node = null;
-            if (!entry.resolving) {
-                try self.resolve.append(a, gop.key_ptr.*);
-                entry.resolving = true;
-                _ = c.pthread_cond_signal(&self.cond);
-            }
+            try self.queueResolution(entry, gop.key_ptr.*);
             return;
         }
         if (entry.idle) return;
@@ -290,13 +301,32 @@ pub const Service = struct {
         }
     }
 
+    fn queueResolution(self: *Service, entry: *PathEntry, path: []const u8) !void {
+        if (entry.resolution != null) return;
+        const id = try std.math.add(u64, self.next_resolution, 1);
+        const owned = try self.allocator.dupe(u8, path);
+        errdefer self.allocator.free(owned);
+        try self.resolve.append(self.allocator, .{ .path = owned, .id = id });
+        self.next_resolution = id;
+        entry.resolution = id;
+        _ = c.pthread_cond_signal(&self.cond);
+    }
+
+    /// Called with the mutex held. Never retain this pointer across unlock.
+    fn currentResolution(self: *Service, job: Resolution) ?*PathEntry {
+        if (self.stop) return null;
+        const entry = self.paths.getPtr(job.path) orelse return null;
+        if (entry.resolution != job.id or entry.stopped or entry.dropped) return null;
+        return entry;
+    }
+
     /// What is known about `path`. Never blocks on the filesystem.
     pub fn lookup(self: *Service, path: []const u8) Info {
         self.lock();
         defer self.unlock();
         const entry = self.paths.getPtr(path) orelse return .{};
         const id = (if (entry.node) |ref| self.liveId(ref) else null) orelse
-            return .{ .status = if (entry.resolving) .measuring else if (entry.idle) .idle else .unknown };
+            return .{ .status = if (entry.resolution != null) .measuring else if (entry.idle) .idle else .unknown };
         const node = &self.nodes.items[id];
         if (node.pending > 0) {
             if (entry.idle or entry.stopped)
@@ -313,6 +343,7 @@ pub const Service = struct {
         defer self.unlock();
         const entry = self.paths.getPtr(path) orelse return;
         entry.stopped = true;
+        entry.resolution = null;
         entry.force = false;
         if (entry.node) |ref| if (self.liveId(ref)) |id| self.dequeueSubtree(id);
         self.bump();
@@ -326,6 +357,7 @@ pub const Service = struct {
         defer self.unlock();
         const entry = self.paths.getPtr(path) orelse return;
         entry.dropped = true;
+        entry.resolution = null;
         if (entry.node) |ref| if (self.liveId(ref)) |id| self.dequeueSubtree(id);
     }
 
@@ -334,9 +366,8 @@ pub const Service = struct {
         self.lock();
         defer self.unlock();
         if (self.working > 0) return true;
-        for (self.resolve.items[self.resolve_head..]) |path| {
-            const entry = self.paths.getPtr(path) orelse continue;
-            if (!entry.stopped and !entry.dropped) return true;
+        for (self.resolve.items[self.resolve_head..]) |job| {
+            if (self.currentResolution(job) != null) return true;
         }
         return self.queued_count > 0;
     }
@@ -496,30 +527,25 @@ pub const Service = struct {
     // ---- workers ----
 
     const Work = union(enum) {
-        resolve: []u8,
+        resolve: Resolution,
         scan: struct { ref: Ref, key: Key },
     };
 
     pub fn take(self: *Service, path_buf: []u8) ?struct { work: Work, path: ?[:0]const u8 } {
         while (!self.stop) {
             if (!self.prefer_scan and self.resolve_head < self.resolve.items.len) {
-                const key = self.resolve.items[self.resolve_head];
+                const job = self.resolve.items[self.resolve_head];
                 self.resolve_head += 1;
                 if (self.resolve_head == self.resolve.items.len) {
                     self.resolve.clearRetainingCapacity();
                     self.resolve_head = 0;
                 }
-                if (self.paths.getPtr(key)) |entry| if (entry.stopped or entry.dropped) {
-                    // Asked for again later, it is queued again.
-                    entry.resolving = false;
+                if (self.currentResolution(job) == null) {
+                    job.deinit(self.allocator);
                     continue;
-                };
-                const copy = self.allocator.dupe(u8, key) catch {
-                    if (self.paths.getPtr(key)) |entry| entry.resolving = false;
-                    continue;
-                };
+                }
                 self.prefer_scan = true;
-                return .{ .work = .{ .resolve = copy }, .path = null };
+                return .{ .work = .{ .resolve = job }, .path = null };
             }
             for (&self.queues) |*q| {
                 while (q.first != no_id) {
@@ -565,12 +591,8 @@ pub const Service = struct {
                     if (self.liveId(ref) == id) {
                         entry.node = null;
                         if (!entry.stopped and !entry.dropped) {
-                            entry.resolving = false;
-                            self.requestLocked(path, level, .{}) catch {
-                                entry.resolving = false;
-                                self.failScan(id);
-                                return;
-                            };
+                            if (@backingInt(level) < @backingInt(entry.level)) entry.level = level;
+                            self.queueResolution(entry, path) catch return self.failScan(id);
                         }
                         self.bump();
                         return;
@@ -616,44 +638,42 @@ pub const Service = struct {
 
     pub const workerLoop = worker.workerLoop;
 
-    pub fn resolvePath(self: *Service, path: []const u8) void {
+    pub fn resolvePath(self: *Service, job: Resolution) void {
         var buf: [4096]u8 = undefined;
-        const z = std.fmt.bufPrintSentinel(&buf, "{s}", .{path}, 0) catch return self.resolved(path, null, false);
+        const z = std.fmt.bufPrintSentinel(&buf, "{s}", .{job.path}, 0) catch return self.resolved(job, null, false);
         const fd = c.open(z.ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
-        if (fd < 0) return self.resolved(path, null, false);
+        if (fd < 0) return self.resolved(job, null, false);
         defer _ = c.close(fd);
-        const info = dirwalk.statFd(fd) orelse return self.resolved(path, null, false);
-        if (info.kind != .directory) return self.resolved(path, null, false);
+        const info = dirwalk.statFd(fd) orelse return self.resolved(job, null, false);
+        if (info.kind != .directory) return self.resolved(job, null, false);
         const key: Key = .{ .dev = info.dev, .ino = info.ino };
         self.lock();
         const known = self.auto.get(key.dev);
+        const active = self.currentResolution(job) != null;
         self.unlock();
+        if (!active) return;
         const auto = known orelse blk: {
             const allowed = self.policy(@intCast(key.dev >> 32), @truncate(key.dev));
             self.lock();
-            self.auto.put(self.allocator, key.dev, allowed) catch {};
+            if (self.currentResolution(job) != null)
+                self.auto.put(self.allocator, key.dev, allowed) catch {};
             self.unlock();
             break :blk allowed;
         };
-        self.resolved(path, key, auto);
+        self.resolved(job, key, auto);
     }
 
-    pub fn resolved(self: *Service, path: []const u8, key: ?Key, auto: bool) void {
+    /// Checks the job identity again after filesystem I/O. On allocation
+    /// failure the entry is left ready for a later request to retry.
+    pub fn resolved(self: *Service, job: Resolution, key: ?Key, auto: bool) void {
         self.lock();
         defer self.unlock();
+        const entry = self.currentResolution(job) orelse return;
+        entry.resolution = null;
         defer self.bump();
-        const entry = self.paths.getPtr(path) orelse return;
-        entry.resolving = false;
-        const k = key orelse {
-            entry.node = null;
-            return;
-        };
-        const id = self.by_key.get(k) orelse (self.newNode(k, path, entry.level) catch return);
+        const k = key orelse return;
+        const id = self.by_key.get(k) orelse (self.newNode(k, job.path, entry.level) catch return);
         entry.node = self.refOf(id);
-        if (entry.stopped or entry.dropped) {
-            self.dequeueSubtree(id);
-            return;
-        }
         if (!auto and !entry.force) {
             entry.idle = true;
             return;
@@ -672,4 +692,5 @@ fn nowMs() i64 {
 test {
     _ = @import("sizetree_internal_tests.zig");
     _ = @import("sizetree_reconcile_tests.zig");
+    _ = @import("sizetree_resolution_tests.zig");
 }
