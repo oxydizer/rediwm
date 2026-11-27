@@ -26,7 +26,7 @@ fn settle(s: *st.Service) void {
 }
 fn expected(path: []const u8) !i64 {
     var buf: [512]u8 = undefined;
-    const cmd = try std.fmt.bufPrintSentinel(&buf, "find {s} -xdev ! -type d -printf '%s\\n' | awk '{{s+=$1}} END {{print s+0}}' > /tmp/rediwm_sizetree_expect", .{path}, 0);
+    const cmd = try std.fmt.bufPrintSentinel(&buf, "find {s} -xdev -type f -printf '%s\\n' | awk '{{s+=$1}} END {{print s+0}}' > /tmp/rediwm_sizetree_expect", .{path}, 0);
     sh(cmd);
     var out: [64]u8 = undefined;
     const fd = c.open("/tmp/rediwm_sizetree_expect", c.O_RDONLY);

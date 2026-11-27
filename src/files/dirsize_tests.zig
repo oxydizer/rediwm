@@ -171,7 +171,7 @@ test "dirsize: on disk is only added up when asked for" {
     try std.testing.expectEqual(@as(i64, 0), job.allocated.load(.acquire));
 }
 
-test "dirsize: a symlink loop is not followed" {
+test "dirsize: symlinks are not followed or counted in Size" {
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);
@@ -204,8 +204,8 @@ test "dirsize: a symlink loop is not followed" {
     }
 
     try std.testing.expectEqual(@as(usize, 1), job.dirs.load(.acquire));
-    try std.testing.expectEqual(@as(usize, 3), job.files.load(.acquire));
-    try std.testing.expectEqual(@as(i64, 10), job.bytes.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 1), job.files.load(.acquire));
+    try std.testing.expectEqual(@as(i64, 7), job.bytes.load(.acquire));
     try std.testing.expect(!job.partial.load(.acquire));
 }
 
@@ -350,6 +350,7 @@ test "App folder size calculation and display lifecycle" {
     disp = app.itemSizeDisplay(app.items.items[0], &buf);
     try std.testing.expectEqualStrings("—", disp.text);
     try std.testing.expect(!disp.is_running);
+    app.syncFolderSizes();
     try std.testing.expect(!app.hasRunningFolderSize());
 
     app.startFolderSize(0);

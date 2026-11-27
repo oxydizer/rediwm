@@ -839,7 +839,7 @@ fn readDirectory(
                 names.shrinkRetainingCapacity(start);
                 result.unreadable = true;
             };
-        } else {
+        } else if (entry.kind == .regular) {
             result.own += @intCast(entry.size);
         }
     }

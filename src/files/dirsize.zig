@@ -389,8 +389,10 @@ fn walkDirectory(pool: *Pool, ctx: *WorkerContext, job: *Job, dir_fd: c_int, dep
                 job.unref();
             }
         } else {
-            local_bytes += @intCast(entry.size);
-            local_files += 1;
+            if (entry.kind == .regular) {
+                local_bytes += @intCast(entry.size);
+                local_files += 1;
+            }
             if (job.track_allocated and firstSighting(job, entry)) local_allocated += blockBytes(entry.blocks);
         }
 
