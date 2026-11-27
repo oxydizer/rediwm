@@ -408,6 +408,15 @@ fn prepare(
     }
     const operation_kind = context.manager.operationKind(token) orelse
         return error.StaleOperation;
+    if (operation_kind == .create_transfer_destination) {
+        const destination = context.manager.destinationDirectory(token.job_id) orelse return error.MissingDestinationDirectory;
+        const state = context.manager.groupDestination(token.job_id) orelse return error.MissingGroupDestination;
+        const bytes = try context.allocator.alloc(u8, @sizeOf(usize) + destination.len + 1);
+        std.mem.writeInt(usize, bytes[0..@sizeOf(usize)], @intFromPtr(state), .little);
+        @memcpy(bytes[@sizeOf(usize)..][0..destination.len], destination);
+        bytes[bytes.len - 1] = 0;
+        return .{ .operation_kind = operation_kind, .input = .{ .allocator = context.allocator, .bytes = bytes } };
+    }
     if (operation_kind == .finalize_directories) {
         return .{
             .operation_kind = operation_kind,
@@ -746,9 +755,10 @@ fn execute(
     item: io_executor.WorkItem,
 ) io_executor.WorkCompletion {
     const context: *Context = @ptrCast(@alignCast(raw_context.?));
-    if (builtin.is_test and item.operation_kind == .copy_file) test_gate.maybePark();
+    if (builtin.is_test and (item.operation_kind == .copy_file or item.operation_kind == .create_transfer_destination)) test_gate.maybePark();
     return switch (item.operation_kind) {
         .create_directory => io_directory.execute(context.allocator, item),
+        .create_transfer_destination => createTransferDestination(item),
         .copy_file => io_copy.execute(context.allocator, item),
         .copy_symlink => io_symlink.execute(context.allocator, item),
         .move_entry => io_move.execute(context.allocator, item),
@@ -759,9 +769,25 @@ fn execute(
     };
 }
 
-/// Test-only stand-in for a hung mount: when armed, the next regular-file copy
-/// unit parks on its worker until the test releases it. Compiled out of
-/// non-test builds.
+fn createTransferDestination(item: io_executor.WorkItem) io_executor.WorkCompletion {
+    const bytes = item.input.slice();
+    const state: *io_manager.GroupDestination = @ptrFromInt(std.mem.readInt(usize, bytes[0..@sizeOf(usize)], .little));
+    const path = bytes[@sizeOf(usize) .. bytes.len - 1 :0];
+    var completion = failWork(item);
+    if (state.cancelled.load(.acquire)) {
+        completion.outcome = .cancelled;
+        return completion;
+    }
+    ops.createFolderPath(path) catch |err| {
+        state.error_code.store(@backingInt(@import("io_coordinator_codes.zig").rejectionCode(err)), .release);
+        return completion;
+    };
+    completion.outcome = .completed;
+    return completion;
+}
+
+/// Parks the next copy or transfer-destination creation on its worker
+/// until the test releases it. Compiled out of non-test builds.
 pub const test_gate = if (builtin.is_test) struct {
     pub var armed: std.atomic.Value(bool) = .init(false);
     pub var parked: std.atomic.Value(bool) = .init(false);

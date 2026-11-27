@@ -60,6 +60,23 @@ fn suggestion(prefix: []const u8, shortest_stem: usize) []const u8 {
     return trimmed;
 }
 
+fn uniqueSuggestion(self: *App, base: []const u8) ![]u8 {
+    var names: std.StringHashMapUnmanaged(void) = .empty;
+    defer names.deinit(self.allocator);
+    if (self.snapshot) |snapshot| {
+        for (snapshot.items) |item| try names.put(self.allocator, item.name, {});
+    }
+    for (self.items.items) |item| try names.put(self.allocator, item.name, {});
+
+    if (!names.contains(base)) return self.allocator.dupe(u8, base);
+    var suffix: usize = 1;
+    while (true) : (suffix += 1) {
+        const candidate = try ops.duplicateName(self.allocator, base, suffix, "");
+        if (!names.contains(candidate)) return candidate;
+        self.allocator.free(candidate);
+    }
+}
+
 pub fn openDialog(self: *App) void {
     if (!eligible(self)) return;
     var paths: std.ArrayList([]const u8) = .empty;
@@ -73,16 +90,19 @@ pub fn openDialog(self: *App) void {
         shortest_stem = @min(shortest_stem, stem.len);
         prefix = if (prefix) |previous| commonPrefix(previous, stem) else stem;
     }
+    const base = std.mem.trim(u8, suggestion(prefix orelse "", shortest_stem), " \t\r\n");
+    const name = uniqueSuggestion(self, base) catch return;
+    defer self.allocator.free(name);
     const selection: Selection = .{
         .paths = @import("app_requests.zig").dupeAll(self.allocator, paths.items) catch return,
         .navigation = self.navigation_count,
     };
     var dialog: Dialog = .{
         .kind = .new_folder_from_selection,
-        .title = tr("New Folder from Selection"),
+        .title = tr("Group in New Folder"),
         .folder_selection = selection,
     };
-    dialog.edit.text.appendSlice(self.allocator, suggestion(prefix orelse "", shortest_stem)) catch {
+    dialog.edit.text.appendSlice(self.allocator, name) catch {
         selection.deinit(self.allocator);
         return;
     };
@@ -112,25 +132,29 @@ pub fn confirm(self: *App, dialog: *const Dialog) void {
 
 /// Keep the new folder selected in the parent view when the user goes Back.
 pub fn enterFolder(self: *App, destination: []const u8) bool {
+    saveParentSelection(self, destination) catch return false;
+    self.applyHistoryNav(self.history.current);
+    return true;
+}
+
+fn saveParentSelection(self: *App, destination: []const u8) !void {
     var view: @import("history.zig").View = .{ .scroll = self.scroll_y };
     defer view.deinit(self.allocator);
     // Use the listing's spelling of the path, including its separator at "/".
-    const selected = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{
-        self.history.current, std.fs.path.basename(destination),
-    }) catch return false;
-    view.selected.append(self.allocator, selected) catch {
+    const path = try @import("worker_scan.zig").listingPath(self.allocator, self.history.current, std.fs.path.basename(destination));
+    defer self.allocator.free(path);
+    const selected = try self.allocator.dupe(u8, path);
+    view.selected.append(self.allocator, selected) catch |err| {
         self.allocator.free(selected);
-        return false;
+        return err;
     };
-    view.focus = self.allocator.dupe(u8, selected) catch return false;
-    view.anchor = self.allocator.dupe(u8, selected) catch return false;
-    self.history.navigate(destination) catch return false;
+    view.focus = try self.allocator.dupe(u8, selected);
+    view.anchor = try self.allocator.dupe(u8, selected);
+    try self.history.navigate(destination);
     const parent = &self.history.back_stack.items[self.history.back_stack.items.len - 1];
     parent.view.deinit(self.allocator);
     parent.view = view;
     view = .{};
-    self.applyHistoryNav(self.history.current);
-    return true;
 }
 
 test "group name trims separators and never splits a UTF-8 character" {
@@ -139,58 +163,35 @@ test "group name trims separators and never splits a UTF-8 character" {
     try std.testing.expectEqualStrings("New Folder", suggestion(commonPrefix("a", "b"), 1));
 }
 
-test "file menu suggests a selected name and excludes ineligible selections" {
-    var app = try @import("app_tests.zig").testApp();
-    defer app.deinit();
-    app.loading = false;
-    const Action = @import("app_model.zig").FileAction;
-    for ([_][]const u8{ "Trip - 01.jpg", "Trip - 02.png" }, [_][]const u8{ "/tmp/Trip - 01.jpg", "/tmp/Trip - 02.png" }) |name, path| {
-        try app.items.append(app.allocator, .{
-            .name = name,
-            .path = path,
-            .is_dir = false,
-            .is_symlink = false,
-            .is_broken = false,
-            .bytes = 0,
-            .mtime = 0,
-            .mode = c.S_IFREG,
-            .icon_name = "",
-            .selected = true,
-        });
-    }
-    const row = std.mem.indexOfScalar(Action, app.fileActions(), .new_folder_from_selection).?;
-    app.openMenu(.file, 0, 0);
-    app.runMenu(row);
-    try std.testing.expectEqualStrings("Trip", app.dialog.?.edit.text.items);
-    try std.testing.expect(app.dialog.?.edit.select_all);
-    try std.testing.expectEqual(@as(usize, 2), app.dialog.?.folder_selection.?.paths.len);
-    app.closeDialog();
-
-    app.items.items[1].transfer_stub = true;
-    try std.testing.expect(!eligible(&app));
-    app.items.items[1].transfer_stub = false;
-    app.transfer_browse_root = try app.allocator.dupe(u8, "/tmp");
-    try std.testing.expect(!eligible(&app));
+test {
+    _ = @import("app_folder_selection_tests.zig");
 }
 
-test "group move completion does not navigate after a tab or folder change" {
+test "Back restores the new folder selection using the root listing path" {
     var app = try @import("app_tests.zig").testApp();
     defer app.deinit();
-    const tag = 1;
-    app.service.transfers.items[0] = .{
-        .tag = tag,
-        .move = true,
-        .destination = try app.allocator.dupe(u8, "/tmp/old-tab/Trip"),
-        .sources = try @import("app_requests.zig").dupeAll(app.allocator, &.{"/tmp/old-tab/Trip 01.jpg"}),
-        .cut_revision = null,
-        .folder_navigation = app.navigation_count,
-    };
-    app.service.transfers.len = 1;
-    app.navigation_count += 1;
-    try std.testing.expect(@import("app_transfers.zig").onRecord(&app, .{
-        .submit_tag = tag,
-        .state = .completed,
-    }));
-    try std.testing.expectEqualStrings("/tmp", app.history.current);
-    try std.testing.expect(!app.history.canBack());
+    const root_history = try @import("history.zig").History.init(app.allocator, "/");
+    app.history.deinit();
+    app.history = root_history;
+    try saveParentSelection(&app, "/Group");
+    try std.testing.expectEqualStrings("/Group", app.history.current);
+    try std.testing.expectEqualStrings("/", (try app.history.back()).?);
+
+    const path = try @import("worker_scan.zig").listingPath(app.allocator, "/", "Group");
+    defer app.allocator.free(path);
+    try std.testing.expectEqualStrings("//Group", path);
+    try app.items.append(app.allocator, .{
+        .name = "Group",
+        .path = path,
+        .is_dir = true,
+        .is_symlink = false,
+        .is_broken = false,
+        .bytes = 0,
+        .mtime = 0,
+        .icon_name = "",
+    });
+    app.restoreView();
+    try std.testing.expect(app.items.items[0].selected);
+    try std.testing.expectEqual(@as(?usize, 0), app.focused_index);
+    try std.testing.expectEqual(@as(?usize, 0), app.selection_anchor);
 }

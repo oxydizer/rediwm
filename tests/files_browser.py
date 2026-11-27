@@ -348,7 +348,7 @@ fi
             send_key(68, modifiers=[42])  # Shift+F10
             for _ in range(3):
                 send_key(103)  # Wrap past Properties and Move to Trash.
-            send_key(28)  # Open New Folder from Selection.
+            send_key(28)  # Open Group in New Folder.
             send_key(28)  # Create with the suggested name.
 
             def group_title(name):

@@ -703,3 +703,86 @@ test "group move collision preserves both entries and any already moved sibling"
         }
     }
 }
+
+test "group cancellation during preparation or before mkdir leaves the source alone" {
+    if (!@import("platform").fs.hasAtomicRenameNoReplace()) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+    const source = try join(allocator, temp, "photo.jpg");
+    defer allocator.free(source);
+    defer cleanup(source, false);
+    const destination = try join(allocator, temp, "group");
+    defer allocator.free(destination);
+    defer cleanup(destination, true);
+    try writeFile(source, "original");
+
+    var service: io_service.Service = .{};
+    try service.init();
+    defer service.deinit();
+    var coordinator: io_coordinator.Coordinator = undefined;
+    try coordinator.init(allocator, std.testing.io, &service);
+    var window = try service.registerWindow();
+    defer window.close();
+    defer coordinator.deinit();
+    var view = support.View.init(window, &service);
+
+    inline for (.{ @import("io_service_tasks.zig").test_gate, io_operation_executor.test_gate }, 1..) |gate, id| {
+        gate.arm();
+        defer gate.release();
+        var command: io_service.Command = .{
+            .kind = .submit_job,
+            .payload = try io_service.OwnedPayload.createTransfer(allocator, .move, destination, &.{source}),
+        };
+        defer command.deinitPayload();
+        command.payload.?.data.transfer.create_destination = true;
+        try sendOwned(window, &command);
+        for (0..1000) |_| {
+            if (gate.parked.load(.acquire)) break;
+            waitBriefly();
+        } else return error.Timeout;
+        try std.testing.expect(!pathExists(destination));
+
+        try send(window, .{ .kind = .cancel_job, .job_id = id });
+        _ = try view.waitFor(support.CancelRequested{ .id = id });
+        gate.release();
+        try view.waitState(id, .cancelled);
+        try std.testing.expect(!pathExists(destination));
+        try waitForContents(source, "original");
+    }
+}
+
+test "group preparation and plan application failure leave no destination" {
+    if (!@import("platform").fs.hasAtomicRenameNoReplace()) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var temp_buffer: [256]u8 = undefined;
+    const temp = try makeTempDir(&temp_buffer);
+    defer cleanup(temp, true);
+    const source = try join(allocator, temp, "photo.jpg");
+    defer allocator.free(source);
+    defer cleanup(source, false);
+    const destination = try join(allocator, temp, "group");
+    defer allocator.free(destination);
+    defer cleanup(destination, true);
+    try writeFile(source, "original");
+
+    const payload = try io_service.OwnedPayload.createTransfer(allocator, .move, destination, &.{source});
+    defer payload.deinit();
+    payload.data.transfer.create_destination = true;
+    var plan = try @import("io_transfer_plan.zig").prepare(allocator, &payload.data.transfer);
+    defer plan.deinit();
+    try std.testing.expect(!pathExists(destination));
+    plan.sources.items[0].destination_name = ""; // Force Manager rejection after adding the mkdir operation.
+
+    var runtime = @import("io_runtime.zig").Runtime.init(allocator);
+    defer runtime.deinit();
+    var coordinator: io_coordinator.Coordinator = undefined;
+    coordinator.allocator = allocator;
+    coordinator.runtime = &runtime;
+    const job = try runtime.manager.createJob(1);
+    try std.testing.expectError(error.InvalidName, coordinator.applyTransferPlan(job, .move, &plan));
+    try std.testing.expect(runtime.manager.discardPlanningJob(job));
+    try std.testing.expect(!pathExists(destination));
+    try waitForContents(source, "original");
+}

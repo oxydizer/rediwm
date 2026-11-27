@@ -188,7 +188,6 @@ pub fn prepare(
     }
 
     if (plan.sources.items.len == 0) return error.TransferSourceEqualsDestination;
-    if (request.create_destination) try ops_mod.createFolder(allocator, parent, folder_name);
     return plan;
 }
 

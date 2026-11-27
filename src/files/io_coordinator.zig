@@ -5,7 +5,6 @@
 //! handles and immutable updates.
 const std = @import("std");
 const io_thread_guard = @import("io_thread_guard.zig");
-const io_transfer_plan = @import("io_transfer_plan.zig");
 const stalls_mod = @import("io_coordinator_stalls.zig");
 const io_service_tasks = @import("io_service_tasks.zig");
 const resources = @import("io_coordinator_resources.zig");
@@ -21,7 +20,6 @@ const c = @import("c.zig").api;
 const io_runtime = @import("io_runtime.zig");
 const io_service = @import("io_service.zig");
 const io_manager = @import("io_manager.zig");
-const io_tree = @import("io_tree.zig");
 const io_resource_ledger = @import("io_resource_ledger.zig");
 const ops_mod = @import("ops.zig");
 
@@ -295,7 +293,6 @@ pub const Coordinator = struct {
     const unwatchView = job_views.unwatchView;
     const publishViews = job_views.publishViews;
     const watchStalls = stalls_mod.watchStalls;
-    const limitDisks = @import("io_coordinator_disks.zig").limitDisks;
     const handleRequest = coordinator_requests.handleRequest;
     const submitArchive = archives.submitArchive;
     const pumpArchives = archives.pumpArchives;
@@ -607,88 +604,7 @@ pub const Coordinator = struct {
         }
     }
 
-    /// Turns a prepared plan into the roots and operations of a planning
-    /// job and queues it. Touches only the Manager. On error the job stays in
-    /// `planning` for the caller to discard.
-    pub fn applyTransferPlan(
-        self: *Coordinator,
-        job_id: JobId,
-        mode: io_service.TransferMode,
-        plan: *const io_transfer_plan.TransferPlan,
-    ) !void {
-        const manager = &self.runtime.manager;
-
-        var discovery_roots: std.ArrayList(io_manager.DiscoveryRoot) = .empty;
-        defer discovery_roots.deinit(self.allocator);
-        var directory_root_ids: std.ArrayList(io_tree.EntryId) = .empty;
-        defer directory_root_ids.deinit(self.allocator);
-
-        if (plan.create_destination) try manager.setRenameOnly(job_id);
-        for (plan.sources.items) |source| {
-            const root_id = try manager.addTreeRoot(
-                job_id,
-                source.destination_name,
-                source.kind,
-                source.metadata,
-                source.symlink_target,
-            );
-            if (plan.create_destination) {
-                try manager.setRootSourcePath(job_id, root_id, source.path);
-                _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
-                continue;
-            }
-            switch (source.kind) {
-                .directory => {
-                    try discovery_roots.append(self.allocator, .{
-                        .root_id = root_id,
-                        .path = source.path,
-                    });
-                    try directory_root_ids.append(self.allocator, root_id);
-                },
-                .regular_file, .symlink => {
-                    try manager.setRootSourcePath(job_id, root_id, source.path);
-                    const copy_kind: io_manager.OperationKind =
-                        if (source.kind == .regular_file) .copy_file else .copy_symlink;
-                    if (mode == .move and source.same_device) {
-                        _ = try manager.addEntryOperation(job_id, root_id, .move_entry);
-                    } else {
-                        _ = try manager.addEntryOperation(job_id, root_id, copy_kind);
-                        if (mode == .move)
-                            _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
-                    }
-                },
-                .other => unreachable,
-            }
-        }
-
-        self.limitDisks(job_id, plan);
-        try manager.setDestinationDirectory(job_id, plan.destination_path);
-        // A copy syncs once at its end; a move keeps syncing each file, since
-        // its source goes away right after (the user's choice, 2026-11-26).
-        if (mode == .copy) try manager.setDeferredSync(job_id);
-        if (mode == .move)
-            try manager.setDestinationDeviceId(job_id, plan.destination_device_id);
-
-        if (directory_root_ids.items.len == 0) {
-            try manager.queueJob(job_id);
-            return;
-        }
-
-        if (mode == .move) {
-            for (directory_root_ids.items) |root_id| {
-                _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
-                _ = try manager.addEntryOperation(job_id, root_id, .detach_source);
-            }
-            try manager.enableDiscoveredEntryMoves(job_id);
-        } else {
-            try manager.enableDiscoveredEntryOperations(job_id);
-            for (directory_root_ids.items) |root_id| {
-                _ = try manager.addEntryOperation(job_id, root_id, .create_directory);
-            }
-        }
-        // Atomically commits the job and all discovery roots.
-        try manager.queueJobWithDiscoveryRoots(job_id, discovery_roots.items);
-    }
+    pub const applyTransferPlan = @import("io_coordinator_tasks.zig").applyTransferPlan;
 
     /// Writes each job's record from its O(1) Manager summary. State,
     /// cancellation and conflict changes are written at once; progress at
@@ -704,6 +620,10 @@ pub const Coordinator = struct {
             const entry = self.published.getPtr(summary.id) orelse continue;
             var next = entry.record;
             applySummary(&next, summary);
+            if (next.state == .failed) {
+                if (manager.groupDestination(summary.id)) |state|
+                    next.error_code = state.error_code.load(.acquire);
+            }
             next.borrow_count = @intCast(@min(self.runtime.resource_ledger.jobBorrowCount(summary.id), 255));
             next.pending_conflict = if (head) |conflict|
                 (if (conflict.job_id == summary.id) conflict.id else 0)
