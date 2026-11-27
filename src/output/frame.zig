@@ -238,7 +238,6 @@ pub fn runFrame(output: *Output) void {
     output.server.input.flushResizeConfigure(output);
     anim.observeBegin();
     const switcher_animating = output.server.switcher.tick(output, now_ms);
-    const osd_animating = output.osd.tick(output, now_ms);
     const dock_animating = output.dock.tick(output, now_ms);
     const taskbar_started = if (observing) stats.nowNs() else 0;
     var bar_animating = false;
@@ -303,6 +302,7 @@ pub fn runFrame(output: *Output) void {
     const minimize_animating = @import("../effects/window_minimize.zig").tick(output, now_ms);
     const projection_started = if (observing) stats.nowNs() else 0;
     output.server.world.refreshBounds();
+    const osd_animating = output.osd.tick(output, now_ms);
     output.server.world.syncPresentation();
     if (observing) stats.global_stats.projection_cpu.record(stats.nowNs() -% projection_started);
     output.server.world.flushCameraEvent();

@@ -146,6 +146,7 @@ pub fn setZoom(toplevel: *Toplevel, index: usize, lx: f64, ly: f64) void {
 
 pub fn setZoomAnimated(toplevel: *Toplevel, index: usize, lx: f64, ly: f64) void {
     if (toplevel.server.world.workspaces.active) return;
+    defer @import("../osd.zig").showWindowZoom(toplevel, lx, ly);
     toplevel.takeZoomBoost();
     const next = @min(index, @import("../camera.zig").zoom_levels.len - 1);
     const target_scale = @as(f64, @floatFromInt(@import("../camera.zig").zoom_levels[next])) / 100;

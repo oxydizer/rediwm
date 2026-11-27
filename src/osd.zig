@@ -4,6 +4,7 @@ const wlr = @import("wlroots");
 const sn = @import("node.zig");
 const Output = @import("Output.zig");
 const Server = @import("Server.zig");
+const Toplevel = @import("Toplevel.zig");
 const painter = @import("osd_paint.zig");
 const PanelBuffer = @import("panel_buffer.zig").PanelBuffer;
 const anim = @import("ui").anim;
@@ -24,6 +25,7 @@ const Osd = @This();
 /// Gap between the OSD and the bottom of the work area, or the top of a dock.
 const edge_gap = 20;
 const dock_gap = 12;
+const window_gap = 8;
 
 pub fn show(server: *Server, state: State) void {
     const output = server.getDefaultOutput() orelse return;
@@ -47,9 +49,26 @@ pub fn showOn(server: *Server, output: *Output, state: State) void {
     output.osd.present(output, state, true) catch |err| std.log.warn("OSD: {}", .{err});
 }
 
+pub fn showWindowZoom(window: *Toplevel, lx: f64, ly: f64) void {
+    const server = window.server;
+    if (server.locker != null) return;
+    const frame = windowFrame(window);
+    const center = frame.x + frame.width / 2;
+    // A zoom anchored inside the frame keeps that point on the same output.
+    const anchor_output = if (lx >= frame.x and lx < frame.x + frame.width and ly >= frame.y and ly < frame.y + frame.height)
+        Output.atLayout(server, lx, ly)
+    else
+        null;
+    const output = anchor_output orelse Output.atLayout(server, center, frame.y) orelse
+        Output.atLayout(server, center, frame.y + frame.height / 2) orelse
+        Output.atLayout(server, lx, ly) orelse return;
+    const percent = @import("camera.zig").zoom_levels[window.zoom_index];
+    showOn(server, output, .{ .kind = .window_zoom, .level = @as(f32, @floatFromInt(percent)) / 100, .window_id = window.id });
+}
+
 fn paintState(self: *Osd, output: *Output, state: State) !void {
     const node = self.node orelse return;
-    const image = try PanelBuffer.create(painter.width(state.kind), painter.height, output.wlr_output.scale);
+    const image = try PanelBuffer.create(painter.width(state.kind), painter.height(state.kind), output.wlr_output.scale);
     defer image.base.drop();
     var renderer = @import("ui").paint.Renderer.init(image.pixels, image.width, image.height, output.wlr_output.scale);
     painter.paint(&renderer, state);
@@ -110,7 +129,9 @@ fn present(self: *Osd, output: *Output, state: State, restart: bool) !void {
     if (self.painted_state == null or !std.meta.eql(self.painted_state.?, render_state) or self.scale != output.wlr_output.scale) {
         try self.paintState(output, render_state);
     }
-    self.position(output);
+    if (state.window_id) |id| {
+        if (!self.positionWindow(output, id)) return self.hide();
+    } else self.position(output);
     self.node.?.node.setEnabled(true);
     self.node.?.node.raiseToTop();
     if (restart) {
@@ -129,7 +150,7 @@ fn position(self: *Osd, output: *Output) void {
     const state = self.state orelse return;
     const box = output.usableBox();
     const width = @min(painter.width(state.kind), box.width);
-    const height = @min(painter.height, box.height);
+    const height = @min(painter.height(state.kind), box.height);
     var bottom = box.y + box.height - edge_gap;
     if (output.server.config.compositor.dock_position == .bottom) {
         const area = output.dockAreaBox();
@@ -140,8 +161,54 @@ fn position(self: *Osd, output: *Output) void {
     self.node.?.node.setPosition(box.x + @divTrunc(box.width - width, 2), @max(box.y, bottom - height));
 }
 
+fn windowFrame(window: *const Toplevel) wlr.FBox {
+    const node = &window.frame_tree.node;
+    const origin = window.server.world.toLayout(@floatFromInt(node.x), @floatFromInt(node.y));
+    const scale = window.zoom() * window.drag_lift_value;
+    return .{
+        .x = origin.x,
+        .y = origin.y,
+        .width = @as(f64, @floatFromInt(window.chrome_width)) * scale,
+        .height = @as(f64, @floatFromInt(window.chrome_height)) * scale,
+    };
+}
+
+fn positionWindow(self: *Osd, output: *Output, id: u64) bool {
+    const server = output.server;
+    if (server.locker != null or server.world.overview.active() or server.world.workspaces.active) return false;
+    const window = server.findToplevelById(id) orelse return false;
+    if (!window.in_world or window.closing or !window.frame_tree.node.enabled) return false;
+
+    const frame = windowFrame(window);
+    const screen = output.cached_box;
+    if (frame.x >= @as(f64, @floatFromInt(screen.x + screen.width)) or frame.x + frame.width <= @as(f64, @floatFromInt(screen.x)) or
+        frame.y >= @as(f64, @floatFromInt(screen.y + screen.height)) or frame.y + frame.height <= @as(f64, @floatFromInt(screen.y))) return false;
+
+    const area = output.usableBox();
+    const width = painter.width(.window_zoom);
+    const height = painter.height(.window_zoom);
+    if (area.width < width or area.height < height) return false;
+
+    // The anchor follows the presented frame. The badge lives in layout units.
+    const center: i32 = @intFromFloat(@round(frame.x + frame.width / 2));
+    const top: i32 = @intFromFloat(@round(frame.y));
+    const node = self.node.?;
+    node.setDestSize(width, height);
+    node.node.setPosition(
+        std.math.clamp(center - @divTrunc(width, 2), area.x, area.x + area.width - width),
+        std.math.clamp(top - window_gap - height, area.y, area.y + area.height - height),
+    );
+    return true;
+}
+
 pub fn tick(self: *Osd, output: *Output, now: i64) bool {
     const state = self.state orelse return false;
+    if (state.window_id) |id| {
+        if (!self.positionWindow(output, id)) {
+            self.hide();
+            return false;
+        }
+    }
     const parent = if (output.server.locker != null) output.server.lock_tree else output.server.overlay_tree;
     if (self.node) |node| {
         if (node.node.parent != parent) node.node.reparent(parent);

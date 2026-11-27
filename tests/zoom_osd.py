@@ -1,12 +1,78 @@
 #!/usr/bin/env python3
-"""Camera zoom uses the shared OSD, stays <=100%, and never takes input."""
+"""Camera and window zoom overlays show their levels and let input pass through."""
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import time
 
 from PIL import Image, ImageChops
+from desktop_zoom import build_client
 from ipc_client import IPCClient, spawn_compositor, stop_process
+
+
+def check_window_zoom(ipc, tmp, scale):
+    build_client(tmp)
+    display = next(p.name for p in tmp.glob('wayland-*') if not p.name.endswith('.lock'))
+    client = subprocess.Popen([str(tmp/'client')],
+        env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display),
+        stdout=subprocess.DEVNULL)
+    try:
+        ipc.wait_for('window_mapped', app_id='rediwm.zoom-fixture')
+        window, = ipc.get_windows()
+        wid = window['id']
+        ipc.action('set_window_zoom', {'id': wid, 'percent': 100})
+        ipc.action('move_window_to', {'id': wid, 'x': 240, 'y': 180})
+        ipc.wait_for('window_geometry_settled', window_id=wid)
+        ipc.move_cursor(440, 370)
+
+        def capture(box):
+            ipc.wait_for_frame()
+            path = tmp/'window-zoom.png'
+            path.unlink(missing_ok=True)
+            ipc.screenshot(path=str(path))
+            with Image.open(path) as image:
+                return image.convert('RGB').crop(box)
+
+        def step(percent, camera_percent):
+            ipc.key(56, True)
+            try:
+                ipc.action('scroll', {'dx': 0, 'dy': 40})
+            finally:
+                ipc.key(56, False)
+            ipc.wait_for_frame()
+            ipc.wait_for('window_geometry_settled', window_id=wid)
+            window, = ipc.get_windows()
+            assert window['zoom_percent'] == percent, window
+            camera = ipc.action('get_camera')
+            assert camera['zoom_percent'] == camera_percent, camera
+            frame = ipc.get_window_debug(wid)['chrome_box']
+            z = camera_percent / 100
+            center = (frame['x'] - camera['x'] + frame['width'] * percent / 200) * z
+            top = (frame['y'] - camera['y']) * z
+            box = tuple(round(v * scale) for v in (center-44, top-46, center+44, top-3))
+            shot = capture(box)
+            beneath = ipc.hit_test(round(center), round(top-24))
+            time.sleep(1.4)
+            faded = capture(box)
+            assert ipc.hit_test(round(center), round(top-24)) == beneath, 'window zoom OSD intercepted input'
+            bounds = ImageChops.difference(shot, faded).getbbox()
+            assert bounds is not None, 'window zoom OSD missing or failed to fade'
+            expected = (8, 6, 80, 38)
+            assert all(abs(actual - want * scale) <= 2 for actual, want in zip(bounds, expected)), bounds
+            label = shot.crop(tuple(round(v * scale) for v in (19, 12, 69, 32)))
+            return label.point(lambda value: 255 if value > 180 else 0).convert('L')
+
+        label_85 = step(85, 100)
+        ipc.move_cursor(0, 0)
+        ipc.action('set_zoom', {'percent': 70})
+        ipc.move_cursor(320, 270)
+        label_70 = step(70, 70)
+        assert label_85.getbbox() and label_70.getbbox(), 'window zoom percentage missing'
+        assert ImageChops.difference(label_85, label_70).getbbox(), 'window zoom percentage stayed the same'
+        print(f'PASS: window zoom OSD placement, fixed size, input and timeout ({scale}x)')
+    finally:
+        stop_process(client)
 
 
 def run():
@@ -18,6 +84,7 @@ def run():
             config_content='''[compositor]
 xwayland = false
 mini_map_enabled = false
+focus_zoom = "keep"
 zoom_steps = [1.5, 1.0, 0.85, 0.70, 0.55]
 camera_zoom_max = 2.0
 [desktop]
@@ -88,6 +155,7 @@ enabled = false
                 time.sleep(1.5)
                 assert ImageChops.difference(baseline, capture()).getbbox() is None, 'zoom OSD did not fade out'
                 print(f'PASS: zoom OSD pixels, percentage, input, timeout and 100% cap ({scale}x)')
+                check_window_zoom(ipc, tmp, scale)
         except Exception:
             print((tmp/'compositor.log').read_text()[-2500:])
             raise

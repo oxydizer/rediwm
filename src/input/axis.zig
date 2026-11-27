@@ -158,12 +158,14 @@ pub fn processAxis(
             const max_index: i32 = @intCast(@import("../camera.zig").zoom_levels.len - 1);
             const next: usize = @intCast(std.math.clamp(current + steps, 0, max_index));
             if (next == 0 or next == @as(usize, @intCast(max_index))) input.zoom_scroll.reset();
-            if (next != index or target == null) {
-                if (target) |window| {
+            if (target) |window| {
+                if (next != index) {
                     window.setZoomAnimated(next, input.cursor.x, input.cursor.y);
                 } else {
-                    input.server.world.stepZoom(steps, input.cursor.x, input.cursor.y);
+                    @import("../osd.zig").showWindowZoom(window, input.cursor.x, input.cursor.y);
                 }
+            } else {
+                input.server.world.stepZoom(steps, input.cursor.x, input.cursor.y);
             }
         }
         return;
