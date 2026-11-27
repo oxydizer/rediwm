@@ -20,6 +20,7 @@ pub fn workerLoop(self: *Service) void {
     while (true) {
         const job = self.take(&path_buf) orelse break;
         self.working += 1;
+        var retry = false;
         switch (job.work) {
             .resolve => |path| {
                 self.unlock();
@@ -33,28 +34,33 @@ pub fn workerLoop(self: *Service) void {
                 found.clearRetainingCapacity();
                 names.clearRetainingCapacity();
                 const result = readDirectory(self.allocator, job.path.?, s.key, dir_buf, &found, &names);
-                // Names point into `names`, which may have moved.
-                var offset: usize = 0;
-                for (found.items) |*f| {
-                    const n = f.name.len;
-                    f.name = names.items[offset .. offset + n];
-                    offset += n;
-                }
                 self.lock();
                 if (self.liveId(s.ref)) |id| {
-                    if (!result.opened) {
-                        if (result.missing) self.lostScan(id, job.path.?) else self.failScan(id);
-                    } else self.finishScan(id, result.own, found.items, result.unreadable) catch {
-                        const node = &self.nodes.items[id];
-                        node.scanning = false;
-                        node.rescan = true;
-                        self.enqueue(id, node.level) catch {};
-                    };
+                    if (result) |read| {
+                        if (!read.opened) {
+                            if (read.missing) self.lostScan(id, job.path.?) else self.failScan(id);
+                        } else {
+                            self.finishScan(id, read.own, found.items, read.unreadable) catch {
+                                self.retryScan(id);
+                                retry = true;
+                            };
+                        }
+                    } else |_| {
+                        self.retryScan(id);
+                        retry = true;
+                    }
                 }
             },
         }
         self.working -= 1;
         if (self.working == 0) self.bump();
+        if (retry) {
+            // Keep the work queued, but avoid spinning under sustained OOM.
+            self.unlock();
+            const delay: c.struct_timespec = .{ .tv_sec = 0, .tv_nsec = 10_000_000 };
+            _ = c.nanosleep(&delay, null);
+            self.lock();
+        }
     }
     self.unlock();
 }
@@ -71,7 +77,7 @@ fn readDirectory(
     buf: []align(dirwalk.buffer_align) u8,
     found: *std.ArrayList(Service.Child),
     names: *std.ArrayList(u8),
-) ReadResult {
+) !ReadResult {
     var result: ReadResult = .{};
     const fd = c.open(path.ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
     if (fd < 0) {
@@ -96,18 +102,20 @@ fn readDirectory(
         if (entry.kind == .directory) {
             if (entry.mount_root or entry.dev != expected.dev) continue;
             const name = std.mem.span(name_ptr);
-            const start = names.items.len;
-            names.appendSlice(a, name) catch {
-                result.unreadable = true;
-                continue;
-            };
-            found.append(a, .{ .key = .{ .dev = entry.dev, .ino = entry.ino }, .name = names.items[start..] }) catch {
-                names.shrinkRetainingCapacity(start);
-                result.unreadable = true;
-            };
+            // Store lengths until the buffer has finished growing.
+            try names.appendSlice(a, name);
+            try found.append(a, .{ .key = .{ .dev = entry.dev, .ino = entry.ino }, .name = names.items[names.items.len - name.len ..] });
         } else if (entry.kind == .regular) {
             result.own += @intCast(entry.size);
         }
+    }
+    // Earlier slices may point at the old allocation. Rebuild them from
+    // their lengths after the final append.
+    var offset: usize = 0;
+    for (found.items) |*child| {
+        const end = offset + child.name.len;
+        child.name = names.items[offset..end];
+        offset = end;
     }
     return result;
 }
@@ -169,7 +177,7 @@ test "sizetree rejects a directory path replaced with another inode" {
     );
     defer std.heap.page_allocator.free(buf);
 
-    const result = readDirectory(
+    const result = try readDirectory(
         std.testing.allocator,
         original_path,
         .{ .dev = original.dev, .ino = original.ino },
@@ -180,4 +188,39 @@ test "sizetree rejects a directory path replaced with another inode" {
     try std.testing.expect(!result.opened);
     try std.testing.expect(result.missing);
     try std.testing.expectEqual(@as(usize, 0), found.items.len);
+}
+
+test "sizetree discards a directory read when child collection runs out of memory" {
+    const a = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    defer a.free(base);
+    const path = try a.dupeSentinel(u8, base, 0);
+    defer a.free(path);
+    const fd = c.open(path.ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
+    if (fd < 0) return error.TestSetupFailed;
+    defer _ = c.close(fd);
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdirat(fd, "child", 0o700));
+    const identity = dirwalk.statFd(fd) orelse return error.TestSetupFailed;
+    const expected: Key = .{ .dev = identity.dev, .ino = identity.ino };
+    var buf: [4096]u8 align(dirwalk.buffer_align) = undefined;
+
+    for (0..3) |fail_index| {
+        var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = fail_index });
+        const allocator = failing.allocator();
+        var found: std.ArrayList(Service.Child) = .empty;
+        defer found.deinit(allocator);
+        var names: std.ArrayList(u8) = .empty;
+        defer names.deinit(allocator);
+        const read = readDirectory(allocator, path, expected, &buf, &found, &names);
+        if (fail_index < 2) {
+            try std.testing.expectError(error.OutOfMemory, read);
+        } else {
+            const result = try read;
+            try std.testing.expect(result.opened and !result.unreadable);
+            try std.testing.expectEqual(@as(usize, 1), found.items.len);
+            try std.testing.expectEqualStrings("child", found.items[0].name);
+        }
+    }
 }

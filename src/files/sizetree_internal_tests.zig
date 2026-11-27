@@ -15,8 +15,8 @@ test "sizetree alternates resolution and scanning while preserving scan priority
 
     const background = try svc.newNode(.{ .dev = 1, .ino = 1 }, "/background", .background);
     const visible = try svc.newNode(.{ .dev = 1, .ino = 2 }, "/visible", .visible);
-    try svc.enqueue(background, .background);
-    try svc.enqueue(visible, .visible);
+    svc.enqueue(background, .background);
+    svc.enqueue(visible, .visible);
 
     svc.request("/resolve1", .visible, .{});
     svc.request("/resolve2", .visible, .{});
@@ -82,7 +82,7 @@ test "sizetree pauses children discovered by an in-flight scan" {
     try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
 
     // A later request resumes pending work in the subtree.
-    try svc.enqueueSubtree(root, .visible);
+    svc.enqueueSubtree(root, .visible);
 
     try std.testing.expect(!svc.nodes.items[root].paused);
     try std.testing.expect(!svc.nodes.items[child].paused);
@@ -126,8 +126,8 @@ test "sizetree deletes every detached descendant without allocating" {
     try svc.attach(root, branch);
     try svc.attach(branch, nested);
     try svc.attach(branch, sibling);
-    try svc.enqueue(branch, .visible);
-    try svc.enqueue(nested, .visible);
+    svc.enqueue(branch, .visible);
+    svc.enqueue(nested, .visible);
     const root_ref = svc.refOf(root);
     const deleted = [_]@TypeOf(root){ branch, nested, sibling };
     const stale_refs = .{ svc.refOf(branch), svc.refOf(nested), svc.refOf(sibling) };

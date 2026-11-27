@@ -26,6 +26,8 @@ const c = @import("c.zig").api;
 const Allocator = std.mem.Allocator;
 const dirwalk = platform.dirwalk;
 const worker = @import("sizetree_worker.zig");
+const schedule = @import("sizetree_schedule.zig");
+const reconcile = @import("sizetree_reconcile.zig");
 
 pub const revalidate_after_ms: i64 = 120_000;
 
@@ -74,8 +76,8 @@ pub const RequestOptions = struct {
 };
 
 pub const Key = struct { dev: u64, ino: u64 };
-const Id = u32;
-const no_id: Id = std.math.maxInt(Id);
+pub const Id = u32;
+pub const no_id: Id = std.math.maxInt(Id);
 const Ref = struct { id: Id, gen: u32 };
 
 const Node = struct {
@@ -85,6 +87,7 @@ const Node = struct {
     /// Parent of a live node, or the next free slot after deletion.
     parent: Id = no_id,
     children: std.ArrayList(Id) = .empty,
+    child_index: usize = 0,
     /// The base name under a parent; the full path for a root.
     name: []u8 = &.{},
     own: i64 = 0,
@@ -99,6 +102,8 @@ const Node = struct {
     complete: bool = false,
     completed_ms: i64 = 0,
     queued: ?Level = null,
+    queue_prev: Id = no_id,
+    queue_next: Id = no_id,
     level: Level = .background,
     scanning: bool = false,
     /// A stopped or forgotten path must not schedule this node again.
@@ -118,36 +123,6 @@ const PathEntry = struct {
     dropped: bool = false,
     level: Level = .background,
     force: bool = false,
-};
-
-const Queue = struct {
-    items: std.ArrayList(Ref) = .empty,
-    head: usize = 0,
-
-    fn push(self: *Queue, a: Allocator, ref: Ref) !void {
-        if (self.head > 1024 and self.head * 2 > self.items.items.len) {
-            const rest = self.items.items.len - self.head;
-            std.mem.copyForwards(Ref, self.items.items[0..rest], self.items.items[self.head..]);
-            self.items.shrinkRetainingCapacity(rest);
-            self.head = 0;
-        }
-        try self.items.append(a, ref);
-    }
-
-    fn pop(self: *Queue) ?Ref {
-        if (self.head >= self.items.items.len) {
-            self.items.clearRetainingCapacity();
-            self.head = 0;
-            return null;
-        }
-        const ref = self.items.items[self.head];
-        self.head += 1;
-        return ref;
-    }
-
-    fn deinit(self: *Queue, a: Allocator) void {
-        self.items.deinit(a);
-    }
 };
 
 /// Whether a disk is measured without being asked: a local disk that is
@@ -187,7 +162,7 @@ pub const Service = struct {
     resolve_head: usize = 0,
     /// Give scans the next turn after dispatching a resolution.
     prefer_scan: bool = false,
-    queues: [level_count]Queue = .{ .{}, .{} },
+    queues: [level_count]schedule.Queue = .{ .{}, .{} },
     /// Known per device: measured automatically or not.
     auto: std.AutoHashMapUnmanaged(u64, bool) = .empty,
     working: usize = 0,
@@ -247,7 +222,6 @@ pub const Service = struct {
         while (it.next()) |k| a.free(k.*);
         self.paths.deinit(a);
         self.resolve.deinit(a);
-        for (&self.queues) |*q| q.deinit(a);
         self.auto.deinit(a);
         _ = c.pthread_cond_destroy(&self.cond);
         _ = c.pthread_mutex_destroy(&self.mutex);
@@ -294,14 +268,14 @@ pub const Service = struct {
             entry.idle = false;
             entry.force = true;
         }
-        if (@intFromEnum(level) < @intFromEnum(entry.level) or !gop.found_existing) entry.level = level;
+        if (@backingInt(level) < @backingInt(entry.level) or !gop.found_existing) entry.level = level;
 
         const node_id = if (entry.node) |ref| self.liveId(ref) else null;
         if (node_id == null) {
             entry.node = null;
             if (!entry.resolving) {
-                entry.resolving = true;
                 try self.resolve.append(a, gop.key_ptr.*);
+                entry.resolving = true;
                 _ = c.pthread_cond_signal(&self.cond);
             }
             return;
@@ -310,9 +284,9 @@ pub const Service = struct {
         const id = node_id.?;
         const node = &self.nodes.items[id];
         if (options.revalidate and node.complete and node.pending == 0 and nowMs() - node.completed_ms >= self.revalidate_ms) {
-            try self.markSubtree(id, level);
+            self.markSubtree(id, level);
         } else if (node.pending > 0) {
-            try self.enqueueSubtree(id, level);
+            self.enqueueSubtree(id, level);
         }
     }
 
@@ -384,12 +358,18 @@ pub const Service = struct {
         const owned = try a.dupe(u8, name);
         errdefer a.free(owned);
         try self.by_key.ensureUnusedCapacity(a, 1);
+        if (self.free_head == no_id) try self.nodes.ensureUnusedCapacity(a, 1);
+        return self.newNodePrepared(key, owned, level);
+    }
+
+    /// Takes ownership of the name after storage has been reserved.
+    pub fn newNodePrepared(self: *Service, key: Key, owned: []u8, level: Level) Id {
         const id: Id = if (self.free_head != no_id) blk: {
             const reused = self.free_head;
             self.free_head = self.nodes.items[reused].parent;
             break :blk reused;
         } else blk: {
-            try self.nodes.append(a, .{});
+            self.nodes.appendAssumeCapacity(.{});
             break :blk @intCast(self.nodes.items.len - 1);
         };
         const node = &self.nodes.items[id];
@@ -401,7 +381,7 @@ pub const Service = struct {
 
     /// Adds deltas to `id` and every ancestor, noting subtrees that become
     /// complete.
-    fn propagate(self: *Service, start: Id, total: i64, pending: i64, unreadable: i64) void {
+    pub fn propagate(self: *Service, start: Id, total: i64, pending: i64, unreadable: i64) void {
         var id = start;
         const now = nowMs();
         while (id != no_id) {
@@ -418,25 +398,37 @@ pub const Service = struct {
     }
 
     pub fn attach(self: *Service, parent: Id, child: Id) !void {
-        try self.nodes.items[parent].children.append(self.allocator, child);
+        try self.nodes.items[parent].children.ensureUnusedCapacity(self.allocator, 1);
+        self.attachPrepared(parent, child);
+    }
+
+    pub fn attachPrepared(self: *Service, parent: Id, child: Id) void {
+        const children = &self.nodes.items[parent].children;
+        const index = children.items.len;
+        children.appendAssumeCapacity(child);
         const node = &self.nodes.items[child];
+        std.debug.assert(node.parent == no_id);
         node.parent = parent;
+        node.child_index = index;
         self.propagate(parent, node.total, node.pending, node.unreadable);
     }
 
-    fn detach(self: *Service, child: Id) void {
+    pub fn detach(self: *Service, child: Id) void {
         const node = &self.nodes.items[child];
         const parent = node.parent;
         if (parent == no_id) return;
         const siblings = &self.nodes.items[parent].children;
-        if (std.mem.indexOfScalar(Id, siblings.items, child)) |i| _ = siblings.swapRemove(i);
+        const index = node.child_index;
+        std.debug.assert(siblings.items[index] == child);
+        _ = siblings.swapRemove(index);
+        if (index < siblings.items.len) self.nodes.items[siblings.items[index]].child_index = index;
         node.parent = no_id;
         self.propagate(parent, -node.total, -@as(i64, node.pending), -@as(i64, node.unreadable));
     }
 
     /// Frees a detached subtree. A worker reading one of its directories
     /// finds the node gone (its generation changed) and drops the result.
-    fn freeSubtree(self: *Service, root: Id) void {
+    pub fn freeSubtree(self: *Service, root: Id) void {
         std.debug.assert(self.nodes.items[root].parent == no_id);
         var id = root;
         while (id != no_id) {
@@ -456,7 +448,7 @@ pub const Service = struct {
     fn freeOne(self: *Service, id: Id) void {
         const node = &self.nodes.items[id];
         if (!node.live) return;
-        self.setQueued(node, null);
+        self.unqueue(id);
         _ = self.by_key.remove(node.key);
         self.allocator.free(node.name);
         node.children.deinit(self.allocator);
@@ -465,75 +457,12 @@ pub const Service = struct {
         self.free_head = id;
     }
 
-    fn setQueued(self: *Service, node: *Node, level: ?Level) void {
-        if (node.queued == null and level != null) self.queued_count += 1;
-        if (node.queued != null and level == null) self.queued_count -= 1;
-        node.queued = level;
-    }
-
-    pub fn enqueue(self: *Service, id: Id, level: Level) !void {
-        const node = &self.nodes.items[id];
-        if (node.paused) return;
-        if (node.scanning) {
-            node.rescan = node.rescan or !node.self_pending;
-            if (@intFromEnum(level) < @intFromEnum(node.level)) node.level = level;
-            return;
-        }
-        if (node.queued) |q| if (@intFromEnum(q) <= @intFromEnum(level)) return;
-        try self.queues[@intFromEnum(level)].push(self.allocator, self.refOf(id));
-        self.setQueued(node, level);
-        node.level = level;
-        _ = c.pthread_cond_signal(&self.cond);
-    }
-
-    /// Queues every directory below `root` still waiting to be read, raising
-    /// its level if it was queued lower.
-    pub fn enqueueSubtree(self: *Service, root: Id, level: Level) !void {
-        var stack: std.ArrayList(Id) = .empty;
-        defer stack.deinit(self.allocator);
-        try stack.append(self.allocator, root);
-        while (stack.pop()) |id| {
-            const node = &self.nodes.items[id];
-            node.paused = false;
-            if (node.pending == 0) continue;
-            if (@intFromEnum(level) < @intFromEnum(node.level)) node.level = level;
-            if (node.self_pending) try self.enqueue(id, level);
-            try stack.appendSlice(self.allocator, node.children.items);
-        }
-    }
-
-    /// Marks every directory below `root` to be read again, keeping totals.
-    fn markSubtree(self: *Service, root: Id, level: Level) !void {
-        var stack: std.ArrayList(Id) = .empty;
-        defer stack.deinit(self.allocator);
-        try stack.append(self.allocator, root);
-        while (stack.pop()) |id| {
-            const node = &self.nodes.items[id];
-            node.paused = false;
-            node.level = level;
-            if (!node.self_pending) {
-                node.self_pending = true;
-                self.propagate(id, 0, 1, 0);
-            }
-            try self.enqueue(id, level);
-            try stack.appendSlice(self.allocator, node.children.items);
-        }
-        self.bump();
-    }
-
-    pub fn dequeueSubtree(self: *Service, root: Id) void {
-        var stack: std.ArrayList(Id) = .empty;
-        defer stack.deinit(self.allocator);
-        stack.append(self.allocator, root) catch return;
-        while (stack.pop()) |id| {
-            const node = &self.nodes.items[id];
-            self.setQueued(node, null);
-            node.paused = true;
-            node.rescan = false;
-            node.level = .background;
-            stack.appendSlice(self.allocator, node.children.items) catch return;
-        }
-    }
+    pub const unqueue = schedule.unqueue;
+    pub const enqueue = schedule.enqueue;
+    pub const enqueueSubtree = schedule.enqueueSubtree;
+    const markSubtree = schedule.markSubtree;
+    pub const dequeueSubtree = schedule.dequeueSubtree;
+    pub const retryScan = schedule.retryScan;
 
     /// The node's path, built from its ancestors' names.
     fn pathOf(self: *Service, id: Id, buf: []u8) ?[:0]const u8 {
@@ -592,12 +521,12 @@ pub const Service = struct {
                 self.prefer_scan = true;
                 return .{ .work = .{ .resolve = copy }, .path = null };
             }
-            for (&self.queues, 0..) |*q, level| {
-                while (q.pop()) |ref| {
-                    const id = self.liveId(ref) orelse continue;
+            for (&self.queues) |*q| {
+                while (q.first != no_id) {
+                    const id = q.first;
                     const node = &self.nodes.items[id];
-                    if (node.queued == null or @intFromEnum(node.queued.?) != level) continue;
-                    self.setQueued(node, null);
+                    const ref = self.refOf(id);
+                    self.unqueue(id);
                     if (node.scanning or !node.self_pending) continue;
                     const path = self.pathOf(id, path_buf) orelse {
                         self.failScan(id);
@@ -658,7 +587,7 @@ pub const Service = struct {
                 up.self_pending = true;
                 self.propagate(parent, 0, 1, 0);
             }
-            self.enqueue(parent, level) catch self.failScan(id);
+            self.enqueue(parent, level);
         }
     }
 
@@ -677,74 +606,9 @@ pub const Service = struct {
         self.bump();
     }
 
-    pub fn finishScan(self: *Service, id: Id, own: i64, found: []const Child, unreadable: bool) !void {
-        const node = &self.nodes.items[id];
-        node.scanning = false;
-        const own_delta = own - node.own;
-        node.own = own;
-        const unread_delta: i64 = @as(i64, @intFromBool(unreadable)) - @intFromBool(node.self_unreadable);
-        node.self_unreadable = unreadable;
-        self.propagate(id, own_delta, 0, unread_delta);
+    pub const finishScan = reconcile.finishScan;
 
-        // Children that are gone, or were moved elsewhere.
-        var listed: std.AutoHashMapUnmanaged(Key, void) = .empty;
-        defer listed.deinit(self.allocator);
-        try listed.ensureTotalCapacity(self.allocator, @intCast(found.len));
-        for (found) |f| listed.putAssumeCapacity(f.key, {});
-        var i: usize = 0;
-        while (i < self.nodes.items[id].children.items.len) {
-            const child = self.nodes.items[id].children.items[i];
-            if (listed.contains(self.nodes.items[child].key)) {
-                i += 1;
-                continue;
-            }
-            // A window that asked for it by path finds it again by path.
-            self.detach(child);
-            self.freeSubtree(child);
-        }
-        for (found) |f| {
-            if (self.by_key.get(f.key)) |existing| {
-                const ex = &self.nodes.items[existing];
-                if (ex.parent == id) {
-                    if (!std.mem.eql(u8, ex.name, f.name)) {
-                        const renamed = try self.allocator.dupe(u8, f.name);
-                        self.allocator.free(ex.name);
-                        self.nodes.items[existing].name = renamed;
-                    }
-                    // Lost under its old name (`lostScan`): read it now.
-                    const child = &self.nodes.items[existing];
-                    if (child.self_pending and child.queued == null and !child.scanning) try self.enqueue(existing, self.nodes.items[id].level);
-                    continue;
-                }
-                if (existing == id or self.isAncestor(existing, id)) continue;
-                // Moved here from elsewhere, or measured before as a root.
-                self.detach(existing);
-                const renamed = try self.allocator.dupe(u8, f.name);
-                self.allocator.free(self.nodes.items[existing].name);
-                self.nodes.items[existing].name = renamed;
-                try self.attach(id, existing);
-                if (self.nodes.items[id].paused) self.dequeueSubtree(existing);
-                continue;
-            }
-            const child = try self.newNode(f.key, f.name, self.nodes.items[id].level);
-            self.nodes.items[child].paused = self.nodes.items[id].paused;
-            try self.attach(id, child);
-            try self.enqueue(child, self.nodes.items[id].level);
-        }
-
-        const after = &self.nodes.items[id];
-        after.self_pending = false;
-        self.propagate(id, 0, -1, 0);
-        if (after.rescan) {
-            after.rescan = false;
-            after.self_pending = true;
-            self.propagate(id, 0, 1, 0);
-            try self.enqueue(id, after.level);
-        }
-        self.bump();
-    }
-
-    fn isAncestor(self: *Service, maybe: Id, of: Id) bool {
+    pub fn isAncestor(self: *Service, maybe: Id, of: Id) bool {
         var at = self.nodes.items[of].parent;
         while (at != no_id) : (at = self.nodes.items[at].parent) if (at == maybe) return true;
         return false;
@@ -795,7 +659,7 @@ pub const Service = struct {
             return;
         }
         entry.idle = false;
-        self.enqueueSubtree(id, entry.level) catch {};
+        self.enqueueSubtree(id, entry.level);
     }
 };
 
@@ -807,4 +671,5 @@ fn nowMs() i64 {
 
 test {
     _ = @import("sizetree_internal_tests.zig");
+    _ = @import("sizetree_reconcile_tests.zig");
 }
