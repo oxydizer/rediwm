@@ -15,6 +15,8 @@ pub const Notice = enum { none, opening, failed };
 pub const Tab = struct { id: u64, title: []const u8, active: bool, attention: bool };
 pub const Strip = struct {
     tabs: []const Tab = &.{},
+    layout: window_chrome.Layout = .standard,
+    inset_left: i32 = 0,
     first: usize = 0,
     hover: u64 = 0,
     notice: Notice = .none,
@@ -64,27 +66,35 @@ pub const Geometry = struct {
 pub const drag_gap: f32 = 48;
 
 pub fn geometry(width: i32, density: f32, strip: Strip) Geometry {
-    const height: f32 = @floatFromInt((window_chrome.Metrics{ .density = density }).titlebarHeight());
-    const h = @max(18, height - 12 * density);
+    const m: window_chrome.Metrics = .{ .density = density, .layout = strip.layout };
+    const compact = strip.layout == .files_tabs;
+    const height: f32 = @floatFromInt(m.titlebarHeight());
+    const h = if (compact) window_chrome.Metrics.files_tab_height else @max(18, height - 12 * density);
+    const y = if (compact) window_chrome.Metrics.files_tab_top else (height - h) / 2;
     // Room is kept before the window controls so the titlebar can always be grabbed.
-    const right = @as(f32, @floatFromInt(window_chrome.controlRectScaled(width, .minimize, density).x)) - (10 + drag_gap) * density;
-    var left: f32 = 8 * density;
-    const leading: ?Rect = if (strip.leading) .{ .x = left, .y = (height - h) / 2, .w = h, .h = h } else null;
-    if (leading != null) left += h + 4 * density;
-    const plus_size = @min(26 * density, h);
+    const control_clearance = if (compact) 8 + 16 else (10 + drag_gap) * density;
+    const right = @as(f32, @floatFromInt(window_chrome.controlRectFor(width, .minimize, m).x)) - control_clearance;
+    var left: f32 = if (compact) @as(f32, @floatFromInt(strip.inset_left + window_chrome.Metrics.files_padding)) else 8 * density;
+    const leading_size = if (compact) height - y - 6 else h;
+    const leading: ?Rect = if (strip.leading) .{ .x = left, .y = y, .w = leading_size, .h = leading_size } else null;
+    if (leading != null) left += leading_size + 4 * density;
+    const plus_size = if (compact) 24 else @min(26 * density, h);
+    const plus_y = if (compact) height - plus_size - 4 else (height - plus_size) / 2;
     const available = @max(0, right - left - plus_size - 8);
-    if (available < 50 * density) return .{ .x = left, .y = (height - h) / 2, .height = h, .width = 0, .first = 0, .count = 0, .plus = .{ .x = left, .y = (height - plus_size) / 2, .w = @max(0, @min(plus_size, right - left)), .h = plus_size }, .previous = null, .next = null, .leading = leading };
-    const overflow = @as(f32, @floatFromInt(strip.tabs.len)) * (85 * density + 4) > available;
+    if (available < 50 * density) return .{ .x = left, .y = y, .height = h, .width = 0, .first = 0, .count = 0, .plus = .{ .x = left, .y = plus_y, .w = @max(0, @min(plus_size, right - left)), .h = plus_size }, .previous = null, .next = null, .leading = leading };
+    const min_width = if (compact) 108 else 85 * density;
+    const max_width = if (compact) 188 else 170 * density;
+    const overflow = @as(f32, @floatFromInt(strip.tabs.len)) * (min_width + 4) > available;
     const arrow_size = if (overflow) @min(22 * density, h) else 0;
     const space = @max(1, available - 2 * arrow_size);
-    const count = @min(strip.tabs.len, @max(1, @as(usize, @intFromFloat(@floor(space / @max(1, 85 * density + 4))))));
+    const count = @min(strip.tabs.len, @max(1, @as(usize, @intFromFloat(@floor(space / @max(1, min_width + 4))))));
     const first = @min(strip.first, strip.tabs.len -| count);
-    const tab_width = @max(1, @min(170 * density, space / @as(f32, @floatFromInt(@max(1, count))) - 4));
-    const y = (height - h) / 2;
+    const tab_width = @max(1, @min(max_width, space / @as(f32, @floatFromInt(@max(1, count))) - 4));
     const previous: ?Rect = if (overflow) .{ .x = left, .y = y, .w = arrow_size, .h = h } else null;
     left += arrow_size;
     const end = left + @as(f32, @floatFromInt(count)) * (tab_width + 4);
-    return .{ .x = left, .y = y, .height = h, .width = tab_width, .first = first, .count = count, .previous = previous, .next = if (overflow) .{ .x = end, .y = y, .w = arrow_size, .h = h } else null, .plus = .{ .x = end + arrow_size, .y = (height - plus_size) / 2, .w = plus_size, .h = plus_size }, .leading = leading };
+    const plus_x = end + arrow_size + @as(f32, if (!compact) 0 else if (overflow) 2 else -2);
+    return .{ .x = left, .y = y, .height = h, .width = tab_width, .first = first, .count = count, .previous = previous, .next = if (overflow) .{ .x = end, .y = y, .w = arrow_size, .h = h } else null, .plus = .{ .x = plus_x, .y = plus_y, .w = plus_size, .h = plus_size }, .leading = leading };
 }
 fn contains(r: Rect, x: f64, y: f64) bool {
     return x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h;

@@ -34,7 +34,6 @@ const button_glyph_scale = window_chrome.button_glyph_scale;
 
 // The app icon sits where the title text used to start; the title shifts
 // right to make room for it when one is found.
-const title_inset = window_chrome.title_inset;
 pub const title_icon_size = window_chrome.title_icon_size;
 const title_icon_gap = window_chrome.title_icon_gap;
 
@@ -103,6 +102,10 @@ pub const ChromeState = struct {
         return logical_width - self.inset_right;
     }
 
+    pub fn metrics(self: ChromeState) Metrics {
+        return .{ .density = self.density, .layout = self.tabs.layout };
+    }
+
     fn titleFont(self: ChromeState) text.Font {
         return if (self.active) .manrope_bold else .manrope;
     }
@@ -113,6 +116,7 @@ pub const ChromeState = struct {
 pub const TitlebarMemo = struct {
     font_generation: u32 = 0,
     tabs_hash: u64 = 0,
+    layout: window_chrome.Layout = .standard,
     // The band's width. The frame's height is not an input: a window resized
     // only in height keeps its titlebar.
     width: i32,
@@ -168,6 +172,7 @@ pub const TitlebarMemo = struct {
             .workspace_active_border = t.workspace_active_border,
             .title_ptr = title_ptr,
             .tabs_hash = @import("chrome_tabs.zig").hash(state.tabs),
+            .layout = state.tabs.layout,
             .scale = state.scale,
             .hover = state.hover,
             .chip_pos = state.chip_pos,
@@ -229,6 +234,7 @@ pub const TitlebarMemo = struct {
         if (a.border_width != b.border_width) return false;
         if (a.chrome_button_bevel != b.chrome_button_bevel) return false;
         if (a.density != b.density) return false;
+        if (a.layout != b.layout) return false;
         if (a.active != b.active) return false;
         if (a.workspace_focus != b.workspace_focus) return false;
         if (a.title_ptr != b.title_ptr or a.tabs_hash != b.tabs_hash) return false;
@@ -278,6 +284,7 @@ pub inline fn mix(a: f32, b: f32, t: f32) f32 {
 
 pub const controlRect = window_chrome.controlRect;
 pub const controlRectScaled = window_chrome.controlRectScaled;
+pub const controlRectFor = window_chrome.controlRectFor;
 
 // The titlebar: a plain band. The window's shape gives it its corners and the
 // output pass draws the border ring over it, so no pixel here is shaped.
@@ -314,7 +321,7 @@ pub const ChromeBuffer = struct {
         errdefer gpa.destroy(frame);
 
         const width = devicePixels(logical_width, state.scale);
-        const height = devicePixels((Metrics{ .density = state.density }).titlebarHeight(), state.scale);
+        const height = devicePixels(state.metrics().titlebarHeight(), state.scale);
         const length: usize = @intCast(width * height);
         const pixels = try gpa.alloc(u32, length);
         errdefer gpa.free(pixels);
@@ -384,7 +391,7 @@ pub const ChromeBuffer = struct {
             }
         }
         var right = frame.logical_width;
-        if (controls_changed) right = @min(right, @max(0, controlRectScaled(frame.state.controlsWidth(frame.logical_width), .minimize, frame.state.density).x - 1));
+        if (controls_changed) right = @min(right, @max(0, controlRectFor(frame.state.controlsWidth(frame.logical_width), .minimize, frame.state.metrics()).x - 1));
         if (right < frame.logical_width) {
             spans[count] = .{ .x0 = right, .x1 = frame.logical_width };
             count += 1;
@@ -396,7 +403,7 @@ pub const ChromeBuffer = struct {
         }.less);
         // A narrow frame can make the regions overlap. Rasterize their union
         // once, so text coverage is never composited twice.
-        const band_h = (Metrics{ .density = state.density }).titlebarHeight();
+        const band_h = state.metrics().titlebarHeight();
         var i: usize = 0;
         while (i < count) {
             var span = spans[i];
@@ -411,9 +418,9 @@ pub const ChromeBuffer = struct {
 
     /// The span the title can occupy: after the app icon, before the controls.
     fn titleRect(logical_width: i32, state: ChromeState) text.Rect {
-        const m: Metrics = .{ .density = state.density };
-        const title_left: i32 = state.inset_left + if (state.icon != null) m.length(title_inset) + m.iconSize() + m.length(title_icon_gap) else m.length(title_inset);
-        const controls_left = @min(controlRectScaled(state.controlsWidth(logical_width), .minimize, state.density).x, plate.titleRight(logical_width, state) orelse std.math.maxInt(i32));
+        const m = state.metrics();
+        const title_left: i32 = state.inset_left + m.titleInset() + if (state.icon != null) m.iconSize() + m.length(title_icon_gap) else 0;
+        const controls_left = @min(controlRectFor(state.controlsWidth(logical_width), .minimize, m).x, plate.titleRight(logical_width, state) orelse std.math.maxInt(i32));
         return .{ .x = title_left, .y = 0, .w = @max(0, controls_left - title_left), .h = m.titlebarHeight() - frameBorder() };
     }
 
@@ -423,8 +430,7 @@ pub const ChromeBuffer = struct {
     fn titleExtent(frame: *const ChromeBuffer) i32 {
         if (frame.state.title.len == 0) return 0;
         const rect = titleRect(frame.logical_width, frame.state);
-        const m: Metrics = .{ .density = frame.state.density };
-        const width = text.measureWidth(frame.state.title, frame.state.titleFont(), theme.global.title_size * m.density, frame.state.scale) catch return rect.w;
+        const width = text.measureWidth(frame.state.title, frame.state.titleFont(), theme.global.title_size * frame.state.density, frame.state.scale) catch return rect.w;
         return @min(rect.w, width + 2);
     }
 
@@ -453,11 +459,11 @@ pub const ChromeBuffer = struct {
 
     fn rasterize(frame: *ChromeBuffer, clip: ?Rect) !void {
         const scale = frame.state.scale;
-        const m: Metrics = .{ .density = frame.state.density };
+        const m = frame.state.metrics();
         const controls_width = frame.state.controlsWidth(frame.logical_width);
-        const min_btn = controlRectScaled(controls_width, .minimize, frame.state.density);
-        const max_btn = controlRectScaled(controls_width, .maximize, frame.state.density);
-        const close_btn = controlRectScaled(controls_width, .close, frame.state.density);
+        const min_btn = controlRectFor(controls_width, .minimize, m);
+        const max_btn = controlRectFor(controls_width, .maximize, m);
+        const close_btn = controlRectFor(controls_width, .close, m);
         // All glyphs fit inside their buttons. Include a full device pixel
         // around the group for antialiasing, including fractional scales.
         const control_left = @as(f32, @floatFromInt(min_btn.x)) - 1 / scale;
@@ -465,7 +471,7 @@ pub const ChromeBuffer = struct {
         const control_top = @as(f32, @floatFromInt(min_btn.y)) - 1 / scale;
         const control_bottom = @as(f32, @floatFromInt(min_btn.y + min_btn.h)) + 1 / scale;
         const diag = std.math.sqrt1_2;
-        const icon_left: f32 = @floatFromInt(frame.state.inset_left + m.length(title_inset));
+        const icon_left: f32 = @floatFromInt(frame.state.inset_left + m.titleInset());
         const icon_top: f32 = @floatFromInt(@divTrunc(m.titlebarHeight() - m.iconSize(), 2));
         const base = Color.chrome();
         const title_plate = plate.polygon(frame.logical_width, frame.state);

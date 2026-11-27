@@ -29,7 +29,17 @@ pub fn breadcrumbs(self: *App, target: ?*c.cairo_t, hit_x: ?f64) ?BreadcrumbHit 
     defer if (surface) |s| c.cairo_surface_destroy(s);
     const cr = target orelse (c.cairo_create(surface) orelse return null);
     defer if (target == null) c.cairo_destroy(cr);
+    if (target == null) c.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
     const r = header.field(self.w);
+    const area = App.textArea(r, false, true);
+    const pad_y = header.field_pad_y;
+    const font_size = header.field_font;
+    const metrics = @import("app_draw.zig").fontMetrics(cr, font_size);
+    const baseline = area.y + (area.h - metrics.ascent - metrics.descent) / 2 + metrics.ascent;
+    const archive_icon = 16;
+    const archive_advance = archive_icon + 4;
+    const separator_width = 10;
+    const crumb_padding = 4;
     var ends: [128]usize = undefined;
     var labels: [128][]const u8 = undefined;
     var widths: [128]f64 = undefined;
@@ -57,43 +67,46 @@ pub fn breadcrumbs(self: *App, target: ?*c.cairo_t, hit_x: ?f64) ?BreadcrumbHit 
     };
     var total: f64 = 0;
     for (labels[0..count], 0..) |label, i| {
-        widths[i] = measureText(cr, label, shell_ui.textSize(), false) + 28 + @as(f64, if (ends[i] == self.history.archive_len) 22 else 0);
+        widths[i] = measureText(cr, label, font_size, false) + 2 * crumb_padding +
+            @as(f64, if (i + 1 < count) separator_width + 6 else 0) +
+            @as(f64, if (ends[i] == self.history.archive_len) archive_advance else 0);
         total += widths[i];
     }
     var first: usize = 0;
-    while (first + 1 < count and total > r.w - 16) : (first += 1) total -= widths[first];
+    while (first + 1 < count and total - crumb_padding > area.w) : (first += 1) total -= widths[first];
     if (target != null) {
         var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) }) orelse return null;
         _ = ui_field.paintFrame(&layer.renderer, layer.local(), .{}, .{});
         layer.finish();
         c.cairo_save(cr);
-        c.cairo_rectangle(cr, r.x + 4, r.y, r.w - 8, r.h);
+        c.cairo_rectangle(cr, area.x - crumb_padding, r.y + pad_y, area.w + crumb_padding, r.h - 2 * pad_y);
         c.cairo_clip(cr);
     }
     defer if (target != null) c.cairo_restore(cr);
-    var x = r.x + 8;
+    var x = area.x - crumb_padding;
     for (first..count) |i| {
+        const right = @min(x + widths[i] - @as(f64, if (i + 1 < count) separator_width else 0), area.x + area.w);
         if (hit_x) |hit| {
-            if (hit >= x and hit < @min(x + widths[i] - 10, r.x + r.w - 8)) return .{ .path = path[0..ends[i]], .index = i };
+            if (hit >= x and hit < right) return .{ .path = path[0..ends[i]], .index = i };
         }
         if (target != null) {
             const alpha = self.breadcrumb_hover[i].frame.alpha;
             if (alpha > 0) {
-                roundedRect(cr, x, r.y + 4, @min(widths[i] - 10, r.x + r.w - 8 - x), r.h - 8, 5);
+                roundedRect(cr, x, r.y + pad_y, right - x, r.h - 2 * pad_y, 5);
                 setSource(cr, withAlpha(ui_theme.global.app_item_hover, alpha));
                 c.cairo_fill(cr);
             }
             setSource(cr, ui_theme.global.window_fg);
             const archive_crumb = ends[i] == self.history.archive_len;
             if (archive_crumb) {
-                if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(x + 4), .y = @floatCast(r.y + 10), .w = 18, .h = 18 })) |icon_layer| {
+                if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(x + crumb_padding), .y = @floatCast(r.y + (r.h - archive_icon) / 2), .w = archive_icon, .h = archive_icon })) |icon_layer| {
                     var layer = icon_layer;
-                    layer.renderer.drawIcon(0, 0, 18, 18, .{ .id = .folder, .color = ui_theme.global.window_fg });
+                    layer.renderer.drawIcon(0, 0, archive_icon, archive_icon, .{ .id = .folder, .color = ui_theme.global.window_fg });
                     layer.finish();
                 }
             }
-            drawText(cr, labels[i], x + 4 + @as(f64, if (archive_crumb) 22 else 0), r.y + 23, shell_ui.textSize(), false);
-            if (i + 1 < count) drawText(cr, "›", x + widths[i] - 20, r.y + 23, shell_ui.textSize(), false);
+            drawText(cr, labels[i], x + crumb_padding + @as(f64, if (archive_crumb) archive_advance else 0), baseline, font_size, false);
+            if (i + 1 < count) drawText(cr, "›", right + 2, baseline, font_size, false);
         }
         x += widths[i];
     }
@@ -180,7 +193,9 @@ pub fn damageSidebarDivider(self: *App) void {
 }
 
 pub fn placeTargetStep(self: *App) i32 {
-    return if (self.h - self.contentTop() < 480) 32 else 40;
+    // Keep the sidebar's window-height breakpoints when the toolbar gets shorter.
+    const threshold: i32 = if (header.isNarrow(self.w, self.inRepository())) 632 else 592;
+    return if (self.h < threshold + @import("app_audio_bar.zig").extraHeight(self)) 32 else 40;
 }
 
 /// Moves `px` toward `target` along the panel slide curve; true when the

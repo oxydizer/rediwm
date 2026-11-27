@@ -346,7 +346,7 @@ def ui_tests(tmp, home, env):
             target = home / "folder with ' quotes"
             target.mkdir()
             # Terminal keeps Ctrl+L; explicitly focus the file list first.
-            click(350, 160)
+            click(350, 130)
             key(38, (29,))
             ipc.type_text(str(target))
             key(28)
@@ -526,7 +526,7 @@ def terminal_drop_test(tmp, home, env, list_view=False):
                 ipc.pointer_button(272, False)
             if list_view:
                 width = ipc.get_window_debug(ident)['client_box']['width']
-                click(width - 232, 80)
+                click(width - 226, 62)
             key(62)
             ready = home / (source.name + '-ready')
             ipc.type_text('printf ready > ' + shlex.quote(str(ready)))
@@ -535,7 +535,7 @@ def terminal_drop_test(tmp, home, env, list_view=False):
             # Build a command before giving focus to the list. The drop must
             # insert arguments, preserve that command and return keyboard focus.
             ipc.type_text("printf '%s\\0' > " + shlex.quote(str(output)) + ' ')
-            sx, sy = 250, (178 if list_view else 158)
+            sx, sy = 250, (148 if list_view else 128)
             click(500, 300)  # Focus empty space so single-click opening cannot navigate.
             key(30, (29,))
             move(sx, sy)

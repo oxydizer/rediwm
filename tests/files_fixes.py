@@ -209,26 +209,26 @@ def run(scale="1"):
                 ipc.focus_window(first["id"])
                 time.sleep(.2)
                 # Header sorting stays folders-first, preserves focus and is reversible.
-                click(first, 727, 80)
-                click(first, 640, 125)  # Size ascending
+                click(first, 734, 62)
+                click(first, 640, 95)  # Size ascending
                 key(102)
                 key(46, ctrl=True)
                 assert paths() == [source / "a.txt"]
-                click(first, 640, 125)  # Size descending
+                click(first, 640, 95)  # Size descending
                 key(102)
                 key(46, ctrl=True)
                 assert paths() == [source / "b.log"]
-                click(first, 750, 125)  # Type ascending
+                click(first, 750, 95)  # Type ascending
                 key(102)
                 key(46, ctrl=True)
                 assert paths() == [source / "b.log"]
-                click(first, 860, 125)  # Modified ascending
+                click(first, 860, 95)  # Modified ascending
                 key(102)
                 key(46, ctrl=True)
                 assert paths() == [source / "a.txt"]
 
                 # History restores selection after leaving and returning.
-                click(first, 640, 125)
+                click(first, 640, 95)
                 key(102)
                 key(106, shift=True)
                 key(46, ctrl=True)

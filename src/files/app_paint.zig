@@ -36,8 +36,8 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
     c.cairo_fill(cr);
     setSource(cr, ui_theme.global.app_divider);
     c.cairo_set_line_width(cr, 1);
-    c.cairo_move_to(cr, 0, 54.5);
-    c.cairo_line_to(cr, width, 54.5);
+    c.cairo_move_to(cr, 0, header.nav_height - 0.5);
+    c.cairo_line_to(cr, width, header.nav_height - 0.5);
     c.cairo_move_to(cr, 0, @as(f64, @floatFromInt(self.contentTop())) - 0.5);
     c.cairo_line_to(cr, width, @as(f64, @floatFromInt(self.contentTop())) - 0.5);
     c.cairo_stroke(cr);
@@ -50,7 +50,7 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
             const enabled = self.toolbarButtonEnabled(action);
             const active = (action == .grid and !self.list_view) or (action == .list and self.list_view) or
                 (action == .filter and (self.folders_only or self.show_hidden or self.changedOnly())) or (action == .search and self.search_visible);
-            const opts: ui_button.Options = switch (action) {
+            var opts: ui_button.Options = switch (action) {
                 .new => .{ .leading_icon = .plus, .label = tr("New") },
                 .sort => .{ .leading_icon = .sort, .label = switch (self.effectiveSort()) {
                     .name, .name_desc => tr("Name"),
@@ -59,8 +59,15 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
                     .type, .type_desc => tr("Type"),
                 } },
                 .filter => .{ .leading_icon = .filter, .label = tr("Filter") },
-                else => .{ .variant = .ghost, .icon = header.glyph(action), .icon_scale = 0.56, .label = @tagName(action) },
+                else => .{ .variant = .ghost, .icon = header.glyph(action), .icon_scale = 16.0 / 28.0, .label = @tagName(action) },
             };
+            if (opts.leading_icon != null) {
+                opts.size = .sm;
+                opts.font_size = 12;
+                opts.icon_gap = 6;
+                opts.alignment = .left;
+                opts.horizontal_padding = 10;
+            }
             var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) }) orelse continue;
             const proximity = self.toolbarButtonProximity(action, self.mouse_x, self.mouse_y);
             const reach = ui_theme.global.border_glow_reach;
@@ -77,7 +84,11 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
                 .proximity_y = proximity.y,
                 .hover_elevation = elevation,
             };
-            if (content) ui_button.paintContent(&layer.renderer, layer.local(), opts, state) else ui_button.paintBackground(&layer.renderer, layer.local(), opts, state);
+            const box = layer.local();
+            if (content) {
+                const inset: f32 = if (opts.leading_icon != null) 4 else 0;
+                ui_button.paintContent(&layer.renderer, .{ .x = box.x, .y = box.y + inset, .w = box.w, .h = box.h - 2 * inset }, opts, state);
+            } else ui_button.paintBackground(&layer.renderer, box, opts, state);
             layer.finish();
         }
     }
@@ -309,8 +320,12 @@ pub fn renderConflictButton(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, 
 // measuring at one size and drawing at another puts the caret a
 // proportion of the prefix width away from the glyph it belongs to, so
 // the error grows with every character typed.
-pub fn fieldFontSize() f64 {
-    return shell_ui.textSize();
+pub fn fieldFontSize(self: *App, edit: *const Editor) f64 {
+    return if (isHeaderEditor(self, edit)) header.field_font else shell_ui.textSize();
+}
+
+fn isHeaderEditor(self: *App, edit: *const Editor) bool {
+    return edit == &self.location or edit == &self.search;
 }
 
 pub fn renderLocationBar(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64) void {
@@ -323,19 +338,22 @@ pub fn renderLocationBar(self: *App, cr: *c.cairo_t, x: f64, y: f64, w: f64, h: 
 }
 
 /// The shared field look: the search box carries the search icon.
-pub fn fieldOptions(search: bool) ui_field.Options {
-    return .{ .leading_icon = if (search) .search else null };
+pub fn fieldOptions(search: bool, compact: bool) ui_field.Options {
+    return .{
+        .leading_icon = if (search) .search else null,
+        .horizontal_padding = if (compact) header.field_pad_x else null,
+    };
 }
 
 /// Where an editor's text runs inside its field.
-pub fn textArea(rect: header.Rect, search: bool) header.Rect {
-    const area = ui_field.arrange(.{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = @floatCast(rect.w), .h = @floatCast(rect.h) }, fieldOptions(search), ui_theme.shellPalette()).text;
+pub fn textArea(rect: header.Rect, search: bool, compact: bool) header.Rect {
+    const area = ui_field.arrange(.{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = @floatCast(rect.w), .h = @floatCast(rect.h) }, fieldOptions(search, compact), ui_theme.shellPalette()).text;
     return .{ .x = area.x, .y = area.y, .w = area.w, .h = area.h };
 }
 
 /// The active editor's text area, for pointer hit testing.
 pub fn editorTextArea(self: *App) header.Rect {
-    return textArea(self.editorRect(), self.dialog == null and self.focus == .search);
+    return textArea(self.editorRect(), self.dialog == null and self.focus == .search, if (self.activeEditor()) |edit| isHeaderEditor(self, edit) else false);
 }
 
 pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
@@ -453,7 +471,7 @@ pub fn placeCaret(self: *App, x: f64, extend: bool) void {
     var previous: f64 = 0;
     while (p < edit.text.items.len) {
         const n = Editor.next(edit.text.items, p);
-        const pen = measureText(cr, edit.text.items[0..n], fieldFontSize(), false);
+        const pen = measureText(cr, edit.text.items[0..n], self.fieldFontSize(edit), false);
         if (target < (previous + pen) / 2) break;
         previous = pen;
         p = n;
@@ -472,9 +490,10 @@ pub fn editorCaretRect(self: *App) ?header.Rect {
     defer c.cairo_destroy(cr);
     // Measure at the buffer scale, as renderEditor and placeCaret do.
     c.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
-    const metrics = fontMetrics(cr, fieldFontSize());
+    const font_size = self.fieldFontSize(edit);
+    const metrics = fontMetrics(cr, font_size);
     const ink_h = metrics.ascent + metrics.descent;
-    const pen = measureText(cr, edit.text.items[0..@min(edit.cursor, edit.text.items.len)], fieldFontSize(), false);
+    const pen = measureText(cr, edit.text.items[0..@min(edit.cursor, edit.text.items.len)], font_size, false);
     return .{ .x = area.x - edit.scroll + pen, .y = area.y + (area.h - ink_h) / 2, .w = 2, .h = ink_h };
 }
 
@@ -482,24 +501,26 @@ pub fn editorCaretRect(self: *App) ?header.Rect {
 /// editor's text, selection, any input-method preedit and the caret in the
 /// theme's colours.
 pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect, focused: bool, search: bool) void {
+    const compact = isHeaderEditor(self, edit);
+    const font_size = self.fieldFontSize(edit);
     if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(rect.x), .y = @floatCast(rect.y), .w = @floatCast(rect.w), .h = @floatCast(rect.h) })) |begun| {
         var layer = begun;
-        _ = ui_field.paintFrame(&layer.renderer, layer.local(), fieldOptions(search), .{ .focused = focused });
+        _ = ui_field.paintFrame(&layer.renderer, layer.local(), fieldOptions(search, compact), .{ .focused = focused });
         layer.finish();
     }
     const t = ui_theme.shellPalette();
-    const area = textArea(rect, search);
+    const area = textArea(rect, search, compact);
     const text = edit.text.items;
     const sel = edit.selection();
-    const metrics = fontMetrics(cr, fieldFontSize());
+    const metrics = fontMetrics(cr, font_size);
     const ink_h = metrics.ascent + metrics.descent;
     const top = area.y + (area.h - ink_h) / 2;
     const view_w = area.w;
     const preedit: []const u8 = if (focused and self.preedit_editor == edit) self.preedit.items else "";
     const caret = @min(edit.cursor, text.len);
-    const pen = measureText(cr, text[0..caret], fieldFontSize(), false);
-    const preedit_w = if (preedit.len > 0) measureText(cr, preedit, fieldFontSize(), false) else 0;
-    const text_w = measureText(cr, text, fieldFontSize(), false) + preedit_w;
+    const pen = measureText(cr, text[0..caret], font_size, false);
+    const preedit_w = if (preedit.len > 0) measureText(cr, preedit, font_size, false) else 0;
+    const text_w = measureText(cr, text, font_size, false) + preedit_w;
     if (focused) {
         const margin = @min(view_w / 4, 12);
         const end = pen + preedit_w;
@@ -510,11 +531,12 @@ pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect
     const x = area.x - if (focused) edit.scroll else 0;
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
-    c.cairo_rectangle(cr, area.x, area.y + 2, view_w, area.h - 4);
+    const pad_y: f64 = if (compact) header.field_pad_y else 2;
+    c.cairo_rectangle(cr, area.x, area.y + pad_y, view_w, area.h - 2 * pad_y);
     c.cairo_clip(cr);
     if (focused and sel[0] != sel[1]) {
-        const left = measureText(cr, text[0..sel[0]], fieldFontSize(), false);
-        const right = measureText(cr, text[0..sel[1]], fieldFontSize(), false);
+        const left = measureText(cr, text[0..sel[0]], font_size, false);
+        const right = measureText(cr, text[0..sel[1]], font_size, false);
         setSource(cr, t.selectionColor());
         c.cairo_rectangle(cr, x + left, top, right - left, ink_h);
         c.cairo_fill(cr);
@@ -529,17 +551,17 @@ pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect
     // Half-strength white, not the shell's blue-grey `faint`.
     setSource(cr, if (placeholder) withAlpha(t.fg, 0.5) else t.fg);
     if (preedit.len == 0) {
-        drawText(cr, if (placeholder) hint.? else text, x, top + metrics.ascent, fieldFontSize(), false);
+        drawText(cr, if (placeholder) hint.? else text, x, top + metrics.ascent, font_size, false);
     } else {
         // Compose at the caret: the preedit is not part of the text yet, so
         // the suffix is drawn after it and the composition is underlined.
-        drawText(cr, text[0..caret], x, top + metrics.ascent, fieldFontSize(), false);
+        drawText(cr, text[0..caret], x, top + metrics.ascent, font_size, false);
         setSource(cr, t.accent);
-        drawText(cr, preedit, x + pen, top + metrics.ascent, fieldFontSize(), false);
+        drawText(cr, preedit, x + pen, top + metrics.ascent, font_size, false);
         c.cairo_rectangle(cr, x + pen, top + ink_h - 1, preedit_w, 1);
         c.cairo_fill(cr);
         setSource(cr, t.fg);
-        drawText(cr, text[caret..], x + pen + preedit_w, top + metrics.ascent, fieldFontSize(), false);
+        drawText(cr, text[caret..], x + pen + preedit_w, top + metrics.ascent, font_size, false);
     }
     if (focused) {
         setSource(cr, t.caretColor());

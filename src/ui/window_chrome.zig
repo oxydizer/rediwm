@@ -33,9 +33,17 @@ const btn_size: i32 = 34;
 const close_size: i32 = 34;
 // Preserve the original icon/control proportions when changing bar height.
 const reference_titlebar_height: f32 = 55;
+pub const Layout = enum { standard, files, files_tabs };
 // Decoration density and the user-selected height are independent of output raster scale.
 pub const Metrics = struct {
     density: f32 = 1,
+    layout: Layout = .standard,
+    pub const files_padding = 12;
+    pub const files_tab_top = 4;
+    pub const files_tab_height = 30;
+    pub const files_control_bottom = 6;
+    const files_control_side = 28;
+    const files_vertical_padding = 8;
 
     pub fn contentScale(self: Metrics) f32 {
         return self.density * theme.global.chrome_height / reference_titlebar_height;
@@ -49,12 +57,20 @@ pub const Metrics = struct {
         return @max(1, @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(title_icon_size)) * self.contentScale() * icon_scale))));
     }
 
+    pub fn titleInset(self: Metrics) i32 {
+        return if (self.layout == .standard) self.length(title_inset) else files_padding;
+    }
+
     pub fn titlebarHeight(self: Metrics) i32 {
-        return @max(1, @as(i32, @intFromFloat(@round(theme.global.chrome_height * self.density))));
+        return switch (self.layout) {
+            .standard => @max(1, @as(i32, @intFromFloat(@round(theme.global.chrome_height * self.density)))),
+            .files => files_control_side + 2 * files_vertical_padding,
+            .files_tabs => files_tab_top + files_tab_height,
+        };
     }
 
     pub fn controlGap(self: Metrics) i32 {
-        return @as(i32, @intFromFloat(@round(theme.global.chrome_control_gap * self.density)));
+        return if (self.layout == .standard) @as(i32, @intFromFloat(@round(theme.global.chrome_control_gap * self.density))) else 12;
     }
 };
 
@@ -89,13 +105,31 @@ pub fn controlRect(frame_width: i32, kind: ControlKind) Rect {
 }
 
 pub fn controlRectScaled(frame_width: i32, kind: ControlKind, density: f32) Rect {
-    const m: Metrics = .{ .density = density };
+    return controlRectFor(frame_width, kind, .{ .density = density });
+}
+
+pub fn controlRectFor(frame_width: i32, kind: ControlKind, m: Metrics) Rect {
+    if (m.layout != .standard) {
+        const tabbed = m.layout == .files_tabs;
+        const side: i32 = if (tabbed) 24 else Metrics.files_control_side;
+        const slot: i32 = switch (kind) {
+            .close => 0,
+            .maximize => 1,
+            .minimize => 2,
+        };
+        return .{
+            .x = frame_width - Metrics.files_padding - side - slot * (side + m.controlGap()),
+            .y = if (tabbed) m.titlebarHeight() - side - Metrics.files_control_bottom else Metrics.files_vertical_padding,
+            .w = side,
+            .h = side,
+        };
+    }
     const right_pad: i32 = @intFromFloat(@round(theme.global.chrome_control_right_pad * m.contentScale()));
     const close_x = frame_width - frameBorder() - right_pad - m.length(close_size);
     const max_x = close_x - m.controlGap() - m.length(btn_size);
     const min_x = max_x - m.controlGap() - m.length(btn_size);
     const centered_y = @divTrunc(m.titlebarHeight() - m.length(btn_size), 2);
-    const shift_y: i32 = @intFromFloat(@round(theme.global.chrome_control_offset_y * density));
+    const shift_y: i32 = @intFromFloat(@round(theme.global.chrome_control_offset_y * m.density));
     const y = std.math.clamp(centered_y + shift_y, 0, @max(0, m.titlebarHeight() - m.length(btn_size) - frameBorder()));
     return switch (kind) {
         .close => .{

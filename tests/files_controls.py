@@ -217,9 +217,9 @@ def run():
 
                         for list_view in (False, True):
                             box = ipc.get_window_debug(win["id"])["client_box"]
-                            click(box["width"] - (233 if list_view else 269), 82)
-                            ix, iy = (252, 180) if list_view else (278, 176)
-                            nx, ny = (330, 180) if list_view else (278, 220)
+                            click(box["width"] - (226 if list_view else 256), 62)
+                            ix, iy = (252, 150) if list_view else (278, 146)
+                            nx, ny = (330, 150) if list_view else (278, 190)
                             search("Archive")
                             cursor(ix, iy, "pointer")
                             cursor(nx, ny, "default")
@@ -284,7 +284,7 @@ def run():
                     text(str(archive_dir))
                     key(28)
                     title("archive-check")
-                    click(250, 160)
+                    click(250, 130)
                     key(57)
                     title("sample.zip")
                     key(102)
@@ -298,7 +298,7 @@ def run():
                     title("sample.zip")
                     key(103, alt=True)
                     title("archive-check")
-                    click(250, 160, 273)
+                    click(250, 130, 273)
                     key(108)
                     key(108)
                     key(28)
@@ -404,7 +404,7 @@ def run():
                 title("Home")
 
                 # Toolbar New popup is actionable with the keyboard.
-                click(50, 80)
+                click(50, 62)
                 key(28)
                 text("Toolbar Folder")
                 key(28)
@@ -412,7 +412,7 @@ def run():
 
                 # The client repeats held keys itself, at the compositor's
                 # repeat_info (default 25/s after 400 ms): 1.2 s is ~21 "a"s.
-                click(50, 80)
+                click(50, 62)
                 key(28)
                 action('key', {"keycode": 30, "pressed": True})
                 time.sleep(1.2)
@@ -425,8 +425,8 @@ def run():
                 (home / repeated).rmdir()
 
                 # A right-click targets the clicked item, including rename.
-                click(250, 160, 273)
-                click(320, 317)  # Rename, after Open's separator and three edit rows.
+                click(250, 130, 273)
+                click(320, 287)  # Rename, after Open's separator and three edit rows.
                 text("Archive renamed")
                 key(28)
                 wait_for(lambda: (home / "Archive renamed").is_dir(), "context rename failed")
@@ -450,7 +450,7 @@ def run():
                 # Sort by size, retaining the current query.
                 search("-file.txt")
                 key(28)
-                click(790, 80)  # Sort
+                click(790, 62)  # Sort
                 key(108)
                 key(108)
                 key(28)  # Largest first
@@ -459,18 +459,18 @@ def run():
                 opened("zeta-file.txt")
 
                 # Switching to list changes hit testing as well as painting.
-                click(727, 80)
-                click(300, 210)  # Second 32px row below the pinned header
+                click(734, 62)
+                click(300, 180)  # Second 32px row below the pinned header
                 key(28)
                 opened("alpha-file.txt")
 
                 # Folders-only filter yields no matches for this file query.
-                click(900, 80)
+                click(900, 62)
                 key(28)
                 key(102)
                 key(28)
                 assert not marker.exists(), "filtered file was still activatable"
-                click(900, 80)
+                click(900, 62)
                 key(28)
                 key(102)
                 key(28)
@@ -479,8 +479,8 @@ def run():
                 # Restore a useful preview and show the file context menu.
                 key(38, ctrl=True)  # Ctrl+L clears query and restores location mode.
                 key(1)
-                click(690, 80)  # Grid
-                click(790, 80)
+                click(704, 62)  # Grid
+                click(790, 62)
                 key(28)  # Name ascending
                 key(102)
                 time.sleep(.2)
@@ -530,15 +530,15 @@ def run():
 
                 def drag_divider(start, end):
                     box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
-                    action('move_cursor', {"x": box["x"] + start, "y": box["y"] + 140})
+                    action('move_cursor', {"x": box["x"] + start, "y": box["y"] + 110})
                     action('pointer_button', {"button": 272, "pressed": True})
-                    action('move_cursor', {"x": box["x"] + end, "y": box["y"] + 190})
+                    action('move_cursor', {"x": box["x"] + end, "y": box["y"] + 160})
                     action('pointer_button', {"button": 272, "pressed": False})
 
                 drag_divider(208, 340)
                 wait_for(lambda: pane_width_is(340), "sidebar did not grow with its divider")
                 title("Home")
-                click(727, 80)  # The same divider works in list view.
+                click(734, 62)  # The same divider works in list view.
                 drag_divider(340, 850)
                 wait_for(lambda: pane_width_is(480), "sidebar exceeded half the window width")
                 action('set_window_size', {"id": win["id"], "width": 600, "height": 540})
@@ -551,7 +551,7 @@ def run():
                 wait_for(lambda: pane_width_is(160), "sidebar shrank below its minimum")
                 drag_divider(160, 208)
                 wait_for(lambda: pane_width_is(208), "sidebar divider did not release")
-                click(690, 80)  # Restore the grid for the remaining checks.
+                click(704, 62)  # Restore the grid for the remaining checks.
                 click(70, 305)
                 title("Downloads")
                 click(70, 140)
@@ -620,7 +620,7 @@ def run():
                     image = git_shot()
                     # List cell ends at width-34; Git defaults to 164px.
                     x = image.width - offset
-                    return [image.getpixel((x, 170 + row * 32)) for row in range(3)]
+                    return [image.getpixel((x, 140 + row * 32)) for row in range(3)]
 
                 def changed_badges():
                     modified, deleted, added = badges()
@@ -629,8 +629,8 @@ def run():
                 # Both line-count colours appear beside M: staged and working
                 # changes combine into +28 -3, rather than double counting.
                 def count_pixels(image, row=0):
-                    return image.crop((image.width - 160, 158 + row * 32,
-                                       image.width - 40, 182 + row * 32)).tobytes()
+                    return image.crop((image.width - 160, 128 + row * 32,
+                                       image.width - 40, 152 + row * 32)).tobytes()
                 raw = count_pixels(git_shot())
                 pixels = zip(raw[0::3], raw[1::3], raw[2::3])
                 assert any(g > r + 40 and g > b + 25 for r, g, b in pixels), "added-line count missing"
@@ -641,15 +641,15 @@ def run():
                 image = git_shot()
                 box = request({"version": 1, "command": 'get_window_debug', "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
                 divider = image.width - 198
-                action('move_cursor', {"x": box["x"] + divider, "y": box["y"] + 140})
+                action('move_cursor', {"x": box["x"] + divider, "y": box["y"] + 110})
                 action('pointer_button', {"button": 272, "pressed": True})
-                action('move_cursor', {"x": box["x"] + divider - 48, "y": box["y"] + 190})
+                action('move_cursor', {"x": box["x"] + divider - 48, "y": box["y"] + 160})
                 action('pointer_button', {"button": 272, "pressed": False})
-                wait_for(lambda: (lambda p: p[1] > p[0] + 12)(git_shot().getpixel((image.width - 238, 170))),
+                wait_for(lambda: (lambda p: p[1] > p[0] + 12)(git_shot().getpixel((image.width - 238, 140))),
                          "Name/Git divider did not resize the columns")
-                action('move_cursor', {"x": box["x"] + divider - 48, "y": box["y"] + 140})
+                action('move_cursor', {"x": box["x"] + divider - 48, "y": box["y"] + 110})
                 action('pointer_button', {"button": 272, "pressed": True})
-                action('move_cursor', {"x": box["x"] + divider, "y": box["y"] + 140})
+                action('move_cursor', {"x": box["x"] + divider, "y": box["y"] + 110})
                 action('pointer_button', {"button": 272, "pressed": False})
                 wait_for(changed_badges, "Git columns did not resize back")
                 # Content edits refresh just the counts as well as the status.
@@ -662,12 +662,12 @@ def run():
                 # nested file is the fourth row, labelled with its path from the folder.
                 def nested_row():
                     image = git_shot()
-                    badge = image.getpixel((image.width - 190, 170 + 3 * 32))
-                    return badge[1] > badge[0] + 12, image.crop((250, 170 + 3 * 32 - 12, 700, 170 + 3 * 32 + 12)).tobytes()
+                    badge = image.getpixel((image.width - 190, 140 + 3 * 32))
+                    return badge[1] > badge[0] + 12, image.crop((250, 140 + 3 * 32 - 12, 700, 140 + 3 * 32 + 12)).tobytes()
                 assert nested_row()[0], "nested changed file was not listed flat"
                 with_path = nested_row()[1]
                 def toggle_full_paths():
-                    click(900, 82)  # Filter: folders only, hidden, changed files, full paths
+                    click(900, 62)  # Filter: folders only, hidden, changed files, full paths
                     for _ in range(3):
                         key(108)
                     key(28)
@@ -686,14 +686,14 @@ def run():
                 # repository as an ordinary folder when off and remembers that.
                 prefs = tmp / "state/rediwm/files-view"
                 checkbox_x = git_shot().width - 380
-                click(checkbox_x, 82)
+                click(checkbox_x, 62)
                 wait_for(lambda: prefs.read_bytes()[4] == 0, "Git View checkbox did not turn off")
                 wait_for(lambda: all(max(pixel) - min(pixel) < 30 for pixel in badges(offset=90)),
                          "Git badges stayed with Git View off")
-                click(checkbox_x, 82)
+                click(checkbox_x, 62)
                 wait_for(lambda: prefs.read_bytes()[4] == 1, "Git View checkbox did not turn back on")
                 wait_for(changed_badges, "Git badges did not return with Git View on")
-                click(300, 200)  # Deleted beta.txt is retained but cannot open.
+                click(300, 170)  # Deleted beta.txt is retained but cannot open.
                 key(28)
                 assert not marker.exists(), "deleted tracked file was opened"
                 key(46, ctrl=True)
@@ -774,7 +774,7 @@ def run():
                 time.sleep(.3)
                 # Leaving Git restores the user's grid preference.
                 assert (tmp / "state/rediwm/files-view").read_bytes()[1] == 0
-                click(250, 160)
+                click(250, 130)
                 key(28)
                 title("Archive renamed")
                 key(105, alt=True)
@@ -796,7 +796,7 @@ def run():
                 key(28)
                 title("archive-check")
                 time.sleep(.3)
-                click(250, 160)
+                click(250, 130)
                 key(57)  # Space browses the archive.
                 title("sample.zip")
                 time.sleep(.3)
@@ -824,15 +824,15 @@ def run():
                 key(106, alt=True)
                 title("archive-check")
                 time.sleep(.3)
-                click(250, 160)
-                click(250, 160)
+                click(250, 130)
+                click(250, 130)
                 title("sample.zip")
                 key(103, alt=True)
                 title("archive-check")
                 time.sleep(.3)
 
                 # Extract to uses the real folder chooser, and its result starts the job.
-                click(250, 160, 273)
+                click(250, 130, 273)
                 for _ in range(3):
                     key(108)
                 key(28)
@@ -845,7 +845,7 @@ def run():
                 wait_for(lambda: picker() is None, "folder picker did not cancel")
                 assert list(destination.iterdir()) == []
                 action('focus_window', {"id": win["id"]})
-                click(250, 160, 273)
+                click(250, 130, 273)
                 for _ in range(3):
                     key(108)
                 key(28)
@@ -860,7 +860,7 @@ def run():
                 wait_for(lambda: (destination / "nested/item.txt").exists(), "Extract to failed")
                 assert (destination / "top.txt").read_text() == "top level"
                 action('focus_window', {"id": win["id"]})
-                click(250, 160, 273)
+                click(250, 130, 273)
                 key(108)
                 key(108)
                 key(28)
@@ -869,7 +869,7 @@ def run():
                 print("Archive browsing, member opening, read-only navigation and both extraction actions passed.")
 
                 if preview := os.environ.get("REDIWM_FILES_PREVIEW"):
-                    click(250, 160, 273)
+                    click(250, 130, 273)
                     preview = Path(preview)
                     preview.unlink(missing_ok=True)
                     action('screenshot', {"path": str(preview)})
