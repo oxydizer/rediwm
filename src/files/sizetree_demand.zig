@@ -159,6 +159,10 @@ pub fn pathLevel(entry: *const Entry) ?Level {
     return higher(best(entry.explicit), if (entry.auto_allowed) best(entry.automatic) else null);
 }
 
+pub fn resolutionLevel(entry: *const Entry) ?Level {
+    return higher(best(entry.explicit), best(entry.automatic));
+}
+
 fn count(counts: *[2]usize, level: ?Level, add: bool) void {
     const l = level orelse return;
     const n = &counts[@backingInt(l)];
@@ -171,15 +175,17 @@ fn explicitLevel(record: Record) ?Level {
 
 fn update(svc: *Service, entry: *Entry, old: Record, new: Record) void {
     const before = pathLevel(entry);
+    const resolution_before = resolutionLevel(entry);
     count(&entry.automatic, old.automatic, false);
     count(&entry.explicit, explicitLevel(old), false);
     count(&entry.automatic, new.automatic, true);
     count(&entry.explicit, explicitLevel(new), true);
     const after = pathLevel(entry);
     if (entry.node != no_id) adjustDirect(svc, entry.node, before, after);
-    if (after == null) {
+    const resolution_after = resolutionLevel(entry);
+    if (resolution_after == null) {
         svc.cancelResolution(entry);
-    } else if (before != after and entry.queued != null) {
+    } else if (resolution_before != resolution_after and entry.queued != null) {
         svc.queueResolution(entry);
     }
 }
@@ -211,17 +217,6 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
         break :blk new.value_ptr;
     };
     const old = record.*;
-    var validate = false;
-    if (options.directory_key) |key| {
-        const changed = !std.meta.eql(entry.expected_key, options.directory_key);
-        const mismatch = entry.node != no_id and
-            !std.meta.eql(svc.nodes.items[entry.node].key, key);
-        if (changed) {
-            svc.cancelResolution(entry);
-            entry.expected_key = key;
-        }
-        validate = mismatch;
-    }
     if (record.stopped and !options.force) return true;
     if (options.force) {
         record.stopped = false;
@@ -239,10 +234,18 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
     if (entry.node == no_id) entry.auto_allowed = true;
     update(svc, entry, old, record.*);
     path_cache.touch(svc, entry);
+    var validate = false;
+    if (options.directory_key) |key| {
+        validate = entry.node != no_id and
+            !std.meta.eql(svc.nodes.items[entry.node].key, key);
+        if (entry.node == no_id or validate) {
+            if (!std.meta.eql(entry.expected_key, options.directory_key)) {
+                svc.cancelResolution(entry);
+                entry.expected_key = key;
+            }
+        }
+    }
     if (validate) {
-        const before = pathLevel(entry);
-        entry.auto_allowed = true;
-        adjustDirect(svc, entry.node, before, pathLevel(entry));
         svc.queueResolution(entry);
         svc.bump();
         return true;

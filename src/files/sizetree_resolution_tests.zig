@@ -124,6 +124,56 @@ test "sizetree filesystem resolution overrides stale observed identity" {
     try std.testing.expectEqual(tree.Status.measuring, svc.lookupIdentity(&owner, "/root", key(2)).status);
 }
 
+test "sizetree matching observation cannot cancel pending validation" {
+    const a = std.testing.allocator;
+    const svc = try Service.create(a, 0, auto);
+    defer svc.destroy();
+    var stale = svc.registerOwner();
+    defer stale.deinit();
+    var current = svc.registerOwner();
+    defer current.deinit();
+
+    svc.request(&stale, "/root", .visible, .{ .directory_key = key(1) });
+    const initial = try takeResolution(svc);
+    defer initial.deinit(a);
+    _ = svc.resolved(initial, key(2), true);
+
+    const id = svc.by_key.get(key(2)).?;
+    svc.unqueue(id);
+    svc.nodes.items[id].self_pending = false;
+    svc.nodes.items[id].pending = 0;
+    svc.nodes.items[id].complete = true;
+    svc.nodes.items[id].own = 200;
+    svc.nodes.items[id].total = 200;
+
+    svc.request(&current, "/root", .visible, .{ .directory_key = key(2) });
+    svc.request(&stale, "/root", .visible, .{ .directory_key = key(1) });
+    const validation = try takeResolution(svc);
+    defer validation.deinit(a);
+
+    svc.request(&current, "/root", .visible, .{ .directory_key = key(2) });
+    try std.testing.expectEqual(@as(?u64, validation.id), svc.paths.get("/root").?.resolution);
+    try std.testing.expectEqual(id, svc.paths.get("/root").?.node);
+
+    _ = svc.resolved(validation, key(2), true);
+    try std.testing.expectEqual(@as(?u64, null), svc.paths.get("/root").?.resolution);
+
+    // Repeating the matching identity does not start new work.
+    svc.request(&current, "/root", .visible, .{ .directory_key = key(2) });
+    try std.testing.expect(!svc.busy());
+    try std.testing.expectEqual(tree.Status.exact, svc.lookupIdentity(&current, "/root", key(2)).status);
+    try std.testing.expectEqual(@as(i64, 200), svc.lookupIdentity(&current, "/root", key(2)).bytes);
+
+    // A previously checked identity may subsequently become valid.
+    svc.request(&stale, "/root", .visible, .{ .directory_key = key(1) });
+    const replacement = try takeResolution(svc);
+    defer replacement.deinit(a);
+    try std.testing.expect(replacement.id != validation.id);
+    _ = svc.resolved(replacement, key(1), true);
+    try std.testing.expectEqual(tree.Status.measuring, svc.lookupIdentity(&stale, "/root", key(1)).status);
+    try std.testing.expectEqual(tree.Status.unknown, svc.lookupIdentity(&current, "/root", key(2)).status);
+}
+
 test "sizetree stale window cannot discard current window measurement" {
     const a = std.testing.allocator;
     const svc = try Service.create(a, 0, auto);
@@ -171,6 +221,48 @@ test "sizetree stale window cannot discard current window measurement" {
     try std.testing.expectEqual(tree.Status.exact, svc.lookupIdentity(&current, "/root", key(2)).status);
     try std.testing.expectEqual(@as(i64, 200), svc.lookupIdentity(&current, "/root", key(2)).bytes);
     try std.testing.expect(!svc.busy());
+}
+
+test "sizetree identity validation preserves automatic scan restrictions" {
+    const a = std.testing.allocator;
+    const svc = try Service.create(a, 0, auto);
+    defer svc.destroy();
+    var owner = svc.registerOwner();
+    defer owner.deinit();
+
+    svc.request(&owner, "/root", .visible, .{ .directory_key = key(1) });
+    const initial = try takeResolution(svc);
+    defer initial.deinit(a);
+    _ = svc.resolved(initial, key(1), false);
+
+    const old_id = svc.by_key.get(key(1)).?;
+    try std.testing.expectEqual(tree.Status.idle, svc.lookup("/root").status);
+    try std.testing.expectEqual(@as(usize, 0), svc.nodes.items[old_id].subtree_demand);
+    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
+
+    svc.request(&owner, "/root", .visible, .{ .directory_key = key(2) });
+    try std.testing.expect(!svc.paths.get("/root").?.auto_allowed);
+    try std.testing.expectEqual(@as(usize, 0), svc.nodes.items[old_id].subtree_demand);
+    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
+
+    const replacement = try takeResolution(svc);
+    defer replacement.deinit(a);
+    _ = svc.resolved(replacement, key(2), false);
+
+    const new_id = svc.by_key.get(key(2)).?;
+    try std.testing.expectEqual(new_id, svc.paths.get("/root").?.node);
+    try std.testing.expectEqual(@as(usize, 0), svc.nodes.items[new_id].subtree_demand);
+    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
+    try std.testing.expectEqual(tree.Status.idle, svc.lookupIdentity(&owner, "/root", key(2)).status);
+    try std.testing.expect(!svc.busy());
+
+    // Explicit measurement still overrides the automatic policy.
+    svc.request(&owner, "/root", .visible, .{
+        .directory_key = key(2),
+        .force = true,
+    });
+    try std.testing.expectEqual(@as(usize, 1), svc.nodes.items[new_id].subtree_demand);
+    try std.testing.expectEqual(@as(usize, 1), svc.queued_count);
 }
 
 test "device policy memoization distinguishes mounts and leaves ambiguous results uncached" {

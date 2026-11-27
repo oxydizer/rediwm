@@ -108,7 +108,7 @@ pub fn hasReady(svc: *const Service) bool {
 }
 
 pub fn queue(svc: *Service, entry: *PathEntry) void {
-    const level = demand.pathLevel(entry) orelse return;
+    const level = demand.resolutionLevel(entry) orelse return;
     if (svc.stop) return;
     if (entry.resolution != null) {
         // An in-flight job uses the latest priority when it completes.
@@ -155,7 +155,7 @@ pub fn take(svc: *Service) ?Job {
 
 fn current(svc: *Service, job: Job) bool {
     if (svc.stop or svc.paths.get(job.path) != job.entry) return false;
-    return job.entry.resolution == job.id and demand.pathLevel(job.entry) != null;
+    return job.entry.resolution == job.id and demand.resolutionLevel(job.entry) != null;
 }
 
 pub fn resolvePath(svc: *Service, job: Job) bool {
@@ -197,7 +197,7 @@ pub fn resolved(svc: *Service, job: Job, key: ?Key, auto: bool) bool {
         }
         return false;
     };
-    const level = demand.pathLevel(entry).?;
+    const level = demand.resolutionLevel(entry).?;
     const id = svc.by_key.get(k) orelse (svc.newNode(k, job.path, level) catch {
         svc.queueResolution(entry);
         return true;
