@@ -99,6 +99,8 @@ const Node = struct {
     queued: ?Level = null,
     level: Level = .background,
     scanning: bool = false,
+    /// A stopped or forgotten path must not schedule this node again.
+    paused: bool = false,
     /// Asked for again while a worker was reading it.
     rescan: bool = false,
 };
@@ -456,6 +458,7 @@ pub const Service = struct {
 
     fn enqueue(self: *Service, id: Id, level: Level) !void {
         const node = &self.nodes.items[id];
+        if (node.paused) return;
         if (node.scanning) {
             node.rescan = node.rescan or !node.self_pending;
             if (@intFromEnum(level) < @intFromEnum(node.level)) node.level = level;
@@ -476,6 +479,7 @@ pub const Service = struct {
         try stack.append(self.allocator, root);
         while (stack.pop()) |id| {
             const node = &self.nodes.items[id];
+            node.paused = false;
             if (node.pending == 0) continue;
             if (@intFromEnum(level) < @intFromEnum(node.level)) node.level = level;
             if (node.self_pending) try self.enqueue(id, level);
@@ -490,6 +494,7 @@ pub const Service = struct {
         try stack.append(self.allocator, root);
         while (stack.pop()) |id| {
             const node = &self.nodes.items[id];
+            node.paused = false;
             node.level = level;
             if (!node.self_pending) {
                 node.self_pending = true;
@@ -508,9 +513,10 @@ pub const Service = struct {
         while (stack.pop()) |id| {
             const node = &self.nodes.items[id];
             self.setQueued(node, null);
+            node.paused = true;
             node.rescan = false;
             node.level = .background;
-            if (node.pending > 0) stack.appendSlice(self.allocator, node.children.items) catch return;
+            stack.appendSlice(self.allocator, node.children.items) catch return;
         }
     }
 
@@ -694,9 +700,11 @@ pub const Service = struct {
                 self.allocator.free(self.nodes.items[existing].name);
                 self.nodes.items[existing].name = renamed;
                 try self.attach(id, existing);
+                if (self.nodes.items[id].paused) self.dequeueSubtree(existing);
                 continue;
             }
             const child = try self.newNode(f.key, f.name, self.nodes.items[id].level);
+            self.nodes.items[child].paused = self.nodes.items[id].paused;
             try self.attach(id, child);
             try self.enqueue(child, self.nodes.items[id].level);
         }
@@ -805,12 +813,15 @@ pub const Service = struct {
         };
         const id = self.by_key.get(k) orelse (self.newNode(k, path, entry.level) catch return);
         entry.node = self.refOf(id);
+        if (entry.stopped or entry.dropped) {
+            self.dequeueSubtree(id);
+            return;
+        }
         if (!auto and !entry.force) {
             entry.idle = true;
             return;
         }
         entry.idle = false;
-        if (entry.stopped) return;
         self.enqueueSubtree(id, entry.level) catch {};
     }
 };
@@ -872,6 +883,73 @@ fn nowMs() i64 {
     var ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
     return @as(i64, ts.tv_sec) * 1000 + @divTrunc(@as(i64, ts.tv_nsec), 1_000_000);
+}
+
+fn testAutoPolicy(_: u32, _: u32) bool {
+    return true;
+}
+
+test "sizetree pauses children discovered by an in-flight scan" {
+    const allocator = std.testing.allocator;
+    const svc = try Service.create(allocator, 0, testAutoPolicy);
+    defer svc.destroy();
+
+    const root = try svc.newNode(.{ .dev = 1, .ino = 1 }, "/root", .visible);
+    svc.nodes.items[root].scanning = true;
+
+    // Navigation away pauses the root while its worker is still reading it.
+    svc.dequeueSubtree(root);
+    try std.testing.expect(svc.nodes.items[root].paused);
+
+    const child_name = try allocator.dupe(u8, "child");
+    defer allocator.free(child_name);
+    const found = [_]Service.Child{
+        .{
+            .key = .{ .dev = 1, .ino = 2 },
+            .name = child_name,
+        },
+    };
+
+    // The in-flight scan completes and discovers a child after cancellation.
+    try svc.finishScan(root, 0, &found, false);
+
+    try std.testing.expectEqual(@as(usize, 1), svc.nodes.items[root].children.items.len);
+    const child = svc.nodes.items[root].children.items[0];
+    try std.testing.expect(svc.nodes.items[child].paused);
+    try std.testing.expect(svc.nodes.items[child].queued == null);
+    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
+
+    // A later request resumes pending work in the subtree.
+    try svc.enqueueSubtree(root, .visible);
+
+    try std.testing.expect(!svc.nodes.items[root].paused);
+    try std.testing.expect(!svc.nodes.items[child].paused);
+    try std.testing.expectEqual(@as(?Level, .visible), svc.nodes.items[child].queued);
+    try std.testing.expectEqual(@as(usize, 1), svc.queued_count);
+}
+
+test "sizetree pauses paths stopped or forgotten during resolution" {
+    const allocator = std.testing.allocator;
+    const svc = try Service.create(allocator, 0, testAutoPolicy);
+    defer svc.destroy();
+
+    svc.request("/stopped", .visible, .{});
+    svc.stopPath("/stopped");
+    svc.resolved("/stopped", .{ .dev = 1, .ino = 1 }, true);
+
+    const stopped_entry = svc.paths.get("/stopped").?;
+    const stopped_id = svc.liveId(stopped_entry.node.?).?;
+    try std.testing.expect(svc.nodes.items[stopped_id].paused);
+    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
+
+    svc.request("/forgotten", .visible, .{});
+    svc.forgetPath("/forgotten");
+    svc.resolved("/forgotten", .{ .dev = 1, .ino = 2 }, true);
+
+    const forgotten_entry = svc.paths.get("/forgotten").?;
+    const forgotten_id = svc.liveId(forgotten_entry.node.?).?;
+    try std.testing.expect(svc.nodes.items[forgotten_id].paused);
+    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
 }
 
 test "sizetree rejects a directory path replaced with another inode" {
