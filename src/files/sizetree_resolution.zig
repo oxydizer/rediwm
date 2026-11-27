@@ -5,6 +5,8 @@ const dirwalk = @import("platform").dirwalk;
 const tree = @import("sizetree.zig");
 const demand = @import("sizetree_demand.zig");
 const eviction = @import("sizetree_eviction.zig");
+const lru = @import("sizetree_lru.zig");
+const path_cache = @import("sizetree_path_cache.zig");
 const Service = tree.Service;
 const Key = tree.Key;
 const no_id = tree.no_id;
@@ -13,8 +15,8 @@ pub const PathEntry = struct {
     path: []u8,
     // The map holds one reference. Dispatched jobs pin their path separately.
     refs: std.atomic.Value(usize) = .init(1),
-    // Owner records and node bindings borrow the map's reference. A future
-    // eviction must unlink them and cancel ready work before dropping it.
+    // Owner records and node bindings borrow the map's reference. Eviction
+    // requires zero owners and unlinks the binding before dropping that pin.
     owners: usize = 0,
     node: tree.Id = no_id,
     bound_prev: ?*PathEntry = null,
@@ -23,6 +25,7 @@ pub const PathEntry = struct {
     explicit: [2]usize = .{ 0, 0 },
     auto_allowed: bool = true,
     access_stamp: u64 = 0,
+    eviction_index: usize = lru.not_indexed,
     resolution: ?u64 = null,
     queued: ?tree.Level = null,
     prev: ?*PathEntry = null,
@@ -53,7 +56,10 @@ pub fn getOrCreatePath(svc: *Service, path: []const u8) !*PathEntry {
     const owned = try a.dupe(u8, path);
     errdefer a.free(owned);
     entry.* = .{ .path = owned };
+    // Any entry may become evictable. Reserve before publishing it.
+    try svc.inactive_paths.ensureTotalCapacity(a, @as(usize, svc.paths.count()) + 1);
     try svc.paths.put(a, owned, entry);
+    path_cache.sync(svc, entry);
     return entry;
 }
 

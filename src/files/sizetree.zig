@@ -30,6 +30,7 @@ const reconcile = @import("sizetree_reconcile.zig");
 const demand = @import("sizetree_demand.zig");
 const resolution = @import("sizetree_resolution.zig");
 const eviction = @import("sizetree_eviction.zig");
+const path_cache = @import("sizetree_path_cache.zig");
 
 pub const revalidate_after_ms: i64 = 120_000;
 
@@ -156,7 +157,9 @@ pub const Service = struct {
     /// Results older than this are measured again on a `revalidate` request.
     revalidate_ms: i64 = revalidate_after_ms,
     live_node_budget: usize,
+    path_entry_budget: usize,
     inactive_roots: std.ArrayList(Id) = .empty,
+    inactive_paths: std.ArrayList(*PathEntry) = .empty,
     access_clock: u64 = 0,
 
     nodes: std.ArrayList(Node) = .empty,
@@ -176,15 +179,29 @@ pub const Service = struct {
     /// Changes whenever a total or status may have changed.
     generation: std.atomic.Value(u64) = .init(0),
 
+    pub const Budgets = struct {
+        live_nodes: usize = eviction.default_live_node_budget,
+        path_entries: usize = path_cache.default_path_budget,
+    };
+
     pub fn create(allocator: Allocator, threads: usize, policy: AutoPolicy) !*Service {
-        return createWithBudget(allocator, threads, policy, eviction.default_live_node_budget);
+        return createWithBudgets(allocator, threads, policy, .{});
     }
 
     /// Soft limit on live directory nodes. Demanded trees may exceed it.
     pub fn createWithBudget(allocator: Allocator, threads: usize, policy: AutoPolicy, live_node_budget: usize) !*Service {
+        return createWithBudgets(allocator, threads, policy, .{ .live_nodes = live_node_budget });
+    }
+
+    pub fn createWithBudgets(allocator: Allocator, threads: usize, policy: AutoPolicy, budgets: Budgets) !*Service {
         const self = try allocator.create(Service);
         errdefer allocator.destroy(self);
-        self.* = .{ .allocator = allocator, .policy = policy, .live_node_budget = live_node_budget };
+        self.* = .{
+            .allocator = allocator,
+            .policy = policy,
+            .live_node_budget = budgets.live_nodes,
+            .path_entry_budget = budgets.path_entries,
+        };
         if (c.pthread_mutex_init(&self.mutex, null) != 0) return error.MutexInitFailed;
         errdefer _ = c.pthread_mutex_destroy(&self.mutex);
         if (c.pthread_cond_init(&self.cond, null) != 0) return error.CondInitFailed;
@@ -228,6 +245,7 @@ pub const Service = struct {
         };
         self.nodes.deinit(a);
         self.inactive_roots.deinit(a);
+        self.inactive_paths.deinit(a);
         self.by_key.deinit(a);
         var it = self.paths.valueIterator();
         while (it.next()) |entry| {
@@ -284,12 +302,12 @@ pub const Service = struct {
         self.lock();
         defer self.unlock();
         const entry = self.paths.get(path) orelse return .{};
+        path_cache.touch(self, entry);
         const is_stopped = if (owner) |view| demand.stopped(view, entry) else false;
         if (entry.node == no_id) {
             if (is_stopped or !entry.auto_allowed) return .{ .status = .idle };
             return .{ .status = if (entry.resolution != null) .measuring else .unknown };
         }
-        eviction.touch(self, entry.node, eviction.nextAccess(self));
         const node = &self.nodes.items[entry.node];
         if (node.pending > 0) {
             const status: Status = if (is_stopped or node.paused)
@@ -315,7 +333,10 @@ pub const Service = struct {
         return self.by_key.count();
     }
 
-    pub const maintainBudget = eviction.maintain;
+    pub fn maintainBudget(self: *Service) void {
+        eviction.maintain(self);
+        path_cache.maintain(self);
+    }
 
     /// Whether any directory is waiting or being read.
     pub fn busy(self: *Service) bool {
@@ -406,7 +427,7 @@ pub const Service = struct {
         eviction.remove(self, child);
         node.parent = parent;
         node.child_index = index;
-        node.path_missing = false;
+        self.clearPathMissing(child);
         self.propagate(parent, node.total, node.pending, node.unreadable);
         demand.adjustAncestors(self, parent, 0, node.subtree_demand);
         // A merged root inherits the most recent access to either tree.
@@ -550,6 +571,13 @@ pub const Service = struct {
 
     pub const Child = struct { key: Key, name: []u8 };
 
+    pub fn clearPathMissing(self: *Service, id: Id) void {
+        const node = &self.nodes.items[id];
+        if (!node.path_missing) return;
+        node.path_missing = false;
+        if (node.paths) |entry| path_cache.sync(self, entry);
+    }
+
     /// The directory is not where its path says: renamed or removed since
     /// its parent was read. Its parent is read again, which renames or drops
     /// it; it stays waiting meanwhile.
@@ -573,7 +601,6 @@ pub const Service = struct {
             break :blk up.self_unreadable and !up.self_pending and !up.scanning;
         } else false;
         if (!parent_active or parent_failed) {
-            node.path_missing = true;
             while (node.paths) |entry| {
                 const old = demand.pathLevel(entry);
                 demand.unbind(entry, self);
@@ -581,6 +608,7 @@ pub const Service = struct {
                 entry.auto_allowed = true;
                 if (demand.pathLevel(entry) != null) self.queueResolution(entry);
             }
+            node.path_missing = true;
             if (parent_failed) self.failScan(id) else self.bump();
             return;
         }
@@ -644,4 +672,5 @@ test {
     _ = @import("sizetree_resolution_tests.zig");
     _ = @import("sizetree_demand_tests.zig");
     _ = @import("sizetree_eviction_tests.zig");
+    _ = @import("sizetree_path_cache_tests.zig");
 }

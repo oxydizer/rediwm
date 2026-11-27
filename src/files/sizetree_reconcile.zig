@@ -67,7 +67,7 @@ const Plan = struct {
         // can still be linked below an omitted child in the cached tree.
         for (self.changes.items) |*change| {
             if (change.existing) |child| {
-                svc.nodes.items[child].path_missing = false;
+                svc.clearPathMissing(child);
                 svc.nodes.items[child].waiting_for_parent = false;
                 if (change.name) |name| {
                     svc.allocator.free(svc.nodes.items[child].name);

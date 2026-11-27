@@ -21,11 +21,11 @@ fn takeResolution(svc: *Service) !Resolution {
 }
 
 test "sizetree retries each path and resolution queue allocation failure" {
-    // Path entry, key, path map, viewport list, and owner map.
-    for (0..5) |offset| {
+    // Path entry, key, inactive-path heap, path map, viewport list, owner map.
+    for (0..6) |offset| {
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
         const a = failing.allocator();
-        const svc = try Service.create(a, 0, auto);
+        const svc = try Service.createWithBudgets(a, 0, auto, .{ .path_entries = 0 });
         defer svc.destroy();
         var owner = svc.registerOwner();
         defer owner.deinit();
@@ -35,6 +35,7 @@ test "sizetree retries each path and resolution queue allocation failure" {
         try std.testing.expect(failing.has_induced_failure);
         try std.testing.expect(!svc.busy());
         try std.testing.expectEqual(tree.Status.unknown, svc.lookup("/root").status);
+        try std.testing.expectEqual(@as(u32, 0), svc.paths.count());
         try std.testing.expect(!@import("sizetree_resolution.zig").hasReady(svc));
 
         failing.fail_index = std.math.maxInt(usize);
@@ -167,23 +168,30 @@ test "sizetree repeated requests keep one resolution and use the latest priority
 }
 
 test "sizetree resolution jobs outlive removed keys and cannot publish into recreated entries" {
-    const a = std.testing.allocator;
-    const svc = try Service.create(a, 0, auto);
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const a = failing.allocator();
+    const svc = try Service.createWithBudgets(a, 0, auto, .{ .path_entries = 0 });
     defer svc.destroy();
     var owner = svc.registerOwner();
     defer owner.deinit();
 
-    // Simulate future removal directly in the fixture, after releasing
-    // the owner and unlinking ready work. The in-flight job keeps its pin.
     svc.request(&owner, "/root", .background, .{});
     const old = try takeResolution(svc);
     defer old.deinit(a);
+    try std.testing.expectEqual(@as(u32, 1), svc.paths.count());
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
     svc.forgetPath(&owner, "/root");
-    svc.paths.fetchRemove("/root").?.value.release(a);
+    try std.testing.expect(!failing.has_induced_failure);
+    try std.testing.expectEqual(@as(u32, 0), svc.paths.count());
+    try std.testing.expectEqual(@as(usize, 1), old.entry.refs.load(.acquire));
     try std.testing.expectEqualStrings("/root", old.path);
     _ = svc.resolved(old, key(1), true);
     try std.testing.expectEqual(@as(u32, 0), svc.by_key.count());
+    failing.fail_index = std.math.maxInt(usize);
+    failing.resize_fail_index = std.math.maxInt(usize);
     svc.request(&owner, "/root", .visible, .{});
+    try std.testing.expect(svc.paths.get("/root").? != old.entry);
     _ = svc.resolved(old, key(1), true);
     try std.testing.expectEqual(tree.Status.measuring, svc.lookup("/root").status);
     try std.testing.expectEqual(@as(u32, 0), svc.by_key.count());

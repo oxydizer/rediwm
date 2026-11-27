@@ -8,6 +8,7 @@ const Entry = tree.PathEntry;
 const no_id = tree.no_id;
 const schedule = @import("sizetree_schedule.zig");
 const eviction = @import("sizetree_eviction.zig");
+const path_cache = @import("sizetree_path_cache.zig");
 
 const Record = struct {
     automatic: ?Level = null,
@@ -42,6 +43,7 @@ pub const Owner = struct {
             entry.owners -= 1;
             // Removing the current slot does not relocate any other slot.
             self.records.removeByPtr(item.key_ptr);
+            path_cache.sync(svc, entry);
         }
         if (self.records.count() == 0) self.records.clearRetainingCapacity();
         self.visible.clearRetainingCapacity();
@@ -93,6 +95,7 @@ pub const Owner = struct {
         if (record.automatic == null and record.explicit == null and !record.stopped) {
             _ = self.records.remove(entry);
             entry.owners -= 1;
+            path_cache.sync(self.service, entry);
         }
     }
 };
@@ -145,12 +148,15 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
     std.debug.assert(owner.service == svc);
     svc.lock();
     defer svc.unlock();
+    // A new entry may be eligible if its owner registration fails.
+    defer path_cache.maintain(svc);
     const entry = svc.getOrCreatePath(path) catch return false;
     const record = owner.records.getPtr(entry) orelse blk: {
         if (!options.force) owner.visible.ensureUnusedCapacity(svc.allocator, 1) catch return false;
         const new = owner.records.getOrPut(svc.allocator, entry) catch return false;
         new.value_ptr.* = .{};
         entry.owners += 1;
+        path_cache.sync(svc, entry);
         break :blk new.value_ptr;
     };
     const old = record.*;
@@ -170,8 +176,7 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
     // A fresh request can re-evaluate disk policy for an evicted binding.
     if (entry.node == no_id) entry.auto_allowed = true;
     update(svc, entry, old, record.*);
-    entry.access_stamp = eviction.nextAccess(svc);
-    if (entry.node != no_id) eviction.touch(svc, entry.node, entry.access_stamp);
+    path_cache.touch(svc, entry);
     if (pathLevel(entry) == null) return true;
     if (entry.node == no_id) {
         svc.queueResolution(entry);
@@ -276,11 +281,16 @@ pub fn bind(svc: *Service, entry: *Entry, id: Id) void {
     entry.bound_next = node.paths;
     if (node.paths) |head| head.bound_prev = entry;
     node.paths = entry;
+    if (node.path_missing) {
+        path_cache.sync(svc, entry);
+        if (entry.bound_next) |previous| path_cache.sync(svc, previous);
+    }
     adjustDirect(svc, id, null, pathLevel(entry));
 }
 
 pub fn unbind(entry: *Entry, svc: *Service) void {
     const id = entry.node;
+    const was_recovery_path = svc.nodes.items[id].path_missing and entry.bound_prev == null;
     if (entry.bound_prev) |prev| {
         prev.bound_next = entry.bound_next;
     } else {
@@ -289,7 +299,12 @@ pub fn unbind(entry: *Entry, svc: *Service) void {
     if (entry.bound_next) |next_entry| next_entry.bound_prev = entry.bound_prev;
     entry.node = no_id;
     entry.bound_prev = null;
+    const next = entry.bound_next;
     entry.bound_next = null;
+    if (was_recovery_path) {
+        if (next) |head| path_cache.sync(svc, head);
+        path_cache.sync(svc, entry);
+    }
 }
 
 /// Used while freeing a detached subtree. Its aggregate has already been
