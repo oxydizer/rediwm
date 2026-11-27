@@ -9,6 +9,46 @@ fn testAutoPolicy(_: u32, _: u32, _: ?u64) ?bool {
     return true;
 }
 
+test "sizetree recovery tries another bound path after a missing scan" {
+    const a = std.testing.allocator;
+    const svc = try Service.create(a, 0, testAutoPolicy);
+    defer svc.destroy();
+    var owner = svc.registerOwner();
+    defer owner.deinit();
+
+    const key: tree.Key = .{ .dev = 1, .ino = 42 };
+    svc.request(&owner, "/valid", .visible, .{ .directory_key = key });
+    var path_buf: [4096]u8 = undefined;
+    const first = svc.take(&path_buf).?.work.resolve;
+    defer first.deinit(a);
+    _ = svc.resolved(first, key, true);
+    const id = svc.by_key.get(key).?;
+
+    svc.unqueue(id);
+    svc.request(&owner, "/obsolete", .visible, .{ .directory_key = key });
+    const second = svc.take(&path_buf).?.work.resolve;
+    defer second.deinit(a);
+    _ = svc.resolved(second, key, true);
+
+    svc.nodes.items[id].path_missing = true;
+    svc.unqueue(id);
+    svc.enqueue(id, .visible);
+
+    const failed = svc.take(&path_buf).?;
+    try std.testing.expectEqualStrings("/obsolete", failed.path.?);
+    svc.lostScan(id, failed.path.?);
+
+    try std.testing.expectEqual(tree.no_id, svc.paths.get("/obsolete").?.node);
+    const validation = svc.take(&path_buf).?.work.resolve;
+    defer validation.deinit(a);
+    try std.testing.expectEqualStrings("/obsolete", validation.path);
+    _ = svc.resolved(validation, null, false);
+
+    const recovered = svc.take(&path_buf).?;
+    try std.testing.expectEqualStrings("/valid", recovered.path.?);
+    try std.testing.expectEqual(id, recovered.work.scan.ref.id);
+}
+
 test "sizetree alternates resolution and scanning while preserving scan priority" {
     const allocator = std.testing.allocator;
     const svc = try Service.create(allocator, 0, testAutoPolicy);

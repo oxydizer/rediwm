@@ -631,6 +631,20 @@ pub const Service = struct {
                 return;
             }
         }
+        if (node.path_missing) {
+            if (node.paths) |head| {
+                if (head.bound_next) |next| {
+                    const old = demand.pathLevel(head);
+                    demand.unbind(head, self);
+                    demand.adjustDirect(self, id, old, null);
+                    head.auto_allowed = true;
+                    self.queueResolution(head);
+                    std.debug.assert(node.paths == next);
+                    self.enqueue(id, node.level);
+                    return;
+                }
+            }
+        }
         const parent = node.parent;
         const parent_active = demand.effective(self, parent) != null;
         const parent_failed = if (parent_active) blk: {
