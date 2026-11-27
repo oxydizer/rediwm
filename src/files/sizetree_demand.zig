@@ -15,6 +15,8 @@ const c = @import("c.zig").api;
 const Record = struct {
     automatic: ?Level = null,
     explicit: ?Level = null,
+    automatic_revalidate: bool = false,
+    explicit_revalidate: bool = false,
     auto_index: usize = 0,
     seen: u64 = 0,
     stopped: bool = false,
@@ -176,6 +178,14 @@ fn explicitLevel(record: Record) ?Level {
 fn update(svc: *Service, entry: *Entry, old: Record, new: Record) void {
     const before = pathLevel(entry);
     const resolution_before = resolutionLevel(entry);
+    if (old.automatic_revalidate and old.automatic != null)
+        entry.automatic_revalidate_demand -= 1;
+    if (old.explicit_revalidate and old.explicit != null)
+        entry.explicit_revalidate_demand -= 1;
+    if (new.automatic_revalidate and new.automatic != null)
+        entry.automatic_revalidate_demand += 1;
+    if (new.explicit_revalidate and new.explicit != null)
+        entry.explicit_revalidate_demand += 1;
     count(&entry.automatic, old.automatic, false);
     count(&entry.explicit, explicitLevel(old), false);
     count(&entry.automatic, new.automatic, true);
@@ -221,6 +231,7 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
     if (options.force) {
         record.stopped = false;
         record.explicit = level;
+        record.explicit_revalidate = options.revalidate;
     } else {
         if (record.automatic == null) {
             storage.visible.ensureUnusedCapacity(svc.allocator, 1) catch return false;
@@ -228,6 +239,7 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
             storage.visible.appendAssumeCapacity(entry);
         }
         record.automatic = level;
+        record.automatic_revalidate = options.revalidate;
         record.seen = owner.epoch;
     }
     // A fresh request can re-evaluate disk policy for an evicted binding.
@@ -253,7 +265,9 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
     if (pathLevel(entry) == null) return true;
     if (entry.node == no_id) {
         svc.queueResolution(entry);
-    } else if (options.revalidate) {
+    } else if (entry.resolution == null and options.revalidate and
+        (options.force or entry.auto_allowed))
+    {
         svc.revalidateNode(entry.node);
     }
     return true;

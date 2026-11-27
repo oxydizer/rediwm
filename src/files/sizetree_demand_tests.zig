@@ -55,6 +55,144 @@ test "sizetree revalidates an expired measurement when it becomes visible again"
     try equal(@as(?tree.Level, .visible), svc.nodes.items[root].queued);
 }
 
+test "sizetree resolution honors freshness requests for cached inodes" {
+    for ([_]bool{ false, true }) |expired| {
+        for ([_]bool{ false, true }) |revalidate| {
+            const svc = try Service.create(std.testing.allocator, 0, auto);
+            defer svc.destroy();
+            var owner = svc.registerOwner();
+            defer owner.deinit();
+
+            svc.request(&owner, "/original", .visible, .{});
+            const root = try resolve(svc, "/original", 1);
+            svc.unqueue(root);
+            try svc.finishScan(root, 41, &.{}, false);
+            owner.clear();
+
+            if (expired)
+                svc.nodes.items[root].completed_ms = tree.nowMs() - svc.revalidate_ms - 1;
+
+            svc.request(&owner, "/alias", .visible, .{
+                .revalidate = revalidate,
+                .directory_key = key(1),
+            });
+            try equal(root, try resolve(svc, "/alias", 1));
+            const expected: tree.Status = if (expired and revalidate) .revalidating else .exact;
+            try equal(expected, svc.lookup("/alias").status);
+            try equal(@as(i64, 41), svc.lookup("/alias").bytes);
+            try equal(expired and revalidate, svc.busy());
+
+            owner.clear();
+            try equal(@as(usize, 0), svc.paths.get("/alias").?.automatic_revalidate_demand);
+            try equal(@as(usize, 0), svc.paths.get("/alias").?.explicit_revalidate_demand);
+        }
+    }
+}
+
+test "sizetree resolution releases withdrawn automatic freshness demand" {
+    const svc = try Service.create(std.testing.allocator, 0, auto);
+    defer svc.destroy();
+    var owner = svc.registerOwner();
+    defer owner.deinit();
+
+    svc.request(&owner, "/original", .visible, .{});
+    const root = try resolve(svc, "/original", 1);
+    svc.unqueue(root);
+    try svc.finishScan(root, 41, &.{}, false);
+    owner.clear();
+    svc.nodes.items[root].completed_ms = tree.nowMs() - svc.revalidate_ms - 1;
+
+    owner.beginViewport();
+    svc.request(&owner, "/alias", .visible, .{ .revalidate = true });
+    svc.request(&owner, "/alias", .background, .{ .force = true });
+    owner.endViewport();
+
+    var buf: [4096]u8 = undefined;
+    const job = switch (svc.take(&buf).?.work) {
+        .resolve => |job| job,
+        .scan => return error.UnexpectedScan,
+    };
+    defer job.deinit(svc.allocator);
+    const entry = svc.paths.get("/alias").?;
+    try equal(@as(usize, 1), entry.automatic_revalidate_demand);
+    try equal(@as(usize, 0), entry.explicit_revalidate_demand);
+
+    owner.beginViewport();
+    owner.endViewport();
+    try equal(@as(usize, 0), entry.automatic_revalidate_demand);
+    try want(!svc.resolved(job, key(1), true));
+    try equal(tree.Status.exact, svc.lookup("/alias").status);
+    try equal(@as(i64, 41), svc.lookup("/alias").bytes);
+    try want(!svc.busy());
+}
+
+test "sizetree automatic freshness respects resolved disk policy" {
+    const svc = try Service.create(std.testing.allocator, 0, auto);
+    defer svc.destroy();
+    var owner = svc.registerOwner();
+    defer owner.deinit();
+
+    svc.request(&owner, "/original", .visible, .{});
+    const root = try resolve(svc, "/original", 1);
+    svc.unqueue(root);
+    try svc.finishScan(root, 41, &.{}, false);
+    owner.clear();
+    svc.nodes.items[root].completed_ms = tree.nowMs() - svc.revalidate_ms - 1;
+
+    svc.request(&owner, "/alias", .visible, .{ .revalidate = true });
+    svc.request(&owner, "/alias", .background, .{ .force = true });
+
+    var buf: [4096]u8 = undefined;
+    const job = switch (svc.take(&buf).?.work) {
+        .resolve => |job| job,
+        .scan => return error.UnexpectedScan,
+    };
+    defer job.deinit(svc.allocator);
+    try want(!svc.resolved(job, key(1), false));
+    try equal(tree.Status.exact, svc.lookup("/alias").status);
+    try want(!svc.busy());
+
+    svc.request(&owner, "/alias", .visible, .{ .revalidate = true });
+    try equal(tree.Status.exact, svc.lookup("/alias").status);
+    try want(!svc.busy());
+
+    svc.request(&owner, "/alias", .background, .{
+        .force = true,
+        .revalidate = true,
+    });
+    try equal(tree.Status.revalidating, svc.lookup("/alias").status);
+    try equal(@as(i64, 41), svc.lookup("/alias").bytes);
+    try want(svc.busy());
+}
+
+test "sizetree freshness waits for pending identity validation" {
+    const svc = try Service.create(std.testing.allocator, 0, auto);
+    defer svc.destroy();
+    var first = svc.registerOwner();
+    defer first.deinit();
+    var second = svc.registerOwner();
+    defer second.deinit();
+
+    svc.request(&first, "/root", .visible, .{ .directory_key = key(1) });
+    const root = try resolve(svc, "/root", 1);
+    svc.unqueue(root);
+    try svc.finishScan(root, 41, &.{}, false);
+    svc.nodes.items[root].completed_ms = tree.nowMs() - svc.revalidate_ms - 1;
+
+    svc.request(&second, "/root", .visible, .{ .directory_key = key(2) });
+    svc.request(&first, "/root", .visible, .{
+        .directory_key = key(1),
+        .revalidate = true,
+    });
+
+    try equal(tree.Status.exact, svc.lookup("/root").status);
+    try equal(@as(?tree.Level, null), svc.nodes.items[root].queued);
+    try equal(root, try resolve(svc, "/root", 1));
+    try equal(tree.Status.revalidating, svc.lookup("/root").status);
+    try equal(@as(i64, 41), svc.lookup("/root").bytes);
+    try equal(@as(?tree.Level, .visible), svc.nodes.items[root].queued);
+}
+
 test "sizetree owners request idempotently and stop and close independently" {
     const svc = try Service.create(std.testing.allocator, 0, auto);
     defer svc.destroy();

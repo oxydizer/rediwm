@@ -58,6 +58,8 @@ pub const PathEntry = struct {
     bound_next: ?*PathEntry = null,
     automatic: [2]usize = .{ 0, 0 },
     explicit: [2]usize = .{ 0, 0 },
+    automatic_revalidate_demand: usize = 0,
+    explicit_revalidate_demand: usize = 0,
     auto_allowed: bool = true,
     access_stamp: u64 = 0,
     eviction_index: usize = lru.not_indexed,
@@ -215,6 +217,9 @@ pub fn resolved(svc: *Service, job: Job, key: ?Key, auto: bool) bool {
         demand.bind(svc, entry, id);
     }
     eviction.touch(svc, id, entry.access_stamp);
+    if (entry.explicit_revalidate_demand != 0 or
+        (entry.auto_allowed and entry.automatic_revalidate_demand != 0))
+        svc.revalidateNode(id);
     const node = &svc.nodes.items[id];
     if (node.path_missing and !node.self_pending and !node.paused) {
         node.self_pending = true;
