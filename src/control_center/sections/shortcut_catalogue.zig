@@ -3,22 +3,6 @@ const i18n = @import("i18n");
 const config = @import("config");
 const keys = config.keybinds;
 
-const launchers = [_]keys.Action{
-    .{ .spawn = "default-terminal" },
-    .{ .spawn = "default-file-manager" },
-    .{ .spawn = "firefox" },
-};
-
-pub fn isBuiltIn(action: keys.Action) bool {
-    return switch (action) {
-        .noop => false,
-        .spawn => for (launchers) |launcher| {
-            if (keys.actionEql(launcher, action)) break true;
-        } else false,
-        else => true,
-    };
-}
-
 fn applicable(action: keys.Action, mode: config.loader.DesktopMode) bool {
     return switch (action) {
         .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down => !mode.tiled(),
@@ -37,7 +21,7 @@ pub fn actions(a: std.mem.Allocator, mode: config.loader.DesktopMode, binds: []c
             if (applicable(action, mode)) try result.append(a, action);
         }
     }
-    try result.appendSlice(a, &launchers);
+    try result.appendSlice(a, &keys.launcher_actions);
     if (mode.tiled()) {
         for (1..11) |n| {
             try result.append(a, .{ .workspace = @intCast(n) });
@@ -124,7 +108,7 @@ pub fn group(action: keys.Action) usize {
         .screenshot_region, .screenshot_output => 3,
         .volume_up, .volume_down, .volume_mute, .mic_mute, .brightness_up, .brightness_down, .power_profile_cycle => 4,
         .workspace, .move_to_workspace, .workspace_next, .workspace_prev => 6,
-        .spawn => if (isBuiltIn(action)) 2 else 7,
+        .spawn => if (keys.isBuiltIn(action)) 2 else 7,
         .noop => 8,
         else => 5,
     };

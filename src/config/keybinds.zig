@@ -114,6 +114,22 @@ pub fn isHardwareAction(action: Action) bool {
     };
 }
 
+pub const launcher_actions = [_]Action{
+    .{ .spawn = "default-terminal" },
+    .{ .spawn = "default-file-manager" },
+    .{ .spawn = "firefox" },
+};
+
+pub fn isBuiltIn(action: Action) bool {
+    return switch (action) {
+        .noop => false,
+        .spawn => for (launcher_actions) |launcher| {
+            if (actionEql(launcher, action)) break true;
+        } else false,
+        else => true,
+    };
+}
+
 /// Switching keyboard layouts also works on the lock screen (layouts only:
 /// input methods never reach it), where passwords are typed.
 pub fn worksWhileLocked(action: Action) bool {

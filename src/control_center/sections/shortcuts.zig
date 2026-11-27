@@ -16,6 +16,7 @@ const Target = struct {
     action: keys.Action,
     index: ?usize,
 };
+const Pending = union(enum) { record, reset: ?keys.Action };
 
 pub const Section = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
@@ -28,13 +29,15 @@ pub const Section = struct {
     editing: ?Target = null,
     candidate: ?keys.Keybind = null,
     message: []const u8 = "",
-    pending_save: bool = false,
+    pending: ?Pending = null,
+    confirm_reset: bool = false,
     held_keycode: ?u32 = null,
     held_sym: xkb.Keysym = .NoSymbol,
     held_mods: wlr.Keyboard.ModifierMask = .{},
 
     pub fn cancel(s: *Section) void {
-        s.pending_save = false;
+        s.pending = null;
+        s.confirm_reset = false;
         s.held_keycode = null;
         s.editing = null;
         s.candidate = null;
@@ -87,12 +90,18 @@ pub const Section = struct {
     }
 
     pub fn apply(s: *Section, cc: *panel.ControlCenter) void {
-        if (!s.pending_save) return;
-        s.pending_save = false;
-        const candidate = s.candidate orelse return;
-        const target = s.editing orelse return;
-        saving.saveMode(gpa, cc.server.io, cc.server.config.path, cc.server.config.activeKeybinds(), target.index, candidate, cc.server.config.compositor.desktop_mode) catch {
-            s.message = i18n.tr("Could not save. Check the configuration file and try again.");
+        const pending = s.pending orelse return;
+        s.pending = null;
+        const config = &cc.server.config;
+        const result = switch (pending) {
+            .record => saving.saveMode(gpa, cc.server.io, config.path, config.activeKeybinds(), (s.editing orelse return).index, s.candidate orelse return, config.compositor.desktop_mode),
+            .reset => |target| saving.saveReset(gpa, cc.server.io, config.path, config.activeKeybinds(), config.compositor.desktop_mode, target),
+        };
+        result catch |err| {
+            s.message = if (err == error.ShortcutConflict)
+                i18n.tr("A factory shortcut is in use. Unassign it before resetting.")
+            else
+                i18n.tr("Could not save. Check the configuration file and try again.");
             cc.refresh();
             return;
         };
@@ -127,6 +136,10 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !void {
     const t = panel.palette();
     const binds = cc.server.config.activeKeybinds();
+    const mode = cc.server.config.compositor.desktop_mode;
+    var factory = try saving.factoryConfig(a, mode);
+    defer factory.deinit();
+    const defaults = factory.activeKeybinds();
     const indices = try catalogue.effectiveIndices(a, binds);
     const effective = try a.alloc(keys.Keybind, indices.len);
     for (effective, indices) |*bind, i| bind.* = binds[i];
@@ -134,8 +147,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
     for (&s.groups, 0..) |*card, g| {
         var rows: std.ArrayList(W) = .empty;
         if (g == 0) {
-            try rows.append(a, text(if (cc.server.world.workspaces.active) i18n.tr("Workspaces · Hyprland-style preset") else i18n.tr("Canvas · RediWM preset"), false));
-            if (cc.server.world.workspaces.active) try rows.append(a, text(i18n.tr("Super+Q opens Terminal; Super+M opens Power. Arrows focus; numbers switch workspaces."), true));
+            try rows.append(a, try resetBar(s, cc, a, saving.canReset(effective, defaults, null)));
         }
         try rows.append(a, .{ .kind = .{ .row = .{ .owner = cc, .id = g, .on_click = collapse } }, .height = .{ .fixed = 40 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 0), .gap = 12, .@"align" = .center, .children = try children(a, &.{
             .{ .kind = .{ .icon = .{ .id = icons[g], .color = t.window_fg } }, .width = .{ .fixed = 20 }, .height = .{ .fixed = 20 } },
@@ -147,7 +159,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             .{ .kind = .{ .icon = .{ .id = if (s.collapsed[g]) .chevron_up else .chevron_down, .color = t.window_dim } }, .width = .{ .fixed = 16 }, .height = .{ .fixed = 16 } },
         }) });
         if (!s.collapsed[g] and g == catalogue.group(.noop)) for (effective, indices) |bind, i| {
-            if (bind.action == .noop) try appendRow(s, cc, a, &rows, i18n.tr("Disabled shortcut."), "", .{ .action = .noop, .index = i }, false);
+            if (bind.action == .noop) try appendRow(s, cc, a, &rows, i18n.tr("Disabled shortcut."), "", .{ .action = .noop, .index = i }, false, false);
         };
         if (!s.collapsed[g]) for (actions) |action| {
             if (catalogue.group(action) != g) continue;
@@ -159,16 +171,34 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             for (effective, indices) |bind, i| {
                 if (!keys.actionEql(bind.action, action)) continue;
                 const caption = if (first) description else "";
-                try appendRow(s, cc, a, &rows, if (first) title else "", caption, .{ .action = action, .index = i }, first);
+                try appendRow(s, cc, a, &rows, if (first) title else "", caption, .{ .action = action, .index = i }, first, first and saving.canReset(effective, defaults, action));
                 first = false;
             }
             const adding = if (s.editing) |target| target.index == null and keys.actionEql(target.action, action) else false;
-            if (first or adding) try appendRow(s, cc, a, &rows, if (first) title else "", if (first) description else "", .{ .action = action, .index = null }, false);
+            if (first or adding) try appendRow(s, cc, a, &rows, if (first) title else "", if (first) description else "", .{ .action = action, .index = null }, false, first and saving.canReset(effective, defaults, action));
         };
         card.* = .{ .name = "shortcuts", .kind = .{ .rect = .{ .color = t.settings_card_bg, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.window_divider, .relief = t.settings_card_relief } }, .direction = .column, .width = .{ .percent = 1 }, .children = rows.items };
     }
 }
-fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: *std.ArrayList(W), title: []const u8, description: []const u8, target: Target, add: bool) !void {
+
+fn resetBar(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, enabled: bool) !W {
+    var widgets: std.ArrayList(W) = .empty;
+    if (s.confirm_reset) {
+        try widgets.append(a, text(i18n.tr("Restore factory bindings for built-in actions in this desktop mode. Custom commands are kept."), true));
+        try widgets.append(a, .{ .kind = .container, .gap = 8, .children = try children(a, &.{
+            button(cc, 0, i18n.tr("Reset built-in shortcuts"), null, confirmReset),
+            button(cc, 0, i18n.tr("Cancel"), null, cancelClicked),
+        }) });
+    } else {
+        var reset = button(cc, 0, i18n.tr("Reset All Shortcuts"), null, requestReset);
+        if (!enabled) reset.kind.button.state = .disabled;
+        try widgets.append(a, reset);
+    }
+    if (s.editing == null and s.message.len != 0) try widgets.append(a, text(s.message, true));
+    return .{ .kind = .container, .direction = .column, .padding = ui.layout.Edges.all(12), .gap = 8, .children = widgets.items };
+}
+
+fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: *std.ArrayList(W), title: []const u8, description: []const u8, target: Target, add: bool, reset: bool) !void {
     const t = panel.palette();
     const id = s.targets.items.len;
     try s.targets.append(a, target);
@@ -189,6 +219,7 @@ fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: 
     var controls: std.ArrayList(W) = .empty;
     try controls.append(a, .{ .kind = .container, .direction = .column, .width = .{ .flex = 1 }, .gap = 3, .children = try children(a, &.{ text(title, false), text(caption, true) }) });
     var chip = button(cc, id, shortcut, null, edit);
+    if (target.action == .noop) chip.kind.button.state = .disabled;
     chip.name = "shortcut";
     chip.width = .{ .fixed = if (cc.panel_box.width < 660) 140 else 190 };
     if (editing) chip.kind.button.variant = .primary;
@@ -202,17 +233,19 @@ fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: 
         var cancel_btn = button(cc, id, i18n.tr("Cancel"), .close, cancelClicked);
         cancel_btn.name = "cancel";
         try controls.append(a, cancel_btn);
-    } else if (bind != null) {
-        var edit_btn = button(cc, id, i18n.tr("Edit shortcut"), .edit, edit);
-        edit_btn.name = "edit";
-        try controls.append(a, edit_btn);
-        if (bind.?.action != .noop) {
-            var disable = button(cc, id, i18n.tr("Disable shortcut"), .close, disableClicked);
-            disable.name = "disable";
-            try controls.append(a, disable);
+    } else {
+        if (bind != null and target.action != .noop) {
+            var remove = button(cc, id, i18n.tr("Unassign shortcut"), .close, disableClicked);
+            remove.name = "unassign";
+            try controls.append(a, remove);
+        }
+        if (add) try controls.append(a, button(cc, id, i18n.tr("Add shortcut"), .plus, addClicked));
+        if (title.len != 0 and keys.isBuiltIn(target.action)) {
+            var restore = button(cc, id, i18n.tr("Restore factory bindings"), .refresh, resetClicked);
+            if (!reset) restore.kind.button.state = .disabled;
+            try controls.append(a, restore);
         }
     }
-    if (add and !editing) try controls.append(a, button(cc, id, i18n.tr("Add shortcut"), .plus, addClicked));
     try rows.append(a, .{ .kind = .{ .rect = .{ .color = t.window_divider } }, .height = .{ .fixed = 1 }, .width = .{ .percent = 1 } });
     try rows.append(a, .{ .kind = .container, .direction = .row, .height = .{ .fixed = 60 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 0), .gap = 8, .@"align" = .center, .children = controls.items });
 }
@@ -244,7 +277,26 @@ fn cancelClicked(p: ?*anyopaque, _: usize) void {
     cc.refresh();
 }
 fn confirmClicked(p: ?*anyopaque, _: usize) void {
-    owner(p).shortcuts.pending_save = true;
+    owner(p).shortcuts.pending = .record;
+}
+
+fn resetClicked(p: ?*anyopaque, i: usize) void {
+    const cc = owner(p);
+    cc.shortcuts.cancel();
+    cc.shortcuts.pending = .{ .reset = cc.shortcuts.targets.items[i].action };
+}
+
+fn requestReset(p: ?*anyopaque, _: usize) void {
+    const cc = owner(p);
+    cc.shortcuts.cancel();
+    cc.shortcuts.confirm_reset = true;
+    cc.refresh();
+}
+
+fn confirmReset(p: ?*anyopaque, _: usize) void {
+    const cc = owner(p);
+    cc.shortcuts.confirm_reset = false;
+    cc.shortcuts.pending = .{ .reset = null };
 }
 
 fn disableClicked(p: ?*anyopaque, i: usize) void {
@@ -254,5 +306,5 @@ fn disableClicked(p: ?*anyopaque, i: usize) void {
     cc.shortcuts.cancel();
     cc.shortcuts.editing = target;
     cc.shortcuts.candidate = .{ .sym = bind.sym, .modifiers = bind.modifiers, .action = .noop };
-    cc.shortcuts.pending_save = true;
+    cc.shortcuts.pending = .record;
 }

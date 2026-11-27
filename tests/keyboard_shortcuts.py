@@ -16,6 +16,8 @@ def run():
         if workspace_mode:
             original = '[compositor]\ndesktop_mode = "workspaces"\n' + original.replace('[keybinds]', '[keybinds.workspace]')
             original += '"Super+c" = "noop"\n'
+        custom = '"Alt+F11" = "spawn printf hello" # keep custom command'
+        original += custom + "\n"
         process, log = spawn_compositor(tmp, config_content=original, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         try:
             with IPCClient(tmp, timeout=15) as ipc:
@@ -142,10 +144,10 @@ def run():
                 chord("F12")
                 click("Save shortcut")
                 assert has("Super+q") and has("Super+F12")
-                click("Disable shortcut", beside="Super+q")
+                click("Unassign shortcut", beside="Super+q")
                 assert has("Super+F12")
                 assert next(w["box"]["y"] for w in widgets() if w["label"] == "Close Window") == close_y
-                click("Disable shortcut", beside="Super+F12")
+                click("Unassign shortcut", beside="Super+F12")
                 assert has("Close Window") and has("Not assigned")
                 saved = (tmp / "rediwm-config.toml").read_text()
                 assert ('"Super+q" = "noop"' in saved) if workspace_mode else ('"Super+q"' not in saved)
@@ -167,7 +169,26 @@ def run():
                 chord("F12")
                 time.sleep(.3)
                 assert ipc.get_shell_state()["control_center"] is None
-            print("PASS: shortcut recording, multiple bindings, unassignment and restart")
+                ipc.action("open_control_center")
+                time.sleep(.3)
+                click("Keyboard Shortcuts")
+                before_reset = (tmp / "rediwm-config.toml").read_text()
+                click("Reset All Shortcuts")
+                assert has("Reset built-in shortcuts")
+                click("Cancel")
+                assert (tmp / "rediwm-config.toml").read_text() == before_reset
+                click("Restore factory bindings", beside="Close Window")
+                assert has("Super+c" if workspace_mode else "Super+q")
+                assert not has("Super+F12")
+                assert custom in (tmp / "rediwm-config.toml").read_text()
+                click("Super+f")
+                chord("F12")
+                click("Save shortcut")
+                click("Reset All Shortcuts")
+                click("Reset built-in shortcuts")
+                assert has("Super+f") and not has("Super+F12")
+                assert custom in (tmp / "rediwm-config.toml").read_text()
+            print("PASS: shortcut recording, multiple bindings, restart and reset")
         finally:
             stop_process(process)
             log.close()

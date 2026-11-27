@@ -17,7 +17,12 @@ pub fn patch(a: std.mem.Allocator, original: []const u8, binds: []const keys.Key
 }
 
 pub fn patchMode(a: std.mem.Allocator, original: []const u8, binds: []const keys.Keybind, index: ?usize, replacement: keys.Keybind, mode: loader.DesktopMode) ![]u8 {
-    var changes = [_]keys.Keybind{ replacement, undefined };
+    var changes: [2]keys.Keybind = undefined;
+    return patchBindings(a, original, binds, bindingChanges(binds, index, replacement, &changes), mode);
+}
+
+fn bindingChanges(binds: []const keys.Keybind, index: ?usize, replacement: keys.Keybind, changes: *[2]keys.Keybind) []const keys.Keybind {
+    changes[0] = replacement;
     var count: usize = 1;
     if (index) |i| {
         const previous = binds[i];
@@ -27,7 +32,7 @@ pub fn patchMode(a: std.mem.Allocator, original: []const u8, binds: []const keys
             count += 1;
         }
     }
-    return patchBindings(a, original, binds, changes[0..count], mode);
+    return changes[0..count];
 }
 
 fn chord(bind: keys.Keybind) u64 {
@@ -35,10 +40,60 @@ fn chord(bind: keys.Keybind) u64 {
 }
 
 fn find(binds: []const keys.Keybind, target: keys.Keybind) ?keys.Keybind {
-    for (binds) |bind| {
+    var i = binds.len;
+    while (i > 0) {
+        i -= 1;
+        const bind = binds[i];
         if (chord(bind) == chord(target)) return bind;
     }
     return null;
+}
+
+pub fn factoryConfig(a: std.mem.Allocator, mode: loader.DesktopMode) !loader.Config {
+    var config = try loader.parse(a, "", "shortcut-defaults");
+    config.compositor.desktop_mode = mode;
+    return config;
+}
+
+fn selected(action: keys.Action, target: ?keys.Action) bool {
+    return if (target) |one| keys.actionEql(action, one) else keys.isBuiltIn(action);
+}
+
+pub fn canReset(binds: []const keys.Keybind, defaults: []const keys.Keybind, target: ?keys.Action) bool {
+    for (defaults) |bind| {
+        if (!selected(bind.action, target)) continue;
+        const current = find(binds, bind) orelse return true;
+        if (!keys.actionEql(current.action, bind.action)) return true;
+    }
+    for (binds) |bind| {
+        if (!selected(bind.action, target)) continue;
+        const default = find(defaults, bind) orelse return true;
+        if (!keys.actionEql(default.action, bind.action)) return true;
+    }
+    return false;
+}
+
+fn resetChanges(a: std.mem.Allocator, binds: []const keys.Keybind, defaults: []const keys.Keybind, target: ?keys.Action) ![]const keys.Keybind {
+    var changes: std.ArrayList(keys.Keybind) = .empty;
+    for (defaults) |bind| {
+        if (!selected(bind.action, target)) continue;
+        if (find(binds, bind)) |current| {
+            if (keys.actionEql(current.action, bind.action)) continue;
+            if (current.action != .noop) return error.ShortcutConflict;
+        }
+        try changes.append(a, bind);
+    }
+    for (binds) |bind| {
+        const current = find(binds, bind).?;
+        if (!selected(current.action, target) or find(changes.items, bind) != null) continue;
+        if (find(defaults, bind)) |default| {
+            if (keys.actionEql(current.action, default.action)) continue;
+        }
+        var removal = bind;
+        removal.action = .noop;
+        try changes.append(a, removal);
+    }
+    return changes.items;
 }
 
 fn writeBinding(a: std.mem.Allocator, writer: *std.Io.Writer, bind: keys.Keybind) !void {
@@ -119,6 +174,20 @@ pub fn save(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const k
 }
 
 pub fn saveMode(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, index: ?usize, replacement: keys.Keybind, mode: loader.DesktopMode) !void {
+    var changes: [2]keys.Keybind = undefined;
+    return saveChanges(a, io, path, binds, bindingChanges(binds, index, replacement, &changes), mode);
+}
+
+pub fn saveReset(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, mode: loader.DesktopMode, target: ?keys.Action) !void {
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var defaults = try factoryConfig(a, mode);
+    defer defaults.deinit();
+    const changes = try resetChanges(arena.allocator(), binds, defaults.activeKeybinds(), target);
+    if (changes.len > 0) try saveChanges(a, io, path, binds, changes, mode);
+}
+
+fn saveChanges(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, changes: []const keys.Keybind, mode: loader.DesktopMode) !void {
     if (path.len == 0) return error.NoConfigPath;
     const original = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20));
     defer a.free(original);
@@ -129,7 +198,7 @@ pub fn saveMode(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []con
     for (old.activeKeybinds(), binds) |x, y| {
         if (chord(x) != chord(y) or !keys.actionEql(x.action, y.action)) return error.ConfigChanged;
     }
-    const result = try patchMode(a, original, binds, index, replacement, mode);
+    const result = try patchBindings(a, original, binds, changes, mode);
     defer a.free(result);
     var checked = try loader.parse(a, result, path);
     defer checked.deinit();
@@ -266,4 +335,29 @@ fn checkWorkspaceEdit(comptime mode: loader.DesktopMode) !void {
     try std.testing.expectEqualStrings("default-terminal", parsed.lookupKeybind(key.modifiers, key.sym).?.spawn);
     parsed.compositor.desktop_mode = .canvas;
     try std.testing.expectEqual(keys.Action.close_window, parsed.lookupKeybind(binds[0].modifiers, binds[0].sym).?);
+}
+
+test "reset checks factory conflicts and keeps unrelated bindings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var factory = try factoryConfig(a, .canvas);
+    defer factory.deinit();
+    const defaults = factory.activeKeybinds();
+    const original =
+        \\[keybinds]
+        \\"Super+q" = "spawn printf hello"
+        \\"Super+F12" = "close_window"
+        \\"Super+f" = "toggle_fullscreen" # keep unrelated
+    ;
+    var cfg = try loader.parse(a, original, "test");
+    defer cfg.deinit();
+    const binds = cfg.activeKeybinds();
+    try std.testing.expectError(error.ShortcutConflict, resetChanges(a, binds, defaults, .close_window));
+    try std.testing.expectError(error.ShortcutConflict, resetChanges(a, binds, defaults, null));
+    const changes = try resetChanges(a, binds, defaults, .toggle_maximize);
+    const updated = try patchBindings(a, original, binds, changes, .canvas);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "\"Super+q\" = \"spawn printf hello\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "\"Super+F12\" = \"close_window\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "\"Super+f\" = \"toggle_fullscreen\" # keep unrelated") != null);
 }
