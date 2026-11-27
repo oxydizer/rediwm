@@ -46,6 +46,76 @@ test "sizetree libc directory identity matches dirwalk identity" {
     );
 }
 
+test "sizetree filesystem replacement preserves the renamed inode measurement" {
+    const a = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    defer a.free(base);
+    const original = try std.fmt.allocPrintSentinel(a, "{s}/root", .{base}, 0);
+    defer a.free(original);
+    const renamed = try std.fmt.allocPrintSentinel(a, "{s}/renamed", .{base}, 0);
+    defer a.free(renamed);
+
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(original.ptr, 0o700));
+    var stat_old: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(original.ptr, &stat_old));
+    const old_key = tree.Key.fromStat(&stat_old);
+
+    const svc = try Service.create(a, 0, auto);
+    defer svc.destroy();
+    var owner = svc.registerOwner();
+    defer owner.deinit();
+
+    svc.request(&owner, original, .visible, .{ .directory_key = old_key });
+    const initial = try takeResolution(svc);
+    defer initial.deinit(a);
+    try std.testing.expect(!svc.resolvePath(initial));
+
+    const old_id = svc.by_key.get(old_key).?;
+    svc.unqueue(old_id);
+    svc.nodes.items[old_id].self_pending = false;
+    svc.nodes.items[old_id].pending = 0;
+    svc.nodes.items[old_id].complete = true;
+    svc.nodes.items[old_id].own = 123;
+    svc.nodes.items[old_id].total = 123;
+    try std.testing.expectEqual(tree.Status.exact, svc.lookupIdentity(&owner, original, old_key).status);
+
+    try std.testing.expectEqual(@as(c_int, 0), c.rename(original.ptr, renamed.ptr));
+    try std.testing.expectEqual(@as(c_int, 0), c.mkdir(original.ptr, 0o700));
+
+    var stat_new: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(original.ptr, &stat_new));
+    const new_key = tree.Key.fromStat(&stat_new);
+    try std.testing.expect(!std.meta.eql(old_key, new_key));
+
+    svc.request(&owner, original, .visible, .{ .directory_key = new_key });
+    try std.testing.expectEqual(tree.Status.unknown, svc.lookupIdentity(&owner, original, new_key).status);
+    try std.testing.expectEqual(old_id, svc.paths.get(original).?.node);
+
+    const replacement = try takeResolution(svc);
+    defer replacement.deinit(a);
+    try std.testing.expect(!svc.resolvePath(replacement));
+
+    const new_id = svc.by_key.get(new_key).?;
+    try std.testing.expect(new_id != old_id);
+    try std.testing.expectEqual(new_id, svc.paths.get(original).?.node);
+    try std.testing.expectEqual(@as(i64, 0), svc.lookupIdentity(&owner, original, new_key).bytes);
+
+    svc.unqueue(new_id);
+    svc.request(&owner, renamed, .visible, .{ .directory_key = old_key });
+    const moved = try takeResolution(svc);
+    defer moved.deinit(a);
+    try std.testing.expect(!svc.resolvePath(moved));
+
+    try std.testing.expectEqual(old_id, svc.paths.get(renamed).?.node);
+    const preserved = svc.lookupIdentity(&owner, renamed, old_key);
+    try std.testing.expectEqual(tree.Status.exact, preserved.status);
+    try std.testing.expectEqual(@as(i64, 123), preserved.bytes);
+    try std.testing.expectEqual(@as(u32, 2), svc.by_key.count());
+}
+
 test "sizetree replaces obsolete path bindings without discarding other bindings" {
     const a = std.testing.allocator;
     const svc = try Service.create(a, 0, auto);
