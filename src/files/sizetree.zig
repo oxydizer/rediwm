@@ -74,6 +74,8 @@ pub const Info = struct {
 };
 
 pub const RequestOptions = struct {
+    /// Directory identity observed by the listing worker, when available.
+    directory_key: ?Key = null,
     /// Measure even on a disk that is not measured automatically, and undo a
     /// `stop`. A click on the size does this.
     force: bool = false,
@@ -81,7 +83,21 @@ pub const RequestOptions = struct {
     revalidate: bool = false,
 };
 
-pub const Key = struct { dev: u64, ino: u64 };
+pub const Key = struct {
+    dev: u64,
+    ino: u64,
+
+    /// Convert libc stat identity to the representation used by dirwalk.
+    pub fn fromStat(info: *const c.struct_stat) Key {
+        const raw: u64 = @intCast(info.st_dev);
+        const dev = if (builtin.os.tag == .linux) blk: {
+            const major = ((raw >> 8) & 0xfff) | ((raw >> 32) & ~@as(u64, 0xfff));
+            const minor = (raw & 0xff) | ((raw >> 12) & ~@as(u64, 0xff));
+            break :blk (major << 32) | minor;
+        } else raw;
+        return .{ .dev = dev, .ino = @intCast(info.st_ino) };
+    }
+};
 pub const Id = u32;
 pub const no_id: Id = std.math.maxInt(Id);
 const Ref = struct { id: Id, key: Key, gen: u64 };
@@ -307,9 +323,17 @@ pub const Service = struct {
     }
 
     pub fn lookupOwned(self: *Service, owner: ?*const Owner, path: []const u8) Info {
+        return self.lookupIdentity(owner, path, null);
+    }
+
+    pub fn lookupIdentity(self: *Service, owner: ?*const Owner, path: []const u8, expected: ?Key) Info {
         self.lock();
         defer self.unlock();
         const entry = self.paths.get(path) orelse return .{};
+        if (expected) |key| {
+            if (entry.node != no_id and !std.meta.eql(self.nodes.items[entry.node].key, key))
+                return .{};
+        }
         path_cache.touch(self, entry);
         const is_stopped = if (owner) |view| demand.stopped(view, entry) else false;
         if (entry.node == no_id) {

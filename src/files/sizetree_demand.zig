@@ -211,6 +211,25 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
         break :blk new.value_ptr;
     };
     const old = record.*;
+    if (options.directory_key) |key| {
+        const changed = !std.meta.eql(entry.expected_key, options.directory_key);
+        const mismatch = entry.node != no_id and
+            !std.meta.eql(svc.nodes.items[entry.node].key, key);
+        if (changed or mismatch) {
+            svc.cancelResolution(entry);
+            entry.expected_key = key;
+            if (mismatch) {
+                const id = entry.node;
+                adjustDirect(svc, id, pathLevel(entry), null);
+                unbind(entry, svc);
+            }
+            if (entry.node == no_id) {
+                entry.auto_allowed = true;
+                svc.queueResolution(entry);
+            }
+            svc.bump();
+        }
+    }
     if (record.stopped and !options.force) return true;
     if (options.force) {
         record.stopped = false;

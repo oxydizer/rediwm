@@ -97,7 +97,10 @@ pub fn syncVisibleFolderSizes(self: *App) void {
     var registered = true;
     const revalidate = app_mod.nowMs() < self.size_revalidate_until;
     for (items) |item| {
-        if (sizable(self, item) and !owner.service.requestOwned(owner, item.path, .visible, .{ .revalidate = revalidate }))
+        if (sizable(self, item) and !owner.service.requestOwned(owner, item.path, .visible, .{
+            .revalidate = revalidate,
+            .directory_key = item.directory_key,
+        }))
             registered = false;
     }
     owner.endViewport();
@@ -116,7 +119,10 @@ pub fn startFolderSize(self: *App, idx: usize) void {
     const it = self.items.items[idx];
     if (!sizable(self, it)) return;
     const owner = sizeOwner(self) orelse return;
-    owner.service.request(owner, it.path, .background, .{ .force = true });
+    owner.service.request(owner, it.path, .background, .{
+        .force = true,
+        .directory_key = it.directory_key,
+    });
     self.size_viewport = null;
     self.damagePathSize(it.path);
 }
@@ -154,7 +160,7 @@ pub fn folderSizeClickable(self: *App, item: ViewItem) bool {
 pub fn folderSizeInfo(self: *App, item: ViewItem) sizetree.Info {
     if (!sizable(self, item)) return .{};
     const svc = self.sizeService() orelse return .{};
-    return svc.lookupOwned(if (self.size_owner) |*owner| owner else null, item.path);
+    return svc.lookupIdentity(if (self.size_owner) |*owner| owner else null, item.path, item.directory_key);
 }
 
 /// Leaving a folder: the service drops the queued work for its subfolders

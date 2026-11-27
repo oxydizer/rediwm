@@ -53,6 +53,7 @@ pub const PathEntry = struct {
     // requires zero owners and unlinks the binding before dropping that pin.
     owners: usize = 0,
     node: tree.Id = no_id,
+    expected_key: ?Key = null,
     bound_prev: ?*PathEntry = null,
     bound_next: ?*PathEntry = null,
     automatic: [2]usize = .{ 0, 0 },
@@ -160,7 +161,7 @@ fn current(svc: *Service, job: Job) bool {
 pub fn resolvePath(svc: *Service, job: Job) bool {
     var buf: [4096]u8 = undefined;
     const z = std.fmt.bufPrintSentinel(&buf, "{s}", .{job.path}, 0) catch return resolved(svc, job, null, false);
-    const fd = c.open(z.ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
+    const fd = c.open(z.ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
     if (fd < 0) return resolved(svc, job, null, false);
     defer _ = c.close(fd);
     const info = dirwalk.statFd(fd) orelse return resolved(svc, job, null, false);
@@ -190,6 +191,9 @@ pub fn resolved(svc: *Service, job: Job, key: ?Key, auto: bool) bool {
     entry.resolution = null;
     defer svc.bump();
     const k = key orelse return false;
+    if (entry.expected_key) |expected| {
+        if (!std.meta.eql(k, expected)) return false;
+    }
     const level = demand.pathLevel(entry).?;
     const id = svc.by_key.get(k) orelse (svc.newNode(k, job.path, level) catch {
         svc.queueResolution(entry);

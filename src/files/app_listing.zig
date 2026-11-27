@@ -425,7 +425,7 @@ pub fn rebuildView(self: *App) void {
                 // Folders sort by what is known of their size, unknown last.
                 bytes = -1;
                 if (self.size_service orelse @import("app_folder_size.zig").sharedService()) |svc| {
-                    const info = svc.lookup(it.path);
+                    const info = svc.lookupIdentity(null, it.path, it.directory_key);
                     if (info.known()) bytes = info.bytes;
                 }
             }
@@ -437,6 +437,7 @@ pub fn rebuildView(self: *App) void {
                 .is_dir = it.is_dir,
                 .is_symlink = it.is_symlink,
                 .is_broken = it.is_broken,
+                .directory_key = it.directory_key,
                 .git_status = it.git_status,
                 .git_lines = it.git_lines,
                 .missing = it.missing,
