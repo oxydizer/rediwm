@@ -204,6 +204,7 @@ pub fn isStaleSnapshot(snapshot_request_id: u64, active_request_id: u64) bool {
 pub fn sync(self: *App) void {
     const profile_started = ui_profile.start();
     defer ui_profile.finish(profile_started, "sync", self.items.items.len);
+    defer self.syncVisibleFolderSizes();
 
     if (self.worker.takeApplicationNotice()) |notice| self.setStatusNotice(notice.message, notice.failed);
     if (self.worker.takeThemeNotice()) |notice| {

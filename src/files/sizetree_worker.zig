@@ -24,7 +24,7 @@ pub fn workerLoop(self: *Service) void {
         switch (job.work) {
             .resolve => |resolution| {
                 self.unlock();
-                self.resolvePath(resolution);
+                retry = self.resolvePath(resolution);
                 resolution.deinit(self.allocator);
                 self.lock();
             },

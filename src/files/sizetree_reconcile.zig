@@ -67,6 +67,8 @@ const Plan = struct {
         // can still be linked below an omitted child in the cached tree.
         for (self.changes.items) |*change| {
             if (change.existing) |child| {
+                svc.nodes.items[child].path_missing = false;
+                svc.nodes.items[child].waiting_for_parent = false;
                 if (change.name) |name| {
                     svc.allocator.free(svc.nodes.items[child].name);
                     svc.nodes.items[child].name = name;
@@ -77,7 +79,6 @@ const Plan = struct {
                 }
             } else {
                 const child = svc.newNodePrepared(change.key, change.name.?, parent.level);
-                svc.nodes.items[child].paused = parent.paused;
                 svc.attachPrepared(id, child);
                 change.existing = child;
             }
@@ -98,12 +99,8 @@ const Plan = struct {
         for (self.changes.items) |change| {
             const child = change.existing.?;
             const node = &svc.nodes.items[child];
-            if (change.attach and parent.paused) {
-                svc.dequeueSubtree(child);
-            } else if (node.self_pending and node.queued == null and !node.scanning) {
-                // Includes children whose scan lost the old path.
-                svc.enqueue(child, parent.level);
-            }
+            if (node.self_pending and node.queued == null and !node.scanning)
+                svc.enqueue(child, node.level);
         }
     }
 };

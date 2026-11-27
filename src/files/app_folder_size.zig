@@ -45,6 +45,58 @@ pub fn sizeService(self: *App) ?*sizetree.Service {
     return shared_service;
 }
 
+fn sizeOwner(self: *App) ?*sizetree.Owner {
+    if (self.size_owner == null) {
+        const svc = self.sizeService() orelse return null;
+        self.size_owner = svc.registerOwner();
+    }
+    return &self.size_owner.?;
+}
+
+pub const Viewport = struct {
+    revision: u64,
+    first: usize,
+    last: usize,
+};
+
+/// Update demand from the actual viewport, independently of paint damage.
+pub fn syncVisibleFolderSizes(self: *App) void {
+    const height = self.contentBottom() - self.viewTop();
+    const row_h = @max(1, self.rowHeight());
+    const cols: usize = @intCast(@max(1, self.columns()));
+    const top = self.scroll_y - self.itemInset();
+    const row0: usize = @intCast(@max(0, @divFloor(top - self.cardHeight(), row_h) + 1));
+    const row1: usize = @intCast(@max(0, -@divFloor(-(top + height), row_h)));
+    const len = self.items.items.len;
+    const first = @min(len, row0 * cols);
+    const view: Viewport = .{
+        .revision = self.view_revision,
+        .first = first,
+        .last = if (height <= 0) first else @max(first, @min(len, row1 * cols)),
+    };
+    if (self.size_viewport) |previous| if (std.meta.eql(previous, view)) return;
+
+    const items = self.items.items[view.first..view.last];
+    if (self.size_owner == null) {
+        for (items) |item| {
+            if (sizable(self, item)) break;
+        } else {
+            self.size_viewport = view;
+            return;
+        }
+    }
+    const owner = sizeOwner(self) orelse return;
+    owner.beginViewport();
+    var registered = true;
+    const revalidate = app_mod.nowMs() < self.size_revalidate_until;
+    for (items) |item| {
+        if (sizable(self, item) and !owner.service.requestOwned(owner, item.path, .visible, .{ .revalidate = revalidate }))
+            registered = false;
+    }
+    owner.endViewport();
+    if (registered) self.size_viewport = view;
+}
+
 /// Folders whose size this window may show: real folders on disk, not an
 /// archive's or a transfer's.
 fn sizable(self: *App, item: ViewItem) bool {
@@ -56,8 +108,9 @@ pub fn startFolderSize(self: *App, idx: usize) void {
     if (idx >= self.items.items.len) return;
     const it = self.items.items[idx];
     if (!sizable(self, it)) return;
-    const svc = self.sizeService() orelse return;
-    svc.request(it.path, .visible, .{ .force = true });
+    const owner = sizeOwner(self) orelse return;
+    owner.service.request(owner, it.path, .background, .{ .force = true });
+    self.size_viewport = null;
     self.damagePathSize(it.path);
 }
 
@@ -65,8 +118,8 @@ pub fn cancelFolderSize(self: *App, idx: usize) void {
     if (idx >= self.items.items.len) return;
     const it = self.items.items[idx];
     if (!sizable(self, it)) return;
-    const svc = self.sizeService() orelse return;
-    svc.stopPath(it.path);
+    const owner = if (self.size_owner) |*owner| owner else return;
+    owner.service.stopPath(owner, it.path);
     self.damagePathSize(it.path);
 }
 
@@ -78,7 +131,7 @@ pub fn toggleFolderSize(self: *App, idx: usize) void {
     switch (self.folderSizeInfo(it).status) {
         .measuring, .revalidating => self.cancelFolderSize(idx),
         .partial, .exact => {},
-        .unknown, .idle => self.startFolderSize(idx),
+        .unknown, .idle, .stale => self.startFolderSize(idx),
     }
 }
 
@@ -94,14 +147,14 @@ pub fn folderSizeClickable(self: *App, item: ViewItem) bool {
 pub fn folderSizeInfo(self: *App, item: ViewItem) sizetree.Info {
     if (!sizable(self, item)) return .{};
     const svc = self.sizeService() orelse return .{};
-    return svc.lookup(item.path);
+    return svc.lookupOwned(if (self.size_owner) |*owner| owner else null, item.path);
 }
 
 /// Leaving a folder: the service drops the queued work for its subfolders
 /// (what was added up stays).
 pub fn cancelRunningFolderSizes(self: *App) void {
-    const svc = self.size_service orelse shared_service orelse return;
-    for (self.items.items) |it| if (sizable(self, it)) svc.forgetPath(it.path);
+    if (self.size_owner) |*owner| owner.clear();
+    self.size_viewport = null;
 }
 
 pub fn clearFolderSizes(self: *App) void {
@@ -113,6 +166,7 @@ pub fn clearFolderSizes(self: *App) void {
 /// measured again as they are painted, for the next moment.
 pub fn revalidateFolderSizes(self: *App) void {
     self.size_revalidate_until = app_mod.nowMs() + 1000;
+    self.size_viewport = null;
     self.invalidate();
 }
 
@@ -181,15 +235,13 @@ pub fn itemSizeDisplay(self: *App, item: ViewItem, buf: *[64]u8) ItemSizeDisplay
     // A torrent's folder knows its size.
     if (self.history.torrent) return .{ .text = formatSize(item.bytes, buf), .is_running = false };
     if (!sizable(self, item)) return .{ .text = "—", .is_running = false };
-    const svc = self.sizeService() orelse return .{ .text = "—", .is_running = false };
-    svc.request(item.path, .visible, .{ .revalidate = app_mod.nowMs() < self.size_revalidate_until });
-    const info = svc.lookup(item.path);
+    const info = self.folderSizeInfo(item);
     var sbuf: [64]u8 = undefined;
     const formatted = formatSize(info.bytes, &sbuf);
     return switch (info.status) {
         .unknown, .idle => .{ .text = "—", .is_running = false },
         .measuring => .{ .text = std.fmt.bufPrint(buf, "{s}", .{formatted}) catch "—", .is_running = true },
-        .revalidating => .{ .text = std.fmt.bufPrint(buf, "≈ {s}", .{formatted}) catch "—", .is_running = false },
+        .revalidating, .stale => .{ .text = std.fmt.bufPrint(buf, "≈ {s}", .{formatted}) catch "—", .is_running = false },
         .partial => .{ .text = std.fmt.bufPrint(buf, "≥ {s}", .{formatted}) catch "—", .is_running = false },
         .exact => .{ .text = formatSize(info.bytes, buf), .is_running = false },
     };

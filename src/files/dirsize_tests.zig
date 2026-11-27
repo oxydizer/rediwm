@@ -345,6 +345,7 @@ test "App folder size calculation and display lifecycle" {
 
     // A disk that is not measured automatically: a dash until clicked.
     var buf: [64]u8 = undefined;
+    app.syncVisibleFolderSizes();
     var disp = app.itemSizeDisplay(app.items.items[0], &buf);
     settle(svc);
     disp = app.itemSizeDisplay(app.items.items[0], &buf);
@@ -403,6 +404,7 @@ test "App folder sizes are measured automatically on a fast local disk" {
 
     // Painting the folder asks for its size.
     var buf: [64]u8 = undefined;
+    app.syncVisibleFolderSizes();
     _ = app.itemSizeDisplay(app.items.items[0], &buf);
     settle(svc);
     try std.testing.expectEqualStrings("5 B", app.itemSizeDisplay(app.items.items[0], &buf).text);
@@ -441,10 +443,12 @@ test "App leaving a folder drops its queued sizes until they are painted again" 
     app.rebuildView();
 
     var buf: [64]u8 = undefined;
+    app.syncVisibleFolderSizes();
     try std.testing.expect(app.itemSizeDisplay(app.items.items[0], &buf).is_running);
     try std.testing.expect(app.hasRunningFolderSize());
     app.cancelRunningFolderSizes();
     try std.testing.expect(!app.hasRunningFolderSize());
+    app.syncVisibleFolderSizes();
     _ = app.itemSizeDisplay(app.items.items[0], &buf);
     try std.testing.expect(app.hasRunningFolderSize());
 }
@@ -495,8 +499,10 @@ test "App size sort: measured folders sort by apparent size, unmeasured last" {
     defer app.deinit();
     defer app.snapshot = null;
 
-    svc.request(paths[1], .visible, .{ .force = true });
-    svc.request(paths[2], .visible, .{ .force = true });
+    var owner = svc.registerOwner();
+    defer owner.deinit();
+    svc.request(&owner, paths[1], .visible, .{ .force = true });
+    svc.request(&owner, paths[2], .visible, .{ .force = true });
     settle(svc);
 
     app.sort_mode = .size;
@@ -645,4 +651,56 @@ test "App context menu Calculate size starts the selected folders" {
     try std.testing.expectEqual(sizetree.Status.unknown, svc.lookup(second).status);
     try std.testing.expectEqual(sizetree.Status.measuring, svc.lookup(third).status);
     try std.testing.expect(app.hasRunningFolderSize());
+}
+
+test "Files viewport, navigation and destruction release their own folder-size demand" {
+    const a = std.testing.allocator;
+    const svc = try sizetree.Service.create(a, 0, everyDisk);
+    defer svc.destroy();
+    var other = svc.registerOwner();
+    defer other.deinit();
+    var app = app_mod.App{
+        .allocator = a,
+        .io = undefined,
+        .environ = undefined,
+        .theme_cfg = undefined,
+        .worker = undefined,
+        .history = try history_mod.History.init(a, "/root"),
+        .home_dir = "/root",
+        .items_arena = std.heap.ArenaAllocator.init(a),
+        .size_service = svc,
+        .list_view = true,
+    };
+    var open = true;
+    defer if (open) app.deinit();
+    try app.items.appendSlice(a, &.{
+        .{ .name = "one", .path = "/root/one", .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 0, .icon_name = "" },
+        .{ .name = "two", .path = "/root/two", .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 0, .icon_name = "" },
+    });
+    app.h = app.viewTop() + app.footerHeight() + app.cardHeight();
+    app.syncVisibleFolderSizes();
+    try std.testing.expectEqual(sizetree.Status.measuring, svc.lookup("/root/one").status);
+    try std.testing.expectEqual(sizetree.Status.unknown, svc.lookup("/root/two").status);
+    app.startFolderSize(0);
+    app.scroll_y = app.rowHeight();
+    app.syncVisibleFolderSizes();
+    try std.testing.expectEqual(sizetree.Status.measuring, svc.lookup("/root/one").status);
+    try std.testing.expectEqual(sizetree.Status.measuring, svc.lookup("/root/two").status);
+    app.items.items.len = 1;
+    app.view_revision += 1;
+    app.syncVisibleFolderSizes();
+    try std.testing.expectEqual(sizetree.Status.unknown, svc.lookup("/root/two").status);
+
+    // The navigation hook clears explicit off-screen work as well.
+    app.cancelRunningFolderSizes();
+    try std.testing.expect(!svc.busy());
+    app.scroll_y = 0;
+    app.syncVisibleFolderSizes();
+    svc.request(&other, "/root/one", .background, .{});
+    app.deinit();
+    open = false;
+    try std.testing.expect(svc.busy());
+    try std.testing.expectEqual(@as(usize, 1), svc.paths.get("/root/one").?.owners);
+    other.clear();
+    try std.testing.expect(!svc.busy());
 }

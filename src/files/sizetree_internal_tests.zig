@@ -3,6 +3,7 @@ const std = @import("std");
 const tree = @import("sizetree.zig");
 const Service = tree.Service;
 const Level = tree.Level;
+const demand = @import("sizetree_demand.zig");
 
 fn testAutoPolicy(_: u32, _: u32) bool {
     return true;
@@ -15,13 +16,15 @@ test "sizetree alternates resolution and scanning while preserving scan priority
 
     const background = try svc.newNode(.{ .dev = 1, .ino = 1 }, "/background", .background);
     const visible = try svc.newNode(.{ .dev = 1, .ino = 2 }, "/visible", .visible);
-    svc.enqueue(background, .background);
-    svc.enqueue(visible, .visible);
+    demand.adjustDirect(svc, background, null, .background);
+    demand.adjustDirect(svc, visible, null, .visible);
+    var owner = svc.registerOwner();
+    defer owner.deinit();
 
-    svc.request("/resolve1", .visible, .{});
-    svc.request("/resolve2", .visible, .{});
-    svc.request("/resolve3", .visible, .{});
-    svc.request("/resolve4", .visible, .{});
+    svc.request(&owner, "/resolve1", .visible, .{});
+    svc.request(&owner, "/resolve2", .visible, .{});
+    svc.request(&owner, "/resolve3", .visible, .{});
+    svc.request(&owner, "/resolve4", .visible, .{});
 
     var path_buf: [4096]u8 = undefined;
     const expected = [_][]const u8{
@@ -48,7 +51,7 @@ test "sizetree alternates resolution and scanning while preserving scan priority
         }
     }
     try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
-    try std.testing.expectEqual(@as(usize, 0), svc.resolve.items.len);
+    try std.testing.expect(!@import("sizetree_resolution.zig").hasReady(svc));
 }
 
 test "sizetree pauses children discovered by an in-flight scan" {
@@ -57,10 +60,12 @@ test "sizetree pauses children discovered by an in-flight scan" {
     defer svc.destroy();
 
     const root = try svc.newNode(.{ .dev = 1, .ino = 1 }, "/root", .visible);
+    demand.adjustDirect(svc, root, null, .visible);
+    svc.unqueue(root);
     svc.nodes.items[root].scanning = true;
 
     // Navigation away pauses the root while its worker is still reading it.
-    svc.dequeueSubtree(root);
+    demand.adjustDirect(svc, root, .visible, null);
     try std.testing.expect(svc.nodes.items[root].paused);
 
     const child_name = try allocator.dupe(u8, "child");
@@ -82,7 +87,7 @@ test "sizetree pauses children discovered by an in-flight scan" {
     try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
 
     // A later request resumes pending work in the subtree.
-    svc.enqueueSubtree(root, .visible);
+    demand.adjustDirect(svc, root, null, .visible);
 
     try std.testing.expect(!svc.nodes.items[root].paused);
     try std.testing.expect(!svc.nodes.items[child].paused);
@@ -102,8 +107,7 @@ test "sizetree deletes every detached descendant without allocating" {
     try svc.attach(root, branch);
     try svc.attach(branch, nested);
     try svc.attach(branch, sibling);
-    svc.enqueue(branch, .visible);
-    svc.enqueue(nested, .visible);
+    demand.adjustDirect(svc, branch, null, .visible);
     const root_ref = svc.refOf(root);
     const deleted = [_]@TypeOf(root){ branch, nested, sibling };
     const stale_refs = .{ svc.refOf(branch), svc.refOf(nested), svc.refOf(sibling) };

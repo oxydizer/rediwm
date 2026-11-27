@@ -233,6 +233,8 @@ pub const App = struct {
     navigation_count: u32 = 0,
     /// The folder-size service to use instead of the process's (tests).
     size_service: ?*@import("sizetree.zig").Service = null,
+    size_owner: ?@import("sizetree.zig").Owner = null,
+    size_viewport: ?app_folder_size.Viewport = null,
     /// The service's generation when the sizes were last damaged.
     size_generation: u64 = 0,
     /// Folders painted until then are measured again if their total is old.
@@ -469,7 +471,7 @@ pub const App = struct {
         self.pins.deinit(self.allocator);
         if (self.preview_return_fd) |fd| _ = c.close(fd);
         if (self.editor_path) |path| self.allocator.free(path);
-        self.clearFolderSizes();
+        if (self.size_owner) |*owner| owner.deinit();
         if (self.dirsize_pool) |p| reaper_mod.retire(self.reaper, p, dirsize.Pool.deinit);
         if (self.thumbs) |t| reaper_mod.retire(self.reaper, t, thumbs_mod.Service.deinit);
         if (self.devices) |monitor| monitor.stop();
@@ -845,6 +847,7 @@ pub const App = struct {
     pub const clearFolderSizes = app_folder_size.clearFolderSizes;
     pub const hasRunningFolderSize = app_folder_size.hasRunningFolderSize;
     pub const damagePathSize = app_folder_size.damagePathSize;
+    pub const syncVisibleFolderSizes = app_folder_size.syncVisibleFolderSizes;
     pub const syncFolderSizes = app_folder_size.syncFolderSizes;
     pub const startPropertiesSizes = app_folder_size.startPropertiesSizes;
     pub const sizeService = app_folder_size.sizeService;

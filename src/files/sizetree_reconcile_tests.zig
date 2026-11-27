@@ -2,6 +2,7 @@
 const std = @import("std");
 const tree = @import("sizetree.zig");
 const Service = tree.Service;
+const demand = @import("sizetree_demand.zig");
 const Id = tree.Id;
 const no_id = tree.no_id;
 
@@ -27,6 +28,7 @@ fn checkTree(svc: *Service) !void {
             try std.testing.expect(parent.live);
             try std.testing.expectEqual(id, parent.children.items[node.child_index]);
         }
+        var demands = node.direct_demand[0] + node.direct_demand[1];
         var total = node.own;
         var pending: u32 = @intFromBool(node.self_pending);
         var unreadable: u32 = @intFromBool(node.self_unreadable);
@@ -35,10 +37,12 @@ fn checkTree(svc: *Service) !void {
             try std.testing.expect(member.live);
             try std.testing.expectEqual(id, member.parent);
             try std.testing.expectEqual(child_index, member.child_index);
+            demands += member.subtree_demand;
             total += member.total;
             pending += member.pending;
             unreadable += member.unreadable;
         }
+        try std.testing.expectEqual(demands, node.subtree_demand);
         try std.testing.expectEqual(total, node.total);
         try std.testing.expectEqual(pending, node.pending);
         try std.testing.expectEqual(unreadable, node.unreadable);
@@ -100,7 +104,8 @@ fn reconcileWithFailure(fail_offset: usize) !bool {
     try svc.finishScan(moved_leaf, 11, &.{}, true);
     try svc.finishScan(renamed, 13, &.{}, false);
     try svc.finishScan(rescued, 17, &.{}, false);
-    svc.enqueue(removed, .background);
+    demand.adjustDirect(svc, root, null, .visible);
+    svc.unqueue(root);
     svc.nodes.items[root].scanning = true;
     svc.nodes.items[root].rescan = true;
     const moved_ref = svc.refOf(moved);
@@ -157,7 +162,9 @@ fn reconcileWithFailure(fail_offset: usize) !bool {
 
         // The worker releases the in-flight job and requeues it without
         // allocating, even though the allocator is still failing.
+        svc.unqueue(removed);
         svc.retryScan(root);
+        svc.enqueue(removed, .visible);
         var path: [4096]u8 = undefined;
         const job = svc.take(&path).?;
         try std.testing.expectEqual(root, svc.liveId(job.work.scan.ref).?);
@@ -212,14 +219,14 @@ test "sizetree promotion, cancellation and rescan scheduling need no allocation"
     failing.fail_index = failing.alloc_index;
     failing.resize_fail_index = failing.resize_index;
 
-    svc.enqueueSubtree(root, .background);
-    svc.enqueue(other, .background);
-    svc.enqueueSubtree(root, .visible);
+    demand.adjustDirect(svc, root, null, .background);
+    demand.adjustDirect(svc, other, null, .background);
+    demand.adjustDirect(svc, root, .background, .visible);
     try checkTree(svc);
     var path: [4096]u8 = undefined;
     try std.testing.expectEqual(root, svc.take(&path).?.work.scan.ref.id);
     svc.retryScan(root);
-    svc.dequeueSubtree(root);
+    demand.adjustDirect(svc, root, .visible, null);
     try checkTree(svc);
     try std.testing.expectEqual(other, svc.take(&path).?.work.scan.ref.id);
     svc.nodes.items[other].rescan = true;
@@ -229,10 +236,10 @@ test "sizetree promotion, cancellation and rescan scheduling need no allocation"
     try std.testing.expectEqual(other, svc.take(&path).?.work.scan.ref.id);
     try svc.finishScan(other, 4, &.{}, false);
     try std.testing.expect(svc.nodes.items[other].complete);
-    svc.enqueueSubtree(root, .visible);
+    demand.adjustDirect(svc, root, null, .visible);
     try std.testing.expectEqual(root, svc.take(&path).?.work.scan.ref.id);
     try std.testing.expectEqual(child, svc.take(&path).?.work.scan.ref.id);
-    svc.dequeueSubtree(root);
+    demand.adjustDirect(svc, root, .visible, null);
     svc.retryScan(root);
     svc.retryScan(child);
     try std.testing.expectEqual(@as(usize, 0), svc.queued_count);

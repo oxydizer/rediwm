@@ -57,7 +57,7 @@ pub fn enqueue(self: *Service, id: Id, level: Level) void {
 
 /// Same reverse child order as pushing children onto a stack, using the
 /// child's slot in its parent's list to find the next sibling.
-fn next(self: *Service, root: Id, from: Id, descend: bool) Id {
+pub fn next(self: *Service, root: Id, from: Id, descend: bool) Id {
     if (descend) if (self.nodes.items[from].children.getLastOrNull()) |child| return child;
     var id = from;
     while (id != root) {
@@ -69,45 +69,19 @@ fn next(self: *Service, root: Id, from: Id, descend: bool) Id {
     return no_id;
 }
 
-/// Queues each pending directory and raises lower-priority work.
-pub fn enqueueSubtree(self: *Service, root: Id, level: Level) void {
-    var id = root;
-    while (id != no_id) {
-        const node = &self.nodes.items[id];
-        node.paused = false;
-        if (node.pending != 0) {
-            if (@backingInt(level) < @backingInt(node.level)) node.level = level;
-            if (node.self_pending) self.enqueue(id, level);
-        }
-        id = next(self, root, id, node.pending != 0);
-    }
-}
-
 /// Marks every directory below root to be read again, keeping totals.
-pub fn markSubtree(self: *Service, root: Id, level: Level) void {
+pub fn markSubtree(self: *Service, root: Id) void {
     var id = root;
     while (id != no_id) : (id = next(self, root, id, true)) {
         const node = &self.nodes.items[id];
-        node.paused = false;
-        node.level = level;
+        if (node.paused) continue;
         if (!node.self_pending) {
             node.self_pending = true;
             self.propagate(id, 0, 1, 0);
         }
-        self.enqueue(id, level);
+        self.enqueue(id, node.level);
     }
     self.bump();
-}
-
-pub fn dequeueSubtree(self: *Service, root: Id) void {
-    var id = root;
-    while (id != no_id) : (id = next(self, root, id, true)) {
-        const node = &self.nodes.items[id];
-        self.unqueue(id);
-        node.paused = true;
-        node.rescan = false;
-        node.level = .background;
-    }
 }
 
 /// A failed read or preparation leaves the previous measurement intact.
