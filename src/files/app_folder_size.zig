@@ -95,10 +95,9 @@ pub fn syncVisibleFolderSizes(self: *App) void {
     const owner = sizeOwner(self) orelse return;
     owner.beginViewport();
     var registered = true;
-    const revalidate = app_mod.nowMs() < self.size_revalidate_until;
     for (items) |item| {
         if (sizable(self, item) and !owner.service.requestOwned(owner, item.path, .visible, .{
-            .revalidate = revalidate,
+            .revalidate = true,
             .directory_key = item.directory_key,
         }))
             registered = false;
@@ -175,10 +174,9 @@ pub fn clearFolderSizes(self: *App) void {
     self.invalidate();
 }
 
-/// Entering or refreshing a folder: subfolders measured long enough ago are
-/// measured again as they are painted, for the next moment.
+/// Entering or refreshing a folder makes the next viewport check freshness.
+/// The service applies its own age threshold to each requested directory.
 pub fn revalidateFolderSizes(self: *App) void {
-    self.size_revalidate_until = app_mod.nowMs() + 1000;
     self.size_viewport = null;
     self.invalidate();
 }

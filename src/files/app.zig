@@ -237,8 +237,6 @@ pub const App = struct {
     size_viewport: ?app_folder_size.Viewport = null,
     /// The service's generation when the sizes were last damaged.
     size_generation: u64 = 0,
-    /// Folders painted until then are measured again if their total is old.
-    size_revalidate_until: i64 = 0,
     dirsize_pool: ?*dirsize.Pool = null,
     /// The process's reaper: helper threads this window stops are joined
     /// there, off the UI thread. Null in tests that build an App alone.

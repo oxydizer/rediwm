@@ -29,6 +29,32 @@ fn discovered(ino: u64, name: []const u8) Service.Child {
     return .{ .key = key(ino), .name = @constCast(name) };
 }
 
+test "sizetree revalidates an expired measurement when it becomes visible again" {
+    const svc = try Service.create(std.testing.allocator, 0, auto);
+    defer svc.destroy();
+    var owner = svc.registerOwner();
+    defer owner.deinit();
+
+    svc.request(&owner, "/root", .visible, .{ .revalidate = true });
+    const root = try resolve(svc, "/root", 1);
+    svc.unqueue(root);
+    try svc.finishScan(root, 41, &.{}, false);
+    try equal(tree.Status.exact, svc.lookup("/root").status);
+
+    owner.clear();
+    svc.request(&owner, "/root", .visible, .{ .revalidate = true });
+    try want(!svc.busy());
+    try equal(tree.Status.exact, svc.lookup("/root").status);
+
+    owner.clear();
+    svc.nodes.items[root].completed_ms = tree.nowMs() - svc.revalidate_ms - 1;
+    svc.request(&owner, "/root", .visible, .{ .revalidate = true });
+
+    try equal(tree.Status.revalidating, svc.lookup("/root").status);
+    try equal(@as(i64, 41), svc.lookup("/root").bytes);
+    try equal(@as(?tree.Level, .visible), svc.nodes.items[root].queued);
+}
+
 test "sizetree owners request idempotently and stop and close independently" {
     const svc = try Service.create(std.testing.allocator, 0, auto);
     defer svc.destroy();
