@@ -91,8 +91,8 @@ pub const Key = struct {
     pub fn fromStat(info: *const c.struct_stat) Key {
         const raw: u64 = @intCast(info.st_dev);
         const dev = if (builtin.os.tag == .linux) blk: {
-            const major = ((raw >> 8) & 0xfff) | ((raw >> 32) & ~@as(u64, 0xfff));
-            const minor = (raw & 0xff) | ((raw >> 12) & ~@as(u64, 0xff));
+            const major = ((raw >> 8) & 0xfff) | ((raw >> 32) & 0xfffff000);
+            const minor = (raw & 0xff) | ((raw >> 12) & 0xffffff00);
             break :blk (major << 32) | minor;
         } else raw;
         return .{ .dev = dev, .ino = @intCast(info.st_ino) };

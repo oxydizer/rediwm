@@ -23,6 +23,29 @@ fn takeResolution(svc: *Service) !Resolution {
     };
 }
 
+test "sizetree libc directory identity matches dirwalk identity" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a = std.testing.allocator;
+    const path = try tmp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    defer a.free(path);
+    const zpath = try a.dupeSentinel(u8, path, 0);
+    defer a.free(zpath);
+
+    var info: c.struct_stat = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), c.lstat(zpath.ptr, &info));
+
+    const fd = c.open(zpath.ptr, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
+    try std.testing.expect(fd >= 0);
+    defer _ = c.close(fd);
+
+    const walked = platform.dirwalk.statFd(fd) orelse return error.TestSetupFailed;
+    try std.testing.expectEqual(
+        tree.Key{ .dev = walked.dev, .ino = walked.ino },
+        tree.Key.fromStat(&info),
+    );
+}
+
 test "sizetree replaces obsolete path bindings without discarding other bindings" {
     const a = std.testing.allocator;
     const svc = try Service.create(a, 0, auto);
