@@ -211,24 +211,16 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
         break :blk new.value_ptr;
     };
     const old = record.*;
+    var validate = false;
     if (options.directory_key) |key| {
         const changed = !std.meta.eql(entry.expected_key, options.directory_key);
         const mismatch = entry.node != no_id and
             !std.meta.eql(svc.nodes.items[entry.node].key, key);
-        if (changed or mismatch) {
+        if (changed) {
             svc.cancelResolution(entry);
             entry.expected_key = key;
-            if (mismatch) {
-                const id = entry.node;
-                adjustDirect(svc, id, pathLevel(entry), null);
-                unbind(entry, svc);
-            }
-            if (entry.node == no_id) {
-                entry.auto_allowed = true;
-                svc.queueResolution(entry);
-            }
-            svc.bump();
         }
+        validate = mismatch;
     }
     if (record.stopped and !options.force) return true;
     if (options.force) {
@@ -247,6 +239,14 @@ pub fn requestOwned(svc: *Service, owner: *Owner, path: []const u8, level: Level
     if (entry.node == no_id) entry.auto_allowed = true;
     update(svc, entry, old, record.*);
     path_cache.touch(svc, entry);
+    if (validate) {
+        const before = pathLevel(entry);
+        entry.auto_allowed = true;
+        adjustDirect(svc, entry.node, before, pathLevel(entry));
+        svc.queueResolution(entry);
+        svc.bump();
+        return true;
+    }
     if (pathLevel(entry) == null) return true;
     if (entry.node == no_id) {
         svc.queueResolution(entry);

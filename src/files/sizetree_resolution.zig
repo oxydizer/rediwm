@@ -190,17 +190,30 @@ pub fn resolved(svc: *Service, job: Job, key: ?Key, auto: bool) bool {
     const entry = job.entry;
     entry.resolution = null;
     defer svc.bump();
-    const k = key orelse return false;
-    if (entry.expected_key) |expected| {
-        if (!std.meta.eql(k, expected)) return false;
-    }
+    const k = key orelse {
+        if (entry.node != no_id) {
+            demand.adjustDirect(svc, entry.node, demand.pathLevel(entry), null);
+            demand.unbind(entry, svc);
+        }
+        return false;
+    };
     const level = demand.pathLevel(entry).?;
     const id = svc.by_key.get(k) orelse (svc.newNode(k, job.path, level) catch {
         svc.queueResolution(entry);
         return true;
     });
-    entry.auto_allowed = auto;
-    demand.bind(svc, entry, id);
+    if (entry.node == id) {
+        const before = demand.pathLevel(entry);
+        entry.auto_allowed = auto;
+        demand.adjustDirect(svc, id, before, demand.pathLevel(entry));
+    } else {
+        if (entry.node != no_id) {
+            demand.adjustDirect(svc, entry.node, demand.pathLevel(entry), null);
+            demand.unbind(entry, svc);
+        }
+        entry.auto_allowed = auto;
+        demand.bind(svc, entry, id);
+    }
     eviction.touch(svc, id, entry.access_stamp);
     const node = &svc.nodes.items[id];
     if (node.path_missing and !node.self_pending and !node.paused) {

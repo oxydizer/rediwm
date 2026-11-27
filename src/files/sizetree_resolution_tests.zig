@@ -59,13 +59,15 @@ test "sizetree replaces obsolete path bindings without discarding other bindings
     try std.testing.expect(!svc.busy());
 
     svc.request(&owner, "/root", .visible, .{ .directory_key = key(2) });
-    try std.testing.expectEqual(tree.no_id, svc.paths.get("/root").?.node);
-    try std.testing.expectEqual(@as(usize, 1), svc.nodes.items[old_id].subtree_demand);
+    try std.testing.expectEqual(old_id, svc.paths.get("/root").?.node);
+    try std.testing.expectEqual(@as(usize, 2), svc.nodes.items[old_id].subtree_demand);
+    try std.testing.expectEqual(tree.Status.unknown, svc.lookupIdentity(&owner, "/root", key(2)).status);
     try std.testing.expectEqual(@as(i64, 100), svc.lookupIdentity(&other, "/alias", key(1)).bytes);
 
     const replacement = try takeResolution(svc);
     defer replacement.deinit(a);
     _ = svc.resolved(replacement, key(2), true);
+    try std.testing.expectEqual(@as(usize, 1), svc.nodes.items[old_id].subtree_demand);
     const new_id = svc.by_key.get(key(2)).?;
     try std.testing.expect(new_id != old_id);
     try std.testing.expectEqual(new_id, svc.paths.get("/root").?.node);
@@ -101,7 +103,7 @@ test "sizetree identity changes supersede in-flight resolution" {
     try std.testing.expectEqual(svc.by_key.get(key(2)).?, svc.paths.get("/root").?.node);
 }
 
-test "sizetree rejects resolution inconsistent with observed directory identity" {
+test "sizetree filesystem resolution overrides stale observed identity" {
     const a = std.testing.allocator;
     const svc = try Service.create(a, 0, auto);
     defer svc.destroy();
@@ -113,15 +115,62 @@ test "sizetree rejects resolution inconsistent with observed directory identity"
     defer job.deinit(a);
     _ = svc.resolved(job, key(2), true);
 
-    try std.testing.expectEqual(@as(u32, 0), svc.by_key.count());
+    try std.testing.expectEqual(@as(u32, 1), svc.by_key.count());
     try std.testing.expectEqual(tree.Status.unknown, svc.lookupIdentity(&owner, "/root", key(1)).status);
-    try std.testing.expect(!svc.busy());
+    try std.testing.expectEqual(tree.Status.measuring, svc.lookupIdentity(&owner, "/root", key(2)).status);
 
     svc.request(&owner, "/root", .visible, .{ .directory_key = key(2) });
-    const fresh = try takeResolution(svc);
-    defer fresh.deinit(a);
-    _ = svc.resolved(fresh, key(2), true);
+    try std.testing.expectEqual(@as(?u64, null), svc.paths.get("/root").?.resolution);
     try std.testing.expectEqual(tree.Status.measuring, svc.lookupIdentity(&owner, "/root", key(2)).status);
+}
+
+test "sizetree stale window cannot discard current window measurement" {
+    const a = std.testing.allocator;
+    const svc = try Service.create(a, 0, auto);
+    defer svc.destroy();
+    var stale = svc.registerOwner();
+    defer stale.deinit();
+    var current = svc.registerOwner();
+    defer current.deinit();
+
+    svc.request(&stale, "/root", .visible, .{ .directory_key = key(1) });
+    const initial = try takeResolution(svc);
+    defer initial.deinit(a);
+    _ = svc.resolved(initial, key(2), true);
+
+    const id = svc.by_key.get(key(2)).?;
+    svc.unqueue(id);
+    svc.nodes.items[id].self_pending = false;
+    svc.nodes.items[id].pending = 0;
+    svc.nodes.items[id].complete = true;
+    svc.nodes.items[id].own = 200;
+    svc.nodes.items[id].total = 200;
+
+    svc.request(&current, "/root", .visible, .{ .directory_key = key(2) });
+    try std.testing.expect(!svc.busy());
+
+    svc.request(&stale, "/root", .visible, .{ .directory_key = key(1) });
+    const validation = try takeResolution(svc);
+    defer validation.deinit(a);
+
+    try std.testing.expectEqual(id, svc.paths.get("/root").?.node);
+    try std.testing.expectEqual(tree.Status.unknown, svc.lookupIdentity(&stale, "/root", key(1)).status);
+    try std.testing.expectEqual(tree.Status.exact, svc.lookupIdentity(&current, "/root", key(2)).status);
+    try std.testing.expectEqual(@as(i64, 200), svc.lookupIdentity(&current, "/root", key(2)).bytes);
+
+    // Repeated requests must not supersede the same validation.
+    svc.request(&stale, "/root", .visible, .{ .directory_key = key(1) });
+    try std.testing.expectEqual(@as(?u64, validation.id), svc.paths.get("/root").?.resolution);
+
+    _ = svc.resolved(validation, key(2), true);
+
+    try std.testing.expectEqual(id, svc.paths.get("/root").?.node);
+    try std.testing.expectEqual(@as(u32, 1), svc.by_key.count());
+    try std.testing.expectEqual(@as(usize, 1), svc.nodes.items[id].subtree_demand);
+    try std.testing.expectEqual(tree.Status.unknown, svc.lookupIdentity(&stale, "/root", key(1)).status);
+    try std.testing.expectEqual(tree.Status.exact, svc.lookupIdentity(&current, "/root", key(2)).status);
+    try std.testing.expectEqual(@as(i64, 200), svc.lookupIdentity(&current, "/root", key(2)).bytes);
+    try std.testing.expect(!svc.busy());
 }
 
 test "device policy memoization distinguishes mounts and leaves ambiguous results uncached" {
