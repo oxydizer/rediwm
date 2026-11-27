@@ -9,7 +9,7 @@ fn position(geo: ribbon.Geometry, i: usize) ribbon.Point {
     return .{ .x = @as(f32, @floatFromInt(geo.x)) + v[0] * @as(f32, @floatFromInt(geo.width)), .y = @as(f32, @floatFromInt(geo.y)) + v[1] * @as(f32, @floatFromInt(geo.height)) };
 }
 
-test "elastic resize fill and glow share a closed boundary at all corners, edges and qualities" {
+test "elastic resize band stays thin and shares a closed boundary with the glow" {
     const cases = [_]Edges{
         .{ .right = true, .bottom = true }, .{ .left = true, .bottom = true },
         .{ .right = true, .top = true },    .{ .left = true, .top = true },
@@ -21,7 +21,8 @@ test "elastic resize fill and glow share a closed boundary at all corners, edges
         const dy: f32 = if (edges.bottom or edges.top) 60 * direction else 0;
         const target: mesh.Box = .{ .x = if (edges.left) -dx else 0, .y = if (edges.top) -dy else 0, .width = 400 + dx, .height = 300 + dy };
         for ([_]@import("config").effects.Quality{ .low, .balanced, .high }) |quality| {
-            const result = mesh.build(400, 300, target, 12, null, null, .{ .edges = edges, .anchor = .{ .x = 0.25, .y = 0.75 } }, 18, 1, 0, .{ .quality = quality });
+            const reach: f32 = 18;
+            const result = mesh.build(400, 300, target, 12, null, null, .{ .edges = edges, .anchor = .{ .x = 0.25, .y = 0.75 } }, reach, 1, 0, .{ .quality = quality });
             try std.testing.expect(result.fill.mesh.count > 4 and result.fill.mesh.count <= 128);
             try std.testing.expect(result.edge.mesh.count > 4 and result.edge.mesh.count <= result.fill.mesh.count);
             for ([_]ribbon.Geometry{ result.fill, result.edge }) |geo| {
@@ -33,7 +34,9 @@ test "elastic resize fill and glow share a closed boundary at all corners, edges
             }
             var i: usize = 0;
             while (i < result.fill.mesh.count) : (i += 2) {
+                const inner = position(result.fill, i);
                 const fill_edge = position(result.fill, i + 1);
+                try std.testing.expect(std.math.hypot(inner.x - fill_edge.x, inner.y - fill_edge.y) <= reach / 4.0 + 0.001);
                 var joined = false;
                 var j: usize = 0;
                 while (j < result.edge.mesh.count) : (j += 2) {
@@ -90,6 +93,18 @@ test "polygon outlines are supported and a caught-up resize has no membrane" {
     const pull: mesh.Pull = .{ .edges = .{ .right = true, .bottom = true } };
     const result = mesh.build(400, 300, .{ .x = 0, .y = 0, .width = 500, .height = 350 }, 12, a, b, pull, 18, 1, 0, .{});
     try std.testing.expect(result.fill.mesh.count > 4 and result.fill.mesh.count <= 128);
+    for ([_]f32{ 0.24, 0.73 }) |anchor| {
+        const points = outline.resolve(400, 300, .{ .x = 0, .y = 0, .width = 500, .height = 300 }, 12, a, shape.resolve(spec, 500, 300, 1), .{
+            .edges = .{ .right = true },
+            .anchor = .{ .x = 1, .y = anchor },
+        }, .balanced);
+        var peak: ribbon.Point = .{ .x = 0, .y = 0 };
+        for (points.leading[0..points.len]) |p| {
+            if (p.x > peak.x) peak = p;
+        }
+        try std.testing.expectApproxEqAbs(@as(f32, 500), peak.x, 0.001);
+        try std.testing.expectApproxEqAbs(anchor * 300, peak.y, 0.001);
+    }
     const idle = mesh.build(400, 300, .{ .x = 0, .y = 0, .width = 400, .height = 300 }, 12, null, null, pull, 18, 1, 0, .{});
     try std.testing.expectEqual(@as(u32, 0), idle.fill.mesh.count);
     try std.testing.expectEqual(@as(u32, 0), idle.edge.mesh.count);

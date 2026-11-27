@@ -444,6 +444,8 @@ test "optional ribbon presets default off, parse and reject invalid settings" {
     try std.testing.expect(!defaults.effects.minimize().enabled);
     try std.testing.expect(!defaults.effects.resize().enabled);
     try std.testing.expectEqual(@as(u32, 3000), defaults.effects.find("soft_flame").?.lifetime_ms);
+    try std.testing.expect(defaults.effects.find("soft_flame").?.color == null);
+    try std.testing.expect(defaults.effects.find("soft_flame").?.core_color == null);
     var custom = try parse(a, "[effects.window_move]\nenabled = true\npreset = \"blue\"\n" ++
         "[effects.presets.blue]\ntype = \"flame_ribbon\"\ncolor = \"#0088ff\"\n" ++
         "lifetime_ms = 10000\nquality = \"high\"\nwidth_px = 12\n", "test");
@@ -453,6 +455,7 @@ test "optional ribbon presets default off, parse and reject invalid settings" {
     try std.testing.expectEqualStrings("blue", custom.effects.minimize().preset);
     try std.testing.expect(custom.effects.resize().enabled);
     try std.testing.expectEqualStrings("blue", custom.effects.resize().preset);
+    try std.testing.expectEqual([4]f32{ 0, 136.0 / 255.0, 1, 1 }, custom.effects.find("blue").?.color.?);
     var separate = try parse(a, "[effects.window_move]\nenabled = true\n" ++
         "[effects.window_minimize]\nenabled = false\n[effects.window_resize]\nenabled = false\n", "test");
     defer separate.deinit();

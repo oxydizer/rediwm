@@ -236,8 +236,8 @@ pub const source =
     \\# preset = "soft_flame"
     \\# [effects.presets.soft_flame]
     \\# type = "flame_ribbon"
-    \\# color = "#ff1820"
-    \\# core_color = "#ffe0c0"
+    \\# color = "#ff1820"          # overrides the shell accent
+    \\# core_color = "#ffe0c0"     # overrides a lighter shade of color
     \\# opacity = 0.9
     \\# width_px = 56
     \\# max_length_px = 420

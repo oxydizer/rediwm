@@ -13,6 +13,18 @@ pub const Mesh = extern struct {
     core_color: [4]f32 = @splat(0),
     edge: u32 = 0,
     fade: [2]f32 = .{ 1, 1 },
+
+    pub fn setColors(self: *Mesh, preset: Preset) void {
+        self.color = preset.color orelse @import("ui").theme.shellPalette().accent;
+        self.core_color = preset.core_color orelse .{
+            std.math.lerp(self.color[0], 1, 0.75),
+            std.math.lerp(self.color[1], 1, 0.75),
+            std.math.lerp(self.color[2], 1, 0.75),
+            self.color[3],
+        };
+        self.color[3] *= preset.opacity;
+        self.core_color[3] *= preset.opacity;
+    }
 };
 pub const Geometry = struct {
     mesh: Mesh = .{},
@@ -141,10 +153,7 @@ pub const Path = struct {
     pub fn mesh(self: *const Path, now: i64, preset: Preset, origin: Point, scale: f32, seed: f32, source_half: ?Point) Geometry {
         var result: Geometry = .{};
         if (self.len < 2 or scale <= 0) return result;
-        result.mesh.color = preset.color;
-        result.mesh.core_color = preset.core_color;
-        result.mesh.color[3] *= preset.opacity;
-        result.mesh.core_color[3] *= preset.opacity;
+        result.mesh.setColors(preset);
         const first = self.samples[0].time;
         const last = self.samples[self.len - 1].time;
         const lifetime: f32 = @floatFromInt(preset.lifetime_ms);

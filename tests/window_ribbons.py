@@ -157,6 +157,17 @@ def check_resize(ipc, win, shot, move, tmp, mixed, scale, process):
         move(x + dx, y + dy)
         ipc.wait_for_frame()
         assert ipc.get_windows()[0]["width"] == win["width"], "window jumped to the pointer"
+        if edge == "e":
+            before = shot("resize-edge-grab", None)
+            move(x + dx, y + 65)
+            ipc.wait_for_frame()
+            slid = ipc.get_windows()[0]
+            assert (slid["width"], slid["height"]) == (win["width"], win["height"]), "sliding along the edge changed the size"
+            after = shot("resize-edge-slid", None)
+            for center, lit, dimmed in ((y, before, after), (y + 65, after, before)):
+                region = tuple(round(v * scale) for v in (x + dx - 3, center - 3, x + dx + 4, center + 4))
+                change = ImageChops.subtract(lit.crop(region), dimmed.crop(region))
+                assert change.getextrema()[0][1] > 20, "resize outline did not follow the pointer along the edge"
         ipc.action("set_anim_time", {"ms": start + 140})
         resized = wait_for(lambda: current if abs((current := ipc.get_windows()[0])["width"] - win["width"]) > 2 else None,
                            "lagging resize did not advance")

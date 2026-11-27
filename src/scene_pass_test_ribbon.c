@@ -191,13 +191,11 @@ static void ribbon_gate(struct rediwm_scene_renderer *r, struct wlr_buffer *buf)
     rediwm_scene_pass_add_ribbon(pass, (struct wlr_box){10, 10, 80, 60}, &mesh, &clip, 1, NULL);
     assert(wlr_render_pass_submit(pass));
     read_pixels(r, buf, pixels);
-    assert(pixels[(40 * WIDTH + 50) * 4] > 15); // translucent rectangular band
-    // The resize sheet must reach BOTH outlines. The trail's edge fade used
-    // to leave transparent gutters here, increasingly wide on large resizes.
+    assert(pixels[(40 * WIDTH + 50) * 4] > 15);
+    // The inset side fades away while the leading side meets the outer glow.
     for (int y = 10; y < 70; y++) {
-        for (int x = 10; x < 90; x++) {
-            assert(pixels[(y * WIDTH + x) * 4 + 3] >= 50);
-        }
+        assert(pixels[(y * WIDTH + 10) * 4 + 3] <= 2);
+        assert(pixels[(y * WIDTH + 89) * 4 + 3] >= 50);
     }
     for (size_t i = 0; i < sizeof(pixels); i += 4)
         for (int c = 0; c < 3; c++) assert(pixels[i + c] <= pixels[i + 3]);

@@ -683,8 +683,8 @@ pub fn processResize(input: *Input) void {
         session.latest_desired_size = desired;
         session.dirty = true;
         changed = true;
-        @import("../effects/window_move.zig").resizeMotion(toplevel);
     }
+    @import("../effects/window_move.zig").resizeMotion(toplevel, cursor_world);
 
     if (session.peer) |*peer| {
         const next_size = peer_desired.?;
