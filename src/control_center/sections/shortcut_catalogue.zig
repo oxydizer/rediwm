@@ -93,10 +93,13 @@ test "catalogue order and action identities survive binding removal and reorder"
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
+    const q = (try keys.parseKeybind("q")).sym;
+    const f = (try keys.parseKeybind("f")).sym;
+    const f4 = (try keys.parseKeybind("F4")).sym;
     const configured: []const keys.Keybind = &.{
-        .{ .sym = .q, .action = .close_window },
-        .{ .sym = .f, .action = .toggle_fullscreen },
-        .{ .sym = .F4, .action = .close_window },
+        .{ .sym = q, .action = .close_window },
+        .{ .sym = f, .action = .toggle_fullscreen },
+        .{ .sym = f4, .action = .close_window },
     };
     const empty = try actions(a, .canvas, &.{});
     const joined = try actions(a, .canvas, configured);
@@ -106,7 +109,7 @@ test "catalogue order and action identities survive binding removal and reorder"
         try std.testing.expect(keys.actionEql(x, y) and keys.actionEql(x, z));
     }
     try std.testing.expectEqual(@as(usize, 3), (try effectiveIndices(a, configured)).len);
-    const disabled: []const keys.Keybind = &.{ configured[0], .{ .sym = .q, .action = .noop } };
+    const disabled: []const keys.Keybind = &.{ configured[0], .{ .sym = q, .action = .noop } };
     try std.testing.expectEqualSlices(usize, &.{1}, try effectiveIndices(a, disabled));
     try std.testing.expect(applicable(.{ .set_depth = 0 }, .canvas));
     try std.testing.expect(!applicable(.{ .set_depth = 0 }, .workspaces));

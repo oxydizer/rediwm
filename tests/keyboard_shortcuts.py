@@ -15,6 +15,7 @@ def run():
         workspace_mode = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
         if workspace_mode:
             original = '[compositor]\ndesktop_mode = "workspaces"\n' + original.replace('[keybinds]', '[keybinds.workspace]')
+            original += '"Super+c" = "noop"\n'
         process, log = spawn_compositor(tmp, config_content=original, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         try:
             with IPCClient(tmp, timeout=15) as ipc:
@@ -24,8 +25,14 @@ def run():
                 def widgets():
                     return ipc.get_widget_tree("control_center")["widgets"]
 
-                def click(label):
-                    widget = next(w for w in widgets() if w["label"] == label)
+                def click(label, beside=None):
+                    tree = widgets()
+                    candidates = [w for w in tree if w["label"] == label]
+                    if beside is None:
+                        widget = candidates[0]
+                    else:
+                        y = next(w["box"]["y"] for w in tree if w["label"] == beside)
+                        widget = min(candidates, key=lambda w: abs(w["box"]["y"] - y))
                     box = widget["box"]
                     panel = ipc.get_shell_state()["control_center"]["box"]
                     ipc.click_at(round(panel["x"] + box["x"] + box["width"] / 2),
@@ -130,12 +137,37 @@ def run():
                 assert not has("Close Window")
                 click("Window Management")
                 assert has("Close Window")
-                if workspace_mode:
-                    click("Disable shortcut")
-                    assert '"Super+q" = "noop"' in (tmp / "rediwm-config.toml").read_text()
-                    chord("q")
-                    assert ipc.get_shell_state()["control_center"] is not None
-            print("PASS: shortcut conflicts, capture, cancel, save, reuse and groups")
+                close_y = next(w["box"]["y"] for w in widgets() if w["label"] == "Close Window")
+                click("Add shortcut", beside="Super+q")
+                chord("F12")
+                click("Save shortcut")
+                assert has("Super+q") and has("Super+F12")
+                click("Disable shortcut", beside="Super+q")
+                assert has("Super+F12")
+                assert next(w["box"]["y"] for w in widgets() if w["label"] == "Close Window") == close_y
+                click("Disable shortcut", beside="Super+F12")
+                assert has("Close Window") and has("Not assigned")
+                saved = (tmp / "rediwm-config.toml").read_text()
+                assert ('"Super+q" = "noop"' in saved) if workspace_mode else ('"Super+q"' not in saved)
+                assert '"Super+F12"' not in saved
+                chord("q")
+                assert ipc.get_shell_state()["control_center"] is not None
+            stop_process(process)
+            log.close()
+            process, log = spawn_compositor(tmp, config_content=saved, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
+            with IPCClient(tmp, timeout=15) as ipc:
+                ipc.action("open_control_center")
+                time.sleep(.3)
+                click("Keyboard Shortcuts")
+                assert has("Close Window")
+                click("Not assigned", beside="Close Window")
+                chord("F12")
+                click("Save shortcut")
+                assert has("Super+F12")
+                chord("F12")
+                time.sleep(.3)
+                assert ipc.get_shell_state()["control_center"] is None
+            print("PASS: shortcut recording, multiple bindings, unassignment and restart")
         finally:
             stop_process(process)
             log.close()

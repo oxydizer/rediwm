@@ -12,6 +12,11 @@ const wlr = @import("wlroots");
 
 const names = [_]i18n.Message{ i18n.msg("Window Management"), i18n.msg("Canvas & Focus"), i18n.msg("Launcher"), i18n.msg("Screenshots"), i18n.msg("Media"), i18n.msg("System"), i18n.msg("Workspaces"), i18n.msg("Custom Commands"), i18n.msg("Disabled Shortcuts") };
 const icons = [_]ui.layout.IconId{ .display, .grid, .grid, .document, .volume, .power, .grid, .document, .keyboard };
+const Target = struct {
+    action: keys.Action,
+    index: ?usize,
+};
+
 pub const Section = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
     groups: [names.len]W = undefined,
@@ -19,8 +24,8 @@ pub const Section = struct {
     /// when the tree could not be allocated.
     group_count: usize = 0,
     collapsed: [names.len]bool = @splat(false),
-    editing: ?usize = null,
-    original: ?keys.Keybind = null,
+    targets: std.ArrayList(Target) = .empty,
+    editing: ?Target = null,
     candidate: ?keys.Keybind = null,
     message: []const u8 = "",
     pending_save: bool = false,
@@ -32,7 +37,6 @@ pub const Section = struct {
         s.pending_save = false;
         s.held_keycode = null;
         s.editing = null;
-        s.original = null;
         s.candidate = null;
         s.message = "";
     }
@@ -60,23 +64,24 @@ pub const Section = struct {
             xkb.Keysym.Super_L, xkb.Keysym.Super_R, xkb.Keysym.Control_L, xkb.Keysym.Control_R, xkb.Keysym.Shift_L, xkb.Keysym.Shift_R, xkb.Keysym.Alt_L, xkb.Keysym.Alt_R, xkb.Keysym.Caps_Lock, xkb.Keysym.Num_Lock => return,
             else => {},
         }
-        const index = s.editing orelse return;
-        if (index >= cc.server.config.activeKeybinds().len) {
-            s.cancel();
-            return;
-        }
+        const target = s.editing orelse return;
         s.held_keycode = keycode;
         s.held_sym = sym;
         s.held_mods = @bitCast(keys.relevantMods(mods));
-        const candidate: keys.Keybind = .{ .sym = keys.normalizeSym(sym), .modifiers = keys.relevantMods(mods), .action = cc.server.config.activeKeybinds()[index].action };
+        const candidate: keys.Keybind = .{ .sym = keys.normalizeSym(sym), .modifiers = keys.relevantMods(mods), .action = target.action };
         s.message = "";
         s.candidate = candidate;
-        for (cc.server.config.activeKeybinds(), 0..) |bind, i| {
-            if (i != index and bind.action != .noop and keys.pack(bind.modifiers, bind.sym) == keys.pack(candidate.modifiers, candidate.sym)) {
+        const binds = cc.server.config.activeKeybinds();
+        var i = binds.len;
+        while (i > 0) {
+            i -= 1;
+            const bind = binds[i];
+            if (keys.pack(bind.modifiers, bind.sym) != keys.pack(candidate.modifiers, candidate.sym)) continue;
+            if (i != target.index and bind.action != .noop) {
                 s.candidate = null;
                 s.message = i18n.tr("Shortcut already in use. Try another.");
-                break;
             }
+            break;
         }
         cc.refresh();
     }
@@ -85,8 +90,8 @@ pub const Section = struct {
         if (!s.pending_save) return;
         s.pending_save = false;
         const candidate = s.candidate orelse return;
-        const index = s.editing orelse return;
-        saving.saveMode(gpa, cc.server.io, cc.server.config.path, cc.server.config.activeKeybinds(), index, candidate, cc.server.config.compositor.desktop_mode) catch {
+        const target = s.editing orelse return;
+        saving.saveMode(gpa, cc.server.io, cc.server.config.path, cc.server.config.activeKeybinds(), target.index, candidate, cc.server.config.compositor.desktop_mode) catch {
             s.message = i18n.tr("Could not save. Check the configuration file and try again.");
             cc.refresh();
             return;
@@ -110,6 +115,7 @@ fn children(a: std.mem.Allocator, values: []const W) ![]W {
 
 pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     _ = s.arena.reset(.retain_capacity);
+    s.targets = .empty;
     buildGroups(s, cc, s.arena.allocator()) catch {
         s.groups[0] = panel.outOfMemory();
         s.group_count = 1;
@@ -120,12 +126,6 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 
 fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !void {
     const t = panel.palette();
-    // Config reloads can replace string payloads and reorder bindings. Retain
-    // only the key identity; cancel if that row no longer denotes the same key.
-    if (s.editing) |i| {
-        if (i >= cc.server.config.activeKeybinds().len or keys.pack(cc.server.config.activeKeybinds()[i].modifiers, cc.server.config.activeKeybinds()[i].sym) != keys.pack(s.original.?.modifiers, s.original.?.sym)) s.cancel();
-        if (s.candidate) |*c| c.action = cc.server.config.activeKeybinds()[i].action;
-    }
     const binds = cc.server.config.activeKeybinds();
     const indices = try catalogue.effectiveIndices(a, binds);
     const effective = try a.alloc(keys.Keybind, indices.len);
@@ -147,7 +147,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             .{ .kind = .{ .icon = .{ .id = if (s.collapsed[g]) .chevron_up else .chevron_down, .color = t.window_dim } }, .width = .{ .fixed = 16 }, .height = .{ .fixed = 16 } },
         }) });
         if (!s.collapsed[g] and g == catalogue.group(.noop)) for (effective, indices) |bind, i| {
-            if (bind.action == .noop) try appendRow(s, cc, a, &rows, i18n.tr("Disabled shortcut."), "", bind, i);
+            if (bind.action == .noop) try appendRow(s, cc, a, &rows, i18n.tr("Disabled shortcut."), "", .{ .action = .noop, .index = i }, false);
         };
         if (!s.collapsed[g]) for (actions) |action| {
             if (catalogue.group(action) != g) continue;
@@ -159,51 +159,60 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             for (effective, indices) |bind, i| {
                 if (!keys.actionEql(bind.action, action)) continue;
                 const caption = if (first) description else "";
-                try appendRow(s, cc, a, &rows, if (first) title else "", caption, bind, i);
+                try appendRow(s, cc, a, &rows, if (first) title else "", caption, .{ .action = action, .index = i }, first);
                 first = false;
             }
-            if (first) try appendRow(s, cc, a, &rows, title, description, null, null);
+            const adding = if (s.editing) |target| target.index == null and keys.actionEql(target.action, action) else false;
+            if (first or adding) try appendRow(s, cc, a, &rows, if (first) title else "", if (first) description else "", .{ .action = action, .index = null }, false);
         };
         card.* = .{ .name = "shortcuts", .kind = .{ .rect = .{ .color = t.settings_card_bg, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.window_divider, .relief = t.settings_card_relief } }, .direction = .column, .width = .{ .percent = 1 }, .children = rows.items };
     }
 }
-fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: *std.ArrayList(W), title: []const u8, description: []const u8, bind: ?keys.Keybind, i: ?usize) !void {
+fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: *std.ArrayList(W), title: []const u8, description: []const u8, target: Target, add: bool) !void {
     const t = panel.palette();
-    const editing = i != null and s.editing == i;
+    const id = s.targets.items.len;
+    try s.targets.append(a, target);
+    const bind = if (target.index) |i| cc.server.config.activeKeybinds()[i] else null;
+    const editing = if (s.editing) |active| active.index == target.index and keys.actionEql(active.action, target.action) else false;
     const caption = if (editing)
         (if (s.message.len > 0) s.message else i18n.tr("Press keys to record. Esc cancels."))
     else if (description.len == 0 and bind != null and bind.?.inherited)
         i18n.tr("Inherited shortcut")
     else
         description;
-    const shortcut = if (bind == null) i18n.tr("Not assigned") else if (editing and s.candidate == null) i18n.tr("Press new shortcut…") else saving.format(a, if (editing) s.candidate.? else bind.?) catch i18n.tr("Unknown key");
+    const shortcut = if (editing)
+        if (s.candidate) |candidate| saving.format(a, candidate) catch i18n.tr("Unknown key") else i18n.tr("Press new shortcut…")
+    else if (bind) |assigned|
+        saving.format(a, assigned) catch i18n.tr("Unknown key")
+    else
+        i18n.tr("Not assigned");
     var controls: std.ArrayList(W) = .empty;
     try controls.append(a, .{ .kind = .container, .direction = .column, .width = .{ .flex = 1 }, .gap = 3, .children = try children(a, &.{ text(title, false), text(caption, true) }) });
-    var chip = button(cc, i orelse 0, shortcut, null, edit);
-    if (i == null) chip.kind.button.state = .disabled;
+    var chip = button(cc, id, shortcut, null, edit);
     chip.name = "shortcut";
     chip.width = .{ .fixed = if (cc.panel_box.width < 660) 140 else 190 };
     if (editing) chip.kind.button.variant = .primary;
     try controls.append(a, chip);
     if (editing) {
-        var confirm = button(cc, i.?, i18n.tr("Save shortcut"), .checkmark, confirmClicked);
+        var confirm = button(cc, id, i18n.tr("Save shortcut"), .checkmark, confirmClicked);
         confirm.name = "save";
         confirm.kind.button.variant = .primary;
         if (s.candidate == null) confirm.kind.button.state = .disabled;
         try controls.append(a, confirm);
-        var cancel_btn = button(cc, i.?, i18n.tr("Cancel"), .close, cancelClicked);
+        var cancel_btn = button(cc, id, i18n.tr("Cancel"), .close, cancelClicked);
         cancel_btn.name = "cancel";
         try controls.append(a, cancel_btn);
     } else if (bind != null) {
-        var edit_btn = button(cc, i.?, i18n.tr("Edit shortcut"), .edit, edit);
+        var edit_btn = button(cc, id, i18n.tr("Edit shortcut"), .edit, edit);
         edit_btn.name = "edit";
         try controls.append(a, edit_btn);
         if (bind.?.action != .noop) {
-            var disable = button(cc, i.?, i18n.tr("Disable shortcut"), .close, disableClicked);
+            var disable = button(cc, id, i18n.tr("Disable shortcut"), .close, disableClicked);
             disable.name = "disable";
             try controls.append(a, disable);
         }
     }
+    if (add and !editing) try controls.append(a, button(cc, id, i18n.tr("Add shortcut"), .plus, addClicked));
     try rows.append(a, .{ .kind = .{ .rect = .{ .color = t.window_divider } }, .height = .{ .fixed = 1 }, .width = .{ .percent = 1 } });
     try rows.append(a, .{ .kind = .container, .direction = .row, .height = .{ .fixed = 60 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 0), .gap = 8, .@"align" = .center, .children = controls.items });
 }
@@ -214,8 +223,13 @@ fn owner(p: ?*anyopaque) *panel.ControlCenter {
 fn edit(p: ?*anyopaque, i: usize) void {
     const cc = owner(p);
     cc.shortcuts.cancel();
-    cc.shortcuts.editing = i;
-    cc.shortcuts.original = cc.server.config.activeKeybinds()[i];
+    cc.shortcuts.editing = cc.shortcuts.targets.items[i];
+    cc.refresh();
+}
+fn addClicked(p: ?*anyopaque, i: usize) void {
+    const cc = owner(p);
+    cc.shortcuts.cancel();
+    cc.shortcuts.editing = .{ .action = cc.shortcuts.targets.items[i].action, .index = null };
     cc.refresh();
 }
 fn collapse(p: ?*anyopaque, i: usize) void {
@@ -235,9 +249,10 @@ fn confirmClicked(p: ?*anyopaque, _: usize) void {
 
 fn disableClicked(p: ?*anyopaque, i: usize) void {
     const cc = owner(p);
-    const bind = cc.server.config.activeKeybinds()[i];
-    cc.shortcuts.editing = i;
-    cc.shortcuts.original = bind;
+    const target = cc.shortcuts.targets.items[i];
+    const bind = cc.server.config.activeKeybinds()[target.index.?];
+    cc.shortcuts.cancel();
+    cc.shortcuts.editing = target;
     cc.shortcuts.candidate = .{ .sym = bind.sym, .modifiers = bind.modifiers, .action = .noop };
     cc.shortcuts.pending_save = true;
 }
