@@ -62,6 +62,8 @@ pub fn buildTree(cc: *ControlCenter) void {
         return;
     }
     cc.search.capture();
+    const shortcut_search_focus = cc.shortcuts.search_focus or ui.input.current.focused == &cc.shortcuts.search_field;
+    cc.shortcuts.search_focus = false;
     if (cc.search.empty() != cc.search.built_empty) {
         if (cc.search.empty()) {
             if (cc.body_children[1].kind == .scroll_container) cc.search.saved_scroll = cc.body_children[1].kind.scroll_container;
@@ -287,6 +289,8 @@ pub fn buildTree(cc: *ControlCenter) void {
         .children = cc.root_children[if (narrow and cc.search.expanded) @as(usize, 0) else 1..2],
     };
     cc.root.linkParents();
+    if (!cc.search.empty() and cc.page == .shortcuts and shortcut_search_focus)
+        ui.input.current.focus(&cc.root, &cc.shortcuts.search_field);
     if (!cc.search.empty() and cc.page == .services and cc.services.search_focus) {
         if (cc.services.search) |field| ui.input.current.focus(&cc.root, field);
     }

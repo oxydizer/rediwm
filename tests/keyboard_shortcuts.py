@@ -29,7 +29,7 @@ def run():
 
                 def click(label, beside=None):
                     tree = widgets()
-                    candidates = [w for w in tree if w["label"] == label]
+                    candidates = [w for w in tree if w["label"] == label or w["name"] == label]
                     if beside is None:
                         widget = candidates[0]
                     else:
@@ -53,6 +53,30 @@ def run():
                 assert has("Window Management") and has("Launcher")
                 assert has("Open System Monitor"), "existing shortcuts omitted System Monitor"
                 assert has("Ctrl+Alt+Delete")
+                click("Window Management")
+                assert not has("Close Window")
+                for query in ("close", "WINDOW", "Super + Q"):
+                    click("shortcut_search")
+                    ipc.type_text(query)
+                    time.sleep(.15)
+                    assert has("Close Window")
+                    if query == "Super + Q":
+                        assert not has("Media")
+                    click("Clear shortcut search")
+                    assert not has("Close Window")
+                click("shortcut_search")
+                ipc.type_text("printf hello")
+                time.sleep(.15)
+                assert has("Custom Commands") and has("Alt+F11")
+                assert not has("Window Management")
+                click("Clear shortcut search")
+                click("shortcut_search")
+                ipc.type_text("missing-action")
+                time.sleep(.15)
+                assert has("No matching shortcuts. Try an action name, command, or key combination.")
+                click("Clear shortcut search")
+                assert (tmp / "rediwm-config.toml").read_text() == original
+                click("Window Management")
                 click("Super+q")
                 chord("f")
                 time.sleep(.15)
@@ -149,6 +173,11 @@ def run():
                 assert next(w["box"]["y"] for w in widgets() if w["label"] == "Close Window") == close_y
                 click("Unassign shortcut", beside="Super+F12")
                 assert has("Close Window") and has("Not assigned")
+                click("shortcut_search")
+                ipc.type_text("close")
+                time.sleep(.15)
+                assert has("Close Window") and has("Not assigned")
+                click("Clear shortcut search")
                 saved = (tmp / "rediwm-config.toml").read_text()
                 assert ('"Super+q" = "noop"' in saved) if workspace_mode else ('"Super+q"' not in saved)
                 assert '"Super+F12"' not in saved

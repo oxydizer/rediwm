@@ -11,6 +11,7 @@ test {
     _ = @import("transfers/popup_tests.zig");
     _ = @import("control_center/search_index.zig");
     _ = @import("control_center/sections/shortcut_catalogue.zig");
+    _ = @import("control_center/sections/shortcut_filter.zig");
     _ = @import("auto_layout.zig");
     _ = @import("scroll_layout.zig");
     _ = @import("scroll_tiling.zig");

@@ -88,7 +88,7 @@ pub fn focusSearch(cc: *ControlCenter) void {
 
 pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
     if (settings_search.key(cc, key, shift)) return true;
-    if (cc.page != .input and cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .printers and cc.page != .network and cc.page != .bluetooth and cc.page != .region and cc.page != .power and cc.page != .keys) return false;
+    if (cc.page != .input and cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .printers and cc.page != .network and cc.page != .bluetooth and cc.page != .region and cc.page != .power and cc.page != .keys and cc.page != .shortcuts) return false;
     const dispatcher = &ui.input.current;
     if (cc.page == .appearance) {
         if (appearance_section.itemKey(&cc.appearance, key)) return true;
@@ -105,7 +105,7 @@ pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
             }
         }
     }
-    if (cc.is_welcome or cc.page == .input or cc.page == .users or cc.page == .services or cc.page == .printers or cc.page == .network or cc.page == .bluetooth or cc.page == .region or cc.page == .power or cc.page == .keys) {
+    if (cc.is_welcome or cc.page == .input or cc.page == .users or cc.page == .services or cc.page == .printers or cc.page == .network or cc.page == .bluetooth or cc.page == .region or cc.page == .power or cc.page == .keys or cc.page == .shortcuts) {
         const focused = dispatcher.focused;
         if (cc.page == .keys and key == .escape and cc.key_settings.form != .none) {
             @import("sections/keys.zig").cancel(cc, 0);
@@ -141,6 +141,7 @@ pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
                 const button = widget.kind.button;
                 if (button.state == .disabled) return true;
                 if (button.on_click) |callback| callback(button.owner, button.id);
+                if (cc.page == .shortcuts) cc.applyPending();
                 cc.requestWidgetRepaint();
                 return true;
             }

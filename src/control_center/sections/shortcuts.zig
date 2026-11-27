@@ -2,6 +2,7 @@ const i18n = @import("i18n");
 const std = @import("std");
 const keys = @import("config").keybinds;
 const catalogue = @import("shortcut_catalogue.zig");
+const Filter = @import("shortcut_filter.zig").Filter;
 const saving = @import("config").shortcut_save;
 const panel = @import("../panel.zig");
 const ui = @import("ui");
@@ -20,10 +21,11 @@ const Pending = union(enum) { record, reset: ?keys.Action };
 
 pub const Section = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
-    groups: [names.len]W = undefined,
-    /// How many of `groups` the page shows: all of them, or one notice
-    /// when the tree could not be allocated.
+    groups: [names.len + 2]W = undefined,
     group_count: usize = 0,
+    search_field: W = .{ .kind = .container },
+    search_clear: W = .{ .kind = .container },
+    search_focus: bool = false,
     collapsed: [names.len]bool = @splat(false),
     targets: std.ArrayList(Target) = .empty,
     editing: ?Target = null,
@@ -34,6 +36,11 @@ pub const Section = struct {
     held_keycode: ?u32 = null,
     held_sym: xkb.Keysym = .NoSymbol,
     held_mods: wlr.Keyboard.ModifierMask = .{},
+
+    pub fn deinit(s: *Section) void {
+        if (s.search_field.kind == .text_input) gpa.free(s.search_field.kind.text_input.value);
+        s.arena.deinit();
+    }
 
     pub fn cancel(s: *Section) void {
         s.pending = null;
@@ -125,12 +132,12 @@ fn children(a: std.mem.Allocator, values: []const W) ![]W {
 pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     _ = s.arena.reset(.retain_capacity);
     s.targets = .empty;
+    s.group_count = 0;
     buildGroups(s, cc, s.arena.allocator()) catch {
         s.groups[0] = panel.outOfMemory();
         s.group_count = 1;
         return;
     };
-    s.group_count = s.groups.len;
 }
 
 fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !void {
@@ -144,41 +151,96 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
     const effective = try a.alloc(keys.Keybind, indices.len);
     for (effective, indices) |*bind, i| bind.* = binds[i];
     const actions = try catalogue.actions(a, cc.server.config.compositor.desktop_mode, effective);
-    for (&s.groups, 0..) |*card, g| {
+    const labels = try a.alloc([]const u8, effective.len);
+    for (labels, effective) |*label, bind| label.* = saving.format(a, bind) catch i18n.tr("Unknown key");
+    const search = try searchField(s, cc);
+    const filter = try Filter.init(a, s.search_field.kind.text_input.value, .{ .turkish = i18n.isTurkish() });
+    const searching = filter.query.len > 0;
+    s.groups[0] = .{ .kind = .container, .direction = .column, .gap = 8, .children = try children(a, &.{
+        search,
+        try resetBar(s, cc, a, saving.canReset(effective, defaults, null)),
+    }) };
+    s.group_count = 1;
+    for (names, 0..) |name, g| {
         var rows: std.ArrayList(W) = .empty;
-        if (g == 0) {
-            try rows.append(a, try resetBar(s, cc, a, saving.canReset(effective, defaults, null)));
-        }
-        try rows.append(a, .{ .kind = .{ .row = .{ .owner = cc, .id = g, .on_click = collapse } }, .height = .{ .fixed = 40 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 0), .gap = 12, .@"align" = .center, .children = try children(a, &.{
+        const expanded = searching or !s.collapsed[g];
+        try rows.append(a, .{ .kind = .{ .row = .{ .owner = cc, .id = g, .on_click = if (searching) null else collapse } }, .height = .{ .fixed = 40 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 0), .gap = 12, .@"align" = .center, .children = try children(a, &.{
             .{ .kind = .{ .icon = .{ .id = icons[g], .color = t.window_fg } }, .width = .{ .fixed = 20 }, .height = .{ .fixed = 20 } },
             blk: {
-                var title = text(names[g].get(), false);
+                var title = text(name.get(), false);
                 title.width = .{ .flex = 1 };
                 break :blk title;
             },
-            .{ .kind = .{ .icon = .{ .id = if (s.collapsed[g]) .chevron_up else .chevron_down, .color = t.window_dim } }, .width = .{ .fixed = 16 }, .height = .{ .fixed = 16 } },
+            .{ .kind = .{ .icon = .{ .id = if (expanded) .chevron_down else .chevron_up, .color = t.window_dim } }, .width = .{ .fixed = 16 }, .height = .{ .fixed = 16 } },
         }) });
-        if (!s.collapsed[g] and g == catalogue.group(.noop)) for (effective, indices) |bind, i| {
-            if (bind.action == .noop) try appendRow(s, cc, a, &rows, i18n.tr("Disabled shortcut."), "", .{ .action = .noop, .index = i }, false, false);
+        if (expanded and g == catalogue.group(.noop)) for (effective, indices, labels) |bind, i, label| {
+            const title = i18n.tr("Disabled shortcut.");
+            if (bind.action == .noop and !searching) try appendRow(s, cc, a, &rows, title, "", .{ .action = .noop, .index = i }, label, false, false);
         };
-        if (!s.collapsed[g]) for (actions) |action| {
+        if (expanded) for (actions) |action| {
             if (catalogue.group(action) != g) continue;
             var title_buf: [1024]u8 = undefined;
             var desc_buf: [8192]u8 = undefined;
             const title = try a.dupe(u8, catalogue.title(action, &title_buf));
             const description = try a.dupe(u8, catalogue.description(action, &desc_buf));
+            const matches = filter.text(title, description) or for (effective, labels) |bind, label| {
+                if (keys.actionEql(bind.action, action) and filter.binding(label)) break true;
+            } else false;
+            if (!matches) continue;
             var first = true;
-            for (effective, indices) |bind, i| {
+            for (effective, indices, labels) |bind, i, label| {
                 if (!keys.actionEql(bind.action, action)) continue;
                 const caption = if (first) description else "";
-                try appendRow(s, cc, a, &rows, if (first) title else "", caption, .{ .action = action, .index = i }, first, first and saving.canReset(effective, defaults, action));
+                try appendRow(s, cc, a, &rows, if (first) title else "", caption, .{ .action = action, .index = i }, label, first, first and saving.canReset(effective, defaults, action));
                 first = false;
             }
             const adding = if (s.editing) |target| target.index == null and keys.actionEql(target.action, action) else false;
-            if (first or adding) try appendRow(s, cc, a, &rows, if (first) title else "", if (first) description else "", .{ .action = action, .index = null }, false, first and saving.canReset(effective, defaults, action));
+            if (first or adding) try appendRow(s, cc, a, &rows, if (first) title else "", if (first) description else "", .{ .action = action, .index = null }, i18n.tr("Not assigned"), false, first and saving.canReset(effective, defaults, action));
         };
-        card.* = .{ .name = "shortcuts", .kind = .{ .rect = .{ .color = t.settings_card_bg, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.window_divider, .relief = t.settings_card_relief } }, .direction = .column, .width = .{ .percent = 1 }, .children = rows.items };
+        if (searching and rows.items.len == 1) continue;
+        s.groups[s.group_count] = .{ .name = "shortcuts", .kind = .{ .rect = .{ .color = t.settings_card_bg, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.window_divider, .relief = t.settings_card_relief } }, .direction = .column, .width = .{ .percent = 1 }, .children = rows.items };
+        s.group_count += 1;
     }
+    if (searching and s.group_count == 1) {
+        s.groups[1] = text(i18n.tr("No matching shortcuts. Try an action name, command, or key combination."), true);
+        s.group_count = 2;
+    }
+}
+
+fn searchField(s: *Section, cc: *panel.ControlCenter) !W {
+    if (s.search_field.kind != .text_input) {
+        s.search_field = .{ .name = "shortcut_search", .kind = .{ .text_input = .{
+            .field = .{ .leading_icon = .search },
+            .placeholder = i18n.tr("Search shortcuts…"),
+            .value = try gpa.dupe(u8, ""),
+            .owner = cc,
+            .on_change = searchChanged,
+        } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 }, .justify = .end, .@"align" = .center, .padding = .{ .right = 3 } };
+    }
+    const has_query = s.search_field.kind.text_input.value.len > 0;
+    s.search_field.kind.text_input.placeholder = i18n.tr("Search shortcuts…");
+    s.search_field.kind.text_input.field.trailing = if (has_query) .accessory else .none;
+    s.search_clear = button(cc, 0, i18n.tr("Clear shortcut search"), .close, clearSearch);
+    s.search_field.children = if (has_query) (&s.search_clear)[0..1] else &.{};
+    return .{ .kind = .container, .width = .{ .percent = 1 }, .children = (&s.search_field)[0..1] };
+}
+
+fn searchChanged(p: ?*anyopaque, _: usize, _: []const u8) void {
+    const cc = owner(p);
+    cc.shortcuts.cancel();
+    cc.shortcuts.search_focus = true;
+    cc.refresh();
+}
+
+fn clearSearch(p: ?*anyopaque, _: usize) void {
+    const cc = owner(p);
+    const empty = gpa.dupe(u8, "") catch return;
+    const field = &cc.shortcuts.search_field.kind.text_input;
+    gpa.free(field.value);
+    field.value = empty;
+    field.cursor_pos = 0;
+    field.selection_anchor = null;
+    searchChanged(cc, 0, empty);
 }
 
 fn resetBar(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, enabled: bool) !W {
@@ -195,10 +257,10 @@ fn resetBar(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, enabled
         try widgets.append(a, reset);
     }
     if (s.editing == null and s.message.len != 0) try widgets.append(a, text(s.message, true));
-    return .{ .kind = .container, .direction = .column, .padding = ui.layout.Edges.all(12), .gap = 8, .children = widgets.items };
+    return .{ .kind = .container, .direction = .column, .@"align" = .start, .gap = 8, .children = widgets.items };
 }
 
-fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: *std.ArrayList(W), title: []const u8, description: []const u8, target: Target, add: bool, reset: bool) !void {
+fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: *std.ArrayList(W), title: []const u8, description: []const u8, target: Target, label: []const u8, add: bool, reset: bool) !void {
     const t = panel.palette();
     const id = s.targets.items.len;
     try s.targets.append(a, target);
@@ -212,10 +274,8 @@ fn appendRow(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, rows: 
         description;
     const shortcut = if (editing)
         if (s.candidate) |candidate| saving.format(a, candidate) catch i18n.tr("Unknown key") else i18n.tr("Press new shortcut…")
-    else if (bind) |assigned|
-        saving.format(a, assigned) catch i18n.tr("Unknown key")
     else
-        i18n.tr("Not assigned");
+        label;
     var controls: std.ArrayList(W) = .empty;
     try controls.append(a, .{ .kind = .container, .direction = .column, .width = .{ .flex = 1 }, .gap = 3, .children = try children(a, &.{ text(title, false), text(caption, true) }) });
     var chip = button(cc, id, shortcut, null, edit);

@@ -138,7 +138,7 @@ pub fn rebuildTree(cc: *ControlCenter) void {
         break :blk if (row < cc.sidebar_children[1].children.len) cc.nav_rows[row].kind.row.id else null;
     } else null;
     const same_page = cc.built_page == cc.page;
-    const bluetooth_scroll: ?layout.ScrollState = if (same_page and cc.page == .bluetooth and !cc.search.empty() and !cc.search.built_empty) cc.body_children[1].kind.scroll_container else null;
+    const saved_scroll: ?layout.ScrollState = if (same_page and (cc.page == .bluetooth or cc.page == .shortcuts) and !cc.search.empty() and !cc.search.built_empty) cc.body_children[1].kind.scroll_container else null;
     var saved: ui.widgets.slider.Saved = .{};
     var knobs: ui.widgets.toggle.Saved = .{};
     var menu: ui.widgets.select.Saved = .{};
@@ -155,7 +155,7 @@ pub fn rebuildTree(cc: *ControlCenter) void {
             ui.input.adoptHover(&cc.root, &cc.nav_rows[row]);
         } else cc.nav_hover.setTarget(anim.nowMs(), null);
     }
-    if (bluetooth_scroll) |state| cc.body_children[1].kind.scroll_container = state;
+    if (saved_scroll) |state| cc.body_children[1].kind.scroll_container = state;
     if (same_page) {
         if (ui.widgets.slider.restore(&cc.root, &saved)) |hovered| ui.input.adoptHover(&cc.root, hovered);
         ui.widgets.toggle.restore(&cc.root, &knobs);

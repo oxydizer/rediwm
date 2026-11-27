@@ -41,9 +41,8 @@ pub fn actions(a: std.mem.Allocator, mode: config.loader.DesktopMode, binds: []c
 }
 
 fn lessThan(_: void, a: keys.Action, b: keys.Action) bool {
-    if (a == .close_window or b == .close_window) return a == .close_window and b != .close_window;
-    const x = @backingInt(std.meta.activeTag(a));
-    const y = @backingInt(std.meta.activeTag(b));
+    const x = order(a);
+    const y = order(b);
     if (x != y) return x < y;
     return switch (a) {
         .workspace => |n| n < b.workspace,
@@ -53,6 +52,15 @@ fn lessThan(_: void, a: keys.Action, b: keys.Action) bool {
         .save_layout => |s| std.mem.lessThan(u8, s, b.save_layout),
         .restore_layout => |s| std.mem.lessThan(u8, s, b.restore_layout),
         else => false,
+    };
+}
+
+fn order(action: keys.Action) usize {
+    return switch (action) {
+        .close_window => 0,
+        .toggle_fullscreen => 1,
+        .toggle_maximize => 2,
+        else => 3 + @as(usize, @backingInt(std.meta.activeTag(action))),
     };
 }
 

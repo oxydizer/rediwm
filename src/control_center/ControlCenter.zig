@@ -270,7 +270,7 @@ pub fn destroy(cc: *ControlCenter) void {
     if (cc.page == .bluetooth) if (cc.server.bluetooth) |m| m.closed();
     cc.bluetooth.deinit();
     users_section.deinit(cc);
-    cc.shortcuts.arena.deinit();
+    cc.shortcuts.deinit();
     cc.desktop.arena.deinit();
     cc.power_settings.arena.deinit();
     cc.region.deinit();
