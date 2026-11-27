@@ -346,26 +346,27 @@ fi
             time.sleep(.4)
             send_key(30, modifiers=[29])  # Ctrl+A
             send_key(68, modifiers=[42])  # Shift+F10
-            for _ in range(3):
-                send_key(103)  # Wrap past Properties and Move to Trash.
-            send_key(28)  # Open Group in New Folder.
+            send_key(28)  # Group in New Folder is the first action.
             send_key(28)  # Create with the suggested name.
 
             def group_title(name):
                 return (find_window() or {}).get('title') == f'{name} — RediWM Files'
 
-            wait_for(lambda: group_title('Trip'), 'Grouping did not enter the new folder')
-            for name in ('Trip - 01.txt', 'Trip - 02.txt'):
+            grouped_names = ('Trip - 01.txt', 'Trip - 02.txt')
+            wait_for(lambda: all((group_source / 'Trip' / name).exists() for name in grouped_names),
+                     'Grouping did not move the selected files')
+            for name in grouped_names:
                 assert (group_source / 'Trip' / name).read_text() == name
                 assert not (group_source / name).exists()
-            send_key(105, modifiers=[56])  # Back.
-            wait_for(lambda: group_title(group_source.name), 'Grouping did not preserve Back')
-            time.sleep(.3)
-            send_key(28)  # The new folder is selected in the parent.
-            wait_for(lambda: group_title('Trip'), 'Back did not select the new folder')
+            time.sleep(.4)  # Let the job completion and listing refresh reach Files.
+            assert group_title(group_source.name), 'Grouping left the current directory'
+            send_key(105, modifiers=[56])  # Back has no previous location.
+            assert group_title(group_source.name), 'Grouping changed navigation history'
+            send_key(28)  # The grouped folder is selected and focused.
+            wait_for(lambda: group_title('Trip'), 'Grouping did not select the new folder')
             action('close_window', {'id': group_win['id']})
             wait_for(check_closed, 'Grouping window did not close')
-            print('Verified grouping into a suggested folder and Back selection.')
+            print('Verified grouping selects the new folder in place.')
 
             if env.get('REDIWM_FORCE_DBUS') == '1':
                 opened_marker.unlink()

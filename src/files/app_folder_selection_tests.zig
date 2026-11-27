@@ -21,9 +21,12 @@ test "file menu suggests a selected name and excludes ineligible selections" {
             .selected = true,
         });
     }
-    const row = std.mem.indexOfScalar(Action, app.fileActions(), .new_folder_from_selection).?;
+    try std.testing.expectEqualSlices(Action, &.{
+        .new_folder_from_selection, .open, .open_with, .cut, .copy, .paste, .rename, .trash, .properties,
+    }, app.fileActions());
     app.openMenu(.file, 0, 0);
-    app.runMenu(row);
+    try std.testing.expectEqual(@as(usize, 0), app.menu_selected);
+    app.runMenu(0);
     try std.testing.expectEqualStrings("Trip", app.dialog.?.edit.text.items);
     try std.testing.expect(app.dialog.?.edit.select_all);
     try std.testing.expectEqual(@as(usize, 2), app.dialog.?.folder_selection.?.paths.len);
@@ -36,7 +39,7 @@ test "file menu suggests a selected name and excludes ineligible selections" {
     try std.testing.expect(!grouping.eligible(&app));
 }
 
-test "group move completion does not navigate after a tab or folder change" {
+test "group move completion does not queue selection after a tab or folder change" {
     var app = try @import("app_tests.zig").testApp();
     defer app.deinit();
     const tag = 1;
@@ -56,6 +59,7 @@ test "group move completion does not navigate after a tab or folder change" {
     }));
     try std.testing.expectEqualStrings("/tmp", app.history.current);
     try std.testing.expect(!app.history.canBack());
+    try std.testing.expect(app.grouped_folder_selection == null);
 }
 
 test "group suggestion skips names from the view and the underlying listing" {

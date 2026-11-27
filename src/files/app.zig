@@ -159,6 +159,7 @@ pub const App = struct {
     scan_notice_shown: bool = false,
     /// A file passed at startup is selected once its parent folder is listed.
     initial_selection: ?[]const u8 = null,
+    grouped_folder_selection: ?[:0]u8 = null,
     error_message: ?[]const u8 = null,
     show_hidden: bool = false,
     /// Directories ahead of files in every sort order. This, `list_view` and
@@ -478,6 +479,7 @@ pub const App = struct {
         self.thumb_arrived.deinit(self.allocator);
         self.clipboard_paths.deinit(self.allocator);
         self.closeDialog();
+        if (self.grouped_folder_selection) |path| self.allocator.free(path);
         if (self.status_notice) |sn| self.allocator.free(sn);
 
         if (self.snapshot) |snap| snap.destroy();
@@ -675,6 +677,7 @@ pub const App = struct {
     pub const refresh = app_listing.refresh;
     pub const toggleHidden = app_listing.toggleHidden;
     pub const selectOnLoad = app_listing.selectOnLoad;
+    pub const refreshAndSelectFolder = app_listing.refreshAndSelectFolder;
     pub const back = app_listing.back;
     pub const forward = app_listing.forward;
     pub const up = app_listing.up;

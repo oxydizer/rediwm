@@ -225,7 +225,8 @@ fn finish(self: *App, transfer: *Transfer, record: io_service.JobRecord) void {
     }
     if (transfer.folder_navigation) |navigation| {
         if (record.state == .completed and self.navigation_count == navigation and self.dialog == null) {
-            if (@import("app_folder_selection.zig").enterFolder(self, transfer.destination)) return;
+            self.refreshAndSelectFolder(transfer.destination);
+            return;
         }
     }
     if (showsAffected(self, transfer)) self.refresh();

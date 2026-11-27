@@ -54,6 +54,22 @@ pub fn refresh(self: *App) void {
     self.invalidate();
 }
 
+/// Select the newly grouped folder when this refresh reaches the view.
+pub fn refreshAndSelectFolder(self: *App, destination: []const u8) void {
+    const name = std.fs.path.basename(destination);
+    const path = @import("worker_scan.zig").listingPath(self.allocator, self.history.current, name) catch {
+        self.refresh();
+        return;
+    };
+    if (self.grouped_folder_selection) |old| self.allocator.free(old);
+    self.grouped_folder_selection = path;
+    if (!self.show_hidden and std.mem.startsWith(u8, name, ".")) {
+        self.toggleHidden();
+    } else {
+        self.refresh();
+    }
+}
+
 pub fn toggleHidden(self: *App) void {
     self.show_hidden = !self.show_hidden;
     self.beginLoading();
@@ -142,6 +158,8 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
     }
 
     self.navigation_count +%= 1;
+    if (self.grouped_folder_selection) |pending| self.allocator.free(pending);
+    self.grouped_folder_selection = null;
     self.overwrite_pending = false;
     if (self.chooser != null and self.chooser.?.mode == .open) self.setChooserName("");
     self.cancelWheel();
@@ -262,6 +280,10 @@ pub fn sync(self: *App) void {
         }
         return;
     };
+    applySnapshot(self, snap);
+}
+
+pub fn applySnapshot(self: *App, snap: *worker_mod.Snapshot) void {
     if (isStaleSnapshot(snap.request_id, self.active_request_id)) {
         snap.destroy();
         return;
@@ -282,6 +304,20 @@ pub fn sync(self: *App) void {
     self.column_resize = null;
     self.clampSidebarScroll();
     self.loading = false;
+    // The new folder may have a different name from the items a search matched.
+    if (self.grouped_folder_selection) |path| {
+        if (!self.changedOnly() and self.search.text.items.len > 0) {
+            for (snap.items) |item| {
+                if (!item.is_dir or !std.mem.eql(u8, item.path, path)) continue;
+                if (!self.matches(item)) {
+                    self.search.text.clearRetainingCapacity();
+                    self.search.cursor = 0;
+                    self.search_visible = false;
+                }
+                break;
+            }
+        }
+    }
     self.rebuildView();
     self.transfer_rows_dirty = false;
     if (self.restore_view) self.restoreView();
@@ -290,6 +326,19 @@ pub fn sync(self: *App) void {
         for (self.items.items, 0..) |*item, i| {
             if (!std.mem.eql(u8, item.path, path)) continue;
             item.selected = true;
+            self.focused_index = i;
+            self.selection_anchor = i;
+            self.revealIndex(i);
+            break;
+        }
+    }
+    if (self.grouped_folder_selection) |path| {
+        self.grouped_folder_selection = null;
+        defer self.allocator.free(path);
+        for (self.items.items, 0..) |item, i| {
+            if (!item.is_dir or item.missing or !std.mem.eql(u8, item.path, path)) continue;
+            for (self.items.items, 0..) |*row, index| row.selected = index == i;
+            self.focus = .file_view;
             self.focused_index = i;
             self.selection_anchor = i;
             self.revealIndex(i);

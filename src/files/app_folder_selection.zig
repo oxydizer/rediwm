@@ -130,33 +130,6 @@ pub fn confirm(self: *App, dialog: *const Dialog) void {
         self.closeDialog();
 }
 
-/// Keep the new folder selected in the parent view when the user goes Back.
-pub fn enterFolder(self: *App, destination: []const u8) bool {
-    saveParentSelection(self, destination) catch return false;
-    self.applyHistoryNav(self.history.current);
-    return true;
-}
-
-fn saveParentSelection(self: *App, destination: []const u8) !void {
-    var view: @import("history.zig").View = .{ .scroll = self.scroll_y };
-    defer view.deinit(self.allocator);
-    // Use the listing's spelling of the path, including its separator at "/".
-    const path = try @import("worker_scan.zig").listingPath(self.allocator, self.history.current, std.fs.path.basename(destination));
-    defer self.allocator.free(path);
-    const selected = try self.allocator.dupe(u8, path);
-    view.selected.append(self.allocator, selected) catch |err| {
-        self.allocator.free(selected);
-        return err;
-    };
-    view.focus = try self.allocator.dupe(u8, selected);
-    view.anchor = try self.allocator.dupe(u8, selected);
-    try self.history.navigate(destination);
-    const parent = &self.history.back_stack.items[self.history.back_stack.items.len - 1];
-    parent.view.deinit(self.allocator);
-    parent.view = view;
-    view = .{};
-}
-
 test "group name trims separators and never splits a UTF-8 character" {
     try std.testing.expectEqualStrings("Trip", suggestion(commonPrefix("Trip - 01", "Trip - 02"), 9));
     try std.testing.expectEqualStrings("Caf", suggestion(commonPrefix("Café", "Cafè"), 5));
@@ -165,33 +138,4 @@ test "group name trims separators and never splits a UTF-8 character" {
 
 test {
     _ = @import("app_folder_selection_tests.zig");
-}
-
-test "Back restores the new folder selection using the root listing path" {
-    var app = try @import("app_tests.zig").testApp();
-    defer app.deinit();
-    const root_history = try @import("history.zig").History.init(app.allocator, "/");
-    app.history.deinit();
-    app.history = root_history;
-    try saveParentSelection(&app, "/Group");
-    try std.testing.expectEqualStrings("/Group", app.history.current);
-    try std.testing.expectEqualStrings("/", (try app.history.back()).?);
-
-    const path = try @import("worker_scan.zig").listingPath(app.allocator, "/", "Group");
-    defer app.allocator.free(path);
-    try std.testing.expectEqualStrings("//Group", path);
-    try app.items.append(app.allocator, .{
-        .name = "Group",
-        .path = path,
-        .is_dir = true,
-        .is_symlink = false,
-        .is_broken = false,
-        .bytes = 0,
-        .mtime = 0,
-        .icon_name = "",
-    });
-    app.restoreView();
-    try std.testing.expect(app.items.items[0].selected);
-    try std.testing.expectEqual(@as(?usize, 0), app.focused_index);
-    try std.testing.expectEqual(@as(?usize, 0), app.selection_anchor);
 }
