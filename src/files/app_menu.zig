@@ -257,10 +257,30 @@ pub fn selectedAppImage(self: *App) ?[]const u8 {
 
 pub fn fileActions(self: *App) []const FileAction {
     const actions = baseFileActions(self);
-    if (!@import("app_folder_selection.zig").eligible(self)) return actions;
-    self.file_menu_actions[0] = .new_folder_from_selection;
-    @memcpy(self.file_menu_actions[1 .. actions.len + 1], actions);
-    return self.file_menu_actions[0 .. actions.len + 1];
+    const group = @import("app_folder_selection.zig").eligible(self);
+    const paste = if (pasteFolder(self) != null) std.mem.indexOfScalar(FileAction, actions, .paste) else null;
+    if (!group and paste == null) return actions;
+    const offset: usize = @intFromBool(group);
+    if (group) self.file_menu_actions[0] = .new_folder_from_selection;
+    @memcpy(self.file_menu_actions[offset .. actions.len + offset], actions);
+    if (paste) |index| self.file_menu_actions[index + offset] = .paste_into_folder;
+    return self.file_menu_actions[0 .. actions.len + offset];
+}
+
+fn pasteFolder(self: *App) ?[]const u8 {
+    if (self.chooser != null or self.loading or self.transfer_browse_root != null or
+        self.history.archive_len != 0 or self.history.torrent or self.isRecent() or self.trashReadOnly()) return null;
+    const local_files = !self.clipboard_is_text and self.clipboard_paths.items.len != 0;
+    if (!local_files and !self.clipboard_offer_files) return null;
+
+    var directory: ?[]const u8 = null;
+    for (self.items.items) |item| {
+        if (!item.selected) continue;
+        if (directory != null or !item.is_dir or item.is_broken or item.missing or
+            item.transfer_ghost or item.transfer_stub) return null;
+        directory = item.path;
+    }
+    return directory;
 }
 
 fn baseFileActions(self: *App) []const FileAction {
@@ -481,6 +501,12 @@ pub fn runMenu(self: *App, row: usize) void {
             .cut => self.cutSelected(),
             .copy => self.copySelected(),
             .paste => self.paste_requested = true,
+            .paste_into_folder => if (pasteFolder(self)) |path| {
+                const destination = self.allocator.dupe(u8, path) catch return;
+                if (self.paste_folder_requested) |old| self.allocator.free(old);
+                self.paste_folder_requested = destination;
+                self.paste_requested = false;
+            },
             .rename => self.openRenameDialog(),
             .new_folder_from_selection => @import("app_folder_selection.zig").openDialog(self),
             .trash, .delete_permanently => self.openTrashConfirmDialog(),

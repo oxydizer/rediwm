@@ -21,7 +21,7 @@ pub fn eligible(self: *App) bool {
         self.history.archive_len != 0 or self.history.torrent or self.transfer_browse_root != null or
         self.changedOnly() or self.loading) return false;
     const dir = std.mem.trimEnd(u8, self.history.current, "/");
-    var found = false;
+    var selected: usize = 0;
     for (self.items.items) |item| {
         if (!item.selected) continue;
         if (item.missing or item.transfer_ghost or item.transfer_stub or item.is_broken) return false;
@@ -31,9 +31,9 @@ pub fn eligible(self: *App) bool {
         }
         const parent = std.fs.path.dirname(item.path) orelse return false;
         if (!std.mem.eql(u8, std.mem.trimEnd(u8, parent, "/"), dir)) return false;
-        found = true;
+        selected += 1;
     }
-    return found;
+    return selected >= 2;
 }
 
 fn commonPrefix(left: []const u8, right: []const u8) []const u8 {

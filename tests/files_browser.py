@@ -364,9 +364,27 @@ fi
             assert group_title(group_source.name), 'Grouping changed navigation history'
             send_key(28)  # The grouped folder is selected and focused.
             wait_for(lambda: group_title('Trip'), 'Grouping did not select the new folder')
+            send_key(105, modifiers=[56])  # Back to the parent.
+            wait_for(lambda: group_title(group_source.name), 'Back did not return to the parent')
+            cut_item = group_source / 'cut-into-folder.txt'
+            cut_item.write_text('move through the context menu')
+            send_key(63, delay=.4)  # Refresh.
+            send_key(102)  # Home selects the folder.
+            send_key(106)  # Right selects the file.
+            send_key(45, modifiers=[29])  # Ctrl+X.
+            send_key(102)  # Select only the folder again.
+            send_key(68, modifiers=[42])  # Shift+F10.
+            for _ in range(3):
+                send_key(108)  # Open, Cut, Copy, Paste into Folder.
+            send_key(28)
+            moved_item = group_source / 'Trip' / cut_item.name
+            wait_for(lambda: moved_item.exists() and not cut_item.exists(),
+                     'Paste into Folder did not move the cut file')
+            assert moved_item.read_text() == 'move through the context menu'
+            assert group_title(group_source.name), 'Paste into Folder navigated away'
             action('close_window', {'id': group_win['id']})
             wait_for(check_closed, 'Grouping window did not close')
-            print('Verified grouping selects the new folder in place.')
+            print('Verified grouping and Paste into Folder both stay in the parent directory.')
 
             if env.get('REDIWM_FORCE_DBUS') == '1':
                 opened_marker.unlink()

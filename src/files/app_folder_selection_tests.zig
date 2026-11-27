@@ -21,6 +21,11 @@ test "file menu suggests a selected name and excludes ineligible selections" {
             .selected = true,
         });
     }
+    app.items.items[1].selected = false;
+    try std.testing.expect(std.mem.indexOfScalar(Action, app.fileActions(), .new_folder_from_selection) == null);
+    grouping.openDialog(&app);
+    try std.testing.expect(app.dialog == null);
+    app.items.items[1].selected = true;
     try std.testing.expectEqualSlices(Action, &.{
         .new_folder_from_selection, .open, .open_with, .cut, .copy, .paste, .rename, .trash, .properties,
     }, app.fileActions());
@@ -83,20 +88,21 @@ test "group suggestion skips names from the view and the underlying listing" {
     for ([_]struct {
         names: []const []const u8,
         expected: []const u8,
-        is_dir: bool = false,
+        first_is_dir: bool = false,
     }{
-        .{ .names = &.{"Photos"}, .expected = "Photos (1)", .is_dir = true },
-        .{ .names = &.{"README"}, .expected = "README (1)" },
+        .{ .names = &.{ "Photos", "Photos 01.jpg" }, .expected = "Photos (1)", .first_is_dir = true },
+        .{ .names = &.{ "README", "README copy.txt" }, .expected = "README (1)" },
         .{ .names = &.{ "Trip 01.jpg", "Trip 02.jpg" }, .expected = "Trip (2)" },
     }) |case| {
         app.items.clearRetainingCapacity();
-        for (case.names) |name| {
+        for (case.names, 0..) |name, i| {
+            const is_dir = i == 0 and case.first_is_dir;
             const path = try std.fs.path.join(app.items_arena.allocator(), &.{ "/tmp", name });
             try app.items.append(app.allocator, .{
                 .name = name,
                 .path = path,
-                .mode = if (case.is_dir) c.S_IFDIR else c.S_IFREG,
-                .is_dir = case.is_dir,
+                .mode = if (is_dir) c.S_IFDIR else c.S_IFREG,
+                .is_dir = is_dir,
                 .is_symlink = false,
                 .is_broken = false,
                 .bytes = 0,

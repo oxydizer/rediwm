@@ -53,6 +53,7 @@ pub const TransferRequest = struct {
     destination_path: []u8,
     sources: []TransferSource,
     create_destination: bool = false,
+    resolve_destination: bool = false,
 
     fn deinit(self: *TransferRequest, allocator: std.mem.Allocator) void {
         allocator.free(self.destination_path);

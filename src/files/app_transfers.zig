@@ -75,14 +75,26 @@ pub const List = struct {
 /// Submits a copy or move of `paths` into `directory`. The service checks
 /// the sources and the destination; the job's record reports the end.
 pub fn submitTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, clipboard: bool) bool {
-    return submit(self, kind, paths, directory, clipboard, null);
+    return submit(self, kind, paths, directory, .{
+        .cut_revision = if (clipboard and kind == .move and self.clipboard_cut) self.clipboard_revision else null,
+    });
 }
 
 pub fn submitFolderMove(self: *App, paths: []const []const u8, directory: []const u8, navigation: u32) bool {
-    return submit(self, .move, paths, directory, false, navigation);
+    return submit(self, .move, paths, directory, .{ .folder_navigation = navigation });
 }
 
-fn submit(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, clipboard: bool, folder_navigation: ?u32) bool {
+pub fn submitPasteIntoFolder(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, cut_revision: ?usize) bool {
+    return submit(self, kind, paths, directory, .{ .resolve_destination = true, .cut_revision = cut_revision });
+}
+
+const SubmitOptions = struct {
+    folder_navigation: ?u32 = null,
+    cut_revision: ?usize = null,
+    resolve_destination: bool = false,
+};
+
+fn submit(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, options: SubmitOptions) bool {
     const link = &self.service;
     const list = &link.transfers;
     const handle = link.handle orelse return false;
@@ -107,7 +119,8 @@ fn submit(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory
         },
     };
     defer command.deinitPayload();
-    command.payload.?.data.transfer.create_destination = folder_navigation != null;
+    command.payload.?.data.transfer.create_destination = options.folder_navigation != null;
+    command.payload.?.data.transfer.resolve_destination = options.resolve_destination;
     link.outbox.send(handle, &command) catch |err| {
         std.log.warn("Files transfer not submitted: {s}", .{@errorName(err)});
         freeAll(self.allocator, sources);
@@ -117,11 +130,11 @@ fn submit(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory
     };
     list.items[list.len] = .{
         .tag = link.next_tag,
-        .folder_navigation = folder_navigation,
+        .folder_navigation = options.folder_navigation,
         .move = move,
         .destination = destination,
         .sources = sources,
-        .cut_revision = if (clipboard and move and self.clipboard_cut) self.clipboard_revision else null,
+        .cut_revision = options.cut_revision,
     };
     list.len += 1;
     link.next_tag += 1;

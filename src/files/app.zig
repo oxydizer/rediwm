@@ -352,6 +352,8 @@ pub const App = struct {
     clipboard_cut: bool = false,
     clipboard_revision: usize = 0,
     paste_requested: bool = false,
+    clipboard_offer_files: bool = false,
+    paste_folder_requested: ?[]u8 = null,
 
     // Mouse & input
     mouse_x: f64 = 0,
@@ -478,6 +480,7 @@ pub const App = struct {
         self.thumb_wants.deinit(self.allocator);
         self.thumb_arrived.deinit(self.allocator);
         self.clipboard_paths.deinit(self.allocator);
+        if (self.paste_folder_requested) |path| self.allocator.free(path);
         self.closeDialog();
         if (self.grouped_folder_selection) |path| self.allocator.free(path);
         if (self.status_notice) |sn| self.allocator.free(sn);

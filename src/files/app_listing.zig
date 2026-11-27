@@ -158,6 +158,8 @@ pub fn applyHistoryNav(self: *App, path: []const u8) void {
     }
 
     self.navigation_count +%= 1;
+    if (self.paste_folder_requested) |destination| self.allocator.free(destination);
+    self.paste_folder_requested = null;
     if (self.grouped_folder_selection) |pending| self.allocator.free(pending);
     self.grouped_folder_selection = null;
     self.overwrite_pending = false;

@@ -103,6 +103,10 @@ pub fn executePaste(self: *App, kind: ops_mod.OpKind, paths: []const []const u8)
 }
 
 pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, clipboard: bool) bool {
+    return transferTo(self, kind, paths, directory, clipboard, null);
+}
+
+fn transferTo(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, directory: []const u8, clipboard: bool, folder_paste: ?FolderPaste) bool {
     if (self.history.archive_len > 0 or recent.isLocation(directory)) return false;
     if (paths.len == 0) return false;
     // Nothing is pasted or dropped into the Trash: Move to Trash is how items get there.
@@ -112,18 +116,30 @@ pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const 
     };
     // The service checks sources and destination off this thread and runs
     // the job; the window learns the end from the job's record.
+    if (folder_paste) |paste| {
+        return @import("app_transfers.zig").submitPasteIntoFolder(self, kind, paths, directory, paste.cut_revision);
+    }
     return self.submitTransfer(kind, paths, directory, clipboard);
 }
 
-pub fn executePasteLocal(self: *App) void {
-    if (self.clipboard_paths.items.len == 0) return;
-    const kind: ops_mod.OpKind = if (self.clipboard_cut) .move else .copy;
-    _ = self.executePaste(kind, self.clipboard_paths.items);
+const FolderPaste = struct { cut_revision: ?usize };
+
+fn pasteTo(self: *App, kind: ops_mod.OpKind, paths: []const []const u8, folder: ?[]const u8, cut_revision: ?usize) bool {
+    if (folder) |destination| return transferTo(self, kind, paths, destination, true, .{ .cut_revision = cut_revision });
+    return self.executePaste(kind, paths);
 }
 
-pub fn executePasteExternal(self: *App, mode: clipboard_mod.ClipboardMode, paths: []const []const u8) void {
+pub fn executePasteLocal(self: *App, folder: ?[]const u8) void {
+    if (self.clipboard_paths.items.len == 0) return;
+    const kind: ops_mod.OpKind = if (self.clipboard_cut) .move else .copy;
+    _ = pasteTo(self, kind, self.clipboard_paths.items, folder, if (self.clipboard_cut) self.clipboard_revision else null);
+}
+
+pub fn executePasteExternal(self: *App, mode: clipboard_mod.ClipboardMode, paths: []const []const u8, folder: ?[]const u8) void {
     const kind: ops_mod.OpKind = if (mode == .cut) .move else .copy;
-    if (!self.executePaste(kind, paths)) return;
+    // A folder paste of an external cut will own the clipboard revision below.
+    const cut_revision = if (mode == .cut) self.clipboard_revision + 1 else null;
+    if (!pasteTo(self, kind, paths, folder, cut_revision)) return;
     // Retain external cut entries too; completion republishes only remaining items.
     if (mode == .cut) {
         self.clearClipboard();

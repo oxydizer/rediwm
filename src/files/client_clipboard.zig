@@ -129,13 +129,15 @@ pub fn receiveClipboard(self: *Client) void {
         if (receive.revision == self.app.edit_revision) self.app.pasteText(receive.bytes.items);
     } else {
         // A delayed reply must not paste into a folder navigated to meanwhile.
-        if (!std.mem.eql(u8, receive.directory, self.app.history.current)) return;
+        if (receive.folder_navigation) |navigation| {
+            if (navigation != self.app.navigation_count) return;
+        } else if (!std.mem.eql(u8, receive.directory, self.app.history.current)) return;
         const decoded = clipboard_mod.decodeUris(a, receive.bytes.items) catch {
             self.app.setStatusNotice(@import("i18n").tr("Invalid file clipboard"), true);
             return;
         };
         defer decoded.deinit(a);
-        self.app.executePasteExternal(decoded.mode, decoded.paths);
+        self.app.executePasteExternal(decoded.mode, decoded.paths, if (receive.folder_navigation != null) receive.directory else null);
     }
 }
 
@@ -144,14 +146,18 @@ pub fn handleClipboard(self: *Client) !void {
         try self.publishClipboard();
         self.clipboard_revision = self.app.clipboard_revision;
     }
-    if (!self.app.paste_requested and !self.app.text_paste_requested) return;
+    const requested_folder = self.app.paste_folder_requested;
+    if (!self.app.paste_requested and !self.app.text_paste_requested and requested_folder == null) return;
+    self.app.paste_folder_requested = null;
+    defer if (requested_folder) |path| self.app.allocator.free(path);
     const text = self.app.text_paste_requested;
+    const folder = if (text or self.app.paste_requested) null else requested_folder;
     self.app.paste_requested = false;
     self.app.text_paste_requested = false;
     self.cancelReceive();
     if (self.clipboard_source) |clip| {
         if (text and clip.text) self.app.pasteText(clip.uris);
-        if (!text and !clip.text) self.app.executePasteLocal();
+        if (!text and !clip.text) self.app.executePasteLocal(folder);
         return;
     }
     const offer = self.selection_offer orelse return;
@@ -161,8 +167,15 @@ pub fn handleClipboard(self: *Client) !void {
     defer _ = c.close(fds[1]);
     errdefer _ = c.close(fds[0]);
     if (c.fcntl(fds[0], c.F_SETFL, @as(c_int, c.O_NONBLOCK)) < 0) return error.NonblockingFailed;
-    const directory = try a.dupe(u8, self.app.history.current);
-    self.receiving = .{ .fd = fds[0], .text = text, .revision = self.app.edit_revision, .directory = directory, .started = app_mod.nowMs() };
+    const directory = try a.dupe(u8, folder orelse self.app.history.current);
+    self.receiving = .{
+        .fd = fds[0],
+        .text = text,
+        .revision = self.app.edit_revision,
+        .directory = directory,
+        .folder_navigation = if (folder != null) self.app.navigation_count else null,
+        .started = app_mod.nowMs(),
+    };
     offer.proxy.receive(mime, fds[1]);
     // The main loop flushes this request before polling the receive pipe.
 }

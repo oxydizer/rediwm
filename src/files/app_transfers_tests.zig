@@ -117,7 +117,7 @@ test "a cut and paste moves, and empties the cut clipboard" {
     try s.app.clipboard_paths.append(allocator, try allocator.dupe(u8, a));
     s.app.clipboard_cut = true;
     try s.app.history.navigate(destination);
-    s.app.executePasteLocal();
+    s.app.executePasteLocal(null);
     try s.until(idle);
     try std.testing.expectEqualStrings("Item moved", notice(&s.app));
     try std.testing.expect(!support.pathExists(a));
@@ -397,4 +397,8 @@ test "group completion refreshes and reveals the only selected row without navig
     try std.testing.expectEqual(@as(?usize, focused), s.app.selection_anchor);
     for (s.app.items.items, 0..) |item, i| try std.testing.expectEqual(i == focused, item.selected);
     try std.testing.expect(s.app.scroll_y > 0);
+}
+
+test {
+    _ = @import("app_paste_tests.zig");
 }

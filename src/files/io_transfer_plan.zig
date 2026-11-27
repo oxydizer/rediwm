@@ -77,6 +77,14 @@ pub fn prepare(
         return error.InvalidTransferDestination;
     }
 
+    // A selected directory can be a symlink whose target is inside a source.
+    // Check the real path as well as the displayed path before starting work.
+    var resolved_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const resolved_destination = if (request.resolve_destination)
+        std.mem.span(c.realpath(destination_z, &resolved_buffer) orelse return error.InvalidTransferDestination)
+    else
+        request.destination_path;
+
     var plan: TransferPlan = .{
         .allocator = allocator,
         .destination_path = request.destination_path,
@@ -109,7 +117,8 @@ pub fn prepare(
 
         // Nothing may be copied or moved into itself or a descendant.
         if (kind == .directory and
-            ops_mod.isDescendantOrSame(source.path, request.destination_path))
+            (ops_mod.isDescendantOrSame(source.path, request.destination_path) or
+                (request.resolve_destination and ops_mod.isDescendantOrSame(source.path, resolved_destination))))
         {
             return error.TransferDestinationInsideSource;
         }
