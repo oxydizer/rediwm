@@ -17,7 +17,8 @@ from PIL import Image
 from ipc_client import IPCClient, ROOT, spawn_compositor, stop_process
 from xwayland_support import wait_for
 
-CTRL, SHIFT, ENTER, KEY_C, KEY_V = 29, 42, 28, 46, 47
+CTRL, SHIFT, ENTER, KEY_C, KEY_V, SPACE = 29, 42, 28, 46, 47, 57
+CURSOR_RGB = (252, 203, 150)
 
 COLOR_PROBE = r"""
 import os
@@ -37,8 +38,74 @@ os.write(1, b"\x1b[?1049h\x1b[?25l\x1b[H"
             b"\x1b[41m            \x1b[48;5;17m            "
             b"\x1b[48;2;42;124;176m            \x1b[0m"
             b"\x1b]2;color swatches\x07")
+for title, sequence in (
+    (b"caret right", b"\x1b[3;8H\x1b[2 q\x1b[?25h"),
+    (b"caret left", b"\x1b[3;2H"),
+    (b"caret next row", b"\x1b[4;8H"),
+    (b"caret hidden", b"\x1b[?25l"),
+    (b"before newline", b"\x1b[?1049l\x1b[2J\x1b[3;12H\x1b[2 q\x1b[?25h"),
+    (b"after newline", b"\r\n"),
+):
+    key = os.read(0, 1)
+    if title == b"after newline":
+        assert key == b"\r", key
+    os.write(1, sequence + b"\x1b]2;" + title + b"\x07")
 os.read(0, 1)
 """
+
+
+def caret_bounds(ipc, window_id, path):
+    path.unlink(missing_ok=True)
+    ipc.screenshot(path=str(path), window_id=window_id)
+    with Image.open(path) as image:
+        # The probe uses only the first few rows and columns.
+        strip = image.convert("RGB").crop((0, 0, 200, 240))
+        pixels = strip.load()
+        points = [(x, y) for y in range(strip.height) for x in range(strip.width) if pixels[x, y] == CURSOR_RGB]
+    if not points:
+        return None
+    x, y = zip(*points)
+    return min(x), min(y), max(x) + 1, max(y) + 1
+
+
+def check_caret(ipc, window_id, caret_shot, windows):
+    def step(title, key=SPACE):
+        ipc.key_down_up(key)
+        wait_for(lambda: windows()[0]["title"] == title, f"cursor probe did not reach {title}")
+
+    def capture():
+        return caret_bounds(ipc, window_id, caret_shot)
+
+    ipc.focus_window(window_id)
+    step("caret right")
+    ipc.wait_for_frame()
+    right = capture()
+    step("caret left")
+    time.sleep(0.07)
+    middle = capture()
+    time.sleep(0.5)
+    left = capture()
+    assert right and middle and left, (right, middle, left)
+    assert left[0] < middle[0] < right[0] and right[1] == middle[1] == left[1], (right, middle, left)
+    assert abs((middle[2] - middle[0]) - (right[2] - right[0])) <= 1, (right, middle)
+    step("caret next row")
+    ipc.wait_for_frame()
+    next_row = capture()
+    assert next_row and next_row[0] == right[0] and next_row[1] > right[1], (right, next_row)
+    step("caret hidden")
+    ipc.wait_for_frame()
+    assert capture() is None
+
+    step("before newline")
+    ipc.wait_for_frame()
+    start = capture()
+    step("after newline", ENTER)
+    time.sleep(0.1)
+    middle = capture()
+    time.sleep(0.75)
+    end = capture()
+    assert start and middle and end, (start, middle, end)
+    assert end[0] < middle[0] < start[0] and start[1] < middle[1] < end[1], (start, middle, end)
 
 
 def main():
@@ -57,12 +124,16 @@ def main():
                            '[theme]\nterminal_fg = "#eeddbc"\nterminal_bg = "#28192a"\n'
                            'terminal_cursor = "#fccb96"\nterminal_red = "#d57d6f"\n',
             binary=os.environ.get("REDIWM_TEST_BINARY"))
+        app_config = tmp / "terminal.toml"
+        # Grow the client glide so a screenshot can sample it while the compositor stays at rest.
+        app_config.write_text((tmp / "rediwm-config.toml").read_text().replace("enabled = false", "enabled = true") +
+                              '[input]\ncaret_motion_ms = 500\n')
         apps = []
         try:
             with IPCClient(tmp, timeout=20) as ipc:
                 display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
                 app_env = dict(os.environ, **env, XDG_RUNTIME_DIR=directory, WAYLAND_DISPLAY=display,
-                               REDIWM_CONFIG=str(tmp / "rediwm-config.toml"), SHELL="/bin/sh",
+                               REDIWM_CONFIG=str(app_config), SHELL="/bin/sh",
                                PS1="$ ", ENV="")
                 app_env.pop("REDIWM_THEME", None)
                 binary = os.environ.get("REDIWM_TEST_TERMINAL", str(ROOT / "zig-out/bin/rediwm-terminal"))
@@ -167,6 +238,8 @@ def main():
                     colors = {rgb: count for count, rgb in image.convert("RGB").getcolors(image.width * image.height)}
                 for rgb in [(213, 125, 111), (0, 0, 95), (42, 124, 176), (40, 25, 42)]:
                     assert colors.get(rgb, 0) > 100, (rgb, colors.get(rgb, 0))
+
+                check_caret(ipc, win["id"], tmp / "caret.png", windows)
                 ipc.close_window(win["id"])
                 ipc.wait_for("window_closed", window_id=win["id"])
                 assert app.wait(timeout=5) == 0
@@ -185,7 +258,7 @@ def main():
                 ipc.wait_for("window_closed", window_id=win["id"])
                 assert app.wait(timeout=5) == 0
                 assert read("hup.txt") == "hup\n", "the shell was not hung up"
-                print("RediTerm: shell, title, copy/paste, -e, color queries and swatches, and close passed")
+                print("RediTerm: shell, title, clipboard, -e, colors, caret glide and close passed")
         finally:
             for app in apps:
                 if app.poll() is None:

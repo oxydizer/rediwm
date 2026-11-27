@@ -90,6 +90,7 @@ pub const Settings = struct {
     theme_path: ?[:0]const u8 = null,
     stamps: [2]?Stamp = .{ null, null },
     animations: anim.Settings = .{},
+    caret_motion_ms: u32 = (config.InputConfig{}).caret_motion_ms,
     region: config.RegionConfig = .{},
     initialized: bool = false,
     last_second: i64 = -1,
@@ -158,6 +159,7 @@ pub const Settings = struct {
         var audio_player = true;
         var terminal_opacity: ?f32 = null;
         self.animations = .{};
+        self.caret_motion_ms = (config.InputConfig{}).caret_motion_ms;
         self.region = .{};
         for (paths, 0..) |path, i| {
             const p = path orelse continue;
@@ -167,6 +169,7 @@ pub const Settings = struct {
                 var cfg = if (self.env) |env| config.loadFromBytes(arena.allocator(), bytes, p, env, io) catch null else config.parse(arena.allocator(), bytes, p) catch null;
                 if (cfg) |*value| {
                     defer value.deinit();
+                    self.caret_motion_ms = value.input.caret_motion_ms;
                     icon_name = value.compositor.icon_theme;
                     if (value.theme_pack) |pack| if (pack.icon_theme.len > 0) {
                         icon_name = pack.icon_theme;

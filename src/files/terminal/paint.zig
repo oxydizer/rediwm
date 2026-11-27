@@ -37,7 +37,22 @@ pub const View = struct {
     focused: bool,
     /// Draw an outlined cursor while unfocused instead of none.
     hollow_cursor: bool = false,
+    /// Animated cursor position within the grid, in logical pixels.
+    cursor_position: ?CursorPosition = null,
     preedit: []const u8 = "",
+};
+
+pub const CursorPosition = struct { x: f64, y: f64 };
+
+pub const Cursor = struct {
+    row: c_int,
+    col: c_int,
+    shape: c_int,
+
+    pub fn get(session: *tc.FT) ?Cursor {
+        var cursor: Cursor = undefined;
+        return if (tc.ft_cursor(session, &cursor.row, &cursor.col, &cursor.shape)) cursor else null;
+    }
 };
 
 pub fn applyPalette(session: *tc.FT) void {
@@ -94,18 +109,25 @@ fn cellBytes(cell: tc.FT_Cell, buffer: []u8) []const u8 {
 
 /// Paints the visible rows, then the cursor. ASCII runs of one style are
 /// drawn together; other cells alone, so fallback shaping cannot move later
-/// cells. The caller's clip (its damage) is kept.
+/// cells. The caller's clip (its damage) is kept, and rows and runs outside
+/// it are skipped. Cell edges snap to device pixels, so a partial repaint
+/// meets the untouched rows exactly and every clip stays a pixel region.
 pub fn paintCells(cr: *c.cairo_t, session: *tc.FT, view: View) void {
     if (view.h <= 0 or view.w <= 0) return;
     c.cairo_save(cr);
-    c.cairo_rectangle(cr, view.x, view.y, view.w, view.h);
+    shell.pixelRect(cr, view.x, view.y, view.x + view.w, view.y + view.h);
     c.cairo_clip(cr);
+    const clip = shell.ClipRects.read(cr);
+    defer clip.deinit();
     const cw = view.metrics.cell_w;
     const ch = view.metrics.cell_h;
     const ascent = view.metrics.ascent;
     const rows = @min(tc.ft_rows(session), @as(i32, @intFromFloat(@ceil(view.h / ch))));
     var row: i32 = 0;
     while (row < rows) : (row += 1) {
+        const top = view.y + @as(f64, @floatFromInt(row)) * ch;
+        const bottom = view.y + @as(f64, @floatFromInt(row + 1)) * ch;
+        if (!clip.touches(view.x, top, view.w, bottom - top)) continue;
         var col: i32 = 0;
         while (col < tc.ft_cols(session)) {
             var cell: tc.FT_Cell = undefined;
@@ -138,23 +160,28 @@ pub fn paintCells(cr: *c.cairo_t, session: *tc.FT, view: View) void {
                 if (!ascii_run) break;
             }
             const x = view.x + @as(f64, @floatFromInt(first_col)) * cw;
-            const y = view.y + @as(f64, @floatFromInt(row)) * ch;
-            const width = @as(f64, @floatFromInt(col - first_col)) * cw;
+            const right = view.x + @as(f64, @floatFromInt(col)) * cw;
+            const y = top;
+            const width = right - x;
+            if (!clip.touches(x, y, width, bottom - top)) continue;
             shell.setSource(cr, rgb(bg));
-            c.cairo_rectangle(cr, x, y, width, ch);
+            shell.pixelRect(cr, x, top, right, bottom);
             c.cairo_fill(cr);
             if (selected) {
                 shell.setSource(cr, theme.shellPalette().selectionColor());
-                c.cairo_rectangle(cr, x, y, width, ch);
+                shell.pixelRect(cr, x, top, right, bottom);
                 c.cairo_fill(cr);
             }
+            const blank = std.mem.indexOfNone(u8, bytes[0..len], " ") == null;
             if (cell.attrs & tc.FT_CONCEAL == 0) {
                 shell.setSource(cr, rgb(fg));
-                c.cairo_save(cr);
-                c.cairo_rectangle(cr, x, y, width, ch);
-                c.cairo_clip(cr);
-                shell.drawStyledText(cr, bytes[0..len], x, y + ascent, shell.textSize(), if (cell.attrs & tc.FT_BOLD != 0) .mono_bold else .mono, cell.attrs & tc.FT_ITALIC != 0);
-                c.cairo_restore(cr);
+                if (!blank) {
+                    c.cairo_save(cr);
+                    shell.pixelRect(cr, x, top, right, bottom);
+                    c.cairo_clip(cr);
+                    shell.drawStyledText(cr, bytes[0..len], x, y + ascent, shell.textSize(), if (cell.attrs & tc.FT_BOLD != 0) .mono_bold else .mono, cell.attrs & tc.FT_ITALIC != 0);
+                    c.cairo_restore(cr);
+                }
                 if (cell.attrs & tc.FT_UNDERLINE != 0) {
                     c.cairo_rectangle(cr, x, y + ascent + 1, width, 1);
                     c.cairo_fill(cr);
@@ -166,35 +193,69 @@ pub fn paintCells(cr: *c.cairo_t, session: *tc.FT, view: View) void {
             }
         }
     }
-    var cursor_row: c_int = 0;
-    var cursor_col: c_int = 0;
-    var shape: c_int = 0;
-    if (tc.ft_cursor(session, &cursor_row, &cursor_col, &shape) and (view.focused or view.hollow_cursor)) {
-        const x = view.x + @as(f64, @floatFromInt(cursor_col)) * cw;
-        const y = view.y + @as(f64, @floatFromInt(cursor_row)) * ch;
-        shell.setSource(cr, cursorColor());
-        if (!view.focused) {
-            c.cairo_set_line_width(cr, 1);
-            c.cairo_rectangle(cr, x + 0.5, y + 0.5, cw - 1, ch - 1);
-            c.cairo_stroke(cr);
-        } else {
-            c.cairo_rectangle(cr, x, y + if (shape == 2) ch - 2 else 0, if (shape == 3) 2 else cw, if (shape == 2) 2 else ch);
-            c.cairo_fill(cr);
-            if (shape == 1) {
-                var cell: tc.FT_Cell = undefined;
-                if (tc.ft_cell(session, cursor_row, cursor_col, &cell)) {
-                    var text: [24]u8 = undefined;
-                    shell.setSource(cr, background());
-                    shell.drawTextFont(cr, cellBytes(cell, &text), x, y + ascent, shell.textSize(), .mono);
-                }
-            }
-            if (view.preedit.len > 0) {
-                shell.setSource(cr, theme.global.terminal_fg orelse theme.global.window_fg);
-                shell.drawTextFont(cr, view.preedit, x, y + ascent, shell.textSize(), .mono);
-            }
-        }
-    }
+    if (Cursor.get(session)) |cursor| paintCursor(cr, session, view, cursor);
     c.cairo_restore(cr);
+}
+
+fn paintCursor(cr: *c.cairo_t, session: *tc.FT, view: View, cursor: Cursor) void {
+    if (!view.focused and !view.hollow_cursor) return;
+    const cw = view.metrics.cell_w;
+    const ch = view.metrics.cell_h;
+    const rest: CursorPosition = .{
+        .x = @as(f64, @floatFromInt(cursor.col)) * cw,
+        .y = @as(f64, @floatFromInt(cursor.row)) * ch,
+    };
+    const position = if (view.focused) view.cursor_position orelse rest else rest;
+    const x = view.x + position.x;
+    const y = view.y + position.y;
+    shell.setSource(cr, cursorColor());
+    if (!view.focused) {
+        c.cairo_set_line_width(cr, 1);
+        c.cairo_rectangle(cr, x + 0.5, y + 0.5, cw - 1, ch - 1);
+        c.cairo_stroke(cr);
+        return;
+    }
+
+    const underline = cursor.shape == 2;
+    c.cairo_rectangle(cr, x, y + if (underline) ch - 2 else 0, if (cursor.shape == 3) 2 else cw, if (underline) 2 else ch);
+    c.cairo_fill(cr);
+    if (cursor.shape == 1) paintBlockGlyphs(cr, session, view, position);
+    if (view.preedit.len > 0) {
+        shell.setSource(cr, theme.global.terminal_fg orelse theme.global.window_fg);
+        shell.drawTextFont(cr, view.preedit, view.x + rest.x, view.y + rest.y + view.metrics.ascent, shell.textSize(), .mono);
+    }
+}
+
+fn paintBlockGlyphs(cr: *c.cairo_t, session: *tc.FT, view: View, position: CursorPosition) void {
+    const cw = view.metrics.cell_w;
+    const ch = view.metrics.cell_h;
+    c.cairo_save(cr);
+    defer c.cairo_restore(cr);
+    c.cairo_rectangle(cr, view.x + position.x, view.y + position.y, cw, ch);
+    c.cairo_clip(cr);
+
+    // A moving block can cover parts of two rows and two columns. Redraw
+    // their glyphs at the grid baseline, including an overlapping wide cell.
+    const first_col: i32 = @max(0, @as(i32, @intFromFloat(@floor(position.x / cw))) - 1);
+    const end_col: i32 = @min(tc.ft_cols(session), @as(i32, @intFromFloat(@ceil((position.x + cw) / cw))));
+    const end_row: i32 = @min(tc.ft_rows(session), @as(i32, @intFromFloat(@ceil((position.y + ch) / ch))));
+    var row: i32 = @intFromFloat(@floor(position.y / ch));
+    shell.setSource(cr, background());
+    while (row < end_row) : (row += 1) {
+        const top = view.y + @as(f64, @floatFromInt(row)) * ch;
+        c.cairo_save(cr);
+        c.cairo_rectangle(cr, view.x + position.x, top, cw, ch);
+        c.cairo_clip(cr);
+        var col = first_col;
+        while (col < end_col) : (col += 1) {
+            var cell: tc.FT_Cell = undefined;
+            if (!tc.ft_cell(session, row, col, &cell) or cell.width == 0 or cell.chars[0] == 0 or cell.attrs & tc.FT_CONCEAL != 0) continue;
+            var text: [24]u8 = undefined;
+            const pen = view.x + @as(f64, @floatFromInt(col)) * cw;
+            shell.drawStyledText(cr, cellBytes(cell, &text), pen, top + view.metrics.ascent, shell.textSize(), if (cell.attrs & tc.FT_BOLD != 0) .mono_bold else .mono, cell.attrs & tc.FT_ITALIC != 0);
+        }
+        c.cairo_restore(cr);
+    }
 }
 
 /// The selected text, rows joined by newlines unless they wrapped, trailing

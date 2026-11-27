@@ -77,19 +77,33 @@ struct ft_terminal {
     char color_query[1536];
     size_t color_query_len;
     VTermColor cursor_color;
+    /* View rows to repaint since ft_take_damage, or all of them. */
+    unsigned char dirty_rows[GRID_MAX];
+    bool dirty_all;
 };
 
-static int damage(VTermRect rect, void *user) { (void)rect; ((FT *)user)->changed=true; return 1; }
+static void mark_all(FT *t) { t->dirty_all=true; t->changed=true; }
+/* Screen rows [start, end). Scrolled back into history, the screen sits
+ * lower in the view, so any change repaints all of it. */
+static void mark_rows(FT *t, int start, int end) {
+    t->changed=true;
+    if (t->offset) { t->dirty_all=true; return; }
+    if (start<0) start=0;
+    if (end>t->rows) end=t->rows;
+    for (int row=start;row<end;row++) t->dirty_rows[row]=1;
+}
+static int damage(VTermRect rect, void *user) { mark_rows(user,rect.start_row,rect.end_row); return 1; }
 static int cursor(VTermPos pos, VTermPos old, int visible, void *user) {
-    (void)old; FT *t=user; t->cursor=pos; t->cursor_visible=visible; t->changed=true; return 1;
+    FT *t=user; t->cursor=pos; t->cursor_visible=visible;
+    mark_rows(t,old.row,old.row+1); mark_rows(t,pos.row,pos.row+1); return 1;
 }
 static int property(VTermProp prop, VTermValue *val, void *user) {
     FT *t=user;
     switch (prop) {
-    case VTERM_PROP_CURSORVISIBLE: t->cursor_visible=val->boolean; break;
-    case VTERM_PROP_CURSORSHAPE: t->cursor_shape=val->number; break;
-    case VTERM_PROP_REVERSE: t->reverse=val->boolean; break;
-    case VTERM_PROP_ALTSCREEN: t->alternate=val->boolean; t->offset=0; break;
+    case VTERM_PROP_CURSORVISIBLE: t->cursor_visible=val->boolean; mark_rows(t,t->cursor.row,t->cursor.row+1); break;
+    case VTERM_PROP_CURSORSHAPE: t->cursor_shape=val->number; mark_rows(t,t->cursor.row,t->cursor.row+1); break;
+    case VTERM_PROP_REVERSE: t->reverse=val->boolean; mark_all(t); break;
+    case VTERM_PROP_ALTSCREEN: t->alternate=val->boolean; t->offset=0; mark_all(t); break;
     case VTERM_PROP_MOUSE: t->mouse=val->number; break;
     case VTERM_PROP_TITLE: {
         /* Stored only; the host decides whether to show it. Control bytes
@@ -126,7 +140,7 @@ static int pushline(int cols, const VTermScreenCell *cells, void *user) {
     t->history[(t->first+t->count)%HISTORY_LINES]=(struct line){copy,cols,next && next->continuation};
     t->count++; t->history_bytes+=bytes;
     t->line++;
-    if (t->offset) t->offset=t->offset<t->count ? t->offset+1 : t->count;
+    if (t->offset) { t->offset=t->offset<t->count ? t->offset+1 : t->count; t->dirty_all=true; }
     t->changed=true; return 1;
 }
 static int popline(int cols, VTermScreenCell *cells, void *user) {
@@ -143,10 +157,10 @@ static int popline(int cols, VTermScreenCell *cells, void *user) {
     free(line->cells); *line=(struct line){0}; t->count--;
     t->line--;
     if (t->offset>t->count) t->offset=t->count;
-    t->changed=true; return 1;
+    mark_all(t); return 1;
 }
 static int clear_history(void *user) {
-    FT *t=user; while(t->count) drop_oldest(t); t->offset=0; t->changed=true; return 1;
+    FT *t=user; while(t->count) drop_oldest(t); t->offset=0; mark_all(t); return 1;
 }
 static const VTermScreenCallbacks callbacks={
     .damage=damage, .movecursor=cursor, .settermprop=property,
@@ -180,7 +194,7 @@ static void allocation_failed(FT *t) {
      * through its own object graph. Our allocation ledger owns every block. */
     while (t->allocations) terminal_free(t->allocations+1,t);
     t->vt=NULL; t->state=NULL; t->screen=NULL;
-    t->error="Terminal ran out of memory"; t->changed=true;
+    t->error="Terminal ran out of memory"; mark_all(t);
     ft_close(t,true);
 }
 static bool enqueue(FT *t, const char *bytes, size_t len) {
@@ -261,7 +275,7 @@ FT *ft_new_alloc(int rows, int cols, const FT_Allocator *allocator) {
     if (!a.alloc || !a.free) return NULL;
     FT *t=a.alloc(a.owner,sizeof *t);
     if (!t) return NULL;
-    memset(t,0,sizeof *t); t->allocator=a;
+    memset(t,0,sizeof *t); t->allocator=a; t->dirty_all=true;
     t->master=t->channel=t->process=-1;
     t->rows=rows; t->cols=cols; t->cursor_visible=true; t->cursor_shape=1;
     vterm_color_rgb(&t->cursor_color,255,255,255);
@@ -277,7 +291,8 @@ FT *ft_new_alloc(int rows, int cols, const FT_Allocator *allocator) {
     /* Physical rows remain stable in history. Screen/history resize clips and
      * pads, never silently reflows selections or joins unrelated commands. */
     vterm_screen_enable_reflow(t->screen,false);
-    vterm_screen_set_damage_merge(t->screen,VTERM_DAMAGE_SCREEN);
+    /* One rect per row, so a status line and the prompt stay apart. */
+    vterm_screen_set_damage_merge(t->screen,VTERM_DAMAGE_ROW);
     vterm_screen_reset(t->screen,1);
     return t;
 }
@@ -365,7 +380,7 @@ void ft_resize(FT *t, int rows, int cols) {
         struct winsize size={.ws_row=(unsigned short)rows,.ws_col=(unsigned short)cols};
         (void)ioctl(t->master,TIOCSWINSZ,&size);
     }
-    t->changed=true;
+    mark_all(t);
 }
 void ft_feed(FT *t, const char *bytes, size_t len) {
     if (!t->vt) return;
@@ -458,6 +473,12 @@ void ft_io(FT *t, bool read_pty, bool write_pty, bool channel, bool exited) {
     }
 }
 bool ft_changed(FT *t) { bool changed=t->changed; t->changed=false; return changed; }
+bool ft_take_damage(FT *t, unsigned char *rows, int count) {
+    bool all=t->dirty_all;
+    for (int row=0;row<count;row++) rows[row]=row<t->rows && row<GRID_MAX && t->dirty_rows[row];
+    memset(t->dirty_rows,0,sizeof t->dirty_rows); t->dirty_all=false;
+    return all;
+}
 bool ft_running(const FT *t) { return t->pid>0 && !t->exited; }
 /* Whether closing would end work: a foreground job on the PTY, or any other
  * process of the session (background jobs, nested shells, ssh). An idle shell
@@ -574,11 +595,11 @@ void ft_scroll(FT *t, int lines) {
     int offset=t->offset+lines;
     if (offset<0) offset=0;
     if (offset>t->count) offset=t->count;
-    if (offset!=t->offset) { t->offset=offset; t->changed=true; }
+    if (offset!=t->offset) { t->offset=offset; mark_all(t); }
 }
 void ft_key(FT *t, uint32_t sym, const char *text, size_t len, int modifiers) {
     if (!t->vt) return;
-    if (t->offset) { t->offset=0; t->changed=true; }
+    if (t->offset) { t->offset=0; mark_all(t); }
     VTermKey key=VTERM_KEY_NONE;
     switch (sym) {
     case XKB_KEY_Return: case XKB_KEY_KP_Enter: key=VTERM_KEY_ENTER; break;
@@ -626,6 +647,7 @@ void ft_key(FT *t, uint32_t sym, const char *text, size_t len, int modifiers) {
 bool ft_paste(FT *t, const char *bytes, size_t len) {
     if (!t->vt) return false;
     if (len>OUTPUT_BYTES-t->out_len-((OUTPUT_BYTES-t->out_len)>=16 ? 16 : 0) || OUTPUT_BYTES-t->out_len<16) return false;
+    if (t->offset) mark_all(t);
     t->offset=0; t->changed=true;
     vterm_keyboard_start_paste(t->vt);
     /* Drop ESC and other control bytes so pasted text cannot close bracketed

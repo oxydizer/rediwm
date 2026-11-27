@@ -64,7 +64,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
         shell.drawText(cr, label, x + 8, y + 17, shell.statusSize(), false);
     };
 }
-fn terminalLabel(self: *App, buffer: []u8) []const u8 {
+pub fn terminalLabel(self: *App, buffer: []u8) []const u8 {
     if (self.terminal.error_message) |message| return message;
     const s = self.terminal.session orelse return "Terminal";
     if (tc.ft_error(s)) |message| return std.mem.span(message);

@@ -302,7 +302,8 @@ pub fn drawTextFont(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size: f
 }
 
 pub fn drawStyledText(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size: f64, font: text.Font, italic: bool) void {
-    if (str.len == 0) return;
+    // Spaces have no ink: skip the raster and the composite (blank terminal rows).
+    if (std.mem.indexOfNone(u8, str, " ") == null) return;
     const cr: *c.cairo_t = @ptrCast(cr_any);
     const s = scaleOf(cr);
     const size_f: f32 = @floatCast(size);
@@ -335,11 +336,65 @@ pub fn drawStyledText(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size:
     }) catch return;
 
     // Pen and baseline onto whole device pixels, so the raster lands 1:1.
+    // drawOpts started the pen at the rounded device pad (`text.devicePixels`),
+    // so the offset stays whole: a fractional one resamples every glyph
+    // through pixman's slow filtered path and blurs it.
     var dx = x;
     var dy = y;
     c.cairo_user_to_device(cr, &dx, &dy);
-    composite(cr, pixels, w_dev, h_dev, @round(dx) - @as(f64, @floatFromInt(pad)) * s, @round(dy) - @as(f64, @floatFromInt(baseline)));
+    const pen: f64 = @round(@as(f32, @floatFromInt(pad)) * s);
+    composite(cr, pixels, w_dev, h_dev, @round(dx) - pen, @round(dy) - @as(f64, @floatFromInt(baseline)));
 }
+
+/// Adds the box from (`x0`, `y0`) to (`x1`, `y1`) in user space to the path,
+/// its edges rounded to whole device pixels: a fill is crisp and a clip stays
+/// a pixel region, fast in pixman and readable by `ClipRects`. Boxes sharing
+/// an edge (pass the same coordinate) round it alike and tile exactly.
+pub fn pixelRect(cr_any: *anyopaque, x0: f64, y0: f64, x1: f64, y1: f64) void {
+    const cr: *c.cairo_t = @ptrCast(cr_any);
+    var ax = x0;
+    var ay = y0;
+    var bx = x1;
+    var by = y1;
+    c.cairo_user_to_device(cr, &ax, &ay);
+    c.cairo_user_to_device(cr, &bx, &by);
+    var matrix: c.cairo_matrix_t = undefined;
+    c.cairo_get_matrix(cr, &matrix);
+    c.cairo_identity_matrix(cr);
+    c.cairo_rectangle(cr, @round(ax), @round(ay), @round(bx) - @round(ax), @round(by) - @round(ay));
+    c.cairo_set_matrix(cr, &matrix);
+}
+
+/// The context's clip as rectangles (user space), read once, so a painter
+/// can skip what a partial repaint will not show. Everything touches when
+/// the clip is not a pixel region (or there is none).
+pub const ClipRects = struct {
+    list: ?*c.cairo_rectangle_list_t,
+
+    pub fn read(cr_any: *anyopaque) ClipRects {
+        const list = c.cairo_copy_clip_rectangle_list(@ptrCast(cr_any)) orelse return .{ .list = null };
+        if (list.*.status != c.CAIRO_STATUS_SUCCESS) {
+            c.cairo_rectangle_list_destroy(list);
+            return .{ .list = null };
+        }
+        return .{ .list = list };
+    }
+
+    pub fn deinit(self: ClipRects) void {
+        if (self.list) |list| c.cairo_rectangle_list_destroy(list);
+    }
+
+    pub fn touches(self: ClipRects, x: f64, y: f64, w: f64, h: f64) bool {
+        const list = self.list orelse return true;
+        // An empty clip has no rectangle array at all.
+        const count: usize = @intCast(@max(0, list.*.num_rectangles));
+        if (count == 0) return false;
+        for (list.*.rectangles[0..count]) |r| {
+            if (x < r.x + r.width and x + w > r.x and y < r.y + r.height and y + h > r.y) return true;
+        }
+        return false;
+    }
+};
 
 fn composite(cr: *c.cairo_t, pixels: []u32, w: i32, h: i32, device_x: f64, device_y: f64) void {
     const surface = c.cairo_image_surface_create_for_data(@ptrCast(pixels.ptr), c.CAIRO_FORMAT_ARGB32, w, h, w * 4) orelse return;

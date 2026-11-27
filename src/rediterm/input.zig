@@ -39,18 +39,21 @@ pub fn handleKey(self: *App, sym: u32, text: []const u8) void {
     if (isModifier(sym)) return;
     const session = self.session orelse return;
     if (!tc.ft_running(session)) return;
+    // No frame of its own: the echo (or anything else the key changes in the
+    // engine) asks for one, and drawing before it arrives would delay it.
     if (shortcut(self, sym)) |action| switch (action) {
         .copy => self.copySelection(),
         .paste => self.paste_requested = true,
         .page_up, .page_down => {
             const page: c_int = @max(1, tc.ft_rows(session) - 1);
             tc.ft_scroll(session, if (action == .page_up) page else -page);
+            self.dirty = true;
         },
     } else {
+        if (self.selection != null) self.dirty = true;
         self.selection = null;
         tc.ft_key(session, sym, text.ptr, text.len, modifiers(self));
     }
-    self.dirty = true;
 }
 
 pub fn keyRepeats(self: *App, sym: u32, _: []const u8) bool {

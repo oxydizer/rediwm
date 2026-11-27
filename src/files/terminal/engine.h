@@ -34,6 +34,12 @@ bool ft_wants_write(const FT *t);
 bool ft_wants_request(const FT *t);
 void ft_io(FT *t, bool read_pty, bool write_pty, bool channel, bool exited);
 bool ft_changed(FT *t);
+/* View rows changed since the last call (cells, colours, cursor): sets
+ * rows[row] to 1 for each of the first `count` rows, 0 for the rest. Returns
+ * true when the whole view must be repainted instead (scrolling through
+ * history, resizing, reverse video, the alternate screen). Clears the record;
+ * independent of ft_changed. */
+bool ft_take_damage(FT *t, unsigned char *rows, int count);
 bool ft_running(const FT *t);
 bool ft_active(const FT *t);
 bool ft_exited(const FT *t);

@@ -2,6 +2,7 @@
 //! paused or suspended. Watch parent directories so atomic saves work too.
 const std = @import("std");
 const platform = @import("platform");
+const ui = @import("ui");
 const settings = @import("settings.zig");
 const a = std.heap.c_allocator;
 pub const Watch = struct {
@@ -30,7 +31,8 @@ pub const Watch = struct {
     fn apply(self: *Watch) bool {
         if (self.settings.reload(a, self.io)) |update| {
             update.apply();
-            @import("ui").anim.applySettings(self.settings.animations);
+            ui.anim.applySettings(self.settings.animations);
+            ui.input.caret_config.motion_ms = self.settings.caret_motion_ms;
             return true;
         }
         return false;

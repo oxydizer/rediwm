@@ -232,16 +232,55 @@ pub fn terminalStep(self: *App, now: i64) void {
         if (focused != self.terminal.focused) {
             self.terminal.focused = focused;
             tc.ft_focus(session, focused);
+            self.terminalDamage(); // The cursor shows only while focused.
         }
         if (self.terminal.generation != self.theme_cfg.generation) {
             @import("terminal/render.zig").applyPalette(session);
             self.terminal.generation = self.theme_cfg.generation;
+            self.terminalDamage();
         }
         const bar = self.terminalScrollbar();
         const hovered = if (bar) |b| self.dialog == null and b.overThumb(@floatCast(self.mouse_x), @floatCast(self.mouse_y)) else false;
         if (self.terminal.bar.step(now, self.terminal.observed_offset != tc.ft_offset(session), hovered, self.terminal.scroll_drag.active, self.terminal.visible and bar != null)) self.terminalDamage();
         self.terminal.observed_offset = tc.ft_offset(session);
-        if (tc.ft_changed(session)) self.terminalDamage();
+        if (tc.ft_changed(session)) terminalChanged(self, session);
+    }
+}
+/// What a terminal change repaints: the rows the engine changed, the header
+/// when its label or controls change and the scrollbar when history grows;
+/// the whole drawer when the engine asks (resize, history view, alternate
+/// screen). `paintCells` skips the rows outside the damage.
+fn terminalChanged(self: *App, session: *tc.FT) void {
+    var rows: [512]u8 = undefined;
+    const count: usize = @intCast(std.math.clamp(tc.ft_rows(session), 0, rows.len));
+    const all = tc.ft_take_damage(session, &rows, @intCast(count));
+    var label_buffer: [4608]u8 = undefined;
+    var hash = std.hash.Wyhash.init(0);
+    hash.update(@import("terminal/render.zig").terminalLabel(self, &label_buffer));
+    hash.update(if (self.terminalRestartable()) "restart" else "");
+    const label = hash.final();
+    const history = tc.ft_history(session);
+    defer {
+        self.terminal.painted_label = label;
+        self.terminal.observed_history = history;
+    }
+    if (self.terminalHeight() <= 0) return;
+    if (all) return self.terminalDamage();
+    const rect = self.terminalRect();
+    if (label != self.terminal.painted_label) self.addDamage(.{ .x = rect.x, .y = rect.y, .w = rect.w, .h = header_height });
+    const body = self.terminalBody();
+    if (history != self.terminal.observed_history) self.addDamage(.{ .x = body.x + body.w, .y = body.y - 1, .w = rect.x + rect.w - body.x - body.w, .h = body.h + 2 });
+    const ch = self.terminal.cell_h;
+    var row: usize = 0;
+    while (row < count) {
+        if (rows[row] == 0) {
+            row += 1;
+            continue;
+        }
+        const first = row;
+        while (row < count and rows[row] != 0) row += 1;
+        const top = body.y + @as(f64, @floatFromInt(first)) * ch;
+        self.addDamage(.{ .x = body.x - 1, .y = top - 1, .w = body.w + 2, .h = @as(f64, @floatFromInt(row - first)) * ch + 2 });
     }
 }
 pub fn terminalDamage(self: *App) void {

@@ -23,7 +23,16 @@
 //!   timeoutMs(*App, now_ms: i64) ?i64 for the App's next deadline;
 //!   pasteText(*App, []const u8) for a plain-text clipboard, with fields
 //!   clipboard_revision: u64 (bump it to publish clipboardText(*App) []const u8)
-//!   and paste_requested: bool (set it to get the selection in pasteText).
+//!   and paste_requested: bool (set it to get the selection in pasteText);
+//!   frameDamage(*App) ui.repaint.Region, called right before each render,
+//!   for partial repaints: what the App draws differently since its previous
+//!   frame (content coordinates, logical pixels; focus changes included;
+//!   `.whole` for everything). render then runs clipped to that plus what the
+//!   recycled buffer missed, and should skip drawing outside the clip; only
+//!   that much is damaged. Without it every frame is a full repaint;
+//!   animating: bool, set (in render or frameDamage) while an animation needs
+//!   another frame: the commit asks for a frame callback and its arrival sets
+//!   `dirty`, so animations step with the display instead of a timer.
 //! getTitle is read every loop iteration and the title resent when it changes.
 //! Set `dirty` to get a frame; set `closed` to quit.
 const std = @import("std");
@@ -121,10 +130,28 @@ pub fn Host(comptime App: type) type {
         clipboard_revision: u64 = 0,
         /// The title last sent, to resend only a changed one.
         title: ?[:0]u8 = null,
+        /// What the host itself changed (configure, scale, theme, titlebar),
+        /// in surface coordinates; the App reports its own (`frameDamage`).
+        damage: ui.repaint.Region = .whole,
+        /// The pending frame callback, while an App animation waits for the display.
+        frame_callback: ?*wl.Callback = null,
 
         const has_clipboard = @hasDecl(App, "pasteText");
+        pub const has_damage = @hasDecl(App, "frameDamage");
+        pub const has_animation = @hasField(App, "animating");
 
-        fn arrangeClose(self: *Client) void {
+        /// A frame repainting everything.
+        fn invalidate(self: *Client) void {
+            self.damage = .whole;
+            self.app.dirty = true;
+        }
+
+        fn invalidateTitlebar(self: *Client) void {
+            self.damage.add(.{ .x = 0, .y = 0, .w = self.app.w, .h = self.titlebarHeight() });
+            self.app.dirty = true;
+        }
+
+        pub fn arrangeClose(self: *Client) void {
             self.close_button.kind.button.label = @import("i18n").tr("Close");
             self.close_button.kind.button.owner = self;
             self.close_button.kind.button.on_click = closeClicked;
@@ -210,7 +237,7 @@ pub fn Host(comptime App: type) type {
                 self.density = new_density;
                 self.app.scale = new_scale;
                 self.app.density = new_density;
-                self.app.dirty = true;
+                self.invalidate();
             }
         }
 
@@ -218,7 +245,7 @@ pub fn Host(comptime App: type) type {
             switch (event) {
                 .enter => |ev| {
                     if (ev.output) |out| self.outputs.enter(out);
-                    self.app.dirty = true;
+                    self.invalidate();
                 },
                 .leave => |ev| if (ev.output) |out| self.outputs.leave(out),
             }
@@ -255,7 +282,7 @@ pub fn Host(comptime App: type) type {
                 .configure => |ev| {
                     xdg_surf.ackConfigure(ev.serial);
                     self.configured = true;
-                    self.app.dirty = true;
+                    self.invalidate();
                 },
             }
         }
@@ -269,7 +296,7 @@ pub fn Host(comptime App: type) type {
             return self.decoration_mode != .server_side;
         }
 
-        fn titlebarHeight(self: *const Client) i32 {
+        pub fn titlebarHeight(self: *const Client) i32 {
             return if (self.wantsCsd()) CSD_TITLEBAR_H else 0;
         }
 
@@ -281,7 +308,7 @@ pub fn Host(comptime App: type) type {
                         .client_side => .client_side,
                         else => .client_side,
                     };
-                    self.app.dirty = true;
+                    self.invalidate();
                 },
             }
         }
@@ -307,7 +334,7 @@ pub fn Host(comptime App: type) type {
                     };
                     self.app.setSuspended(suspended);
                     self.xdg_toplevel.setMinSize(o.min_width, o.min_height + tbh);
-                    self.app.dirty = true;
+                    self.invalidate();
                 },
                 .close => {
                     self.app.requestClose();
@@ -381,7 +408,7 @@ pub fn Host(comptime App: type) type {
         // Only the CSD titlebar and its resize border are handled here; anything
         // below is forwarded to the App with the titlebar height subtracted so
         // its content-area layout stays oblivious to decorations.
-        fn updateCursor(self: *Client) void {
+        pub fn updateCursor(self: *Client) void {
             if (self.wantsCsd()) {
                 const tbh: f64 = @floatFromInt(self.titlebarHeight());
                 if (edgeAt(self.pointer_x, self.pointer_y, @floatFromInt(self.app.w), @as(f64, @floatFromInt(self.app.h)) + tbh)) |edge| {
@@ -406,13 +433,13 @@ pub fn Host(comptime App: type) type {
             }
             self.app.handleMotion(x, y - tbh);
             self.updateCursor();
-            if (tbh > 0 and y < tbh) self.app.dirty = true;
+            if (tbh > 0 and y < tbh) self.invalidateTitlebar();
         }
 
         fn handlePointerButton(self: *Client, button: u32, pressed: bool) void {
             if (button == 0x110 and !pressed and self.chrome_input.pressed != null) {
                 self.chrome_input.pointerButtonUp(&self.close_button, @floatCast(self.pointer_x), @floatCast(self.pointer_y));
-                self.app.dirty = true;
+                self.invalidateTitlebar();
                 return;
             }
             if (button == 0x110 and pressed and self.wantsCsd()) {
@@ -445,6 +472,13 @@ pub fn Host(comptime App: type) type {
         pub const repeatDue = keyboard_group.repeatDue;
         pub const keyboardEvent = keyboard_group.keyboardEvent;
 
+        const render_group = @import("window_render.zig").Render(Client);
+        pub const requestAnimationFrame = render_group.requestAnimationFrame;
+        pub const frameDone = render_group.frameDone;
+        pub const wantsFrame = render_group.wantsFrame;
+        pub const render = render_group.render;
+        pub const renderTitlebar = render_group.renderTitlebar;
+
         fn setCursor(self: *Client, name: [*:0]const u8) void {
             if (!self.inside) return;
             if (std.mem.eql(u8, std.mem.span(self.cursor_name), std.mem.span(name))) return;
@@ -466,64 +500,6 @@ pub fn Host(comptime App: type) type {
             self.cursor_name = name;
         }
 
-        fn wantsFrame(self: *const Client) bool {
-            return self.configured and self.app.dirty and !self.app.suspended and self.buffers.outstanding < 2;
-        }
-
-        fn render(self: *Client) !void {
-            self.updateCursor();
-            if (!self.wantsFrame()) return;
-
-            const tbh = self.titlebarHeight();
-            const w = self.app.w;
-            const h = self.app.h + tbh;
-            const raster_scale: f64 = if (self.viewport != null) self.density else @floatFromInt(self.scale);
-            const bw: i32 = @intFromFloat(@round(@as(f64, @floatFromInt(w)) * raster_scale));
-            const bh: i32 = @intFromFloat(@round(@as(f64, @floatFromInt(h)) * raster_scale));
-            const buffer = (try self.buffers.acquire(bw, bh)) orelse return;
-
-            const cr = c.cairo_create(buffer.image) orelse return error.CairoFailed;
-            defer c.cairo_destroy(cr);
-
-            c.cairo_scale(cr, @as(f64, @floatFromInt(bw)) / @as(f64, @floatFromInt(w)), @as(f64, @floatFromInt(bh)) / @as(f64, @floatFromInt(h)));
-
-            if (tbh > 0) self.renderTitlebar(cr, w, tbh);
-
-            c.cairo_save(cr);
-            c.cairo_translate(cr, 0, @floatFromInt(tbh));
-            self.app.render(cr);
-            c.cairo_restore(cr);
-
-            c.cairo_surface_flush(buffer.image);
-
-            const buffer_scale: i32 = if (self.viewport != null) 1 else self.scale;
-            if (self.applied_scale != buffer_scale) {
-                self.surface.setBufferScale(buffer_scale);
-                self.applied_scale = buffer_scale;
-            }
-            if (self.viewport) |viewport| viewport.setDestination(w, h);
-            self.xdg_surface.setWindowGeometry(0, 0, w, h);
-            self.buffers.submit(buffer);
-            self.surface.attach(buffer.wl_buffer, 0, 0);
-            self.surface.damage(0, 0, w, h);
-            self.surface.commit();
-            self.app.dirty = false;
-        }
-
-        fn renderTitlebar(self: *Client, cr: *c.cairo_t, w: i32, h: i32) void {
-            shell_ui.setSource(cr, ui_theme.global.window_bg);
-            c.cairo_rectangle(cr, 0, 0, @floatFromInt(w), @floatFromInt(h));
-            c.cairo_fill(cr);
-            shell_ui.setSource(cr, ui_theme.global.window_fg);
-            shell_ui.drawText(cr, std.mem.span(self.app.getTitle()), 16, @as(f64, @floatFromInt(h)) / 2 + shell_ui.statusSize() / 3, shell_ui.statusSize(), true);
-            self.arrangeClose();
-            if (shell_ui.Layer.begin(cr, .{ .x = 0, .y = 0, .w = @floatFromInt(w), .h = @floatFromInt(h) })) |value| {
-                var layer = value;
-                ui.paint.paint(&self.close_button, &layer.renderer);
-                layer.finish();
-            }
-        }
-
         /// Resends the App's title when it changed; a drawn titlebar repaints.
         fn syncTitle(self: *Client) void {
             const title = std.mem.span(self.app.getTitle());
@@ -532,7 +508,7 @@ pub fn Host(comptime App: type) type {
             if (self.title) |old| a.free(old);
             self.title = copy;
             self.xdg_toplevel.setTitle(copy);
-            if (self.wantsCsd()) self.app.dirty = true;
+            if (self.wantsCsd()) self.invalidateTitlebar();
         }
 
         /// Publishes a bumped clipboard revision and starts a requested paste.
@@ -549,6 +525,7 @@ pub fn Host(comptime App: type) type {
         }
 
         fn deinit(self: *Client) void {
+            if (self.frame_callback) |callback| callback.destroy();
             if (self.title) |title| a.free(title);
             self.clipboard.deinit();
             self.outputs.deinit();
@@ -653,7 +630,7 @@ pub fn Host(comptime App: type) type {
 
             while (self.running) {
                 if (watch.poll()) {
-                    self.app.dirty = true;
+                    self.invalidate();
                     if (@hasDecl(App, "themeChanged")) self.app.themeChanged();
                 }
                 if (self.app.closed) self.close();
