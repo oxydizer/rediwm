@@ -179,6 +179,8 @@ pub const Service = struct {
     paths: std.StringHashMapUnmanaged(PathEntry) = .empty,
     resolve: std.ArrayList([]const u8) = .empty,
     resolve_head: usize = 0,
+    /// Give scans the next turn after dispatching a resolution.
+    prefer_scan: bool = false,
     queues: [level_count]Queue = .{ .{}, .{} },
     /// Known per device: measured automatically or not.
     auto: std.AutoHashMapUnmanaged(u64, bool) = .empty,
@@ -558,7 +560,7 @@ pub const Service = struct {
 
     fn take(self: *Service, path_buf: []u8) ?struct { work: Work, path: ?[:0]const u8 } {
         while (!self.stop) {
-            if (self.resolve_head < self.resolve.items.len) {
+            if (!self.prefer_scan and self.resolve_head < self.resolve.items.len) {
                 const key = self.resolve.items[self.resolve_head];
                 self.resolve_head += 1;
                 if (self.resolve_head == self.resolve.items.len) {
@@ -574,6 +576,7 @@ pub const Service = struct {
                     if (self.paths.getPtr(key)) |entry| entry.resolving = false;
                     continue;
                 };
+                self.prefer_scan = true;
                 return .{ .work = .{ .resolve = copy }, .path = null };
             }
             for (&self.queues, 0..) |*q, level| {
@@ -588,8 +591,15 @@ pub const Service = struct {
                         continue;
                     };
                     node.scanning = true;
+                    self.prefer_scan = false;
                     return .{ .work = .{ .scan = .{ .ref = ref, .key = node.key } }, .path = path };
                 }
+            }
+            // No eligible scan remains. Allow resolution to proceed
+            // without waiting for another worker or request.
+            if (self.resolve_head < self.resolve.items.len) {
+                self.prefer_scan = false;
+                continue;
             }
             _ = c.pthread_cond_wait(&self.cond, &self.mutex);
         }
@@ -887,6 +897,49 @@ fn nowMs() i64 {
 
 fn testAutoPolicy(_: u32, _: u32) bool {
     return true;
+}
+
+test "sizetree alternates resolution and scanning while preserving scan priority" {
+    const allocator = std.testing.allocator;
+    const svc = try Service.create(allocator, 0, testAutoPolicy);
+    defer svc.destroy();
+
+    const background = try svc.newNode(.{ .dev = 1, .ino = 1 }, "/background", .background);
+    const visible = try svc.newNode(.{ .dev = 1, .ino = 2 }, "/visible", .visible);
+    try svc.enqueue(background, .background);
+    try svc.enqueue(visible, .visible);
+
+    svc.request("/resolve1", .visible, .{});
+    svc.request("/resolve2", .visible, .{});
+    svc.request("/resolve3", .visible, .{});
+    svc.request("/resolve4", .visible, .{});
+
+    var path_buf: [4096]u8 = undefined;
+    const expected = [_][]const u8{
+        "/resolve1",
+        "/visible",
+        "/resolve2",
+        "/background",
+        "/resolve3",
+        "/resolve4",
+    };
+    for (expected, 0..) |path, i| {
+        const job = svc.take(&path_buf).?;
+        switch (job.work) {
+            .resolve => |owned| {
+                defer allocator.free(owned);
+                try std.testing.expect(i != 1 and i != 3);
+                try std.testing.expectEqualStrings(path, owned);
+            },
+            .scan => |scan| {
+                try std.testing.expect(i == 1 or i == 3);
+                try std.testing.expectEqualStrings(path, job.path.?);
+                try std.testing.expectEqual(if (i == 1) visible else background, scan.ref.id);
+            },
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 0), svc.queued_count);
+    try std.testing.expectEqual(@as(usize, 0), svc.resolve.items.len);
 }
 
 test "sizetree pauses children discovered by an in-flight scan" {
