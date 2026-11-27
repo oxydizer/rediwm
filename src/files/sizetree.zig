@@ -52,8 +52,8 @@ const level_count = 2;
 pub const Status = enum {
     /// Never asked for, or the path could not be opened.
     unknown,
-    /// Not measured automatically (a slow, removable or network disk), or
-    /// stopped by the user; a click measures it.
+    /// Not measured automatically (a network or unidentified filesystem),
+    /// or stopped by the user; a click measures it.
     idle,
     /// Initial scan in progress: `bytes` is an evolving subtotal.
     measuring,
@@ -153,23 +153,23 @@ pub const PathEntry = resolution.PathEntry;
 pub const Resolution = resolution.Job;
 pub const Owner = demand.Owner;
 
-/// Whether a disk is measured without being asked: a local disk that is
-/// neither spinning nor attached over USB. Network and virtual filesystems
-/// are not. Null means the backing disk could not be identified.
+/// Whether a disk is measured without being asked: any identified local
+/// block device, including rotational and USB storage. Null means the
+/// backing disk could not be identified.
 pub const AutoPolicy = *const fn (dev_major: u32, dev_minor: u32, mount_id: ?u64) ?bool;
 
 pub fn defaultAutoPolicy(dev_major: u32, dev_minor: u32, mount_id: ?u64) ?bool {
     if (builtin.os.tag != .linux) return null;
     if (mount_id) |id| {
-        const disk = platform.mounts.diskOfMount(id) orelse return null;
-        return !disk.serial;
+        _ = platform.mounts.diskOfMount(id) orelse return null;
+        return true;
     }
     const major: u64 = dev_major;
     const minor: u64 = dev_minor;
     // `stat`'s encoding of the device number (glibc `makedev`).
     const st_dev = ((major & 0xfff) << 8) | ((major & ~@as(u64, 0xfff)) << 32) | (minor & 0xff) | ((minor & ~@as(u64, 0xff)) << 12);
-    const disk = platform.mounts.diskOf(st_dev) orelse return null;
-    return !disk.serial;
+    _ = platform.mounts.diskOf(st_dev) orelse return null;
+    return true;
 }
 
 /// Tree, queue, and scan helpers exposed for the worker and tests are internal.
