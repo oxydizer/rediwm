@@ -26,7 +26,6 @@ const pin_base = App.pin_base;
 const MenuKind = @import("app_model.zig").MenuKind;
 const FileAction = @import("app_model.zig").FileAction;
 const Sort = @import("app_model.zig").Sort;
-const SizeState = @import("app_model.zig").SizeState;
 const ViewItem = @import("app_model.zig").ViewItem;
 const nowMs = @import("app_draw.zig").nowMs;
 const clipDamage = @import("app_draw.zig").clipDamage;
@@ -102,9 +101,7 @@ test "search and sorting preserve visible selection across snapshot rebuilds" {
         .home_dir = "/",
         .items_arena = std.heap.ArenaAllocator.init(allocator),
         .snapshot = &snap,
-        .folder_sizes = std.StringHashMap(SizeState).init(allocator),
     };
-    defer app.folder_sizes.deinit();
     defer app.items_arena.deinit();
     defer app.items.deinit(allocator);
     defer app.search.text.deinit(allocator);
@@ -217,7 +214,6 @@ pub fn testApp() !App {
         .history = try history_mod.History.init(std.testing.allocator, "/tmp"),
         .home_dir = "/tmp",
         .items_arena = std.heap.ArenaAllocator.init(std.testing.allocator),
-        .folder_sizes = std.StringHashMap(SizeState).init(std.testing.allocator),
     };
 }
 
@@ -272,7 +268,8 @@ test "transfer ghosts have no file actions or folder-size affordance" {
     try std.testing.expect(app.sizeButtonRect(0) == null);
 
     app.toggleFolderSize(0);
-    try std.testing.expectEqual(@as(usize, 0), app.folder_sizes.count());
+    try std.testing.expect(!app.folderSizeClickable(app.items.items[0]));
+    try std.testing.expect(app.folderSizeInfo(app.items.items[0]).status == .unknown);
     try std.testing.expect(app.dirsize_pool == null);
 
     // A completed manifest entry is no longer a ghost and remains actionable.

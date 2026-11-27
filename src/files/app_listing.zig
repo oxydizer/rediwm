@@ -48,7 +48,7 @@ pub fn refresh(self: *App) void {
         return;
     }
     clearTransferBrowse(self);
-    self.clearFolderSizes();
+    self.revalidateFolderSizes();
     self.beginLoading();
     self.active_request_id = self.worker.refresh();
     self.invalidate();
@@ -282,6 +282,7 @@ pub fn sync(self: *App) void {
     self.column_resize = null;
     self.clampSidebarScroll();
     self.loading = false;
+    self.revalidateFolderSizes();
     self.rebuildView();
     self.transfer_rows_dirty = false;
     if (self.restore_view) self.restoreView();
@@ -420,13 +421,11 @@ pub fn rebuildView(self: *App) void {
             const selected = if (previous) |item| item.selected else false;
             var bytes = it.bytes;
             if (it.is_dir and !it.is_symlink) {
-                if (self.folder_sizes.get(it.path)) |sz| {
-                    switch (sz) {
-                        .done => |d| bytes = d.bytes,
-                        else => bytes = -1,
-                    }
-                } else {
-                    bytes = -1;
+                // Folders sort by what is known of their size, unknown last.
+                bytes = -1;
+                if (self.size_service orelse @import("app_folder_size.zig").sharedService()) |svc| {
+                    const info = svc.lookup(it.path);
+                    if (info.known()) bytes = info.bytes;
                 }
             }
             self.items.append(self.allocator, .{

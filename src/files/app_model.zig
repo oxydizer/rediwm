@@ -6,7 +6,6 @@ const tr = i18n.tr;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const git = @import("git.zig");
-const dirsize = @import("dirsize.zig");
 const deletion = @import("../delete_dialog.zig");
 const header = @import("header.zig");
 const IconId = @import("ui").layout.IconId;
@@ -149,14 +148,6 @@ pub const SidebarLayout = struct {
 
         return result;
     }
-};
-
-pub const SizeState = union(enum) {
-    running: *dirsize.Job,
-    done: struct {
-        bytes: i64,
-        partial: bool,
-    },
 };
 
 pub const SelectionFade = @import("ui").hover_glide.Fade;

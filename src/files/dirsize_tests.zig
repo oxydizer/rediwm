@@ -7,6 +7,7 @@ const worker_mod = @import("worker.zig");
 const app_mod = @import("app.zig");
 const ops_mod = @import("ops.zig");
 const dirsize_mod = @import("dirsize.zig");
+const sizetree = @import("sizetree.zig");
 const FileAction = @import("app_model.zig").FileAction;
 const c = @import("c.zig").api;
 const linux = std.os.linux;
@@ -34,6 +35,20 @@ pub fn countOpenFds() !usize {
         }
     }
     return if (count > 0) count - 1 else 0;
+}
+
+fn everyDisk(_: u32, _: u32) bool {
+    return true;
+}
+
+/// Like a thumb drive: nothing is measured until clicked.
+fn noDisk(_: u32, _: u32) bool {
+    return false;
+}
+
+fn settle(svc: *sizetree.Service) void {
+    var waited: usize = 0;
+    while (svc.busy() and waited < 10_000) : (waited += 1) _ = c.usleep(1000);
 }
 
 test "dirsize: nested folders give the right total" {
@@ -308,6 +323,8 @@ test "App folder size calculation and display lifecycle" {
     };
     var snap = worker_mod.Snapshot{ .arena = undefined, .request_id = 1, .dir = tmp, .items = &source };
 
+    const svc = try sizetree.Service.create(a, 2, noDisk);
+    defer svc.destroy();
     var app = app_mod.App{
         .allocator = a,
         .io = undefined,
@@ -318,7 +335,7 @@ test "App folder size calculation and display lifecycle" {
         .home_dir = tmp,
         .items_arena = std.heap.ArenaAllocator.init(a),
         .snapshot = &snap,
-        .folder_sizes = std.StringHashMap(app_mod.SizeState).init(a),
+        .size_service = svc,
     };
     defer app.deinit();
     defer app.snapshot = null;
@@ -326,68 +343,160 @@ test "App folder size calculation and display lifecycle" {
     app.rebuildView();
     try std.testing.expectEqual(@as(usize, 1), app.items.items.len);
 
+    // A disk that is not measured automatically: a dash until clicked.
     var buf: [64]u8 = undefined;
     var disp = app.itemSizeDisplay(app.items.items[0], &buf);
+    settle(svc);
+    disp = app.itemSizeDisplay(app.items.items[0], &buf);
     try std.testing.expectEqualStrings("—", disp.text);
     try std.testing.expect(!disp.is_running);
     try std.testing.expect(!app.hasRunningFolderSize());
 
-    // Start calculation
     app.startFolderSize(0);
-    try std.testing.expect(app.hasRunningFolderSize());
-
-    disp = app.itemSizeDisplay(app.items.items[0], &buf);
-    try std.testing.expect(disp.is_running);
-
-    // Wait for pool job to complete
-    const job = app.folder_sizes.get(folder).?.running;
-    while (!job.isDone()) {
-        _ = c.usleep(1000);
-    }
-
+    settle(svc);
     app.syncFolderSizes();
     try std.testing.expect(!app.hasRunningFolderSize());
-
     disp = app.itemSizeDisplay(app.items.items[0], &buf);
     try std.testing.expect(!disp.is_running);
     try std.testing.expectEqualStrings("22 B", disp.text);
 
-    // Clearing folder sizes resets it
+    // Leaving the folder keeps what was added up.
     app.clearFolderSizes();
     disp = app.itemSizeDisplay(app.items.items[0], &buf);
-    try std.testing.expectEqualStrings("—", disp.text);
+    try std.testing.expectEqualStrings("22 B", disp.text);
 }
 
-test "App size sort: calculated folders sort by apparent size, uncalculated last" {
+test "App folder sizes are measured automatically on a fast local disk" {
     const a = std.testing.allocator;
-    var source = [_]worker_mod.Item{
-        .{ .name = "uncalc", .path = "/uncalc", .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 1, .icon_name = "" },
-        .{ .name = "small", .path = "/small", .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 2, .icon_name = "" },
-        .{ .name = "big", .path = "/big", .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 3, .icon_name = "" },
-        .{ .name = "file.txt", .path = "/file.txt", .is_dir = false, .is_symlink = false, .is_broken = false, .bytes = 5000, .mtime = 4, .icon_name = "" },
-    };
-    var snap = worker_mod.Snapshot{ .arena = undefined, .request_id = 1, .dir = "/", .items = &source };
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+    const folder = try std.fmt.allocPrint(a, "{s}/auto", .{tmp});
+    defer a.free(folder);
+    try ops_mod.createFolder(a, tmp, "auto");
+    const f1 = try std.fmt.allocPrint(a, "{s}/file.txt", .{folder});
+    defer a.free(f1);
+    try writeTestFile(f1, "12345");
 
+    var source = [_]worker_mod.Item{
+        .{ .name = "auto", .path = folder, .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 100, .icon_name = "" },
+    };
+    var snap = worker_mod.Snapshot{ .arena = undefined, .request_id = 1, .dir = tmp, .items = &source };
+    const svc = try sizetree.Service.create(a, 2, everyDisk);
+    defer svc.destroy();
     var app = app_mod.App{
         .allocator = a,
         .io = undefined,
         .environ = undefined,
         .theme_cfg = undefined,
         .worker = undefined,
-        .history = try history_mod.History.init(a, "/"),
-        .home_dir = "/",
+        .history = try history_mod.History.init(a, tmp),
+        .home_dir = tmp,
         .items_arena = std.heap.ArenaAllocator.init(a),
         .snapshot = &snap,
-        .folder_sizes = std.StringHashMap(app_mod.SizeState).init(a),
+        .size_service = svc,
+    };
+    defer app.deinit();
+    defer app.snapshot = null;
+    app.rebuildView();
+
+    // Painting the folder asks for its size.
+    var buf: [64]u8 = undefined;
+    _ = app.itemSizeDisplay(app.items.items[0], &buf);
+    settle(svc);
+    try std.testing.expectEqualStrings("5 B", app.itemSizeDisplay(app.items.items[0], &buf).text);
+    try std.testing.expect(!app.folderSizeClickable(app.items.items[0]));
+}
+
+test "App leaving a folder drops its queued sizes until they are painted again" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+    const folder = try std.fmt.allocPrint(a, "{s}/queued", .{tmp});
+    defer a.free(folder);
+    try ops_mod.createFolder(a, tmp, "queued");
+    var source = [_]worker_mod.Item{
+        .{ .name = "queued", .path = folder, .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 100, .icon_name = "" },
+    };
+    var snap = worker_mod.Snapshot{ .arena = undefined, .request_id = 1, .dir = tmp, .items = &source };
+    // No workers: requests stay queued.
+    const svc = try sizetree.Service.create(a, 0, everyDisk);
+    defer svc.destroy();
+    var app = app_mod.App{
+        .allocator = a,
+        .io = undefined,
+        .environ = undefined,
+        .theme_cfg = undefined,
+        .worker = undefined,
+        .history = try history_mod.History.init(a, tmp),
+        .home_dir = tmp,
+        .items_arena = std.heap.ArenaAllocator.init(a),
+        .snapshot = &snap,
+        .size_service = svc,
+    };
+    defer app.deinit();
+    defer app.snapshot = null;
+    app.rebuildView();
+
+    var buf: [64]u8 = undefined;
+    try std.testing.expect(app.itemSizeDisplay(app.items.items[0], &buf).is_running);
+    try std.testing.expect(app.hasRunningFolderSize());
+    app.cancelRunningFolderSizes();
+    try std.testing.expect(!app.hasRunningFolderSize());
+    _ = app.itemSizeDisplay(app.items.items[0], &buf);
+    try std.testing.expect(app.hasRunningFolderSize());
+}
+
+test "App size sort: measured folders sort by apparent size, unmeasured last" {
+    const a = std.testing.allocator;
+    var tmp_buf: [256]u8 = undefined;
+    const tmp = try makeTestDir(&tmp_buf);
+    defer ops_mod.deleteRecursive(a, tmp) catch {};
+    var paths: [3][]u8 = undefined;
+    for ([_][]const u8{ "uncalc", "small", "big" }, 0..) |name, i| {
+        try ops_mod.createFolder(a, tmp, name);
+        paths[i] = try std.fmt.allocPrint(a, "{s}/{s}", .{ tmp, name });
+    }
+    defer for (paths) |p| a.free(p);
+    const small_file = try std.fmt.allocPrint(a, "{s}/f", .{paths[1]});
+    defer a.free(small_file);
+    try writeTestFile(small_file, &@as([500]u8, @splat('x')));
+    const big_file = try std.fmt.allocPrint(a, "{s}/f", .{paths[2]});
+    defer a.free(big_file);
+    try writeTestFile(big_file, &@as([10000]u8, @splat('y')));
+    const file_path = try std.fmt.allocPrint(a, "{s}/file.txt", .{tmp});
+    defer a.free(file_path);
+    try writeTestFile(file_path, "z");
+
+    var source = [_]worker_mod.Item{
+        .{ .name = "uncalc", .path = paths[0], .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 1, .icon_name = "" },
+        .{ .name = "small", .path = paths[1], .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 2, .icon_name = "" },
+        .{ .name = "big", .path = paths[2], .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 0, .mtime = 3, .icon_name = "" },
+        .{ .name = "file.txt", .path = file_path, .is_dir = false, .is_symlink = false, .is_broken = false, .bytes = 5000, .mtime = 4, .icon_name = "" },
+    };
+    var snap = worker_mod.Snapshot{ .arena = undefined, .request_id = 1, .dir = tmp, .items = &source };
+
+    const svc = try sizetree.Service.create(a, 2, noDisk);
+    defer svc.destroy();
+    var app = app_mod.App{
+        .allocator = a,
+        .io = undefined,
+        .environ = undefined,
+        .theme_cfg = undefined,
+        .worker = undefined,
+        .history = try history_mod.History.init(a, tmp),
+        .home_dir = tmp,
+        .items_arena = std.heap.ArenaAllocator.init(a),
+        .snapshot = &snap,
+        .size_service = svc,
     };
     defer app.deinit();
     defer app.snapshot = null;
 
-    // Populate fake done sizes
-    const key_big = try a.dupe(u8, "/big");
-    try app.folder_sizes.put(key_big, .{ .done = .{ .bytes = 10000, .partial = false } });
-    const key_small = try a.dupe(u8, "/small");
-    try app.folder_sizes.put(key_small, .{ .done = .{ .bytes = 500, .partial = false } });
+    svc.request(paths[1], .visible, .{ .force = true });
+    svc.request(paths[2], .visible, .{ .force = true });
+    settle(svc);
 
     app.sort_mode = .size;
     app.rebuildView();
@@ -400,7 +509,7 @@ test "App size sort: calculated folders sort by apparent size, uncalculated last
 }
 
 /// Clicks a folder's size dash twice: the first starts the calculation,
-/// the second cancels it; the selection stays on the file throughout.
+/// the second stops it; the selection stays on the file throughout.
 fn clickDash(list_view: bool) !void {
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
@@ -421,6 +530,9 @@ fn clickDash(list_view: bool) !void {
     };
     var snap = worker_mod.Snapshot{ .arena = undefined, .request_id = 1, .dir = tmp, .items = &source };
 
+    // A slow disk with no workers: the click's request stays running.
+    const svc = try sizetree.Service.create(a, 0, noDisk);
+    defer svc.destroy();
     var app = app_mod.App{
         .allocator = a,
         .io = undefined,
@@ -431,7 +543,7 @@ fn clickDash(list_view: bool) !void {
         .home_dir = tmp,
         .items_arena = std.heap.ArenaAllocator.init(a),
         .snapshot = &snap,
-        .folder_sizes = std.StringHashMap(app_mod.SizeState).init(a),
+        .size_service = svc,
     };
     defer app.deinit();
     defer app.snapshot = null;
@@ -462,10 +574,12 @@ fn clickDash(list_view: bool) !void {
     try std.testing.expect(app.items.items[1].selected);
     try std.testing.expectEqual(@as(?usize, 1), app.focused_index);
 
-    // Clicking again cancels
+    // Clicking again stops it.
     app.handleButton(0x110, true);
     app.handleButton(0x110, false);
+    app.syncFolderSizes();
     try std.testing.expect(!app.hasRunningFolderSize());
+    try std.testing.expect(app.items.items[1].selected);
 }
 
 test "App clicking dash starts calculation without changing selection" {
@@ -499,6 +613,8 @@ test "App context menu Calculate size starts the selected folders" {
     };
     var snap = worker_mod.Snapshot{ .arena = undefined, .request_id = 1, .dir = tmp, .items = &source };
 
+    const svc = try sizetree.Service.create(a, 0, noDisk);
+    defer svc.destroy();
     var app = app_mod.App{
         .allocator = a,
         .io = std.testing.io,
@@ -509,7 +625,7 @@ test "App context menu Calculate size starts the selected folders" {
         .home_dir = tmp,
         .items_arena = std.heap.ArenaAllocator.init(a),
         .snapshot = &snap,
-        .folder_sizes = std.StringHashMap(app_mod.SizeState).init(a),
+        .size_service = svc,
     };
     defer app.deinit();
     defer app.snapshot = null;
@@ -524,8 +640,8 @@ test "App context menu Calculate size starts the selected folders" {
     app.runMenu(row);
 
     try std.testing.expect(app.menu == null);
-    try std.testing.expect(app.folder_sizes.get(first) != null);
-    try std.testing.expect(app.folder_sizes.get(second) == null);
-    try std.testing.expect(app.folder_sizes.get(third) != null);
+    try std.testing.expectEqual(sizetree.Status.measuring, svc.lookup(first).status);
+    try std.testing.expectEqual(sizetree.Status.unknown, svc.lookup(second).status);
+    try std.testing.expectEqual(sizetree.Status.measuring, svc.lookup(third).status);
     try std.testing.expect(app.hasRunningFolderSize());
 }

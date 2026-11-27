@@ -6,7 +6,6 @@ const c = @import("c.zig").api;
 const browse = @import("app_torrent_browse.zig");
 const torrents = @import("torrents.zig");
 const app_tests = @import("app_tests.zig");
-const dirsize = @import("dirsize.zig");
 
 const files = [_]torrents.Entry{
     .{ .index = 0, .path = "Show/Season 1/e1.mkv", .size = 700 << 20, .done = 700 << 20, .wanted = true },
@@ -80,25 +79,6 @@ test "a torrent's top shows its folders and files as ghosts with ticks" {
     try std.testing.expect(!browse.active(&app));
     browse.leave(&app);
     try std.testing.expect(app.torrent_browse == null);
-}
-
-test "going to another folder cancels running folder sizes" {
-    var app = try app_tests.testApp();
-    defer app.deinit();
-    _ = try enter(&app);
-    // A size still counting (as far as the window knows: it has not synced).
-    const job = try dirsize.Job.create(std.testing.allocator, 0, .{});
-    job.ref(); // ours, so the job outlives the window's cancel
-    defer job.unref();
-    try app.folder_sizes.put(try std.testing.allocator.dupe(u8, "/tmp/elsewhere"), .{ .running = job });
-    try std.testing.expect(app.hasRunningFolderSize());
-
-    // Inside a torrent nothing is scanned, so this navigates without the
-    // listing worker.
-    app.navigate("/tmp/Show.torrent/Season 1");
-    try std.testing.expect(!app.hasRunningFolderSize());
-    try std.testing.expect(app.folder_sizes.get("/tmp/elsewhere") == null);
-    try std.testing.expect(job.cancelled.load(.acquire));
 }
 
 test "checkbox geometry sits in front of list rows and in grid corners" {
